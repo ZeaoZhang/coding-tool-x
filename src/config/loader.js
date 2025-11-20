@@ -26,6 +26,9 @@ function loadConfig() {
       const config = { ...DEFAULT_CONFIG, ...userConfig };
       config.projectsDir = expandHome(config.projectsDir);
 
+      // 合并 ports 配置
+      config.ports = { ...DEFAULT_CONFIG.ports, ...userConfig.ports };
+
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {
         config.currentProject = config.defaultProject;

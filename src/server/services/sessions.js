@@ -154,7 +154,7 @@ function getProjectsWithStats(config) {
 
       try {
         const files = fs.readdirSync(projectPath);
-        const jsonlFiles = files.filter(f => f.endsWith('.jsonl'));
+        const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
         sessionCount = jsonlFiles.length;
 
         // Find most recent session
@@ -339,7 +339,8 @@ function searchSessions(config, projectName, keyword, contextLength = 15) {
 
   const results = [];
   const files = fs.readdirSync(projectDir);
-  const jsonlFiles = files.filter(f => f.endsWith('.jsonl'));
+  const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
+  const aliases = loadAliases();
 
   for (const file of jsonlFiles) {
     const sessionId = file.replace('.jsonl', '');
@@ -386,6 +387,7 @@ function searchSessions(config, projectName, keyword, contextLength = 15) {
       if (matches.length > 0) {
         results.push({
           sessionId,
+          alias: aliases[sessionId] || null,
           matchCount: matches.length,
           matches: matches.slice(0, 5) // Limit to 5 matches per session
         });
@@ -412,7 +414,7 @@ function getRecentSessions(config, limit = 5) {
   projects.forEach(projectName => {
     const projectConfig = { ...config, currentProject: projectName };
     const sessions = getAllSessions(projectConfig);
-    const { displayName, fullPath } = parseRealProjectPath(projectName);
+    const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
 
     sessions.forEach(session => {
       const info = parseSessionInfoFast(session.filePath);
@@ -439,6 +441,32 @@ function getRecentSessions(config, limit = 5) {
   return allSessions.slice(0, limit);
 }
 
+// Search sessions across all projects
+function searchSessionsAcrossProjects(config, keyword, contextLength = 35) {
+  const projects = getProjects(config);
+  const allResults = [];
+
+  projects.forEach(projectName => {
+    const projectResults = searchSessions(config, projectName, keyword, contextLength);
+    const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
+
+    // Add project info to each result
+    projectResults.forEach(result => {
+      allResults.push({
+        ...result,
+        projectName: projectName,
+        projectDisplayName: displayName,
+        projectFullPath: fullPath
+      });
+    });
+  });
+
+  // Sort by match count
+  allResults.sort((a, b) => b.matchCount - a.matchCount);
+
+  return allResults;
+}
+
 module.exports = {
   getProjects,
   getProjectsWithStats,
@@ -452,5 +480,6 @@ module.exports = {
   saveSessionOrder,
   deleteProject,
   parseRealProjectPath,
-  searchSessions
+  searchSessions,
+  searchSessionsAcrossProjects
 };

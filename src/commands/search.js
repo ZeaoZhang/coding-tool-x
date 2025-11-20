@@ -1,91 +1,116 @@
 // 搜索会话命令
-const fs = require('fs');
 const chalk = require('chalk');
 const ora = require('ora');
 const inquirer = require('inquirer');
-const { getAllSessions, parseSessionInfoFast } = require('../utils/session');
-const { formatTime, formatSize, truncate } = require('../utils/format');
 const { promptSelectSession, promptSearchKeyword, promptForkConfirm } = require('../ui/prompts');
 const { resumeSession } = require('./resume');
+const { getProjects, searchSessions: searchSessionsInProject, parseRealProjectPath } = require('../server/services/sessions');
+const { loadAliases } = require('../server/services/alias');
 
 /**
- * 搜索会话
+ * 跨所有项目搜索会话内容
  */
-async function searchSessions(config, keyword) {
-  const spinner = ora(`搜索 "${keyword}"...`).start();
+async function searchSessionsAcrossProjects(config, keyword) {
+  const spinner = ora(`🔍 正在搜索 "${keyword}"...`).start();
 
-  const sessions = getAllSessions(config);
-  const matches = [];
+  const projects = getProjects(config);
+  const aliases = loadAliases();
+  const allResults = [];
 
-  for (const session of sessions) {
+  // 跨所有项目搜索
+  for (const projectName of projects) {
     try {
-      // 先检查文件名和基本信息
-      const info = parseSessionInfoFast(session.filePath);
-      const basicInfo = `${info.gitBranch} ${info.summary} ${info.firstMessage}`;
+      const { projectName: displayName } = parseRealProjectPath(projectName);
+      spinner.text = `🔍 正在搜索项目: ${displayName}...`;
+      const results = searchSessionsInProject(config, projectName, keyword, 15);
 
-      if (basicInfo.toLowerCase().includes(keyword.toLowerCase())) {
-        matches.push(session);
-        continue;
-      }
-
-      // 如果基本信息没匹配，再搜索文件内容（只搜索小文件）
-      if (session.size < 5 * 1024 * 1024) { // 小于5MB
-        const content = fs.readFileSync(session.filePath, 'utf8');
-        if (content.includes(keyword)) {
-          matches.push(session);
-        }
+      if (results.length > 0) {
+        results.forEach(result => {
+          allResults.push({
+            ...result,
+            projectName: projectName,
+            projectDisplayName: displayName,
+            alias: aliases[result.sessionId] || null
+          });
+        });
       }
     } catch (e) {
-      // 忽略错误
+      // 忽略单个项目的错误
     }
-  }
-
-  if (matches.length === 0) {
-    spinner.fail('未找到匹配的会话');
-    return [];
   }
 
   spinner.stop();
   spinner.clear();
 
-  // 清屏并重新显示，避免之前的输出干扰
+  if (allResults.length === 0) {
+    console.clear();
+    console.log(chalk.red(`\n❌ 未找到包含 "${keyword}" 的对话\n`));
+    return [];
+  }
+
+  // 按匹配数量排序
+  allResults.sort((a, b) => b.matchCount - a.matchCount);
+
+  // 统计总匹配数
+  const totalMatches = allResults.reduce((sum, r) => sum + r.matchCount, 0);
+
   console.clear();
-  console.log(chalk.green(`\n✨ 找到 ${matches.length} 个匹配的会话\n`));
+  console.log(chalk.green(`\n✨ 找到 ${allResults.length} 个对话，共 ${totalMatches} 处匹配\n`));
 
-  const choices = matches.map((session, index) => {
-    const info = parseSessionInfoFast(session.filePath);
-    const time = formatTime(session.mtime);
-    const size = formatSize(session.size);
+  const choices = [];
 
-    // 构建单行显示格式：序号. 时间 │ 大小 │ 分支 │ 第一条消息
+  allResults.forEach((result, index) => {
+    // 构建显示名称
     let displayName = '';
 
+    // 序号
     displayName += chalk.bold.white(`${index + 1}. `);
-    displayName += chalk.cyan(`${time.padEnd(10)}`);
-    displayName += chalk.gray(` │ ${size.padEnd(9)}`);
 
-    if (info.gitBranch) {
-      const branchName = info.gitBranch
-        .replace('feature/', '')
-        .replace('feat/', '')
-        .replace('fix/', '')
-        .substring(0, 30);
-      displayName += chalk.green(` │ ${branchName.padEnd(25)}`);
+    // 项目名（洋红色高亮）
+    displayName += chalk.magenta.bold(`[${result.projectDisplayName}] `);
+
+    // 会话别名或 ID
+    if (result.alias) {
+      displayName += chalk.yellow.bold(`[${result.alias}] `);
     } else {
-      displayName += chalk.green(` │ ${''.padEnd(25)}`);
+      displayName += chalk.gray(`[${result.sessionId.substring(0, 8)}] `);
     }
 
-    // 只显示第一条用户消息（单行格式）
-    if (info.firstMessage && info.firstMessage !== 'Warmup') {
-      const firstMsg = truncate(info.firstMessage, 50);
-      displayName += chalk.gray(' │ ') + chalk.white(firstMsg);
-    }
+    // 匹配数量
+    displayName += chalk.cyan(`(${result.matchCount} 处匹配)`);
 
-    return {
+    choices.push({
       name: displayName,
-      value: session.sessionId,
-      short: `会话 ${session.sessionId.substring(0, 8)}`,
-    };
+      value: { sessionId: result.sessionId, projectName: result.projectName },
+      short: result.alias || result.sessionId.substring(0, 8)
+    });
+
+    // 显示前 3 个匹配的上下文
+    const matchesToShow = result.matches.slice(0, 3);
+    matchesToShow.forEach((match, idx) => {
+      const roleColor = match.role === 'user' ? chalk.blue : chalk.green;
+      const roleLabel = match.role === 'user' ? '用户' : '助手';
+
+      choices.push({
+        name: `    ${roleColor(`[${roleLabel}]`)} ${chalk.gray(match.context)}`,
+        value: null,
+        disabled: true
+      });
+    });
+
+    // 如果还有更多匹配，显示提示
+    if (result.matches.length > 3) {
+      choices.push({
+        name: chalk.gray(`    ... 还有 ${result.matches.length - 3} 处匹配`),
+        value: null,
+        disabled: true
+      });
+    }
+
+    // 添加分隔线（不是最后一个）
+    if (index < allResults.length - 1) {
+      choices.push(new inquirer.Separator(chalk.gray('─'.repeat(10))));
+    }
   });
 
   return choices;
@@ -97,52 +122,55 @@ async function searchSessions(config, keyword) {
 async function handleSearch(config, switchProjectCallback) {
   while (true) {
     const keyword = await promptSearchKeyword();
-    const choices = await searchSessions(config, keyword);
+    const choices = await searchSessionsAcrossProjects(config, keyword);
 
     if (choices.length === 0) {
       const { action } = await inquirer.prompt([
         {
           type: 'list',
           name: 'action',
-          message: '未找到匹配的会话',
+          message: '未找到匹配的对话',
           choices: [
             { name: chalk.blue('↩️  返回主菜单'), value: 'back' },
             { name: chalk.cyan('🔎  重新搜索'), value: 'retry' },
-            { name: chalk.magenta('🔀  切换项目'), value: 'switch' },
           ],
         },
       ]);
 
       if (action === 'back') return;
       if (action === 'retry') continue;
-      if (action === 'switch') {
-        const switched = await switchProjectCallback();
-        if (!switched) return;
-        continue;
-      }
     }
 
     // 添加操作选项
-    choices.push(new inquirer.Separator(chalk.gray('─'.repeat(50))));
+    choices.push(new inquirer.Separator(chalk.gray('═'.repeat(80))));
     choices.push({ name: chalk.blue('↩️  返回主菜单'), value: 'back' });
     choices.push({ name: chalk.cyan('🔎  重新搜索'), value: 'retry' });
-    choices.push({ name: chalk.magenta('🔀  切换项目'), value: 'switch' });
 
-    const sessionId = await promptSelectSession(choices);
+    // 使用自定义 pageSize 以便显示更多结果
+    const { selected } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'selected',
+        message: '选择对话:',
+        pageSize: 20,
+        choices: choices,
+      },
+    ]);
 
-    if (sessionId === 'back') {
+    if (selected === 'back') {
       return;
     }
 
-    if (sessionId === 'retry') {
+    if (selected === 'retry') {
       continue;
     }
 
-    if (sessionId === 'switch') {
-      const switched = await switchProjectCallback();
-      if (!switched) return;
-      continue;
-    }
+    // selected 是 { sessionId, projectName }
+    const sessionId = selected.sessionId;
+    const projectName = selected.projectName;
+
+    // 切换到该项目
+    config.currentProject = projectName;
 
     // 询问是否 fork
     const action = await promptForkConfirm();
@@ -157,6 +185,6 @@ async function handleSearch(config, switchProjectCallback) {
 }
 
 module.exports = {
-  searchSessions,
+  searchSessionsAcrossProjects,
   handleSearch,
 };

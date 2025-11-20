@@ -74,6 +74,14 @@ const api = {
     return response.data
   },
 
+  // Search sessions across all projects
+  async searchSessionsGlobally(keyword, contextLength = 35) {
+    const response = await client.get('/sessions/search/global', {
+      params: { keyword, context: contextLength }
+    })
+    return response.data
+  },
+
   // Launch terminal with session
   async launchTerminal(projectName, sessionId) {
     const response = await client.post(`/sessions/${projectName}/${sessionId}/launch`)
@@ -114,6 +122,28 @@ const api = {
   // Get recent sessions across all projects
   async getRecentSessions(limit = 5) {
     const response = await client.get(`/sessions/recent/list?limit=${limit}`)
+    return response.data
+  },
+
+  // Proxy management
+  async getProxyStatus() {
+    const response = await client.get('/proxy/status')
+    return response.data
+  },
+
+  async startProxy() {
+    const response = await client.post('/proxy/start')
+    return response.data
+  },
+
+  async stopProxy() {
+    const response = await client.post('/proxy/stop')
+    return response.data
+  },
+
+  // Clear proxy logs
+  async clearProxyLogs() {
+    const response = await client.post('/proxy/logs/clear')
     return response.data
   }
 }

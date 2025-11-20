@@ -72,13 +72,20 @@ async function promptSearchKeyword() {
  * 选择项目提示
  */
 async function promptSelectProject(projects) {
+  // 添加取消选项
+  const choices = [
+    ...projects,
+    new inquirer.Separator(chalk.gray('─'.repeat(14))),
+    { name: chalk.gray('↩️  取消切换'), value: null }
+  ];
+
   const { project } = await inquirer.prompt([
     {
       type: 'list',
       name: 'project',
       message: chalk.cyan('选择项目:'),
       pageSize: 15,
-      choices: projects,
+      choices: choices,
     },
   ]);
 

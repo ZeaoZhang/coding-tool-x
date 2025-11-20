@@ -11,6 +11,11 @@ const { handleList } = require('./commands/list');
 const { handleSearch } = require('./commands/search');
 const { switchProject } = require('./commands/switch');
 const { handleUI } = require('./commands/ui');
+const { handleProxyStart, handleProxyStop, handleProxyStatus } = require('./commands/proxy');
+const { resetConfig } = require('./reset-config');
+const { handleSwitchChannel, handleAddChannel } = require('./commands/channels');
+const { handleToggleProxy } = require('./commands/toggle-proxy');
+const { handlePortConfig } = require('./commands/port-config');
 
 // 全局错误处理
 process.on('uncaughtException', (err) => {
@@ -30,6 +35,51 @@ process.on('SIGINT', () => {
  * 主函数
  */
 async function main() {
+  // 处理命令行参数
+  const args = process.argv.slice(2);
+
+  // reset 命令 - 恢复默认配置
+  if (args[0] === 'reset') {
+    await resetConfig();
+    return;
+  }
+
+  // ui 命令 - 快捷启动 Web UI
+  if (args[0] === 'ui') {
+    await handleUI();
+    return;
+  }
+
+  // status 命令 - 快捷方式
+  if (args[0] === 'status') {
+    handleProxyStatus();
+    return;
+  }
+
+  // 代理命令
+  if (args[0] === 'proxy') {
+    const subCommand = args[1] || 'start';
+
+    switch (subCommand) {
+      case 'start':
+        await handleProxyStart();
+        return;
+
+      case 'stop':
+        await handleProxyStop();
+        return;
+
+      case 'status':
+        handleProxyStatus();
+        return;
+
+      default:
+        // 默认执行 start
+        await handleProxyStart();
+        return;
+    }
+  }
+
   // 加载配置
   let config = loadConfig();
 
@@ -46,7 +96,7 @@ async function main() {
             config = loadConfig();
           }
           return switched;
-        });
+        }, true); // crossProject = true，跨项目显示最近会话
         break;
 
       case 'search':
@@ -63,11 +113,39 @@ async function main() {
         const switched = await switchProject(config);
         if (switched) {
           config = loadConfig();
+          // 切换成功后自动进入会话列表
+          await handleList(config, async () => {
+            const switched = await switchProject(config);
+            if (switched) {
+              config = loadConfig();
+            }
+            return switched;
+          });
         }
+        break;
+
+      case 'switch-channel':
+        await handleSwitchChannel();
+        break;
+
+      case 'toggle-proxy':
+        await handleToggleProxy();
+        break;
+
+      case 'add-channel':
+        await handleAddChannel();
         break;
 
       case 'ui':
         await handleUI();
+        break;
+
+      case 'port-config':
+        await handlePortConfig();
+        break;
+
+      case 'reset':
+        await resetConfig();
         break;
 
       case 'exit':

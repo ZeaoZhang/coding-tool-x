@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { isProxyConfig } = require('./settings-manager');
 
 // Get channels config file path
 function getChannelsFilePath() {
@@ -11,9 +12,39 @@ function getChannelsFilePath() {
   return path.join(dir, 'channels.json');
 }
 
+// Get active channel ID file path (for proxy mode)
+function getActiveChannelIdPath() {
+  const dir = path.join(os.homedir(), '.claude', 'cc-tool');
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  return path.join(dir, 'active-channel.json');
+}
+
 // Get Claude settings file path
 function getClaudeSettingsPath() {
   return path.join(os.homedir(), '.claude', 'settings.json');
+}
+
+// Save active channel ID (for proxy mode)
+function saveActiveChannelId(channelId) {
+  const filePath = getActiveChannelIdPath();
+  fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
+}
+
+// Load active channel ID (for proxy mode)
+function loadActiveChannelId() {
+  const filePath = getActiveChannelIdPath();
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content);
+      return data.activeChannelId || null;
+    }
+  } catch (error) {
+    console.error('Error loading active channel ID:', error);
+  }
+  return null;
 }
 
 // Load channels from file
@@ -66,36 +97,48 @@ function getCurrentSettings() {
 // Get all channels with correct active status based on current settings.json
 function getAllChannels() {
   const data = loadChannels();
-  const currentSettings = getCurrentSettings();
-
-  if (!currentSettings) {
-    return data.channels || [];
-  }
 
   // First, mark all channels as inactive
   data.channels.forEach(ch => { ch.isActive = false; });
 
-  // Find matching channel by baseUrl and apiKey
-  const matchingChannel = data.channels.find(ch =>
-    ch.baseUrl === currentSettings.baseUrl &&
-    ch.apiKey === currentSettings.apiKey
-  );
-
-  if (matchingChannel) {
-    // Found a matching channel, mark it as active
-    matchingChannel.isActive = true;
+  // Check if we're in proxy mode
+  if (isProxyConfig()) {
+    // Proxy mode: use saved active channel ID
+    const activeChannelId = loadActiveChannelId();
+    if (activeChannelId) {
+      const activeChannel = data.channels.find(ch => ch.id === activeChannelId);
+      if (activeChannel) {
+        activeChannel.isActive = true;
+      }
+    }
   } else {
-    // No matching channel found, auto-save it as a new channel
-    const newChannel = {
-      id: `channel-${Date.now()}`,
-      name: '当前使用',
-      baseUrl: currentSettings.baseUrl,
-      apiKey: currentSettings.apiKey,
-      isActive: true,
-      createdAt: Date.now()
-    };
-    data.channels.unshift(newChannel);
-    saveChannels(data); // Save immediately so it persists
+    // Normal mode: use settings.json to determine active channel
+    const currentSettings = getCurrentSettings();
+
+    if (currentSettings) {
+      // Find matching channel by baseUrl and apiKey
+      const matchingChannel = data.channels.find(ch =>
+        ch.baseUrl === currentSettings.baseUrl &&
+        ch.apiKey === currentSettings.apiKey
+      );
+
+      if (matchingChannel) {
+        // Found a matching channel, mark it as active
+        matchingChannel.isActive = true;
+      } else {
+        // No matching channel found, auto-save it as a new channel
+        const newChannel = {
+          id: `channel-${Date.now()}`,
+          name: '当前使用',
+          baseUrl: currentSettings.baseUrl,
+          apiKey: currentSettings.apiKey,
+          isActive: true,
+          createdAt: Date.now()
+        };
+        data.channels.unshift(newChannel);
+        saveChannels(data); // Save immediately so it persists
+      }
+    }
   }
 
   return data.channels;
@@ -192,10 +235,17 @@ function activateChannel(id) {
     throw new Error('Channel not found');
   }
 
-  // Update Claude settings.json (this will make it the active channel)
-  updateClaudeSettings(channel.baseUrl, channel.apiKey);
+  // Check if we're in proxy mode
+  if (isProxyConfig()) {
+    // Proxy mode: only save active channel ID, don't modify settings.json
+    saveActiveChannelId(id);
+    console.log(`✅ Activated channel in proxy mode: ${channel.name}`);
+  } else {
+    // Normal mode: update Claude settings.json
+    updateClaudeSettings(channel.baseUrl, channel.apiKey);
+    console.log(`✅ Activated channel in normal mode: ${channel.name}`);
+  }
 
-  // No need to save channels.json, isActive is computed dynamically
   return channel;
 }
 
@@ -226,8 +276,10 @@ function updateClaudeSettings(baseUrl, apiKey) {
 module.exports = {
   getAllChannels,
   getCurrentChannel,
+  getActiveChannel: getCurrentChannel, // Alias for proxy server
   createChannel,
   updateChannel,
   deleteChannel,
-  activateChannel
+  activateChannel,
+  updateClaudeSettings // Export for proxy stop
 };

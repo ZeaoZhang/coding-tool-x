@@ -17,6 +17,12 @@ async function switchProject(config) {
 
   const selectedProject = await promptSelectProject(projects);
 
+  // 用户取消切换
+  if (!selectedProject) {
+    console.log(chalk.gray('\n取消切换\n'));
+    return false;
+  }
+
   // 更新配置
   config.currentProject = selectedProject;
 

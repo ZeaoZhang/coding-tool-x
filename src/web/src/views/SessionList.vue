@@ -27,12 +27,13 @@
           clearable
           class="search-input"
           @keyup.enter="handleSearch"
+          :disabled="searching"
         >
           <template #prefix>
             <n-icon><SearchOutline /></n-icon>
           </template>
           <template #suffix>
-            <n-button text @click="handleSearch" :disabled="!searchQuery">
+            <n-button text @click="handleSearch" :disabled="!searchQuery || searching" :loading="searching">
               搜索
             </n-button>
           </template>
@@ -202,22 +203,32 @@
     </n-modal>
 
     <!-- Search Results Dialog -->
-    <n-modal v-model:show="showSearchResults" preset="card" title="搜索结果" style="width: 800px; max-height: 600px;">
-      <div v-if="searchResults">
+    <n-modal v-model:show="showSearchResults" preset="card" title="搜索结果" style="width: 1200px;">
+      <div v-if="searchResults" style="max-height: 70vh; overflow-y: auto;">
         <n-alert type="info" style="margin-bottom: 16px;">
           关键词 "{{ searchResults.keyword }}" 共找到 {{ searchResults.totalMatches }} 处匹配
         </n-alert>
 
         <div v-for="session in searchResults.sessions" :key="session.sessionId" class="search-result-item">
           <div class="search-result-header">
-            <n-text strong>{{ session.sessionId.substring(0, 8) }}</n-text>
-            <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
+            <div class="search-result-title">
+              <n-text strong>
+                {{ session.alias ? `${session.alias} (${session.sessionId.substring(0, 8)})` : session.sessionId.substring(0, 8) }}
+              </n-text>
+              <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
+            </div>
+            <n-button size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
+              <template #icon>
+                <n-icon><TerminalOutline /></n-icon>
+              </template>
+              使用对话
+            </n-button>
           </div>
           <div v-for="(match, idx) in session.matches" :key="idx" class="search-match">
             <n-tag size="tiny" :type="match.role === 'user' ? 'info' : 'success'" :bordered="false">
               {{ match.role === 'user' ? '用户' : '助手' }}
             </n-tag>
-            <n-text depth="3">{{ match.context }}</n-text>
+            <n-text depth="3" class="search-match-text" v-html="highlightKeyword(match.context, searchResults.keyword)"></n-text>
           </div>
         </div>
 
@@ -262,6 +273,7 @@ const orderedSessions = ref([])
 const searchResults = ref(null)
 const showSearchResults = ref(false)
 const contentEl = ref(null)
+const searching = ref(false)
 
 // Project display name (使用后端解析的名称)
 const projectDisplayName = computed(() => {
@@ -299,12 +311,16 @@ function goBack() {
 async function handleSearch() {
   if (!searchQuery.value) return
 
+  searching.value = true
   try {
-    const data = await api.searchSessions(props.projectName, searchQuery.value)
+    // 增加上下文长度到 35 (15 + 20)
+    const data = await api.searchSessions(props.projectName, searchQuery.value, 35)
     searchResults.value = data
     showSearchResults.value = true
   } catch (err) {
     message.error('搜索失败: ' + err.message)
+  } finally {
+    searching.value = false
   }
 }
 
@@ -386,6 +402,13 @@ function formatSize(bytes) {
   if (bytes < k) return bytes + ' B'
   if (bytes < k * k) return (bytes / k).toFixed(1) + ' KB'
   return (bytes / k / k).toFixed(1) + ' MB'
+}
+
+// 高亮关键字
+function highlightKeyword(text, keyword) {
+  if (!keyword || !text) return text
+  const regex = new RegExp(`(${keyword})`, 'gi')
+  return text.replace(regex, '<mark style="background-color: #ffd700; padding: 2px 4px; border-radius: 2px; font-weight: 600;">$1</mark>')
 }
 
 // 保存和恢复滚动位置
@@ -651,8 +674,14 @@ onUnmounted(() => {
 .search-result-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
   margin-bottom: 8px;
+}
+
+.search-result-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .search-match {
@@ -663,5 +692,10 @@ onUnmounted(() => {
   padding: 6px;
   background: #f9fafb;
   border-radius: 4px;
+}
+
+.search-match-text {
+  flex: 1;
+  line-height: 1.6;
 }
 </style>

@@ -1,9 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions } = require('../services/sessions');
+const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects } = require('../services/sessions');
 const { loadAliases } = require('../services/alias');
+const { broadcastLog } = require('../websocket-server');
 
 module.exports = (config) => {
+  // GET /api/sessions/search/global - Search sessions across all projects
+  router.get('/search/global', (req, res) => {
+    try {
+      const { keyword, context } = req.query;
+
+      if (!keyword) {
+        return res.status(400).json({ error: 'Keyword is required' });
+      }
+
+      const contextLength = context ? parseInt(context) : 35;
+      const results = searchSessionsAcrossProjects(config, keyword, contextLength);
+
+      res.json({
+        keyword,
+        totalMatches: results.reduce((sum, r) => sum + r.matchCount, 0),
+        sessions: results
+      });
+    } catch (error) {
+      console.error('Error searching sessions globally:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // GET /api/sessions/recent - Get recent sessions across all projects
   router.get('/recent/list', (req, res) => {
     try {
@@ -131,6 +155,20 @@ module.exports = (config) => {
       } catch (e) {
         // Use current directory if unable to extract
       }
+
+      // Get alias
+      const aliases = loadAliases();
+      const alias = aliases[sessionId];
+
+      // 广播行为日志
+      broadcastLog({
+        type: 'action',
+        action: 'launch_session',
+        message: `启动会话 ${alias || sessionId.substring(0, 8)}`,
+        sessionId: sessionId,
+        alias: alias || null,
+        timestamp: Date.now()
+      });
 
       // Launch Terminal.app on macOS
       const script = `

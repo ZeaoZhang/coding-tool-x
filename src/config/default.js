@@ -5,8 +5,12 @@ const os = require('os');
 const DEFAULT_CONFIG = {
   projectsDir: path.join(os.homedir(), '.claude', 'projects'),
   defaultProject: null,
-  maxDisplaySessions: 20,
+  maxDisplaySessions: 100,
   pageSize: 15,
+  ports: {
+    webUI: 10099,      // Web UI 页面端口 (同时用于 WebSocket)
+    proxy: 10088       // 代理服务端口
+  }
 };
 
 module.exports = DEFAULT_CONFIG;

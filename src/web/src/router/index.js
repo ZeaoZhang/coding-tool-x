@@ -13,6 +13,10 @@ const routes = [
     name: 'sessions',
     component: SessionList,
     props: true
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/'
   }
 ]
 

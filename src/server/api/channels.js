@@ -8,6 +8,7 @@ const {
   deleteChannel,
   activateChannel
 } = require('../services/channels');
+const { broadcastLog } = require('../websocket-server');
 
 // GET /api/channels - Get all channels
 router.get('/', (req, res) => {
@@ -79,6 +80,16 @@ router.post('/:id/activate', (req, res) => {
   try {
     const { id } = req.params;
     const channel = activateChannel(id);
+
+    // 广播行为日志
+    broadcastLog({
+      type: 'action',
+      action: 'switch_channel',
+      message: `切换渠道至 ${channel.name}`,
+      channelName: channel.name,
+      timestamp: Date.now()
+    });
+
     res.json({ channel });
   } catch (error) {
     console.error('Error activating channel:', error);
