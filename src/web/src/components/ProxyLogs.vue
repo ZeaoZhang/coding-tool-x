@@ -101,13 +101,11 @@ function connectWebSocket() {
     const host = window.location.host
     const wsUrl = `${protocol}//${host}/ws`
 
-    console.log('Connecting to WebSocket:', wsUrl)
     ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {
       wsConnected.value = true
       reconnectAttempts = 0 // 重置重连次数
-      console.log('✅ WebSocket connected')
 
       // 初次连接时清空日志，准备接收历史日志
       if (isInitialConnection) {
@@ -160,12 +158,10 @@ function connectWebSocket() {
 
     ws.onclose = () => {
       wsConnected.value = false
-      console.log('WebSocket disconnected')
 
       // 限制重连次数，避免无限重连
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++
-        console.log(`Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`)
 
         // 延迟重连，时间递增（5秒、10秒、15秒）
         const delay = reconnectAttempts * 5000
@@ -174,8 +170,6 @@ function connectWebSocket() {
             connectWebSocket()
           }
         }, delay)
-      } else {
-        console.log('Max reconnect attempts reached, stopped reconnecting')
       }
     }
   } catch (err) {

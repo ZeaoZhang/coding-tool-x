@@ -16,6 +16,43 @@ const { resetConfig } = require('./reset-config');
 const { handleSwitchChannel, handleAddChannel } = require('./commands/channels');
 const { handleToggleProxy } = require('./commands/toggle-proxy');
 const { handlePortConfig } = require('./commands/port-config');
+const chalk = require('chalk');
+const path = require('path');
+const fs = require('fs');
+
+// 读取版本号
+function getVersion() {
+  const packagePath = path.join(__dirname, '../package.json');
+  const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  return packageJson.version;
+}
+
+// 显示帮助信息
+function showHelp() {
+  const version = getVersion();
+  console.log(chalk.cyan.bold(`\nCC-TOOL v${version}`));
+  console.log(chalk.gray('ClaudeCode 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控\n'));
+
+  console.log(chalk.yellow('使用方法:'));
+  console.log('  cct                  启动交互式命令行界面');
+  console.log('  cct ui               启动 Web 可视化界面（推荐）');
+  console.log('  cct reset            重置配置文件');
+  console.log('  cct proxy [start]    启动代理服务');
+  console.log('  cct proxy stop       停止代理服务');
+  console.log('  cct proxy status     查看代理状态');
+  console.log('  cct status           查看代理状态（快捷方式）');
+  console.log('  cct --version, -v    显示版本号');
+  console.log('  cct --help, -h       显示帮助信息\n');
+
+  console.log(chalk.yellow('示例:'));
+  console.log(chalk.gray('  $ cct ui              # 启动 Web UI'));
+  console.log(chalk.gray('  $ cct                 # 启动交互式命令行'));
+  console.log(chalk.gray('  $ cct reset           # 重置配置\n'));
+
+  console.log(chalk.yellow('更多信息:'));
+  console.log(chalk.gray('  官网: https://github.com/CooperJiang/cc-tool'));
+  console.log(chalk.gray('  问题: https://github.com/CooperJiang/cc-tool/issues\n'));
+}
 
 // 全局错误处理
 process.on('uncaughtException', (err) => {
@@ -37,6 +74,18 @@ process.on('SIGINT', () => {
 async function main() {
   // 处理命令行参数
   const args = process.argv.slice(2);
+
+  // --version 或 -v - 显示版本号
+  if (args[0] === '--version' || args[0] === '-v') {
+    console.log(getVersion());
+    return;
+  }
+
+  // --help 或 -h - 显示帮助信息
+  if (args[0] === '--help' || args[0] === '-h') {
+    showHelp();
+    return;
+  }
 
   // reset 命令 - 恢复默认配置
   if (args[0] === 'reset') {

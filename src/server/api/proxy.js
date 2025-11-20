@@ -31,7 +31,19 @@ function findActiveChannelFromSettings() {
   try {
     const settings = readSettings();
     const baseUrl = settings?.env?.ANTHROPIC_BASE_URL || '';
-    const apiKey = settings?.env?.ANTHROPIC_API_KEY || '';
+
+    // 兼容多种 API Key 格式（与 channels.js 保持一致）
+    let apiKey = settings?.env?.ANTHROPIC_API_KEY ||        // 标准格式
+                 settings?.env?.ANTHROPIC_AUTH_TOKEN ||     // 88code等平台格式
+                 '';
+
+    // 如果 apiKey 仍为空，尝试从 apiKeyHelper 提取
+    if (!apiKey && settings?.apiKeyHelper) {
+      const match = settings.apiKeyHelper.match(/['"]([^'"]+)['"]/);
+      if (match && match[1]) {
+        apiKey = match[1];
+      }
+    }
 
     if (!baseUrl || !apiKey || baseUrl.includes('127.0.0.1')) {
       return null;

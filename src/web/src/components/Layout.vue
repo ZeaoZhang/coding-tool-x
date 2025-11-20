@@ -91,6 +91,7 @@
           v-if="showChannels || (showLogs && proxyRunning)"
           :show-channels="showChannels"
           :show-logs="showLogs"
+          :proxy-running="proxyRunning"
         />
       </transition>
     </div>
@@ -163,14 +164,12 @@ async function checkProxyStatus(isInitial = false) {
   try {
     const status = await api.getProxyStatus()
     proxyRunning.value = status.proxy.running
-    console.log('✅ Proxy status loaded:', status.proxy.running)
   } catch (err) {
     console.error('Failed to check proxy status:', err)
     // 即使失败也要关闭 loading
   } finally {
     // 初次加载完成后关闭全局 loading
     if (isInitial) {
-      console.log('Closing global loading...')
       globalLoading.value = false
     }
   }
@@ -188,14 +187,26 @@ async function toggleProxy(newValue) {
       // 启动代理
       const result = await api.startProxy()
       message.success(`代理已启动，端口: ${result.port}`)
-      // 立即更新状态，让日志面板立即显示
-      await checkProxyStatus()
+
+      // 立即更新状态，让日志面板立即显示（不等待后台检查）
+      proxyRunning.value = true
+
+      // 自动展示日志面板
+      showLogs.value = true
+      savePanelSettings()
+
+      // 后台异步检查状态确认，不阻塞 UI
+      checkProxyStatus().catch(err => console.error('Background status check failed:', err))
     } else {
       // 停止代理
       await api.stopProxy()
       message.success('代理已停止并恢复配置')
+
       // 立即更新状态，让日志面板立即隐藏
-      await checkProxyStatus()
+      proxyRunning.value = false
+
+      // 后台异步检查状态确认
+      checkProxyStatus().catch(err => console.error('Background status check failed:', err))
     }
   } catch (err) {
     message.error('操作失败: ' + err.message)

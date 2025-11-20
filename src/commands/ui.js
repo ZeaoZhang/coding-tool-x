@@ -1,6 +1,6 @@
 const chalk = require('chalk');
 const { startServer } = require('../server');
-const { execSync } = require('child_process');
+const open = require('open');
 const { getProxyStatus } = require('../server/proxy-server');
 const { loadConfig } = require('../config/loader');
 
@@ -17,16 +17,9 @@ async function handleUI() {
     startServer(port);
 
     // 自动打开浏览器
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        const platform = process.platform;
-        if (platform === 'darwin') {
-          execSync(`open ${url}`, { stdio: 'ignore' });
-        } else if (platform === 'win32') {
-          execSync(`start ${url}`, { stdio: 'ignore' });
-        } else {
-          execSync(`xdg-open ${url}`, { stdio: 'ignore' });
-        }
+        await open(url);
         console.log(chalk.green(`✅ 已在浏览器中打开: ${url}\n`));
       } catch (err) {
         console.log(chalk.yellow(`💡 请手动打开: ${url}\n`));

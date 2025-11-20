@@ -134,15 +134,38 @@ module.exports = (config) => {
       const { execSync } = require('child_process');
       const path = require('path');
       const fs = require('fs');
+      const os = require('os');
 
-      // Get session file path
-      const sessionFile = path.join(config.projectsDir, projectName, sessionId + '.jsonl');
-      if (!fs.existsSync(sessionFile)) {
-        return res.status(404).json({ error: 'Session not found' });
+      // Parse real project path (important for cross-project sessions)
+      const { fullPath } = parseRealProjectPath(projectName);
+
+      // Try to find session file in multiple possible locations
+      let sessionFile = null;
+      const possiblePaths = [
+        // Location 1: Project's .claude/sessions directory
+        path.join(fullPath, '.claude', 'sessions', sessionId + '.jsonl'),
+        // Location 2: User's .claude/projects directory (ClaudeCode default)
+        path.join(os.homedir(), '.claude', 'projects', projectName, sessionId + '.jsonl')
+      ];
+
+      for (const testPath of possiblePaths) {
+        if (fs.existsSync(testPath)) {
+          sessionFile = testPath;
+          break;
+        }
+      }
+
+      if (!sessionFile) {
+        console.error(`Session file not found in any location for session: ${sessionId}`);
+        console.error('Tried paths:', possiblePaths);
+        return res.status(404).json({
+          error: `No conversation found with session ID: ${sessionId}`,
+          details: `Tried locations: ${possiblePaths.join(', ')}`
+        });
       }
 
       // Extract working directory from session file
-      let cwd = process.cwd();
+      let cwd = fullPath; // Default to project directory
       try {
         const content = fs.readFileSync(sessionFile, 'utf8');
         const firstLine = content.split('\n')[0];
@@ -153,7 +176,7 @@ module.exports = (config) => {
           }
         }
       } catch (e) {
-        // Use current directory if unable to extract
+        console.warn('Unable to extract cwd from session, using project path:', e.message);
       }
 
       // Get alias
@@ -171,16 +194,18 @@ module.exports = (config) => {
       });
 
       // Launch Terminal.app on macOS
+      // 使用 CLAUDE_SESSION_FILE 环境变量直接指定会话文件路径
+      // 这样 ClaudeCode 就不需要通过目录编码来查找会话文件
       const script = `
         tell application "Terminal"
           activate
-          do script "cd '${cwd}' && claude -r ${sessionId}"
+          do script "cd '${cwd}' && CLAUDE_SESSION_FILE='${sessionFile}' claude -r ${sessionId}"
         end tell
       `;
 
       execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
 
-      res.json({ success: true, cwd });
+      res.json({ success: true, cwd, sessionFile });
     } catch (error) {
       console.error('Error launching terminal:', error);
       res.status(500).json({ error: error.message });

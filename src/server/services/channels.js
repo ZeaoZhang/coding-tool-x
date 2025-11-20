@@ -78,9 +78,22 @@ function getCurrentSettings() {
     }
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
 
-    // Read from env object
-    const baseUrl = settings.env?.ANTHROPIC_BASE_URL || '';
-    const apiKey = settings.env?.ANTHROPIC_API_KEY || '';
+    // Read baseUrl from env
+    let baseUrl = settings.env?.ANTHROPIC_BASE_URL || '';
+
+    // Read apiKey from multiple possible sources (兼容多种配置格式)
+    let apiKey = settings.env?.ANTHROPIC_API_KEY ||        // 标准格式
+                 settings.env?.ANTHROPIC_AUTH_TOKEN ||     // 88code等平台格式
+                 '';
+
+    // If apiKey is still empty, try to extract from apiKeyHelper
+    if (!apiKey && settings.apiKeyHelper) {
+      // apiKeyHelper format: echo 'sk-ant-xxx' or other shell commands
+      const match = settings.apiKeyHelper.match(/['"]([^'"]+)['"]/);
+      if (match && match[1]) {
+        apiKey = match[1];
+      }
+    }
 
     // If no valid config, return null
     if (!baseUrl && !apiKey) {
@@ -116,6 +129,12 @@ function getAllChannels() {
     const currentSettings = getCurrentSettings();
 
     if (currentSettings) {
+      // Only proceed if we have valid apiKey
+      if (!currentSettings.apiKey) {
+        console.warn('Warning: Current settings has no API Key');
+        return data.channels;
+      }
+
       // Find matching channel by baseUrl and apiKey
       const matchingChannel = data.channels.find(ch =>
         ch.baseUrl === currentSettings.baseUrl &&
@@ -137,6 +156,7 @@ function getAllChannels() {
         };
         data.channels.unshift(newChannel);
         saveChannels(data); // Save immediately so it persists
+        console.log('Auto-created new channel from current settings:', newChannel.name);
       }
     }
   }
@@ -263,9 +283,22 @@ function updateClaudeSettings(baseUrl, apiKey) {
     settings.env = {};
   }
 
-  // Update env fields
+  // 检测用户使用的是哪种 API Key 字段格式
+  const useAuthToken = settings.env.ANTHROPIC_AUTH_TOKEN !== undefined;
+  const useApiKey = settings.env.ANTHROPIC_API_KEY !== undefined;
+
+  // Update env fields - 保持用户原有的格式
   settings.env.ANTHROPIC_BASE_URL = baseUrl;
-  settings.env.ANTHROPIC_API_KEY = apiKey;
+
+  if (useAuthToken || (!useAuthToken && !useApiKey)) {
+    // 如果使用 ANTHROPIC_AUTH_TOKEN 格式，或者两者都没有（新用户），优先使用 AUTH_TOKEN
+    settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+    // 删除可能存在的 ANTHROPIC_API_KEY
+    delete settings.env.ANTHROPIC_API_KEY;
+  } else {
+    // 使用标准的 ANTHROPIC_API_KEY 格式
+    settings.env.ANTHROPIC_API_KEY = apiKey;
+  }
 
   // Update apiKeyHelper (for compatibility)
   settings.apiKeyHelper = `echo '${apiKey}'`;

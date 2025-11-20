@@ -1,10 +1,10 @@
 {
   "name": "cc-tool",
-  "version": "1.3.0",
-  "description": "Interactive session manager for Claude Code - Quick search, list and resume your conversation history",
+  "version": "2.0.4",
+  "description": "ClaudeCode 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
-    "cc": "./bin/cc.js"
+    "cct": "./bin/cc.js"
   },
   "scripts": {
     "start": "node bin/cc.js",
@@ -21,7 +21,8 @@
     "cli",
     "interactive",
     "conversation",
-    "history"
+    "history",
+    "cc switch"
   ],
   "author": "CooperJiang",
   "license": "MIT",
@@ -30,10 +31,15 @@
   },
   "files": [
     "bin/",
-    "src/",
+    "src/commands/",
+    "src/config/",
+    "src/server/",
+    "src/ui/",
+    "src/utils/",
+    "src/index.js",
+    "src/reset-config.js",
     "docs/",
     "dist/",
-    "config.json",
     "README.md",
     "LICENSE"
   ],
@@ -42,6 +48,7 @@
     "express": "^4.18.2",
     "http-proxy": "^1.18.1",
     "inquirer": "^8.2.7",
+    "open": "^8.4.2",
     "ora": "^5.4.1",
     "ws": "^8.18.3"
   },

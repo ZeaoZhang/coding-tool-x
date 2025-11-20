@@ -1,10 +1,20 @@
+# Dependencies
+node_modules/
+package-lock.json
+
 # Development files
 test/
 *.test.js
 *.spec.js
 
-# Web UI source (build output in dist/ will be included)
-src/web/
+# Web UI source files (keep dist/ for production)
+src/web/node_modules/
+src/web/src/
+src/web/public/
+src/web/index.html
+src/web/vite.config.js
+src/web/package.json
+src/web/.gitignore
 
 # IDE
 .vscode/

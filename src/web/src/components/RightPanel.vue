@@ -121,10 +121,10 @@
       </div>
     </div>
 
-    <!-- 下半部分：实时日志（始终挂载，但仅在代理开启且用户开启日志显示时显示） -->
-    <!-- 使用 v-show 而不是 v-if，保持组件挂载状态和日志数据 -->
+    <!-- 下半部分：实时日志（仅在代理开启且用户开启日志显示时显示和挂载） -->
+    <!-- 使用 v-if，只在代理开启时才挂载，避免 WebSocket 连接失败 -->
     <div
-      v-show="showLogs && proxyRunning"
+      v-if="showLogs && proxyRunning"
       class="logs-section"
       :class="{ 'full-height': !showChannels }"
     >
@@ -190,6 +190,10 @@ const props = defineProps({
   showLogs: {
     type: Boolean,
     default: true
+  },
+  proxyRunning: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -198,7 +202,6 @@ const loading = ref(false)
 const showAddDialog = ref(false)
 const editingChannel = ref(null)
 const editingActiveChannel = ref(false) // 是否正在编辑使用中的渠道
-const proxyRunning = ref(false) // 代理是否运行中
 const collapsedChannels = ref({}) // 折叠状态：{ channelId: true/false }
 const formData = ref({
   name: '',
@@ -206,8 +209,6 @@ const formData = ref({
   apiKey: '',
   websiteUrl: ''
 })
-
-let statusCheckInterval = null
 
 async function loadChannels() {
   loading.value = true
@@ -324,14 +325,35 @@ function loadChannelOrder() {
 }
 
 async function handleSave() {
-  if (!formData.value.name || !formData.value.baseUrl || !formData.value.apiKey) {
-    message.error('请填写所有字段')
-    return
+  // 验证逻辑：编辑使用中的渠道时，只需验证名称
+  if (editingActiveChannel.value) {
+    if (!formData.value.name) {
+      message.error('请填写渠道名称')
+      return
+    }
+  } else {
+    // 添加新渠道或编辑非使用中的渠道时，需要验证所有必填字段
+    if (!formData.value.name || !formData.value.baseUrl || !formData.value.apiKey) {
+      message.error('请填写所有必填字段')
+      return
+    }
   }
 
   try {
     if (editingChannel.value) {
-      await api.updateChannel(editingChannel.value.id, formData.value)
+      // 编辑渠道：只发送允许修改的字段
+      const updates = {
+        name: formData.value.name,
+        websiteUrl: formData.value.websiteUrl
+      }
+
+      // 如果不是使用中的渠道，可以修改 baseUrl 和 apiKey
+      if (!editingActiveChannel.value) {
+        updates.baseUrl = formData.value.baseUrl
+        updates.apiKey = formData.value.apiKey
+      }
+
+      await api.updateChannel(editingChannel.value.id, updates)
       message.success('渠道已更新')
     } else {
       await api.createChannel(formData.value.name, formData.value.baseUrl, formData.value.apiKey, formData.value.websiteUrl)
@@ -376,29 +398,9 @@ function handleDelete(id) {
   })
 }
 
-// 检查代理状态
-async function checkProxyStatus() {
-  try {
-    const status = await api.getProxyStatus()
-    proxyRunning.value = status.proxy.running
-  } catch (err) {
-    console.error('Failed to check proxy status:', err)
-  }
-}
-
 onMounted(() => {
   loadCollapseSettings()
   loadChannels()
-  checkProxyStatus()
-
-  // 每30秒检查一次代理状态（降低请求频率）
-  statusCheckInterval = setInterval(checkProxyStatus, 30000)
-})
-
-onUnmounted(() => {
-  if (statusCheckInterval) {
-    clearInterval(statusCheckInterval)
-  }
 })
 </script>
 

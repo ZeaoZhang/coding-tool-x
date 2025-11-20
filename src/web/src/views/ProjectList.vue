@@ -309,12 +309,8 @@ watch(showGlobalSearch, (newVal) => {
 })
 
 onMounted(async () => {
-  console.log('🏠 ProjectList mounted')
-  console.log('📊 Fetching projects...')
-
   try {
     await store.fetchProjects()
-    console.log('✅ Projects fetched:', store.projects.length)
   } catch (err) {
     console.error('❌ Failed to fetch projects:', err)
   }
