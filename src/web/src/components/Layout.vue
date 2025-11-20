@@ -67,6 +67,18 @@
           </template>
           {{ !proxyRunning ? '开启动态切换后才能展示实时日志' : (showLogs ? '隐藏实时日志' : '显示实时日志') }}
         </n-tooltip>
+
+        <!-- GitHub Link -->
+        <n-tooltip placement="bottom">
+          <template #trigger>
+            <n-button text @click="openGithub">
+              <n-icon size="24" color="#333">
+                <LogoGithub />
+              </n-icon>
+            </n-button>
+          </template>
+          访问 GitHub 仓库
+        </n-tooltip>
       </div>
     </header>
 
@@ -105,7 +117,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { NIcon, NButton, NTooltip, NSwitch, NSpin } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import api from '../api'
@@ -157,6 +169,10 @@ function toggleLogs() {
 
 function goHome() {
   router.push({ name: 'projects' })
+}
+
+function openGithub() {
+  window.open('https://github.com/CooperJiang/cc-tool', '_blank')
 }
 
 // 检查代理状态
