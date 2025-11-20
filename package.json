@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node bin/cc.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:web": "cd src/web && npm run build",
+    "dev:web": "cd src/web && npm run dev"
   },
   "keywords": [
     "claude",
@@ -29,6 +31,7 @@
     "bin/",
     "src/",
     "docs/",
+    "dist/",
     "config.json",
     "README.md",
     "LICENSE"
@@ -36,7 +39,8 @@
   "dependencies": {
     "chalk": "^4.1.2",
     "inquirer": "^8.2.7",
-    "ora": "^5.4.1"
+    "ora": "^5.4.1",
+    "express": "^4.18.2"
   },
   "devDependencies": {},
   "repository": {

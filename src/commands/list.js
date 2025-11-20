@@ -6,6 +6,7 @@ const { getAllSessions, parseSessionInfoFast } = require('../utils/session');
 const { formatTime, formatSize, truncate } = require('../utils/format');
 const { promptSelectSession, promptForkConfirm } = require('../ui/prompts');
 const { resumeSession } = require('./resume');
+const { loadAliases } = require('../server/services/alias');
 
 /**
  * 列出会话
@@ -23,16 +24,26 @@ async function listSessions(config, limit = null) {
 
   spinner.text = '解析会话信息...';
 
+  // 加载别名
+  const aliases = loadAliases();
+
   const choices = sessions.map((session, index) => {
     const info = parseSessionInfoFast(session.filePath);
     const time = formatTime(session.mtime);
     const size = formatSize(session.size);
+    const alias = aliases[session.sessionId];
 
     // 构建显示名称 - 清爽的单行布局
     let displayName = '';
 
-    // 格式：序号. 时间 │ 大小 │ 分支 │ 第一条消息
+    // 格式：序号. [别名] 时间 │ 大小 │ 分支 │ 第一条消息
     displayName += chalk.bold.white(`${index + 1}. `);
+
+    // 如果有别名，优先显示别名
+    if (alias) {
+      displayName += chalk.yellow.bold(`[${alias}] `);
+    }
+
     displayName += chalk.cyan(`${time.padEnd(10)}`);
     displayName += chalk.gray(` │ ${size.padEnd(9)}`);
 
@@ -56,7 +67,7 @@ async function listSessions(config, limit = null) {
     return {
       name: displayName,
       value: session.sessionId,
-      short: `会话 ${session.sessionId.substring(0, 8)}`,
+      short: alias ? `${alias} (${session.sessionId.substring(0, 8)})` : `会话 ${session.sessionId.substring(0, 8)}`,
     };
   });
 

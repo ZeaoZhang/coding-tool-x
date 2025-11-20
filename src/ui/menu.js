@@ -27,6 +27,7 @@ async function showMainMenu(config) {
         { name: chalk.blue('💼  列出最近的会话'), value: 'list' },
         { name: chalk.blue('🔎  搜索会话'), value: 'search' },
         { name: chalk.blue('🔀  切换项目'), value: 'switch' },
+        { name: chalk.blue('🌐  启动 Web UI'), value: 'ui' },
         new inquirer.Separator(chalk.gray('─'.repeat(14))),
         { name: chalk.gray('👋  退出程序'), value: 'exit' },
       ],

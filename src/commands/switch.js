@@ -28,7 +28,12 @@ async function switchProject(config) {
     pageSize: config.pageSize,
   });
 
-  console.log(chalk.green(`\n✅ 已切换到: ${selectedProject.replace(/-/g, '/').substring(1)}\n`));
+  // 使用解析后的名称显示
+  const { parseRealProjectPath } = require('../server/services/sessions');
+  const { displayName, fullPath } = parseRealProjectPath(selectedProject);
+
+  console.log(chalk.green(`\n✅ 已切换到: ${displayName}\n`));
+  console.log(chalk.gray(`   路径: ${fullPath}\n`));
   return true;
 }
 

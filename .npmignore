@@ -3,6 +3,9 @@ test/
 *.test.js
 *.spec.js
 
+# Web UI source (build output in dist/ will be included)
+src/web/
+
 # IDE
 .vscode/
 .idea/

@@ -10,6 +10,7 @@ const { showMainMenu } = require('./ui/menu');
 const { handleList } = require('./commands/list');
 const { handleSearch } = require('./commands/search');
 const { switchProject } = require('./commands/switch');
+const { handleUI } = require('./commands/ui');
 
 // 全局错误处理
 process.on('uncaughtException', (err) => {
@@ -63,6 +64,10 @@ async function main() {
         if (switched) {
           config = loadConfig();
         }
+        break;
+
+      case 'ui':
+        await handleUI();
         break;
 
       case 'exit':

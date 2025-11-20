@@ -176,15 +176,32 @@ function getAvailableProjects(config) {
     return [];
   }
 
-  return fs.readdirSync(projectsDir)
-    .filter(file => {
-      const fullPath = path.join(projectsDir, file);
-      return fs.statSync(fullPath).isDirectory() && file.startsWith('-');
-    })
-    .map(dir => ({
-      name: dir.replace(/-/g, '/').substring(1),
-      value: dir,
-    }));
+  // 获取项目列表和统计信息（包含解析后的名称）
+  const { getProjectsWithStats, getProjectOrder } = require('../server/services/sessions');
+  const projects = getProjectsWithStats(config);
+  const savedOrder = getProjectOrder(config);
+
+  // 按保存的顺序排列
+  let orderedProjects = [];
+  if (savedOrder.length > 0) {
+    const projectMap = new Map(projects.map(p => [p.name, p]));
+    for (const name of savedOrder) {
+      if (projectMap.has(name)) {
+        orderedProjects.push(projectMap.get(name));
+        projectMap.delete(name);
+      }
+    }
+    // 添加不在排序中的新项目
+    orderedProjects.push(...projectMap.values());
+  } else {
+    orderedProjects = projects;
+  }
+
+  // 转换为选项格式
+  return orderedProjects.map(project => ({
+    name: `${project.displayName} (${project.sessionCount} 会话)`,
+    value: project.name,
+  }));
 }
 
 module.exports = {
