@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { getAllSessions, parseSessionInfoFast } = require('../../utils/session');
-const { execSync } = require('child_process');
 const { loadAliases } = require('./alias');
 
 // Base directory for cc-tool data
@@ -255,7 +255,7 @@ function forkSession(config, projectName, sessionId) {
   const content = fs.readFileSync(sessionFile, 'utf8');
 
   // Generate new session ID (UUID v4)
-  const newSessionId = execSync('uuidgen', { encoding: 'utf8' }).trim().toLowerCase();
+  const newSessionId = crypto.randomUUID();
   const newSessionFile = path.join(projectDir, newSessionId + '.jsonl');
 
   // Write to new file

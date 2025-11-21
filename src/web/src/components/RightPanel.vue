@@ -409,11 +409,12 @@ onMounted(() => {
   width: 480px;
   min-width: 480px;
   border-left: 1px solid #e5e7eb;
-  background: #fafafa;
+  background: linear-gradient(180deg, #fafbfc 0%, #f5f6f7 100%);
   height: 100vh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.03);
 }
 
 /* 上半部分：API 渠道管理 */
@@ -440,7 +441,19 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 18px 18px 16px 18px;
-  background: #fafafa;
+  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  position: relative;
+}
+
+.panel-header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 18px;
+  right: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(24, 160, 88, 0.08), transparent);
 }
 
 .header-title {
@@ -476,8 +489,21 @@ onMounted(() => {
 
 .panel-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2937;
+  letter-spacing: -0.3px;
+}
+
+.panel-header :deep(.n-button--primary-type) {
+  border-radius: 8px;
   font-weight: 600;
+  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.25);
+}
+
+.panel-header :deep(.n-button--primary-type:hover) {
+  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.35);
+  transform: translateY(-1px);
 }
 
 .loading-container {
@@ -493,12 +519,19 @@ onMounted(() => {
 }
 
 .channel-card {
-  background: #fff;
+  background: linear-gradient(145deg, #ffffff 0%, #fafbfc 100%);
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 16px;
-  transition: all 0.2s;
+  border-radius: 12px;
+  padding: 14px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: move;
+  position: relative;
+}
+
+.channel-card:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transform: translateX(-2px);
 }
 
 /* 拖动时的半透明虚影 */
@@ -522,8 +555,14 @@ onMounted(() => {
 
 .channel-card.active {
   border-color: #18a058;
-  background: #f0fdf4;
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
+  background: linear-gradient(145deg, #f0fdf4 0%, #ecfdf5 100%);
+  box-shadow: 0 3px 16px rgba(24, 160, 88, 0.18);
+}
+
+.channel-card.active:hover {
+  border-color: #16a34a;
+  box-shadow: 0 6px 20px rgba(24, 160, 88, 0.25);
+  transform: translateX(-2px);
 }
 
 .channel-header {
@@ -541,8 +580,19 @@ onMounted(() => {
 .channel-title {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex: 1;
+}
+
+.channel-title :deep(.n-text) {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.channel-title :deep(.n-tag) {
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(24, 160, 88, 0.2);
 }
 
 .collapse-btn {
@@ -573,12 +623,26 @@ onMounted(() => {
   gap: 6px;
 }
 
+.channel-actions :deep(.n-button) {
+  font-size: 12px;
+  padding: 0 8px;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.channel-actions :deep(.n-button:hover) {
+  transform: translateY(-1px);
+}
+
 .channel-info {
   display: flex;
   flex-direction: column;
   gap: 8px;
   overflow: hidden;
   transition: all 0.3s ease;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  margin-top: 4px;
 }
 
 .info-row {
@@ -588,14 +652,16 @@ onMounted(() => {
 }
 
 .label {
-  min-width: 40px;
-  font-size: 13px;
+  min-width: 36px;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .value {
-  font-size: 13px;
+  font-size: 12px;
   word-break: break-all;
   flex: 1;
+  color: #4b5563;
 }
 
 .website-row {

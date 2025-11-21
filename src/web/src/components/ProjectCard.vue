@@ -37,7 +37,7 @@
 
       <!-- Stats -->
       <div class="stats-row">
-        <n-tag size="small" :bordered="false" type="info">
+        <n-tag size="small" :bordered="false" type="success" round>
           {{ sessionCount }} 会话
         </n-tag>
         <n-text v-if="lastUsed" depth="3" class="last-used">
@@ -111,13 +111,34 @@ function formatTime(timestamp) {
 .project-card {
   height: 140px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.12);
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: linear-gradient(145deg, #ffffff 0%, #fafbfc 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.project-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(24, 160, 88, 0.3), transparent);
+  opacity: 0;
+  transition: opacity 0.3s ease;
 }
 
 .project-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15), 0 4px 8px rgba(0, 0, 0, 0.1);
+  transform: translateY(-6px);
+  box-shadow: 0 16px 32px rgba(24, 160, 88, 0.15), 0 6px 12px rgba(0, 0, 0, 0.08);
+  border-color: #18a058;
+}
+
+.project-card:hover::before {
+  opacity: 1;
 }
 
 .card-content {
@@ -135,12 +156,14 @@ function formatTime(timestamp) {
 }
 
 .project-name {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+  color: #1f2937;
+  letter-spacing: -0.3px;
 }
 
 .delete-btn {
@@ -168,9 +191,17 @@ function formatTime(timestamp) {
   align-items: center;
   justify-content: space-between;
   margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.stats-row :deep(.n-tag) {
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(24, 160, 88, 0.15);
 }
 
 .last-used {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
 }
 </style>

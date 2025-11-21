@@ -1,13 +1,13 @@
 {
-  "name": "cc-tool",
-  "version": "2.0.5",
-  "description": "ClaudeCode 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
+  "name": "coding-tool",
+  "version": "1.0.0",
+  "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
-    "cct": "./bin/cc.js"
+    "ct": "./bin/ct.js"
   },
   "scripts": {
-    "start": "node bin/cc.js",
+    "start": "node bin/ct.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:web": "cd src/web && npm run build",
     "dev:web": "cd src/web && npm run dev",
