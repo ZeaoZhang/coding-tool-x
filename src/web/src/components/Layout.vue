@@ -11,6 +11,40 @@
         </div>
       </div>
 
+      <!-- Navigation Tabs -->
+      <div class="nav-tabs">
+        <div
+          class="nav-tab"
+          :class="{ active: currentRoute === 'home' }"
+          @click="router.push({ name: 'home' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <HomeOutline />
+          </n-icon>
+          <span class="nav-label">首页</span>
+        </div>
+        <div
+          class="nav-tab"
+          :class="{ active: currentChannel === 'claude' }"
+          @click="router.push({ name: 'claude-projects' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <LayersOutline />
+          </n-icon>
+          <span class="nav-label">Claude</span>
+        </div>
+        <div
+          class="nav-tab"
+          :class="{ active: currentChannel === 'codex' }"
+          @click="router.push({ name: 'codex-projects' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <CodeSlashOutline />
+          </n-icon>
+          <span class="nav-label">Codex</span>
+        </div>
+      </div>
+
       <div class="header-actions">
         <!-- Proxy Toggle -->
         <n-tooltip placement="bottom" :style="{ maxWidth: '280px' }">
@@ -196,10 +230,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, LayersOutline, CodeSlashOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import SettingsDrawer from './SettingsDrawer.vue'
@@ -212,6 +246,12 @@ import { useTheme } from '../composables/useTheme'
 const { isDark, toggleTheme } = useTheme()
 
 const router = useRouter()
+const route = useRoute()
+
+// 导航状态
+const currentRoute = computed(() => route.name)
+const currentChannel = computed(() => route.meta.channel || null)
+
 const showRecentDrawer = ref(false)
 const showSettingsDrawer = ref(false)
 const showHelpModal = ref(false)
@@ -258,7 +298,7 @@ function toggleLogs() {
 }
 
 function goHome() {
-  router.push({ name: 'projects' })
+  router.push({ name: 'home' })
 }
 
 function openGithub() {
@@ -434,6 +474,96 @@ onUnmounted(() => {
   font-weight: 500;
   color: var(--text-tertiary);
   user-select: none;
+}
+
+/* 导航标签 */
+.nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 40px;
+}
+
+.nav-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  position: relative;
+}
+
+.nav-tab:hover {
+  background: var(--hover-bg);
+}
+
+[data-theme="dark"] .nav-tab:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.nav-tab.active {
+  background: rgba(24, 160, 88, 0.1);
+  color: #18a058;
+}
+
+[data-theme="dark"] .nav-tab.active {
+  background: rgba(24, 160, 88, 0.15);
+  color: #34d399;
+}
+
+.nav-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: #18a058;
+  border-radius: 2px 2px 0 0;
+}
+
+[data-theme="dark"] .nav-tab.active::after {
+  background: #34d399;
+}
+
+.nav-icon {
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+
+.nav-tab:hover .nav-icon {
+  color: var(--text-secondary);
+}
+
+.nav-tab.active .nav-icon {
+  color: #18a058;
+}
+
+[data-theme="dark"] .nav-tab.active .nav-icon {
+  color: #34d399;
+}
+
+.nav-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+}
+
+.nav-tab:hover .nav-label {
+  color: var(--text-primary);
+}
+
+.nav-tab.active .nav-label {
+  color: #18a058;
+  font-weight: 600;
+}
+
+[data-theme="dark"] .nav-tab.active .nav-label {
+  color: #34d399;
 }
 
 .main-container {
