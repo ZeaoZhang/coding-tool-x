@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects } = require('../services/sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
@@ -123,6 +126,164 @@ module.exports = (config) => {
       });
     } catch (error) {
       console.error('Error searching sessions:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/sessions/:projectName/:sessionId/messages - Get session messages with pagination
+  router.get('/:projectName/:sessionId/messages', (req, res) => {
+    try {
+      const { projectName, sessionId } = req.params;
+      const { page = 1, limit = 20, order = 'desc' } = req.query;
+
+      console.log(`[Messages API] Request for ${projectName}/${sessionId}, page=${page}, limit=${limit}`);
+
+      const pageNum = parseInt(page);
+      const limitNum = parseInt(limit);
+
+      // Parse real project path
+      const { fullPath } = parseRealProjectPath(projectName);
+      console.log(`[Messages API] Parsed project path: ${fullPath}`);
+
+      // Try to find session file
+      let sessionFile = null;
+      const possiblePaths = [
+        path.join(fullPath, '.claude', 'sessions', sessionId + '.jsonl'),
+        path.join(os.homedir(), '.claude', 'projects', projectName, sessionId + '.jsonl')
+      ];
+
+      console.log(`[Messages API] Trying paths:`, possiblePaths);
+
+      for (const testPath of possiblePaths) {
+        if (fs.existsSync(testPath)) {
+          sessionFile = testPath;
+          console.log(`[Messages API] Found session file: ${sessionFile}`);
+          break;
+        }
+      }
+
+      if (!sessionFile) {
+        console.error(`[Messages API] Session file not found for: ${sessionId}`);
+        return res.status(404).json({
+          error: `Session file not found: ${sessionId}`,
+          triedPaths: possiblePaths
+        });
+      }
+
+      // Read and parse session file
+      const content = fs.readFileSync(sessionFile, 'utf8');
+      const lines = content.split('\n').filter(line => line.trim());
+
+      console.log(`[Messages API] Total lines in file: ${lines.length}`);
+
+      // Parse all messages
+      const allMessages = [];
+      const metadata = {};
+
+      for (const line of lines) {
+        try {
+          const json = JSON.parse(line);
+
+          // Extract metadata
+          if (json.type === 'summary' && json.summary) {
+            metadata.summary = json.summary;
+          }
+          if (json.gitBranch) {
+            metadata.gitBranch = json.gitBranch;
+          }
+          if (json.cwd) {
+            metadata.cwd = json.cwd;
+          }
+
+          // Extract messages
+          if (json.type === 'user' || json.type === 'assistant') {
+            const message = {
+              type: json.type,
+              content: null,
+              timestamp: json.timestamp || null,
+              model: json.model || null
+            };
+
+            // Parse content
+            if (json.type === 'user') {
+              if (typeof json.message?.content === 'string') {
+                message.content = json.message.content;
+              } else if (Array.isArray(json.message?.content)) {
+                const parts = [];
+                for (const item of json.message.content) {
+                  if (item.type === 'text' && item.text) {
+                    parts.push(item.text);
+                  } else if (item.type === 'tool_result') {
+                    // Show tool result content (full)
+                    const resultContent = typeof item.content === 'string'
+                      ? item.content
+                      : JSON.stringify(item.content, null, 2);
+                    parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
+                  } else if (item.type === 'image') {
+                    parts.push(`[图片]`);
+                  }
+                }
+                message.content = parts.join('\n\n') || '[工具交互]';
+              }
+            } else if (json.type === 'assistant') {
+              if (Array.isArray(json.message?.content)) {
+                const parts = [];
+                for (const item of json.message.content) {
+                  if (item.type === 'text' && item.text) {
+                    parts.push(item.text);
+                  } else if (item.type === 'tool_use') {
+                    // Show tool name and input (full)
+                    const inputStr = JSON.stringify(item.input, null, 2);
+                    parts.push(`**[调用工具: ${item.name}]**\n\`\`\`json\n${inputStr}\n\`\`\``);
+                  } else if (item.type === 'thinking' && item.thinking) {
+                    // Show thinking content (full)
+                    parts.push(`**[思考]**\n${item.thinking}`);
+                  }
+                }
+                message.content = parts.join('\n\n') || '[处理中...]';
+              } else if (typeof json.message?.content === 'string') {
+                message.content = json.message.content;
+              }
+            }
+
+            // Skip only warmup messages
+            if (message.content && message.content !== 'Warmup') {
+              allMessages.push(message);
+            }
+          }
+        } catch (err) {
+          // Skip invalid lines
+        }
+      }
+
+      // Sort messages (desc = newest first)
+      if (order === 'desc') {
+        allMessages.reverse();
+      }
+
+      console.log(`[Messages API] Parsed ${allMessages.length} total messages`);
+
+      // Pagination
+      const total = allMessages.length;
+      const startIndex = (pageNum - 1) * limitNum;
+      const endIndex = startIndex + limitNum;
+      const messages = allMessages.slice(startIndex, endIndex);
+      const hasMore = endIndex < total;
+
+      console.log(`[Messages API] Returning ${messages.length} messages (page ${pageNum}, total ${total})`);
+
+      res.json({
+        messages,
+        metadata,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          hasMore
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching session messages:', error);
       res.status(500).json({ error: error.message });
     }
   });

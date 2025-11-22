@@ -88,6 +88,14 @@ const api = {
     return response.data
   },
 
+  // Get session messages (chat history)
+  async getSessionMessages(projectName, sessionId, page = 1, limit = 20, order = 'desc') {
+    const response = await client.get(`/sessions/${projectName}/${sessionId}/messages`, {
+      params: { page, limit, order }
+    })
+    return response.data
+  },
+
   // Channels management
   async getChannels() {
     const response = await client.get('/channels')

@@ -73,6 +73,7 @@
           class="session-item"
           @mouseenter="hoveredSession = session.sessionId"
           @mouseleave="hoveredSession = null"
+          @click="handleViewChatHistory(session)"
         >
           <!-- Drag Handle -->
           <div class="drag-handle">
@@ -235,6 +236,17 @@
         <n-empty v-if="searchResults.sessions.length === 0" description="没有找到匹配的内容" />
       </div>
     </n-modal>
+
+    <!-- Chat History Drawer -->
+    <ChatHistoryDrawer
+      ref="chatHistoryRef"
+      v-if="selectedSessionId"
+      v-model:show="showChatHistory"
+      :project-name="props.projectName"
+      :session-id="selectedSessionId"
+      :session-alias="selectedSessionAlias"
+      @error="handleChatHistoryError"
+    />
   </div>
 </template>
 
@@ -254,6 +266,7 @@ import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import message, { dialog } from '../utils/message'
 import api from '../api'
+import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
   projectName: {
@@ -274,6 +287,12 @@ const searchResults = ref(null)
 const showSearchResults = ref(false)
 const contentEl = ref(null)
 const searching = ref(false)
+
+// Chat history drawer state
+const showChatHistory = ref(false)
+const selectedSessionId = ref('')
+const selectedSessionAlias = ref('')
+const chatHistoryRef = ref(null)
 
 // Project display name (使用后端解析的名称)
 const projectDisplayName = computed(() => {
@@ -362,6 +381,21 @@ async function handleFork(sessionId) {
   } catch (err) {
     message.error('Fork 失败: ' + err.message)
   }
+}
+
+// View chat history
+function handleViewChatHistory(session) {
+  selectedSessionId.value = session.sessionId
+  selectedSessionAlias.value = session.alias || ''
+  showChatHistory.value = true
+  nextTick(() => {
+    chatHistoryRef.value?.open()
+  })
+}
+
+// Handle chat history error
+function handleChatHistoryError(errorMsg) {
+  message.error(errorMsg)
 }
 
 async function handleLaunchTerminal(sessionId) {
@@ -542,6 +576,7 @@ onUnmounted(() => {
   border-radius: 8px;
   margin-bottom: 8px;
   transition: all 0.2s;
+  cursor: pointer;
 }
 
 .session-item:hover {
