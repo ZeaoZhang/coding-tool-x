@@ -88,45 +88,92 @@ function getProjects(config) {
 }
 
 // Parse real project path from encoded name
-// e.g., "-Users-lilithgames-work-lilith-internal-psp-web-mono"
-// -> "/Users/lilithgames/work/lilith/internal/psp-web-mono"
+// macOS/Linux: "-Users-lilithgames-work-project" -> "/Users/lilithgames/work/project"
+// Windows: "C--Users-admin-Desktop-project" -> "C:\Users\admin\Desktop\project"
 function parseRealProjectPath(encodedName) {
-  // Convert - to / to get potential segments
-  const pathStr = encodedName.replace(/^-/, '/').replace(/-/g, '/');
-  const segments = pathStr.split('/').filter(s => s);
+  const isWindows = process.platform === 'win32';
 
-  // Build path from left to right, checking existence
-  let currentPath = '';
-  const realSegments = [];
-  let accumulated = '';
+  // Detect Windows drive letter (e.g., "C--Users-admin")
+  const windowsDriveMatch = encodedName.match(/^([A-Z])--(.+)$/);
 
-  for (let i = 0; i < segments.length; i++) {
+  if (isWindows && windowsDriveMatch) {
+    // Windows path with drive letter
+    const driveLetter = windowsDriveMatch[1];
+    const restPath = windowsDriveMatch[2];
+
+    // Split by '-' to get segments
+    const segments = restPath.split('-').filter(s => s);
+
+    // Build path from left to right, checking existence
+    let realSegments = [];
+    let accumulated = '';
+    let currentPath = '';
+
+    for (let i = 0; i < segments.length; i++) {
+      if (accumulated) {
+        accumulated += '-' + segments[i];
+      } else {
+        accumulated = segments[i];
+      }
+
+      const testPath = driveLetter + ':\\' + realSegments.concat(accumulated).join('\\');
+
+      // Check if this path exists
+      if (fs.existsSync(testPath)) {
+        realSegments.push(accumulated);
+        accumulated = '';
+        currentPath = testPath;
+      }
+    }
+
+    // If there's remaining accumulated segment, add it
     if (accumulated) {
-      accumulated += '-' + segments[i];
-    } else {
-      accumulated = segments[i];
-    }
-
-    const testPath = '/' + realSegments.concat(accumulated).join('/');
-
-    // Check if this path exists
-    if (fs.existsSync(testPath)) {
       realSegments.push(accumulated);
-      accumulated = '';
-      currentPath = testPath;
+      currentPath = driveLetter + ':\\' + realSegments.join('\\');
     }
-  }
 
-  // If there's remaining accumulated segment, add it
-  if (accumulated) {
-    realSegments.push(accumulated);
-    currentPath = '/' + realSegments.join('/');
-  }
+    return {
+      fullPath: currentPath || (driveLetter + ':\\' + restPath.replace(/-/g, '\\')),
+      projectName: realSegments[realSegments.length - 1] || encodedName
+    };
+  } else {
+    // Unix-like path (macOS/Linux) or fallback
+    const pathStr = encodedName.replace(/^-/, '/').replace(/-/g, '/');
+    const segments = pathStr.split('/').filter(s => s);
 
-  return {
-    fullPath: currentPath || pathStr,
-    projectName: realSegments[realSegments.length - 1] || encodedName
-  };
+    // Build path from left to right, checking existence
+    let currentPath = '';
+    const realSegments = [];
+    let accumulated = '';
+
+    for (let i = 0; i < segments.length; i++) {
+      if (accumulated) {
+        accumulated += '-' + segments[i];
+      } else {
+        accumulated = segments[i];
+      }
+
+      const testPath = '/' + realSegments.concat(accumulated).join('/');
+
+      // Check if this path exists
+      if (fs.existsSync(testPath)) {
+        realSegments.push(accumulated);
+        accumulated = '';
+        currentPath = testPath;
+      }
+    }
+
+    // If there's remaining accumulated segment, add it
+    if (accumulated) {
+      realSegments.push(accumulated);
+      currentPath = '/' + realSegments.join('/');
+    }
+
+    return {
+      fullPath: currentPath || pathStr,
+      projectName: realSegments[realSegments.length - 1] || encodedName
+    };
+  }
 }
 
 // Get projects with detailed stats

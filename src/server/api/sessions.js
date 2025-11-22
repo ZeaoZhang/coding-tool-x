@@ -292,7 +292,7 @@ module.exports = (config) => {
   router.post('/:projectName/:sessionId/launch', (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
-      const { execSync } = require('child_process');
+      const { exec } = require('child_process');
       const path = require('path');
       const fs = require('fs');
       const os = require('os');
@@ -354,53 +354,41 @@ module.exports = (config) => {
         timestamp: Date.now()
       });
 
-      // 跨平台启动终端
-      // 使用 CLAUDE_SESSION_FILE 环境变量直接指定会话文件路径
-      const platform = process.platform;
+      // 使用配置的终端工具启动
+      const { getTerminalLaunchCommand } = require('../services/terminal-config');
 
-      if (platform === 'darwin') {
-        // macOS - 使用 AppleScript 启动 Terminal.app
-        const script = `
-          tell application "Terminal"
-            activate
-            do script "cd '${cwd}' && CLAUDE_SESSION_FILE='${sessionFile}' claude -r ${sessionId}"
-          end tell
-        `;
-        execSync(`osascript -e '${script}'`, { encoding: 'utf8' });
-      } else if (platform === 'win32') {
-        // Windows - 使用 start 命令启动新的 cmd 窗口
-        // 注意：Windows 路径需要特殊处理
-        const winCwd = cwd.replace(/\//g, '\\');
-        const winSessionFile = sessionFile.replace(/\//g, '\\');
-        const cmd = `start cmd /k "cd /d "${winCwd}" && set CLAUDE_SESSION_FILE=${winSessionFile} && claude -r ${sessionId}"`;
-        execSync(cmd, { encoding: 'utf8', shell: true });
-      } else {
-        // Linux - 尝试多种终端模拟器
-        const terminals = [
-          { cmd: 'gnome-terminal', args: `-- bash -c "cd '${cwd}' && CLAUDE_SESSION_FILE='${sessionFile}' claude -r ${sessionId}; exec bash"` },
-          { cmd: 'konsole', args: `-e bash -c "cd '${cwd}' && CLAUDE_SESSION_FILE='${sessionFile}' claude -r ${sessionId}; exec bash"` },
-          { cmd: 'xfce4-terminal', args: `-e "bash -c \\"cd '${cwd}' && CLAUDE_SESSION_FILE='${sessionFile}' claude -r ${sessionId}; exec bash\\""` },
-          { cmd: 'xterm', args: `-e "cd '${cwd}' && CLAUDE_SESSION_FILE='${sessionFile}' claude -r ${sessionId}; exec bash"` }
-        ];
+      try {
+        // Windows 路径需要转换为反斜杠格式
+        const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
 
-        let launched = false;
-        for (const term of terminals) {
-          try {
-            execSync(`which ${term.cmd}`, { encoding: 'utf8' });
-            execSync(`${term.cmd} ${term.args} &`, { encoding: 'utf8', shell: true });
-            launched = true;
-            break;
-          } catch (e) {
-            // 此终端不可用，尝试下一个
+        // 获取启动命令
+        const { command, terminalId, terminalName } = getTerminalLaunchCommand(normalizedCwd, sessionId);
+
+        console.log(`Launching terminal: ${terminalName} (${terminalId})`);
+        console.log(`Command: ${command}`);
+
+        // 异步执行命令，不等待结果
+        const shellOption = process.platform === 'win32' ? { shell: 'cmd.exe' } : { shell: true };
+        exec(command, shellOption, (error, stdout, stderr) => {
+          if (error) {
+            console.error(`Failed to launch terminal ${terminalName}:`, error.message);
           }
-        }
+        });
 
-        if (!launched) {
-          throw new Error('未找到可用的终端模拟器。请安装 gnome-terminal、konsole、xfce4-terminal 或 xterm。');
-        }
+        // 立即返回成功响应
+        res.json({
+          success: true,
+          cwd,
+          sessionFile,
+          terminal: terminalName,
+          terminalId
+        });
+      } catch (terminalError) {
+        console.error('Failed to get terminal command:', terminalError);
+        return res.status(500).json({
+          error: '无法启动终端：' + terminalError.message
+        });
       }
-
-      res.json({ success: true, cwd, sessionFile, platform });
     } catch (error) {
       console.error('Error launching terminal:', error);
       res.status(500).json({ error: error.message });

@@ -243,17 +243,19 @@ async function refreshDataWithScrollPreservation() {
   }
 }
 
-// 页面可见性变化时刷新数据
-function handleVisibilityChange() {
-  if (document.visibilityState === 'visible') {
-    refreshDataWithScrollPreservation()
-  }
-}
+// 【暂时移除】页面可见性变化时刷新数据
+// 原因：每次切换回来就刷新，体验不好
+// function handleVisibilityChange() {
+//   if (document.visibilityState === 'visible') {
+//     refreshDataWithScrollPreservation()
+//   }
+// }
 
-// 窗口获得焦点时刷新数据
-function handleWindowFocus() {
-  refreshDataWithScrollPreservation()
-}
+// 【暂时移除】窗口获得焦点时刷新数据
+// 原因：每次切换回来就刷新，体验不好
+// function handleWindowFocus() {
+//   refreshDataWithScrollPreservation()
+// }
 
 // 全局搜索相关函数
 async function handleGlobalSearch() {
@@ -315,16 +317,16 @@ onMounted(async () => {
     console.error('❌ Failed to fetch projects:', err)
   }
 
-  // 添加事件监听
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  window.addEventListener('focus', handleWindowFocus)
+  // 【暂时移除】添加事件监听 - 每次切换回来就刷新，体验不好
+  // document.addEventListener('visibilitychange', handleVisibilityChange)
+  // window.addEventListener('focus', handleWindowFocus)
   document.addEventListener('keydown', handleKeyDown)
 })
 
 onUnmounted(() => {
-  // 清理事件监听
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-  window.removeEventListener('focus', handleWindowFocus)
+  // 【暂时移除】清理事件监听
+  // document.removeEventListener('visibilitychange', handleVisibilityChange)
+  // window.removeEventListener('focus', handleWindowFocus)
   document.removeEventListener('keydown', handleKeyDown)
 })
 </script>
@@ -341,8 +343,8 @@ onUnmounted(() => {
 .header {
   flex-shrink: 0;
   padding: 24px 24px 20px 24px;
-  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--gradient-bg);
+  border-bottom: 1px solid var(--border-primary);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -374,6 +376,13 @@ onUnmounted(() => {
   letter-spacing: -0.5px;
 }
 
+[data-theme="dark"] .header-text :deep(.n-h2) {
+  background: linear-gradient(135deg, #f9fafb 0%, #d1d5db 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 .search-input {
   width: 320px;
   flex-shrink: 0;
@@ -381,14 +390,14 @@ onUnmounted(() => {
 
 .search-input :deep(.n-input) {
   border-radius: 10px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
   transition: all 0.2s ease;
 }
 
 .search-input :deep(.n-input:hover) {
-  border-color: #d1d5db;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-color: var(--border-secondary);
+  box-shadow: var(--shadow-sm);
 }
 
 .search-input :deep(.n-input:focus-within) {
@@ -400,7 +409,7 @@ onUnmounted(() => {
   flex: 1;
   overflow-y: auto;
   padding: 20px 24px 24px 24px;
-  background: linear-gradient(180deg, #fafbfc 0%, #f5f6f7 100%);
+  background: var(--gradient-bg);
 }
 
 .loading-container {
@@ -440,40 +449,61 @@ onUnmounted(() => {
   position: fixed;
   bottom: 24px;
   left: 24px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(229, 231, 235, 0.6);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   z-index: 10;
-  backdrop-filter: blur(4px);
-  opacity: 0.6;
-  transition: opacity 0.2s;
+  backdrop-filter: blur(10px);
+  opacity: 0.8;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .search-hint {
+  background: rgba(30, 41, 59, 0.95);
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
 .search-hint:hover {
   opacity: 1;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="dark"] .search-hint:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
 }
 
 .search-hint kbd {
   display: inline-block;
-  padding: 2px 6px;
-  font-family: monospace;
-  font-size: 11px;
+  padding: 4px 8px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
   line-height: 1.4;
-  color: #999;
-  background-color: rgba(245, 245, 245, 0.8);
-  border: 1px solid rgba(208, 208, 208, 0.5);
-  border-radius: 3px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 var(--border-primary), 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="dark"] .search-hint kbd {
+  background: rgba(51, 65, 85, 0.6);
+  border: 1px solid rgba(71, 85, 105, 0.8);
+  box-shadow: 0 2px 0 rgba(30, 41, 59, 0.8), 0 1px 4px rgba(0, 0, 0, 0.4);
+  color: #e2e8f0;
 }
 
 /* 搜索结果样式 */
 .search-result-item {
   margin-bottom: 16px;
   padding: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
+  background: var(--bg-elevated);
 }
 
 .search-result-header {
@@ -495,7 +525,7 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 6px;
   padding: 6px;
-  background: #f9fafb;
+  background: var(--bg-secondary);
   border-radius: 4px;
 }
 

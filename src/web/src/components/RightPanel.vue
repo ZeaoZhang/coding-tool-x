@@ -26,7 +26,9 @@
         <!-- Channels List -->
         <div v-else>
           <!-- Empty State -->
-          <n-empty v-if="channels.length === 0" description="暂无渠道" />
+          <div v-if="channels.length === 0" class="empty-state">
+            <n-empty description="暂无渠道" />
+          </div>
 
           <!-- Draggable List -->
           <draggable
@@ -408,8 +410,8 @@ onMounted(() => {
 .right-panel {
   width: 480px;
   min-width: 480px;
-  border-left: 1px solid #e5e7eb;
-  background: linear-gradient(180deg, #fafbfc 0%, #f5f6f7 100%);
+  border-left: 1px solid var(--border-primary);
+  background: var(--gradient-bg);
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -441,8 +443,8 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 18px 18px 16px 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #fafbfc 100%);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--gradient-card);
+  border-bottom: 1px solid var(--border-primary);
   position: relative;
 }
 
@@ -491,7 +493,7 @@ onMounted(() => {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
-  color: #1f2937;
+  color: var(--text-primary);
   letter-spacing: -0.3px;
 }
 
@@ -512,6 +514,13 @@ onMounted(() => {
   padding: 40px 0;
 }
 
+.empty-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+}
+
 .channels-list {
   display: flex;
   flex-direction: column;
@@ -519,8 +528,8 @@ onMounted(() => {
 }
 
 .channel-card {
-  background: linear-gradient(145deg, #ffffff 0%, #fafbfc 100%);
-  border: 1px solid #e5e7eb;
+  background: var(--gradient-card);
+  border: 1px solid var(--border-primary);
   border-radius: 12px;
   padding: 14px;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -529,8 +538,8 @@ onMounted(() => {
 }
 
 .channel-card:hover {
-  border-color: #d1d5db;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border-color: var(--border-secondary);
+  box-shadow: var(--shadow-md);
   transform: translateX(-2px);
 }
 
@@ -587,7 +596,7 @@ onMounted(() => {
 .channel-title :deep(.n-text) {
   font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text-primary);
 }
 
 .channel-title :deep(.n-tag) {
@@ -641,7 +650,7 @@ onMounted(() => {
   overflow: hidden;
   transition: all 0.3s ease;
   padding-top: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid var(--border-primary);
   margin-top: 4px;
 }
 
@@ -661,7 +670,7 @@ onMounted(() => {
   font-size: 12px;
   word-break: break-all;
   flex: 1;
-  color: #4b5563;
+  color: var(--text-secondary);
 }
 
 .website-row {

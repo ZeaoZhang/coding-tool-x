@@ -24,6 +24,7 @@ build/
 
 # User config (keep template only)
 # config.json is tracked for template
+.claude/
 
 # Temporary files
 tmp/

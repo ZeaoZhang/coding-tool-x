@@ -86,6 +86,8 @@ async function startServer(port) {
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/channels', require('./api/channels'));
   app.use('/api/proxy', require('./api/proxy'));
+  app.use('/api/settings', require('./api/settings'));
+  app.use('/api/statistics', require('./api/statistics'));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');

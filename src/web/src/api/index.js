@@ -153,6 +153,46 @@ const api = {
   async clearProxyLogs() {
     const response = await client.post('/proxy/logs/clear')
     return response.data
+  },
+
+  // Terminal settings
+  async getAvailableTerminals() {
+    const response = await client.get('/settings/terminals')
+    return response.data
+  },
+
+  async getTerminalConfig() {
+    const response = await client.get('/settings/terminal-config')
+    return response.data
+  },
+
+  async saveTerminalConfig(selectedTerminal, customCommand = null) {
+    const response = await client.post('/settings/terminal-config', {
+      selectedTerminal,
+      customCommand
+    })
+    return response.data
+  },
+
+  // Statistics
+  async getStatistics() {
+    const response = await client.get('/statistics/summary')
+    return response.data
+  },
+
+  async getTodayStatistics() {
+    const response = await client.get('/statistics/today')
+    return response.data
+  },
+
+  async getDailyStatistics(date) {
+    const response = await client.get(`/statistics/daily/${date}`)
+    return response.data
+  },
+
+  async getRecentStatistics(days = 7) {
+    const response = await client.get('/statistics/recent', { params: { days } })
+    return response.data
   }
 }
 

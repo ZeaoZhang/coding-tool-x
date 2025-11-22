@@ -189,8 +189,8 @@ function formatSize(bytes) {
   align-items: center;
   gap: 12px;
   padding: 16px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   margin-bottom: 8px;
   transition: all 0.2s;
@@ -233,7 +233,7 @@ function formatSize(bytes) {
 
 .session-title {
   font-weight: 500;
-  color: #333;
+  color: var(--text-primary);
   font-size: 14px;
 }
 
@@ -247,12 +247,12 @@ function formatSize(bytes) {
   align-items: center;
   gap: 4px;
   font-size: 13px;
-  color: #666;
+  color: var(--text-tertiary);
 }
 
 .session-message {
   font-size: 13px;
-  color: #888;
+  color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -261,7 +261,7 @@ function formatSize(bytes) {
 
 .session-path {
   font-size: 12px;
-  color: #999;
+  color: var(--text-quaternary);
   margin-top: 4px;
   overflow: hidden;
   text-overflow: ellipsis;

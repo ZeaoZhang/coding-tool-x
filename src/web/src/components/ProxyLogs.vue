@@ -1,7 +1,17 @@
 <template>
   <div class="proxy-logs">
     <div class="logs-header">
-      <h3 class="title">实时日志</h3>
+      <div class="header-left">
+        <h3 class="title">实时日志</h3>
+        <div class="today-stats">
+          <n-tag size="tiny" :bordered="false" type="info">
+            今日请求: {{ todayStats.requests }}
+          </n-tag>
+          <n-tag size="tiny" :bordered="false" type="success">
+            今日Token: {{ formatNumber(todayStats.tokens) }}
+          </n-tag>
+        </div>
+      </div>
       <n-button text size="small" @click="clearLogs">
         <n-icon size="16"><TrashOutline /></n-icon>
         清空
@@ -88,12 +98,49 @@ import message from '../utils/message'
 const logs = ref([])
 const wsConnected = ref(false)
 const tableBody = ref(null)
+const todayStats = ref({
+  requests: 0,
+  tokens: 0
+})
 let ws = null
 let isInitialConnection = true // 标记是否是初次连接
 let reconnectAttempts = 0 // 重连尝试次数
 const MAX_RECONNECT_ATTEMPTS = 3 // 最大重连次数
 let reconnectTimer = null // 重连定时器
 let isConnecting = false // 是否正在连接中
+let statsUpdateTimer = null // 统计数据更新定时器
+
+// 格式化数字（添加千位分隔符）
+function formatNumber(num) {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(1) + 'M'
+  } else if (num >= 1000) {
+    return (num / 1000).toFixed(1) + 'K'
+  }
+  return num.toString()
+}
+
+// 加载今日统计数据
+async function loadTodayStats() {
+  try {
+    const stats = await api.getTodayStatistics()
+    todayStats.value = {
+      requests: stats.summary?.requests || 0,
+      tokens: stats.summary?.tokens || 0
+    }
+  } catch (err) {
+    // 静默失败，不影响日志功能
+    console.error('Failed to load today statistics:', err)
+  }
+}
+
+// 启动定时更新统计数据（每30秒更新一次）
+function startStatsUpdate() {
+  loadTodayStats() // 立即加载一次
+  statsUpdateTimer = setInterval(() => {
+    loadTodayStats()
+  }, 30000) // 30秒更新一次
+}
 
 // 连接 WebSocket
 function connectWebSocket() {
@@ -162,6 +209,11 @@ function connectWebSocket() {
         // 限制日志数量（最多保留 100 条）
         if (logs.value.length > 100) {
           logs.value.shift()
+        }
+
+        // 如果是普通日志（非行为日志），更新统计数据
+        if (log.type !== 'action') {
+          loadTodayStats()
         }
 
         // 自动滚动到底部，确保最后一条完全可见
@@ -233,6 +285,7 @@ function resetConnection() {
 
 onMounted(() => {
   connectWebSocket()
+  startStatsUpdate() // 启动统计数据更新
 })
 
 onUnmounted(() => {
@@ -240,6 +293,12 @@ onUnmounted(() => {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
+  }
+
+  // 清除统计数据更新定时器
+  if (statsUpdateTimer) {
+    clearInterval(statsUpdateTimer)
+    statsUpdateTimer = null
   }
 
   // 关闭 WebSocket 连接
@@ -277,11 +336,29 @@ defineExpose({
   border-bottom: 1px solid #e5e7eb;
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
   color: #18181b;
+}
+
+.today-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.today-stats :deep(.n-tag) {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
 }
 
 .logs-table {

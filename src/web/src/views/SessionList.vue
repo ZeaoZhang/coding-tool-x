@@ -460,30 +460,32 @@ async function refreshDataWithScrollPreservation() {
   }
 }
 
-// 页面可见性变化时刷新数据
-function handleVisibilityChange() {
-  if (document.visibilityState === 'visible') {
-    refreshDataWithScrollPreservation()
-  }
-}
+// 【暂时移除】页面可见性变化时刷新数据
+// 原因：每次切换回来就刷新，体验不好
+// function handleVisibilityChange() {
+//   if (document.visibilityState === 'visible') {
+//     refreshDataWithScrollPreservation()
+//   }
+// }
 
-// 窗口获得焦点时刷新数据
-function handleWindowFocus() {
-  refreshDataWithScrollPreservation()
-}
+// 【暂时移除】窗口获得焦点时刷新数据
+// 原因：每次切换回来就刷新，体验不好
+// function handleWindowFocus() {
+//   refreshDataWithScrollPreservation()
+// }
 
 onMounted(async () => {
   await store.fetchSessions(props.projectName)
 
-  // 添加事件监听
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  window.addEventListener('focus', handleWindowFocus)
+  // 【暂时移除】添加事件监听 - 每次切换回来就刷新，体验不好
+  // document.addEventListener('visibilitychange', handleVisibilityChange)
+  // window.addEventListener('focus', handleWindowFocus)
 })
 
 onUnmounted(() => {
-  // 清理事件监听
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-  window.removeEventListener('focus', handleWindowFocus)
+  // 【暂时移除】清理事件监听
+  // document.removeEventListener('visibilitychange', handleVisibilityChange)
+  // window.removeEventListener('focus', handleWindowFocus)
 })
 </script>
 
@@ -499,8 +501,8 @@ onUnmounted(() => {
 .header {
   flex-shrink: 0;
   padding: 24px 24px 16px 24px;
-  background: #fff;
-  border-bottom: 1px solid #e5e7eb;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .content {
@@ -571,8 +573,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 16px;
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
   border-radius: 8px;
   margin-bottom: 8px;
   transition: all 0.2s;
@@ -702,8 +704,9 @@ onUnmounted(() => {
 .search-result-item {
   margin-bottom: 16px;
   padding: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--border-primary);
   border-radius: 6px;
+  background: var(--bg-elevated);
 }
 
 .search-result-header {
@@ -725,7 +728,7 @@ onUnmounted(() => {
   gap: 8px;
   margin-top: 6px;
   padding: 6px;
-  background: #f9fafb;
+  background: var(--bg-secondary);
   border-radius: 4px;
 }
 

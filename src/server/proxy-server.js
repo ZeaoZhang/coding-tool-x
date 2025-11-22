@@ -6,6 +6,7 @@ const chalk = require('chalk');
 const { getActiveChannel } = require('./services/channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
+const { recordRequest } = require('./services/statistics-service');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -13,6 +14,44 @@ let currentPort = null;
 
 // 用于存储每个请求的元数据（用于 WebSocket 日志）
 const requestMetadata = new Map();
+
+// Claude API 定价（每百万 tokens 的价格，单位：美元）
+const PRICING = {
+  'claude-sonnet-4-5-20250929': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
+  'claude-sonnet-4-20250514': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
+  'claude-sonnet-3-5-20241022': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
+  'claude-sonnet-3-5-20240620': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
+  'claude-opus-4-20250514': { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.50 },
+  'claude-opus-3-20240229': { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.50 },
+  'claude-haiku-3-5-20241022': { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 },
+  'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 }
+};
+
+/**
+ * 计算请求成本
+ * @param {string} model - 模型名称
+ * @param {object} tokens - token 使用情况
+ * @returns {number} 成本（美元）
+ */
+function calculateCost(model, tokens) {
+  const pricing = PRICING[model];
+  if (!pricing) {
+    // 如果没有定价信息，使用 Sonnet 的默认定价
+    return (
+      (tokens.input || 0) * 3 / 1000000 +
+      (tokens.output || 0) * 15 / 1000000 +
+      (tokens.cacheCreation || 0) * 3.75 / 1000000 +
+      (tokens.cacheRead || 0) * 0.30 / 1000000
+    );
+  }
+
+  return (
+    (tokens.input || 0) * pricing.input / 1000000 +
+    (tokens.output || 0) * pricing.output / 1000000 +
+    (tokens.cacheCreation || 0) * pricing.cacheCreation / 1000000 +
+    (tokens.cacheRead || 0) * pricing.cacheRead / 1000000
+  );
+}
 
 // 启动代理服务器
 async function startProxyServer() {
@@ -34,11 +73,12 @@ async function startProxyServer() {
     proxy.on('proxyReq', (proxyReq, req, res) => {
       const activeChannel = getActiveChannel();
       if (activeChannel) {
-        // 记录请求元数据（用于 WebSocket 日志）
+        // 记录请求元数据（用于 WebSocket 日志和统计）
         const requestId = `${Date.now()}-${Math.random()}`;
         requestMetadata.set(req, {
           id: requestId,
           channel: activeChannel.name,
+          channelId: activeChannel.id,
           startTime: Date.now()
         });
 
@@ -182,6 +222,30 @@ async function startProxyServer() {
                 outputTokens: tokenData.outputTokens,
                 cacheCreation: tokenData.cacheCreation,
                 cacheRead: tokenData.cacheRead
+              });
+
+              // 记录统计数据
+              const tokens = {
+                input: tokenData.inputTokens,
+                output: tokenData.outputTokens,
+                cacheCreation: tokenData.cacheCreation,
+                cacheRead: tokenData.cacheRead,
+                total: tokenData.inputTokens + tokenData.outputTokens + tokenData.cacheCreation + tokenData.cacheRead
+              };
+              const cost = calculateCost(tokenData.model, tokens);
+              const duration = Date.now() - metadata.startTime;
+
+              recordRequest({
+                id: metadata.id,
+                timestamp: new Date(metadata.startTime).toISOString(),
+                toolType: 'claude-code',
+                channel: metadata.channel,
+                channelId: metadata.channelId,
+                model: tokenData.model,
+                tokens: tokens,
+                duration: duration,
+                success: true,
+                cost: cost
               });
             }
           } catch (err) {

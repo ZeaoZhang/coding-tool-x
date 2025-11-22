@@ -1,0 +1,7 @@
+{
+  "watch": ["src/server", "src/config", "src/utils"],
+  "ext": "js,json",
+  "ignore": ["src/web/**", "node_modules/**"],
+  "exec": "node src/server/dev-server.js",
+  "delay": "1000"
+}

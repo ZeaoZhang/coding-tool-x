@@ -32,6 +32,13 @@
           </div>
         </n-tooltip>
 
+        <!-- Theme Toggle -->
+        <HeaderButton
+          :icon="isDark ? SunnyOutline : MoonOutline"
+          :tooltip="isDark ? '切换到亮色主题' : '切换到暗色主题'"
+          @click="toggleTheme"
+        />
+
         <!-- Recent Sessions -->
         <HeaderButton
           :icon="ChatbubblesOutline"
@@ -54,6 +61,13 @@
           :active="showLogs && proxyRunning"
           :disabled="!proxyRunning"
           @click="toggleLogs"
+        />
+
+        <!-- Settings Button -->
+        <HeaderButton
+          :icon="SettingsOutline"
+          tooltip="设置"
+          @click="showSettingsDrawer = true"
         />
 
         <!-- Help Button -->
@@ -102,8 +116,11 @@
     <!-- Recent Sessions Drawer -->
     <RecentSessionsDrawer v-model:visible="showRecentDrawer" />
 
+    <!-- Settings Drawer -->
+    <SettingsDrawer v-model:visible="showSettingsDrawer" />
+
     <!-- Help Modal -->
-    <n-modal v-model:show="showHelpModal" preset="card" title="CODING-TOOL 使用帮助" style="width: 680px; max-width: 90vw;">
+    <n-modal v-model:show="showHelpModal" preset="card" title="CODING-TOOL 使用帮助" style="width: 800px; max-width: 90vw;">
       <div class="help-content">
         <div class="help-section">
           <h4>🚀 快速开始</h4>
@@ -182,15 +199,21 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
+import SettingsDrawer from './SettingsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import api from '../api'
 import message from '../utils/message'
+import { useTheme } from '../composables/useTheme'
+
+// 使用主题 composable
+const { isDark, toggleTheme } = useTheme()
 
 const router = useRouter()
 const showRecentDrawer = ref(false)
+const showSettingsDrawer = ref(false)
 const showHelpModal = ref(false)
 const proxyRunning = ref(false)
 const proxyLoading = ref(false)
@@ -331,18 +354,18 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #ffffff;
+  background: var(--bg-primary);
 }
 
 .header {
   height: 64px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border-primary);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
-  background: linear-gradient(135deg, #ffffff 0%, #f8fffe 50%, #f0fdf4 100%);
-  box-shadow: 0 2px 12px rgba(24, 160, 88, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: var(--gradient-header);
+  box-shadow: 0 2px 12px rgba(24, 160, 88, 0.06), var(--shadow-sm);
   z-index: 10;
 }
 
@@ -360,7 +383,7 @@ onUnmounted(() => {
 
 .proxy-label {
   font-size: 13px;
-  color: #4b5563;
+  color: var(--text-secondary);
   font-weight: 600;
   user-select: none;
   letter-spacing: 0.3px;
@@ -402,14 +425,14 @@ onUnmounted(() => {
 .title-divider {
   font-size: 18px;
   font-weight: 400;
-  color: #d1d5db;
+  color: var(--border-secondary);
   user-select: none;
 }
 
 .title-sub {
   font-size: 15px;
   font-weight: 500;
-  color: #6b7280;
+  color: var(--text-tertiary);
   user-select: none;
 }
 
@@ -429,7 +452,7 @@ onUnmounted(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--bg-overlay);
   z-index: 1000;
   backdrop-filter: blur(4px);
 }
@@ -465,12 +488,23 @@ onUnmounted(() => {
 
 /* Help Modal Styles */
 .help-content {
-  max-height: 65vh;
+  max-height: 70vh;
   overflow-y: auto;
+  padding: 4px; /* 为滚动条留出空间 */
 }
 
 .help-section {
-  margin-bottom: 20px;
+  margin-bottom: 28px;
+  padding: 20px;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border-primary);
+  transition: all 0.2s ease;
+}
+
+.help-section:hover {
+  border-color: rgba(24, 160, 88, 0.3);
+  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.08);
 }
 
 .help-section:last-child {
@@ -478,91 +512,155 @@ onUnmounted(() => {
 }
 
 .help-section h4 {
-  margin: 0 0 10px 0;
-  font-size: 15px;
+  margin: 0 0 16px 0;
+  font-size: 16px;
   font-weight: 700;
-  color: #1f2937;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid rgba(24, 160, 88, 0.2);
 }
 
 .help-section p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.7;
-  color: #4b5563;
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+
+.help-section p:last-child {
+  margin-bottom: 0;
 }
 
 .help-section ul {
-  margin: 0;
-  padding-left: 20px;
+  margin: 8px 0 0 0;
+  padding-left: 24px;
 }
 
 .help-section li {
-  font-size: 13px;
-  line-height: 1.8;
-  color: #4b5563;
+  font-size: 14px;
+  line-height: 2;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.help-section li:last-child {
+  margin-bottom: 0;
 }
 
 .help-section li strong {
-  color: #1f2937;
+  color: #18a058;
+  font-weight: 600;
 }
 
 .command-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .command-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: #f8fafc;
-  border-radius: 6px;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.command-item:hover {
+  border-color: rgba(24, 160, 88, 0.4);
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
 }
 
 .command-item code {
-  min-width: 140px;
-  font-family: 'SF Mono', Monaco, monospace;
-  font-size: 12px;
+  min-width: 160px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  font-size: 13px;
   font-weight: 600;
   color: #18a058;
-  background: #f0fdf4;
-  padding: 4px 8px;
-  border-radius: 4px;
+  background: rgba(24, 160, 88, 0.1);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(24, 160, 88, 0.2);
+}
+
+[data-theme="dark"] .command-item code {
+  background: rgba(24, 160, 88, 0.15);
+  border-color: rgba(24, 160, 88, 0.3);
+  color: #36ad6a;
 }
 
 .command-item span {
-  font-size: 13px;
-  color: #4b5563;
+  font-size: 14px;
+  color: var(--text-secondary);
+  flex: 1;
 }
 
 .help-section kbd {
   display: inline-block;
-  padding: 2px 6px;
-  font-family: monospace;
-  font-size: 11px;
-  color: #666;
-  background-color: #f5f5f5;
-  border: 1px solid #d0d0d0;
-  border-radius: 3px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
+  padding: 3px 8px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 var(--border-primary), 0 1px 2px rgba(0, 0, 0, 0.1);
+  margin: 0 2px;
+}
+
+[data-theme="dark"] .help-section kbd {
+  background: var(--bg-elevated);
+  box-shadow: 0 2px 0 var(--border-secondary), 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .link-list {
   display: flex;
-  gap: 16px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 .link-list a {
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   color: #18a058;
   text-decoration: none;
-  transition: color 0.2s;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(24, 160, 88, 0.08);
+  border: 1px solid rgba(24, 160, 88, 0.2);
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .link-list a:hover {
-  color: #16a34a;
-  text-decoration: underline;
+  background: rgba(24, 160, 88, 0.15);
+  border-color: rgba(24, 160, 88, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(24, 160, 88, 0.2);
+}
+
+.link-list a::before {
+  content: '→';
+  font-weight: 700;
+}
+
+[data-theme="dark"] .link-list a {
+  background: rgba(24, 160, 88, 0.12);
+  border-color: rgba(24, 160, 88, 0.3);
+}
+
+[data-theme="dark"] .link-list a:hover {
+  background: rgba(24, 160, 88, 0.2);
+  border-color: rgba(24, 160, 88, 0.5);
 }
 </style>

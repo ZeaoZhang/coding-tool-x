@@ -53,7 +53,7 @@ const props = defineProps({
 const emit = defineEmits(['click'])
 
 const iconColor = computed(() => {
-  if (props.disabled) return '#d1d5db'
+  if (props.disabled) return '#6b7280' // 更深的灰色，在暗色主题下也清晰
   if (props.active) return '#18a058'
   return '#9ca3af'
 })
@@ -87,7 +87,7 @@ function handleClick() {
 
 .header-button.disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.7; /* 从 0.5 提升到 0.7，让图标更清晰 */
 }
 
 .header-button :deep(.n-icon) {

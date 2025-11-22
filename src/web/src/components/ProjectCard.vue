@@ -112,9 +112,9 @@ function formatTime(timestamp) {
   height: 140px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   border-radius: 14px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  background: linear-gradient(145deg, #ffffff 0%, #fafbfc 100%);
+  border: 1px solid var(--border-primary);
+  box-shadow: var(--shadow-sm);
+  background: var(--gradient-card);
   position: relative;
   overflow: hidden;
 }
@@ -133,7 +133,7 @@ function formatTime(timestamp) {
 
 .project-card:hover {
   transform: translateY(-6px);
-  box-shadow: 0 16px 32px rgba(24, 160, 88, 0.15), 0 6px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 16px 32px rgba(24, 160, 88, 0.15), var(--shadow-md);
   border-color: #18a058;
 }
 
@@ -162,7 +162,7 @@ function formatTime(timestamp) {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
-  color: #1f2937;
+  color: var(--text-primary);
   letter-spacing: -0.3px;
 }
 
@@ -192,7 +192,7 @@ function formatTime(timestamp) {
   justify-content: space-between;
   margin-top: auto;
   padding-top: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  border-top: 1px solid var(--border-primary);
 }
 
 .stats-row :deep(.n-tag) {
