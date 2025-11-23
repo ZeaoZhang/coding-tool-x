@@ -9,6 +9,7 @@ const { isProxyConfig } = require('./services/settings-manager');
 const { isProxyConfig: isCodexProxyConfig } = require('./services/codex-settings-manager');
 const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
+const { startGeminiProxyServer } = require('./gemini-proxy-server');
 
 async function startServer(port) {
   const config = loadConfig();
@@ -93,11 +94,18 @@ async function startServer(port) {
   app.use('/api/codex/sessions', require('./api/codex-sessions')(config));
   app.use('/api/codex/channels', require('./api/codex-channels')(config));
 
+  // Gemini API Routes
+  app.use('/api/gemini/projects', require('./api/gemini-projects')(config));
+  app.use('/api/gemini/sessions', require('./api/gemini-sessions')(config));
+  app.use('/api/gemini/channels', require('./api/gemini-channels')(config));
+  app.use('/api/gemini/proxy', require('./api/gemini-proxy'));
+
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/channels', require('./api/channels'));
   app.use('/api/proxy', require('./api/proxy'));
   app.use('/api/codex/proxy', require('./api/codex-proxy'));
   app.use('/api/settings', require('./api/settings'));
+  app.use('/api/config', require('./api/config'));
   app.use('/api/statistics', require('./api/statistics'));
 
   // Serve static files in production
@@ -171,6 +179,26 @@ function autoRestoreProxies() {
       .catch((err) => {
         console.error(chalk.red(`❌ Codex 代理启动失败: ${err.message}`));
       });
+  }
+
+  // 检查 Gemini 代理状态文件
+  const geminiActiveFile = path.join(ccToolDir, 'gemini-active-channel.json');
+  if (fs.existsSync(geminiActiveFile)) {
+    console.log(chalk.cyan('\n🔄 检测到 Gemini 代理状态文件，正在自动启动...'));
+    const geminiProxyPort = config.ports?.geminiProxy || 10090;
+    startGeminiProxyServer(geminiProxyPort)
+      .then((result) => {
+        if (result.success) {
+          console.log(chalk.green(`✅ Gemini 代理已自动启动，端口: ${result.port}`));
+        } else {
+          console.error(chalk.red(`❌ Gemini 代理启动失败: ${result.error || 'Unknown error'}`));
+        }
+      })
+      .catch((err) => {
+        console.error(chalk.red(`❌ Gemini 代理启动失败: ${err.message}`));
+      });
+  } else {
+    console.log(chalk.gray('\n💡 提示: 如需使用 Gemini 代理，请在前端界面激活 Gemini 渠道'));
   }
 }
 

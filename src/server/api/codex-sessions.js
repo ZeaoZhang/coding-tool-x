@@ -13,6 +13,90 @@ const { isCodexInstalled } = require('../services/codex-config');
 const { loadAliases } = require('../services/alias');
 
 module.exports = (config) => {
+  // ============================================
+  // 静态路由必须放在参数路由之前
+  // ============================================
+
+  /**
+   * GET /api/codex/sessions/search/global?keyword=xxx
+   * 全局搜索
+   */
+  router.get('/search/global', (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const { keyword } = req.query;
+
+      if (!keyword) {
+        return res.status(400).json({ error: 'Keyword is required' });
+      }
+
+      const results = searchSessions(keyword);
+
+      // 按会话分组，统计每个会话的匹配数
+      const sessionMap = new Map();
+      results.forEach(match => {
+        if (!sessionMap.has(match.sessionId)) {
+          sessionMap.set(match.sessionId, {
+            sessionId: match.sessionId,
+            projectName: match.projectName,
+            matchCount: 0,
+            matches: []
+          });
+        }
+        const session = sessionMap.get(match.sessionId);
+        session.matchCount++;
+        session.matches.push({
+          messageIndex: match.messageIndex,
+          role: match.role,
+          context: match.context,
+          timestamp: match.timestamp
+        });
+      });
+
+      const sessions = Array.from(sessionMap.values());
+
+      res.json({
+        keyword,
+        totalMatches: results.length,
+        sessions,
+        source: 'codex'
+      });
+    } catch (err) {
+      console.error('[Codex API] Failed to search sessions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/codex/sessions/recent/list?limit=10
+   * 获取最近会话
+   */
+  router.get('/recent/list', (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const limit = parseInt(req.query.limit) || 5;
+      const sessions = getRecentSessions(limit);
+
+      res.json({
+        sessions,
+        source: 'codex'
+      });
+    } catch (err) {
+      console.error('[Codex API] Failed to get recent sessions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ============================================
+  // 参数路由
+  // ============================================
+
   /**
    * GET /api/codex/sessions/:projectName
    * 获取项目的所有会话
@@ -46,6 +130,61 @@ module.exports = (config) => {
       });
     } catch (err) {
       console.error('[Codex API] Failed to get sessions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/codex/sessions/:projectName/search
+   * 项目级搜索
+   */
+  router.get('/:projectName/search', (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const { projectName } = req.params;
+      const { keyword, context } = req.query;
+
+      if (!keyword) {
+        return res.status(400).json({ error: 'Keyword is required' });
+      }
+
+      // 使用全局搜索，然后过滤项目
+      const allResults = searchSessions(keyword);
+      const filteredResults = allResults.filter(r => r.projectName === projectName);
+
+      // 按会话分组
+      const sessionMap = new Map();
+      filteredResults.forEach(match => {
+        if (!sessionMap.has(match.sessionId)) {
+          sessionMap.set(match.sessionId, {
+            sessionId: match.sessionId,
+            projectName: match.projectName,
+            matchCount: 0,
+            matches: []
+          });
+        }
+        const session = sessionMap.get(match.sessionId);
+        session.matchCount++;
+        session.matches.push({
+          messageIndex: match.messageIndex,
+          role: match.role,
+          context: match.context,
+          timestamp: match.timestamp
+        });
+      });
+
+      const sessions = Array.from(sessionMap.values());
+
+      res.json({
+        keyword,
+        totalMatches: filteredResults.length,
+        sessions
+      });
+    } catch (err) {
+      console.error('[Codex API] Failed to search project sessions:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -170,58 +309,6 @@ module.exports = (config) => {
       });
     } catch (err) {
       console.error('[Codex API] Failed to get session messages:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  /**
-   * GET /api/codex/sessions/search/global?keyword=xxx
-   * 全局搜索
-   */
-  router.get('/search/global', (req, res) => {
-    try {
-      if (!isCodexInstalled()) {
-        return res.status(404).json({ error: 'Codex CLI not installed' });
-      }
-
-      const { keyword } = req.query;
-
-      if (!keyword) {
-        return res.status(400).json({ error: 'Keyword is required' });
-      }
-
-      const results = searchSessions(keyword);
-
-      res.json({
-        keyword,
-        results,
-        source: 'codex'
-      });
-    } catch (err) {
-      console.error('[Codex API] Failed to search sessions:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  /**
-   * GET /api/codex/sessions/recent/list?limit=10
-   * 获取最近会话
-   */
-  router.get('/recent/list', (req, res) => {
-    try {
-      if (!isCodexInstalled()) {
-        return res.status(404).json({ error: 'Codex CLI not installed' });
-      }
-
-      const limit = parseInt(req.query.limit) || 5;
-      const sessions = getRecentSessions(limit);
-
-      res.json({
-        sessions,
-        source: 'codex'
-      });
-    } catch (err) {
-      console.error('[Codex API] Failed to get recent sessions:', err);
       res.status(500).json({ error: err.message });
     }
   });

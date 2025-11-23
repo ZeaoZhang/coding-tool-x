@@ -7,11 +7,13 @@ const client = axios.create({
 
 /**
  * 根据 channel 生成 API 路径前缀
- * @param {string} channel - 'claude' 或 'codex'
+ * @param {string} channel - 'claude', 'codex' 或 'gemini'
  * @returns {string} - API 路径前缀
  */
 function getChannelPrefix(channel = 'claude') {
-  return channel === 'codex' ? '/codex' : ''
+  if (channel === 'codex') return '/codex'
+  if (channel === 'gemini') return '/gemini'
+  return ''
 }
 
 const api = {
@@ -237,6 +239,64 @@ const api = {
 
   async stopCodexProxy() {
     const response = await client.post('/codex/proxy/stop')
+    return response.data
+  },
+
+  // Gemini Channels management
+  async getGeminiChannels() {
+    const response = await client.get('/gemini/channels')
+    return response.data
+  },
+
+  async getActiveGeminiChannel() {
+    const response = await client.get('/gemini/channels/active')
+    return response.data
+  },
+
+  async createGeminiChannel(name, baseUrl, apiKey, model, websiteUrl) {
+    const response = await client.post('/gemini/channels', {
+      name,
+      baseUrl,
+      apiKey,
+      model,
+      websiteUrl
+    })
+    return response.data
+  },
+
+  async updateGeminiChannel(channelId, updates) {
+    const response = await client.put(`/gemini/channels/${channelId}`, updates)
+    return response.data
+  },
+
+  async deleteGeminiChannel(channelId) {
+    const response = await client.delete(`/gemini/channels/${channelId}`)
+    return response.data
+  },
+
+  async activateGeminiChannel(channelId) {
+    const response = await client.post(`/gemini/channels/${channelId}/activate`)
+    return response.data
+  },
+
+  async saveGeminiChannelOrder(order) {
+    const response = await client.post('/gemini/channels/order', { order })
+    return response.data
+  },
+
+  // Gemini Proxy management
+  async getGeminiProxyStatus() {
+    const response = await client.get('/gemini/proxy/status')
+    return response.data
+  },
+
+  async startGeminiProxy() {
+    const response = await client.post('/gemini/proxy/start')
+    return response.data
+  },
+
+  async stopGeminiProxy() {
+    const response = await client.post('/gemini/proxy/stop')
     return response.data
   },
 

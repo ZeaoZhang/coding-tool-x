@@ -1,12 +1,14 @@
 <template>
   <n-config-provider :theme="theme" :theme-overrides="themeOverrides">
-    <Layout />
+    <n-message-provider>
+      <Layout />
+    </n-message-provider>
   </n-config-provider>
 </template>
 
 <script setup>
 import { computed, onMounted } from 'vue'
-import { NConfigProvider, darkTheme } from 'naive-ui'
+import { NConfigProvider, NMessageProvider, darkTheme } from 'naive-ui'
 import Layout from './components/Layout.vue'
 import { useTheme } from './composables/useTheme'
 

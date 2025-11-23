@@ -37,7 +37,7 @@
             {{ currentChannel === 'claude' ? '拖拽可调整顺序' : '拖拽可调整顺序' }}
           </n-text>
         </div>
-        <n-button type="primary" size="small" @click="currentChannel === 'claude' ? handleAdd() : handleCodexAdd()">
+        <n-button type="primary" size="small" @click="currentChannel === 'claude' ? handleAdd() : (currentChannel === 'codex' ? handleCodexAdd() : handleGeminiAdd())">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
           </template>
@@ -271,6 +271,125 @@
             </draggable>
           </div>
         </template>
+
+        <!-- Gemini 渠道列表 -->
+        <template v-else-if="currentChannel === 'gemini'">
+          <!-- Loading -->
+          <div v-if="geminiLoading" class="loading-container">
+            <n-spin size="small" />
+          </div>
+
+          <!-- Channels List -->
+          <div v-else>
+            <!-- Empty State -->
+            <div v-if="geminiChannels.length === 0" class="empty-state">
+              <n-empty description="暂无渠道">
+                <template #extra>
+                  <n-button type="primary" size="small" @click="handleGeminiAdd">
+                    <template #icon>
+                      <n-icon><AddOutline /></n-icon>
+                    </template>
+                    添加 Gemini 渠道
+                  </n-button>
+                </template>
+              </n-empty>
+            </div>
+
+            <!-- Draggable List -->
+            <draggable
+              v-else
+              v-model="geminiChannels"
+              item-key="id"
+              class="channels-list"
+              ghost-class="ghost"
+              chosen-class="chosen"
+              drag-class="drag"
+              animation="200"
+              @end="handleGeminiDragEnd"
+            >
+              <template #item="{ element }">
+                <div
+                  :key="element.id"
+                  class="channel-card"
+                  :class="{ active: element.isActive, collapsed: collapsedGeminiChannels[element.id] }"
+                >
+                  <div class="channel-header">
+                    <div class="channel-title">
+                      <n-button
+                        text
+                        size="tiny"
+                        @click="toggleGeminiCollapse(element.id)"
+                        class="collapse-btn"
+                      >
+                        <n-icon size="18" :class="{ 'collapsed': collapsedGeminiChannels[element.id] }">
+                          <ChevronDownOutline />
+                        </n-icon>
+                      </n-button>
+                      <n-text strong>{{ element.name }}</n-text>
+                      <n-tag v-if="element.isActive" size="tiny" type="success" :bordered="false">
+                        当前使用
+                      </n-tag>
+                    </div>
+                    <div class="channel-actions">
+                      <n-button
+                        v-if="!element.isActive"
+                        size="tiny"
+                        type="primary"
+                        @click="handleGeminiActivate(element.id)"
+                      >
+                        切换
+                      </n-button>
+                      <n-button
+                        size="tiny"
+                        @click="handleGeminiEdit(element)"
+                      >
+                        编辑
+                      </n-button>
+                      <n-button
+                        size="tiny"
+                        type="error"
+                        :disabled="element.isActive"
+                        @click="handleGeminiDelete(element.id)"
+                      >
+                        删除
+                      </n-button>
+                    </div>
+                  </div>
+
+                  <div v-show="!collapsedGeminiChannels[element.id]" class="channel-info">
+                    <div class="info-row">
+                      <n-text depth="3" class="label">Model:</n-text>
+                      <n-text depth="2" class="value" style="font-family: monospace;">{{ element.model }}</n-text>
+                    </div>
+                    <div class="info-row">
+                      <n-text depth="3" class="label">URL:</n-text>
+                      <n-text depth="2" class="value">{{ element.baseUrl }}</n-text>
+                    </div>
+                    <div class="info-row">
+                      <n-text depth="3" class="label">Key:</n-text>
+                      <n-text depth="2" class="value" style="font-family: monospace;">
+                        {{ maskApiKey(element.apiKey) }}
+                      </n-text>
+                    </div>
+                    <div v-if="element.websiteUrl" class="info-row website-row">
+                      <n-text depth="3" class="label">官网:</n-text>
+                      <n-button
+                        text
+                        size="tiny"
+                        @click="openWebsite(element.websiteUrl)"
+                      >
+                        <template #icon>
+                          <n-icon size="14"><OpenOutline /></n-icon>
+                        </template>
+                        前往官网
+                      </n-button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </draggable>
+          </div>
+        </template>
       </div>
     </div>
 
@@ -372,6 +491,57 @@
         </n-space>
       </template>
     </n-modal>
+
+    <!-- Gemini Add/Edit Dialog -->
+    <n-modal v-model:show="showGeminiDialog" preset="dialog" :title="editingGeminiChannel ? '编辑 Gemini 渠道' : '添加 Gemini 渠道'">
+      <n-form :model="geminiFormData">
+        <n-form-item label="渠道名称">
+          <n-input v-model:value="geminiFormData.name" placeholder="显示名称，如：Google AI Studio / 我的中转" />
+        </n-form-item>
+        <n-form-item label="Model">
+          <n-input
+            v-model:value="geminiFormData.model"
+            placeholder="如：gemini-2.0-flash-exp、gemini-2.5-pro 等"
+          />
+          <template #feedback>
+            <n-text depth="3" style="font-size: 11px;">
+              Gemini 模型名称，如 gemini-2.0-flash-exp
+            </n-text>
+          </template>
+        </n-form-item>
+        <n-form-item label="Base URL">
+          <n-input
+            v-model:value="geminiFormData.baseUrl"
+            placeholder="https://generativelanguage.googleapis.com/v1beta"
+            :disabled="editingGeminiActiveChannel"
+          />
+        </n-form-item>
+        <n-form-item label="API Key">
+          <n-input
+            v-model:value="geminiFormData.apiKey"
+            type="password"
+            show-password-on="click"
+            placeholder="AIza..."
+            :disabled="editingGeminiActiveChannel"
+          />
+        </n-form-item>
+        <n-form-item label="官网地址（可选）">
+          <n-input
+            v-model:value="geminiFormData.websiteUrl"
+            placeholder="https://aistudio.google.com"
+          />
+        </n-form-item>
+        <n-text v-if="editingGeminiActiveChannel" depth="3" style="font-size: 12px;">
+          提示：使用中的渠道只能修改名称和模型
+        </n-text>
+      </n-form>
+      <template #action>
+        <n-space>
+          <n-button @click="showGeminiDialog = false">取消</n-button>
+          <n-button type="primary" @click="handleGeminiSave">保存</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -417,7 +587,10 @@ const currentChannel = computed(() => route.meta.channel || 'claude')
 
 // 渠道标题
 const channelTitle = computed(() => {
-  return currentChannel.value === 'claude' ? 'API 渠道管理' : 'Codex 配置'
+  if (currentChannel.value === 'claude') return 'Claude 渠道管理'
+  if (currentChannel.value === 'codex') return 'Codex 渠道管理'
+  if (currentChannel.value === 'gemini') return 'Gemini 渠道管理'
+  return 'Claude 渠道管理'
 })
 
 const channels = ref([])
@@ -443,6 +616,21 @@ const collapsedCodexChannels = ref({})
 const codexFormData = ref({
   name: '',
   providerKey: '',
+  baseUrl: '',
+  apiKey: '',
+  websiteUrl: ''
+})
+
+// Gemini 渠道相关状态
+const geminiChannels = ref([])
+const geminiLoading = ref(false)
+const showGeminiDialog = ref(false)
+const editingGeminiChannel = ref(null)
+const editingGeminiActiveChannel = ref(false)
+const collapsedGeminiChannels = ref({})
+const geminiFormData = ref({
+  name: '',
+  model: '',
   baseUrl: '',
   apiKey: '',
   websiteUrl: ''
@@ -845,29 +1033,232 @@ function loadCodexChannelOrder() {
   }
 }
 
+// ==================== Gemini 渠道管理 ====================
+
+async function loadGeminiChannels() {
+  if (currentChannel.value !== 'gemini') {
+    return
+  }
+
+  geminiLoading.value = true
+  try {
+    const data = await api.getGeminiChannels()
+    geminiChannels.value = data.channels || []
+    loadGeminiChannelOrder()
+  } catch (err) {
+    message.error('加载 Gemini 渠道失败: ' + err.message)
+  } finally {
+    geminiLoading.value = false
+  }
+}
+
+function handleGeminiAdd() {
+  editingGeminiChannel.value = null
+  editingGeminiActiveChannel.value = false
+  geminiFormData.value = {
+    name: '',
+    model: '',
+    baseUrl: '',
+    apiKey: '',
+    websiteUrl: ''
+  }
+  showGeminiDialog.value = true
+}
+
+function handleGeminiEdit(channel) {
+  editingGeminiChannel.value = channel
+  editingGeminiActiveChannel.value = channel.isActive
+  geminiFormData.value = {
+    name: channel.name,
+    model: channel.model,
+    baseUrl: channel.baseUrl,
+    apiKey: channel.apiKey,
+    websiteUrl: channel.websiteUrl || ''
+  }
+  showGeminiDialog.value = true
+}
+
+async function handleGeminiSave() {
+  // 验证逻辑
+  if (editingGeminiActiveChannel.value) {
+    if (!geminiFormData.value.name) {
+      message.error('请填写渠道名称')
+      return
+    }
+  } else {
+    if (!geminiFormData.value.name || !geminiFormData.value.model ||
+        !geminiFormData.value.baseUrl || !geminiFormData.value.apiKey) {
+      message.error('请填写所有必填字段')
+      return
+    }
+  }
+
+  try {
+    if (editingGeminiChannel.value) {
+      // 编辑
+      const updates = {
+        name: geminiFormData.value.name,
+        model: geminiFormData.value.model,
+        websiteUrl: geminiFormData.value.websiteUrl
+      }
+
+      if (!editingGeminiActiveChannel.value) {
+        updates.baseUrl = geminiFormData.value.baseUrl
+        updates.apiKey = geminiFormData.value.apiKey
+      }
+
+      await api.updateGeminiChannel(editingGeminiChannel.value.id, updates)
+      message.success('Gemini 渠道已更新')
+    } else {
+      // 创建
+      await api.createGeminiChannel(
+        geminiFormData.value.name,
+        geminiFormData.value.baseUrl,
+        geminiFormData.value.apiKey,
+        geminiFormData.value.model,
+        geminiFormData.value.websiteUrl
+      )
+      message.success('Gemini 渠道已添加')
+    }
+
+    showGeminiDialog.value = false
+    editingGeminiChannel.value = null
+    editingGeminiActiveChannel.value = false
+    geminiFormData.value = {
+      name: '',
+      model: '',
+      baseUrl: '',
+      apiKey: '',
+      websiteUrl: ''
+    }
+    await loadGeminiChannels()
+  } catch (err) {
+    message.error('操作失败: ' + err.message)
+  }
+}
+
+async function handleGeminiActivate(id) {
+  try {
+    await api.activateGeminiChannel(id)
+    message.success('Gemini 渠道已切换')
+    await loadGeminiChannels()
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  }
+}
+
+function handleGeminiDelete(id) {
+  dialog.warning({
+    title: '删除 Gemini 渠道',
+    content: '确定要删除这个渠道吗？',
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await api.deleteGeminiChannel(id)
+        message.success('Gemini 渠道已删除')
+        await loadGeminiChannels()
+      } catch (err) {
+        message.error('删除失败: ' + err.message)
+      }
+    }
+  })
+}
+
+// Gemini 折叠状态管理
+function toggleGeminiCollapse(channelId) {
+  collapsedGeminiChannels.value[channelId] = !collapsedGeminiChannels.value[channelId]
+  saveGeminiCollapseSettings()
+}
+
+function loadGeminiCollapseSettings() {
+  try {
+    const saved = localStorage.getItem('cc-gemini-channel-collapse')
+    if (saved) {
+      collapsedGeminiChannels.value = JSON.parse(saved)
+    }
+  } catch (err) {
+    console.error('Failed to load Gemini collapse settings:', err)
+  }
+}
+
+function saveGeminiCollapseSettings() {
+  try {
+    localStorage.setItem('cc-gemini-channel-collapse', JSON.stringify(collapsedGeminiChannels.value))
+  } catch (err) {
+    console.error('Failed to save Gemini collapse settings:', err)
+  }
+}
+
+// Gemini 拖拽排序
+function handleGeminiDragEnd() {
+  saveGeminiChannelOrder()
+}
+
+function saveGeminiChannelOrder() {
+  try {
+    const order = geminiChannels.value.map(c => c.id)
+    localStorage.setItem('cc-gemini-channel-order', JSON.stringify(order))
+  } catch (err) {
+    console.error('Failed to save Gemini channel order:', err)
+  }
+}
+
+function loadGeminiChannelOrder() {
+  try {
+    const saved = localStorage.getItem('cc-gemini-channel-order')
+    if (saved && geminiChannels.value.length > 0) {
+      const order = JSON.parse(saved)
+      const orderedChannels = []
+      order.forEach(id => {
+        const channel = geminiChannels.value.find(c => c.id === id)
+        if (channel) {
+          orderedChannels.push(channel)
+        }
+      })
+      geminiChannels.value.forEach(channel => {
+        if (!orderedChannels.find(c => c.id === channel.id)) {
+          orderedChannels.push(channel)
+        }
+      })
+      geminiChannels.value = orderedChannels
+    }
+  } catch (err) {
+    console.error('Failed to load Gemini channel order:', err)
+  }
+}
+
 // 监听路由变化，切换渠道时重新加载
 watch(() => currentChannel.value, (newChannel) => {
   if (newChannel === 'claude') {
     loadChannels()
     codexChannels.value = []
+    geminiChannels.value = []
   } else if (newChannel === 'codex') {
     loadCodexChannels()
     channels.value = []
+    geminiChannels.value = []
+  } else if (newChannel === 'gemini') {
+    loadGeminiChannels()
+    channels.value = []
+    codexChannels.value = []
   }
 })
 
 onMounted(() => {
   loadCollapseSettings()
   loadCodexCollapseSettings()
+  loadGeminiCollapseSettings()
   loadChannels()
   loadCodexChannels()
+  loadGeminiChannels()
 })
 </script>
 
 <style scoped>
 .right-panel {
-  width: 480px;
-  min-width: 480px;
+  width: 520px;
+  min-width: 520px;
   border-left: 1px solid var(--border-primary);
   background: var(--gradient-bg);
   height: 100vh;
@@ -1061,10 +1452,21 @@ onMounted(() => {
   box-shadow: 0 3px 16px rgba(24, 160, 88, 0.18);
 }
 
+[data-theme="dark"] .channel-card.active {
+  background: linear-gradient(145deg, rgba(24, 160, 88, 0.15) 0%, rgba(24, 160, 88, 0.1) 100%);
+  border-color: rgba(24, 160, 88, 0.6);
+  box-shadow: 0 3px 16px rgba(24, 160, 88, 0.25);
+}
+
 .channel-card.active:hover {
   border-color: #16a34a;
   box-shadow: 0 6px 20px rgba(24, 160, 88, 0.25);
   transform: translateX(-2px);
+}
+
+[data-theme="dark"] .channel-card.active:hover {
+  border-color: rgba(24, 160, 88, 0.8);
+  box-shadow: 0 6px 20px rgba(24, 160, 88, 0.35);
 }
 
 .channel-header {

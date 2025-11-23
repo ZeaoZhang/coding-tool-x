@@ -7,6 +7,7 @@ const { getActiveChannel } = require('./services/channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const { recordRequest } = require('./services/statistics-service');
+const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -279,6 +280,9 @@ async function startProxyServer() {
       proxyServer.listen(port, '127.0.0.1', () => {
         console.log(`✅ Proxy server started on http://127.0.0.1:${port}`);
 
+        // 保存代理启动时间
+        saveProxyStartTime('claude');
+
         // WebSocket 服务器已经在 Web UI 启动时附加到 HTTP 服务器了
         // 不需要在这里重复启动
 
@@ -322,6 +326,10 @@ async function stopProxyServer() {
   return new Promise((resolve) => {
     proxyServer.close(() => {
       console.log('✅ Proxy server stopped');
+
+      // 清除代理启动时间
+      clearProxyStartTime('claude');
+
       proxyServer = null;
       proxyApp = null;
       const stoppedPort = currentPort;
@@ -334,10 +342,15 @@ async function stopProxyServer() {
 // 获取代理服务器状态
 function getProxyStatus() {
   const config = loadConfig();
+  const startTime = getProxyStartTime('claude');
+  const runtime = getProxyRuntime('claude');
+
   return {
     running: !!proxyServer,
     port: currentPort,
-    defaultPort: config.ports?.proxy || 10088
+    defaultPort: config.ports?.proxy || 10088,
+    startTime,
+    runtime
   };
 }
 

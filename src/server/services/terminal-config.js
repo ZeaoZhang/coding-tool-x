@@ -79,18 +79,32 @@ function getSelectedTerminal() {
 
 /**
  * 获取终端启动命令（填充参数后）
+ * @param {string} cwd - 工作目录
+ * @param {string} sessionId - 会话ID（用于 Claude -r 参数）
+ * @param {string} customCliCommand - 自定义 CLI 命令（如 "gemini --resume latest"），如果提供则替换默认的 claude 命令
  */
-function getTerminalLaunchCommand(cwd, sessionId) {
+function getTerminalLaunchCommand(cwd, sessionId, customCliCommand) {
   const terminal = getSelectedTerminal();
 
   if (!terminal) {
     throw new Error('No terminal available');
   }
 
-  // 替换命令模板中的占位符
-  let command = terminal.command
-    .replace(/{cwd}/g, cwd)
-    .replace(/{sessionId}/g, sessionId);
+  let command = terminal.command;
+
+  // 如果提供了自定义 CLI 命令，替换模板中的 claude 命令部分
+  if (customCliCommand) {
+    // 替换各种格式的 claude 命令
+    command = command
+      .replace(/claude\s+-r\s+\{sessionId\}/g, customCliCommand)
+      .replace(/claude\s+-r\s+{sessionId}/g, customCliCommand);
+  } else {
+    // 默认行为：替换 sessionId 占位符
+    command = command.replace(/{sessionId}/g, sessionId);
+  }
+
+  // 替换 cwd 占位符
+  command = command.replace(/{cwd}/g, cwd);
 
   return {
     command,

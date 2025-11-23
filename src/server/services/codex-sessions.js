@@ -300,16 +300,23 @@ function getSessionById(sessionId) {
  * @returns {Array} 搜索结果
  */
 function searchSessions(keyword) {
-  const sessions = getAllSessions();
+  const files = scanSessionFiles();
   const results = [];
 
-  sessions.forEach(session => {
+  files.forEach(file => {
+    // 使用完整解析获取消息内容
+    const session = parseSession(file.filePath);
+
+    if (!session || !session.messages || !Array.isArray(session.messages)) {
+      return;
+    }
+
     session.messages.forEach((message, index) => {
       if (message.role !== 'user' && message.role !== 'assistant') {
         return;
       }
 
-      const content = message.content.toLowerCase();
+      const content = (message.content || '').toLowerCase();
       const keywordLower = keyword.toLowerCase();
 
       if (content.includes(keywordLower)) {
@@ -320,14 +327,16 @@ function searchSessions(keyword) {
 
         // 确定项目名
         let projectName;
-        if (session.meta.git?.repositoryUrl) {
+        if (session.meta?.git?.repositoryUrl) {
           projectName = session.meta.git.repositoryUrl.split('/').pop().replace('.git', '');
-        } else {
+        } else if (session.meta?.cwd) {
           projectName = path.basename(session.meta.cwd);
+        } else {
+          projectName = 'Unknown';
         }
 
         results.push({
-          sessionId: session.sessionId,
+          sessionId: file.sessionId,
           projectName,
           messageIndex: index,
           role: message.role,

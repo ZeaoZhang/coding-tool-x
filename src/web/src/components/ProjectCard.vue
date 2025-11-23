@@ -79,7 +79,7 @@ const projectName = computed(() => {
 
 // Full path for display (使用后端解析的完整路径)
 const projectPath = computed(() => {
-  return props.project?.fullPath || props.project?.name || ''
+  return props.project?.path || props.project?.fullPath || props.project?.name || ''
 })
 
 const sessionCount = computed(() => props.project?.sessionCount || 0)

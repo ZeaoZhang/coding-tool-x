@@ -2,7 +2,7 @@ const express = require('express');
 const httpProxy = require('http-proxy');
 const http = require('http');
 const chalk = require('chalk');
-const { getActiveCodexChannel } = require('./services/codex-channels');
+const { getActiveGeminiChannel } = require('./services/gemini-channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const { recordRequest } = require('./services/statistics-service');
@@ -15,26 +15,19 @@ let currentPort = null;
 // 用于存储每个请求的元数据
 const requestMetadata = new Map();
 
-// OpenAI 模型定价（每百万 tokens 的价格，单位：美元）
+// Gemini 模型定价（每百万 tokens 的价格，单位：美元）
 const PRICING = {
-  'gpt-4o': { input: 2.5, output: 10 },
-  'gpt-4o-2024-11-20': { input: 2.5, output: 10 },
-  'gpt-4o-mini': { input: 0.15, output: 0.6 },
-  'gpt-4-turbo': { input: 10, output: 30 },
-  'gpt-4': { input: 30, output: 60 },
-  'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
-  'o1': { input: 15, output: 60 },
-  'o1-mini': { input: 3, output: 12 },
-  'o1-pro': { input: 150, output: 600 },
-  'o3': { input: 10, output: 40 },
-  'o3-mini': { input: 1.1, output: 4.4 },
-  'o4-mini': { input: 1.1, output: 4.4 },
-  // Claude 模型（通过 OpenAI 格式访问）
-  'claude-sonnet-4-5-20250929': { input: 3, output: 15 },
-  'claude-sonnet-4-20250514': { input: 3, output: 15 },
-  'claude-opus-4-20250514': { input: 15, output: 75 },
-  'claude-3-5-sonnet-20241022': { input: 3, output: 15 },
-  'claude-3-5-haiku-20241022': { input: 0.8, output: 4 }
+  'gemini-2.5-pro': { input: 1.25, output: 5 },
+  'gemini-2.5-flash': { input: 0.075, output: 0.3 },
+  'gemini-2.0-flash-exp': { input: 0, output: 0 }, // 实验性免费
+  'gemini-2.0-flash-thinking-exp-1219': { input: 0, output: 0 }, // 实验性免费
+  'gemini-1.5-pro': { input: 1.25, output: 5 },
+  'gemini-1.5-flash': { input: 0.075, output: 0.3 },
+  'gemini-1.5-flash-8b': { input: 0.0375, output: 0.15 },
+  'gemini-1.0-pro': { input: 0.5, output: 1.5 },
+  // 旧版本别名
+  'gemini-pro': { input: 0.5, output: 1.5 },
+  'gemini-pro-vision': { input: 0.5, output: 1.5 }
 };
 
 /**
@@ -47,35 +40,30 @@ function calculateCost(model, tokens) {
   // 如果没有精确匹配，尝试模糊匹配
   if (!pricing) {
     const modelLower = model.toLowerCase();
-    if (modelLower.includes('gpt-4o-mini')) {
-      pricing = PRICING['gpt-4o-mini'];
-    } else if (modelLower.includes('gpt-4o')) {
-      pricing = PRICING['gpt-4o'];
-    } else if (modelLower.includes('gpt-4')) {
-      pricing = PRICING['gpt-4'];
-    } else if (modelLower.includes('gpt-3.5')) {
-      pricing = PRICING['gpt-3.5-turbo'];
-    } else if (modelLower.includes('o1-mini')) {
-      pricing = PRICING['o1-mini'];
-    } else if (modelLower.includes('o1-pro')) {
-      pricing = PRICING['o1-pro'];
-    } else if (modelLower.includes('o1')) {
-      pricing = PRICING['o1'];
-    } else if (modelLower.includes('o3-mini')) {
-      pricing = PRICING['o3-mini'];
-    } else if (modelLower.includes('o3')) {
-      pricing = PRICING['o3'];
-    } else if (modelLower.includes('o4-mini')) {
-      pricing = PRICING['o4-mini'];
-    } else if (modelLower.includes('claude')) {
-      // Claude 模型默认使用 Sonnet 定价
-      pricing = PRICING['claude-sonnet-4-5-20250929'];
+    if (modelLower.includes('gemini-2.5-pro')) {
+      pricing = PRICING['gemini-2.5-pro'];
+    } else if (modelLower.includes('gemini-2.5-flash')) {
+      pricing = PRICING['gemini-2.5-flash'];
+    } else if (modelLower.includes('gemini-2.0-flash-thinking')) {
+      pricing = PRICING['gemini-2.0-flash-thinking-exp-1219'];
+    } else if (modelLower.includes('gemini-2.0-flash')) {
+      pricing = PRICING['gemini-2.0-flash-exp'];
+    } else if (modelLower.includes('gemini-1.5-pro')) {
+      pricing = PRICING['gemini-1.5-pro'];
+    } else if (modelLower.includes('gemini-1.5-flash-8b')) {
+      pricing = PRICING['gemini-1.5-flash-8b'];
+    } else if (modelLower.includes('gemini-1.5-flash')) {
+      pricing = PRICING['gemini-1.5-flash'];
+    } else if (modelLower.includes('gemini-1.0-pro')) {
+      pricing = PRICING['gemini-1.0-pro'];
+    } else if (modelLower.includes('gemini-pro')) {
+      pricing = PRICING['gemini-pro'];
     }
   }
 
-  // 默认使用 GPT-4o 的定价
+  // 默认使用 Gemini 2.5 Pro 的定价
   if (!pricing) {
-    pricing = { input: 2.5, output: 10 };
+    pricing = { input: 1.25, output: 5 };
   }
 
   return (
@@ -84,16 +72,16 @@ function calculateCost(model, tokens) {
   );
 }
 
-// 启动 Codex 代理服务器
-async function startCodexProxyServer() {
+// 启动 Gemini 代理服务器
+async function startGeminiProxyServer() {
   if (proxyServer) {
-    console.log('Codex proxy server already running on port', currentPort);
+    console.log('Gemini proxy server already running on port', currentPort);
     return { success: true, port: currentPort };
   }
 
   try {
     const config = loadConfig();
-    const port = config.ports?.codexProxy || 10089;
+    const port = config.ports?.geminiProxy || 10090;
     currentPort = port;
 
     proxyApp = express();
@@ -101,23 +89,36 @@ async function startCodexProxyServer() {
 
     // 监听 proxyReq 事件，修改发往真实API的请求头
     proxy.on('proxyReq', (proxyReq, req, res) => {
-      const activeChannel = getActiveCodexChannel();
+      const activeChannel = getActiveGeminiChannel();
       if (activeChannel) {
         // 记录请求元数据
-        const requestId = `codex-${Date.now()}-${Math.random()}`;
+        const requestId = `gemini-${Date.now()}-${Math.random()}`;
+
+        // 尝试从 URL 中提取模型名称
+        // Gemini 原生 API: /v1beta/models/gemini-2.5-pro:streamGenerateContent
+        // OpenAI 兼容: /v1/chat/completions (模型在请求体中)
+        let modelFromUrl = '';
+        const urlMatch = req.url.match(/\/models\/([\w.-]+):/);
+        if (urlMatch) {
+          modelFromUrl = urlMatch[1];
+        }
+
         requestMetadata.set(req, {
           id: requestId,
           channel: activeChannel.name,
           channelId: activeChannel.id,
-          startTime: Date.now()
+          startTime: Date.now(),
+          modelFromUrl: modelFromUrl
         });
 
-        // 设置真实的 API Key (OpenAI 格式使用 Bearer token)
+        // 设置真实的 API Key
+        // Gemini 通过 OpenAI 兼容格式访问时使用 x-goog-api-key header
+        // 但如果是第三方代理（如 PackyCode），则使用标准的 Authorization Bearer
         proxyReq.removeHeader('authorization');
-        proxyReq.setHeader('authorization', `Bearer ${activeChannel.apiKey}`);
+        proxyReq.removeHeader('x-goog-api-key');
 
-        // 添加 OpenAI Responses API 必需的 header
-        proxyReq.setHeader('openai-beta', 'responses=experimental');
+        // PackyCode 等第三方使用 Bearer token
+        proxyReq.setHeader('authorization', `Bearer ${activeChannel.apiKey}`);
 
         // 确保 content-type 正确
         if (!proxyReq.getHeader('content-type')) {
@@ -128,12 +129,12 @@ async function startCodexProxyServer() {
 
     // 代理所有请求
     proxyApp.use((req, res) => {
-      const activeChannel = getActiveCodexChannel();
+      const activeChannel = getActiveGeminiChannel();
 
       if (!activeChannel) {
         res.status(500).json({
           error: {
-            message: 'No active Codex channel configured',
+            message: 'No active Gemini channel configured',
             type: 'channel_error'
           }
         });
@@ -156,7 +157,7 @@ async function startCodexProxyServer() {
         changeOrigin: true
       }, (err) => {
         if (err) {
-          console.error('Codex proxy error:', err);
+          console.error('Gemini proxy error:', err);
           if (res && !res.headersSent) {
             res.status(502).json({
               error: {
@@ -169,7 +170,7 @@ async function startCodexProxyServer() {
       });
     });
 
-    // 监听代理响应 (OpenAI 格式)
+    // 监听代理响应 (OpenAI 兼容格式)
     proxy.on('proxyRes', (proxyRes, req, res) => {
       const metadata = requestMetadata.get(req);
       if (!metadata) {
@@ -214,37 +215,35 @@ async function startCodexProxyServer() {
 
               const parsed = JSON.parse(data);
 
-              // OpenAI Responses API: 在 response.completed 事件中获取 usage
-              if (parsed.type === 'response.completed' && parsed.response) {
-                // 从 response 对象中提取模型和 usage
-                if (parsed.response.model) {
-                  tokenData.model = parsed.response.model;
-                }
-
-                if (parsed.response.usage) {
-                  tokenData.inputTokens = parsed.response.usage.input_tokens || 0;
-                  tokenData.outputTokens = parsed.response.usage.output_tokens || 0;
-                  tokenData.totalTokens = parsed.response.usage.total_tokens || 0;
-
-                  // 提取详细信息
-                  if (parsed.response.usage.input_tokens_details) {
-                    tokenData.cachedTokens = parsed.response.usage.input_tokens_details.cached_tokens || 0;
-                  }
-                  if (parsed.response.usage.output_tokens_details) {
-                    tokenData.reasoningTokens = parsed.response.usage.output_tokens_details.reasoning_tokens || 0;
-                  }
-                }
-              }
-
-              // 兼容其他格式：直接在顶层的 model 和 usage
+              // 提取模型信息
               if (parsed.model && !tokenData.model) {
                 tokenData.model = parsed.model;
               }
 
-              if (parsed.usage && tokenData.inputTokens === 0) {
-                // 兼容 Responses API 和 Chat Completions API
-                tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
-                tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
+              // 提取 usage 信息 (支持 OpenAI 和 Gemini 原生格式)
+              if (tokenData.inputTokens === 0) {
+                // OpenAI 格式
+                if (parsed.usage) {
+                  tokenData.inputTokens = parsed.usage.prompt_tokens || parsed.usage.input_tokens || 0;
+                  tokenData.outputTokens = parsed.usage.completion_tokens || parsed.usage.output_tokens || 0;
+                  tokenData.totalTokens = parsed.usage.total_tokens || 0;
+
+                  // Gemini 可能包含缓存信息
+                  if (parsed.usage.prompt_tokens_details) {
+                    tokenData.cachedTokens = parsed.usage.prompt_tokens_details.cached_tokens || 0;
+                  }
+                }
+                // Gemini 原生格式
+                else if (parsed.usageMetadata) {
+                  tokenData.inputTokens = parsed.usageMetadata.promptTokenCount || 0;
+                  tokenData.outputTokens = parsed.usageMetadata.candidatesTokenCount || 0;
+                  tokenData.totalTokens = parsed.usageMetadata.totalTokenCount || 0;
+
+                  // Gemini 缓存信息
+                  if (parsed.usageMetadata.cachedContentTokenCount) {
+                    tokenData.cachedTokens = parsed.usageMetadata.cachedContentTokenCount;
+                  }
+                }
               }
             } catch (err) {
               // 忽略解析错误
@@ -261,26 +260,47 @@ async function startCodexProxyServer() {
             if (parsed.model) {
               tokenData.model = parsed.model;
             }
+
+            // OpenAI 格式
             if (parsed.usage) {
-              // 兼容两种格式
-              tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
-              tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
+              tokenData.inputTokens = parsed.usage.prompt_tokens || parsed.usage.input_tokens || 0;
+              tokenData.outputTokens = parsed.usage.completion_tokens || parsed.usage.output_tokens || 0;
+              tokenData.totalTokens = parsed.usage.total_tokens || 0;
+
+              if (parsed.usage.prompt_tokens_details) {
+                tokenData.cachedTokens = parsed.usage.prompt_tokens_details.cached_tokens || 0;
+              }
+            }
+            // Gemini 原生格式
+            else if (parsed.usageMetadata) {
+              tokenData.inputTokens = parsed.usageMetadata.promptTokenCount || 0;
+              tokenData.outputTokens = parsed.usageMetadata.candidatesTokenCount || 0;
+              tokenData.totalTokens = parsed.usageMetadata.totalTokenCount || 0;
+
+              if (parsed.usageMetadata.cachedContentTokenCount) {
+                tokenData.cachedTokens = parsed.usageMetadata.cachedContentTokenCount;
+              }
             }
           } catch (err) {
             // 忽略解析错误
           }
         }
 
-        // 只有当有 token 数据时才记录
-        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0) {
-          const now = new Date();
-          const time = now.toLocaleTimeString('zh-CN', {
-            hour12: false,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          });
+        // 如果没有从响应中提取到模型，使用 URL 中的模型
+        if (!tokenData.model && metadata.modelFromUrl) {
+          tokenData.model = metadata.modelFromUrl;
+        }
 
+        // 记录日志和统计
+        const now = new Date();
+        const time = now.toLocaleTimeString('zh-CN', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+
+        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0) {
           // 广播日志
           broadcastLog({
             id: metadata.id,
@@ -292,7 +312,7 @@ async function startCodexProxyServer() {
             cachedTokens: tokenData.cachedTokens,
             reasoningTokens: tokenData.reasoningTokens,
             totalTokens: tokenData.totalTokens,
-            source: 'codex'
+            source: 'gemini'
           });
 
           // 记录统计数据
@@ -307,7 +327,7 @@ async function startCodexProxyServer() {
           recordRequest({
             id: metadata.id,
             timestamp: new Date(metadata.startTime).toISOString(),
-            toolType: 'codex',
+            toolType: 'gemini',
             channel: metadata.channel,
             channelId: metadata.channelId,
             model: tokenData.model,
@@ -316,6 +336,9 @@ async function startCodexProxyServer() {
             success: true,
             cost: cost
           });
+        } else {
+          console.warn(`[Gemini Proxy] Request ${metadata.id}: No token data found. Model: ${tokenData.model || 'unknown'}`);
+          console.warn(`[Gemini Proxy] Response content-type: ${proxyRes.headers['content-type']}`);
         }
 
         requestMetadata.delete(req);
@@ -324,7 +347,7 @@ async function startCodexProxyServer() {
 
     // 处理代理错误
     proxy.on('error', (err, req, res) => {
-      console.error('Codex proxy error:', err);
+      console.error('Gemini proxy error:', err);
       if (res && !res.headersSent) {
         res.status(502).json({
           error: {
@@ -340,19 +363,19 @@ async function startCodexProxyServer() {
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
-        console.log(`Codex proxy server started on http://127.0.0.1:${port}`);
+        console.log(`Gemini proxy server started on http://127.0.0.1:${port}`);
 
         // 保存代理启动时间
-        saveProxyStartTime('codex');
+        saveProxyStartTime('gemini');
 
         resolve({ success: true, port });
       });
 
       proxyServer.on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
-          console.error(chalk.red(`\nCodex proxy port ${port} is already in use`));
+          console.error(chalk.red(`\nGemini proxy port ${port} is already in use`));
         } else {
-          console.error('Failed to start Codex proxy server:', err);
+          console.error('Failed to start Gemini proxy server:', err);
         }
         proxyServer = null;
         proxyApp = null;
@@ -361,25 +384,25 @@ async function startCodexProxyServer() {
       });
     });
   } catch (err) {
-    console.error('Error starting Codex proxy server:', err);
+    console.error('Error starting Gemini proxy server:', err);
     throw err;
   }
 }
 
-// 停止 Codex 代理服务器
-async function stopCodexProxyServer() {
+// 停止 Gemini 代理服务器
+async function stopGeminiProxyServer() {
   if (!proxyServer) {
-    return { success: true, message: 'Codex proxy server not running' };
+    return { success: true, message: 'Gemini proxy server not running' };
   }
 
   requestMetadata.clear();
 
   return new Promise((resolve) => {
     proxyServer.close(() => {
-      console.log('Codex proxy server stopped');
+      console.log('Gemini proxy server stopped');
 
       // 清除代理启动时间
-      clearProxyStartTime('codex');
+      clearProxyStartTime('gemini');
 
       proxyServer = null;
       proxyApp = null;
@@ -391,22 +414,22 @@ async function stopCodexProxyServer() {
 }
 
 // 获取代理服务器状态
-function getCodexProxyStatus() {
+function getGeminiProxyStatus() {
   const config = loadConfig();
-  const startTime = getProxyStartTime('codex');
-  const runtime = getProxyRuntime('codex');
+  const startTime = getProxyStartTime('gemini');
+  const runtime = getProxyRuntime('gemini');
 
   return {
     running: !!proxyServer,
     port: currentPort,
-    defaultPort: config.ports?.codexProxy || 10089,
+    defaultPort: config.ports?.geminiProxy || 10090,
     startTime,
     runtime
   };
 }
 
 module.exports = {
-  startCodexProxyServer,
-  stopCodexProxyServer,
-  getCodexProxyStatus
+  startGeminiProxyServer,
+  stopGeminiProxyServer,
+  getGeminiProxyStatus
 };

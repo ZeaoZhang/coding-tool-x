@@ -1,0 +1,12 @@
+{
+  "projectsDir": "~/.claude/projects",
+  "defaultProject": null,
+  "maxDisplaySessions": 100,
+  "pageSize": 15,
+  "ports": {
+    "webUI": 10099,
+    "proxy": 10088,
+    "codexProxy": 10089,
+    "geminiProxy": 10090
+  }
+}

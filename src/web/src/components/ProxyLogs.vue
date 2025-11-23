@@ -20,20 +20,24 @@
 
     <div class="logs-table">
       <!-- 表头 -->
-      <div class="table-header">
-        <div class="col col-channel">渠道</div>
-        <div class="col col-token">请求</div>
-        <div class="col col-token">回复</div>
+      <div class="table-header" :class="`table-header-${source}`">
+        <div class="col col-channel" :class="`col-channel-${source}`">渠道</div>
+        <div class="col col-token" :class="`col-token-${source}`">请求</div>
+        <div class="col col-token" :class="`col-token-${source}`">回复</div>
         <template v-if="source === 'claude'">
-          <div class="col col-token">写入</div>
-          <div class="col col-token">命中</div>
+          <div class="col col-token" :class="`col-token-${source}`">写入</div>
+          <div class="col col-token" :class="`col-token-${source}`">命中</div>
         </template>
-        <template v-else>
-          <div class="col col-token">推理</div>
-          <div class="col col-token">缓存</div>
-          <div class="col col-token">总计</div>
+        <template v-else-if="source === 'codex'">
+          <div class="col col-token" :class="`col-token-${source}`">推理</div>
+          <div class="col col-token" :class="`col-token-${source}`">缓存</div>
+          <div class="col col-token" :class="`col-token-${source}`">总计</div>
         </template>
-        <div class="col col-time">时间</div>
+        <template v-else-if="source === 'gemini'">
+          <div class="col col-token" :class="`col-token-${source}`">缓存</div>
+          <div class="col col-token" :class="`col-token-${source}`">总计</div>
+        </template>
+        <div class="col col-time" :class="`col-time-${source}`">时间</div>
       </div>
 
       <!-- 内容区域（可滚动） -->
@@ -46,7 +50,10 @@
         <div
           v-for="log in filteredLogs"
           :key="log.id"
-          :class="log.type === 'action' ? 'action-row' : 'table-row'"
+          :class="[
+            log.type === 'action' ? 'action-row' : 'table-row',
+            { 'new-log': log.isNew }
+          ]"
         >
           <!-- 行为日志样式 -->
           <template v-if="log.type === 'action'">
@@ -61,22 +68,26 @@
           <template v-else>
             <n-tooltip placement="top" :style="{ maxWidth: '300px' }">
               <template #trigger>
-                <div class="table-row-content">
-                  <div class="col col-channel" :title="log.channel">
+                <div class="table-row-content" :class="`table-row-content-${source}`">
+                  <div class="col col-channel" :class="`col-channel-${source}`" :title="log.channel">
                     <n-tag size="small" type="success">{{ log.channel }}</n-tag>
                   </div>
-                  <div class="col col-token">{{ log.inputTokens }}</div>
-                  <div class="col col-token">{{ log.outputTokens }}</div>
+                  <div class="col col-token" :class="`col-token-${source}`">{{ log.inputTokens }}</div>
+                  <div class="col col-token" :class="`col-token-${source}`">{{ log.outputTokens }}</div>
                   <template v-if="source === 'claude'">
-                    <div class="col col-token">{{ log.cacheCreation }}</div>
-                    <div class="col col-token">{{ log.cacheRead }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cacheCreation }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cacheRead }}</div>
                   </template>
-                  <template v-else>
-                    <div class="col col-token">{{ log.reasoningTokens || 0 }}</div>
-                    <div class="col col-token">{{ log.cachedTokens || 0 }}</div>
-                    <div class="col col-token">{{ log.totalTokens || 0 }}</div>
+                  <template v-else-if="source === 'codex'">
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.reasoningTokens || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cachedTokens || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.totalTokens || 0 }}</div>
                   </template>
-                  <div class="col col-time">{{ log.time }}</div>
+                  <template v-else-if="source === 'gemini'">
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cachedTokens || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.totalTokens || 0 }}</div>
+                  </template>
+                  <div class="col col-time" :class="`col-time-${source}`">{{ log.time }}</div>
                 </div>
               </template>
               <div v-if="log.model">
@@ -136,8 +147,8 @@ const todayStats = ref({
 })
 let ws = null
 let isInitialConnection = true // 标记是否是初次连接
+let isReceivingHistory = true // 标记是否正在接收历史日志
 let reconnectAttempts = 0 // 重连尝试次数
-const MAX_RECONNECT_ATTEMPTS = 3 // 最大重连次数
 let reconnectTimer = null // 重连定时器
 let isConnecting = false // 是否正在连接中
 let statsUpdateTimer = null // 统计数据更新定时器
@@ -158,8 +169,14 @@ async function loadTodayStats() {
     const stats = await api.getTodayStatistics()
 
     // 根据 source 获取对应工具类型的统计
-    // Claude 的 toolType 是 'claude-code'，Codex 的是 'codex'
-    const toolType = props.source === 'codex' ? 'codex' : 'claude-code'
+    // Claude 的 toolType 是 'claude-code'，Codex 的是 'codex'，Gemini 的是 'gemini'
+    let toolType = 'claude-code'
+    if (props.source === 'codex') {
+      toolType = 'codex'
+    } else if (props.source === 'gemini') {
+      toolType = 'gemini'
+    }
+
     const toolStats = stats.byToolType?.[toolType]
 
     if (toolStats) {
@@ -189,13 +206,21 @@ function startStatsUpdate() {
 
 // 连接 WebSocket
 function connectWebSocket() {
+  // 清除待处理的重连定时器
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+
   // 避免重复连接
   if (isConnecting || (ws && ws.readyState === WebSocket.CONNECTING)) {
+    console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Already connecting, skipping...`)
     return
   }
 
   // 如果已有连接且是打开状态，直接返回
   if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Already connected`)
     return
   }
 
@@ -217,9 +242,12 @@ function connectWebSocket() {
     const host = window.location.host
     const wsUrl = `${protocol}//${host}/ws`
 
+    console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Connecting to ${wsUrl}...`)
+
     ws = new WebSocket(wsUrl)
 
     ws.onopen = () => {
+      console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Connected successfully`)
       wsConnected.value = true
       isConnecting = false
       reconnectAttempts = 0 // 重置重连次数
@@ -229,6 +257,15 @@ function connectWebSocket() {
         logs.value = []
         isInitialConnection = false
       }
+
+      // 开始接收历史日志
+      isReceivingHistory = true
+
+      // 2秒后认为历史日志接收完毕，之后的日志都是新推送的
+      setTimeout(() => {
+        isReceivingHistory = false
+        console.log(`[${props.source.toUpperCase()} ProxyLogs WS] History receiving completed, now accepting real-time logs`)
+      }, 2000)
     }
 
     ws.onmessage = (event) => {
@@ -246,40 +283,49 @@ function connectWebSocket() {
         const log = {
           ...data,
           id: `${Date.now()}-${Math.random()}`,
-          time
+          time,
+          isNew: !isReceivingHistory // 只有非历史日志才标记为新
         }
 
-        logs.value.push(log)
+        // 检查用户是否在顶部附近（前20px）
+        const isNearTop = tableBody.value ? tableBody.value.scrollTop < 20 : true
+
+        // 添加到日志列表前面（新日志在前）
+        logs.value.unshift(log)
+
+        // 4.5秒后移除高亮效果（与动画时长保持一致，只对新日志生效）
+        if (log.isNew) {
+          setTimeout(() => {
+            log.isNew = false
+          }, 4500)
+        }
 
         // 限制日志数量（最多保留 100 条）
         if (logs.value.length > 100) {
-          logs.value.shift()
+          logs.value.pop()
         }
 
-        // 如果是普通日志（非行为日志），更新统计数据
-        if (log.type !== 'action') {
-          loadTodayStats()
+        // 只在用户在顶部时才自动滚动到顶部，避免打断用户查看历史日志
+        if (isNearTop) {
+          nextTick(() => {
+            if (tableBody.value) {
+              tableBody.value.scrollTop = 0
+            }
+          })
         }
-
-        // 自动滚动到底部，确保最后一条完全可见
-        nextTick(() => {
-          if (tableBody.value) {
-            // 立即滚动到底部，确保新日志可见
-            tableBody.value.scrollTop = tableBody.value.scrollHeight
-          }
-        })
       } catch (err) {
         console.error('Failed to parse WebSocket message:', err)
       }
     }
 
     ws.onerror = (error) => {
-      // 不要打印错误，避免控制台刷屏
+      console.error(`[${props.source.toUpperCase()} ProxyLogs WS] Error:`, error)
       wsConnected.value = false
       isConnecting = false
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Connection closed (code: ${event.code}, reason: ${event.reason || 'none'})`)
       wsConnected.value = false
       isConnecting = false
 
@@ -289,18 +335,17 @@ function connectWebSocket() {
         reconnectTimer = null
       }
 
-      // 限制重连次数，避免无限重连
-      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttempts++
+      // 计算重连延迟（指数退避，最大 30 秒）
+      reconnectAttempts++
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000)
 
-        // 延迟重连，时间递增（5秒、10秒、15秒）
-        const delay = reconnectAttempts * 5000
-        reconnectTimer = setTimeout(() => {
-          if (!wsConnected.value) {
-            connectWebSocket()
-          }
-        }, delay)
-      }
+      console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`)
+
+      reconnectTimer = setTimeout(() => {
+        if (!wsConnected.value) {
+          connectWebSocket()
+        }
+      }, delay)
     }
   } catch (err) {
     console.error('Failed to connect WebSocket:', err)
@@ -377,6 +422,11 @@ defineExpose({
   border-top: 1px solid #e5e7eb;
 }
 
+[data-theme="dark"] .proxy-logs {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-primary);
+}
+
 .logs-header {
   flex-shrink: 0;
   display: flex;
@@ -384,6 +434,10 @@ defineExpose({
   justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid #e5e7eb;
+}
+
+[data-theme="dark"] .logs-header {
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .header-left {
@@ -397,6 +451,10 @@ defineExpose({
   font-size: 14px;
   font-weight: 600;
   color: #18181b;
+}
+
+[data-theme="dark"] .title {
+  color: var(--text-primary);
 }
 
 .today-stats {
@@ -430,6 +488,12 @@ defineExpose({
   white-space: nowrap;
 }
 
+[data-theme="dark"] .table-header {
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--border-primary);
+  color: var(--text-tertiary);
+}
+
 .table-body {
   flex: 1;
   min-height: 0;
@@ -446,10 +510,110 @@ defineExpose({
   font-size: 12px;
   transition: background-color 0.2s;
   cursor: pointer;
+  position: relative;
+}
+
+[data-theme="dark"] .table-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .table-row:hover {
   background: #f9fafb;
+}
+
+[data-theme="dark"] .table-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* 新日志高亮动画 - 柔和版本 */
+.table-row.new-log {
+  animation: newLogPulse 4.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  border-left: 3px solid #18a058;
+  padding-left: 9px;
+}
+
+.action-row.new-log {
+  animation: newLogPulse 4.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  border-left: 3px solid #18a058;
+  padding-left: 9px;
+}
+
+@keyframes newLogPulse {
+  0% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.15) 0%, rgba(24, 160, 88, 0.06) 100%);
+    box-shadow: 0 0 8px 0 rgba(24, 160, 88, 0.2);
+  }
+  5% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.18) 0%, rgba(24, 160, 88, 0.08) 100%);
+    box-shadow: 0 0 12px 1px rgba(24, 160, 88, 0.25);
+  }
+  15% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.16) 0%, rgba(24, 160, 88, 0.07) 100%);
+    box-shadow: 0 0 10px 1px rgba(24, 160, 88, 0.2);
+  }
+  30% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.12) 0%, rgba(24, 160, 88, 0.05) 100%);
+    box-shadow: 0 0 6px 0 rgba(24, 160, 88, 0.15);
+  }
+  50% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.08) 0%, rgba(24, 160, 88, 0.03) 100%);
+    box-shadow: 0 0 4px 0 rgba(24, 160, 88, 0.1);
+  }
+  70% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.04) 0%, rgba(24, 160, 88, 0.015) 100%);
+    box-shadow: 0 0 2px 0 rgba(24, 160, 88, 0.06);
+  }
+  85% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.02) 0%, rgba(24, 160, 88, 0.008) 100%);
+    box-shadow: 0 0 1px 0 rgba(24, 160, 88, 0.03);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 0 rgba(24, 160, 88, 0);
+    border-left-color: transparent;
+  }
+}
+
+/* 暗色主题下的新日志高亮 - 柔和版本 */
+[data-theme="dark"] .table-row.new-log,
+[data-theme="dark"] .action-row.new-log {
+  animation: newLogPulseDark 4.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+@keyframes newLogPulseDark {
+  0% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.2) 0%, rgba(24, 160, 88, 0.08) 100%);
+    box-shadow: 0 0 10px 0 rgba(24, 160, 88, 0.25);
+  }
+  5% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.24) 0%, rgba(24, 160, 88, 0.1) 100%);
+    box-shadow: 0 0 14px 2px rgba(24, 160, 88, 0.3);
+  }
+  15% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.21) 0%, rgba(24, 160, 88, 0.09) 100%);
+    box-shadow: 0 0 12px 1px rgba(24, 160, 88, 0.25);
+  }
+  30% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.16) 0%, rgba(24, 160, 88, 0.07) 100%);
+    box-shadow: 0 0 8px 1px rgba(24, 160, 88, 0.18);
+  }
+  50% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.11) 0%, rgba(24, 160, 88, 0.045) 100%);
+    box-shadow: 0 0 5px 0 rgba(24, 160, 88, 0.12);
+  }
+  70% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.06) 0%, rgba(24, 160, 88, 0.024) 100%);
+    box-shadow: 0 0 3px 0 rgba(24, 160, 88, 0.08);
+  }
+  85% {
+    background: linear-gradient(90deg, rgba(24, 160, 88, 0.03) 0%, rgba(24, 160, 88, 0.012) 100%);
+    box-shadow: 0 0 1px 0 rgba(24, 160, 88, 0.04);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 0 rgba(24, 160, 88, 0);
+    border-left-color: transparent;
+  }
 }
 
 .table-row-content {
@@ -469,6 +633,12 @@ defineExpose({
   border-left: 3px solid #18a058;
 }
 
+[data-theme="dark"] .action-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(24, 160, 88, 0.12);
+  color: #4ade80;
+}
+
 .action-message {
   flex: 1;
   font-weight: 500;
@@ -479,7 +649,11 @@ defineExpose({
   font-family: monospace;
   color: #6b7280;
   margin-left: 12px;
-  margin-right: 7px;
+  margin-right: 22px;
+}
+
+[data-theme="dark"] .action-time {
+  color: var(--text-tertiary);
 }
 
 .col {
@@ -490,8 +664,77 @@ defineExpose({
   text-overflow: ellipsis;
 }
 
+/* Claude 渠道列宽 (6列) */
+.col-channel-claude {
+  flex: 0 0 90px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.col-token-claude {
+  flex: 0 0 68px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-time-claude {
+  flex: 0 0 100px;
+  min-width: 100px;
+  font-family: monospace;
+  font-size: 11px;
+  justify-content: flex-end;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
+/* Codex 渠道列宽 (7列，需要压缩) */
+.col-channel-codex {
+  flex: 0 0 75px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.col-token-codex {
+  flex: 0 0 58px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-time-codex {
+  flex: 0 0 92px;
+  min-width: 92px;
+  font-family: monospace;
+  font-size: 11px;
+  justify-content: flex-end;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
+/* Gemini 渠道列宽 (6列) */
+.col-channel-gemini {
+  flex: 0 0 90px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.col-token-gemini {
+  flex: 0 0 68px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-time-gemini {
+  flex: 0 0 100px;
+  min-width: 100px;
+  font-family: monospace;
+  font-size: 11px;
+  justify-content: flex-end;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
+/* 通用样式（保留以防兼容性问题） */
 .col-channel {
-  flex: 0 0 120px;
   min-width: 0;
   overflow: hidden;
 }
@@ -503,14 +746,11 @@ defineExpose({
 }
 
 .col-token {
-  flex: 0 0 65px;
   justify-content: center;
   min-width: 0;
 }
 
 .col-time {
-  flex: 0 0 70px;
-  min-width: 0;
   font-family: monospace;
   font-size: 11px;
   justify-content: flex-end;
@@ -523,6 +763,10 @@ defineExpose({
   color: #9ca3af;
 }
 
+[data-theme="dark"] .empty-state {
+  color: var(--text-tertiary);
+}
+
 .logs-footer {
   display: flex;
   align-items: center;
@@ -531,6 +775,11 @@ defineExpose({
   border-top: 1px solid #e5e7eb;
   font-size: 12px;
   color: #6b7280;
+}
+
+[data-theme="dark"] .logs-footer {
+  border-top: 1px solid var(--border-primary);
+  color: var(--text-tertiary);
 }
 
 .status {
@@ -544,7 +793,15 @@ defineExpose({
   color: #10b981;
 }
 
+[data-theme="dark"] .status.connected {
+  color: #4ade80;
+}
+
 .count {
   color: #6b7280;
+}
+
+[data-theme="dark"] .count {
+  color: var(--text-tertiary);
 }
 </style>

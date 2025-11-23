@@ -8,9 +8,10 @@ const DEFAULT_CONFIG = {
   maxDisplaySessions: 100,
   pageSize: 15,
   ports: {
-    webUI: 10099,      // Web UI 页面端口 (同时用于 WebSocket)
-    proxy: 10088,      // Claude 代理服务端口
-    codexProxy: 10089  // Codex 代理服务端口
+    webUI: 10099,       // Web UI 页面端口 (同时用于 WebSocket)
+    proxy: 10088,       // Claude 代理服务端口
+    codexProxy: 10089,  // Codex 代理服务端口
+    geminiProxy: 10090  // Gemini 代理服务端口
   }
 };
 

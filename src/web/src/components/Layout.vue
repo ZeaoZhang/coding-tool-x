@@ -21,7 +21,7 @@
           <n-icon :size="18" class="nav-icon">
             <HomeOutline />
           </n-icon>
-          <span class="nav-label">首页</span>
+          <span class="nav-label">Home</span>
         </div>
         <div
           class="nav-tab"
@@ -42,6 +42,16 @@
             <CodeSlashOutline />
           </n-icon>
           <span class="nav-label">Codex</span>
+        </div>
+        <div
+          class="nav-tab"
+          :class="{ active: currentChannel === 'gemini' }"
+          @click="router.push({ name: 'gemini-projects' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <ColorPaletteOutline />
+          </n-icon>
+          <span class="nav-label">Gemini</span>
         </div>
       </div>
 
@@ -92,18 +102,17 @@
         <router-view />
       </div>
 
-      <!-- Right Panel (Global) - Only show if at least one panel is enabled -->
-      <transition name="slide-right">
-        <RightPanel
-          v-if="showChannels || (showLogs && effectiveProxyRunning)"
-          :show-channels="showChannels"
-          :show-logs="showLogs"
-          :proxy-running="effectiveProxyRunning"
-          :proxy-loading="effectiveProxyLoading"
-          @proxy-toggle="handleProxyToggle"
-          @show-recent="showRecentDrawer = true"
-        />
-      </transition>
+      <!-- Right Panel (Global) - Only show if not on home page and at least one panel is enabled -->
+      <!-- 首页不显示过渡动画，避免页面从窄变宽的卡顿感 -->
+      <RightPanel
+        v-if="shouldShowRightPanel"
+        :show-channels="showChannels"
+        :show-logs="showLogs"
+        :proxy-running="effectiveProxyRunning"
+        :proxy-loading="effectiveProxyLoading"
+        @proxy-toggle="handleProxyToggle"
+        @show-recent="showRecentDrawer = true"
+      />
     </div>
 
     <!-- Recent Sessions Drawer -->
@@ -192,7 +201,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, LayersOutline, CodeSlashOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, LayersOutline, CodeSlashOutline, ColorPaletteOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import SettingsDrawer from './SettingsDrawer.vue'
@@ -200,9 +209,22 @@ import HeaderButton from './HeaderButton.vue'
 import api from '../api'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
+import { useProxyState } from '../composables/useProxyState'
 
 // 使用主题 composable
 const { isDark, toggleTheme } = useTheme()
+
+// 使用全局代理状态 composable
+const {
+  claudeProxy,
+  codexProxy,
+  geminiProxy,
+  toggleClaudeProxy,
+  toggleCodexProxy,
+  toggleGeminiProxy,
+  initialize: initializeProxyState,
+  cleanup: cleanupProxyState
+} = useProxyState()
 
 const router = useRouter()
 const route = useRoute()
@@ -211,22 +233,26 @@ const route = useRoute()
 const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => route.meta.channel || null)
 
+// 是否显示右侧面板（首页不显示）
+const shouldShowRightPanel = computed(() => {
+  return currentChannel.value && (showChannels.value || (showLogs.value && effectiveProxyRunning.value))
+})
+
 const showRecentDrawer = ref(false)
 const showSettingsDrawer = ref(false)
 const showHelpModal = ref(false)
-const proxyRunning = ref(false)
-const proxyLoading = ref(false)
-const codexProxyRunning = ref(false)
-const codexProxyLoading = ref(false)
 const globalLoading = ref(true) // 全局 loading 状态
-let statusCheckInterval = null
 
 // 根据当前 channel 计算有效的代理状态
 const effectiveProxyRunning = computed(() => {
-  return currentChannel.value === 'codex' ? codexProxyRunning.value : proxyRunning.value
+  if (currentChannel.value === 'codex') return codexProxy.value.running
+  if (currentChannel.value === 'gemini') return geminiProxy.value.running
+  return claudeProxy.value.running
 })
 const effectiveProxyLoading = computed(() => {
-  return currentChannel.value === 'codex' ? codexProxyLoading.value : proxyLoading.value
+  if (currentChannel.value === 'codex') return codexProxy.value.loading
+  if (currentChannel.value === 'gemini') return geminiProxy.value.loading
+  return claudeProxy.value.loading
 })
 
 // Panel visibility settings (with localStorage persistence)
@@ -274,107 +300,27 @@ function openGithub() {
   window.open('https://github.com/CooperJiang/cc-tool', '_blank')
 }
 
-// 检查代理状态
-async function checkProxyStatus(isInitial = false) {
-  try {
-    const status = await api.getProxyStatus()
-    proxyRunning.value = status.proxy.running
-  } catch (err) {
-    console.error('Failed to check proxy status:', err)
-    // 即使失败也要关闭 loading
-  } finally {
-    // 初次加载完成后关闭全局 loading
-    if (isInitial) {
-      globalLoading.value = false
-    }
-  }
-}
-
-// 切换代理状态
-async function toggleProxy(newValue) {
-  proxyLoading.value = true
-
-  // 保存旧值，如果失败需要恢复
-  const oldValue = !newValue
-
-  try {
-    if (newValue) {
-      // 启动代理
-      const result = await api.startProxy()
-      message.success(`代理已启动，端口: ${result.port}`)
-
-      // 立即更新状态，让日志面板立即显示（不等待后台检查）
-      proxyRunning.value = true
-
-      // 自动展示日志面板
-      showLogs.value = true
-      savePanelSettings()
-
-      // 后台异步检查状态确认，不阻塞 UI
-      checkProxyStatus().catch(err => console.error('Background status check failed:', err))
-    } else {
-      // 停止代理
-      await api.stopProxy()
-      message.success('代理已停止并恢复配置')
-
-      // 立即更新状态，让日志面板立即隐藏
-      proxyRunning.value = false
-
-      // 后台异步检查状态确认
-      checkProxyStatus().catch(err => console.error('Background status check failed:', err))
-    }
-  } catch (err) {
-    message.error('操作失败: ' + err.message)
-    // 恢复旧值
-    proxyRunning.value = oldValue
-  } finally {
-    proxyLoading.value = false
-  }
-}
-
-// 检查 Codex 代理状态
-async function checkCodexProxyStatus() {
-  try {
-    const status = await api.getCodexProxyStatus()
-    codexProxyRunning.value = status.proxy.running
-  } catch (err) {
-    console.error('Failed to check Codex proxy status:', err)
-  }
-}
-
-// 切换 Codex 代理状态
-async function toggleCodexProxy(newValue) {
-  codexProxyLoading.value = true
-  const oldValue = !newValue
-
-  try {
-    if (newValue) {
-      const result = await api.startCodexProxy()
-      message.success(`Codex 代理已启动，端口: ${result.port}`)
-      codexProxyRunning.value = true
-      showLogs.value = true
-      savePanelSettings()
-      checkCodexProxyStatus().catch(err => console.error('Background status check failed:', err))
-    } else {
-      await api.stopCodexProxy()
-      message.success('Codex 代理已停止并恢复配置')
-      codexProxyRunning.value = false
-      checkCodexProxyStatus().catch(err => console.error('Background status check failed:', err))
-    }
-  } catch (err) {
-    message.error('操作失败: ' + err.message)
-    codexProxyRunning.value = oldValue
-  } finally {
-    codexProxyLoading.value = false
-  }
-}
-
 // 统一的代理切换处理器（根据当前 channel 路由到正确的代理）
-function handleProxyToggle(newValue) {
+async function handleProxyToggle(newValue) {
+  let result
   if (currentChannel.value === 'codex') {
-    toggleCodexProxy(newValue)
+    result = await toggleCodexProxy(newValue)
+  } else if (currentChannel.value === 'gemini') {
+    result = await toggleGeminiProxy(newValue)
   } else {
-    toggleProxy(newValue)
+    result = await toggleClaudeProxy(newValue)
+  }
+
+  // 处理结果
+  if (result.success) {
+    message.success(newValue ? '代理已启动' : '代理已停止')
+    // 自动展示/隐藏日志面板
+    if (newValue) {
+      showLogs.value = true
+    }
+    savePanelSettings()
+  } else {
+    message.error(result.error || '操作失败')
   }
 }
 
@@ -392,15 +338,8 @@ onMounted(() => {
   // 监听面板可见性变化事件
   window.addEventListener('panel-visibility-change', handlePanelVisibilityChange)
 
-  // 初始检查状态（传入 isInitial = true）
-  checkProxyStatus(true)
-  checkCodexProxyStatus() // 也检查 Codex 代理状态
-
-  // 每30秒检查一次状态（降低请求频率）
-  statusCheckInterval = setInterval(() => {
-    checkProxyStatus(false)
-    checkCodexProxyStatus()
-  }, 30000)
+  // 初始化全局代理状态（包含自动检查和定时刷新）
+  initializeProxyState()
 
   // 添加超时保护，确保 3 秒后无论如何都关闭 loading
   setTimeout(() => {
@@ -412,9 +351,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (statusCheckInterval) {
-    clearInterval(statusCheckInterval)
-  }
+  // 清理全局代理状态
+  cleanupProxyState()
   // 移除事件监听
   window.removeEventListener('panel-visibility-change', handlePanelVisibilityChange)
 })
@@ -600,6 +538,8 @@ onUnmounted(() => {
 .main-container {
   display: flex;
   flex: 1;
+  height: calc(100vh - 64px);
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -621,30 +561,8 @@ onUnmounted(() => {
 .left-content {
   flex: 1;
   min-width: 0;
+  height: 100%;
   overflow: hidden;
-  transition: all 0.3s ease-out;
-}
-
-/* Slide in from right animation */
-.slide-right-enter-active,
-.slide-right-leave-active {
-  transition: transform 0.3s ease-out, opacity 0.3s ease-out;
-}
-
-.slide-right-enter-from {
-  transform: translateX(100%);
-  opacity: 0;
-}
-
-.slide-right-leave-to {
-  transform: translateX(100%);
-  opacity: 0;
-}
-
-.slide-right-enter-to,
-.slide-right-leave-from {
-  transform: translateX(0);
-  opacity: 1;
 }
 
 /* Help Modal Styles */

@@ -15,8 +15,10 @@ async function handlePortConfig() {
   const config = loadConfig();
 
   console.log(chalk.cyan('当前端口配置:'));
-  console.log(chalk.gray(`• Web UI 页面端口:  ${config.ports.webUI} (同时用于 WebSocket)`));
-  console.log(chalk.gray(`• 代理服务端口:     ${config.ports.proxy}\n`));
+  console.log(chalk.gray(`• Web UI 页面端口:     ${config.ports.webUI} (同时用于 WebSocket)`));
+  console.log(chalk.gray(`• Claude 代理端口:     ${config.ports.proxy}`));
+  console.log(chalk.gray(`• Codex 代理端口:      ${config.ports.codexProxy || 10089}`));
+  console.log(chalk.gray(`• Gemini 代理端口:     ${config.ports.geminiProxy || 10090}\n`));
 
   console.log(chalk.yellow('说明:'));
   console.log(chalk.gray('• 端口范围: 1024-65535'));
@@ -40,8 +42,34 @@ async function handlePortConfig() {
     {
       type: 'input',
       name: 'proxy',
-      message: '代理服务端口:',
+      message: 'Claude 代理服务端口:',
       default: config.ports.proxy,
+      validate: (input) => {
+        const port = parseInt(input);
+        if (isNaN(port) || port < 1024 || port > 65535) {
+          return '端口必须是 1024-65535 之间的数字';
+        }
+        return true;
+      },
+    },
+    {
+      type: 'input',
+      name: 'codexProxy',
+      message: 'Codex 代理服务端口:',
+      default: config.ports.codexProxy || 10089,
+      validate: (input) => {
+        const port = parseInt(input);
+        if (isNaN(port) || port < 1024 || port > 65535) {
+          return '端口必须是 1024-65535 之间的数字';
+        }
+        return true;
+      },
+    },
+    {
+      type: 'input',
+      name: 'geminiProxy',
+      message: 'Gemini 代理服务端口:',
+      default: config.ports.geminiProxy || 10090,
       validate: (input) => {
         const port = parseInt(input);
         if (isNaN(port) || port < 1024 || port > 65535) {
@@ -56,6 +84,8 @@ async function handlePortConfig() {
   config.ports = {
     webUI: parseInt(answers.webUI),
     proxy: parseInt(answers.proxy),
+    codexProxy: parseInt(answers.codexProxy),
+    geminiProxy: parseInt(answers.geminiProxy),
   };
 
   // 保存配置

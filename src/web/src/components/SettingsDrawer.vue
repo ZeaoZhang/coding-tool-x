@@ -196,62 +196,44 @@
                     </n-text>
                   </div>
 
-                  <div class="theme-options">
-                    <!-- 亮色主题 -->
+                  <div class="simple-theme-options">
+                    <!-- 亮色模式 -->
                     <div
-                      class="theme-card"
+                      class="simple-theme-item"
                       :class="{ active: !isDark }"
                       @click="isDark && toggleTheme()"
                     >
-                      <div class="theme-preview light-preview">
-                        <div class="preview-header"></div>
-                        <div class="preview-content">
-                          <div class="preview-sidebar"></div>
-                          <div class="preview-main"></div>
-                        </div>
+                      <n-icon :size="20" class="theme-icon">
+                        <SunnyOutline />
+                      </n-icon>
+                      <div class="theme-text">
+                        <n-text strong>亮色模式</n-text>
+                        <n-text depth="3" style="font-size: 12px;">经典的浅色主题</n-text>
                       </div>
-                      <div class="theme-info">
-                        <n-icon :size="20" class="theme-icon">
-                          <SunnyOutline />
+                      <div v-if="!isDark" class="theme-check">
+                        <n-icon :size="20" color="#18a058">
+                          <CheckmarkCircleOutline />
                         </n-icon>
-                        <div class="theme-details">
-                          <n-text strong class="theme-name">亮色模式</n-text>
-                          <n-text depth="3" class="theme-desc">经典的浅色主题</n-text>
-                        </div>
-                        <div v-if="!isDark" class="theme-check">
-                          <n-icon :size="20" color="#18a058">
-                            <CheckmarkCircleOutline />
-                          </n-icon>
-                        </div>
                       </div>
                     </div>
 
-                    <!-- 暗色主题 -->
+                    <!-- 暗色模式 -->
                     <div
-                      class="theme-card"
+                      class="simple-theme-item"
                       :class="{ active: isDark }"
                       @click="!isDark && toggleTheme()"
                     >
-                      <div class="theme-preview dark-preview">
-                        <div class="preview-header"></div>
-                        <div class="preview-content">
-                          <div class="preview-sidebar"></div>
-                          <div class="preview-main"></div>
-                        </div>
+                      <n-icon :size="20" class="theme-icon">
+                        <MoonOutline />
+                      </n-icon>
+                      <div class="theme-text">
+                        <n-text strong>暗色模式</n-text>
+                        <n-text depth="3" style="font-size: 12px;">护眼的深色主题</n-text>
                       </div>
-                      <div class="theme-info">
-                        <n-icon :size="20" class="theme-icon">
-                          <MoonOutline />
+                      <div v-if="isDark" class="theme-check">
+                        <n-icon :size="20" color="#18a058">
+                          <CheckmarkCircleOutline />
                         </n-icon>
-                        <div class="theme-details">
-                          <n-text strong class="theme-name">暗色模式</n-text>
-                          <n-text depth="3" class="theme-desc">护眼的深色主题</n-text>
-                        </div>
-                        <div v-if="isDark" class="theme-check">
-                          <n-icon :size="20" color="#18a058">
-                            <CheckmarkCircleOutline />
-                          </n-icon>
-                        </div>
                       </div>
                     </div>
                   </div>
@@ -268,16 +250,163 @@
                 </n-icon>
                 <div>
                   <h3 class="panel-title">高级设置</h3>
-                  <n-text depth="3" class="panel-subtitle">高级功能和实验性选项</n-text>
+                  <n-text depth="3" class="panel-subtitle">端口配置和高级选项</n-text>
                 </div>
               </div>
             </div>
             <div class="panel-body">
-              <n-empty description="此功能即将推出" style="margin-top: 60px;">
-                <template #icon>
-                  <n-icon size="48"><OptionsOutline /></n-icon>
-                </template>
-              </n-empty>
+              <div class="setting-group">
+                <!-- 端口配置 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>端口配置</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      修改后需要重启服务器才能生效
+                    </n-text>
+                  </div>
+
+                  <div class="ports-grid">
+                    <!-- Web UI 端口 -->
+                    <div class="port-field">
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Web UI 端口</n-text>
+                      <n-input-number
+                        v-model:value="ports.webUI"
+                        :min="1024"
+                        :max="65535"
+                        :show-button="false"
+                        placeholder="10099"
+                      >
+                        <template #prefix>
+                          <n-icon><CheckmarkCircleOutline /></n-icon>
+                        </template>
+                      </n-input-number>
+                    </div>
+
+                    <!-- Claude 代理端口 -->
+                    <div class="port-field">
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Claude 代理</n-text>
+                      <n-input-number
+                        v-model:value="ports.proxy"
+                        :min="1024"
+                        :max="65535"
+                        :show-button="false"
+                        placeholder="10088"
+                      >
+                        <template #prefix>
+                          <n-icon><OptionsOutline /></n-icon>
+                        </template>
+                      </n-input-number>
+                    </div>
+
+                    <!-- Codex 代理端口 -->
+                    <div class="port-field">
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Codex 代理</n-text>
+                      <n-input-number
+                        v-model:value="ports.codexProxy"
+                        :min="1024"
+                        :max="65535"
+                        :show-button="false"
+                        placeholder="10089"
+                      >
+                        <template #prefix>
+                          <n-icon><OptionsOutline /></n-icon>
+                        </template>
+                      </n-input-number>
+                    </div>
+
+                    <!-- Gemini 代理端口 -->
+                    <div class="port-field">
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Gemini 代理</n-text>
+                      <n-input-number
+                        v-model:value="ports.geminiProxy"
+                        :min="1024"
+                        :max="65535"
+                        :show-button="false"
+                        placeholder="10090"
+                      >
+                        <template #prefix>
+                          <n-icon><OptionsOutline /></n-icon>
+                        </template>
+                      </n-input-number>
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
+                <!-- 日志和性能设置 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>日志和性能</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      控制日志显示和数据刷新行为
+                    </n-text>
+                  </div>
+
+                  <div class="advanced-options">
+                    <!-- 日志保留数量 -->
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">实时日志保留数量</n-text>
+                        <n-text depth="3" style="font-size: 12px;">超过此数量将自动清理旧日志</n-text>
+                      </div>
+                      <n-input-number
+                        v-model:value="advancedSettings.maxLogs"
+                        :min="50"
+                        :max="500"
+                        :step="10"
+                        style="width: 140px;"
+                      >
+                        <template #suffix>
+                          <n-text depth="3" style="font-size: 12px;">条</n-text>
+                        </template>
+                      </n-input-number>
+                    </div>
+
+                    <!-- 统计刷新间隔 -->
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">统计数据刷新间隔</n-text>
+                        <n-text depth="3" style="font-size: 12px;">自动刷新今日统计的时间间隔</n-text>
+                      </div>
+                      <n-input-number
+                        v-model:value="advancedSettings.statsInterval"
+                        :min="10"
+                        :max="300"
+                        :step="5"
+                        style="width: 140px;"
+                      >
+                        <template #suffix>
+                          <n-text depth="3" style="font-size: 12px;">秒</n-text>
+                        </template>
+                      </n-input-number>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <n-space justify="end">
+                <n-button
+                  size="large"
+                  @click="show = false"
+                >
+                  取消
+                </n-button>
+                <n-button
+                  type="primary"
+                  size="large"
+                  :loading="savingPorts"
+                  :disabled="!portsChanged"
+                  @click="handleSavePorts"
+                >
+                  <template #icon>
+                    <n-icon><SaveOutline /></n-icon>
+                  </template>
+                  保存端口配置
+                </n-button>
+              </n-space>
             </div>
           </div>
         </div>
@@ -290,7 +419,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
-  NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch
+  NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber
 } from 'naive-ui'
 import {
   SettingsOutline, TerminalOutline, ColorPaletteOutline, OptionsOutline,
@@ -328,6 +457,41 @@ const { isDark, toggleTheme } = useTheme()
 const showChannels = ref(true)
 const showLogs = ref(true)
 
+// 端口配置
+const ports = ref({
+  webUI: 10099,
+  proxy: 10088,
+  codexProxy: 10089,
+  geminiProxy: 10090
+})
+const originalPorts = ref({
+  webUI: 10099,
+  proxy: 10088,
+  codexProxy: 10089,
+  geminiProxy: 10090
+})
+const savingPorts = ref(false)
+
+// 高级设置
+const advancedSettings = ref({
+  maxLogs: 100,
+  statsInterval: 30
+})
+const originalAdvancedSettings = ref({
+  maxLogs: 100,
+  statsInterval: 30
+})
+
+// 检查配置是否有修改
+const portsChanged = computed(() => {
+  return ports.value.webUI !== originalPorts.value.webUI ||
+    ports.value.proxy !== originalPorts.value.proxy ||
+    ports.value.codexProxy !== originalPorts.value.codexProxy ||
+    ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
+    advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
+    advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval
+})
+
 // 菜单项配置
 const menuItems = ref([
   {
@@ -343,9 +507,7 @@ const menuItems = ref([
   {
     key: 'advanced',
     label: '高级设置',
-    icon: OptionsOutline,
-    badge: '即将推出',
-    badgeType: 'warning'
+    icon: OptionsOutline
   }
 ])
 
@@ -453,6 +615,72 @@ function handleShowLogsChange(value) {
   }))
 }
 
+// 加载端口和高级配置
+async function loadPortsConfig() {
+  try {
+    const response = await fetch('/api/config/advanced')
+    if (response.ok) {
+      const data = await response.json()
+      ports.value = {
+        webUI: data.ports?.webUI || 10099,
+        proxy: data.ports?.proxy || 10088,
+        codexProxy: data.ports?.codexProxy || 10089,
+        geminiProxy: data.ports?.geminiProxy || 10090
+      }
+      originalPorts.value = { ...ports.value }
+
+      advancedSettings.value = {
+        maxLogs: data.maxLogs || 100,
+        statsInterval: data.statsInterval || 30
+      }
+      originalAdvancedSettings.value = { ...advancedSettings.value }
+    }
+  } catch (error) {
+    console.error('Failed to load advanced config:', error)
+  }
+}
+
+// 保存端口和高级配置
+async function handleSavePorts() {
+  savingPorts.value = true
+  try {
+    const response = await fetch('/api/config/advanced', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ports: ports.value,
+        maxLogs: advancedSettings.value.maxLogs,
+        statsInterval: advancedSettings.value.statsInterval
+      })
+    })
+
+    if (response.ok) {
+      originalPorts.value = { ...ports.value }
+      originalAdvancedSettings.value = { ...advancedSettings.value }
+
+      // 广播配置更新事件
+      window.dispatchEvent(new CustomEvent('advanced-config-change', {
+        detail: {
+          maxLogs: advancedSettings.value.maxLogs,
+          statsInterval: advancedSettings.value.statsInterval
+        }
+      }))
+
+      message.success('配置已保存，端口修改需要重启服务器生效')
+    } else {
+      const error = await response.json()
+      message.error('保存失败：' + (error.error || '未知错误'))
+    }
+  } catch (error) {
+    console.error('Failed to save advanced config:', error)
+    message.error('保存失败：' + error.message)
+  } finally {
+    savingPorts.value = false
+  }
+}
+
 // 加载设置
 onMounted(() => {
   loadPanelSettings()
@@ -463,6 +691,7 @@ watch(show, (newVal) => {
   if (newVal) {
     loadTerminals()
     loadPanelSettings()
+    loadPortsConfig()
   }
 })
 </script>
@@ -784,153 +1013,70 @@ watch(show, (newVal) => {
   margin-right: 16px;
 }
 
-/* 主题选择器样式 */
-.theme-options {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+/* 简化主题选择器样式 */
+.simple-theme-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   margin-top: 16px;
 }
 
-.theme-card {
-  border: 2px solid var(--border-primary);
-  border-radius: 12px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  background: var(--bg-primary);
-}
-
-.theme-card:hover {
-  border-color: #18a058;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08);
-}
-
-[data-theme="dark"] .theme-card:hover {
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
-}
-
-.theme-card.active {
-  border-color: #18a058;
-  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.15);
-}
-
-[data-theme="dark"] .theme-card.active {
-  border-color: #34d399;
-  box-shadow: 0 4px 16px rgba(52, 211, 153, 0.2);
-}
-
-/* 主题预览区 */
-.theme-preview {
-  height: 140px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.light-preview {
-  background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
-}
-
-.dark-preview {
-  background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
-}
-
-.preview-header {
-  height: 20px;
-  border-radius: 6px;
-}
-
-.light-preview .preview-header {
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.dark-preview .preview-header {
-  background: #374151;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.preview-content {
-  flex: 1;
-  display: flex;
-  gap: 8px;
-}
-
-.preview-sidebar {
-  width: 30%;
-  border-radius: 6px;
-}
-
-.light-preview .preview-sidebar {
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.dark-preview .preview-sidebar {
-  background: #374151;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.preview-main {
-  flex: 1;
-  border-radius: 6px;
-}
-
-.light-preview .preview-main {
-  background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.dark-preview .preview-main {
-  background: #1f2937;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-/* 主题信息区 */
-.theme-info {
-  padding: 16px;
+.simple-theme-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  border-top: 1px solid var(--border-primary);
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.theme-icon {
+[data-theme="dark"] .simple-theme-item {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.simple-theme-item:hover {
+  border-color: #18a058;
+  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
+}
+
+.simple-theme-item.active {
+  border-color: #18a058;
+  background: rgba(24, 160, 88, 0.05);
+}
+
+[data-theme="dark"] .simple-theme-item.active {
+  border-color: #34d399;
+  background: rgba(52, 211, 153, 0.1);
+}
+
+.simple-theme-item .theme-icon {
   flex-shrink: 0;
   color: var(--text-secondary);
   transition: all 0.2s ease;
 }
 
-.theme-card:hover .theme-icon {
+.simple-theme-item:hover .theme-icon {
   color: #18a058;
   transform: scale(1.1);
 }
 
-.theme-card.active .theme-icon {
+.simple-theme-item.active .theme-icon {
   color: #18a058;
 }
 
-[data-theme="dark"] .theme-card.active .theme-icon {
+[data-theme="dark"] .simple-theme-item.active .theme-icon {
   color: #34d399;
 }
 
-.theme-details {
+.theme-text {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-.theme-name {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.theme-desc {
-  font-size: 12px;
 }
 
 .theme-check {
@@ -938,5 +1084,64 @@ watch(show, (newVal) => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 端口配置样式 */
+.ports-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.port-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.port-field :deep(.n-input-number) {
+  width: 100%;
+}
+
+.port-field :deep(.n-input-number .n-input__input) {
+  font-family: monospace;
+  font-size: 13px;
+}
+
+/* 高级设置选项样式 */
+.advanced-options {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.option-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .option-field {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.option-field:hover {
+  border-color: #18a058;
+  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
+}
+
+.option-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  margin-right: 16px;
 }
 </style>

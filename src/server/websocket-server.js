@@ -81,6 +81,9 @@ function startWebSocketServer(httpServer) {
       wsClients.add(ws);
       console.log(`✅ WebSocket client connected (total: ${wsClients.size})`);
 
+      // 标记客户端存活
+      ws.isAlive = true;
+
       // 发送历史日志给新连接的客户端
       if (logsCache.length > 0) {
         logsCache.forEach(log => {
@@ -90,6 +93,16 @@ function startWebSocketServer(httpServer) {
         });
         console.log(`📤 Sent ${logsCache.length} historical logs to new client`);
       }
+
+      // 响应 pong 消息
+      ws.on('pong', () => {
+        ws.isAlive = true;
+      });
+
+      // 响应客户端的心跳 ping
+      ws.on('ping', () => {
+        ws.pong();
+      });
 
       ws.on('close', () => {
         wsClients.delete(ws);
@@ -101,6 +114,25 @@ function startWebSocketServer(httpServer) {
         wsClients.delete(ws);
       });
     });
+
+    // 心跳检测：每 30 秒 ping 一次所有客户端
+    const heartbeatInterval = setInterval(() => {
+      wsClients.forEach(ws => {
+        if (ws.isAlive === false) {
+          // 客户端没有响应 pong，断开连接
+          console.log('❌ WebSocket client timeout, terminating');
+          wsClients.delete(ws);
+          return ws.terminate();
+        }
+
+        // 标记为未响应，等待 pong
+        ws.isAlive = false;
+        ws.ping();
+      });
+    }, 30000);
+
+    // 保存 interval 以便停止时清除
+    wss.heartbeatInterval = heartbeatInterval;
 
     wss.on('error', (error) => {
       console.error('WebSocket server error:', error);
@@ -120,6 +152,12 @@ function startWebSocketServer(httpServer) {
 function stopWebSocketServer() {
   if (!wss) {
     return;
+  }
+
+  // 清除心跳定时器
+  if (wss.heartbeatInterval) {
+    clearInterval(wss.heartbeatInterval);
+    wss.heartbeatInterval = null;
   }
 
   // 关闭所有客户端连接

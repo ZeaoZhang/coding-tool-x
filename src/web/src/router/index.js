@@ -37,6 +37,20 @@ const routes = [
     props: true,
     meta: { channel: 'codex' }
   },
+  // Gemini 渠道路由
+  {
+    path: '/gemini',
+    name: 'gemini-projects',
+    component: ProjectList,
+    meta: { channel: 'gemini' }
+  },
+  {
+    path: '/gemini/sessions/:projectName',
+    name: 'gemini-sessions',
+    component: SessionList,
+    props: true,
+    meta: { channel: 'gemini' }
+  },
   // 404 重定向到首页
   {
     path: '/:pathMatch(.*)*',
