@@ -66,7 +66,7 @@ ct ui
 **Web UI 界面预览：**
 
 <div align="center">
-  <img src="docs/cc-tool.png" alt="Web UI 界面截图" width="90%" />
+  <img src="docs/home.png" alt="Web UI 界面截图" width="90%" />
   <p><i>现代化 Web 界面 - 项目与会话管理、实时日志监控</i></p>
 </div>
 
