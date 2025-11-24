@@ -95,7 +95,7 @@
               </div>
               <div class="access-content">
                 <n-text depth="3" style="font-size: 10px; font-weight: 600;">前往</n-text>
-                <n-text strong style="font-size: 11px; line-height: 1.2; white-space: nowrap;">{{ channelTypeName }}</n-text>
+                <n-text strong style="font-size: 12px; font-weight: 700; line-height: 1.2; white-space: nowrap;">{{ channelTypeName }}</n-text>
               </div>
             </div>
           </div>
