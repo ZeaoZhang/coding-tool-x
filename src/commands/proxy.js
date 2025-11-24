@@ -48,14 +48,14 @@ async function handleProxyStart() {
     console.log('\n代理服务运行中...');
     console.log('现在可以使用 Claude Code，它将通过代理访问 API');
     console.log('使用 Ctrl+C 停止服务（配置不会恢复）');
-    console.log('或使用 "cc proxy stop" 停止并恢复配置\n');
+    console.log('或使用 "ct proxy stop" 停止并恢复配置\n');
 
     // 保持进程运行
     return new Promise(() => {
       // 处理退出信号
       process.on('SIGINT', async () => {
         console.log('\n\n⚠️  收到退出信号');
-        console.log('提示: 配置文件未恢复，使用 "cc proxy stop" 恢复配置\n');
+        console.log('提示: 配置文件未恢复，使用 "ct proxy stop" 恢复配置\n');
         process.exit(0);
       });
     });
@@ -128,18 +128,18 @@ function handleProxyStatus() {
 
   if (proxyStatus.running && configIsProxy) {
     console.log(chalk.green('  ✓ 代理正常运行，Claude Code 将通过代理访问 API'));
-    console.log(chalk.gray('  • 使用 Web UI (cc ui) 可以动态切换渠道'));
-    console.log(chalk.gray('  • 使用 cc proxy stop 停止代理并恢复配置'));
+    console.log(chalk.gray('  • 使用 Web UI (ct ui) 可以动态切换渠道'));
+    console.log(chalk.gray('  • 使用 ct proxy stop 停止代理并恢复配置'));
   } else if (proxyStatus.running && !configIsProxy) {
     console.log(chalk.yellow('  ⚠️  代理服务在运行，但配置未启用代理模式'));
-    console.log(chalk.gray('  • 配置可能被手动修改，建议运行: cc proxy stop'));
+    console.log(chalk.gray('  • 配置可能被手动修改，建议运行: ct proxy stop'));
   } else if (!proxyStatus.running && configIsProxy) {
     console.log(chalk.yellow('  ⚠️  配置为代理模式，但代理服务未运行'));
     console.log(chalk.gray('  • Claude Code 可能无法正常工作'));
-    console.log(chalk.gray('  • 建议运行: cc reset (恢复配置)'));
+    console.log(chalk.gray('  • 建议运行: ct reset (恢复配置)'));
   } else {
     console.log(chalk.gray('  • 代理未运行，Claude Code 使用常规配置'));
-    console.log(chalk.gray('  • 如需启用动态切换，运行: cc ui'));
+    console.log(chalk.gray('  • 如需启用动态切换，运行: ct ui'));
   }
 
   console.log('\n');

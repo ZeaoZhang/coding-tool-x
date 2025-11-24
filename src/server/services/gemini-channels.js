@@ -239,12 +239,14 @@ function updateChannel(channelId, updates) {
 
   // 不允许修改正在使用的渠道的关键配置
   if (isActive) {
-    // 只允许修改名称
-    data.channels[index] = {
-      ...channel,
-      name: updates.name || channel.name,
-      updatedAt: Date.now()
-    };
+    // 只允许修改名称和官网
+    if (updates.name) {
+      data.channels[index].name = updates.name;
+    }
+    if (updates.websiteUrl !== undefined) {
+      data.channels[index].websiteUrl = updates.websiteUrl;
+    }
+    data.channels[index].updatedAt = Date.now();
   } else {
     // 检查名称冲突
     if (updates.name && updates.name !== channel.name) {
@@ -303,17 +305,19 @@ function activateChannel(channelId) {
     throw new Error('Channel not found');
   }
 
+  // Always save active channel ID for UI consistency
+  saveActiveChannelId(channelId);
+
+  // Also update in-file activeChannelId for Gemini
+  data.activeChannelId = channelId;
+  saveChannels(data);
+
   // 检查是否在代理模式
   if (isProxyConfig()) {
     // 代理模式：只保存激活渠道 ID，不修改 Gemini 配置文件
-    saveActiveChannelId(channelId);
     console.log(`[Gemini Channels] Activated channel in proxy mode: ${channel.name}`);
   } else {
-    // 普通模式：更新 Gemini 配置文件
-    data.activeChannelId = channelId;
-    saveChannels(data);
-
-    // 写入 Gemini 配置文件
+    // 普通模式：写入 Gemini 配置文件
     try {
       writeGeminiConfig(channel);
     } catch (err) {

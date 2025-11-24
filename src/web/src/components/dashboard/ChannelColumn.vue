@@ -40,7 +40,7 @@
               <n-text depth="3" style="font-size: 11px; margin-left: 6px;">端口: {{ proxyState.port }}</n-text>
             </div>
             <n-popselect
-              v-model:value="selectedChannelId"
+              :value="selectedChannelId"
               :options="channelOptions"
               trigger="click"
               @update:value="handleChannelSwitch"
@@ -71,32 +71,32 @@
         </div>
         <div class="card-body" style="padding: 8px 10px;">
           <div class="quick-access-list">
-            <div class="access-card clickable" @click="goToProjects">
-              <div class="access-card-content">
-                <n-text depth="3" style="font-size: 11px;">项目</n-text>
-                <n-text strong style="font-size: 16px; margin-top: 2px;">{{ stats.projects }}</n-text>
+            <div class="access-card access-card-projects clickable" @click="goToProjects">
+              <div class="access-icon">
+                <n-icon :size="16"><FolderOutline /></n-icon>
               </div>
-              <n-icon :size="16" style="color: var(--text-tertiary);">
-                <ChevronForwardOutline />
-              </n-icon>
+              <div class="access-content">
+                <n-text depth="3" style="font-size: 10px; font-weight: 600;">项目</n-text>
+                <n-text strong style="font-size: 18px; line-height: 1;">{{ stats.projects }}</n-text>
+              </div>
             </div>
-            <div class="access-card clickable" @click="showRecentSessions = true">
-              <div class="access-card-content">
-                <n-text depth="3" style="font-size: 11px;">最新对话</n-text>
-                <n-text strong style="font-size: 16px; margin-top: 2px;">{{ stats.sessions }}</n-text>
+            <div class="access-card access-card-sessions clickable" @click="showRecentSessions = true">
+              <div class="access-icon">
+                <n-icon :size="16"><ChatbubblesOutline /></n-icon>
               </div>
-              <n-icon :size="16" style="color: var(--text-tertiary);">
-                <ChevronForwardOutline />
-              </n-icon>
+              <div class="access-content">
+                <n-text depth="3" style="font-size: 10px; font-weight: 600;">最新对话</n-text>
+                <n-text strong style="font-size: 18px; line-height: 1;">{{ stats.sessions }}</n-text>
+              </div>
             </div>
-            <div class="access-card clickable primary" @click="goToChannelPage">
-              <div class="access-card-content">
-                <n-text depth="3" style="font-size: 11px;">前往</n-text>
-                <n-text strong style="font-size: 12px; margin-top: 2px;">进入{{ channelTypeName }}页面</n-text>
+            <div class="access-card access-card-goto clickable" @click="goToChannelPage">
+              <div class="access-icon">
+                <n-icon :size="16"><ArrowForwardOutline /></n-icon>
               </div>
-              <n-icon :size="16" style="color: var(--primary-color);">
-                <ChevronForwardOutline />
-              </n-icon>
+              <div class="access-content">
+                <n-text depth="3" style="font-size: 10px; font-weight: 600;">前往</n-text>
+                <n-text strong style="font-size: 11px; line-height: 1.2; white-space: nowrap;">{{ channelTypeName }}</n-text>
+              </div>
             </div>
           </div>
         </div>
@@ -116,21 +116,21 @@
               <div class="stat-icon-dot requests"></div>
               <div class="stat-info">
                 <span class="stat-label">请求</span>
-                <span class="stat-value">{{ todayStats.requests }}</span>
+                <span class="stat-value" :class="{ animating: isAnimating.requests }">{{ animatedStats.requests }}</span>
               </div>
             </div>
             <div class="stat-inline-item stat-input">
-              <div class="stat-icon-dot input"></div>
+              <div class="stat-icon-dot tokens"></div>
               <div class="stat-info">
-                <span class="stat-label">输入</span>
-                <span class="stat-value">{{ formatTokens(todayStats.inputTokens) }}</span>
+                <span class="stat-label">总 Tokens</span>
+                <span class="stat-value" :class="{ animating: isAnimating.tokens }">{{ formatTokens(animatedStats.tokens) }}</span>
               </div>
             </div>
             <div class="stat-inline-item stat-output">
-              <div class="stat-icon-dot output"></div>
+              <div class="stat-icon-dot cost"></div>
               <div class="stat-info">
-                <span class="stat-label">输出</span>
-                <span class="stat-value">{{ formatTokens(todayStats.outputTokens) }}</span>
+                <span class="stat-label">成本 / USD</span>
+                <span class="stat-value" :class="{ animating: isAnimating.cost }">{{ formatCurrency(animatedStats.cost) }}</span>
               </div>
             </div>
           </div>
@@ -138,7 +138,7 @@
       </div>
 
       <!-- 实时日志 -->
-      <div class="card logs-card">
+      <div v-if="showLogs" class="card logs-card">
         <div class="card-header compact">
           <n-icon :size="14">
             <RadioOutline />
@@ -172,13 +172,17 @@
           </div>
           <!-- 日志内容 -->
           <div class="logs-container" ref="logsContainer">
-            <div v-if="logs.length === 0" class="empty-logs">
-              <n-text depth="3" style="font-size: 11px;">暂无日志</n-text>
+            <div v-if="logsToDisplay.length === 0" class="empty-logs">
+              <n-icon :size="32" depth="3" style="margin-bottom: 8px;">
+                <RadioOutline />
+              </n-icon>
+              <n-text depth="3" style="font-size: 12px; font-weight: 500;">暂无实时日志</n-text>
+              <n-text depth="3" style="font-size: 11px; margin-top: 4px;">开启代理后将显示请求记录</n-text>
             </div>
 
-            <div v-for="log in logs" :key="log.id" class="log-row" :class="{ 'action-row': log.status === 'action', 'new-log': log.isNew }">
+            <div v-for="log in logsToDisplay" :key="log.id" class="log-row" :class="{ 'action-row': log.type === 'action', 'new-log': log.isNew }">
               <!-- Action 类型日志 -->
-              <template v-if="log.status === 'action'">
+              <template v-if="log.type === 'action'">
                 <div class="action-content">
                   <n-icon :size="12" color="#18a058"><CheckmarkCircleOutline /></n-icon>
                   <span class="action-msg">{{ log.message }}</span>
@@ -188,7 +192,7 @@
               <!-- 普通日志 -->
               <template v-else>
                 <div class="log-col col-channel" :class="`col-channel-${channelType}`">
-                  <n-tag size="tiny" type="success">{{ log.channelName }}</n-tag>
+                  <n-tag size="tiny" type="success">{{ log.channel }}</n-tag>
                 </div>
                 <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.input || 0 }}</div>
                 <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.output || 0 }}</div>
@@ -202,7 +206,7 @@
                 </template>
                 <template v-else-if="channelType === 'gemini'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatTokens(log.tokens?.total || 0) }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
                 </template>
                 <div class="log-col col-time" :class="`col-time-${channelType}`">{{ log.time }}</div>
               </template>
@@ -218,13 +222,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { NIcon, NText, NSwitch, NTag, NButton, NPopselect, NTooltip, useMessage } from 'naive-ui'
 import {
-  LayersOutline,
+  ChatboxEllipsesOutline,
   CodeSlashOutline,
-  ColorPaletteOutline,
+  SparklesOutline,
   PowerOutline,
   RocketOutline,
   TrendingUpOutline,
@@ -235,9 +239,12 @@ import {
   ChevronForwardOutline,
   ChevronDownOutline,
   SwapHorizontalOutline,
-  CheckmarkCircleOutline
+  CheckmarkCircleOutline,
+  FolderOutline,
+  ChatbubblesOutline,
+  ArrowForwardOutline
 } from '@vicons/ionicons5'
-import { useProxyState } from '../../composables/useProxyState'
+import { useGlobalState } from '../../composables/useGlobalState'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import api from '../../api'
 import axios from 'axios'
@@ -252,24 +259,35 @@ const props = defineProps({
 
 const router = useRouter()
 const message = useMessage()
-const { claudeProxy, codexProxy, geminiProxy, toggleClaudeProxy, toggleCodexProxy, toggleGeminiProxy, initialize } = useProxyState()
+const {
+  claudeProxy,
+  codexProxy,
+  geminiProxy,
+  getProxyState,
+  startProxy,
+  stopProxy,
+  getLogs,
+  clearLogsForSource,
+  logLimit,
+  statsInterval: statsIntervalSetting
+} = useGlobalState()
 
 // 渠道配置
 const channelConfig = {
   claude: {
-    title: 'Claude Code',
+    title: 'ClaudeCode',
     subtitle: '智能编程助手',
-    icon: LayersOutline
+    icon: ChatboxEllipsesOutline
   },
   codex: {
-    title: 'Codex',
+    title: 'Codex-CLI',
     subtitle: '高效代码生成',
     icon: CodeSlashOutline
   },
   gemini: {
-    title: 'Gemini',
+    title: 'Gemini-CLI',
     subtitle: '多模态AI助手',
-    icon: ColorPaletteOutline
+    icon: SparklesOutline
   }
 }
 
@@ -298,14 +316,98 @@ const stats = ref({ projects: 0, sessions: 0 })
 const todayStats = ref({
   requests: 0,
   tokens: 0,
-  inputTokens: 0,
-  outputTokens: 0,
-  cacheTokens: 0,
   cost: 0
 })
 
+// 动画数值（用于显示滚动动画）
+const animatedStats = ref({
+  requests: 0,
+  tokens: 0,
+  cost: 0
+})
+
+const statPrecision = {
+  requests: 0,
+  tokens: 0,
+  cost: 3
+}
+
+// 动画计时器ID
+let animationFrameIds = {
+  requests: null,
+  tokens: null,
+  cost: null
+}
+
+// 跟踪哪些数值正在动画中
+const isAnimating = ref({
+  requests: false,
+  tokens: false,
+  cost: false
+})
+
+// 数字滚动动画函数
+function animateValue(key, startValue, endValue, duration = 600) {
+  if (animationFrameIds[key]) {
+    cancelAnimationFrame(animationFrameIds[key])
+  }
+
+  // 开始动画，触发CSS动画效果
+  isAnimating.value[key] = true
+
+  const startTime = Date.now()
+
+  const animate = () => {
+    const elapsed = Date.now() - startTime
+    const progress = Math.min(elapsed / duration, 1)
+
+    // 使用 easeOutQuad 缓动函数
+    const easeProgress = 1 - Math.pow(1 - progress, 2)
+    const rawValue = startValue + (endValue - startValue) * easeProgress
+    const precision = statPrecision[key] ?? 0
+    const factor = Math.pow(10, precision)
+    const currentValue = precision > 0
+      ? Math.round(rawValue * factor) / factor
+      : Math.round(rawValue)
+
+    animatedStats.value[key] = currentValue
+
+    if (progress < 1) {
+      animationFrameIds[key] = requestAnimationFrame(animate)
+    } else {
+      // 动画结束，移除CSS动画效果
+      isAnimating.value[key] = false
+    }
+  }
+
+  animationFrameIds[key] = requestAnimationFrame(animate)
+}
+
 // 最新对话抽屉
 const showRecentSessions = ref(false)
+
+// 显示实时日志（从localStorage读取，默认true）
+const showLogs = ref(true)
+
+// 加载显示设置
+function loadShowLogs() {
+  try {
+    const saved = localStorage.getItem('panel-visibility')
+    if (saved) {
+      const settings = JSON.parse(saved)
+      showLogs.value = settings.showLogs !== false // 默认true
+    }
+  } catch (err) {
+    console.error('Failed to load panel settings:', err)
+  }
+}
+
+// 监听设置变化
+function handleVisibilityChange(event) {
+  if (event.detail && event.detail.showLogs !== undefined) {
+    showLogs.value = event.detail.showLogs
+  }
+}
 
 // 代理运行时间（实时更新）
 const currentTime = ref(Date.now())
@@ -339,9 +441,23 @@ const runtimeDisplay = computed(() => {
 })
 
 // 日志
-const logs = ref([])
 const logsContainer = ref(null)
-const maxLogs = 20
+const maxLogs = computed(() => logLimit.value)
+const logStreams = {
+  claude: getLogs('claude'),
+  codex: getLogs('codex'),
+  gemini: getLogs('gemini')
+}
+const logsToDisplay = computed(() => {
+  const stream = logStreams[props.channelType] || logStreams.claude
+  const list = stream.value || []
+  return list.slice(0, maxLogs.value)
+})
+let latestLogId = null
+let statsIntervalId = null
+let channelsIntervalId = null
+let timeIntervalId = null
+let componentMounted = false
 
 // 渠道列表
 const channels = ref([])
@@ -373,16 +489,56 @@ const currentChannelName = computed(() => {
   return channels.value.length > 0 ? '选择渠道' : '无渠道'
 })
 
-let ws = null
-let isReceivingHistory = true // 标记是否正在接收历史日志
-let reconnectAttempts = 0 // 重连尝试次数
-let reconnectTimer = null // 重连定时器
+watch(logsToDisplay, (newLogs) => {
+  const newestId = newLogs[0]?.id || null
+  if (!newestId || newestId === latestLogId) {
+    latestLogId = newestId
+    return
+  }
+  latestLogId = newestId
+  const isNearTop = logsContainer.value ? logsContainer.value.scrollTop < 20 : true
+  if (isNearTop) {
+    nextTick(() => {
+      if (logsContainer.value) {
+        logsContainer.value.scrollTop = 0
+      }
+    })
+  }
+})
+
+// 监听今日统计数据变化，触发滚动动画
+watch(() => todayStats.value.requests, (newVal) => {
+  animateValue('requests', animatedStats.value.requests, newVal, 600)
+})
+
+watch(() => todayStats.value.tokens, (newVal) => {
+  animateValue('tokens', animatedStats.value.tokens, newVal, 600)
+})
+
+watch(() => todayStats.value.cost, (newVal) => {
+  animateValue('cost', animatedStats.value.cost, newVal, 600)
+})
+
+watch(() => props.channelType, () => {
+  latestLogId = logsToDisplay.value[0]?.id || null
+})
+
+watch(statsIntervalSetting, () => {
+  if (componentMounted) {
+    setupStatsTimer()
+  }
+})
 
 // 格式化 Token
 function formatTokens(num) {
   if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M'
   if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
   return num.toString()
+}
+
+function formatCurrency(value) {
+  if (!value || Number.isNaN(value)) return '$0'
+  return '$' + Number(value).toFixed(3)
 }
 
 // 格式化时间
@@ -393,19 +549,29 @@ function formatTime(timestamp) {
 
 // 处理代理切换
 async function handleProxyToggle(value) {
-  let result
-  if (props.channelType === 'claude') {
-    result = await toggleClaudeProxy(value)
-  } else if (props.channelType === 'codex') {
-    result = await toggleCodexProxy(value)
-  } else if (props.channelType === 'gemini') {
-    result = await toggleGeminiProxy(value)
-  }
+  const proxyState = getProxyState(props.channelType)
+  proxyState.value.loading = true
+  try {
+    let result
+    if (value) {
+      result = await startProxy(props.channelType)
+    } else {
+      result = await stopProxy(props.channelType)
+    }
 
-  if (result.success) {
-    message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
-  } else {
-    message.error(result.error || '操作失败')
+    if (result.success !== false) {
+      message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
+    } else {
+      message.error(result.error || '操作失败')
+      // 回滚状态
+      proxyState.value.running = !value
+    }
+  } catch (error) {
+    message.error(error.response?.data?.error || error.message || '操作失败')
+    // 回滚状态
+    proxyState.value.running = !value
+  } finally {
+    proxyState.value.loading = false
   }
 }
 
@@ -416,7 +582,7 @@ function goToProjects() {
 
 // 跳转到渠道单独页面
 function goToChannelPage() {
-  router.push({ name: props.channelType })
+  router.push({ name: `${props.channelType}-projects` })
 }
 
 // 加载渠道列表
@@ -443,7 +609,12 @@ async function loadChannels() {
 
 // 切换渠道
 async function handleChannelSwitch(channelId) {
-  if (!channelId || channelId === selectedChannelId.value) return
+  if (!channelId) return
+  // 如果和当前选中的相同，显示提示
+  if (channelId === selectedChannelId.value) {
+    message.info('已是当前渠道')
+    return
+  }
   try {
     if (props.channelType === 'claude') {
       await api.activateChannel(channelId)
@@ -505,9 +676,6 @@ async function loadStats() {
     if (channelData) {
       todayStats.value.requests = channelData.requests || 0
       todayStats.value.tokens = channelData.tokens?.total || 0
-      todayStats.value.inputTokens = channelData.tokens?.input || 0
-      todayStats.value.outputTokens = channelData.tokens?.output || 0
-      todayStats.value.cacheTokens = channelData.tokens?.cacheRead || 0
       todayStats.value.cost = channelData.cost || 0
     }
   } catch (error) {
@@ -515,238 +683,48 @@ async function loadStats() {
   }
 }
 
-// 添加日志
-function addLog(logData) {
-  const log = {
-    id: logData.id || Date.now() + Math.random(),
-    timestamp: logData.timestamp || new Date().toISOString(),
-    channelName: logData.channelName || 'Unknown',
-    status: logData.success ? 'success' : 'error',
-    statusCode: logData.statusCode || (logData.success ? '200' : '500'),
-    tokens: logData.tokens || { total: 0 },
-    cost: logData.cost || 0
-  }
-
-  logs.value.unshift(log)
-
-  if (logs.value.length > maxLogs) {
-    logs.value = logs.value.slice(0, maxLogs)
-  }
-}
-
 // 清空日志
 function clearLogs() {
-  logs.value = []
+  clearLogsForSource(props.channelType)
 }
 
-// WebSocket 连接
-function connectWebSocket() {
-  // 如果有待处理的重连定时器，先清除
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
+function setupStatsTimer() {
+  if (statsIntervalId) {
+    clearInterval(statsIntervalId)
+    statsIntervalId = null
   }
-
-  // 如果已有连接，先关闭
-  if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
-    try {
-      ws.close()
-    } catch (e) {
-      // 忽略关闭错误
-    }
-  }
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/ws`
-
-  console.log(`[${props.channelType.toUpperCase()} WS] Connecting to ${wsUrl}...`)
-
-  ws = new WebSocket(wsUrl)
-
-  ws.onopen = () => {
-    console.log(`[${props.channelType.toUpperCase()} WS] Connected successfully`)
-    reconnectAttempts = 0 // 重置重连计数
-
-    // WebSocket 连接成功，开始接收历史日志
-    isReceivingHistory = true
-
-    // 2秒后认为历史日志接收完毕，之后的日志都是新推送的
-    setTimeout(() => {
-      isReceivingHistory = false
-      console.log(`[${props.channelType.toUpperCase()} WS] History receiving completed, now accepting real-time logs`)
-    }, 2000)
-  }
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-
-      // 根据 source 字段过滤日志
-      let logSource = data.source
-
-      // 如果没有 source 字段，尝试从其他字段推断
-      if (!logSource) {
-        // 1. 从 toolType 推断
-        if (data.toolType === 'codex') {
-          logSource = 'codex'
-        } else if (data.toolType === 'gemini') {
-          logSource = 'gemini'
-        } else if (data.toolType === 'claude' || data.toolType === 'claude-code') {
-          logSource = 'claude'
-        }
-        // 2. 从 model 名称推断
-        else if (data.model) {
-          const model = data.model.toLowerCase()
-          if (model.includes('claude')) {
-            logSource = 'claude'
-          } else if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) {
-            logSource = 'codex'
-          } else if (model.includes('gemini')) {
-            logSource = 'gemini'
-          }
-        }
-        // 3. 从 channel 名称匹配已加载的渠道列表
-        if (!logSource && data.channel) {
-          const matchedChannel = channels.value.find(ch => ch.name === data.channel)
-          if (matchedChannel) {
-            // 找到了对应的渠道，使用当前 channelType
-            logSource = props.channelType
-          }
-        }
-        // 4. 从 action 字段推断
-        if (!logSource) {
-          if (data.action?.includes('codex')) {
-            logSource = 'codex'
-          } else if (data.action?.includes('gemini')) {
-            logSource = 'gemini'
-          }
-        }
-        // 5. 最后默认是 claude
-        if (!logSource) {
-          logSource = 'claude'
-        }
-      }
-
-      // 过滤日志
-      if (data.type === 'action') {
-        // action 类型日志根据 action 字段判断
-        const actionSource = data.action?.includes('codex') ? 'codex' :
-                            data.action?.includes('gemini') ? 'gemini' : 'claude'
-        if (actionSource !== props.channelType) return
-      } else {
-        // 普通日志根据 source 字段判断
-        if (logSource !== props.channelType) return
-      }
-
-      // 格式化时间
-      const time = data.time || new Date(data.timestamp || Date.now()).toLocaleTimeString('zh-CN', {
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
-      })
-
-      const log = {
-        id: data.id || `${Date.now()}-${Math.random()}`,
-        timestamp: data.timestamp || new Date().toISOString(),
-        channelName: data.channel || 'Unknown',
-        status: data.type === 'action' ? 'action' : 'success',
-        tokens: {
-          input: data.inputTokens || 0,
-          output: data.outputTokens || 0,
-          cacheCreation: data.cacheCreation || 0,
-          cacheRead: data.cacheRead || 0,
-          reasoning: data.reasoningTokens || 0,
-          cached: data.cachedTokens || 0,
-          total: data.totalTokens || ((data.inputTokens || 0) + (data.outputTokens || 0))
-        },
-        cost: data.cost || 0,
-        model: data.model,
-        message: data.message,
-        time: time,
-        isNew: !isReceivingHistory // 只有非历史日志才标记为新
-      }
-
-      // 检查用户是否在顶部附近（前20px）
-      const isNearTop = logsContainer.value ? logsContainer.value.scrollTop < 20 : true
-
-      // 添加到日志列表前面（新日志在前）
-      logs.value.unshift(log)
-
-      // 如果是新日志，4.5秒后移除高亮效果
-      if (log.isNew) {
-        setTimeout(() => {
-          log.isNew = false
-        }, 4500)
-      }
-
-      // 限制日志数量
-      if (logs.value.length > maxLogs) {
-        logs.value = logs.value.slice(0, maxLogs)
-      }
-
-      // 只在用户在顶部时才自动滚动到顶部，避免打断用户查看历史日志
-      if (isNearTop) {
-        nextTick(() => {
-          if (logsContainer.value) {
-            logsContainer.value.scrollTop = 0
-          }
-        })
-      }
-    } catch (error) {
-      console.error('Failed to parse WebSocket message:', error)
-    }
-  }
-
-  ws.onerror = (error) => {
-    console.error(`[${props.channelType.toUpperCase()} WS] Error:`, error)
-  }
-
-  ws.onclose = (event) => {
-    console.log(`[${props.channelType.toUpperCase()} WS] Connection closed (code: ${event.code}, reason: ${event.reason || 'none'})`)
-
-    // 计算重连延迟（指数退避，最大 30 秒）
-    reconnectAttempts++
-    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000)
-
-    console.log(`[${props.channelType.toUpperCase()} WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`)
-
-    reconnectTimer = setTimeout(() => {
-      connectWebSocket()
-    }, delay)
-  }
+  const intervalSeconds = statsIntervalSetting.value || 30
+  const delay = Math.max(intervalSeconds * 1000, 10000)
+  statsIntervalId = setInterval(loadStats, delay)
 }
 
-onMounted(() => {
-  initialize()
-  loadStats()
+onMounted(async () => {
+  await loadStats()
   loadChannels()
-  connectWebSocket()
+  loadShowLogs()
+  window.addEventListener('panel-visibility-change', handleVisibilityChange)
 
-  // 定时刷新统计和渠道
-  const statsInterval = setInterval(loadStats, 30000)
-  const channelsInterval = setInterval(loadChannels, 10000)
+  // 初始化动画数值
+  animatedStats.value = { ...todayStats.value }
 
-  // 定时更新当前时间（每秒），用于实时计算代理运行时长
-  const timeInterval = setInterval(() => {
+  componentMounted = true
+  setupStatsTimer()
+  channelsIntervalId = setInterval(loadChannels, 30000)
+  timeIntervalId = setInterval(() => {
     currentTime.value = Date.now()
   }, 1000)
+})
 
-  onUnmounted(() => {
-    clearInterval(statsInterval)
-    clearInterval(channelsInterval)
-    clearInterval(timeInterval)
+onUnmounted(() => {
+  componentMounted = false
+  if (statsIntervalId) clearInterval(statsIntervalId)
+  if (channelsIntervalId) clearInterval(channelsIntervalId)
+  if (timeIntervalId) clearInterval(timeIntervalId)
+  window.removeEventListener('panel-visibility-change', handleVisibilityChange)
 
-    // 清除重连定时器
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
-
-    // 关闭 WebSocket 连接
-    if (ws) {
-      ws.close()
-      ws = null
-    }
+  // 清理动画计时器
+  Object.values(animationFrameIds).forEach(id => {
+    if (id) cancelAnimationFrame(id)
   })
 })
 </script>
@@ -844,19 +822,19 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  padding: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .card {
   background: var(--bg-primary);
   border: 1px solid var(--border-primary);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
   position: relative;
 }
 
@@ -913,6 +891,7 @@ onMounted(() => {
   background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
   border-bottom: 1px solid var(--border-primary);
   position: relative;
+  min-height: 24px;
 }
 
 .card-header.compact {
@@ -947,7 +926,7 @@ onMounted(() => {
   color: #10b981;
   background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(52, 211, 153, 0.1) 100%);
   border: 1px solid rgba(16, 185, 129, 0.2);
-  border-radius: 12px;
+  border-radius: 4px;
   white-space: nowrap;
   animation: pulse-runtime 2s ease-in-out infinite;
 }
@@ -1062,53 +1041,115 @@ onMounted(() => {
 }
 
 .quick-access-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
 }
 
 .access-card {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  min-height: 52px;
+  overflow: hidden;
 }
 
-.access-card-content {
+.access-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.access-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.access-content {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1;
+}
+
+/* 项目卡片 */
+.access-card-projects .access-icon {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+  color: #6366f1;
+}
+
+.access-card-projects::before {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.08));
+}
+
+.access-card-projects:hover .access-icon {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(139, 92, 246, 0.25));
+  transform: scale(1.1) rotate(-5deg);
+}
+
+/* 对话卡片 */
+.access-card-sessions .access-icon {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(5, 150, 105, 0.15));
+  color: #10b981;
+}
+
+.access-card-sessions::before {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(5, 150, 105, 0.08));
+}
+
+.access-card-sessions:hover .access-icon {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(5, 150, 105, 0.25));
+  transform: scale(1.1) rotate(5deg);
+}
+
+/* 前往卡片 */
+.access-card-goto .access-icon {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(251, 146, 60, 0.15));
+  color: #f59e0b;
+}
+
+.access-card-goto::before {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(251, 146, 60, 0.08));
+}
+
+.access-card-goto:hover .access-icon {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(251, 146, 60, 0.25));
+  transform: scale(1.1) translateX(3px);
 }
 
 .access-card.clickable:hover {
-  background: var(--hover-bg);
-  border-color: var(--border-hover);
-  transform: translateX(2px);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+  border-color: var(--border-secondary);
+}
+
+.access-card.clickable:hover::before {
+  opacity: 1;
 }
 
 .access-card.clickable:active {
-  transform: translateX(0);
-}
-
-.access-card.primary {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%);
-  border-color: rgba(99, 102, 241, 0.3);
-}
-
-.access-card.primary:hover {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);
-  border-color: rgba(99, 102, 241, 0.5);
+  transform: translateY(0);
 }
 
 .stats-inline {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: 10px;
 }
 
 .stats-inline.stats-3col {
@@ -1118,10 +1159,10 @@ onMounted(() => {
 .stat-inline-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 14px 14px;
   background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--border-primary);
   transition: all 0.25s ease;
 }
@@ -1134,8 +1175,8 @@ onMounted(() => {
 
 /* 统计项图标点 */
 .stat-icon-dot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -1145,12 +1186,12 @@ onMounted(() => {
   box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
 }
 
-.stat-icon-dot.input {
+.stat-icon-dot.tokens {
   background: linear-gradient(135deg, #18a058, #15803d);
   box-shadow: 0 0 8px rgba(24, 160, 88, 0.4);
 }
 
-.stat-icon-dot.output {
+.stat-icon-dot.cost {
   background: linear-gradient(135deg, #f59e0b, #d97706);
   box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
@@ -1163,15 +1204,41 @@ onMounted(() => {
 }
 
 .stat-label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-tertiary);
-  font-weight: 500;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
 
 .stat-value {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 18px;
+  font-weight: 800;
   color: var(--text-primary);
+  line-height: 1.2;
+  transition: all 0.3s ease;
+}
+
+/* 数字变化时的动画效果 */
+.stat-value.animating {
+  animation: numberChange 0.6s ease;
+}
+
+@keyframes numberChange {
+  0% {
+    transform: translateY(-8px);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(0);
+    opacity: 1;
+    color: var(--primary-color);
+    text-shadow: 0 0 8px currentColor;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 /* 统计卡片特殊样式 */
@@ -1243,27 +1310,30 @@ onMounted(() => {
 
 .logs-table-header {
   display: flex;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
-  border-bottom: 1px solid var(--border-primary);
-  font-size: 10px;
+  border-bottom: 2px solid var(--border-primary);
+  font-size: 11px;
   font-weight: 700;
   color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
   flex-shrink: 0;
 }
 
 .logs-header-claude .log-col {
-  color: rgba(24, 160, 88, 0.8);
+  color: #18a058;
+  font-weight: 800;
 }
 
 .logs-header-codex .log-col {
-  color: rgba(59, 130, 246, 0.8);
+  color: #3b82f6;
+  font-weight: 800;
 }
 
 .logs-header-gemini .log-col {
-  color: rgba(168, 85, 247, 0.8);
+  color: #a855f7;
+  font-weight: 800;
 }
 
 .logs-container {
@@ -1287,19 +1357,22 @@ onMounted(() => {
 
 .empty-logs {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 20px 12px;
+  padding: 40px 20px;
   color: var(--text-tertiary);
+  min-height: 200px;
+  text-align: center;
 }
 
 .log-row {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
-  min-height: 36px;
+  padding: 10px 12px;
+  min-height: 40px;
   border-bottom: 1px solid var(--border-primary);
-  font-size: 11px;
+  font-size: 12px;
   transition: all 0.2s ease;
   background: var(--bg-primary);
   position: relative;
@@ -1451,35 +1524,36 @@ onMounted(() => {
 
 .col-channel .n-tag {
   max-width: 100%;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  border-radius: 4px;
-  padding: 2px 8px;
+  border-radius: 5px;
+  padding: 3px 10px;
 }
 
 .col-token {
   justify-content: center;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--text-secondary);
-  background: rgba(0, 0, 0, 0.02);
-  padding: 3px 6px;
-  border-radius: 4px;
-  margin: 0 2px;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 4px 8px;
+  border-radius: 5px;
+  margin: 0 3px;
 }
 
 [data-theme="dark"] .col-token {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .col-time {
   justify-content: flex-end;
   font-family: 'SF Mono', Monaco, Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-tertiary);
   padding-right: 2px;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .log-row:hover .col-time {

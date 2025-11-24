@@ -81,6 +81,7 @@ ct
 ### 其他命令
 
 ```bash
+ct update           # 检查并更新到最新版本
 ct reset            # 重置配置文件
 ct proxy start      # 启动代理服务
 ct proxy stop       # 停止代理服务
@@ -162,6 +163,12 @@ A: 直接复制 `~/.claude/cc-tool/` 整个目录即可
 如果这个项目对你有帮助，请给它一个 Star ⭐
 
 [![Star History Chart](https://api.star-history.com/svg?repos=CooperJiang/cc-tool&type=Date)](https://star-history.com/#CooperJiang/cc-tool&Date)
+
+---
+
+## 📝 更新日志
+
+查看完整更新日志：[CHANGELOG.md](docs/CHANGELOG.md)
 
 ---
 

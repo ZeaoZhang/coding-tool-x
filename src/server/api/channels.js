@@ -8,7 +8,7 @@ const {
   deleteChannel,
   activateChannel
 } = require('../services/channels');
-const { broadcastLog } = require('../websocket-server');
+const { broadcastLog, broadcastProxyState } = require('../websocket-server');
 
 // GET /api/channels - Get all channels
 router.get('/', (req, res) => {
@@ -76,10 +76,32 @@ router.delete('/:id', (req, res) => {
 });
 
 // POST /api/channels/:id/activate - Activate channel
-router.post('/:id/activate', (req, res) => {
+router.post('/:id/activate', async (req, res) => {
   try {
     const { id } = req.params;
     const channel = activateChannel(id);
+
+    // 检查代理是否正在运行，如果是则重启以应用新渠道
+    const { getProxyStatus, stopProxyServer, startProxyServer } = require('../proxy-server');
+    let proxyStatus = getProxyStatus();
+
+    if (proxyStatus && proxyStatus.running) {
+      console.log(`Proxy is running, restarting to switch to channel: ${channel.name}`);
+
+      // 停止代理
+      await stopProxyServer();
+
+      // 重新启动代理（会自动使用新的激活渠道）
+      const { setProxyConfig } = require('../services/settings-manager');
+      const proxyResult = await startProxyServer();
+
+      if (proxyResult.success) {
+        setProxyConfig(proxyResult.port);
+        console.log(`Proxy restarted successfully on port ${proxyResult.port}`);
+      }
+
+      proxyStatus = getProxyStatus();
+    }
 
     // 广播行为日志
     broadcastLog({
@@ -90,6 +112,11 @@ router.post('/:id/activate', (req, res) => {
       timestamp: Date.now(),
       source: 'claude'
     });
+
+    // 推送代理状态更新（渠道列表已更新）
+    const channels = getAllChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
+    broadcastProxyState('claude', proxyStatus, activeChannel, channels);
 
     res.json({ channel });
   } catch (error) {

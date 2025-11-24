@@ -13,7 +13,7 @@
         <div class="proxy-header">
           <div class="proxy-info">
             <div class="proxy-name">
-              <div class="status-dot" :class="{ active: claudeStatus.running }"></div>
+              <div class="status-dot" :class="{ active: claudeRunning }"></div>
               <span>Claude Proxy</span>
             </div>
             <div class="proxy-meta">
@@ -21,15 +21,15 @@
             </div>
           </div>
           <n-switch
-            v-model:value="claudeStatus.running"
+            :value="claudeRunning"
             @update:value="toggleClaudeProxy"
-            :loading="claudeStatus.loading"
+            :loading="claudeLoading"
             size="small"
           />
         </div>
-        <div v-if="claudeStatus.running && claudeStatus.activeChannel" class="proxy-active">
+        <div v-if="claudeRunning && claudeActiveChannel" class="proxy-active">
           <n-text depth="3" style="font-size: 12px;">
-            Active: {{ claudeStatus.activeChannel }}
+            Active: {{ claudeActiveChannel }}
           </n-text>
         </div>
       </div>
@@ -39,7 +39,7 @@
         <div class="proxy-header">
           <div class="proxy-info">
             <div class="proxy-name">
-              <div class="status-dot" :class="{ active: codexStatus.running }"></div>
+              <div class="status-dot" :class="{ active: codexRunning }"></div>
               <span>Codex Proxy</span>
             </div>
             <div class="proxy-meta">
@@ -47,15 +47,15 @@
             </div>
           </div>
           <n-switch
-            v-model:value="codexStatus.running"
+            :value="codexRunning"
             @update:value="toggleCodexProxy"
-            :loading="codexStatus.loading"
+            :loading="codexLoading"
             size="small"
           />
         </div>
-        <div v-if="codexStatus.running && codexStatus.activeChannel" class="proxy-active">
+        <div v-if="codexRunning && codexActiveChannel" class="proxy-active">
           <n-text depth="3" style="font-size: 12px;">
-            Active: {{ codexStatus.activeChannel }}
+            Active: {{ codexActiveChannel }}
           </n-text>
         </div>
       </div>
@@ -65,7 +65,7 @@
         <div class="proxy-header">
           <div class="proxy-info">
             <div class="proxy-name">
-              <div class="status-dot" :class="{ active: geminiStatus.running }"></div>
+              <div class="status-dot" :class="{ active: geminiRunning }"></div>
               <span>Gemini Proxy</span>
             </div>
             <div class="proxy-meta">
@@ -73,15 +73,15 @@
             </div>
           </div>
           <n-switch
-            v-model:value="geminiStatus.running"
+            :value="geminiRunning"
             @update:value="toggleGeminiProxy"
-            :loading="geminiStatus.loading"
+            :loading="geminiLoading"
             size="small"
           />
         </div>
-        <div v-if="geminiStatus.running && geminiStatus.activeChannel" class="proxy-active">
+        <div v-if="geminiRunning && geminiActiveChannel" class="proxy-active">
           <n-text depth="3" style="font-size: 12px;">
-            Active: {{ geminiStatus.activeChannel }}
+            Active: {{ geminiActiveChannel }}
           </n-text>
         </div>
       </div>
@@ -90,22 +90,37 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { NSwitch, NText, NIcon, useMessage } from 'naive-ui'
 import { PowerOutline } from '@vicons/ionicons5'
 import axios from 'axios'
+import { useGlobalState } from '../../composables/useGlobalState'
 
 const message = useMessage()
+const { claudeProxy, codexProxy, geminiProxy, startProxy, stopProxy } = useGlobalState()
 
 // 端口配置
 const claudePort = ref(10088)
 const codexPort = ref(10089)
 const geminiPort = ref(10090)
 
-// 状态
-const claudeStatus = ref({ running: false, loading: false, activeChannel: '' })
-const codexStatus = ref({ running: false, loading: false, activeChannel: '' })
-const geminiStatus = ref({ running: false, loading: false, activeChannel: '' })
+const claudeLoading = ref(false)
+const codexLoading = ref(false)
+const geminiLoading = ref(false)
+
+function getChannelName(channel) {
+  if (!channel) return ''
+  if (typeof channel === 'string') return channel
+  return channel.name || ''
+}
+
+const claudeRunning = computed(() => claudeProxy.value.running)
+const codexRunning = computed(() => codexProxy.value.running)
+const geminiRunning = computed(() => geminiProxy.value.running)
+
+const claudeActiveChannel = computed(() => getChannelName(claudeProxy.value.activeChannel))
+const codexActiveChannel = computed(() => getChannelName(codexProxy.value.activeChannel))
+const geminiActiveChannel = computed(() => getChannelName(geminiProxy.value.activeChannel))
 
 // 加载配置
 async function loadConfig() {
@@ -121,119 +136,37 @@ async function loadConfig() {
   }
 }
 
-// 检查代理状态
-async function checkProxyStatus() {
-  // Claude
+async function toggleProxy(type, value, loadingRef, startMsg, stopMsg) {
+  loadingRef.value = true
   try {
-    const response = await axios.get('/api/proxy/status')
-    claudeStatus.value.running = response.data.running
-    claudeStatus.value.activeChannel = response.data.activeChannel?.name || ''
+    if (value) {
+      await startProxy(type)
+      message.success(startMsg)
+    } else {
+      await stopProxy(type)
+      message.success(stopMsg)
+    }
   } catch (error) {
-    claudeStatus.value.running = false
-  }
-
-  // Codex
-  try {
-    const response = await axios.get('/api/codex/proxy/status')
-    codexStatus.value.running = response.data.running
-    codexStatus.value.activeChannel = response.data.activeChannel?.name || ''
-  } catch (error) {
-    codexStatus.value.running = false
-  }
-
-  // Gemini
-  try {
-    const response = await axios.get('/api/gemini/proxy/status')
-    geminiStatus.value.running = response.data.running
-    geminiStatus.value.activeChannel = response.data.activeChannel?.name || ''
-  } catch (error) {
-    geminiStatus.value.running = false
+    message.error(error.response?.data?.error || error.message || '操作失败')
+  } finally {
+    loadingRef.value = false
   }
 }
 
-// 切换 Claude 代理
-async function toggleClaudeProxy(value) {
-  claudeStatus.value.loading = true
-  try {
-    if (value) {
-      const response = await axios.post('/api/proxy/start')
-      if (response.data.success) {
-        message.success('Claude Proxy started')
-        claudeStatus.value.activeChannel = response.data.activeChannel?.name || ''
-      } else {
-        claudeStatus.value.running = false
-        message.error(response.data.error || 'Failed to start proxy')
-      }
-    } else {
-      await axios.post('/api/proxy/stop')
-      message.success('Claude Proxy stopped')
-      claudeStatus.value.activeChannel = ''
-    }
-  } catch (error) {
-    claudeStatus.value.running = !value
-    message.error(error.response?.data?.error || 'Failed to toggle proxy')
-  } finally {
-    claudeStatus.value.loading = false
-  }
+function toggleClaudeProxy(value) {
+  toggleProxy('claude', value, claudeLoading, 'Claude Proxy started', 'Claude Proxy stopped')
 }
 
-// 切换 Codex 代理
-async function toggleCodexProxy(value) {
-  codexStatus.value.loading = true
-  try {
-    if (value) {
-      const response = await axios.post('/api/codex/proxy/start')
-      if (response.data.success) {
-        message.success('Codex Proxy started')
-        codexStatus.value.activeChannel = response.data.activeChannel?.name || ''
-      } else {
-        codexStatus.value.running = false
-        message.error(response.data.error || 'Failed to start proxy')
-      }
-    } else {
-      await axios.post('/api/codex/proxy/stop')
-      message.success('Codex Proxy stopped')
-      codexStatus.value.activeChannel = ''
-    }
-  } catch (error) {
-    codexStatus.value.running = !value
-    message.error(error.response?.data?.error || 'Failed to toggle proxy')
-  } finally {
-    codexStatus.value.loading = false
-  }
+function toggleCodexProxy(value) {
+  toggleProxy('codex', value, codexLoading, 'Codex Proxy started', 'Codex Proxy stopped')
 }
 
-// 切换 Gemini 代理
-async function toggleGeminiProxy(value) {
-  geminiStatus.value.loading = true
-  try {
-    if (value) {
-      const response = await axios.post('/api/gemini/proxy/start')
-      if (response.data.success) {
-        message.success('Gemini Proxy started')
-        geminiStatus.value.activeChannel = response.data.activeChannel?.name || ''
-      } else {
-        geminiStatus.value.running = false
-        message.error(response.data.error || 'Failed to start proxy')
-      }
-    } else {
-      await axios.post('/api/gemini/proxy/stop')
-      message.success('Gemini Proxy stopped')
-      geminiStatus.value.activeChannel = ''
-    }
-  } catch (error) {
-    geminiStatus.value.running = !value
-    message.error(error.response?.data?.error || 'Failed to toggle proxy')
-  } finally {
-    geminiStatus.value.loading = false
-  }
+function toggleGeminiProxy(value) {
+  toggleProxy('gemini', value, geminiLoading, 'Gemini Proxy started', 'Gemini Proxy stopped')
 }
 
 onMounted(() => {
   loadConfig()
-  checkProxyStatus()
-  // 定时刷新状态
-  setInterval(checkProxyStatus, 5000)
 })
 </script>
 

@@ -103,7 +103,7 @@ module.exports = (config) => {
    * POST /api/gemini/channels/:channelId/activate
    * 激活渠道(切换)
    */
-  router.post('/:channelId/activate', (req, res) => {
+  router.post('/:channelId/activate', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
@@ -112,8 +112,28 @@ module.exports = (config) => {
       const { channelId } = req.params;
       const result = activateChannel(channelId);
 
+      // 检查代理是否正在运行，如果是则重启以应用新渠道
+      const { getGeminiProxyStatus, stopGeminiProxyServer, startGeminiProxyServer } = require('../gemini-proxy-server');
+      let proxyStatus = getGeminiProxyStatus();
+
+      if (proxyStatus && proxyStatus.running) {
+        console.log(`Gemini proxy is running, restarting to switch to channel: ${result.channel.name}`);
+
+        // 停止代理
+        await stopGeminiProxyServer();
+
+        // 重新启动代理（会自动使用新的激活渠道）
+        const { setProxyConfig } = require('../services/gemini-settings-manager');
+        const proxyResult = await startGeminiProxyServer();
+
+        if (proxyResult.success) {
+          setProxyConfig(proxyResult.port);
+          console.log(`Gemini proxy restarted successfully on port ${proxyResult.port}`);
+        }
+      }
+
       // 广播切换日志
-      const { broadcastLog } = require('../websocket-server');
+      const { broadcastLog, broadcastProxyState } = require('../websocket-server');
       broadcastLog({
         type: 'action',
         action: 'switch_gemini_channel',
@@ -123,6 +143,12 @@ module.exports = (config) => {
         timestamp: Date.now(),
         source: 'gemini'
       });
+
+      // 推送代理状态更新（渠道列表已更新）
+      proxyStatus = getGeminiProxyStatus();
+      const { channels } = getChannels();
+      const activeChannel = channels.find(ch => ch.id === result.channel.id);
+      broadcastProxyState('gemini', proxyStatus, activeChannel, channels);
 
       res.json(result);
     } catch (err) {

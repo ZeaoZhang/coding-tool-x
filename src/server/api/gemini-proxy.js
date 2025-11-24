@@ -18,6 +18,12 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+function sanitizeChannel(channel) {
+  if (!channel) return null;
+  const { apiKey, ...rest } = channel;
+  return rest;
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   const dir = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -38,10 +44,13 @@ router.get('/status', (req, res) => {
       hasBackup: hasBackup(),
       currentProxyPort: getCurrentProxyPort()
     };
+    const { channels } = getChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
 
     res.json({
       proxy: proxyStatus,
-      config: configStatus
+      config: configStatus,
+      activeChannel: sanitizeChannel(activeChannel)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -80,10 +89,16 @@ router.post('/start', async (req, res) => {
     // 5. 设置代理配置（备份并修改 .env 和 settings.json）
     setProxyConfig(proxyResult.port);
 
+    const { broadcastProxyState } = require('../websocket-server');
+    const proxyStatus = getGeminiProxyStatus();
+    const { channels } = getChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
+    broadcastProxyState('gemini', proxyStatus, activeChannel, channels);
+
     res.json({
       success: true,
       port: proxyResult.port,
-      activeChannel: currentChannel.name,
+      activeChannel: sanitizeChannel(currentChannel),
       message: `Gemini proxy started on port ${proxyResult.port}, active channel: ${currentChannel.name}`
     });
   } catch (error) {
@@ -103,6 +118,7 @@ router.post('/stop', async (req, res) => {
     const proxyResult = await stopGeminiProxyServer();
 
     // 3. 恢复原始配置
+    const { broadcastProxyState } = require('../websocket-server');
     if (hasBackup()) {
       restoreSettings();
       console.log('[Gemini Proxy] Restored settings from backup');
@@ -114,12 +130,13 @@ router.post('/stop', async (req, res) => {
         console.log('[Gemini Proxy] Removed gemini-active-channel.json');
       }
 
-      res.json({
+      const response = {
         success: true,
         message: `Gemini proxy stopped, settings restored${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
         port: proxyResult.port,
         restoredChannel: activeChannel?.name
-      });
+      };
+      res.json(response);
     } else {
       res.json({
         success: true,
@@ -127,6 +144,10 @@ router.post('/stop', async (req, res) => {
         port: proxyResult.port
       });
     }
+
+    const proxyStatus = getGeminiProxyStatus();
+    const latestChannels = getChannels().channels;
+    broadcastProxyState('gemini', proxyStatus, activeChannel, latestChannels);
   } catch (error) {
     console.error('[Gemini Proxy] Error stopping proxy:', error);
     res.status(500).json({ error: error.message });

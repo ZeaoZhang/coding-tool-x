@@ -63,8 +63,8 @@ export function useProxyState() {
       codexProxy.value.startTime = response.data.proxy?.startTime || null
       if (codexProxy.value.running && !codexProxy.value.activeChannel) {
         try {
-          const channelRes = await axios.get('/api/codex/channels/current')
-          codexProxy.value.activeChannel = channelRes.data
+          const channelRes = await axios.get('/api/codex/channels/active')
+          codexProxy.value.activeChannel = channelRes.data.channel
         } catch (e) {}
       }
     } catch (error) {
@@ -85,8 +85,8 @@ export function useProxyState() {
       geminiProxy.value.startTime = response.data.proxy?.startTime || null
       if (geminiProxy.value.running && !geminiProxy.value.activeChannel) {
         try {
-          const channelRes = await axios.get('/api/gemini/channels/current')
-          geminiProxy.value.activeChannel = channelRes.data
+          const channelRes = await axios.get('/api/gemini/channels/active')
+          geminiProxy.value.activeChannel = channelRes.data.channel
         } catch (e) {}
       }
     } catch (error) {
@@ -210,8 +210,8 @@ export function useProxyState() {
       loadPorts()
       checkAllStatus()
 
-      // 定时检查状态（5秒一次）
-      statusCheckInterval = setInterval(checkAllStatus, 5000)
+      // 定时检查状态（30秒一次，与全局设置保持一致）
+      statusCheckInterval = setInterval(checkAllStatus, 30000)
 
       isInitialized = true
     }

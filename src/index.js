@@ -16,6 +16,8 @@ const { resetConfig } = require('./reset-config');
 const { handleSwitchChannel, handleAddChannel } = require('./commands/channels');
 const { handleToggleProxy } = require('./commands/toggle-proxy');
 const { handlePortConfig } = require('./commands/port-config');
+const { handleSwitchCliType } = require('./commands/cli-type');
+const { handleUpdate } = require('./commands/update');
 const chalk = require('chalk');
 const path = require('path');
 const fs = require('fs');
@@ -36,6 +38,7 @@ function showHelp() {
   console.log(chalk.yellow('使用方法:'));
   console.log('  ct                  启动交互式命令行界面');
   console.log('  ct ui               启动 Web 可视化界面（推荐）');
+  console.log('  ct update           检查并更新到最新版本');
   console.log('  ct reset            重置配置文件');
   console.log('  ct proxy [start]    启动代理服务');
   console.log('  ct proxy stop       停止代理服务');
@@ -47,6 +50,7 @@ function showHelp() {
   console.log(chalk.yellow('示例:'));
   console.log(chalk.gray('  $ ct ui              # 启动 Web UI'));
   console.log(chalk.gray('  $ ct                 # 启动交互式命令行'));
+  console.log(chalk.gray('  $ ct update          # 检查并更新版本'));
   console.log(chalk.gray('  $ ct reset           # 重置配置\n'));
 
   console.log(chalk.yellow('更多信息:'));
@@ -96,6 +100,12 @@ async function main() {
   // ui 命令 - 快捷启动 Web UI
   if (args[0] === 'ui') {
     await handleUI();
+    return;
+  }
+
+  // update 命令 - 检查并更新版本
+  if (args[0] === 'update') {
+    await handleUpdate();
     return;
   }
 
@@ -171,6 +181,11 @@ async function main() {
             return switched;
           });
         }
+        break;
+
+      case 'switch-cli-type':
+        await handleSwitchCliType();
+        config = loadConfig(); // 重新加载配置以获取新的类型
         break;
 
       case 'switch-channel':

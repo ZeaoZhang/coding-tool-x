@@ -135,14 +135,6 @@ function buildPathMapping() {
   pathMappingCache = results;
   pathMappingCacheTime = now;
 
-  // 输出匹配结果日志
-  if (results.size > 0) {
-    console.log(`[Gemini Sessions] Path mapping built: ${results.size}/${projectHashes.length} projects resolved`);
-    results.forEach((projectPath, hash) => {
-      console.log(`[Gemini Sessions]   ${hash.slice(0, 8)}... -> ${projectPath}`);
-    });
-  }
-
   return results;
 }
 

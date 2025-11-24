@@ -81,9 +81,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { NIcon, NText, NTag, NProgress } from 'naive-ui'
 import { SettingsOutline, GlobeOutline, GitNetworkOutline, TimeOutline, HardwareChipOutline } from '@vicons/ionicons5'
+import { useGlobalState } from '../../composables/useGlobalState'
 
 const webUIStatus = ref({ running: true, port: 10099 })
 const wsStatus = ref({ connected: false, clients: 0 })
@@ -92,7 +93,9 @@ const memoryUsage = ref(0)
 const memoryPercentage = ref(0)
 
 let uptimeInterval = null
-let ws = null
+let systemInfoInterval = null
+
+const { wsConnected } = useGlobalState()
 
 function formatUptime(seconds) {
   const hours = Math.floor(seconds / 3600)
@@ -107,26 +110,6 @@ function formatMemory(bytes) {
 
 function updateUptime() {
   uptime.value++
-}
-
-function connectWebSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/ws`
-
-  ws = new WebSocket(wsUrl)
-
-  ws.onopen = () => {
-    wsStatus.value.connected = true
-  }
-
-  ws.onclose = () => {
-    wsStatus.value.connected = false
-    setTimeout(connectWebSocket, 3000)
-  }
-
-  ws.onerror = () => {
-    wsStatus.value.connected = false
-  }
 }
 
 function updateSystemInfo() {
@@ -149,23 +132,23 @@ function updateSystemInfo() {
   }
 }
 
+watch(wsConnected, (connected) => {
+  wsStatus.value.connected = connected
+  wsStatus.value.clients = connected ? 1 : 0
+}, { immediate: true })
+
 onMounted(() => {
-  connectWebSocket()
   updateSystemInfo()
-
-  // 每秒更新运行时间
   uptimeInterval = setInterval(updateUptime, 1000)
-
-  // 每5秒更新系统信息
-  setInterval(updateSystemInfo, 5000)
+  systemInfoInterval = setInterval(updateSystemInfo, 5000)
 })
 
 onUnmounted(() => {
   if (uptimeInterval) {
     clearInterval(uptimeInterval)
   }
-  if (ws) {
-    ws.close()
+  if (systemInfoInterval) {
+    clearInterval(systemInfoInterval)
   }
 })
 </script>

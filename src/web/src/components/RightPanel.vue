@@ -17,15 +17,21 @@
           </div>
 
           <!-- 最近对话 -->
-          <n-button
-            size="small"
-            @click="handleShowRecent"
-          >
-            <template #icon>
-              <n-icon><TimeOutline /></n-icon>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                text
+                size="small"
+                @click="handleShowRecent"
+                class="recent-sessions-icon-btn"
+              >
+                <template #icon>
+                  <n-icon :size="18"><ChatbubblesOutline /></n-icon>
+                </template>
+              </n-button>
             </template>
-            最近对话
-          </n-button>
+            最新对话
+          </n-tooltip>
         </div>
       </div>
 
@@ -393,10 +399,9 @@
       </div>
     </div>
 
-    <!-- 下半部分：实时日志（仅在代理开启且用户开启日志显示时显示和挂载） -->
-    <!-- 使用 v-if，只在代理开启时才挂载，避免 WebSocket 连接失败 -->
+    <!-- 下半部分：实时日志（用户开启日志显示时显示） -->
     <div
-      v-if="showLogs && proxyRunning"
+      v-if="showLogs"
       class="logs-section"
       :class="{ 'full-height': !showChannels }"
     >
@@ -549,9 +554,9 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NButton, NIcon, NText, NTag, NSpin, NEmpty, NModal, NForm, NFormItem, NInput, NSpace, NSwitch
+  NButton, NIcon, NText, NTag, NSpin, NEmpty, NModal, NForm, NFormItem, NInput, NSpace, NSwitch, NTooltip
 } from 'naive-ui'
-import { AddOutline, OpenOutline, ChevronDownOutline, TimeOutline, CodeSlashOutline } from '@vicons/ionicons5'
+import { AddOutline, OpenOutline, ChevronDownOutline, ChatbubblesOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import api from '../api'
 import message, { dialog } from '../utils/message'
@@ -1293,6 +1298,24 @@ onMounted(() => {
   flex-shrink: 0;
 }
 
+.recent-sessions-icon-btn {
+  padding: 6px !important;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  color: var(--text-secondary);
+}
+
+.recent-sessions-icon-btn:hover {
+  background: var(--hover-bg);
+  color: #18a058;
+  transform: scale(1.1);
+}
+
+[data-theme="dark"] .recent-sessions-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #34d399;
+}
+
 /* 上半部分：API 渠道管理 */
 .channels-section {
   flex: 1;
@@ -1342,7 +1365,7 @@ onMounted(() => {
 .channels-scroll-area {
   flex: 1;
   min-height: 0;
-  padding: 0 18px 18px 18px;
+  padding:18px;
   overflow-y: auto;
   overflow-x: hidden;
 }

@@ -1,8 +1,9 @@
 {
-  "projectsDir": "~/.claude/projects",
+  "projectsDir": "/Users/lilithgames/.claude/projects",
   "defaultProject": null,
   "maxDisplaySessions": 100,
   "pageSize": 15,
+  "currentCliType": "codex",
   "ports": {
     "webUI": 10099,
     "proxy": 10088,

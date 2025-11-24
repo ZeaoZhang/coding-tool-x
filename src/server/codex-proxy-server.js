@@ -5,6 +5,8 @@ const chalk = require('chalk');
 const { getActiveCodexChannel } = require('./services/codex-channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
+const DEFAULT_CONFIG = require('../config/default');
+const { resolvePricing } = require('./utils/pricing');
 const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 
@@ -36,6 +38,9 @@ const PRICING = {
   'claude-3-5-sonnet-20241022': { input: 3, output: 15 },
   'claude-3-5-haiku-20241022': { input: 0.8, output: 4 }
 };
+
+const CODEX_BASE_PRICING = DEFAULT_CONFIG.pricing.codex;
+const ONE_MILLION = 1000000;
 
 /**
  * 计算请求成本
@@ -73,14 +78,14 @@ function calculateCost(model, tokens) {
     }
   }
 
-  // 默认使用 GPT-4o 的定价
-  if (!pricing) {
-    pricing = { input: 2.5, output: 10 };
-  }
+  // 默认使用基础定价
+  pricing = resolvePricing('codex', pricing, CODEX_BASE_PRICING);
+  const inputRate = typeof pricing.input === 'number' ? pricing.input : CODEX_BASE_PRICING.input;
+  const outputRate = typeof pricing.output === 'number' ? pricing.output : CODEX_BASE_PRICING.output;
 
   return (
-    (tokens.input || 0) * pricing.input / 1000000 +
-    (tokens.output || 0) * pricing.output / 1000000
+    (tokens.input || 0) * inputRate / ONE_MILLION +
+    (tokens.output || 0) * outputRate / ONE_MILLION
   );
 }
 
@@ -281,8 +286,17 @@ async function startCodexProxyServer() {
             second: '2-digit'
           });
 
+          // 记录统计数据（先计算）
+          const tokens = {
+            input: tokenData.inputTokens,
+            output: tokenData.outputTokens,
+            total: tokenData.inputTokens + tokenData.outputTokens
+          };
+          const cost = calculateCost(tokenData.model, tokens);
+
           // 广播日志
           broadcastLog({
+            type: 'log',
             id: metadata.id,
             time: time,
             channel: metadata.channel,
@@ -292,16 +306,9 @@ async function startCodexProxyServer() {
             cachedTokens: tokenData.cachedTokens,
             reasoningTokens: tokenData.reasoningTokens,
             totalTokens: tokenData.totalTokens,
+            cost: cost,
             source: 'codex'
           });
-
-          // 记录统计数据
-          const tokens = {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            total: tokenData.inputTokens + tokenData.outputTokens
-          };
-          const cost = calculateCost(tokenData.model, tokens);
           const duration = Date.now() - metadata.startTime;
 
           recordRequest({

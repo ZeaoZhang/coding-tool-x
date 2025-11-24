@@ -92,6 +92,7 @@ function getProjects(config) {
 // Windows: "C--Users-admin-Desktop-project" -> "C:\Users\admin\Desktop\project"
 function parseRealProjectPath(encodedName) {
   const isWindows = process.platform === 'win32';
+  const fallbackFromSessions = tryResolvePathFromSessions(encodedName);
 
   // Detect Windows drive letter (e.g., "C--Users-admin")
   const windowsDriveMatch = encodedName.match(/^([A-Z])--(.+)$/);
@@ -119,22 +120,43 @@ function parseRealProjectPath(encodedName) {
       const testPath = driveLetter + ':\\' + realSegments.concat(accumulated).join('\\');
 
       // Check if this path exists
-      if (fs.existsSync(testPath)) {
-        realSegments.push(accumulated);
+      let found = fs.existsSync(testPath);
+      let finalAccumulated = accumulated;
+
+      // If not found with dash, try with underscore
+      if (!found && accumulated.includes('-')) {
+        const withUnderscore = accumulated.replace(/-/g, '_');
+        const testPathUnderscore = driveLetter + ':\\' + realSegments.concat(withUnderscore).join('\\');
+        if (fs.existsSync(testPathUnderscore)) {
+          finalAccumulated = withUnderscore;
+          found = true;
+        }
+      }
+
+      if (found) {
+        realSegments.push(finalAccumulated);
         accumulated = '';
-        currentPath = testPath;
+        currentPath = driveLetter + ':\\' + realSegments.join('\\');
       }
     }
 
-    // If there's remaining accumulated segment, add it
+    // If there's remaining accumulated segment, try underscore variant
     if (accumulated) {
-      realSegments.push(accumulated);
+      let finalAccumulated = accumulated;
+      if (accumulated.includes('-')) {
+        const withUnderscore = accumulated.replace(/-/g, '_');
+        const testPath = driveLetter + ':\\' + realSegments.concat(withUnderscore).join('\\');
+        if (fs.existsSync(testPath)) {
+          finalAccumulated = withUnderscore;
+        }
+      }
+      realSegments.push(finalAccumulated);
       currentPath = driveLetter + ':\\' + realSegments.join('\\');
     }
 
     return {
-      fullPath: currentPath || (driveLetter + ':\\' + restPath.replace(/-/g, '\\')),
-      projectName: realSegments[realSegments.length - 1] || encodedName
+      fullPath: validateProjectPath(currentPath) || fallbackFromSessions?.fullPath || (driveLetter + ':\\' + restPath.replace(/-/g, '\\')),
+      projectName: fallbackFromSessions?.projectName || realSegments[realSegments.length - 1] || encodedName
     };
   } else {
     // Unix-like path (macOS/Linux) or fallback
@@ -156,24 +178,100 @@ function parseRealProjectPath(encodedName) {
       const testPath = '/' + realSegments.concat(accumulated).join('/');
 
       // Check if this path exists
-      if (fs.existsSync(testPath)) {
-        realSegments.push(accumulated);
+      let found = fs.existsSync(testPath);
+      let finalAccumulated = accumulated;
+
+      // If not found with dash, try with underscore
+      if (!found && accumulated.includes('-')) {
+        const withUnderscore = accumulated.replace(/-/g, '_');
+        const testPathUnderscore = '/' + realSegments.concat(withUnderscore).join('/');
+        if (fs.existsSync(testPathUnderscore)) {
+          finalAccumulated = withUnderscore;
+          found = true;
+        }
+      }
+
+      if (found) {
+        realSegments.push(finalAccumulated);
         accumulated = '';
-        currentPath = testPath;
+        currentPath = '/' + realSegments.join('/');
       }
     }
 
-    // If there's remaining accumulated segment, add it
+    // If there's remaining accumulated segment, try underscore variant
     if (accumulated) {
-      realSegments.push(accumulated);
+      let finalAccumulated = accumulated;
+      if (accumulated.includes('-')) {
+        const withUnderscore = accumulated.replace(/-/g, '_');
+        const testPath = '/' + realSegments.concat(withUnderscore).join('/');
+        if (fs.existsSync(testPath)) {
+          finalAccumulated = withUnderscore;
+        }
+      }
+      realSegments.push(finalAccumulated);
       currentPath = '/' + realSegments.join('/');
     }
 
     return {
-      fullPath: currentPath || pathStr,
-      projectName: realSegments[realSegments.length - 1] || encodedName
+      fullPath: validateProjectPath(currentPath) || fallbackFromSessions?.fullPath || pathStr,
+      projectName: fallbackFromSessions?.projectName || realSegments[realSegments.length - 1] || encodedName
     };
   }
+}
+
+function validateProjectPath(candidatePath) {
+  if (candidatePath && fs.existsSync(candidatePath)) {
+    return candidatePath;
+  }
+  return null;
+}
+
+function tryResolvePathFromSessions(encodedName) {
+  try {
+    const projectDir = path.join(os.homedir(), '.claude', 'projects', encodedName);
+    if (!fs.existsSync(projectDir)) {
+      return null;
+    }
+    const files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+    for (const file of files) {
+      const sessionFile = path.join(projectDir, file);
+      const cwd = extractCwdFromSessionHeader(sessionFile);
+      if (cwd && fs.existsSync(cwd)) {
+        return {
+          fullPath: cwd,
+          projectName: path.basename(cwd)
+        };
+      }
+    }
+  } catch (err) {
+    // ignore fallback errors
+  }
+  return null;
+}
+
+function extractCwdFromSessionHeader(sessionFile) {
+  try {
+    const fd = fs.openSync(sessionFile, 'r');
+    const buffer = Buffer.alloc(4096);
+    const bytesRead = fs.readSync(fd, buffer, 0, 4096, 0);
+    fs.closeSync(fd);
+    const content = buffer.slice(0, bytesRead).toString('utf8');
+    const lines = content.split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const json = JSON.parse(line);
+        if (json.cwd && typeof json.cwd === 'string') {
+          return json.cwd;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+  return null;
 }
 
 // Get projects with detailed stats

@@ -255,13 +255,15 @@ function activateChannel(id) {
     throw new Error('Channel not found');
   }
 
+  // Always save active channel ID for UI consistency
+  saveActiveChannelId(id);
+
   // Check if we're in proxy mode
   if (isProxyConfig()) {
     // Proxy mode: only save active channel ID, don't modify settings.json
-    saveActiveChannelId(id);
     console.log(`✅ Activated channel in proxy mode: ${channel.name}`);
   } else {
-    // Normal mode: update Claude settings.json
+    // Normal mode: also update Claude settings.json
     updateClaudeSettings(channel.baseUrl, channel.apiKey);
     console.log(`✅ Activated channel in normal mode: ${channel.name}`);
   }

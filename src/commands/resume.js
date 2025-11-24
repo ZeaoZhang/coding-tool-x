@@ -88,7 +88,7 @@ async function resumeSession(config, sessionId, fork = false) {
   await new Promise(resolve => setTimeout(resolve, 100));
 
   // 使用 execSync 完全替代当前进程
-  // cc 会阻塞等待 claude 完成，然后一起退出
+  // ct 会阻塞等待 claude 完成，然后一起退出
   // Claude 独占终端，不会有输入冲突
   try {
     const command = `claude ${args.join(' ')}`;
@@ -103,7 +103,7 @@ async function resumeSession(config, sessionId, fork = false) {
     }
 
     // execSync 会阻塞并完全接管终端
-    // 此时 cc 进程只是等待，不处理任何输入
+    // 此时 ct 进程只是等待，不处理任何输入
     execSync(command, {
       stdio: 'inherit', // 完全继承 stdio，让 claude 控制终端
     });

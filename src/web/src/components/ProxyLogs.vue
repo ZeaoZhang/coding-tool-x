@@ -72,20 +72,20 @@
                   <div class="col col-channel" :class="`col-channel-${source}`" :title="log.channel">
                     <n-tag size="small" type="success">{{ log.channel }}</n-tag>
                   </div>
-                  <div class="col col-token" :class="`col-token-${source}`">{{ log.inputTokens }}</div>
-                  <div class="col col-token" :class="`col-token-${source}`">{{ log.outputTokens }}</div>
+                  <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.input || 0 }}</div>
+                  <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.output || 0 }}</div>
                   <template v-if="source === 'claude'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cacheCreation }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cacheRead }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cacheCreation || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cacheRead || 0 }}</div>
                   </template>
                   <template v-else-if="source === 'codex'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.reasoningTokens || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cachedTokens || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.totalTokens || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.reasoning || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
                   </template>
                   <template v-else-if="source === 'gemini'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.cachedTokens || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.totalTokens || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
                   </template>
                   <div class="col col-time" :class="`col-time-${source}`">{{ log.time }}</div>
                 </div>
@@ -119,6 +119,7 @@ import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import { TrashOutline, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
 import api from '../api'
 import message from '../utils/message'
+import { useGlobalState } from '../composables/useGlobalState'
 
 // Props
 const props = defineProps({
@@ -128,30 +129,26 @@ const props = defineProps({
   }
 })
 
-const logs = ref([])
+const { getLogs, wsConnected, clearLogsState, logLimit } = useGlobalState()
+const logStreams = {
+  claude: getLogs('claude'),
+  codex: getLogs('codex'),
+  gemini: getLogs('gemini')
+}
 
-// 根据 source 过滤日志
 const filteredLogs = computed(() => {
-  return logs.value.filter(log => {
-    // 如果日志没有 source 字段，默认当作 claude 的日志
-    const logSource = log.source || 'claude'
-    return logSource === props.source
-  })
+  const stream = logStreams[props.source] || logStreams.claude
+  const list = stream.value || []
+  return list.slice(0, logLimit.value)
 })
-
-const wsConnected = ref(false)
+const logsBefore = ref(filteredLogs.value.length)
 const tableBody = ref(null)
 const todayStats = ref({
   requests: 0,
   tokens: 0
 })
-let ws = null
-let isInitialConnection = true // 标记是否是初次连接
-let isReceivingHistory = true // 标记是否正在接收历史日志
-let reconnectAttempts = 0 // 重连尝试次数
-let reconnectTimer = null // 重连定时器
-let isConnecting = false // 是否正在连接中
 let statsUpdateTimer = null // 统计数据更新定时器
+let latestRenderedId = null
 
 // 格式化数字（添加千位分隔符）
 function formatNumber(num) {
@@ -198,218 +195,57 @@ async function loadTodayStats() {
 
 // 启动定时更新统计数据（每30秒更新一次）
 function startStatsUpdate() {
-  loadTodayStats() // 立即加载一次
+  loadTodayStats()
   statsUpdateTimer = setInterval(() => {
     loadTodayStats()
-  }, 30000) // 30秒更新一次
+  }, 30000)
 }
 
-// 连接 WebSocket
-function connectWebSocket() {
-  // 清除待处理的重连定时器
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-
-  // 避免重复连接
-  if (isConnecting || (ws && ws.readyState === WebSocket.CONNECTING)) {
-    console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Already connecting, skipping...`)
+watch(filteredLogs, (newLogs) => {
+  const newestId = newLogs[0]?.id || null
+  if (!newestId || newestId === latestRenderedId) {
+    latestRenderedId = newestId
     return
   }
 
-  // 如果已有连接且是打开状态，直接返回
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Already connected`)
-    return
-  }
-
-  // 如果已有连接但未完全关闭，先关闭
-  if (ws && ws.readyState !== WebSocket.CLOSED) {
-    try {
-      ws.close()
-    } catch (err) {
-      // 忽略关闭错误
-    }
-    ws = null
-  }
-
-  try {
-    isConnecting = true
-
-    // 根据当前环境构建 WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    const wsUrl = `${protocol}//${host}/ws`
-
-    console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Connecting to ${wsUrl}...`)
-
-    ws = new WebSocket(wsUrl)
-
-    ws.onopen = () => {
-      console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Connected successfully`)
-      wsConnected.value = true
-      isConnecting = false
-      reconnectAttempts = 0 // 重置重连次数
-
-      // 初次连接时清空日志，准备接收历史日志
-      if (isInitialConnection) {
-        logs.value = []
-        isInitialConnection = false
+  latestRenderedId = newestId
+  const isNearTop = tableBody.value ? tableBody.value.scrollTop < 20 : true
+  if (isNearTop) {
+    nextTick(() => {
+      if (tableBody.value) {
+        tableBody.value.scrollTop = 0
       }
-
-      // 开始接收历史日志
-      isReceivingHistory = true
-
-      // 2秒后认为历史日志接收完毕，之后的日志都是新推送的
-      setTimeout(() => {
-        isReceivingHistory = false
-        console.log(`[${props.source.toUpperCase()} ProxyLogs WS] History receiving completed, now accepting real-time logs`)
-      }, 2000)
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-
-        // 格式化时间
-        const time = new Date(data.timestamp || Date.now()).toLocaleTimeString('zh-CN', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })
-
-        // 添加唯一 ID
-        const log = {
-          ...data,
-          id: `${Date.now()}-${Math.random()}`,
-          time,
-          isNew: !isReceivingHistory // 只有非历史日志才标记为新
-        }
-
-        // 检查用户是否在顶部附近（前20px）
-        const isNearTop = tableBody.value ? tableBody.value.scrollTop < 20 : true
-
-        // 添加到日志列表前面（新日志在前）
-        logs.value.unshift(log)
-
-        // 4.5秒后移除高亮效果（与动画时长保持一致，只对新日志生效）
-        if (log.isNew) {
-          setTimeout(() => {
-            log.isNew = false
-          }, 4500)
-        }
-
-        // 限制日志数量（最多保留 100 条）
-        if (logs.value.length > 100) {
-          logs.value.pop()
-        }
-
-        // 只在用户在顶部时才自动滚动到顶部，避免打断用户查看历史日志
-        if (isNearTop) {
-          nextTick(() => {
-            if (tableBody.value) {
-              tableBody.value.scrollTop = 0
-            }
-          })
-        }
-      } catch (err) {
-        console.error('Failed to parse WebSocket message:', err)
-      }
-    }
-
-    ws.onerror = (error) => {
-      console.error(`[${props.source.toUpperCase()} ProxyLogs WS] Error:`, error)
-      wsConnected.value = false
-      isConnecting = false
-    }
-
-    ws.onclose = (event) => {
-      console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Connection closed (code: ${event.code}, reason: ${event.reason || 'none'})`)
-      wsConnected.value = false
-      isConnecting = false
-
-      // 清除之前的重连定时器
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer)
-        reconnectTimer = null
-      }
-
-      // 计算重连延迟（指数退避，最大 30 秒）
-      reconnectAttempts++
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000)
-
-      console.log(`[${props.source.toUpperCase()} ProxyLogs WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`)
-
-      reconnectTimer = setTimeout(() => {
-        if (!wsConnected.value) {
-          connectWebSocket()
-        }
-      }, delay)
-    }
-  } catch (err) {
-    console.error('Failed to connect WebSocket:', err)
-    isConnecting = false
-    wsConnected.value = false
+    })
   }
-}
+})
 
 // 清空日志
 async function clearLogs() {
   try {
     await api.clearProxyLogs()
-    logs.value = []
+    clearLogsState()
     message.success('日志已清空')
   } catch (err) {
     message.error('清空失败: ' + err.message)
   }
 }
 
-// 重置连接（可在代理开启时调用）
-function resetConnection() {
-  reconnectAttempts = 0
-  if (!wsConnected.value) {
-    connectWebSocket()
-  }
-}
-
 // 监听 source 变化，重新加载统计数据
 watch(() => props.source, () => {
   loadTodayStats()
+  latestRenderedId = filteredLogs.value[0]?.id || null
 })
 
 onMounted(() => {
-  connectWebSocket()
   startStatsUpdate() // 启动统计数据更新
 })
 
 onUnmounted(() => {
-  // 清除重连定时器
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
-  }
-
   // 清除统计数据更新定时器
   if (statsUpdateTimer) {
     clearInterval(statsUpdateTimer)
     statsUpdateTimer = null
   }
-
-  // 关闭 WebSocket 连接
-  if (ws) {
-    ws.close()
-    ws = null
-  }
-
-  // 重置状态
-  isConnecting = false
-  wsConnected.value = false
-})
-
-// 暴露给父组件
-defineExpose({
-  resetConnection
 })
 </script>
 

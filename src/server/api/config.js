@@ -1,6 +1,40 @@
 const express = require('express');
 const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
+const DEFAULT_CONFIG = require('../../config/default');
+
+function clampNumber(value, fallback) {
+  const num = typeof value === 'number' ? value : parseFloat(value);
+  if (!Number.isFinite(num)) {
+    return fallback;
+  }
+  if (num < 0) return 0;
+  if (num > 1000) return 1000;
+  return Math.round(num * 1000000) / 1000000;
+}
+
+function sanitizePricing(inputPricing, currentPricing) {
+  const defaults = DEFAULT_CONFIG.pricing;
+  const sanitized = {};
+
+  Object.keys(defaults).forEach((toolKey) => {
+    const defaultValue = defaults[toolKey];
+    const existingValue = currentPricing?.[toolKey] || {};
+    const payload = inputPricing?.[toolKey] || {};
+
+    const mode = payload.mode === 'custom' ? 'custom' : (existingValue.mode || defaultValue.mode || 'auto');
+    sanitized[toolKey] = { mode };
+
+    Object.keys(defaultValue)
+      .filter((key) => key !== 'mode')
+      .forEach((rateKey) => {
+        const fallback = existingValue[rateKey] !== undefined ? existingValue[rateKey] : defaultValue[rateKey];
+        sanitized[toolKey][rateKey] = clampNumber(payload[rateKey], fallback);
+      });
+  });
+
+  return sanitized;
+}
 
 /**
  * GET /api/config/advanced
@@ -17,7 +51,8 @@ router.get('/advanced', (req, res) => {
         geminiProxy: config.ports?.geminiProxy || 10090
       },
       maxLogs: config.maxLogs || 100,
-      statsInterval: config.statsInterval || 30
+      statsInterval: config.statsInterval || 30,
+      pricing: config.pricing || DEFAULT_CONFIG.pricing
     });
   } catch (error) {
     console.error('[Config API] Failed to get advanced config:', error);
@@ -31,7 +66,7 @@ router.get('/advanced', (req, res) => {
  */
 router.post('/advanced', (req, res) => {
   try {
-    const { ports, maxLogs, statsInterval } = req.body;
+    const { ports, maxLogs, statsInterval, pricing } = req.body;
 
     // 验证端口
     if (ports) {
@@ -67,16 +102,25 @@ router.post('/advanced', (req, res) => {
 
     // 加载当前配置
     const config = loadConfig();
+    const sanitizedPricing = sanitizePricing(pricing, config.pricing);
+
+    let normalizedPorts = config.ports;
+    if (ports) {
+      normalizedPorts = { ...config.ports };
+      Object.entries(ports).forEach(([key, value]) => {
+        const port = parseInt(value);
+        normalizedPorts[key] = port;
+      });
+    }
 
     // 更新配置
     const newConfig = {
+      ...config,
       projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
-      defaultProject: config.defaultProject,
-      maxDisplaySessions: config.maxDisplaySessions,
-      pageSize: config.pageSize,
-      ports: ports || config.ports,
+      ports: normalizedPorts,
       maxLogs: maxLogs !== undefined ? parseInt(maxLogs) : config.maxLogs,
-      statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval
+      statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,
+      pricing: sanitizedPricing
     };
 
     // 保存配置
@@ -87,7 +131,8 @@ router.post('/advanced', (req, res) => {
       config: {
         ports: newConfig.ports,
         maxLogs: newConfig.maxLogs,
-        statsInterval: newConfig.statsInterval
+        statsInterval: newConfig.statsInterval,
+        pricing: newConfig.pricing
       }
     });
   } catch (error) {

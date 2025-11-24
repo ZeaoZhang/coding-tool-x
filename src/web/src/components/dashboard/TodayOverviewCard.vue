@@ -57,7 +57,7 @@
         </div>
         <div class="stat-info">
           <div class="stat-label">Cost</div>
-          <div class="stat-value">${{ stats.cost.toFixed(2) }}</div>
+          <div class="stat-value">${{ stats.cost.toFixed(3) }}</div>
           <div class="stat-change" :class="{ positive: stats.costChange > 0, negative: stats.costChange < 0 }">
             <n-icon :size="14">
               <component :is="stats.costChange > 0 ? ArrowUpOutline : ArrowDownOutline" />
@@ -71,10 +71,19 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { NIcon, NButton } from 'naive-ui'
-import { TrendingUpOutline, PulseOutline, FlashOutline, CashOutline, RefreshOutline, ArrowUpOutline, ArrowDownOutline } from '@vicons/ionicons5'
+import {
+  TrendingUpOutline,
+  PulseOutline,
+  FlashOutline,
+  CashOutline,
+  RefreshOutline,
+  ArrowUpOutline,
+  ArrowDownOutline
+} from '@vicons/ionicons5'
 import axios from 'axios'
+import { useGlobalState } from '../../composables/useGlobalState'
 
 const loading = ref(false)
 const stats = ref({
@@ -85,6 +94,16 @@ const stats = ref({
   tokensChange: 0,
   costChange: 0
 })
+
+let syncInterval = null
+let realtimeEnabled = false
+let mounted = false
+const processedLogIds = new Set()
+
+const { getLogs, statsInterval: statsIntervalSetting } = useGlobalState()
+const claudeLogs = getLogs('claude')
+const codexLogs = getLogs('codex')
+const geminiLogs = getLogs('gemini')
 
 function formatNumber(num) {
   if (num >= 1000000) {
@@ -113,7 +132,6 @@ async function loadTodayStats() {
     stats.value.tokens = response.data.summary?.tokens || 0
     stats.value.cost = response.data.summary?.cost || 0
 
-    // 获取昨天的数据来计算变化百分比
     const yesterday = new Date()
     yesterday.setDate(yesterday.getDate() - 1)
     const yesterdayStr = yesterday.toISOString().split('T')[0]
@@ -132,12 +150,14 @@ async function loadTodayStats() {
         stats.value.costChange = Math.round(((stats.value.cost - yesterdayStats.cost) / yesterdayStats.cost) * 100)
       }
     } catch (error) {
-      // 昨天没有数据，忽略
+      // ignore
     }
   } catch (error) {
     console.error('Failed to load today stats:', error)
   } finally {
     loading.value = false
+    markExistingLogs()
+    realtimeEnabled = true
   }
 }
 
@@ -145,10 +165,60 @@ function refresh() {
   loadTodayStats()
 }
 
+function markExistingLogs() {
+  ;[claudeLogs.value, codexLogs.value, geminiLogs.value].forEach(list => {
+    list.forEach(log => processedLogIds.add(log.id))
+  })
+}
+
+function processNewLogs(logList) {
+  if (!realtimeEnabled) return
+  for (const log of logList) {
+    if (processedLogIds.has(log.id)) {
+      break
+    }
+    if (log.type !== 'action') {
+      stats.value.requests += 1
+      const totalTokens = log.tokens?.total ?? (log.tokens?.input || 0) + (log.tokens?.output || 0)
+      stats.value.tokens += totalTokens
+      if (log.cost) {
+        stats.value.cost += log.cost
+      }
+    }
+    processedLogIds.add(log.id)
+  }
+}
+
+watch(claudeLogs, (list) => processNewLogs(list), { deep: true })
+watch(codexLogs, (list) => processNewLogs(list), { deep: true })
+watch(geminiLogs, (list) => processNewLogs(list), { deep: true })
+
+function scheduleStatsSync() {
+  if (syncInterval) {
+    clearInterval(syncInterval)
+    syncInterval = null
+  }
+  const seconds = statsIntervalSetting.value || 30
+  const delay = Math.max(seconds * 1000, 10000)
+  syncInterval = setInterval(loadTodayStats, delay)
+}
+
+watch(statsIntervalSetting, () => {
+  if (mounted) {
+    scheduleStatsSync()
+  }
+})
+
 onMounted(() => {
   loadTodayStats()
-  // 定时刷新
-  setInterval(loadTodayStats, 30000) // 30秒刷新一次
+  mounted = true
+  scheduleStatsSync()
+})
+
+onUnmounted(() => {
+  if (syncInterval) {
+    clearInterval(syncInterval)
+  }
 })
 </script>
 

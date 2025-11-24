@@ -16,6 +16,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+function sanitizeChannelForResponse(channel) {
+  if (!channel) return null;
+  return {
+    id: channel.id,
+    name: channel.name,
+    baseUrl: channel.baseUrl,
+    websiteUrl: channel.websiteUrl
+  };
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   const dir = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -66,6 +76,8 @@ function findActiveChannelFromSettings() {
 router.get('/status', (req, res) => {
   try {
     const proxyStatus = getProxyStatus();
+    const channels = getAllChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
     const configStatus = {
       isProxyConfig: isProxyConfig(),
       settingsExists: settingsExists(),
@@ -75,7 +87,8 @@ router.get('/status', (req, res) => {
 
     res.json({
       proxy: proxyStatus,
-      config: configStatus
+      config: configStatus,
+      activeChannel: sanitizeChannelForResponse(activeChannel)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -112,12 +125,20 @@ router.post('/start', async (req, res) => {
     }
 
     // 5. 设置代理配置（备份并修改 settings.json）
-    const configResult = setProxyConfig(proxyResult.port);
+    setProxyConfig(proxyResult.port);
+
+    const updatedStatus = getProxyStatus();
+    const channels = getAllChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
+
+    // 6. 通过 WebSocket 推送代理状态更新
+    const { broadcastProxyState } = require('../websocket-server');
+    broadcastProxyState('claude', updatedStatus, activeChannel, channels);
 
     res.json({
       success: true,
       port: proxyResult.port,
-      activeChannel: currentChannel.name,
+      activeChannel: sanitizeChannelForResponse(currentChannel),
       message: `代理已启动在端口 ${proxyResult.port}，当前渠道: ${currentChannel.name}`
     });
   } catch (error) {
@@ -156,6 +177,11 @@ router.post('/stop', async (req, res) => {
         console.log('✅ Removed active-channel.json');
       }
 
+      // 通过 WebSocket 推送代理状态更新
+      const { broadcastProxyState } = require('../websocket-server');
+      const updatedStatus = getProxyStatus();
+      broadcastProxyState('claude', updatedStatus, activeChannel, channels);
+
       res.json({
         success: true,
         message: `代理已停止，配置已恢复到渠道: ${activeChannel.name}`,
@@ -178,6 +204,10 @@ router.post('/stop', async (req, res) => {
           port: proxyResult.port
         });
       }
+
+      const { broadcastProxyState } = require('../websocket-server');
+      const updatedStatus = getProxyStatus();
+      broadcastProxyState('claude', updatedStatus, activeChannel, channels);
     }
   } catch (error) {
     console.error('Error stopping proxy:', error);

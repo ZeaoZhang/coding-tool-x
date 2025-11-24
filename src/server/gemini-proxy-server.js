@@ -5,6 +5,8 @@ const chalk = require('chalk');
 const { getActiveGeminiChannel } = require('./services/gemini-channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
+const DEFAULT_CONFIG = require('../config/default');
+const { resolvePricing } = require('./utils/pricing');
 const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 
@@ -29,6 +31,9 @@ const PRICING = {
   'gemini-pro': { input: 0.5, output: 1.5 },
   'gemini-pro-vision': { input: 0.5, output: 1.5 }
 };
+
+const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
+const ONE_MILLION = 1000000;
 
 /**
  * 计算请求成本
@@ -61,14 +66,13 @@ function calculateCost(model, tokens) {
     }
   }
 
-  // 默认使用 Gemini 2.5 Pro 的定价
-  if (!pricing) {
-    pricing = { input: 1.25, output: 5 };
-  }
+  pricing = resolvePricing('gemini', pricing, GEMINI_BASE_PRICING);
+  const inputRate = typeof pricing.input === 'number' ? pricing.input : GEMINI_BASE_PRICING.input;
+  const outputRate = typeof pricing.output === 'number' ? pricing.output : GEMINI_BASE_PRICING.output;
 
   return (
-    (tokens.input || 0) * pricing.input / 1000000 +
-    (tokens.output || 0) * pricing.output / 1000000
+    (tokens.input || 0) * inputRate / ONE_MILLION +
+    (tokens.output || 0) * outputRate / ONE_MILLION
   );
 }
 
@@ -300,9 +304,19 @@ async function startGeminiProxyServer() {
           second: '2-digit'
         });
 
-        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0) {
+        // 记录统计数据（先计算）
+        const tokens = {
+          input: tokenData.inputTokens,
+          output: tokenData.outputTokens,
+          total: tokenData.totalTokens || (tokenData.inputTokens + tokenData.outputTokens)
+        };
+        const cost = calculateCost(tokenData.model, tokens);
+
+        // 只有在有 token 数据时才广播日志和记录统计
+        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0 || tokenData.totalTokens > 0) {
           // 广播日志
-          broadcastLog({
+          const logData = {
+            type: 'log',
             id: metadata.id,
             time: time,
             channel: metadata.channel,
@@ -311,17 +325,14 @@ async function startGeminiProxyServer() {
             outputTokens: tokenData.outputTokens,
             cachedTokens: tokenData.cachedTokens,
             reasoningTokens: tokenData.reasoningTokens,
-            totalTokens: tokenData.totalTokens,
+            totalTokens: tokenData.totalTokens || (tokenData.inputTokens + tokenData.outputTokens),
+            cost: cost,
             source: 'gemini'
-          });
-
-          // 记录统计数据
-          const tokens = {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            total: tokenData.inputTokens + tokenData.outputTokens
           };
-          const cost = calculateCost(tokenData.model, tokens);
+
+          broadcastLog(logData);
+
+          // 记录统计
           const duration = Date.now() - metadata.startTime;
 
           recordRequest({
@@ -336,9 +347,6 @@ async function startGeminiProxyServer() {
             success: true,
             cost: cost
           });
-        } else {
-          console.warn(`[Gemini Proxy] Request ${metadata.id}: No token data found. Model: ${tokenData.model || 'unknown'}`);
-          console.warn(`[Gemini Proxy] Response content-type: ${proxyRes.headers['content-type']}`);
         }
 
         requestMetadata.delete(req);

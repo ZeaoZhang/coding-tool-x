@@ -1,5 +1,6 @@
 // 切换项目命令
 const chalk = require('chalk');
+const os = require('os');
 const { getAvailableProjects } = require('../utils/session');
 const { promptSelectProject } = require('../ui/prompts');
 const { saveConfig } = require('../config/loader');
@@ -25,13 +26,12 @@ async function switchProject(config) {
 
   // 更新配置
   config.currentProject = selectedProject;
+  config.defaultProject = selectedProject;
 
-  // 保存到配置文件
+  // 保存到配置文件（保留其余字段）
   saveConfig({
-    projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
-    defaultProject: selectedProject,
-    maxDisplaySessions: config.maxDisplaySessions,
-    pageSize: config.pageSize,
+    ...config,
+    projectsDir: config.projectsDir.replace(os.homedir(), '~')
   });
 
   // 使用解析后的名称显示

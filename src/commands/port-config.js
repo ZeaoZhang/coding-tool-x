@@ -1,6 +1,7 @@
 // 端口配置命令
 const chalk = require('chalk');
 const inquirer = require('inquirer');
+const os = require('os');
 const { loadConfig, saveConfig } = require('../config/loader');
 
 /**
@@ -88,12 +89,10 @@ async function handlePortConfig() {
     geminiProxy: parseInt(answers.geminiProxy),
   };
 
-  // 保存配置
+  // 保存配置（保留其余字段）
   saveConfig({
-    projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
-    defaultProject: config.defaultProject,
-    maxDisplaySessions: config.maxDisplaySessions,
-    pageSize: config.pageSize,
+    ...config,
+    projectsDir: config.projectsDir.replace(os.homedir(), '~'),
     ports: config.ports,
   });
 

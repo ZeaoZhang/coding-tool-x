@@ -6,6 +6,8 @@ const chalk = require('chalk');
 const { getActiveChannel } = require('./services/channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
+const DEFAULT_CONFIG = require('../config/default');
+const { resolvePricing } = require('./utils/pricing');
 const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 
@@ -28,6 +30,9 @@ const PRICING = {
   'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 }
 };
 
+const CLAUDE_BASE_PRICING = DEFAULT_CONFIG.pricing.claude;
+const ONE_MILLION = 1000000;
+
 /**
  * 计算请求成本
  * @param {string} model - 模型名称
@@ -35,22 +40,19 @@ const PRICING = {
  * @returns {number} 成本（美元）
  */
 function calculateCost(model, tokens) {
-  const pricing = PRICING[model];
-  if (!pricing) {
-    // 如果没有定价信息，使用 Sonnet 的默认定价
-    return (
-      (tokens.input || 0) * 3 / 1000000 +
-      (tokens.output || 0) * 15 / 1000000 +
-      (tokens.cacheCreation || 0) * 3.75 / 1000000 +
-      (tokens.cacheRead || 0) * 0.30 / 1000000
-    );
-  }
+  const basePricing = PRICING[model] || {};
+  const pricing = resolvePricing('claude', basePricing, CLAUDE_BASE_PRICING);
+
+  const inputRate = typeof pricing.input === 'number' ? pricing.input : CLAUDE_BASE_PRICING.input;
+  const outputRate = typeof pricing.output === 'number' ? pricing.output : CLAUDE_BASE_PRICING.output;
+  const cacheCreationRate = typeof pricing.cacheCreation === 'number' ? pricing.cacheCreation : CLAUDE_BASE_PRICING.cacheCreation;
+  const cacheReadRate = typeof pricing.cacheRead === 'number' ? pricing.cacheRead : CLAUDE_BASE_PRICING.cacheRead;
 
   return (
-    (tokens.input || 0) * pricing.input / 1000000 +
-    (tokens.output || 0) * pricing.output / 1000000 +
-    (tokens.cacheCreation || 0) * pricing.cacheCreation / 1000000 +
-    (tokens.cacheRead || 0) * pricing.cacheRead / 1000000
+    (tokens.input || 0) * inputRate / ONE_MILLION +
+    (tokens.output || 0) * outputRate / ONE_MILLION +
+    (tokens.cacheCreation || 0) * cacheCreationRate / ONE_MILLION +
+    (tokens.cacheRead || 0) * cacheReadRate / ONE_MILLION
   );
 }
 
@@ -213,20 +215,7 @@ async function startProxyServer() {
                 second: '2-digit'
               });
 
-              // 广播日志
-              broadcastLog({
-                id: metadata.id,
-                time: time,
-                channel: metadata.channel,
-                model: tokenData.model,
-                inputTokens: tokenData.inputTokens,
-                outputTokens: tokenData.outputTokens,
-                cacheCreation: tokenData.cacheCreation,
-                cacheRead: tokenData.cacheRead,
-                source: 'claude'
-              });
-
-              // 记录统计数据
+              // 记录统计数据（先计算）
               const tokens = {
                 input: tokenData.inputTokens,
                 output: tokenData.outputTokens,
@@ -235,6 +224,21 @@ async function startProxyServer() {
                 total: tokenData.inputTokens + tokenData.outputTokens + tokenData.cacheCreation + tokenData.cacheRead
               };
               const cost = calculateCost(tokenData.model, tokens);
+
+              // 广播日志
+              broadcastLog({
+                type: 'log',
+                id: metadata.id,
+                time: time,
+                channel: metadata.channel,
+                model: tokenData.model,
+                inputTokens: tokenData.inputTokens,
+                outputTokens: tokenData.outputTokens,
+                cacheCreation: tokenData.cacheCreation,
+                cacheRead: tokenData.cacheRead,
+                cost: cost,
+                source: 'claude'
+              });
               const duration = Date.now() - metadata.startTime;
 
               recordRequest({
@@ -293,7 +297,7 @@ async function startProxyServer() {
         if (err.code === 'EADDRINUSE') {
           console.error(chalk.red(`\n❌ 代理服务端口 ${port} 已被占用`));
           console.error(chalk.yellow('\n💡 解决方案:'));
-          console.error(chalk.gray('   1. 运行 cc 命令，选择"配置端口"修改端口'));
+          console.error(chalk.gray('   1. 运行 ct 命令，选择"配置端口"修改端口'));
           console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
         } else {
           console.error('Failed to start proxy server:', err);

@@ -1,6 +1,6 @@
 <template>
   <n-drawer v-model:show="show" :width="1200" placement="right" :show-close="true">
-    <n-drawer-content :title="channel === 'codex' ? 'Codex 最新对话' : 'Claude 最新对话'" :native-scrollbar="false" closable>
+    <n-drawer-content :title="getChannelTitle()" :native-scrollbar="false" closable>
       <div v-if="loading" class="loading-container">
         <n-spin size="medium">
           <template #description>加载中...</template>
@@ -60,6 +60,14 @@ const loading = ref(false)
 
 // 为了在 template 中使用
 const channel = computed(() => props.channel)
+
+// 获取渠道标题
+function getChannelTitle() {
+  if (props.channel === 'claude') return 'Claude 最新对话'
+  if (props.channel === 'codex') return 'Codex 最新对话'
+  if (props.channel === 'gemini') return 'Gemini 最新对话'
+  return '最新对话'
+}
 
 // Sync with props
 watch(() => props.visible, (val) => {

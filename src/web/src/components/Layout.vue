@@ -3,10 +3,11 @@
     <!-- Global Header -->
     <header class="header">
       <div class="logo-section" @click="goHome">
-        <img src="/logo.png" alt="Coding Tool Logo" class="logo-image" />
+        <div class="logo-wrapper">
+          <img src="/logo.png" alt="Coding Tool Logo" class="logo-image" />
+        </div>
         <div class="title-group">
           <h1 class="title-main">Coding-Tool</h1>
-          <span class="title-divider">-</span>
           <span class="title-sub">Vibe Coding增强工作助手</span>
         </div>
       </div>
@@ -29,7 +30,7 @@
           @click="router.push({ name: 'claude-projects' })"
         >
           <n-icon :size="18" class="nav-icon">
-            <LayersOutline />
+            <ChatboxEllipsesOutline />
           </n-icon>
           <span class="nav-label">Claude</span>
         </div>
@@ -49,13 +50,39 @@
           @click="router.push({ name: 'gemini-projects' })"
         >
           <n-icon :size="18" class="nav-icon">
-            <ColorPaletteOutline />
+            <SparklesOutline />
           </n-icon>
           <span class="nav-label">Gemini</span>
         </div>
       </div>
 
       <div class="header-actions">
+        <!-- Update Notification -->
+        <div v-if="updateInfo" class="update-notification">
+          <n-tooltip placement="bottom">
+            <template #trigger>
+              <div class="update-badge" @click="handleUpdateClick">
+                <n-icon :size="18">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
+                    <path d="M256 48C141.13 48 48 141.13 48 256s93.13 208 208 208 208-93.13 208-208S370.87 48 256 48zm-80 288v-32h160v32H176zm48-112h-48v-32h48v-48h32v48h48v32h-48v48h-32v-48z"/>
+                  </svg>
+                </n-icon>
+                <span class="update-text">有更新</span>
+              </div>
+            </template>
+            <div style="max-width: 300px;">
+              <div style="font-weight: 600; margin-bottom: 6px; font-size: 13px;">发现新版本 🎉</div>
+              <div style="font-size: 12px; color: var(--text-tertiary); line-height: 1.6;">
+                当前版本: <span style="font-weight: 600;">{{ updateInfo.current }}</span><br>
+                最新版本: <span style="font-weight: 600; color: var(--success-color);">{{ updateInfo.latest }}</span>
+              </div>
+              <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--primary-color); font-weight: 500;">
+                💡 点击查看更新说明
+              </div>
+            </div>
+          </n-tooltip>
+        </div>
+
         <!-- Theme Toggle -->
         <HeaderButton
           :icon="isDark ? SunnyOutline : MoonOutline"
@@ -97,7 +124,7 @@
         </n-spin>
       </div>
 
-      <!-- Left Content Area (Router View) - Always mounted -->
+      <!-- Left Content Area (Router View) -->
       <div class="left-content">
         <router-view />
       </div>
@@ -126,7 +153,16 @@
       <div class="help-content">
         <div class="help-section">
           <h4>🚀 快速开始</h4>
-          <p>CODING-TOOL 是 Vibe Coding 的增强工作助手，提供智能会话管理、动态渠道切换、全局搜索和实时监控功能。</p>
+          <p>CODING-TOOL 是 AI 编程工具的增强管理助手，支持 Claude Code、Codex 和 Gemini 三种 AI 工具，提供智能会话管理、动态渠道切换、全局搜索和实时监控功能。</p>
+        </div>
+
+        <div class="help-section">
+          <h4>🤖 支持的 AI 工具</h4>
+          <ul>
+            <li><strong>Claude Code</strong>：Anthropic 官方命令行工具，支持 Claude 系列模型</li>
+            <li><strong>Codex</strong>：支持 OpenAI GPT 系列和 Claude 模型（通过 OpenAI 兼容格式）</li>
+            <li><strong>Gemini</strong>：支持 Google Gemini 系列模型</li>
+          </ul>
         </div>
 
         <div class="help-section">
@@ -146,15 +182,19 @@
             </div>
             <div class="command-item">
               <code>ct proxy start</code>
-              <span>启动代理服务</span>
+              <span>启动 Claude 代理服务</span>
             </div>
             <div class="command-item">
               <code>ct proxy stop</code>
-              <span>停止代理服务</span>
+              <span>停止 Claude 代理服务</span>
             </div>
             <div class="command-item">
               <code>ct status</code>
-              <span>查看代理状态</span>
+              <span>查看所有代理状态</span>
+            </div>
+            <div class="command-item">
+              <code>ct update</code>
+              <span>检查并更新到最新版本</span>
             </div>
             <div class="command-item">
               <code>ct -v</code>
@@ -170,19 +210,26 @@
         <div class="help-section">
           <h4>🎯 Web UI 功能</h4>
           <ul>
+            <li><strong>多类型支持</strong>：统一管理 Claude Code、Codex、Gemini 三种工具的项目和会话</li>
             <li><strong>项目管理</strong>：查看所有项目，支持拖拽排序、搜索过滤、删除项目</li>
             <li><strong>会话管理</strong>：查看项目会话列表，支持搜索、Fork、删除、重命名</li>
-            <li><strong>快速启动</strong>：点击会话直接在终端中启动 ClaudeCode</li>
-            <li><strong>动态切换</strong>：开启后可在右侧面板快速切换 API 渠道，无需修改配置文件</li>
-            <li><strong>实时日志</strong>：查看代理请求的实时日志和状态</li>
+            <li><strong>快速启动</strong>：点击会话直接在终端中启动对应的 AI 工具</li>
+            <li><strong>动态切换</strong>：每种工具独立的渠道管理，可在右侧面板快速切换 API 渠道</li>
+            <li><strong>实时日志</strong>：查看各类型代理的实时请求日志、token 消耗和成本统计</li>
             <li><strong>全局搜索</strong>：使用 <kbd>⌘/Ctrl</kbd> + <kbd>K</kbd> 在所有项目中搜索对话内容</li>
           </ul>
         </div>
 
         <div class="help-section">
-          <h4>⚡ 动态渠道切换</h4>
-          <p>开启「动态切换」后，会在本地启动代理服务。您可以在右侧面板添加多个 API 渠道，快速切换而无需修改配置文件或重启 ClaudeCode。</p>
-          <p style="color: #f59e0b; font-size: 13px; margin-top: 8px;">⚠️ 注意：开启期间请勿关闭 CC 进程窗口。</p>
+          <h4>⚡ 代理服务与渠道管理</h4>
+          <p>每种 AI 工具都有独立的代理服务和渠道配置：</p>
+          <ul>
+            <li><strong>Claude 代理</strong>：端口 10088，支持 Anthropic API 格式</li>
+            <li><strong>Codex 代理</strong>：端口 10089，支持 OpenAI API 格式（兼容 Claude）</li>
+            <li><strong>Gemini 代理</strong>：端口 10090，支持 Gemini API 格式</li>
+          </ul>
+          <p>在 Dashboard 或各工具详情页，可以添加多个渠道并快速切换，无需修改配置文件或重启工具。</p>
+          <p style="color: #f59e0b; font-size: 13px; margin-top: 8px;">⚠️ 注意：开启代理期间请勿关闭工具窗口。</p>
         </div>
 
         <div class="help-section">
@@ -198,33 +245,30 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, LayersOutline, CodeSlashOutline, ColorPaletteOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import SettingsDrawer from './SettingsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import api from '../api'
-import message from '../utils/message'
+import message, { dialog } from '../utils/message'
 import { useTheme } from '../composables/useTheme'
-import { useProxyState } from '../composables/useProxyState'
+import { useGlobalState } from '../composables/useGlobalState'
 
 // 使用主题 composable
 const { isDark, toggleTheme } = useTheme()
 
-// 使用全局代理状态 composable
+// 使用全局状态 composable
 const {
   claudeProxy,
   codexProxy,
   geminiProxy,
-  toggleClaudeProxy,
-  toggleCodexProxy,
-  toggleGeminiProxy,
-  initialize: initializeProxyState,
-  cleanup: cleanupProxyState
-} = useProxyState()
+  startProxy,
+  stopProxy
+} = useGlobalState()
 
 const router = useRouter()
 const route = useRoute()
@@ -241,7 +285,8 @@ const shouldShowRightPanel = computed(() => {
 const showRecentDrawer = ref(false)
 const showSettingsDrawer = ref(false)
 const showHelpModal = ref(false)
-const globalLoading = ref(true) // 全局 loading 状态
+const globalLoading = ref(false) // 全局 loading 状态
+const updateInfo = ref(null) // 版本更新信息
 
 // 根据当前 channel 计算有效的代理状态
 const effectiveProxyRunning = computed(() => {
@@ -302,25 +347,29 @@ function openGithub() {
 
 // 统一的代理切换处理器（根据当前 channel 路由到正确的代理）
 async function handleProxyToggle(newValue) {
-  let result
-  if (currentChannel.value === 'codex') {
-    result = await toggleCodexProxy(newValue)
-  } else if (currentChannel.value === 'gemini') {
-    result = await toggleGeminiProxy(newValue)
-  } else {
-    result = await toggleClaudeProxy(newValue)
-  }
+  const channelType = currentChannel.value || 'claude'
 
-  // 处理结果
-  if (result.success) {
-    message.success(newValue ? '代理已启动' : '代理已停止')
-    // 自动展示/隐藏日志面板
+  try {
+    let result
     if (newValue) {
-      showLogs.value = true
+      result = await startProxy(channelType)
+    } else {
+      result = await stopProxy(channelType)
     }
-    savePanelSettings()
-  } else {
-    message.error(result.error || '操作失败')
+
+    // 处理结果
+    if (result.success !== false) {
+      message.success(newValue ? '代理已启动' : '代理已停止')
+      // 自动展示/隐藏日志面板
+      if (newValue) {
+        showLogs.value = true
+      }
+      savePanelSettings()
+    } else {
+      message.error(result.error || '操作失败')
+    }
+  } catch (error) {
+    message.error(error.response?.data?.error || error.message || '操作失败')
   }
 }
 
@@ -331,6 +380,48 @@ function handlePanelVisibilityChange(event) {
   showLogs.value = newShowLogs
 }
 
+// 检查版本更新
+async function checkForUpdates() {
+  try {
+    const result = await api.checkForUpdates()
+    if (result.hasUpdate && !result.error) {
+      updateInfo.value = result
+    }
+  } catch (err) {
+    // 静默失败，不影响用户体验
+  }
+}
+
+// 处理更新点击
+function handleUpdateClick() {
+  if (!updateInfo.value) return
+
+  dialog.info({
+    title: '发现新版本 🎉',
+    content: () => h('div', { style: 'line-height: 1.8;' }, [
+      h('div', { style: 'margin-bottom: 12px; color: var(--text-secondary);' }, [
+        h('div', { style: 'margin-bottom: 6px;' }, [
+          h('span', '当前版本: '),
+          h('span', { style: 'font-weight: 600; color: var(--text-primary);' }, updateInfo.value.current)
+        ]),
+        h('div', [
+          h('span', '最新版本: '),
+          h('span', { style: 'font-weight: 600; color: var(--success-color);' }, updateInfo.value.latest)
+        ])
+      ]),
+      h('div', { style: 'margin-top: 16px; padding: 12px; background: var(--code-bg); border-radius: 6px; border-left: 3px solid var(--primary-color);' }, [
+        h('div', { style: 'font-size: 13px; color: var(--text-tertiary); margin-bottom: 8px;' }, '💡 更新方法：'),
+        h('div', { style: 'font-family: monospace; font-size: 14px; font-weight: 600; color: var(--primary-color);' }, 'ct update')
+      ])
+    ]),
+    positiveText: '我知道了',
+    maskClosable: true,
+    style: {
+      width: '480px'
+    }
+  })
+}
+
 onMounted(() => {
   // 加载面板可见性设置
   loadPanelSettings()
@@ -338,21 +429,11 @@ onMounted(() => {
   // 监听面板可见性变化事件
   window.addEventListener('panel-visibility-change', handlePanelVisibilityChange)
 
-  // 初始化全局代理状态（包含自动检查和定时刷新）
-  initializeProxyState()
-
-  // 添加超时保护，确保 3 秒后无论如何都关闭 loading
-  setTimeout(() => {
-    if (globalLoading.value) {
-      console.warn('Global loading timeout, forcing to hide')
-      globalLoading.value = false
-    }
-  }, 3000)
+  // 检查版本更新
+  checkForUpdates()
 })
 
 onUnmounted(() => {
-  // 清理全局代理状态
-  cleanupProxyState()
   // 移除事件监听
   window.removeEventListener('panel-visibility-change', handlePanelVisibilityChange)
 })
@@ -401,48 +482,66 @@ onUnmounted(() => {
 .logo-section {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: all 0.2s ease;
+  padding: 6px 12px;
+  border-radius: 10px;
+  margin-left: -12px;
 }
 
 .logo-section:hover {
-  opacity: 0.8;
+  background: var(--hover-bg);
+}
+
+.logo-wrapper {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(24, 160, 88, 0.15) 0%, rgba(24, 160, 88, 0.05) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.15);
+  transition: all 0.2s ease;
+}
+
+.logo-section:hover .logo-wrapper {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.25);
 }
 
 .logo-image {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
 }
 
 .title-group {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .title-main {
   margin: 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #18a058;
-  user-select: none;
-  letter-spacing: -0.5px;
-}
-
-.title-divider {
   font-size: 18px;
-  font-weight: 400;
-  color: var(--border-secondary);
+  font-weight: 800;
+  background: linear-gradient(135deg, #18a058 0%, #10b981 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
   user-select: none;
+  letter-spacing: -0.3px;
+  line-height: 1.2;
 }
 
 .title-sub {
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--text-tertiary);
   user-select: none;
+  letter-spacing: 0.2px;
 }
 
 /* 导航标签 */
@@ -741,5 +840,62 @@ onUnmounted(() => {
 [data-theme="dark"] .link-list a:hover {
   background: rgba(24, 160, 88, 0.2);
   border-color: rgba(24, 160, 88, 0.5);
+}
+
+/* 更新提示样式 */
+.update-notification {
+  margin-right: 8px;
+}
+
+.update-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(251, 146, 60, 0.15));
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  animation: pulse-update 2s ease-in-out infinite;
+}
+
+.update-badge:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(251, 146, 60, 0.25));
+  border-color: rgba(245, 158, 11, 0.5);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.update-badge .n-icon {
+  color: #f59e0b;
+}
+
+.update-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f59e0b;
+  white-space: nowrap;
+}
+
+@keyframes pulse-update {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  50% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+  }
+}
+
+[data-theme="dark"] .update-badge {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(251, 146, 60, 0.2));
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+[data-theme="dark"] .update-badge:hover {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(251, 146, 60, 0.3));
+  border-color: rgba(245, 158, 11, 0.6);
 }
 </style>

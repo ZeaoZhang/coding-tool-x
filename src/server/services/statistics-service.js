@@ -351,8 +351,6 @@ function recordRequest(requestData) {
     updateStats(dailyStats.byModel[model], tokens, cost);
 
     saveDailyStats(date, dailyStats);
-
-    console.log(`[Statistics] Recorded request ${id} - ${toolType} - ${channel} - ${model}`);
   } catch (err) {
     console.error('[Statistics] Failed to record request:', err);
   }

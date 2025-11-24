@@ -338,6 +338,17 @@ const api = {
   async getRecentStatistics(days = 7) {
     const response = await client.get('/statistics/recent', { params: { days } })
     return response.data
+  },
+
+  // Version check
+  async checkForUpdates() {
+    const response = await client.get('/version/check')
+    return response.data
+  },
+
+  async getCurrentVersion() {
+    const response = await client.get('/version/current')
+    return response.data
   }
 }
 

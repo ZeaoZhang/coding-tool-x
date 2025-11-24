@@ -19,6 +19,17 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+function sanitizeChannel(channel) {
+  if (!channel) return null;
+  return {
+    id: channel.id,
+    name: channel.name,
+    baseUrl: channel.baseUrl,
+    websiteUrl: channel.websiteUrl,
+    providerKey: channel.providerKey
+  };
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   const dir = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -33,6 +44,8 @@ function saveActiveChannelId(channelId) {
 router.get('/status', (req, res) => {
   try {
     const proxyStatus = getCodexProxyStatus();
+    const { channels } = getChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
     const configStatus = {
       isProxyConfig: isProxyConfig(),
       configExists: configExists(),
@@ -42,7 +55,8 @@ router.get('/status', (req, res) => {
 
     res.json({
       proxy: proxyStatus,
-      config: configStatus
+      config: configStatus,
+      activeChannel: sanitizeChannel(activeChannel)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -81,10 +95,16 @@ router.post('/start', async (req, res) => {
     // 5. 设置代理配置（备份并修改 config.toml 和 auth.json）
     setProxyConfig(proxyResult.port);
 
+    const updatedStatus = getCodexProxyStatus();
+    const { channels } = getChannels();
+    const activeChannel = channels.find(ch => ch.isActive);
+    const { broadcastProxyState } = require('../websocket-server');
+    broadcastProxyState('codex', updatedStatus, activeChannel, channels);
+
     res.json({
       success: true,
       port: proxyResult.port,
-      activeChannel: currentChannel.name,
+      activeChannel: sanitizeChannel(currentChannel),
       message: `Codex proxy started on port ${proxyResult.port}, active channel: ${currentChannel.name}`
     });
   } catch (error) {
@@ -98,12 +118,14 @@ router.post('/stop', async (req, res) => {
   try {
     // 1. 获取当前激活的渠道
     const { channels, activeChannelId } = getChannels();
-    const activeChannel = channels.find(ch => ch.id === activeChannelId);
+    const activeChannel = channels.find(ch => ch.id === activeChannelId) || channels.find(ch => ch.isActive);
 
     // 2. 停止代理服务器
     const proxyResult = await stopCodexProxyServer();
 
     // 3. 恢复原始配置
+    const { broadcastProxyState } = require('../websocket-server');
+
     if (hasBackup()) {
       restoreSettings();
       console.log('[Codex Proxy] Restored settings from backup');
@@ -115,18 +137,25 @@ router.post('/stop', async (req, res) => {
         console.log('[Codex Proxy] Removed codex-active-channel.json');
       }
 
-      res.json({
+      const response = {
         success: true,
         message: `Codex proxy stopped, settings restored${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
         port: proxyResult.port,
         restoredChannel: activeChannel?.name
-      });
+      };
+      res.json(response);
+
+      const updatedStatus = getCodexProxyStatus();
+      broadcastProxyState('codex', updatedStatus, activeChannel, channels);
     } else {
       res.json({
         success: true,
         message: 'Codex proxy stopped (no backup to restore)',
         port: proxyResult.port
       });
+
+      const updatedStatus = getCodexProxyStatus();
+      broadcastProxyState('codex', updatedStatus, activeChannel, channels);
     }
   } catch (error) {
     console.error('[Codex Proxy] Error stopping proxy:', error);

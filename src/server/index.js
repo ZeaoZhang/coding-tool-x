@@ -107,6 +107,7 @@ async function startServer(port) {
   app.use('/api/settings', require('./api/settings'));
   app.use('/api/config', require('./api/config'));
   app.use('/api/statistics', require('./api/statistics'));
+  app.use('/api/version', require('./api/version'));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');
@@ -135,7 +136,7 @@ async function startServer(port) {
     if (err.code === 'EADDRINUSE') {
       console.error(chalk.red(`\n❌ 端口 ${port} 已被占用`));
       console.error(chalk.yellow('\n💡 解决方案:'));
-      console.error(chalk.gray('   1. 运行 cc 命令，选择"配置端口"修改端口'));
+      console.error(chalk.gray('   1. 运行 ct 命令，选择"配置端口"修改端口'));
       console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
       process.exit(1);
     }

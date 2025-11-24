@@ -16,6 +16,20 @@ function expandHome(filepath) {
   return filepath;
 }
 
+function mergePricing(defaultPricing, overrides = {}) {
+  const merged = {};
+  Object.keys(defaultPricing).forEach((key) => {
+    merged[key] = {
+      ...defaultPricing[key],
+      ...(overrides && overrides[key] ? overrides[key] : {})
+    };
+    if (!merged[key].mode) {
+      merged[key].mode = 'auto';
+    }
+  });
+  return merged;
+}
+
 /**
  * 加载配置
  */
@@ -28,6 +42,7 @@ function loadConfig() {
 
       // 合并 ports 配置
       config.ports = { ...DEFAULT_CONFIG.ports, ...userConfig.ports };
+      config.pricing = mergePricing(DEFAULT_CONFIG.pricing, userConfig.pricing);
 
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {

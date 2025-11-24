@@ -74,16 +74,47 @@
 </template>
 
 <script setup>
-import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, nextTick, watch } from 'vue'
 import { NIcon, NText, NTag, NCheckbox, NButton } from 'naive-ui'
 import { RadioOutline, TrashOutline, DocumentTextOutline } from '@vicons/ionicons5'
+import { useGlobalState } from '../../composables/useGlobalState'
 
-const logs = ref([])
+const { getLogs, clearLogsState, logLimit } = useGlobalState()
+const claudeLogs = getLogs('claude')
+const codexLogs = getLogs('codex')
+const geminiLogs = getLogs('gemini')
+
 const autoScroll = ref(true)
 const logsContainer = ref(null)
-const maxLogs = 50
 
-let ws = null
+function normalizeLog(log) {
+  return {
+    id: log.id,
+    timestamp: log.timestamp || Date.now(),
+    channelType: log.source || 'claude',
+    channelName: log.channel || 'Unknown',
+    method: 'REQUEST',
+    path: log.model || 'N/A',
+    status: 'success',
+    statusCode: '200',
+    tokens: log.tokens || {},
+    cost: log.cost || 0,
+    duration: log.duration || 0,
+    error: log.type === 'action' ? null : log.error || null,
+    type: log.type || 'log'
+  }
+}
+
+const logs = computed(() => {
+  const merged = [
+    ...claudeLogs.value.map(normalizeLog),
+    ...codexLogs.value.map(normalizeLog),
+    ...geminiLogs.value.map(normalizeLog)
+  ]
+  return merged
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+    .slice(0, logLimit.value)
+})
 
 function formatTime(timestamp) {
   const date = new Date(timestamp)
@@ -97,89 +128,18 @@ function formatTokens(num) {
   return num.toString()
 }
 
-function addLog(logData) {
-  const log = {
-    id: logData.id || Date.now() + Math.random(),
-    timestamp: logData.timestamp || new Date().toISOString(),
-    channelType: logData.channel || 'unknown',
-    channelName: logData.channelName || 'Unknown',
-    method: logData.method || 'POST',
-    path: logData.path || '/api/messages',
-    status: logData.success ? 'success' : 'error',
-    statusCode: logData.statusCode || (logData.success ? '200 OK' : '500 Error'),
-    tokens: logData.tokens || { input: 0, output: 0 },
-    cost: logData.cost || 0,
-    duration: logData.duration || 0,
-    error: logData.error || null,
-    type: logData.type || 'request'
-  }
-
-  logs.value.unshift(log)
-
-  // 限制日志数量
-  if (logs.value.length > maxLogs) {
-    logs.value = logs.value.slice(0, maxLogs)
-  }
-
-  if (autoScroll.value) {
-    nextTick(() => {
-      if (logsContainer.value) {
-        logsContainer.value.scrollTop = 0
-      }
-    })
-  }
-}
+watch(logs, () => {
+  if (!autoScroll.value) return
+  nextTick(() => {
+    if (logsContainer.value) {
+      logsContainer.value.scrollTop = 0
+    }
+  })
+})
 
 function clearLogs() {
-  logs.value = []
+  clearLogsState()
 }
-
-function connectWebSocket() {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/ws`
-
-  ws = new WebSocket(wsUrl)
-
-  ws.onopen = () => {
-    console.log('[Dashboard] WebSocket connected')
-  }
-
-  ws.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-
-      // 处理不同类型的消息
-      if (data.type === 'proxy-log' || data.type === 'codex-proxy-log' || data.type === 'gemini-proxy-log') {
-        addLog({
-          ...data.log,
-          channel: data.type.replace('-proxy-log', ''),
-          channelName: data.log.channelName || 'Default'
-        })
-      }
-    } catch (error) {
-      console.error('[Dashboard] Failed to parse WebSocket message:', error)
-    }
-  }
-
-  ws.onerror = (error) => {
-    console.error('[Dashboard] WebSocket error:', error)
-  }
-
-  ws.onclose = () => {
-    console.log('[Dashboard] WebSocket disconnected, reconnecting...')
-    setTimeout(connectWebSocket, 3000)
-  }
-}
-
-onMounted(() => {
-  connectWebSocket()
-})
-
-onUnmounted(() => {
-  if (ws) {
-    ws.close()
-  }
-})
 </script>
 
 <style scoped>

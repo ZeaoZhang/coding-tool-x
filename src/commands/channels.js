@@ -1,8 +1,36 @@
 // 渠道管理命令
 const chalk = require('chalk');
 const inquirer = require('inquirer');
-const { getAllChannels, createChannel, activateChannel } = require('../server/services/channels');
-const { getProxyStatus } = require('../server/proxy-server');
+const { loadConfig } = require('../config/loader');
+
+/**
+ * 获取当前类型的渠道服务
+ */
+function getChannelServices(cliType) {
+  if (cliType === 'claude') {
+    const { getAllChannels, createChannel, activateChannel } = require('../server/services/channels');
+    const { getProxyStatus } = require('../server/proxy-server');
+    return { getAllChannels, createChannel, activateChannel, getProxyStatus };
+  } else if (cliType === 'codex') {
+    const { getAllCodexChannels, createCodexChannel, activateCodexChannel } = require('../server/services/codex-channels');
+    const { getCodexProxyStatus } = require('../server/codex-proxy-server');
+    return {
+      getAllChannels: getAllCodexChannels,
+      createChannel: createCodexChannel,
+      activateChannel: activateCodexChannel,
+      getProxyStatus: getCodexProxyStatus
+    };
+  } else if (cliType === 'gemini') {
+    const { getAllGeminiChannels, createGeminiChannel, activateGeminiChannel } = require('../server/services/gemini-channels');
+    const { getGeminiProxyStatus } = require('../server/gemini-proxy-server');
+    return {
+      getAllChannels: getAllGeminiChannels,
+      createChannel: createGeminiChannel,
+      activateChannel: activateGeminiChannel,
+      getProxyStatus: getGeminiProxyStatus
+    };
+  }
+}
 
 /**
  * 切换渠道
@@ -13,7 +41,11 @@ async function handleSwitchChannel() {
   console.log(chalk.bold.cyan('║          切换渠道          ║'));
   console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
 
-  const channels = getAllChannels();
+  const config = loadConfig();
+  const cliType = config.currentCliType || 'claude';
+  const services = getChannelServices(cliType);
+
+  const channels = services.getAllChannels();
 
   if (channels.length === 0) {
     console.log(chalk.yellow('还没有添加任何渠道'));
@@ -33,7 +65,7 @@ async function handleSwitchChannel() {
     return;
   }
 
-  const proxyStatus = getProxyStatus();
+  const proxyStatus = services.getProxyStatus();
   const isProxyMode = proxyStatus.running;
 
   // 构建渠道选项
@@ -81,13 +113,15 @@ async function handleSwitchChannel() {
   }
 
   try {
-    const channel = activateChannel(channelId);
+    const channel = services.activateChannel(channelId);
     console.log(chalk.green(`\n✅ 已切换到渠道: ${channel.name}\n`));
 
+    const toolName = cliType === 'claude' ? 'Claude Code' : (cliType === 'codex' ? 'Codex' : 'Gemini');
+
     if (isProxyMode) {
-      console.log(chalk.cyan('💡 动态切换模式已激活，无需重启 Claude Code'));
+      console.log(chalk.cyan(`💡 动态切换模式已激活，无需重启 ${toolName}`));
     } else {
-      console.log(chalk.yellow('⚠️  请重启 Claude Code 以使用新渠道'));
+      console.log(chalk.yellow(`⚠️  请重启 ${toolName} 以使用新渠道`));
       console.log(chalk.gray('   提示: 开启"动态切换"可以无需重启即可切换渠道\n'));
     }
 
@@ -119,6 +153,10 @@ async function handleAddChannel() {
   console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
   console.log(chalk.bold.cyan('║          添加渠道          ║'));
   console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+
+  const config = loadConfig();
+  const cliType = config.currentCliType || 'claude';
+  const services = getChannelServices(cliType);
 
   const answers = await inquirer.prompt([
     {
@@ -166,7 +204,7 @@ async function handleAddChannel() {
   ]);
 
   try {
-    const channel = createChannel(
+    const channel = services.createChannel(
       answers.name.trim(),
       answers.baseUrl.trim(),
       answers.apiKey.trim(),

@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="show" :width="900" placement="right" :show-mask="true">
+  <n-drawer v-model:show="show" :width="680" placement="right" :show-mask="true">
     <n-drawer-content :show-header="false" closable :native-scrollbar="false">
       <div class="settings-container">
         <!-- 左侧菜单 -->
@@ -174,7 +174,7 @@
                       <div class="visibility-info">
                         <n-text strong>显示实时日志</n-text>
                         <n-text depth="3" style="font-size: 13px;">
-                          在右侧面板显示代理日志区域(需开启动态切换)
+                          在 Dashboard 显示实时日志区域
                         </n-text>
                       </div>
                       <n-switch
@@ -383,6 +383,200 @@
                     </div>
                   </div>
                 </div>
+
+                <n-divider />
+
+                <!-- 成本计算设置 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>成本计算</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      自定义每百万 Tokens 的单价（USD），便于估算当日成本
+                    </n-text>
+                  </div>
+
+                  <div class="pricing-section">
+                    <!-- Claude -->
+                    <div class="pricing-card claude-card">
+                      <div class="pricing-card-header">
+                        <div>
+                          <n-text strong style="font-size: 15px;">Claude</n-text>
+                          <n-text depth="3" style="font-size: 12px; display: block;">USD / 1M Tokens</n-text>
+                        </div>
+                        <div class="pricing-toggle">
+                          <n-text depth="3" style="font-size: 12px; margin-right: 8px;">自定义单价</n-text>
+                          <n-switch
+                            size="small"
+                            :checked-value="'custom'"
+                            :unchecked-value="'auto'"
+                            v-model:value="pricingSettings.claude.mode"
+                          />
+                        </div>
+                      </div>
+                      <div class="pricing-hint">
+                        {{ pricingSettings.claude.mode === 'custom' ? '立即按自定义单价计算成本' : '使用官方定价自动计算' }}
+                      </div>
+                      <div class="pricing-grid">
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">输入 Tokens</n-text>
+                            <n-text depth="3" style="font-size: 12px;">Input</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.claude.input"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.claude.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">输出 Tokens</n-text>
+                            <n-text depth="3" style="font-size: 12px;">Output</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.claude.output"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.claude.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">缓存写入</n-text>
+                            <n-text depth="3" style="font-size: 12px;">Cache Write</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.claude.cacheCreation"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.claude.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">缓存命中</n-text>
+                            <n-text depth="3" style="font-size: 12px;">Cache Hit</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.claude.cacheRead"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.claude.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Codex -->
+                    <div class="pricing-card codex-card">
+                      <div class="pricing-card-header">
+                        <div>
+                          <n-text strong style="font-size: 15px;">Codex</n-text>
+                          <n-text depth="3" style="font-size: 12px; display: block;">USD / 1M Tokens</n-text>
+                        </div>
+                        <div class="pricing-toggle">
+                          <n-text depth="3" style="font-size: 12px; margin-right: 8px;">自定义单价</n-text>
+                          <n-switch
+                            size="small"
+                            :checked-value="'custom'"
+                            :unchecked-value="'auto'"
+                            v-model:value="pricingSettings.codex.mode"
+                          />
+                        </div>
+                      </div>
+                      <div class="pricing-hint">
+                        {{ pricingSettings.codex.mode === 'custom' ? '自定义单价' : '使用官方单价' }}
+                      </div>
+                      <div class="pricing-grid">
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">输入 Tokens</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.codex.input"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.codex.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">输出 Tokens</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.codex.output"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.codex.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Gemini -->
+                    <div class="pricing-card gemini-card">
+                      <div class="pricing-card-header">
+                        <div>
+                          <n-text strong style="font-size: 15px;">Gemini</n-text>
+                          <n-text depth="3" style="font-size: 12px; display: block;">USD / 1M Tokens</n-text>
+                        </div>
+                        <div class="pricing-toggle">
+                          <n-text depth="3" style="font-size: 12px; margin-right: 8px;">自定义单价</n-text>
+                          <n-switch
+                            size="small"
+                            :checked-value="'custom'"
+                            :unchecked-value="'auto'"
+                            v-model:value="pricingSettings.gemini.mode"
+                          />
+                        </div>
+                      </div>
+                      <div class="pricing-hint">
+                        {{ pricingSettings.gemini.mode === 'custom' ? '自定义单价' : '使用官方单价' }}
+                      </div>
+                      <div class="pricing-grid">
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">输入 Tokens</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.gemini.input"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.gemini.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                        <div class="option-field">
+                          <div class="option-label">
+                            <n-text depth="2" style="font-size: 13px;">输出 Tokens</n-text>
+                          </div>
+                          <n-input-number
+                            v-model:value="pricingSettings.gemini.output"
+                            :precision="4"
+                            :step="0.01"
+                            :min="0"
+                            :disabled="pricingSettings.gemini.mode !== 'custom'"
+                            style="width: 100%;"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -416,7 +610,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
   NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber
@@ -482,6 +676,27 @@ const originalAdvancedSettings = ref({
   statsInterval: 30
 })
 
+const pricingSettings = ref({
+  claude: {
+    mode: 'auto',
+    input: 3,
+    output: 15,
+    cacheCreation: 3.75,
+    cacheRead: 0.3
+  },
+  codex: {
+    mode: 'auto',
+    input: 2.5,
+    output: 10
+  },
+  gemini: {
+    mode: 'auto',
+    input: 1.25,
+    output: 5
+  }
+})
+const originalPricingSettings = ref(JSON.parse(JSON.stringify(pricingSettings.value)))
+
 // 检查配置是否有修改
 const portsChanged = computed(() => {
   return ports.value.webUI !== originalPorts.value.webUI ||
@@ -489,7 +704,8 @@ const portsChanged = computed(() => {
     ports.value.codexProxy !== originalPorts.value.codexProxy ||
     ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
-    advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval
+    advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
+    JSON.stringify(pricingSettings.value) !== JSON.stringify(originalPricingSettings.value)
 })
 
 // 菜单项配置
@@ -497,17 +713,17 @@ const menuItems = ref([
   {
     key: 'terminal',
     label: '终端工具',
-    icon: TerminalOutline
+    icon: markRaw(TerminalOutline)
   },
   {
     key: 'appearance',
     label: '外观设置',
-    icon: ColorPaletteOutline
+    icon: markRaw(ColorPaletteOutline)
   },
   {
     key: 'advanced',
     label: '高级设置',
-    icon: OptionsOutline
+    icon: markRaw(OptionsOutline)
   }
 ])
 
@@ -519,6 +735,18 @@ const terminalOptions = computed(() => {
       value: t.id
     }))
 })
+
+function normalizePrice(value, fallback) {
+  if (typeof value === 'number' && !Number.isNaN(value)) {
+    return value
+  }
+  const parsed = parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function clonePricing(value) {
+  return JSON.parse(JSON.stringify(value))
+}
 
 const selectedTerminalInfo = computed(() => {
   return availableTerminals.value.find(t => t.id === selectedTerminal.value)
@@ -550,7 +778,7 @@ async function loadTerminals() {
 
 // 终端切换处理
 function handleTerminalChange(value) {
-  console.log('Terminal changed to:', value)
+  // 终端切换，无需额外处理
 }
 
 // 保存设置
@@ -634,6 +862,27 @@ async function loadPortsConfig() {
         statsInterval: data.statsInterval || 30
       }
       originalAdvancedSettings.value = { ...advancedSettings.value }
+
+      pricingSettings.value = {
+        claude: {
+          mode: data.pricing?.claude?.mode === 'custom' ? 'custom' : 'auto',
+          input: normalizePrice(data.pricing?.claude?.input, 3),
+          output: normalizePrice(data.pricing?.claude?.output, 15),
+          cacheCreation: normalizePrice(data.pricing?.claude?.cacheCreation, 3.75),
+          cacheRead: normalizePrice(data.pricing?.claude?.cacheRead, 0.3)
+        },
+        codex: {
+          mode: data.pricing?.codex?.mode === 'custom' ? 'custom' : 'auto',
+          input: normalizePrice(data.pricing?.codex?.input, 2.5),
+          output: normalizePrice(data.pricing?.codex?.output, 10)
+        },
+        gemini: {
+          mode: data.pricing?.gemini?.mode === 'custom' ? 'custom' : 'auto',
+          input: normalizePrice(data.pricing?.gemini?.input, 1.25),
+          output: normalizePrice(data.pricing?.gemini?.output, 5)
+        }
+      }
+      originalPricingSettings.value = clonePricing(pricingSettings.value)
     }
   } catch (error) {
     console.error('Failed to load advanced config:', error)
@@ -652,19 +901,22 @@ async function handleSavePorts() {
       body: JSON.stringify({
         ports: ports.value,
         maxLogs: advancedSettings.value.maxLogs,
-        statsInterval: advancedSettings.value.statsInterval
+        statsInterval: advancedSettings.value.statsInterval,
+        pricing: pricingSettings.value
       })
     })
 
     if (response.ok) {
       originalPorts.value = { ...ports.value }
       originalAdvancedSettings.value = { ...advancedSettings.value }
+      originalPricingSettings.value = clonePricing(pricingSettings.value)
 
       // 广播配置更新事件
       window.dispatchEvent(new CustomEvent('advanced-config-change', {
         detail: {
           maxLogs: advancedSettings.value.maxLogs,
-          statsInterval: advancedSettings.value.statsInterval
+          statsInterval: advancedSettings.value.statsInterval,
+          pricing: pricingSettings.value
         }
       }))
 
@@ -1143,5 +1395,84 @@ watch(show, (newVal) => {
   gap: 4px;
   flex: 1;
   margin-right: 16px;
+}
+
+.pricing-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pricing-card {
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pricing-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pricing-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.pricing-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pricing-grid .option-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.pricing-grid .option-field:hover {
+  border-color: var(--border-secondary);
+  background: var(--hover-bg);
+}
+
+.pricing-grid .option-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+  flex: 1;
+}
+
+.pricing-grid .option-field .n-input-number {
+  width: 120px !important;
+  flex-shrink: 0;
+}
+
+[data-theme="dark"] .pricing-grid .option-field {
+  background: rgba(30, 41, 59, 0.3);
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+[data-theme="dark"] .pricing-grid .option-field:hover {
+  background: rgba(30, 41, 59, 0.5);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.pricing-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 </style>

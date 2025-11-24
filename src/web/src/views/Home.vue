@@ -24,13 +24,16 @@ import ChannelColumn from '../components/dashboard/ChannelColumn.vue'
   overflow: hidden;
   padding: 12px;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
   box-sizing: border-box;
 }
