@@ -90,7 +90,10 @@ function calculateCost(model, tokens) {
 }
 
 // 启动 Codex 代理服务器
-async function startCodexProxyServer() {
+async function startCodexProxyServer(options = {}) {
+  // options.preserveStartTime - 是否保留现有的启动时间（用于切换渠道时）
+  const preserveStartTime = options.preserveStartTime || false;
+
   if (proxyServer) {
     console.log('Codex proxy server already running on port', currentPort);
     return { success: true, port: currentPort };
@@ -181,6 +184,31 @@ async function startCodexProxyServer() {
         return;
       }
 
+      // 检查响应是否已关闭
+      if (res.writableEnded || res.destroyed) {
+        requestMetadata.delete(req);
+        return;
+      }
+
+      // 标记响应是否已关闭
+      let isResponseClosed = false;
+
+      // 监听响应关闭事件
+      res.on('close', () => {
+        isResponseClosed = true;
+        requestMetadata.delete(req);
+      });
+
+      // 监听响应错误事件
+      res.on('error', (err) => {
+        isResponseClosed = true;
+        // 忽略客户端断开连接的常见错误
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+          console.error('Response error:', err);
+        }
+        requestMetadata.delete(req);
+      });
+
       let buffer = '';
       let tokenData = {
         inputTokens: 0,
@@ -192,6 +220,11 @@ async function startCodexProxyServer() {
       };
 
       proxyRes.on('data', (chunk) => {
+        // 如果响应已关闭，停止处理
+        if (isResponseClosed) {
+          return;
+        }
+
         buffer += chunk.toString();
 
         // 检查是否是 SSE 流
@@ -294,21 +327,24 @@ async function startCodexProxyServer() {
           };
           const cost = calculateCost(tokenData.model, tokens);
 
-          // 广播日志
-          broadcastLog({
-            type: 'log',
-            id: metadata.id,
-            time: time,
-            channel: metadata.channel,
-            model: tokenData.model,
-            inputTokens: tokenData.inputTokens,
-            outputTokens: tokenData.outputTokens,
-            cachedTokens: tokenData.cachedTokens,
-            reasoningTokens: tokenData.reasoningTokens,
-            totalTokens: tokenData.totalTokens,
-            cost: cost,
-            source: 'codex'
-          });
+          // 广播日志（仅当响应仍然开放时）
+          if (!isResponseClosed) {
+            broadcastLog({
+              type: 'log',
+              id: metadata.id,
+              time: time,
+              channel: metadata.channel,
+              model: tokenData.model,
+              inputTokens: tokenData.inputTokens,
+              outputTokens: tokenData.outputTokens,
+              cachedTokens: tokenData.cachedTokens,
+              reasoningTokens: tokenData.reasoningTokens,
+              totalTokens: tokenData.totalTokens,
+              cost: cost,
+              source: 'codex'
+            });
+          }
+
           const duration = Date.now() - metadata.startTime;
 
           recordRequest({
@@ -325,6 +361,17 @@ async function startCodexProxyServer() {
           });
         }
 
+        if (!isResponseClosed) {
+          requestMetadata.delete(req);
+        }
+      });
+
+      proxyRes.on('error', (err) => {
+        // 忽略代理响应错误（可能是网络问题）
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+          console.error('Proxy response error:', err);
+        }
+        isResponseClosed = true;
         requestMetadata.delete(req);
       });
     });
@@ -349,8 +396,8 @@ async function startCodexProxyServer() {
       proxyServer.listen(port, '127.0.0.1', () => {
         console.log(`Codex proxy server started on http://127.0.0.1:${port}`);
 
-        // 保存代理启动时间
-        saveProxyStartTime('codex');
+        // 保存代理启动时间（如果是切换渠道，保留原有启动时间）
+        saveProxyStartTime('codex', preserveStartTime);
 
         resolve({ success: true, port });
       });
@@ -374,7 +421,10 @@ async function startCodexProxyServer() {
 }
 
 // 停止 Codex 代理服务器
-async function stopCodexProxyServer() {
+async function stopCodexProxyServer(options = {}) {
+  // options.clearStartTime - 是否清除启动时间（默认 true）
+  const clearStartTime = options.clearStartTime !== false;
+
   if (!proxyServer) {
     return { success: true, message: 'Codex proxy server not running' };
   }
@@ -385,8 +435,10 @@ async function stopCodexProxyServer() {
     proxyServer.close(() => {
       console.log('Codex proxy server stopped');
 
-      // 清除代理启动时间
-      clearProxyStartTime('codex');
+      // 清除代理启动时间（仅当明确要求时）
+      if (clearStartTime) {
+        clearProxyStartTime('codex');
+      }
 
       proxyServer = null;
       proxyApp = null;

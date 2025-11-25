@@ -119,12 +119,12 @@ module.exports = (config) => {
       if (proxyStatus && proxyStatus.running) {
         console.log(`Gemini proxy is running, restarting to switch to channel: ${result.channel.name}`);
 
-        // 停止代理
-        await stopGeminiProxyServer();
+        // 停止代理（但保留启动时间）
+        await stopGeminiProxyServer({ clearStartTime: false });
 
-        // 重新启动代理（会自动使用新的激活渠道）
+        // 重新启动代理（保留原有启动时间）
         const { setProxyConfig } = require('../services/gemini-settings-manager');
-        const proxyResult = await startGeminiProxyServer();
+        const proxyResult = await startGeminiProxyServer({ preserveStartTime: true });
 
         if (proxyResult.success) {
           setProxyConfig(proxyResult.port);

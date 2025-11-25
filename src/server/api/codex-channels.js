@@ -120,12 +120,12 @@ module.exports = (config) => {
       if (proxyStatus && proxyStatus.running) {
         console.log(`Codex proxy is running, restarting to switch to channel: ${result.channel.name}`);
 
-        // 停止代理
-        await stopCodexProxyServer();
+        // 停止代理（但保留启动时间）
+        await stopCodexProxyServer({ clearStartTime: false });
 
-        // 重新启动代理（会自动使用新的激活渠道）
+        // 重新启动代理（保留原有启动时间）
         const { setProxyConfig } = require('../services/codex-settings-manager');
-        const proxyResult = await startCodexProxyServer();
+        const proxyResult = await startCodexProxyServer({ preserveStartTime: true });
 
         if (proxyResult.success) {
           setProxyConfig(proxyResult.port);

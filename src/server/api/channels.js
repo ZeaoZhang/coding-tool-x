@@ -75,25 +75,19 @@ router.delete('/:id', (req, res) => {
   }
 });
 
-// POST /api/channels/:id/activate - Activate channel
 router.post('/:id/activate', async (req, res) => {
   try {
     const { id } = req.params;
     const channel = activateChannel(id);
 
-    // 检查代理是否正在运行，如果是则重启以应用新渠道
     const { getProxyStatus, stopProxyServer, startProxyServer } = require('../proxy-server');
     let proxyStatus = getProxyStatus();
 
     if (proxyStatus && proxyStatus.running) {
       console.log(`Proxy is running, restarting to switch to channel: ${channel.name}`);
-
-      // 停止代理
-      await stopProxyServer();
-
-      // 重新启动代理（会自动使用新的激活渠道）
+      await stopProxyServer({ clearStartTime: false });
       const { setProxyConfig } = require('../services/settings-manager');
-      const proxyResult = await startProxyServer();
+      const proxyResult = await startProxyServer({ preserveStartTime: true });
 
       if (proxyResult.success) {
         setProxyConfig(proxyResult.port);
@@ -103,7 +97,6 @@ router.post('/:id/activate', async (req, res) => {
       proxyStatus = getProxyStatus();
     }
 
-    // 广播行为日志
     broadcastLog({
       type: 'action',
       action: 'switch_channel',
@@ -113,7 +106,6 @@ router.post('/:id/activate', async (req, res) => {
       source: 'claude'
     });
 
-    // 推送代理状态更新（渠道列表已更新）
     const channels = getAllChannels();
     const activeChannel = channels.find(ch => ch.isActive);
     broadcastProxyState('claude', proxyStatus, activeChannel, channels);

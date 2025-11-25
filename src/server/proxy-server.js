@@ -56,15 +56,15 @@ function calculateCost(model, tokens) {
   );
 }
 
-// 启动代理服务器
-async function startProxyServer() {
+async function startProxyServer(options = {}) {
+  const preserveStartTime = options.preserveStartTime || false;
+
   if (proxyServer) {
     console.log('Proxy server already running on port', currentPort);
     return { success: true, port: currentPort };
   }
 
   try {
-    // 加载配置获取端口
     const config = loadConfig();
     const port = config.ports?.proxy || 10088;
     currentPort = port;
@@ -72,11 +72,9 @@ async function startProxyServer() {
     proxyApp = express();
     const proxy = httpProxy.createProxyServer({});
 
-    // 监听 proxyReq 事件，修改发往真实API的请求头
     proxy.on('proxyReq', (proxyReq, req, res) => {
       const activeChannel = getActiveChannel();
       if (activeChannel) {
-        // 记录请求元数据（用于 WebSocket 日志和统计）
         const requestId = `${Date.now()}-${Math.random()}`;
         requestMetadata.set(req, {
           id: requestId,
@@ -85,27 +83,20 @@ async function startProxyServer() {
           startTime: Date.now()
         });
 
-        // 删除原有的 PROXY_KEY，设置真实的 API Key
         proxyReq.removeHeader('x-api-key');
         proxyReq.setHeader('x-api-key', activeChannel.apiKey);
-
-        // 同时替换 Authorization header (Claude Code 会同时发送这两个 header)
         proxyReq.removeHeader('authorization');
         proxyReq.setHeader('authorization', `Bearer ${activeChannel.apiKey}`);
 
-        // 确保必需的 Anthropic API headers 存在
         if (!proxyReq.getHeader('anthropic-version')) {
           proxyReq.setHeader('anthropic-version', '2023-06-01');
         }
-
-        // 确保 content-type 正确
         if (!proxyReq.getHeader('content-type')) {
           proxyReq.setHeader('content-type', 'application/json');
         }
       }
     });
 
-    // 代理所有请求
     proxyApp.use((req, res) => {
       const activeChannel = getActiveChannel();
 
@@ -117,10 +108,8 @@ async function startProxyServer() {
         return;
       }
 
-      // 设置代理目标
       const target = activeChannel.baseUrl;
 
-      // 代理请求
       proxy.web(req, res, {
         target,
         changeOrigin: true
@@ -137,15 +126,30 @@ async function startProxyServer() {
       });
     });
 
-    // 监听代理响应
     proxy.on('proxyRes', (proxyRes, req, res) => {
-      // 获取请求元数据
       const metadata = requestMetadata.get(req);
-      if (!metadata) {
+      if (!metadata) return;
+
+      if (res.writableEnded || res.destroyed) {
+        requestMetadata.delete(req);
         return;
       }
 
-      // 解析 SSE 流以提取 token 数据
+      let isResponseClosed = false;
+
+      res.on('close', () => {
+        isResponseClosed = true;
+        requestMetadata.delete(req);
+      });
+
+      res.on('error', (err) => {
+        isResponseClosed = true;
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+          console.error('Response error:', err);
+        }
+        requestMetadata.delete(req);
+      });
+
       let buffer = '';
       let tokenData = {
         inputTokens: 0,
@@ -156,17 +160,17 @@ async function startProxyServer() {
       };
 
       proxyRes.on('data', (chunk) => {
+        if (isResponseClosed) return;
+
         buffer += chunk.toString();
 
-        // 处理完整的 SSE 事件
         const events = buffer.split('\n\n');
-        buffer = events.pop() || ''; // 保留未完成的部分
+        buffer = events.pop() || '';
 
         events.forEach(eventText => {
           if (!eventText.trim()) return;
 
           try {
-            // 解析 SSE 格式: "event: xxx\ndata: {...}"
             const lines = eventText.split('\n');
             let eventType = '';
             let data = '';
@@ -183,12 +187,10 @@ async function startProxyServer() {
 
             const parsed = JSON.parse(data);
 
-            // 提取模型名称（在 message_start 事件中）
             if (eventType === 'message_start' && parsed.message && parsed.message.model) {
               tokenData.model = parsed.message.model;
             }
 
-            // 提取 usage 数据
             if (parsed.usage) {
               if (parsed.usage.input_tokens !== undefined) {
                 tokenData.inputTokens = parsed.usage.input_tokens;
@@ -204,9 +206,7 @@ async function startProxyServer() {
               }
             }
 
-            // 如果是 message_delta 事件，通常包含最终的 usage
             if (eventType === 'message_delta' && parsed.usage) {
-              // 格式化时间为 HH:MM:SS
               const now = new Date();
               const time = now.toLocaleTimeString('zh-CN', {
                 hour12: false,
@@ -215,7 +215,6 @@ async function startProxyServer() {
                 second: '2-digit'
               });
 
-              // 记录统计数据（先计算）
               const tokens = {
                 input: tokenData.inputTokens,
                 output: tokenData.outputTokens,
@@ -225,20 +224,22 @@ async function startProxyServer() {
               };
               const cost = calculateCost(tokenData.model, tokens);
 
-              // 广播日志
-              broadcastLog({
-                type: 'log',
-                id: metadata.id,
-                time: time,
-                channel: metadata.channel,
-                model: tokenData.model,
-                inputTokens: tokenData.inputTokens,
-                outputTokens: tokenData.outputTokens,
-                cacheCreation: tokenData.cacheCreation,
-                cacheRead: tokenData.cacheRead,
-                cost: cost,
-                source: 'claude'
-              });
+              if (!isResponseClosed) {
+                broadcastLog({
+                  type: 'log',
+                  id: metadata.id,
+                  time: time,
+                  channel: metadata.channel,
+                  model: tokenData.model,
+                  inputTokens: tokenData.inputTokens,
+                  outputTokens: tokenData.outputTokens,
+                  cacheCreation: tokenData.cacheCreation,
+                  cacheRead: tokenData.cacheRead,
+                  cost: cost,
+                  source: 'claude'
+                });
+              }
+
               const duration = Date.now() - metadata.startTime;
 
               recordRequest({
@@ -255,18 +256,25 @@ async function startProxyServer() {
               });
             }
           } catch (err) {
-            // 忽略解析错误
           }
         });
       });
 
       proxyRes.on('end', () => {
-        // 清理元数据
+        if (!isResponseClosed) {
+          requestMetadata.delete(req);
+        }
+      });
+
+      proxyRes.on('error', (err) => {
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+          console.error('Proxy response error:', err);
+        }
+        isResponseClosed = true;
         requestMetadata.delete(req);
       });
     });
 
-    // 处理代理错误
     proxy.on('error', (err, req, res) => {
       console.error('Proxy error:', err);
       if (res && !res.headersSent) {
@@ -277,19 +285,12 @@ async function startProxyServer() {
       }
     });
 
-    // 启动服务器
     proxyServer = http.createServer(proxyApp);
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
         console.log(`✅ Proxy server started on http://127.0.0.1:${port}`);
-
-        // 保存代理启动时间
-        saveProxyStartTime('claude');
-
-        // WebSocket 服务器已经在 Web UI 启动时附加到 HTTP 服务器了
-        // 不需要在这里重复启动
-
+        saveProxyStartTime('claude', preserveStartTime);
         resolve({ success: true, port });
       });
 
@@ -314,26 +315,21 @@ async function startProxyServer() {
   }
 }
 
-// 停止代理服务器
-async function stopProxyServer() {
+async function stopProxyServer(options = {}) {
+  const clearStartTime = options.clearStartTime !== false;
+
   if (!proxyServer) {
     return { success: true, message: 'Proxy server not running' };
   }
 
-  // 注意：不要停止 WebSocket 服务器！
-  // WebSocket 服务器附加到 Web UI 的 HTTP 服务器上，
-  // 应该始终保持运行，直到 Web UI 停止
-
-  // 清理请求元数据
   requestMetadata.clear();
 
   return new Promise((resolve) => {
     proxyServer.close(() => {
       console.log('✅ Proxy server stopped');
-
-      // 清除代理启动时间
-      clearProxyStartTime('claude');
-
+      if (clearStartTime) {
+        clearProxyStartTime('claude');
+      }
       proxyServer = null;
       proxyApp = null;
       const stoppedPort = currentPort;
