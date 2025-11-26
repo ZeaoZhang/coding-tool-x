@@ -577,6 +577,53 @@
                     </div>
                   </div>
                 </div>
+
+                <n-divider />
+
+                <!-- 开机自启设置 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>开机自启</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      启用此选项后，重启电脑时 Coding-Tool 会自动启动
+                    </n-text>
+                  </div>
+
+                  <div style="margin-top: 16px;">
+                    <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; border-left: 3px solid #18a058;">
+                      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <n-text strong style="flex: 1;">{{ autoStartStatus }}</n-text>
+                        <n-button
+                          v-if="!autoStartEnabled"
+                          type="primary"
+                          size="small"
+                          :loading="autoStartLoading"
+                          @click="handleEnableAutoStart"
+                        >
+                          <template #icon>
+                            <n-icon><CheckmarkCircleOutline /></n-icon>
+                          </template>
+                          启用自启
+                        </n-button>
+                        <n-button
+                          v-else
+                          type="warning"
+                          size="small"
+                          :loading="autoStartLoading"
+                          @click="handleDisableAutoStart"
+                        >
+                          <template #icon>
+                            <n-icon><WarningOutline /></n-icon>
+                          </template>
+                          禁用自启
+                        </n-button>
+                      </div>
+                      <n-text depth="3" style="font-size: 12px;">
+                        {{ autoStartHelp }}
+                      </n-text>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -665,6 +712,18 @@ const originalPorts = ref({
   geminiProxy: 10090
 })
 const savingPorts = ref(false)
+
+// 开机自启配置
+const autoStartEnabled = ref(false)
+const autoStartLoading = ref(false)
+const autoStartStatus = computed(() => autoStartEnabled.value ? '✓ 已启用' : '未启用')
+const autoStartHelp = computed(() => {
+  if (autoStartEnabled.value) {
+    return '重启电脑时 Coding-Tool 会自动启动。如需禁用，点击下方按钮'
+  } else {
+    return '启用后，重启电脑时 Coding-Tool 会自动启动'
+  }
+})
 
 // 高级设置
 const advancedSettings = ref({
@@ -802,25 +861,26 @@ async function handleSave() {
 }
 
 // 加载面板可见性设置
-function loadPanelSettings() {
-  const saved = localStorage.getItem('cc-panel-visibility')
-  if (saved) {
-    try {
-      const settings = JSON.parse(saved)
-      showChannels.value = settings.showChannels !== false // default true
-      showLogs.value = settings.showLogs !== false // default true
-    } catch (e) {
-      // Ignore parse errors
+async function loadPanelSettings() {
+  try {
+    const response = await api.getUIConfig()
+    if (response.success && response.config) {
+      showChannels.value = response.config.panelVisibility?.showChannels !== false // default true
+      showLogs.value = response.config.panelVisibility?.showLogs !== false // default true
     }
+  } catch (err) {
+    console.error('Failed to load panel settings:', err)
   }
 }
 
 // 保存面板可见性设置
-function savePanelSettings() {
-  localStorage.setItem('cc-panel-visibility', JSON.stringify({
-    showChannels: showChannels.value,
-    showLogs: showLogs.value
-  }))
+async function savePanelSettings() {
+  try {
+    await api.updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
+    await api.updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
+  } catch (err) {
+    console.error('Failed to save panel settings:', err)
+  }
 }
 
 // 处理显示渠道列表切换
@@ -933,6 +993,73 @@ async function handleSavePorts() {
   }
 }
 
+// 加载开机自启状态
+async function loadAutoStartStatus() {
+  try {
+    const response = await api.getAutoStartStatus()
+    if (response && response.success) {
+      autoStartEnabled.value = response.data?.enabled || false
+    } else {
+      console.warn('Failed to load autostart status:', response?.message)
+      // 如果加载失败，默认为未启用
+      autoStartEnabled.value = false
+    }
+  } catch (err) {
+    console.error('Failed to load autostart status:', err)
+    autoStartEnabled.value = false
+  }
+}
+
+// 启用开机自启
+async function handleEnableAutoStart() {
+  autoStartLoading.value = true
+  try {
+    const response = await api.enableAutoStart()
+    if (response.success) {
+      autoStartEnabled.value = true
+      message.success('开机自启已启用')
+    } else {
+      const errorMsg = response.message || '未知错误'
+      // 检查是否是警告类信息（需要先启动服务）
+      if (errorMsg.includes('暂无运行中的进程') || errorMsg.includes('请先启动')) {
+        message.warning(errorMsg)
+      } else {
+        message.error(errorMsg)
+      }
+    }
+  } catch (err) {
+    console.error('Failed to enable autostart:', err)
+    message.error(err.message || '启用失败：未知错误')
+  } finally {
+    autoStartLoading.value = false
+  }
+}
+
+// 禁用开机自启
+async function handleDisableAutoStart() {
+  autoStartLoading.value = true
+  try {
+    const response = await api.disableAutoStart()
+    if (response.success) {
+      autoStartEnabled.value = false
+      message.success('开机自启已禁用')
+    } else {
+      const errorMsg = response.message || '未知错误'
+      // 检查是否是警告类信息（未启用状态）
+      if (errorMsg.includes('未启用') || errorMsg.includes('不存在')) {
+        message.warning(errorMsg)
+      } else {
+        message.error(errorMsg)
+      }
+    }
+  } catch (err) {
+    console.error('Failed to disable autostart:', err)
+    message.error(err.message || '禁用失败：未知错误')
+  } finally {
+    autoStartLoading.value = false
+  }
+}
+
 // 加载设置
 onMounted(() => {
   loadPanelSettings()
@@ -944,6 +1071,7 @@ watch(show, (newVal) => {
     loadTerminals()
     loadPanelSettings()
     loadPortsConfig()
+    loadAutoStartStatus()
   }
 })
 </script>

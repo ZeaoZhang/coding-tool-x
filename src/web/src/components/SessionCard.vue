@@ -111,6 +111,9 @@
           <n-icon><TrashOutline /></n-icon>
         </template>
       </n-button>
+
+      <!-- Extra actions slot -->
+      <slot name="actions-extra"></slot>
     </div>
   </div>
 </template>

@@ -48,7 +48,7 @@ function readConfig() {
 // 将配置对象转换为 TOML 字符串
 function configToToml(config) {
   let content = `# Codex Configuration
-# Managed by CC-Tool (Proxy Mode)
+# Managed by Coding-Tool (Proxy Mode)
 
 `;
 

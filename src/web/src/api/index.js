@@ -330,6 +330,16 @@ const api = {
     return response.data
   },
 
+  async getCodexTodayStatistics() {
+    const response = await client.get('/codex/statistics/today')
+    return response.data
+  },
+
+  async getGeminiTodayStatistics() {
+    const response = await client.get('/gemini/statistics/today')
+    return response.data
+  },
+
   async getDailyStatistics(date) {
     const response = await client.get(`/statistics/daily/${date}`)
     return response.data
@@ -341,13 +351,98 @@ const api = {
   },
 
   // Version check
-  async checkForUpdates() {
-    const response = await client.get('/version/check')
+  async checkForUpdates(mock = false) {
+    const url = mock ? '/version/check?mock=true' : '/version/check'
+    const response = await client.get(url)
     return response.data
   },
 
   async getCurrentVersion() {
     const response = await client.get('/version/current')
+    return response.data
+  },
+
+  async getChangelog(version) {
+    const response = await client.get(`/version/changelog/${version}`)
+    return response.data
+  },
+
+  async getAllChangelog() {
+    const response = await client.get('/version/changelog')
+    return response.data
+  },
+
+  async performUpdate() {
+    const response = await client.post('/version/update')
+    return response.data
+  },
+
+  // Favorites
+  async getAllFavorites() {
+    const response = await client.get('/favorites')
+    return response.data
+  },
+
+  async getFavorites(channel) {
+    const response = await client.get(`/favorites/${channel}`)
+    return response.data
+  },
+
+  async addFavorite(channel, sessionData) {
+    const response = await client.post('/favorites', { channel, sessionData })
+    return response.data
+  },
+
+  async removeFavorite(channel, projectName, sessionId) {
+    const response = await client.delete(`/favorites/${channel}/${encodeURIComponent(projectName)}/${sessionId}`)
+    return response.data
+  },
+
+  async checkFavorite(channel, projectName, sessionId) {
+    const response = await client.get(`/favorites/check/${channel}/${encodeURIComponent(projectName)}/${sessionId}`)
+    return response.data
+  },
+
+  // UI Config
+  async getUIConfig() {
+    const response = await client.get('/ui-config')
+    return response.data
+  },
+
+  async saveUIConfig(config) {
+    const response = await client.post('/ui-config', { config })
+    return response.data
+  },
+
+  async updateUIConfigKey(key, value) {
+    const response = await client.put(`/ui-config/${key}`, { value })
+    return response.data
+  },
+
+  async updateNestedUIConfig(parentKey, childKey, value) {
+    const response = await client.put(`/ui-config/${parentKey}/${childKey}`, { value })
+    return response.data
+  },
+
+  // PM2 Auto-start management
+  async getAutoStartStatus() {
+    const response = await client.get('/pm2-autostart')
+    return response.data
+  },
+
+  async enableAutoStart() {
+    const response = await client.post('/pm2-autostart', { action: 'enable' })
+    return response.data
+  },
+
+  async disableAutoStart() {
+    const response = await client.post('/pm2-autostart', { action: 'disable' })
+    return response.data
+  },
+
+  // Dashboard aggregated API
+  async getDashboardInit() {
+    const response = await client.get('/dashboard/init')
     return response.data
   }
 }

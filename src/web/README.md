@@ -16,7 +16,7 @@ npm install
 npm run dev
 ```
 
-The dev server will start at `http://localhost:3000` and proxy API requests to the Express backend at `http://localhost:9999`.
+The dev server will start at `http://localhost:5000` and proxy API requests to the Express backend at `http://localhost:9999`.
 
 ### Build for Production
 
@@ -72,7 +72,7 @@ The web UI communicates with the Express backend at `/api`:
 
 1. Start the Express backend: `cc ui` (from CLI)
 2. In another terminal, start the Vite dev server: `cd src/web && npm run dev`
-3. Open `http://localhost:3000` in your browser
+3. Open `http://localhost:5000` in your browser
 4. Changes to Vue components will hot-reload automatically
 
 ## Production

@@ -6,42 +6,52 @@ const { loadConfig } = require('../config/loader');
 const { checkUpdateSilently } = require('./update');
 
 async function handleUI() {
-  console.clear();
-  console.log(chalk.cyan.bold('\n🌐 启动 CC-Tool Web UI...\n'));
+  // 检查是否为 daemon 模式（PM2 启动）
+  const isDaemon = process.argv.includes('--daemon');
+
+  if (!isDaemon) {
+    console.clear();
+    console.log(chalk.cyan.bold('\n🌐 启动 Coding-Tool Web UI...\n'));
+  }
 
   // 从配置加载端口
   const config = loadConfig();
   const port = config.ports?.webUI || 10099;
   const url = `http://localhost:${port}`;
 
-  // 静默检查更新
-  checkUpdateSilently().then((result) => {
-    if (result.hasUpdate && !result.error) {
-      console.log(chalk.yellow.bold('\n📢 发现新版本可用！'));
-      console.log(chalk.gray(`   当前版本: ${result.current}`));
-      console.log(chalk.gray(`   最新版本: ${result.latest}`));
-      console.log(chalk.cyan('   运行 ') + chalk.white.bold('ct update') + chalk.cyan(' 进行更新\n'));
-    }
-  }).catch(() => {
-    // 忽略检查错误
-  });
+  // 静默检查更新（非 daemon 模式）
+  if (!isDaemon) {
+    checkUpdateSilently().then((result) => {
+      if (result.hasUpdate && !result.error) {
+        console.log(chalk.yellow.bold('\n📢 发现新版本可用！'));
+        console.log(chalk.gray(`   当前版本: ${result.current}`));
+        console.log(chalk.gray(`   最新版本: ${result.latest}`));
+        console.log(chalk.cyan('   运行 ') + chalk.white.bold('ct update') + chalk.cyan(' 进行更新\n'));
+      }
+    }).catch(() => {
+      // 忽略检查错误
+    });
+  }
 
   try {
     await startServer(port);
 
-    // 自动打开浏览器
-    setTimeout(async () => {
-      try {
-        await open(url);
-        console.log(chalk.green(`✅ 已在浏览器中打开: ${url}\n`));
-      } catch (err) {
-        console.log(chalk.yellow(`💡 请手动打开: ${url}\n`));
-      }
-    }, 1000);
+    // 自动打开浏览器（仅非 daemon 模式）
+    if (!isDaemon) {
+      setTimeout(async () => {
+        try {
+          await open(url);
+          console.log(chalk.green(`✅ 已在浏览器中打开: ${url}\n`));
+        } catch (err) {
+          console.log(chalk.yellow(`💡 请手动打开: ${url}\n`));
+        }
+      }, 1000);
+    }
 
-    // 处理退出信号
-    process.on('SIGINT', async () => {
-      console.log(chalk.yellow('\n\n👋 正在停止服务器...\n'));
+    // 处理退出信号（仅非 daemon 模式）
+    if (!isDaemon) {
+      process.on('SIGINT', async () => {
+        console.log(chalk.yellow('\n\n👋 正在停止服务器...\n'));
 
       // 检查代理状态并询问是否停止
       try {
@@ -82,7 +92,11 @@ async function handleUI() {
       process.exit(0);
     });
 
-    console.log(chalk.gray('按 Ctrl+C 停止服务器'));
+      console.log(chalk.gray('按 Ctrl+C 停止服务器'));
+    } else {
+      // Daemon 模式：保持运行
+      console.log(chalk.green(`✅ Coding-Tool 服务已在后台启动 (端口: ${port})`));
+    }
 
   } catch (error) {
     console.error(chalk.red('启动服务器失败:'), error.message);

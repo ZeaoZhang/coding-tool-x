@@ -373,7 +373,7 @@ function writeCodexConfig(activeChannel, allChannels) {
 
   // 构建新的 config.toml
   let tomlContent = `# Codex Configuration
-# Managed by CC-Tool
+# Managed by Coding-Tool
 
 # 当前使用的模型提供商
 model_provider = "${activeChannel.providerKey}"

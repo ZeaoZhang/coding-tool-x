@@ -59,28 +59,14 @@
       <div class="header-actions">
         <!-- Update Notification -->
         <div v-if="updateInfo" class="update-notification">
-          <n-tooltip placement="bottom">
-            <template #trigger>
-              <div class="update-badge" @click="handleUpdateClick">
-                <n-icon :size="18">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
-                    <path d="M256 48C141.13 48 48 141.13 48 256s93.13 208 208 208 208-93.13 208-208S370.87 48 256 48zm-80 288v-32h160v32H176zm48-112h-48v-32h48v-48h32v48h48v32h-48v48h-32v-48z"/>
-                  </svg>
-                </n-icon>
-                <span class="update-text">有更新</span>
-              </div>
-            </template>
-            <div style="max-width: 300px;">
-              <div style="font-weight: 600; margin-bottom: 6px; font-size: 13px;">发现新版本 🎉</div>
-              <div style="font-size: 12px; color: var(--text-tertiary); line-height: 1.6;">
-                当前版本: <span style="font-weight: 600;">{{ updateInfo.current }}</span><br>
-                最新版本: <span style="font-weight: 600; color: var(--success-color);">{{ updateInfo.latest }}</span>
-              </div>
-              <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--primary-color); font-weight: 500;">
-                💡 点击查看更新说明
-              </div>
-            </div>
-          </n-tooltip>
+          <div class="update-badge" @click="handleUpdateClick">
+            <n-icon :size="18">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
+                <path d="M256 48C141.13 48 48 141.13 48 256s93.13 208 208 208 208-93.13 208-208S370.87 48 256 48zm-80 288v-32h160v32H176zm48-112h-48v-32h48v-48h32v48h48v32h-48v48h-32v-48z"/>
+              </svg>
+            </n-icon>
+            <span class="update-text">有更新</span>
+          </div>
         </div>
 
         <!-- Theme Toggle -->
@@ -89,6 +75,18 @@
           :tooltip="isDark ? '切换到亮色主题' : '切换到暗色主题'"
           @click="toggleTheme"
         />
+
+        <!-- Favorites Button -->
+        <div class="favorites-button-wrapper">
+          <HeaderButton
+            :icon="BookmarkOutline"
+            :tooltip="`我的收藏 (${totalFavorites})`"
+            @click="showFavoritesDrawer = true"
+          />
+          <div v-if="totalFavorites > 0" class="favorites-badge">
+            {{ totalFavorites }}
+          </div>
+        </div>
 
         <!-- Settings Button -->
         <HeaderButton
@@ -145,6 +143,9 @@
     <!-- Recent Sessions Drawer -->
     <RecentSessionsDrawer v-model:visible="showRecentDrawer" :channel="currentChannel" />
 
+    <!-- Favorites Drawer -->
+    <FavoritesDrawer v-model:visible="showFavoritesDrawer" />
+
     <!-- Settings Drawer -->
     <SettingsDrawer v-model:visible="showSettingsDrawer" />
 
@@ -154,6 +155,20 @@
         <div class="help-section">
           <h4>🚀 快速开始</h4>
           <p>CODING-TOOL 是 AI 编程工具的增强管理助手，支持 Claude Code、Codex 和 Gemini 三种 AI 工具，提供智能会话管理、动态渠道切换、全局搜索和实时监控功能。</p>
+
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">⭐ 最简单的启动方式：</h5>
+          <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058;">
+            <p style="margin: 0; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 600; color: var(--primary-color);">ct start</p>
+            <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-secondary);">• 后台启动所有服务<br/>• 可以关闭终端窗口<br/>• 代理服务保持运行</p>
+          </div>
+
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">📋 日常工作流：</h5>
+          <div style="font-size: 12px; line-height: 1.8; color: var(--text-secondary);">
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct start</code> 启动服务<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct status</code> 查看状态<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct logs</code> 查看日志<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct stop</code> 停止服务
+          </div>
         </div>
 
         <div class="help-section">
@@ -167,42 +182,84 @@
 
         <div class="help-section">
           <h4>📋 命令行用法</h4>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">🚀 服务管理</h5>
           <div class="command-list">
             <div class="command-item">
-              <code>ct</code>
-              <span>启动交互式命令行界面</span>
+              <code>ct start</code>
+              <span>后台启动所有服务（推荐）</span>
             </div>
             <div class="command-item">
-              <code>ct ui</code>
-              <span>启动 Web 可视化界面（推荐）</span>
+              <code>ct stop</code>
+              <span>停止所有服务</span>
             </div>
             <div class="command-item">
-              <code>ct reset</code>
-              <span>重置配置文件到默认状态</span>
-            </div>
-            <div class="command-item">
-              <code>ct proxy start</code>
-              <span>启动 Claude 代理服务</span>
-            </div>
-            <div class="command-item">
-              <code>ct proxy stop</code>
-              <span>停止 Claude 代理服务</span>
+              <code>ct restart</code>
+              <span>重启所有服务</span>
             </div>
             <div class="command-item">
               <code>ct status</code>
-              <span>查看所有代理状态</span>
+              <span>查看服务状态</span>
+            </div>
+          </div>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">🔌 代理管理</h5>
+          <div class="command-list">
+            <div class="command-item">
+              <code>ct claude start</code>
+              <span>启动 Claude 代理</span>
+            </div>
+            <div class="command-item">
+              <code>ct codex start</code>
+              <span>启动 Codex 代理</span>
+            </div>
+            <div class="command-item">
+              <code>ct gemini start</code>
+              <span>启动 Gemini 代理</span>
+            </div>
+            <div class="command-item">
+              <code>ct claude stop</code>
+              <span>停止指定代理（支持 stop/restart/status）</span>
+            </div>
+          </div>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">📋 日志管理</h5>
+          <div class="command-list">
+            <div class="command-item">
+              <code>ct logs</code>
+              <span>查看所有日志</span>
+            </div>
+            <div class="command-item">
+              <code>ct logs claude</code>
+              <span>查看 Claude 日志（支持 ui/codex/gemini）</span>
+            </div>
+            <div class="command-item">
+              <code>ct logs --follow</code>
+              <span>实时跟踪日志</span>
+            </div>
+            <div class="command-item">
+              <code>ct logs --clear</code>
+              <span>清空日志</span>
+            </div>
+          </div>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">📊 其他命令</h5>
+          <div class="command-list">
+            <div class="command-item">
+              <code>ct stats</code>
+              <span>查看统计信息</span>
+            </div>
+            <div class="command-item">
+              <code>ct doctor</code>
+              <span>系统诊断</span>
             </div>
             <div class="command-item">
               <code>ct update</code>
-              <span>检查并更新到最新版本</span>
-            </div>
-            <div class="command-item">
-              <code>ct -v</code>
-              <span>显示版本号</span>
+              <span>检查更新</span>
             </div>
             <div class="command-item">
               <code>ct -h</code>
-              <span>显示帮助信息</span>
+              <span>完整帮助</span>
             </div>
           </div>
         </div>
@@ -229,7 +286,36 @@
             <li><strong>Gemini 代理</strong>：端口 10090，支持 Gemini API 格式</li>
           </ul>
           <p>在 Dashboard 或各工具详情页，可以添加多个渠道并快速切换，无需修改配置文件或重启工具。</p>
-          <p style="color: #f59e0b; font-size: 13px; margin-top: 8px;">⚠️ 注意：开启代理期间请勿关闭工具窗口。</p>
+        </div>
+
+        <div class="help-section">
+          <h4>⭐ 后台启动与开机自启</h4>
+
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">后台启动服务</h5>
+          <p style="font-size: 12px; line-height: 1.8;">使用 <code style="background: var(--bg-primary); padding: 2px 6px;">ct start</code> 命令后台启动所有服务，可以安全关闭终端窗口而不影响代理服务的运行。</p>
+
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">配置开机自启（可选）</h5>
+          <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 8px 0;">第一次启用开机自启只需三个步骤：</p>
+          <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058; font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.8; color: var(--text-secondary);">
+            # 第 1 步：启用 PM2 开机自启<br/>
+            <span style="color: var(--primary-color);">pm2 startup</span><br/>
+            <br/>
+            # 第 2 步：保存配置<br/>
+            <span style="color: var(--primary-color);">pm2 save</span><br/>
+            <br/>
+            # 第 3 步：重启电脑，服务自动启动 ✓
+          </div>
+
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">相关命令</h5>
+          <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.8;">
+            <code style="background: var(--bg-primary); padding: 2px 6px;">ct start</code> 后台启动<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">ct status</code> 查看状态<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">ct logs</code> 查看日志<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">pm2 list</code> 查看所有后台进程<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">pm2 unstartup</code> 禁用开机自启
+          </div>
+
+          <p style="color: #18a058; font-size: 12px; margin-top: 8px;">💡 提示：配置开机自启后，重启电脑时 Coding-Tool 会自动启动，无需手动运行命令。</p>
         </div>
 
         <div class="help-section">
@@ -248,15 +334,19 @@
 import { ref, computed, onMounted, onUnmounted, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
+import FavoritesDrawer from './FavoritesDrawer.vue'
 import SettingsDrawer from './SettingsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
+import UpdateDialog from './UpdateDialog.vue'
 import api from '../api'
 import message, { dialog } from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
+import { useFavorites } from '../composables/useFavorites'
+import { useDashboard } from '../composables/useDashboard'
 
 // 使用主题 composable
 const { isDark, toggleTheme } = useTheme()
@@ -269,6 +359,12 @@ const {
   startProxy,
   stopProxy
 } = useGlobalState()
+
+// 使用收藏功能
+const { totalFavorites } = useFavorites()
+
+// 使用 dashboard 聚合数据
+const { dashboardData, isLoading: dashboardLoading, loadDashboard } = useDashboard()
 
 const router = useRouter()
 const route = useRoute()
@@ -283,6 +379,7 @@ const shouldShowRightPanel = computed(() => {
 })
 
 const showRecentDrawer = ref(false)
+const showFavoritesDrawer = ref(false)
 const showSettingsDrawer = ref(false)
 const showHelpModal = ref(false)
 const globalLoading = ref(false) // 全局 loading 状态
@@ -300,30 +397,31 @@ const effectiveProxyLoading = computed(() => {
   return claudeProxy.value.loading
 })
 
-// Panel visibility settings (with localStorage persistence)
+// Panel visibility settings (with file persistence)
 const showChannels = ref(true)
 const showLogs = ref(true)
 
-// Load panel visibility from localStorage
-function loadPanelSettings() {
-  const saved = localStorage.getItem('cc-panel-visibility')
-  if (saved) {
-    try {
-      const settings = JSON.parse(saved)
-      showChannels.value = settings.showChannels !== false // default true
-      showLogs.value = settings.showLogs !== false // default true
-    } catch (e) {
-      // Ignore parse errors
+// Load panel visibility from server using dashboard API
+async function loadPanelSettings() {
+  try {
+    const data = await loadDashboard()
+    if (data && data.uiConfig) {
+      showChannels.value = data.uiConfig.panelVisibility?.showChannels !== false
+      showLogs.value = data.uiConfig.panelVisibility?.showLogs !== false
     }
+  } catch (err) {
+    console.error('Failed to load dashboard data:', err)
   }
 }
 
-// Save panel visibility to localStorage
-function savePanelSettings() {
-  localStorage.setItem('cc-panel-visibility', JSON.stringify({
-    showChannels: showChannels.value,
-    showLogs: showLogs.value
-  }))
+// Save panel visibility to server
+async function savePanelSettings() {
+  try {
+    await api.updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
+    await api.updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
+  } catch (err) {
+    console.error('Failed to save panel settings:', err)
+  }
 }
 
 // Toggle handlers
@@ -383,43 +481,103 @@ function handlePanelVisibilityChange(event) {
 // 检查版本更新
 async function checkForUpdates() {
   try {
-    const result = await api.checkForUpdates()
+    // 开发模式下使用 mock，便于查看实际效果
+    const isDev = process.env.NODE_ENV === 'development'
+    const result = await api.checkForUpdates(isDev)
     if (result.hasUpdate && !result.error) {
       updateInfo.value = result
     }
   } catch (err) {
     // 静默失败，不影响用户体验
+    console.error('Version check failed:', err)
+  }
+}
+
+// 处理自动更新
+async function handleAutoUpdate() {
+  try {
+    // 显示加载状态的对话框
+    const loadingDialog = dialog.info({
+      title: '更新中...',
+      content: '正在下载最新版本，请稍候...',
+      positiveText: '关闭',
+      maskClosable: false,
+      closable: false,
+      style: {
+        width: '400px'
+      }
+    })
+
+    // 调用后端更新接口
+    const result = await api.performUpdate()
+
+    if (result.success) {
+      // 关闭加载对话框
+      loadingDialog.destroy()
+
+      // 显示更新成功提示
+      dialog.success({
+        title: '更新成功！',
+        content: '应用将在 3 秒后自动刷新...',
+        positiveText: '立即刷新',
+        maskClosable: true,
+        style: {
+          width: '400px'
+        },
+        onPositiveClick: () => {
+          window.location.reload()
+        }
+      })
+
+      // 3 秒后自动刷新
+      setTimeout(() => {
+        window.location.reload()
+      }, 3000)
+    } else {
+      loadingDialog.destroy()
+      message.error(result.error || '更新失败，请稍后重试')
+    }
+  } catch (err) {
+    message.error('更新出错: ' + err.message)
   }
 }
 
 // 处理更新点击
-function handleUpdateClick() {
+async function handleUpdateClick() {
   if (!updateInfo.value) return
 
-  dialog.info({
-    title: '发现新版本 🎉',
-    content: () => h('div', { style: 'line-height: 1.8;' }, [
-      h('div', { style: 'margin-bottom: 12px; color: var(--text-secondary);' }, [
-        h('div', { style: 'margin-bottom: 6px;' }, [
-          h('span', '当前版本: '),
-          h('span', { style: 'font-weight: 600; color: var(--text-primary);' }, updateInfo.value.current)
-        ]),
-        h('div', [
-          h('span', '最新版本: '),
-          h('span', { style: 'font-weight: 600; color: var(--success-color);' }, updateInfo.value.latest)
-        ])
-      ]),
-      h('div', { style: 'margin-top: 16px; padding: 12px; background: var(--code-bg); border-radius: 6px; border-left: 3px solid var(--primary-color);' }, [
-        h('div', { style: 'font-size: 13px; color: var(--text-tertiary); margin-bottom: 8px;' }, '💡 更新方法：'),
-        h('div', { style: 'font-family: monospace; font-size: 14px; font-weight: 600; color: var(--primary-color);' }, 'ct update')
-      ])
-    ]),
-    positiveText: '我知道了',
+  // 获取更新日志
+  let changelogData = null
+  try {
+    const result = await api.getChangelog(updateInfo.value.latest)
+    if (result.success) {
+      changelogData = result.changelog
+    }
+  } catch (err) {
+    console.error('Failed to load changelog:', err)
+  }
+
+  // 使用 dialog.create 方法而不是 info，这样可以完全自定义对话框
+  let dialogInstance = null
+  const d = dialog.create({
+    title: '✨ 发现新版本 🎉',
+    content: () => h(UpdateDialog, {
+      currentVersion: updateInfo.value.current,
+      latestVersion: updateInfo.value.latest,
+      changelog: changelogData,
+      onUpdate: () => {
+        dialogInstance?.destroy()
+        handleAutoUpdate()
+      }
+    }),
     maskClosable: true,
+    closable: true,
+    showIcon: false,
     style: {
-      width: '480px'
+      width: '540px'
     }
   })
+  dialogInstance = d
 }
 
 onMounted(() => {
@@ -897,5 +1055,35 @@ onUnmounted(() => {
 [data-theme="dark"] .update-badge:hover {
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(251, 146, 60, 0.3));
   border-color: rgba(245, 158, 11, 0.6);
+}
+
+/* 收藏按钮样式 */
+.favorites-button-wrapper {
+  position: relative;
+}
+
+.favorites-badge {
+  position: absolute;
+  top: -2px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ff4d4f;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--bg-primary);
+  pointer-events: none;
+}
+
+/* 版本更新对话框样式 */
+:deep(.n-dialog__action) {
+  display: none;
 }
 </style>

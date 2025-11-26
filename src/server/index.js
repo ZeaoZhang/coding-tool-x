@@ -101,6 +101,8 @@ async function startServer(port) {
   app.use('/api/gemini/proxy', require('./api/gemini-proxy'));
 
   app.use('/api/aliases', require('./api/aliases')());
+  app.use('/api/favorites', require('./api/favorites'));
+  app.use('/api/ui-config', require('./api/ui-config'));
   app.use('/api/channels', require('./api/channels'));
   app.use('/api/proxy', require('./api/proxy'));
   app.use('/api/codex/proxy', require('./api/codex-proxy'));
@@ -108,6 +110,8 @@ async function startServer(port) {
   app.use('/api/config', require('./api/config'));
   app.use('/api/statistics', require('./api/statistics'));
   app.use('/api/version', require('./api/version'));
+  app.use('/api/pm2-autostart', require('./api/pm2-autostart')());
+  app.use('/api/dashboard', require('./api/dashboard'));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');
@@ -120,7 +124,7 @@ async function startServer(port) {
 
   // Start server
   const server = app.listen(port, () => {
-    console.log(`\n🚀 CC-Tool Web UI running at:`);
+    console.log(`\n🚀 Coding-Tool Web UI running at:`);
     console.log(`   http://localhost:${port}`);
 
     // 附加 WebSocket 服务器到同一个端口

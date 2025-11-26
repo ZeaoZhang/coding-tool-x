@@ -8,10 +8,25 @@
         </n-icon>
       </div>
       <h2 class="channel-title">{{ channelTitle }}</h2>
+
+      <!-- 锁定按钮 -->
+      <n-button
+        text
+        class="lock-button"
+        @click="toggleLock"
+        :title="isLocked ? '解锁此列' : '锁定此列'"
+      >
+        <template #icon>
+          <n-icon :size="18">
+            <LockClosed v-if="isLocked" />
+            <LockOpen v-else />
+          </n-icon>
+        </template>
+      </n-button>
     </div>
 
     <!-- 滚动内容区 -->
-    <div class="channel-content">
+    <div v-if="!isLocked" class="channel-content">
       <!-- 代理控制 -->
       <div class="card">
         <div class="card-header">
@@ -216,6 +231,21 @@
       </div>
     </div>
 
+    <!-- 锁定状态 UI -->
+    <div v-else class="locked-overlay" :class="`locked-${channelType}`">
+      <div class="locked-content">
+        <div class="lock-icon">
+          <n-icon :size="48">
+            <LockClosed />
+          </n-icon>
+        </div>
+        <h3 class="locked-title">该渠道已锁定</h3>
+        <n-text depth="3" class="locked-hint">
+          点击上方按钮解锁以查看内容
+        </n-text>
+      </div>
+    </div>
+
     <!-- 最新对话抽屉 -->
     <RecentSessionsDrawer v-model:visible="showRecentSessions" :channel="channelType" />
   </div>
@@ -242,9 +272,12 @@ import {
   CheckmarkCircleOutline,
   FolderOutline,
   ChatbubblesOutline,
-  ArrowForwardOutline
+  ArrowForwardOutline,
+  LockClosed,
+  LockOpen
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
+import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import api from '../../api'
 import axios from 'axios'
@@ -271,6 +304,9 @@ const {
   logLimit,
   statsInterval: statsIntervalSetting
 } = useGlobalState()
+
+// Dashboard 聚合数据
+const { dashboardData, isLoading: dashboardLoading, loadDashboard } = useDashboard()
 
 // 渠道配置
 const channelConfig = {
@@ -386,16 +422,50 @@ function animateValue(key, startValue, endValue, duration = 600) {
 // 最新对话抽屉
 const showRecentSessions = ref(false)
 
-// 显示实时日志（从localStorage读取，默认true）
+// 锁定状态
+const isLocked = ref(false)
+
+// 加载锁定状态
+async function loadLockState() {
+  try {
+    // 优先从 dashboard 数据读取
+    if (dashboardData.value && dashboardData.value.uiConfig) {
+      isLocked.value = dashboardData.value.uiConfig.channelLocks?.[props.channelType] || false
+    } else {
+      const response = await api.getUIConfig()
+      if (response.success && response.config) {
+        isLocked.value = response.config.channelLocks?.[props.channelType] || false
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load lock state:', err)
+  }
+}
+
+// 切换锁定状态
+async function toggleLock() {
+  isLocked.value = !isLocked.value
+  try {
+    await api.updateNestedUIConfig('channelLocks', props.channelType, isLocked.value)
+  } catch (err) {
+    console.error('Failed to save lock state:', err)
+  }
+}
+
+// 显示实时日志（从服务器读取，默认true）
 const showLogs = ref(true)
 
 // 加载显示设置
-function loadShowLogs() {
+async function loadShowLogs() {
   try {
-    const saved = localStorage.getItem('panel-visibility')
-    if (saved) {
-      const settings = JSON.parse(saved)
-      showLogs.value = settings.showLogs !== false // 默认true
+    // 优先从 dashboard 数据读取
+    if (dashboardData.value && dashboardData.value.uiConfig) {
+      showLogs.value = dashboardData.value.uiConfig.panelVisibility?.showLogs !== false
+    } else {
+      const response = await api.getUIConfig()
+      if (response.success && response.config) {
+        showLogs.value = response.config.panelVisibility?.showLogs !== false
+      }
     }
   } catch (err) {
     console.error('Failed to load panel settings:', err)
@@ -588,15 +658,21 @@ function goToChannelPage() {
 // 加载渠道列表
 async function loadChannels() {
   try {
-    let data
-    if (props.channelType === 'claude') {
-      data = await api.getChannels()
-    } else if (props.channelType === 'codex') {
-      data = await api.getCodexChannels()
-    } else if (props.channelType === 'gemini') {
-      data = await api.getGeminiChannels()
+    // 如果 dashboard 数据已加载，直接从缓存读取
+    if (dashboardData.value && dashboardData.value.channels) {
+      channels.value = dashboardData.value.channels[props.channelType] || []
+    } else {
+      // 否则单独调用API
+      let data
+      if (props.channelType === 'claude') {
+        data = await api.getChannels()
+      } else if (props.channelType === 'codex') {
+        data = await api.getCodexChannels()
+      } else if (props.channelType === 'gemini') {
+        data = await api.getGeminiChannels()
+      }
+      channels.value = data?.channels || []
     }
-    channels.value = data?.channels || []
     // 设置当前选中的渠道
     const active = channels.value.find(ch => ch.isActive)
     if (active) {
@@ -634,7 +710,17 @@ async function handleChannelSwitch(channelId) {
 
 // 加载统计数据
 async function loadStats() {
-  // 加载项目和会话数
+  // 从 dashboard 聚合数据读取（已格式化）
+  if (dashboardData.value && dashboardData.value.todayStats) {
+    const statsData = dashboardData.value.todayStats[props.channelType]
+    if (statsData) {
+      todayStats.value.requests = statsData.requests || 0
+      todayStats.value.tokens = statsData.tokens || 0
+      todayStats.value.cost = statsData.cost || 0
+    }
+  }
+
+  // 加载项目和会话数（这个数据不在 dashboard 中，仍需单独请求）
   try {
     const apiPrefix = props.channelType === 'claude' ? '' : `/${props.channelType}`
     const [projectsRes, sessionsRes] = await Promise.all([
@@ -645,41 +731,6 @@ async function loadStats() {
     stats.value.sessions = sessionsRes.data.sessions?.length || 0
   } catch (error) {
     console.error('Failed to load stats:', error)
-  }
-
-  // 加载今日统计
-  try {
-    const response = await axios.get('/api/statistics/today')
-    const byChannel = response.data.byChannel || {}
-
-    // 找到当前渠道的数据
-    let channelData = null
-    Object.values(byChannel).forEach(channel => {
-      const toolType = channel.toolType
-      if ((props.channelType === 'claude' && (toolType === 'claude' || toolType === 'claude-code')) ||
-          (props.channelType === 'codex' && toolType === 'codex') ||
-          (props.channelType === 'gemini' && toolType === 'gemini')) {
-        if (!channelData) {
-          channelData = channel
-        } else {
-          // 合并多个渠道的数据
-          channelData.requests += channel.requests || 0
-          channelData.tokens.input += channel.tokens?.input || 0
-          channelData.tokens.output += channel.tokens?.output || 0
-          channelData.tokens.cacheRead += channel.tokens?.cacheRead || 0
-          channelData.tokens.total += channel.tokens?.total || 0
-          channelData.cost += channel.cost || 0
-        }
-      }
-    })
-
-    if (channelData) {
-      todayStats.value.requests = channelData.requests || 0
-      todayStats.value.tokens = channelData.tokens?.total || 0
-      todayStats.value.cost = channelData.cost || 0
-    }
-  } catch (error) {
-    console.error('Failed to load today stats:', error)
   }
 }
 
@@ -699,16 +750,20 @@ function setupStatsTimer() {
 }
 
 onMounted(async () => {
+  // 先加载 dashboard 聚合数据（只有第一个组件会真正发起请求，其他复用缓存）
+  await loadDashboard()
+
+  // 从缓存数据加载
   await loadStats()
   loadChannels()
   loadShowLogs()
+  loadLockState()
   window.addEventListener('panel-visibility-change', handleVisibilityChange)
 
   // 初始化动画数值
   animatedStats.value = { ...todayStats.value }
 
   componentMounted = true
-  setupStatsTimer()
   channelsIntervalId = setInterval(loadChannels, 30000)
   timeIntervalId = setInterval(() => {
     currentTime.value = Date.now()
@@ -1607,5 +1662,236 @@ onUnmounted(() => {
 .col-time-gemini {
   flex: 1.8 1 60px;
   min-width: 55px;
+}
+
+/* 锁定按钮样式 - 精致版本 */
+.lock-button {
+  margin-left: auto;
+  padding: 6px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.lock-button .n-icon {
+  color: var(--text-color-3);
+  transition: all 0.25s ease;
+  transform: scaleY(0.85);
+}
+
+.lock-button:hover {
+  background: var(--bg-primary);
+  border-color: var(--border-secondary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.lock-button:hover .n-icon {
+  color: var(--text-color-1);
+  transform: scale(1.1) scaleY(0.94);
+}
+
+.lock-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* 锁定状态覆盖层 - 精致版本 */
+.locked-overlay {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  margin: 10px;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  backdrop-filter: blur(10px);
+}
+
+/* 背景装饰 */
+.locked-overlay::before {
+  content: '';
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.4;
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+/* 根据不同渠道类型设置主题色 */
+.locked-claude {
+  background: linear-gradient(135deg,
+    rgba(24, 160, 88, 0.03) 0%,
+    var(--bg-secondary) 50%,
+    rgba(24, 160, 88, 0.02) 100%);
+}
+
+.locked-claude::before {
+  background: radial-gradient(circle, rgba(24, 160, 88, 0.15) 0%, transparent 70%);
+}
+
+.locked-codex {
+  background: linear-gradient(135deg,
+    rgba(59, 130, 246, 0.03) 0%,
+    var(--bg-secondary) 50%,
+    rgba(59, 130, 246, 0.02) 100%);
+}
+
+.locked-codex::before {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+}
+
+.locked-gemini {
+  background: linear-gradient(135deg,
+    rgba(168, 85, 247, 0.03) 0%,
+    var(--bg-secondary) 50%,
+    rgba(168, 85, 247, 0.02) 100%);
+}
+
+.locked-gemini::before {
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
+}
+
+/* 锁定内容 */
+.locked-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 60px 40px;
+  text-align: center;
+  position: relative;
+  z-index: 1;
+}
+
+.lock-icon {
+  width: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  border: 2px solid var(--border-primary);
+  margin-bottom: 8px;
+  position: relative;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  animation: lock-float 3s ease-in-out infinite;
+}
+
+@keyframes lock-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* 光晕效果 */
+.lock-icon::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 20px;
+  opacity: 0.6;
+  filter: blur(12px);
+}
+
+/* Claude 主题色 */
+.locked-claude .lock-icon {
+  background: linear-gradient(135deg,
+    rgba(24, 160, 88, 0.12) 0%,
+    var(--bg-primary) 100%);
+  border-color: rgba(24, 160, 88, 0.25);
+  box-shadow:
+    0 8px 24px rgba(24, 160, 88, 0.15),
+    0 0 0 1px rgba(24, 160, 88, 0.1) inset;
+}
+
+.locked-claude .lock-icon::before {
+  background: radial-gradient(circle, rgba(24, 160, 88, 0.3) 0%, transparent 60%);
+}
+
+.locked-claude .lock-icon .n-icon {
+  color: #18a058;
+  filter: drop-shadow(0 2px 4px rgba(24, 160, 88, 0.3));
+}
+
+/* Codex 主题色 */
+.locked-codex .lock-icon {
+  background: linear-gradient(135deg,
+    rgba(59, 130, 246, 0.12) 0%,
+    var(--bg-primary) 100%);
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow:
+    0 8px 24px rgba(59, 130, 246, 0.15),
+    0 0 0 1px rgba(59, 130, 246, 0.1) inset;
+}
+
+.locked-codex .lock-icon::before {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.3) 0%, transparent 60%);
+}
+
+.locked-codex .lock-icon .n-icon {
+  color: #3b82f6;
+  filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.3));
+}
+
+/* Gemini 主题色 */
+.locked-gemini .lock-icon {
+  background: linear-gradient(135deg,
+    rgba(168, 85, 247, 0.12) 0%,
+    var(--bg-primary) 100%);
+  border-color: rgba(168, 85, 247, 0.25);
+  box-shadow:
+    0 8px 24px rgba(168, 85, 247, 0.15),
+    0 0 0 1px rgba(168, 85, 247, 0.1) inset;
+}
+
+.locked-gemini .lock-icon::before {
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.3) 0%, transparent 60%);
+}
+
+.locked-gemini .lock-icon .n-icon {
+  color: #a855f7;
+  filter: drop-shadow(0 2px 4px rgba(168, 85, 247, 0.3));
+}
+
+.lock-icon .n-icon {
+  opacity: 0.85;
+  position: relative;
+  z-index: 1;
+}
+
+.locked-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-color-1);
+  margin: 0;
+  letter-spacing: 0.3px;
+}
+
+.locked-hint {
+  font-size: 13px;
+  color: var(--text-color-3);
+  max-width: 220px;
+  line-height: 1.7;
+  opacity: 0.9;
 }
 </style>

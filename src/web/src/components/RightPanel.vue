@@ -711,20 +711,20 @@ function toggleCollapse(channelId) {
   saveCollapseSettings()
 }
 
-function loadCollapseSettings() {
+async function loadCollapseSettings() {
   try {
-    const saved = localStorage.getItem('cc-channel-collapse')
-    if (saved) {
-      collapsedChannels.value = JSON.parse(saved)
+    const response = await api.getUIConfig()
+    if (response.success && response.config) {
+      collapsedChannels.value = response.config.channelCollapse?.claude || {}
     }
   } catch (err) {
     console.error('Failed to load collapse settings:', err)
   }
 }
 
-function saveCollapseSettings() {
+async function saveCollapseSettings() {
   try {
-    localStorage.setItem('cc-channel-collapse', JSON.stringify(collapsedChannels.value))
+    await api.updateNestedUIConfig('channelCollapse', 'claude', collapsedChannels.value)
   } catch (err) {
     console.error('Failed to save collapse settings:', err)
   }
@@ -735,20 +735,20 @@ function handleDragEnd() {
   saveChannelOrder()
 }
 
-function saveChannelOrder() {
+async function saveChannelOrder() {
   try {
     const order = channels.value.map(c => c.id)
-    localStorage.setItem('cc-channel-order', JSON.stringify(order))
+    await api.updateNestedUIConfig('channelOrder', 'claude', order)
   } catch (err) {
     console.error('Failed to save channel order:', err)
   }
 }
 
-function loadChannelOrder() {
+async function loadChannelOrder() {
   try {
-    const saved = localStorage.getItem('cc-channel-order')
-    if (saved && channels.value.length > 0) {
-      const order = JSON.parse(saved)
+    const response = await api.getUIConfig()
+    if (response.success && response.config && channels.value.length > 0) {
+      const order = response.config.channelOrder?.claude || []
       // 按照保存的顺序重新排列
       const orderedChannels = []
       order.forEach(id => {
@@ -981,20 +981,20 @@ function toggleCodexCollapse(channelId) {
   saveCodexCollapseSettings()
 }
 
-function loadCodexCollapseSettings() {
+async function loadCodexCollapseSettings() {
   try {
-    const saved = localStorage.getItem('cc-codex-channel-collapse')
-    if (saved) {
-      collapsedCodexChannels.value = JSON.parse(saved)
+    const response = await api.getUIConfig()
+    if (response.success && response.config) {
+      collapsedCodexChannels.value = response.config.channelCollapse?.codex || {}
     }
   } catch (err) {
     console.error('Failed to load Codex collapse settings:', err)
   }
 }
 
-function saveCodexCollapseSettings() {
+async function saveCodexCollapseSettings() {
   try {
-    localStorage.setItem('cc-codex-channel-collapse', JSON.stringify(collapsedCodexChannels.value))
+    await api.updateNestedUIConfig('channelCollapse', 'codex', collapsedCodexChannels.value)
   } catch (err) {
     console.error('Failed to save Codex collapse settings:', err)
   }
@@ -1005,20 +1005,20 @@ function handleCodexDragEnd() {
   saveCodexChannelOrder()
 }
 
-function saveCodexChannelOrder() {
+async function saveCodexChannelOrder() {
   try {
     const order = codexChannels.value.map(c => c.id)
-    localStorage.setItem('cc-codex-channel-order', JSON.stringify(order))
+    await api.updateNestedUIConfig('channelOrder', 'codex', order)
   } catch (err) {
     console.error('Failed to save Codex channel order:', err)
   }
 }
 
-function loadCodexChannelOrder() {
+async function loadCodexChannelOrder() {
   try {
-    const saved = localStorage.getItem('cc-codex-channel-order')
-    if (saved && codexChannels.value.length > 0) {
-      const order = JSON.parse(saved)
+    const response = await api.getUIConfig()
+    if (response.success && response.config && codexChannels.value.length > 0) {
+      const order = response.config.channelOrder?.codex || []
       const orderedChannels = []
       order.forEach(id => {
         const channel = codexChannels.value.find(c => c.id === id)
@@ -1176,20 +1176,20 @@ function toggleGeminiCollapse(channelId) {
   saveGeminiCollapseSettings()
 }
 
-function loadGeminiCollapseSettings() {
+async function loadGeminiCollapseSettings() {
   try {
-    const saved = localStorage.getItem('cc-gemini-channel-collapse')
-    if (saved) {
-      collapsedGeminiChannels.value = JSON.parse(saved)
+    const response = await api.getUIConfig()
+    if (response.success && response.config) {
+      collapsedGeminiChannels.value = response.config.channelCollapse?.gemini || {}
     }
   } catch (err) {
     console.error('Failed to load Gemini collapse settings:', err)
   }
 }
 
-function saveGeminiCollapseSettings() {
+async function saveGeminiCollapseSettings() {
   try {
-    localStorage.setItem('cc-gemini-channel-collapse', JSON.stringify(collapsedGeminiChannels.value))
+    await api.updateNestedUIConfig('channelCollapse', 'gemini', collapsedGeminiChannels.value)
   } catch (err) {
     console.error('Failed to save Gemini collapse settings:', err)
   }
@@ -1200,33 +1200,35 @@ function handleGeminiDragEnd() {
   saveGeminiChannelOrder()
 }
 
-function saveGeminiChannelOrder() {
+async function saveGeminiChannelOrder() {
   try {
     const order = geminiChannels.value.map(c => c.id)
-    localStorage.setItem('cc-gemini-channel-order', JSON.stringify(order))
+    await api.updateNestedUIConfig('channelOrder', 'gemini', order)
   } catch (err) {
     console.error('Failed to save Gemini channel order:', err)
   }
 }
 
-function loadGeminiChannelOrder() {
+async function loadGeminiChannelOrder() {
   try {
-    const saved = localStorage.getItem('cc-gemini-channel-order')
-    if (saved && geminiChannels.value.length > 0) {
-      const order = JSON.parse(saved)
-      const orderedChannels = []
-      order.forEach(id => {
-        const channel = geminiChannels.value.find(c => c.id === id)
-        if (channel) {
-          orderedChannels.push(channel)
-        }
-      })
-      geminiChannels.value.forEach(channel => {
-        if (!orderedChannels.find(c => c.id === channel.id)) {
-          orderedChannels.push(channel)
-        }
-      })
-      geminiChannels.value = orderedChannels
+    const response = await api.getUIConfig()
+    if (response.success && response.config) {
+      const saved = response.config.channelOrder?.gemini
+      if (saved && geminiChannels.value.length > 0) {
+        const orderedChannels = []
+        saved.forEach(id => {
+          const channel = geminiChannels.value.find(c => c.id === id)
+          if (channel) {
+            orderedChannels.push(channel)
+          }
+        })
+        geminiChannels.value.forEach(channel => {
+          if (!orderedChannels.find(c => c.id === channel.id)) {
+            orderedChannels.push(channel)
+          }
+        })
+        geminiChannels.value = orderedChannels
+      }
     }
   } catch (err) {
     console.error('Failed to load Gemini channel order:', err)

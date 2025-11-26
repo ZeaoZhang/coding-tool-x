@@ -20,7 +20,7 @@ console.log(chalk.cyan('\n🔧 开发模式：启动后端 API 服务器...\n'))
 
   console.log(chalk.yellow('💡 开发提示：'));
   console.log(chalk.gray(`   - 后端 API: http://localhost:${port}/api`));
-  console.log(chalk.gray('   - 前端开发服务器: http://localhost:3000'));
+  console.log(chalk.gray('   - 前端开发服务器: http://localhost:5000'));
   console.log(chalk.gray('   - 修改后端代码会自动重启 (nodemon)'));
   console.log(chalk.gray('   - 按 Ctrl+C 停止服务器\n'));
 })();

@@ -1,14 +1,25 @@
 import { ref, watch } from 'vue'
+import api from '../api'
 
 // 主题状态（全局单例）
 const isDark = ref(false)
+let isLoaded = false
 
-// 从 localStorage 加载主题设置
-function loadTheme() {
-  const saved = localStorage.getItem('cc-theme')
-  if (saved) {
-    isDark.value = saved === 'dark'
-  } else {
+// 从服务器加载主题设置
+async function loadTheme() {
+  if (isLoaded) return
+
+  try {
+    const response = await api.getUIConfig()
+    if (response.success && response.config) {
+      isDark.value = response.config.theme === 'dark'
+      isLoaded = true
+    } else {
+      // 默认使用系统偏好
+      isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
+    }
+  } catch (err) {
+    console.error('Failed to load theme:', err)
     // 默认使用系统偏好
     isDark.value = window.matchMedia('(prefers-color-scheme: dark)').matches
   }
@@ -25,10 +36,14 @@ function applyTheme(dark) {
   }
 }
 
-// 监听主题变化并持久化
-watch(isDark, (newValue) => {
-  localStorage.setItem('cc-theme', newValue ? 'dark' : 'light')
+// 监听主题变化并持久化到服务器
+watch(isDark, async (newValue) => {
   applyTheme(newValue)
+  try {
+    await api.updateUIConfigKey('theme', newValue ? 'dark' : 'light')
+  } catch (err) {
+    console.error('Failed to save theme:', err)
+  }
 })
 
 // 切换主题

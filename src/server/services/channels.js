@@ -47,8 +47,14 @@ function loadActiveChannelId() {
   return null;
 }
 
-// Load channels from file
-function loadChannels() {
+// 内存缓存
+let channelsCache = null;
+let channelsCacheInitialized = false;
+
+const DEFAULT_CHANNELS = { channels: [] };
+
+// 从文件读取并缓存
+function readChannelsFromFile() {
   const filePath = getChannelsFilePath();
   try {
     if (fs.existsSync(filePath)) {
@@ -60,13 +66,40 @@ function loadChannels() {
   }
 
   // Return empty channels list if file doesn't exist
-  return { channels: [] };
+  return { ...DEFAULT_CHANNELS };
 }
 
-// Save channels to file
+// 初始化缓存（延迟初始化）
+function initializeChannelsCache() {
+  if (channelsCacheInitialized) return;
+  channelsCache = readChannelsFromFile();
+  channelsCacheInitialized = true;
+
+  // 监听文件变化，更新缓存
+  try {
+    const filePath = getChannelsFilePath();
+    fs.watchFile(filePath, { persistent: false }, () => {
+      channelsCache = readChannelsFromFile();
+    });
+  } catch (err) {
+    console.error('Failed to watch channels file:', err);
+  }
+}
+
+// Load channels from file（使用缓存）
+function loadChannels() {
+  if (!channelsCacheInitialized) {
+    initializeChannelsCache();
+  }
+  return JSON.parse(JSON.stringify(channelsCache)); // 深拷贝返回
+}
+
+// Save channels to file（同时更新缓存）
 function saveChannels(data) {
   const filePath = getChannelsFilePath();
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  // 同时更新缓存
+  channelsCache = JSON.parse(JSON.stringify(data));
 }
 
 // Get current settings from settings.json

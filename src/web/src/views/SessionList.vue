@@ -157,6 +157,19 @@
                   </template>
                   别名
                 </n-button>
+                <n-button
+                  size="small"
+                  :type="isFavorite(currentChannel, projectName, session.sessionId) ? 'warning' : 'default'"
+                  @click.stop="handleToggleFavorite(session)"
+                >
+                  <template #icon>
+                    <n-icon>
+                      <Star v-if="isFavorite(currentChannel, projectName, session.sessionId)" />
+                      <StarOutline v-else />
+                    </n-icon>
+                  </template>
+                  {{ isFavorite(currentChannel, projectName, session.sessionId) ? '已收藏' : '收藏' }}
+                </n-button>
                 <n-button size="small" @click.stop="handleFork(session.sessionId)">
                   <template #icon>
                     <n-icon><GitBranchOutline /></n-icon>
@@ -261,10 +274,11 @@ import {
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
   ChatbubbleEllipsesOutline, GitBranchOutline, CreateOutline, TrashOutline,
-  ReorderThreeOutline, TerminalOutline
+  ReorderThreeOutline, TerminalOutline, StarOutline, Star
 } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
+import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
 import api from '../api'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
@@ -279,6 +293,7 @@ const props = defineProps({
 const router = useRouter()
 const route = useRoute()
 const store = useSessionsStore()
+const { addFavorite, removeFavorite, isFavorite } = useFavorites()
 
 // 当前渠道
 const currentChannel = computed(() => route.meta.channel || 'claude')
@@ -429,6 +444,36 @@ function handleDelete(sessionId) {
       }
     }
   })
+}
+
+// 切换收藏状态
+async function handleToggleFavorite(session) {
+  const channel = currentChannel.value
+  const favorited = isFavorite(channel, props.projectName, session.sessionId)
+
+  try {
+    if (favorited) {
+      await removeFavorite(channel, props.projectName, session.sessionId)
+      message.success('已取消收藏')
+    } else {
+      const sessionData = {
+        sessionId: session.sessionId,
+        projectName: props.projectName,
+        projectDisplayName: projectDisplayName.value,
+        projectFullPath: displayProjectPath.value,
+        alias: session.alias || '',
+        firstMessage: session.firstMessage || '',
+        mtime: session.mtime,
+        size: session.size,
+        gitBranch: session.gitBranch || '',
+        forkedFrom: session.forkedFrom || ''
+      }
+      await addFavorite(channel, sessionData)
+      message.success('已添加到收藏')
+    }
+  } catch (err) {
+    message.error('操作失败: ' + err.message)
+  }
 }
 
 function formatTime(timestamp) {
