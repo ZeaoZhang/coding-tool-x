@@ -91,8 +91,8 @@
                 <n-icon :size="16"><FolderOutline /></n-icon>
               </div>
               <div class="access-content">
-                <n-text depth="3" style="font-size: 10px; font-weight: 600;">项目</n-text>
-                <n-text strong style="font-size: 18px; line-height: 1;">{{ stats.projects }}</n-text>
+                <span class="access-label">项目</span>
+                <span class="access-value">{{ stats.projects }}</span>
               </div>
             </div>
             <div class="access-card access-card-sessions clickable" @click="showRecentSessions = true">
@@ -100,8 +100,8 @@
                 <n-icon :size="16"><ChatbubblesOutline /></n-icon>
               </div>
               <div class="access-content">
-                <n-text depth="3" style="font-size: 10px; font-weight: 600;">最新对话</n-text>
-                <n-text strong style="font-size: 18px; line-height: 1;">{{ stats.sessions }}</n-text>
+                <span class="access-label">最新对话</span>
+                <span class="access-value">{{ stats.sessions }}</span>
               </div>
             </div>
             <div class="access-card access-card-goto clickable" @click="goToChannelPage">
@@ -109,8 +109,8 @@
                 <n-icon :size="16"><ArrowForwardOutline /></n-icon>
               </div>
               <div class="access-content">
-                <n-text depth="3" style="font-size: 10px; font-weight: 600;">前往</n-text>
-                <n-text strong style="font-size: 12px; font-weight: 700; line-height: 1.2; white-space: nowrap;">{{ channelTypeName }}</n-text>
+                <span class="access-label">前往</span>
+                <span class="access-goto">{{ channelTypeName }}</span>
               </div>
             </div>
           </div>
@@ -280,7 +280,6 @@ import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import api from '../../api'
-import axios from 'axios'
 
 const props = defineProps({
   channelType: {
@@ -593,6 +592,10 @@ watch(() => props.channelType, () => {
   latestLogId = logsToDisplay.value[0]?.id || null
 })
 
+watch(() => dashboardData.value?.counts?.[props.channelType], () => {
+  syncCountsFromDashboard()
+})
+
 watch(statsIntervalSetting, () => {
   if (componentMounted) {
     setupStatsTimer()
@@ -708,9 +711,14 @@ async function handleChannelSwitch(channelId) {
   }
 }
 
+function syncCountsFromDashboard() {
+  const counts = dashboardData.value?.counts?.[props.channelType]
+  stats.value.projects = counts?.projectCount || 0
+  stats.value.sessions = counts?.sessionCount || 0
+}
+
 // 加载统计数据
 async function loadStats() {
-  // 从 dashboard 聚合数据读取（已格式化）
   if (dashboardData.value && dashboardData.value.todayStats) {
     const statsData = dashboardData.value.todayStats[props.channelType]
     if (statsData) {
@@ -719,19 +727,7 @@ async function loadStats() {
       todayStats.value.cost = statsData.cost || 0
     }
   }
-
-  // 加载项目和会话数（这个数据不在 dashboard 中，仍需单独请求）
-  try {
-    const apiPrefix = props.channelType === 'claude' ? '' : `/${props.channelType}`
-    const [projectsRes, sessionsRes] = await Promise.all([
-      axios.get(`/api${apiPrefix}/projects`),
-      axios.get(`/api${apiPrefix}/sessions/recent/list?limit=1000`)
-    ])
-    stats.value.projects = projectsRes.data.projects?.length || 0
-    stats.value.sessions = sessionsRes.data.sessions?.length || 0
-  } catch (error) {
-    console.error('Failed to load stats:', error)
-  }
+  syncCountsFromDashboard()
 }
 
 // 清空日志
@@ -1199,6 +1195,32 @@ onUnmounted(() => {
 
 .access-card.clickable:active {
   transform: translateY(0);
+}
+
+.access-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.access-value {
+  display: block;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.access-goto {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .stats-inline {
