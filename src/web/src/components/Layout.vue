@@ -385,6 +385,11 @@ const showHelpModal = ref(false)
 const globalLoading = ref(false) // 全局 loading 状态
 const updateInfo = ref(null) // 版本更新信息
 
+// ===== 临时测试：用于本地 mock 更新弹窗 =====
+// 如果需要测试更新弹窗效果，取消下面的注释即可
+// updateInfo.value = { current: '1.5.3', latest: '1.5.2', hasUpdate: true }
+// ============================================
+
 // 根据当前 channel 计算有效的代理状态
 const effectiveProxyRunning = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.running
