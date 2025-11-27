@@ -8,23 +8,9 @@ const { checkForUpdates, getCurrentVersion } = require('../../utils/version-chec
 /**
  * GET /api/version/check
  * 检查是否有新版本
- * 支持本地 mock 模式: ?mock=true 会模拟有新版本更新
  */
 router.get('/check', async (req, res) => {
   try {
-    // 支持本地 mock 模式，便于开发测试
-    if (req.query.mock === 'true') {
-      const { getCurrentVersion } = require('../../utils/version-check');
-      const current = getCurrentVersion();
-
-      return res.json({
-        hasUpdate: true,
-        current: current,
-        latest: '1.5.2', // mock 返回最新版本
-        mock: true
-      });
-    }
-
     const result = await checkForUpdates();
     res.json(result);
   } catch (error) {
