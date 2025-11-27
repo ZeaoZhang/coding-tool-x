@@ -481,9 +481,7 @@ function handlePanelVisibilityChange(event) {
 // 检查版本更新
 async function checkForUpdates() {
   try {
-    // 开发模式下使用 mock，便于查看实际效果
-    const isDev = process.env.NODE_ENV === 'development'
-    const result = await api.checkForUpdates(isDev)
+    const result = await api.checkForUpdates()
     if (result.hasUpdate && !result.error) {
       updateInfo.value = result
     }

@@ -351,9 +351,8 @@ const api = {
   },
 
   // Version check
-  async checkForUpdates(mock = false) {
-    const url = mock ? '/version/check?mock=true' : '/version/check'
-    const response = await client.get(url)
+  async checkForUpdates() {
+    const response = await client.get('/version/check')
     return response.data
   },
 
