@@ -145,6 +145,9 @@
             :step="1"
             style="width: 100%;"
           />
+          <template #feedback>
+            权重越高，渠道被选中的概率越大
+          </template>
         </n-form-item>
         <n-form-item label="启用">
           <n-switch v-model:value="formData.enabled" />
@@ -220,7 +223,7 @@ const formData = ref({
   baseUrl: '',
   apiKey: '',
   websiteUrl: '',
-  maxConcurrency: 1,
+  maxConcurrency: null, // 默认不限制
   weight: 1,
   enabled: true
 })
@@ -272,7 +275,7 @@ function handleEdit(channel) {
     baseUrl: channel.baseUrl,
     apiKey: channel.apiKey,
     websiteUrl: channel.websiteUrl || '',
-    maxConcurrency: channel.maxConcurrency || 1,
+    maxConcurrency: channel.maxConcurrency ?? null,
     weight: channel.weight || 1,
     enabled: channel.enabled !== false
   }
@@ -316,7 +319,7 @@ async function handleSave() {
     showAddDialog.value = false
     editingChannel.value = null
     editingActiveChannel.value = false
-    formData.value = { name: '', baseUrl: '', apiKey: '', websiteUrl: '', maxConcurrency: 1, weight: 1, enabled: true }
+    formData.value = { name: '', baseUrl: '', apiKey: '', websiteUrl: '', maxConcurrency: null, weight: 1, enabled: true }
     await loadChannels()
   } catch (err) {
     message.error('操作失败: ' + err.message)
