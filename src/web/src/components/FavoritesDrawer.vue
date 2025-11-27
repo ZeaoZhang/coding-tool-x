@@ -164,7 +164,7 @@ import {
 import SessionCard from './SessionCard.vue'
 import { useFavorites } from '../composables/useFavorites'
 import { useSessionsStore } from '../stores/sessions'
-import api from '../api'
+import { launchTerminal } from '../api/sessions'
 import message from '../utils/message'
 
 const props = defineProps({
@@ -253,7 +253,7 @@ async function confirmAlias() {
 
 async function handleLaunch(channel, session) {
   try {
-    await api.launchTerminal(session.projectName, session.sessionId, channel)
+    await launchTerminal(session.projectName, session.sessionId, channel)
     message.success('已启动终端')
   } catch (err) {
     message.error('启动失败: ' + err.message)

@@ -334,6 +334,32 @@
 
                 <n-divider />
 
+                <!-- 负载均衡设置 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>负载均衡</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      多渠道负载均衡时的分配策略
+                    </n-text>
+                  </div>
+
+                  <div class="advanced-options">
+                    <!-- 会话绑定开关 -->
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">多渠道负载会话绑定</n-text>
+                        <n-text depth="3" style="font-size: 12px;">开启后同一对话始终使用同一渠道，保证上下文连续性</n-text>
+                      </div>
+                      <n-switch
+                        v-model:value="advancedSettings.enableSessionBinding"
+                        size="medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
                 <!-- 日志和性能设置 -->
                 <div class="setting-item">
                   <div class="setting-label">
@@ -667,7 +693,9 @@ import {
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
   SunnyOutline, MoonOutline
 } from '@vicons/ionicons5'
-import api from '../api'
+import { getAvailableTerminals, saveTerminalConfig } from '../api/terminal'
+import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 
@@ -728,11 +756,13 @@ const autoStartHelp = computed(() => {
 // 高级设置
 const advancedSettings = ref({
   maxLogs: 100,
-  statsInterval: 30
+  statsInterval: 30,
+  enableSessionBinding: true // 默认开启
 })
 const originalAdvancedSettings = ref({
   maxLogs: 100,
-  statsInterval: 30
+  statsInterval: 30,
+  enableSessionBinding: true
 })
 
 const pricingSettings = ref({
@@ -815,7 +845,7 @@ const selectedTerminalInfo = computed(() => {
 async function loadTerminals() {
   loading.value = true
   try {
-    const data = await api.getAvailableTerminals()
+    const data = await getAvailableTerminals()
     availableTerminals.value = data.available || []
     selectedTerminal.value = data.selected || null
     originalSelectedTerminal.value = data.selected || null
@@ -849,7 +879,7 @@ async function handleSave() {
 
   saving.value = true
   try {
-    await api.saveTerminalConfig(selectedTerminal.value)
+    await saveTerminalConfig(selectedTerminal.value)
     originalSelectedTerminal.value = selectedTerminal.value
     message.success('设置已保存')
   } catch (error) {
@@ -863,7 +893,7 @@ async function handleSave() {
 // 加载面板可见性设置
 async function loadPanelSettings() {
   try {
-    const response = await api.getUIConfig()
+    const response = await getUIConfig()
     if (response.success && response.config) {
       showChannels.value = response.config.panelVisibility?.showChannels !== false // default true
       showLogs.value = response.config.panelVisibility?.showLogs !== false // default true
@@ -876,8 +906,8 @@ async function loadPanelSettings() {
 // 保存面板可见性设置
 async function savePanelSettings() {
   try {
-    await api.updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
-    await api.updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
+    await updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
+    await updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
   } catch (err) {
     console.error('Failed to save panel settings:', err)
   }
@@ -919,7 +949,8 @@ async function loadPortsConfig() {
 
       advancedSettings.value = {
         maxLogs: data.maxLogs || 100,
-        statsInterval: data.statsInterval || 30
+        statsInterval: data.statsInterval || 30,
+        enableSessionBinding: data.enableSessionBinding !== false
       }
       originalAdvancedSettings.value = { ...advancedSettings.value }
 
@@ -962,6 +993,7 @@ async function handleSavePorts() {
         ports: ports.value,
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
+        enableSessionBinding: advancedSettings.value.enableSessionBinding,
         pricing: pricingSettings.value
       })
     })
@@ -996,7 +1028,7 @@ async function handleSavePorts() {
 // 加载开机自启状态
 async function loadAutoStartStatus() {
   try {
-    const response = await api.getAutoStartStatus()
+    const response = await getAutoStartStatus()
     if (response && response.success) {
       autoStartEnabled.value = response.data?.enabled || false
     } else {
@@ -1014,7 +1046,7 @@ async function loadAutoStartStatus() {
 async function handleEnableAutoStart() {
   autoStartLoading.value = true
   try {
-    const response = await api.enableAutoStart()
+    const response = await enableAutoStart()
     if (response.success) {
       autoStartEnabled.value = true
       message.success('开机自启已启用')
@@ -1039,7 +1071,7 @@ async function handleEnableAutoStart() {
 async function handleDisableAutoStart() {
   autoStartLoading.value = true
   try {
-    const response = await api.disableAutoStart()
+    const response = await disableAutoStart()
     if (response.success) {
       autoStartEnabled.value = false
       message.success('开机自启已禁用')

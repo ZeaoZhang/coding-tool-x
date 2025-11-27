@@ -31,8 +31,13 @@
           <div v-for="(item, index) in message.content" :key="index" class="content-item">
             <div v-if="item.type === 'text'">{{ item.text }}</div>
             <div v-else-if="item.type === 'image'" class="image-item">
-              <n-icon :size="20" :component="ImageIcon" />
-              <span>图片内容</span>
+              <template v-if="getImageSrc(item)">
+                <img :src="getImageSrc(item)" alt="会话图片" loading="lazy" />
+              </template>
+              <template v-else>
+                <n-icon :size="20" :component="ImageIcon" />
+                <span>图片内容</span>
+              </template>
             </div>
           </div>
         </template>
@@ -168,6 +173,21 @@ function copyContent() {
     : JSON.stringify(props.message.content)
   navigator.clipboard.writeText(text)
 }
+
+function getImageSrc(item) {
+  if (!item) return null
+  if (item.source?.type === 'base64' && item.source?.data) {
+    const mediaType = item.source.media_type || 'image/png'
+    return `data:${mediaType};base64,${item.source.data}`
+  }
+  if (item.source?.type === 'url' && item.source?.url) {
+    return item.source.url
+  }
+  if (item.url) {
+    return item.url
+  }
+  return null
+}
 </script>
 
 <style scoped>
@@ -274,6 +294,12 @@ function copyContent() {
   border-radius: 4px;
   color: var(--n-text-color-2);
   font-size: 12px;
+}
+
+.image-item img {
+  max-width: 100%;
+  border-radius: 6px;
+  display: block;
 }
 
 /* Markdown styles */

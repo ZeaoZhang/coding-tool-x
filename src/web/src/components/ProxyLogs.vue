@@ -117,7 +117,8 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import { TrashOutline, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
-import api from '../api'
+import { getTodayStatistics } from '../api/statistics'
+import { clearProxyLogs } from '../api/proxy'
 import message from '../utils/message'
 import { useGlobalState } from '../composables/useGlobalState'
 
@@ -163,7 +164,7 @@ function formatNumber(num) {
 // 加载今日统计数据（根据 source 过滤）
 async function loadTodayStats() {
   try {
-    const stats = await api.getTodayStatistics()
+    const stats = await getTodayStatistics()
 
     // 根据 source 获取对应工具类型的统计
     // Claude 的 toolType 是 'claude-code'，Codex 的是 'codex'，Gemini 的是 'gemini'
@@ -222,7 +223,7 @@ watch(filteredLogs, (newLogs) => {
 // 清空日志
 async function clearLogs() {
   try {
-    await api.clearProxyLogs()
+    await clearProxyLogs()
     clearLogsState()
     message.success('日志已清空')
   } catch (err) {

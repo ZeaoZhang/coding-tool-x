@@ -2,6 +2,13 @@
   <div class="channel-column">
     <!-- 渠道头部 -->
     <div class="channel-header" :class="channelType">
+      <!-- 拖拽手柄 -->
+      <div class="drag-handle" title="拖拽排序">
+        <n-icon :size="16">
+          <ReorderTwoOutline />
+        </n-icon>
+      </div>
+
       <div class="header-icon">
         <n-icon :size="20">
           <component :is="channelIcon" />
@@ -54,24 +61,21 @@
               </n-text>
               <span class="proxy-port">端口: {{ proxyState.port }}</span>
             </div>
-            <n-popselect
-              :value="selectedChannelId"
-              :options="channelOptions"
-              trigger="click"
-              @update:value="handleChannelSwitch"
-              size="small"
-              :disabled="channels.length === 0"
-            >
-              <n-tooltip trigger="hover" :disabled="channels.length === 0">
-                <template #trigger>
-                  <n-button text size="tiny" class="channel-selector" :disabled="channels.length === 0">
-                    <span class="channel-name">{{ currentChannelName }}</span>
-                    <n-icon :size="10" style="margin-left: 2px;"><ChevronDownOutline /></n-icon>
-                  </n-button>
-                </template>
-                点击切换渠道
-              </n-tooltip>
-            </n-popselect>
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button text size="tiny" class="channel-status">
+                  <span class="channel-name">{{ statusText }}</span>
+                </n-button>
+              </template>
+              <div v-if="proxyState.running">
+                多渠道调度模式<br>
+                <span style="font-size: 11px; opacity: 0.8;">启用渠道数: {{ channels.filter(ch => ch.enabled !== false).length }}</span>
+              </div>
+              <div v-else>
+                直连模式<br>
+                <span style="font-size: 11px; opacity: 0.8;">请从渠道管理写入配置</span>
+              </div>
+            </n-tooltip>
           </div>
         </div>
       </div>
@@ -274,12 +278,21 @@ import {
   ChatbubblesOutline,
   ArrowForwardOutline,
   LockClosed,
-  LockOpen
+  LockOpen,
+  ReorderTwoOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
-import api from '../../api'
+import {
+  getUIConfig,
+  updateNestedUIConfig
+} from '../../api/ui-config'
+import {
+  getChannels,
+  getCodexChannels,
+  getGeminiChannels
+} from '../../api/channels'
 
 const props = defineProps({
   channelType: {
@@ -456,7 +469,7 @@ async function loadLockState() {
     if (dashboardData.value && dashboardData.value.uiConfig) {
       serverLocked = dashboardData.value.uiConfig.channelLocks?.[props.channelType] || false
     } else {
-      const response = await api.getUIConfig()
+      const response = await getUIConfig()
       if (response.success && response.config) {
         serverLocked = response.config.channelLocks?.[props.channelType] || false
       }
@@ -474,7 +487,7 @@ async function toggleLock() {
   isLocked.value = !isLocked.value
   saveLockToStorage(isLocked.value)
   try {
-    await api.updateNestedUIConfig('channelLocks', props.channelType, isLocked.value)
+    await updateNestedUIConfig('channelLocks', props.channelType, isLocked.value)
     if (dashboardData.value) {
       const config = dashboardData.value.uiConfig || {}
       const channelLocks = { ...(config.channelLocks || {}) }
@@ -502,7 +515,7 @@ async function loadShowLogs() {
     if (dashboardData.value && dashboardData.value.uiConfig) {
       showLogs.value = dashboardData.value.uiConfig.panelVisibility?.showLogs !== false
     } else {
-      const response = await api.getUIConfig()
+      const response = await getUIConfig()
       if (response.success && response.config) {
         showLogs.value = response.config.panelVisibility?.showLogs !== false
       }
@@ -571,32 +584,14 @@ let componentMounted = false
 
 // 渠道列表
 const channels = ref([])
-const selectedChannelId = ref(null)
 
-// 渠道选项（用于下拉选择）
-const channelOptions = computed(() => {
-  return channels.value.map(ch => ({
-    label: ch.name,
-    value: ch.id
-  }))
-})
-
-// 当前渠道名称
-const currentChannelName = computed(() => {
-  // 优先从已选择的渠道ID查找
-  if (selectedChannelId.value) {
-    const current = channels.value.find(ch => ch.id === selectedChannelId.value)
-    if (current) return current.name
+// 当前状态文本
+const statusText = computed(() => {
+  const enabledCount = channels.value.filter(ch => ch.enabled !== false).length
+  if (proxyState.value.proxy?.running) {
+    return `${enabledCount}个渠道调度中`
   }
-  // 然后从 proxyState 获取
-  if (proxyState.value.activeChannel) {
-    return proxyState.value.activeChannel.name
-  }
-  // 查找 isActive 为 true 的渠道
-  const active = channels.value.find(ch => ch.isActive)
-  if (active) return active.name
-  // 最后显示默认文字
-  return channels.value.length > 0 ? '选择渠道' : '无渠道'
+  return channels.value.length > 0 ? `${enabledCount}个渠道已启用` : '无渠道'
 })
 
 watch(logsToDisplay, (newLogs) => {
@@ -710,51 +705,22 @@ async function loadChannels() {
       // 否则单独调用API
       let response
       if (props.channelType === 'claude') {
-        response = await api.getChannels()
+        response = await getChannels()
       } else if (props.channelType === 'codex') {
-        response = await api.getCodexChannels()
+        response = await getCodexChannels()
       } else if (props.channelType === 'gemini') {
-        response = await api.getGeminiChannels()
+        response = await getGeminiChannels()
       }
       data = response?.channels
     }
     // 确保 channels.value 是数组
     channels.value = Array.isArray(data) ? data : []
-    // 设置当前选中的渠道
-    const active = channels.value.find(ch => ch.isActive)
-    if (active) {
-      selectedChannelId.value = active.id
-    }
   } catch (error) {
     console.error('Failed to load channels:', error)
     channels.value = []
   }
 }
 
-// 切换渠道
-async function handleChannelSwitch(channelId) {
-  if (!channelId) return
-  // 如果和当前选中的相同，显示提示
-  if (channelId === selectedChannelId.value) {
-    message.info('已是当前渠道')
-    return
-  }
-  try {
-    if (props.channelType === 'claude') {
-      await api.activateChannel(channelId)
-    } else if (props.channelType === 'codex') {
-      await api.activateCodexChannel(channelId)
-    } else if (props.channelType === 'gemini') {
-      await api.activateGeminiChannel(channelId)
-    }
-    message.success('渠道切换成功')
-    selectedChannelId.value = channelId
-    // 重新加载渠道列表以更新状态
-    await loadChannels()
-  } catch (error) {
-    message.error(error.response?.data?.error || error.message || '切换失败')
-  }
-}
 
 function syncCountsFromDashboard() {
   const counts = dashboardData.value?.counts?.[props.channelType]
@@ -845,6 +811,27 @@ onUnmounted(() => {
   padding: 12px 14px;
   background: var(--bg-primary);
   position: relative;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  margin: -4px;
+  margin-right: 0;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.drag-handle:hover {
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .channel-header::after {

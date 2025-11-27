@@ -1,5 +1,10 @@
 import { ref } from 'vue'
-import api from '../api'
+import {
+  getUIConfig,
+  saveUIConfig,
+  updateUIConfigKey,
+  updateNestedUIConfig
+} from '../api/ui-config'
 
 // UI 配置
 const uiConfig = ref({
@@ -32,7 +37,7 @@ async function loadUIConfig() {
   if (isLoaded) return uiConfig.value
 
   try {
-    const response = await api.getUIConfig()
+    const response = await getUIConfig()
     if (response.success && response.config) {
       uiConfig.value = response.config
       isLoaded = true
@@ -48,7 +53,7 @@ export function useUIConfig() {
   // 更新整个配置
   async function saveConfig(config) {
     try {
-      const response = await api.saveUIConfig(config)
+      const response = await saveUIConfig(config)
       if (response.success) {
         uiConfig.value = response.config
         return true
@@ -63,7 +68,7 @@ export function useUIConfig() {
   // 更新单个键
   async function updateConfig(key, value) {
     try {
-      const response = await api.updateUIConfigKey(key, value)
+      const response = await updateUIConfigKey(key, value)
       if (response.success) {
         uiConfig.value = response.config
         return true
@@ -78,7 +83,7 @@ export function useUIConfig() {
   // 更新嵌套键
   async function updateNestedConfig(parentKey, childKey, value) {
     try {
-      const response = await api.updateNestedUIConfig(parentKey, childKey, value)
+      const response = await updateNestedUIConfig(parentKey, childKey, value)
       if (response.success) {
         uiConfig.value = response.config
         return true

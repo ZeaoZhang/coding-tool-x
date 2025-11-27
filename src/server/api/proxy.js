@@ -77,7 +77,6 @@ router.get('/status', (req, res) => {
   try {
     const proxyStatus = getProxyStatus();
     const channels = getAllChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
     const configStatus = {
       isProxyConfig: isProxyConfig(),
       settingsExists: settingsExists(),
@@ -88,7 +87,8 @@ router.get('/status', (req, res) => {
     res.json({
       proxy: proxyStatus,
       config: configStatus,
-      activeChannel: sanitizeChannelForResponse(activeChannel)
+      channelsCount: channels.length,
+      enabledChannelsCount: channels.filter(ch => ch.enabled !== false).length
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -150,64 +150,70 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 读取当前激活的渠道（从 active-channel.json）
-    const channels = getAllChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
-
-    // 2. 停止代理服务器
+    // 1. 停止代理服务器
     const proxyResult = await stopProxyServer();
 
-    // 3. 将当前激活渠道写入 settings.json
-    if (activeChannel) {
-      const { updateClaudeSettings } = require('../services/channels');
-      updateClaudeSettings(activeChannel.baseUrl, activeChannel.apiKey);
-      console.log(`✅ Restored settings to channel: ${activeChannel.name}`);
+    // 2. 恢复配置（优先从备份，否则选择权重最高的启用渠道）
+    let restoredChannel = null;
 
-      // 删除备份文件
-      if (hasBackup()) {
-        const backupPath = path.join(os.homedir(), '.claude', 'settings.json.cc-tool-backup');
+    // 优先尝试从备份恢复
+    if (hasBackup()) {
+      restoreSettings();
+      console.log('✅ Restored settings from backup');
+
+      // 尝试找到匹配的渠道
+      const channels = getAllChannels();
+      const currentSettings = require('../services/channels').getCurrentSettings();
+      if (currentSettings) {
+        restoredChannel = channels.find(ch =>
+          ch.baseUrl === currentSettings.baseUrl && ch.apiKey === currentSettings.apiKey
+        );
+      }
+    } else {
+      // 没有备份，选择权重最高的启用渠道
+      const { getBestChannelForRestore, updateClaudeSettings } = require('../services/channels');
+      restoredChannel = getBestChannelForRestore();
+
+      if (restoredChannel) {
+        updateClaudeSettings(restoredChannel.baseUrl, restoredChannel.apiKey);
+        console.log(`✅ Restored settings to best channel: ${restoredChannel.name}`);
+      }
+    }
+
+    // 3. 删除备份文件和active-channel.json
+    if (hasBackup()) {
+      const backupPath = path.join(os.homedir(), '.claude', 'settings.json.cc-tool-backup');
+      if (fs.existsSync(backupPath)) {
         fs.unlinkSync(backupPath);
         console.log('✅ Removed backup file');
       }
+    }
 
-      // 删除 active-channel.json
-      const activeChannelPath = path.join(os.homedir(), '.claude', 'cc-tool', 'active-channel.json');
-      if (fs.existsSync(activeChannelPath)) {
-        fs.unlinkSync(activeChannelPath);
-        console.log('✅ Removed active-channel.json');
-      }
+    const activeChannelPath = path.join(os.homedir(), '.claude', 'cc-tool', 'active-channel.json');
+    if (fs.existsSync(activeChannelPath)) {
+      fs.unlinkSync(activeChannelPath);
+      console.log('✅ Removed active-channel.json');
+    }
 
-      // 通过 WebSocket 推送代理状态更新
-      const { broadcastProxyState } = require('../websocket-server');
-      const updatedStatus = getProxyStatus();
-      broadcastProxyState('claude', updatedStatus, activeChannel, channels);
+    // 4. 通过 WebSocket 推送代理状态更新
+    const { broadcastProxyState } = require('../websocket-server');
+    const updatedStatus = getProxyStatus();
+    const channels = getAllChannels();
+    broadcastProxyState('claude', updatedStatus, null, channels);
 
+    if (restoredChannel) {
       res.json({
         success: true,
-        message: `代理已停止，配置已恢复到渠道: ${activeChannel.name}`,
+        message: `代理已停止，配置已恢复到渠道: ${restoredChannel.name}`,
         port: proxyResult.port,
-        restoredChannel: activeChannel.name
+        restoredChannel: restoredChannel.name
       });
     } else {
-      // 没有激活渠道，恢复备份
-      if (hasBackup()) {
-        restoreSettings();
-        res.json({
-          success: true,
-          message: '代理已停止，配置已从备份恢复',
-          port: proxyResult.port
-        });
-      } else {
-        res.json({
-          success: true,
-          message: '代理已停止（无备份可恢复）',
-          port: proxyResult.port
-        });
-      }
-
-      const { broadcastProxyState } = require('../websocket-server');
-      const updatedStatus = getProxyStatus();
-      broadcastProxyState('claude', updatedStatus, activeChannel, channels);
+      res.json({
+        success: true,
+        message: '代理已停止（无配置可恢复）',
+        port: proxyResult.port
+      });
     }
   } catch (error) {
     console.error('Error stopping proxy:', error);

@@ -628,6 +628,22 @@ function saveProjectOrder(order) {
   saveClaudeProjectOrder({ projectsDir: getCodexDir() }, order);
 }
 
+/**
+ * 获取 Codex 项目与会话数量（用于仪表盘轻量统计）
+ */
+function getProjectAndSessionCounts() {
+  try {
+    const projects = getProjects();
+    const sessions = scanSessionFiles();
+    return {
+      projectCount: projects.length,
+      sessionCount: sessions.length
+    };
+  } catch (err) {
+    return { projectCount: 0, sessionCount: 0 };
+  }
+}
+
 module.exports = {
   getSessionsDir,
   scanSessionFiles,
@@ -644,5 +660,6 @@ module.exports = {
   getSessionOrder,
   saveSessionOrder,
   getProjectOrder,
-  saveProjectOrder
+  saveProjectOrder,
+  getProjectAndSessionCounts
 };

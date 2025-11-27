@@ -280,7 +280,7 @@ import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
-import api from '../api'
+import { searchSessions as searchSessionsApi, launchTerminal } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
@@ -355,7 +355,7 @@ async function handleSearch() {
   searching.value = true
   try {
     // 增加上下文长度到 35 (15 + 20)
-    const data = await api.searchSessions(props.projectName, searchQuery.value, 35, currentChannel.value)
+    const data = await searchSessionsApi(props.projectName, searchQuery.value, 35, currentChannel.value)
     searchResults.value = data
     showSearchResults.value = true
   } catch (err) {
@@ -422,7 +422,7 @@ function handleChatHistoryError(errorMsg) {
 
 async function handleLaunchTerminal(sessionId) {
   try {
-    await api.launchTerminal(props.projectName, sessionId, currentChannel.value)
+    await launchTerminal(props.projectName, sessionId, currentChannel.value)
     message.success('已启动终端')
   } catch (err) {
     message.error('启动失败: ' + err.message)

@@ -92,12 +92,8 @@ router.get('/changelog/:version', async (req, res) => {
       }
     }
 
-    console.log(`[Version] Failed to get changelog from GitHub for v${version}, trying local CHANGELOG.md`);
-    // 如果从 GitHub 获取失败，尝试从本地 CHANGELOG.md 获取
     getChangelogFromLocal(version, res);
   } catch (error) {
-    console.error('[Version] Failed to fetch from GitHub:', error.message);
-    // 如果 GitHub 请求出错，尝试从本地文件获取
     const version = req.params.version;
     getChangelogFromLocal(version, res);
   }
@@ -199,35 +195,22 @@ router.post('/update', async (req, res) => {
     // 在后台异步执行更新
     setTimeout(() => {
       try {
-        console.log('[Update] 开始更新 coding-tool 包...');
-
-        // 获取包的安装目录
         const packageJsonPath = path.join(__dirname, '../../..', 'package.json');
         const projectDir = path.dirname(packageJsonPath);
 
-        // 执行 npm update 命令
-        console.log(`[Update] 执行命令: npm update coding-tool --save`);
         execSync('npm update coding-tool --save', {
           cwd: projectDir,
           stdio: 'pipe',
-          timeout: 300000 // 5分钟超时
+          timeout: 300000
         });
 
-        console.log('[Update] npm update 完成');
-
-        // 使用 pm2 重启所有应用
-        console.log('[Update] 正在重启 pm2 应用...');
         try {
           execSync('pm2 restart all', {
             timeout: 60000
           });
-          console.log('[Update] pm2 应用重启成功');
         } catch (pmErr) {
-          console.warn('[Update] pm2 重启失败或应用未在 pm2 中运行:', pmErr.message);
-          // 不是致命错误，继续
+          // pm2 not available, ignore
         }
-
-        console.log('[Update] 更新过程完成');
       } catch (error) {
         console.error('[Update] 更新失败:', error.message);
       }

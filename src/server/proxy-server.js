@@ -3,7 +3,7 @@ const httpProxy = require('http-proxy');
 const http = require('http');
 const net = require('net');
 const chalk = require('chalk');
-const { getActiveChannel } = require('./services/channels');
+const { allocateChannel, releaseChannel } = require('./services/channel-scheduler');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
@@ -56,6 +56,46 @@ function calculateCost(model, tokens) {
   );
 }
 
+const jsonBodyParser = express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    req.rawBody = Buffer.from(buf);
+  }
+});
+
+function shouldParseJson(req) {
+  const contentType = req.headers['content-type'] || '';
+  return req.method === 'POST' && contentType.includes('application/json');
+}
+
+function extractSessionIdFromBody(body = {}) {
+  if (!body || typeof body !== 'object') return null;
+  return (
+    body.session_id ||
+    body.sessionId ||
+    body.conversation_id ||
+    body.conversationId ||
+    body.metadata?.session_id ||
+    body.metadata?.sessionId ||
+    body.metadata?.conversation_id ||
+    body.workspace?.workspace_id ||
+    body.project_id ||
+    null
+  );
+}
+
+function extractSessionId(req) {
+  const headerSession =
+    req.headers['x-session-id'] ||
+    req.headers['x-claude-session'] ||
+    req.headers['x-cc-session'];
+  if (headerSession) return String(headerSession);
+  if (req.body) {
+    return extractSessionIdFromBody(req.body);
+  }
+  return null;
+}
+
 async function startProxyServer(options = {}) {
   const preserveStartTime = options.preserveStartTime || false;
 
@@ -70,23 +110,30 @@ async function startProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+    proxyApp.use((req, res, next) => {
+      if (shouldParseJson(req)) {
+        return jsonBodyParser(req, res, next);
+      }
+      return next();
+    });
     const proxy = httpProxy.createProxyServer({});
 
     proxy.on('proxyReq', (proxyReq, req, res) => {
-      const activeChannel = getActiveChannel();
-      if (activeChannel) {
+      const selectedChannel = req.selectedChannel;
+      if (selectedChannel) {
         const requestId = `${Date.now()}-${Math.random()}`;
         requestMetadata.set(req, {
           id: requestId,
-          channel: activeChannel.name,
-          channelId: activeChannel.id,
-          startTime: Date.now()
+          channel: selectedChannel.name,
+          channelId: selectedChannel.id,
+          startTime: Date.now(),
+          sessionId: req.sessionId || null
         });
 
         proxyReq.removeHeader('x-api-key');
-        proxyReq.setHeader('x-api-key', activeChannel.apiKey);
+        proxyReq.setHeader('x-api-key', selectedChannel.apiKey);
         proxyReq.removeHeader('authorization');
-        proxyReq.setHeader('authorization', `Bearer ${activeChannel.apiKey}`);
+        proxyReq.setHeader('authorization', `Bearer ${selectedChannel.apiKey}`);
 
         if (!proxyReq.getHeader('anthropic-version')) {
           proxyReq.setHeader('anthropic-version', '2023-06-01');
@@ -95,35 +142,63 @@ async function startProxyServer(options = {}) {
           proxyReq.setHeader('content-type', 'application/json');
         }
       }
+
+      if (shouldParseJson(req) && (req.rawBody || req.body)) {
+        const bodyBuffer = req.rawBody
+          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
+          : Buffer.from(JSON.stringify(req.body));
+        proxyReq.setHeader('Content-Length', bodyBuffer.length);
+        proxyReq.write(bodyBuffer);
+        proxyReq.end();
+      }
     });
 
-    proxyApp.use((req, res) => {
-      const activeChannel = getActiveChannel();
+    proxyApp.use(async (req, res) => {
+      try {
+        const sessionId = extractSessionId(req);
+        const config = loadConfig();
+        const enableSessionBinding = config.enableSessionBinding !== false; // 默认开启
+        const channel = await allocateChannel({ sessionId, enableSessionBinding });
 
-      if (!activeChannel) {
-        res.status(500).json({
-          error: 'No active channel configured',
-          type: 'channel_error'
-        });
-        return;
-      }
+        req.selectedChannel = channel;
+        req.sessionId = sessionId || null;
+        let released = false;
 
-      const target = activeChannel.baseUrl;
+        const release = () => {
+          if (released) return;
+          released = true;
+          releaseChannel(channel.id);
+        };
 
-      proxy.web(req, res, {
-        target,
-        changeOrigin: true
-      }, (err) => {
-        if (err) {
-          console.error('Proxy error:', err);
-          if (res && !res.headersSent) {
-            res.status(502).json({
-              error: 'Proxy error: ' + err.message,
-              type: 'proxy_error'
-            });
+        req.__releaseChannel = release;
+
+        res.on('close', release);
+        res.on('error', release);
+
+        proxy.web(req, res, {
+          target: channel.baseUrl,
+          changeOrigin: true
+        }, (err) => {
+          release();
+          if (err) {
+            console.error('Proxy error:', err);
+            if (res && !res.headersSent) {
+              res.status(502).json({
+                error: 'Proxy error: ' + err.message,
+                type: 'proxy_error'
+              });
+            }
           }
+        });
+      } catch (error) {
+        console.error('Channel allocation error:', error);
+        if (!res.headersSent) {
+          res.status(503).json({
+            error: error.message || '所有渠道暂时不可用',
+            type: 'channel_pool_exhausted'
+          });
         }
-      });
+      }
     });
 
     proxy.on('proxyRes', (proxyRes, req, res) => {
@@ -260,18 +335,23 @@ async function startProxyServer(options = {}) {
         });
       });
 
-      proxyRes.on('end', () => {
+      const finalize = () => {
         if (!isResponseClosed) {
           requestMetadata.delete(req);
         }
-      });
+        if (typeof req.__releaseChannel === 'function') {
+          req.__releaseChannel();
+        }
+      };
+
+      proxyRes.on('end', finalize);
 
       proxyRes.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);
         }
         isResponseClosed = true;
-        requestMetadata.delete(req);
+        finalize();
       });
     });
 

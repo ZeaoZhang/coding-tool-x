@@ -4,6 +4,13 @@ const os = require('os');
 const crypto = require('crypto');
 const { getAllSessions, parseSessionInfoFast } = require('../../utils/session');
 const { loadAliases } = require('./alias');
+const {
+  getCachedProjects,
+  setCachedProjects,
+  invalidateProjectsCache,
+  checkHasMessagesCache,
+  rememberHasMessages
+} = require('./session-cache');
 
 // Base directory for cc-tool data
 function getCcToolDir() {
@@ -47,6 +54,7 @@ function saveProjectOrder(config, order) {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(orderFile, JSON.stringify(order, null, 2), 'utf8');
+  invalidateProjectsCache(config);
 }
 
 // Get fork relations
@@ -274,8 +282,21 @@ function extractCwdFromSessionHeader(sessionFile) {
   return null;
 }
 
-// Get projects with detailed stats
-function getProjectsWithStats(config) {
+// Get projects with detailed stats (with caching)
+function getProjectsWithStats(config, options = {}) {
+  if (!options.force) {
+    const cached = getCachedProjects(config);
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const data = buildProjectsWithStats(config);
+  setCachedProjects(config, data);
+  return data;
+}
+
+function buildProjectsWithStats(config) {
   const projectsDir = config.projectsDir;
 
   if (!fs.existsSync(projectsDir)) {
@@ -333,26 +354,81 @@ function getProjectsWithStats(config) {
     .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)); // Sort by last used
 }
 
+// 获取 Claude 项目/会话数量（轻量统计）
+function getProjectAndSessionCounts(config) {
+  const projectsDir = config.projectsDir;
+  if (!fs.existsSync(projectsDir)) {
+    return { projectCount: 0, sessionCount: 0 };
+  }
+
+  let projectCount = 0;
+  let sessionCount = 0;
+
+  const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
+  entries.forEach((entry) => {
+    if (!entry.isDirectory()) {
+      return;
+    }
+    projectCount += 1;
+    const projectPath = path.join(projectsDir, entry.name);
+    try {
+      const files = fs.readdirSync(projectPath);
+      sessionCount += files.filter(file => file.endsWith('.jsonl') && !file.startsWith('agent-')).length;
+    } catch (err) {
+      // 忽略单个项目的读取错误
+    }
+  });
+
+  return { projectCount, sessionCount };
+}
+
 // Check if a session file has actual messages (not just file-history-snapshots)
 function hasActualMessages(filePath) {
   try {
-    const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n').filter(line => line.trim());
-
-    for (const line of lines) {
-      try {
-        const json = JSON.parse(line);
-        // If we find any message type (user, assistant, summary), it has actual messages
-        if (json.type === 'user' || json.type === 'assistant' || json.type === 'summary') {
-          return true;
-        }
-      } catch (e) {
-        // Skip invalid JSON lines
-      }
+    const stats = fs.statSync(filePath);
+    const cached = checkHasMessagesCache(filePath, stats);
+    if (typeof cached === 'boolean') {
+      return cached;
     }
-    // If we only found file-history-snapshots or no valid lines, return false
+
+    const result = scanSessionFileForMessages(filePath);
+    rememberHasMessages(filePath, stats, result);
+    return result;
+  } catch (err) {
+    return false;
+  }
+}
+
+function scanSessionFileForMessages(filePath) {
+  let fd = null;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const bufferSize = 64 * 1024;
+    const buffer = Buffer.alloc(bufferSize);
+    const pattern = /"type"\s*:\s*"(user|assistant|summary)"/;
+    let leftover = '';
+    let bytesRead;
+
+    while ((bytesRead = fs.readSync(fd, buffer, 0, bufferSize, null)) > 0) {
+      const chunk = buffer.toString('utf8', 0, bytesRead);
+      const combined = leftover + chunk;
+      if (pattern.test(combined)) {
+        fs.closeSync(fd);
+        return true;
+      }
+      leftover = combined.slice(-64);
+    }
+
+    fs.closeSync(fd);
     return false;
   } catch (err) {
+    if (fd) {
+      try {
+        fs.closeSync(fd);
+      } catch (e) {
+        // ignore
+      }
+    }
     return false;
   }
 }
@@ -417,6 +493,7 @@ function deleteSession(config, projectName, sessionId) {
   }
 
   fs.unlinkSync(sessionFile);
+  invalidateProjectsCache(config);
   return { success: true };
 }
 
@@ -443,6 +520,7 @@ function forkSession(config, projectName, sessionId) {
   const forkRelations = getForkRelations();
   forkRelations[newSessionId] = sessionId;
   saveForkRelations(forkRelations);
+  invalidateProjectsCache(config);
 
   return { newSessionId, forkedFrom: sessionId };
 }
@@ -504,6 +582,7 @@ function deleteProject(config, projectName) {
     saveProjectOrder(config, newOrder);
   }
 
+  invalidateProjectsCache(config);
   return { success: true };
 }
 
@@ -672,5 +751,6 @@ module.exports = {
   searchSessionsAcrossProjects,
   getForkRelations,
   saveForkRelations,
-  hasActualMessages
+  hasActualMessages,
+  getProjectAndSessionCounts
 };

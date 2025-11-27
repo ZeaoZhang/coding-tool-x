@@ -38,7 +38,12 @@ import { ref, computed, watch, h } from 'vue'
 import { NDrawer, NDrawerContent, NSpin, NEmpty, NIcon, NInput } from 'naive-ui'
 import { ChatbubblesOutline } from '@vicons/ionicons5'
 import SessionCard from './SessionCard.vue'
-import api from '../api'
+import {
+  getRecentSessions,
+  setAlias as setAliasApi,
+  deleteAlias as deleteAliasApi,
+  launchTerminal
+} from '../api/sessions'
 import message, { dialog } from '../utils/message'
 
 const props = defineProps({
@@ -85,7 +90,7 @@ watch(show, (val) => {
 async function loadSessions() {
   loading.value = true
   try {
-    const data = await api.getRecentSessions(10, props.channel)
+    const data = await getRecentSessions(10, props.channel)
     sessions.value = data.sessions
   } catch (err) {
     console.error('Failed to load recent sessions:', err)
@@ -136,10 +141,10 @@ async function handleSetAlias(session) {
 
   try {
     if (newAlias) {
-      await api.setAlias(session.sessionId, newAlias)
+      await setAliasApi(session.sessionId, newAlias)
       message.success('别名设置成功')
     } else {
-      await api.deleteAlias(session.sessionId)
+      await deleteAliasApi(session.sessionId)
       message.success('别名已删除')
     }
     await loadSessions()
@@ -150,7 +155,7 @@ async function handleSetAlias(session) {
 
 async function handleLaunchSession(session) {
   try {
-    await api.launchTerminal(session.projectName, session.sessionId, props.channel)
+    await launchTerminal(session.projectName, session.sessionId, props.channel)
     message.success('已启动终端')
   } catch (err) {
     message.error('启动失败: ' + err.message)

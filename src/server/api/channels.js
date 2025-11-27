@@ -2,11 +2,12 @@ const express = require('express');
 const router = express.Router();
 const {
   getAllChannels,
-  getCurrentChannel,
+  applyChannelToSettings,
   createChannel,
   updateChannel,
   deleteChannel,
-  activateChannel
+  getCurrentSettings,
+  getBestChannelForRestore
 } = require('../services/channels');
 const { broadcastLog, broadcastProxyState } = require('../websocket-server');
 
@@ -21,13 +22,22 @@ router.get('/', (req, res) => {
   }
 });
 
-// GET /api/channels/current - Get current active channel
+// GET /api/channels/current - Get current settings
 router.get('/current', (req, res) => {
   try {
-    const channel = getCurrentChannel();
-    res.json({ channel });
+    const settings = getCurrentSettings();
+    const channels = getAllChannels();
+    let currentChannel = null;
+
+    if (settings) {
+      currentChannel = channels.find(ch =>
+        ch.baseUrl === settings.baseUrl && ch.apiKey === settings.apiKey
+      );
+    }
+
+    res.json({ channel: currentChannel, settings });
   } catch (error) {
-    console.error('Error fetching current channel:', error);
+    console.error('Error fetching current settings:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -35,13 +45,17 @@ router.get('/current', (req, res) => {
 // POST /api/channels - Create new channel
 router.post('/', (req, res) => {
   try {
-    const { name, baseUrl, apiKey, websiteUrl } = req.body;
+    const { name, baseUrl, apiKey, websiteUrl, enabled, weight, maxConcurrency } = req.body;
 
     if (!name || !baseUrl || !apiKey) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const channel = createChannel(name, baseUrl, apiKey, websiteUrl);
+    const channel = createChannel(name, baseUrl, apiKey, websiteUrl, {
+      enabled,
+      weight,
+      maxConcurrency
+    });
     res.json({ channel });
   } catch (error) {
     console.error('Error creating channel:', error);
@@ -75,44 +89,68 @@ router.delete('/:id', (req, res) => {
   }
 });
 
-router.post('/:id/activate', async (req, res) => {
+router.post('/:id/apply-to-settings', async (req, res) => {
   try {
     const { id } = req.params;
-    const channel = activateChannel(id);
+    const channel = applyChannelToSettings(id);
 
-    const { getProxyStatus, stopProxyServer, startProxyServer } = require('../proxy-server');
-    let proxyStatus = getProxyStatus();
-
-    if (proxyStatus && proxyStatus.running) {
-      console.log(`Proxy is running, restarting to switch to channel: ${channel.name}`);
-      await stopProxyServer({ clearStartTime: false });
-      const { setProxyConfig } = require('../services/settings-manager');
-      const proxyResult = await startProxyServer({ preserveStartTime: true });
-
-      if (proxyResult.success) {
-        setProxyConfig(proxyResult.port);
-        console.log(`Proxy restarted successfully on port ${proxyResult.port}`);
-      }
-
-      proxyStatus = getProxyStatus();
-    }
+    // Check if proxy is running
+    const { getProxyStatus } = require('../proxy-server');
+    const proxyStatus = getProxyStatus();
 
     broadcastLog({
       type: 'action',
-      action: 'switch_channel',
-      message: `切换渠道至 ${channel.name}`,
+      action: 'apply_settings',
+      message: `已将 (${channel.name}) 渠道写入配置文件中`,
       channelName: channel.name,
       timestamp: Date.now(),
       source: 'claude'
     });
 
-    const channels = getAllChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
-    broadcastProxyState('claude', proxyStatus, activeChannel, channels);
+    // Stop proxy if running
+    if (proxyStatus && proxyStatus.running) {
+      console.log(`Proxy is running, stopping to apply channel settings: ${channel.name}`);
 
+      // Stop proxy and restore backup
+      const { stopProxyServer } = require('../proxy-server');
+      await stopProxyServer({ clearStartTime: false });
+
+      console.log(`✅ 已停���动态切换，默认使用当前渠道`);
+      broadcastLog({
+        type: 'action',
+        action: 'stop_proxy',
+        message: `已停止动态切换，默认使用当前渠道`,
+        timestamp: Date.now(),
+        source: 'claude'
+      });
+
+      // 广播代理状态更新，通知前端代理已停止
+      const { broadcastProxyState } = require('../websocket-server');
+      broadcastProxyState('claude', {
+        running: false,
+        port: null,
+        runtime: null,
+        startTime: null
+      }, null, getAllChannels());
+    }
+
+    res.json({
+      message: `已将 (${channel.name}) 渠道写入配置文件中`,
+      channel
+    });
+  } catch (error) {
+    console.error('Error applying channel to settings:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/channels/best-for-restore - Get best channel for restore
+router.get('/best-for-restore', (req, res) => {
+  try {
+    const channel = getBestChannelForRestore();
     res.json({ channel });
   } catch (error) {
-    console.error('Error activating channel:', error);
+    console.error('Error getting best channel for restore:', error);
     res.status(500).json({ error: error.message });
   }
 });

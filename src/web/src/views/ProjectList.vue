@@ -160,7 +160,7 @@ import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import ProjectCard from '../components/ProjectCard.vue'
 import message, { dialog } from '../utils/message'
-import api from '../api'
+import { searchSessionsGlobally, launchTerminal } from '../api/sessions'
 
 const router = useRouter()
 const route = useRoute()
@@ -268,7 +268,7 @@ async function handleGlobalSearch() {
 
   globalSearching.value = true
   try {
-    const data = await api.searchSessionsGlobally(globalSearchQuery.value, 35, currentChannel.value)
+    const data = await searchSessionsGlobally(globalSearchQuery.value, 35, currentChannel.value)
     globalSearchResults.value = data
   } catch (err) {
     message.error('搜索失败: ' + err.message)
@@ -279,7 +279,7 @@ async function handleGlobalSearch() {
 
 async function handleLaunchTerminalFromGlobal(projectName, sessionId) {
   try {
-    await api.launchTerminal(projectName, sessionId, currentChannel.value)
+    await launchTerminal(projectName, sessionId, currentChannel.value)
     message.success('已启动终端')
     showGlobalSearch.value = false
   } catch (err) {

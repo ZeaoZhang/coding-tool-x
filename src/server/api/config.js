@@ -52,6 +52,7 @@ router.get('/advanced', (req, res) => {
       },
       maxLogs: config.maxLogs || 100,
       statsInterval: config.statsInterval || 30,
+      enableSessionBinding: config.enableSessionBinding !== false, // 默认开启
       pricing: config.pricing || DEFAULT_CONFIG.pricing
     });
   } catch (error) {
@@ -66,7 +67,7 @@ router.get('/advanced', (req, res) => {
  */
 router.post('/advanced', (req, res) => {
   try {
-    const { ports, maxLogs, statsInterval, pricing } = req.body;
+    const { ports, maxLogs, statsInterval, pricing, enableSessionBinding } = req.body;
 
     // 验证端口
     if (ports) {
@@ -120,6 +121,7 @@ router.post('/advanced', (req, res) => {
       ports: normalizedPorts,
       maxLogs: maxLogs !== undefined ? parseInt(maxLogs) : config.maxLogs,
       statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,
+      enableSessionBinding: enableSessionBinding !== undefined ? enableSessionBinding : (config.enableSessionBinding !== false),
       pricing: sanitizedPricing
     };
 
@@ -132,6 +134,7 @@ router.post('/advanced', (req, res) => {
         ports: newConfig.ports,
         maxLogs: newConfig.maxLogs,
         statsInterval: newConfig.statsInterval,
+        enableSessionBinding: newConfig.enableSessionBinding,
         pricing: newConfig.pricing
       }
     });

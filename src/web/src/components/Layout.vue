@@ -341,7 +341,8 @@ import FavoritesDrawer from './FavoritesDrawer.vue'
 import SettingsDrawer from './SettingsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import UpdateDialog from './UpdateDialog.vue'
-import api from '../api'
+import { updateNestedUIConfig } from '../api/ui-config'
+import { checkForUpdates as checkForUpdatesApi, performUpdate, getChangelog } from '../api/version'
 import message, { dialog } from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -422,8 +423,8 @@ async function loadPanelSettings() {
 // Save panel visibility to server
 async function savePanelSettings() {
   try {
-    await api.updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
-    await api.updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
+    await updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
+    await updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
   } catch (err) {
     console.error('Failed to save panel settings:', err)
   }
@@ -486,7 +487,7 @@ function handlePanelVisibilityChange(event) {
 // 检查版本更新
 async function checkForUpdates() {
   try {
-    const result = await api.checkForUpdates()
+    const result = await checkForUpdatesApi()
     if (result.hasUpdate && !result.error) {
       updateInfo.value = result
     }
@@ -512,7 +513,7 @@ async function handleAutoUpdate() {
     })
 
     // 调用后端更新接口
-    const result = await api.performUpdate()
+    const result = await performUpdate()
 
     if (result.success) {
       // 关闭加载对话框
@@ -552,7 +553,7 @@ async function handleUpdateClick() {
   // 获取更新日志
   let changelogData = null
   try {
-    const result = await api.getChangelog(updateInfo.value.latest)
+    const result = await getChangelog(updateInfo.value.latest)
     if (result.success) {
       changelogData = result.changelog
     }

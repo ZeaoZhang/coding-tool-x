@@ -53,13 +53,45 @@ let channelsCacheInitialized = false;
 
 const DEFAULT_CHANNELS = { channels: [] };
 
+function normalizeNumber(value, defaultValue) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    return defaultValue;
+  }
+  return num;
+}
+
+function applyChannelDefaults(channel) {
+  const normalized = { ...channel };
+  if (normalized.enabled === undefined) {
+    normalized.enabled = true;
+  } else {
+    normalized.enabled = !!normalized.enabled;
+  }
+
+  normalized.weight = normalizeNumber(normalized.weight, 1);
+
+  // maxConcurrency: undefined/0/null 表示无限制
+  if (normalized.maxConcurrency === undefined ||
+      normalized.maxConcurrency === null ||
+      normalized.maxConcurrency === 0) {
+    normalized.maxConcurrency = null; // null 表示无限制
+  } else {
+    normalized.maxConcurrency = normalizeNumber(normalized.maxConcurrency, 1);
+  }
+
+  return normalized;
+}
+
 // 从文件读取并缓存
 function readChannelsFromFile() {
   const filePath = getChannelsFilePath();
   try {
     if (fs.existsSync(filePath)) {
       const content = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(content);
+      const data = JSON.parse(content);
+      data.channels = (data.channels || []).map(applyChannelDefaults);
+      return data;
     }
   } catch (error) {
     console.error('Error loading channels:', error);
@@ -97,9 +129,13 @@ function loadChannels() {
 // Save channels to file（同时更新缓存）
 function saveChannels(data) {
   const filePath = getChannelsFilePath();
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  const payload = {
+    ...data,
+    channels: (data.channels || []).map(applyChannelDefaults)
+  };
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
   // 同时更新缓存
-  channelsCache = JSON.parse(JSON.stringify(data));
+  channelsCache = JSON.parse(JSON.stringify(payload));
 }
 
 // Get current settings from settings.json
@@ -140,83 +176,40 @@ function getCurrentSettings() {
   }
 }
 
-// Get all channels with correct active status based on current settings.json
-function getAllChannels() {
+// Get best channel to restore when stopping proxy
+function getBestChannelForRestore() {
   const data = loadChannels();
+  const enabledChannels = data.channels.filter(ch => ch.enabled !== false);
 
-  // First, mark all channels as inactive
-  data.channels.forEach(ch => { ch.isActive = false; });
-
-  // Check if we're in proxy mode
-  if (isProxyConfig()) {
-    // Proxy mode: use saved active channel ID
-    const activeChannelId = loadActiveChannelId();
-    if (activeChannelId) {
-      const activeChannel = data.channels.find(ch => ch.id === activeChannelId);
-      if (activeChannel) {
-        activeChannel.isActive = true;
-      }
-    }
-  } else {
-    // Normal mode: use settings.json to determine active channel
-    const currentSettings = getCurrentSettings();
-
-    if (currentSettings) {
-      // Only proceed if we have valid apiKey
-      if (!currentSettings.apiKey) {
-        console.warn('Warning: Current settings has no API Key');
-        return data.channels;
-      }
-
-      // Find matching channel by baseUrl and apiKey
-      const matchingChannel = data.channels.find(ch =>
-        ch.baseUrl === currentSettings.baseUrl &&
-        ch.apiKey === currentSettings.apiKey
-      );
-
-      if (matchingChannel) {
-        // Found a matching channel, mark it as active
-        matchingChannel.isActive = true;
-      } else {
-        // No matching channel found, auto-save it as a new channel
-        const newChannel = {
-          id: `channel-${Date.now()}`,
-          name: '当前使用',
-          baseUrl: currentSettings.baseUrl,
-          apiKey: currentSettings.apiKey,
-          isActive: true,
-          createdAt: Date.now()
-        };
-        data.channels.unshift(newChannel);
-        saveChannels(data); // Save immediately so it persists
-        console.log('Auto-created new channel from current settings:', newChannel.name);
-      }
-    }
+  if (enabledChannels.length === 0) {
+    return data.channels[0]; // If no enabled channels, return first one
   }
 
+  // Sort by weight, highest weight first
+  enabledChannels.sort((a, b) => (b.weight || 1) - (a.weight || 1));
+  return enabledChannels[0];
+}
+
+// Get all channels
+function getAllChannels() {
+  const data = loadChannels();
   return data.channels;
 }
 
-// Get current active channel
-function getCurrentChannel() {
-  const channels = getAllChannels();
-  return channels.find(ch => ch.isActive) || null;
-}
-
 // Create new channel
-function createChannel(name, baseUrl, apiKey, websiteUrl) {
+function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
   const data = loadChannels();
-  const newChannel = {
+  const newChannel = applyChannelDefaults({
     id: `channel-${Date.now()}`,
     name,
     baseUrl,
     apiKey,
-    createdAt: Date.now()
-  };
-
-  if (websiteUrl) {
-    newChannel.websiteUrl = websiteUrl;
-  }
+    createdAt: Date.now(),
+    websiteUrl: websiteUrl || undefined,
+    enabled: extraConfig.enabled !== undefined ? !!extraConfig.enabled : true,
+    weight: normalizeNumber(extraConfig.weight, 1),
+    maxConcurrency: normalizeNumber(extraConfig.maxConcurrency, 1)
+  });
 
   data.channels.push(newChannel);
   saveChannels(data);
@@ -232,25 +225,14 @@ function updateChannel(id, updates) {
     throw new Error('Channel not found');
   }
 
-  // Check if this channel is currently active
-  const currentSettings = getCurrentSettings();
-  const channel = data.channels[index];
-  const isActive = currentSettings &&
-    channel.baseUrl === currentSettings.baseUrl &&
-    channel.apiKey === currentSettings.apiKey;
-
-  if (isActive) {
-    // Only allow updating name and websiteUrl for active channel
-    if (updates.name) {
-      data.channels[index].name = updates.name;
-    }
-    if (updates.websiteUrl !== undefined) {
-      data.channels[index].websiteUrl = updates.websiteUrl;
-    }
-  } else {
-    // Allow all updates for inactive channels
-    data.channels[index] = { ...data.channels[index], ...updates };
-  }
+  // Allow all updates
+  const merged = { ...data.channels[index], ...updates };
+  data.channels[index] = applyChannelDefaults({
+    ...merged,
+    weight: merged.weight,
+    maxConcurrency: merged.maxConcurrency,
+    enabled: merged.enabled
+  });
 
   saveChannels(data);
   return data.channels[index];
@@ -265,22 +247,13 @@ function deleteChannel(id) {
     throw new Error('Channel not found');
   }
 
-  // Check if this channel is currently active
-  const currentSettings = getCurrentSettings();
-  const channel = data.channels[index];
-  if (currentSettings &&
-      channel.baseUrl === currentSettings.baseUrl &&
-      channel.apiKey === currentSettings.apiKey) {
-    throw new Error('Cannot delete active channel');
-  }
-
   data.channels.splice(index, 1);
   saveChannels(data);
   return { success: true };
 }
 
-// Activate channel (switch to this channel)
-function activateChannel(id) {
+// Apply channel to settings (write channel config to settings.json)
+function applyChannelToSettings(id) {
   const data = loadChannels();
   const channel = data.channels.find(ch => ch.id === id);
 
@@ -288,18 +261,13 @@ function activateChannel(id) {
     throw new Error('Channel not found');
   }
 
-  // Always save active channel ID for UI consistency
-  saveActiveChannelId(id);
+  // 启用渠道（确保加入调度池）
+  channel.enabled = true;
+  saveChannels(data);
 
-  // Check if we're in proxy mode
-  if (isProxyConfig()) {
-    // Proxy mode: only save active channel ID, don't modify settings.json
-    console.log(`✅ Activated channel in proxy mode: ${channel.name}`);
-  } else {
-    // Normal mode: also update Claude settings.json
-    updateClaudeSettings(channel.baseUrl, channel.apiKey);
-    console.log(`✅ Activated channel in normal mode: ${channel.name}`);
-  }
+  // Update Claude settings.json
+  updateClaudeSettings(channel.baseUrl, channel.apiKey);
+  console.log(`✅ Applied channel settings to Claude: ${channel.name}`);
 
   return channel;
 }
@@ -343,11 +311,11 @@ function updateClaudeSettings(baseUrl, apiKey) {
 
 module.exports = {
   getAllChannels,
-  getCurrentChannel,
-  getActiveChannel: getCurrentChannel, // Alias for proxy server
+  getCurrentSettings,
   createChannel,
   updateChannel,
   deleteChannel,
-  activateChannel,
+  applyChannelToSettings,
+  getBestChannelForRestore,
   updateClaudeSettings // Export for proxy stop
 };

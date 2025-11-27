@@ -3,6 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const readline = require('readline');
 const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('../services/sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
@@ -131,8 +132,8 @@ module.exports = (config) => {
   });
 
   // GET /api/sessions/:projectName/:sessionId/messages - Get session messages with pagination
-  router.get('/:projectName/:sessionId/messages', (req, res) => {
-    try {
+router.get('/:projectName/:sessionId/messages', async (req, res) => {
+  try {
       const { projectName, sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 
@@ -180,20 +181,18 @@ module.exports = (config) => {
       }
 
       // Read and parse session file
-      const content = fs.readFileSync(sessionFile, 'utf8');
-      const lines = content.split('\n').filter(line => line.trim());
+    const allMessages = [];
+    const metadata = {};
 
-      console.log(`[Messages API] Total lines in file: ${lines.length}`);
+    const stream = fs.createReadStream(sessionFile, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
-      // Parse all messages
-      const allMessages = [];
-      const metadata = {};
-
-      for (const line of lines) {
+    try {
+      for await (const line of rl) {
+        if (!line.trim()) continue;
         try {
           const json = JSON.parse(line);
 
-          // Extract metadata
           if (json.type === 'summary' && json.summary) {
             metadata.summary = json.summary;
           }
@@ -204,7 +203,6 @@ module.exports = (config) => {
             metadata.cwd = json.cwd;
           }
 
-          // Extract messages
           if (json.type === 'user' || json.type === 'assistant') {
             const message = {
               type: json.type,
@@ -213,7 +211,6 @@ module.exports = (config) => {
               model: json.model || null
             };
 
-            // Parse content
             if (json.type === 'user') {
               if (typeof json.message?.content === 'string') {
                 message.content = json.message.content;
@@ -223,13 +220,12 @@ module.exports = (config) => {
                   if (item.type === 'text' && item.text) {
                     parts.push(item.text);
                   } else if (item.type === 'tool_result') {
-                    // Show tool result content (full)
                     const resultContent = typeof item.content === 'string'
                       ? item.content
                       : JSON.stringify(item.content, null, 2);
                     parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
                   } else if (item.type === 'image') {
-                    parts.push(`[图片]`);
+                    parts.push('[图片]');
                   }
                 }
                 message.content = parts.join('\n\n') || '[工具交互]';
@@ -241,11 +237,9 @@ module.exports = (config) => {
                   if (item.type === 'text' && item.text) {
                     parts.push(item.text);
                   } else if (item.type === 'tool_use') {
-                    // Show tool name and input (full)
                     const inputStr = JSON.stringify(item.input, null, 2);
                     parts.push(`**[调用工具: ${item.name}]**\n\`\`\`json\n${inputStr}\n\`\`\``);
                   } else if (item.type === 'thinking' && item.thinking) {
-                    // Show thinking content (full)
                     parts.push(`**[思考]**\n${item.thinking}`);
                   }
                 }
@@ -255,7 +249,6 @@ module.exports = (config) => {
               }
             }
 
-            // Skip only warmup messages
             if (message.content && message.content !== 'Warmup') {
               allMessages.push(message);
             }
@@ -264,6 +257,10 @@ module.exports = (config) => {
           // Skip invalid lines
         }
       }
+    } finally {
+      rl.close();
+      stream.destroy();
+    }
 
       // Sort messages (desc = newest first)
       if (order === 'desc') {

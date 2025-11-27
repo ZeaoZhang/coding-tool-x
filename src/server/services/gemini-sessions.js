@@ -651,6 +651,25 @@ function forkSession(sessionId) {
   }
 }
 
+/**
+ * 获取 Gemini 项目与会话数量（仪表盘轻量统计）
+ */
+function getProjectAndSessionCounts() {
+  try {
+    const projectHashes = scanProjects();
+    let sessionCount = 0;
+    projectHashes.forEach((hash) => {
+      sessionCount += scanProjectSessions(hash).length;
+    });
+    return {
+      projectCount: projectHashes.length,
+      sessionCount
+    };
+  } catch (err) {
+    return { projectCount: 0, sessionCount: 0 };
+  }
+}
+
 module.exports = {
   getAllSessions,
   getProjects,
@@ -665,5 +684,6 @@ module.exports = {
   searchSessions,
   saveSessionOrder,
   forkSession,
-  getProjectPath
+  getProjectPath,
+  getProjectAndSessionCounts
 };
