@@ -421,31 +421,72 @@ function animateValue(key, startValue, endValue, duration = 600) {
 // 最新对话抽屉
 const showRecentSessions = ref(false)
 
-// 锁定状态
-const isLocked = ref(false)
+// localStorage key
+const LOCK_STORAGE_KEY = 'channelLocks'
 
-// 加载锁定状态
+// 从 localStorage 读取锁定状态
+function getLockFromStorage() {
+  try {
+    const stored = localStorage.getItem(LOCK_STORAGE_KEY)
+    if (stored) {
+      const locks = JSON.parse(stored)
+      return locks[props.channelType] || false
+    }
+  } catch (e) {}
+  return false
+}
+
+// 保存锁定状态到 localStorage
+function saveLockToStorage(locked) {
+  try {
+    const stored = localStorage.getItem(LOCK_STORAGE_KEY)
+    const locks = stored ? JSON.parse(stored) : {}
+    locks[props.channelType] = locked
+    localStorage.setItem(LOCK_STORAGE_KEY, JSON.stringify(locks))
+  } catch (e) {}
+}
+
+// 锁定状态 - 初始值从 localStorage 读取，避免闪烁
+const isLocked = ref(getLockFromStorage())
+
+// 加载锁定状态（从服务器同步）
 async function loadLockState() {
   try {
-    // 优先从 dashboard 数据读取
+    let serverLocked = false
     if (dashboardData.value && dashboardData.value.uiConfig) {
-      isLocked.value = dashboardData.value.uiConfig.channelLocks?.[props.channelType] || false
+      serverLocked = dashboardData.value.uiConfig.channelLocks?.[props.channelType] || false
     } else {
       const response = await api.getUIConfig()
       if (response.success && response.config) {
-        isLocked.value = response.config.channelLocks?.[props.channelType] || false
+        serverLocked = response.config.channelLocks?.[props.channelType] || false
       }
     }
+    // 服务器状态同步到本地
+    isLocked.value = serverLocked
+    saveLockToStorage(serverLocked)
   } catch (err) {
-    console.error('Failed to load lock state:', err)
+    // 出错时保持 localStorage 的状态
   }
 }
 
 // 切换锁定状态
 async function toggleLock() {
   isLocked.value = !isLocked.value
+  saveLockToStorage(isLocked.value)
   try {
     await api.updateNestedUIConfig('channelLocks', props.channelType, isLocked.value)
+    if (dashboardData.value) {
+      const config = dashboardData.value.uiConfig || {}
+      const channelLocks = { ...(config.channelLocks || {}) }
+      channelLocks[props.channelType] = isLocked.value
+      dashboardData.value = {
+        ...dashboardData.value,
+        uiConfig: {
+          ...config,
+          channelLocks
+        }
+      }
+    }
   } catch (err) {
     console.error('Failed to save lock state:', err)
   }
