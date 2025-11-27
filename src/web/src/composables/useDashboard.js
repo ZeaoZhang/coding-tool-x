@@ -61,22 +61,86 @@ async function loadDashboard(force = false) {
 
   isLoading.value = true
 
-  loadPromise = api.getDashboardInit()
-    .then(response => {
-      if (response.success && response.data) {
-        dashboardData.value = response.data
-        isLoaded.value = true
+  loadPromise = (async () => {
+    try {
+      // 前端并行加载所有数据，不依赖后端的聚合 API
+      // 这样可以让快的请求快速返回，不被慢的请求拖累
+      const [
+        uiConfigResp,
+        favoritesResp,
+        channelsResp,
+        codexChannelsResp,
+        geminiChannelsResp,
+        proxyStatusResp,
+        codexProxyStatusResp,
+        geminiProxyStatusResp,
+        todayStatsResp
+      ] = await Promise.allSettled([
+        api.getUIConfig(),
+        api.getAllFavorites(),
+        api.getChannels(),
+        api.getCodexChannels(),
+        api.getGeminiChannels(),
+        api.getProxyStatus(),
+        api.getCodexProxyStatus(),
+        api.getGeminiProxyStatus(),
+        api.getTodayStatistics()
+      ])
+
+      // 处理结果，失败的部分使用默认值
+      const getData = (settled, fallback = null) => {
+        return settled.status === 'fulfilled' ? settled.value : fallback
       }
+
+      const uiConfig = getData(uiConfigResp)
+      const favorites = getData(favoritesResp)
+      const channels = getData(channelsResp, { channels: [] })
+      const codexChannels = getData(codexChannelsResp, { channels: [] })
+      const geminiChannels = getData(geminiChannelsResp, { channels: [] })
+      const proxyStatus = getData(proxyStatusResp, {})
+      const codexProxyStatus = getData(codexProxyStatusResp, {})
+      const geminiProxyStatus = getData(geminiProxyStatusResp, {})
+      const todayStats = getData(todayStatsResp, {})
+
+      // 更新仪表板数据
+      dashboardData.value = {
+        uiConfig,
+        favorites,
+        channels: {
+          claude: channels?.channels || [],
+          codex: codexChannels?.channels || [],
+          gemini: geminiChannels?.channels || []
+        },
+        proxyStatus: {
+          claude: proxyStatus,
+          codex: codexProxyStatus,
+          gemini: geminiProxyStatus
+        },
+        todayStats: {
+          claude: todayStats && todayStats.summary
+            ? {
+                requests: todayStats.summary.requests || 0,
+                tokens: todayStats.summary.tokens || 0,
+                cost: todayStats.summary.cost || 0
+              }
+            : { requests: 0, tokens: 0, cost: 0 },
+          codex: { requests: 0, tokens: 0, cost: 0 },
+          gemini: { requests: 0, tokens: 0, cost: 0 }
+        }
+      }
+
+      isLoaded.value = true
       return dashboardData.value
-    })
-    .catch(err => {
+    } catch (err) {
       console.error('Failed to load dashboard:', err)
       throw err
-    })
-    .finally(() => {
-      isLoading.value = false
-      loadPromise = null
-    })
+    }
+  })()
+
+  loadPromise.finally(() => {
+    isLoading.value = false
+    loadPromise = null
+  })
 
   return loadPromise
 }
