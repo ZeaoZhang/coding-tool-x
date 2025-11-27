@@ -661,21 +661,24 @@ function goToChannelPage() {
 // 加载渠道列表
 async function loadChannels() {
   try {
+    let data = null
     // 如果 dashboard 数据已加载，直接从缓存读取
     if (dashboardData.value && dashboardData.value.channels) {
-      channels.value = dashboardData.value.channels[props.channelType] || []
+      data = dashboardData.value.channels[props.channelType]
     } else {
       // 否则单独调用API
-      let data
+      let response
       if (props.channelType === 'claude') {
-        data = await api.getChannels()
+        response = await api.getChannels()
       } else if (props.channelType === 'codex') {
-        data = await api.getCodexChannels()
+        response = await api.getCodexChannels()
       } else if (props.channelType === 'gemini') {
-        data = await api.getGeminiChannels()
+        response = await api.getGeminiChannels()
       }
-      channels.value = data?.channels || []
+      data = response?.channels
     }
+    // 确保 channels.value 是数组
+    channels.value = Array.isArray(data) ? data : []
     // 设置当前选中的渠道
     const active = channels.value.find(ch => ch.isActive)
     if (active) {
@@ -683,6 +686,7 @@ async function loadChannels() {
     }
   } catch (error) {
     console.error('Failed to load channels:', error)
+    channels.value = []
   }
 }
 
