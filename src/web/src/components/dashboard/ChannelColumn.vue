@@ -52,7 +52,7 @@
               <n-text :type="proxyState.running ? 'success' : 'default'" style="font-size: 12px;">
                 {{ proxyState.running ? '运行中' : '已停止' }}
               </n-text>
-              <n-text depth="3" style="font-size: 11px; margin-left: 6px;">端口: {{ proxyState.port }}</n-text>
+              <span class="proxy-port">端口: {{ proxyState.port }}</span>
             </div>
             <n-popselect
               :value="selectedChannelId"
@@ -1025,6 +1025,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.proxy-port {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-left: 6px;
 }
 
 .channel-selector {
