@@ -117,10 +117,10 @@
               </div>
 
               <n-text depth="3" class="session-message" v-if="session.firstMessage">
-                {{ session.firstMessage }}
+                {{ truncateText(session.firstMessage, 80) }}
               </n-text>
-              <n-text depth="3" class="session-message session-message-empty" v-else>
-                暂未读取到对话首条消息记录
+              <n-text depth="3" class="session-message session-message-empty" v-else-if="!session.gitBranch && !session.summary">
+                暂未读取到对话内容
               </n-text>
             </div>
           </div>
@@ -495,6 +495,15 @@ function highlightKeyword(text, keyword) {
   if (!keyword || !text) return text
   const regex = new RegExp(`(${keyword})`, 'gi')
   return text.replace(regex, '<mark style="background-color: #ffd700; padding: 2px 4px; border-radius: 2px; font-weight: 600;">$1</mark>')
+}
+
+// 截断文本
+function truncateText(text, maxLength = 80) {
+  if (!text) return ''
+  if (text.length > maxLength) {
+    return text.substring(0, maxLength) + '...'
+  }
+  return text
 }
 
 // 保存和恢复滚动位置

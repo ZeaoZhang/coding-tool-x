@@ -48,9 +48,9 @@ function parseSessionInfoFast(filePath) {
     if (fileSize > 10 * 1024 * 1024) {
       const fd = fs.openSync(filePath, 'r');
 
-      // 读取开头 8KB
-      const headBuffer = Buffer.alloc(8192);
-      fs.readSync(fd, headBuffer, 0, 8192, 0);
+      // 读取开头 32KB（扩大范围以找到第一条消息）
+      const headBuffer = Buffer.alloc(32 * 1024);
+      const headBytesRead = fs.readSync(fd, headBuffer, 0, 32 * 1024, 0);
 
       // 读取结尾 8KB
       const tailBuffer = Buffer.alloc(8192);
@@ -59,10 +59,10 @@ function parseSessionInfoFast(filePath) {
 
       fs.closeSync(fd);
 
-      const headContent = headBuffer.toString('utf8');
+      const headContent = headBuffer.slice(0, headBytesRead).toString('utf8');
       const tailContent = tailBuffer.toString('utf8');
 
-      const headLines = headContent.split('\n').slice(0, 10);
+      const headLines = headContent.split('\n');
       const tailLines = tailContent.split('\n').slice(-20);
 
       return parseLinesWithTail(headLines, tailLines);
@@ -71,10 +71,8 @@ function parseSessionInfoFast(filePath) {
     // 小文件直接读取
     const content = fs.readFileSync(filePath, 'utf8');
     const lines = content.split('\n');
-    const headLines = lines.slice(0, 10);
-    const tailLines = lines.slice(-20);
 
-    return parseLinesWithTail(headLines, tailLines);
+    return parseLinesWithTail(lines, lines.slice(-20));
   } catch (error) {
     return { summary: '', gitBranch: '', firstMessage: '', lastMessage: '', messageCount: 0 };
   }
@@ -90,7 +88,7 @@ function parseLinesWithTail(headLines, tailLines) {
   let lastMessage = '';
   let lastUserMessage = '';
 
-  // 解析开头
+  // 解析开头（查找第一条有效消息，跳过 file-history-snapshot）
   for (const line of headLines) {
     if (!line.trim()) continue;
 
@@ -105,6 +103,7 @@ function parseLinesWithTail(headLines, tailLines) {
         gitBranch = json.gitBranch;
       }
 
+      // 优先找用户消息作为首条消息
       if (json.type === 'user' && json.message && json.message.content !== 'Warmup' && !firstMessage) {
         firstMessage = typeof json.message.content === 'string'
           ? json.message.content
@@ -112,6 +111,26 @@ function parseLinesWithTail(headLines, tailLines) {
       }
     } catch (e) {
       // 忽略解析错误
+    }
+  }
+
+  // 如果开头找不到用户消息，尝试从尾部向前找
+  if (!firstMessage) {
+    for (let i = 0; i < tailLines.length; i++) {
+      const line = tailLines[i];
+      if (!line.trim()) continue;
+
+      try {
+        const json = JSON.parse(line);
+        if (json.type === 'user' && json.message && json.message.content !== 'Warmup') {
+          firstMessage = typeof json.message.content === 'string'
+            ? json.message.content
+            : JSON.stringify(json.message.content);
+          break;
+        }
+      } catch (e) {
+        // 忽略
+      }
     }
   }
 
@@ -155,6 +174,13 @@ function parseLinesWithTail(headLines, tailLines) {
     }
 
     if (lastMessage && lastUserMessage) break;
+  }
+
+  // 如果仍然找不到首条消息，使用 summary 或 gitBranch 作为备选
+  if (!firstMessage && summary) {
+    firstMessage = `[摘要] ${summary}`;
+  } else if (!firstMessage && gitBranch) {
+    firstMessage = `[分支] ${gitBranch}`;
   }
 
   return {

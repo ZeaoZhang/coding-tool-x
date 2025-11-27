@@ -3,7 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects } = require('../services/sessions');
+const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('../services/sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 
@@ -167,6 +167,15 @@ module.exports = (config) => {
         return res.status(404).json({
           error: `Session file not found: ${sessionId}`,
           triedPaths: possiblePaths
+        });
+      }
+
+      // Check if session has actual messages (not just file-history-snapshots)
+      if (!hasActualMessages(sessionFile)) {
+        console.warn(`[Messages API] Session ${sessionId} has no actual messages (only file-history-snapshots)`);
+        return res.status(404).json({
+          error: `Session has no conversation messages: ${sessionId}`,
+          reason: 'This session contains only file history snapshots, not actual conversation data'
         });
       }
 

@@ -293,18 +293,25 @@ function getProjectsWithStats(config) {
       // Parse real project path
       const { fullPath, projectName: displayName } = parseRealProjectPath(projectName);
 
-      // Get session files
+      // Get session files (only count sessions with actual messages)
       let sessionCount = 0;
       let lastUsed = null;
 
       try {
         const files = fs.readdirSync(projectPath);
         const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
-        sessionCount = jsonlFiles.length;
 
-        // Find most recent session
-        if (jsonlFiles.length > 0) {
-          const stats = jsonlFiles.map(f => {
+        // Filter: only count sessions that have actual messages (not just file-history-snapshots)
+        const sessionFilesWithMessages = jsonlFiles.filter(f => {
+          const filePath = path.join(projectPath, f);
+          return hasActualMessages(filePath);
+        });
+
+        sessionCount = sessionFilesWithMessages.length;
+
+        // Find most recent session (only from sessions with messages)
+        if (sessionFilesWithMessages.length > 0) {
+          const stats = sessionFilesWithMessages.map(f => {
             const filePath = path.join(projectPath, f);
             const stat = fs.statSync(filePath);
             return stat.mtime.getTime();
@@ -326,6 +333,30 @@ function getProjectsWithStats(config) {
     .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)); // Sort by last used
 }
 
+// Check if a session file has actual messages (not just file-history-snapshots)
+function hasActualMessages(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n').filter(line => line.trim());
+
+    for (const line of lines) {
+      try {
+        const json = JSON.parse(line);
+        // If we find any message type (user, assistant, summary), it has actual messages
+        if (json.type === 'user' || json.type === 'assistant' || json.type === 'summary') {
+          return true;
+        }
+      } catch (e) {
+        // Skip invalid JSON lines
+      }
+    }
+    // If we only found file-history-snapshots or no valid lines, return false
+    return false;
+  } catch (err) {
+    return false;
+  }
+}
+
 // Get sessions for a project
 function getSessionsForProject(config, projectName) {
   const projectConfig = { ...config, currentProject: projectName };
@@ -333,21 +364,23 @@ function getSessionsForProject(config, projectName) {
   const forkRelations = getForkRelations();
   const savedOrder = getSessionOrder(projectName);
 
-  // Parse session info and calculate total size
+  // Parse session info and calculate total size, filter out sessions with no messages
   let totalSize = 0;
-  const sessionsWithInfo = sessions.map(session => {
-    const info = parseSessionInfoFast(session.filePath);
-    totalSize += session.size || 0;
-    return {
-      sessionId: session.sessionId,
-      mtime: session.mtime,
-      size: session.size,
-      filePath: session.filePath,
-      gitBranch: info.gitBranch || null,
-      firstMessage: info.firstMessage || null,
-      forkedFrom: forkRelations[session.sessionId] || null
-    };
-  });
+  const sessionsWithInfo = sessions
+    .filter(session => hasActualMessages(session.filePath))
+    .map(session => {
+      const info = parseSessionInfoFast(session.filePath);
+      totalSize += session.size || 0;
+      return {
+        sessionId: session.sessionId,
+        mtime: session.mtime,
+        size: session.size,
+        filePath: session.filePath,
+        gitBranch: info.gitBranch || null,
+        firstMessage: info.firstMessage || null,
+        forkedFrom: forkRelations[session.sessionId] || null
+      };
+    });
 
   // Apply saved order if exists
   let orderedSessions = sessionsWithInfo;
@@ -491,6 +524,11 @@ function searchSessions(config, projectName, keyword, contextLength = 15) {
     const sessionId = file.replace('.jsonl', '');
     const filePath = path.join(projectDir, file);
 
+    // Skip sessions with no actual messages
+    if (!hasActualMessages(filePath)) {
+      continue;
+    }
+
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       const lines = content.split('\n');
@@ -562,6 +600,11 @@ function getRecentSessions(config, limit = 5) {
     const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
 
     sessions.forEach(session => {
+      // Skip sessions with no actual messages
+      if (!hasActualMessages(session.filePath)) {
+        return;
+      }
+
       const info = parseSessionInfoFast(session.filePath);
       allSessions.push({
         sessionId: session.sessionId,
@@ -628,5 +671,6 @@ module.exports = {
   searchSessions,
   searchSessionsAcrossProjects,
   getForkRelations,
-  saveForkRelations
+  saveForkRelations,
+  hasActualMessages
 };
