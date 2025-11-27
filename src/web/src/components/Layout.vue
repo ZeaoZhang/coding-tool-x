@@ -585,8 +585,13 @@ onMounted(() => {
   // 监听面板可见性变化事件
   window.addEventListener('panel-visibility-change', handlePanelVisibilityChange)
 
-  // 检查版本更新
-  checkForUpdates()
+  // 异步检查版本更新，不阻塞首页加载
+  // 延迟 500ms 后执行，避免与首页其他加载任务竞争资源
+  setTimeout(() => {
+    checkForUpdates().catch(err => {
+      console.warn('Version check failed:', err)
+    })
+  }, 500)
 })
 
 onUnmounted(() => {

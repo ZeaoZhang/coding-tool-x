@@ -2,6 +2,10 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+// 版本检查缓存，避免频繁重复请求
+const versionCache = new Map();
+const CACHE_TTL = 3600000; // 1小时缓存
+
 /**
  * 从 npm registry 获取最新版本号
  * @param {string} packageName - npm 包名
@@ -9,9 +13,16 @@ const path = require('path');
  */
 function fetchLatestVersion(packageName) {
   return new Promise((resolve) => {
-    const url = `https://registry.npmjs.org/${packageName}/latest`;
+    // 检查缓存
+    const cached = versionCache.get(packageName);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return resolve(cached.version);
+    }
 
-    https.get(url, { timeout: 5000 }, (res) => {
+    const url = `https://registry.npmjs.org/${packageName}/latest`;
+    let timedOut = false;
+
+    const request = https.get(url, { timeout: 2000 }, (res) => {
       let data = '';
 
       res.on('data', (chunk) => {
@@ -19,16 +30,31 @@ function fetchLatestVersion(packageName) {
       });
 
       res.on('end', () => {
+        if (timedOut) return;
+
         try {
           const json = JSON.parse(data);
-          resolve(json.version || null);
+          const version = json.version || null;
+          // 缓存结果
+          if (version) {
+            versionCache.set(packageName, { version, timestamp: Date.now() });
+          }
+          resolve(version);
         } catch (err) {
           resolve(null);
         }
       });
-    }).on('error', () => {
-      resolve(null);
-    }).on('timeout', () => {
+    });
+
+    request.on('error', () => {
+      if (!timedOut) {
+        resolve(null);
+      }
+    });
+
+    request.on('timeout', () => {
+      timedOut = true;
+      request.destroy();
       resolve(null);
     });
   });

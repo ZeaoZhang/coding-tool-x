@@ -8,10 +8,26 @@ const { checkForUpdates, getCurrentVersion } = require('../../utils/version-chec
 /**
  * GET /api/version/check
  * 检查是否有新版本
+ * 注意：版本检查可能需要 2+ 秒，建议前端异步调用
  */
 router.get('/check', async (req, res) => {
   try {
-    const result = await checkForUpdates();
+    // 设置响应超时为 3 秒，如果 npm 请求超过 2 秒会自动失败
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({
+          hasUpdate: false,
+          current: getCurrentVersion(),
+          latest: null,
+          error: true,
+          reason: 'version check timeout'
+        });
+      }, 2500);
+    });
+
+    const resultPromise = checkForUpdates();
+    const result = await Promise.race([resultPromise, timeoutPromise]);
+
     res.json(result);
   } catch (error) {
     res.status(500).json({
