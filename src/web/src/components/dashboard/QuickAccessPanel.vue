@@ -17,11 +17,7 @@
         </div>
         <div class="access-info">
           <div class="access-name">Claude Code</div>
-          <div class="access-stats">
-            <n-text depth="3" style="font-size: 12px;">
-              {{ claudeStats.projects }} Projects · {{ claudeStats.sessions }} Sessions
-            </n-text>
-          </div>
+          <div class="access-stats">{{ claudeStats.projects }} Projects · {{ claudeStats.sessions }} Sessions</div>
         </div>
         <n-icon :size="16" color="var(--text-tertiary)">
           <ChevronForwardOutline />
@@ -37,11 +33,7 @@
         </div>
         <div class="access-info">
           <div class="access-name">Codex</div>
-          <div class="access-stats">
-            <n-text depth="3" style="font-size: 12px;">
-              {{ codexStats.projects }} Projects · {{ codexStats.sessions }} Sessions
-            </n-text>
-          </div>
+          <div class="access-stats">{{ codexStats.projects }} Projects · {{ codexStats.sessions }} Sessions</div>
         </div>
         <n-icon :size="16" color="var(--text-tertiary)">
           <ChevronForwardOutline />
@@ -57,11 +49,7 @@
         </div>
         <div class="access-info">
           <div class="access-name">Gemini</div>
-          <div class="access-stats">
-            <n-text depth="3" style="font-size: 12px;">
-              {{ geminiStats.projects }} Projects · {{ geminiStats.sessions }} Sessions
-            </n-text>
-          </div>
+          <div class="access-stats">{{ geminiStats.projects }} Projects · {{ geminiStats.sessions }} Sessions</div>
         </div>
         <n-icon :size="16" color="var(--text-tertiary)">
           <ChevronForwardOutline />
@@ -74,7 +62,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { NIcon, NText } from 'naive-ui'
+import { NIcon } from 'naive-ui'
 import { RocketOutline, LayersOutline, CodeSlashOutline, ColorPaletteOutline, ChevronForwardOutline } from '@vicons/ionicons5'
 import axios from 'axios'
 
@@ -212,6 +200,6 @@ onMounted(() => {
 
 .access-stats {
   font-size: 12px;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 </style>
