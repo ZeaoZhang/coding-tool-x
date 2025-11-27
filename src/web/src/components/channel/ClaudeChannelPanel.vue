@@ -24,7 +24,9 @@
             class="channel-card"
             :class="{
               collapsed: collapsed[element.id],
-              disabled: element.enabled === false
+              disabled: element.enabled === false,
+              'status-frozen': element.health?.status === 'frozen',
+              'status-checking': element.health?.status === 'checking'
             }"
           >
             <div class="channel-header">
@@ -41,24 +43,32 @@
                 </n-button>
                 <span class="channel-name">{{ element.name }}</span>
                 <n-tag
-                  v-if="element.health && element.health.status !== 'healthy'"
+                  v-if="element.health?.status === 'frozen'"
                   size="tiny"
-                  :type="element.health.status === 'frozen' ? 'error' : 'warning'"
+                  type="error"
                   :bordered="false"
                 >
-                  {{ element.health.statusText }}
-                  <template v-if="element.health.status === 'frozen' && element.health.freezeRemaining > 0">
-                    ({{ formatFreezeTime(element.health.freezeRemaining) }})
-                  </template>
+                  冻结 {{ formatFreezeTime(element.health.freezeRemaining) }}
                 </n-tag>
                 <n-tag
-                  v-if="element.enabled === false"
+                  v-else-if="element.health?.status === 'checking'"
                   size="tiny"
                   type="warning"
                   :bordered="false"
                 >
+                  检测中
+                </n-tag>
+                <n-tag
+                  v-if="element.enabled === false"
+                  size="tiny"
+                  :bordered="false"
+                >
                   未启用
                 </n-tag>
+              </div>
+              <div class="channel-meta">
+                <span class="meta-item" title="权重">W:{{ element.weight || 1 }}</span>
+                <span class="meta-item" title="并发">C:{{ element.maxConcurrency ?? '∞' }}</span>
               </div>
               <div class="channel-actions">
                 <n-switch
@@ -87,47 +97,26 @@
             </div>
 
             <div v-show="!collapsed[element.id]" class="channel-info">
-              <div class="info-row">
-                <n-text depth="3" class="label">URL:</n-text>
-                <n-text depth="2" class="value">{{ element.baseUrl }}</n-text>
+              <div class="info-main">
+                <div class="info-row">
+                  <n-text depth="3" class="label">URL:</n-text>
+                  <n-text depth="2" class="value">{{ element.baseUrl }}</n-text>
+                </div>
+                <div class="info-row">
+                  <n-text depth="3" class="label">Key:</n-text>
+                  <n-text depth="2" class="value mono">{{ maskApiKey(element.apiKey) }}</n-text>
+                  <n-button
+                    v-if="element.health?.status !== 'healthy'"
+                    size="tiny"
+                    text
+                    type="primary"
+                    @click="handleResetHealth(element)"
+                  >
+                    重置状态
+                  </n-button>
+                </div>
               </div>
-              <div class="info-row">
-                <n-text depth="3" class="label">Key:</n-text>
-                <n-text depth="2" class="value" style="font-family: monospace;">
-                  {{ maskApiKey(element.apiKey) }}
-                </n-text>
-              </div>
-              <div class="info-row">
-                <n-text depth="3" class="label">并发:</n-text>
-                <n-text depth="2" class="value">
-                  {{ element.maxConcurrency === null || element.maxConcurrency === undefined ? '不限制' : element.maxConcurrency }}
-                </n-text>
-              </div>
-              <div class="info-row">
-                <n-text depth="3" class="label">权重:</n-text>
-                <n-text depth="2" class="value">{{ element.weight || 1 }}</n-text>
-              </div>
-              <div v-if="element.health" class="info-row">
-                <n-text depth="3" class="label">健康:</n-text>
-                <n-text depth="2" class="value" :style="{ color: element.health.statusColor }">
-                  {{ element.health.statusText }}
-                  <template v-if="element.health.status === 'frozen'">
-                    (剩余 {{ formatFreezeTime(element.health.freezeRemaining) }})
-                  </template>
-                </n-text>
-                <n-button
-                  v-if="element.health.status !== 'healthy'"
-                  size="tiny"
-                  text
-                  type="primary"
-                  style="margin-left: 8px;"
-                  @click="handleResetHealth(element)"
-                >
-                  重置
-                </n-button>
-              </div>
-              <div v-if="element.websiteUrl" class="info-row website-row">
-                <n-text depth="3" class="label">官网:</n-text>
+              <div v-if="element.websiteUrl" class="info-footer">
                 <n-button text size="tiny" @click="emit('open-website', element.websiteUrl)">
                   <template #icon>
                     <n-icon size="14"><OpenOutline /></n-icon>
@@ -535,16 +524,17 @@ defineExpose({
 .channels-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .channel-card {
   border: 1px solid var(--n-divider-color);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 6px;
+  padding: 10px 12px;
   background: var(--bg-secondary);
   transition: all 0.2s ease;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  border-left: 3px solid #18a058;
 }
 
 .channel-card:hover {
@@ -553,8 +543,18 @@ defineExpose({
 }
 
 .channel-card.disabled {
-  opacity: 0.65;
-  border-style: dashed;
+  opacity: 0.6;
+  border-left-color: #909399;
+}
+
+.channel-card.status-frozen {
+  border-left-color: #d03050;
+  background: linear-gradient(90deg, rgba(208, 48, 80, 0.08) 0%, transparent 100%);
+}
+
+.channel-card.status-checking {
+  border-left-color: #f0a020;
+  background: linear-gradient(90deg, rgba(240, 160, 32, 0.08) 0%, transparent 100%);
 }
 
 .channel-card.collapsed .channel-info {
@@ -565,6 +565,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   cursor: grab;
 }
 
@@ -575,32 +576,57 @@ defineExpose({
 .channel-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
+  min-width: 0;
 }
 
 .channel-name {
   font-weight: 600;
+  font-size: 13px;
   color: var(--n-text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-meta {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.meta-item {
+  font-size: 11px;
+  font-family: monospace;
+  color: var(--n-text-color-3);
+  background: var(--n-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .channel-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .channel-actions :deep(.n-switch) {
-  margin-right: 4px;
+  margin-right: 2px;
 }
 
 .channel-info {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--n-border-color);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--n-border-color);
+}
+
+.info-main {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .info-row {
@@ -610,18 +636,27 @@ defineExpose({
 }
 
 .label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--n-text-color-3);
+  flex-shrink: 0;
+  width: 32px;
 }
 
 .value {
   font-size: 12px;
-  color: var(--n-text-color);
+  color: var(--n-text-color-2);
   word-break: break-all;
+  flex: 1;
 }
 
-.website-row {
-  margin-top: 8px;
+.value.mono {
+  font-family: monospace;
+}
+
+.info-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--n-border-color);
 }
 
 .collapse-btn {
