@@ -4,6 +4,7 @@ const http = require('http');
 const net = require('net');
 const chalk = require('chalk');
 const { allocateChannel, releaseChannel } = require('./services/channel-scheduler');
+const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
@@ -181,6 +182,8 @@ async function startProxyServer(options = {}) {
         }, (err) => {
           release();
           if (err) {
+            // 记录请求失败
+            recordFailure(channel.id, err);
             console.error('Proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -329,6 +332,9 @@ async function startProxyServer(options = {}) {
                 success: true,
                 cost: cost
               });
+
+              // 记录请求成功（用于健康检查）
+              recordSuccess(metadata.channelId);
             }
           } catch (err) {
           }
@@ -350,6 +356,10 @@ async function startProxyServer(options = {}) {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);
         }
+        // 记录响应错误
+        if (metadata && metadata.channelId) {
+          recordFailure(metadata.channelId, err);
+        }
         isResponseClosed = true;
         finalize();
       });
@@ -357,6 +367,10 @@ async function startProxyServer(options = {}) {
 
     proxy.on('error', (err, req, res) => {
       console.error('Proxy error:', err);
+      // 记录请求失败（用于健康检查）
+      if (req && req.selectedChannel && req.selectedChannel.id) {
+        recordFailure(req.selectedChannel.id, err);
+      }
       if (res && !res.headersSent) {
         res.status(502).json({
           error: 'Proxy error: ' + err.message,

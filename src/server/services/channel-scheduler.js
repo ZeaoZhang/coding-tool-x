@@ -1,4 +1,5 @@
 const { getAllChannels } = require('./channels');
+const { isChannelAvailable, getChannelHealthStatus } = require('./channel-health');
 
 const state = {
   channels: [],
@@ -51,7 +52,11 @@ function refreshChannels() {
 function getAvailableChannels() {
   refreshChannels();
   return state.channels.filter(ch => {
-    // 如果 maxConcurrency 为 null，表示无限制
+    // 首先检查健康状态
+    if (!isChannelAvailable(ch.id)) {
+      return false;
+    }
+    // 然后检查并发限制
     if (ch.maxConcurrency === null) {
       return true;
     }
@@ -158,13 +163,17 @@ function releaseChannel(channelId) {
 function getSchedulerState() {
   refreshChannels();
   return {
-    channels: state.channels.map(ch => ({
-      id: ch.id,
-      name: ch.name,
-      weight: ch.weight,
-      maxConcurrency: ch.maxConcurrency,
-      inflight: state.inflight.get(ch.id) || 0
-    })),
+    channels: state.channels.map(ch => {
+      const healthStatus = getChannelHealthStatus(ch.id);
+      return {
+        id: ch.id,
+        name: ch.name,
+        weight: ch.weight,
+        maxConcurrency: ch.maxConcurrency,
+        inflight: state.inflight.get(ch.id) || 0,
+        health: healthStatus
+      };
+    }),
     pending: state.queue.length
   };
 }

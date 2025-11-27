@@ -9,13 +9,19 @@ const {
   getCurrentSettings,
   getBestChannelForRestore
 } = require('../services/channels');
+const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastLog, broadcastProxyState } = require('../websocket-server');
 
-// GET /api/channels - Get all channels
+// GET /api/channels - Get all channels with health status
 router.get('/', (req, res) => {
   try {
     const channels = getAllChannels();
-    res.json({ channels });
+    // 为每个渠道附加健康状态
+    const channelsWithHealth = channels.map(ch => ({
+      ...ch,
+      health: getChannelHealthStatus(ch.id)
+    }));
+    res.json({ channels: channelsWithHealth });
   } catch (error) {
     console.error('Error fetching channels:', error);
     res.status(500).json({ error: error.message });
@@ -151,6 +157,22 @@ router.get('/best-for-restore', (req, res) => {
     res.json({ channel });
   } catch (error) {
     console.error('Error getting best channel for restore:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/channels/:id/reset-health - Reset channel health status
+router.post('/:id/reset-health', (req, res) => {
+  try {
+    const { id } = req.params;
+    resetChannelHealth(id);
+    res.json({
+      success: true,
+      message: '渠道健康状态已重置',
+      health: getChannelHealthStatus(id)
+    });
+  } catch (error) {
+    console.error('Error resetting channel health:', error);
     res.status(500).json({ error: error.message });
   }
 });

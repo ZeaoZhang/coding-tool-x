@@ -41,6 +41,17 @@
                 </n-button>
                 <span class="channel-name">{{ element.name }}</span>
                 <n-tag
+                  v-if="element.health && element.health.status !== 'healthy'"
+                  size="tiny"
+                  :type="element.health.status === 'frozen' ? 'error' : 'warning'"
+                  :bordered="false"
+                >
+                  {{ element.health.statusText }}
+                  <template v-if="element.health.status === 'frozen' && element.health.freezeRemaining > 0">
+                    ({{ formatFreezeTime(element.health.freezeRemaining) }})
+                  </template>
+                </n-tag>
+                <n-tag
                   v-if="element.enabled === false"
                   size="tiny"
                   type="warning"
@@ -95,6 +106,25 @@
               <div class="info-row">
                 <n-text depth="3" class="label">权重:</n-text>
                 <n-text depth="2" class="value">{{ element.weight || 1 }}</n-text>
+              </div>
+              <div v-if="element.health" class="info-row">
+                <n-text depth="3" class="label">健康:</n-text>
+                <n-text depth="2" class="value" :style="{ color: element.health.statusColor }">
+                  {{ element.health.statusText }}
+                  <template v-if="element.health.status === 'frozen'">
+                    (剩余 {{ formatFreezeTime(element.health.freezeRemaining) }})
+                  </template>
+                </n-text>
+                <n-button
+                  v-if="element.health.status !== 'healthy'"
+                  size="tiny"
+                  text
+                  type="primary"
+                  style="margin-left: 8px;"
+                  @click="handleResetHealth(element)"
+                >
+                  重置
+                </n-button>
               </div>
               <div v-if="element.websiteUrl" class="info-row website-row">
                 <n-text depth="3" class="label">官网:</n-text>
@@ -237,6 +267,29 @@ function maskApiKey(key) {
   if (!key) return '(未设置)'
   if (key.length <= 12) return '******'
   return key.substring(0, 8) + '******' + key.substring(key.length - 4)
+}
+
+function formatFreezeTime(seconds) {
+  if (seconds <= 0) return '0秒'
+  if (seconds < 60) return `${seconds}秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = seconds % 60
+  if (minutes < 60) {
+    return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分钟`
+  }
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes > 0 ? `${hours}小时${remainingMinutes}分` : `${hours}小时`
+}
+
+async function handleResetHealth(channel) {
+  try {
+    await client.post(`/channels/${channel.id}/reset-health`)
+    message.success('渠道健康状态已重置')
+    await loadChannels()
+  } catch (err) {
+    message.error('重置失败: ' + err.message)
+  }
 }
 
 function toggleCollapse(id) {
