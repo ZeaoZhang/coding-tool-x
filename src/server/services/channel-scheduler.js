@@ -1,5 +1,5 @@
 const { getAllChannels } = require('./channels');
-const { isChannelAvailable, getChannelHealthStatus } = require('./channel-health');
+const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen } = require('./channel-health');
 
 const state = {
   channels: [],
@@ -11,13 +11,32 @@ const state = {
 
 const WAIT_TIMEOUT_MS = 15000;
 
+/**
+ * 解绑指定渠道的所有会话
+ */
+function unbindChannelSessions(channelId) {
+  let unbindCount = 0;
+  for (const [sessionId, boundChannelId] of state.sessionBindings) {
+    if (boundChannelId === channelId) {
+      state.sessionBindings.delete(sessionId);
+      unbindCount++;
+    }
+  }
+  if (unbindCount > 0) {
+    console.log(`[ChannelScheduler] Unbound ${unbindCount} sessions from frozen channel ${channelId}`);
+  }
+}
+
+// 注册冻结回调，当渠道被冻结时解绑其会话
+setOnChannelFrozen(unbindChannelSessions);
+
 function buildSignature(channels) {
   return JSON.stringify(
     channels.map(ch => ({
       id: ch.id,
       enabled: ch.enabled !== false,
       weight: ch.weight || 1,
-      maxConcurrency: ch.maxConcurrency || 1
+      maxConcurrency: ch.maxConcurrency ?? null // 保持 null 值
     }))
   );
 }

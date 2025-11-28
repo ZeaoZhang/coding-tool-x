@@ -16,6 +16,16 @@ const healthConfig = {
 // 渠道健康状态
 const channelHealth = new Map(); // channelId → health info
 
+// 冻结回调（用于通知调度器解绑会话）
+let onChannelFrozenCallback = null;
+
+/**
+ * 设置渠道冻结时的回调
+ */
+function setOnChannelFrozen(callback) {
+  onChannelFrozenCallback = callback;
+}
+
 /**
  * 初始化渠道健康信息
  */
@@ -70,21 +80,27 @@ function recordFailure(channelId, error) {
   health.consecutiveSuccesses = 0;
   health.lastCheckTime = now;
 
-  // 如果当前是健康状态，检查是否需要冻结
-  if (health.status === 'healthy') {
+  // 如果当前是健康状态或检测中状态，检查是否需要冻结
+  if (health.status === 'healthy' || health.status === 'checking') {
     if (health.consecutiveFailures >= healthConfig.failureThreshold) {
       // 触发冻结
+      const previousStatus = health.status;
       health.status = 'frozen';
       health.freezeUntil = now + health.nextFreezeTime;
 
       const freezeMinutes = Math.round(health.nextFreezeTime / 60000);
-      console.warn(`[ChannelHealth] Channel ${channelId} frozen due to ${health.consecutiveFailures} consecutive failures. Frozen for ${freezeMinutes} minutes`);
+      console.warn(`[ChannelHealth] Channel ${channelId} frozen due to ${health.consecutiveFailures} consecutive failures (was ${previousStatus}). Frozen for ${freezeMinutes} minutes`);
 
       // 更新下次冻结时间（翻倍，不超过最大值）
       health.nextFreezeTime = Math.min(
         health.nextFreezeTime * healthConfig.freezeMultiplier,
         healthConfig.maxFreezeTime
       );
+
+      // 触发冻结回调（通知调度器解绑会话）
+      if (onChannelFrozenCallback) {
+        onChannelFrozenCallback(channelId);
+      }
     }
   }
 }
@@ -202,5 +218,6 @@ module.exports = {
   getChannelHealthStatus,
   getAllChannelHealthStatus,
   resetChannelHealth,
+  setOnChannelFrozen,
   healthConfig,
 };
