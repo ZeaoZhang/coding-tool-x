@@ -77,8 +77,8 @@ async function handleStartProxy(cliType, services) {
 
   console.log(chalk.cyan('动态切换功能说明:'));
   console.log(chalk.gray('• 开启后会在本地启动一个代理服务'));
-  console.log(chalk.gray(`• 可以在不重启 ${toolName} 的情况下切换渠道`));
-  console.log(chalk.gray('• 通过 Web UI 或"切换渠道"功能实现快速切换'));
+  console.log(chalk.gray(`• 可以在不重启 ${toolName} 的情况下动态管理渠道`));
+  console.log(chalk.gray('• 通过 Web UI 或"渠道管理"功能快速调整启用的线路'));
   console.log(chalk.gray(`• 代理服务地址: http://127.0.0.1:${defaultPort}\n`));
 
   console.log(chalk.yellow('⚠️  重要提示:'));
@@ -122,7 +122,7 @@ async function handleStartProxy(cliType, services) {
     }
 
     console.log(chalk.cyan('\n💡 动态切换已启用！'));
-    console.log(chalk.gray(`   现在可以通过"切换渠道"功能快速切换，无需重启 ${toolName}\n`));
+    console.log(chalk.gray(`   现在可以通过"渠道管理"功能快速调整，无需重启 ${toolName}\n`));
 
     await inquirer.prompt([
       {
@@ -164,7 +164,7 @@ async function handleStopProxy(cliType, services) {
   console.log(chalk.yellow('关闭后:'));
   console.log(chalk.gray('• 代理服务将被停止'));
   console.log(chalk.gray('• 配置将恢复到关闭前的状态'));
-  console.log(chalk.gray(`• 切换渠道需要重启 ${toolName}\n`));
+  console.log(chalk.gray(`• 之后管理渠道将需要重启 ${toolName}\n`));
 
   const { confirm } = await inquirer.prompt([
     {
@@ -195,7 +195,7 @@ async function handleStopProxy(cliType, services) {
     }
 
     console.log(chalk.cyan('\n💡 动态切换已关闭'));
-    console.log(chalk.gray(`   现在切换渠道需要重启 ${toolName} 才能生效\n`));
+    console.log(chalk.gray(`   现在调整渠道需要重启 ${toolName} 才能生效\n`));
 
     await inquirer.prompt([
       {

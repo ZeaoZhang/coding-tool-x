@@ -128,7 +128,7 @@ function handleProxyStatus() {
 
   if (proxyStatus.running && configIsProxy) {
     console.log(chalk.green('  ✓ 代理正常运行，Claude Code 将通过代理访问 API'));
-    console.log(chalk.gray('  • 使用 Web UI (ct ui) 可以动态切换渠道'));
+    console.log(chalk.gray('  • 使用 Web UI (ct ui) 可以动态管理渠道'));
     console.log(chalk.gray('  • 使用 ct proxy stop 停止代理并恢复配置'));
   } else if (proxyStatus.running && !configIsProxy) {
     console.log(chalk.yellow('  ⚠️  代理服务在运行，但配置未启用代理模式'));

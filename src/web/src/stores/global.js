@@ -49,6 +49,13 @@ export const useGlobalStore = defineStore('global', () => {
   const codexChannels = ref([])
   const geminiChannels = ref([])
 
+  // 调度状态（实时并发信息）
+  const schedulerState = reactive({
+    claude: { channels: [], pending: 0 },
+    codex: { channels: [], pending: 0 },
+    gemini: { channels: [], pending: 0 }
+  })
+
   const logsBySource = reactive({
     claude: [],
     codex: [],
@@ -238,6 +245,13 @@ export const useGlobalStore = defineStore('global', () => {
     }
   }
 
+  function handleSchedulerStateUpdate(data) {
+    const { source, scheduler } = data
+    if (schedulerState[source] && scheduler) {
+      schedulerState[source] = scheduler
+    }
+  }
+
   async function initializeState() {
     try {
       const [claudeRes, codexRes, geminiRes] = await Promise.all([
@@ -262,15 +276,20 @@ export const useGlobalStore = defineStore('global', () => {
 
   async function loadChannels() {
     try {
-      const [claudeRes, codexRes, geminiRes] = await Promise.all([
+      const [claudeRes, codexRes, geminiRes, poolRes] = await Promise.all([
         axios.get('/api/channels').catch(() => ({ data: { channels: [] } })),
         axios.get('/api/codex/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/gemini/channels').catch(() => ({ data: { channels: [] } }))
+        axios.get('/api/gemini/channels').catch(() => ({ data: { channels: [] } })),
+        axios.get('/api/channels/pool/status').catch(() => ({ data: null }))
       ])
 
       claudeChannels.value = claudeRes.data.channels || []
       codexChannels.value = codexRes.data.channels || []
       geminiChannels.value = geminiRes.data.channels || []
+
+      if (poolRes.data?.scheduler) {
+        schedulerState.claude = poolRes.data.scheduler
+      }
     } catch (error) {
       console.error('Failed to load channels:', error)
     }
@@ -286,6 +305,10 @@ export const useGlobalStore = defineStore('global', () => {
     if (type === 'codex') return codexChannels
     if (type === 'gemini') return geminiChannels
     return claudeChannels
+  }
+
+  function getSchedulerState(type) {
+    return schedulerState[type] || { channels: [], pending: 0 }
   }
 
   async function startProxy(type) {
@@ -354,6 +377,8 @@ export const useGlobalStore = defineStore('global', () => {
           const data = JSON.parse(event.data)
           if (data.type === 'proxy-state') {
             handleProxyStateUpdate(data)
+          } else if (data.type === 'scheduler-state') {
+            handleSchedulerStateUpdate(data)
           } else {
             appendLogEntry(data)
           }
@@ -389,11 +414,13 @@ export const useGlobalStore = defineStore('global', () => {
     claudeChannels,
     codexChannels,
     geminiChannels,
+    schedulerState,
     connectWebSocket,
     initializeState,
     loadChannels,
     getProxyState,
     getChannels,
+    getSchedulerState,
     handleProxyStateUpdate,
     startProxy,
     stopProxy,

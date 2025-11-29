@@ -5,8 +5,7 @@ const {
   createChannel,
   updateChannel,
   deleteChannel,
-  activateChannel,
-  getActiveChannel,
+  getEnabledChannels,
   saveChannelOrder
 } = require('../services/codex-channels');
 const { isCodexInstalled } = require('../services/codex-config');
@@ -21,7 +20,6 @@ module.exports = (config) => {
       if (!isCodexInstalled()) {
         return res.json({
           channels: [],
-          activeChannelId: null,
           error: 'Codex CLI not installed'
         });
       }
@@ -45,14 +43,19 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
-      const { name, providerKey, baseUrl, apiKey, websiteUrl } = req.body;
+      const { name, providerKey, baseUrl, apiKey, websiteUrl, enabled, weight, maxConcurrency } = req.body;
 
       if (!name || !providerKey || !baseUrl || !apiKey) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
       // wireApi 固定为 'responses' (OpenAI Responses API 格式)
-      const channel = createChannel(name, providerKey, baseUrl, apiKey, 'responses', { websiteUrl });
+      const channel = createChannel(name, providerKey, baseUrl, apiKey, 'responses', {
+        websiteUrl,
+        enabled,
+        weight,
+        maxConcurrency
+      });
       res.json(channel);
     } catch (err) {
       console.error('[Codex Channels API] Failed to create channel:', err);
@@ -101,64 +104,6 @@ module.exports = (config) => {
   });
 
   /**
-   * POST /api/codex/channels/:channelId/activate
-   * 激活渠道(切换)
-   */
-  router.post('/:channelId/activate', async (req, res) => {
-    try {
-      if (!isCodexInstalled()) {
-        return res.status(404).json({ error: 'Codex CLI not installed' });
-      }
-
-      const { channelId } = req.params;
-      const result = activateChannel(channelId);
-
-      // 检查代理是否正在运行，如果是则重启以应用新渠道
-      const { getCodexProxyStatus, stopCodexProxyServer, startCodexProxyServer } = require('../codex-proxy-server');
-      let proxyStatus = getCodexProxyStatus();
-
-      if (proxyStatus && proxyStatus.running) {
-        console.log(`Codex proxy is running, restarting to switch to channel: ${result.channel.name}`);
-
-        // 停止代理（但保留启动时间）
-        await stopCodexProxyServer({ clearStartTime: false });
-
-        // 重新启动代理（保留原有启动时间）
-        const { setProxyConfig } = require('../services/codex-settings-manager');
-        const proxyResult = await startCodexProxyServer({ preserveStartTime: true });
-
-        if (proxyResult.success) {
-          setProxyConfig(proxyResult.port);
-          console.log(`Codex proxy restarted successfully on port ${proxyResult.port}`);
-        }
-      }
-
-      // 广播切换日志
-      const { broadcastLog, broadcastProxyState } = require('../websocket-server');
-      broadcastLog({
-        type: 'action',
-        action: 'switch_codex_channel',
-        message: `切换到 Codex 渠道: ${result.channel.name}`,
-        channelId: result.channel.id,
-        channelName: result.channel.name,
-        timestamp: Date.now(),
-        source: 'codex'
-      });
-
-      // 推送代理状态更新（渠道列表已更新）
-      proxyStatus = getCodexProxyStatus();
-      const { channels } = getChannels();
-      const activeChannel = channels.find(ch => ch.id === result.channel.id);
-      broadcastProxyState('codex', proxyStatus, activeChannel, channels);
-
-      res.json(result);
-    } catch (err) {
-      console.error('[Codex Channels API] Failed to activate channel:', err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  /**
    * POST /api/codex/channels/order
    * 保存渠道顺序
    */
@@ -183,19 +128,19 @@ module.exports = (config) => {
   });
 
   /**
-   * GET /api/codex/channels/active
-   * 获取当前激活的渠道
+   * GET /api/codex/channels/enabled
+   * 获取所有启用的渠道（供调度器使用）
    */
-  router.get('/active', (req, res) => {
+  router.get('/enabled', (req, res) => {
     try {
       if (!isCodexInstalled()) {
-        return res.json({ channel: null });
+        return res.json({ channels: [] });
       }
 
-      const channel = getActiveChannel();
-      res.json({ channel });
+      const channels = getEnabledChannels();
+      res.json({ channels });
     } catch (err) {
-      console.error('[Codex Channels API] Failed to get active channel:', err);
+      console.error('[Codex Channels API] Failed to get enabled channels:', err);
       res.status(500).json({ error: err.message });
     }
   });

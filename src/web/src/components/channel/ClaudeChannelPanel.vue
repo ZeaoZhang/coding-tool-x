@@ -66,19 +66,11 @@
                   未启用
                 </n-tag>
               </div>
-              <div class="channel-meta">
-                <span class="meta-item" title="权重">W:{{ element.weight || 1 }}</span>
-                <span class="meta-item" title="并发">C:{{ element.maxConcurrency ?? '∞' }}</span>
-              </div>
               <div class="channel-actions">
-                <n-switch
-                  size="small"
-                  :value="element.enabled !== false"
-                  @update:value="value => toggleChannelEnabled(element, value)"
-                />
                 <n-button
                   size="tiny"
                   type="primary"
+                  class="apply-btn"
                   @click="handleApplyToSettings(element)"
                 >
                   写入配置
@@ -93,6 +85,11 @@
                 >
                   删除
                 </n-button>
+                <n-switch
+                  size="small"
+                  :value="element.enabled !== false"
+                  @update:value="value => toggleChannelEnabled(element, value)"
+                />
               </div>
             </div>
 
@@ -116,13 +113,23 @@
                   </n-button>
                 </div>
               </div>
-              <div v-if="element.websiteUrl" class="info-footer">
-                <n-button text size="tiny" @click="emit('open-website', element.websiteUrl)">
+              <div class="info-footer">
+                <n-button v-if="element.websiteUrl" text size="tiny" @click="emit('open-website', element.websiteUrl)">
                   <template #icon>
                     <n-icon size="14"><OpenOutline /></n-icon>
                   </template>
                   前往官网
                 </n-button>
+                <div class="footer-spacer"></div>
+                <div class="channel-meta">
+                  <span class="meta-item">权重: <span class="meta-value">{{ element.weight || 1 }}</span></span>
+                  <span class="meta-item" v-if="element.maxConcurrency">
+                    并发: <span class="meta-value" :class="{ 'meta-active': getChannelInflight(element.id) > 0 }">{{ getChannelInflight(element.id) }}/{{ element.maxConcurrency }}</span>
+                  </span>
+                  <span class="meta-item" v-else>
+                    并发: <span class="meta-value" :class="{ 'meta-active': getChannelInflight(element.id) > 0 }">{{ getChannelInflight(element.id) > 0 ? getChannelInflight(element.id) : '不限' }}</span>
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -130,47 +137,57 @@
       </draggable>
     </div>
 
-    <n-modal v-model:show="showAddDialog" preset="card" :title="dialogTitle" style="width: 480px;">
-      <n-form label-placement="left" label-width="80px">
-        <n-form-item label="名称" required>
-          <n-input v-model:value="formData.name" placeholder="渠道名称" />
-        </n-form-item>
-        <n-form-item label="Base URL" required>
-          <n-input v-model:value="formData.baseUrl" placeholder="https://api.example.com" />
-        </n-form-item>
-        <n-form-item label="API Key" required>
-          <n-input v-model:value="formData.apiKey" placeholder="sk-..." type="password" />
-        </n-form-item>
-        <n-form-item label="官网链接">
-          <n-input v-model:value="formData.websiteUrl" placeholder="https://" />
-        </n-form-item>
-        <n-form-item label="最大并发">
-          <n-input-number
-            v-model:value="formData.maxConcurrency"
-            :min="1"
-            :step="1"
-            placeholder="不限制"
-            clearable
-            style="width: 100%;"
-          />
-          <template #feedback>
-            留空表示不限制并发数
-          </template>
-        </n-form-item>
-        <n-form-item label="权重" required>
-          <n-input-number
-            v-model:value="formData.weight"
-            :min="1"
-            :step="1"
-            style="width: 100%;"
-          />
-          <template #feedback>
-            权重越高，渠道被选中的概率越大
-          </template>
-        </n-form-item>
-        <n-form-item label="启用">
-          <n-switch v-model:value="formData.enabled" />
-        </n-form-item>
+    <n-modal v-model:show="showAddDialog" preset="card" :title="dialogTitle" style="width: 520px;" class="channel-dialog">
+      <n-form label-placement="left" label-width="80px" class="channel-form">
+        <div class="form-section">
+          <div class="section-title">基本信息</div>
+          <n-form-item label="渠道名称" required>
+            <n-input v-model:value="formData.name" placeholder="输入渠道名称" />
+          </n-form-item>
+          <n-form-item label="接口地址" required>
+            <n-input v-model:value="formData.baseUrl" placeholder="https://api.example.com" />
+          </n-form-item>
+          <n-form-item label="接口密钥" required>
+            <n-input v-model:value="formData.apiKey" placeholder="sk-..." type="password" show-password-on="click" />
+          </n-form-item>
+          <n-form-item label="官网链接">
+            <n-input v-model:value="formData.websiteUrl" placeholder="https://（选填）" />
+          </n-form-item>
+        </div>
+
+        <div class="form-section">
+          <div class="section-title">调度配置</div>
+          <n-form-item label="最大并发">
+            <n-input-number
+              v-model:value="formData.maxConcurrency"
+              :min="1"
+              :max="100"
+              :step="1"
+              placeholder="1-100，留空不限制"
+              clearable
+              style="width: 100%;"
+            />
+          </n-form-item>
+          <n-form-item label="调度权重">
+            <n-input-number
+              v-model:value="formData.weight"
+              :min="1"
+              :max="100"
+              :step="1"
+              placeholder="1-100"
+              style="width: 100%;"
+            />
+            <template #feedback>
+              权重越高，被选中概率越大
+            </template>
+          </n-form-item>
+          <n-form-item label="渠道状态">
+            <n-switch v-model:value="formData.enabled">
+              <template #checked>启用</template>
+              <template #unchecked>停用</template>
+            </n-switch>
+          </n-form-item>
+        </div>
       </n-form>
       <template #footer>
         <div class="dialog-footer">
@@ -209,6 +226,9 @@ import {
 } from '../../api/channels'
 import { client } from '../../api/client'
 import { getUIConfig, updateNestedUIConfig } from '../../api/ui-config'
+import { useGlobalStore } from '../../stores/global'
+
+const globalStore = useGlobalStore()
 
 const COLLAPSE_STORAGE_KEY = 'claudeChannelCollapse'
 
@@ -217,6 +237,14 @@ const loading = ref(false)
 const showAddDialog = ref(false)
 const editingChannel = ref(null)
 const editingActiveChannel = ref(false)
+
+// 获取渠道的实时并发数
+function getChannelInflight(channelId) {
+  const scheduler = globalStore.schedulerState.claude
+  if (!scheduler || !scheduler.channels) return 0
+  const ch = scheduler.channels.find(c => c.id === channelId)
+  return ch ? ch.inflight : 0
+}
 
 // 从 localStorage 获取初始折叠状态
 function getCollapseFromStorage() {
@@ -371,7 +399,7 @@ async function handleSave() {
 async function toggleChannelEnabled(channel, enabled) {
   try {
     await updateChannel(channel.id, { enabled })
-    message.success(enabled ? '渠道已启用' : '渠道已停用')
+    message.success(enabled ? `渠道「${channel.name}」已启用` : `渠道「${channel.name}」已停用`)
 
     // 如果禁用渠道，自动折叠并移到最后
     if (!enabled) {
@@ -507,9 +535,17 @@ onMounted(() => {
   loadCollapseSettings()
 })
 
+// 计算渠道统计
+const channelStats = computed(() => {
+  const enabled = channels.value.filter(ch => ch.enabled !== false).length
+  const disabled = channels.value.filter(ch => ch.enabled === false).length
+  return { enabled, disabled, total: channels.value.length }
+})
+
 defineExpose({
   openAddDialog: handleAdd,
-  refresh: loadChannels
+  refresh: loadChannels,
+  channelStats
 })
 </script>
 
@@ -590,20 +626,44 @@ defineExpose({
   text-overflow: ellipsis;
 }
 
+.info-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--n-border-color);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-spacer {
+  flex: 1;
+}
+
 .channel-meta {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
 .meta-item {
   font-size: 11px;
-  font-family: monospace;
   color: var(--n-text-color-3);
-  background: var(--n-color);
-  padding: 2px 6px;
-  border-radius: 4px;
   white-space: nowrap;
+}
+
+.meta-value {
+  color: #18a058;
+  font-weight: 600;
+}
+
+.meta-value.meta-active {
+  color: #f0a020;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .channel-actions {
@@ -613,8 +673,17 @@ defineExpose({
   flex-shrink: 0;
 }
 
+.channel-actions .apply-btn {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.channel-card:hover .channel-actions .apply-btn {
+  opacity: 1;
+}
+
 .channel-actions :deep(.n-switch) {
-  margin-right: 2px;
+  margin-left: 2px;
 }
 
 .channel-info {
@@ -653,12 +722,6 @@ defineExpose({
   font-family: monospace;
 }
 
-.info-footer {
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed var(--n-border-color);
-}
-
 .collapse-btn {
   padding: 0;
   display: flex;
@@ -677,6 +740,44 @@ defineExpose({
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* 添加渠道弹窗样式 */
+.channel-form {
+  padding: 0 4px;
+}
+
+.form-section {
+  background: var(--n-color);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--n-border-color);
+}
+
+.form-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--n-text-color);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--n-border-color);
+}
+
+.channel-form :deep(.n-form-item) {
+  margin-bottom: 16px;
+}
+
+.channel-form :deep(.n-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.channel-form :deep(.n-form-item-label) {
+  font-size: 13px;
 }
 
 :global(.ghost) {

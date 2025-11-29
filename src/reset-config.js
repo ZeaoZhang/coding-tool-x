@@ -69,7 +69,7 @@ async function resetConfig() {
           }
         } else {
           console.log('⚠️  未找到激活渠道信息，但已清除代理配置');
-          console.log('请手动配置 Claude Code 或通过 Web UI 切换渠道');
+          console.log('请手动配置 Claude Code 或通过 Web UI 管理渠道');
         }
       } else {
         console.log('✅ 配置文件正常，无需恢复');

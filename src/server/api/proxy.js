@@ -129,7 +129,7 @@ router.post('/start', async (req, res) => {
 
     const updatedStatus = getProxyStatus();
     const channels = getAllChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
+    const activeChannel = channels.find(ch => ch.enabled !== false);
 
     // 6. 通过 WebSocket 推送代理状态更新
     const { broadcastProxyState } = require('../websocket-server');

@@ -346,10 +346,31 @@ function broadcastProxyState(source, proxyStatus = {}, activeChannel = null, cha
   }
 }
 
+// 广播调度状态更新（实时并发信息）
+function broadcastSchedulerState(source, schedulerState) {
+  const stateUpdate = {
+    type: 'scheduler-state',
+    source, // 'claude', 'codex', or 'gemini'
+    scheduler: schedulerState,
+    timestamp: Date.now()
+  };
+
+  if (wss && wsClients.size > 0) {
+    const message = JSON.stringify(stateUpdate);
+
+    wsClients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  }
+}
+
 module.exports = {
   startWebSocketServer,
   stopWebSocketServer,
   broadcastLog,
   clearAllLogs,
-  broadcastProxyState
+  broadcastProxyState,
+  broadcastSchedulerState
 };

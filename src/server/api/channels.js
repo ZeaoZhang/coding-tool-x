@@ -9,8 +9,9 @@ const {
   getCurrentSettings,
   getBestChannelForRestore
 } = require('../services/channels');
+const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
-const { broadcastLog, broadcastProxyState } = require('../websocket-server');
+const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
 
 // GET /api/channels - Get all channels with health status
 router.get('/', (req, res) => {
@@ -24,6 +25,15 @@ router.get('/', (req, res) => {
     res.json({ channels: channelsWithHealth });
   } catch (error) {
     console.error('Error fetching channels:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/pool/status', (req, res) => {
+  try {
+    const scheduler = getSchedulerState();
+    res.json({ source: 'claude', scheduler });
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
@@ -63,8 +73,20 @@ router.post('/', (req, res) => {
       maxConcurrency
     });
     res.json({ channel });
+    broadcastSchedulerState('claude', getSchedulerState());
   } catch (error) {
     console.error('Error creating channel:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/channels/best-for-restore - Get best channel for restore (must be before /:id)
+router.get('/best-for-restore', (req, res) => {
+  try {
+    const channel = getBestChannelForRestore();
+    res.json({ channel });
+  } catch (error) {
+    console.error('Error getting best channel for restore:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -77,6 +99,7 @@ router.put('/:id', (req, res) => {
 
     const channel = updateChannel(id, updates);
     res.json({ channel });
+    broadcastSchedulerState('claude', getSchedulerState());
   } catch (error) {
     console.error('Error updating channel:', error);
     res.status(500).json({ error: error.message });
@@ -89,6 +112,7 @@ router.delete('/:id', (req, res) => {
     const { id } = req.params;
     const result = deleteChannel(id);
     res.json(result);
+    broadcastSchedulerState('claude', getSchedulerState());
   } catch (error) {
     console.error('Error deleting channel:', error);
     res.status(500).json({ error: error.message });
@@ -146,17 +170,6 @@ router.post('/:id/apply-to-settings', async (req, res) => {
     });
   } catch (error) {
     console.error('Error applying channel to settings:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// GET /api/channels/best-for-restore - Get best channel for restore
-router.get('/best-for-restore', (req, res) => {
-  try {
-    const channel = getBestChannelForRestore();
-    res.json({ channel });
-  } catch (error) {
-    console.error('Error getting best channel for restore:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -353,6 +353,7 @@
                       <n-switch
                         v-model:value="advancedSettings.enableSessionBinding"
                         size="medium"
+                        @update:value="handleSessionBindingChange"
                       />
                     </div>
                   </div>
@@ -794,6 +795,7 @@ const portsChanged = computed(() => {
     ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
+    advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
     JSON.stringify(pricingSettings.value) !== JSON.stringify(originalPricingSettings.value)
 })
 
@@ -931,6 +933,35 @@ function handleShowLogsChange(value) {
   window.dispatchEvent(new CustomEvent('panel-visibility-change', {
     detail: { showChannels: showChannels.value, showLogs: value }
   }))
+}
+
+// 会话绑定开关变化时立即保存
+async function handleSessionBindingChange(value) {
+  try {
+    const response = await fetch('/api/config/advanced', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ports: ports.value,
+        maxLogs: advancedSettings.value.maxLogs,
+        statsInterval: advancedSettings.value.statsInterval,
+        enableSessionBinding: value,
+        pricing: pricingSettings.value
+      })
+    })
+    if (response.ok) {
+      originalAdvancedSettings.value.enableSessionBinding = value
+      message.success(value ? '会话绑定已开启' : '会话绑定已关闭')
+    } else {
+      // 保存失败，回滚开关状态
+      advancedSettings.value.enableSessionBinding = !value
+      message.error('保存失���')
+    }
+  } catch (error) {
+    console.error('Failed to save session binding:', error)
+    advancedSettings.value.enableSessionBinding = !value
+    message.error('保存失败: ' + error.message)
+  }
 }
 
 // 加载端口和高级配置

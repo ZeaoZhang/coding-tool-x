@@ -38,11 +38,14 @@ export function useProxyState() {
       claudeProxy.value.activeChannel = response.data.activeChannel || null
       claudeProxy.value.runtime = response.data.proxy?.runtime || null
       claudeProxy.value.startTime = response.data.proxy?.startTime || null
-      // 如果代理运行中但没有activeChannel，尝试获取当前渠道
+      // 如果代理运行中但没有activeChannel，尝试获取当前启用的渠道
       if (claudeProxy.value.running && !claudeProxy.value.activeChannel) {
         try {
-          const channelRes = await axios.get('/api/channels/current')
-          claudeProxy.value.activeChannel = channelRes.data
+          const channelRes = await axios.get('/api/channels')
+          const enabledChannels = channelRes.data.channels?.filter(ch => ch.enabled !== false)
+          if (enabledChannels && enabledChannels.length > 0) {
+            claudeProxy.value.activeChannel = enabledChannels[0]
+          }
         } catch (e) {}
       }
     } catch (error) {
@@ -63,8 +66,11 @@ export function useProxyState() {
       codexProxy.value.startTime = response.data.proxy?.startTime || null
       if (codexProxy.value.running && !codexProxy.value.activeChannel) {
         try {
-          const channelRes = await axios.get('/api/codex/channels/active')
-          codexProxy.value.activeChannel = channelRes.data.channel
+          const channelRes = await axios.get('/api/codex/channels/enabled')
+          const enabledChannels = channelRes.data.channels
+          if (enabledChannels && enabledChannels.length > 0) {
+            codexProxy.value.activeChannel = enabledChannels[0]
+          }
         } catch (e) {}
       }
     } catch (error) {
@@ -85,8 +91,11 @@ export function useProxyState() {
       geminiProxy.value.startTime = response.data.proxy?.startTime || null
       if (geminiProxy.value.running && !geminiProxy.value.activeChannel) {
         try {
-          const channelRes = await axios.get('/api/gemini/channels/active')
-          geminiProxy.value.activeChannel = channelRes.data.channel
+          const channelRes = await axios.get('/api/gemini/channels/enabled')
+          const enabledChannels = channelRes.data.channels
+          if (enabledChannels && enabledChannels.length > 0) {
+            geminiProxy.value.activeChannel = enabledChannels[0]
+          }
         } catch (e) {}
       }
     } catch (error) {

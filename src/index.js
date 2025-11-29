@@ -13,7 +13,7 @@ const { switchProject } = require('./commands/switch');
 const { handleUI } = require('./commands/ui');
 const { handleProxyStart, handleProxyStop, handleProxyStatus } = require('./commands/proxy');
 const { resetConfig } = require('./reset-config');
-const { handleSwitchChannel, handleAddChannel } = require('./commands/channels');
+const { handleChannelManagement, handleAddChannel, handleChannelStatus } = require('./commands/channels');
 const { handleToggleProxy } = require('./commands/toggle-proxy');
 const { handlePortConfig } = require('./commands/port-config');
 const { handleSwitchCliType } = require('./commands/cli-type');
@@ -331,7 +331,10 @@ async function main() {
         break;
 
       case 'switch-channel':
-        await handleSwitchChannel();
+        await handleChannelManagement();
+        break;
+      case 'channel-status':
+        await handleChannelStatus();
         break;
 
       case 'toggle-proxy':

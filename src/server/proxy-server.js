@@ -3,9 +3,9 @@ const httpProxy = require('http-proxy');
 const http = require('http');
 const net = require('net');
 const chalk = require('chalk');
-const { allocateChannel, releaseChannel } = require('./services/channel-scheduler');
+const { allocateChannel, releaseChannel, getSchedulerState } = require('./services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('./services/channel-health');
-const { broadcastLog } = require('./websocket-server');
+const { broadcastLog, broadcastSchedulerState } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
 const { resolvePricing } = require('./utils/pricing');
@@ -161,6 +161,9 @@ async function startProxyServer(options = {}) {
         const enableSessionBinding = config.enableSessionBinding !== false; // 默认开启
         const channel = await allocateChannel({ sessionId, enableSessionBinding });
 
+        // 广播调度状态（请求开始）
+        broadcastSchedulerState('claude', getSchedulerState());
+
         req.selectedChannel = channel;
         req.sessionId = sessionId || null;
         let released = false;
@@ -169,6 +172,8 @@ async function startProxyServer(options = {}) {
           if (released) return;
           released = true;
           releaseChannel(channel.id);
+          // 广播调度状态（请求结束）
+          broadcastSchedulerState('claude', getSchedulerState());
         };
 
         req.__releaseChannel = release;

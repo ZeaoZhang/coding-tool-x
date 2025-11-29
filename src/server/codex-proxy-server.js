@@ -2,7 +2,7 @@ const express = require('express');
 const httpProxy = require('http-proxy');
 const http = require('http');
 const chalk = require('chalk');
-const { getActiveCodexChannel } = require('./services/codex-channels');
+const { getEnabledChannels } = require('./services/codex-channels');
 const { broadcastLog } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
@@ -109,7 +109,9 @@ async function startCodexProxyServer(options = {}) {
 
     // 监听 proxyReq 事件，修改发往真实API的请求头
     proxy.on('proxyReq', (proxyReq, req, res) => {
-      const activeChannel = getActiveCodexChannel();
+      // 多渠道模式：使用第一个启用的渠道（简化版本）
+      const enabledChannels = getEnabledChannels();
+      const activeChannel = enabledChannels[0];
       if (activeChannel) {
         // 记录请求元数据
         const requestId = `codex-${Date.now()}-${Math.random()}`;
@@ -136,7 +138,9 @@ async function startCodexProxyServer(options = {}) {
 
     // 代理所有请求
     proxyApp.use((req, res) => {
-      const activeChannel = getActiveCodexChannel();
+      // 多渠道模式：使用第一个启用的渠道
+      const enabledChannels = getEnabledChannels();
+      const activeChannel = enabledChannels[0];
 
       if (!activeChannel) {
         res.status(500).json({

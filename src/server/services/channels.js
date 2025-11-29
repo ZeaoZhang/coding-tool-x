@@ -53,10 +53,13 @@ let channelsCacheInitialized = false;
 
 const DEFAULT_CHANNELS = { channels: [] };
 
-function normalizeNumber(value, defaultValue) {
+function normalizeNumber(value, defaultValue, max = null) {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) {
     return defaultValue;
+  }
+  if (max !== null && num > max) {
+    return max;
   }
   return num;
 }
@@ -69,15 +72,15 @@ function applyChannelDefaults(channel) {
     normalized.enabled = !!normalized.enabled;
   }
 
-  normalized.weight = normalizeNumber(normalized.weight, 1);
+  normalized.weight = normalizeNumber(normalized.weight, 1, 100);
 
-  // maxConcurrency: undefined/0/null 表示无限制
+  // maxConcurrency: undefined/0/null 表示无限制，最大100
   if (normalized.maxConcurrency === undefined ||
       normalized.maxConcurrency === null ||
       normalized.maxConcurrency === 0) {
     normalized.maxConcurrency = null; // null 表示无限制
   } else {
-    normalized.maxConcurrency = normalizeNumber(normalized.maxConcurrency, 1);
+    normalized.maxConcurrency = normalizeNumber(normalized.maxConcurrency, 1, 100);
   }
 
   return normalized;
@@ -207,8 +210,8 @@ function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
     createdAt: Date.now(),
     websiteUrl: websiteUrl || undefined,
     enabled: extraConfig.enabled !== undefined ? !!extraConfig.enabled : true,
-    weight: normalizeNumber(extraConfig.weight, 1),
-    maxConcurrency: normalizeNumber(extraConfig.maxConcurrency, 1)
+    weight: extraConfig.weight,
+    maxConcurrency: extraConfig.maxConcurrency
   });
 
   data.channels.push(newChannel);

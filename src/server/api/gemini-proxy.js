@@ -13,7 +13,7 @@ const {
   configExists,
   hasBackup
 } = require('../services/gemini-settings-manager');
-const { getChannels, getActiveChannel } = require('../services/gemini-channels');
+const { getChannels, getEnabledChannels } = require('../services/gemini-channels');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -45,7 +45,8 @@ router.get('/status', (req, res) => {
       currentProxyPort: getCurrentProxyPort()
     };
     const { channels } = getChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
+    const enabledChannels = channels.filter(ch => ch.enabled !== false);
+    const activeChannel = enabledChannels[0]; // 多渠道模式：第一个启用的渠道
 
     res.json({
       proxy: proxyStatus,
@@ -67,11 +68,12 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    // 2. 获取当前激活的渠道
-    const currentChannel = getActiveChannel();
+    // 2. 获取当前启用的渠道（多渠道模式）
+    const enabledChannels = getEnabledChannels();
+    const currentChannel = enabledChannels[0];
     if (!currentChannel) {
       return res.status(400).json({
-        error: 'No active Gemini channel found. Please create and activate a channel first.'
+        error: 'No enabled Gemini channel found. Please create and enable a channel first.'
       });
     }
 
@@ -91,9 +93,9 @@ router.post('/start', async (req, res) => {
 
     const { broadcastProxyState } = require('../websocket-server');
     const proxyStatus = getGeminiProxyStatus();
-    const { channels } = getChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
-    broadcastProxyState('gemini', proxyStatus, activeChannel, channels);
+    const { channels: allChannels } = getChannels();
+    const activeChannel = allChannels.filter(ch => ch.enabled !== false)[0];
+    broadcastProxyState('gemini', proxyStatus, activeChannel, allChannels);
 
     res.json({
       success: true,
@@ -110,9 +112,10 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前激活的渠道
-    const { channels, activeChannelId } = getChannels();
-    const activeChannel = channels.find(ch => ch.id === activeChannelId);
+    // 1. 获取当前启用的渠道（多渠道模式）
+    const { channels } = getChannels();
+    const enabledChannels = channels.filter(ch => ch.enabled !== false);
+    const activeChannel = enabledChannels[0];
 
     // 2. 停止代理服务器
     const proxyResult = await stopGeminiProxyServer();
@@ -146,7 +149,7 @@ router.post('/stop', async (req, res) => {
     }
 
     const proxyStatus = getGeminiProxyStatus();
-    const latestChannels = getChannels().channels;
+    const { channels: latestChannels } = getChannels();
     broadcastProxyState('gemini', proxyStatus, activeChannel, latestChannels);
   } catch (error) {
     console.error('[Gemini Proxy] Error stopping proxy:', error);

@@ -3,11 +3,33 @@
   "defaultProject": null,
   "maxDisplaySessions": 100,
   "pageSize": 15,
-  "currentCliType": "codex",
+  "currentCliType": "claude",
   "ports": {
     "webUI": 10099,
     "proxy": 10088,
     "codexProxy": 10089,
     "geminiProxy": 10090
-  }
+  },
+  "maxLogs": 100,
+  "statsInterval": 30,
+  "pricing": {
+    "claude": {
+      "mode": "auto",
+      "input": 3,
+      "output": 15,
+      "cacheCreation": 3.75,
+      "cacheRead": 0.3
+    },
+    "codex": {
+      "mode": "auto",
+      "input": 2.5,
+      "output": 10
+    },
+    "gemini": {
+      "mode": "auto",
+      "input": 1.25,
+      "output": 5
+    }
+  },
+  "enableSessionBinding": true
 }

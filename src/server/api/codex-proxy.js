@@ -13,7 +13,7 @@ const {
   configExists,
   hasBackup
 } = require('../services/codex-settings-manager');
-const { getChannels, getActiveChannel } = require('../services/codex-channels');
+const { getChannels, getEnabledChannels } = require('../services/codex-channels');
 const { clearAllLogs } = require('../websocket-server');
 const fs = require('fs');
 const path = require('path');
@@ -45,7 +45,8 @@ router.get('/status', (req, res) => {
   try {
     const proxyStatus = getCodexProxyStatus();
     const { channels } = getChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
+    const enabledChannels = channels.filter(ch => ch.enabled !== false);
+    const activeChannel = enabledChannels[0]; // 多渠道模式：第一个启用的渠道
     const configStatus = {
       isProxyConfig: isProxyConfig(),
       configExists: configExists(),
@@ -73,11 +74,12 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    // 2. 获取当前激活的渠道
-    const currentChannel = getActiveChannel();
+    // 2. 获取当前启用的渠道（多渠道模式）
+    const enabledChannels = getEnabledChannels();
+    const currentChannel = enabledChannels[0];
     if (!currentChannel) {
       return res.status(400).json({
-        error: 'No active Codex channel found. Please create and activate a channel first.'
+        error: 'No enabled Codex channel found. Please create and enable a channel first.'
       });
     }
 
@@ -96,10 +98,10 @@ router.post('/start', async (req, res) => {
     setProxyConfig(proxyResult.port);
 
     const updatedStatus = getCodexProxyStatus();
-    const { channels } = getChannels();
-    const activeChannel = channels.find(ch => ch.isActive);
+    const { channels: allChannels } = getChannels();
+    const activeChannel = allChannels.filter(ch => ch.enabled !== false)[0];
     const { broadcastProxyState } = require('../websocket-server');
-    broadcastProxyState('codex', updatedStatus, activeChannel, channels);
+    broadcastProxyState('codex', updatedStatus, activeChannel, allChannels);
 
     res.json({
       success: true,
@@ -116,9 +118,10 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前激活的渠道
-    const { channels, activeChannelId } = getChannels();
-    const activeChannel = channels.find(ch => ch.id === activeChannelId) || channels.find(ch => ch.isActive);
+    // 1. 获取当前启用的渠道（多渠道模式）
+    const { channels } = getChannels();
+    const enabledChannels = channels.filter(ch => ch.enabled !== false);
+    const activeChannel = enabledChannels[0];
 
     // 2. 停止代理服务器
     const proxyResult = await stopCodexProxyServer();

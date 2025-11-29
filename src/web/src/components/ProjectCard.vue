@@ -1,31 +1,27 @@
 <template>
-  <n-card
-    hoverable
+  <div
     class="project-card"
     @click="handleCardClick"
-    :style="{ cursor: 'pointer' }"
     @mouseenter="showDelete = true"
     @mouseleave="showDelete = false"
   >
     <div class="card-content">
-      <!-- Header row: Icon + Title -->
+      <!-- Header row: Icon + Title + Delete -->
       <div class="header-row">
-        <n-icon size="24" :color="projectColor">
+        <n-icon size="18" :color="projectColor">
           <FolderOpenOutline />
         </n-icon>
         <span class="project-name">{{ projectName }}</span>
-
-        <!-- Delete button (shows on hover) -->
         <n-button
           v-show="showDelete"
           text
           type="error"
-          size="small"
+          size="tiny"
           class="delete-btn"
           @click.stop="handleDelete"
         >
           <template #icon>
-            <n-icon size="18">
+            <n-icon size="14">
               <TrashOutline />
             </n-icon>
           </template>
@@ -35,9 +31,9 @@
       <!-- Full Path -->
       <n-text depth="3" class="project-path">{{ projectPath }}</n-text>
 
-      <!-- Stats -->
+      <!-- Stats Row -->
       <div class="stats-row">
-        <n-tag size="small" :bordered="false" type="success" round>
+        <n-tag size="tiny" :bordered="false" type="success">
           {{ sessionCount }} 会话
         </n-tag>
         <n-text v-if="lastUsed" depth="3" class="last-used">
@@ -45,12 +41,12 @@
         </n-text>
       </div>
     </div>
-  </n-card>
+  </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
-import { NCard, NIcon, NText, NTag, NButton } from 'naive-ui'
+import { NIcon, NText, NTag, NButton } from 'naive-ui'
 import { FolderOpenOutline, TrashOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -109,12 +105,13 @@ function formatTime(timestamp) {
 
 <style scoped>
 .project-card {
-  height: 140px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 14px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 8px;
   border: 1px solid var(--border-primary);
-  box-shadow: var(--shadow-sm);
-  background: var(--gradient-card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  background: var(--bg-primary);
   position: relative;
   overflow: hidden;
 }
@@ -124,17 +121,17 @@ function formatTime(timestamp) {
   position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, rgba(24, 160, 88, 0.3), transparent);
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(180deg, #18a058, rgba(24, 160, 88, 0.4));
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.25s ease;
 }
 
 .project-card:hover {
-  transform: translateY(-6px);
-  box-shadow: 0 16px 32px rgba(24, 160, 88, 0.15), var(--shadow-md);
-  border-color: #18a058;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(24, 160, 88, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+  border-color: rgba(24, 160, 88, 0.4);
 }
 
 .project-card:hover::before {
@@ -144,32 +141,30 @@ function formatTime(timestamp) {
 .card-content {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  gap: 6px;
 }
 
 .header-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-  position: relative;
+  gap: 8px;
 }
 
 .project-name {
-  font-size: 17px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
   color: var(--text-primary);
-  letter-spacing: -0.3px;
+  letter-spacing: -0.2px;
 }
 
 .delete-btn {
-  margin-left: auto;
-  opacity: 0.8;
+  opacity: 0.7;
   transition: opacity 0.2s;
+  padding: 2px !important;
 }
 
 .delete-btn:hover {
@@ -177,27 +172,29 @@ function formatTime(timestamp) {
 }
 
 .project-path {
-  font-size: 12px;
+  font-size: 11px;
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-bottom: 12px;
-  flex: 1;
+  line-height: 1.3;
 }
 
 .stats-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: auto;
+  margin-top: 4px;
   padding-top: 8px;
-  border-top: 1px solid var(--border-primary);
+  border-top: 1px dashed var(--border-primary);
 }
 
 .stats-row :deep(.n-tag) {
+  font-size: 11px;
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(24, 160, 88, 0.15);
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 4px;
 }
 
 .last-used {

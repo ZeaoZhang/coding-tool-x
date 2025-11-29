@@ -61,21 +61,64 @@
               </n-text>
               <span class="proxy-port">端口: {{ proxyState.port }}</span>
             </div>
-            <n-tooltip trigger="hover">
+            <n-popover trigger="click" placement="bottom" :width="320" class="channel-popover">
               <template #trigger>
                 <n-button text size="tiny" class="channel-status">
                   <span class="channel-name">{{ statusText }}</span>
                 </n-button>
               </template>
-              <div v-if="proxyState.running">
-                多渠道调度模式<br>
-                <span style="font-size: 11px; opacity: 0.8;">启用渠道数: {{ channels.filter(ch => ch.enabled !== false).length }}</span>
+              <div class="channel-quick-panel">
+                <div class="panel-title">
+                  <span>渠道快捷管理</span>
+                  <n-text depth="3" style="font-size: 11px;">点击开关切换状态</n-text>
+                </div>
+                <div v-if="channels.length === 0" class="no-channels">
+                  <n-text depth="3">暂无配置渠道</n-text>
+                </div>
+                <div v-else class="channel-quick-list">
+                  <div
+                    v-for="channel in channels"
+                    :key="channel.id"
+                    class="channel-quick-item"
+                    :class="{ disabled: channel.enabled === false }"
+                  >
+                    <div class="channel-quick-info">
+                      <span class="channel-quick-name">{{ channel.name }}</span>
+                      <n-tag v-if="channel.health?.status === 'frozen'" size="tiny" type="error" :bordered="false">
+                        冻结
+                      </n-tag>
+                      <n-switch
+                        size="small"
+                        :value="channel.enabled !== false"
+                        @update:value="value => handleQuickToggle(channel, value)"
+                        style="margin-left: auto;"
+                      />
+                    </div>
+                    <!-- 渠道统计指标 -->
+                    <div class="channel-metrics">
+                      <span class="metric-item">
+                        <span class="metric-label">请求</span>
+                        <span class="metric-value">{{ getChannelTodayStats(channel.id).requests }}</span>
+                      </span>
+                      <span class="metric-item">
+                        <span class="metric-label">Tokens</span>
+                        <span class="metric-value">{{ formatStatNumber(getChannelTodayStats(channel.id).tokens) }}</span>
+                      </span>
+                      <span class="metric-item">
+                        <span class="metric-label">权重</span>
+                        <span class="metric-value">{{ channel.weight || 1 }}</span>
+                      </span>
+                      <span class="metric-item">
+                        <span class="metric-label">并发</span>
+                        <span class="metric-value" :class="{ active: getChannelInflight(channel.id) > 0 }">
+                          {{ getChannelInflight(channel.id) }}{{ channel.maxConcurrency ? `/${channel.maxConcurrency}` : '' }}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div v-else>
-                直连模式<br>
-                <span style="font-size: 11px; opacity: 0.8;">请从渠道管理写入配置</span>
-              </div>
-            </n-tooltip>
+            </n-popover>
           </div>
         </div>
       </div>
@@ -258,7 +301,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { NIcon, NText, NSwitch, NTag, NButton, NPopselect, NTooltip, useMessage } from 'naive-ui'
+import { NIcon, NText, NSwitch, NTag, NButton, NTooltip, NPopover, useMessage } from 'naive-ui'
 import {
   ChatboxEllipsesOutline,
   CodeSlashOutline,
@@ -289,10 +332,15 @@ import {
   updateNestedUIConfig
 } from '../../api/ui-config'
 import {
-  getChannels,
-  getCodexChannels,
-  getGeminiChannels
+  updateChannel,
+  updateCodexChannel,
+  updateGeminiChannel
 } from '../../api/channels'
+import {
+  getTodayStatistics,
+  getCodexTodayStatistics,
+  getGeminiTodayStatistics
+} from '../../api/statistics'
 
 const props = defineProps({
   channelType: {
@@ -308,11 +356,16 @@ const {
   claudeProxy,
   codexProxy,
   geminiProxy,
+  claudeChannels,
+  codexChannels,
+  geminiChannels,
+  schedulerState,
   getProxyState,
   startProxy,
   stopProxy,
   getLogs,
   clearLogsForSource,
+  loadChannels: loadGlobalChannels,
   logLimit,
   statsInterval: statsIntervalSetting
 } = useGlobalState()
@@ -578,12 +631,29 @@ const logsToDisplay = computed(() => {
 })
 let latestLogId = null
 let statsIntervalId = null
-let channelsIntervalId = null
 let timeIntervalId = null
 let componentMounted = false
 
-// 渠道列表
-const channels = ref([])
+// 渠道列表 - 使用 Pinia store 的共享数据，启用的排前面
+const channels = computed(() => {
+  let list = []
+  if (props.channelType === 'claude') list = claudeChannels.value || []
+  else if (props.channelType === 'codex') list = codexChannels.value || []
+  else if (props.channelType === 'gemini') list = geminiChannels.value || []
+
+  // 启用的排前面，禁用的排后面
+  const enabled = list.filter(ch => ch.enabled !== false)
+  const disabled = list.filter(ch => ch.enabled === false)
+  return [...enabled, ...disabled]
+})
+
+// 获取渠道的实时并发数
+function getChannelInflight(channelId) {
+  const scheduler = schedulerState[props.channelType]
+  if (!scheduler || !scheduler.channels) return 0
+  const ch = scheduler.channels.find(c => c.id === channelId)
+  return ch ? ch.inflight : 0
+}
 
 // 当前状态文本
 const statusText = computed(() => {
@@ -594,6 +664,50 @@ const statusText = computed(() => {
   return channels.value.length > 0 ? `${enabledCount}个渠道已启用` : '无渠道'
 })
 
+// 渠道统计数据
+const channelStats = ref({})
+
+// 获取渠道的今日统计
+function getChannelTodayStats(channelId) {
+  return channelStats.value[channelId] || { requests: 0, tokens: 0, cost: 0 }
+}
+
+// 加载渠道统计数据
+async function loadChannelStats() {
+  try {
+    let statsData
+    if (props.channelType === 'claude') {
+      statsData = await getTodayStatistics()
+    } else if (props.channelType === 'codex') {
+      statsData = await getCodexTodayStatistics()
+    } else if (props.channelType === 'gemini') {
+      statsData = await getGeminiTodayStatistics()
+    }
+
+    // 从 byChannel 提取各渠道统计
+    if (statsData && statsData.byChannel) {
+      const stats = {}
+      for (const [channelId, data] of Object.entries(statsData.byChannel)) {
+        stats[channelId] = {
+          requests: data.requests || 0,
+          tokens: data.tokens?.total || 0,
+          cost: data.cost || 0
+        }
+      }
+      channelStats.value = stats
+    }
+  } catch (err) {
+    console.error('Failed to load channel stats:', err)
+  }
+}
+
+// 格式化统计数字
+function formatStatNumber(num) {
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M'
+  if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
+  return num.toString()
+}
+
 watch(logsToDisplay, (newLogs) => {
   const newestId = newLogs[0]?.id || null
   if (!newestId || newestId === latestLogId) {
@@ -601,6 +715,10 @@ watch(logsToDisplay, (newLogs) => {
     return
   }
   latestLogId = newestId
+
+  // 有新日志时刷新渠道统计
+  loadChannelStats()
+
   const isNearTop = logsContainer.value ? logsContainer.value.scrollTop < 20 : true
   if (isNearTop) {
     nextTick(() => {
@@ -694,30 +812,26 @@ function goToChannelPage() {
   router.push({ name: `${props.channelType}-projects` })
 }
 
-// 加载渠道列表
-async function loadChannels() {
+// 快捷切换渠道状态
+async function handleQuickToggle(channel, enabled) {
   try {
-    let data = null
-    // 如果 dashboard 数据已加载，直接从缓存读取
-    if (dashboardData.value && dashboardData.value.channels) {
-      data = dashboardData.value.channels[props.channelType]
-    } else {
-      // 否则单独调用API
-      let response
-      if (props.channelType === 'claude') {
-        response = await getChannels()
-      } else if (props.channelType === 'codex') {
-        response = await getCodexChannels()
-      } else if (props.channelType === 'gemini') {
-        response = await getGeminiChannels()
-      }
-      data = response?.channels
+    let updateFn
+    if (props.channelType === 'claude') {
+      updateFn = updateChannel
+    } else if (props.channelType === 'codex') {
+      updateFn = updateCodexChannel
+    } else if (props.channelType === 'gemini') {
+      updateFn = updateGeminiChannel
     }
-    // 确保 channels.value 是数组
-    channels.value = Array.isArray(data) ? data : []
+
+    if (updateFn) {
+      await updateFn(channel.id, { enabled })
+      message.success(enabled ? `渠道「${channel.name}」已启用` : `渠道「${channel.name}」已停用`)
+      // 使用全局 store 的 loadChannels 刷新数据
+      await loadGlobalChannels()
+    }
   } catch (error) {
-    console.error('Failed to load channels:', error)
-    channels.value = []
+    message.error('操作失败: ' + error.message)
   }
 }
 
@@ -753,7 +867,10 @@ function setupStatsTimer() {
   }
   const intervalSeconds = statsIntervalSetting.value || 30
   const delay = Math.max(intervalSeconds * 1000, 10000)
-  statsIntervalId = setInterval(loadStats, delay)
+  statsIntervalId = setInterval(() => {
+    loadStats()
+    loadChannelStats()  // 同时刷新渠道统计
+  }, delay)
 }
 
 onMounted(async () => {
@@ -762,7 +879,9 @@ onMounted(async () => {
 
   // 从缓存数据加载
   await loadStats()
-  loadChannels()
+  // 加载渠道统计数据
+  await loadChannelStats()
+  // 渠道数据现在从 Pinia store 获取，由 store 自动管理
   loadShowLogs()
   loadLockState()
   window.addEventListener('panel-visibility-change', handleVisibilityChange)
@@ -771,7 +890,6 @@ onMounted(async () => {
   animatedStats.value = { ...todayStats.value }
 
   componentMounted = true
-  channelsIntervalId = setInterval(loadChannels, 30000)
   timeIntervalId = setInterval(() => {
     currentTime.value = Date.now()
   }, 1000)
@@ -780,7 +898,6 @@ onMounted(async () => {
 onUnmounted(() => {
   componentMounted = false
   if (statsIntervalId) clearInterval(statsIntervalId)
-  if (channelsIntervalId) clearInterval(channelsIntervalId)
   if (timeIntervalId) clearInterval(timeIntervalId)
   window.removeEventListener('panel-visibility-change', handleVisibilityChange)
 
@@ -1953,5 +2070,134 @@ onUnmounted(() => {
   max-width: 220px;
   line-height: 1.7;
   opacity: 0.9;
+}
+
+/* 渠道快捷管理面板 */
+.channel-status {
+  cursor: pointer;
+  padding: 4px 8px !important;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.channel-status:hover {
+  background: var(--hover-bg);
+}
+
+.channel-quick-panel {
+  padding: 4px 0;
+}
+
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px 12px 12px;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 8px;
+}
+
+.panel-title span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.no-channels {
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.channel-quick-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.channel-quick-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin: 0 4px 6px 4px;
+  background: var(--bg-secondary);
+  transition: all 0.2s ease;
+}
+
+.channel-quick-item:hover {
+  background: var(--hover-bg);
+}
+
+.channel-quick-item.disabled {
+  opacity: 0.6;
+}
+
+.channel-quick-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.channel-quick-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 渠道指标行 */
+.channel-metrics {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.channel-metrics .metric-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  border: 1px solid var(--border-primary);
+}
+
+.channel-metrics .metric-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.channel-metrics .metric-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.channel-metrics .metric-value.active {
+  color: #f59e0b;
+}
+
+.channel-quick-item.disabled .channel-metrics .metric-value {
+  color: var(--text-tertiary);
+}
+
+.channel-quick-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.channel-quick-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+[data-theme="dark"] .channel-quick-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
 }
 </style>

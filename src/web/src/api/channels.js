@@ -54,18 +54,19 @@ export async function getCodexChannels() {
   return response.data
 }
 
-export async function getActiveCodexChannel() {
-  const response = await client.get('/codex/channels/active')
+export async function getEnabledCodexChannels() {
+  const response = await client.get('/codex/channels/enabled')
   return response.data
 }
 
-export async function createCodexChannel(name, providerKey, baseUrl, apiKey, websiteUrl) {
+export async function createCodexChannel(name, providerKey, baseUrl, apiKey, websiteUrl, extra = {}) {
   const response = await client.post('/codex/channels', {
     name,
     providerKey,
     baseUrl,
     apiKey,
-    websiteUrl
+    websiteUrl,
+    ...extra
   })
   return response.data
 }
@@ -80,11 +81,6 @@ export async function deleteCodexChannel(channelId) {
   return response.data
 }
 
-export async function activateCodexChannel(channelId) {
-  const response = await client.post(`/codex/channels/${channelId}/activate`)
-  return response.data
-}
-
 export async function saveCodexChannelOrder(order) {
   const response = await client.post('/codex/channels/order', { order })
   return response.data
@@ -96,19 +92,25 @@ export async function getGeminiChannels() {
   return response.data
 }
 
-export async function getActiveGeminiChannel() {
-  const response = await client.get('/gemini/channels/active')
+export async function getEnabledGeminiChannels() {
+  const response = await client.get('/gemini/channels/enabled')
   return response.data
 }
 
-export async function createGeminiChannel(name, baseUrl, apiKey, model, websiteUrl) {
+export async function createGeminiChannel(name, baseUrl, apiKey, model, websiteUrl, extra = {}) {
   const response = await client.post('/gemini/channels', {
     name,
     baseUrl,
     apiKey,
     model,
-    websiteUrl
+    websiteUrl,
+    ...extra
   })
+  return response.data
+}
+
+export async function getChannelPoolStatus() {
+  const response = await client.get('/channels/pool/status')
   return response.data
 }
 
@@ -119,11 +121,6 @@ export async function updateGeminiChannel(channelId, updates) {
 
 export async function deleteGeminiChannel(channelId) {
   const response = await client.delete(`/gemini/channels/${channelId}`)
-  return response.data
-}
-
-export async function activateGeminiChannel(channelId) {
-  const response = await client.post(`/gemini/channels/${channelId}/activate`)
   return response.data
 }
 

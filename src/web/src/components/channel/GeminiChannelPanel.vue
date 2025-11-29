@@ -31,7 +31,7 @@
           <div
             :key="element.id"
             class="channel-card"
-            :class="{ active: element.isActive, collapsed: collapsed[element.id] }"
+            :class="{ active: element.enabled !== false, collapsed: collapsed[element.id], disabled: element.enabled === false }"
           >
             <div class="channel-header">
               <div class="channel-title">
@@ -46,26 +46,25 @@
                   </n-icon>
                 </n-button>
                 <span class="channel-name">{{ element.name }}</span>
-                <n-tag v-if="element.isActive" size="tiny" type="success" :bordered="false">
-                  当前使用
+                <n-tag v-if="element.enabled !== false" size="tiny" type="success" :bordered="false">
+                  已启用
+                </n-tag>
+                <n-tag v-else size="tiny" type="default" :bordered="false">
+                  已禁用
                 </n-tag>
               </div>
               <div class="channel-actions">
-                <n-button
-                  v-if="!element.isActive"
-                  size="tiny"
-                  type="primary"
-                  @click="handleActivate(element.id)"
-                >
-                  切换
-                </n-button>
+                <n-switch
+                  size="small"
+                  :value="element.enabled !== false"
+                  @update:value="value => handleToggleEnabled(element, value)"
+                />
                 <n-button size="tiny" @click="handleEdit(element)">
                   编辑
                 </n-button>
                 <n-button
                   size="tiny"
                   type="error"
-                  :disabled="element.isActive"
                   @click="handleDelete(element.id)"
                 >
                   删除
@@ -87,6 +86,14 @@
                 <n-text depth="2" class="value" style="font-family: monospace;">
                   {{ maskApiKey(element.apiKey) }}
                 </n-text>
+              </div>
+              <div class="info-row">
+                <n-text depth="3" class="label">并发:</n-text>
+                <n-text depth="2" class="value">{{ element.maxConcurrency ?? '不限' }}</n-text>
+              </div>
+              <div class="info-row">
+                <n-text depth="3" class="label">权重:</n-text>
+                <n-text depth="2" class="value">{{ element.weight || 1 }}</n-text>
               </div>
               <div v-if="element.websiteUrl" class="info-row website-row">
                 <n-text depth="3" class="label">官网:</n-text>
@@ -140,6 +147,21 @@
         <n-form-item label="官网地址">
           <n-input v-model:value="formData.websiteUrl" placeholder="https://aistudio.google.com" />
         </n-form-item>
+        <n-form-item label="最大并发">
+          <n-input-number
+            v-model:value="formData.maxConcurrency"
+            :min="0"
+            :step="1"
+            placeholder="0 表示不限"
+            style="width: 100%;"
+          />
+        </n-form-item>
+        <n-form-item label="权重">
+          <n-input-number v-model:value="formData.weight" :min="1" :step="1" style="width: 100%;" />
+        </n-form-item>
+        <n-form-item label="启用">
+          <n-switch v-model:value="formData.enabled" />
+        </n-form-item>
         <n-text v-if="editingActiveChannel" depth="3" style="font-size: 12px;">
           提示：使用中的渠道只能修改名称和模型
         </n-text>
@@ -167,7 +189,9 @@ import {
   NForm,
   NFormItem,
   NInput,
-  NSpace
+  NSpace,
+  NSwitch,
+  NInputNumber
 } from 'naive-ui'
 import { AddOutline, ChevronDownOutline, OpenOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
@@ -176,8 +200,7 @@ import {
   getGeminiChannels,
   createGeminiChannel,
   updateGeminiChannel,
-  deleteGeminiChannel,
-  activateGeminiChannel
+  deleteGeminiChannel
 } from '../../api/channels'
 import { getUIConfig, updateNestedUIConfig } from '../../api/ui-config'
 
@@ -213,7 +236,10 @@ const formData = ref({
   model: '',
   baseUrl: '',
   apiKey: '',
-  websiteUrl: ''
+  websiteUrl: '',
+  maxConcurrency: 0,
+  weight: 1,
+  enabled: true
 })
 
 const emit = defineEmits(['open-website'])
@@ -237,19 +263,22 @@ function handleDragEnd() {
 function handleAdd() {
   editingChannel.value = null
   editingActiveChannel.value = false
-  formData.value = { name: '', model: '', baseUrl: '', apiKey: '', websiteUrl: '' }
+  formData.value = { name: '', model: '', baseUrl: '', apiKey: '', websiteUrl: '', maxConcurrency: 0, weight: 1, enabled: true }
   showDialog.value = true
 }
 
 function handleEdit(channel) {
   editingChannel.value = channel
-  editingActiveChannel.value = channel.isActive
+  editingActiveChannel.value = false
   formData.value = {
     name: channel.name,
     model: channel.model,
     baseUrl: channel.baseUrl,
     apiKey: channel.apiKey,
-    websiteUrl: channel.websiteUrl || ''
+    websiteUrl: channel.websiteUrl || '',
+    maxConcurrency: channel.maxConcurrency ?? 0,
+    weight: channel.weight || 1,
+    enabled: channel.enabled !== false
   }
   showDialog.value = true
 }
@@ -272,7 +301,10 @@ async function handleSave() {
       const updates = {
         name: formData.value.name,
         model: formData.value.model,
-        websiteUrl: formData.value.websiteUrl
+        websiteUrl: formData.value.websiteUrl,
+        maxConcurrency: normalizeConcurrency(formData.value.maxConcurrency),
+        weight: normalizeWeight(formData.value.weight),
+        enabled: formData.value.enabled
       }
       if (!editingActiveChannel.value) {
         updates.baseUrl = formData.value.baseUrl
@@ -286,7 +318,12 @@ async function handleSave() {
         formData.value.baseUrl,
         formData.value.apiKey,
         formData.value.model,
-        formData.value.websiteUrl
+        formData.value.websiteUrl,
+        {
+          maxConcurrency: normalizeConcurrency(formData.value.maxConcurrency),
+          weight: normalizeWeight(formData.value.weight),
+          enabled: formData.value.enabled
+        }
       )
       message.success('Gemini 渠道已添加')
     }
@@ -294,20 +331,21 @@ async function handleSave() {
     showDialog.value = false
     editingChannel.value = null
     editingActiveChannel.value = false
-    formData.value = { name: '', model: '', baseUrl: '', apiKey: '', websiteUrl: '' }
+    formData.value = { name: '', model: '', baseUrl: '', apiKey: '', websiteUrl: '', maxConcurrency: 0, weight: 1, enabled: true }
     await loadChannels()
   } catch (err) {
     message.error('操作失败: ' + err.message)
   }
 }
 
-async function handleActivate(id) {
+async function handleToggleEnabled(channel, value) {
   try {
-    await activateGeminiChannel(id)
-    message.success('Gemini 渠道已切换')
+    const newEnabled = typeof value === 'boolean' ? value : channel.enabled === false
+    await updateGeminiChannel(channel.id, { enabled: newEnabled })
+    message.success(newEnabled ? 'Gemini 渠道已启用' : 'Gemini 渠道已禁用')
     await loadChannels()
   } catch (err) {
-    message.error('切换失败: ' + err.message)
+    message.error('操作失败: ' + err.message)
   }
 }
 
@@ -403,6 +441,22 @@ defineExpose({
   openAddDialog: handleAdd,
   refresh: loadChannels
 })
+
+function normalizeConcurrency(value) {
+  const num = Number(value)
+  if (Number.isNaN(num) || num <= 0) {
+    return null
+  }
+  return Math.round(num)
+}
+
+function normalizeWeight(value) {
+  const num = Number(value)
+  if (Number.isNaN(num) || num < 1) {
+    return 1
+  }
+  return Math.round(num)
+}
 </script>
 
 <style scoped>
@@ -433,6 +487,11 @@ defineExpose({
   background: var(--bg-secondary);
   transition: all 0.2s ease;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.channel-card.disabled {
+  opacity: 0.65;
+  border-style: dashed;
 }
 
 .channel-card:hover {
@@ -476,6 +535,11 @@ defineExpose({
 .channel-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.channel-actions :deep(.n-switch) {
+  margin-right: 4px;
 }
 
 .channel-info {
