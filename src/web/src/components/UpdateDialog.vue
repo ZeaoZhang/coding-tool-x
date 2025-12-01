@@ -19,28 +19,38 @@
       <div class="changelog-content" v-html="parseMarkdown(changelog)"></div>
     </div>
 
+    <!-- 获取失败时显示链接 -->
+    <div v-else class="changelog-fallback">
+      <div class="fallback-icon">📄</div>
+      <div class="fallback-text">
+        <a :href="changelogUrl" target="_blank" class="changelog-link">
+          查看完整更新日志 →
+        </a>
+      </div>
+    </div>
+
     <!-- 更新方法 -->
     <div class="action-section">
-      <div class="action-title">🚀 立即更新</div>
-      <div class="action-buttons">
-        <button class="btn btn-primary" @click="handleAutoUpdate">
-          ✨ 自动更新并重启
-        </button>
-        <button class="btn btn-secondary" @click="openNpmPage">
-          📖 查看详情
-        </button>
-      </div>
+      <div class="action-title">🚀 如何更新</div>
 
       <!-- 手动更新提示 -->
       <div class="manual-update-hint">
-        💡 <strong>也可手动更新：</strong>在终端运行 <code>ct update</code> 命令
+        <div class="update-command">
+          <span class="command-label">在终端运行：</span>
+          <code class="command-code">ct update</code>
+        </div>
+        <div class="update-note">更新完成后请重启服务</div>
       </div>
+
+      <button class="btn btn-secondary" @click="openNpmPage">
+        📖 查看 npm 详情
+      </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { defineProps, defineEmits } from 'vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   currentVersion: {
@@ -57,11 +67,9 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update', 'openNpm'])
-
-function handleAutoUpdate() {
-  emit('update')
-}
+const changelogUrl = computed(() => {
+  return 'https://github.com/CooperJiang/coding-tool/blob/main/CHANGELOG.md'
+})
 
 function openNpmPage() {
   window.open('https://www.npmjs.com/package/coding-tool', '_blank')
@@ -122,6 +130,8 @@ function parseMarkdown(content) {
 .update-dialog-content {
   line-height: 1.8;
   color: var(--text-primary);
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 /* 版本信息卡片 */
@@ -189,6 +199,39 @@ function parseMarkdown(content) {
   font-size: 12px;
   line-height: 1.8;
   color: var(--text-secondary);
+}
+
+/* 获取失败时的 fallback */
+.changelog-fallback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(59, 130, 246, 0.04) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 8px;
+}
+
+.fallback-icon {
+  font-size: 24px;
+}
+
+.fallback-text {
+  flex: 1;
+}
+
+.changelog-link {
+  color: #3b82f6;
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.changelog-link:hover {
+  color: #2563eb;
+  text-decoration: underline;
 }
 
 /* Markdown 内容样式 */
@@ -272,14 +315,45 @@ function parseMarkdown(content) {
   margin-bottom: 10px;
 }
 
-.action-buttons {
-  display: flex;
-  gap: 10px;
+/* 手动更新提示 */
+.manual-update-hint {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(24, 160, 88, 0.08) 0%, rgba(24, 160, 88, 0.04) 100%);
+  border: 1px solid rgba(24, 160, 88, 0.2);
+  border-radius: 8px;
   margin-bottom: 12px;
 }
 
+.update-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.command-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.command-code {
+  background: var(--bg-primary);
+  color: #18a058;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 13px;
+  font-weight: 700;
+  border: 1px solid rgba(24, 160, 88, 0.2);
+}
+
+.update-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 .btn {
-  flex: 1;
+  width: 100%;
   padding: 8px 12px;
   border: none;
   border-radius: 6px;
@@ -288,23 +362,6 @@ function parseMarkdown(content) {
   cursor: pointer;
   transition: all 0.2s ease;
   outline: none;
-  white-space: nowrap;
-}
-
-.btn-primary {
-  background: linear-gradient(135deg, #18a058 0%, #10b981 100%);
-  color: white;
-  box-shadow: 0 2px 6px rgba(24, 160, 88, 0.25);
-}
-
-.btn-primary:hover {
-  box-shadow: 0 3px 8px rgba(24, 160, 88, 0.35);
-  transform: translateY(-0.5px);
-}
-
-.btn-primary:active {
-  transform: translateY(0.5px);
-  box-shadow: 0 1px 4px rgba(24, 160, 88, 0.2);
 }
 
 .btn-secondary {
@@ -321,32 +378,5 @@ function parseMarkdown(content) {
 
 .btn-secondary:active {
   transform: translateY(0.5px);
-}
-
-/* 手动更新提示 */
-.manual-update-hint {
-  padding: 10px;
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.2);
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-
-.manual-update-hint strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.manual-update-hint code {
-  background: var(--bg-primary);
-  color: #18a058;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: monospace;
-  font-size: 11px;
-  font-weight: 600;
-  margin: 0 4px;
 }
 </style>

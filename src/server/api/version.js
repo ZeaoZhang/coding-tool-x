@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const { execSync } = require('child_process');
 const { checkForUpdates, getCurrentVersion } = require('../../utils/version-check');
 
 /**
@@ -60,84 +59,68 @@ router.get('/current', (req, res) => {
  * 获取指定版本的更新日志（从 GitHub CHANGELOG.md 或本地获取）
  */
 router.get('/changelog/:version', async (req, res) => {
-  try {
-    const { version } = req.params;
-    const owner = 'CooperJiang';
-    const repo = 'coding-tool';
+  const { version } = req.params;
+  const owner = 'CooperJiang';
+  const repo = 'coding-tool';
+  const changelogUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/CHANGELOG.md`;
 
-    // 先尝试从 GitHub CHANGELOG.md 获取
-    const changelogUrl = `https://raw.githubusercontent.com/${owner}/${repo}/main/CHANGELOG.md`;
+  try {
+    // 使用 AbortController 实现超时
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     const response = await fetch(changelogUrl, {
-      timeout: 5000,
+      signal: controller.signal,
       headers: {
         'User-Agent': 'coding-tool'
       }
     });
+    clearTimeout(timeoutId);
 
-    if (response.ok) {
-      const content = await response.text();
-
-      // 解析 Markdown，提取指定版本的内容
-      const versionRegex = new RegExp(`## \\[${escapeRegExp(version)}\\][\\s\\S]*?(?=## \\[|$)`, 'i');
-      const match = content.match(versionRegex);
-
-      if (match) {
-        return res.json({
-          success: true,
-          version,
-          changelog: match[0],
-          source: 'github'
-        });
-      }
-    }
-
-    getChangelogFromLocal(version, res);
-  } catch (error) {
-    const version = req.params.version;
-    getChangelogFromLocal(version, res);
-  }
-});
-
-/**
- * 从本地 CHANGELOG.md 获取指定版本的更新日志
- */
-function getChangelogFromLocal(version, res) {
-  try {
-    const changelogPath = path.join(__dirname, '../../..', 'CHANGELOG.md');
-
-    if (!fs.existsSync(changelogPath)) {
-      return res.status(404).json({
+    if (!response.ok) {
+      console.error(`[Version] GitHub fetch failed: ${response.status} ${response.statusText}`);
+      return res.status(502).json({
         error: true,
-        message: '找不到 CHANGELOG 文件'
+        message: `无法从 GitHub 获取更新日志 (HTTP ${response.status})`
       });
     }
 
-    const content = fs.readFileSync(changelogPath, 'utf-8');
+    const content = await response.text();
 
     // 解析 Markdown，提取指定版本的内容
     const versionRegex = new RegExp(`## \\[${escapeRegExp(version)}\\][\\s\\S]*?(?=## \\[|$)`, 'i');
     const match = content.match(versionRegex);
 
-    if (!match) {
-      return res.status(404).json({
-        error: true,
-        message: `未找到版本 ${version} 的更新日志`
+    if (match) {
+      return res.json({
+        success: true,
+        version,
+        changelog: match[0],
+        source: 'github'
       });
     }
 
-    res.json({
-      success: true,
-      version,
-      changelog: match[0]
+    // GitHub 有内容但没找到该版本
+    return res.status(404).json({
+      error: true,
+      message: `未找到版本 ${version} 的更新日志`
     });
   } catch (error) {
-    res.status(500).json({
+    console.error(`[Version] GitHub fetch error:`, error.message);
+
+    if (error.name === 'AbortError') {
+      return res.status(504).json({
+        error: true,
+        message: '获取更新日志超时，请稍后重试'
+      });
+    }
+
+    return res.status(502).json({
       error: true,
-      message: error.message
+      message: `无法连接到 GitHub: ${error.message}`
     });
   }
-}
+});
 
 /**
  * 转义正则表达式特殊字符
@@ -173,52 +156,6 @@ router.get('/changelog', (req, res) => {
     res.status(500).json({
       error: true,
       message: error.message
-    });
-  }
-});
-
-/**
- * POST /api/version/update
- * 执行自动更新
- * 1. 使用 npm 更新包
- * 2. 重启 pm2 服务
- * 3. 返回成功状态
- */
-router.post('/update', async (req, res) => {
-  try {
-    // 在后台执行更新，立即返回响应，避免超时
-    res.json({
-      success: true,
-      message: '更新已启动，应用将自动重启...'
-    });
-
-    // 在后台异步执行更新
-    setTimeout(() => {
-      try {
-        const packageJsonPath = path.join(__dirname, '../../..', 'package.json');
-        const projectDir = path.dirname(packageJsonPath);
-
-        execSync('npm update coding-tool --save', {
-          cwd: projectDir,
-          stdio: 'pipe',
-          timeout: 300000
-        });
-
-        try {
-          execSync('pm2 restart all', {
-            timeout: 60000
-          });
-        } catch (pmErr) {
-          // pm2 not available, ignore
-        }
-      } catch (error) {
-        console.error('[Update] 更新失败:', error.message);
-      }
-    }, 1000);
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
     });
   }
 });

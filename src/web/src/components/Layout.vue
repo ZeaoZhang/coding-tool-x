@@ -342,7 +342,7 @@ import SettingsDrawer from './SettingsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import UpdateDialog from './UpdateDialog.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
-import { checkForUpdates as checkForUpdatesApi, performUpdate, getChangelog } from '../api/version'
+import { checkForUpdates as checkForUpdatesApi, getChangelog } from '../api/version'
 import message, { dialog } from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -497,55 +497,6 @@ async function checkForUpdates() {
   }
 }
 
-// 处理自动更新
-async function handleAutoUpdate() {
-  try {
-    // 显示加载状态的对话框
-    const loadingDialog = dialog.info({
-      title: '更新中...',
-      content: '正在下载最新版本，请稍候...',
-      positiveText: '关闭',
-      maskClosable: false,
-      closable: false,
-      style: {
-        width: '400px'
-      }
-    })
-
-    // 调用后端更新接口
-    const result = await performUpdate()
-
-    if (result.success) {
-      // 关闭加载对话框
-      loadingDialog.destroy()
-
-      // 显示更新成功提示
-      dialog.success({
-        title: '更新成功！',
-        content: '应用将在 3 秒后自动刷新...',
-        positiveText: '立即刷新',
-        maskClosable: true,
-        style: {
-          width: '400px'
-        },
-        onPositiveClick: () => {
-          window.location.reload()
-        }
-      })
-
-      // 3 秒后自动刷新
-      setTimeout(() => {
-        window.location.reload()
-      }, 3000)
-    } else {
-      loadingDialog.destroy()
-      message.error(result.error || '更新失败，请稍后重试')
-    }
-  } catch (err) {
-    message.error('更新出错: ' + err.message)
-  }
-}
-
 // 处理更新点击
 async function handleUpdateClick() {
   if (!updateInfo.value) return
@@ -561,27 +512,21 @@ async function handleUpdateClick() {
     console.error('Failed to load changelog:', err)
   }
 
-  // 使用 dialog.create 方法而不是 info，这样可以完全自定义对话框
-  let dialogInstance = null
-  const d = dialog.create({
-    title: '✨ 发现新版本 🎉',
+  // 使用 dialog.create 方法显示更新弹窗
+  dialog.create({
+    title: '✨ 发现新版本',
     content: () => h(UpdateDialog, {
       currentVersion: updateInfo.value.current,
       latestVersion: updateInfo.value.latest,
-      changelog: changelogData,
-      onUpdate: () => {
-        dialogInstance?.destroy()
-        handleAutoUpdate()
-      }
+      changelog: changelogData
     }),
     maskClosable: true,
     closable: true,
     showIcon: false,
     style: {
-      width: '540px'
+      width: '580px'
     }
   })
-  dialogInstance = d
 }
 
 onMounted(() => {

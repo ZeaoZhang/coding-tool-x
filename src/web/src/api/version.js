@@ -19,8 +19,3 @@ export async function getAllChangelog() {
   const response = await client.get('/version/changelog')
   return response.data
 }
-
-export async function performUpdate() {
-  const response = await client.post('/version/update')
-  return response.data
-}
