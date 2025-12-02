@@ -5,33 +5,58 @@
       <!-- 动作按钮区域 -->
       <div class="actions-section">
         <div class="action-buttons">
-          <!-- 代理切换 -->
-          <div class="action-item">
-            <n-text depth="3" style="font-size: 13px; margin-right: 8px;">动态切换</n-text>
-            <n-switch
-              :value="proxyRunning"
-              :loading="proxyLoading"
-              size="small"
-              @update:value="handleProxyToggle"
-            />
+          <!-- 左侧：代理切换 + 已安装技能数 -->
+          <div class="action-left">
+            <div class="action-item">
+              <n-text depth="3" style="font-size: 13px; margin-right: 8px;">动态切换</n-text>
+              <n-switch
+                :value="proxyRunning"
+                :loading="proxyLoading"
+                size="small"
+                @update:value="handleProxyToggle"
+              />
+            </div>
+            <n-tag v-if="installedSkillsCount > 0" type="success" size="small" :bordered="false" class="skills-count-tag">
+              已安装 {{ installedSkillsCount }} 个技能
+            </n-tag>
           </div>
 
-          <!-- 最近对话 -->
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <n-button
-                text
-                size="small"
-                @click="handleShowRecent"
-                class="recent-sessions-icon-btn"
-              >
-                <template #icon>
-                  <n-icon :size="18"><ChatbubblesOutline /></n-icon>
-                </template>
-              </n-button>
-            </template>
-            最新对话
-          </n-tooltip>
+          <!-- 右侧：图标按钮 -->
+          <div class="action-right">
+            <!-- Skills 技能 -->
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  text
+                  size="small"
+                  @click="handleShowSkills"
+                  class="recent-sessions-icon-btn"
+                >
+                  <template #icon>
+                    <n-icon :size="18"><ExtensionPuzzleOutline /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              Skills 技能
+            </n-tooltip>
+
+            <!-- 最近对话 -->
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  text
+                  size="small"
+                  @click="handleShowRecent"
+                  class="recent-sessions-icon-btn"
+                >
+                  <template #icon>
+                    <n-icon :size="18"><ChatbubblesOutline /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              最新对话
+            </n-tooltip>
+          </div>
         </div>
       </div>
 
@@ -74,21 +99,25 @@
       <ProxyLogs :source="currentChannel" />
     </div>
 
+    <!-- Skills 抽屉 -->
+    <SkillsDrawer v-model:visible="showSkillsDrawer" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NButton, NIcon, NText, NSwitch, NTooltip
+  NButton, NIcon, NText, NSwitch, NTooltip, NTag
 } from 'naive-ui'
-import { AddOutline, ChatbubblesOutline } from '@vicons/ionicons5'
+import { AddOutline, ChatbubblesOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
+import SkillsDrawer from './SkillsDrawer.vue'
 import { useGlobalStore } from '../stores/global'
+import { getSkills } from '../api/skills'
 
 const route = useRoute()
 const globalStore = useGlobalStore()
@@ -122,6 +151,20 @@ const currentChannel = computed(() => route.meta.channel || 'claude')
 const claudePanelRef = ref(null)
 const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
+const showSkillsDrawer = ref(false)
+const installedSkillsCount = ref(0)
+
+// 加载已安装技能数量
+async function loadInstalledSkillsCount() {
+  try {
+    const result = await getSkills()
+    if (result.success && result.skills) {
+      installedSkillsCount.value = result.skills.filter(s => s.installed).length
+    }
+  } catch (err) {
+    console.error('Failed to load skills count:', err)
+  }
+}
 
 const channelRefs = {
   claude: claudePanelRef,
@@ -154,6 +197,22 @@ function handleProxyToggle(value) {
 function handleShowRecent() {
   emit('show-recent')
 }
+
+// 处理显示 Skills
+function handleShowSkills() {
+  showSkillsDrawer.value = true
+}
+
+// 监听 drawer 关闭后刷新计数
+watch(showSkillsDrawer, (val) => {
+  if (!val) {
+    loadInstalledSkillsCount()
+  }
+})
+
+onMounted(() => {
+  loadInstalledSkillsCount()
+})
 
 function refreshChannel(channel) {
   channelRefs[channel]?.value?.refresh?.()
@@ -198,6 +257,22 @@ watch(() => currentChannel.value, refreshChannel)
 
 .action-item :deep(.n-switch) {
   flex-shrink: 0;
+}
+
+.action-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.action-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.skills-count-tag {
+  font-size: 11px;
 }
 
 .recent-sessions-icon-btn {

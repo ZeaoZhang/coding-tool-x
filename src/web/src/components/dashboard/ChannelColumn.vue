@@ -16,6 +16,30 @@
       </div>
       <h2 class="channel-title">{{ channelTitle }}</h2>
 
+      <!-- Skills 区域 (仅 Claude) -->
+      <div v-if="channelType === 'claude'" class="skills-area">
+        <n-tag v-if="installedSkillsCount > 0" type="success" size="small" :bordered="false" class="skills-count-tag">
+          已安装 {{ installedSkillsCount }} 个技能
+        </n-tag>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              text
+              class="skills-button"
+              @click="showSkillsPanel = true"
+              title="Skills 技能管理"
+            >
+              <template #icon>
+                <n-icon :size="18">
+                  <ExtensionPuzzleOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          Skills 技能管理
+        </n-tooltip>
+      </div>
+
       <!-- 锁定按钮 -->
       <n-button
         text
@@ -32,8 +56,14 @@
       </n-button>
     </div>
 
+    <!-- Skills 面板 (覆盖内容区) -->
+    <SkillsPanel
+      v-if="showSkillsPanel"
+      @back="showSkillsPanel = false"
+    />
+
     <!-- 滚动内容区 -->
-    <div v-if="!isLocked" class="channel-content">
+    <div v-if="!isLocked && !showSkillsPanel" class="channel-content">
       <!-- 代理控制 -->
       <div class="card">
         <div class="card-header">
@@ -279,7 +309,7 @@
     </div>
 
     <!-- 锁定状态 UI -->
-    <div v-else class="locked-overlay" :class="`locked-${channelType}`">
+    <div v-if="isLocked && !showSkillsPanel" class="locked-overlay" :class="`locked-${channelType}`">
       <div class="locked-content">
         <div class="lock-icon">
           <n-icon :size="48">
@@ -322,11 +352,13 @@ import {
   ArrowForwardOutline,
   LockClosed,
   LockOpen,
-  ReorderTwoOutline
+  ReorderTwoOutline,
+  ExtensionPuzzleOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
+import SkillsPanel from '../SkillsPanel.vue'
 import {
   getUIConfig,
   updateNestedUIConfig
@@ -341,6 +373,7 @@ import {
   getCodexTodayStatistics,
   getGeminiTodayStatistics
 } from '../../api/statistics'
+import { getSkills } from '../../api/skills'
 
 const props = defineProps({
   channelType: {
@@ -486,6 +519,23 @@ function animateValue(key, startValue, endValue, duration = 600) {
 
 // 最新对话抽屉
 const showRecentSessions = ref(false)
+
+// Skills 面板（仅 Claude）
+const showSkillsPanel = ref(false)
+const installedSkillsCount = ref(0)
+
+// 加载已安装技能数量
+async function loadInstalledSkillsCount() {
+  if (props.channelType !== 'claude') return
+  try {
+    const result = await getSkills()
+    if (result.success && result.skills) {
+      installedSkillsCount.value = result.skills.filter(s => s.installed).length
+    }
+  } catch (err) {
+    console.error('Failed to load skills count:', err)
+  }
+}
 
 // localStorage key
 const LOCK_STORAGE_KEY = 'channelLocks'
@@ -885,6 +935,13 @@ function setupStatsTimer() {
   }, delay)
 }
 
+// 监听 Skills 面板关闭后刷新计数
+watch(showSkillsPanel, (val) => {
+  if (!val && props.channelType === 'claude') {
+    loadInstalledSkillsCount()
+  }
+})
+
 onMounted(async () => {
   // 先加载 dashboard 聚合数据（只有第一个组件会真正发起请求，其他复用缓存）
   await loadDashboard()
@@ -893,6 +950,8 @@ onMounted(async () => {
   await loadStats()
   // 加载渠道统计数据
   await loadChannelStats()
+  // 加载已安装技能数量（仅 Claude）
+  loadInstalledSkillsCount()
   // 渠道数据现在从 Pinia store 获取，由 store 自动管理
   loadShowLogs()
   loadLockState()
@@ -1854,9 +1913,58 @@ onUnmounted(() => {
   min-width: 55px;
 }
 
+/* Skills 区域样式 */
+.skills-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.skills-count-tag {
+  font-size: 11px;
+}
+
+/* Skills 按钮样式 */
+.skills-button {
+  padding: 6px !important;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.skills-button .n-icon {
+  color: var(--text-color-3);
+  transition: all 0.25s ease;
+}
+
+.skills-button:hover {
+  background: linear-gradient(135deg, rgba(24, 160, 88, 0.1), rgba(24, 160, 88, 0.05));
+  border-color: rgba(24, 160, 88, 0.3);
+  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.15);
+  transform: translateY(-1px);
+}
+
+.skills-button:hover .n-icon {
+  color: #18a058;
+  transform: scale(1.1);
+}
+
+.skills-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
 /* 锁定按钮样式 - 精致版本 */
 .lock-button {
-  margin-left: auto;
+  margin-left: 6px;
   padding: 6px;
   width: 30px;
   height: 30px;

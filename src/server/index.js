@@ -115,6 +115,7 @@ async function startServer(port) {
   app.use('/api/mcp', require('./api/mcp'));
   app.use('/api/prompts', require('./api/prompts'));
   app.use('/api/env', require('./api/env'));
+  app.use('/api/skills', require('./api/skills'));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');
