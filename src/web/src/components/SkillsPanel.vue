@@ -175,7 +175,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['back'])
+const emit = defineEmits(['back', 'updated'])
 
 const skills = ref([])
 const loading = ref(false)
@@ -268,9 +268,10 @@ async function handleInstall(skill) {
 
     if (result.success) {
       message.success(`技能 "${skill.name}" 安装成功`)
-      // 更新本地状态
-      const target = skills.value.find(s => s.key === skill.key)
-      if (target) target.installed = true
+      // 重新加载列表以确保与后端同步
+      await loadSkills(true)
+      // 通知父组件更新
+      emit('updated')
     }
   } catch (err) {
     message.error('安装失败: ' + err.message)
@@ -286,9 +287,10 @@ async function handleUninstall(skill) {
 
     if (result.success) {
       message.success(`技能 "${skill.name}" 已卸载`)
-      // 更新本地状态
-      const target = skills.value.find(s => s.key === skill.key)
-      if (target) target.installed = false
+      // 重新加载列表以确保与后端同步
+      await loadSkills(true)
+      // 通知父组件更新
+      emit('updated')
     }
   } catch (err) {
     message.error('卸载失败: ' + err.message)

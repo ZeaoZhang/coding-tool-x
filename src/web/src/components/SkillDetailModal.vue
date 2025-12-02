@@ -156,7 +156,10 @@ async function handleInstall() {
 
     if (result.success) {
       message.success('安装成功')
-      detail.value.installed = true
+      // 安全地更新状态
+      if (detail.value) {
+        detail.value.installed = true
+      }
       emit('updated')
     }
   } catch (err) {
@@ -175,7 +178,10 @@ async function handleUninstall() {
 
     if (result.success) {
       message.success('卸载成功')
-      detail.value.installed = false
+      // 安全地更新状态
+      if (detail.value) {
+        detail.value.installed = false
+      }
       emit('updated')
     }
   } catch (err) {

@@ -1,8 +1,8 @@
 const express = require('express');
 const httpProxy = require('http-proxy');
 const http = require('http');
-const net = require('net');
 const chalk = require('chalk');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const { allocateChannel, releaseChannel, getSchedulerState } = require('./services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { broadcastLog, broadcastSchedulerState } = require('./websocket-server');
@@ -58,7 +58,7 @@ function calculateCost(model, tokens) {
 }
 
 const jsonBodyParser = express.json({
-  limit: '10mb',
+  limit: '100mb',
   verify: (req, res, buf) => {
     req.rawBody = Buffer.from(buf);
   }
@@ -181,10 +181,16 @@ async function startProxyServer(options = {}) {
         res.on('close', release);
         res.on('error', release);
 
-        proxy.web(req, res, {
+        const proxyOptions = {
           target: channel.baseUrl,
           changeOrigin: true
-        }, (err) => {
+        };
+
+        if (channel.proxyUrl) {
+          proxyOptions.agent = new HttpsProxyAgent(channel.proxyUrl);
+        }
+
+        proxy.web(req, res, proxyOptions, (err) => {
           release();
           if (err) {
             // 记录请求失败

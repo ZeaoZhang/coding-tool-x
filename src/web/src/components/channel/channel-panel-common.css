@@ -204,14 +204,14 @@
 }
 
 .channel-form {
-  padding: 0 4px;
+  padding: 0;
 }
 
 .form-section {
   background: var(--n-color);
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
   border: 1px solid var(--n-border-color);
 }
 
@@ -220,16 +220,29 @@
 }
 
 .section-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--n-text-color);
-  margin-bottom: 16px;
-  padding-bottom: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--n-border-color);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-desc {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--n-text-color-3);
+}
+
+.form-section.collapsible {
+  background: var(--n-color-hover);
 }
 
 .channel-form :deep(.n-form-item) {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .channel-form :deep(.n-form-item:last-child) {
@@ -237,7 +250,8 @@
 }
 
 .channel-form :deep(.n-form-item-label) {
-  font-size: 13px;
+  font-size: 12px;
+  padding-bottom: 0;
 }
 
 :global(.ghost) {

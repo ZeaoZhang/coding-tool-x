@@ -4,68 +4,101 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
-## [2.0.0] - 2025-12-01
+## [2.0.1] - 2025-12-02
 
-### 🎉 重大更新：MCP 服务器管理系统
+### 🎉 重大更新：MCP 管理 & Prompts 管理 & Skills 技能 & 多模型预设
 
 ### Added
-- 🔌 **MCP 服务器管理**
-  - 全新 MCP (Model Context Protocol) 服务器管理模块
-  - 支持三种传输类型：stdio、http、sse
-  - 多平台同步：Claude / Codex / Gemini 配置一键同步
-  - 15+ 内置预设模板（filesystem、fetch、memory、github、puppeteer、playwright 等）
-  - 已安装预设自动识别，禁用重复添加
 
-- 📋 **智能配置解析**
-  - 支持粘贴 JSON 配置快速导入
-  - 智能解析多种格式：`mcpServers`、`mcp_servers`、直接对象格式
-  - 支持不完整 JSON 片段自动修复（缺少外层括号、缺少逗号等）
-  - 单服务器直接编辑，多服务器批量选择导入
-  - 已存在服务器自动标记，避免重复导入
+#### 🔌 MCP 服务器管理
+- 全新 MCP (Model Context Protocol) 服务器管理模块
+- 支持三种传输类型：stdio、http、sse
+- 多平台同步：Claude / Codex / Gemini 配置一键同步
+- 15+ 内置预设模板（filesystem、fetch、memory、github、puppeteer、playwright 等）
+- 已安装预设自动识别，禁用重复添加
+- 智能配置解析：支持粘贴 JSON 配置快速导入，自动修复不完整片段
+- 一键测试 MCP 服务器连接状态
+- 实时状态监控：在线/异常/测试中状态指示
+- 配置导出：支持 JSON、Claude 格式、Codex TOML 格式
+- 服务器卡片拖拽排序
 
-- 🧪 **服务器测试功能**
-  - 一键测试 MCP 服务器连接状态
-  - stdio 类型：检测命令是否存在，尝试启动验证
-  - http/sse 类型：发送健康检查请求
-  - 显示测试耗时和详细错误信息
+#### 📝 Prompts 系统提示词管理
+- 全新 Prompts 提示词预设管理模块
+- 支持创建、编辑、删除自定义提示词预设
+- 内置模板：代码审查专家、调试专家等
+- 多平台同步：一键同步到 `CLAUDE.md`、`AGENTS.md`、`GEMINI.md`
+- 支持从现有文件导入提示词
+- 激活/停用管理，灵活切换不同场景
 
-- 📊 **状态监控**
-  - 实时显示服务器状态（在线/异常/测试中）
-  - 状态指示器：绿色发光（在线）、红色发光（异常）、黄色闪烁（测试中）
-  - 鼠标悬停显示最后检查时间
+#### 🧩 Skills 技能管理
+- 全新 Claude Code Skills 技能管理模块
+- 支持从 GitHub 仓库获取技能列表（默认 anthropics/skills 官方仓库）
+- 支持添加自定义仓库源，灵活扩展技能来源
+- 技能一键安装/卸载到 `~/.claude/skills/`
+- 技能详情查看，包含描述、用法、参数说明
+- 支持搜索和筛选（全部/已安装/未安装）
+- 支持创建自定义本地技能
 
-- 📤 **配置导出**
-  - 支持三种导出格式：JSON 通用、Claude 格式、Codex TOML 格式
-  - 导出预览弹窗，支持复制和下载
-  - 按平台筛选导出（只导出某平台启用的服务器）
+#### 🌐 多模型预设支持
+- 渠道表单新增预设选择器，快速配置不同 AI 服务商
+- 内置预设：
+  - **Claude 官方** - Anthropic 原版 API
+  - **DeepSeek** - DeepSeek-V3.2-Exp
+  - **智谱 GLM** - glm-4.6 / glm-4.5-air
+  - **Kimi K2** - kimi-k2-thinking
+  - **MiniMax** - MiniMax-M2
+  - **通义千问** - qwen3-max
+  - **豆包 Seed** - doubao-seed-code-preview-latest
+- 选择预设后自动填充 baseUrl 和模型配置
+- 切换渠道时自动写入对应模型环境变量
 
-- 🔀 **拖拽排序**
-  - 服务器卡片支持拖拽调整顺序
-  - 排序自动保存到后端
-  - 拖拽手柄视觉提示
+#### 🔗 渠道级代理配置
+- 每个渠道可单独配置代理地址（proxyUrl）
+- 支持直连模式：将代理写入 `HTTPS_PROXY`/`HTTP_PROXY` 环境变量
+- 支持代理模式：通过 `https-proxy-agent` 在代理服务器中路由请求
+
+#### ⚡ 渠道速度测试
+- 全新渠道速度测试功能
+- 支持测试所有渠道的 API 响应延迟
+- 按渠道类型筛选（Claude/Codex/Gemini）
+- 测试摘要统计（成功/失败/平均延迟）
+- 结果可视化展示，延迟分级着色
+
+#### ⚠️ 环境变量冲突检测
+- 启动时自动检测系统环境变量冲突
+- 检测 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`GEMINI_API_KEY` 等敏感变量
+- 检测 shell 配置文件（~/.zshrc、~/.bashrc 等）
+- 提供详细的冲突来源和清理建议
+- 支持批量选择清理或"不再提醒"
 
 ### Improved
 - 🎨 **UI/UX 优化**
-  - MCP 管理抽屉式界面，不打断主流程
-  - 服务器卡片 hover 显示操作按钮
-  - 平台开关一键切换（Claude/Codex/Gemini）
+  - MCP/Prompts/Skills 管理抽屉式界面，不打断主流程
+  - 卡片 hover 显示操作按钮
+  - 平台开关一键切换
   - 统计信息实时更新
 
 ### Technical
 - 🏗️ **后端架构**
-  - 新增 `mcp-service.js` 服务层
-  - 新增 `mcp.js` API 路由
-  - 支持原子写入，配置变更安全可靠
-  - 自动同步到各平台配置文件
+  - 新增 `mcp-service.js` MCP 服务层
+  - 新增 `prompts-service.js` 提示词服务层
+  - 新增 `skill-service.js` 技能服务层
+  - 新增 `speed-test.js` 速度测试服务
+  - 新增 `env-checker.js` 环境变量检测服务
+  - 新增 `env-manager.js` 环境变量管理服务
+  - 渠道数据结构新增 `presetId`、`modelConfig`、`proxyUrl` 字段
 
 - 🔧 **前端架构**
-  - 新增 `McpDrawer.vue` 主管理组件
-  - 新增 `McpFormDrawer.vue` 添加/编辑表单
-  - 新增 `src/web/src/api/mcp.js` API 层
+  - 新增 `McpDrawer.vue` / `McpFormDrawer.vue` MCP 管理组件
+  - 新增 `PromptsDrawer.vue` / `PromptsFormDrawer.vue` 提示词管理组件
+  - 新增 `SkillsPanel.vue` / `SkillCard.vue` / `SkillDetailModal.vue` 技能管理组件
+  - 新增 `SpeedTestDrawer.vue` 速度测试组件
+  - 新增 `EnvConflictModal.vue` 环境变量冲突弹窗
+  - 新增 `claudePresets.js` 预设配置文件
 
 ---
 
-## [1.6.0] - 2025-01-29
+## [1.6.0] - 2025-11-29
 
 ### 🎉 重大更新：多渠道负载均衡架构
 

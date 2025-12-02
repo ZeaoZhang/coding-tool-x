@@ -52,26 +52,48 @@
       preset="card"
       :title="state.editingChannel ? config.editTitle : config.addTitle"
       class="channel-dialog"
-      :style="{ width: config.modalWidth + 'px' }"
+      :style="{ width: config.modalWidth + 'px', maxHeight: '80vh' }"
+      :content-style="{ maxHeight: 'calc(80vh - 100px)', overflowY: 'auto' }"
     >
       <n-form label-placement="left" :label-width="config.formLabelWidth" class="channel-form">
-        <div v-for="section in config.formSections" :key="section.title" class="form-section">
-          <div class="section-title">{{ section.title }}</div>
-          <n-form-item
-            v-for="field in section.fields"
-            :key="field.key"
-            :label="field.label"
-            :required="field.required"
-            :validation-status="validation[field.key]?.status"
-            :feedback="validation[field.key]?.message"
+        <template v-for="section in config.formSections" :key="section.title">
+          <!-- 条件显示 section -->
+          <div
+            v-if="!section.showWhen || section.showWhen(state.formData)"
+            class="form-section"
+            :class="{ collapsible: section.collapsible }"
           >
-            <component
-              :is="resolveFieldComponent(field)"
-              v-model:value="state.formData[field.key]"
-              v-bind="buildFieldProps(field)"
-            />
-          </n-form-item>
-        </div>
+            <div class="section-title">
+              {{ section.title }}
+              <span v-if="section.description" class="section-desc">{{ section.description }}</span>
+            </div>
+            <n-form-item
+              v-for="field in section.fields"
+              :key="field.key"
+              :label="field.label"
+              :required="field.required"
+              :validation-status="getValidationStatus(field.key)"
+              :feedback="getValidationMessage(field.key)"
+            >
+              <!-- 预设选择器 -->
+              <n-select
+                v-if="field.type === 'preset'"
+                :value="state.formData.presetId"
+                :options="presetOptions"
+                :placeholder="field.placeholder"
+                @update:value="handlePresetChange"
+              />
+              <!-- 其他字段 -->
+              <component
+                v-else
+                :is="resolveFieldComponent(field)"
+                :value="getNestedValue(state.formData, field.key)"
+                v-bind="buildFieldProps(field)"
+                @update:value="(val) => setNestedValue(state.formData, field.key, val)"
+              />
+            </n-form-item>
+          </div>
+        </template>
       </n-form>
       <template #footer>
         <div class="dialog-footer">
@@ -86,6 +108,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import {
   NButton,
   NIcon,
@@ -96,7 +119,8 @@ import {
   NFormItem,
   NInput,
   NSwitch,
-  NInputNumber
+  NInputNumber,
+  NSelect
 } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
@@ -118,6 +142,77 @@ const configFactory = channelPanelFactories[props.type] || channelPanelFactories
 const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
+
+// 预设选项（仅 Claude 有）
+const presetOptions = computed(() => {
+  if (!config.presets) return []
+
+  const groups = {}
+  config.presets.forEach(preset => {
+    const category = preset.category || 'custom'
+    if (!groups[category]) {
+      groups[category] = {
+        type: 'group',
+        label: config.presetCategories?.[category] || category,
+        key: category,
+        children: []
+      }
+    }
+    groups[category].children.push({
+      label: preset.name,
+      value: preset.id
+    })
+  })
+
+  return Object.values(groups)
+})
+
+// 预设变化处理
+function handlePresetChange(presetId) {
+  if (config.onPresetChange) {
+    const newForm = config.onPresetChange(presetId, state.formData)
+    Object.assign(state.formData, newForm)
+  } else {
+    state.formData.presetId = presetId
+  }
+}
+
+// 获取嵌套值 (支持 'modelConfig.model' 这种路径)
+function getNestedValue(obj, path) {
+  if (!path.includes('.')) return obj[path]
+  const keys = path.split('.')
+  let value = obj
+  for (const key of keys) {
+    value = value?.[key]
+  }
+  return value
+}
+
+// 设置嵌套值
+function setNestedValue(obj, path, value) {
+  if (!path.includes('.')) {
+    obj[path] = value
+    return
+  }
+  const keys = path.split('.')
+  let target = obj
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (!target[keys[i]]) target[keys[i]] = {}
+    target = target[keys[i]]
+  }
+  target[keys[keys.length - 1]] = value
+}
+
+// 获取验证状态（支持嵌套路径）
+function getValidationStatus(key) {
+  const flatKey = key.replace(/\./g, '_')
+  return validation[flatKey]?.status || validation[key]?.status
+}
+
+function getValidationMessage(key) {
+  const flatKey = key.replace(/\./g, '_')
+  return validation[flatKey]?.message || validation[key]?.message
+}
 
 const helpers = {
   getChannelInflight,

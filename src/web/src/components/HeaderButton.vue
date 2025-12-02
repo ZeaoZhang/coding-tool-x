@@ -38,7 +38,7 @@ const props = defineProps({
   },
   iconSize: {
     type: Number,
-    default: 22
+    default: 18
   },
   active: {
     type: Boolean,
@@ -53,9 +53,9 @@ const props = defineProps({
 const emit = defineEmits(['click'])
 
 const iconColor = computed(() => {
-  if (props.disabled) return '#6b7280' // 更深的灰色，在暗色主题下也清晰
+  if (props.disabled) return '#6b7280'
   if (props.active) return '#18a058'
-  return '#9ca3af'
+  return undefined // 让 CSS 控制颜色
 })
 
 function handleClick() {
@@ -70,31 +70,46 @@ function handleClick() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--bg-secondary);
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: all 0.2s ease;
   padding: 0;
   outline: none;
 }
 
+.header-button :deep(.n-icon) {
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+
 .header-button:hover:not(.disabled) {
-  background: rgba(24, 160, 88, 0.08);
+  background: var(--hover-bg);
+  border-color: var(--border-primary);
+}
+
+.header-button:hover:not(.disabled) :deep(.n-icon) {
+  color: var(--text-primary);
+}
+
+.header-button:active:not(.disabled) {
+  transform: scale(0.95);
+}
+
+.header-button.active {
+  background: rgba(24, 160, 88, 0.1);
+  border-color: rgba(24, 160, 88, 0.3);
+}
+
+.header-button.active :deep(.n-icon) {
+  color: #18a058 !important;
 }
 
 .header-button.disabled {
   cursor: not-allowed;
-  opacity: 0.7; /* 从 0.5 提升到 0.7，让图标更清晰 */
-}
-
-.header-button :deep(.n-icon) {
-  transition: color 0.2s ease;
-}
-
-.header-button:hover:not(.disabled) :deep(.n-icon) {
-  color: #18a058 !important;
+  opacity: 0.5;
 }
 </style>

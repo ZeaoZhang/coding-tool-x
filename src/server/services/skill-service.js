@@ -112,18 +112,14 @@ class SkillService {
    * 获取所有技能列表（带缓存）
    */
   async listSkills(forceRefresh = false) {
-    console.log('[SkillService] listSkills called, forceRefresh:', forceRefresh);
-
     // 强制刷新时清除缓存
     if (forceRefresh) {
-      console.log('[SkillService] Force refresh - clearing all cache');
       this.skillsCache = null;
       this.cacheTime = 0;
       // 删除文件缓存
       try {
         if (fs.existsSync(this.cachePath)) {
           fs.unlinkSync(this.cachePath);
-          console.log('[SkillService] Deleted cache file');
         }
       } catch (err) {
         console.warn('[SkillService] Failed to delete cache file:', err.message);
@@ -132,7 +128,6 @@ class SkillService {
 
     // 检查内存缓存
     if (!forceRefresh && this.skillsCache && (Date.now() - this.cacheTime < CACHE_TTL)) {
-      console.log('[SkillService] Using memory cache, skills count:', this.skillsCache.length);
       this.updateInstallStatus(this.skillsCache);
       return this.skillsCache;
     }
@@ -141,7 +136,6 @@ class SkillService {
     if (!forceRefresh) {
       const fileCache = this.loadCacheFromFile();
       if (fileCache) {
-        console.log('[SkillService] Using file cache, skills count:', fileCache.length);
         this.skillsCache = fileCache;
         this.cacheTime = Date.now();
         this.updateInstallStatus(this.skillsCache);
@@ -149,14 +143,11 @@ class SkillService {
       }
     }
 
-    console.log('[SkillService] No cache, fetching from GitHub...');
     const repos = this.loadRepos();
-    console.log('[SkillService] Loaded repos:', JSON.stringify(repos));
     const skills = [];
 
     // 并行获取所有启用仓库的技能（带超时保护）
     const enabledRepos = repos.filter(r => r.enabled);
-    console.log('[SkillService] Enabled repos count:', enabledRepos.length);
 
     if (enabledRepos.length > 0) {
       const results = await Promise.allSettled(
@@ -174,13 +165,11 @@ class SkillService {
         const result = results[i];
         const repoInfo = `${enabledRepos[i].owner}/${enabledRepos[i].name}`;
         if (result.status === 'fulfilled') {
-          console.log(`[SkillService] Repo ${repoInfo} fetched ${result.value.length} skills`);
           skills.push(...result.value);
         } else {
           console.warn(`[SkillService] Fetch repo ${repoInfo} failed:`, result.reason?.message);
         }
       }
-      console.log(`[SkillService] Total skills from all repos: ${skills.length}`);
     }
 
     // 合并本地已安装的技能
@@ -259,12 +248,8 @@ class SkillService {
         item.type === 'blob' && item.path.endsWith('/SKILL.md')
       );
 
-      console.log(`[SkillService] Found ${skillFiles.length} SKILL.md files in ${repo.owner}/${repo.name}`);
-
       // 并行获取所有 SKILL.md 的内容（限制并发数）
       const batchSize = 5;
-      let successCount = 0;
-      let failCount = 0;
 
       for (let i = 0; i < skillFiles.length; i += batchSize) {
         const batch = skillFiles.slice(i, i + batchSize);
@@ -275,14 +260,9 @@ class SkillService {
         for (const result of results) {
           if (result.status === 'fulfilled' && result.value) {
             skills.push(result.value);
-            successCount++;
-          } else {
-            failCount++;
           }
         }
       }
-
-      console.log(`[SkillService] ${repo.owner}/${repo.name}: success=${successCount}, failed=${failCount}`);
     } catch (err) {
       console.error(`[SkillService] Fetch repo ${repo.owner}/${repo.name} error:`, err.message);
       throw err;
@@ -765,6 +745,10 @@ class SkillService {
       // 复制到安装目录
       fs.mkdirSync(dest, { recursive: true });
       this.copyDirRecursive(sourceDir, dest);
+
+      // 清除缓存，让列表刷新
+      this.skillsCache = null;
+      this.cacheTime = 0;
 
       return { success: true, message: 'Installed successfully' };
     } finally {

@@ -142,7 +142,6 @@
         <!-- Help Button -->
         <HeaderButton
           :icon="HelpCircleOutline"
-          :icon-size="24"
           tooltip="使用帮助"
           @click="showHelpModal = true"
         />
@@ -495,11 +494,6 @@ function handleEnvNeverRemind() {
 const globalLoading = ref(false) // 全局 loading 状态
 const updateInfo = ref(null) // 版本更新信息
 
-// ===== 临时测试：用于本地 mock 更新弹窗 =====
-// 如果需要测试更新弹窗效果，取消下面的注释即可
-// updateInfo.value = { current: '1.5.3', latest: '1.5.2', hasUpdate: true }
-// ============================================
-
 // 根据当前 channel 计算有效的代理状态
 const effectiveProxyRunning = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.running
@@ -695,14 +689,14 @@ onUnmounted(() => {
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
 }
 
 .env-warning-btn {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px;
+  padding: 5px 10px;
   background: rgba(245, 158, 11, 0.12);
   border-radius: 6px;
   cursor: pointer;
@@ -715,10 +709,11 @@ onUnmounted(() => {
 
 .env-warning-icon {
   color: #f59e0b;
+  font-size: 14px;
 }
 
 .env-warning-count {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #f59e0b;
 }
@@ -1102,17 +1097,17 @@ onUnmounted(() => {
 
 /* 更新提示样式 */
 .update-notification {
-  margin-right: 8px;
+  margin-right: 2px;
 }
 
 .update-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 4px;
+  padding: 5px 10px;
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(251, 146, 60, 0.15));
   border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
   animation: pulse-update 2s ease-in-out infinite;
@@ -1127,10 +1122,11 @@ onUnmounted(() => {
 
 .update-badge .n-icon {
   color: #f59e0b;
+  font-size: 14px;
 }
 
 .update-text {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: #f59e0b;
   white-space: nowrap;
@@ -1164,20 +1160,20 @@ onUnmounted(() => {
 
 .favorites-badge {
   position: absolute;
-  top: -2px;
-  right: -6px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #ff4d4f;
   color: white;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   line-height: 1;
-  border-radius: 8px;
+  border-radius: 7px;
   box-shadow: 0 0 0 2px var(--bg-primary);
   pointer-events: none;
 }

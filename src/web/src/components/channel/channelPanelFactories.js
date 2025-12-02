@@ -6,6 +6,7 @@ import {
   applyChannelToSettings,
   resetChannelHealth
 } from '../../api/channels'
+import { claudePresets, presetCategories, getPresetById } from '../../config/claudePresets'
 import {
   getCodexChannels,
   createCodexChannel,
@@ -118,9 +119,23 @@ const channelPanelFactories = {
     showEmptyAction: false,
     emptyActionText: '',
     modalWidth: 520,
-    formLabelWidth: 80,
+    formLabelWidth: 95,
     showApplyButton: true,
+    presets: claudePresets,
+    presetCategories,
+    getPresetById,
     formSections: [
+      {
+        title: '供应商预设',
+        fields: [
+          {
+            key: 'presetId',
+            label: '选择预设',
+            type: 'preset',
+            placeholder: '选择供应商预设'
+          }
+        ]
+      },
       {
         title: '基本信息',
         fields: [
@@ -150,28 +165,109 @@ const channelPanelFactories = {
         ]
       },
       {
+        title: '模型配置',
+        description: '非官方供应商需要配置模型映射',
+        collapsible: true,
+        showWhen: (form) => form.presetId && form.presetId !== 'official',
+        fields: [
+          {
+            key: 'modelConfig.model',
+            label: '主模型',
+            type: 'text',
+            placeholder: '如 glm-4.6'
+          },
+          {
+            key: 'modelConfig.haikuModel',
+            label: 'Haiku 模型',
+            type: 'text',
+            placeholder: '如 glm-4.5-air'
+          },
+          {
+            key: 'modelConfig.sonnetModel',
+            label: 'Sonnet 模型',
+            type: 'text',
+            placeholder: '如 glm-4.6'
+          },
+          {
+            key: 'modelConfig.opusModel',
+            label: 'Opus 模型',
+            type: 'text',
+            placeholder: '如 glm-4.6'
+          }
+        ]
+      },
+      {
         title: '调度配置',
         fields: baseSections.schedule
+      },
+      {
+        title: '网络代理',
+        description: '部分渠道可能需要代理才能访问',
+        collapsible: true,
+        fields: [
+          {
+            key: 'proxyUrl',
+            label: '代理地址',
+            type: 'text',
+            placeholder: 'http://127.0.0.1:7890（选填）'
+          }
+        ]
       }
     ],
     getInitialForm: () => ({
-      name: '',
-      baseUrl: '',
+      presetId: 'official',
+      name: 'Claude 官方',
+      baseUrl: 'https://api.anthropic.com',
       apiKey: '',
-      websiteUrl: '',
+      websiteUrl: 'https://www.anthropic.com',
+      modelConfig: {
+        model: '',
+        haikuModel: '',
+        sonnetModel: '',
+        opusModel: ''
+      },
+      proxyUrl: '',
       maxConcurrency: null,
       weight: 1,
       enabled: true
     }),
     mapChannelToForm: (channel) => ({
+      presetId: channel.presetId || 'official',
       name: channel.name || '',
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       websiteUrl: channel.websiteUrl || '',
+      modelConfig: {
+        model: channel.modelConfig?.model || '',
+        haikuModel: channel.modelConfig?.haikuModel || '',
+        sonnetModel: channel.modelConfig?.sonnetModel || '',
+        opusModel: channel.modelConfig?.opusModel || ''
+      },
+      proxyUrl: channel.proxyUrl || '',
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false
     }),
+    onPresetChange: (presetId, form) => {
+      const preset = getPresetById(presetId)
+      if (!preset) return form
+
+      const newForm = { ...form, presetId }
+      newForm.name = preset.name
+      newForm.baseUrl = preset.baseUrl
+      newForm.websiteUrl = preset.websiteUrl || ''
+
+      if (preset.env) {
+        newForm.modelConfig = {
+          model: preset.env.ANTHROPIC_MODEL || '',
+          haikuModel: preset.env.ANTHROPIC_DEFAULT_HAIKU_MODEL || '',
+          sonnetModel: preset.env.ANTHROPIC_DEFAULT_SONNET_MODEL || '',
+          opusModel: preset.env.ANTHROPIC_DEFAULT_OPUS_MODEL || ''
+        }
+      }
+
+      return newForm
+    },
     api: {
       fetch: async () => {
         const data = await fetchClaudeChannels()
@@ -186,7 +282,10 @@ const channelPanelFactories = {
           {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
-            enabled: form.enabled
+            enabled: form.enabled,
+            presetId: form.presetId,
+            modelConfig: form.modelConfig,
+            proxyUrl: form.proxyUrl || ''
           }
         )
       },
@@ -198,7 +297,10 @@ const channelPanelFactories = {
           websiteUrl: form.websiteUrl,
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
-          enabled: form.enabled
+          enabled: form.enabled,
+          presetId: form.presetId,
+          modelConfig: form.modelConfig,
+          proxyUrl: form.proxyUrl || ''
         })
       },
       toggle: async (channel, enabled) => {

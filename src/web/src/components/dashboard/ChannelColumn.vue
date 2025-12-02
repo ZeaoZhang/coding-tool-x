@@ -16,11 +16,102 @@
       </div>
       <h2 class="channel-title">{{ channelTitle }}</h2>
 
+      <!-- MCP 服务状态 (所有平台) -->
+      <n-popover v-if="mcpEnabledCount > 0" trigger="click" placement="bottom" :width="340" class="mcp-popover">
+        <template #trigger>
+          <n-tag
+            type="info"
+            size="small"
+            :bordered="false"
+            class="mcp-count-tag clickable"
+          >
+            已启用 {{ mcpEnabledCount }} 个 MCP
+          </n-tag>
+        </template>
+        <div class="mcp-quick-panel">
+          <div class="panel-title">
+            <span>已启用的 MCP 服务</span>
+            <n-text depth="3" style="font-size: 11px;">{{ platformLabel }} 平台</n-text>
+          </div>
+          <div v-if="mcpEnabledServers.length === 0" class="no-items">
+            <n-text depth="3">暂无启用的 MCP 服务</n-text>
+          </div>
+          <div v-else class="mcp-quick-list">
+            <div
+              v-for="server in mcpEnabledServers"
+              :key="server.id"
+              class="mcp-quick-item"
+            >
+              <div class="mcp-item-icon">
+                <n-icon :size="14"><ServerOutline /></n-icon>
+              </div>
+              <div class="mcp-item-info">
+                <span class="mcp-item-name">{{ server.name }}</span>
+                <span class="mcp-item-type">{{ server.transportType || 'stdio' }}</span>
+              </div>
+              <n-switch
+                size="small"
+                :value="true"
+                @update:value="(val) => handleMcpToggle(server, val)"
+                :loading="server._toggling"
+              />
+            </div>
+          </div>
+        </div>
+      </n-popover>
+
       <!-- Skills 区域 (仅 Claude) -->
-      <div v-if="channelType === 'claude'" class="skills-area">
-        <n-tag v-if="installedSkillsCount > 0" type="success" size="small" :bordered="false" class="skills-count-tag">
-          已安装 {{ installedSkillsCount }} 个技能
-        </n-tag>
+      <div v-if="channelType === 'claude'" class="claude-extra-area">
+        <!-- Skills 状态 -->
+        <n-popover v-if="installedSkillsCount > 0" trigger="click" placement="bottom" :width="340" class="skills-popover">
+          <template #trigger>
+            <n-tag
+              type="success"
+              size="small"
+              :bordered="false"
+              class="skills-count-tag clickable"
+            >
+              {{ installedSkillsCount }} 个技能
+            </n-tag>
+          </template>
+          <div class="skills-quick-panel">
+            <div class="panel-title">
+              <span>已安装的技能</span>
+              <n-button text size="tiny" @click="showSkillsPanel = true">
+                管理全部
+              </n-button>
+            </div>
+            <div v-if="installedSkills.length === 0" class="no-items">
+              <n-text depth="3">暂无已安装的技能</n-text>
+            </div>
+            <div v-else class="skills-quick-list">
+              <div
+                v-for="skill in installedSkills"
+                :key="skill.id"
+                class="skill-quick-item"
+              >
+                <div class="skill-item-icon">
+                  <n-icon :size="14"><ExtensionPuzzleOutline /></n-icon>
+                </div>
+                <div class="skill-item-info">
+                  <span class="skill-item-name">{{ skill.name }}</span>
+                  <span class="skill-item-desc">{{ skill.description || '无描述' }}</span>
+                </div>
+                <n-button
+                  size="tiny"
+                  tertiary
+                  type="error"
+                  @click="handleUninstallSkill(skill)"
+                  :loading="skill._uninstalling"
+                >
+                  卸载
+                </n-button>
+              </div>
+            </div>
+          </div>
+        </n-popover>
+
+        <!-- Skills 管理按钮 -->
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-button
@@ -60,6 +151,7 @@
     <SkillsPanel
       v-if="showSkillsPanel"
       @back="showSkillsPanel = false"
+      @updated="loadInstalledSkills"
     />
 
     <!-- 滚动内容区 -->
@@ -353,7 +445,8 @@ import {
   LockClosed,
   LockOpen,
   ReorderTwoOutline,
-  ExtensionPuzzleOutline
+  ExtensionPuzzleOutline,
+  ServerOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
@@ -373,7 +466,8 @@ import {
   getCodexTodayStatistics,
   getGeminiTodayStatistics
 } from '../../api/statistics'
-import { getSkills } from '../../api/skills'
+import { getSkills, uninstallSkill } from '../../api/skills'
+import { getAllServers as getMcpServers, toggleServerApp } from '../../api/mcp'
 
 const props = defineProps({
   channelType: {
@@ -523,18 +617,87 @@ const showRecentSessions = ref(false)
 // Skills 面板（仅 Claude）
 const showSkillsPanel = ref(false)
 const installedSkillsCount = ref(0)
+const installedSkills = ref([])
 
-// 加载已安装技能数量
-async function loadInstalledSkillsCount() {
+// MCP 服务（所有平台）
+const mcpEnabledCount = ref(0)
+const mcpEnabledServers = ref([])
+
+// 平台标签
+const platformLabel = computed(() => {
+  const labels = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' }
+  return labels[props.channelType] || ''
+})
+
+// 加载已安装技能
+async function loadInstalledSkills() {
   if (props.channelType !== 'claude') return
   try {
     const result = await getSkills()
     if (result.success && result.skills) {
-      installedSkillsCount.value = result.skills.filter(s => s.installed).length
+      const installed = result.skills.filter(s => s.installed)
+      installedSkillsCount.value = installed.length
+      installedSkills.value = installed.slice(0, 10).map(s => ({ ...s, _uninstalling: false }))
     }
   } catch (err) {
-    console.error('Failed to load skills count:', err)
+    console.error('Failed to load skills:', err)
   }
+}
+
+// 加载 MCP 服务
+async function loadMcpServers() {
+  try {
+    const result = await getMcpServers()
+    if (result.success && result.servers) {
+      // servers 是对象格式，需要转换为数组
+      const serverList = Object.values(result.servers)
+      // 根据当前平台筛选已启用的服务
+      const enabled = serverList.filter(s => s.apps?.[props.channelType] === true)
+      mcpEnabledCount.value = enabled.length
+      mcpEnabledServers.value = enabled.slice(0, 10).map(s => ({ ...s, _toggling: false }))
+    }
+  } catch (err) {
+    console.error('Failed to load MCP servers:', err)
+  }
+}
+
+// 切换 MCP 服务状态
+async function handleMcpToggle(server, enabled) {
+  server._toggling = true
+  try {
+    await toggleServerApp(server.id, props.channelType, enabled)
+    message.success(enabled ? `已启用 ${server.name}` : `已禁用 ${server.name}`)
+    // 刷新列表
+    await loadMcpServers()
+  } catch (err) {
+    message.error('操作失败: ' + (err.message || '未知错误'))
+  } finally {
+    server._toggling = false
+  }
+}
+
+// 卸载技能
+async function handleUninstallSkill(skill) {
+  skill._uninstalling = true
+  try {
+    const result = await uninstallSkill(skill.directory)
+    if (result.success) {
+      message.success(`已卸载 ${skill.name}`)
+      // 刷新列表
+      await loadInstalledSkills()
+    } else {
+      message.error(result.error || '卸载失败')
+    }
+  } catch (err) {
+    message.error('卸载失败: ' + (err.message || '未知错误'))
+  } finally {
+    skill._uninstalling = false
+  }
+}
+
+// 兼容旧方法名
+function loadInstalledSkillsCount() {
+  loadInstalledSkills()
 }
 
 // localStorage key
@@ -950,8 +1113,9 @@ onMounted(async () => {
   await loadStats()
   // 加载渠道统计数据
   await loadChannelStats()
-  // 加载已安装技能数量（仅 Claude）
-  loadInstalledSkillsCount()
+  // 加载已安装技能和 MCP 服务（仅 Claude）
+  loadInstalledSkills()
+  loadMcpServers()
   // 渠道数据现在从 Pinia store 获取，由 store 自动管理
   loadShowLogs()
   loadLockState()
@@ -1453,7 +1617,7 @@ onUnmounted(() => {
 .stats-inline {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .stats-inline.stats-3col {
@@ -1463,61 +1627,60 @@ onUnmounted(() => {
 .stat-inline-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 12px;
-  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg-secondary);
   border-radius: 6px;
   border: 1px solid var(--border-primary);
-  transition: all 0.25s ease;
+  transition: all 0.2s ease;
 }
 
 .stat-inline-item:hover {
   border-color: var(--border-secondary);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  background: var(--hover-bg);
 }
 
 /* 统计项图标点 */
 .stat-icon-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .stat-icon-dot.requests {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  box-shadow: 0 0 8px rgba(59, 130, 246, 0.4);
+  background: #3b82f6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
 }
 
 .stat-icon-dot.tokens {
-  background: linear-gradient(135deg, #18a058, #15803d);
-  box-shadow: 0 0 8px rgba(24, 160, 88, 0.4);
+  background: #18a058;
+  box-shadow: 0 0 6px rgba(24, 160, 88, 0.5);
 }
 
 .stat-icon-dot.cost {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
 }
 
 .stat-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
 .stat-label {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-tertiary);
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
 }
 
 .stat-value {
-  font-size: 18px;
-  font-weight: 800;
+  font-size: 16px;
+  font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
   transition: all 0.3s ease;
@@ -1530,14 +1693,13 @@ onUnmounted(() => {
 
 @keyframes numberChange {
   0% {
-    transform: translateY(-8px);
+    transform: translateY(-6px);
     opacity: 0.5;
   }
   50% {
     transform: translateY(0);
     opacity: 1;
     color: var(--primary-color);
-    text-shadow: 0 0 8px currentColor;
   }
   100% {
     transform: translateY(0);
@@ -1547,7 +1709,7 @@ onUnmounted(() => {
 
 /* 统计卡片特殊样式 */
 .stats-card {
-  border-left: 3px solid transparent;
+  border-left: 2px solid transparent;
 }
 
 .stats-card-claude {
@@ -1625,19 +1787,33 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* 柔和的日志表头颜色 */
 .logs-header-claude .log-col {
-  color: #18a058;
-  font-weight: 800;
+  color: rgba(24, 160, 88, 0.7);
+  font-weight: 600;
 }
 
 .logs-header-codex .log-col {
-  color: #3b82f6;
-  font-weight: 800;
+  color: rgba(59, 130, 246, 0.7);
+  font-weight: 600;
 }
 
 .logs-header-gemini .log-col {
-  color: #a855f7;
-  font-weight: 800;
+  color: rgba(168, 85, 247, 0.7);
+  font-weight: 600;
+}
+
+/* 暗色主题下稍微提亮 */
+[data-theme="dark"] .logs-header-claude .log-col {
+  color: rgba(52, 211, 153, 0.65);
+}
+
+[data-theme="dark"] .logs-header-codex .log-col {
+  color: rgba(96, 165, 250, 0.65);
+}
+
+[data-theme="dark"] .logs-header-gemini .log-col {
+  color: rgba(192, 132, 252, 0.65);
 }
 
 .logs-container {
@@ -1913,16 +2089,173 @@ onUnmounted(() => {
   min-width: 55px;
 }
 
-/* Skills 区域样式 */
-.skills-area {
+/* Claude 额外区域样式 (MCP & Skills) */
+.claude-extra-area {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
 }
 
+.mcp-count-tag,
 .skills-count-tag {
-  font-size: 11px;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 0 8px;
+  height: 22px;
+  line-height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mcp-count-tag.clickable:hover,
+.skills-count-tag.clickable:hover {
+  transform: scale(1.03);
+  filter: brightness(1.1);
+}
+
+/* MCP 快捷面板样式 */
+.mcp-quick-panel,
+.skills-quick-panel {
+  padding: 2px 0;
+}
+
+.mcp-quick-panel .panel-title,
+.skills-quick-panel .panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px 8px 10px;
+  border-bottom: 1px solid var(--border-primary);
+  margin-bottom: 4px;
+}
+
+.mcp-quick-panel .panel-title span:first-child,
+.skills-quick-panel .panel-title span:first-child {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.no-items {
+  padding: 16px 10px;
+  text-align: center;
+}
+
+.mcp-quick-list,
+.skills-quick-list {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 0 4px 4px 4px;
+}
+
+.mcp-quick-item,
+.skill-quick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 5px;
+  margin-bottom: 4px;
+  background: var(--bg-secondary);
+  transition: all 0.2s ease;
+}
+
+.mcp-quick-item:hover,
+.skill-quick-item:hover {
+  background: var(--hover-bg);
+}
+
+.mcp-item-icon,
+.skill-item-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.mcp-item-icon {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(59, 130, 246, 0.05));
+  color: #3b82f6;
+}
+
+.skill-item-icon {
+  background: linear-gradient(135deg, rgba(24, 160, 88, 0.15), rgba(24, 160, 88, 0.05));
+  color: #18a058;
+}
+
+.mcp-item-info,
+.skill-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mcp-item-name,
+.skill-item-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-item-type {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+}
+
+.skill-item-desc {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mcp-item-status {
+  flex-shrink: 0;
+}
+
+.mcp-item-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-secondary);
+}
+
+.mcp-item-status.online .status-dot {
+  background: #18a058;
+  box-shadow: 0 0 6px rgba(24, 160, 88, 0.5);
+}
+
+.mcp-item-status.error .status-dot {
+  background: #d03050;
+  box-shadow: 0 0 6px rgba(208, 48, 80, 0.5);
+}
+
+.mcp-quick-list::-webkit-scrollbar,
+.skills-quick-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.mcp-quick-list::-webkit-scrollbar-thumb,
+.skills-quick-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+[data-theme="dark"] .mcp-quick-list::-webkit-scrollbar-thumb,
+[data-theme="dark"] .skills-quick-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 /* Skills 按钮样式 */
@@ -1962,10 +2295,10 @@ onUnmounted(() => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-/* 锁定按钮样式 - 精致版本 */
+/* 锁定按钮样式 - 与 Skills 按钮统一风格 */
 .lock-button {
   margin-left: 6px;
-  padding: 6px;
+  padding: 6px !important;
   width: 30px;
   height: 30px;
   display: flex;
@@ -1981,19 +2314,18 @@ onUnmounted(() => {
 .lock-button .n-icon {
   color: var(--text-color-3);
   transition: all 0.25s ease;
-  transform: scaleY(0.85);
 }
 
 .lock-button:hover {
-  background: var(--bg-primary);
-  border-color: var(--border-secondary);
+  background: linear-gradient(135deg, rgba(107, 114, 128, 0.1), rgba(107, 114, 128, 0.05));
+  border-color: rgba(107, 114, 128, 0.3);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   transform: translateY(-1px);
 }
 
 .lock-button:hover .n-icon {
   color: var(--text-color-1);
-  transform: scale(1.1) scaleY(0.94);
+  transform: scale(1.1);
 }
 
 .lock-button:active {
