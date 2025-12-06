@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="drawerVisible" :width="1200" placement="right">
+  <n-drawer v-model:show="drawerVisible" :width="drawerWidth" placement="right">
     <n-drawer-content title="我的收藏" closable>
       <div class="favorites-container">
         <!-- Claude 收藏 -->
@@ -166,6 +166,9 @@ import { useFavorites } from '../composables/useFavorites'
 import { useSessionsStore } from '../stores/sessions'
 import { launchTerminal } from '../api/sessions'
 import message from '../utils/message'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(800, 700)
 
 const props = defineProps({
   visible: {

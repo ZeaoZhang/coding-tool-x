@@ -140,8 +140,16 @@ async function toggleProxy(type, value, loadingRef, startMsg, stopMsg) {
   loadingRef.value = true
   try {
     if (value) {
-      await startProxy(type)
+      const result = await startProxy(type)
       message.success(startMsg)
+
+      // 如果有环境变量提示（Codex），显示额外的提示信息
+      if (result.envHint && type === 'codex') {
+        message.warning(result.envHint.message, {
+          duration: 10000,
+          closable: true
+        })
+      }
     } else {
       await stopProxy(type)
       message.success(stopMsg)

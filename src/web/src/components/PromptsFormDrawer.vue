@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="600" placement="right" :show-mask="true">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right" :show-mask="true">
     <n-drawer-content closable :native-scrollbar="false">
       <template #header>
         <div class="form-header">
@@ -107,6 +107,9 @@ import { NDrawer, NDrawerContent, NButton, NIcon, NInput, NSwitch } from 'naive-
 import { DocumentTextOutline, InformationCircleOutline, AppsOutline, CodeSlashOutline } from '@vicons/ionicons5'
 import { savePreset } from '../api/prompts'
 import message from '../utils/message'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(600)
 
 const props = defineProps({
   visible: {

@@ -110,9 +110,52 @@ onMounted(async () => {
   }
 }
 
+@media (max-width: 1024px) {
+  .dashboard-container {
+    padding: 10px;
+  }
+
+  .dashboard-grid {
+    gap: 10px;
+  }
+}
+
 @media (max-width: 900px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-container {
+    padding: 8px;
+    overflow-y: auto;
+  }
+
+  .dashboard-grid {
+    gap: 8px;
+    overflow: visible;
+    min-height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-container {
+    padding: 6px;
+  }
+
+  .dashboard-grid {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-container {
+    padding: 4px;
+  }
+
+  .dashboard-grid {
+    gap: 4px;
   }
 }
 </style>

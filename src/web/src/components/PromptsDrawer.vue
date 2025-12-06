@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="680" placement="right" :show-mask="true">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right" :show-mask="true">
     <n-drawer-content title="Prompts 管理" closable :native-scrollbar="false">
       <template #header>
         <div class="drawer-header">
@@ -181,6 +181,9 @@ import {
 import { getAllPresets, activatePreset, deletePreset, importFromPlatform, deactivatePrompt } from '../api/prompts'
 import message, { dialog } from '../utils/message'
 import PromptsFormDrawer from './PromptsFormDrawer.vue'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(680)
 
 const props = defineProps({
   visible: {

@@ -3,7 +3,9 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 const { getCodexDir } = require('./codex-config');
+const { injectEnvToShell, removeEnvFromShell, isProxyConfig } = require('./codex-settings-manager');
 
 /**
  * Codex 渠道管理服务（多渠道架构）
@@ -109,6 +111,14 @@ function initializeFromConfig() {
           createdAt: Date.now(),
           updatedAt: Date.now()
         });
+
+        // 自动注入环境变量（从 Codex 迁移过来时使用）
+        if (apiKey && envKey) {
+          const injectResult = injectEnvToShell(envKey, apiKey);
+          if (injectResult.success) {
+            console.log(`[Codex Channels] Environment variable ${envKey} injected during initialization`);
+          }
+        }
       }
     }
 
@@ -172,6 +182,16 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
   data.channels.push(newChannel);
   saveChannels(data);
 
+  // 立即注入该渠道的环境变量（在所有渠道配置之前）
+  if (apiKey && envKey) {
+    const injectResult = injectEnvToShell(envKey, apiKey);
+    if (injectResult.success) {
+      console.log(`[Codex Channels] Environment variable ${envKey} injected for new channel`);
+    } else {
+      console.warn(`[Codex Channels] Failed to inject ${envKey}: ${injectResult.error}`);
+    }
+  }
+
   // 写入 Codex 配置文件
   writeCodexConfigForMultiChannel(data.channels);
 
@@ -187,25 +207,49 @@ function updateChannel(channelId, updates) {
     throw new Error('Channel not found');
   }
 
-  const channel = data.channels[index];
+  const oldChannel = data.channels[index];
 
   // 检查 providerKey 冲突
-  if (updates.providerKey && updates.providerKey !== channel.providerKey) {
+  if (updates.providerKey && updates.providerKey !== oldChannel.providerKey) {
     const existing = data.channels.find(c => c.providerKey === updates.providerKey && c.id !== channelId);
     if (existing) {
       throw new Error(`Provider key "${updates.providerKey}" already exists`);
     }
   }
 
-  data.channels[index] = {
-    ...channel,
+  const newChannel = {
+    ...oldChannel,
     ...updates,
     id: channelId, // 保持 ID 不变
-    createdAt: channel.createdAt, // 保持创建时间
+    createdAt: oldChannel.createdAt, // 保持创建时间
     updatedAt: Date.now()
   };
 
+  data.channels[index] = newChannel;
   saveChannels(data);
+
+  // 处理环境变量更新
+  // 如果 envKey 或 apiKey 变化，需要更新环境变量
+  const oldEnvKey = oldChannel.envKey;
+  const newEnvKey = newChannel.envKey;
+  const oldApiKey = oldChannel.apiKey;
+  const newApiKey = newChannel.apiKey;
+
+  // 如果 envKey 改变，删除旧的，注入新的
+  if (oldEnvKey !== newEnvKey && oldEnvKey) {
+    const removeResult = removeEnvFromShell(oldEnvKey);
+    if (removeResult.success) {
+      console.log(`[Codex Channels] Old environment variable ${oldEnvKey} removed`);
+    }
+  }
+
+  // 如果有新的 API Key，注入到环境变量
+  if (newApiKey && newEnvKey) {
+    const injectResult = injectEnvToShell(newEnvKey, newApiKey);
+    if (injectResult.success) {
+      console.log(`[Codex Channels] Environment variable ${newEnvKey} updated`);
+    }
+  }
 
   // 更新 Codex 配置文件
   writeCodexConfigForMultiChannel(data.channels);
@@ -222,8 +266,19 @@ function deleteChannel(channelId) {
     throw new Error('Channel not found');
   }
 
+  const deletedChannel = data.channels[index];
   data.channels.splice(index, 1);
   saveChannels(data);
+
+  // 从 shell 配置文件移除该渠道的环境变量
+  if (deletedChannel.envKey) {
+    const removeResult = removeEnvFromShell(deletedChannel.envKey);
+    if (removeResult.success) {
+      console.log(`[Codex Channels] Environment variable ${deletedChannel.envKey} removed`);
+    } else {
+      console.warn(`[Codex Channels] Failed to remove ${deletedChannel.envKey}: ${removeResult.error}`);
+    }
+  }
 
   // 更新 Codex 配置文件
   writeCodexConfigForMultiChannel(data.channels);
@@ -231,7 +286,14 @@ function deleteChannel(channelId) {
   return { success: true };
 }
 
-// 写入 Codex 配置文件（多渠道模式）
+/**
+ * 写入 Codex 配置文件（多渠道模式）
+ *
+ * 关键改进：
+ * 1. 完整保留现有配置（mcp_servers, projects 等）
+ * 2. 如果已启用动态切换（cc-proxy），不覆盖 model_provider
+ * 3. 使用 TOML 序列化而不是字符串拼接，确保配置完整性
+ */
 function writeCodexConfigForMultiChannel(allChannels) {
   const codexDir = getCodexDir();
 
@@ -242,8 +304,8 @@ function writeCodexConfigForMultiChannel(allChannels) {
   const configPath = path.join(codexDir, 'config.toml');
   const authPath = path.join(codexDir, 'auth.json');
 
-  // 读取现有配置(保留其他字段)
-  let existingConfig = {
+  // 读取现有配置，保留所有现有字段（特别是 mcp_servers, projects 等）
+  let config = {
     model: 'gpt-4',
     model_reasoning_effort: 'high',
     model_reasoning_summary_format: 'experimental',
@@ -255,63 +317,80 @@ function writeCodexConfigForMultiChannel(allChannels) {
   if (fs.existsSync(configPath)) {
     try {
       const content = fs.readFileSync(configPath, 'utf8');
-      existingConfig = { ...existingConfig, ...toml.parse(content) };
+      const parsedConfig = toml.parse(content);
+
+      // 深度合并，保留原有的所有配置
+      config = {
+        ...parsedConfig,
+        // 只覆盖这些字段
+        model: parsedConfig.model || config.model,
+        model_reasoning_effort: parsedConfig.model_reasoning_effort || config.model_reasoning_effort,
+        model_reasoning_summary_format: parsedConfig.model_reasoning_summary_format || config.model_reasoning_summary_format,
+        network_access: parsedConfig.network_access || config.network_access,
+        disable_response_storage: parsedConfig.disable_response_storage !== undefined ? parsedConfig.disable_response_storage : config.disable_response_storage,
+        show_raw_agent_reasoning: parsedConfig.show_raw_agent_reasoning !== undefined ? parsedConfig.show_raw_agent_reasoning : config.show_raw_agent_reasoning,
+        // mcp_servers 和 projects 会从 parsedConfig 自动继承
+        // model_provider 会根据动态切换情况决定是否更新
+      };
+
+      console.log('[Codex Channels] Preserved existing config sections:', {
+        hasMcpServers: !!parsedConfig.mcp_servers,
+        hasProjects: !!parsedConfig.projects,
+        otherSections: Object.keys(parsedConfig).filter(k => !['model_provider', 'model', 'model_reasoning_effort', 'model_reasoning_summary_format', 'network_access', 'disable_response_storage', 'show_raw_agent_reasoning', 'model_providers'].includes(k))
+      });
     } catch (err) {
       console.warn('[Codex Channels] Failed to read existing config, using defaults');
     }
   }
 
-  // 获取第一个启用的渠道作为默认 provider（Codex 配置要求）
-  const enabledChannels = allChannels.filter(c => c.enabled !== false);
-  const defaultProvider = enabledChannels[0]?.providerKey || allChannels[0]?.providerKey || 'openai';
+  // 判断是否已启用动态切换
+  const isProxyMode = config.model_provider === 'cc-proxy';
 
-  // 构建新的 config.toml
-  let tomlContent = `# Codex Configuration
-# Managed by Coding-Tool
+  // 只有当未启用动态切换时，才更新 model_provider
+  if (!isProxyMode) {
+    const enabledChannels = allChannels.filter(c => c.enabled !== false);
+    const defaultProvider = enabledChannels[0]?.providerKey || allChannels[0]?.providerKey || 'openai';
+    config.model_provider = defaultProvider;
+  } else {
+    console.log('[Codex Channels] Dynamic proxy mode detected, preserving cc-proxy as model_provider');
+  }
 
-# 当前使用的模型提供商
-model_provider = "${defaultProvider}"
-
-# 使用的模型
-model = "${existingConfig.model || 'gpt-4'}"
-
-# 推理强度 (low/medium/high)
-model_reasoning_effort = "${existingConfig.model_reasoning_effort || 'high'}"
-
-# 推理摘要格式
-model_reasoning_summary_format = "${existingConfig.model_reasoning_summary_format || 'experimental'}"
-
-# 网络访问 (enabled/restricted)
-network_access = "${existingConfig.network_access || 'enabled'}"
-
-# 是否禁用响应存储
-disable_response_storage = ${existingConfig.disable_response_storage || false}
-
-# 显示原始推理过程
-show_raw_agent_reasoning = ${existingConfig.show_raw_agent_reasoning !== false}
-
-`;
-
-  // 添加所有提供商配置
+  // 重建 model_providers 配置
+  config.model_providers = {};
   for (const channel of allChannels) {
-    tomlContent += `\n[model_providers.${channel.providerKey}]
-name = "${channel.name}"
-base_url = "${channel.baseUrl}"
-wire_api = "${channel.wireApi}"
-env_key = "${channel.envKey}"
-requires_openai_auth = ${channel.requiresOpenaiAuth !== false}
-`;
+    config.model_providers[channel.providerKey] = {
+      name: channel.name,
+      base_url: channel.baseUrl,
+      wire_api: channel.wireApi,
+      env_key: channel.envKey,
+      requires_openai_auth: channel.requiresOpenaiAuth !== false
+    };
 
     // 添加额外查询参数(如 Azure 的 api-version)
     if (channel.queryParams && Object.keys(channel.queryParams).length > 0) {
-      tomlContent += `\n[model_providers.${channel.providerKey}.query_params]\n`;
-      for (const [key, value] of Object.entries(channel.queryParams)) {
-        tomlContent += `${key} = "${value}"\n`;
-      }
+      config.model_providers[channel.providerKey].query_params = channel.queryParams;
     }
   }
 
-  fs.writeFileSync(configPath, tomlContent, 'utf8');
+  // 使用 TOML 序列化写入配置（保留注释和格式）
+  try {
+    const tomlContent = tomlStringify(config);
+    // 在开头添加标记注释
+    const annotatedContent = `# Codex Configuration
+# Managed by Coding-Tool
+# WARNING: MCP servers and projects are preserved automatically
+
+${tomlContent}`;
+
+    fs.writeFileSync(configPath, annotatedContent, 'utf8');
+    console.log('[Codex Channels] Config file written successfully with all sections preserved');
+  } catch (err) {
+    console.error('[Codex Channels] Failed to write config with TOML stringify:', err);
+    // 降级处理：如果 tomlStringify 失败，使用手工拼接（但这样会丢失注释）
+    const fallbackContent = JSON.stringify(config, null, 2);
+    console.warn('[Codex Channels] Falling back to JSON format (may lose formatting)');
+    fs.writeFileSync(configPath, fallbackContent, 'utf8');
+  }
 
   // 更新 auth.json
   let auth = {};
@@ -331,6 +410,9 @@ requires_openai_auth = ${channel.requiresOpenaiAuth !== false}
   }
 
   fs.writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8');
+
+  // 注意：环境变量注入在 createChannel 和 updateChannel 时已经处理
+  // 这里不再重复注入，避免多次写入 shell 配置文件
 }
 
 // 获取所有启用的渠道（供调度器使用）
@@ -363,11 +445,60 @@ function saveChannelOrder(order) {
   saveChannels(data);
 }
 
+/**
+ * 同步所有渠道的环境变量到 shell 配置文件
+ * 确保用户可以直接使用 codex 命令而无需手动设置环境变量
+ * 这个函数会在服务启动时自动调用
+ */
+function syncAllChannelEnvVars() {
+  try {
+    const data = loadChannels();
+    const channels = data.channels || [];
+
+    if (channels.length === 0) {
+      return { success: true, synced: 0 };
+    }
+
+    let syncedCount = 0;
+    const results = [];
+
+    for (const channel of channels) {
+      if (channel.apiKey && channel.envKey) {
+        const injectResult = injectEnvToShell(channel.envKey, channel.apiKey);
+        if (injectResult.success) {
+          syncedCount++;
+          results.push({ envKey: channel.envKey, success: true });
+        } else {
+          results.push({ envKey: channel.envKey, success: false, error: injectResult.error });
+        }
+      }
+    }
+
+    console.log(`[Codex Channels] Synced ${syncedCount} environment variables`);
+    return { success: true, synced: syncedCount, results };
+  } catch (err) {
+    console.error('[Codex Channels] Failed to sync env vars:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// 服务启动时自动同步环境变量（静默执行，不影响其他功能）
+try {
+  const data = loadChannels();
+  if (data.channels && data.channels.length > 0) {
+    syncAllChannelEnvVars();
+  }
+} catch (err) {
+  // 静默失败，不影响模块加载
+  console.warn('[Codex Channels] Auto sync env vars failed:', err.message);
+}
+
 module.exports = {
   getChannels,
   createChannel,
   updateChannel,
   deleteChannel,
   getEnabledChannels,
-  saveChannelOrder
+  saveChannelOrder,
+  syncAllChannelEnvVars
 };

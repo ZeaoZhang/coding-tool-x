@@ -1,7 +1,7 @@
 <template>
   <n-drawer
     v-model:show="visible"
-    :width="900"
+    :width="drawerWidth"
     placement="right"
     :auto-focus="false"
     :trap-focus="false"
@@ -83,6 +83,7 @@
 <script setup>
 import { ref, computed, nextTick } from 'vue'
 import { NDrawer, NIcon, NTag, NSpin, NEmpty, NButton } from 'naive-ui'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { Chatbubbles as ChatbubblesIcon, GitBranch as GitBranchIcon, ChevronUp as ChevronUpIcon, ArrowDown as ArrowDownIcon, Close as CloseIcon } from '@vicons/ionicons5'
 import ChatMessage from './ChatMessage.vue'
 import { getSessionMessages } from '../api/sessions'
@@ -111,6 +112,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:show', 'error'])
+
+const { drawerWidth } = useResponsiveDrawer(900, 800)
+
 const visible = computed({
   get: () => props.show,
   set: (val) => emit('update:show', val)

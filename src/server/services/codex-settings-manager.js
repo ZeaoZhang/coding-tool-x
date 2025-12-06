@@ -170,10 +170,102 @@ function restoreSettings() {
       fs.unlinkSync(getAuthBackupPath());
     }
 
+    // 清理 shell 配置文件中的环境变量（可选，不影响恢复结果）
+    removeEnvFromShell('CC_PROXY_KEY');
+
     console.log('Codex settings restored from backup');
     return { success: true };
   } catch (err) {
     throw new Error('Failed to restore settings: ' + err.message);
+  }
+}
+
+// 获取用户的 shell 配置文件路径
+function getShellConfigPath() {
+  const shell = process.env.SHELL || '';
+  if (shell.includes('zsh')) {
+    return path.join(os.homedir(), '.zshrc');
+  } else if (shell.includes('bash')) {
+    // macOS 使用 .bash_profile，Linux 使用 .bashrc
+    const bashProfile = path.join(os.homedir(), '.bash_profile');
+    const bashrc = path.join(os.homedir(), '.bashrc');
+    if (fs.existsSync(bashProfile)) {
+      return bashProfile;
+    }
+    return bashrc;
+  }
+  // 默认使用 .zshrc (macOS 默认)
+  return path.join(os.homedir(), '.zshrc');
+}
+
+// 注入环境变量到 shell 配置文件
+function injectEnvToShell(envName, envValue) {
+  const configPath = getShellConfigPath();
+  const exportLine = `export ${envName}="${envValue}"`;
+  // 使用更具体的标记，包含环境变量名，方便后续精确移除
+  const marker = `# Added by Coding-Tool for Codex [${envName}]`;
+
+  try {
+    let content = '';
+    if (fs.existsSync(configPath)) {
+      content = fs.readFileSync(configPath, 'utf8');
+    }
+
+    // 检查是否已经存在这个环境变量配置
+    const regex = new RegExp(`^export ${envName}=`, 'm');
+    const alreadyExists = regex.test(content);
+
+    if (alreadyExists) {
+      // 已存在，替换它（保留原有的标记注释）
+      content = content.replace(
+        new RegExp(`^(# Added by Coding-Tool for Codex \\[${envName}\\]\n)?export ${envName}=.*$`, 'm'),
+        `${marker}\n${exportLine}`
+      );
+    } else {
+      // 不存在，追加到文件末尾
+      content = content.trimEnd() + `\n\n${marker}\n${exportLine}\n`;
+    }
+
+    fs.writeFileSync(configPath, content, 'utf8');
+    return { success: true, path: configPath, isFirstTime: !alreadyExists };
+  } catch (err) {
+    // 不抛出错误，只是警告，因为这不是致命问题
+    console.warn(`[Codex] Failed to inject env to shell config: ${err.message}`);
+    return { success: false, error: err.message, isFirstTime: false };
+  }
+}
+
+// 从 shell 配置文件移除环境变量
+function removeEnvFromShell(envName) {
+  const configPath = getShellConfigPath();
+
+  try {
+    if (!fs.existsSync(configPath)) {
+      return { success: true };
+    }
+
+    let content = fs.readFileSync(configPath, 'utf8');
+
+    // 移除具体标记的环境变量（推荐方式）
+    content = content.replace(
+      new RegExp(`\\n?# Added by Coding-Tool for Codex \\[${envName}\\]\\nexport ${envName}=.*\\n?`, 'g'),
+      '\n'
+    );
+
+    // 如果没有标记，也尝试移除（兼容旧数据）
+    content = content.replace(
+      new RegExp(`^export ${envName}=.*\\n?`, 'gm'),
+      ''
+    );
+
+    // 清理多余的空行
+    content = content.replace(/\n\n\n+/g, '\n\n');
+
+    fs.writeFileSync(configPath, content, 'utf8');
+    return { success: true };
+  } catch (err) {
+    console.warn(`[Codex] Failed to remove env from shell config: ${err.message}`);
+    return { success: false, error: err.message };
   }
 }
 
@@ -210,8 +302,22 @@ function setProxyConfig(proxyPort) {
     auth.CC_PROXY_KEY = 'PROXY_KEY';
     writeAuth(auth);
 
+    // 注入环境变量到 shell 配置文件（解决某些系统环境变量优先级问题）
+    const shellInjectResult = injectEnvToShell('CC_PROXY_KEY', 'PROXY_KEY');
+
+    // 获取 shell 配置文件路径用于提示信息
+    const shellConfigPath = getShellConfigPath();
+    const sourceCommand = process.env.SHELL?.includes('zsh') ? 'source ~/.zshrc' : 'source ~/.bashrc';
+
     console.log(`Codex settings updated to use proxy on port ${proxyPort}`);
-    return { success: true, port: proxyPort };
+    return {
+      success: true,
+      port: proxyPort,
+      envInjected: shellInjectResult.success,
+      isFirstTime: shellInjectResult.isFirstTime,
+      shellConfigPath: shellConfigPath,
+      sourceCommand: sourceCommand
+    };
   } catch (err) {
     throw new Error('Failed to set proxy config: ' + err.message);
   }
@@ -283,5 +389,9 @@ module.exports = {
   restoreSettings,
   setProxyConfig,
   isProxyConfig,
-  getCurrentProxyPort
+  getCurrentProxyPort,
+  // 导出环境变量注入函数供其他模块使用
+  getShellConfigPath,
+  injectEnvToShell,
+  removeEnvFromShell
 };

@@ -491,4 +491,207 @@ function getImageSrc(item) {
 .expand-btn:hover {
   background: var(--n-color-embedded);
 }
+
+/* ========== 响应式样式 ========== */
+
+/* 平板端 (768px - 1024px) */
+@media (max-width: 1024px) {
+  .chat-message {
+    padding: 10px 14px;
+  }
+
+  .message-content {
+    font-size: 12px;
+  }
+
+  .markdown-body {
+    font-size: 12px;
+  }
+
+  .markdown-body :deep(pre code) {
+    font-size: 11px;
+  }
+}
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .chat-message {
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    border-radius: 6px;
+  }
+
+  .message-header {
+    gap: 4px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+
+  .message-role {
+    font-size: 11px;
+  }
+
+  .message-model {
+    font-size: 9px;
+  }
+
+  .message-time {
+    font-size: 10px;
+  }
+
+  .role-icon {
+    font-size: 14px;
+  }
+
+  .message-content {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .markdown-body {
+    font-size: 12px;
+  }
+
+  .markdown-body :deep(h1) { font-size: 1.3em; }
+  .markdown-body :deep(h2) { font-size: 1.2em; }
+  .markdown-body :deep(h3) { font-size: 1.1em; }
+
+  .markdown-body :deep(pre) {
+    padding: 6px;
+  }
+
+  .markdown-body :deep(pre code) {
+    font-size: 10px;
+  }
+
+  .markdown-body :deep(table th),
+  .markdown-body :deep(table td) {
+    padding: 6px 8px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .chat-message {
+    padding: 6px 10px;
+    margin-bottom: 4px;
+  }
+
+  .message-header {
+    gap: 3px;
+    margin-bottom: 4px;
+  }
+
+  .message-role {
+    font-size: 10px;
+  }
+
+  .message-model {
+    font-size: 8px;
+    padding: 1px 4px;
+  }
+
+  .message-time {
+    font-size: 9px;
+    display: none; /* 在非常小的屏幕隐藏时间 */
+  }
+
+  .role-icon {
+    font-size: 12px;
+  }
+
+  .copy-btn {
+    opacity: 1; /* 在移动端始终显示复制按钮 */
+  }
+
+  .message-content {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .markdown-body {
+    font-size: 11px;
+  }
+
+  .markdown-body :deep(h1) { font-size: 1.2em; }
+  .markdown-body :deep(h2) { font-size: 1.1em; }
+  .markdown-body :deep(h3) { font-size: 1.05em; }
+
+  .markdown-body :deep(code) {
+    padding: 1px 4px;
+    font-size: 0.85em;
+  }
+
+  .markdown-body :deep(pre) {
+    padding: 4px;
+    border-radius: 4px;
+  }
+
+  .markdown-body :deep(pre code) {
+    font-size: 9px;
+    line-height: 1.4;
+  }
+
+  .markdown-body :deep(ul),
+  .markdown-body :deep(ol) {
+    padding-left: 14px;
+  }
+
+  .markdown-body :deep(table th),
+  .markdown-body :deep(table td) {
+    padding: 4px 6px;
+    font-size: 10px;
+  }
+
+  .expand-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+  }
+
+  .image-item {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .chat-message {
+    padding: 4px 8px;
+    margin-bottom: 3px;
+  }
+
+  .message-header {
+    margin-bottom: 3px;
+  }
+
+  .message-role {
+    font-size: 9px;
+  }
+
+  .message-model {
+    font-size: 7px;
+  }
+
+  .role-icon {
+    font-size: 10px;
+  }
+
+  .message-content {
+    font-size: 10px;
+  }
+
+  .markdown-body {
+    font-size: 10px;
+  }
+
+  .markdown-body :deep(pre code) {
+    font-size: 8px;
+  }
+
+  .expand-btn {
+    font-size: 10px;
+    padding: 2px 8px;
+  }
+}
 </style>

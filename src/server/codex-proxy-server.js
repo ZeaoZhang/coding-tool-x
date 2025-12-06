@@ -8,7 +8,7 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
 const { resolvePricing } = require('./utils/pricing');
-const { recordRequest } = require('./services/statistics-service');
+const { recordRequest: recordCodexRequest } = require('./services/codex-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 
 let proxyServer = null;
@@ -362,14 +362,20 @@ async function startCodexProxyServer(options = {}) {
 
           const duration = Date.now() - metadata.startTime;
 
-          recordRequest({
+          recordCodexRequest({
             id: metadata.id,
             timestamp: new Date(metadata.startTime).toISOString(),
             toolType: 'codex',
             channel: metadata.channel,
             channelId: metadata.channelId,
             model: tokenData.model,
-            tokens: tokens,
+            tokens: {
+              input: tokenData.inputTokens,
+              output: tokenData.outputTokens,
+              reasoning: tokenData.reasoningTokens,
+              cached: tokenData.cachedTokens,
+              total: tokens.total
+            },
             duration: duration,
             success: true,
             cost: cost

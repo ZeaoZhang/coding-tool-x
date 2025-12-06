@@ -19,6 +19,8 @@ const { getChannels: getGeminiChannels } = require('../services/gemini-channels'
 
 // Statistics
 const { getTodayStatistics } = require('../services/statistics-service');
+const { getTodayStatistics: getCodexTodayStatistics } = require('../services/codex-statistics-service');
+const { getTodayStatistics: getGeminiTodayStatistics } = require('../services/gemini-statistics-service');
 
 /**
  * GET /api/dashboard/init
@@ -39,6 +41,8 @@ router.get('/init', async (req, res) => {
       codexProxyStatus,
       geminiProxyStatus,
       claudeTodayStats,
+      codexTodayStats,
+      geminiTodayStats,
       claudeCounts,
       codexCounts,
       geminiCounts
@@ -59,8 +63,10 @@ router.get('/init', async (req, res) => {
       Promise.resolve(getCodexProxyStatus()),
       Promise.resolve(getGeminiProxyStatus()),
 
-      // Today Stats (只有 Claude 有统计功能)
+      // Today Stats (所有平台)
       Promise.resolve(getTodayStatistics()),
+      Promise.resolve(getCodexTodayStatistics()),
+      Promise.resolve(getGeminiTodayStatistics()),
 
       // 轻量级统计
       Promise.resolve(getClaudeCounts(config)),
@@ -102,9 +108,8 @@ router.get('/init', async (req, res) => {
         },
         todayStats: {
           claude: formatStats(claudeTodayStats),
-          // Codex 和 Gemini 暂无统计功能
-          codex: { requests: 0, tokens: 0, cost: 0 },
-          gemini: { requests: 0, tokens: 0, cost: 0 }
+          codex: formatStats(codexTodayStats),
+          gemini: formatStats(geminiTodayStats)
         }
       }
     });

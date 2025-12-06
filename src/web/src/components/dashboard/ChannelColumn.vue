@@ -2653,4 +2653,321 @@ onUnmounted(() => {
 [data-theme="dark"] .channel-quick-list::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
 }
+
+/* ========== 响应式样式 ========== */
+
+/* 平板端 (768px - 1024px) */
+@media (max-width: 1024px) {
+  .channel-column {
+    border-radius: 6px;
+  }
+
+  .card-header {
+    padding: 8px 10px;
+  }
+
+  .card-title {
+    font-size: 13px;
+  }
+
+  .stats-inline {
+    gap: 6px;
+  }
+
+  .stat-inline-item {
+    padding: 8px;
+  }
+
+  .stat-value {
+    font-size: 14px;
+  }
+
+  .stat-label {
+    font-size: 9px;
+  }
+
+  .logs-table-header {
+    padding: 8px 10px;
+    font-size: 10px;
+  }
+
+  .log-row {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+}
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .channel-column {
+    border-radius: 6px;
+    min-height: 300px;
+    height: auto;
+    max-height: 400px;
+  }
+
+  .card-header {
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .card-title {
+    font-size: 12px;
+  }
+
+  .stats-inline {
+    gap: 4px;
+  }
+
+  .stat-inline-item {
+    padding: 6px;
+    gap: 6px;
+  }
+
+  .stat-icon-dot {
+    width: 6px;
+    height: 6px;
+  }
+
+  .stat-value {
+    font-size: 13px;
+  }
+
+  .stat-label {
+    font-size: 8px;
+  }
+
+  .logs-card {
+    min-height: 150px;
+  }
+
+  .logs-table-header {
+    padding: 6px 8px;
+    font-size: 9px;
+  }
+
+  .log-row {
+    padding: 6px 8px;
+    font-size: 10px;
+    min-height: 32px;
+  }
+
+  .col-token {
+    font-size: 10px;
+    padding: 2px 4px;
+  }
+
+  .col-time {
+    font-size: 9px;
+  }
+
+  .mcp-count-tag,
+  .skills-count-tag {
+    font-size: 9px;
+    padding: 0 6px;
+    height: 18px;
+    line-height: 18px;
+  }
+
+  .skills-button {
+    padding: 4px 8px;
+    font-size: 10px;
+    gap: 4px;
+  }
+
+  .lock-button {
+    width: 26px;
+    height: 26px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .channel-column {
+    min-height: 250px;
+    max-height: 350px;
+  }
+
+  .card-header {
+    padding: 6px;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .card-title {
+    font-size: 11px;
+  }
+
+  .stats-card .card-content {
+    padding: 6px;
+  }
+
+  .stats-inline {
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+
+  .stat-inline-item {
+    padding: 5px;
+    gap: 4px;
+    min-width: calc(33% - 3px);
+    flex: 1 1 auto;
+  }
+
+  .stat-icon-dot {
+    width: 5px;
+    height: 5px;
+  }
+
+  .stat-value {
+    font-size: 12px;
+  }
+
+  .stat-label {
+    font-size: 7px;
+  }
+
+  .logs-card {
+    min-height: 120px;
+  }
+
+  .logs-table-header {
+    padding: 5px 6px;
+    font-size: 8px;
+    letter-spacing: 0.3px;
+  }
+
+  .log-row {
+    padding: 5px 6px;
+    font-size: 9px;
+    min-height: 28px;
+  }
+
+  .col-channel .n-tag {
+    font-size: 9px;
+    padding: 2px 6px;
+  }
+
+  .col-token {
+    font-size: 9px;
+    padding: 2px 3px;
+    margin: 0 1px;
+  }
+
+  .col-time {
+    font-size: 8px;
+  }
+
+  .claude-extra-area {
+    gap: 4px;
+  }
+
+  .mcp-count-tag,
+  .skills-count-tag {
+    font-size: 8px;
+    padding: 0 4px;
+    height: 16px;
+    line-height: 16px;
+  }
+
+  .skills-button {
+    padding: 3px 6px;
+    font-size: 9px;
+    gap: 3px;
+  }
+
+  .skills-button .n-icon {
+    font-size: 12px !important;
+  }
+
+  .lock-button {
+    width: 24px;
+    height: 24px;
+    margin-left: 4px;
+  }
+
+  .lock-button .n-icon {
+    font-size: 12px !important;
+  }
+
+  /* 锁定状态覆盖层适配 */
+  .locked-content {
+    padding: 30px 20px;
+    gap: 12px;
+  }
+
+  .lock-icon {
+    width: 64px;
+    height: 64px;
+  }
+
+  .lock-icon .n-icon {
+    font-size: 28px !important;
+  }
+
+  .lock-title {
+    font-size: 14px;
+  }
+
+  .lock-subtitle {
+    font-size: 10px;
+  }
+
+  .unlock-btn {
+    padding: 8px 16px;
+    font-size: 11px;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .channel-column {
+    min-height: 220px;
+    max-height: 300px;
+  }
+
+  .card-header {
+    padding: 5px;
+  }
+
+  .card-title {
+    font-size: 10px;
+  }
+
+  .stats-inline {
+    gap: 2px;
+  }
+
+  .stat-inline-item {
+    padding: 4px;
+    gap: 3px;
+  }
+
+  .stat-value {
+    font-size: 11px;
+  }
+
+  .stat-label {
+    font-size: 6px;
+  }
+
+  .logs-table-header {
+    padding: 4px 5px;
+    font-size: 7px;
+  }
+
+  .log-row {
+    padding: 4px 5px;
+    font-size: 8px;
+    min-height: 24px;
+  }
+
+  .col-token {
+    font-size: 8px;
+  }
+
+  .col-time {
+    font-size: 7px;
+  }
+}
 </style>

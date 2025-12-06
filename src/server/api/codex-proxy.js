@@ -95,7 +95,7 @@ router.post('/start', async (req, res) => {
     }
 
     // 5. 设置代理配置（备份并修改 config.toml 和 auth.json）
-    setProxyConfig(proxyResult.port);
+    const configResult = setProxyConfig(proxyResult.port);
 
     const updatedStatus = getCodexProxyStatus();
     const { channels: allChannels } = getChannels();
@@ -103,11 +103,24 @@ router.post('/start', async (req, res) => {
     const { broadcastProxyState } = require('../websocket-server');
     broadcastProxyState('codex', updatedStatus, activeChannel, allChannels);
 
+    // 构建响应消息，包含环境变量提示（仅首次）
+    let message = `Codex proxy started on port ${proxyResult.port}, active channel: ${currentChannel.name}`;
+    let envHint = null;
+
+    // 只有首次注入环境变量时才提示用户执行 source 命令
+    if (configResult.envInjected && configResult.isFirstTime) {
+      envHint = {
+        command: configResult.sourceCommand,
+        message: `首次启用需在 Codex 终端执行: ${configResult.sourceCommand}`
+      };
+    }
+
     res.json({
       success: true,
       port: proxyResult.port,
       activeChannel: sanitizeChannel(currentChannel),
-      message: `Codex proxy started on port ${proxyResult.port}, active channel: ${currentChannel.name}`
+      message,
+      envHint
     });
   } catch (error) {
     console.error('[Codex Proxy] Error starting proxy:', error);

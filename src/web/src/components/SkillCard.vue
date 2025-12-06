@@ -190,4 +190,88 @@ function handleUninstall() {
   display: flex;
   align-items: center;
 }
+
+/* ========== 响应式样式 ========== */
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .skill-card {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+
+  .skill-name {
+    font-size: 12px;
+  }
+
+  .skill-desc {
+    font-size: 11px;
+    -webkit-line-clamp: 3;
+  }
+
+  .skill-meta {
+    font-size: 10px;
+    gap: 8px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .skill-card {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .skill-badges {
+    align-self: flex-start;
+  }
+
+  .skill-desc {
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+
+  .skill-meta {
+    justify-content: flex-start;
+  }
+
+  .card-actions {
+    justify-content: center;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .skill-card {
+    padding: 6px 8px;
+  }
+
+  .skill-name {
+    font-size: 11px;
+  }
+
+  .skill-desc {
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .skill-meta {
+    font-size: 9px;
+    gap: 6px;
+  }
+
+  .card-actions :deep(.n-button) {
+    font-size: 10px;
+    height: 24px;
+  }
+}
 </style>

@@ -641,4 +641,298 @@ onUnmounted(() => {
 [data-theme="dark"] .count {
   color: var(--text-tertiary);
 }
+
+/* ========== 响应式样式 ========== */
+
+/* 平板端 (768px - 1024px) */
+@media (max-width: 1024px) {
+  .logs-header {
+    padding: 10px 12px;
+  }
+
+  .header-left {
+    gap: 8px;
+  }
+
+  .title {
+    font-size: 13px;
+  }
+
+  .today-stats :deep(.n-tag) {
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+
+  .table-header {
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+
+  .table-row {
+    padding: 6px 10px;
+  }
+
+  .logs-footer {
+    padding: 6px 12px;
+    font-size: 11px;
+  }
+
+  /* 压缩列宽 */
+  .col-channel-claude,
+  .col-channel-gemini {
+    flex: 0 0 75px;
+  }
+
+  .col-token-claude,
+  .col-token-gemini {
+    flex: 0 0 55px;
+  }
+
+  .col-time-claude,
+  .col-time-gemini {
+    flex: 0 0 80px;
+    min-width: 80px;
+  }
+
+  .col-channel-codex {
+    flex: 0 0 65px;
+  }
+
+  .col-token-codex {
+    flex: 0 0 48px;
+  }
+
+  .col-time-codex {
+    flex: 0 0 75px;
+    min-width: 75px;
+  }
+}
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .logs-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 8px 10px;
+  }
+
+  .header-left {
+    justify-content: space-between;
+  }
+
+  .title {
+    font-size: 12px;
+  }
+
+  .today-stats :deep(.n-tag) {
+    font-size: 9px;
+    padding: 1px 4px;
+  }
+
+  .table-header,
+  .table-row {
+    font-size: 10px;
+    padding: 4px 8px;
+  }
+
+  .table-row-content {
+    font-size: 10px;
+  }
+
+  .action-row {
+    font-size: 11px;
+    padding: 8px 10px;
+  }
+
+  .action-message {
+    font-size: 11px;
+  }
+
+  .action-time {
+    font-size: 9px;
+    margin-right: 12px;
+  }
+
+  /* 更紧凑的列宽 */
+  .col-channel-claude,
+  .col-channel-gemini,
+  .col-channel-codex {
+    flex: 0 0 60px;
+  }
+
+  .col-channel :deep(.n-tag) {
+    font-size: 9px;
+    padding: 0 4px;
+    height: 18px;
+  }
+
+  .col-token-claude,
+  .col-token-gemini,
+  .col-token-codex {
+    flex: 0 0 40px;
+    font-size: 9px;
+  }
+
+  .col-time-claude,
+  .col-time-gemini,
+  .col-time-codex {
+    flex: 0 0 65px;
+    min-width: 65px;
+    font-size: 9px;
+  }
+
+  .logs-footer {
+    padding: 4px 10px;
+    font-size: 10px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .logs-header {
+    padding: 6px 8px;
+    gap: 6px;
+  }
+
+  .header-left {
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .title {
+    font-size: 11px;
+  }
+
+  .today-stats {
+    gap: 4px;
+  }
+
+  .today-stats :deep(.n-tag) {
+    font-size: 8px;
+    padding: 0 3px;
+    height: 16px;
+  }
+
+  .table-header,
+  .table-row {
+    padding: 3px 6px;
+    font-size: 9px;
+  }
+
+  .table-row-content {
+    font-size: 9px;
+  }
+
+  .action-row {
+    font-size: 10px;
+    padding: 6px 8px;
+  }
+
+  .action-message {
+    font-size: 10px;
+  }
+
+  .action-time {
+    font-size: 8px;
+    margin-left: 8px;
+    margin-right: 8px;
+  }
+
+  /* 超紧凑列宽 */
+  .col-channel-claude,
+  .col-channel-gemini,
+  .col-channel-codex {
+    flex: 0 0 50px;
+  }
+
+  .col-channel :deep(.n-tag) {
+    font-size: 8px;
+    padding: 0 3px;
+    height: 16px;
+  }
+
+  .col-token-claude,
+  .col-token-gemini,
+  .col-token-codex {
+    flex: 0 0 32px;
+    font-size: 8px;
+  }
+
+  .col-time-claude,
+  .col-time-gemini,
+  .col-time-codex {
+    flex: 0 0 55px;
+    min-width: 55px;
+    font-size: 8px;
+  }
+
+  .logs-footer {
+    padding: 3px 8px;
+    font-size: 9px;
+  }
+
+  .status,
+  .count {
+    font-size: 9px;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .logs-header {
+    padding: 4px 6px;
+  }
+
+  .title {
+    font-size: 10px;
+  }
+
+  .today-stats :deep(.n-tag) {
+    font-size: 7px;
+    height: 14px;
+  }
+
+  .table-header,
+  .table-row {
+    padding: 2px 4px;
+    font-size: 8px;
+  }
+
+  .action-row {
+    font-size: 9px;
+    padding: 4px 6px;
+  }
+
+  .action-row :deep(.n-icon) {
+    margin-right: 4px;
+  }
+
+  /* 隐藏部分 Token 列 */
+  .col-channel-claude,
+  .col-channel-gemini,
+  .col-channel-codex {
+    flex: 0 0 45px;
+  }
+
+  .col-token-claude,
+  .col-token-gemini,
+  .col-token-codex {
+    flex: 0 0 28px;
+    font-size: 7px;
+  }
+
+  .col-time-claude,
+  .col-time-gemini,
+  .col-time-codex {
+    flex: 0 0 48px;
+    min-width: 48px;
+    font-size: 7px;
+  }
+
+  .logs-footer {
+    padding: 2px 6px;
+    font-size: 8px;
+  }
+}
 </style>

@@ -1182,4 +1182,228 @@ onUnmounted(() => {
 :deep(.n-dialog__action) {
   display: none;
 }
+
+/* ========== 响应式样式 ========== */
+
+/* 平板端 (768px - 1024px) */
+@media (max-width: 1024px) {
+  .header {
+    padding: 0 16px;
+  }
+
+  .nav-tabs {
+    margin-left: 20px;
+    gap: 4px;
+  }
+
+  .nav-tab {
+    padding: 8px 12px;
+  }
+
+  .nav-label {
+    font-size: 13px;
+  }
+
+  .title-sub {
+    display: none;
+  }
+
+  .header-actions {
+    gap: 4px;
+  }
+}
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .header {
+    padding: 0 12px;
+    height: 56px;
+  }
+
+  .main-container {
+    height: calc(100vh - 56px);
+  }
+
+  .logo-section {
+    gap: 10px;
+    padding: 4px 8px;
+    margin-left: -8px;
+  }
+
+  .logo-wrapper {
+    width: 32px;
+    height: 32px;
+  }
+
+  .logo-image {
+    width: 20px;
+    height: 20px;
+  }
+
+  .title-main {
+    font-size: 16px;
+  }
+
+  .title-sub {
+    display: none;
+  }
+
+  .nav-tabs {
+    margin-left: 12px;
+    gap: 2px;
+  }
+
+  .nav-tab {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+
+  .nav-icon {
+    font-size: 16px !important;
+  }
+
+  .nav-label {
+    font-size: 12px;
+  }
+
+  .header-actions {
+    gap: 2px;
+  }
+
+  .update-text {
+    display: none;
+  }
+
+  .update-badge {
+    padding: 4px 8px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .header {
+    padding: 0 8px;
+    height: 52px;
+  }
+
+  .main-container {
+    height: calc(100vh - 52px);
+  }
+
+  .logo-section {
+    gap: 8px;
+    padding: 4px 6px;
+    margin-left: -6px;
+  }
+
+  .logo-wrapper {
+    width: 28px;
+    height: 28px;
+  }
+
+  .logo-image {
+    width: 18px;
+    height: 18px;
+  }
+
+  .title-group {
+    display: none;
+  }
+
+  .nav-tabs {
+    margin-left: 8px;
+    gap: 2px;
+    flex: 1;
+    justify-content: center;
+  }
+
+  .nav-tab {
+    padding: 6px 8px;
+    gap: 4px;
+    flex-direction: column;
+  }
+
+  .nav-tab .n-icon {
+    font-size: 18px !important;
+  }
+
+  .nav-label {
+    font-size: 10px;
+  }
+
+  .nav-tab.active::after {
+    left: 8px;
+    right: 8px;
+  }
+
+  .header-actions {
+    gap: 2px;
+  }
+
+  .env-warning-btn {
+    padding: 4px 6px;
+    gap: 4px;
+  }
+
+  .env-warning-icon {
+    font-size: 14px !important;
+  }
+
+  .env-warning-count {
+    font-size: 10px;
+  }
+
+  .update-badge {
+    padding: 4px 6px;
+  }
+
+  .update-text {
+    display: none;
+  }
+
+  .favorites-badge {
+    min-width: 12px;
+    height: 12px;
+    font-size: 8px;
+    top: -3px;
+    right: -3px;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .header {
+    height: 48px;
+  }
+
+  .main-container {
+    height: calc(100vh - 48px);
+  }
+
+  .logo-wrapper {
+    width: 26px;
+    height: 26px;
+  }
+
+  .logo-image {
+    width: 16px;
+    height: 16px;
+  }
+
+  .nav-tabs {
+    margin-left: 4px;
+  }
+
+  .nav-tab {
+    padding: 4px 6px;
+  }
+
+  .nav-tab .n-icon {
+    font-size: 16px !important;
+  }
+
+  .nav-label {
+    font-size: 9px;
+  }
+}
 </style>

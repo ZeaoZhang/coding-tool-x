@@ -94,7 +94,6 @@ function extractMessages(lines) {
         parsedArguments = JSON.parse(payload.arguments);
       } catch (err) {
         // 如果解析失败，保持原样
-        console.warn('[Codex Parser] Failed to parse function_call arguments:', err.message);
       }
 
       messages.push({
@@ -113,8 +112,7 @@ function extractMessages(lines) {
       try {
         parsedOutput = JSON.parse(payload.output);
       } catch (err) {
-        // 如果解析失败，保持原样
-        console.warn('[Codex Parser] Failed to parse function_call_output:', err.message);
+        // 如果解析失败，保持原样（output 可能是普通文本如 "Exit code: 0"）
       }
 
       messages.push({

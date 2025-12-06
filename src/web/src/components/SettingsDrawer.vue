@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="show" :width="680" placement="right" :show-mask="true">
+  <n-drawer v-model:show="show" :width="drawerWidth" placement="right" :show-mask="true">
     <n-drawer-content :show-header="false" closable :native-scrollbar="false">
       <div class="settings-container">
         <!-- 左侧菜单 -->
@@ -689,6 +689,9 @@ import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
   NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber
 } from 'naive-ui'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth, isMobile } = useResponsiveDrawer(680)
 import {
   SettingsOutline, TerminalOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,

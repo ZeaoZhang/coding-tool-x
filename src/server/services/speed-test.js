@@ -25,7 +25,7 @@ function sanitizeTimeout(timeout) {
 }
 
 /**
- * 测试单个渠道的连接速度
+ * 测试单个渠道的连接速度和 API 功能
  * @param {Object} channel - 渠道配置
  * @param {number} timeout - 超时时间（毫秒）
  * @returns {Promise<Object>} 测试结果
@@ -39,9 +39,12 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT) {
         channelId: channel.id,
         channelName: channel.name,
         success: false,
+        networkOk: false,
+        apiOk: false,
         error: 'URL 不能为空',
         latency: null,
-        statusCode: null
+        statusCode: null,
+        testedAt: Date.now()
       };
     }
 
@@ -55,30 +58,48 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT) {
         channelId: channel.id,
         channelName: channel.name,
         success: false,
+        networkOk: false,
+        apiOk: false,
         error: `URL 无效: ${urlError.message}`,
         latency: null,
-        statusCode: null
+        statusCode: null,
+        testedAt: Date.now()
       };
     }
 
-    // 先进行一次热身请求，忽略结果，用于复用连接/绕过首包延迟
-    await makeRequest(testUrl, channel.apiKey, sanitizedTimeout).catch(() => {});
+    // 第一步：测试网络连接（简单 HEAD/GET 请求）
+    const connectResult = await testNetworkConnectivity(testUrl, channel.apiKey, sanitizedTimeout);
+    const networkOk = connectResult.statusCode !== null;
 
-    // 第二次请求开始计时
-    const startTime = Date.now();
-    const result = await makeRequest(testUrl, channel.apiKey, sanitizedTimeout);
-    const latency = Date.now() - startTime;
+    let latency = connectResult.latency;
+    let apiOk = false;
+    let apiError = null;
+    let detailError = null;
 
-    // 只要收到 HTTP 响应就算成功（网络可达）
-    const success = result.statusCode !== null;
+    // 第二步：如果网络可达，测试 API 功能（发送测试消息）
+    if (networkOk) {
+      const apiResult = await testAPIFunctionality(testUrl, channel.apiKey, sanitizedTimeout);
+      apiOk = apiResult.success;
+      apiError = apiResult.error;
+      if (apiResult.latency && apiResult.latency > latency) {
+        latency = apiResult.latency;
+      }
+    } else {
+      detailError = connectResult.error;
+    }
+
+    // 综合判断成功（网络可达且 API 可用）
+    const success = networkOk && apiOk;
 
     // 缓存结果
     const finalResult = {
       channelId: channel.id,
       channelName: channel.name,
       success,
-      statusCode: result.statusCode,
-      error: result.error,
+      networkOk,
+      apiOk,
+      statusCode: connectResult.statusCode,
+      error: success ? null : (apiError || detailError || '测试失败'),
       latency: success ? latency : null,
       testedAt: Date.now()
     };
@@ -91,18 +112,22 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT) {
       channelId: channel.id,
       channelName: channel.name,
       success: false,
+      networkOk: false,
+      apiOk: false,
       error: error.message || '连接失败',
       latency: null,
-      statusCode: null
+      statusCode: null,
+      testedAt: Date.now()
     };
   }
 }
 
 /**
- * 发起 HTTP 请求
+ * 测试网络连通性（简单 GET 请求）
  */
-function makeRequest(url, apiKey, timeout) {
+function testNetworkConnectivity(url, apiKey, timeout) {
   return new Promise((resolve) => {
+    const startTime = Date.now();
     const parsedUrl = new URL(url);
     const isHttps = parsedUrl.protocol === 'https:';
     const httpModule = isHttps ? https : http;
@@ -114,21 +139,20 @@ function makeRequest(url, apiKey, timeout) {
       method: 'GET',
       timeout,
       headers: {
-        'x-api-key': apiKey || '',
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${apiKey || ''}`,
         'Content-Type': 'application/json',
         'User-Agent': 'Coding-Tool-SpeedTest/1.0'
       }
     };
 
     const req = httpModule.request(options, (res) => {
-      // 收到响应就读取完毕
       let data = '';
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
-        // 只要收到 HTTP 响应就认为网络可达
+        const latency = Date.now() - startTime;
         resolve({
           statusCode: res.statusCode,
+          latency,
           error: null
         });
       });
@@ -150,6 +174,7 @@ function makeRequest(url, apiKey, timeout) {
 
       resolve({
         statusCode: null,
+        latency: null,
         error: errorMsg
       });
     });
@@ -158,10 +183,175 @@ function makeRequest(url, apiKey, timeout) {
       req.destroy();
       resolve({
         statusCode: null,
+        latency: null,
         error: '请求超时'
       });
     });
 
+    req.end();
+  });
+}
+
+/**
+ * 测试 API 功能（发送真实的聊天请求）
+ * 支持 OpenAI 和 Anthropic 格式
+ */
+function testAPIFunctionality(baseUrl, apiKey, timeout) {
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const parsedUrl = new URL(baseUrl);
+    const isHttps = parsedUrl.protocol === 'https:';
+    const httpModule = isHttps ? https : http;
+
+    // 确定 API 路径和请求格式
+    let apiPath;
+    let requestBody;
+    let headers;
+
+    // 检测是 Anthropic 还是 OpenAI 格式
+    const isAnthropic = baseUrl.includes('anthropic') || baseUrl.includes('claude');
+
+    if (isAnthropic) {
+      // Anthropic 格式
+      apiPath = parsedUrl.pathname.includes('/v1')
+        ? parsedUrl.pathname.replace(/\/$/, '') + '/messages'
+        : '/v1/messages';
+      requestBody = JSON.stringify({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 10,
+        messages: [{ role: 'user', content: 'Hi' }]
+      });
+      headers = {
+        'x-api-key': apiKey || '',
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+        'User-Agent': 'Coding-Tool-SpeedTest/1.0'
+      };
+    } else {
+      // OpenAI 格式（默认）
+      apiPath = parsedUrl.pathname.includes('/v1')
+        ? parsedUrl.pathname.replace(/\/$/, '') + '/chat/completions'
+        : '/v1/chat/completions';
+      requestBody = JSON.stringify({
+        model: 'gpt-4o-mini',
+        max_tokens: 10,
+        messages: [{ role: 'user', content: 'Hi' }]
+      });
+      headers = {
+        'Authorization': `Bearer ${apiKey || ''}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Coding-Tool-SpeedTest/1.0'
+      };
+    }
+
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (isHttps ? 443 : 80),
+      path: apiPath,
+      method: 'POST',
+      timeout,
+      headers
+    };
+
+    const req = httpModule.request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        const latency = Date.now() - startTime;
+
+        // 检查响应状态
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          // 成功响应
+          resolve({
+            success: true,
+            latency,
+            error: null
+          });
+        } else if (res.statusCode === 401) {
+          resolve({
+            success: false,
+            latency,
+            error: 'API Key 无效或已过期'
+          });
+        } else if (res.statusCode === 403) {
+          resolve({
+            success: false,
+            latency,
+            error: 'API Key 权限不足'
+          });
+        } else if (res.statusCode === 429) {
+          // 429 表示请求过多，但说明 API Key 有效
+          resolve({
+            success: true,
+            latency,
+            error: null
+          });
+        } else if (res.statusCode === 402) {
+          resolve({
+            success: false,
+            latency,
+            error: '账户余额不足'
+          });
+        } else if (res.statusCode === 400) {
+          // 尝试解析错误信息
+          try {
+            const errData = JSON.parse(data);
+            const errMsg = errData.error?.message || errData.message || '请求参数错误';
+            // 如果是模型不存在的错误，说明 API 本身是通的
+            if (errMsg.includes('model') || errMsg.includes('Model')) {
+              resolve({
+                success: true,
+                latency,
+                error: null
+              });
+            } else {
+              resolve({
+                success: false,
+                latency,
+                error: errMsg
+              });
+            }
+          } catch {
+            resolve({
+              success: false,
+              latency,
+              error: '请求参数错误'
+            });
+          }
+        } else {
+          // 其他错误
+          let errMsg = `HTTP ${res.statusCode}`;
+          try {
+            const errData = JSON.parse(data);
+            errMsg = errData.error?.message || errData.message || errMsg;
+          } catch {}
+          resolve({
+            success: false,
+            latency,
+            error: errMsg
+          });
+        }
+      });
+    });
+
+    req.on('error', (error) => {
+      resolve({
+        success: false,
+        latency: null,
+        error: error.message || '请求失败'
+      });
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({
+        success: false,
+        latency: null,
+        error: 'API 请求超时'
+      });
+    });
+
+    req.write(requestBody);
     req.end();
   });
 }

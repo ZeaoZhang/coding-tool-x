@@ -111,9 +111,34 @@ function detectMacTerminals() {
     });
   }
 
-  // Alacritty
+  // Ghostty
+  if (fs.existsSync('/Applications/Ghostty.app')) {
+    terminals.push({
+      id: 'ghostty',
+      name: 'Ghostty',
+      available: true,
+      isDefault: false,
+      command: 'open -a Ghostty --args -e "cd \'{cwd}\' && claude -r {sessionId}; exec $SHELL"'
+    });
+  }
+  // 也检查 homebrew 安装的 ghostty
   try {
-    execSync('which alacritty', { encoding: 'utf8', stdio: 'pipe' });
+    execSync('which ghostty', { encoding: 'utf8', stdio: 'pipe' });
+    if (!terminals.find(t => t.id === 'ghostty')) {
+      terminals.push({
+        id: 'ghostty',
+        name: 'Ghostty',
+        available: true,
+        isDefault: false,
+        command: 'ghostty -e "cd \'{cwd}\' && claude -r {sessionId}; exec $SHELL"'
+      });
+    }
+  } catch (e) {
+    // Ghostty CLI 不可用
+  }
+
+  // Alacritty
+  if (fs.existsSync('/Applications/Alacritty.app')) {
     terminals.push({
       id: 'alacritty',
       name: 'Alacritty',
@@ -121,13 +146,23 @@ function detectMacTerminals() {
       isDefault: false,
       command: 'alacritty --working-directory "{cwd}" -e bash -c "claude -r {sessionId}; exec bash"'
     });
-  } catch (e) {
-    // Alacritty 不可用
+  } else {
+    try {
+      execSync('which alacritty', { encoding: 'utf8', stdio: 'pipe' });
+      terminals.push({
+        id: 'alacritty',
+        name: 'Alacritty',
+        available: true,
+        isDefault: false,
+        command: 'alacritty --working-directory "{cwd}" -e bash -c "claude -r {sessionId}; exec bash"'
+      });
+    } catch (e) {
+      // Alacritty 不可用
+    }
   }
 
   // Kitty
-  try {
-    execSync('which kitty', { encoding: 'utf8', stdio: 'pipe' });
+  if (fs.existsSync('/Applications/kitty.app')) {
     terminals.push({
       id: 'kitty',
       name: 'Kitty',
@@ -135,8 +170,19 @@ function detectMacTerminals() {
       isDefault: false,
       command: 'kitty --directory "{cwd}" bash -c "claude -r {sessionId}; exec bash"'
     });
-  } catch (e) {
-    // Kitty 不可用
+  } else {
+    try {
+      execSync('which kitty', { encoding: 'utf8', stdio: 'pipe' });
+      terminals.push({
+        id: 'kitty',
+        name: 'Kitty',
+        available: true,
+        isDefault: false,
+        command: 'kitty --directory "{cwd}" bash -c "claude -r {sessionId}; exec bash"'
+      });
+    } catch (e) {
+      // Kitty 不可用
+    }
   }
 
   // Warp
@@ -148,6 +194,55 @@ function detectMacTerminals() {
       isDefault: false,
       command: 'open -a Warp "{cwd}" --args -e "claude -r {sessionId}"'
     });
+  }
+
+  // Hyper
+  if (fs.existsSync('/Applications/Hyper.app')) {
+    terminals.push({
+      id: 'hyper',
+      name: 'Hyper',
+      available: true,
+      isDefault: false,
+      command: 'open -a Hyper --args "{cwd}"'
+    });
+  }
+
+  // WezTerm
+  if (fs.existsSync('/Applications/WezTerm.app')) {
+    terminals.push({
+      id: 'wezterm',
+      name: 'WezTerm',
+      available: true,
+      isDefault: false,
+      command: 'wezterm start --cwd "{cwd}" -- bash -c "claude -r {sessionId}; exec bash"'
+    });
+  } else {
+    try {
+      execSync('which wezterm', { encoding: 'utf8', stdio: 'pipe' });
+      terminals.push({
+        id: 'wezterm',
+        name: 'WezTerm',
+        available: true,
+        isDefault: false,
+        command: 'wezterm start --cwd "{cwd}" -- bash -c "claude -r {sessionId}; exec bash"'
+      });
+    } catch (e) {
+      // WezTerm 不可用
+    }
+  }
+
+  // Rio
+  try {
+    execSync('which rio', { encoding: 'utf8', stdio: 'pipe' });
+    terminals.push({
+      id: 'rio',
+      name: 'Rio',
+      available: true,
+      isDefault: false,
+      command: 'rio -e bash -c "cd \'{cwd}\' && claude -r {sessionId}; exec bash"'
+    });
+  } catch (e) {
+    // Rio 不可用
   }
 
   return terminals;
@@ -166,19 +261,28 @@ function detectLinuxTerminals() {
     { id: 'xterm', name: 'XTerm', cmd: 'xterm', args: '-e "cd \'{cwd}\' && claude -r {sessionId}; exec bash"' },
     { id: 'alacritty', name: 'Alacritty', cmd: 'alacritty', args: '--working-directory "{cwd}" -e bash -c "claude -r {sessionId}; exec bash"' },
     { id: 'kitty', name: 'Kitty', cmd: 'kitty', args: '--directory "{cwd}" bash -c "claude -r {sessionId}; exec bash"' },
-    { id: 'tilix', name: 'Tilix', cmd: 'tilix', args: '-e "bash -c \\"cd \'{cwd}\' && claude -r {sessionId}; exec bash\\""' }
+    { id: 'tilix', name: 'Tilix', cmd: 'tilix', args: '-e "bash -c \\"cd \'{cwd}\' && claude -r {sessionId}; exec bash\\""' },
+    { id: 'ghostty', name: 'Ghostty', cmd: 'ghostty', args: '-e "cd \'{cwd}\' && claude -r {sessionId}; exec $SHELL"' },
+    { id: 'wezterm', name: 'WezTerm', cmd: 'wezterm', args: 'start --cwd "{cwd}" -- bash -c "claude -r {sessionId}; exec bash"' },
+    { id: 'rio', name: 'Rio', cmd: 'rio', args: '-e bash -c "cd \'{cwd}\' && claude -r {sessionId}; exec bash"' },
+    { id: 'foot', name: 'Foot', cmd: 'foot', args: 'bash -c "cd \'{cwd}\' && claude -r {sessionId}; exec bash"' },
+    { id: 'terminator', name: 'Terminator', cmd: 'terminator', args: '-e "bash -c \\"cd \'{cwd}\' && claude -r {sessionId}; exec bash\\""' },
+    { id: 'urxvt', name: 'URxvt', cmd: 'urxvt', args: '-e bash -c "cd \'{cwd}\' && claude -r {sessionId}; exec bash"' },
+    { id: 'st', name: 'st (suckless)', cmd: 'st', args: '-e bash -c "cd \'{cwd}\' && claude -r {sessionId}; exec bash"' }
   ];
 
-  terminalConfigs.forEach((config, index) => {
+  let foundDefault = false;
+  terminalConfigs.forEach((config) => {
     try {
       execSync(`which ${config.cmd}`, { encoding: 'utf8', stdio: 'pipe' });
       terminals.push({
         id: config.id,
         name: config.name,
         available: true,
-        isDefault: index === 0,  // 第一个可用的设为默认
+        isDefault: !foundDefault,  // 第一个可用的设为默认
         command: `${config.cmd} ${config.args}`
       });
+      foundDefault = true;
     } catch (e) {
       // 此终端不可用
     }

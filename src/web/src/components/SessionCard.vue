@@ -276,4 +276,132 @@ function formatSize(bytes) {
   gap: 8px;
   flex-shrink: 0;
 }
+
+/* ========== 响应式样式 ========== */
+
+/* 平板端 (768px - 1024px) */
+@media (max-width: 1024px) {
+  .session-item {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .session-left {
+    gap: 12px;
+  }
+
+  .session-meta {
+    gap: 12px;
+  }
+
+  .session-actions {
+    gap: 6px;
+  }
+}
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .session-item {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .session-left {
+    gap: 10px;
+  }
+
+  .session-icon {
+    display: none;
+  }
+
+  .session-meta {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .session-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .session-actions :deep(.n-button) {
+    font-size: 12px;
+    padding: 0 10px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .session-item {
+    padding: 10px;
+    gap: 10px;
+    border-radius: 6px;
+  }
+
+  .session-title {
+    font-size: 13px;
+  }
+
+  .session-meta {
+    gap: 6px;
+  }
+
+  .meta-item {
+    font-size: 12px;
+  }
+
+  .session-message {
+    font-size: 12px;
+  }
+
+  .session-path {
+    font-size: 11px;
+  }
+
+  .session-actions {
+    gap: 4px;
+  }
+
+  .session-actions :deep(.n-button) {
+    font-size: 11px;
+    padding: 0 8px;
+    height: 26px;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .session-item {
+    padding: 8px;
+    margin-bottom: 6px;
+  }
+
+  .session-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .session-title-row :deep(.n-tag) {
+    margin: 0 !important;
+  }
+
+  .session-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .session-actions {
+    justify-content: space-between;
+  }
+
+  .session-actions :deep(.n-button) {
+    flex: 1;
+    min-width: 0;
+  }
+}
 </style>

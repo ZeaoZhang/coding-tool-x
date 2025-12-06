@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="show" :width="1200" placement="right" :show-close="true">
+  <n-drawer v-model:show="show" :width="drawerWidth" placement="right" :show-close="true">
     <n-drawer-content :title="getChannelTitle()" :native-scrollbar="false" closable>
       <div v-if="loading" class="loading-container">
         <n-spin size="medium">
@@ -45,6 +45,9 @@ import {
   launchTerminal
 } from '../api/sessions'
 import message, { dialog } from '../utils/message'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(800, 700)
 
 const props = defineProps({
   visible: {

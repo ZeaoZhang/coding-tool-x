@@ -382,4 +382,211 @@ watch(() => currentChannel.value, refreshChannel)
   transform: translateY(-1px);
 }
 
+/* ========== 响应式样式 ========== */
+
+/* 平板端 (768px - 1024px) */
+@media (max-width: 1024px) {
+  .right-panel {
+    width: 480px;
+    min-width: 480px;
+  }
+
+  .actions-section {
+    padding: 14px 16px 10px 16px;
+  }
+
+  .panel-header {
+    padding: 16px;
+  }
+
+  .panel-header::after {
+    left: 16px;
+    right: 16px;
+  }
+
+  .channels-scroll-area {
+    padding: 10px;
+  }
+
+  .logs-section {
+    flex: 0 0 350px;
+    min-height: 350px;
+    max-height: 350px;
+  }
+}
+
+/* 小屏幕 (640px - 768px) */
+@media (max-width: 768px) {
+  .right-panel {
+    width: 100%;
+    min-width: 100%;
+    position: fixed;
+    top: 56px;
+    right: 0;
+    z-index: 9;
+    box-shadow: -2px 0 16px rgba(0, 0, 0, 0.1);
+  }
+
+  .actions-section {
+    padding: 12px 14px 8px 14px;
+  }
+
+  .action-buttons {
+    gap: 8px;
+  }
+
+  .action-left {
+    gap: 8px;
+  }
+
+  .action-left :deep(.n-text) {
+    font-size: 12px;
+    margin-right: 6px;
+  }
+
+  .skills-count-tag {
+    font-size: 10px;
+  }
+
+  .recent-sessions-icon-btn {
+    padding: 4px !important;
+  }
+
+  .panel-header {
+    padding: 14px;
+  }
+
+  .panel-header h3 {
+    font-size: 14px;
+  }
+
+  .panel-header :deep(.n-button) {
+    font-size: 12px;
+    padding: 0 12px;
+  }
+
+  .panel-header::after {
+    left: 14px;
+    right: 14px;
+  }
+
+  .channels-scroll-area {
+    padding: 8px;
+  }
+
+  .logs-section {
+    flex: 0 0 300px;
+    min-height: 300px;
+    max-height: 300px;
+  }
+}
+
+/* 移动端 (< 640px) */
+@media (max-width: 640px) {
+  .right-panel {
+    width: 100%;
+    min-width: 100%;
+    top: 52px;
+  }
+
+  .actions-section {
+    padding: 10px 12px 6px 12px;
+  }
+
+  .action-buttons {
+    gap: 6px;
+  }
+
+  .action-left {
+    gap: 6px;
+    flex-direction: column;
+    align-items: flex-start;
+    align-self: stretch;
+  }
+
+  .action-right {
+    gap: 2px;
+  }
+
+  .action-item :deep(.n-text) {
+    font-size: 11px;
+    margin-right: 6px;
+  }
+
+  .skills-count-tag {
+    font-size: 9px;
+    align-self: flex-start;
+  }
+
+  .recent-sessions-icon-btn {
+    padding: 3px !important;
+  }
+
+  .recent-sessions-icon-btn :deep(.n-icon) {
+    font-size: 16px !important;
+  }
+
+  .panel-header {
+    padding: 12px;
+  }
+
+  .panel-header h3 {
+    font-size: 13px;
+  }
+
+  .panel-header :deep(.n-button) {
+    font-size: 11px;
+    padding: 0 10px;
+  }
+
+  .panel-header::after {
+    left: 12px;
+    right: 12px;
+  }
+
+  .channels-scroll-area {
+    padding: 6px;
+  }
+
+  .logs-section {
+    flex: 0 0 250px;
+    min-height: 250px;
+    max-height: 250px;
+  }
+}
+
+/* 超小屏幕 (< 480px) */
+@media (max-width: 480px) {
+  .right-panel {
+    top: 48px;
+  }
+
+  .actions-section {
+    padding: 8px 10px 4px 10px;
+  }
+
+  .panel-header {
+    padding: 10px;
+  }
+
+  .panel-header h3 {
+    font-size: 12px;
+  }
+
+  .panel-header :deep(.n-button) {
+    font-size: 10px;
+    padding: 0 8px;
+  }
+
+  .channels-scroll-area {
+    padding: 4px;
+  }
+
+  .logs-section {
+    flex: 0 0 200px;
+    min-height: 200px;
+    max-height: 200px;
+  }
+}
+
 </style>

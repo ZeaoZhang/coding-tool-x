@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="560" placement="right" :show-mask="true">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right" :show-mask="true">
     <n-drawer-content title="MCP 服务器管理" closable :native-scrollbar="false">
       <template #header>
         <div class="drawer-header">
@@ -319,6 +319,9 @@ import {
 } from '../api/mcp'
 import message, { dialog } from '../utils/message'
 import McpFormDrawer from './McpFormDrawer.vue'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(560)
 
 const props = defineProps({
   visible: {

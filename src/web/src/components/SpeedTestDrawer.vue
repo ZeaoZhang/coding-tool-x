@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="520" placement="right" :show-mask="true">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right" :show-mask="true">
     <n-drawer-content closable :native-scrollbar="false">
       <template #header>
         <div class="drawer-header">
@@ -57,7 +57,7 @@
           <!-- Loading 状态 - 居中显示 -->
           <div v-if="testing && results.length === 0" class="loading-state">
             <n-spin size="large" />
-            <p class="loading-text">正在测试渠道连接速度...</p>
+            <p class="loading-text">正在测试渠道连接速度和 API 可用性...</p>
           </div>
 
           <!-- 空状态 -->
@@ -113,9 +113,17 @@
                 </template>
               </div>
 
-              <!-- 显示 HTTP 状态码 -->
-              <div v-if="!result.testing && result.statusCode" class="result-meta">
-                <span class="meta-item">HTTP {{ result.statusCode }}</span>
+              <!-- 显示网络和 API 状态指示器 -->
+              <div v-if="!result.testing" class="result-meta">
+                <span class="meta-item status-indicator">
+                  <span :class="['status-dot', result.networkOk ? 'ok' : 'fail']"></span>
+                  网络{{ result.networkOk ? '正常' : '异常' }}
+                </span>
+                <span class="meta-item status-indicator">
+                  <span :class="['status-dot', result.apiOk ? 'ok' : 'fail']"></span>
+                  API{{ result.apiOk ? '可用' : '不可用' }}
+                </span>
+                <span v-if="result.statusCode" class="meta-item">HTTP {{ result.statusCode }}</span>
                 <span v-if="result.testedAt" class="meta-item">{{ formatTime(result.testedAt) }}</span>
               </div>
             </div>
@@ -142,6 +150,9 @@ import {
   testAllGeminiChannelsSpeed
 } from '../api/channels'
 import message from '../utils/message'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(520)
 
 const props = defineProps({
   visible: {
@@ -569,6 +580,7 @@ watch(() => props.visible, (val) => {
 
 .result-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 8px;
   padding-top: 8px;
@@ -579,6 +591,31 @@ watch(() => props.visible, (val) => {
   font-size: 11px;
   color: var(--text-tertiary);
   font-family: 'SF Mono', Monaco, monospace;
+}
+
+.meta-item.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+.status-dot.ok {
+  background-color: #18a058;
+  box-shadow: 0 0 4px rgba(24, 160, 88, 0.6);
+}
+
+.status-dot.fail {
+  background-color: #f56c6c;
+  box-shadow: 0 0 4px rgba(245, 108, 108, 0.6);
 }
 
 .cache-hint {

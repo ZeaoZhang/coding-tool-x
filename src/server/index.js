@@ -109,6 +109,8 @@ async function startServer(port) {
   app.use('/api/settings', require('./api/settings'));
   app.use('/api/config', require('./api/config'));
   app.use('/api/statistics', require('./api/statistics'));
+  app.use('/api/codex/statistics', require('./api/codex-statistics'));
+  app.use('/api/gemini/statistics', require('./api/gemini-statistics'));
   app.use('/api/version', require('./api/version'));
   app.use('/api/pm2-autostart', require('./api/pm2-autostart')());
   app.use('/api/dashboard', require('./api/dashboard'));

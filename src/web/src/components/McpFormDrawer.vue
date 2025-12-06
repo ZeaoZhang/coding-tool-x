@@ -1,5 +1,5 @@
 <template>
-  <n-drawer v-model:show="visible" :width="520" placement="right" :show-mask="true">
+  <n-drawer v-model:show="visible" :width="drawerWidth" placement="right" :show-mask="true">
     <n-drawer-content closable :native-scrollbar="false">
       <template #header>
         <div class="drawer-header">
@@ -274,6 +274,9 @@ import {
 } from '@vicons/ionicons5'
 import { getPresets, saveServer } from '../api/mcp'
 import message from '../utils/message'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+
+const { drawerWidth } = useResponsiveDrawer(520)
 
 const props = defineProps({
   visible: {

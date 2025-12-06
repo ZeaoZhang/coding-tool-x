@@ -1,7 +1,7 @@
 <template>
   <n-drawer
     v-model:show="visible"
-    :width="520"
+    :width="drawerWidth"
     placement="right"
     :mask-closable="true"
   >
@@ -20,12 +20,15 @@
 import { computed } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import SkillsPanel from './SkillsPanel.vue'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
   visible: Boolean
 })
 
 const emit = defineEmits(['update:visible'])
+
+const { drawerWidth } = useResponsiveDrawer(520)
 
 const visible = computed({
   get: () => props.visible,
