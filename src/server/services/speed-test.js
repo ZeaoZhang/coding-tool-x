@@ -7,14 +7,19 @@
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const path = require('path');
+const fs = require('fs');
 
 // 测试结果缓存
 const testResultsCache = new Map();
 
+// Codex 请求体模板文件路径
+const CODEX_REQUEST_TEMPLATE_PATH = path.join(__dirname, 'codex-speed-test-template.json');
+
 // 超时配置（毫秒）
-const DEFAULT_TIMEOUT = 8000;
-const MIN_TIMEOUT = 2000;
-const MAX_TIMEOUT = 30000;
+const DEFAULT_TIMEOUT = 15000;
+const MIN_TIMEOUT = 5000;
+const MAX_TIMEOUT = 60000;
 
 /**
  * 规范化超时时间
@@ -28,9 +33,10 @@ function sanitizeTimeout(timeout) {
  * 测试单个渠道的连接速度和 API 功能
  * @param {Object} channel - 渠道配置
  * @param {number} timeout - 超时时间（毫秒）
+ * @param {string} channelType - 渠道类型：'claude' | 'codex' | 'gemini'
  * @returns {Promise<Object>} 测试结果
  */
-async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT) {
+async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType = 'claude') {
   const sanitizedTimeout = sanitizeTimeout(timeout);
 
   try {
@@ -67,29 +73,12 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT) {
       };
     }
 
-    // 第一步：测试网络连接（简单 HEAD/GET 请求）
-    const connectResult = await testNetworkConnectivity(testUrl, channel.apiKey, sanitizedTimeout);
-    const networkOk = connectResult.statusCode !== null;
+    // 直接测试 API 功能（发送测试消息）
+    // 不再单独测试网络连通性，因为直接 GET base_url 可能返回 404
+    const apiResult = await testAPIFunctionality(testUrl, channel.apiKey, sanitizedTimeout, channelType, channel.model);
 
-    let latency = connectResult.latency;
-    let apiOk = false;
-    let apiError = null;
-    let detailError = null;
-
-    // 第二步：如果网络可达，测试 API 功能（发送测试消息）
-    if (networkOk) {
-      const apiResult = await testAPIFunctionality(testUrl, channel.apiKey, sanitizedTimeout);
-      apiOk = apiResult.success;
-      apiError = apiResult.error;
-      if (apiResult.latency && apiResult.latency > latency) {
-        latency = apiResult.latency;
-      }
-    } else {
-      detailError = connectResult.error;
-    }
-
-    // 综合判断成功（网络可达且 API 可用）
-    const success = networkOk && apiOk;
+    const success = apiResult.success;
+    const networkOk = apiResult.latency !== null; // 如果有延迟数据，说明网络是通的
 
     // 缓存结果
     const finalResult = {
@@ -97,10 +86,10 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT) {
       channelName: channel.name,
       success,
       networkOk,
-      apiOk,
-      statusCode: connectResult.statusCode,
-      error: success ? null : (apiError || detailError || '测试失败'),
-      latency: success ? latency : null,
+      apiOk: success,
+      statusCode: apiResult.statusCode || null,
+      error: success ? null : (apiResult.error || '测试失败'),
+      latency: apiResult.latency || null, // 无论成功失败都保留延迟数据
       testedAt: Date.now()
     };
 
@@ -194,44 +183,115 @@ function testNetworkConnectivity(url, apiKey, timeout) {
 
 /**
  * 测试 API 功能（发送真实的聊天请求）
- * 支持 OpenAI 和 Anthropic 格式
+ * 根据渠道类型选择正确的 API 格式
+ * @param {string} baseUrl - 基础 URL
+ * @param {string} apiKey - API Key
+ * @param {number} timeout - 超时时间
+ * @param {string} channelType - 渠道类型：'claude' | 'codex' | 'gemini'
+ * @param {string} model - 模型名称（可选，用于 Gemini）
  */
-function testAPIFunctionality(baseUrl, apiKey, timeout) {
+function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', model = null) {
   return new Promise((resolve) => {
     const startTime = Date.now();
     const parsedUrl = new URL(baseUrl);
     const isHttps = parsedUrl.protocol === 'https:';
     const httpModule = isHttps ? https : http;
 
-    // 确定 API 路径和请求格式
+    // 根据渠道类型确定 API 路径和请求格式
     let apiPath;
     let requestBody;
     let headers;
 
-    // 检测是 Anthropic 还是 OpenAI 格式
-    const isAnthropic = baseUrl.includes('anthropic') || baseUrl.includes('claude');
+    // Claude 渠道使用 Anthropic 格式
+    if (channelType === 'claude') {
+      // Anthropic Messages API - 模拟 Claude Code 请求格式
+      apiPath = parsedUrl.pathname.replace(/\/$/, '');
+      if (!apiPath.endsWith('/messages')) {
+        apiPath = apiPath + (apiPath.endsWith('/v1') ? '/messages' : '/v1/messages');
+      }
+      // 添加 ?beta=true 查询参数
+      apiPath += '?beta=true';
 
-    if (isAnthropic) {
-      // Anthropic 格式
-      apiPath = parsedUrl.pathname.includes('/v1')
-        ? parsedUrl.pathname.replace(/\/$/, '') + '/messages'
-        : '/v1/messages';
+      // 使用 Claude Code 的请求格式
+      // user_id 必须符合特定格式: user_xxx_account__session_xxx
+      // 使用 claude-sonnet-4 模型测试，因为 haiku 可能没有配额
+      const sessionId = Math.random().toString(36).substring(2, 15);
       requestBody = JSON.stringify({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 10,
+        stream: true,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+        system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
+        metadata: { user_id: `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}` }
+      });
+
+      headers = {
+        'x-api-key': apiKey || '',
+        'Authorization': `Bearer ${apiKey || ''}`,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'claude-code-20250219,interleaved-thinking-2025-05-14',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+        'x-stainless-runtime': 'node',
+        'Content-Type': 'application/json',
+        'User-Agent': 'claude-cli/2.0.53 (external, cli)'
+      };
+    } else if (channelType === 'codex') {
+      // Codex 使用 OpenAI Responses API 格式
+      // 路径: /v1/responses
+      apiPath = parsedUrl.pathname.replace(/\/$/, '');
+      if (!apiPath.endsWith('/responses')) {
+        apiPath = apiPath + (apiPath.endsWith('/v1') ? '/responses' : '/v1/responses');
+      }
+      // 从模板文件加载完整的 Codex 请求格式
+      try {
+        const template = JSON.parse(fs.readFileSync(CODEX_REQUEST_TEMPLATE_PATH, 'utf-8'));
+        // 生成新的 prompt_cache_key
+        template.prompt_cache_key = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+        requestBody = JSON.stringify(template);
+      } catch (err) {
+        console.error('[SpeedTest] Failed to load Codex template:', err.message);
+        // 降级使用简化版本（可能会失败）
+        requestBody = JSON.stringify({
+          model: 'gpt-5-codex',
+          instructions: 'You are Codex.',
+          input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
+          max_output_tokens: 10,
+          stream: false,
+          store: false
+        });
+      }
+      headers = {
+        'Authorization': `Bearer ${apiKey || ''}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'codex_cli_rs/0.65.0',
+        'openai-beta': 'responses=experimental'
+      };
+    } else if (channelType === 'gemini') {
+      // Gemini 也使用 OpenAI 兼容格式
+      apiPath = parsedUrl.pathname.replace(/\/$/, '');
+      if (!apiPath.endsWith('/chat/completions')) {
+        apiPath = apiPath + (apiPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
+      }
+      // 使用渠道配置的模型，如果没有则默认使用 gemini-2.5-pro
+      const geminiModel = model || 'gemini-2.5-pro';
+      requestBody = JSON.stringify({
+        model: geminiModel,
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Hi' }]
       });
       headers = {
-        'x-api-key': apiKey || '',
-        'anthropic-version': '2023-06-01',
+        'Authorization': `Bearer ${apiKey || ''}`,
         'Content-Type': 'application/json',
         'User-Agent': 'Coding-Tool-SpeedTest/1.0'
       };
     } else {
-      // OpenAI 格式（默认）
-      apiPath = parsedUrl.pathname.includes('/v1')
-        ? parsedUrl.pathname.replace(/\/$/, '') + '/chat/completions'
-        : '/v1/chat/completions';
+      // 默认使用 OpenAI 格式
+      apiPath = parsedUrl.pathname.replace(/\/$/, '');
+      if (!apiPath.endsWith('/chat/completions')) {
+        apiPath = apiPath + (apiPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
+      }
       requestBody = JSON.stringify({
         model: 'gpt-4o-mini',
         max_tokens: 10,
@@ -255,80 +315,143 @@ function testAPIFunctionality(baseUrl, apiKey, timeout) {
 
     const req = httpModule.request(options, (res) => {
       let data = '';
-      res.on('data', chunk => { data += chunk; });
+      let resolved = false;
+      const isStreamingResponse = channelType === 'codex'; // Codex 使用流式响应
+
+      // 解析响应体中的错误信息
+      const parseErrorMessage = (responseData) => {
+        try {
+          const errData = JSON.parse(responseData);
+          return errData.error?.message || errData.message || errData.detail || null;
+        } catch {
+          return null;
+        }
+      };
+
+      res.on('data', chunk => {
+        data += chunk;
+        const chunkStr = chunk.toString();
+
+        // 对于流式响应（Codex），在收到第一个有效事件时立即返回成功
+        if (isStreamingResponse && !resolved && res.statusCode >= 200 && res.statusCode < 300) {
+          // 检查是否收到了 response.created 或 response.in_progress 事件
+          if (chunkStr.includes('response.created') || chunkStr.includes('response.in_progress')) {
+            resolved = true;
+            const latency = Date.now() - startTime;
+            req.destroy();
+            resolve({
+              success: true,
+              latency,
+              error: null,
+              statusCode: res.statusCode
+            });
+          } else if (chunkStr.includes('"detail"') || chunkStr.includes('"error"')) {
+            // 流式响应中的错误
+            resolved = true;
+            const latency = Date.now() - startTime;
+            req.destroy();
+            const errMsg = parseErrorMessage(chunkStr) || '流式响应错误';
+            resolve({
+              success: false,
+              latency,
+              error: errMsg,
+              statusCode: res.statusCode
+            });
+          }
+        }
+      });
+
       res.on('end', () => {
+        if (resolved) return; // 已经处理过了
+
         const latency = Date.now() - startTime;
 
-        // 检查响应状态
+        // 严格判断：只有 2xx 且没有错误信息才算成功
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          // 成功响应
-          resolve({
-            success: true,
-            latency,
-            error: null
-          });
+          // 检查响应体是否包含错误信息
+          const errMsg = parseErrorMessage(data);
+          if (errMsg && (errMsg.includes('error') || errMsg.includes('Error') ||
+                         errMsg.includes('失败') || errMsg.includes('错误'))) {
+            resolve({
+              success: false,
+              latency,
+              error: errMsg,
+              statusCode: res.statusCode
+            });
+          } else {
+            // 真正的成功响应
+            resolve({
+              success: true,
+              latency,
+              error: null,
+              statusCode: res.statusCode
+            });
+          }
         } else if (res.statusCode === 401) {
           resolve({
             success: false,
             latency,
-            error: 'API Key 无效或已过期'
+            error: 'API Key 无效或已过期',
+            statusCode: res.statusCode
           });
         } else if (res.statusCode === 403) {
           resolve({
             success: false,
             latency,
-            error: 'API Key 权限不足'
+            error: 'API Key 权限不足',
+            statusCode: res.statusCode
           });
         } else if (res.statusCode === 429) {
-          // 429 表示请求过多，但说明 API Key 有效
+          // 请求过多 - 标记为失败
+          const errMsg = parseErrorMessage(data) || '请求过多，服务限流中';
           resolve({
-            success: true,
+            success: false,
             latency,
-            error: null
+            error: errMsg,
+            statusCode: res.statusCode
+          });
+        } else if (res.statusCode === 503 || res.statusCode === 529) {
+          // 服务暂时不可用/过载 - 标记为失败
+          const errMsg = parseErrorMessage(data) || (res.statusCode === 503 ? '服务暂时不可用' : '服务过载');
+          resolve({
+            success: false,
+            latency,
+            error: errMsg,
+            statusCode: res.statusCode
           });
         } else if (res.statusCode === 402) {
           resolve({
             success: false,
             latency,
-            error: '账户余额不足'
+            error: '账户余额不足',
+            statusCode: res.statusCode
           });
         } else if (res.statusCode === 400) {
-          // 尝试解析错误信息
-          try {
-            const errData = JSON.parse(data);
-            const errMsg = errData.error?.message || errData.message || '请求参数错误';
-            // 如果是模型不存在的错误，说明 API 本身是通的
-            if (errMsg.includes('model') || errMsg.includes('Model')) {
-              resolve({
-                success: true,
-                latency,
-                error: null
-              });
-            } else {
-              resolve({
-                success: false,
-                latency,
-                error: errMsg
-              });
-            }
-          } catch {
-            resolve({
-              success: false,
-              latency,
-              error: '请求参数错误'
-            });
-          }
-        } else {
-          // 其他错误
-          let errMsg = `HTTP ${res.statusCode}`;
-          try {
-            const errData = JSON.parse(data);
-            errMsg = errData.error?.message || errData.message || errMsg;
-          } catch {}
+          // 请求参数错误
+          const errMsg = parseErrorMessage(data) || '请求参数错误';
           resolve({
             success: false,
             latency,
-            error: errMsg
+            error: errMsg,
+            statusCode: res.statusCode
+          });
+        } else if (res.statusCode >= 500) {
+          // 5xx 服务器错误
+          const errMsg = parseErrorMessage(data) || `服务器错误 (${res.statusCode})`;
+          resolve({
+            success: false,
+            latency,
+            error: errMsg,
+            statusCode: res.statusCode
+          });
+        } else {
+          // 其他错误
+          const errMsg = parseErrorMessage(data) || `HTTP ${res.statusCode}`;
+          resolve({
+            success: false,
+            latency,
+            error: errMsg,
+            statusCode: res.statusCode
           });
         }
       });
@@ -360,11 +483,12 @@ function testAPIFunctionality(baseUrl, apiKey, timeout) {
  * 批量测试多个渠道
  * @param {Array} channels - 渠道列表
  * @param {number} timeout - 超时时间
+ * @param {string} channelType - 渠道类型：'claude' | 'codex' | 'gemini'
  * @returns {Promise<Array>} 测试结果列表
  */
-async function testMultipleChannels(channels, timeout = DEFAULT_TIMEOUT) {
+async function testMultipleChannels(channels, timeout = DEFAULT_TIMEOUT, channelType = 'claude') {
   const results = await Promise.all(
-    channels.map(channel => testChannelSpeed(channel, timeout))
+    channels.map(channel => testChannelSpeed(channel, timeout, channelType))
   );
 
   // 按延迟排序（成功的在前，按延迟升序）

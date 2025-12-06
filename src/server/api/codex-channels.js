@@ -6,10 +6,11 @@ const {
   updateChannel,
   deleteChannel,
   getEnabledChannels,
-  saveChannelOrder
+  saveChannelOrder,
+  applyChannelToSettings
 } = require('../services/codex-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
-const { broadcastSchedulerState } = require('../websocket-server');
+const { broadcastSchedulerState, broadcastLog } = require('../websocket-server');
 const { isCodexInstalled } = require('../services/codex-config');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
 
@@ -170,7 +171,7 @@ module.exports = (config) => {
         return res.status(404).json({ error: '渠道不存在' });
       }
 
-      const result = await testChannelSpeed(channel, timeout);
+      const result = await testChannelSpeed(channel, timeout, 'codex');
       result.level = getLatencyLevel(result.latency);
 
       res.json(result);
@@ -198,7 +199,8 @@ module.exports = (config) => {
         return res.json({ results: [], message: '没有可测试的渠道' });
       }
 
-      const results = await testMultipleChannels(channels, timeout);
+      // Codex 渠道使用 'codex' 类型
+      const results = await testMultipleChannels(channels, timeout, 'codex');
       results.forEach(r => {
         r.level = getLatencyLevel(r.latency);
       });
@@ -214,6 +216,55 @@ module.exports = (config) => {
       });
     } catch (error) {
       console.error('[Codex Channels API] Error testing all channels speed:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/codex/channels/:channelId/apply-to-settings
+   * 将渠道应用到 Codex 配置文件
+   */
+  router.post('/:channelId/apply-to-settings', async (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const { channelId } = req.params;
+      const channel = applyChannelToSettings(channelId);
+
+      // 如果代理正在运行，停止它
+      const { getCodexProxyStatus, stopCodexProxyServer } = require('../codex-proxy-server');
+      const proxyStatus = getCodexProxyStatus();
+
+      if (proxyStatus && proxyStatus.running) {
+        console.log(`Codex proxy is running, stopping to apply channel settings: ${channel.name}`);
+        await stopCodexProxyServer({ clearStartTime: false });
+
+        broadcastLog({
+          type: 'action',
+          action: 'stop_proxy',
+          message: `已停止动态切换，默认使用当前渠道`,
+          timestamp: Date.now(),
+          source: 'codex'
+        });
+      }
+
+      broadcastLog({
+        type: 'action',
+        action: 'apply_settings',
+        message: `已将 (${channel.name}) 渠道写入配置文件中`,
+        channelName: channel.name,
+        timestamp: Date.now(),
+        source: 'codex'
+      });
+
+      res.json({
+        message: `已将 (${channel.name}) 渠道写入配置文件中`,
+        channel
+      });
+    } catch (error) {
+      console.error('[Codex Channels API] Error applying channel to settings:', error);
       res.status(500).json({ error: error.message });
     }
   });

@@ -218,8 +218,6 @@ function recordRequest(requestData) {
 
     saveDailyStats(date, dailyStats);
 
-    console.log(`[Gemini Statistics] Recorded request: channel=${channel}, model=${model}, tokens=${totalTokens}, cost=${cost}`);
-
   } catch (err) {
     console.error('[Gemini Statistics] Failed to record request:', err);
   }

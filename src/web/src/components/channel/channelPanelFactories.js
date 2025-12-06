@@ -4,14 +4,18 @@ import {
   updateChannel as updateClaudeChannel,
   deleteChannel as deleteClaudeChannel,
   applyChannelToSettings,
-  resetChannelHealth
+  resetChannelHealth,
+  testClaudeChannelSpeed,
+  testCodexChannelSpeed,
+  testGeminiChannelSpeed
 } from '../../api/channels'
 import { claudePresets, presetCategories, getPresetById } from '../../config/claudePresets'
 import {
   getCodexChannels,
   createCodexChannel,
   updateCodexChannel,
-  deleteCodexChannel
+  deleteCodexChannel,
+  applyCodexChannelToSettings
 } from '../../api/channels'
 import {
   getGeminiChannels,
@@ -268,6 +272,7 @@ const channelPanelFactories = {
 
       return newForm
     },
+    testFn: testClaudeChannelSpeed,
     api: {
       fetch: async () => {
         const data = await fetchClaudeChannels()
@@ -356,7 +361,7 @@ const channelPanelFactories = {
     emptyActionText: '添加 Codex 渠道',
     modalWidth: 600,
     formLabelWidth: 90,
-    showApplyButton: false,
+    showApplyButton: true,
     formSections: [
       {
         title: '基本信息',
@@ -420,6 +425,7 @@ const channelPanelFactories = {
       weight: channel.weight || 1,
       enabled: channel.enabled !== false
     }),
+    testFn: testCodexChannelSpeed,
     api: {
       fetch: async () => {
         const data = await getCodexChannels()
@@ -451,7 +457,10 @@ const channelPanelFactories = {
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
-      remove: deleteCodexChannel
+      remove: deleteCodexChannel,
+      applyToSettings: async (channel) => {
+        return applyCodexChannelToSettings(channel.id)
+      }
     },
     getHeaderTags: (channel) => {
       if (channel.enabled === false) {
@@ -535,6 +544,7 @@ const channelPanelFactories = {
       weight: channel.weight || 1,
       enabled: channel.enabled !== false
     }),
+    testFn: testGeminiChannelSpeed,
     api: {
       fetch: async () => {
         const data = await getGeminiChannels()

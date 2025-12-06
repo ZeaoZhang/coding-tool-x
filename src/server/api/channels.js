@@ -204,7 +204,8 @@ router.post('/:id/speed-test', async (req, res) => {
       return res.status(404).json({ error: '渠道不存在' });
     }
 
-    const result = await testChannelSpeed(channel, timeout);
+    // Claude 渠道使用 'claude' 类型
+    const result = await testChannelSpeed(channel, timeout, 'claude');
     result.level = getLatencyLevel(result.latency);
 
     res.json(result);
@@ -224,7 +225,8 @@ router.post('/speed-test-all', async (req, res) => {
       return res.json({ results: [], message: '没有可测试的渠道' });
     }
 
-    const results = await testMultipleChannels(channels, timeout);
+    // Claude 渠道使用 'claude' 类型
+    const results = await testMultipleChannels(channels, timeout, 'claude');
     // 添加延迟等级
     results.forEach(r => {
       r.level = getLatencyLevel(r.latency);

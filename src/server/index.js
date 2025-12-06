@@ -6,7 +6,10 @@ const { loadConfig } = require('../config/loader');
 const { startWebSocketServer: attachWebSocketServer } = require('./websocket-server');
 const { isPortInUse, killProcessByPort, waitForPortRelease } = require('../utils/port-helper');
 const { isProxyConfig } = require('./services/settings-manager');
-const { isProxyConfig: isCodexProxyConfig } = require('./services/codex-settings-manager');
+const {
+  isProxyConfig: isCodexProxyConfig,
+  setProxyConfig: setCodexProxyConfig
+} = require('./services/codex-settings-manager');
 const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
@@ -184,8 +187,19 @@ function autoRestoreProxies() {
     console.log(chalk.cyan('\n🔄 检测到 Codex 代理状态文件，正在自动启动...'));
     const codexProxyPort = config.ports?.codexProxy || 10089;
     startCodexProxyServer(codexProxyPort)
-      .then(() => {
-        console.log(chalk.green(`✅ Codex 代理已自动启动，端口: ${codexProxyPort}`));
+      .then((result) => {
+        const port = result?.port || codexProxyPort;
+        console.log(chalk.green(`✅ Codex 代理已自动启动，端口: ${port}`));
+
+        // 重启后重新写入 cc-proxy 配置与环境变量，避免缺少 provider/env 导致报错
+        try {
+          const cfgResult = setCodexProxyConfig(port);
+          if (cfgResult?.success) {
+            console.log(chalk.gray('   已同步 codex config.toml 与 CC_PROXY_KEY'));
+          }
+        } catch (err) {
+          console.error(chalk.red(`❌ Codex 代理配置同步失败: ${err.message}`));
+        }
       })
       .catch((err) => {
         console.error(chalk.red(`❌ Codex 代理启动失败: ${err.message}`));

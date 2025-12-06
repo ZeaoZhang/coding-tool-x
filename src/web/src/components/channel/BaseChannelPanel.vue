@@ -36,6 +36,8 @@
             :info-rows="config.buildInfoRows(element, helpers)"
             :meta="buildMeta(element)"
             :show-apply-button="config.showApplyButton"
+            :channel-type="config.type"
+            :test-fn="config.testFn"
             @toggle-collapse="actions.toggleCollapse(element.id)"
             @apply="actions.handleApplyToSettings(element)"
             @edit="actions.handleEdit(element)"

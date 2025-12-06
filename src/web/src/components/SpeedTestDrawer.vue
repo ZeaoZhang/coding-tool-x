@@ -3,9 +3,11 @@
     <n-drawer-content closable :native-scrollbar="false">
       <template #header>
         <div class="drawer-header">
-          <n-icon :size="20" class="header-icon">
-            <SpeedometerOutline />
-          </n-icon>
+          <div class="header-icon-wrapper">
+            <n-icon :size="18">
+              <SpeedometerOutline />
+            </n-icon>
+          </div>
           <span>渠道速度测试</span>
         </div>
       </template>
@@ -18,6 +20,7 @@
             :loading="testing"
             :disabled="testing"
             @click="runAllTests"
+            class="test-btn"
           >
             <template #icon>
               <n-icon><PlayOutline /></n-icon>
@@ -62,9 +65,11 @@
 
           <!-- 空状态 -->
           <div v-else-if="results.length === 0 && !testing" class="empty-state">
-            <n-icon :size="48" class="empty-icon">
-              <SpeedometerOutline />
-            </n-icon>
+            <div class="empty-icon-wrapper">
+              <n-icon :size="32">
+                <SpeedometerOutline />
+              </n-icon>
+            </div>
             <p class="empty-title">暂无测试结果</p>
             <p class="empty-desc">点击上方按钮开始测试渠道连接速度</p>
           </div>
@@ -81,16 +86,19 @@
               ]"
             >
               <div class="result-header">
-                <span class="channel-name">{{ result.channelName }}</span>
+                <div class="channel-info">
+                  <span class="channel-type-badge" :class="getChannelTypeClass(result.channelType)">
+                    {{ getChannelTypeLabel(result.channelType) }}
+                  </span>
+                  <span class="channel-name">{{ getCleanChannelName(result.channelName) }}</span>
+                </div>
                 <div class="result-status">
                   <n-spin v-if="result.testing" :size="14" />
                   <template v-else>
-                    <n-tag v-if="result.success" :type="getLevelType(result.level)" size="small">
+                    <span v-if="result.success" class="latency-badge" :class="result.level">
                       {{ result.latency }}ms
-                    </n-tag>
-                    <n-tag v-else type="error" size="small">
-                      失败
-                    </n-tag>
+                    </span>
+                    <span v-else class="status-badge failed">失败</span>
                   </template>
                 </div>
               </div>
@@ -109,7 +117,16 @@
                   </span>
                 </template>
                 <template v-else>
-                  <span class="error-msg">{{ result.error }}</span>
+                  <div class="error-info">
+                    <div class="error-container">
+                      <n-icon :size="14" class="error-icon"><AlertCircleOutline /></n-icon>
+                      <span class="error-msg">{{ result.error }}</span>
+                    </div>
+                    <!-- 失败时也显示延迟，表明网络是通的 -->
+                    <span v-if="result.latency" class="error-latency">
+                      响应 {{ result.latency }}ms
+                    </span>
+                  </div>
                 </template>
               </div>
 
@@ -123,8 +140,8 @@
                   <span :class="['status-dot', result.apiOk ? 'ok' : 'fail']"></span>
                   API{{ result.apiOk ? '可用' : '不可用' }}
                 </span>
-                <span v-if="result.statusCode" class="meta-item">HTTP {{ result.statusCode }}</span>
-                <span v-if="result.testedAt" class="meta-item">{{ formatTime(result.testedAt) }}</span>
+                <span v-if="result.statusCode" class="meta-item http-code">HTTP {{ result.statusCode }}</span>
+                <span v-if="result.testedAt" class="meta-item time">{{ formatTime(result.testedAt) }}</span>
               </div>
             </div>
           </div>
@@ -143,7 +160,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NTag, NSelect } from 'naive-ui'
-import { SpeedometerOutline, PlayOutline, TimeOutline } from '@vicons/ionicons5'
+import { SpeedometerOutline, PlayOutline, TimeOutline, AlertCircleOutline } from '@vicons/ionicons5'
 import {
   testAllClaudeChannelsSpeed,
   testAllCodexChannelsSpeed,
@@ -338,6 +355,32 @@ function formatTime(timestamp) {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+// 获取渠道类型标签
+function getChannelTypeLabel(type) {
+  switch (type) {
+    case 'claude': return 'Claude'
+    case 'codex': return 'Codex'
+    case 'gemini': return 'Gemini'
+    default: return type?.toUpperCase() || ''
+  }
+}
+
+// 获取渠道类型样式类
+function getChannelTypeClass(type) {
+  switch (type) {
+    case 'claude': return 'type-claude'
+    case 'codex': return 'type-codex'
+    case 'gemini': return 'type-gemini'
+    default: return ''
+  }
+}
+
+// 清理渠道名称（移除类型前缀）
+function getCleanChannelName(name) {
+  if (!name) return ''
+  return name.replace(/^\[(CLAUDE|CODEX|GEMINI)\]\s*/i, '')
+}
+
 // 抽屉打开时加载缓存
 watch(() => props.visible, (val) => {
   if (val) {
@@ -351,20 +394,27 @@ watch(() => props.visible, (val) => {
 .drawer-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 16px;
+  gap: 10px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
-.header-icon {
-  color: #f59e0b;
+.header-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
+  border-radius: 8px;
+  color: white;
 }
 
 .speed-test-container {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 .test-controls {
@@ -373,13 +423,17 @@ watch(() => props.visible, (val) => {
   gap: 12px;
 }
 
+.test-btn {
+  border-radius: 6px;
+}
+
 .test-summary {
   display: flex;
-  gap: 12px;
-  padding: 16px;
+  gap: 8px;
+  padding: 12px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .summary-item {
@@ -387,10 +441,10 @@ watch(() => props.visible, (val) => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 8px;
+  gap: 2px;
+  padding: 10px 8px;
   background: var(--bg-primary);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 .summary-label {
@@ -400,7 +454,7 @@ watch(() => props.visible, (val) => {
 }
 
 .summary-value {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text-primary);
 }
@@ -415,13 +469,14 @@ watch(() => props.visible, (val) => {
 
 .summary-item.avg .summary-value {
   color: #f59e0b;
+  font-size: 16px;
 }
 
 .results-list {
   min-height: 200px;
 }
 
-/* Loading 状态 - 居中 */
+/* Loading 状态 */
 .loading-state {
   display: flex;
   flex-direction: column;
@@ -432,11 +487,12 @@ watch(() => props.visible, (val) => {
 }
 
 .loading-text {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-secondary);
   margin: 0;
 }
 
+/* 空状态 */
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -447,16 +503,23 @@ watch(() => props.visible, (val) => {
   min-height: 300px;
 }
 
-.empty-icon {
+.empty-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  background: var(--bg-tertiary);
+  border-radius: 16px;
   color: var(--text-tertiary);
   margin-bottom: 16px;
 }
 
 .empty-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 8px 0;
+  margin: 0 0 6px 0;
 }
 
 .empty-desc {
@@ -465,22 +528,24 @@ watch(() => props.visible, (val) => {
   margin: 0;
 }
 
+/* 结果卡片 */
 .result-cards {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .result-card {
-  padding: 14px 16px;
+  padding: 12px 14px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  border-radius: 10px;
   transition: all 0.2s ease;
 }
 
 .result-card:hover {
   border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .result-card.success {
@@ -503,8 +568,40 @@ watch(() => props.visible, (val) => {
   margin-bottom: 8px;
 }
 
+.channel-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.channel-type-badge.type-claude {
+  background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
+  color: white;
+}
+
+.channel-type-badge.type-codex {
+  background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+  color: white;
+}
+
+.channel-type-badge.type-gemini {
+  background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
+  color: white;
+}
+
 .channel-name {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -512,6 +609,50 @@ watch(() => props.visible, (val) => {
 .result-status {
   display: flex;
   align-items: center;
+}
+
+.latency-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.latency-badge.excellent {
+  background: rgba(24, 160, 88, 0.1);
+  color: #18a058;
+}
+
+.latency-badge.good {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.latency-badge.fair {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+}
+
+.latency-badge.poor {
+  background: rgba(245, 108, 108, 0.1);
+  color: #f56c6c;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.status-badge.failed {
+  background: rgba(245, 108, 108, 0.1);
+  color: #f56c6c;
 }
 
 .result-details {
@@ -522,15 +663,15 @@ watch(() => props.visible, (val) => {
 
 .latency-bar {
   flex: 1;
-  height: 6px;
+  height: 4px;
   background: var(--bg-tertiary);
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .latency-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 2px;
   transition: width 0.3s ease;
 }
 
@@ -551,46 +692,72 @@ watch(() => props.visible, (val) => {
 }
 
 .latency-level {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  min-width: 36px;
+  min-width: 32px;
   text-align: right;
 }
 
-.latency-level.excellent {
-  color: #18a058;
+.latency-level.excellent { color: #18a058; }
+.latency-level.good { color: #3b82f6; }
+.latency-level.fair { color: #f59e0b; }
+.latency-level.poor { color: #f56c6c; }
+
+/* 错误信息 */
+.error-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
 }
 
-.latency-level.good {
-  color: #3b82f6;
+.error-container {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(245, 108, 108, 0.06);
+  border-radius: 6px;
+  flex: 1;
 }
 
-.latency-level.fair {
-  color: #f59e0b;
-}
-
-.latency-level.poor {
+.error-icon {
   color: #f56c6c;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .error-msg {
   font-size: 12px;
   color: #f56c6c;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
+.error-latency {
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, monospace;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 元信息 */
 .result-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
-  padding-top: 8px;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px dashed var(--border-primary);
 }
 
 .meta-item {
   font-size: 11px;
   color: var(--text-tertiary);
-  font-family: 'SF Mono', Monaco, monospace;
 }
 
 .meta-item.status-indicator {
@@ -598,6 +765,19 @@ watch(() => props.visible, (val) => {
   align-items: center;
   gap: 4px;
   color: var(--text-secondary);
+  font-family: inherit;
+}
+
+.meta-item.http-code {
+  font-family: 'SF Mono', Monaco, monospace;
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.meta-item.time {
+  font-family: 'SF Mono', Monaco, monospace;
+  color: var(--text-quaternary);
 }
 
 .status-dot {
@@ -605,28 +785,28 @@ watch(() => props.visible, (val) => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  transition: all 0.2s ease;
 }
 
 .status-dot.ok {
   background-color: #18a058;
-  box-shadow: 0 0 4px rgba(24, 160, 88, 0.6);
+  box-shadow: 0 0 4px rgba(24, 160, 88, 0.5);
 }
 
 .status-dot.fail {
   background-color: #f56c6c;
-  box-shadow: 0 0 4px rgba(245, 108, 108, 0.6);
+  box-shadow: 0 0 4px rgba(245, 108, 108, 0.5);
 }
 
+/* 缓存提示 */
 .cache-hint {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 14px;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.2);
-  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  border-radius: 8px;
   font-size: 12px;
-  color: #f59e0b;
+  color: #d97706;
 }
 </style>

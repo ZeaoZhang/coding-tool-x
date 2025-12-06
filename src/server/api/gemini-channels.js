@@ -169,7 +169,7 @@ module.exports = (config) => {
         return res.status(404).json({ error: '渠道不存在' });
       }
 
-      const result = await testChannelSpeed(channel, timeout);
+      const result = await testChannelSpeed(channel, timeout, 'gemini');
       result.level = getLatencyLevel(result.latency);
 
       res.json(result);
@@ -197,7 +197,8 @@ module.exports = (config) => {
         return res.json({ results: [], message: '没有可测试的渠道' });
       }
 
-      const results = await testMultipleChannels(channels, timeout);
+      // Gemini 渠道使用 'gemini' 类型
+      const results = await testMultipleChannels(channels, timeout, 'gemini');
       results.forEach(r => {
         r.level = getLatencyLevel(r.latency);
       });

@@ -182,7 +182,7 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
   data.channels.push(newChannel);
   saveChannels(data);
 
-  // 立即注入该渠道的环境变量（在所有渠道配置之前）
+  // 注入该渠道的环境变量（用于直接使用 codex 命令）
   if (apiKey && envKey) {
     const injectResult = injectEnvToShell(envKey, apiKey);
     if (injectResult.success) {
@@ -192,8 +192,8 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
     }
   }
 
-  // 写入 Codex 配置文件
-  writeCodexConfigForMultiChannel(data.channels);
+  // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
+  // writeCodexConfigForMultiChannel(data.channels);
 
   return newChannel;
 }
@@ -251,8 +251,8 @@ function updateChannel(channelId, updates) {
     }
   }
 
-  // 更新 Codex 配置文件
-  writeCodexConfigForMultiChannel(data.channels);
+  // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
+  // writeCodexConfigForMultiChannel(data.channels);
 
   return data.channels[index];
 }
@@ -280,8 +280,8 @@ function deleteChannel(channelId) {
     }
   }
 
-  // 更新 Codex 配置文件
-  writeCodexConfigForMultiChannel(data.channels);
+  // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
+  // writeCodexConfigForMultiChannel(data.channels);
 
   return { success: true };
 }
@@ -345,6 +345,8 @@ function writeCodexConfigForMultiChannel(allChannels) {
 
   // 判断是否已启用动态切换
   const isProxyMode = config.model_provider === 'cc-proxy';
+  const existingProviders = (config && typeof config.model_providers === 'object') ? config.model_providers : {};
+  const existingProxyProvider = existingProviders['cc-proxy'];
 
   // 只有当未启用动态切换时，才更新 model_provider
   if (!isProxyMode) {
@@ -355,8 +357,24 @@ function writeCodexConfigForMultiChannel(allChannels) {
     console.log('[Codex Channels] Dynamic proxy mode detected, preserving cc-proxy as model_provider');
   }
 
-  // 重建 model_providers 配置
-  config.model_providers = {};
+  // 重建 model_providers 配置，先保留已有的非渠道 provider，避免丢失用户自定义配置
+  config.model_providers = { ...existingProviders };
+
+  // 在代理模式下，先保留 cc-proxy provider，避免被覆盖导致缺少 provider
+  if (isProxyMode) {
+    if (existingProxyProvider) {
+      config.model_providers['cc-proxy'] = existingProxyProvider;
+    } else {
+      // 回退默认的代理配置（使用默认端口），确保 provider 存在
+      config.model_providers['cc-proxy'] = {
+        name: 'cc-proxy',
+        base_url: 'http://127.0.0.1:10089/v1',
+        wire_api: 'responses',
+        env_key: 'CC_PROXY_KEY'
+      };
+    }
+  }
+
   for (const channel of allChannels) {
     config.model_providers[channel.providerKey] = {
       name: channel.name,
@@ -482,6 +500,117 @@ function syncAllChannelEnvVars() {
   }
 }
 
+/**
+ * 将指定渠道应用到 Codex 配置文件
+ * 类似 Claude 的"写入配置"功能，将渠道设置为当前激活的 provider
+ *
+ * @param {string} channelId - 渠道 ID
+ * @returns {Object} 应用结果
+ */
+function applyChannelToSettings(channelId) {
+  const data = loadChannels();
+  const channel = data.channels.find(c => c.id === channelId);
+
+  if (!channel) {
+    throw new Error('Channel not found');
+  }
+
+  const codexDir = getCodexDir();
+
+  if (!fs.existsSync(codexDir)) {
+    fs.mkdirSync(codexDir, { recursive: true });
+  }
+
+  const configPath = path.join(codexDir, 'config.toml');
+  const authPath = path.join(codexDir, 'auth.json');
+
+  // 读取现有配置，保留 mcp_servers, projects 等
+  let config = {
+    model: 'gpt-4',
+    model_reasoning_effort: 'high',
+    model_reasoning_summary_format: 'experimental',
+    network_access: 'enabled',
+    disable_response_storage: false,
+    show_raw_agent_reasoning: true
+  };
+
+  if (fs.existsSync(configPath)) {
+    try {
+      const content = fs.readFileSync(configPath, 'utf8');
+      const parsedConfig = toml.parse(content);
+      // 深度合并，保留原有的所有配置
+      config = { ...parsedConfig };
+    } catch (err) {
+      console.warn('[Codex Channels] Failed to read existing config, using defaults');
+    }
+  }
+
+  // 设置当前渠道为 model_provider
+  config.model_provider = channel.providerKey;
+
+  // 确保 model_providers 对象存在
+  if (!config.model_providers) {
+    config.model_providers = {};
+  }
+
+  // 添加/更新当前渠道的 provider 配置
+  config.model_providers[channel.providerKey] = {
+    name: channel.name,
+    base_url: channel.baseUrl,
+    wire_api: channel.wireApi || 'responses',
+    env_key: channel.envKey,
+    requires_openai_auth: channel.requiresOpenaiAuth !== false
+  };
+
+  // 添加额外查询参数(如 Azure 的 api-version)
+  if (channel.queryParams && Object.keys(channel.queryParams).length > 0) {
+    config.model_providers[channel.providerKey].query_params = channel.queryParams;
+  }
+
+  // 使用 TOML 序列化写入配置
+  try {
+    const tomlContent = tomlStringify(config);
+    const annotatedContent = `# Codex Configuration
+# Managed by Coding-Tool
+# Current provider: ${channel.name}
+
+${tomlContent}`;
+
+    fs.writeFileSync(configPath, annotatedContent, 'utf8');
+    console.log(`[Codex Channels] Applied channel ${channel.name} to config.toml`);
+  } catch (err) {
+    console.error('[Codex Channels] Failed to write config with TOML stringify:', err);
+    throw new Error('Failed to write config.toml: ' + err.message);
+  }
+
+  // 更新 auth.json
+  let auth = {};
+  if (fs.existsSync(authPath)) {
+    try {
+      auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
+    } catch (err) {
+      console.warn('[Codex Channels] Failed to read auth.json, creating new');
+    }
+  }
+
+  // 添加当前渠道的 API Key
+  if (channel.apiKey && channel.envKey) {
+    auth[channel.envKey] = channel.apiKey;
+  }
+
+  fs.writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8');
+
+  // 注入环境变量到 shell 配置文件
+  if (channel.apiKey && channel.envKey) {
+    const injectResult = injectEnvToShell(channel.envKey, channel.apiKey);
+    if (injectResult.success) {
+      console.log(`[Codex Channels] Environment variable ${channel.envKey} injected`);
+    }
+  }
+
+  return channel;
+}
+
 // 服务启动时自动同步环境变量（静默执行，不影响其他功能）
 try {
   const data = loadChannels();
@@ -500,5 +629,7 @@ module.exports = {
   deleteChannel,
   getEnabledChannels,
   saveChannelOrder,
-  syncAllChannelEnvVars
+  syncAllChannelEnvVars,
+  writeCodexConfigForMultiChannel,
+  applyChannelToSettings
 };

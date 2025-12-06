@@ -91,6 +91,11 @@ export async function saveCodexChannelOrder(order) {
   return response.data
 }
 
+export async function applyCodexChannelToSettings(channelId) {
+  const response = await client.post(`/codex/channels/${channelId}/apply-to-settings`)
+  return response.data
+}
+
 // Gemini channels
 export async function getGeminiChannels() {
   const response = await client.get('/gemini/channels')
@@ -139,7 +144,7 @@ export async function saveGeminiChannelOrder(order) {
 /**
  * 测试单个 Claude 渠道速度
  */
-export async function testClaudeChannelSpeed(channelId, timeout = 10000) {
+export async function testClaudeChannelSpeed(channelId, timeout = 20000) {
   const response = await client.post(`/channels/${channelId}/speed-test`, { timeout })
   return response.data
 }
@@ -147,15 +152,16 @@ export async function testClaudeChannelSpeed(channelId, timeout = 10000) {
 /**
  * 测试所有 Claude 渠道速度
  */
-export async function testAllClaudeChannelsSpeed(timeout = 10000) {
-  const response = await client.post('/channels/speed-test-all', { timeout })
+export async function testAllClaudeChannelsSpeed(timeout = 20000) {
+  // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
+  const response = await client.post('/channels/speed-test-all', { timeout }, { timeout: 120000 })
   return response.data
 }
 
 /**
  * 测试单个 Codex 渠道速度
  */
-export async function testCodexChannelSpeed(channelId, timeout = 10000) {
+export async function testCodexChannelSpeed(channelId, timeout = 20000) {
   const response = await client.post(`/codex/channels/${channelId}/speed-test`, { timeout })
   return response.data
 }
@@ -163,15 +169,16 @@ export async function testCodexChannelSpeed(channelId, timeout = 10000) {
 /**
  * 测试所有 Codex 渠道速度
  */
-export async function testAllCodexChannelsSpeed(timeout = 10000) {
-  const response = await client.post('/codex/channels/speed-test-all', { timeout })
+export async function testAllCodexChannelsSpeed(timeout = 20000) {
+  // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
+  const response = await client.post('/codex/channels/speed-test-all', { timeout }, { timeout: 120000 })
   return response.data
 }
 
 /**
  * 测试单个 Gemini 渠道速度
  */
-export async function testGeminiChannelSpeed(channelId, timeout = 10000) {
+export async function testGeminiChannelSpeed(channelId, timeout = 20000) {
   const response = await client.post(`/gemini/channels/${channelId}/speed-test`, { timeout })
   return response.data
 }
@@ -179,7 +186,8 @@ export async function testGeminiChannelSpeed(channelId, timeout = 10000) {
 /**
  * 测试所有 Gemini 渠道速度
  */
-export async function testAllGeminiChannelsSpeed(timeout = 10000) {
-  const response = await client.post('/gemini/channels/speed-test-all', { timeout })
+export async function testAllGeminiChannelsSpeed(timeout = 20000) {
+  // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
+  const response = await client.post('/gemini/channels/speed-test-all', { timeout }, { timeout: 120000 })
   return response.data
 }

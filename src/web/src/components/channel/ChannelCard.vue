@@ -37,6 +37,16 @@
         >
           写入配置
         </n-button>
+        <n-button
+          size="tiny"
+          :loading="testing"
+          @click="runTest"
+        >
+          <template #icon>
+            <n-icon><SpeedometerOutline /></n-icon>
+          </template>
+          测速
+        </n-button>
         <n-button size="tiny" @click="$emit('edit')">
           编辑
         </n-button>
@@ -48,6 +58,27 @@
           :value="channel.enabled !== false"
           @update:value="$emit('toggle-enabled', $event)"
         />
+      </div>
+    </div>
+
+    <!-- 测试结果展示 -->
+    <div v-if="testResult" class="test-result" :class="testResult.success ? 'success' : 'failed'">
+      <div class="test-result-header">
+        <span class="test-result-status">
+          <n-icon v-if="testResult.success" color="#18a058"><CheckmarkCircleOutline /></n-icon>
+          <n-icon v-else color="#f56c6c"><CloseCircleOutline /></n-icon>
+          {{ testResult.success ? '测试成功' : '测试失败' }}
+        </span>
+        <div class="test-result-info">
+          <span v-if="testResult.latency" class="latency">{{ testResult.latency }}ms</span>
+          <span v-if="testResult.statusCode" class="status-code">HTTP {{ testResult.statusCode }}</span>
+        </div>
+        <n-button text size="tiny" @click="testResult = null">
+          <n-icon><CloseOutline /></n-icon>
+        </n-button>
+      </div>
+      <div v-if="testResult.error" class="test-result-error">
+        {{ testResult.error }}
       </div>
     </div>
 
@@ -99,10 +130,11 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { NButton, NIcon, NTag, NText, NSwitch } from 'naive-ui'
-import { ChevronDownOutline, OpenOutline } from '@vicons/ionicons5'
+import { ChevronDownOutline, OpenOutline, SpeedometerOutline, CheckmarkCircleOutline, CloseCircleOutline, CloseOutline } from '@vicons/ionicons5'
 
-defineProps({
+const props = defineProps({
   channel: {
     type: Object,
     required: true
@@ -126,10 +158,40 @@ defineProps({
   showApplyButton: {
     type: Boolean,
     default: false
+  },
+  channelType: {
+    type: String,
+    default: 'claude'
+  },
+  testFn: {
+    type: Function,
+    default: null
   }
 })
 
 defineEmits(['toggle-collapse', 'apply', 'edit', 'delete', 'toggle-enabled', 'open-website'])
+
+const testing = ref(false)
+const testResult = ref(null)
+
+async function runTest() {
+  if (!props.testFn) return
+  testing.value = true
+  testResult.value = null
+  try {
+    const result = await props.testFn(props.channel.id, 20000)
+    testResult.value = result
+  } catch (err) {
+    testResult.value = {
+      success: false,
+      error: err.message || '测试失败',
+      latency: null,
+      statusCode: null
+    }
+  } finally {
+    testing.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -179,6 +241,79 @@ defineEmits(['toggle-collapse', 'apply', 'edit', 'delete', 'toggle-enabled', 'op
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+/* 测试结果样式 */
+.test-result {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+
+.test-result.success {
+  background: rgba(24, 160, 88, 0.06);
+  border-left: 3px solid #18a058;
+}
+
+.test-result.failed {
+  background: rgba(245, 108, 108, 0.06);
+  border-left: 3px solid #f56c6c;
+}
+
+.test-result-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.test-result-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.test-result.success .test-result-status {
+  color: #18a058;
+}
+
+.test-result.failed .test-result-status {
+  color: #f56c6c;
+}
+
+.test-result-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.test-result-info .latency {
+  font-size: 13px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.test-result-info .status-code {
+  font-size: 11px;
+  font-family: 'SF Mono', Monaco, monospace;
+  color: var(--text-tertiary);
+}
+
+.test-result-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(245, 108, 108, 0.08);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #f56c6c;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .channel-info {

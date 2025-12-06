@@ -111,6 +111,7 @@ async function startProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+
     proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
         return jsonBodyParser(req, res, next);
