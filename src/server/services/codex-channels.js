@@ -332,14 +332,8 @@ function writeCodexConfigForMultiChannel(allChannels) {
         // mcp_servers 和 projects 会从 parsedConfig 自动继承
         // model_provider 会根据动态切换情况决定是否更新
       };
-
-      console.log('[Codex Channels] Preserved existing config sections:', {
-        hasMcpServers: !!parsedConfig.mcp_servers,
-        hasProjects: !!parsedConfig.projects,
-        otherSections: Object.keys(parsedConfig).filter(k => !['model_provider', 'model', 'model_reasoning_effort', 'model_reasoning_summary_format', 'network_access', 'disable_response_storage', 'show_raw_agent_reasoning', 'model_providers'].includes(k))
-      });
     } catch (err) {
-      console.warn('[Codex Channels] Failed to read existing config, using defaults');
+      // ignore read error, use defaults
     }
   }
 
@@ -353,8 +347,6 @@ function writeCodexConfigForMultiChannel(allChannels) {
     const enabledChannels = allChannels.filter(c => c.enabled !== false);
     const defaultProvider = enabledChannels[0]?.providerKey || allChannels[0]?.providerKey || 'openai';
     config.model_provider = defaultProvider;
-  } else {
-    console.log('[Codex Channels] Dynamic proxy mode detected, preserving cc-proxy as model_provider');
   }
 
   // 重建 model_providers 配置，先保留已有的非渠道 provider，避免丢失用户自定义配置
@@ -401,12 +393,10 @@ function writeCodexConfigForMultiChannel(allChannels) {
 ${tomlContent}`;
 
     fs.writeFileSync(configPath, annotatedContent, 'utf8');
-    console.log('[Codex Channels] Config file written successfully with all sections preserved');
   } catch (err) {
     console.error('[Codex Channels] Failed to write config with TOML stringify:', err);
     // 降级处理：如果 tomlStringify 失败，使用手工拼接（但这样会丢失注释）
     const fallbackContent = JSON.stringify(config, null, 2);
-    console.warn('[Codex Channels] Falling back to JSON format (may lose formatting)');
     fs.writeFileSync(configPath, fallbackContent, 'utf8');
   }
 

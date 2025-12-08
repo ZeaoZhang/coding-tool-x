@@ -10,6 +10,7 @@ const {
   applyChannelToSettings
 } = require('../services/codex-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
+const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState, broadcastLog } = require('../websocket-server');
 const { isCodexInstalled } = require('../services/codex-config');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
@@ -17,7 +18,7 @@ const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../
 module.exports = (config) => {
   /**
    * GET /api/codex/channels
-   * 获取所有 Codex 渠道
+   * 获取所有 Codex 渠道（包含健康状态）
    */
   router.get('/', (req, res) => {
     try {
@@ -29,7 +30,12 @@ module.exports = (config) => {
       }
 
       const data = getChannels();
-      res.json(data);
+      // 为每个渠道添加健康状态
+      const channelsWithHealth = (data.channels || []).map(ch => ({
+        ...ch,
+        health: getChannelHealthStatus(ch.id, 'codex')
+      }));
+      res.json({ channels: channelsWithHealth });
     } catch (err) {
       console.error('[Codex Channels API] Failed to get channels:', err);
       res.status(500).json({ error: err.message });
@@ -265,6 +271,31 @@ module.exports = (config) => {
       });
     } catch (error) {
       console.error('[Codex Channels API] Error applying channel to settings:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/codex/channels/:channelId/reset-health
+   * 重置渠道健康状态
+   */
+  router.post('/:channelId/reset-health', (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const { channelId } = req.params;
+      resetChannelHealth(channelId, 'codex');
+      broadcastSchedulerState('codex', getSchedulerState('codex'));
+
+      res.json({
+        success: true,
+        message: '渠道健康状态已重置',
+        health: getChannelHealthStatus(channelId, 'codex')
+      });
+    } catch (error) {
+      console.error('[Codex Channels API] Error resetting channel health:', error);
       res.status(500).json({ error: error.message });
     }
   });

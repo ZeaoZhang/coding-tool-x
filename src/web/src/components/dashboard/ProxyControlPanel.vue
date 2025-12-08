@@ -15,6 +15,9 @@
             <div class="proxy-name">
               <div class="status-dot" :class="{ active: claudeRunning }"></div>
               <span>Claude Proxy</span>
+              <n-tag v-if="claudeFrozenCount > 0" size="tiny" type="error" :bordered="false">
+                {{ claudeFrozenCount }} 冻结
+              </n-tag>
             </div>
             <div class="proxy-meta">
               <n-text depth="3" style="font-size: 12px;">Port: {{ claudePort }}</n-text>
@@ -41,6 +44,9 @@
             <div class="proxy-name">
               <div class="status-dot" :class="{ active: codexRunning }"></div>
               <span>Codex Proxy</span>
+              <n-tag v-if="codexFrozenCount > 0" size="tiny" type="error" :bordered="false">
+                {{ codexFrozenCount }} 冻结
+              </n-tag>
             </div>
             <div class="proxy-meta">
               <n-text depth="3" style="font-size: 12px;">Port: {{ codexPort }}</n-text>
@@ -67,6 +73,9 @@
             <div class="proxy-name">
               <div class="status-dot" :class="{ active: geminiRunning }"></div>
               <span>Gemini Proxy</span>
+              <n-tag v-if="geminiFrozenCount > 0" size="tiny" type="error" :bordered="false">
+                {{ geminiFrozenCount }} 冻结
+              </n-tag>
             </div>
             <div class="proxy-meta">
               <n-text depth="3" style="font-size: 12px;">Port: {{ geminiPort }}</n-text>
@@ -91,13 +100,13 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { NSwitch, NText, NIcon, useMessage } from 'naive-ui'
+import { NSwitch, NText, NIcon, NTag, useMessage } from 'naive-ui'
 import { PowerOutline } from '@vicons/ionicons5'
 import axios from 'axios'
 import { useGlobalState } from '../../composables/useGlobalState'
 
 const message = useMessage()
-const { claudeProxy, codexProxy, geminiProxy, startProxy, stopProxy } = useGlobalState()
+const { claudeProxy, codexProxy, geminiProxy, schedulerState, startProxy, stopProxy } = useGlobalState()
 
 // 端口配置
 const claudePort = ref(10088)
@@ -121,6 +130,17 @@ const geminiRunning = computed(() => geminiProxy.value.running)
 const claudeActiveChannel = computed(() => getChannelName(claudeProxy.value.activeChannel))
 const codexActiveChannel = computed(() => getChannelName(codexProxy.value.activeChannel))
 const geminiActiveChannel = computed(() => getChannelName(geminiProxy.value.activeChannel))
+
+// 计算各类型冻结渠道数量
+function getFrozenCount(source) {
+  const state = schedulerState[source]
+  if (!state?.channels?.length) return 0
+  return state.channels.filter(ch => ch.health?.status === 'frozen').length
+}
+
+const claudeFrozenCount = computed(() => getFrozenCount('claude'))
+const codexFrozenCount = computed(() => getFrozenCount('codex'))
+const geminiFrozenCount = computed(() => getFrozenCount('gemini'))
 
 // 加载配置
 async function loadConfig() {

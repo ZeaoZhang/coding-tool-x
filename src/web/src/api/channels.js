@@ -96,6 +96,11 @@ export async function applyCodexChannelToSettings(channelId) {
   return response.data
 }
 
+export async function resetCodexChannelHealth(channelId) {
+  const response = await client.post(`/codex/channels/${channelId}/reset-health`)
+  return response.data
+}
+
 // Gemini channels
 export async function getGeminiChannels() {
   const response = await client.get('/gemini/channels')
@@ -136,6 +141,11 @@ export async function deleteGeminiChannel(channelId) {
 
 export async function saveGeminiChannelOrder(order) {
   const response = await client.post('/gemini/channels/order', { order })
+  return response.data
+}
+
+export async function resetGeminiChannelHealth(channelId) {
+  const response = await client.post(`/gemini/channels/${channelId}/reset-health`)
   return response.data
 }
 

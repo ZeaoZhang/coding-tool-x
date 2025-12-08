@@ -184,7 +184,9 @@ async function startProxyServer(options = {}) {
 
         const proxyOptions = {
           target: channel.baseUrl,
-          changeOrigin: true
+          changeOrigin: true,
+          proxyTimeout: 120000,  // 代理连接超时 2 分钟
+          timeout: 120000        // 请求超时 2 分钟
         };
 
         if (channel.proxyUrl) {

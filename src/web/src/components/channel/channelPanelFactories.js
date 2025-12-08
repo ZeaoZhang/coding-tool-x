@@ -15,13 +15,15 @@ import {
   createCodexChannel,
   updateCodexChannel,
   deleteCodexChannel,
-  applyCodexChannelToSettings
+  applyCodexChannelToSettings,
+  resetCodexChannelHealth
 } from '../../api/channels'
 import {
   getGeminiChannels,
   createGeminiChannel,
   updateGeminiChannel,
-  deleteGeminiChannel
+  deleteGeminiChannel,
+  resetGeminiChannelHealth
 } from '../../api/channels'
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
@@ -460,18 +462,35 @@ const channelPanelFactories = {
       remove: deleteCodexChannel,
       applyToSettings: async (channel) => {
         return applyCodexChannelToSettings(channel.id)
+      },
+      resetHealth: async (channel) => {
+        return resetCodexChannelHealth(channel.id)
       }
     },
-    getHeaderTags: (channel) => {
-      if (channel.enabled === false) {
-        return [{ text: '已禁用', type: 'default' }]
+    getHeaderTags: (channel, helpers) => {
+      const tags = []
+      if (channel.health?.status === 'frozen') {
+        tags.push({ text: helpers.formatFreeze(channel.health.freezeRemaining), type: 'error' })
+      } else if (channel.health?.status === 'checking') {
+        tags.push({ text: '检测中', type: 'warning' })
       }
-      return [{ text: '已启用', type: 'success' }]
+      if (channel.enabled === false) {
+        tags.push({ text: '已禁用', type: 'default' })
+      }
+      return tags
     },
     buildInfoRows: (channel, helpers) => ([
       { label: 'Provider', value: channel.providerKey, mono: true },
       { label: 'URL', value: channel.baseUrl },
-      { label: 'Key', value: helpers.maskApiKey(channel.apiKey), mono: true }
+      {
+        label: 'Key',
+        value: helpers.maskApiKey(channel.apiKey),
+        mono: true,
+        action: channel.health?.status !== 'healthy'
+          ? () => helpers.handleResetHealth(channel)
+          : null,
+        actionLabel: '重置状态'
+      }
     ])
   }),
   gemini: () => ({
@@ -577,18 +596,35 @@ const channelPanelFactories = {
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),
-      remove: deleteGeminiChannel
-    },
-    getHeaderTags: (channel) => {
-      if (channel.enabled === false) {
-        return [{ text: '已禁用', type: 'default' }]
+      remove: deleteGeminiChannel,
+      resetHealth: async (channel) => {
+        return resetGeminiChannelHealth(channel.id)
       }
-      return [{ text: '已启用', type: 'success' }]
+    },
+    getHeaderTags: (channel, helpers) => {
+      const tags = []
+      if (channel.health?.status === 'frozen') {
+        tags.push({ text: helpers.formatFreeze(channel.health.freezeRemaining), type: 'error' })
+      } else if (channel.health?.status === 'checking') {
+        tags.push({ text: '检测中', type: 'warning' })
+      }
+      if (channel.enabled === false) {
+        tags.push({ text: '已禁用', type: 'default' })
+      }
+      return tags
     },
     buildInfoRows: (channel, helpers) => ([
       { label: 'Model', value: channel.model, mono: true },
       { label: 'URL', value: channel.baseUrl },
-      { label: 'Key', value: helpers.maskApiKey(channel.apiKey), mono: true }
+      {
+        label: 'Key',
+        value: helpers.maskApiKey(channel.apiKey),
+        mono: true,
+        action: channel.health?.status !== 'healthy'
+          ? () => helpers.handleResetHealth(channel)
+          : null,
+        actionLabel: '重置状态'
+      }
     ])
   })
 }

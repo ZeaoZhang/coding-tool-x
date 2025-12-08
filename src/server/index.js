@@ -121,6 +121,11 @@ async function startServer(port) {
   app.use('/api/prompts', require('./api/prompts'));
   app.use('/api/env', require('./api/env'));
   app.use('/api/skills', require('./api/skills'));
+  const claudeHooks = require('./api/claude-hooks');
+  app.use('/api/claude/hooks', claudeHooks);
+
+  // 初始化 Claude hooks 默认配置（自动开启任务完成通知）
+  claudeHooks.initDefaultHooks();
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');

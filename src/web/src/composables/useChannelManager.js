@@ -1,6 +1,7 @@
-import { reactive } from 'vue'
+import { reactive, watch, onUnmounted } from 'vue'
 import message, { dialog } from '../utils/message'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import { useGlobalStore } from '../stores/global'
 
 function getLocalCollapse(storageKey) {
   try {
@@ -24,6 +25,8 @@ function resolveError(error, fallback) {
 }
 
 export default function useChannelManager(config) {
+  const globalStore = useGlobalStore()
+
   const state = reactive({
     channels: [],
     loading: false,
@@ -35,12 +38,34 @@ export default function useChannelManager(config) {
 
   const validation = reactive({})
 
+  // 监听 scheduler-state 更新，实时更新渠道健康状态
+  function updateChannelHealth() {
+    const scheduler = globalStore.schedulerState[config.schedulerSource]
+    if (!scheduler?.channels?.length || !state.channels.length) return
+
+    state.channels.forEach(channel => {
+      const schedulerChannel = scheduler.channels.find(sc => sc.id === channel.id)
+      if (schedulerChannel?.health) {
+        channel.health = schedulerChannel.health
+      }
+    })
+  }
+
+  // 监听 schedulerState 变化
+  const stopWatch = watch(
+    () => globalStore.schedulerState[config.schedulerSource],
+    updateChannelHealth,
+    { deep: true }
+  )
+
   async function loadChannels() {
     state.loading = true
     try {
       const list = await config.api.fetch()
       state.channels = Array.isArray(list) ? [...list] : []
       await applyChannelOrder()
+      // 应用实时健康状态
+      updateChannelHealth()
     } catch (error) {
       message.error(resolveError(error, `${config.displayName} 渠道加载失败`))
     } finally {
@@ -280,6 +305,11 @@ export default function useChannelManager(config) {
 
   loadChannels()
   loadCollapseSettings()
+
+  // 清理 watch
+  onUnmounted(() => {
+    stopWatch()
+  })
 
   return {
     state,

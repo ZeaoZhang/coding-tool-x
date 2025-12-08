@@ -157,7 +157,9 @@ async function startGeminiProxyServer(options = {}) {
 
         proxy.web(req, res, {
           target,
-          changeOrigin: true
+          changeOrigin: true,
+          proxyTimeout: 120000,  // 代理连接超时 2 分钟
+          timeout: 120000        // 请求超时 2 分钟
         }, (err) => {
           release();
           if (err) {

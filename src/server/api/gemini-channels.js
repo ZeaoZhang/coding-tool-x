@@ -9,6 +9,7 @@ const {
   saveChannelOrder
 } = require('../services/gemini-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
+const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
@@ -16,7 +17,7 @@ const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../
 module.exports = (config) => {
   /**
    * GET /api/gemini/channels
-   * 获取所有 Gemini 渠道
+   * 获取所有 Gemini 渠道（包含健康状态）
    */
   router.get('/', (req, res) => {
     try {
@@ -28,7 +29,12 @@ module.exports = (config) => {
       }
 
       const data = getChannels();
-      res.json(data);
+      // 为每个渠道添加健康状态
+      const channelsWithHealth = (data.channels || []).map(ch => ({
+        ...ch,
+        health: getChannelHealthStatus(ch.id, 'gemini')
+      }));
+      res.json({ channels: channelsWithHealth });
     } catch (err) {
       console.error('[Gemini Channels API] Failed to get channels:', err);
       res.status(500).json({ error: err.message });
@@ -214,6 +220,31 @@ module.exports = (config) => {
       });
     } catch (error) {
       console.error('[Gemini Channels API] Error testing all channels speed:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * POST /api/gemini/channels/:channelId/reset-health
+   * 重置渠道健康状态
+   */
+  router.post('/:channelId/reset-health', (req, res) => {
+    try {
+      if (!isGeminiInstalled()) {
+        return res.status(404).json({ error: 'Gemini CLI not installed' });
+      }
+
+      const { channelId } = req.params;
+      resetChannelHealth(channelId, 'gemini');
+      broadcastSchedulerState('gemini', getSchedulerState('gemini'));
+
+      res.json({
+        success: true,
+        message: '渠道健康状态已重置',
+        health: getChannelHealthStatus(channelId, 'gemini')
+      });
+    } catch (error) {
+      console.error('[Gemini Channels API] Error resetting channel health:', error);
       res.status(500).json({ error: error.message });
     }
   });

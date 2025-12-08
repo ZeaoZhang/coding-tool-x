@@ -18,7 +18,6 @@ const channelProviders = {
 function createState() {
   return {
     channels: [],
-    signature: '',
     inflight: new Map(),
     sessionBindings: new Map(),
     queue: []
@@ -60,29 +59,13 @@ function unbindChannelSessions(source, channelId) {
 // 注册冻结回调，当渠道被冻结时解绑其会话
 setOnChannelFrozen(unbindChannelSessions);
 
-function buildSignature(channels) {
-  return JSON.stringify(
-    channels.map(ch => ({
-      id: ch.id,
-      enabled: ch.enabled !== false,
-      weight: ch.weight || 1,
-      maxConcurrency: ch.maxConcurrency ?? null // 保持 null 值
-    }))
-  );
-}
-
 function refreshChannels(source = 'claude') {
   const state = getState(source);
   const provider = channelProviders[source];
   if (!provider) return;
+
+  // 每次直接读取最新配置，不做缓存
   const raw = provider();
-  const signature = buildSignature(raw);
-
-  if (signature === state.signature) {
-    return;
-  }
-
-  state.signature = signature;
   state.channels = raw
     .filter(ch => ch.enabled !== false)
     .map(ch => ({
@@ -187,13 +170,21 @@ function allocateChannel(options = {}) {
     return Promise.reject(new Error('暂无可用渠道，请先添加并启用至少一个渠道'));
   }
 
+  // 检查是否所有渠道都被冻结
+  const allFrozen = state.channels.every(ch => !isChannelAvailable(ch.id, source));
+
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       const index = state.queue.findIndex(item => item.timer === timer);
       if (index !== -1) {
         state.queue.splice(index, 1);
       }
-      reject(new Error('所有渠道均已达到并发上限，请稍后重试'));
+      // 根据实际情况返回更准确的错误信息
+      if (allFrozen) {
+        reject(new Error('所有渠道均已被冻结，请等待健康检查恢复或手动重置'));
+      } else {
+        reject(new Error('所有渠道均已达到并发上限，请稍后重试'));
+      }
     }, WAIT_TIMEOUT_MS);
 
     state.queue.push({

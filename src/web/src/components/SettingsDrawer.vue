@@ -242,6 +242,176 @@
             </div>
           </div>
 
+          <!-- 通知设置面板 -->
+          <div v-show="activeMenu === 'notification'" class="settings-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <n-icon size="24" color="#18a058">
+                  <NotificationsOutline />
+                </n-icon>
+                <div>
+                  <h3 class="panel-title">通知设置</h3>
+                  <n-text depth="3" class="panel-subtitle">配置任务完成时的系统通知</n-text>
+                </div>
+              </div>
+            </div>
+            <div class="panel-body">
+              <div class="setting-group">
+                <!-- Claude Code 通知 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>Claude Code</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      当 Claude Code 任务完成或等待交互时发送系统通知
+                    </n-text>
+                  </div>
+
+                  <div class="notification-options">
+                    <!-- 开启通知 -->
+                    <div class="visibility-item">
+                      <div class="visibility-info">
+                        <n-text strong>启用任务完成通知</n-text>
+                        <n-text depth="3" style="font-size: 13px;">
+                          通过 Claude Code 的 Stop Hook 在任务完成时发送通知
+                        </n-text>
+                      </div>
+                      <n-switch
+                        v-model:value="notificationSettings.claude.enabled"
+                      />
+                    </div>
+
+                    <!-- 通知方式 -->
+                    <div v-if="notificationSettings.claude.enabled" class="notification-type-section">
+                      <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
+                        选择通知方式
+                      </n-text>
+                      <n-radio-group v-model:value="notificationSettings.claude.type">
+                        <n-space vertical>
+                          <n-radio value="notification">
+                            <div class="radio-content">
+                              <n-text strong>右上角卡片通知</n-text>
+                              <n-text depth="3" style="font-size: 12px; display: block;">
+                                轻量提醒，几秒后自动消失，带提示音
+                              </n-text>
+                            </div>
+                          </n-radio>
+                          <n-radio value="dialog">
+                            <div class="radio-content">
+                              <n-text strong>弹窗对话框</n-text>
+                              <n-text depth="3" style="font-size: 12px; display: block;">
+                                强制提醒，需要手动点击确认才能关闭
+                              </n-text>
+                            </div>
+                          </n-radio>
+                        </n-space>
+                      </n-radio-group>
+
+                      <!-- macOS 安装提示 -->
+                      <n-alert
+                        v-if="notificationPlatform === 'darwin'"
+                        type="info"
+                        :bordered="false"
+                        style="margin-top: 16px;"
+                        :show-icon="false"
+                      >
+                        <div style="font-size: 13px;">
+                          <n-text strong>💡 更好的通知体验</n-text>
+                          <n-text depth="3" style="display: block; margin-top: 4px; font-size: 12px;">
+                            安装 terminal-notifier 后，点击通知可自动打开终端
+                          </n-text>
+                          <n-text code style="display: block; margin-top: 8px; font-size: 12px;">
+                            brew install terminal-notifier
+                          </n-text>
+                        </div>
+                      </n-alert>
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
+                <!-- 飞书通知 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>飞书机器人通知</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      任务完成时同时发送飞书机器人通知，适合需要远程提醒的场景
+                    </n-text>
+                  </div>
+
+                  <div class="notification-options">
+                    <!-- 开启飞书通知 -->
+                    <div class="visibility-item">
+                      <div class="visibility-info">
+                        <n-text strong>启用飞书通知</n-text>
+                        <n-text depth="3" style="font-size: 13px;">
+                          通过飞书机器人 Webhook 发送通知
+                        </n-text>
+                      </div>
+                      <n-switch
+                        v-model:value="notificationSettings.feishu.enabled"
+                      />
+                    </div>
+
+                    <!-- 飞书 Webhook URL -->
+                    <div v-if="notificationSettings.feishu.enabled" class="notification-type-section">
+                      <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
+                        飞书机器人 Webhook URL
+                      </n-text>
+                      <n-input
+                        v-model:value="notificationSettings.feishu.webhookUrl"
+                        placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx"
+                        type="text"
+                        clearable
+                      />
+                      <n-text depth="3" style="font-size: 12px; margin-top: 8px; display: block;">
+                        在飞书群设置中添加自定义机器人，复制 Webhook 地址粘贴到这里
+                      </n-text>
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
+                <!-- Codex / Gemini 提示 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>Codex CLI / Gemini CLI</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      暂不支持 - Codex 和 Gemini 目前没有 hooks 功能
+                    </n-text>
+                  </div>
+                  <n-alert type="info" :bordered="false" style="margin-top: 12px;">
+                    Codex CLI 和 Gemini CLI 暂未提供 hooks 机制，未来如有支持将自动适配
+                  </n-alert>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <n-space justify="end">
+                <n-button
+                  size="large"
+                  @click="show = false"
+                >
+                  取消
+                </n-button>
+                <n-button
+                  type="primary"
+                  size="large"
+                  :loading="savingNotification"
+                  :disabled="JSON.stringify(notificationSettings) === JSON.stringify(originalNotificationSettings)"
+                  @click="handleSaveNotification"
+                >
+                  <template #icon>
+                    <n-icon><SaveOutline /></n-icon>
+                  </template>
+                  保存设置
+                </n-button>
+              </n-space>
+            </div>
+          </div>
+
           <div v-show="activeMenu === 'advanced'" class="settings-panel">
             <div class="panel-header">
               <div class="panel-title-row">
@@ -687,7 +857,8 @@
 import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
-  NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber
+  NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber,
+  NRadio, NRadioGroup, NInput
 } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
@@ -695,7 +866,7 @@ const { drawerWidth, isMobile } = useResponsiveDrawer(680)
 import {
   SettingsOutline, TerminalOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
-  SunnyOutline, MoonOutline
+  SunnyOutline, MoonOutline, NotificationsOutline
 } from '@vicons/ionicons5'
 import { getAvailableTerminals, saveTerminalConfig } from '../api/terminal'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
@@ -769,6 +940,30 @@ const originalAdvancedSettings = ref({
   enableSessionBinding: true
 })
 
+// 通知设置
+const notificationSettings = ref({
+  claude: {
+    enabled: false,
+    type: 'notification' // 'notification' | 'dialog'
+  },
+  feishu: {
+    enabled: false,
+    webhookUrl: ''
+  }
+})
+const originalNotificationSettings = ref({
+  claude: {
+    enabled: false,
+    type: 'notification'
+  },
+  feishu: {
+    enabled: false,
+    webhookUrl: ''
+  }
+})
+const savingNotification = ref(false)
+const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
+
 const pricingSettings = ref({
   claude: {
     mode: 'auto',
@@ -813,6 +1008,11 @@ const menuItems = ref([
     key: 'appearance',
     label: '外观设置',
     icon: markRaw(ColorPaletteOutline)
+  },
+  {
+    key: 'notification',
+    label: '通知设置',
+    icon: markRaw(NotificationsOutline)
   },
   {
     key: 'advanced',
@@ -1014,6 +1214,65 @@ async function loadPortsConfig() {
   }
 }
 
+// 加载通知设置
+async function loadNotificationSettings() {
+  try {
+    const response = await fetch('/api/claude/hooks')
+    if (response.ok) {
+      const data = await response.json()
+      notificationSettings.value = {
+        claude: {
+          enabled: data.stopHook?.enabled || false,
+          type: data.stopHook?.type || 'notification'
+        },
+        feishu: {
+          enabled: data.feishu?.enabled || false,
+          webhookUrl: data.feishu?.webhookUrl || ''
+        }
+      }
+      originalNotificationSettings.value = JSON.parse(JSON.stringify(notificationSettings.value))
+      // 获取平台信息用于显示安装提示
+      notificationPlatform.value = data.platform || ''
+    }
+  } catch (error) {
+    console.error('Failed to load notification settings:', error)
+  }
+}
+
+// 保存通知设置
+async function handleSaveNotification() {
+  savingNotification.value = true
+  try {
+    const response = await fetch('/api/claude/hooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        stopHook: {
+          enabled: notificationSettings.value.claude.enabled,
+          type: notificationSettings.value.claude.type
+        },
+        feishu: {
+          enabled: notificationSettings.value.feishu.enabled,
+          webhookUrl: notificationSettings.value.feishu.webhookUrl
+        }
+      })
+    })
+
+    if (response.ok) {
+      originalNotificationSettings.value = JSON.parse(JSON.stringify(notificationSettings.value))
+      message.success('通知设置已保存')
+    } else {
+      const error = await response.json()
+      message.error('保存失败：' + (error.error || '未知错误'))
+    }
+  } catch (error) {
+    console.error('Failed to save notification settings:', error)
+    message.error('保存失败：' + error.message)
+  } finally {
+    savingNotification.value = false
+  }
+}
+
 // 保存端口和高级配置
 async function handleSavePorts() {
   savingPorts.value = true
@@ -1138,6 +1397,7 @@ watch(show, (newVal) => {
     loadPanelSettings()
     loadPortsConfig()
     loadAutoStartStatus()
+    loadNotificationSettings()
   }
 })
 </script>
@@ -1668,5 +1928,33 @@ watch(show, (newVal) => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* 通知设置样式 */
+.notification-options {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.notification-type-section {
+  padding: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  margin-top: 8px;
+}
+
+[data-theme="dark"] .notification-type-section {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.radio-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
 }
 </style>

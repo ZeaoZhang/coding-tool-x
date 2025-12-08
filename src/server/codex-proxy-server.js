@@ -189,7 +189,9 @@ async function startCodexProxyServer(options = {}) {
 
         proxy.web(req, res, {
           target,
-          changeOrigin: true
+          changeOrigin: true,
+          proxyTimeout: 120000,  // 代理连接超时 2 分钟
+          timeout: 120000        // 请求超时 2 分钟
         }, (err) => {
           release();
           if (err) {
@@ -459,10 +461,9 @@ async function startCodexProxyServer(options = {}) {
           const enabledChannels = getEnabledChannels();
           if (enabledChannels.length > 0) {
             writeCodexConfigForMultiChannel(enabledChannels);
-            console.log('[Codex Proxy] Config synced to Codex config.toml');
           }
         } catch (err) {
-          console.warn('[Codex Proxy] Failed to sync config:', err.message);
+          // ignore sync error
         }
 
         resolve({ success: true, port });
