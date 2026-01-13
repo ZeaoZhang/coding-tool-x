@@ -110,7 +110,7 @@ import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import MarkdownEditor from './MarkdownEditor.vue'
 
-const { drawerWidth } = useResponsiveDrawer(600)
+const { drawerWidth } = useResponsiveDrawer(800, 700)
 
 const props = defineProps({
   visible: {
