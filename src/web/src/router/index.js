@@ -2,6 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import ProjectList from '../views/ProjectList.vue'
 import SessionList from '../views/SessionList.vue'
+import Terminal from '../views/Terminal.vue'
+import WorkspaceManager from '../views/WorkspaceManager.vue'
+import ConfigTemplates from '../views/ConfigTemplates.vue'
 
 const routes = [
   {
@@ -50,6 +53,39 @@ const routes = [
     component: SessionList,
     props: true,
     meta: { channel: 'gemini' }
+  },
+  // Web 终端路由
+  {
+    path: '/terminal',
+    name: 'terminal',
+    component: Terminal,
+    meta: { keepAlive: true }
+  },
+  {
+    path: '/terminal/:channel',
+    name: 'terminal-channel',
+    component: Terminal,
+    props: true,
+    meta: { keepAlive: true }
+  },
+  {
+    path: '/terminal/:channel/:projectName/:sessionId',
+    name: 'terminal-session',
+    component: Terminal,
+    props: true,
+    meta: { keepAlive: true }
+  },
+  // 工作区管理路由
+  {
+    path: '/workspaces',
+    name: 'workspaces',
+    component: WorkspaceManager
+  },
+  // 配置模版管理路由
+  {
+    path: '/config-templates',
+    name: 'config-templates',
+    component: ConfigTemplates
   },
   // 404 重定向到首页
   {

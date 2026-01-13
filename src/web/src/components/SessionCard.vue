@@ -23,6 +23,7 @@
             <span class="session-title">
               {{ displayTitle }}
             </span>
+
             <n-tooltip v-if="session.forkedFrom" placement="top">
               <template #trigger>
                 <n-tag size="small" type="warning" :bordered="false" style="margin-left: 8px; cursor: help;">
@@ -76,16 +77,26 @@
         别名
       </n-button>
 
-      <!-- Launch Button -->
+      <!-- Launch Button with Dropdown -->
+      <n-dropdown :options="launchOptions" @select="handleLaunchSelect">
+        <n-button type="primary" size="small">
+          <template #icon>
+            <n-icon><TerminalOutline /></n-icon>
+          </template>
+          使用对话
+          <n-icon size="14" style="margin-left: 4px;"><ChevronDownOutline /></n-icon>
+        </n-button>
+      </n-dropdown>
+
+      <!-- Convert Button -->
       <n-button
-        type="primary"
         size="small"
-        @click="$emit('launch', session)"
+        @click="$emit('convert', session)"
       >
         <template #icon>
-          <n-icon><TerminalOutline /></n-icon>
+          <n-icon><SwapHorizontalOutline /></n-icon>
         </template>
-        使用对话
+        转换
       </n-button>
 
       <!-- Fork Button (only show if not hideFork) -->
@@ -119,8 +130,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
+import { ref, computed, h } from 'vue'
+import { NButton, NIcon, NTag, NTooltip, NDropdown } from 'naive-ui'
 import {
   ChatbubbleEllipsesOutline,
   CalendarOutline,
@@ -128,7 +139,11 @@ import {
   GitBranchOutline,
   PricetagOutline,
   TerminalOutline,
-  TrashOutline
+  TrashOutline,
+  ChevronDownOutline,
+  DesktopOutline,
+  GlobeOutline,
+  SwapHorizontalOutline
 } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -150,7 +165,66 @@ const props = defineProps({
   }
 })
 
-defineEmits(['set-alias', 'launch', 'fork', 'delete'])
+const emit = defineEmits(['set-alias', 'launch', 'launch-web', 'fork', 'delete', 'convert'])
+
+// 启动方式下拉选项（支持工具选择）
+const launchOptions = [
+  {
+    type: 'group',
+    label: 'Web 终端',
+    key: 'web-group',
+    children: [
+      {
+        label: 'Claude Code',
+        key: 'web-claude',
+        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+      },
+      {
+        label: 'Codex',
+        key: 'web-codex',
+        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+      },
+      {
+        label: 'Gemini',
+        key: 'web-gemini',
+        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+      }
+    ]
+  },
+  {
+    type: 'group',
+    label: '本地终端',
+    key: 'local-group',
+    children: [
+      {
+        label: 'Claude Code',
+        key: 'local-claude',
+        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+      },
+      {
+        label: 'Codex',
+        key: 'local-codex',
+        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+      },
+      {
+        label: 'Gemini',
+        key: 'local-gemini',
+        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+      }
+    ]
+  }
+]
+
+// 处理启动选择
+function handleLaunchSelect(key) {
+  const [launchMode, targetTool] = key.split('-')
+
+  if (launchMode === 'web') {
+    emit('launch-web', props.session, targetTool)
+  } else {
+    emit('launch', props.session, targetTool)
+  }
+}
 
 const hovered = ref(false)
 

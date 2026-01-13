@@ -6,16 +6,24 @@
           <n-h2 style="margin: 0;">我的项目</n-h2>
           <n-text depth="3">选择一个项目查看会话，拖拽可调整顺序</n-text>
         </div>
-        <n-input
-          v-model:value="searchQuery"
-          placeholder="搜索项目..."
-          clearable
-          class="search-input"
-        >
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
-        </n-input>
+        <n-space>
+          <n-button type="primary" size="medium" @click="showCreateProjectDialog = true">
+            <template #icon>
+              <n-icon><AddOutline /></n-icon>
+            </template>
+            新建项目
+          </n-button>
+          <n-input
+            v-model:value="searchQuery"
+            placeholder="搜索项目..."
+            clearable
+            class="search-input"
+          >
+            <template #prefix>
+              <n-icon><SearchOutline /></n-icon>
+            </template>
+          </n-input>
+        </n-space>
       </div>
 
       <!-- Scrollable Content -->
@@ -148,19 +156,71 @@
         <n-empty v-if="globalSearchResults.sessions.length === 0" description="没有找到匹配的内容" />
       </div>
     </n-modal>
+
+    <!-- Create Project Dialog -->
+    <n-modal
+      v-model:show="showCreateProjectDialog"
+      preset="card"
+      title="新建项目"
+      style="width: 600px;"
+      :mask-closable="false"
+    >
+      <n-space vertical size="large">
+        <div>
+          <n-text strong>项目名称</n-text>
+          <n-input
+            v-model:value="newProjectName"
+            placeholder="例如: my-project"
+            style="margin-top: 8px;"
+            @keyup.enter="handleCreateProject"
+          />
+          <n-text depth="3" style="font-size: 12px; display: block; margin-top: 4px;">
+            项目名称将用于标识项目，建议使用英文字母、数字和短横线
+          </n-text>
+        </div>
+
+        <div>
+          <n-text strong>项目路径</n-text>
+          <n-input
+            v-model:value="newProjectPath"
+            placeholder="例如: /Users/username/projects/my-project"
+            style="margin-top: 8px;"
+            @keyup.enter="handleCreateProject"
+          />
+          <n-text depth="3" style="font-size: 12px; display: block; margin-top: 4px;">
+            请输入项目的完整绝对路径，该目录必须已存在
+          </n-text>
+        </div>
+      </n-space>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showCreateProjectDialog = false">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="creatingProject"
+            :disabled="!newProjectName || !newProjectPath"
+            @click="handleCreateProject"
+          >
+            创建
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag } from 'naive-ui'
-import { FolderOpenOutline, SearchOutline, TerminalOutline } from '@vicons/ionicons5'
+import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace } from 'naive-ui'
+import { FolderOpenOutline, SearchOutline, TerminalOutline, AddOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import ProjectCard from '../components/ProjectCard.vue'
 import message, { dialog } from '../utils/message'
 import { searchSessionsGlobally, launchTerminal } from '../api/sessions'
+import { createProject } from '../api/projects'
 
 const router = useRouter()
 const route = useRoute()
@@ -184,6 +244,12 @@ const globalSearchQuery = ref('')
 const globalSearchResults = ref(null)
 const globalSearching = ref(false)
 const globalSearchInputRef = ref(null)
+
+// Create project dialog
+const showCreateProjectDialog = ref(false)
+const newProjectName = ref('')
+const newProjectPath = ref('')
+const creatingProject = ref(false)
 
 // Filtered projects based on search (only used when searching)
 const filteredProjects = computed(() => {
@@ -231,6 +297,36 @@ function handleDeleteProject(project) {
       }
     }
   })
+}
+
+// 创建新项目
+async function handleCreateProject() {
+  creatingProject.value = true
+
+  try {
+    const result = await createProject(newProjectName.value, newProjectPath.value, currentChannel.value)
+
+    if (result.success) {
+      message.success(`项目创建成功: ${newProjectName.value}`)
+
+      // 刷新项目列表
+      await store.fetchProjects()
+
+      // 关闭对话框
+      showCreateProjectDialog.value = false
+
+      // 重置表单
+      newProjectName.value = ''
+      newProjectPath.value = ''
+    } else {
+      message.error('创建失败')
+    }
+  } catch (err) {
+    console.error('Failed to create project:', err)
+    message.error('创建失败: ' + err.message)
+  } finally {
+    creatingProject.value = false
+  }
 }
 
 // 保存和恢复滚动位置

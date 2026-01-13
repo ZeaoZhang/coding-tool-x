@@ -225,25 +225,25 @@
 ## [1.5.3] - 2024-11-26
 
 ### Added
-- 🚀 新增 `ct daemon` 命令，支持后台运行模式（基于 PM2）
-  - `ct daemon start` - 后台启动服务
-  - `ct daemon stop` - 停止后台服务
-  - `ct daemon restart` - 重启服务
-  - `ct daemon status` - 查看运行状态
-  - `ct daemon logs` - 查看 PM2 日志
-- 🩺 新增 `ct doctor` 命令，系统健康诊断工具
+- 🚀 新增 `ctx daemon` 命令，支持后台运行模式（基于 PM2）
+  - `ctx daemon start` - 后台启动服务
+  - `ctx daemon stop` - 停止后台服务
+  - `ctx daemon restart` - 重启服务
+  - `ctx daemon status` - 查看运行状态
+  - `ctx daemon logs` - 查看 PM2 日志
+- 🩺 新增 `ctx doctor` 命令，系统健康诊断工具
   - 检查 Node.js 版本兼容性
   - 检查配置文件完整性
   - 检查端口占用情况
   - 检查 Claude Code 配置
   - 检查日志目录和磁盘空间
   - 检查进程运行状态
-- 📋 新增 `ct logs` 命令，日志管理工具
-  - `ct logs [type]` - 查看指定类型日志（ui/claude/codex/gemini）
-  - `ct logs --follow` - 实时跟踪日志
-  - `ct logs --lines N` - 显示最后 N 行
-  - `ct logs --clear` - 清空日志文件
-- 📊 新增 `ct stats` 命令，查看统计信息
+- 📋 新增 `ctx logs` 命令，日志管理工具
+  - `ctx logs [type]` - 查看指定类型日志（ui/claude/codex/gemini）
+  - `ctx logs --follow` - 实时跟踪日志
+  - `ctx logs --lines N` - 显示最后 N 行
+  - `ctx logs --clear` - 清空日志文件
+- 📊 新增 `ctx stats` 命令，查看统计信息
   - 会话数量统计
   - Token 使用统计
   - API 调用次数统计

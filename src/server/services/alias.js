@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS } = require('../../config/paths');
 
-const ALIAS_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
-const ALIAS_FILE = path.join(ALIAS_DIR, 'aliases.json');
+const ALIAS_DIR = PATHS.base;
+const ALIAS_FILE = PATHS.aliases;
 
 // Ensure alias directory exists
 function ensureAliasDir() {

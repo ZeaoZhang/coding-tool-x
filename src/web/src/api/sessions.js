@@ -28,9 +28,18 @@ export async function forkSession(projectName, sessionId, channel = 'claude') {
   return response.data
 }
 
-export async function launchSession(projectName, sessionId, fork = false, channel = 'claude') {
+export async function createSession(projectName, toolType = 'claude', channel = 'claude') {
   const prefix = getChannelPrefix(channel)
-  const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/launch`, { fork })
+  const response = await client.post(`${prefix}/sessions/${projectName}/create`, { toolType })
+  return response.data
+}
+
+export async function launchSession(projectName, sessionId, targetTool = null, fork = false, channel = 'claude') {
+  const prefix = getChannelPrefix(channel)
+  const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/launch`, {
+    fork,
+    targetTool
+  })
   return response.data
 }
 

@@ -107,6 +107,7 @@ async function showMainMenu(config) {
         { name: chalk.cyan('列出最新对话'), value: 'list' },
         { name: chalk.green('搜索会话'), value: 'search' },
         { name: chalk.magenta('切换项目'), value: 'switch' },
+        { name: chalk.hex('#FF6B35')('工作区管理'), value: 'workspace' },
         new inquirer.Separator(chalk.gray('─'.repeat(14))),
         { name: chalk.cyan('渠道管理'), value: 'switch-channel' },
         { name: chalk.cyan('查看调度状态'), value: 'channel-status' },

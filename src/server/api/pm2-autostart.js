@@ -79,7 +79,7 @@ async function enableAutoStart() {
           pm2.disconnect();
           return resolve({
             success: false,
-            message: '暂无运行中的进程，无法启用开机自启。请先启动服务：ct start'
+            message: '暂无运行中的进程，无法启用开机自启。请先启动服务：ctx start'
           });
         }
 

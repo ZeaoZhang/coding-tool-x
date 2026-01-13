@@ -115,7 +115,7 @@ function showAllLogs(lines, follow) {
   });
 
   console.log(chalk.gray(`\n═`.repeat(60)));
-  console.log(chalk.gray(`\n💡 使用 `) + chalk.cyan(`ct logs ${Object.keys(LOG_FILES).join('|')}`) + chalk.gray(` 查看特定类型日志\n`));
+  console.log(chalk.gray(`\n💡 使用 `) + chalk.cyan(`ctx logs ${Object.keys(LOG_FILES).join('|')}`) + chalk.gray(` 查看特定类型日志\n`));
 }
 
 /**
@@ -134,7 +134,7 @@ function showLastLines(filePath, lines) {
     });
 
     console.log(chalk.gray(`\n═`.repeat(60)));
-    console.log(chalk.gray(`\n💡 使用 `) + chalk.cyan(`ct logs <type> --follow`) + chalk.gray(` 实时跟踪日志\n`));
+    console.log(chalk.gray(`\n💡 使用 `) + chalk.cyan(`ctx logs <type> --follow`) + chalk.gray(` 实时跟踪日志\n`));
   } catch (err) {
     console.error(chalk.red(`读取日志失败: ${err.message}\n`));
     process.exit(1);

@@ -17,12 +17,12 @@ const { handleChannelManagement, handleAddChannel, handleChannelStatus } = requi
 const { handleToggleProxy } = require('./commands/toggle-proxy');
 const { handlePortConfig } = require('./commands/port-config');
 const { handleSwitchCliType } = require('./commands/cli-type');
-const { handleUpdate } = require('./commands/update');
 const { handleStart, handleStop, handleRestart, handleStatus } = require('./commands/daemon');
 const { handleProxyStart: proxyStart, handleProxyStop: proxyStop, handleProxyRestart, handleProxyStatus: proxyStatus } = require('./commands/proxy-control');
 const { handleLogs } = require('./commands/logs');
 const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
+const { workspaceMenu } = require('./commands/workspace');
 const chalk = require('chalk');
 const path = require('path');
 const fs = require('fs');
@@ -41,51 +41,50 @@ function showHelp() {
   console.log(chalk.gray('Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控\n'));
 
   console.log(chalk.yellow('🚀 服务管理:'));
-  console.log('  ct start                启动所有服务（后台运行）');
-  console.log('  ct stop                 停止所有服务');
-  console.log('  ct restart              重启所有服务');
-  console.log('  ct status               查看服务状态\n');
+  console.log('  ctx start               启动所有服务（后台运行）');
+  console.log('  ctx stop                停止所有服务');
+  console.log('  ctx restart             重启所有服务');
+  console.log('  ctx status              查看服务状态\n');
 
   console.log(chalk.yellow('📱 UI 管理:'));
-  console.log('  ct ui                   前台启动 Web UI（默认）');
-  console.log('  ct ui start             后台启动 Web UI');
-  console.log('  ct ui stop              停止 Web UI');
-  console.log('  ct ui restart           重启 Web UI\n');
+  console.log('  ctx ui                  前台启动 Web UI（默认）');
+  console.log('  ctx ui start            后台启动 Web UI');
+  console.log('  ctx ui stop             停止 Web UI');
+  console.log('  ctx ui restart          重启 Web UI\n');
 
   console.log(chalk.yellow('🔌 代理管理:'));
-  console.log('  ct claude start         启动 Claude 代理');
-  console.log('  ct claude stop          停止 Claude 代理');
-  console.log('  ct claude status        查看 Claude 代理状态');
-  console.log('  ct codex start          启动 Codex 代理');
-  console.log('  ct gemini start         启动 Gemini 代理');
+  console.log('  ctx claude start        启动 Claude 代理');
+  console.log('  ctx claude stop         停止 Claude 代理');
+  console.log('  ctx claude status       查看 Claude 代理状态');
+  console.log('  ctx codex start         启动 Codex 代理');
+  console.log('  ctx gemini start        启动 Gemini 代理');
   console.log(chalk.gray('  (codex/gemini 命令与 claude 类似)\n'));
 
   console.log(chalk.yellow('📋 日志管理:'));
-  console.log('  ct logs                 查看所有日志');
-  console.log('  ct logs ui              查看 UI 日志');
-  console.log('  ct logs claude          查看 Claude 日志');
-  console.log('  ct logs --lines 100     查看最近 100 行');
-  console.log('  ct logs --follow        实时跟踪日志');
-  console.log('  ct logs --clear         清空日志\n');
+  console.log('  ctx logs                查看所有日志');
+  console.log('  ctx logs ui             查看 UI 日志');
+  console.log('  ctx logs claude         查看 Claude 日志');
+  console.log('  ctx logs --lines 100    查看最近 100 行');
+  console.log('  ctx logs --follow       实时跟踪日志');
+  console.log('  ctx logs --clear        清空日志\n');
 
   console.log(chalk.yellow('📊 统计信息:'));
-  console.log('  ct stats                查看总体统计');
-  console.log('  ct stats claude         查看 Claude 统计');
-  console.log('  ct stats --today        查看今日统计');
-  console.log('  ct stats export         导出统计数据\n');
+  console.log('  ctx stats               查看总体统计');
+  console.log('  ctx stats claude        查看 Claude 统计');
+  console.log('  ctx stats --today       查看今日统计');
+  console.log('  ctx stats export        导出统计数据\n');
 
   console.log(chalk.yellow('🛠️  其他命令:'));
-  console.log('  ct doctor               系统诊断');
-  console.log('  ct update               检查并更新');
-  console.log('  ct reset                重置配置');
-  console.log('  ct --version, -v        显示版本');
-  console.log('  ct --help, -h           显示帮助\n');
+  console.log('  ctx doctor              系统诊断');
+  console.log('  ctx reset               重置配置');
+  console.log('  ctx --version, -v       显示版本');
+  console.log('  ctx --help, -h          显示帮助\n');
 
   console.log(chalk.yellow('💡 快速开始:'));
-  console.log(chalk.gray('  $ ct start           # 后台启动服务（推荐）'));
-  console.log(chalk.gray('  $ ct status          # 查看服务状态'));
-  console.log(chalk.gray('  $ ct logs            # 查看实时日志'));
-  console.log(chalk.gray('  $ ct stop            # 停止服务\n'));
+  console.log(chalk.gray('  $ ctx start          # 后台启动服务（推荐）'));
+  console.log(chalk.gray('  $ ctx status         # 查看服务状态'));
+  console.log(chalk.gray('  $ ctx logs           # 查看实时日志'));
+  console.log(chalk.gray('  $ ctx stop           # 停止服务\n'));
 
   console.log(chalk.yellow('⭐ 开机自启（可选）:'));
   console.log(chalk.gray('  $ pm2 startup        # 启用开机自启'));
@@ -94,7 +93,7 @@ function showHelp() {
 
   console.log(chalk.yellow('更多信息:'));
   console.log(chalk.gray('  官网: https://github.com/CooperJiang/cc-tool'));
-  console.log(chalk.gray('  文档: 运行 ct start 后在 Web UI 右上角点击帮助'));
+  console.log(chalk.gray('  文档: 运行 ctx start 后在 Web UI 右上角点击帮助'));
   console.log(chalk.gray('  问题: https://github.com/CooperJiang/cc-tool/issues\n'));
 }
 
@@ -251,12 +250,6 @@ async function main() {
     return;
   }
 
-  // update 命令 - 检查并更新版本
-  if (args[0] === 'update') {
-    await handleUpdate();
-    return;
-  }
-
   // 代理命令
   if (args[0] === 'proxy') {
     const subCommand = args[1] || 'start';
@@ -323,6 +316,10 @@ async function main() {
             return switched;
           });
         }
+        break;
+
+      case 'workspace':
+        await workspaceMenu();
         break;
 
       case 'switch-cli-type':
