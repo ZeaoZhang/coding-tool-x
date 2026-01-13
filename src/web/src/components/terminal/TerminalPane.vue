@@ -1,0 +1,396 @@
+<template>
+  <div class="terminal-pane" ref="containerRef">
+    <div class="terminal-container" ref="terminalRef"></div>
+    <div v-if="!connected" class="terminal-overlay">
+      <n-spin size="large" />
+      <span class="connecting-text">{{ connecting ? '连接中...' : '已断开' }}</span>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { NSpin } from 'naive-ui'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import '@xterm/xterm/css/xterm.css'
+
+const props = defineProps({
+  terminalId: {
+    type: String,
+    default: null
+  },
+  channel: {
+    type: String,
+    default: 'claude'
+  },
+  sessionId: {
+    type: String,
+    default: null
+  },
+  projectName: {
+    type: String,
+    default: null
+  },
+  cwd: {
+    type: String,
+    default: null
+  }
+})
+
+const emit = defineEmits(['created', 'exit', 'error'])
+
+const containerRef = ref(null)
+const terminalRef = ref(null)
+const connected = ref(false)
+const connecting = ref(true)
+
+let terminal = null
+let fitAddon = null
+let ws = null
+let currentTerminalId = null
+let resizeObserver = null
+let reconnectTimer = null
+let shouldReconnect = true  // 控制是否允许重连
+
+// Catppuccin Mocha 主题配色
+const theme = {
+  background: '#1e1e2e',
+  foreground: '#cdd6f4',
+  cursor: '#f5e0dc',
+  cursorAccent: '#1e1e2e',
+  selectionBackground: 'rgba(166, 227, 161, 0.3)',
+  selectionForeground: '#cdd6f4',
+  black: '#45475a',
+  red: '#f38ba8',
+  green: '#a6e3a1',
+  yellow: '#f9e2af',
+  blue: '#89b4fa',
+  magenta: '#f5c2e7',
+  cyan: '#94e2d5',
+  white: '#bac2de',
+  brightBlack: '#585b70',
+  brightRed: '#f38ba8',
+  brightGreen: '#a6e3a1',
+  brightYellow: '#f9e2af',
+  brightBlue: '#89b4fa',
+  brightMagenta: '#f5c2e7',
+  brightCyan: '#94e2d5',
+  brightWhite: '#a6adc8'
+}
+
+// 初始化终端
+function initTerminal() {
+  if (terminal) return
+
+  terminal = new Terminal({
+    theme,
+    fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Monaco, "Cascadia Code", Consolas, monospace',
+    fontSize: 14,
+    lineHeight: 1.2,
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    scrollback: 10000,
+    allowTransparency: true,
+    convertEol: true
+  })
+
+  fitAddon = new FitAddon()
+  terminal.loadAddon(fitAddon)
+  terminal.loadAddon(new WebLinksAddon())
+
+  terminal.open(terminalRef.value)
+
+  // 延迟 fit 以确保容器尺寸正确
+  nextTick(() => {
+    fitAddon.fit()
+  })
+
+  // 监听终端输入
+  terminal.onData((data) => {
+    if (ws && ws.readyState === WebSocket.OPEN && currentTerminalId) {
+      ws.send(JSON.stringify({
+        type: 'terminal:input',
+        terminalId: currentTerminalId,
+        data
+      }))
+    }
+  })
+
+  // 监听终端大小变化
+  terminal.onResize(({ cols, rows }) => {
+    if (ws && ws.readyState === WebSocket.OPEN && currentTerminalId) {
+      ws.send(JSON.stringify({
+        type: 'terminal:resize',
+        terminalId: currentTerminalId,
+        cols,
+        rows
+      }))
+    }
+  })
+
+  // 监听容器大小变化
+  resizeObserver = new ResizeObserver(() => {
+    if (fitAddon) {
+      fitAddon.fit()
+    }
+  })
+  resizeObserver.observe(containerRef.value)
+}
+
+// 连接 WebSocket
+function connectWebSocket() {
+  if (ws) {
+    ws.close()
+  }
+
+  // 重置重连标志
+  shouldReconnect = true
+  connecting.value = true
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const wsUrl = `${protocol}//${window.location.host}/ws`
+
+  ws = new WebSocket(wsUrl)
+
+  ws.onopen = () => {
+    console.log('Terminal WebSocket connected')
+
+    // 如果有传入的 terminalId，绑定到现有终端
+    if (props.terminalId) {
+      ws.send(JSON.stringify({
+        type: 'terminal:attach',
+        terminalId: props.terminalId
+      }))
+    } else {
+      // 创建新终端
+      ws.send(JSON.stringify({
+        type: 'terminal:create',
+        channel: props.channel,
+        sessionId: props.sessionId,
+        projectName: props.projectName,
+        cwd: props.cwd
+      }))
+    }
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data)
+      handleMessage(message)
+    } catch (e) {
+      // 可能是非 JSON 数据，忽略
+    }
+  }
+
+  ws.onclose = () => {
+    console.log('Terminal WebSocket closed')
+    connected.value = false
+    connecting.value = false
+
+    // 尝试重连（仅在允许重连时）
+    if (shouldReconnect && !reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        if (shouldReconnect) {
+          connectWebSocket()
+        }
+      }, 3000)
+    }
+  }
+
+  ws.onerror = (error) => {
+    console.error('Terminal WebSocket error:', error)
+    connecting.value = false
+    emit('error', error)
+  }
+}
+
+// 处理 WebSocket 消息
+function handleMessage(message) {
+  switch (message.type) {
+    case 'terminal:created':
+      currentTerminalId = message.terminalId
+      connected.value = true
+      connecting.value = false
+      emit('created', { terminalId: message.terminalId, metadata: message.metadata })
+
+      // 发送初始大小
+      if (terminal && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'terminal:resize',
+          terminalId: currentTerminalId,
+          cols: terminal.cols,
+          rows: terminal.rows
+        }))
+      }
+      break
+
+    case 'terminal:attached':
+      currentTerminalId = message.terminalId
+      connected.value = true
+      connecting.value = false
+      break
+
+    case 'terminal:output':
+      if (terminal && message.data) {
+        terminal.write(message.data)
+      }
+      break
+
+    case 'terminal:exited':
+      connected.value = false
+      emit('exit', { terminalId: message.terminalId, exitCode: message.exitCode })
+      break
+
+    case 'terminal:error':
+      console.error('Terminal error:', message.error)
+      emit('error', message.error)
+      break
+  }
+}
+
+// 聚焦终端
+function focus() {
+  if (terminal) {
+    terminal.focus()
+  }
+}
+
+// 断开连接（不销毁后台终端）
+function disconnect() {
+  // 禁止重连
+  shouldReconnect = false
+  
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+}
+
+// 销毁终端（完全销毁后台终端）
+function destroy() {
+  // 先清除 terminalId，防止 onclose 回调触发重连
+  const terminalIdToDestroy = currentTerminalId
+  currentTerminalId = null
+  
+  if (ws && ws.readyState === WebSocket.OPEN && terminalIdToDestroy) {
+    ws.send(JSON.stringify({
+      type: 'terminal:destroy',
+      terminalId: terminalIdToDestroy
+    }))
+  }
+  disconnect()
+}
+
+// 暴露方法
+defineExpose({
+  focus,
+  disconnect,
+  destroy,
+  getTerminalId: () => currentTerminalId
+})
+
+onMounted(() => {
+  initTerminal()
+  connectWebSocket()
+})
+
+onBeforeUnmount(() => {
+  // 禁止重连
+  shouldReconnect = false
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+  }
+
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+  }
+
+  if (ws) {
+    ws.close()
+  }
+
+  if (terminal) {
+    terminal.dispose()
+  }
+})
+
+// 监听 terminalId 变化
+watch(() => props.terminalId, (newId) => {
+  if (newId && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'terminal:attach',
+      terminalId: newId
+    }))
+  }
+})
+</script>
+
+<style scoped>
+.terminal-pane {
+  width: 100%;
+  height: 100%;
+  background: #1e1e2e;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-container {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.terminal-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(30, 30, 46, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 10;
+}
+
+.connecting-text {
+  color: #cdd6f4;
+  font-size: 14px;
+}
+
+:deep(.xterm) {
+  height: 100%;
+  padding: 4px;
+}
+
+:deep(.xterm-viewport) {
+  overflow-y: auto !important;
+}
+
+:deep(.xterm-viewport::-webkit-scrollbar) {
+  width: 8px;
+}
+
+:deep(.xterm-viewport::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+:deep(.xterm-viewport::-webkit-scrollbar-thumb) {
+  background: rgba(166, 227, 161, 0.3);
+  border-radius: 4px;
+}
+
+:deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+  background: rgba(166, 227, 161, 0.5);
+}
+</style>

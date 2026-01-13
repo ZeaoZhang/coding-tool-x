@@ -1,16 +1,11 @@
 <template>
   <n-drawer
     v-model:show="visible"
-    :width="drawerWidth"
+    width="680"
     placement="right"
-    :mask-closable="true"
+    :auto-focus="false"
   >
-    <n-drawer-content closable>
-      <template #header>
-        <div class="drawer-header">
-          <span>Skills 技能管理</span>
-        </div>
-      </template>
+    <n-drawer-content title="技能管理">
       <SkillsPanel @back="visible = false" :hide-back="true" :in-drawer="true" />
     </n-drawer-content>
   </n-drawer>
@@ -18,28 +13,19 @@
 
 <script setup>
 import { computed } from 'vue'
-import { NDrawer, NDrawerContent } from 'naive-ui'
 import SkillsPanel from './SkillsPanel.vue'
-import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
-  visible: Boolean
+  modelValue: {
+    type: Boolean,
+    default: false
+  }
 })
 
-const emit = defineEmits(['update:visible'])
-
-const { drawerWidth } = useResponsiveDrawer(520)
+const emit = defineEmits(['update:modelValue'])
 
 const visible = computed({
-  get: () => props.visible,
-  set: (val) => emit('update:visible', val)
+  get: () => props.modelValue,
+  set: (value) => emit('update:modelValue', value)
 })
 </script>
-
-<style scoped>
-.drawer-header {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-</style>

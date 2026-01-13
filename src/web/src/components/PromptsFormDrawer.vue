@@ -79,12 +79,12 @@
             <span class="content-hint">支持 Markdown 格式</span>
           </div>
 
-          <n-input
-            v-model:value="form.content"
-            type="textarea"
-            placeholder="# 系统提示词&#10;&#10;在这里编写你的系统提示词..."
+          <MarkdownEditor
+            v-model="form.content"
             :rows="16"
-            class="content-editor"
+            :min-height="300"
+            placeholder="# 系统提示词&#10;&#10;在这里编写你的系统提示词..."
+            :default-editing="!isEditing"
           />
         </div>
       </div>
@@ -108,6 +108,7 @@ import { DocumentTextOutline, InformationCircleOutline, AppsOutline, CodeSlashOu
 import { savePreset } from '../api/prompts'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import MarkdownEditor from './MarkdownEditor.vue'
 
 const { drawerWidth } = useResponsiveDrawer(600)
 

@@ -83,7 +83,7 @@ async function handleStartProxy(cliType, services) {
 
   console.log(chalk.yellow('⚠️  重要提示:'));
   console.log(chalk.yellow('• 开启期间请勿关闭 CLI 终端窗口'));
-  console.log(chalk.yellow('• 如果异常关闭导致代理失效，请运行: ct reset'));
+  console.log(chalk.yellow('• 如果异常关闭导致代理失效，请运行: ctx reset'));
   console.log(chalk.yellow('• 或使用主菜单的"恢复默认配置"功能\n'));
 
   const { confirm } = await inquirer.prompt([

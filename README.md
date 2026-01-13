@@ -1,15 +1,15 @@
 <div align="center">
 
-<img src="docs/logo.png" alt="Coding-Tool Logo" width="140" />
+<img src="docs/logo.png" alt="Coding-Tool-X Logo" width="140" />
 
-# Coding-Tool
+# Coding-Tool-X
 
 **Claude Code / Codex / Gemini CLI 增强工具**
 
 智能会话管理 | 多渠道动态切换 | 实时 Token 监控
 
-[![npm version](https://img.shields.io/npm/v/coding-tool.svg?style=flat-square)](https://www.npmjs.com/package/coding-tool)
-[![npm downloads](https://img.shields.io/npm/dm/coding-tool.svg?style=flat-square)](https://www.npmjs.com/package/coding-tool)
+[![npm version](https://img.shields.io/npm/v/coding-tool-x.svg?style=flat-square)](https://www.npmjs.com/package/coding-tool-x)
+[![npm downloads](https://img.shields.io/npm/dm/coding-tool-x.svg?style=flat-square)](https://www.npmjs.com/package/coding-tool-x)
 [![GitHub stars](https://img.shields.io/github/stars/CooperJiang/cc-tool?style=flat-square)](https://github.com/CooperJiang/cc-tool/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen.svg?style=flat-square)](package.json)
@@ -42,7 +42,7 @@
 ### npm（推荐）
 
 ```bash
-npm install -g coding-tool
+npm install -g coding-tool-x
 ```
 
 ### 从源码构建
@@ -56,7 +56,7 @@ npm install && npm link
 ### 验证安装
 
 ```bash
-ct --version
+ctx --version
 ```
 
 ---
@@ -66,7 +66,7 @@ ct --version
 ### 启动 Web UI（推荐）
 
 ```bash
-ct ui
+ctx ui
 ```
 
 浏览器自动打开 `http://localhost:9999`，即可开始管理会话和渠道。
@@ -74,7 +74,7 @@ ct ui
 ### 命令行交互模式
 
 ```bash
-ct
+ctx
 ```
 
 启动交互式菜单，通过键盘完成会话管理和渠道切换。
@@ -87,50 +87,50 @@ ct
 
 | 命令 | 描述 |
 |------|------|
-| `ct` | 启动交互式命令行界面 |
-| `ct ui` | 启动 Web UI 管理界面 |
-| `ct update` | 检查并更新到最新版本 |
-| `ct --version` | 显示版本号 |
-| `ct --help` | 显示帮助信息 |
+| `ctx` | 启动交互式命令行界面 |
+| `ctx ui` | 启动 Web UI 管理界面 |
+| `ctx update` | 检查并更新到最新版本 |
+| `ctx --version` | 显示版本号 |
+| `ctx --help` | 显示帮助信息 |
 
 ### 代理管理
 
 | 命令 | 描述 |
 |------|------|
-| `ct proxy start` | 启动代理服务（动态切换渠道） |
-| `ct proxy stop` | 停止代理服务 |
-| `ct proxy status` | 查看代理运行状态 |
+| `ctx proxy start` | 启动代理服务（动态切换渠道） |
+| `ctx proxy stop` | 停止代理服务 |
+| `ctx proxy status` | 查看代理运行状态 |
 
 ### 后台运行（基于 PM2）
 
 | 命令 | 描述 |
 |------|------|
-| `ct daemon start` | 后台启动服务（可关闭终端） |
-| `ct daemon stop` | 停止后台服务 |
-| `ct daemon restart` | 重启后台服务 |
-| `ct daemon status` | 查看后台服务状态 |
-| `ct daemon logs` | 查看 PM2 运行日志 |
+| `ctx daemon start` | 后台启动服务（可关闭终端） |
+| `ctx daemon stop` | 停止后台服务 |
+| `ctx daemon restart` | 重启后台服务 |
+| `ctx daemon status` | 查看后台服务状态 |
+| `ctx daemon logs` | 查看 PM2 运行日志 |
 
 ### 日志管理
 
 | 命令 | 描述 |
 |------|------|
-| `ct logs` | 查看所有日志 |
-| `ct logs ui` | 查看 Web UI 日志 |
-| `ct logs claude` | 查看 Claude 代理日志 |
-| `ct logs codex` | 查看 Codex 代理日志 |
-| `ct logs gemini` | 查看 Gemini 代理日志 |
-| `ct logs --follow` | 实时跟踪日志输出 |
-| `ct logs --lines 100` | 显示最后 100 行日志 |
-| `ct logs --clear` | 清空所有日志文件 |
+| `ctx logs` | 查看所有日志 |
+| `ctx logs ui` | 查看 Web UI 日志 |
+| `ctx logs claude` | 查看 Claude 代理日志 |
+| `ctx logs codex` | 查看 Codex 代理日志 |
+| `ctx logs gemini` | 查看 Gemini 代理日志 |
+| `ctx logs --follow` | 实时跟踪日志输出 |
+| `ctx logs --lines 100` | 显示最后 100 行日志 |
+| `ctx logs --clear` | 清空所有日志文件 |
 
 ### 系统工具
 
 | 命令 | 描述 |
 |------|------|
-| `ct doctor` | 运行系统诊断，检查配置和环境 |
-| `ct stats` | 查看使用统计（会话数、Token 等） |
-| `ct reset` | 重置配置文件 |
+| `ctx doctor` | 运行系统诊断，检查配置和环境 |
+| `ctx stats` | 查看使用统计（会话数、Token 等） |
+| `ctx reset` | 重置配置文件 |
 
 ---
 
@@ -163,16 +163,16 @@ ct
 
 ### 系统诊断与监控
 
-- **健康检查**：`ct doctor` 一键诊断系统健康状态
+- **健康检查**：`ctx doctor` 一键诊断系统健康状态
   - Node.js 版本兼容性检查
   - 配置文件完整性验证
   - 端口占用情况检测
   - 磁盘空间监控
-- **日志管理**：`ct logs` 查看和管理各类日志
+- **日志管理**：`ctx logs` 查看和管理各类日志
   - 支持按类型筛选（UI/Claude/Codex/Gemini）
   - 实时跟踪模式（--follow）
   - 灵活的行数控制
-- **使用统计**：`ct stats` 查看详细统计信息
+- **使用统计**：`ctx stats` 查看详细统计信息
   - 会话数量和分布
   - Token 使用情况
   - API 调用统计
@@ -203,10 +203,10 @@ ct
 <details>
 <summary><b>后台运行服务</b></summary>
 
-1. 使用 `ct daemon start` 启动后台服务
+1. 使用 `ctx daemon start` 启动后台服务
 2. 服务启动后，可以安全关闭终端窗口
-3. 使用 `ct daemon status` 随时查看运行状态
-4. 使用 `ct daemon logs` 查看实时日志
+3. 使用 `ctx daemon status` 随时查看运行状态
+4. 使用 `ctx daemon logs` 查看实时日志
 
 > **优势**：无需保持终端窗口打开，服务持久运行
 
@@ -215,10 +215,10 @@ ct
 <details>
 <summary><b>系统诊断</b></summary>
 
-遇到问题时，首先运行 `ct doctor` 进行全面诊断：
+遇到问题时，首先运行 `ctx doctor` 进行全面诊断：
 
 ```bash
-ct doctor
+ctx doctor
 ```
 
 诊断工具会自动检查：
@@ -238,13 +238,13 @@ ct doctor
 
 ```bash
 # 实时跟踪所有日志
-ct logs --follow
+ctx logs --follow
 
 # 查看 Claude 代理日志的最后 100 行
-ct logs claude --lines 100
+ctx logs claude --lines 100
 
 # 清空所有日志文件
-ct logs --clear
+ctx logs --clear
 ```
 
 </details>
@@ -266,7 +266,7 @@ ct logs --clear
 3. 可以随时调整权重和并发数，实时生效
 4. 渠道健康状态异常时可点击「重置」恢复
 
-> **注意**：使用 `ct daemon start` 后台运行时，渠道变更会实时生效
+> **注意**：使用 `ctx daemon start` 后台运行时，渠道变更会实时生效
 
 </details>
 
@@ -286,11 +286,11 @@ ct logs --clear
 <details>
 <summary>如何后台运行服务？</summary>
 
-使用 `ct daemon start` 启动后台服务，基于 PM2 进程管理，启动后可以安全关闭终端窗口。
+使用 `ctx daemon start` 启动后台服务，基于 PM2 进程管理，启动后可以安全关闭终端窗口。
 
-查看状态：`ct daemon status`
-查看日志：`ct daemon logs`
-停止服务：`ct daemon stop`
+查看状态：`ctx daemon status`
+查看日志：`ctx daemon logs`
+停止服务：`ctx daemon stop`
 
 </details>
 
@@ -300,7 +300,7 @@ ct logs --clear
 在 Web UI 的设置中，开启"开机自启"选项，或使用 API：
 
 ```bash
-ct daemon start
+ctx daemon start
 # 然后在 Web UI 设置中启用开机自启
 ```
 
@@ -309,13 +309,13 @@ ct daemon start
 <details>
 <summary>如何查看运行日志？</summary>
 
-使用 `ct logs` 命令：
+使用 `ctx logs` 命令：
 
 ```bash
-ct logs              # 查看所有日志
-ct logs claude       # 查看 Claude 代理日志
-ct logs --follow     # 实时跟踪日志
-ct logs --clear      # 清空日志
+ctx logs              # 查看所有日志
+ctx logs claude       # 查看 Claude 代理日志
+ctx logs --follow     # 实时跟踪日志
+ctx logs --clear      # 清空日志
 ```
 
 日志文件存储在 `~/.claude/logs/` 目录。
@@ -325,7 +325,7 @@ ct logs --clear      # 清空日志
 <details>
 <summary>遇到问题如何诊断？</summary>
 
-运行 `ct doctor` 进行系统诊断，会自动检查：
+运行 `ctx doctor` 进行系统诊断，会自动检查：
 - Node.js 版本
 - 配置文件
 - 端口占用
@@ -362,7 +362,7 @@ ct logs --clear      # 清空日志
 
 实时日志需要先开启「动态切换」功能，代理服务运行后才能捕获请求。
 
-推荐使用 `ct daemon start` 后台运行，然后通过 `ct logs --follow` 查看实时日志。
+推荐使用 `ctx daemon start` 后台运行，然后通过 `ctx logs --follow` 查看实时日志。
 
 </details>
 

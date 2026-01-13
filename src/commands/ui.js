@@ -3,7 +3,6 @@ const { startServer } = require('../server');
 const open = require('open');
 const { getProxyStatus } = require('../server/proxy-server');
 const { loadConfig } = require('../config/loader');
-const { checkUpdateSilently } = require('./update');
 
 async function handleUI() {
   // 检查是否为 daemon 模式（PM2 启动）
@@ -16,22 +15,8 @@ async function handleUI() {
 
   // 从配置加载端口
   const config = loadConfig();
-  const port = config.ports?.webUI || 10099;
+  const port = config.ports?.webUI || 19999;
   const url = `http://localhost:${port}`;
-
-  // 静默检查更新（非 daemon 模式）
-  if (!isDaemon) {
-    checkUpdateSilently().then((result) => {
-      if (result.hasUpdate && !result.error) {
-        console.log(chalk.yellow.bold('\n📢 发现新版本可用！'));
-        console.log(chalk.gray(`   当前版本: ${result.current}`));
-        console.log(chalk.gray(`   最新版本: ${result.latest}`));
-        console.log(chalk.cyan('   运行 ') + chalk.white.bold('ct update') + chalk.cyan(' 进行更新\n'));
-      }
-    }).catch(() => {
-      // 忽略检查错误
-    });
-  }
 
   try {
     await startServer(port);
@@ -81,7 +66,7 @@ async function handleUI() {
             console.log(chalk.green('✅ 代理服务已停止\n'));
           } else {
             console.log(chalk.yellow('⚠️  代理服务保持运行状态'));
-            console.log(chalk.gray('   - 如需停止，请运行: ct proxy stop\n'));
+            console.log(chalk.gray('   - 如需停止，请运行: ctx proxy stop\n'));
           }
         }
       } catch (err) {

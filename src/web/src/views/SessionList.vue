@@ -16,6 +16,13 @@
             <n-tag size="small" :bordered="false" type="info" class="total-size-tag">
               {{ formatSize(store.totalSize) }}
             </n-tag>
+            <!-- 新建会话按钮 -->
+            <n-button type="primary" size="small" @click="showCreateSessionDialog = true" style="margin-left: 12px;">
+              <template #icon>
+                <n-icon><AddOutline /></n-icon>
+              </template>
+              新建会话
+            </n-button>
           </div>
           <n-text depth="3" class="project-path">{{ displayProjectPath }}</n-text>
         </div>
@@ -176,12 +183,15 @@
                   </template>
                   Fork
                 </n-button>
-                <n-button size="small" type="primary" @click.stop="handleLaunchTerminal(session.sessionId)">
-                  <template #icon>
-                    <n-icon><TerminalOutline /></n-icon>
-                  </template>
-                  使用对话
-                </n-button>
+                <n-dropdown :options="launchOptions" @select="(key) => handleLaunchSelect(key, session.sessionId)">
+                  <n-button size="small" type="primary" @click.stop>
+                    <template #icon>
+                      <n-icon><TerminalOutline /></n-icon>
+                    </template>
+                    使用对话
+                    <n-icon size="14" style="margin-left: 4px;"><ChevronDownOutline /></n-icon>
+                  </n-button>
+                </n-dropdown>
               </n-space>
             </div>
           </div>
@@ -231,12 +241,15 @@
               </n-text>
               <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
             </div>
-            <n-button size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
-              <template #icon>
-                <n-icon><TerminalOutline /></n-icon>
-              </template>
-              使用对话
-            </n-button>
+            <n-dropdown :options="launchOptions" @select="(key) => handleLaunchSelect(key, session.sessionId)">
+              <n-button size="small" type="primary">
+                <template #icon>
+                  <n-icon><TerminalOutline /></n-icon>
+                </template>
+                使用对话
+                <n-icon size="14" style="margin-left: 4px;"><ChevronDownOutline /></n-icon>
+              </n-button>
+            </n-dropdown>
           </div>
           <div v-for="(match, idx) in session.matches" :key="idx" class="search-match">
             <n-tag size="tiny" :type="match.role === 'user' ? 'info' : 'success'" :bordered="false">
@@ -261,26 +274,73 @@
       :channel="currentChannel"
       @error="handleChatHistoryError"
     />
+
+    <!-- Create Session Dialog -->
+    <n-modal
+      v-model:show="showCreateSessionDialog"
+      preset="card"
+      title="新建会话"
+      style="width: 500px;"
+      :mask-closable="false"
+    >
+      <n-space vertical size="large">
+        <div>
+          <n-text strong>选择工具类型</n-text>
+          <n-radio-group v-model:value="newSessionToolType" style="margin-top: 12px;">
+            <n-space vertical>
+              <n-radio value="claude">
+                <div>
+                  <div style="font-weight: 500;">Claude Code</div>
+                  <n-text depth="3" style="font-size: 12px;">Anthropic Claude Code CLI</n-text>
+                </div>
+              </n-radio>
+              <n-radio value="codex">
+                <div>
+                  <div style="font-weight: 500;">Codex</div>
+                  <n-text depth="3" style="font-size: 12px;">OpenAI Codex CLI</n-text>
+                </div>
+              </n-radio>
+              <n-radio value="gemini">
+                <div>
+                  <div style="font-weight: 500;">Gemini</div>
+                  <n-text depth="3" style="font-size: 12px;">Google Gemini CLI</n-text>
+                </div>
+              </n-radio>
+            </n-space>
+          </n-radio-group>
+        </div>
+      </n-space>
+
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showCreateSessionDialog = false">取消</n-button>
+          <n-button type="primary" :loading="creatingSession" @click="handleCreateSession">
+            创建
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NButton, NIcon, NH2, NText, NInput, NSpin, NAlert, NEmpty,
-  NTag, NSpace, NModal, NTooltip
+  NTag, NSpace, NModal, NTooltip, NDropdown, NRadioGroup, NRadio
 } from 'naive-ui'
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
   ChatbubbleEllipsesOutline, GitBranchOutline, CreateOutline, TrashOutline,
-  ReorderThreeOutline, TerminalOutline, StarOutline, Star
+  ReorderThreeOutline, TerminalOutline, StarOutline, Star,
+  GlobeOutline, DesktopOutline, ChevronDownOutline, AddOutline
 } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
-import { searchSessions as searchSessionsApi, launchTerminal } from '../api/sessions'
+import { searchSessions as searchSessionsApi, launchTerminal, launchSession, createSession } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
@@ -298,6 +358,65 @@ const { addFavorite, removeFavorite, isFavorite } = useFavorites()
 // 当前渠道
 const currentChannel = computed(() => route.meta.channel || 'claude')
 
+// 启动方式下拉选项（支持工具选择）
+const launchOptions = [
+  {
+    type: 'group',
+    label: 'Web 终端',
+    key: 'web-group',
+    children: [
+      {
+        label: 'Claude Code',
+        key: 'web-claude',
+        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+      },
+      {
+        label: 'Codex',
+        key: 'web-codex',
+        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+      },
+      {
+        label: 'Gemini',
+        key: 'web-gemini',
+        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+      }
+    ]
+  },
+  {
+    type: 'group',
+    label: '本地终端',
+    key: 'local-group',
+    children: [
+      {
+        label: 'Claude Code',
+        key: 'local-claude',
+        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+      },
+      {
+        label: 'Codex',
+        key: 'local-codex',
+        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+      },
+      {
+        label: 'Gemini',
+        key: 'local-gemini',
+        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+      }
+    ]
+  }
+]
+
+// 处理启动选择
+function handleLaunchSelect(key, sessionId) {
+  const [launchMode, targetTool] = key.split('-')
+
+  if (launchMode === 'web') {
+    handleLaunchWebTerminal(sessionId, targetTool)
+  } else {
+    handleLaunchTerminal(sessionId, targetTool)
+  }
+}
+
 const searchQuery = ref('')
 const showAliasDialog = ref(false)
 const editingSession = ref(null)
@@ -314,6 +433,11 @@ const showChatHistory = ref(false)
 const selectedSessionId = ref('')
 const selectedSessionAlias = ref('')
 const chatHistoryRef = ref(null)
+
+// Create session dialog state
+const showCreateSessionDialog = ref(false)
+const newSessionToolType = ref('claude')
+const creatingSession = ref(false)
 
 // Project display name (使用后端解析的名称)
 const projectDisplayName = computed(() => {
@@ -420,13 +544,30 @@ function handleChatHistoryError(errorMsg) {
   message.error(errorMsg)
 }
 
-async function handleLaunchTerminal(sessionId) {
+async function handleLaunchTerminal(sessionId, targetTool = null) {
   try {
-    await launchTerminal(props.projectName, sessionId, currentChannel.value)
-    message.success('已启动终端')
+    await launchSession(props.projectName, sessionId, targetTool, false, currentChannel.value)
+    message.success(`已启动终端 (${targetTool || currentChannel.value})`)
   } catch (err) {
     message.error('启动失败: ' + err.message)
   }
+}
+
+// 启动 Web 终端
+function handleLaunchWebTerminal(sessionId, targetTool = null) {
+  const channel = targetTool || currentChannel.value
+  router.push({
+    name: 'terminal-session',
+    params: {
+      channel,
+      projectName: encodeURIComponent(props.projectName),
+      sessionId
+    },
+    query: {
+      targetTool: targetTool || undefined,
+      cwd: displayProjectPath.value || undefined
+    }
+  })
 }
 
 function handleDelete(sessionId) {
@@ -444,6 +585,35 @@ function handleDelete(sessionId) {
       }
     }
   })
+}
+
+// 创建新会话
+async function handleCreateSession() {
+  creatingSession.value = true
+
+  try {
+    const result = await createSession(props.projectName, newSessionToolType.value, currentChannel.value)
+
+    if (result.success) {
+      message.success(`新会话创建成功: ${result.sessionId.substring(0, 8)}`)
+
+      // 刷新会话列表
+      await store.fetchSessions(props.projectName)
+
+      // 关闭对话框
+      showCreateSessionDialog.value = false
+
+      // 重置工具类型
+      newSessionToolType.value = 'claude'
+    } else {
+      message.error('创建失败')
+    }
+  } catch (err) {
+    console.error('Failed to create session:', err)
+    message.error('创建失败: ' + err.message)
+  } finally {
+    creatingSession.value = false
+  }
 }
 
 // 切换收藏状态

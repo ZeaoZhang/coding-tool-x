@@ -1,13 +1,13 @@
 {
-  "name": "coding-tool",
+  "name": "@adversity/coding-tool-x",
   "version": "2.2.0",
   "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
-    "ct": "./bin/ct.js"
+    "ctx": "bin/ctx.js"
   },
   "scripts": {
-    "start": "node bin/ct.js",
+    "start": "node bin/ctx.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:web": "cd src/web && npm run build",
     "dev:web": "cd src/web && npm run dev",
@@ -46,6 +46,7 @@
   ],
   "dependencies": {
     "@iarna/toml": "^2.2.5",
+    "@lydell/node-pty": "^1.1.0",
     "adm-zip": "^0.5.16",
     "chalk": "^4.1.2",
     "express": "^4.18.2",

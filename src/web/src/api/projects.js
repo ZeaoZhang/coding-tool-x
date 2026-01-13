@@ -6,6 +6,15 @@ export async function getProjects(channel = 'claude') {
   return response.data
 }
 
+export async function createProject(projectName, projectPath, channel = 'claude') {
+  const prefix = getChannelPrefix(channel)
+  const response = await client.post(`${prefix}/projects/create`, {
+    projectName,
+    projectPath
+  })
+  return response.data
+}
+
 export async function saveProjectOrder(order, channel = 'claude') {
   const prefix = getChannelPrefix(channel)
   const response = await client.post(`${prefix}/projects/order`, { order })

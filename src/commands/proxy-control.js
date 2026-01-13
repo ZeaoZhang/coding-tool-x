@@ -105,7 +105,7 @@ async function handleProxyStart(channel) {
   if (!uiRunning) {
     console.error(chalk.red('❌ UI 服务未运行\n'));
     console.log(chalk.yellow('💡 请先启动 UI 服务:'));
-    console.log(chalk.gray('   ') + chalk.cyan('ct start') + chalk.gray('  或  ') + chalk.cyan('ct ui\n'));
+    console.log(chalk.gray('   ') + chalk.cyan('ctx start') + chalk.gray('  或  ') + chalk.cyan('ctx ui\n'));
     process.exit(1);
   }
 
@@ -123,7 +123,7 @@ async function handleProxyStart(channel) {
   } catch (error) {
     if (error.code === 'ECONNREFUSED') {
       console.error(chalk.red('❌ 无法连接到 UI 服务\n'));
-      console.log(chalk.yellow('💡 请确保 UI 服务正在运行: ') + chalk.cyan('ct start\n'));
+      console.log(chalk.yellow('💡 请确保 UI 服务正在运行: ') + chalk.cyan('ctx start\n'));
     } else {
       console.error(chalk.red(`❌ 启动失败: ${error.message}\n`));
     }
@@ -197,7 +197,7 @@ async function handleProxyStatus(channel) {
     console.log(chalk.bold.cyan(`║      ${channelInfo.name} 代理服务状态           ║`));
     console.log(chalk.bold.cyan(`╚══════════════════════════════════════╝\n`));
     console.log(chalk.gray('  ❌ UI 服务未运行\n'));
-    console.log(chalk.yellow('💡 请先启动 UI 服务: ') + chalk.cyan('ct start\n'));
+    console.log(chalk.yellow('💡 请先启动 UI 服务: ') + chalk.cyan('ctx start\n'));
     return;
   }
 
@@ -221,9 +221,9 @@ async function handleProxyStatus(channel) {
     }
 
     console.log(chalk.bold('\n💡 提示:'));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ct ${channel} start`) + chalk.gray(` 启动代理`));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ct logs ${channel}`) + chalk.gray(` 查看日志`));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ct stats ${channel}`) + chalk.gray(` 查看统计\n`));
+    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx ${channel} start`) + chalk.gray(` 启动代理`));
+    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx logs ${channel}`) + chalk.gray(` 查看日志`));
+    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx stats ${channel}`) + chalk.gray(` 查看统计\n`));
   } catch (error) {
     console.error(chalk.red(`❌ 查询状态失败: ${error.message}\n`));
     process.exit(1);

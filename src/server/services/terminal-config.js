@@ -81,9 +81,10 @@ function getSelectedTerminal() {
  * 获取终端启动命令（填充参数后）
  * @param {string} cwd - 工作目录
  * @param {string} sessionId - 会话ID（用于 Claude -r 参数）
+ * @param {string} toolType - 工具类型 ('claude', 'codex', 'gemini')
  * @param {string} customCliCommand - 自定义 CLI 命令（如 "gemini --resume latest"），如果提供则替换默认的 claude 命令
  */
-function getTerminalLaunchCommand(cwd, sessionId, customCliCommand) {
+function getTerminalLaunchCommand(cwd, sessionId, toolType, customCliCommand) {
   const terminal = getSelectedTerminal();
 
   if (!terminal) {
@@ -92,16 +93,34 @@ function getTerminalLaunchCommand(cwd, sessionId, customCliCommand) {
 
   let command = terminal.command;
 
-  // 如果提供了自定义 CLI 命令，替换模板中的 claude 命令部分
+  // 根据工具类型构建 CLI 命令
+  let cliCommand;
   if (customCliCommand) {
-    // 替换各种格式的 claude 命令
-    command = command
-      .replace(/claude\s+-r\s+\{sessionId\}/g, customCliCommand)
-      .replace(/claude\s+-r\s+{sessionId}/g, customCliCommand);
+    cliCommand = customCliCommand;
   } else {
-    // 默认行为：替换 sessionId 占位符
-    command = command.replace(/{sessionId}/g, sessionId);
+    // 根据工具类型选择对应的 CLI 命令
+    switch (toolType) {
+      case 'codex':
+        cliCommand = `codex resume {sessionId}`;
+        break;
+      case 'gemini':
+        cliCommand = `gemini -r {sessionId}`;
+        break;
+      case 'claude':
+      default:
+        cliCommand = `claude -r {sessionId}`;
+        break;
+    }
   }
+
+  // 替换 sessionId 占位符
+  cliCommand = cliCommand.replace(/{sessionId}/g, sessionId);
+
+  // 替换命令中的 claude 相关部分为实际的 CLI 命令
+  command = command
+    .replace(/claude\s+-r\s+\{sessionId\}/g, cliCommand)
+    .replace(/claude\s+-r\s+{sessionId}/g, cliCommand)
+    .replace(/claude -r {sessionId}/g, cliCommand);
 
   // 替换 cwd 占位符
   command = command.replace(/{cwd}/g, cwd);

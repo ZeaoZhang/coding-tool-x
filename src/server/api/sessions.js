@@ -94,6 +94,96 @@ module.exports = (config) => {
     }
   });
 
+  // POST /api/sessions/:projectName/create - Create a new session
+  router.post('/:projectName/create', (req, res) => {
+    try {
+      const { projectName } = req.params;
+      const { toolType = 'claude' } = req.body; // 'claude', 'codex', 或 'gemini'
+      const crypto = require('crypto');
+
+      // 解析项目路径
+      const { fullPath } = parseRealProjectPath(projectName);
+
+      // 生成新的 session ID
+      const newSessionId = crypto.randomUUID();
+
+      // 根据工具类型决定会话文件路径
+      let sessionDir, sessionFile;
+
+      if (toolType === 'claude') {
+        // Claude Code: 直接创建在项目的 .claude/sessions/ 目录（与 Claude Code 默认行为一致）
+        sessionDir = path.join(fullPath, '.claude', 'sessions');
+        sessionFile = path.join(sessionDir, `${newSessionId}.jsonl`);
+      } else if (toolType === 'codex') {
+        // Codex: ~/.codex/sessions/YYYY/MM/DD/{sessionId}.jsonl
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        sessionDir = path.join(os.homedir(), '.codex', 'sessions', String(year), month, day);
+        sessionFile = path.join(sessionDir, `${newSessionId}.jsonl`);
+      } else if (toolType === 'gemini') {
+        // Gemini: ~/.gemini/tmp/{hash}/chats/{sessionId}.json
+        const pathHash = crypto.createHash('sha256').update(fullPath).digest('hex');
+        sessionDir = path.join(os.homedir(), '.gemini', 'tmp', pathHash, 'chats');
+        sessionFile = path.join(sessionDir, `${newSessionId}.json`);
+      } else {
+        return res.status(400).json({ error: 'Invalid toolType. Must be claude, codex, or gemini' });
+      }
+
+      // 确保目录存在
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true });
+      }
+
+      // 创建初始化会话文件
+      const timestamp = new Date().toISOString();
+      let initialContent;
+
+      if (toolType === 'gemini') {
+        // Gemini 使用 JSON 格式
+        initialContent = JSON.stringify({
+          id: newSessionId,
+          projectPath: fullPath,
+          createdAt: timestamp,
+          messages: []
+        }, null, 2);
+      } else {
+        // Claude 和 Codex 使用 JSONL 格式
+        const metadata = {
+          type: 'metadata',
+          cwd: fullPath,
+          gitBranch: null,
+          timestamp: timestamp
+        };
+        initialContent = JSON.stringify(metadata) + '\n';
+      }
+
+      fs.writeFileSync(sessionFile, initialContent, 'utf8');
+
+      // 广播日志
+      broadcastLog({
+        type: 'action',
+        action: 'create_session',
+        message: `创建新会话: ${newSessionId.substring(0, 8)} (${toolType})`,
+        sessionId: newSessionId,
+        tool: toolType,
+        timestamp: Date.now()
+      });
+
+      res.json({
+        success: true,
+        sessionId: newSessionId,
+        sessionFile,
+        toolType,
+        projectName
+      });
+    } catch (error) {
+      console.error('Error creating session:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // POST /api/sessions/:projectName/order - Save session order
   router.post('/:projectName/order', (req, res) => {
     try {
@@ -295,9 +385,10 @@ router.get('/:projectName/:sessionId/messages', async (req, res) => {
   });
 
   // POST /api/sessions/:projectName/:sessionId/launch - Launch terminal with session
-  router.post('/:projectName/:sessionId/launch', (req, res) => {
+  router.post('/:projectName/:sessionId/launch', async (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
+      const { targetTool } = req.body; // 'claude', 'codex', 或 'gemini'
       const { exec } = require('child_process');
       const path = require('path');
       const fs = require('fs');
@@ -346,10 +437,66 @@ router.get('/:projectName/:sessionId/messages', async (req, res) => {
         });
       }
 
+      // 判断会话来源类型
+      let sourceType = 'claude'; // 默认
+      if (sessionFile.includes('/.codex/') || sessionFile.includes('\\.codex\\')) {
+        sourceType = 'codex';
+      } else if (sessionFile.includes('/.gemini/') || sessionFile.includes('\\.gemini\\')) {
+        sourceType = 'gemini';
+      }
+
+      // 如果指定了 targetTool 且与 sourceType 不同，则需要转换
+      let finalSessionFile = sessionFile;
+      let finalSessionId = sessionId;
+
+      if (targetTool && targetTool !== sourceType) {
+        console.log(`跨工具启动：${sourceType} -> ${targetTool}，会话 ${sessionId}`);
+
+        try {
+          const { convertSession } = require('../services/session-converter');
+
+          // 执行转换
+          const convertResult = await convertSession(
+            sourceType,
+            targetTool,
+            sessionId,
+            {
+              sourcePath: sessionFile,
+              preserveTimestamps: true,
+              targetProjectPath: fullPath
+            }
+          );
+
+          if (convertResult.success) {
+            finalSessionFile = convertResult.targetPath;
+            finalSessionId = convertResult.targetSessionId;
+            console.log(`转换成功：${finalSessionFile}`);
+
+            // 广播转换日志
+            broadcastLog({
+              type: 'action',
+              action: 'auto_convert_session',
+              message: `自动转换会话：${sourceType} -> ${targetTool}`,
+              sessionId: finalSessionId,
+              timestamp: Date.now()
+            });
+          } else {
+            return res.status(500).json({
+              error: '会话转换失败：' + (convertResult.error || '未知错误')
+            });
+          }
+        } catch (convertError) {
+          console.error('会话转换出错：', convertError);
+          return res.status(500).json({
+            error: '会话转换出错：' + convertError.message
+          });
+        }
+      }
+
       // Extract working directory from session file
       let cwd = fullPath; // Default to project directory
       try {
-        const content = fs.readFileSync(sessionFile, 'utf8');
+        const content = fs.readFileSync(finalSessionFile, 'utf8');
         const firstLine = content.split('\n')[0];
         if (firstLine) {
           const json = JSON.parse(firstLine);
@@ -361,17 +508,41 @@ router.get('/:projectName/:sessionId/messages', async (req, res) => {
         console.warn('Unable to extract cwd from session, using project path:', e.message);
       }
 
+      // 确保会话文件在 cwd 的 .claude/sessions/ 目录下
+      // 这样 claude -r 才能找到文件
+      const cwdSessionsDir = path.join(cwd, '.claude', 'sessions');
+      const cwdSessionFile = path.join(cwdSessionsDir, finalSessionId + '.jsonl');
+
+      // 如果会话文件不在 cwd 的 sessions 目录，复制过去
+      if (finalSessionFile !== cwdSessionFile && !fs.existsSync(cwdSessionFile)) {
+        try {
+          if (!fs.existsSync(cwdSessionsDir)) {
+            fs.mkdirSync(cwdSessionsDir, { recursive: true });
+          }
+          fs.copyFileSync(finalSessionFile, cwdSessionFile);
+          console.log(`[Launch] Copied session to cwd: ${cwdSessionFile}`);
+        } catch (copyError) {
+          console.warn('[Launch] Failed to copy session file to cwd:', copyError.message);
+          // 如果复制失败，尝试更新 cwd 为项目目录
+          if (fs.existsSync(projectSessionsDir)) {
+            cwd = fullPath;
+            console.log(`[Launch] Fallback to project directory: ${cwd}`);
+          }
+        }
+      }
+
       // Get alias
       const aliases = loadAliases();
-      const alias = aliases[sessionId];
+      const alias = aliases[finalSessionId];
 
       // 广播行为日志
       broadcastLog({
         type: 'action',
         action: 'launch_session',
-        message: `启动会话 ${alias || sessionId.substring(0, 8)}`,
-        sessionId: sessionId,
+        message: `启动会话 ${alias || finalSessionId.substring(0, 8)} (${targetTool || sourceType})`,
+        sessionId: finalSessionId,
         alias: alias || null,
+        tool: targetTool || sourceType,
         timestamp: Date.now()
       });
 
@@ -382,8 +553,12 @@ router.get('/:projectName/:sessionId/messages', async (req, res) => {
         // Windows 路径需要转换为反斜杠格式
         const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
 
-        // 获取启动命令
-        const { command, terminalId, terminalName } = getTerminalLaunchCommand(normalizedCwd, sessionId);
+        // 获取启动命令（需要传入 targetTool）
+        const { command, terminalId, terminalName } = getTerminalLaunchCommand(
+          normalizedCwd,
+          finalSessionId,
+          targetTool || sourceType
+        );
 
         console.log(`Launching terminal: ${terminalName} (${terminalId})`);
         console.log(`Command: ${command}`);

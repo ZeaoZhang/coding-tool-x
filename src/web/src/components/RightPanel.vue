@@ -40,6 +40,57 @@
               Skills 技能
             </n-tooltip>
 
+            <!-- Commands 命令 -->
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  text
+                  size="small"
+                  @click="handleShowCommands"
+                  class="recent-sessions-icon-btn"
+                >
+                  <template #icon>
+                    <n-icon :size="18"><TerminalOutline /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              Commands 命令
+            </n-tooltip>
+
+            <!-- Agents 代理 -->
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  text
+                  size="small"
+                  @click="handleShowAgents"
+                  class="recent-sessions-icon-btn"
+                >
+                  <template #icon>
+                    <n-icon :size="18"><PersonOutline /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              Agents 代理
+            </n-tooltip>
+
+            <!-- Rules 规则 -->
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  text
+                  size="small"
+                  @click="handleShowRules"
+                  class="recent-sessions-icon-btn"
+                >
+                  <template #icon>
+                    <n-icon :size="18"><BookOutline /></n-icon>
+                  </template>
+                </n-button>
+              </template>
+              Rules 规则
+            </n-tooltip>
+
             <!-- 最近对话 -->
             <n-tooltip trigger="hover">
               <template #trigger>
@@ -101,6 +152,15 @@
 
     <!-- Skills 抽屉 -->
     <SkillsDrawer v-model:visible="showSkillsDrawer" />
+
+    <!-- Commands 抽屉 -->
+    <CommandsDrawer v-model:visible="showCommandsDrawer" />
+
+    <!-- Agents 抽屉 -->
+    <AgentsDrawer v-model:visible="showAgentsDrawer" />
+
+    <!-- Rules 抽屉 -->
+    <RulesDrawer v-model:visible="showRulesDrawer" />
   </div>
 </template>
 
@@ -110,18 +170,25 @@ import { useRoute } from 'vue-router'
 import {
   NButton, NIcon, NText, NSwitch, NTooltip, NTag
 } from 'naive-ui'
-import { AddOutline, ChatbubblesOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
+import {
+  AddOutline,
+  ChatbubblesOutline,
+  ExtensionPuzzleOutline,
+  TerminalOutline,
+  PersonOutline,
+  BookOutline
+} from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import SkillsDrawer from './SkillsDrawer.vue'
-import { useGlobalStore } from '../stores/global'
+import CommandsDrawer from './CommandsDrawer.vue'
+import AgentsDrawer from './AgentsDrawer.vue'
+import RulesDrawer from './RulesDrawer.vue'
 import { getSkills } from '../api/skills'
 
 const route = useRoute()
-const globalStore = useGlobalStore()
-
 // Props for panel visibility
 defineProps({
   showChannels: {
@@ -153,6 +220,9 @@ const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
 const showSkillsDrawer = ref(false)
 const installedSkillsCount = ref(0)
+const showCommandsDrawer = ref(false)
+const showAgentsDrawer = ref(false)
+const showRulesDrawer = ref(false)
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
@@ -201,6 +271,21 @@ function handleShowRecent() {
 // 处理显示 Skills
 function handleShowSkills() {
   showSkillsDrawer.value = true
+}
+
+// 处理显示 Commands
+function handleShowCommands() {
+  showCommandsDrawer.value = true
+}
+
+// 处理显示 Agents
+function handleShowAgents() {
+  showAgentsDrawer.value = true
+}
+
+// 处理显示 Rules
+function handleShowRules() {
+  showRulesDrawer.value = true
 }
 
 // 监听 drawer 关闭后刷新计数

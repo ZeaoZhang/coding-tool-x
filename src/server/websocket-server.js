@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { loadConfig } = require('../config/loader');
+const { ptyManager } = require('./services/pty-manager');
 
 const MAX_PERSISTED_LOGS = 500;
 
@@ -179,6 +180,8 @@ function startWebSocketServer(httpServer) {
 
       // 标记客户端存活
       ws.isAlive = true;
+      // 终端绑定信息
+      ws.terminalId = null;
 
       // 发送历史日志给新连接的客户端
       if (logsCache.length > 0) {
@@ -188,6 +191,16 @@ function startWebSocketServer(httpServer) {
           }
         });
       }
+
+      // 处理客户端消息
+      ws.on('message', (data) => {
+        try {
+          const message = JSON.parse(data.toString());
+          handleTerminalMessage(ws, message);
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err.message);
+        }
+      });
 
       // 响应 pong 消息
       ws.on('pong', () => {
@@ -200,11 +213,18 @@ function startWebSocketServer(httpServer) {
       });
 
       ws.on('close', () => {
+        // 解绑终端
+        if (ws.terminalId) {
+          ptyManager.detachWebSocket(ws.terminalId);
+        }
         wsClients.delete(ws);
       });
 
       ws.on('error', (error) => {
         console.error('WebSocket error:', error);
+        if (ws.terminalId) {
+          ptyManager.detachWebSocket(ws.terminalId);
+        }
         wsClients.delete(ws);
       });
     });
@@ -363,6 +383,167 @@ function broadcastSchedulerState(source, schedulerState) {
         client.send(message);
       }
     });
+  }
+}
+
+// ============ 终端 WebSocket 消息处理 ============
+
+const { getCommandForChannel } = require('./services/terminal-commands');
+
+/**
+ * 处理终端相关的 WebSocket 消息
+ */
+function handleTerminalMessage(ws, message) {
+  const { type } = message;
+
+  switch (type) {
+    case 'terminal:create':
+      handleTerminalCreate(ws, message);
+      break;
+
+    case 'terminal:attach':
+      handleTerminalAttach(ws, message);
+      break;
+
+    case 'terminal:input':
+      handleTerminalInput(ws, message);
+      break;
+
+    case 'terminal:resize':
+      handleTerminalResize(ws, message);
+      break;
+
+    case 'terminal:destroy':
+      handleTerminalDestroy(ws, message);
+      break;
+
+    default:
+      // 非终端消息，忽略
+      break;
+  }
+}
+
+/**
+ * 创建新终端
+ */
+function handleTerminalCreate(ws, message) {
+  const {
+    channel = 'claude',
+    sessionId = null,
+    projectName = null,
+    cwd = null
+  } = message;
+
+  try {
+    // 确定工作目录
+    let workDir = cwd || os.homedir();
+
+    // 获取启动命令
+    const startCommand = getCommandForChannel(channel, sessionId, workDir);
+
+    // 创建终端
+    const terminal = ptyManager.create({
+      cwd: workDir,
+      channel,
+      sessionId,
+      projectName,
+      startCommand
+    });
+
+    // 绑定 WebSocket
+    ws.terminalId = terminal.id;
+    ptyManager.attachWebSocket(terminal.id, ws);
+
+    // 发送创建成功消息
+    ws.send(JSON.stringify({
+      type: 'terminal:created',
+      terminalId: terminal.id,
+      metadata: terminal.metadata
+    }));
+  } catch (err) {
+    console.error('Failed to create terminal:', err);
+    ws.send(JSON.stringify({
+      type: 'terminal:error',
+      error: err.message
+    }));
+  }
+}
+
+/**
+ * 绑定到已有终端
+ */
+function handleTerminalAttach(ws, message) {
+  const { terminalId } = message;
+
+  if (!terminalId) {
+    ws.send(JSON.stringify({
+      type: 'terminal:error',
+      error: 'Missing terminalId'
+    }));
+    return;
+  }
+
+  const terminal = ptyManager.get(terminalId);
+  if (!terminal) {
+    ws.send(JSON.stringify({
+      type: 'terminal:error',
+      error: 'Terminal not found',
+      terminalId
+    }));
+    return;
+  }
+
+  // 绑定 WebSocket
+  ws.terminalId = terminalId;
+  ptyManager.attachWebSocket(terminalId, ws);
+
+  ws.send(JSON.stringify({
+    type: 'terminal:attached',
+    terminalId,
+    metadata: terminal.metadata
+  }));
+}
+
+/**
+ * 终端输入
+ */
+function handleTerminalInput(ws, message) {
+  const { terminalId, data } = message;
+
+  if (!terminalId || !data) {
+    return;
+  }
+
+  ptyManager.write(terminalId, data);
+}
+
+/**
+ * 调整终端大小
+ */
+function handleTerminalResize(ws, message) {
+  const { terminalId, cols, rows } = message;
+
+  if (!terminalId || !cols || !rows) {
+    return;
+  }
+
+  ptyManager.resize(terminalId, cols, rows);
+}
+
+/**
+ * 销毁终端
+ */
+function handleTerminalDestroy(ws, message) {
+  const { terminalId } = message;
+
+  if (!terminalId) {
+    return;
+  }
+
+  ptyManager.destroy(terminalId);
+
+  if (ws.terminalId === terminalId) {
+    ws.terminalId = null;
   }
 }
 

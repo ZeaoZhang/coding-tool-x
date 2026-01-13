@@ -80,18 +80,6 @@
           检测到 {{ envConflicts.length }} 个环境变量冲突，点击查看
         </n-tooltip>
 
-        <!-- Update Notification -->
-        <div v-if="updateInfo" class="update-notification">
-          <div class="update-badge" @click="handleUpdateClick">
-            <n-icon :size="18">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="currentColor">
-                <path d="M256 48C141.13 48 48 141.13 48 256s93.13 208 208 208 208-93.13 208-208S370.87 48 256 48zm-80 288v-32h160v32H176zm48-112h-48v-32h48v-48h32v48h48v32h-48v48h-32v-48z"/>
-              </svg>
-            </n-icon>
-            <span class="update-text">有更新</span>
-          </div>
-        </div>
-
         <!-- Theme Toggle -->
         <HeaderButton
           :icon="isDark ? SunnyOutline : MoonOutline"
@@ -110,6 +98,27 @@
             {{ totalFavorites }}
           </div>
         </div>
+
+        <!-- Terminal Button -->
+        <HeaderButton
+          :icon="TerminalOutline"
+          tooltip="Web 终端"
+          @click="goToTerminal"
+        />
+
+        <!-- Workspace Button -->
+        <HeaderButton
+          :icon="FolderOpenOutline"
+          tooltip="工作区管理"
+          @click="goToWorkspace"
+        />
+
+        <!-- Config Templates Button -->
+        <HeaderButton
+          :icon="LayersOutline"
+          tooltip="配置模版管理"
+          @click="goToConfigTemplates"
+        />
 
         <!-- Prompts Button -->
         <HeaderButton
@@ -167,7 +176,11 @@
 
       <!-- Left Content Area (Router View) -->
       <div class="left-content">
-        <router-view />
+        <router-view v-slot="{ Component, route }">
+          <keep-alive :include="['Terminal']">
+            <component :is="Component" :key="route.name === 'terminal' ? 'terminal-keep' : route.fullPath" />
+          </keep-alive>
+        </router-view>
       </div>
 
       <!-- Right Panel (Global) - Only show if not on home page and at least one panel is enabled -->
@@ -210,16 +223,16 @@
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">⭐ 最简单的启动方式：</h5>
           <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058;">
-            <p style="margin: 0; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 600; color: var(--primary-color);">ct start</p>
+            <p style="margin: 0; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 600; color: var(--primary-color);">ctx start</p>
             <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-secondary);">• 后台启动所有服务<br/>• 可以关闭终端窗口<br/>• 代理服务保持运行</p>
           </div>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">📋 日常工作流：</h5>
           <div style="font-size: 12px; line-height: 1.8; color: var(--text-secondary);">
-            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct start</code> 启动服务<br/>
-            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct status</code> 查看状态<br/>
-            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct logs</code> 查看日志<br/>
-            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ct stop</code> 停止服务
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ctx start</code> 启动服务<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ctx status</code> 查看状态<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ctx logs</code> 查看日志<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ctx stop</code> 停止服务
           </div>
         </div>
 
@@ -238,19 +251,19 @@
           <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">🚀 服务管理</h5>
           <div class="command-list">
             <div class="command-item">
-              <code>ct start</code>
+              <code>ctx start</code>
               <span>后台启动所有服务（推荐）</span>
             </div>
             <div class="command-item">
-              <code>ct stop</code>
+              <code>ctx stop</code>
               <span>停止所有服务</span>
             </div>
             <div class="command-item">
-              <code>ct restart</code>
+              <code>ctx restart</code>
               <span>重启所有服务</span>
             </div>
             <div class="command-item">
-              <code>ct status</code>
+              <code>ctx status</code>
               <span>查看服务状态</span>
             </div>
           </div>
@@ -258,19 +271,19 @@
           <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">🔌 代理管理</h5>
           <div class="command-list">
             <div class="command-item">
-              <code>ct claude start</code>
+              <code>ctx claude start</code>
               <span>启动 Claude 代理</span>
             </div>
             <div class="command-item">
-              <code>ct codex start</code>
+              <code>ctx codex start</code>
               <span>启动 Codex 代理</span>
             </div>
             <div class="command-item">
-              <code>ct gemini start</code>
+              <code>ctx gemini start</code>
               <span>启动 Gemini 代理</span>
             </div>
             <div class="command-item">
-              <code>ct claude stop</code>
+              <code>ctx claude stop</code>
               <span>停止指定代理（支持 stop/restart/status）</span>
             </div>
           </div>
@@ -278,19 +291,19 @@
           <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">📋 日志管理</h5>
           <div class="command-list">
             <div class="command-item">
-              <code>ct logs</code>
+              <code>ctx logs</code>
               <span>查看所有日志</span>
             </div>
             <div class="command-item">
-              <code>ct logs claude</code>
+              <code>ctx logs claude</code>
               <span>查看 Claude 日志（支持 ui/codex/gemini）</span>
             </div>
             <div class="command-item">
-              <code>ct logs --follow</code>
+              <code>ctx logs --follow</code>
               <span>实时跟踪日志</span>
             </div>
             <div class="command-item">
-              <code>ct logs --clear</code>
+              <code>ctx logs --clear</code>
               <span>清空日志</span>
             </div>
           </div>
@@ -298,19 +311,15 @@
           <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">📊 其他命令</h5>
           <div class="command-list">
             <div class="command-item">
-              <code>ct stats</code>
+              <code>ctx stats</code>
               <span>查看统计信息</span>
             </div>
             <div class="command-item">
-              <code>ct doctor</code>
+              <code>ctx doctor</code>
               <span>系统诊断</span>
             </div>
             <div class="command-item">
-              <code>ct update</code>
-              <span>检查更新</span>
-            </div>
-            <div class="command-item">
-              <code>ct -h</code>
+              <code>ctx -h</code>
               <span>完整帮助</span>
             </div>
           </div>
@@ -333,9 +342,9 @@
           <h4>⚡ 代理服务与渠道管理</h4>
           <p>每种 AI 工具都有独立的代理服务和渠道配置：</p>
           <ul>
-            <li><strong>Claude 代理</strong>：端口 10088，支持 Anthropic API 格式</li>
-            <li><strong>Codex 代理</strong>：端口 10089，支持 OpenAI API 格式（兼容 Claude）</li>
-            <li><strong>Gemini 代理</strong>：端口 10090，支持 Gemini API 格式</li>
+            <li><strong>Claude 代理</strong>：端口 20088，支持 Anthropic API 格式</li>
+            <li><strong>Codex 代理</strong>：端口 20089，支持 OpenAI API 格式（兼容 Claude）</li>
+            <li><strong>Gemini 代理</strong>：端口 20090，支持 Gemini API 格式</li>
           </ul>
           <p>在 Dashboard 或各工具详情页，可以添加多个渠道并快速切换，无需修改配置文件或重启工具。</p>
         </div>
@@ -344,7 +353,7 @@
           <h4>⭐ 后台启动与开机自启</h4>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">后台启动服务</h5>
-          <p style="font-size: 12px; line-height: 1.8;">使用 <code style="background: var(--bg-primary); padding: 2px 6px;">ct start</code> 命令后台启动所有服务，可以安全关闭终端窗口而不影响代理服务的运行。</p>
+          <p style="font-size: 12px; line-height: 1.8;">使用 <code style="background: var(--bg-primary); padding: 2px 6px;">ctx start</code> 命令后台启动所有服务，可以安全关闭终端窗口而不影响代理服务的运行。</p>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">配置开机自启（可选）</h5>
           <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 8px 0;">第一次启用开机自启只需三个步骤：</p>
@@ -360,9 +369,9 @@
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">相关命令</h5>
           <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.8;">
-            <code style="background: var(--bg-primary); padding: 2px 6px;">ct start</code> 后台启动<br/>
-            <code style="background: var(--bg-primary); padding: 2px 6px;">ct status</code> 查看状态<br/>
-            <code style="background: var(--bg-primary); padding: 2px 6px;">ct logs</code> 查看日志<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">ctx start</code> 后台启动<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">ctx status</code> 查看状态<br/>
+            <code style="background: var(--bg-primary); padding: 2px 6px;">ctx logs</code> 查看日志<br/>
             <code style="background: var(--bg-primary); padding: 2px 6px;">pm2 list</code> 查看所有后台进程<br/>
             <code style="background: var(--bg-primary); padding: 2px 6px;">pm2 unstartup</code> 禁用开机自启
           </div>
@@ -383,10 +392,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ExtensionPuzzleOutline, ChatboxOutline, SpeedometerOutline, WarningOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ExtensionPuzzleOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -395,12 +404,10 @@ import McpDrawer from './McpDrawer.vue'
 import PromptsDrawer from './PromptsDrawer.vue'
 import SpeedTestDrawer from './SpeedTestDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
-import UpdateDialog from './UpdateDialog.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
-import { checkForUpdates as checkForUpdatesApi, getChangelog } from '../api/version'
 import { checkEnvConflicts } from '../api/env'
-import message, { dialog } from '../utils/message'
+import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
 import { useFavorites } from '../composables/useFavorites'
@@ -492,7 +499,6 @@ function handleEnvNeverRemind() {
   localStorage.setItem('envConflictNeverRemind', 'true')
 }
 const globalLoading = ref(false) // 全局 loading 状态
-const updateInfo = ref(null) // 版本更新信息
 
 // 根据当前 channel 计算有效的代理状态
 const effectiveProxyRunning = computed(() => {
@@ -548,6 +554,18 @@ function goHome() {
   router.push({ name: 'home' })
 }
 
+function goToTerminal() {
+  router.push({ name: 'terminal' })
+}
+
+function goToWorkspace() {
+  router.push({ name: 'workspaces' })
+}
+
+function goToConfigTemplates() {
+  router.push({ name: 'config-templates' })
+}
+
 function openGithub() {
   window.open('https://github.com/CooperJiang/cc-tool', '_blank')
 }
@@ -587,51 +605,6 @@ function handlePanelVisibilityChange(event) {
   showLogs.value = newShowLogs
 }
 
-// 检查版本更新
-async function checkForUpdates() {
-  try {
-    const result = await checkForUpdatesApi()
-    if (result.hasUpdate && !result.error) {
-      updateInfo.value = result
-    }
-  } catch (err) {
-    // 静默失败，不影响用户体验
-    console.error('Version check failed:', err)
-  }
-}
-
-// 处理更新点击
-async function handleUpdateClick() {
-  if (!updateInfo.value) return
-
-  // 获取更新日志
-  let changelogData = null
-  try {
-    const result = await getChangelog(updateInfo.value.latest)
-    if (result.success) {
-      changelogData = result.changelog
-    }
-  } catch (err) {
-    console.error('Failed to load changelog:', err)
-  }
-
-  // 使用 dialog.create 方法显示更新弹窗
-  dialog.create({
-    title: '✨ 发现新版本',
-    content: () => h(UpdateDialog, {
-      currentVersion: updateInfo.value.current,
-      latestVersion: updateInfo.value.latest,
-      changelog: changelogData
-    }),
-    maskClosable: true,
-    closable: true,
-    showIcon: false,
-    style: {
-      width: '580px'
-    }
-  })
-}
-
 onMounted(() => {
   // 加载面板可见性设置
   loadPanelSettings()
@@ -641,23 +614,6 @@ onMounted(() => {
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
-
-  // 延迟检查版本更新，等页面完全加载后再执行
-  // 使用 requestIdleCallback 在浏览器空闲时执行，或者延迟到 2 秒后
-  if (window.requestIdleCallback) {
-    window.requestIdleCallback(() => {
-      checkForUpdates().catch(err => {
-        console.warn('Version check failed:', err)
-      })
-    })
-  } else {
-    // 降级方案：延迟 2 秒后执行
-    setTimeout(() => {
-      checkForUpdates().catch(err => {
-        console.warn('Version check failed:', err)
-      })
-    }, 2000)
-  }
 })
 
 onUnmounted(() => {
@@ -1095,64 +1051,6 @@ onUnmounted(() => {
   border-color: rgba(24, 160, 88, 0.5);
 }
 
-/* 更新提示样式 */
-.update-notification {
-  margin-right: 2px;
-}
-
-.update-badge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(251, 146, 60, 0.15));
-  border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  animation: pulse-update 2s ease-in-out infinite;
-}
-
-.update-badge:hover {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(251, 146, 60, 0.25));
-  border-color: rgba(245, 158, 11, 0.5);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-}
-
-.update-badge .n-icon {
-  color: #f59e0b;
-  font-size: 14px;
-}
-
-.update-text {
-  font-size: 11px;
-  font-weight: 600;
-  color: #f59e0b;
-  white-space: nowrap;
-}
-
-@keyframes pulse-update {
-  0%, 100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
-  }
-  50% {
-    transform: scale(1.02);
-    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
-  }
-}
-
-[data-theme="dark"] .update-badge {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(251, 146, 60, 0.2));
-  border-color: rgba(245, 158, 11, 0.4);
-}
-
-[data-theme="dark"] .update-badge:hover {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(251, 146, 60, 0.3));
-  border-color: rgba(245, 158, 11, 0.6);
-}
-
 /* 收藏按钮样式 */
 .favorites-button-wrapper {
   position: relative;
@@ -1176,11 +1074,6 @@ onUnmounted(() => {
   border-radius: 7px;
   box-shadow: 0 0 0 2px var(--bg-primary);
   pointer-events: none;
-}
-
-/* 版本更新对话框样式 */
-:deep(.n-dialog__action) {
-  display: none;
 }
 
 /* ========== 响应式样式 ========== */
@@ -1269,14 +1162,6 @@ onUnmounted(() => {
   .header-actions {
     gap: 2px;
   }
-
-  .update-text {
-    display: none;
-  }
-
-  .update-badge {
-    padding: 4px 8px;
-  }
 }
 
 /* 移动端 (< 640px) */
@@ -1351,14 +1236,6 @@ onUnmounted(() => {
 
   .env-warning-count {
     font-size: 10px;
-  }
-
-  .update-badge {
-    padding: 4px 6px;
-  }
-
-  .update-text {
-    display: none;
   }
 
   .favorites-badge {

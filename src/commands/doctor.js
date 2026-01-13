@@ -130,7 +130,7 @@ async function checkConfigFiles() {
         name: '配置文件',
         status: 'fail',
         message: '配置文件存在但解析失败',
-        suggestion: '使用 ct config reset 重置配置'
+        suggestion: '使用 ctx config reset 重置配置'
       };
     }
   } else {
@@ -175,7 +175,7 @@ async function checkPorts() {
       name: '端口检查',
       status: 'warning',
       message: `以下端口被占用: ${conflicts.join(', ')}`,
-      suggestion: '如果服务正在运行这是正常的；否则使用 ct config port 修改端口'
+      suggestion: '如果服务正在运行这是正常的；否则使用 ctx config port 修改端口'
     };
   }
 }
@@ -231,7 +231,7 @@ async function checkLogsDirectory() {
         name: '日志目录',
         status: 'warning',
         message: `日志文件过大 (${sizeMB} MB)`,
-        suggestion: '使用 ct logs --clear 清理日志'
+        suggestion: '使用 ctx logs --clear 清理日志'
       };
     } else {
       return {
@@ -277,7 +277,7 @@ async function checkProcessStatus() {
       name: '进程状态',
       status: 'warning',
       message: 'Coding-Tool 服务未运行',
-      suggestion: '使用 ct start 启动服务'
+      suggestion: '使用 ctx start 启动服务'
     };
   } catch (err) {
     return {

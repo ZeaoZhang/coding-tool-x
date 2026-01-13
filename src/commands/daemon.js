@@ -63,8 +63,8 @@ async function handleStart() {
       console.log(chalk.yellow('\n⚠️  服务已在运行中\n'));
       console.log(chalk.gray(`进程 ID: ${existing.pid}`));
       console.log(chalk.gray(`运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
-      console.log(chalk.gray('\n使用 ') + chalk.cyan('ct status') + chalk.gray(' 查看详细状态'));
-      console.log(chalk.gray('使用 ') + chalk.cyan('ct restart') + chalk.gray(' 重启服务\n'));
+      console.log(chalk.gray('\n使用 ') + chalk.cyan('ctx status') + chalk.gray(' 查看详细状态'));
+      console.log(chalk.gray('使用 ') + chalk.cyan('ctx restart') + chalk.gray(' 重启服务\n'));
       disconnectPM2();
       return;
     }
@@ -99,9 +99,9 @@ async function handleStart() {
       console.log(chalk.gray(`Web UI: http://localhost:${port}`));
       console.log(chalk.gray('\n可以安全关闭此终端窗口'));
       console.log(chalk.gray('\n常用命令:'));
-      console.log(chalk.gray('  ') + chalk.cyan('ct status') + chalk.gray('   - 查看服务状态'));
-      console.log(chalk.gray('  ') + chalk.cyan('ct logs') + chalk.gray('      - 查看实时日志'));
-      console.log(chalk.gray('  ') + chalk.cyan('ct stop') + chalk.gray('      - 停止服务\n'));
+      console.log(chalk.gray('  ') + chalk.cyan('ctx status') + chalk.gray('   - 查看服务状态'));
+      console.log(chalk.gray('  ') + chalk.cyan('ctx logs') + chalk.gray('      - 查看实时日志'));
+      console.log(chalk.gray('  ') + chalk.cyan('ctx stop') + chalk.gray('      - 停止服务\n'));
 
       // 保存进程列表
       pm2.dump((err) => {
@@ -165,7 +165,7 @@ async function handleRestart() {
 
     const existing = await getCCToolProcess();
     if (!existing) {
-      console.log(chalk.yellow('\n⚠️  服务未在运行，请使用 ') + chalk.cyan('ct start') + chalk.yellow(' 启动\n'));
+      console.log(chalk.yellow('\n⚠️  服务未在运行，请使用 ') + chalk.cyan('ctx start') + chalk.yellow(' 启动\n'));
       disconnectPM2();
       return;
     }
@@ -237,8 +237,8 @@ async function handleStatus() {
 
     console.log(chalk.bold('\n💡 提示:'));
     console.log(chalk.gray('  • 代理服务通过 Web UI 界面控制'));
-    console.log(chalk.gray('  • 使用 ') + chalk.cyan('ct logs [type]') + chalk.gray(' 查看日志'));
-    console.log(chalk.gray('  • 使用 ') + chalk.cyan('ct stats [type]') + chalk.gray(' 查看统计信息\n'));
+    console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx logs [type]') + chalk.gray(' 查看日志'));
+    console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats [type]') + chalk.gray(' 查看统计信息\n'));
 
     disconnectPM2();
   } catch (error) {

@@ -43,7 +43,7 @@ async function startServer(port) {
     if (!shouldKill) {
       console.log(chalk.gray('\n已取消启动'));
       console.log(chalk.yellow('\n💡 解决方案:'));
-      console.log(chalk.gray('   1. 运行 ct 命令，选择"配置端口"修改端口'));
+      console.log(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
       console.log(chalk.gray(`   2. 或手动关闭占用端口 ${port} 的程序\n`));
       process.exit(0);
     }
@@ -103,6 +103,9 @@ async function startServer(port) {
   app.use('/api/gemini/channels', require('./api/gemini-channels')(config));
   app.use('/api/gemini/proxy', require('./api/gemini-proxy'));
 
+  // 会话格式转换 API
+  app.use('/api/convert', require('./api/convert'));
+
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
   app.use('/api/ui-config', require('./api/ui-config'));
@@ -114,7 +117,6 @@ async function startServer(port) {
   app.use('/api/statistics', require('./api/statistics'));
   app.use('/api/codex/statistics', require('./api/codex-statistics'));
   app.use('/api/gemini/statistics', require('./api/gemini-statistics'));
-  app.use('/api/version', require('./api/version'));
   app.use('/api/pm2-autostart', require('./api/pm2-autostart')());
   app.use('/api/dashboard', require('./api/dashboard'));
   app.use('/api/mcp', require('./api/mcp'));
@@ -126,6 +128,23 @@ async function startServer(port) {
 
   // 初始化 Claude hooks 默认配置（自动开启任务完成通知）
   claudeHooks.initDefaultHooks();
+
+  // Claude Code 专有功能 API
+  app.use('/api/commands', require('./api/commands'));
+  app.use('/api/agents', require('./api/agents'));
+  app.use('/api/rules', require('./api/rules'));
+
+  // Web 终端 API
+  app.use('/api/terminal', require('./api/terminal'));
+
+  // 工作区 API
+  app.use('/api/workspaces', require('./api/workspaces'));
+
+  // 配置模板 API
+  app.use('/api/config-templates', require('./api/config-templates'));
+
+  // 健康检查 API
+  app.use('/api/health-check', require('./api/health-check')(config));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');
@@ -147,6 +166,9 @@ async function startServer(port) {
 
     // 自动恢复代理状态
     autoRestoreProxies();
+
+    // 启动时执行健康检查
+    performStartupHealthCheck();
   });
 
   // 监听端口占用错误
@@ -154,7 +176,7 @@ async function startServer(port) {
     if (err.code === 'EADDRINUSE') {
       console.error(chalk.red(`\n❌ 端口 ${port} 已被占用`));
       console.error(chalk.yellow('\n💡 解决方案:'));
-      console.error(chalk.gray('   1. 运行 ct 命令，选择"配置端口"修改端口'));
+      console.error(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
       console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
       process.exit(1);
     }
@@ -229,6 +251,54 @@ function autoRestoreProxies() {
       });
   } else {
     console.log(chalk.gray('\n💡 提示: 如需使用 Gemini 代理，请在前端界面激活 Gemini 渠道'));
+  }
+}
+
+// 启动时执行健康检查
+function performStartupHealthCheck() {
+  const { healthCheckAllProjects, scanLegacySessionFiles } = require('./services/health-check');
+  const { getProjects } = require('./services/sessions');
+
+  try {
+    console.log(chalk.cyan('\n🔍 正在进行启动健康检查...'));
+
+    // 获取所有项目
+    const config = loadConfig();
+    const projects = getProjects(config);
+
+    if (projects.length === 0) {
+      console.log(chalk.gray('   未发现项目，跳过健康检查'));
+      return;
+    }
+
+    // 检查并创建缺失的目录
+    const healthResult = healthCheckAllProjects(projects);
+
+    if (healthResult.summary.created > 0) {
+      console.log(chalk.green(`   ✓ 已为 ${healthResult.summary.created} 个项目创建 .claude/sessions 目录`));
+    }
+
+    if (healthResult.summary.errors > 0) {
+      console.log(chalk.yellow(`   ⚠ ${healthResult.summary.errors} 个项目检查失败`));
+    }
+
+    if (healthResult.summary.created === 0 && healthResult.summary.errors === 0) {
+      console.log(chalk.green(`   ✓ 所有 ${healthResult.summary.healthy} 个项目状态正常`));
+    }
+
+    // 扫描旧文件
+    const legacyResult = scanLegacySessionFiles();
+
+    if (legacyResult.found && legacyResult.projectCount > 0) {
+      console.log(chalk.yellow(`\n   ⚠ 发现 ${legacyResult.projectCount} 个项目的旧会话文件在全局目录`));
+      console.log(chalk.gray('   💡 提示: 可通过 Web UI 或 API 清理这些文件'));
+      console.log(chalk.gray(`      - Web UI: 设置 -> 系统维护 -> 清理旧文件`));
+      console.log(chalk.gray(`      - API: POST /api/health-check/clean-legacy`));
+    }
+
+    console.log('');
+  } catch (err) {
+    console.error(chalk.red('   ✗ 健康检查失败:'), err.message);
   }
 }
 

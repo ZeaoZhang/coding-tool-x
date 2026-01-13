@@ -77,7 +77,7 @@ async function handleStats(type = null, options = {}) {
   const uiRunning = await checkUIService();
   if (!uiRunning) {
     console.error(chalk.red('\n❌ UI 服务未运行\n'));
-    console.log(chalk.yellow('💡 请先启动 UI 服务: ') + chalk.cyan('ct start\n'));
+    console.log(chalk.yellow('💡 请先启动 UI 服务: ') + chalk.cyan('ctx start\n'));
     process.exit(1);
   }
 
@@ -175,9 +175,9 @@ function displayStats(stats, type, timeRange) {
   }
 
   console.log(chalk.gray('\n💡 提示:'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ct stats --today') + chalk.gray(' 查看今日统计'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ct stats claude') + chalk.gray(' 查看特定渠道'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ct stats export') + chalk.gray(' 导出统计数据\n'));
+  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats --today') + chalk.gray(' 查看今日统计'));
+  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats claude') + chalk.gray(' 查看特定渠道'));
+  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats export') + chalk.gray(' 导出统计数据\n'));
 }
 
 /**

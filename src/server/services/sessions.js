@@ -11,20 +11,21 @@ const {
   checkHasMessagesCache,
   rememberHasMessages
 } = require('./session-cache');
+const { PATHS } = require('../../config/paths');
 
 // Base directory for cc-tool data
 function getCcToolDir() {
-  return path.join(os.homedir(), '.claude', 'cc-tool');
+  return PATHS.base;
 }
 
 // Get path for storing project order
 function getOrderFilePath() {
-  return path.join(getCcToolDir(), 'project-order.json');
+  return PATHS.projectOrder;
 }
 
 // Get path for storing fork relations
 function getForkRelationsFilePath() {
-  return path.join(getCcToolDir(), 'fork-relations.json');
+  return path.join(PATHS.base, 'fork-relations.json');
 }
 
 // Get path for storing session order
