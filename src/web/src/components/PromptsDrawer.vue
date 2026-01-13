@@ -183,7 +183,7 @@ import message, { dialog } from '../utils/message'
 import PromptsFormDrawer from './PromptsFormDrawer.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
-const { drawerWidth } = useResponsiveDrawer(680)
+const { drawerWidth } = useResponsiveDrawer(800, 700)
 
 const props = defineProps({
   visible: {
