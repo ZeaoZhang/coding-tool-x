@@ -10,7 +10,7 @@
 
 [![npm version](https://img.shields.io/npm/v/coding-tool-x.svg?style=flat-square)](https://www.npmjs.com/package/coding-tool-x)
 [![npm downloads](https://img.shields.io/npm/dm/coding-tool-x.svg?style=flat-square)](https://www.npmjs.com/package/coding-tool-x)
-[![GitHub stars](https://img.shields.io/github/stars/CooperJiang/cc-tool?style=flat-square)](https://github.com/CooperJiang/cc-tool/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/CooperJiang/cc-tool?style=flat-square)](https://github.com/ZeaoZhang/coding-tool/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D14.0.0-brightgreen.svg?style=flat-square)](package.json)
 
@@ -48,7 +48,7 @@ npm install -g coding-tool-x
 ### 从源码构建
 
 ```bash
-git clone https://github.com/CooperJiang/cc-tool.git
+git clone https://github.com/ZeaoZhang/coding-tool.git
 cd cc-tool
 npm install && npm link
 ```
@@ -385,20 +385,10 @@ ctx logs --clear      # 清空日志
 
 ## 🤝 贡献
 
-欢迎提交 [Issue](https://github.com/CooperJiang/cc-tool/issues) 和 [Pull Request](https://github.com/CooperJiang/cc-tool/pulls)！
+欢迎提交 [Issue](https://github.com/ZeaoZhang/coding-tool/issues) 和 [Pull Request](https://github.com/ZeaoZhang/coding-tool/pulls)！
 
 ---
 
 ## 📄 许可证
 
-[MIT License](LICENSE) © 2025 CooperJiang
-
----
-
-<div align="center">
-
-**如果这个项目对你有帮助，请给它一个 Star ⭐**
-
-[![Star History Chart](https://api.star-history.com/svg?repos=CooperJiang/cc-tool&type=Date)](https://star-history.com/#CooperJiang/cc-tool&Date)
-
-</div>
+[MIT License](LICENSE) © 2026

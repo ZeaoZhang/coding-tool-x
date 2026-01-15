@@ -9,9 +9,6 @@
           </template>
         </n-button>
         <span class="panel-title">Custom Agents</span>
-        <n-tag type="info" size="small" :bordered="false">
-          {{ agents.length }}
-        </n-tag>
       </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
@@ -31,11 +28,6 @@
 
     <!-- Drawer 模式下的简化头部 -->
     <div class="drawer-header-bar" v-if="props.inDrawer">
-      <div class="header-left">
-        <n-tag type="info" size="small" :bordered="false">
-          {{ agents.length }}
-        </n-tag>
-      </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
@@ -50,6 +42,16 @@
           刷新
         </n-button>
       </div>
+    </div>
+
+    <!-- 统计栏 -->
+    <div class="stats-bar">
+      <span class="stats-text">
+        共 {{ agents.length }} 个代理
+        <template v-if="agents.length > 0">
+          · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
+        </template>
+      </span>
     </div>
 
     <!-- 搜索和筛选 -->
@@ -160,7 +162,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import {
-  NButton, NInput, NSelect, NIcon, NTag, NSpin, NEmpty,
+  NButton, NInput, NSelect, NIcon, NSpin, NEmpty,
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode
 } from 'naive-ui'
 import {
@@ -208,6 +210,9 @@ const scopeOptions = [
   { label: '用户级', value: 'user' },
   { label: '项目级', value: 'project' }
 ]
+
+const userCount = computed(() => agents.value.filter(a => a.scope === 'user').length)
+const projectCount = computed(() => agents.value.filter(a => a.scope === 'project').length)
 
 const filteredAgents = computed(() => {
   let result = agents.value
@@ -340,6 +345,19 @@ onMounted(() => {
   padding: 4px 8px;
 }
 
+.stats-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.stats-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .filter-bar {
   display: flex;
   gap: 10px;
@@ -408,6 +426,10 @@ onMounted(() => {
 }
 
 .agents-panel.in-drawer .filter-bar {
+  padding: 10px 12px;
+}
+
+.agents-panel.in-drawer .stats-bar {
   padding: 10px 12px;
 }
 

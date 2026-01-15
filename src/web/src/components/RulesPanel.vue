@@ -9,9 +9,6 @@
           </template>
         </n-button>
         <span class="panel-title">Rules 规则</span>
-        <n-tag type="info" size="small" :bordered="false">
-          {{ rules.length }}
-        </n-tag>
       </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
@@ -31,11 +28,6 @@
 
     <!-- Drawer 模式下的简化头部 -->
     <div class="drawer-header-bar" v-if="props.inDrawer">
-      <div class="header-left">
-        <n-tag type="info" size="small" :bordered="false">
-          {{ rules.length }}
-        </n-tag>
-      </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
@@ -50,6 +42,16 @@
           刷新
         </n-button>
       </div>
+    </div>
+
+    <!-- 统计栏 -->
+    <div class="stats-bar">
+      <span class="stats-text">
+        共 {{ rules.length }} 条规则
+        <template v-if="rules.length > 0">
+          · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
+        </template>
+      </span>
     </div>
 
     <!-- 搜索和筛选 -->
@@ -200,6 +202,9 @@ const scopeOptions = [
   { label: '项目级', value: 'project' }
 ]
 
+const userCount = computed(() => rules.value.filter(r => r.scope === 'user').length)
+const projectCount = computed(() => rules.value.filter(r => r.scope === 'project').length)
+
 const filteredRules = computed(() => {
   let result = rules.value
 
@@ -332,6 +337,19 @@ onMounted(() => {
   padding: 4px 8px;
 }
 
+.stats-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.stats-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .filter-bar {
   display: flex;
   gap: 10px;
@@ -400,6 +418,10 @@ onMounted(() => {
 }
 
 .rules-panel.in-drawer .filter-bar {
+  padding: 10px 12px;
+}
+
+.rules-panel.in-drawer .stats-bar {
   padding: 10px 12px;
 }
 

@@ -4,6 +4,26 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [2.3.0] - 2025-01-15
+
+### Added
+- 🛡️ **命令执行权限管理** - 新增 CommandPermissionDrawer 组件，支持配置 AI 自动执行和需要确认的命令
+  - 支持三种权限模板：安全模式、平衡模式、宽松模式
+  - 配置保存到项目 `.claude/settings.json`，支持 `settings.local.json` 个人配置
+  - 显示三种 CLI 工具的权限配置说明和全权限命令
+- 🏗️ **工作区创建权限选择** - 创建工作区时可选择命令执行权限模板
+  - 自动为工作区内所有项目应用权限配置
+
+### Changed
+- 🧹 **移除 Web 终端命令设置** - 从设置抽屉中删除 "Web终端命令" 面板
+- 🧹 **移除系统维护设置** - 从设置抽屉中删除 "系统维护" 面板和旧文件扫描功能
+- 📝 **更新 CLI 权限文档** - 修正三个 CLI 工具的全权限命令说明：
+  - Claude Code: `--dangerously-skip-permissions`
+  - Codex CLI: `--dangerously-bypass-approvals-and-sandbox`
+  - Gemini CLI: `--yolo`
+
+---
+
 ## [2.2.0] - 2025-12-08
 
 ### Added

@@ -106,11 +106,37 @@ router.get('/check-git/*', (req, res) => {
 });
 
 /**
+ * GET /api/workspaces/available-projects
+ * 获取所有渠道（Claude/Codex/Gemini）的项目并集
+ */
+router.get('/available-projects', (req, res) => {
+  try {
+    const projects = workspaceService.getAllAvailableProjects();
+    res.json({
+      success: true,
+      data: projects
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+/**
  * GET /api/workspaces/:id
  * 获取单个工作区详情
  */
-router.get('/:id', (req, res) => {
+// 注意：此路由需要放在所有静态子路由之后，避免把 /available-projects 等路径当成 id
+router.get('/:id', (req, res, next) => {
   try {
+    // 兜底：即便路由顺序被改动，也避免把保留路径当成工作区 ID
+    const reservedIds = new Set(['available-projects', 'read-file']);
+    if (reservedIds.has(req.params.id)) {
+      return next();
+    }
+
     const workspace = workspaceService.getWorkspace(req.params.id);
     if (!workspace) {
       return res.status(404).json({
@@ -147,7 +173,7 @@ router.get('/:id', (req, res) => {
  */
 router.post('/', (req, res) => {
   try {
-    const { name, description, baseDir, projects, configTemplateId } = req.body;
+    const { name, description, baseDir, projects, configTemplateId, permissionTemplate } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -185,7 +211,8 @@ router.post('/', (req, res) => {
       description,
       baseDir,
       projects,
-      configTemplateId
+      configTemplateId,
+      permissionTemplate
     });
 
     res.json({
@@ -323,25 +350,6 @@ router.delete('/:id/projects/:projectName', (req, res) => {
 });
 
 /**
- * GET /api/workspaces/available-projects
- * 获取所有渠道（Claude/Codex/Gemini）的项目并集
- */
-router.get('/available-projects', (req, res) => {
-  try {
-    const projects = workspaceService.getAllAvailableProjects();
-    res.json({
-      success: true,
-      data: projects
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-/**
  * POST /api/workspaces/:id/launch
  * 获取在工作区启动 CLI 工具的命令
  * Body: { tool: 'claude' | 'codex' | 'gemini', projectName?: string }
@@ -362,39 +370,6 @@ router.post('/:id/launch', (req, res) => {
     res.json({
       success: true,
       data: launchInfo
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-});
-
-/**
- * GET /api/workspaces/check-git/:projectPath
- * 检查项目是否是 git 仓库并获取 worktrees
- */
-router.get('/check-git/*', (req, res) => {
-  try {
-    const projectPath = req.params[0];
-
-    if (!projectPath) {
-      return res.status(400).json({
-        success: false,
-        message: '项目路径不能为空'
-      });
-    }
-
-    const isGit = workspaceService.isGitRepo(projectPath);
-    const worktrees = isGit ? workspaceService.getGitWorktrees(projectPath) : [];
-
-    res.json({
-      success: true,
-      data: {
-        isGitRepo: isGit,
-        worktrees
-      }
     });
   } catch (error) {
     res.status(500).json({

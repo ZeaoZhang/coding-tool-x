@@ -5,6 +5,7 @@ import SessionList from '../views/SessionList.vue'
 import Terminal from '../views/Terminal.vue'
 import WorkspaceManager from '../views/WorkspaceManager.vue'
 import ConfigTemplates from '../views/ConfigTemplates.vue'
+import SkillManager from '../views/SkillManager.vue'
 
 const routes = [
   {
@@ -86,6 +87,12 @@ const routes = [
     path: '/config-templates',
     name: 'config-templates',
     component: ConfigTemplates
+  },
+  // 技能管理路由
+  {
+    path: '/skills',
+    name: 'skills',
+    component: SkillManager
   },
   // 404 重定向到首页
   {

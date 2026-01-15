@@ -245,4 +245,192 @@ router.delete('/:scope/:fileName', (req, res) => {
   }
 });
 
+// ==================== 仓库管理 API ====================
+
+/**
+ * 获取所有代理（包括远程仓库）
+ * GET /api/agents/all
+ * Query: projectPath, refresh=1 强制刷新缓存
+ */
+router.get('/all', async (req, res) => {
+  try {
+    const { projectPath, refresh } = req.query;
+    const forceRefresh = refresh === '1';
+    const result = await agentsService.listAllAgents(projectPath || null, forceRefresh);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Agents API] List all agents error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 获取仓库列表
+ * GET /api/agents/repos
+ */
+router.get('/repos', (req, res) => {
+  try {
+    const repos = agentsService.getRepos();
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Agents API] Get repos error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 添加仓库
+ * POST /api/agents/repos
+ * Body: { owner, name, branch, directory, enabled }
+ */
+router.post('/repos', (req, res) => {
+  try {
+    const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
+
+    if (!owner || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing owner or name'
+      });
+    }
+
+    const repos = agentsService.addRepo({ owner, name, branch, directory, enabled });
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Agents API] Add repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 删除仓库
+ * DELETE /api/agents/repos/:owner/:name
+ * Query: directory - 可选，子目录路径
+ */
+router.delete('/repos/:owner/:name', (req, res) => {
+  try {
+    const { owner, name } = req.params;
+    const { directory = '' } = req.query;
+    const repos = agentsService.removeRepo(owner, name, directory);
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Agents API] Remove repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 切换仓库启用状态
+ * PUT /api/agents/repos/:owner/:name/toggle
+ * Body: { enabled, directory }
+ */
+router.put('/repos/:owner/:name/toggle', (req, res) => {
+  try {
+    const { owner, name } = req.params;
+    const { enabled, directory = '' } = req.body;
+
+    const repos = agentsService.toggleRepo(owner, name, directory, enabled);
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Agents API] Toggle repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 从远程仓库安装代理
+ * POST /api/agents/install
+ * Body: agent object from listAllAgents
+ */
+router.post('/install', async (req, res) => {
+  try {
+    const agent = req.body;
+
+    if (!agent || !agent.repoOwner || !agent.repoName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing agent info or repo info'
+      });
+    }
+
+    const result = await agentsService.installFromRemote(agent);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Agents API] Install agent error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 卸载代理
+ * POST /api/agents/uninstall
+ * Body: { fileName } - 代理的文件名（不含扩展名）
+ */
+router.post('/uninstall', (req, res) => {
+  try {
+    const { fileName } = req.body;
+
+    if (!fileName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing fileName'
+      });
+    }
+
+    const result = agentsService.uninstallAgent(fileName);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Agents API] Uninstall agent error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
 module.exports = router;

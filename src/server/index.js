@@ -143,6 +143,9 @@ async function startServer(port) {
   // 配置模板 API
   app.use('/api/config-templates', require('./api/config-templates'));
 
+  // 命令执行权限 API
+  app.use('/api/permissions', require('./api/permissions'));
+
   // 健康检查 API
   app.use('/api/health-check', require('./api/health-check')(config));
 

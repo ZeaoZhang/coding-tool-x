@@ -20,6 +20,7 @@
 import { computed } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import AgentsPanel from './AgentsPanel.vue'
+import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
   visible: Boolean
@@ -27,7 +28,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible'])
 
-const { drawerWidth } = useResponsiveDrawer(800, 700)
+const { drawerWidth } = useResponsiveDrawer(520)
 
 const visible = computed({
   get: () => props.visible,

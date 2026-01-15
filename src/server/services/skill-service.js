@@ -13,10 +13,17 @@ const http = require('http');
 const { createWriteStream } = require('fs');
 const { pipeline } = require('stream/promises');
 const AdmZip = require('adm-zip');
+const {
+  parseSkillContent,
+  detectSkillFormat,
+  convertSkillToCodex,
+  convertSkillToClaude
+} = require('./format-converter');
 
 // 默认仓库源 - 只预设官方仓库，其他由用户手动添加
+// directory 字段支持指定仓库子目录
 const DEFAULT_REPOS = [
-  { owner: 'anthropics', name: 'skills', branch: 'main', enabled: true }
+  { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
 ];
 
 // 缓存有效期（5分钟）
@@ -70,10 +77,21 @@ class SkillService {
 
   /**
    * 添加仓库
+   * @param {Object} repo - 仓库配置
+   * @param {string} repo.owner - 仓库所有者
+   * @param {string} repo.name - 仓库名称
+   * @param {string} repo.branch - 分支名称
+   * @param {string} [repo.directory] - 扫描的子目录路径（可选）
+   * @param {boolean} repo.enabled - 是否启用
    */
   addRepo(repo) {
     const repos = this.loadRepos();
-    const existingIndex = repos.findIndex(r => r.owner === repo.owner && r.name === repo.name);
+    // 使用 owner/name/directory 作为唯一标识
+    const existingIndex = repos.findIndex(r =>
+      r.owner === repo.owner &&
+      r.name === repo.name &&
+      (r.directory || '') === (repo.directory || '')
+    );
 
     if (existingIndex >= 0) {
       repos[existingIndex] = repo;
@@ -82,28 +100,52 @@ class SkillService {
     }
 
     this.saveRepos(repos);
+    // 清除缓存
+    this.skillsCache = null;
+    this.cacheTime = 0;
     return repos;
   }
 
   /**
    * 删除仓库
+   * @param {string} owner - 仓库所有者
+   * @param {string} name - 仓库名称
+   * @param {string} [directory=''] - 子目录路径
    */
-  removeRepo(owner, name) {
+  removeRepo(owner, name, directory = '') {
     const repos = this.loadRepos();
-    const filtered = repos.filter(r => !(r.owner === owner && r.name === name));
+    const filtered = repos.filter(r => !(
+      r.owner === owner &&
+      r.name === name &&
+      (r.directory || '') === directory
+    ));
     this.saveRepos(filtered);
+    // 清除缓存
+    this.skillsCache = null;
+    this.cacheTime = 0;
     return filtered;
   }
 
   /**
    * 切换仓库启用状态
+   * @param {string} owner - 仓库所有者
+   * @param {string} name - 仓库名称
+   * @param {string} [directory=''] - 子目录路径
+   * @param {boolean} enabled - 是否启用
    */
-  toggleRepo(owner, name, enabled) {
+  toggleRepo(owner, name, directory = '', enabled) {
     const repos = this.loadRepos();
-    const repo = repos.find(r => r.owner === owner && r.name === name);
+    const repo = repos.find(r =>
+      r.owner === owner &&
+      r.name === name &&
+      (r.directory || '') === directory
+    );
     if (repo) {
       repo.enabled = enabled;
       this.saveRepos(repos);
+      // 清除缓存
+      this.skillsCache = null;
+      this.cacheTime = 0;
     }
     return repos;
   }
@@ -229,6 +271,7 @@ class SkillService {
 
   /**
    * 从 GitHub 仓库获取技能列表（使用 Tree API 一次性获取）
+   * 支持指定子目录扫描
    */
   async fetchRepoSkills(repo) {
     const skills = [];
@@ -243,10 +286,21 @@ class SkillService {
         return skills;
       }
 
-      // 找到所有 SKILL.md 文件
-      const skillFiles = tree.tree.filter(item =>
-        item.type === 'blob' && item.path.endsWith('/SKILL.md')
-      );
+      // 获取基础目录（如果配置了 directory）
+      const baseDir = repo.directory || '';
+      const baseDirPrefix = baseDir ? `${baseDir}/` : '';
+
+      // 找到所有 SKILL.md 文件（如果配置了子目录，只扫描该目录下的）
+      const skillFiles = tree.tree.filter(item => {
+        if (item.type !== 'blob' || !item.path.endsWith('/SKILL.md')) {
+          return false;
+        }
+        // 如果配置了子目录，只返回该子目录下的文件
+        if (baseDir && !item.path.startsWith(baseDirPrefix)) {
+          return false;
+        }
+        return true;
+      });
 
       // 并行获取所有 SKILL.md 的内容（限制并发数）
       const batchSize = 5;
@@ -254,7 +308,7 @@ class SkillService {
       for (let i = 0; i < skillFiles.length; i += batchSize) {
         const batch = skillFiles.slice(i, i + batchSize);
         const results = await Promise.allSettled(
-          batch.map(file => this.fetchAndParseSkill(file, repo))
+          batch.map(file => this.fetchAndParseSkill(file, repo, baseDir))
         );
 
         for (const result of results) {
@@ -273,26 +327,34 @@ class SkillService {
 
   /**
    * 获取并解析单个 SKILL.md
+   * @param {Object} file - GitHub tree 文件对象
+   * @param {Object} repo - 仓库配置
+   * @param {string} baseDir - 基础目录（用于计算相对路径）
    */
-  async fetchAndParseSkill(file, repo) {
+  async fetchAndParseSkill(file, repo, baseDir = '') {
     try {
       // 从路径提取目录名 (e.g., "algorithmic-art/SKILL.md" -> "algorithmic-art")
-      const directory = file.path.replace(/\/SKILL\.md$/, '');
+      const fullDirectory = file.path.replace(/\/SKILL\.md$/, '');
+
+      // 计算相对于 baseDir 的目录名（用于显示和安装）
+      const directory = baseDir ? fullDirectory.slice(baseDir.length + 1) : fullDirectory;
 
       // 使用 raw.githubusercontent.com 获取文件内容（不消耗 API 限额）
       const content = await this.fetchBlobContent(file.sha, repo, file.path);
       const metadata = this.parseSkillMd(content);
 
       return {
-        key: `${repo.owner}/${repo.name}:${directory}`,
+        key: `${repo.owner}/${repo.name}:${fullDirectory}`,
         name: metadata.name || directory.split('/').pop(),
         description: metadata.description || '',
-        directory,
+        directory,  // 相对目录（用于安装）
+        fullDirectory,  // 完整目录（用于从仓库下载）
         installed: this.isInstalled(directory),
-        readmeUrl: `https://github.com/${repo.owner}/${repo.name}/tree/${repo.branch}/${directory}`,
+        readmeUrl: `https://github.com/${repo.owner}/${repo.name}/tree/${repo.branch}/${fullDirectory}`,
         repoOwner: repo.owner,
         repoName: repo.name,
         repoBranch: repo.branch,
+        repoDirectory: repo.directory || '',  // 仓库配置的子目录
         license: metadata.license
       };
     } catch (err) {
@@ -545,55 +607,40 @@ class SkillService {
   }
 
   /**
-   * 解析 SKILL.md 文件
+   * 解析 SKILL.md 文件（支持 Claude Code 和 Codex CLI 格式）
    */
   parseSkillMd(content) {
-    const result = {
-      name: null,
-      description: null,
-      license: null,
-      allowedTools: [],
-      metadata: {}
+    // 使用格式转换器统一解析
+    const parsed = parseSkillContent(content);
+
+    return {
+      name: parsed.name || null,
+      description: parsed.description || null,
+      license: parsed.license || null,
+      allowedTools: parsed.allowedTools ? [parsed.allowedTools] : [],
+      metadata: parsed.metadata || {},
+      shortDescription: parsed.shortDescription || null,
+      format: parsed.format
     };
+  }
 
-    // 移除 BOM
-    content = content.trim().replace(/^\uFEFF/, '');
+  /**
+   * 转换技能格式
+   * @param {string} content - 技能内容
+   * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
+   */
+  convertSkillFormat(content, targetFormat) {
+    const sourceFormat = detectSkillFormat(content);
 
-    // 解析 YAML frontmatter
-    const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
-    if (!match) return result;
-
-    const frontmatter = match[1];
-
-    // 简单解析 YAML
-    const lines = frontmatter.split('\n');
-    for (const line of lines) {
-      const colonIndex = line.indexOf(':');
-      if (colonIndex === -1) continue;
-
-      const key = line.slice(0, colonIndex).trim();
-      let value = line.slice(colonIndex + 1).trim();
-
-      // 去除引号
-      if ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-
-      switch (key) {
-        case 'name':
-          result.name = value;
-          break;
-        case 'description':
-          result.description = value;
-          break;
-        case 'license':
-          result.license = value;
-          break;
-      }
+    if (sourceFormat === targetFormat) {
+      return { content, warnings: [], format: targetFormat };
     }
 
-    return result;
+    if (targetFormat === 'codex') {
+      return convertSkillToCodex(content);
+    } else {
+      return convertSkillToClaude(content);
+    }
   }
 
   /**
@@ -702,14 +749,20 @@ class SkillService {
 
   /**
    * 安装技能
+   * @param {string} directory - 本地安装目录（相对于 installDir）
+   * @param {Object} repo - 仓库配置
+   * @param {string} [fullDirectory] - 仓库中的完整路径（可选，默认与 directory 相同）
    */
-  async installSkill(directory, repo) {
+  async installSkill(directory, repo, fullDirectory = null) {
     const dest = path.join(this.installDir, directory);
 
     // 已安装则跳过
     if (fs.existsSync(dest)) {
       return { success: true, message: 'Already installed' };
     }
+
+    // 使用 fullDirectory（仓库中的完整路径）或 directory（向后兼容）
+    const sourcePath = fullDirectory || directory;
 
     // 下载仓库 ZIP
     const zipUrl = `https://github.com/${repo.owner}/${repo.name}/archive/refs/heads/${repo.branch}.zip`;
@@ -736,10 +789,10 @@ class SkillService {
       }
 
       const repoDir = path.join(tempDir, extractedDirs[0]);
-      const sourceDir = path.join(repoDir, directory);
+      const sourceDir = path.join(repoDir, sourcePath);
 
       if (!fs.existsSync(sourceDir)) {
-        throw new Error(`Skill directory not found: ${directory}`);
+        throw new Error(`Skill directory not found: ${sourcePath}`);
       }
 
       // 复制到安装目录

@@ -9,9 +9,6 @@
           </template>
         </n-button>
         <span class="panel-title">Custom Commands</span>
-        <n-tag type="info" size="small" :bordered="false">
-          {{ commands.length }}
-        </n-tag>
       </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
@@ -31,11 +28,6 @@
 
     <!-- Drawer 模式下的简化头部 -->
     <div class="drawer-header-bar" v-if="props.inDrawer">
-      <div class="header-left">
-        <n-tag type="info" size="small" :bordered="false">
-          {{ commands.length }}
-        </n-tag>
-      </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
@@ -50,6 +42,16 @@
           刷新
         </n-button>
       </div>
+    </div>
+
+    <!-- 统计栏 -->
+    <div class="stats-bar">
+      <span class="stats-text">
+        共 {{ commands.length }} 个命令
+        <template v-if="commands.length > 0">
+          · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
+        </template>
+      </span>
     </div>
 
     <!-- 搜索和筛选 -->
@@ -154,7 +156,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import {
-  NButton, NInput, NSelect, NIcon, NTag, NSpin, NEmpty,
+  NButton, NInput, NSelect, NIcon, NSpin, NEmpty,
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode
 } from 'naive-ui'
 import {
@@ -202,6 +204,9 @@ const scopeOptions = [
   { label: '用户级', value: 'user' },
   { label: '项目级', value: 'project' }
 ]
+
+const userCount = computed(() => commands.value.filter(c => c.scope === 'user').length)
+const projectCount = computed(() => commands.value.filter(c => c.scope === 'project').length)
 
 const filteredCommands = computed(() => {
   let result = commands.value
@@ -334,6 +339,19 @@ onMounted(() => {
   padding: 4px 8px;
 }
 
+.stats-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.stats-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .filter-bar {
   display: flex;
   gap: 10px;
@@ -402,6 +420,10 @@ onMounted(() => {
 }
 
 .commands-panel.in-drawer .filter-bar {
+  padding: 10px 12px;
+}
+
+.commands-panel.in-drawer .stats-bar {
   padding: 10px 12px;
 }
 

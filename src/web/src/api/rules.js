@@ -18,6 +18,20 @@ export async function getRules(projectPath = null) {
 }
 
 /**
+ * 获取所有规则（包括远程仓库）
+ * @param {string} projectPath - 项目路径（可选）
+ * @param {boolean} forceRefresh - 是否强制刷新缓存
+ */
+export async function getAllRules(projectPath = null, forceRefresh = false) {
+  const params = {}
+  if (projectPath) params.projectPath = projectPath
+  if (forceRefresh) params.refresh = '1'
+
+  const response = await client.get('/rules/all', { params })
+  return response.data
+}
+
+/**
  * 获取规则统计
  * @param {string} projectPath - 项目路径
  */
@@ -90,5 +104,67 @@ export async function deleteRule(relativePath, scope, projectPath = null) {
   // 移除 .md 后缀以符合 API 路由
   const pathWithoutExt = relativePath.replace(/\.md$/, '')
   const response = await client.delete(`/rules/${scope}/${pathWithoutExt}`, { params })
+  return response.data
+}
+
+// ==================== 仓库管理 ====================
+
+/**
+ * 获取仓库列表
+ */
+export async function getRuleRepos() {
+  const response = await client.get('/rules/repos')
+  return response.data
+}
+
+/**
+ * 添加仓库
+ * @param {object} repo - { owner, name, branch, directory, enabled }
+ */
+export async function addRuleRepo(repo) {
+  const response = await client.post('/rules/repos', repo)
+  return response.data
+}
+
+/**
+ * 删除仓库
+ * @param {string} owner
+ * @param {string} name
+ * @param {string} [directory] - 子目录路径
+ */
+export async function removeRuleRepo(owner, name, directory = '') {
+  const response = await client.delete(`/rules/repos/${owner}/${name}`, {
+    params: { directory }
+  })
+  return response.data
+}
+
+/**
+ * 切换仓库启用状态
+ * @param {string} owner
+ * @param {string} name
+ * @param {boolean} enabled
+ * @param {string} [directory] - 子目录路径
+ */
+export async function toggleRuleRepo(owner, name, enabled, directory = '') {
+  const response = await client.put(`/rules/repos/${owner}/${name}/toggle`, { enabled, directory })
+  return response.data
+}
+
+/**
+ * 从远程仓库安装规则
+ * @param {object} rule - 规则对象
+ */
+export async function installRule(rule) {
+  const response = await client.post('/rules/install', rule)
+  return response.data
+}
+
+/**
+ * 卸载规则
+ * @param {string} path - 规则的相对路径
+ */
+export async function uninstallRule(path) {
+  const response = await client.post('/rules/uninstall', { path })
   return response.data
 }

@@ -5,14 +5,27 @@
  * 命令目录:
  * - 用户级: ~/.claude/commands/
  * - 项目级: .claude/commands/
+ *
+ * 支持从 GitHub 仓库扫描和安装命令
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { RepoScannerBase } = require('./repo-scanner-base');
+const {
+  parseCommandContent,
+  detectCommandFormat,
+  convertCommandToCodex,
+  convertCommandToClaude,
+  parseFrontmatter
+} = require('./format-converter');
 
 // 命令目录路径
 const USER_COMMANDS_DIR = path.join(os.homedir(), '.claude', 'commands');
+
+// 默认仓库源
+const DEFAULT_REPOS = [];
 
 /**
  * 确保目录存在
@@ -24,51 +37,9 @@ function ensureDir(dirPath) {
 }
 
 /**
- * 解析 YAML frontmatter
+ * 生成 frontmatter 字符串（用于命令创建/更新）
  */
-function parseFrontmatter(content) {
-  const result = {
-    frontmatter: {},
-    body: content
-  };
-
-  // 移除 BOM
-  content = content.trim().replace(/^\uFEFF/, '');
-
-  // 解析 YAML frontmatter
-  const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
-  if (!match) {
-    return result;
-  }
-
-  const frontmatterText = match[1];
-  result.body = match[2].trim();
-
-  // 简单解析 YAML（支持基本字段）
-  const lines = frontmatterText.split('\n');
-  for (const line of lines) {
-    const colonIndex = line.indexOf(':');
-    if (colonIndex === -1) continue;
-
-    const key = line.slice(0, colonIndex).trim();
-    let value = line.slice(colonIndex + 1).trim();
-
-    // 去除引号
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-
-    result.frontmatter[key] = value;
-  }
-
-  return result;
-}
-
-/**
- * 生成 frontmatter 字符串
- */
-function generateFrontmatter(data) {
+function generateCommandFrontmatter(data) {
   const lines = ['---'];
 
   if (data.description) {
@@ -79,6 +50,15 @@ function generateFrontmatter(data) {
   }
   if (data['argument-hint']) {
     lines.push(`argument-hint: ${data['argument-hint']}`);
+  }
+  if (data.model) {
+    lines.push(`model: ${data.model}`);
+  }
+  if (data.context) {
+    lines.push(`context: ${data.context}`);
+  }
+  if (data.agent) {
+    lines.push(`agent: ${data.agent}`);
   }
 
   lines.push('---');
@@ -142,11 +122,95 @@ function scanCommandsDir(dir, basePath, scope) {
 }
 
 /**
+ * Commands 仓库扫描器
+ */
+class CommandsRepoScanner extends RepoScannerBase {
+  constructor() {
+    super({
+      type: 'commands',
+      installDir: USER_COMMANDS_DIR,
+      markerFile: null, // 直接扫描 .md 文件
+      fileExtension: '.md',
+      defaultRepos: DEFAULT_REPOS
+    });
+  }
+
+  /**
+   * 获取并解析单个命令文件
+   */
+  async fetchAndParseItem(file, repo, baseDir) {
+    try {
+      // 计算相对路径
+      const relativePath = baseDir ? file.path.slice(baseDir.length + 1) : file.path;
+      const fileName = path.basename(file.path, '.md');
+      const namespace = path.dirname(relativePath);
+
+      // 获取文件内容
+      const content = await this.fetchRawContent(repo, file.path);
+      const { frontmatter, body } = this.parseFrontmatter(content);
+
+      return {
+        key: `${repo.owner}/${repo.name}:${relativePath}`,
+        name: fileName,
+        namespace: namespace === '.' ? null : namespace,
+        scope: 'remote',
+        path: relativePath,
+        repoPath: file.path,
+        description: frontmatter.description || '',
+        allowedTools: frontmatter['allowed-tools'] || '',
+        argumentHint: frontmatter['argument-hint'] || '',
+        body,
+        fullContent: content,
+        installed: this.isInstalled(relativePath),
+        readmeUrl: `https://github.com/${repo.owner}/${repo.name}/blob/${repo.branch}/${file.path}`,
+        repoOwner: repo.owner,
+        repoName: repo.name,
+        repoBranch: repo.branch,
+        repoDirectory: repo.directory || ''
+      };
+    } catch (err) {
+      console.warn(`[CommandsRepoScanner] Parse command ${file.path} error:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * 检查命令是否已安装
+   */
+  isInstalled(relativePath) {
+    const fullPath = path.join(this.installDir, relativePath);
+    return fs.existsSync(fullPath);
+  }
+
+  /**
+   * 获取去重 key
+   */
+  getDedupeKey(item) {
+    // 使用 namespace/name 作为去重 key
+    return item.namespace ? `${item.namespace}/${item.name}`.toLowerCase() : item.name.toLowerCase();
+  }
+
+  /**
+   * 安装命令
+   */
+  async installCommand(item) {
+    const repo = {
+      owner: item.repoOwner,
+      name: item.repoName,
+      branch: item.repoBranch
+    };
+
+    return this.installFromRepo(item.repoPath, repo, item.path);
+  }
+}
+
+/**
  * Commands 服务类
  */
 class CommandsService {
   constructor() {
     this.userCommandsDir = USER_COMMANDS_DIR;
+    this.repoScanner = new CommandsRepoScanner();
     ensureDir(this.userCommandsDir);
   }
 
@@ -176,6 +240,52 @@ class CommandsService {
       total: commands.length,
       userCount: userCommands.length,
       projectCount: commands.length - userCommands.length
+    };
+  }
+
+  /**
+   * 获取所有命令（包括远程仓库）
+   * @param {boolean} forceRefresh - 强制刷新远程缓存
+   */
+  async listAllCommands(projectPath = null, forceRefresh = false) {
+    // 获取本地命令
+    const { commands: localCommands, userCount, projectCount } = this.listCommands(projectPath);
+
+    // 获取远程命令
+    let remoteCommands = [];
+    try {
+      remoteCommands = await this.repoScanner.listRemoteItems(forceRefresh);
+
+      // 更新安装状态
+      for (const cmd of remoteCommands) {
+        cmd.installed = this.repoScanner.isInstalled(cmd.path);
+      }
+    } catch (err) {
+      console.warn('[CommandsService] Failed to fetch remote commands:', err.message);
+    }
+
+    // 合并列表（本地优先）
+    const allCommands = [...localCommands];
+    const localKeys = new Set(localCommands.map(c =>
+      c.namespace ? `${c.namespace}/${c.name}`.toLowerCase() : c.name.toLowerCase()
+    ));
+
+    for (const remote of remoteCommands) {
+      const key = remote.namespace ? `${remote.namespace}/${remote.name}`.toLowerCase() : remote.name.toLowerCase();
+      if (!localKeys.has(key)) {
+        allCommands.push(remote);
+      }
+    }
+
+    // 排序
+    allCommands.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+    return {
+      commands: allCommands,
+      total: allCommands.length,
+      userCount,
+      projectCount,
+      remoteCount: remoteCommands.length
     };
   }
 
@@ -250,7 +360,7 @@ class CommandsService {
 
     let content = '';
     if (Object.keys(frontmatterData).length > 0) {
-      content = generateFrontmatter(frontmatterData) + '\n\n';
+      content = generateCommandFrontmatter(frontmatterData) + '\n\n';
     }
     content += body || '';
 
@@ -285,7 +395,7 @@ class CommandsService {
 
     let content = '';
     if (Object.keys(frontmatterData).length > 0) {
-      content = generateFrontmatter(frontmatterData) + '\n\n';
+      content = generateCommandFrontmatter(frontmatterData) + '\n\n';
     }
     content += body || '';
 
@@ -353,8 +463,82 @@ class CommandsService {
       namespaces
     };
   }
+
+  // ==================== 仓库管理 ====================
+
+  /**
+   * 获取仓库列表
+   */
+  getRepos() {
+    return this.repoScanner.loadRepos();
+  }
+
+  /**
+   * 添加仓库
+   */
+  addRepo(repo) {
+    return this.repoScanner.addRepo(repo);
+  }
+
+  /**
+   * 删除仓库
+   */
+  removeRepo(owner, name, directory = '') {
+    return this.repoScanner.removeRepo(owner, name, directory);
+  }
+
+  /**
+   * 切换仓库启用状态
+   */
+  toggleRepo(owner, name, directory = '', enabled) {
+    return this.repoScanner.toggleRepo(owner, name, directory, enabled);
+  }
+
+  /**
+   * 从远程仓库安装命令
+   */
+  async installFromRemote(command) {
+    return this.repoScanner.installCommand(command);
+  }
+
+  /**
+   * 卸载命令
+   */
+  uninstallCommand(relativePath) {
+    return this.repoScanner.uninstall(relativePath);
+  }
+
+  // ==================== 格式转换 ====================
+
+  /**
+   * 转换命令格式
+   * @param {string} content - 命令内容
+   * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
+   */
+  convertCommandFormat(content, targetFormat) {
+    const sourceFormat = detectCommandFormat(content);
+
+    if (sourceFormat === targetFormat) {
+      return { content, warnings: [], format: targetFormat };
+    }
+
+    if (targetFormat === 'codex') {
+      return convertCommandToCodex(content);
+    } else {
+      return convertCommandToClaude(content);
+    }
+  }
+
+  /**
+   * 检测命令格式
+   * @param {string} content - 命令内容
+   */
+  detectFormat(content) {
+    return detectCommandFormat(content);
+  }
 }
 
 module.exports = {
-  CommandsService
+  CommandsService,
+  DEFAULT_REPOS
 };
