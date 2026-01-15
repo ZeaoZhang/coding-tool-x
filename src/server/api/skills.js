@@ -83,11 +83,13 @@ router.get('/installed', (req, res) => {
 /**
  * 安装技能
  * POST /api/skills/install
- * Body: { directory, repo: { owner, name, branch } }
+ * Body: { directory, fullDirectory, repo: { owner, name, branch } }
+ * - directory: 本地安装目录（相对路径）
+ * - fullDirectory: 仓库中的完整路径（当指定了仓库子目录时使用）
  */
 router.post('/install', async (req, res) => {
   try {
-    const { directory, repo } = req.body;
+    const { directory, fullDirectory, repo } = req.body;
 
     if (!directory) {
       return res.status(400).json({
@@ -103,11 +105,15 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const result = await skillService.installSkill(directory, {
-      owner: repo.owner,
-      name: repo.name,
-      branch: repo.branch || 'main'
-    });
+    const result = await skillService.installSkill(
+      directory,
+      {
+        owner: repo.owner,
+        name: repo.name,
+        branch: repo.branch || 'main'
+      },
+      fullDirectory || null  // 传递 fullDirectory 用于从仓库子目录下载
+    );
 
     res.json({
       success: true,
@@ -227,11 +233,12 @@ router.get('/repos', (req, res) => {
 /**
  * 添加仓库
  * POST /api/skills/repos
- * Body: { owner, name, branch, enabled }
+ * Body: { owner, name, branch, directory, enabled }
+ * - directory: 可选，指定扫描的子目录路径
  */
 router.post('/repos', (req, res) => {
   try {
-    const { owner, name, branch = 'main', enabled = true } = req.body;
+    const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
 
     if (!owner || !name) {
       return res.status(400).json({
@@ -240,7 +247,7 @@ router.post('/repos', (req, res) => {
       });
     }
 
-    const repos = skillService.addRepo({ owner, name, branch, enabled });
+    const repos = skillService.addRepo({ owner, name, branch, directory, enabled });
 
     res.json({
       success: true,
@@ -258,11 +265,13 @@ router.post('/repos', (req, res) => {
 /**
  * 删除仓库
  * DELETE /api/skills/repos/:owner/:name
+ * Query: directory - 可选，子目录路径
  */
 router.delete('/repos/:owner/:name', (req, res) => {
   try {
     const { owner, name } = req.params;
-    const repos = skillService.removeRepo(owner, name);
+    const { directory = '' } = req.query;
+    const repos = skillService.removeRepo(owner, name, directory);
 
     res.json({
       success: true,
@@ -280,14 +289,15 @@ router.delete('/repos/:owner/:name', (req, res) => {
 /**
  * 切换仓库启用状态
  * PUT /api/skills/repos/:owner/:name/toggle
- * Body: { enabled }
+ * Body: { enabled, directory }
+ * - directory: 可选，子目录路径
  */
 router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
     const { owner, name } = req.params;
-    const { enabled } = req.body;
+    const { enabled, directory = '' } = req.body;
 
-    const repos = skillService.toggleRepo(owner, name, enabled);
+    const repos = skillService.toggleRepo(owner, name, directory, enabled);
 
     res.json({
       success: true,
@@ -295,6 +305,48 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Toggle repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+// ==================== 格式转换 API ====================
+
+/**
+ * 转换技能格式
+ * POST /api/skills/convert
+ * Body: { content, targetFormat }
+ * - content: 技能内容
+ * - targetFormat: 目标格式 ('claude' | 'codex')
+ */
+router.post('/convert', (req, res) => {
+  try {
+    const { content, targetFormat } = req.body;
+
+    if (!content) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供技能内容'
+      });
+    }
+
+    if (!['claude', 'codex'].includes(targetFormat)) {
+      return res.status(400).json({
+        success: false,
+        message: '目标格式必须是 claude 或 codex'
+      });
+    }
+
+    const result = skillService.convertSkillFormat(content, targetFormat);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Skills API] Convert skill error:', err);
     res.status(500).json({
       success: false,
       message: err.message

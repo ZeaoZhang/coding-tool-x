@@ -77,7 +77,7 @@
           <div class="skills-quick-panel">
             <div class="panel-title">
               <span>已安装的技能</span>
-              <n-button text size="tiny" @click="showSkillsPanel = true">
+              <n-button text size="tiny" @click="openSkillsManager">
                 管理全部
               </n-button>
             </div>
@@ -117,7 +117,7 @@
             <n-button
               text
               class="skills-button"
-              @click="showSkillsPanel = true"
+              @click="openSkillsManager"
               title="Skills 技能管理"
             >
               <template #icon>
@@ -147,15 +147,8 @@
       </n-button>
     </div>
 
-    <!-- Skills 面板 (覆盖内容区) -->
-    <SkillsPanel
-      v-if="showSkillsPanel"
-      @back="showSkillsPanel = false"
-      @updated="loadInstalledSkills"
-    />
-
     <!-- 滚动内容区 -->
-    <div v-if="!isLocked && !showSkillsPanel" class="channel-content">
+    <div v-if="!isLocked" class="channel-content">
       <!-- 代理控制 -->
       <div class="card">
         <div class="card-header">
@@ -401,7 +394,7 @@
     </div>
 
     <!-- 锁定状态 UI -->
-    <div v-if="isLocked && !showSkillsPanel" class="locked-overlay" :class="`locked-${channelType}`">
+    <div v-if="isLocked" class="locked-overlay" :class="`locked-${channelType}`">
       <div class="locked-content">
         <div class="lock-icon">
           <n-icon :size="48">
@@ -451,7 +444,6 @@ import {
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
-import SkillsPanel from '../SkillsPanel.vue'
 import {
   getUIConfig,
   updateNestedUIConfig
@@ -615,7 +607,6 @@ function animateValue(key, startValue, endValue, duration = 600) {
 const showRecentSessions = ref(false)
 
 // Skills 面板（仅 Claude）
-const showSkillsPanel = ref(false)
 const installedSkillsCount = ref(0)
 const installedSkills = ref([])
 
@@ -1098,12 +1089,9 @@ function setupStatsTimer() {
   }, delay)
 }
 
-// 监听 Skills 面板关闭后刷新计数
-watch(showSkillsPanel, (val) => {
-  if (!val && props.channelType === 'claude') {
-    loadInstalledSkillsCount()
-  }
-})
+function openSkillsManager() {
+  window.dispatchEvent(new CustomEvent('open-skills-drawer'))
+}
 
 onMounted(async () => {
   // 先加载 dashboard 聚合数据（只有第一个组件会真正发起请求，其他复用缓存）

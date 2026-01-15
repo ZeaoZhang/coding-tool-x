@@ -1,109 +1,77 @@
 <template>
-  <div class="skills-panel" :class="{ 'in-drawer': props.inDrawer }">
-    <!-- 头部 -->
-    <div class="panel-header" v-if="!props.inDrawer">
+  <div class="skills-panel" :class="{ 'in-drawer': inDrawer }">
+    <!-- 独立模式头部 -->
+    <div class="panel-header" v-if="!inDrawer">
       <div class="header-left">
-        <n-button v-if="!props.hideBack" text @click="handleBack" class="back-btn">
-          <template #icon>
-            <n-icon><ArrowBackOutline /></n-icon>
-          </template>
+        <n-button v-if="!hideBack" text @click="$emit('back')" class="back-btn">
+          <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
         </n-button>
         <span class="panel-title">Skills 技能管理</span>
-        <n-tag type="info" size="small" :bordered="false">
-          {{ installedCount }}/{{ skills.length }}
-        </n-tag>
       </div>
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
-          <template #icon>
-            <n-icon><AddOutline /></n-icon>
-          </template>
+          <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
         </n-button>
         <n-button text @click="showRepoManager = true" class="action-btn">
-          <template #icon>
-            <n-icon><GitBranchOutline /></n-icon>
-          </template>
+          <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
-          <template #icon>
-            <n-icon><RefreshOutline /></n-icon>
-          </template>
+        <n-button text @click="loadData(true)" :loading="loading" class="action-btn">
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
       </div>
     </div>
 
-    <!-- Drawer 模式下的简化头部 -->
-    <div class="drawer-header-bar" v-if="props.inDrawer">
-      <div class="header-left">
-        <n-tag type="info" size="small" :bordered="false">
-          {{ installedCount }}/{{ skills.length }}
-        </n-tag>
-      </div>
+    <!-- 抽屉模式头部 -->
+    <div class="drawer-header-bar" v-if="inDrawer">
       <div class="header-right">
         <n-button text @click="showCreateModal = true" class="action-btn">
-          <template #icon>
-            <n-icon><AddOutline /></n-icon>
-          </template>
+          <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
         </n-button>
         <n-button text @click="showRepoManager = true" class="action-btn">
-          <template #icon>
-            <n-icon><GitBranchOutline /></n-icon>
-          </template>
+          <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
-          <template #icon>
-            <n-icon><RefreshOutline /></n-icon>
-          </template>
+        <n-button text @click="loadData(true)" :loading="loading" class="action-btn">
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
       </div>
     </div>
 
-    <!-- 搜索和筛选 -->
-    <div class="filter-bar">
-      <n-input
-        v-model:value="searchQuery"
-        placeholder="搜索技能..."
-        clearable
-        size="small"
-        class="search-input"
-      >
-        <template #prefix>
-          <n-icon><SearchOutline /></n-icon>
+    <!-- 统计栏 -->
+    <div class="stats-bar">
+      <span class="stats-text">
+        共 {{ skills.length }} 个技能
+        <template v-if="skills.length > 0">
+          · 已安装: {{ installedCount }} · 未安装: {{ skills.length - installedCount }}
         </template>
-      </n-input>
-      <n-select
-        v-model:value="filterStatus"
-        :options="filterOptions"
-        size="small"
-        class="filter-select"
-      />
+      </span>
     </div>
 
-    <!-- 技能列表 -->
-    <div class="skills-content">
+    <!-- 搜索筛选 -->
+    <div class="filter-bar">
+      <n-input v-model:value="searchQuery" placeholder="搜索技能..." clearable size="small" class="search-input">
+        <template #prefix><n-icon><SearchOutline /></n-icon></template>
+      </n-input>
+      <n-select v-model:value="filterStatus" :options="filterOptions" size="small" class="filter-select" />
+    </div>
+
+    <!-- 内容区域 -->
+    <div class="panel-content">
       <n-spin :show="loading">
         <div v-if="filteredSkills.length === 0 && !loading" class="empty-state">
           <n-empty :description="emptyText">
-            <template #icon>
-              <n-icon size="48" color="var(--text-quaternary)">
-                <ExtensionPuzzleOutline />
-              </n-icon>
-            </template>
+            <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="skills.length === 0">
-                配置仓库源
-              </n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="skills.length === 0">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
-
-        <div v-else class="skills-grid">
+        <div v-else class="card-list">
           <SkillCard
             v-for="skill in filteredSkills"
             :key="skill.key"
@@ -118,75 +86,48 @@
       </n-spin>
     </div>
 
-    <!-- 提示信息 -->
+    <!-- 底部提示 -->
     <div class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
       <span>安装/卸载后需重启 Claude Code 生效</span>
     </div>
 
-    <!-- 仓库管理弹窗 -->
-    <SkillRepoManager
-      v-model:visible="showRepoManager"
-      @updated="loadSkills"
-    />
-
-    <!-- 创建技能弹窗 -->
-    <SkillCreateModal
-      v-model:visible="showCreateModal"
-      @created="loadSkills"
-    />
-
-    <!-- 技能详情弹窗 -->
-    <SkillDetailModal
-      v-model:visible="showDetailModal"
-      :skill="selectedSkill"
-      @updated="loadSkills"
-    />
+    <!-- 弹窗组件 -->
+    <SkillRepoManager v-model:visible="showRepoManager" @updated="loadData" />
+    <SkillCreateModal v-model:visible="showCreateModal" @created="loadData" />
+    <SkillDetailModal v-model:visible="showDetailModal" :skill="selectedSkill" @updated="loadData" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { NButton, NInput, NSelect, NIcon, NTag, NSpin, NEmpty } from 'naive-ui'
-import {
-  ArrowBackOutline,
-  GitBranchOutline,
-  RefreshOutline,
-  SearchOutline,
-  InformationCircleOutline,
-  AddOutline,
-  ExtensionPuzzleOutline
-} from '@vicons/ionicons5'
+import { ref, computed, onMounted, watch } from 'vue'
+import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
+import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline } from '@vicons/ionicons5'
 import { getSkills, installSkill, uninstallSkill } from '../api/skills'
-import message from '../utils/message'
 import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
 import SkillCreateModal from './SkillCreateModal.vue'
 import SkillDetailModal from './SkillDetailModal.vue'
 
 const props = defineProps({
-  hideBack: {
-    type: Boolean,
-    default: false
-  },
-  inDrawer: {
-    type: Boolean,
-    default: false
-  }
+  inDrawer: { type: Boolean, default: false },
+  hideBack: { type: Boolean, default: false },
+  drawerVisible: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['back', 'updated'])
+defineEmits(['back', 'updated'])
 
-const skills = ref([])
+const message = useMessage()
 const loading = ref(false)
+const skills = ref([])
 const searchQuery = ref('')
 const filterStatus = ref('all')
 const showRepoManager = ref(false)
 const showCreateModal = ref(false)
 const showDetailModal = ref(false)
 const selectedSkill = ref(null)
-const installingKeys = ref({})  // 正在安装的技能 key -> true
-const uninstallingKeys = ref({})  // 正在卸载的技能 key -> true
+const installingKeys = ref({})
+const uninstallingKeys = ref({})
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -198,32 +139,13 @@ const installedCount = computed(() => skills.value.filter(s => s.installed).leng
 
 const filteredSkills = computed(() => {
   let result = skills.value
-
-  // 按状态筛选
-  if (filterStatus.value === 'installed') {
-    result = result.filter(s => s.installed)
-  } else if (filterStatus.value === 'uninstalled') {
-    result = result.filter(s => !s.installed)
-  }
-
-  // 按搜索词筛选
+  if (filterStatus.value === 'installed') result = result.filter(s => s.installed)
+  else if (filterStatus.value === 'uninstalled') result = result.filter(s => !s.installed)
   if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase()
-    result = result.filter(s =>
-      s.name?.toLowerCase().includes(query) ||
-      s.description?.toLowerCase().includes(query) ||
-      s.directory?.toLowerCase().includes(query)
-    )
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
   }
-
-  // 已安装的排在前面
-  result = [...result].sort((a, b) => {
-    if (a.installed && !b.installed) return -1
-    if (!a.installed && b.installed) return 1
-    return 0
-  })
-
-  return result
+  return [...result].sort((a, b) => (a.installed === b.installed ? 0 : a.installed ? -1 : 1))
 })
 
 const emptyText = computed(() => {
@@ -233,70 +155,35 @@ const emptyText = computed(() => {
   return '暂无可用技能，请配置仓库源'
 })
 
-async function loadSkills(forceRefresh = false) {
+async function loadData(force = false) {
   loading.value = true
   try {
-    const result = await getSkills(forceRefresh)
-    if (result.success) {
-      skills.value = result.skills || []
-    }
+    const res = await getSkills(force)
+    if (res.success) skills.value = res.skills || []
   } catch (err) {
-    message.error('加载技能列表失败: ' + err.message)
+    message.error('加载技能失败: ' + err.message)
   } finally {
     loading.value = false
   }
 }
 
-// 强制刷新（用于刷新按钮）
-function handleRefresh() {
-  loadSkills(true)
-}
-
 async function handleInstall(skill) {
-  if (!skill.repoOwner || !skill.repoName) {
-    message.error('缺少仓库信息，无法安装')
-    return
-  }
-
+  if (!skill.repoOwner) return message.error('缺少仓库信息')
   installingKeys.value[skill.key] = true
   try {
-    const result = await installSkill(skill.directory, {
-      owner: skill.repoOwner,
-      name: skill.repoName,
-      branch: skill.repoBranch || 'main'
-    })
-
-    if (result.success) {
-      message.success(`技能 "${skill.name}" 安装成功`)
-      // 重新加载列表以确保与后端同步
-      await loadSkills(true)
-      // 通知父组件更新
-      emit('updated')
-    }
-  } catch (err) {
-    message.error('安装失败: ' + err.message)
-  } finally {
-    delete installingKeys.value[skill.key]
-  }
+    const res = await installSkill(skill.directory, { owner: skill.repoOwner, name: skill.repoName, branch: skill.repoBranch || 'main' })
+    if (res.success) { message.success(`技能 "${skill.name}" 安装成功`); await loadData(true) }
+  } catch (err) { message.error('安装失败: ' + err.message) }
+  finally { delete installingKeys.value[skill.key] }
 }
 
 async function handleUninstall(skill) {
   uninstallingKeys.value[skill.key] = true
   try {
-    const result = await uninstallSkill(skill.directory)
-
-    if (result.success) {
-      message.success(`技能 "${skill.name}" 已卸载`)
-      // 重新加载列表以确保与后端同步
-      await loadSkills(true)
-      // 通知父组件更新
-      emit('updated')
-    }
-  } catch (err) {
-    message.error('卸载失败: ' + err.message)
-  } finally {
-    delete uninstallingKeys.value[skill.key]
-  }
+    const res = await uninstallSkill(skill.directory)
+    if (res.success) { message.success(`技能 "${skill.name}" 已卸载`); await loadData(true) }
+  } catch (err) { message.error('卸载失败: ' + err.message) }
+  finally { delete uninstallingKeys.value[skill.key] }
 }
 
 function handleCardClick(skill) {
@@ -304,12 +191,10 @@ function handleCardClick(skill) {
   showDetailModal.value = true
 }
 
-function handleBack() {
-  emit('back')
-}
+onMounted(() => loadData())
 
-onMounted(() => {
-  loadSkills()
+watch(() => props.drawerVisible, (val) => {
+  if (val) loadData()
 })
 </script>
 
@@ -317,11 +202,11 @@ onMounted(() => {
 .skills-panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   background: var(--bg-primary);
 }
-
-.panel-header {
+.panel-header, .drawer-header-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -329,79 +214,61 @@ onMounted(() => {
   border-bottom: 1px solid var(--border-primary);
   background: var(--bg-secondary);
 }
-
-.header-left {
+.drawer-header-bar { padding: 8px 12px; }
+.header-left, .header-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
-
-.back-btn {
-  padding: 4px;
-}
-
+.back-btn { padding: 4px; }
 .panel-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .action-btn {
   font-size: 12px;
   padding: 4px 8px;
 }
-
+.stats-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-primary);
+}
+.skills-panel.in-drawer .stats-bar { padding: 10px 12px; }
+.stats-text {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
 .filter-bar {
   display: flex;
   gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-primary);
 }
-
-.search-input {
-  flex: 1;
-}
-
-.filter-select {
-  width: 100px;
-}
-
-.skills-content {
+.skills-panel.in-drawer .filter-bar { padding: 10px 12px; }
+.search-input { flex: 1; }
+.filter-select { width: 100px; }
+.panel-content {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
 }
-
-/* loading 时居中显示 */
-.skills-content :deep(.n-spin-container) {
-  min-height: 300px;
-}
-
-.skills-content :deep(.n-spin-container.n-spin-container--spinning) {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
+.skills-panel.in-drawer .panel-content { padding: 12px; }
+.panel-content :deep(.n-spin-container) { min-height: 200px; }
 .empty-state {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 200px;
 }
-
-.skills-grid {
+.card-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
-
 .panel-footer {
   display: flex;
   align-items: center;
@@ -412,34 +279,6 @@ onMounted(() => {
   border-top: 1px solid var(--border-primary);
   background: var(--bg-secondary);
 }
-
-.info-icon {
-  color: var(--text-quaternary);
-}
-
-/* Drawer 模式样式 */
-.skills-panel.in-drawer {
-  height: 100%;
-}
-
-.drawer-header-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-
-.skills-panel.in-drawer .filter-bar {
-  padding: 10px 12px;
-}
-
-.skills-panel.in-drawer .skills-content {
-  padding: 12px;
-}
-
-.skills-panel.in-drawer .panel-footer {
-  padding: 8px 12px;
-}
+.skills-panel.in-drawer .panel-footer { padding: 8px 12px; }
+.info-icon { color: var(--text-quaternary); }
 </style>

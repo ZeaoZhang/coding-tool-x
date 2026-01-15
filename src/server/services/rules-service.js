@@ -5,14 +5,20 @@
  * 规则目录:
  * - 用户级: ~/.claude/rules/
  * - 项目级: .claude/rules/
+ *
+ * 支持从 GitHub 仓库扫描和安装规则
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { RepoScannerBase } = require('./repo-scanner-base');
 
 // 规则目录路径
 const USER_RULES_DIR = path.join(os.homedir(), '.claude', 'rules');
+
+// 默认仓库源
+const DEFAULT_REPOS = [];
 
 /**
  * 确保目录存在
@@ -135,11 +141,93 @@ function scanRulesDir(dir, basePath, scope) {
 }
 
 /**
+ * Rules 仓库扫描器
+ */
+class RulesRepoScanner extends RepoScannerBase {
+  constructor() {
+    super({
+      type: 'rules',
+      installDir: USER_RULES_DIR,
+      markerFile: null, // 直接扫描 .md 文件
+      fileExtension: '.md',
+      defaultRepos: DEFAULT_REPOS
+    });
+  }
+
+  /**
+   * 获取并解析单个规则文件
+   */
+  async fetchAndParseItem(file, repo, baseDir) {
+    try {
+      // 计算相对路径
+      const relativePath = baseDir ? file.path.slice(baseDir.length + 1) : file.path;
+      const fileName = path.basename(file.path, '.md');
+      const directory = path.dirname(relativePath);
+
+      // 获取文件内容
+      const content = await this.fetchRawContent(repo, file.path);
+      const { frontmatter, body } = this.parseFrontmatter(content);
+
+      return {
+        key: `${repo.owner}/${repo.name}:${relativePath}`,
+        name: fileName,
+        fileName,
+        directory: directory === '.' ? null : directory,
+        scope: 'remote',
+        path: relativePath,
+        repoPath: file.path,
+        paths: frontmatter.paths || '',
+        body,
+        fullContent: content,
+        installed: this.isInstalled(relativePath),
+        readmeUrl: `https://github.com/${repo.owner}/${repo.name}/blob/${repo.branch}/${file.path}`,
+        repoOwner: repo.owner,
+        repoName: repo.name,
+        repoBranch: repo.branch,
+        repoDirectory: repo.directory || ''
+      };
+    } catch (err) {
+      console.warn(`[RulesRepoScanner] Parse rule ${file.path} error:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * 检查规则是否已安装
+   */
+  isInstalled(relativePath) {
+    const fullPath = path.join(this.installDir, relativePath);
+    return fs.existsSync(fullPath);
+  }
+
+  /**
+   * 获取去重 key
+   */
+  getDedupeKey(item) {
+    return item.directory ? `${item.directory}/${item.fileName}`.toLowerCase() : item.fileName.toLowerCase();
+  }
+
+  /**
+   * 安装规则
+   */
+  async installRule(item) {
+    const repo = {
+      owner: item.repoOwner,
+      name: item.repoName,
+      branch: item.repoBranch
+    };
+
+    return this.installFromRepo(item.repoPath, repo, item.path);
+  }
+}
+
+/**
  * Rules 服务类
  */
 class RulesService {
   constructor() {
     this.userRulesDir = USER_RULES_DIR;
+    this.repoScanner = new RulesRepoScanner();
     ensureDir(this.userRulesDir);
   }
 
@@ -169,6 +257,51 @@ class RulesService {
       total: rules.length,
       userCount: userRules.length,
       projectCount: rules.length - userRules.length
+    };
+  }
+
+  /**
+   * 获取所有规则（包括远程仓库）
+   */
+  async listAllRules(projectPath = null, forceRefresh = false) {
+    // 获取本地规则
+    const { rules: localRules, userCount, projectCount } = this.listRules(projectPath);
+
+    // 获取远程规则
+    let remoteRules = [];
+    try {
+      remoteRules = await this.repoScanner.listRemoteItems(forceRefresh);
+
+      // 更新安装状态
+      for (const rule of remoteRules) {
+        rule.installed = this.repoScanner.isInstalled(rule.path);
+      }
+    } catch (err) {
+      console.warn('[RulesService] Failed to fetch remote rules:', err.message);
+    }
+
+    // 合并列表（本地优先）
+    const allRules = [...localRules];
+    const localKeys = new Set(localRules.map(r =>
+      r.directory ? `${r.directory}/${r.fileName}`.toLowerCase() : r.fileName.toLowerCase()
+    ));
+
+    for (const remote of remoteRules) {
+      const key = remote.directory ? `${remote.directory}/${remote.fileName}`.toLowerCase() : remote.fileName.toLowerCase();
+      if (!localKeys.has(key)) {
+        allRules.push(remote);
+      }
+    }
+
+    // 排序
+    allRules.sort((a, b) => a.path.toLowerCase().localeCompare(b.path.toLowerCase()));
+
+    return {
+      rules: allRules,
+      total: allRules.length,
+      userCount,
+      projectCount,
+      remoteCount: remoteRules.length
     };
   }
 
@@ -394,8 +527,53 @@ class RulesService {
       directories
     };
   }
+
+  // ==================== 仓库管理 ====================
+
+  /**
+   * 获取仓库列表
+   */
+  getRepos() {
+    return this.repoScanner.loadRepos();
+  }
+
+  /**
+   * 添加仓库
+   */
+  addRepo(repo) {
+    return this.repoScanner.addRepo(repo);
+  }
+
+  /**
+   * 删除仓库
+   */
+  removeRepo(owner, name, directory = '') {
+    return this.repoScanner.removeRepo(owner, name, directory);
+  }
+
+  /**
+   * 切换仓库启用状态
+   */
+  toggleRepo(owner, name, directory = '', enabled) {
+    return this.repoScanner.toggleRepo(owner, name, directory, enabled);
+  }
+
+  /**
+   * 从远程仓库安装规则
+   */
+  async installFromRemote(rule) {
+    return this.repoScanner.installRule(rule);
+  }
+
+  /**
+   * 卸载规则
+   */
+  uninstallRule(relativePath) {
+    return this.repoScanner.uninstall(relativePath);
+  }
 }
 
 module.exports = {
-  RulesService
+  RulesService,
+  DEFAULT_REPOS
 };

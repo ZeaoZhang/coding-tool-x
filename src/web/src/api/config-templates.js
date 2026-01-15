@@ -53,16 +53,22 @@ export async function getAvailableConfigs() {
 
 /**
  * 应用模板到项目目录
+ * @param {string} id - 模板 ID
+ * @param {string} targetPath - 目标项目路径
+ * @param {string} aiConfigType - AI 配置类型: 'claude' | 'codex' | 'gemini'
  */
-export async function applyTemplate(id, targetPath) {
-  const response = await axios.post(`${API_BASE}/${id}/apply`, { targetPath });
+export async function applyTemplate(id, targetPath, aiConfigType = 'claude') {
+  const response = await axios.post(`${API_BASE}/${id}/apply`, { targetPath, aiConfigType });
   return response.data;
 }
 
 /**
  * 预览模板应用效果
+ * @param {string} id - 模板 ID
+ * @param {string} targetPath - 目标项目路径
+ * @param {string} aiConfigType - AI 配置类型: 'claude' | 'codex' | 'gemini'
  */
-export async function previewTemplate(id, targetPath) {
-  const response = await axios.post(`${API_BASE}/${id}/preview`, { targetPath });
+export async function previewTemplate(id, targetPath, aiConfigType = 'claude') {
+  const response = await axios.post(`${API_BASE}/${id}/preview`, { targetPath, aiConfigType });
   return response.data;
 }

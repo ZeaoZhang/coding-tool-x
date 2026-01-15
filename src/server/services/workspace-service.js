@@ -151,7 +151,7 @@ function getGitWorktrees(repoPath) {
  * @param {Array} options.projects - 项目列表 [{sourcePath, name, createWorktree, branch}]
  */
 function createWorkspace(options) {
-  const { name, description = '', baseDir, projects = [], configTemplateId } = options;
+  const { name, description = '', baseDir, projects = [], configTemplateId, permissionTemplate } = options;
 
   if (!name || name.trim() === '') {
     throw new Error('工作区名称不能为空');
@@ -299,6 +299,114 @@ function createWorkspace(options) {
       }
     }
 
+    // 应用权限模板（如果指定且不是 'none'）
+    let permissionInfo = null;
+    if (permissionTemplate && permissionTemplate !== 'none') {
+      try {
+        const permissionTemplates = {
+          safe: {
+            allow: [
+              'Bash(cat:*)',
+              'Bash(ls:*)',
+              'Bash(pwd)',
+              'Bash(echo:*)',
+              'Bash(head:*)',
+              'Bash(tail:*)',
+              'Bash(grep:*)',
+              'Read(*)'
+            ],
+            deny: [
+              'Bash(rm:*)',
+              'Bash(sudo:*)',
+              'Bash(git push:*)',
+              'Bash(git reset --hard:*)',
+              'Bash(chmod:*)',
+              'Bash(chown:*)',
+              'Edit(*)'
+            ]
+          },
+          balanced: {
+            allow: [
+              'Bash(cat:*)',
+              'Bash(ls:*)',
+              'Bash(pwd)',
+              'Bash(echo:*)',
+              'Bash(head:*)',
+              'Bash(tail:*)',
+              'Bash(grep:*)',
+              'Bash(find:*)',
+              'Bash(git status)',
+              'Bash(git diff:*)',
+              'Bash(git log:*)',
+              'Bash(npm run:*)',
+              'Bash(pnpm:*)',
+              'Bash(yarn:*)',
+              'Read(*)',
+              'Edit(*)'
+            ],
+            deny: [
+              'Bash(rm -rf:*)',
+              'Bash(sudo:*)',
+              'Bash(git push --force:*)',
+              'Bash(git reset --hard:*)'
+            ]
+          },
+          permissive: {
+            allow: [
+              'Bash(*)',
+              'Read(*)',
+              'Edit(*)'
+            ],
+            deny: [
+              'Bash(rm -rf /*)',
+              'Bash(sudo rm -rf:*)'
+            ]
+          }
+        };
+
+        const permSettings = permissionTemplates[permissionTemplate];
+        if (permSettings) {
+          // 为工作区中的每个项目应用权限设置
+          for (const proj of workspaceProjects) {
+            const projSettingsDir = path.join(proj.targetPath, '.claude');
+            const projSettingsFile = path.join(projSettingsDir, 'settings.json');
+
+            // 确保 .claude 目录存在
+            if (!fs.existsSync(projSettingsDir)) {
+              fs.mkdirSync(projSettingsDir, { recursive: true });
+            }
+
+            // 读取现有设置或创建新的
+            let settings = {};
+            if (fs.existsSync(projSettingsFile)) {
+              try {
+                settings = JSON.parse(fs.readFileSync(projSettingsFile, 'utf8'));
+              } catch (e) {
+                settings = {};
+              }
+            }
+
+            // 更新权限设置
+            settings.permissions = {
+              allow: permSettings.allow,
+              deny: permSettings.deny
+            };
+
+            // 保存设置
+            fs.writeFileSync(projSettingsFile, JSON.stringify(settings, null, 2), 'utf8');
+          }
+
+          permissionInfo = {
+            template: permissionTemplate,
+            appliedAt: new Date().toISOString()
+          };
+        }
+      } catch (permError) {
+        console.warn('应用权限模板失败:', permError.message);
+        // 不中断工作区创建流程
+      }
+    }
+
     // 保存工作区配置
     const workspaceId = generateWorkspaceId();
     const workspace = {
@@ -308,6 +416,7 @@ function createWorkspace(options) {
       path: workspacePath,
       projects: workspaceProjects,
       configTemplate: templateInfo,
+      permissionTemplate: permissionInfo,
       createdAt: new Date().toISOString(),
       lastUsed: new Date().toISOString()
     };

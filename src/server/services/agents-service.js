@@ -5,14 +5,20 @@
  * 代理目录:
  * - 用户级: ~/.claude/agents/
  * - 项目级: .claude/agents/
+ *
+ * 支持从 GitHub 仓库扫描和安装代理
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { RepoScannerBase } = require('./repo-scanner-base');
 
 // 代理目录路径
 const USER_AGENTS_DIR = path.join(os.homedir(), '.claude', 'agents');
+
+// 默认仓库源
+const DEFAULT_REPOS = [];
 
 /**
  * 确保目录存在
@@ -155,11 +161,96 @@ function scanAgentsDir(dir, basePath, scope) {
 }
 
 /**
+ * Agents 仓库扫描器
+ */
+class AgentsRepoScanner extends RepoScannerBase {
+  constructor() {
+    super({
+      type: 'agents',
+      installDir: USER_AGENTS_DIR,
+      markerFile: null, // 直接扫描 .md 文件
+      fileExtension: '.md',
+      defaultRepos: DEFAULT_REPOS
+    });
+  }
+
+  /**
+   * 获取并解析单个代理文件
+   */
+  async fetchAndParseItem(file, repo, baseDir) {
+    try {
+      // 计算相对路径
+      const relativePath = baseDir ? file.path.slice(baseDir.length + 1) : file.path;
+      const fileName = path.basename(file.path, '.md');
+
+      // 获取文件内容
+      const content = await this.fetchRawContent(repo, file.path);
+      const { frontmatter, body } = this.parseFrontmatter(content);
+
+      return {
+        key: `${repo.owner}/${repo.name}:${relativePath}`,
+        name: frontmatter.name || fileName,
+        fileName,
+        scope: 'remote',
+        path: relativePath,
+        repoPath: file.path,
+        description: frontmatter.description || '',
+        tools: frontmatter.tools || '',
+        model: frontmatter.model || '',
+        permissionMode: frontmatter.permissionMode || '',
+        skills: frontmatter.skills || '',
+        systemPrompt: body,
+        fullContent: content,
+        installed: this.isInstalled(fileName),
+        readmeUrl: `https://github.com/${repo.owner}/${repo.name}/blob/${repo.branch}/${file.path}`,
+        repoOwner: repo.owner,
+        repoName: repo.name,
+        repoBranch: repo.branch,
+        repoDirectory: repo.directory || ''
+      };
+    } catch (err) {
+      console.warn(`[AgentsRepoScanner] Parse agent ${file.path} error:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * 检查代理是否已安装
+   */
+  isInstalled(fileName) {
+    const fullPath = path.join(this.installDir, `${fileName}.md`);
+    return fs.existsSync(fullPath);
+  }
+
+  /**
+   * 获取去重 key
+   */
+  getDedupeKey(item) {
+    return item.fileName.toLowerCase();
+  }
+
+  /**
+   * 安装代理
+   */
+  async installAgent(item) {
+    const repo = {
+      owner: item.repoOwner,
+      name: item.repoName,
+      branch: item.repoBranch
+    };
+
+    // 代理安装到根目录，使用文件名
+    return this.installFromRepo(item.repoPath, repo, `${item.fileName}.md`);
+  }
+}
+
+/**
  * Agents 服务类
  */
 class AgentsService {
   constructor() {
     this.userAgentsDir = USER_AGENTS_DIR;
+    this.repoScanner = new AgentsRepoScanner();
     ensureDir(this.userAgentsDir);
   }
 
@@ -189,6 +280,48 @@ class AgentsService {
       total: agents.length,
       userCount: userAgents.length,
       projectCount: agents.length - userAgents.length
+    };
+  }
+
+  /**
+   * 获取所有代理（包括远程仓库）
+   */
+  async listAllAgents(projectPath = null, forceRefresh = false) {
+    // 获取本地代理
+    const { agents: localAgents, userCount, projectCount } = this.listAgents(projectPath);
+
+    // 获取远程代理
+    let remoteAgents = [];
+    try {
+      remoteAgents = await this.repoScanner.listRemoteItems(forceRefresh);
+
+      // 更新安装状态
+      for (const agent of remoteAgents) {
+        agent.installed = this.repoScanner.isInstalled(agent.fileName);
+      }
+    } catch (err) {
+      console.warn('[AgentsService] Failed to fetch remote agents:', err.message);
+    }
+
+    // 合并列表（本地优先）
+    const allAgents = [...localAgents];
+    const localKeys = new Set(localAgents.map(a => a.fileName.toLowerCase()));
+
+    for (const remote of remoteAgents) {
+      if (!localKeys.has(remote.fileName.toLowerCase())) {
+        allAgents.push(remote);
+      }
+    }
+
+    // 排序
+    allAgents.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+    return {
+      agents: allAgents,
+      total: allAgents.length,
+      userCount,
+      projectCount,
+      remoteCount: remoteAgents.length
     };
   }
 
@@ -347,8 +480,53 @@ class AgentsService {
       models
     };
   }
+
+  // ==================== 仓库管理 ====================
+
+  /**
+   * 获取仓库列表
+   */
+  getRepos() {
+    return this.repoScanner.loadRepos();
+  }
+
+  /**
+   * 添加仓库
+   */
+  addRepo(repo) {
+    return this.repoScanner.addRepo(repo);
+  }
+
+  /**
+   * 删除仓库
+   */
+  removeRepo(owner, name, directory = '') {
+    return this.repoScanner.removeRepo(owner, name, directory);
+  }
+
+  /**
+   * 切换仓库启用状态
+   */
+  toggleRepo(owner, name, directory = '', enabled) {
+    return this.repoScanner.toggleRepo(owner, name, directory, enabled);
+  }
+
+  /**
+   * 从远程仓库安装代理
+   */
+  async installFromRemote(agent) {
+    return this.repoScanner.installAgent(agent);
+  }
+
+  /**
+   * 卸载代理
+   */
+  uninstallAgent(fileName) {
+    return this.repoScanner.uninstall(`${fileName}.md`);
+  }
 }
 
 module.exports = {
-  AgentsService
+  AgentsService,
+  DEFAULT_REPOS
 };

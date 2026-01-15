@@ -130,154 +130,6 @@
             </div>
           </div>
 
-          <!-- Web 终端命令设置面板 -->
-          <div v-show="activeMenu === 'webTerminal'" class="settings-panel">
-            <div class="panel-header">
-              <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
-                  <CodeOutline />
-                </n-icon>
-                <div>
-                  <h3 class="panel-title">Web 终端命令</h3>
-                  <n-text depth="3" class="panel-subtitle">配置 Web 终端启动 CLI 的命令</n-text>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel-body">
-              <n-spin :show="loadingCommands">
-                <div class="setting-group">
-                  <n-alert type="info" :bordered="false" style="margin-bottom: 20px;">
-                    <template #icon>
-                      <n-icon><TerminalOutline /></n-icon>
-                    </template>
-                    <div style="font-size: 13px;">
-                      配置 Web 终端中启动各 CLI 工具的命令。使用 <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px;">{sessionId}</code> 作为会话 ID 占位符。
-                    </div>
-                  </n-alert>
-
-                  <!-- Claude 命令配置 -->
-                  <div class="command-config-card">
-                    <div class="command-card-header">
-                      <n-icon :size="20" color="#cc785c">
-                        <TerminalOutline />
-                      </n-icon>
-                      <n-text strong style="font-size: 15px;">Claude Code</n-text>
-                    </div>
-                    <div class="command-fields">
-                      <div class="command-field">
-                        <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">新会话命令</n-text>
-                        <n-input
-                          v-model:value="terminalCommands.claude.newSession"
-                          placeholder="claude"
-                          :input-props="{ style: 'font-family: monospace;' }"
-                        />
-                      </div>
-                      <div class="command-field">
-                        <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">恢复会话命令</n-text>
-                        <n-input
-                          v-model:value="terminalCommands.claude.resumeSession"
-                          placeholder="claude -r {sessionId}"
-                          :input-props="{ style: 'font-family: monospace;' }"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Codex 命令配置 -->
-                  <div class="command-config-card">
-                    <div class="command-card-header">
-                      <n-icon :size="20" color="#10a37f">
-                        <CodeOutline />
-                      </n-icon>
-                      <n-text strong style="font-size: 15px;">Codex CLI</n-text>
-                    </div>
-                    <div class="command-fields">
-                      <div class="command-field">
-                        <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">新会话命令</n-text>
-                        <n-input
-                          v-model:value="terminalCommands.codex.newSession"
-                          placeholder="codex"
-                          :input-props="{ style: 'font-family: monospace;' }"
-                        />
-                      </div>
-                      <div class="command-field">
-                        <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">恢复会话命令</n-text>
-                        <n-input
-                          v-model:value="terminalCommands.codex.resumeSession"
-                          placeholder="codex resume {sessionId}"
-                          :input-props="{ style: 'font-family: monospace;' }"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Gemini 命令配置 -->
-                  <div class="command-config-card">
-                    <div class="command-card-header">
-                      <n-icon :size="20" color="#4285f4">
-                        <SparklesOutline />
-                      </n-icon>
-                      <n-text strong style="font-size: 15px;">Gemini CLI</n-text>
-                    </div>
-                    <div class="command-fields">
-                      <div class="command-field">
-                        <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">新会话命令</n-text>
-                        <n-input
-                          v-model:value="terminalCommands.gemini.newSession"
-                          placeholder="gemini"
-                          :input-props="{ style: 'font-family: monospace;' }"
-                        />
-                      </div>
-                      <div class="command-field">
-                        <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">恢复会话命令</n-text>
-                        <n-input
-                          v-model:value="terminalCommands.gemini.resumeSession"
-                          placeholder="gemini -r {sessionId}"
-                          :input-props="{ style: 'font-family: monospace;' }"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </n-spin>
-            </div>
-
-            <div class="panel-footer">
-              <n-space justify="space-between" style="width: 100%;">
-                <n-button
-                  size="large"
-                  @click="handleResetCommands"
-                >
-                  <template #icon>
-                    <n-icon><RefreshOutline /></n-icon>
-                  </template>
-                  恢复默认
-                </n-button>
-                <n-space>
-                  <n-button
-                    size="large"
-                    @click="show = false"
-                  >
-                    取消
-                  </n-button>
-                  <n-button
-                    type="primary"
-                    size="large"
-                    :loading="savingCommands"
-                    :disabled="!commandsChanged"
-                    @click="handleSaveCommands"
-                  >
-                    <template #icon>
-                      <n-icon><SaveOutline /></n-icon>
-                    </template>
-                    保存设置
-                  </n-button>
-                </n-space>
-              </n-space>
-            </div>
-          </div>
-
           <!-- 外观设置面板 -->
           <div v-show="activeMenu === 'appearance'" class="settings-panel">
             <div class="panel-header">
@@ -557,25 +409,6 @@
                   保存设置
                 </n-button>
               </n-space>
-            </div>
-          </div>
-
-          <!-- 系统维护面板 -->
-          <div v-show="activeMenu === 'maintenance'" class="settings-panel">
-            <div class="panel-header">
-              <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
-                  <BuildOutline />
-                </n-icon>
-                <div>
-                  <h3 class="panel-title">系统维护</h3>
-                  <n-text depth="3" class="panel-subtitle">管理旧会话文件，优化存储空间</n-text>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel-body">
-              <MaintenancePanel ref="maintenancePanelRef" />
             </div>
           </div>
 
@@ -1033,16 +866,14 @@ const { drawerWidth, isMobile } = useResponsiveDrawer(680)
 import {
   SettingsOutline, TerminalOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
-  SunnyOutline, MoonOutline, NotificationsOutline, CodeOutline, RefreshOutline,
-  SparklesOutline, BuildOutline
+  SunnyOutline, MoonOutline, NotificationsOutline, RefreshOutline,
+  SparklesOutline
 } from '@vicons/ionicons5'
-import { getAvailableTerminals, saveTerminalConfig, getTerminalCommands, saveTerminalCommands, resetTerminalCommands } from '../api/terminal'
+import { getAvailableTerminals, saveTerminalConfig } from '../api/terminal'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
-import { scanLegacyFiles } from '../api/health-check'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
-import MaintenancePanel from './MaintenancePanel.vue'
 
 const props = defineProps({
   visible: {
@@ -1063,8 +894,6 @@ const availableTerminals = ref([])
 const selectedTerminal = ref(null)
 const originalSelectedTerminal = ref(null)
 const activeMenu = ref('terminal')
-const maintenancePanelRef = ref(null)
-const legacyFileCount = ref(0)
 
 // 主题管理
 const { isDark, toggleTheme } = useTheme()
@@ -1136,16 +965,6 @@ const originalNotificationSettings = ref({
 const savingNotification = ref(false)
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
 
-// Web 终端命令配置
-const terminalCommands = ref({
-  claude: { newSession: 'claude', resumeSession: 'claude -r {sessionId}' },
-  codex: { newSession: 'codex', resumeSession: 'codex resume {sessionId}' },
-  gemini: { newSession: 'gemini', resumeSession: 'gemini -r {sessionId}' }
-})
-const originalTerminalCommands = ref({})
-const savingCommands = ref(false)
-const loadingCommands = ref(false)
-
 const pricingSettings = ref({
   claude: {
     mode: 'auto',
@@ -1179,22 +998,12 @@ const portsChanged = computed(() => {
     JSON.stringify(pricingSettings.value) !== JSON.stringify(originalPricingSettings.value)
 })
 
-// 检查命令配置是否有修改
-const commandsChanged = computed(() => {
-  return JSON.stringify(terminalCommands.value) !== JSON.stringify(originalTerminalCommands.value)
-})
-
 // 菜单项配置
 const menuItems = computed(() => [
   {
     key: 'terminal',
     label: '终端工具',
     icon: markRaw(TerminalOutline)
-  },
-  {
-    key: 'webTerminal',
-    label: 'Web 终端命令',
-    icon: markRaw(CodeOutline)
   },
   {
     key: 'appearance',
@@ -1205,13 +1014,6 @@ const menuItems = computed(() => [
     key: 'notification',
     label: '通知设置',
     icon: markRaw(NotificationsOutline)
-  },
-  {
-    key: 'maintenance',
-    label: '系统维护',
-    icon: markRaw(BuildOutline),
-    badge: legacyFileCount.value > 0 ? legacyFileCount.value : null,
-    badgeType: 'warning'
   },
   {
     key: 'advanced',
@@ -1472,84 +1274,6 @@ async function handleSaveNotification() {
   }
 }
 
-// 加载 Web 终端命令配置
-async function loadTerminalCommandsConfig() {
-  loadingCommands.value = true
-  try {
-    const result = await getTerminalCommands()
-    if (result.success && result.commands) {
-      terminalCommands.value = {
-        claude: {
-          newSession: result.commands.claude?.newSession || 'claude',
-          resumeSession: result.commands.claude?.resumeSession || 'claude -r {sessionId}'
-        },
-        codex: {
-          newSession: result.commands.codex?.newSession || 'codex',
-          resumeSession: result.commands.codex?.resumeSession || 'codex resume {sessionId}'
-        },
-        gemini: {
-          newSession: result.commands.gemini?.newSession || 'gemini',
-          resumeSession: result.commands.gemini?.resumeSession || 'gemini -r {sessionId}'
-        }
-      }
-      originalTerminalCommands.value = JSON.parse(JSON.stringify(terminalCommands.value))
-    }
-  } catch (error) {
-    console.error('Failed to load terminal commands:', error)
-  } finally {
-    loadingCommands.value = false
-  }
-}
-
-// 保存 Web 终端命令配置
-async function handleSaveCommands() {
-  savingCommands.value = true
-  try {
-    const result = await saveTerminalCommands(terminalCommands.value)
-    if (result.success) {
-      originalTerminalCommands.value = JSON.parse(JSON.stringify(terminalCommands.value))
-      message.success('命令配置已保存')
-    } else {
-      message.error('保存失败：' + (result.error || '未知错误'))
-    }
-  } catch (error) {
-    console.error('Failed to save terminal commands:', error)
-    message.error('保存失败：' + error.message)
-  } finally {
-    savingCommands.value = false
-  }
-}
-
-// 重置为默认命令配置
-async function handleResetCommands() {
-  try {
-    const result = await resetTerminalCommands()
-    if (result.success && result.commands) {
-      terminalCommands.value = {
-        claude: {
-          newSession: result.commands.claude?.newSession || 'claude',
-          resumeSession: result.commands.claude?.resumeSession || 'claude -r {sessionId}'
-        },
-        codex: {
-          newSession: result.commands.codex?.newSession || 'codex',
-          resumeSession: result.commands.codex?.resumeSession || 'codex resume {sessionId}'
-        },
-        gemini: {
-          newSession: result.commands.gemini?.newSession || 'gemini',
-          resumeSession: result.commands.gemini?.resumeSession || 'gemini -r {sessionId}'
-        }
-      }
-      originalTerminalCommands.value = JSON.parse(JSON.stringify(terminalCommands.value))
-      message.success('已重置为默认配置')
-    } else {
-      message.error('重置失败')
-    }
-  } catch (error) {
-    console.error('Failed to reset terminal commands:', error)
-    message.error('重置失败：' + error.message)
-  }
-}
-
 // 保存端口和高级配置
 async function handleSavePorts() {
   savingPorts.value = true
@@ -1665,18 +1389,7 @@ async function handleDisableAutoStart() {
 // 加载设置
 onMounted(() => {
   loadPanelSettings()
-  loadLegacyFileCount()
 })
-
-// 加载旧文件数量（用于徽章显示）
-async function loadLegacyFileCount() {
-  try {
-    const result = await scanLegacyFiles()
-    legacyFileCount.value = result.projectCount || 0
-  } catch (err) {
-    console.error('Failed to load legacy file count:', err)
-  }
-}
 
 // 监听抽屉打开，加载数据
 watch(show, (newVal) => {
@@ -1686,8 +1399,6 @@ watch(show, (newVal) => {
     loadPortsConfig()
     loadAutoStartStatus()
     loadNotificationSettings()
-    loadTerminalCommandsConfig()
-    loadLegacyFileCount()
   }
 })
 </script>

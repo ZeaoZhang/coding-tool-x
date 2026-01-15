@@ -3,7 +3,7 @@
     :show="show"
     preset="card"
     :title="`应用模版: ${template?.name || ''}`"
-    style="width: 600px"
+    style="width: 650px"
     :mask-closable="false"
     @update:show="emit('update:show', $event)"
   >
@@ -13,6 +13,25 @@
           v-model:value="formData.targetPath"
           placeholder="输入项目目录路径，如 /path/to/project"
         />
+      </n-form-item>
+
+      <!-- AI 配置文件选择 -->
+      <n-form-item label="AI 配置文件" v-if="hasMultipleAiConfigs">
+        <n-radio-group v-model:value="formData.aiConfigType">
+          <n-space>
+            <n-radio
+              v-for="ai in availableAiConfigs"
+              :key="ai.key"
+              :value="ai.key"
+            >
+              <n-space align="center" :size="4">
+                <n-icon :size="16" :color="ai.color"><DocumentTextOutline /></n-icon>
+                <span>{{ ai.name }}</span>
+                <n-text depth="3" style="font-size: 12px">({{ ai.fileName }})</n-text>
+              </n-space>
+            </n-radio>
+          </n-space>
+        </n-radio-group>
       </n-form-item>
     </n-form>
 
@@ -29,6 +48,9 @@
         <div v-if="previewData.summary">
           <n-text depth="3">将应用：</n-text>
           <n-space style="margin-top: 8px">
+            <n-tag v-if="previewData.summary.aiConfig" :type="getAiConfigTagType(previewData.summary.aiConfig.type)" size="small">
+              {{ previewData.summary.aiConfig.fileName }}
+            </n-tag>
             <n-tag v-if="previewData.summary.claudeMd" type="success" size="small">CLAUDE.md</n-tag>
             <n-tag v-if="previewData.summary.skills" type="info" size="small">{{ previewData.summary.skills }} Skills</n-tag>
             <n-tag v-if="previewData.summary.agents" type="info" size="small">{{ previewData.summary.agents }} Agents</n-tag>
@@ -86,12 +108,13 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import {
   NModal, NForm, NFormItem, NInput, NButton, NSpace, NCard,
-  NTag, NText, NDivider, NUl, NLi, NAlert,
+  NTag, NText, NDivider, NUl, NLi, NAlert, NRadioGroup, NRadio, NIcon,
   useMessage
 } from 'naive-ui'
+import { DocumentTextOutline } from '@vicons/ionicons5'
 import { applyTemplate, previewTemplate } from '@/api/config-templates'
 
 const props = defineProps({
@@ -107,20 +130,65 @@ const loadingPreview = ref(false)
 const applying = ref(false)
 const previewData = ref(null)
 
+// AI 配置类型信息
+const AI_CONFIG_INFO = {
+  claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
+  codex: { key: 'codex', name: 'Codex', fileName: 'AGENT.md', color: '#10a37f' },
+  gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
+}
+
+// 获取可用的 AI 配置列表
+const availableAiConfigs = computed(() => {
+  const aiConfigs = props.template?.aiConfigs
+  if (!aiConfigs) return []
+
+  return Object.entries(aiConfigs)
+    .filter(([, cfg]) => cfg?.enabled && cfg?.content)
+    .map(([key]) => AI_CONFIG_INFO[key])
+})
+
+// 是否有多个 AI 配置可选
+const hasMultipleAiConfigs = computed(() => availableAiConfigs.value.length > 0)
+
+// 获取默认的 AI 配置类型
+function getDefaultAiConfigType() {
+  if (availableAiConfigs.value.length > 0) {
+    return availableAiConfigs.value[0].key
+  }
+  return 'claude'
+}
+
 const formData = ref({
-  targetPath: ''
+  targetPath: '',
+  aiConfigType: 'claude'
 })
 
 const formRules = {
   targetPath: { required: true, message: '请输入目标路径', trigger: 'blur' }
 }
 
+// 获取 AI 配置标签类型
+function getAiConfigTagType(type) {
+  const typeMap = {
+    claude: 'warning',
+    codex: 'success',
+    gemini: 'info'
+  }
+  return typeMap[type] || 'default'
+}
+
 // 重置状态
 watch(() => props.show, (newVal) => {
   if (newVal) {
     formData.value.targetPath = ''
+    formData.value.aiConfigType = getDefaultAiConfigType()
     previewData.value = null
   }
+})
+
+// 监听模版变化，重置 AI 配置类型
+watch(() => props.template, () => {
+  formData.value.aiConfigType = getDefaultAiConfigType()
 })
 
 // 预览
@@ -129,7 +197,11 @@ async function handlePreview() {
 
   loadingPreview.value = true
   try {
-    const res = await previewTemplate(props.template.id, formData.value.targetPath)
+    const res = await previewTemplate(
+      props.template.id,
+      formData.value.targetPath,
+      formData.value.aiConfigType
+    )
     if (res.success) {
       previewData.value = res.data
     } else {
@@ -154,7 +226,11 @@ async function handleApply() {
 
   applying.value = true
   try {
-    const res = await applyTemplate(props.template.id, formData.value.targetPath)
+    const res = await applyTemplate(
+      props.template.id,
+      formData.value.targetPath,
+      formData.value.aiConfigType
+    )
     if (res.success) {
       message.success('模版应用成功')
       emit('success')

@@ -30,3 +30,11 @@ build/
 tmp/
 temp/
 *.tmp
+
+# AI files
+CLAUDE.md
+AGENTS.md
+.serena
+.claude
+
+

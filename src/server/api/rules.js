@@ -268,4 +268,192 @@ router.delete('/:scope/*', (req, res) => {
   }
 });
 
+// ==================== 仓库管理 API ====================
+
+/**
+ * 获取所有规则（包括远程仓库）
+ * GET /api/rules/all
+ * Query: projectPath, refresh=1 强制刷新缓存
+ */
+router.get('/all', async (req, res) => {
+  try {
+    const { projectPath, refresh } = req.query;
+    const forceRefresh = refresh === '1';
+    const result = await rulesService.listAllRules(projectPath || null, forceRefresh);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Rules API] List all rules error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 获取仓库列表
+ * GET /api/rules/repos
+ */
+router.get('/repos', (req, res) => {
+  try {
+    const repos = rulesService.getRepos();
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Rules API] Get repos error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 添加仓库
+ * POST /api/rules/repos
+ * Body: { owner, name, branch, directory, enabled }
+ */
+router.post('/repos', (req, res) => {
+  try {
+    const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
+
+    if (!owner || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing owner or name'
+      });
+    }
+
+    const repos = rulesService.addRepo({ owner, name, branch, directory, enabled });
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Rules API] Add repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 删除仓库
+ * DELETE /api/rules/repos/:owner/:name
+ * Query: directory - 可选，子目录路径
+ */
+router.delete('/repos/:owner/:name', (req, res) => {
+  try {
+    const { owner, name } = req.params;
+    const { directory = '' } = req.query;
+    const repos = rulesService.removeRepo(owner, name, directory);
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Rules API] Remove repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 切换仓库启用状态
+ * PUT /api/rules/repos/:owner/:name/toggle
+ * Body: { enabled, directory }
+ */
+router.put('/repos/:owner/:name/toggle', (req, res) => {
+  try {
+    const { owner, name } = req.params;
+    const { enabled, directory = '' } = req.body;
+
+    const repos = rulesService.toggleRepo(owner, name, directory, enabled);
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Rules API] Toggle repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 从远程仓库安装规则
+ * POST /api/rules/install
+ * Body: rule object from listAllRules
+ */
+router.post('/install', async (req, res) => {
+  try {
+    const rule = req.body;
+
+    if (!rule || !rule.repoOwner || !rule.repoName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing rule info or repo info'
+      });
+    }
+
+    const result = await rulesService.installFromRemote(rule);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Rules API] Install rule error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 卸载规则
+ * POST /api/rules/uninstall
+ * Body: { path } - 规则的相对路径
+ */
+router.post('/uninstall', (req, res) => {
+  try {
+    const { path } = req.body;
+
+    if (!path) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing path'
+      });
+    }
+
+    const result = rulesService.uninstallRule(path);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Rules API] Uninstall rule error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
 module.exports = router;

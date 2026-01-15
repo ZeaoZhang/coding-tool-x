@@ -64,6 +64,16 @@
           </n-icon>
           <span class="nav-label">Gemini</span>
         </div>
+        <div
+          class="nav-tab"
+          :class="{ active: currentRoute === 'terminal' }"
+          @click="router.push({ name: 'terminal' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <TerminalOutline />
+          </n-icon>
+          <span class="nav-label">Terminal</span>
+        </div>
       </div>
 
       <div class="header-actions">
@@ -87,6 +97,9 @@
           @click="toggleTheme"
         />
 
+        <!-- 全局公用功能区分隔线 -->
+        <div class="header-divider" />
+
         <!-- Favorites Button -->
         <div class="favorites-button-wrapper">
           <HeaderButton
@@ -99,25 +112,18 @@
           </div>
         </div>
 
-        <!-- Terminal Button -->
-        <HeaderButton
-          :icon="TerminalOutline"
-          tooltip="Web 终端"
-          @click="goToTerminal"
-        />
-
         <!-- Workspace Button -->
         <HeaderButton
           :icon="FolderOpenOutline"
           tooltip="工作区管理"
-          @click="goToWorkspace"
+          @click="showWorkspaceDrawer = true"
         />
 
-        <!-- Config Templates Button -->
+        <!-- Permission Button -->
         <HeaderButton
-          :icon="LayersOutline"
-          tooltip="配置模版管理"
-          @click="goToConfigTemplates"
+          :icon="ShieldCheckmarkOutline"
+          tooltip="命令执行权限"
+          @click="showPermissionDrawer = true"
         />
 
         <!-- Prompts Button -->
@@ -129,10 +135,20 @@
 
         <!-- MCP Button -->
         <HeaderButton
-          :icon="ExtensionPuzzleOutline"
+          :icon="ServerOutline"
           tooltip="MCP 服务器管理"
           @click="showMcpDrawer = true"
         />
+
+        <!-- Config Templates Button -->
+        <HeaderButton
+          :icon="LayersOutline"
+          tooltip="配置模版管理"
+          @click="showConfigTemplatesDrawer = true"
+        />
+
+        <!-- 功能区分隔线 -->
+        <div class="header-divider" />
 
         <!-- Speed Test Button -->
         <HeaderButton
@@ -213,6 +229,21 @@
 
     <!-- Speed Test Drawer -->
     <SpeedTestDrawer v-model:visible="showSpeedTestDrawer" />
+
+    <!-- Workspace Drawer -->
+    <WorkspaceDrawer v-model:visible="showWorkspaceDrawer" />
+
+    <!-- Config Templates Drawer -->
+    <ConfigTemplatesDrawer v-model:visible="showConfigTemplatesDrawer" />
+
+    <!-- Command Permission Drawer -->
+    <CommandPermissionDrawer v-model:visible="showPermissionDrawer" />
+
+    <!-- Skills/Commands/Agents/Rules Drawers -->
+    <SkillsDrawer v-model:visible="showSkillsDrawer" />
+    <CommandsDrawer v-model:visible="showCommandsDrawer" />
+    <AgentsDrawer v-model:visible="showAgentsDrawer" />
+    <RulesDrawer v-model:visible="showRulesDrawer" />
 
     <!-- Help Modal -->
     <n-modal v-model:show="showHelpModal" preset="card" title="CODING-TOOL 使用帮助" style="width: 800px; max-width: 90vw;">
@@ -382,8 +413,8 @@
         <div class="help-section">
           <h4>🔗 相关链接</h4>
           <div class="link-list">
-            <a href="https://github.com/CooperJiang/cc-tool" target="_blank">GitHub 仓库</a>
-            <a href="https://github.com/CooperJiang/cc-tool/issues" target="_blank">问题反馈</a>
+            <a href="https://github.com/ZeaoZhang/coding-tool" target="_blank">GitHub 仓库</a>
+            <a href="https://github.com/ZeaoZhang/coding-tool/issues" target="_blank">问题反馈</a>
           </div>
         </div>
       </div>
@@ -392,10 +423,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ExtensionPuzzleOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -403,6 +434,13 @@ import SettingsDrawer from './SettingsDrawer.vue'
 import McpDrawer from './McpDrawer.vue'
 import PromptsDrawer from './PromptsDrawer.vue'
 import SpeedTestDrawer from './SpeedTestDrawer.vue'
+import SkillsDrawer from './SkillsDrawer.vue'
+import CommandsDrawer from './CommandsDrawer.vue'
+import AgentsDrawer from './AgentsDrawer.vue'
+import RulesDrawer from './RulesDrawer.vue'
+import WorkspaceDrawer from './WorkspaceDrawer.vue'
+import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
+import CommandPermissionDrawer from './CommandPermissionDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
@@ -450,6 +488,13 @@ const showMcpDrawer = ref(false)
 const showPromptsDrawer = ref(false)
 const showSpeedTestDrawer = ref(false)
 const showHelpModal = ref(false)
+const showWorkspaceDrawer = ref(false)
+const showConfigTemplatesDrawer = ref(false)
+const showPermissionDrawer = ref(false)
+const showSkillsDrawer = ref(false)
+const showCommandsDrawer = ref(false)
+const showAgentsDrawer = ref(false)
+const showRulesDrawer = ref(false)
 
 // 环境变量冲突检测
 const envConflicts = ref([])
@@ -554,20 +599,8 @@ function goHome() {
   router.push({ name: 'home' })
 }
 
-function goToTerminal() {
-  router.push({ name: 'terminal' })
-}
-
-function goToWorkspace() {
-  router.push({ name: 'workspaces' })
-}
-
-function goToConfigTemplates() {
-  router.push({ name: 'config-templates' })
-}
-
 function openGithub() {
-  window.open('https://github.com/CooperJiang/cc-tool', '_blank')
+  window.open('https://github.com/ZeaoZhang/coding-tool', '_blank')
 }
 
 // 统一的代理切换处理器（根据当前 channel 路由到正确的代理）
@@ -612,6 +645,11 @@ onMounted(() => {
   // 监听面板可见性变化事件
   window.addEventListener('panel-visibility-change', handlePanelVisibilityChange)
 
+  window.addEventListener('open-skills-drawer', openSkillsDrawer)
+  window.addEventListener('open-commands-drawer', openCommandsDrawer)
+  window.addEventListener('open-agents-drawer', openAgentsDrawer)
+  window.addEventListener('open-rules-drawer', openRulesDrawer)
+
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
 })
@@ -619,10 +657,31 @@ onMounted(() => {
 onUnmounted(() => {
   // 移除事件监听
   window.removeEventListener('panel-visibility-change', handlePanelVisibilityChange)
+  window.removeEventListener('open-skills-drawer', openSkillsDrawer)
+  window.removeEventListener('open-commands-drawer', openCommandsDrawer)
+  window.removeEventListener('open-agents-drawer', openAgentsDrawer)
+  window.removeEventListener('open-rules-drawer', openRulesDrawer)
 })
+
+function openSkillsDrawer() {
+  showSkillsDrawer.value = true
+}
+
+function openCommandsDrawer() {
+  showCommandsDrawer.value = true
+}
+
+function openAgentsDrawer() {
+  showAgentsDrawer.value = true
+}
+
+function openRulesDrawer() {
+  showRulesDrawer.value = true
+}
 </script>
 
 <style scoped>
+/* ========== 基础布局 ========== */
 .layout {
   display: flex;
   flex-direction: column;
@@ -630,42 +689,49 @@ onUnmounted(() => {
   background: var(--bg-primary);
 }
 
+/* ========== 顶部导航栏 ========== */
 .header {
-  height: 64px;
-  border-bottom: 1px solid var(--border-primary);
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
-  background: var(--gradient-header);
-  box-shadow: 0 2px 12px rgba(24, 160, 88, 0.06), var(--shadow-sm);
-  z-index: 10;
+  padding: 0 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  flex-shrink: 0;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
+.header-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-primary);
+  margin: 0 6px;
+}
+
+/* 环境变量警告 */
 .env-warning-btn {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 10px;
-  background: rgba(245, 158, 11, 0.12);
-  border-radius: 6px;
+  padding: 4px 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 4px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background 0.2s;
 }
 
 .env-warning-btn:hover {
-  background: rgba(245, 158, 11, 0.2);
+  background: rgba(245, 158, 11, 0.18);
 }
 
 .env-warning-icon {
   color: #f59e0b;
-  font-size: 14px;
 }
 
 .env-warning-count {
@@ -674,29 +740,16 @@ onUnmounted(() => {
   color: #f59e0b;
 }
 
-.proxy-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.proxy-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-weight: 600;
-  user-select: none;
-  letter-spacing: 0.3px;
-}
-
+/* ========== Logo 区域 ========== */
 .logo-section {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  padding: 6px 12px;
+  padding: 6px 10px;
   border-radius: 6px;
-  margin-left: -12px;
+  margin-left: -10px;
+  transition: background 0.2s;
 }
 
 .logo-section:hover {
@@ -704,72 +757,59 @@ onUnmounted(() => {
 }
 
 .logo-wrapper {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 6px;
-  background: linear-gradient(135deg, rgba(24, 160, 88, 0.15) 0%, rgba(24, 160, 88, 0.05) 100%);
+  background: linear-gradient(135deg, rgba(24, 160, 88, 0.12), rgba(24, 160, 88, 0.04));
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.15);
-  transition: all 0.2s ease;
-}
-
-.logo-section:hover .logo-wrapper {
-  transform: scale(1.05);
-  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.25);
 }
 
 .logo-image {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
 }
 
 .title-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .title-main {
   margin: 0;
-  font-size: 18px;
-  font-weight: 800;
-  background: linear-gradient(135deg, #18a058 0%, #10b981 100%);
+  font-size: 16px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #18a058, #10b981);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  user-select: none;
-  letter-spacing: -0.3px;
   line-height: 1.2;
 }
 
 .title-sub {
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 10px;
   color: var(--text-tertiary);
-  user-select: none;
-  letter-spacing: 0.2px;
 }
 
-/* 导航标签 */
+/* ========== 导航标签 ========== */
 .nav-tabs {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-left: 40px;
+  gap: 4px;
+  margin-left: 32px;
 }
 
 .nav-tab {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  gap: 6px;
+  padding: 6px 12px;
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  user-select: none;
+  transition: background 0.2s;
   position: relative;
 }
 
@@ -777,93 +817,62 @@ onUnmounted(() => {
   background: var(--hover-bg);
 }
 
-[data-theme="dark"] .nav-tab:hover {
-  background: rgba(255, 255, 255, 0.09);
-}
-
 .nav-tab.active {
   background: rgba(24, 160, 88, 0.1);
-  color: #18a058;
-}
-
-[data-theme="dark"] .nav-tab.active {
-  background: rgba(24, 160, 88, 0.15);
-  color: #34d399;
 }
 
 .nav-tab.active::after {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 12px;
-  right: 12px;
+  left: 10px;
+  right: 10px;
   height: 2px;
-  background: #18a058;
-  border-radius: 2px 2px 0 0;
-}
-
-[data-theme="dark"] .nav-tab.active::after {
-  background: #34d399;
+  background: var(--primary-color, #18a058);
+  border-radius: 1px 1px 0 0;
 }
 
 .nav-icon {
   color: var(--text-tertiary);
-  transition: all 0.2s ease;
 }
 
-.nav-tab:hover .nav-icon {
-  color: var(--text-secondary);
-}
-
+.nav-tab:hover .nav-icon,
 .nav-tab.active .nav-icon {
-  color: #18a058;
-}
-
-[data-theme="dark"] .nav-tab.active .nav-icon {
-  color: #34d399;
+  color: var(--primary-color, #18a058);
 }
 
 .nav-label {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
-  transition: all 0.2s ease;
 }
 
-.nav-tab:hover .nav-label {
-  color: var(--text-primary);
+.nav-tab:hover .nav-label,
+.nav-tab.active .nav-label {
+  color: var(--primary-color, #18a058);
 }
 
 .nav-tab.active .nav-label {
-  color: #18a058;
   font-weight: 600;
 }
 
-[data-theme="dark"] .nav-tab.active .nav-label {
-  color: #34d399;
-}
-
+/* ========== 主容器 ========== */
 .main-container {
   display: flex;
   flex: 1;
-  height: calc(100vh - 64px);
+  height: calc(100vh - 56px);
   min-height: 0;
   overflow: hidden;
-  position: relative;
 }
 
 .global-loading-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   display: flex;
   justify-content: center;
   align-items: center;
   background: var(--bg-overlay);
   z-index: 1000;
-  backdrop-filter: blur(4px);
 }
 
 .left-content {
@@ -873,193 +882,15 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* Help Modal Styles */
-.help-content {
-  max-height: 70vh;
-  overflow-y: auto;
-  padding: 4px; /* 为滚动条留出空间 */
-}
-
-.help-section {
-  margin-bottom: 28px;
-  padding: 20px;
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  border: 1px solid var(--border-primary);
-  transition: all 0.2s ease;
-}
-
-.help-section:hover {
-  border-color: rgba(24, 160, 88, 0.3);
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.08);
-}
-
-.help-section:last-child {
-  margin-bottom: 0;
-}
-
-.help-section h4 {
-  margin: 0 0 16px 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 12px;
-  border-bottom: 2px solid rgba(24, 160, 88, 0.2);
-}
-
-.help-section p {
-  margin: 0 0 12px 0;
-  font-size: 14px;
-  line-height: 1.8;
-  color: var(--text-secondary);
-}
-
-.help-section p:last-child {
-  margin-bottom: 0;
-}
-
-.help-section ul {
-  margin: 8px 0 0 0;
-  padding-left: 24px;
-}
-
-.help-section li {
-  font-size: 14px;
-  line-height: 2;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
-}
-
-.help-section li:last-child {
-  margin-bottom: 0;
-}
-
-.help-section li strong {
-  color: #18a058;
-  font-weight: 600;
-}
-
-.command-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.command-item {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
-  transition: all 0.2s ease;
-}
-
-.command-item:hover {
-  border-color: rgba(24, 160, 88, 0.4);
-  transform: translateX(4px);
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
-}
-
-.command-item code {
-  min-width: 160px;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-  font-size: 13px;
-  font-weight: 600;
-  color: #18a058;
-  background: rgba(24, 160, 88, 0.1);
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid rgba(24, 160, 88, 0.2);
-}
-
-[data-theme="dark"] .command-item code {
-  background: rgba(24, 160, 88, 0.15);
-  border-color: rgba(24, 160, 88, 0.3);
-  color: #36ad6a;
-}
-
-.command-item span {
-  font-size: 14px;
-  color: var(--text-secondary);
-  flex: 1;
-}
-
-.help-section kbd {
-  display: inline-block;
-  padding: 3px 8px;
-  font-family: 'SF Mono', Monaco, monospace;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-secondary);
-  border-radius: 4px;
-  box-shadow: 0 2px 0 var(--border-primary), 0 1px 2px rgba(0, 0, 0, 0.1);
-  margin: 0 2px;
-}
-
-[data-theme="dark"] .help-section kbd {
-  background: var(--bg-elevated);
-  box-shadow: 0 2px 0 var(--border-secondary), 0 1px 2px rgba(0, 0, 0, 0.3);
-}
-
-.link-list {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-
-.link-list a {
-  font-size: 14px;
-  font-weight: 500;
-  color: #18a058;
-  text-decoration: none;
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: rgba(24, 160, 88, 0.08);
-  border: 1px solid rgba(24, 160, 88, 0.2);
-  transition: all 0.2s ease;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.link-list a:hover {
-  background: rgba(24, 160, 88, 0.15);
-  border-color: rgba(24, 160, 88, 0.4);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(24, 160, 88, 0.2);
-}
-
-.link-list a::before {
-  content: '→';
-  font-weight: 700;
-}
-
-[data-theme="dark"] .link-list a {
-  background: rgba(24, 160, 88, 0.12);
-  border-color: rgba(24, 160, 88, 0.3);
-}
-
-[data-theme="dark"] .link-list a:hover {
-  background: rgba(24, 160, 88, 0.2);
-  border-color: rgba(24, 160, 88, 0.5);
-}
-
-/* 收藏按钮样式 */
+/* ========== 收藏按钮 ========== */
 .favorites-button-wrapper {
   position: relative;
 }
 
 .favorites-badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
+  top: -3px;
+  right: -3px;
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
@@ -1070,217 +901,150 @@ onUnmounted(() => {
   color: white;
   font-size: 9px;
   font-weight: 600;
-  line-height: 1;
   border-radius: 7px;
-  box-shadow: 0 0 0 2px var(--bg-primary);
   pointer-events: none;
 }
 
+/* ========== 帮助弹窗 ========== */
+.help-content {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.help-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-primary);
+}
+
+.help-section:last-child {
+  margin-bottom: 0;
+}
+
+.help-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.help-section p {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.help-section ul {
+  margin: 8px 0 0 0;
+  padding-left: 20px;
+}
+
+.help-section li {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.help-section li strong {
+  color: var(--primary-color, #18a058);
+}
+
+.command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+}
+
+.command-item code {
+  min-width: 140px;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary-color, #18a058);
+  background: rgba(24, 160, 88, 0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.command-item span {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.help-section kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 3px;
+  margin: 0 2px;
+}
+
+.link-list {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.link-list a {
+  font-size: 13px;
+  color: var(--primary-color, #18a058);
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: rgba(24, 160, 88, 0.08);
+}
+
+.link-list a:hover {
+  background: rgba(24, 160, 88, 0.15);
+}
+
 /* ========== 响应式样式 ========== */
-
-/* 平板端 (768px - 1024px) */
 @media (max-width: 1024px) {
-  .header {
-    padding: 0 16px;
-  }
-
-  .nav-tabs {
-    margin-left: 20px;
-    gap: 4px;
-  }
-
-  .nav-tab {
-    padding: 8px 12px;
-  }
-
-  .nav-label {
-    font-size: 13px;
-  }
-
-  .title-sub {
-    display: none;
-  }
-
-  .header-actions {
-    gap: 4px;
-  }
+  .header { padding: 0 16px; }
+  .nav-tabs { margin-left: 20px; }
+  .title-sub { display: none; }
 }
 
-/* 小屏幕 (640px - 768px) */
 @media (max-width: 768px) {
-  .header {
-    padding: 0 12px;
-    height: 56px;
-  }
-
-  .main-container {
-    height: calc(100vh - 56px);
-  }
-
-  .logo-section {
-    gap: 10px;
-    padding: 4px 8px;
-    margin-left: -8px;
-  }
-
-  .logo-wrapper {
-    width: 32px;
-    height: 32px;
-  }
-
-  .logo-image {
-    width: 20px;
-    height: 20px;
-  }
-
-  .title-main {
-    font-size: 16px;
-  }
-
-  .title-sub {
-    display: none;
-  }
-
-  .nav-tabs {
-    margin-left: 12px;
-    gap: 2px;
-  }
-
-  .nav-tab {
-    padding: 6px 10px;
-    gap: 6px;
-  }
-
-  .nav-icon {
-    font-size: 16px !important;
-  }
-
-  .nav-label {
-    font-size: 12px;
-  }
-
-  .header-actions {
-    gap: 2px;
-  }
+  .header { height: 52px; padding: 0 12px; }
+  .main-container { height: calc(100vh - 52px); }
+  .logo-wrapper { width: 28px; height: 28px; }
+  .logo-image { width: 18px; height: 18px; }
+  .title-main { font-size: 14px; }
+  .title-sub { display: none; }
+  .nav-tabs { margin-left: 12px; gap: 2px; }
+  .nav-tab { padding: 5px 8px; gap: 4px; }
+  .nav-label { font-size: 12px; }
+  .header-actions { gap: 2px; }
 }
 
-/* 移动端 (< 640px) */
 @media (max-width: 640px) {
-  .header {
-    padding: 0 8px;
-    height: 52px;
-  }
-
-  .main-container {
-    height: calc(100vh - 52px);
-  }
-
-  .logo-section {
-    gap: 8px;
-    padding: 4px 6px;
-    margin-left: -6px;
-  }
-
-  .logo-wrapper {
-    width: 28px;
-    height: 28px;
-  }
-
-  .logo-image {
-    width: 18px;
-    height: 18px;
-  }
-
-  .title-group {
-    display: none;
-  }
-
-  .nav-tabs {
-    margin-left: 8px;
-    gap: 2px;
-    flex: 1;
-    justify-content: center;
-  }
-
-  .nav-tab {
-    padding: 6px 8px;
-    gap: 4px;
-    flex-direction: column;
-  }
-
-  .nav-tab .n-icon {
-    font-size: 18px !important;
-  }
-
-  .nav-label {
-    font-size: 10px;
-  }
-
-  .nav-tab.active::after {
-    left: 8px;
-    right: 8px;
-  }
-
-  .header-actions {
-    gap: 2px;
-  }
-
-  .env-warning-btn {
-    padding: 4px 6px;
-    gap: 4px;
-  }
-
-  .env-warning-icon {
-    font-size: 14px !important;
-  }
-
-  .env-warning-count {
-    font-size: 10px;
-  }
-
-  .favorites-badge {
-    min-width: 12px;
-    height: 12px;
-    font-size: 8px;
-    top: -3px;
-    right: -3px;
-  }
-}
-
-/* 超小屏幕 (< 480px) */
-@media (max-width: 480px) {
-  .header {
-    height: 48px;
-  }
-
-  .main-container {
-    height: calc(100vh - 48px);
-  }
-
-  .logo-wrapper {
-    width: 26px;
-    height: 26px;
-  }
-
-  .logo-image {
-    width: 16px;
-    height: 16px;
-  }
-
-  .nav-tabs {
-    margin-left: 4px;
-  }
-
-  .nav-tab {
-    padding: 4px 6px;
-  }
-
-  .nav-tab .n-icon {
-    font-size: 16px !important;
-  }
-
-  .nav-label {
-    font-size: 9px;
-  }
+  .header { height: 48px; padding: 0 8px; }
+  .main-container { height: calc(100vh - 48px); }
+  .title-group { display: none; }
+  .nav-tabs { margin-left: 8px; flex: 1; justify-content: center; }
+  .nav-tab { padding: 4px 6px; flex-direction: column; gap: 2px; }
+  .nav-label { font-size: 10px; }
 }
 </style>

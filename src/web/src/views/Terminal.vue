@@ -478,7 +478,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1e1e2e;
+  background: var(--terminal-bg);
 }
 
 .terminal-panels {
@@ -502,13 +502,13 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 24px;
   font-weight: 600;
-  color: #cdd6f4;
+  color: var(--terminal-text);
 }
 
 .empty-desc {
   margin: 0;
   font-size: 14px;
-  color: #a6adc8;
+  color: var(--terminal-text-muted);
 }
 
 .empty-actions {
@@ -528,7 +528,7 @@ onBeforeUnmount(() => {
   margin: 0 0 12px 0;
   font-size: 14px;
   font-weight: 500;
-  color: #a6adc8;
+  color: var(--terminal-text-muted);
 }
 
 .terminal-list {
@@ -542,16 +542,16 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: rgba(69, 71, 90, 0.3);
-  border: 1px solid rgba(69, 71, 90, 0.5);
+  background: var(--terminal-item-bg);
+  border: 1px solid var(--terminal-item-border);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .terminal-item:hover {
-  background: rgba(69, 71, 90, 0.5);
-  border-color: #89b4fa;
+  background: var(--terminal-item-hover);
+  border-color: var(--primary-color);
 }
 
 .terminal-item-icon {
@@ -561,7 +561,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(30, 30, 46, 0.5);
+  background: var(--terminal-icon-bg);
   border-radius: 6px;
 }
 
@@ -573,7 +573,7 @@ onBeforeUnmount(() => {
 .terminal-item-title {
   font-size: 14px;
   font-weight: 500;
-  color: #cdd6f4;
+  color: var(--terminal-text);
   margin-bottom: 4px;
 }
 
@@ -586,7 +586,7 @@ onBeforeUnmount(() => {
 
 .meta-text {
   font-size: 12px;
-  color: #a6adc8;
+  color: var(--terminal-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

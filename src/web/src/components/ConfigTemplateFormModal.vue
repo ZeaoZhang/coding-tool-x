@@ -3,7 +3,7 @@
     :show="show"
     preset="card"
     :title="isEdit ? '编辑配置模版' : '创建配置模版'"
-    style="width: 800px; max-height: 90vh"
+    style="width: 850px; max-height: 90vh"
     :mask-closable="false"
     @update:show="emit('update:show', $event)"
   >
@@ -19,20 +19,47 @@
           </n-form-item>
         </n-card>
 
-        <!-- CLAUDE.md -->
-        <n-card title="CLAUDE.md" size="small" style="margin-bottom: 16px">
-          <template #header-extra>
-            <n-switch v-model:value="formData.claudeMd.enabled" />
-          </template>
-          <n-collapse-transition :show="formData.claudeMd.enabled">
-            <MarkdownEditor
-              v-model="formData.claudeMd.content"
-              :rows="8"
-              :min-height="180"
-              placeholder="输入 CLAUDE.md 内容"
-              :default-editing="!isEdit"
-            />
-          </n-collapse-transition>
+        <!-- AI 配置文件 -->
+        <n-card title="AI 配置文件" size="small" style="margin-bottom: 16px">
+          <n-tabs type="line" animated>
+            <n-tab-pane
+              v-for="ai in AI_CONFIG_LIST"
+              :key="ai.key"
+              :name="ai.key"
+            >
+              <template #tab>
+                <n-space align="center" :size="4">
+                  <n-icon :size="16" :color="ai.color"><DocumentTextOutline /></n-icon>
+                  <span>{{ ai.name }}</span>
+                  <n-badge
+                    v-if="formData.aiConfigs[ai.key]?.enabled"
+                    dot
+                    type="success"
+                    :offset="[-2, 0]"
+                  />
+                </n-space>
+              </template>
+              <div class="ai-config-pane">
+                <div class="ai-config-header">
+                  <n-space align="center">
+                    <n-switch v-model:value="formData.aiConfigs[ai.key].enabled" />
+                    <n-text :depth="formData.aiConfigs[ai.key].enabled ? 1 : 3">
+                      启用 {{ ai.fileName }}
+                    </n-text>
+                  </n-space>
+                </div>
+                <n-collapse-transition :show="formData.aiConfigs[ai.key].enabled">
+                  <MarkdownEditor
+                    v-model="formData.aiConfigs[ai.key].content"
+                    :rows="10"
+                    :min-height="220"
+                    :placeholder="`输入 ${ai.fileName} 内容`"
+                    :default-editing="!isEdit"
+                  />
+                </n-collapse-transition>
+              </div>
+            </n-tab-pane>
+          </n-tabs>
         </n-card>
 
         <!-- Skills -->
@@ -117,9 +144,11 @@
 import { ref, computed, watch } from 'vue'
 import {
   NModal, NScrollbar, NForm, NFormItem, NInput, NCard, NSwitch,
-  NCollapseTransition, NTransfer, NTag, NSpace, NButton,
+  NCollapseTransition, NTransfer, NTag, NSpace, NButton, NTabs, NTabPane,
+  NIcon, NText, NBadge,
   useMessage
 } from 'naive-ui'
+import { DocumentTextOutline } from '@vicons/ionicons5'
 import { createTemplate, updateTemplate } from '@/api/config-templates'
 import MarkdownEditor from './MarkdownEditor.vue'
 
@@ -138,6 +167,13 @@ const message = useMessage()
 const formRef = ref(null)
 const saving = ref(false)
 
+// AI 配置类型列表
+const AI_CONFIG_LIST = [
+  { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
+  { key: 'codex', name: 'Codex', fileName: 'AGENT.md', color: '#10a37f' },
+  { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
+]
+
 const isEdit = computed(() => !!props.template?.id && !props.template?.isBuiltin)
 
 // 表单数据
@@ -147,6 +183,12 @@ function getDefaultFormData() {
   return {
     name: '',
     description: '',
+    aiConfigs: {
+      claude: { enabled: false, content: '' },
+      codex: { enabled: false, content: '' },
+      gemini: { enabled: false, content: '' }
+    },
+    // 兼容旧字段
     claudeMd: { enabled: false, content: '' },
     skills: [],
     agents: [],
@@ -265,9 +307,29 @@ const selectedRuleFileNames = computed({
 watch(() => props.show, (newVal) => {
   if (newVal) {
     if (props.template) {
+      // 处理 AI 配置
+      let aiConfigs = {
+        claude: { enabled: false, content: '' },
+        codex: { enabled: false, content: '' },
+        gemini: { enabled: false, content: '' }
+      }
+
+      // 优先使用新的 aiConfigs
+      if (props.template.aiConfigs) {
+        for (const key of ['claude', 'codex', 'gemini']) {
+          if (props.template.aiConfigs[key]) {
+            aiConfigs[key] = { ...props.template.aiConfigs[key] }
+          }
+        }
+      } else if (props.template.claudeMd) {
+        // 兼容旧的 claudeMd 字段
+        aiConfigs.claude = { ...props.template.claudeMd }
+      }
+
       formData.value = {
         name: props.template.name || '',
         description: props.template.description || '',
+        aiConfigs,
         claudeMd: props.template.claudeMd ? { ...props.template.claudeMd } : { enabled: false, content: '' },
         skills: props.template.skills ? [...props.template.skills] : [],
         agents: props.template.agents ? [...props.template.agents] : [],
@@ -311,3 +373,12 @@ async function handleSave() {
   }
 }
 </script>
+
+<style scoped>
+.ai-config-pane {
+  padding: 12px 0;
+}
+.ai-config-header {
+  margin-bottom: 12px;
+}
+</style>

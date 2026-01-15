@@ -92,9 +92,9 @@ function showHelp() {
   console.log(chalk.gray('  $ pm2 unstartup      # 禁用开机自启\n'));
 
   console.log(chalk.yellow('更多信息:'));
-  console.log(chalk.gray('  官网: https://github.com/CooperJiang/cc-tool'));
+  console.log(chalk.gray('  官网: https://github.com/ZeaoZhang/coding-tool'));
   console.log(chalk.gray('  文档: 运行 ctx start 后在 Web UI 右上角点击帮助'));
-  console.log(chalk.gray('  问题: https://github.com/CooperJiang/cc-tool/issues\n'));
+  console.log(chalk.gray('  问题: https://github.com/ZeaoZhang/coding-tool/issues\n'));
 }
 
 // 全局错误处理

@@ -9,12 +9,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from 'vue'
 import { NSpin } from 'naive-ui'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import { useTheme } from '../../composables/useTheme'
 
 const props = defineProps({
   terminalId: {
@@ -41,6 +42,8 @@ const props = defineProps({
 
 const emit = defineEmits(['created', 'exit', 'error'])
 
+const { isDark } = useTheme()
+
 const containerRef = ref(null)
 const terminalRef = ref(null)
 const connected = ref(false)
@@ -54,8 +57,8 @@ let resizeObserver = null
 let reconnectTimer = null
 let shouldReconnect = true  // 控制是否允许重连
 
-// Catppuccin Mocha 主题配色
-const theme = {
+// 深色主题配色 (Catppuccin Mocha)
+const darkTheme = {
   background: '#1e1e2e',
   foreground: '#cdd6f4',
   cursor: '#f5e0dc',
@@ -80,12 +83,41 @@ const theme = {
   brightWhite: '#a6adc8'
 }
 
+// 浅色主题配色 (Catppuccin Latte)
+const lightTheme = {
+  background: '#eff1f5',
+  foreground: '#4c4f69',
+  cursor: '#dc8a78',
+  cursorAccent: '#eff1f5',
+  selectionBackground: 'rgba(64, 160, 43, 0.3)',
+  selectionForeground: '#4c4f69',
+  black: '#5c5f77',
+  red: '#d20f39',
+  green: '#40a02b',
+  yellow: '#df8e1d',
+  blue: '#1e66f5',
+  magenta: '#ea76cb',
+  cyan: '#179299',
+  white: '#acb0be',
+  brightBlack: '#6c6f85',
+  brightRed: '#d20f39',
+  brightGreen: '#40a02b',
+  brightYellow: '#df8e1d',
+  brightBlue: '#1e66f5',
+  brightMagenta: '#ea76cb',
+  brightCyan: '#179299',
+  brightWhite: '#bcc0cc'
+}
+
+// 根据主题获取配色
+const currentTheme = computed(() => isDark.value ? darkTheme : lightTheme)
+
 // 初始化终端
 function initTerminal() {
   if (terminal) return
 
   terminal = new Terminal({
-    theme,
+    theme: currentTheme.value,
     fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Monaco, "Cascadia Code", Consolas, monospace',
     fontSize: 14,
     lineHeight: 1.2,
@@ -330,13 +362,20 @@ watch(() => props.terminalId, (newId) => {
     }))
   }
 })
+
+// 监听主题变化，动态更新终端主题
+watch(isDark, () => {
+  if (terminal) {
+    terminal.options.theme = currentTheme.value
+  }
+})
 </script>
 
 <style scoped>
 .terminal-pane {
   width: 100%;
   height: 100%;
-  background: #1e1e2e;
+  background: var(--terminal-bg);
   position: relative;
   overflow: hidden;
 }
@@ -354,7 +393,7 @@ watch(() => props.terminalId, (newId) => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(30, 30, 46, 0.9);
+  background: var(--terminal-overlay-bg);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -364,7 +403,7 @@ watch(() => props.terminalId, (newId) => {
 }
 
 .connecting-text {
-  color: #cdd6f4;
+  color: var(--terminal-text);
   font-size: 14px;
 }
 
@@ -386,11 +425,11 @@ watch(() => props.terminalId, (newId) => {
 }
 
 :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
-  background: rgba(166, 227, 161, 0.3);
+  background: var(--terminal-scrollbar);
   border-radius: 4px;
 }
 
 :deep(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
-  background: rgba(166, 227, 161, 0.5);
+  background: var(--terminal-scrollbar-hover);
 }
 </style>

@@ -214,8 +214,8 @@ function handleAttachTerminal(terminalId) {
   display: flex;
   align-items: center;
   height: 40px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  background: var(--terminal-tabs-bg);
+  border-bottom: 1px solid var(--terminal-border);
   padding: 0 8px;
   gap: 8px;
 }
@@ -238,8 +238,8 @@ function handleAttachTerminal(terminalId) {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  background: #1e1e2e;
-  border: 1px solid #313244;
+  background: var(--terminal-tab-bg);
+  border: 1px solid var(--terminal-border);
   border-radius: 6px 6px 0 0;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -248,13 +248,13 @@ function handleAttachTerminal(terminalId) {
 }
 
 .tab-item:hover {
-  background: #313244;
+  background: var(--terminal-tab-hover);
 }
 
 .tab-item.active {
-  background: #1e1e2e;
-  border-color: #45475a;
-  border-bottom-color: #1e1e2e;
+  background: var(--terminal-bg);
+  border-color: var(--terminal-tab-active-border);
+  border-bottom-color: var(--terminal-bg);
   margin-bottom: -1px;
 }
 
@@ -265,7 +265,7 @@ function handleAttachTerminal(terminalId) {
 .tab-title {
   flex: 1;
   font-size: 12px;
-  color: #cdd6f4;
+  color: var(--terminal-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -290,7 +290,7 @@ function handleAttachTerminal(terminalId) {
 
 .existing-terminals-btn,
 .add-tab-btn {
-  color: #a6adc8;
+  color: var(--terminal-text-muted);
   display: flex;
   align-items: center;
   gap: 4px;
@@ -301,8 +301,8 @@ function handleAttachTerminal(terminalId) {
 
 .existing-terminals-btn:hover,
 .add-tab-btn:hover {
-  color: #cdd6f4;
-  background: rgba(69, 71, 90, 0.5);
+  color: var(--terminal-text);
+  background: var(--terminal-btn-hover);
 }
 
 .btn-label {

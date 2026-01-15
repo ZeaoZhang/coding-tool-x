@@ -34,11 +34,12 @@ export async function getSkillDetail(directory) {
 
 /**
  * 安装技能
- * @param {string} directory - 技能目录
+ * @param {string} directory - 本地安装目录
  * @param {object} repo - 仓库信息 { owner, name, branch }
+ * @param {string} [fullDirectory] - 仓库中的完整路径（当指定了仓库子目录时使用）
  */
-export async function installSkill(directory, repo) {
-  const response = await client.post('/skills/install', { directory, repo })
+export async function installSkill(directory, repo, fullDirectory = null) {
+  const response = await client.post('/skills/install', { directory, repo, fullDirectory })
   return response.data
 }
 
@@ -70,7 +71,7 @@ export async function getSkillRepos() {
 
 /**
  * 添加仓库
- * @param {object} repo - { owner, name, branch, enabled }
+ * @param {object} repo - { owner, name, branch, directory, enabled }
  */
 export async function addSkillRepo(repo) {
   const response = await client.post('/skills/repos', repo)
@@ -81,9 +82,12 @@ export async function addSkillRepo(repo) {
  * 删除仓库
  * @param {string} owner
  * @param {string} name
+ * @param {string} [directory] - 子目录路径
  */
-export async function removeSkillRepo(owner, name) {
-  const response = await client.delete(`/skills/repos/${owner}/${name}`)
+export async function removeSkillRepo(owner, name, directory = '') {
+  const response = await client.delete(`/skills/repos/${owner}/${name}`, {
+    params: { directory }
+  })
   return response.data
 }
 
@@ -92,8 +96,19 @@ export async function removeSkillRepo(owner, name) {
  * @param {string} owner
  * @param {string} name
  * @param {boolean} enabled
+ * @param {string} [directory] - 子目录路径
  */
-export async function toggleSkillRepo(owner, name, enabled) {
-  const response = await client.put(`/skills/repos/${owner}/${name}/toggle`, { enabled })
+export async function toggleSkillRepo(owner, name, enabled, directory = '') {
+  const response = await client.put(`/skills/repos/${owner}/${name}/toggle`, { enabled, directory })
+  return response.data
+}
+
+/**
+ * 转换技能格式
+ * @param {string} content - 技能内容
+ * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
+ */
+export async function convertSkillFormat(content, targetFormat) {
+  const response = await client.post('/skills/convert', { content, targetFormat })
   return response.data
 }

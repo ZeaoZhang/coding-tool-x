@@ -242,4 +242,265 @@ router.delete('/:scope/:name', (req, res) => {
   }
 });
 
+// ==================== 仓库管理 API ====================
+
+/**
+ * 获取所有命令（包括远程仓库）
+ * GET /api/commands/all
+ * Query: projectPath, refresh=1 强制刷新缓存
+ */
+router.get('/all', async (req, res) => {
+  try {
+    const { projectPath, refresh } = req.query;
+    const forceRefresh = refresh === '1';
+    const result = await commandsService.listAllCommands(projectPath || null, forceRefresh);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Commands API] List all commands error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 获取仓库列表
+ * GET /api/commands/repos
+ */
+router.get('/repos', (req, res) => {
+  try {
+    const repos = commandsService.getRepos();
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Commands API] Get repos error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 添加仓库
+ * POST /api/commands/repos
+ * Body: { owner, name, branch, directory, enabled }
+ */
+router.post('/repos', (req, res) => {
+  try {
+    const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
+
+    if (!owner || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing owner or name'
+      });
+    }
+
+    const repos = commandsService.addRepo({ owner, name, branch, directory, enabled });
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Commands API] Add repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 删除仓库
+ * DELETE /api/commands/repos/:owner/:name
+ * Query: directory - 可选，子目录路径
+ */
+router.delete('/repos/:owner/:name', (req, res) => {
+  try {
+    const { owner, name } = req.params;
+    const { directory = '' } = req.query;
+    const repos = commandsService.removeRepo(owner, name, directory);
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Commands API] Remove repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 切换仓库启用状态
+ * PUT /api/commands/repos/:owner/:name/toggle
+ * Body: { enabled, directory }
+ */
+router.put('/repos/:owner/:name/toggle', (req, res) => {
+  try {
+    const { owner, name } = req.params;
+    const { enabled, directory = '' } = req.body;
+
+    const repos = commandsService.toggleRepo(owner, name, directory, enabled);
+
+    res.json({
+      success: true,
+      repos
+    });
+  } catch (err) {
+    console.error('[Commands API] Toggle repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 从远程仓库安装命令
+ * POST /api/commands/install
+ * Body: command object from listAllCommands
+ */
+router.post('/install', async (req, res) => {
+  try {
+    const command = req.body;
+
+    if (!command || !command.repoOwner || !command.repoName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing command info or repo info'
+      });
+    }
+
+    const result = await commandsService.installFromRemote(command);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Commands API] Install command error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 卸载命令
+ * POST /api/commands/uninstall
+ * Body: { path } - 命令的相对路径
+ */
+router.post('/uninstall', (req, res) => {
+  try {
+    const { path } = req.body;
+
+    if (!path) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing path'
+      });
+    }
+
+    const result = commandsService.uninstallCommand(path);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Commands API] Uninstall command error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+// ==================== 格式转换 API ====================
+
+/**
+ * 转换命令格式
+ * POST /api/commands/convert
+ * Body: { content, targetFormat }
+ * - content: 命令内容
+ * - targetFormat: 目标格式 ('claude' | 'codex')
+ */
+router.post('/convert', (req, res) => {
+  try {
+    const { content, targetFormat } = req.body;
+
+    if (!content) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供命令内容'
+      });
+    }
+
+    if (!['claude', 'codex'].includes(targetFormat)) {
+      return res.status(400).json({
+        success: false,
+        message: '目标格式必须是 claude 或 codex'
+      });
+    }
+
+    const result = commandsService.convertCommandFormat(content, targetFormat);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Commands API] Convert command error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 检测命令格式
+ * POST /api/commands/detect-format
+ * Body: { content }
+ */
+router.post('/detect-format', (req, res) => {
+  try {
+    const { content } = req.body;
+
+    if (!content) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供命令内容'
+      });
+    }
+
+    const format = commandsService.detectFormat(content);
+
+    res.json({
+      success: true,
+      format
+    });
+  } catch (err) {
+    console.error('[Commands API] Detect format error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
 module.exports = router;

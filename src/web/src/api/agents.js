@@ -18,6 +18,20 @@ export async function getAgents(projectPath = null) {
 }
 
 /**
+ * 获取所有代理（包括远程仓库）
+ * @param {string} projectPath - 项目路径（可选）
+ * @param {boolean} forceRefresh - 是否强制刷新缓存
+ */
+export async function getAllAgents(projectPath = null, forceRefresh = false) {
+  const params = {}
+  if (projectPath) params.projectPath = projectPath
+  if (forceRefresh) params.refresh = '1'
+
+  const response = await client.get('/agents/all', { params })
+  return response.data
+}
+
+/**
  * 获取代理统计
  * @param {string} projectPath - 项目路径
  */
@@ -73,5 +87,67 @@ export async function deleteAgent(fileName, scope, projectPath = null) {
   if (projectPath) params.projectPath = projectPath
 
   const response = await client.delete(`/agents/${scope}/${fileName}`, { params })
+  return response.data
+}
+
+// ==================== 仓库管理 ====================
+
+/**
+ * 获取仓库列表
+ */
+export async function getAgentRepos() {
+  const response = await client.get('/agents/repos')
+  return response.data
+}
+
+/**
+ * 添加仓库
+ * @param {object} repo - { owner, name, branch, directory, enabled }
+ */
+export async function addAgentRepo(repo) {
+  const response = await client.post('/agents/repos', repo)
+  return response.data
+}
+
+/**
+ * 删除仓库
+ * @param {string} owner
+ * @param {string} name
+ * @param {string} [directory] - 子目录路径
+ */
+export async function removeAgentRepo(owner, name, directory = '') {
+  const response = await client.delete(`/agents/repos/${owner}/${name}`, {
+    params: { directory }
+  })
+  return response.data
+}
+
+/**
+ * 切换仓库启用状态
+ * @param {string} owner
+ * @param {string} name
+ * @param {boolean} enabled
+ * @param {string} [directory] - 子目录路径
+ */
+export async function toggleAgentRepo(owner, name, enabled, directory = '') {
+  const response = await client.put(`/agents/repos/${owner}/${name}/toggle`, { enabled, directory })
+  return response.data
+}
+
+/**
+ * 从远程仓库安装代理
+ * @param {object} agent - 代理对象
+ */
+export async function installAgent(agent) {
+  const response = await client.post('/agents/install', agent)
+  return response.data
+}
+
+/**
+ * 卸载代理
+ * @param {string} fileName - 代理的文件名（不含扩展名）
+ */
+export async function uninstallAgent(fileName) {
+  const response = await client.post('/agents/uninstall', { fileName })
   return response.data
 }

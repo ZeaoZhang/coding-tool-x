@@ -1,6 +1,6 @@
 {
   "name": "@adversity/coding-tool-x",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
@@ -48,6 +48,7 @@
     "@iarna/toml": "^2.2.5",
     "@lydell/node-pty": "^1.1.0",
     "adm-zip": "^0.5.16",
+    "cc-tool-web": "file:src/web",
     "chalk": "^4.1.2",
     "express": "^4.18.2",
     "http-proxy": "^1.18.1",
@@ -64,10 +65,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/CooperJiang/cc-tool.git"
+    "url": "git+https://github.com/ZeaoZhang/coding-tool.git"
   },
   "bugs": {
-    "url": "https://github.com/CooperJiang/cc-tool/issues"
+    "url": "https://github.com/ZeaoZhang/coding-tool/issues"
   },
-  "homepage": "https://github.com/CooperJiang/cc-tool#readme"
+  "homepage": "https://github.com/ZeaoZhang/coding-tool#readme"
 }

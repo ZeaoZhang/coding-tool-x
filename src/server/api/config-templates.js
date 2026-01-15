@@ -46,8 +46,15 @@ router.get('/available-configs', (req, res) => {
  * GET /api/config-templates/:id
  * 获取单个配置模板详情
  */
-router.get('/:id', (req, res) => {
+// 注意：此路由需要放在所有静态子路由之后，避免把 /available-configs 等路径当成 id
+router.get('/:id', (req, res, next) => {
   try {
+    // 兜底：即便路由顺序被改动，也避免把保留路径当成模板 ID
+    const reservedIds = new Set(['available-configs']);
+    if (reservedIds.has(req.params.id)) {
+      return next();
+    }
+
     const template = templatesService.getTemplateById(req.params.id);
     if (!template) {
       return res.status(404).json({
@@ -132,14 +139,18 @@ router.delete('/:id', (req, res) => {
  */
 router.post('/:id/apply', (req, res) => {
   try {
-    const { targetPath } = req.body;
+    const { targetPath, aiConfigType } = req.body;
     if (!targetPath) {
       return res.status(400).json({
         success: false,
         message: '目标路径不能为空'
       });
     }
-    const result = templatesService.applyTemplateToProject(targetPath, req.params.id);
+    const options = {};
+    if (aiConfigType) {
+      options.aiConfigType = aiConfigType;
+    }
+    const result = templatesService.applyTemplateToProject(targetPath, req.params.id, options);
     res.json({
       success: true,
       message: '模板应用成功',
@@ -159,14 +170,18 @@ router.post('/:id/apply', (req, res) => {
  */
 router.post('/:id/preview', (req, res) => {
   try {
-    const { targetPath } = req.body;
+    const { targetPath, aiConfigType } = req.body;
     if (!targetPath) {
       return res.status(400).json({
         success: false,
         message: '目标路径不能为空'
       });
     }
-    const preview = templatesService.previewTemplateApplication(targetPath, req.params.id);
+    const options = {};
+    if (aiConfigType) {
+      options.aiConfigType = aiConfigType;
+    }
+    const preview = templatesService.previewTemplateApplication(targetPath, req.params.id, options);
     res.json({
       success: true,
       data: preview
