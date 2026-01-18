@@ -15,11 +15,11 @@
         />
       </n-form-item>
 
-      <!-- AI 配置文件选择 -->
-      <n-form-item label="AI 配置文件" v-if="hasMultipleAiConfigs">
-        <n-radio-group v-model:value="formData.aiConfigType">
+      <!-- AI 配置文件选择（多选） -->
+      <n-form-item label="生成配置文件" v-if="availableAiConfigs.length > 0">
+        <n-checkbox-group v-model:value="formData.aiConfigTypes">
           <n-space>
-            <n-radio
+            <n-checkbox
               v-for="ai in availableAiConfigs"
               :key="ai.key"
               :value="ai.key"
@@ -29,15 +29,18 @@
                 <span>{{ ai.name }}</span>
                 <n-text depth="3" style="font-size: 12px">({{ ai.fileName }})</n-text>
               </n-space>
-            </n-radio>
+            </n-checkbox>
           </n-space>
-        </n-radio-group>
+        </n-checkbox-group>
+        <n-text depth="3" style="font-size: 12px; margin-top: 4px; display: block">
+          可同时选择多个 CLI 配置文件
+        </n-text>
       </n-form-item>
     </n-form>
 
     <!-- 预览按钮 -->
     <n-space style="margin-bottom: 16px">
-      <n-button @click="handlePreview" :loading="loadingPreview" :disabled="!formData.targetPath">
+      <n-button @click="handlePreview" :loading="loadingPreview" :disabled="!formData.targetPath || formData.aiConfigTypes.length === 0">
         预览应用效果
       </n-button>
     </n-space>
@@ -47,9 +50,14 @@
       <n-space vertical>
         <div v-if="previewData.summary">
           <n-text depth="3">将应用：</n-text>
-          <n-space style="margin-top: 8px">
-            <n-tag v-if="previewData.summary.aiConfig" :type="getAiConfigTagType(previewData.summary.aiConfig.type)" size="small">
-              {{ previewData.summary.aiConfig.fileName }}
+          <n-space style="margin-top: 8px" wrap>
+            <n-tag
+              v-for="aiCfg in previewData.summary.aiConfigs"
+              :key="aiCfg.type"
+              :type="getAiConfigTagType(aiCfg.type)"
+              size="small"
+            >
+              {{ aiCfg.fileName }}
             </n-tag>
             <n-tag v-if="previewData.summary.claudeMd" type="success" size="small">CLAUDE.md</n-tag>
             <n-tag v-if="previewData.summary.skills" type="info" size="small">{{ previewData.summary.skills }} Skills</n-tag>
@@ -97,7 +105,7 @@
         <n-button
           type="primary"
           :loading="applying"
-          :disabled="!formData.targetPath"
+          :disabled="!formData.targetPath || formData.aiConfigTypes.length === 0"
           @click="handleApply"
         >
           确认应用
@@ -111,7 +119,7 @@
 import { ref, watch, computed } from 'vue'
 import {
   NModal, NForm, NFormItem, NInput, NButton, NSpace, NCard,
-  NTag, NText, NDivider, NUl, NLi, NAlert, NRadioGroup, NRadio, NIcon,
+  NTag, NText, NDivider, NUl, NLi, NAlert, NCheckboxGroup, NCheckbox, NIcon,
   useMessage
 } from 'naive-ui'
 import { DocumentTextOutline } from '@vicons/ionicons5'
@@ -133,7 +141,7 @@ const previewData = ref(null)
 // AI 配置类型信息
 const AI_CONFIG_INFO = {
   claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
-  codex: { key: 'codex', name: 'Codex', fileName: 'AGENT.md', color: '#10a37f' },
+  codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
 }
 
@@ -147,20 +155,14 @@ const availableAiConfigs = computed(() => {
     .map(([key]) => AI_CONFIG_INFO[key])
 })
 
-// 是否有多个 AI 配置可选
-const hasMultipleAiConfigs = computed(() => availableAiConfigs.value.length > 0)
-
-// 获取默认的 AI 配置类型
-function getDefaultAiConfigType() {
-  if (availableAiConfigs.value.length > 0) {
-    return availableAiConfigs.value[0].key
-  }
-  return 'claude'
+// 获取默认选中的 AI 配置类型（全部选中）
+function getDefaultAiConfigTypes() {
+  return availableAiConfigs.value.map(ai => ai.key)
 }
 
 const formData = ref({
   targetPath: '',
-  aiConfigType: 'claude'
+  aiConfigTypes: []  // 改为数组支持多选
 })
 
 const formRules = {
@@ -181,26 +183,26 @@ function getAiConfigTagType(type) {
 watch(() => props.show, (newVal) => {
   if (newVal) {
     formData.value.targetPath = ''
-    formData.value.aiConfigType = getDefaultAiConfigType()
+    formData.value.aiConfigTypes = getDefaultAiConfigTypes()
     previewData.value = null
   }
 })
 
 // 监听模版变化，重置 AI 配置类型
 watch(() => props.template, () => {
-  formData.value.aiConfigType = getDefaultAiConfigType()
+  formData.value.aiConfigTypes = getDefaultAiConfigTypes()
 })
 
 // 预览
 async function handlePreview() {
-  if (!formData.value.targetPath || !props.template) return
+  if (!formData.value.targetPath || !props.template || formData.value.aiConfigTypes.length === 0) return
 
   loadingPreview.value = true
   try {
     const res = await previewTemplate(
       props.template.id,
       formData.value.targetPath,
-      formData.value.aiConfigType
+      formData.value.aiConfigTypes  // 传递数组
     )
     if (res.success) {
       previewData.value = res.data
@@ -222,14 +224,14 @@ async function handleApply() {
     return
   }
 
-  if (!props.template) return
+  if (!props.template || formData.value.aiConfigTypes.length === 0) return
 
   applying.value = true
   try {
     const res = await applyTemplate(
       props.template.id,
       formData.value.targetPath,
-      formData.value.aiConfigType
+      formData.value.aiConfigTypes  // 传递数组
     )
     if (res.success) {
       message.success('模版应用成功')

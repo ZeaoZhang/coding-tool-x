@@ -76,7 +76,7 @@ const message = useMessage()
 const formRef = ref(null)
 const submitting = ref(false)
 const templates = ref([])
-const permissionTemplates = ref({})
+const permissionTemplates = ref([])
 const existingProjects = ref([])
 
 const visible = computed({
@@ -106,12 +106,16 @@ const templateOptions = computed(() => templates.value.map(t => ({
   value: t.id
 })))
 
-const permissionOptions = computed(() => [
-  { label: '安全模式 - 仅允许只读命令', value: 'safe' },
-  { label: '平衡模式 - 允许常用开发命令 (推荐)', value: 'balanced' },
-  { label: '宽松模式 - 允许大多数命令', value: 'permissive' },
-  { label: '无限制 - 不设置权限', value: 'none' }
-])
+const permissionOptions = computed(() => {
+  // 从API加载的权限模板转换为下拉选项
+  if (!permissionTemplates.value || !Array.isArray(permissionTemplates.value)) {
+    return [];
+  }
+  return permissionTemplates.value.map(tpl => ({
+    label: `${tpl.name} - ${tpl.description}`,
+    value: tpl.id
+  }));
+})
 
 const existingProjectOptions = computed(() => existingProjects.value.map(p => ({
   label: `${p.displayName || p.name} (${p.channel})${p.isGitRepo ? ' [Git]' : ''}`,
@@ -177,11 +181,16 @@ function resetForm() {
 
 async function loadData() {
   try {
-    const [tplRes, projRes] = await Promise.all([getAllTemplates(), getAvailableProjects()])
-    if (tplRes.success) templates.value = tplRes.data || []
-    if (projRes.success) existingProjects.value = projRes.data || []
+    const [tplRes, projRes, permRes] = await Promise.all([
+      getAllTemplates(),
+      getAvailableProjects(),
+      getPermissionTemplates()
+    ]);
+    if (tplRes.success) templates.value = tplRes.data || [];
+    if (projRes.success) existingProjects.value = projRes.data || [];
+    if (permRes.success) permissionTemplates.value = permRes.data || [];
   } catch (err) {
-    console.error('加载数据失败:', err)
+    console.error('加载数据失败:', err);
   }
 }
 

@@ -55,10 +55,12 @@ export async function getAvailableConfigs() {
  * 应用模板到项目目录
  * @param {string} id - 模板 ID
  * @param {string} targetPath - 目标项目路径
- * @param {string} aiConfigType - AI 配置类型: 'claude' | 'codex' | 'gemini'
+ * @param {string|string[]} aiConfigTypes - AI 配置类型(s): 'claude' | 'codex' | 'gemini' 或数组
  */
-export async function applyTemplate(id, targetPath, aiConfigType = 'claude') {
-  const response = await axios.post(`${API_BASE}/${id}/apply`, { targetPath, aiConfigType });
+export async function applyTemplate(id, targetPath, aiConfigTypes = ['claude']) {
+  // 兼容单值和数组
+  const types = Array.isArray(aiConfigTypes) ? aiConfigTypes : [aiConfigTypes];
+  const response = await axios.post(`${API_BASE}/${id}/apply`, { targetPath, aiConfigTypes: types });
   return response.data;
 }
 
@@ -66,9 +68,11 @@ export async function applyTemplate(id, targetPath, aiConfigType = 'claude') {
  * 预览模板应用效果
  * @param {string} id - 模板 ID
  * @param {string} targetPath - 目标项目路径
- * @param {string} aiConfigType - AI 配置类型: 'claude' | 'codex' | 'gemini'
+ * @param {string|string[]} aiConfigTypes - AI 配置类型(s): 'claude' | 'codex' | 'gemini' 或数组
  */
-export async function previewTemplate(id, targetPath, aiConfigType = 'claude') {
-  const response = await axios.post(`${API_BASE}/${id}/preview`, { targetPath, aiConfigType });
+export async function previewTemplate(id, targetPath, aiConfigTypes = ['claude']) {
+  // 兼容单值和数组
+  const types = Array.isArray(aiConfigTypes) ? aiConfigTypes : [aiConfigTypes];
+  const response = await axios.post(`${API_BASE}/${id}/preview`, { targetPath, aiConfigTypes: types });
   return response.data;
 }

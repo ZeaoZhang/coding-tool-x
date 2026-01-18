@@ -154,7 +154,7 @@ const emit = defineEmits(['update:show', 'apply'])
 // AI 配置类型信息
 const AI_CONFIG_INFO = {
   claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
-  codex: { key: 'codex', name: 'Codex', fileName: 'AGENT.md', color: '#10a37f' },
+  codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
 }
 

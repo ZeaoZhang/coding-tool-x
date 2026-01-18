@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 
 const DEFAULT_CONFIG = {
-  projectsDir: path.join(os.homedir(), '.claude', 'ctx', 'projects'),
+  projectsDir: path.join(os.homedir(), '.claude', 'projects'),
   defaultProject: null,
   maxDisplaySessions: 100,
   pageSize: 15,

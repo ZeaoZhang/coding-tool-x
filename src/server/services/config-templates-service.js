@@ -802,7 +802,8 @@ function generateRuleContent(rule) {
  * @param {string} targetDir - 目标项目目录
  * @param {string} templateId - 模板 ID
  * @param {object} options - 可选配置
- * @param {string} options.aiConfigType - 选择的 AI 配置类型: 'claude' | 'codex' | 'gemini'
+ * @param {string|string[]} options.aiConfigTypes - 选择的 AI 配置类型数组: ['claude', 'codex', 'gemini']
+ * @param {string} options.aiConfigType - (兼容旧版) 单个 AI 配置类型
  */
 function applyTemplateToProject(targetDir, templateId, options = {}) {
   const template = getTemplateById(templateId);
@@ -813,7 +814,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
   ensureDir(targetDir);
 
   const results = {
-    aiConfig: { applied: false, path: null, type: null },
+    aiConfigs: [],  // 改为数组存储多个 AI 配置结果
     skills: { applied: template.skills?.length || 0, items: template.skills?.map(s => s.directory || s.name) || [] },
     agents: { applied: 0, files: [] },
     commands: { applied: 0, files: [] },
@@ -822,27 +823,37 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
   };
 
   // 1. 写入 AI 配置文件（支持多 AI 类型选择）
-  const aiConfigType = options.aiConfigType || 'claude';
+  // 兼容旧版单值参数
+  let aiConfigTypes = options.aiConfigTypes;
+  if (!aiConfigTypes) {
+    aiConfigTypes = options.aiConfigType ? [options.aiConfigType] : ['claude'];
+  }
+  if (!Array.isArray(aiConfigTypes)) {
+    aiConfigTypes = [aiConfigTypes];
+  }
+
   const aiConfigMap = {
     claude: { fileName: 'CLAUDE.md', name: 'Claude' },
-    codex: { fileName: 'AGENT.md', name: 'Codex' },
+    codex: { fileName: 'AGENTS.md', name: 'Codex' },
     gemini: { fileName: 'GEMINI.md', name: 'Gemini' }
   };
 
-  // 优先使用新的 aiConfigs 结构
-  let aiConfig = null;
-  if (template.aiConfigs && template.aiConfigs[aiConfigType]) {
-    aiConfig = template.aiConfigs[aiConfigType];
-  } else if (aiConfigType === 'claude' && template.claudeMd) {
-    // 兼容旧的 claudeMd 字段
-    aiConfig = template.claudeMd;
-  }
+  // 遍历所有选中的 AI 配置类型
+  for (const aiConfigType of aiConfigTypes) {
+    let aiConfig = null;
+    if (template.aiConfigs && template.aiConfigs[aiConfigType]) {
+      aiConfig = template.aiConfigs[aiConfigType];
+    } else if (aiConfigType === 'claude' && template.claudeMd) {
+      // 兼容旧的 claudeMd 字段
+      aiConfig = template.claudeMd;
+    }
 
-  if (aiConfig?.enabled && aiConfig?.content) {
-    const configInfo = aiConfigMap[aiConfigType];
-    const configPath = path.join(targetDir, configInfo.fileName);
-    fs.writeFileSync(configPath, aiConfig.content, 'utf-8');
-    results.aiConfig = { applied: true, path: configInfo.fileName, type: configInfo.name };
+    if (aiConfig?.enabled && aiConfig?.content) {
+      const configInfo = aiConfigMap[aiConfigType];
+      const configPath = path.join(targetDir, configInfo.fileName);
+      fs.writeFileSync(configPath, aiConfig.content, 'utf-8');
+      results.aiConfigs.push({ applied: true, path: configInfo.fileName, type: configInfo.name, key: aiConfigType });
+    }
   }
 
   // 2. 写入 Agents
@@ -932,8 +943,8 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     templateId: template.id,
     templateName: template.name,
     appliedAt: new Date().toISOString(),
-    aiConfigType: aiConfigType,
-    aiConfigPath: results.aiConfig.path,
+    aiConfigTypes: aiConfigTypes,
+    aiConfigPaths: results.aiConfigs.map(c => c.path),
     skills: template.skills?.map(s => s.directory || s.name) || [],
     agents: template.agents?.map(a => a.fileName || a.name) || [],
     commands: template.commands?.map(c => c.name) || [],
@@ -955,7 +966,8 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
  * @param {string} targetDir - 目标项目目录
  * @param {string} templateId - 模板 ID
  * @param {object} options - 可选配置
- * @param {string} options.aiConfigType - 选择的 AI 配置类型: 'claude' | 'codex' | 'gemini'
+ * @param {string|string[]} options.aiConfigTypes - 选择的 AI 配置类型数组: ['claude', 'codex', 'gemini']
+ * @param {string} options.aiConfigType - (兼容旧版) 单个 AI 配置类型
  */
 function previewTemplateApplication(targetDir, templateId, options = {}) {
   const template = getTemplateById(templateId);
@@ -967,7 +979,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     willCreate: [],
     willOverwrite: [],
     summary: {
-      aiConfig: null,
+      aiConfigs: [],  // 改为数组
       skills: 0,
       agents: 0,
       commands: 0,
@@ -976,30 +988,41 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     }
   };
 
-  // 检查 AI 配置文件
-  const aiConfigType = options.aiConfigType || 'claude';
+  // 检查 AI 配置文件（支持多选）
+  // 兼容旧版单值参数
+  let aiConfigTypes = options.aiConfigTypes;
+  if (!aiConfigTypes) {
+    aiConfigTypes = options.aiConfigType ? [options.aiConfigType] : ['claude'];
+  }
+  if (!Array.isArray(aiConfigTypes)) {
+    aiConfigTypes = [aiConfigTypes];
+  }
+
   const aiConfigMap = {
     claude: { fileName: 'CLAUDE.md', name: 'Claude' },
-    codex: { fileName: 'AGENT.md', name: 'Codex' },
+    codex: { fileName: 'AGENTS.md', name: 'Codex' },
     gemini: { fileName: 'GEMINI.md', name: 'Gemini' }
   };
 
-  let aiConfig = null;
-  if (template.aiConfigs && template.aiConfigs[aiConfigType]) {
-    aiConfig = template.aiConfigs[aiConfigType];
-  } else if (aiConfigType === 'claude' && template.claudeMd) {
-    aiConfig = template.claudeMd;
-  }
-
-  if (aiConfig?.enabled && aiConfig?.content) {
-    const configInfo = aiConfigMap[aiConfigType];
-    const configPath = path.join(targetDir, configInfo.fileName);
-    if (fs.existsSync(configPath)) {
-      preview.willOverwrite.push(configInfo.fileName);
-    } else {
-      preview.willCreate.push(configInfo.fileName);
+  // 遍历所有选中的 AI 配置类型
+  for (const aiConfigType of aiConfigTypes) {
+    let aiConfig = null;
+    if (template.aiConfigs && template.aiConfigs[aiConfigType]) {
+      aiConfig = template.aiConfigs[aiConfigType];
+    } else if (aiConfigType === 'claude' && template.claudeMd) {
+      aiConfig = template.claudeMd;
     }
-    preview.summary.aiConfig = { type: aiConfigType, fileName: configInfo.fileName, name: configInfo.name };
+
+    if (aiConfig?.enabled && aiConfig?.content) {
+      const configInfo = aiConfigMap[aiConfigType];
+      const configPath = path.join(targetDir, configInfo.fileName);
+      if (fs.existsSync(configPath)) {
+        preview.willOverwrite.push(configInfo.fileName);
+      } else {
+        preview.willCreate.push(configInfo.fileName);
+      }
+      preview.summary.aiConfigs.push({ type: aiConfigType, fileName: configInfo.fileName, name: configInfo.name });
+    }
   }
 
   // Skills 摘要

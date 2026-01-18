@@ -147,6 +147,13 @@
           @click="showConfigTemplatesDrawer = true"
         />
 
+        <!-- Config Export/Import Button -->
+        <HeaderButton
+          :icon="CloudDownloadOutline"
+          tooltip="配置导出/导入"
+          @click="showConfigExportDrawer = true"
+        />
+
         <!-- 功能区分隔线 -->
         <div class="header-divider" />
 
@@ -235,6 +242,9 @@
 
     <!-- Config Templates Drawer -->
     <ConfigTemplatesDrawer v-model:visible="showConfigTemplatesDrawer" />
+
+    <!-- Config Export/Import Drawer -->
+    <ConfigExportDrawer v-model:visible="showConfigExportDrawer" />
 
     <!-- Command Permission Drawer -->
     <CommandPermissionDrawer v-model:visible="showPermissionDrawer" />
@@ -426,7 +436,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, ShieldCheckmarkOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -440,6 +450,7 @@ import AgentsDrawer from './AgentsDrawer.vue'
 import RulesDrawer from './RulesDrawer.vue'
 import WorkspaceDrawer from './WorkspaceDrawer.vue'
 import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
+import ConfigExportDrawer from './ConfigExportDrawer.vue'
 import CommandPermissionDrawer from './CommandPermissionDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
@@ -491,6 +502,7 @@ const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
 const showPermissionDrawer = ref(false)
+const showConfigExportDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const showCommandsDrawer = ref(false)
 const showAgentsDrawer = ref(false)

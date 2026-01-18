@@ -61,6 +61,43 @@ export async function getPermissionTemplates() {
 }
 
 /**
+ * 获取单个权限模版
+ * @param {string} id - 模版 ID
+ */
+export async function getPermissionTemplate(id) {
+  const response = await client.get(`/permissions/templates/${id}`)
+  return response.data
+}
+
+/**
+ * 创建自定义权限模版
+ * @param {object} template - 模版数据
+ */
+export async function createPermissionTemplate(template) {
+  const response = await client.post('/permissions/templates', template)
+  return response.data
+}
+
+/**
+ * 更新自定义权限模版
+ * @param {string} id - 模版 ID
+ * @param {object} updates - 更新数据
+ */
+export async function updatePermissionTemplate(id, updates) {
+  const response = await client.put(`/permissions/templates/${id}`, updates)
+  return response.data
+}
+
+/**
+ * 删除自定义权限模版
+ * @param {string} id - 模版 ID
+ */
+export async function deletePermissionTemplate(id) {
+  const response = await client.delete(`/permissions/templates/${id}`)
+  return response.data
+}
+
+/**
  * 获取各 CLI 工具的配置说明
  */
 export async function getCliConfigs() {

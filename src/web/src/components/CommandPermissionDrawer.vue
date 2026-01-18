@@ -199,41 +199,77 @@
               建议: Bash(rm:*), Bash(sudo:*), Bash(git push --force:*), Read(.env)
             </n-text>
           </div>
-
-          <!-- 预设模版 -->
-          <div class="template-section">
-            <n-text depth="2" style="font-size: 13px; margin-bottom: 8px; display: block;">
-              快速应用预设
-            </n-text>
-            <n-space>
-              <n-button size="small" @click="applyTemplate('safe')">
-                <template #icon>
-                  <n-icon><ShieldOutline /></n-icon>
-                </template>
-                安全模式
-              </n-button>
-              <n-button size="small" @click="applyTemplate('balanced')">
-                <template #icon>
-                  <n-icon><ScaleOutline /></n-icon>
-                </template>
-                平衡模式
-              </n-button>
-              <n-button size="small" @click="applyTemplate('permissive')">
-                <template #icon>
-                  <n-icon><FlashOutline /></n-icon>
-                </template>
-                宽松模式
-              </n-button>
-            </n-space>
-          </div>
         </div>
 
         <!-- 无项目选择提示 -->
-        <n-empty
-          v-else
-          description="请选择一个项目来配置权限"
-          style="margin-top: 40px;"
-        />
+        <div v-if="!selectedProject" class="empty-hint">
+          <n-icon :size="32" color="var(--text-quaternary)">
+            <ShieldCheckmarkOutline />
+          </n-icon>
+          <n-text depth="3" style="font-size: 13px;">
+            请先选择一个项目来配置权限
+          </n-text>
+        </div>
+
+        <!-- 权限模版（始终显示） -->
+        <div class="template-section">
+          <div class="template-header">
+            <n-text depth="2" style="font-size: 13px;">
+              权限模版
+            </n-text>
+            <n-button size="tiny" text @click="handleCreateTemplate">
+              <template #icon><n-icon><AddOutline /></n-icon></template>
+              新建
+            </n-button>
+          </div>
+          <div class="template-list">
+            <div
+              v-for="tpl in templates"
+              :key="tpl.id"
+              class="template-item"
+            >
+              <div class="template-info" @click="applyTemplate(tpl)">
+                <n-text strong style="font-size: 13px;">{{ tpl.name }}</n-text>
+                <n-text depth="3" style="font-size: 11px;">{{ tpl.description }}</n-text>
+              </div>
+              <n-space :size="4">
+                <n-button
+                  size="tiny"
+                  text
+                  @click="handlePreviewTemplate(tpl)"
+                >
+                  预览
+                </n-button>
+                <n-button
+                  size="tiny"
+                  text
+                  :disabled="!selectedProject"
+                  @click="applyTemplate(tpl)"
+                >
+                  应用
+                </n-button>
+                <n-button
+                  size="tiny"
+                  text
+                  @click="handleEditTemplate(tpl)"
+                >
+                  编辑
+                </n-button>
+                <n-popconfirm
+                  @positive-click="handleDeleteTemplate(tpl)"
+                >
+                  <template #trigger>
+                    <n-button size="tiny" text type="error">
+                      删除
+                    </n-button>
+                  </template>
+                  确定删除模版 "{{ tpl.name }}" 吗？
+                </n-popconfirm>
+              </n-space>
+            </div>
+            <n-empty v-if="templates.length === 0" description="暂无模版" size="small" />
+          </div>
+        </div>
       </div>
 
       <template #footer>
@@ -254,6 +290,75 @@
       </template>
     </n-drawer-content>
   </n-drawer>
+
+  <!-- 模版表单弹窗 -->
+  <PermissionTemplateFormModal
+    v-model:show="showTemplateForm"
+    :template="editingTemplate"
+    @success="handleTemplateFormSuccess"
+  />
+
+  <!-- 模版预览弹窗 -->
+  <n-modal v-model:show="showPreview" preset="card" style="width: 480px; max-width: 90vw;">
+    <template #header>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <n-icon :size="18" color="#18a058"><EyeOutline /></n-icon>
+        <span>模版预览</span>
+      </div>
+    </template>
+    <div v-if="previewTemplate" class="preview-content">
+      <div class="preview-header">
+        <n-text strong style="font-size: 15px;">{{ previewTemplate.name }}</n-text>
+      </div>
+      <n-text depth="3" style="font-size: 12px;">{{ previewTemplate.description }}</n-text>
+
+      <n-divider style="margin: 12px 0;" />
+
+      <!-- Allow 规则 -->
+      <div class="preview-section">
+        <div class="preview-section-header">
+          <n-icon :size="16" color="#18a058"><CheckmarkCircleOutline /></n-icon>
+          <n-text strong>允许自动执行 (allow)</n-text>
+        </div>
+        <div class="preview-rules">
+          <n-tag
+            v-for="rule in previewTemplate.permissions?.allow || []"
+            :key="rule"
+            type="success"
+            size="small"
+            style="margin: 2px;"
+          >
+            {{ rule }}
+          </n-tag>
+          <n-text v-if="!previewTemplate.permissions?.allow?.length" depth="3" style="font-size: 12px;">
+            无规则
+          </n-text>
+        </div>
+      </div>
+
+      <!-- Deny 规则 -->
+      <div class="preview-section" style="margin-top: 12px;">
+        <div class="preview-section-header">
+          <n-icon :size="16" color="#f0a020"><HandLeftOutline /></n-icon>
+          <n-text strong>需要用户确认 (deny)</n-text>
+        </div>
+        <div class="preview-rules">
+          <n-tag
+            v-for="rule in previewTemplate.permissions?.deny || []"
+            :key="rule"
+            type="warning"
+            size="small"
+            style="margin: 2px;"
+          >
+            {{ rule }}
+          </n-tag>
+          <n-text v-if="!previewTemplate.permissions?.deny?.length" depth="3" style="font-size: 12px;">
+            无规则
+          </n-text>
+        </div>
+      </div>
+    </div>
+  </n-modal>
 </template>
 
 <script setup>
@@ -261,16 +366,17 @@ import { ref, computed, watch, h } from 'vue'
 import {
   NDrawer, NDrawerContent, NSelect, NButton, NIcon, NText, NSpace,
   NAlert, NDynamicTags, NInput, NEmpty, NTag, NCollapse, NCollapseItem,
-  NRadioGroup, NRadioButton
+  NRadioGroup, NRadioButton, NPopconfirm, NModal, NCard, NDivider
 } from 'naive-ui'
 import {
   ShieldCheckmarkOutline, CheckmarkCircleOutline, HandLeftOutline,
-  WarningOutline, AddOutline, SaveOutline, ShieldOutline, ScaleOutline, FlashOutline
+  WarningOutline, AddOutline, SaveOutline, EyeOutline
 } from '@vicons/ionicons5'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
-import { getPermissions, savePermissions, getAllAllowStatus, getPermissionTemplates } from '../api/permissions'
+import { getPermissions, savePermissions, getAllAllowStatus, getPermissionTemplates, deletePermissionTemplate } from '../api/permissions'
 import { getProjects } from '../api/projects'
 import message from '../utils/message'
+import PermissionTemplateFormModal from './PermissionTemplateFormModal.vue'
 
 const props = defineProps({
   visible: { type: Boolean, default: false }
@@ -302,7 +408,11 @@ const originalPermissions = ref({
 })
 
 // 模版数据
-const templates = ref({})
+const templates = ref([])
+const showTemplateForm = ref(false)
+const editingTemplate = ref(null)
+const showPreview = ref(false)
+const previewTemplate = ref(null)
 
 // 输入值
 const allowInputValue = ref('')
@@ -310,10 +420,14 @@ const denyInputValue = ref('')
 
 // 计算属性
 const projectOptions = computed(() => {
-  return projects.value.map(p => ({
-    label: p.name,
-    value: p.path
-  }))
+  return projects.value.map(p => {
+    // 优先使用项目名称，否则从路径提取
+    const name = p.name || p.path.split('/').pop() || p.path
+    return {
+      label: name,
+      value: p.path
+    }
+  })
 })
 
 const hasChanges = computed(() => {
@@ -366,7 +480,7 @@ async function loadTemplates() {
   try {
     const result = await getPermissionTemplates()
     if (result.success) {
-      templates.value = result.templates
+      templates.value = result.data || []
     }
   } catch (err) {
     console.error('Failed to load templates:', err)
@@ -407,13 +521,13 @@ function handleProjectChange(value) {
 }
 
 // 应用模版
-function applyTemplate(templateName) {
-  const template = templates.value[templateName]
-  if (template) {
+function applyTemplate(template) {
+  if (template && template.permissions) {
     permissions.value = {
-      allow: [...template.allow],
-      deny: [...template.deny]
+      allow: [...(template.permissions.allow || [])],
+      deny: [...(template.permissions.deny || [])]
     }
+    message.success(`已应用模版: ${template.name}`)
   }
 }
 
@@ -436,6 +550,45 @@ async function handleSave() {
   } finally {
     saving.value = false
   }
+}
+
+// 创建模版
+function handleCreateTemplate() {
+  editingTemplate.value = null
+  showTemplateForm.value = true
+}
+
+// 编辑模版
+function handleEditTemplate(tpl) {
+  editingTemplate.value = { ...tpl }
+  showTemplateForm.value = true
+}
+
+// 预览模版
+function handlePreviewTemplate(tpl) {
+  previewTemplate.value = tpl
+  showPreview.value = true
+}
+
+// 删除模版
+async function handleDeleteTemplate(tpl) {
+  try {
+    const res = await deletePermissionTemplate(tpl.id)
+    if (res.success) {
+      message.success('模版已删除')
+      loadTemplates()
+    } else {
+      message.error(res.message || '删除失败')
+    }
+  } catch (err) {
+    message.error('删除失败: ' + err.message)
+  }
+}
+
+// 模版表单成功回调
+function handleTemplateFormSuccess() {
+  showTemplateForm.value = false
+  loadTemplates()
 }
 
 // 监听抽屉打开
@@ -540,7 +693,7 @@ watch(visible, (val) => {
 }
 
 .template-section {
-  padding: 16px;
+  padding: 12px;
   border-radius: 10px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -549,5 +702,101 @@ watch(visible, (val) => {
 [data-theme="dark"] .template-section {
   background: rgba(30, 41, 59, 0.4);
   border-color: rgba(148, 163, 184, 0.15);
+}
+
+.template-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.template-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  transition: all 0.2s;
+}
+
+.template-item:hover {
+  border-color: var(--primary-color);
+}
+
+.template-item.is-builtin {
+  border-left: 3px solid #18a058;
+}
+
+.template-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+[data-theme="dark"] .template-item {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(148, 163, 184, 0.1);
+}
+
+.empty-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px dashed var(--border-primary);
+}
+
+[data-theme="dark"] .empty-hint {
+  background: rgba(30, 41, 59, 0.3);
+}
+
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.preview-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.preview-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  min-height: 32px;
 }
 </style>

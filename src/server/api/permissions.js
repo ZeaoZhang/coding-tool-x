@@ -25,6 +25,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const permissionTemplatesService = require('../services/permission-templates-service');
 
 const router = express.Router();
 
@@ -207,85 +208,107 @@ router.post('/all-allow', (req, res) => {
 });
 
 /**
- * 获取权限模版
+ * 获取所有权限模版（内置 + 自定义）
  * GET /api/permissions/templates
  */
 router.get('/templates', (req, res) => {
   try {
-    const templates = {
-      safe: {
-        name: '安全模式',
-        description: '仅允许只读命令，危险操作需要确认',
-        allow: [
-          'Bash(cat:*)',
-          'Bash(ls:*)',
-          'Bash(pwd)',
-          'Bash(echo:*)',
-          'Bash(head:*)',
-          'Bash(tail:*)',
-          'Bash(grep:*)',
-          'Read(*)'
-        ],
-        deny: [
-          'Bash(rm:*)',
-          'Bash(sudo:*)',
-          'Bash(git push:*)',
-          'Bash(git reset --hard:*)',
-          'Bash(chmod:*)',
-          'Bash(chown:*)',
-          'Edit(*)'
-        ]
-      },
-      balanced: {
-        name: '平衡模式',
-        description: '允许常用开发命令，危险操作需要确认',
-        allow: [
-          'Bash(cat:*)',
-          'Bash(ls:*)',
-          'Bash(pwd)',
-          'Bash(echo:*)',
-          'Bash(head:*)',
-          'Bash(tail:*)',
-          'Bash(grep:*)',
-          'Bash(find:*)',
-          'Bash(git status)',
-          'Bash(git diff:*)',
-          'Bash(git log:*)',
-          'Bash(npm run:*)',
-          'Bash(pnpm:*)',
-          'Bash(yarn:*)',
-          'Read(*)',
-          'Edit(*)'
-        ],
-        deny: [
-          'Bash(rm -rf:*)',
-          'Bash(sudo:*)',
-          'Bash(git push --force:*)',
-          'Bash(git reset --hard:*)'
-        ]
-      },
-      permissive: {
-        name: '宽松模式',
-        description: '允许大多数命令，仅阻止极度危险的操作',
-        allow: [
-          'Bash(*)',
-          'Read(*)',
-          'Edit(*)'
-        ],
-        deny: [
-          'Bash(rm -rf /*)',
-          'Bash(sudo rm -rf:*)'
-        ]
-      }
-    };
-
+    const templates = permissionTemplatesService.getAllTemplates();
     res.json({
       success: true,
-      templates
+      data: templates
     });
   } catch (err) {
     console.error('[Permissions API] Get templates error:', err);
     res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 获取单个权限模版
+ * GET /api/permissions/templates/:id
+ */
+router.get('/templates/:id', (req, res) => {
+  try {
+    const template = permissionTemplatesService.getTemplateById(req.params.id);
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        message: '模版不存在'
+      });
+    }
+    res.json({
+      success: true,
+      data: template
+    });
+  } catch (err) {
+    console.error('[Permissions API] Get template error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 创建自定义权限模版
+ * POST /api/permissions/templates
+ */
+router.post('/templates', (req, res) => {
+  try {
+    const template = permissionTemplatesService.createTemplate(req.body);
+    res.json({
+      success: true,
+      data: template,
+      message: '模版创建成功'
+    });
+  } catch (err) {
+    console.error('[Permissions API] Create template error:', err);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 更新自定义权限模版
+ * PUT /api/permissions/templates/:id
+ */
+router.put('/templates/:id', (req, res) => {
+  try {
+    const template = permissionTemplatesService.updateTemplate(req.params.id, req.body);
+    res.json({
+      success: true,
+      data: template,
+      message: '模版更新成功'
+    });
+  } catch (err) {
+    console.error('[Permissions API] Update template error:', err);
+    res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 删除自定义权限模版
+ * DELETE /api/permissions/templates/:id
+ */
+router.delete('/templates/:id', (req, res) => {
+  try {
+    permissionTemplatesService.deleteTemplate(req.params.id);
+    res.json({
+      success: true,
+      message: '模版删除成功'
+    });
+  } catch (err) {
+    console.error('[Permissions API] Delete template error:', err);
+    res.status(400).json({
       success: false,
       message: err.message
     });
