@@ -139,7 +139,7 @@ router.delete('/:id', (req, res) => {
  */
 router.post('/:id/apply', (req, res) => {
   try {
-    const { targetPath, aiConfigType } = req.body;
+    const { targetPath, aiConfigType, aiConfigTypes } = req.body;
     if (!targetPath) {
       return res.status(400).json({
         success: false,
@@ -147,8 +147,11 @@ router.post('/:id/apply', (req, res) => {
       });
     }
     const options = {};
-    if (aiConfigType) {
-      options.aiConfigType = aiConfigType;
+    // 优先使用新的数组参数，兼容旧的单值参数
+    if (aiConfigTypes) {
+      options.aiConfigTypes = aiConfigTypes;
+    } else if (aiConfigType) {
+      options.aiConfigTypes = [aiConfigType];
     }
     const result = templatesService.applyTemplateToProject(targetPath, req.params.id, options);
     res.json({
@@ -170,7 +173,7 @@ router.post('/:id/apply', (req, res) => {
  */
 router.post('/:id/preview', (req, res) => {
   try {
-    const { targetPath, aiConfigType } = req.body;
+    const { targetPath, aiConfigType, aiConfigTypes } = req.body;
     if (!targetPath) {
       return res.status(400).json({
         success: false,
@@ -178,8 +181,11 @@ router.post('/:id/preview', (req, res) => {
       });
     }
     const options = {};
-    if (aiConfigType) {
-      options.aiConfigType = aiConfigType;
+    // 优先使用新的数组参数，兼容旧的单值参数
+    if (aiConfigTypes) {
+      options.aiConfigTypes = aiConfigTypes;
+    } else if (aiConfigType) {
+      options.aiConfigTypes = [aiConfigType];
     }
     const preview = templatesService.previewTemplateApplication(targetPath, req.params.id, options);
     res.json({

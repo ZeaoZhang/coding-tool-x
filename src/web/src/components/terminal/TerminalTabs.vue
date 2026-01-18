@@ -26,22 +26,6 @@
     </div>
 
     <div class="tabs-actions">
-      <!-- 现有终端下拉列表 -->
-      <n-dropdown
-        v-if="existingTerminals.length > 0"
-        :options="existingTerminalOptions"
-        @select="handleAttachTerminal"
-        placement="bottom-end"
-      >
-        <n-button text size="small" class="existing-terminals-btn">
-          <template #icon>
-            <n-icon :size="16"><ListOutline /></n-icon>
-          </template>
-          <span class="btn-label">终端列表</span>
-          <n-badge :value="existingTerminals.length" :max="99" type="info" />
-        </n-button>
-      </n-dropdown>
-
       <!-- 新建终端下拉 -->
       <n-dropdown :options="newTabOptions" @select="handleNewTab" placement="bottom-end">
         <n-button text size="small" class="add-tab-btn">
@@ -57,17 +41,13 @@
 
 <script setup>
 import { h, computed } from 'vue'
-import { NIcon, NButton, NDropdown, NBadge } from 'naive-ui'
+import { NIcon, NButton, NDropdown } from 'naive-ui'
 import {
   CloseOutline,
   AddOutline,
   TerminalOutline,
   CodeSlashOutline,
-  SparklesOutline,
-  ListOutline,
-  CheckmarkCircleOutline,
-  CloseCircleOutline,
-  EllipseOutline
+  SparklesOutline
 } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -78,14 +58,10 @@ const props = defineProps({
   activeTab: {
     type: String,
     default: null
-  },
-  existingTerminals: {
-    type: Array,
-    default: () => []
   }
 })
 
-const emit = defineEmits(['select', 'close', 'add', 'attach'])
+const emit = defineEmits(['select', 'close', 'add'])
 
 // 渠道图标
 function getChannelIcon(channel) {
@@ -125,59 +101,6 @@ function getDefaultTitle(tab) {
   return channelName
 }
 
-// 格式化终端标题
-function formatTerminalTitle(term) {
-  if (term.metadata?.sessionId) {
-    return `会话: ${term.metadata.sessionId.substring(0, 8)}`
-  }
-  return `终端 ${term.id.split('_')[1] || term.id}`
-}
-
-// 获取状态图标
-function getStatusIcon(term) {
-  if (term.connected) return CheckmarkCircleOutline
-  if (term.exited) return CloseCircleOutline
-  return EllipseOutline
-}
-
-// 获取状态颜色
-function getStatusColor(term) {
-  if (term.connected) return '#a6e3a1'
-  if (term.exited) return '#f38ba8'
-  return '#f9e2af'
-}
-
-// 检查终端是否已在标签页中打开
-function isTerminalOpened(terminalId) {
-  return props.tabs.some(tab => tab.terminalId === terminalId)
-}
-
-// 现有终端选项
-const existingTerminalOptions = computed(() => {
-  return props.existingTerminals.map(term => ({
-    label: () => h('div', { style: 'display: flex; align-items: center; gap: 8px; width: 100%;' }, [
-      h(NIcon, {
-        size: 14,
-        color: getChannelColor(term.metadata?.channel)
-      }, {
-        default: () => h(getChannelIcon(term.metadata?.channel))
-      }),
-      h('span', { style: 'flex: 1;' }, formatTerminalTitle(term)),
-      h(NIcon, {
-        size: 12,
-        color: getStatusColor(term)
-      }, {
-        default: () => h(getStatusIcon(term))
-      }),
-      isTerminalOpened(term.id) ? h('span', {
-        style: 'font-size: 10px; color: #89b4fa; margin-left: 4px;'
-      }, '已打开') : null
-    ]),
-    key: term.id,
-    disabled: isTerminalOpened(term.id)
-  }))
-})
-
 // 新建标签选项
 const newTabOptions = computed(() => [
   {
@@ -199,13 +122,6 @@ const newTabOptions = computed(() => [
 
 function handleNewTab(channel) {
   emit('add', { channel })
-}
-
-function handleAttachTerminal(terminalId) {
-  const term = props.existingTerminals.find(t => t.id === terminalId)
-  if (term) {
-    emit('attach', term)
-  }
 }
 </script>
 
@@ -288,7 +204,6 @@ function handleAttachTerminal(terminalId) {
   gap: 4px;
 }
 
-.existing-terminals-btn,
 .add-tab-btn {
   color: var(--terminal-text-muted);
   display: flex;
@@ -299,7 +214,6 @@ function handleAttachTerminal(terminalId) {
   transition: all 0.15s ease;
 }
 
-.existing-terminals-btn:hover,
 .add-tab-btn:hover {
   color: var(--terminal-text);
   background: var(--terminal-btn-hover);
@@ -307,16 +221,5 @@ function handleAttachTerminal(terminalId) {
 
 .btn-label {
   font-size: 12px;
-}
-
-:deep(.n-badge) {
-  margin-left: 4px;
-}
-
-:deep(.n-badge .n-badge-sup) {
-  font-size: 10px;
-  padding: 0 4px;
-  height: 14px;
-  line-height: 14px;
 }
 </style>

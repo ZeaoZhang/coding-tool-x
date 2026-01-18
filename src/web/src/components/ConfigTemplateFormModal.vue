@@ -170,7 +170,7 @@ const saving = ref(false)
 // AI 配置类型列表
 const AI_CONFIG_LIST = [
   { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
-  { key: 'codex', name: 'Codex', fileName: 'AGENT.md', color: '#10a37f' },
+  { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
 ]
 

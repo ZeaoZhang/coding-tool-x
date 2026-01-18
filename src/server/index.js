@@ -146,6 +146,9 @@ async function startServer(port) {
   // 命令执行权限 API
   app.use('/api/permissions', require('./api/permissions'));
 
+  // 配置导出/导入 API
+  app.use('/api/config-export', require('./api/config-export'));
+
   // 健康检查 API
   app.use('/api/health-check', require('./api/health-check')(config));
 
@@ -259,7 +262,7 @@ function autoRestoreProxies() {
 
 // 启动时执行健康检查
 function performStartupHealthCheck() {
-  const { healthCheckAllProjects, scanLegacySessionFiles } = require('./services/health-check');
+  const { healthCheckAllProjects } = require('./services/health-check');
   const { getProjects } = require('./services/sessions');
 
   try {
@@ -287,16 +290,6 @@ function performStartupHealthCheck() {
 
     if (healthResult.summary.created === 0 && healthResult.summary.errors === 0) {
       console.log(chalk.green(`   ✓ 所有 ${healthResult.summary.healthy} 个项目状态正常`));
-    }
-
-    // 扫描旧文件
-    const legacyResult = scanLegacySessionFiles();
-
-    if (legacyResult.found && legacyResult.projectCount > 0) {
-      console.log(chalk.yellow(`\n   ⚠ 发现 ${legacyResult.projectCount} 个项目的旧会话文件在全局目录`));
-      console.log(chalk.gray('   💡 提示: 可通过 Web UI 或 API 清理这些文件'));
-      console.log(chalk.gray(`      - Web UI: 设置 -> 系统维护 -> 清理旧文件`));
-      console.log(chalk.gray(`      - API: POST /api/health-check/clean-legacy`));
     }
 
     console.log('');

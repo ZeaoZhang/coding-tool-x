@@ -4,6 +4,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { PATHS } = require('../../config/paths');
 const configTemplatesService = require('./config-templates-service');
+const permissionTemplatesService = require('./permission-templates-service');
 
 // 工作区配置文件路径
 const WORKSPACES_CONFIG = path.join(PATHS.base, 'workspaces.json');
@@ -299,73 +300,14 @@ function createWorkspace(options) {
       }
     }
 
-    // 应用权限模板（如果指定且不是 'none'）
+    // 应用权限模板（如果指定）
     let permissionInfo = null;
-    if (permissionTemplate && permissionTemplate !== 'none') {
+    if (permissionTemplate) {
       try {
-        const permissionTemplates = {
-          safe: {
-            allow: [
-              'Bash(cat:*)',
-              'Bash(ls:*)',
-              'Bash(pwd)',
-              'Bash(echo:*)',
-              'Bash(head:*)',
-              'Bash(tail:*)',
-              'Bash(grep:*)',
-              'Read(*)'
-            ],
-            deny: [
-              'Bash(rm:*)',
-              'Bash(sudo:*)',
-              'Bash(git push:*)',
-              'Bash(git reset --hard:*)',
-              'Bash(chmod:*)',
-              'Bash(chown:*)',
-              'Edit(*)'
-            ]
-          },
-          balanced: {
-            allow: [
-              'Bash(cat:*)',
-              'Bash(ls:*)',
-              'Bash(pwd)',
-              'Bash(echo:*)',
-              'Bash(head:*)',
-              'Bash(tail:*)',
-              'Bash(grep:*)',
-              'Bash(find:*)',
-              'Bash(git status)',
-              'Bash(git diff:*)',
-              'Bash(git log:*)',
-              'Bash(npm run:*)',
-              'Bash(pnpm:*)',
-              'Bash(yarn:*)',
-              'Read(*)',
-              'Edit(*)'
-            ],
-            deny: [
-              'Bash(rm -rf:*)',
-              'Bash(sudo:*)',
-              'Bash(git push --force:*)',
-              'Bash(git reset --hard:*)'
-            ]
-          },
-          permissive: {
-            allow: [
-              'Bash(*)',
-              'Read(*)',
-              'Edit(*)'
-            ],
-            deny: [
-              'Bash(rm -rf /*)',
-              'Bash(sudo rm -rf:*)'
-            ]
-          }
-        };
+        // 从权限模板服务获取模板
+        const template = permissionTemplatesService.getTemplateById(permissionTemplate);
 
-        const permSettings = permissionTemplates[permissionTemplate];
-        if (permSettings) {
+        if (template && template.permissions) {
           // 为工作区中的每个项目应用权限设置
           for (const proj of workspaceProjects) {
             const projSettingsDir = path.join(proj.targetPath, '.claude');
@@ -388,8 +330,8 @@ function createWorkspace(options) {
 
             // 更新权限设置
             settings.permissions = {
-              allow: permSettings.allow,
-              deny: permSettings.deny
+              allow: template.permissions.allow || [],
+              deny: template.permissions.deny || []
             };
 
             // 保存设置
