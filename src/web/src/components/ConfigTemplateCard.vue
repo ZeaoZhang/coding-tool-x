@@ -1,19 +1,14 @@
 <template>
-  <div class="template-card" :class="{ 'is-builtin': template.isBuiltin }" @click="$emit('click', template)">
+  <div class="template-card" @click="$emit('click', template)">
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ template.name }}</span>
-        <n-tag :type="template.isBuiltin ? 'info' : 'success'" size="small">
-          {{ template.isBuiltin ? '内置' : '自定义' }}
-        </n-tag>
       </div>
       <div class="card-actions" @click.stop>
         <n-button size="small" type="primary" @click="$emit('apply', template)">应用</n-button>
         <n-button size="small" @click="$emit('preview', template)">预览</n-button>
-        <template v-if="!template.isBuiltin">
-          <n-button size="small" @click="$emit('edit', template)">编辑</n-button>
-          <n-button size="small" type="error" :loading="deleting" @click="$emit('delete', template)">删除</n-button>
-        </template>
+        <n-button size="small" @click="$emit('edit', template)">编辑</n-button>
+        <n-button size="small" type="error" :loading="deleting" @click="$emit('delete', template)">删除</n-button>
       </div>
     </div>
     <div class="card-body">
@@ -31,7 +26,7 @@
 </template>
 
 <script setup>
-import { NTag, NButton } from 'naive-ui'
+import { NButton } from 'naive-ui'
 
 defineProps({
   template: { type: Object, required: true },
@@ -57,9 +52,6 @@ function truncate(text, len) {
 .template-card:hover {
   border-color: var(--primary-color);
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-.template-card.is-builtin {
-  border-left: 3px solid var(--info-color);
 }
 .card-header {
   display: flex;

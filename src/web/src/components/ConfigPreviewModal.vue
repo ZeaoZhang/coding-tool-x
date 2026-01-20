@@ -13,9 +13,6 @@
         <div class="info-row">
           <span class="label">名称：</span>
           <span class="value">{{ template.name }}</span>
-          <n-tag :type="template.isBuiltin ? 'info' : 'success'" size="small">
-            {{ template.isBuiltin ? '内置' : '自定义' }}
-          </n-tag>
         </div>
         <div class="info-row" v-if="template.description">
           <span class="label">描述：</span>
@@ -133,7 +130,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { NModal, NTag, NIcon, NCollapse, NCollapseItem, NButton, NSpace } from 'naive-ui'
+import { NModal, NIcon, NCollapse, NCollapseItem, NButton, NSpace } from 'naive-ui'
 import MarkdownViewer from './MarkdownViewer.vue'
 import {
   DocumentTextOutline,

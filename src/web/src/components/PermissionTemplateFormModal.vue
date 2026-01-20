@@ -122,7 +122,7 @@ const saving = ref(false)
 const allowInputValue = ref('')
 const denyInputValue = ref('')
 
-const isEdit = computed(() => !!props.template?.id && !props.template?.isBuiltin)
+const isEdit = computed(() => !!props.template?.id)
 
 const formData = ref({
   name: '',

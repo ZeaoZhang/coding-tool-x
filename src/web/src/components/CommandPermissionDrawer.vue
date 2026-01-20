@@ -522,12 +522,18 @@ function handleProjectChange(value) {
 
 // 应用模版
 function applyTemplate(template) {
+  // 检查是否选择了项目
+  if (!selectedProject.value) {
+    message.warning('请选择一个项目')
+    return
+  }
+  
   if (template && template.permissions) {
     permissions.value = {
       allow: [...(template.permissions.allow || [])],
       deny: [...(template.permissions.deny || [])]
     }
-    message.success(`已应用模版: ${template.name}`)
+    message.success(`已应用模板：${template.name}`)
   }
 }
 
