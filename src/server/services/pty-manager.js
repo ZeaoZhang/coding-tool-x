@@ -5,6 +5,7 @@
 
 const os = require('os');
 const path = require('path');
+const fs = require('fs');
 
 // 尝试加载 node-pty，如果失败则提示
 let pty = null;
@@ -40,7 +41,22 @@ class PtyManager {
     if (process.platform === 'win32') {
       return process.env.COMSPEC || 'cmd.exe';
     }
-    return process.env.SHELL || '/bin/zsh';
+
+    // 优先使用环境变量指定的 shell
+    if (process.env.SHELL && fs.existsSync(process.env.SHELL)) {
+      return process.env.SHELL;
+    }
+
+    // 回退到常见的 shell,按优先级检查
+    const commonShells = ['/bin/bash', '/bin/sh', '/usr/bin/bash', '/usr/bin/sh'];
+    for (const shell of commonShells) {
+      if (fs.existsSync(shell)) {
+        return shell;
+      }
+    }
+
+    // 最后回退
+    return '/bin/sh';
   }
 
   /**
@@ -78,6 +94,9 @@ class PtyManager {
     // 检查 PTY 是否可用
     if (!pty) {
       const errMsg = this.getPtyError() || 'node-pty is not available';
+      console.error('[PTY] Cannot create terminal:', errMsg);
+      console.error('[PTY] Node version:', process.version);
+      console.error('[PTY] Platform:', process.platform);
       throw new Error(`Cannot create terminal: ${errMsg}`);
     }
 
@@ -93,6 +112,21 @@ class PtyManager {
       projectName = null,
       startCommand = null
     } = options;
+
+    // 验证 shell 和 cwd 存在
+    if (!fs.existsSync(shell)) {
+      const error = `Shell not found: ${shell}`;
+      console.error('[PTY]', error);
+      throw new Error(error);
+    }
+    if (!fs.existsSync(cwd)) {
+      const error = `Working directory not found: ${cwd}`;
+      console.error('[PTY]', error);
+      throw new Error(error);
+    }
+
+    console.log(`[PTY] Creating terminal: shell=${shell}, cwd=${cwd}`);
+
 
     const terminalId = `term_${this.nextId++}_${Date.now()}`;
 

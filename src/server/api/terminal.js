@@ -29,6 +29,32 @@ router.get('/list', (req, res) => {
 });
 
 /**
+ * GET /api/terminal/health - 检查终端健康状态
+ */
+router.get('/health', (req, res) => {
+  try {
+    const isPtyAvailable = ptyManager.isPtyAvailable();
+    const ptyError = ptyManager.getPtyError();
+
+    res.json({
+      success: isPtyAvailable,
+      pty: {
+        available: isPtyAvailable,
+        error: ptyError,
+        nodeVersion: process.version,
+        platform: process.platform
+      },
+      shell: {
+        default: ptyManager.getDefaultShell(),
+        env: process.env.SHELL
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * GET /api/terminal/commands/config - 获取命令配置
  * 注意：此路由必须在 /:id 之前定义，否则会被动态路由捕获
  */

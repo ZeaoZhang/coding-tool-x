@@ -149,6 +149,9 @@ async function startServer(port) {
   // 配置导出/导入 API
   app.use('/api/config-export', require('./api/config-export'));
 
+  // 配置同步 API
+  app.use('/api/config-sync', require('./api/config-sync'));
+
   // 健康检查 API
   app.use('/api/health-check', require('./api/health-check')(config));
 

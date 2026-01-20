@@ -396,27 +396,44 @@ function deleteWorkspace(id, removeFiles = false) {
 
   const workspace = data.workspaces[index];
 
-  // 如果需要删除物理文件
-  if (removeFiles && fs.existsSync(workspace.path)) {
-    try {
-      // 清理 worktrees
-      for (const proj of workspace.projects) {
-        if (proj.worktrees && proj.worktrees.length > 0) {
-          for (const wt of proj.worktrees) {
-            if (fs.existsSync(wt.path)) {
-              try {
-                execSync(`git worktree remove "${wt.path}" --force`, {
-                  cwd: proj.sourcePath,
-                  stdio: 'pipe'
-                });
-              } catch (error) {
-                console.error(`删除 worktree 失败: ${wt.path}`, error.message);
+  // 清理 worktrees (无论是否删除工作区目录,都应该清理 worktree)
+  for (const proj of workspace.projects) {
+    if (proj.isGitRepo && proj.sourcePath && fs.existsSync(proj.sourcePath)) {
+      try {
+        // 重新扫描实际的 worktrees,确保获取最新状态
+        const actualWorktrees = getGitWorktrees(proj.sourcePath);
+        for (const wt of actualWorktrees) {
+          // 只删除属于这个工作区的 worktree (通过 -ws- 标识符识别)
+          if (wt.path && wt.path.includes('-ws-')) {
+            try {
+              console.log(`清理 worktree: ${wt.path}`);
+              execSync(`git worktree remove "${wt.path}" --force`, {
+                cwd: proj.sourcePath,
+                stdio: 'pipe'
+              });
+            } catch (error) {
+              console.error(`删除 worktree 失败: ${wt.path}`, error.message);
+              // 如果 git worktree remove 失败,尝试手动删除目录
+              if (fs.existsSync(wt.path)) {
+                try {
+                  fs.rmSync(wt.path, { recursive: true, force: true });
+                  console.log(`手动删除 worktree 目录: ${wt.path}`);
+                } catch (rmError) {
+                  console.error(`手动删除 worktree 目录失败: ${wt.path}`, rmError.message);
+                }
               }
             }
           }
         }
+      } catch (error) {
+        console.error(`扫描 worktree 失败: ${proj.sourcePath}`, error.message);
       }
+    }
+  }
 
+  // 如果需要删除物理文件
+  if (removeFiles && fs.existsSync(workspace.path)) {
+    try {
       // 删除工作区目录
       fs.rmSync(workspace.path, { recursive: true, force: true });
     } catch (error) {
@@ -620,10 +637,11 @@ function getAllAvailableProjects() {
       const projects = sessionsService.getProjectsWithStats(config, { force: true });
 
       for (const proj of projects) {
-        // 使用 fullPath 去重
+        // 使用 fullPath + channel 组合去重,允许同一项目在不同渠道显示
         const projectPath = proj.fullPath;
-        if (projectPath && !seenPaths.has(projectPath)) {
-          seenPaths.add(projectPath);
+        const projectKey = `${projectPath}:${channel.name}`;
+        if (projectPath && !seenPaths.has(projectKey)) {
+          seenPaths.add(projectKey);
           allProjects.push({
             name: proj.name,
             displayName: proj.displayName,

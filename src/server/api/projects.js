@@ -4,9 +4,9 @@ const { getProjectsWithStats, saveProjectOrder, getProjectOrder, deleteProject }
 
 module.exports = (config) => {
   // GET /api/projects - Get all projects with stats
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     try {
-      const projects = getProjectsWithStats(config);
+      const projects = await getProjectsWithStats(config);
       const order = getProjectOrder(config);
 
       // Sort projects by saved order
