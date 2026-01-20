@@ -847,14 +847,14 @@ class SkillService {
 
       request.on('error', (err) => {
         file.close();
-        fs.unlink(dest, () => {});
+        fs.unlink(dest, () => { });
         reject(err);
       });
 
       request.on('timeout', () => {
         request.destroy();
         file.close();
-        fs.unlink(dest, () => {});
+        fs.unlink(dest, () => { });
         reject(new Error('Download timeout'));
       });
     });
@@ -911,6 +911,256 @@ ${content}
 
     return { success: true, message: '技能创建成功', directory };
   }
+
+  /**
+   * 创建带多文件的技能
+   * @param {string} directory - 技能目录名
+   * @param {Array<{path: string, content: string}>} files - 文件数组
+   * @returns {Object} 创建结果
+   */
+  createSkillWithFiles({ directory, files }) {
+    const dest = path.join(this.installDir, directory);
+
+    // 检查是否已存在
+    if (fs.existsSync(dest)) {
+      throw new Error(`技能目录 "${directory}" 已存在`);
+    }
+
+    // 验证必须包含 SKILL.md
+    const hasSkillMd = files.some(f =>
+      f.path === 'SKILL.md' || f.path.endsWith('/SKILL.md')
+    );
+    if (!hasSkillMd) {
+      throw new Error('技能必须包含 SKILL.md 文件');
+    }
+
+    // 创建目录
+    fs.mkdirSync(dest, { recursive: true });
+
+    // 写入所有文件
+    for (const file of files) {
+      const filePath = path.join(dest, file.path);
+      const fileDir = path.dirname(filePath);
+
+      // 确保父目录存在
+      if (!fs.existsSync(fileDir)) {
+        fs.mkdirSync(fileDir, { recursive: true });
+      }
+
+      // 写入文件内容
+      if (file.isBase64) {
+        // 二进制文件使用 base64 编码
+        fs.writeFileSync(filePath, Buffer.from(file.content, 'base64'));
+      } else {
+        fs.writeFileSync(filePath, file.content, 'utf-8');
+      }
+    }
+
+    // 清除缓存
+    this.skillsCache = null;
+    this.cacheTime = 0;
+
+    return {
+      success: true,
+      message: '技能创建成功',
+      directory,
+      fileCount: files.length
+    };
+  }
+
+  /**
+   * 获取技能目录下所有文件列表
+   * @param {string} directory - 技能目录名
+   * @returns {Array<{path: string, size: number, isDirectory: boolean}>}
+   */
+  getSkillFiles(directory) {
+    const skillPath = path.join(this.installDir, directory);
+
+    if (!fs.existsSync(skillPath)) {
+      throw new Error(`技能 "${directory}" 不存在`);
+    }
+
+    const files = [];
+    this._scanFilesRecursive(skillPath, skillPath, files);
+    return files;
+  }
+
+  /**
+   * 递归扫描目录获取文件列表
+   */
+  _scanFilesRecursive(currentDir, baseDir, files) {
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(baseDir, fullPath);
+
+      if (entry.isDirectory()) {
+        files.push({
+          path: relativePath,
+          size: 0,
+          isDirectory: true
+        });
+        this._scanFilesRecursive(fullPath, baseDir, files);
+      } else {
+        const stats = fs.statSync(fullPath);
+        files.push({
+          path: relativePath,
+          size: stats.size,
+          isDirectory: false
+        });
+      }
+    }
+  }
+
+  /**
+   * 获取技能文件内容
+   * @param {string} directory - 技能目录名
+   * @param {string} filePath - 文件相对路径
+   * @returns {Object} 文件内容
+   */
+  getSkillFileContent(directory, filePath) {
+    const fullPath = path.join(this.installDir, directory, filePath);
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`文件 "${filePath}" 不存在`);
+    }
+
+    const stats = fs.statSync(fullPath);
+    if (stats.isDirectory()) {
+      throw new Error(`"${filePath}" 是目录，不是文件`);
+    }
+
+    // 判断是否是文本文件
+    const textExtensions = ['.md', '.txt', '.json', '.js', '.ts', '.py', '.sh', '.yaml', '.yml', '.toml', '.xml', '.html', '.css'];
+    const ext = path.extname(filePath).toLowerCase();
+    const isText = textExtensions.includes(ext);
+
+    if (isText) {
+      return {
+        path: filePath,
+        content: fs.readFileSync(fullPath, 'utf-8'),
+        isBase64: false,
+        size: stats.size
+      };
+    } else {
+      return {
+        path: filePath,
+        content: fs.readFileSync(fullPath).toString('base64'),
+        isBase64: true,
+        size: stats.size
+      };
+    }
+  }
+
+  /**
+   * 添加文件到现有技能
+   * @param {string} directory - 技能目录名
+   * @param {Array<{path: string, content: string, isBase64?: boolean}>} files - 文件数组
+   */
+  addSkillFiles(directory, files) {
+    const skillPath = path.join(this.installDir, directory);
+
+    if (!fs.existsSync(skillPath)) {
+      throw new Error(`技能 "${directory}" 不存在`);
+    }
+
+    const added = [];
+    for (const file of files) {
+      const filePath = path.join(skillPath, file.path);
+      const fileDir = path.dirname(filePath);
+
+      // 确保父目录存在
+      if (!fs.existsSync(fileDir)) {
+        fs.mkdirSync(fileDir, { recursive: true });
+      }
+
+      // 写入文件
+      if (file.isBase64) {
+        fs.writeFileSync(filePath, Buffer.from(file.content, 'base64'));
+      } else {
+        fs.writeFileSync(filePath, file.content, 'utf-8');
+      }
+      added.push(file.path);
+    }
+
+    // 清除缓存
+    this.skillsCache = null;
+    this.cacheTime = 0;
+
+    return { success: true, added };
+  }
+
+  /**
+   * 删除技能中的文件
+   * @param {string} directory - 技能目录名
+   * @param {string} filePath - 文件相对路径
+   */
+  deleteSkillFile(directory, filePath) {
+    const skillPath = path.join(this.installDir, directory);
+
+    if (!fs.existsSync(skillPath)) {
+      throw new Error(`技能 "${directory}" 不存在`);
+    }
+
+    // 不允许删除 SKILL.md
+    if (filePath === 'SKILL.md') {
+      throw new Error('不能删除 SKILL.md 文件');
+    }
+
+    const fullPath = path.join(skillPath, filePath);
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`文件 "${filePath}" 不存在`);
+    }
+
+    const stats = fs.statSync(fullPath);
+    if (stats.isDirectory()) {
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(fullPath);
+    }
+
+    // 清除缓存
+    this.skillsCache = null;
+    this.cacheTime = 0;
+
+    return { success: true, deleted: filePath };
+  }
+
+  /**
+   * 更新技能文件内容
+   * @param {string} directory - 技能目录名
+   * @param {string} filePath - 文件相对路径
+   * @param {string} content - 新内容
+   * @param {boolean} isBase64 - 是否为 base64 编码
+   */
+  updateSkillFile(directory, filePath, content, isBase64 = false) {
+    const skillPath = path.join(this.installDir, directory);
+
+    if (!fs.existsSync(skillPath)) {
+      throw new Error(`技能 "${directory}" 不存在`);
+    }
+
+    const fullPath = path.join(skillPath, filePath);
+
+    if (!fs.existsSync(fullPath)) {
+      throw new Error(`文件 "${filePath}" 不存在`);
+    }
+
+    if (isBase64) {
+      fs.writeFileSync(fullPath, Buffer.from(content, 'base64'));
+    } else {
+      fs.writeFileSync(fullPath, content, 'utf-8');
+    }
+
+    // 清除缓存
+    this.skillsCache = null;
+    this.cacheTime = 0;
+
+    return { success: true, updated: filePath };
+  }
+
 
   /**
    * 卸载技能

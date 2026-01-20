@@ -312,6 +312,212 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
   }
 });
 
+// ==================== 多文件技能管理 API ====================
+
+/**
+ * 创建带多文件的技能
+ * POST /api/skills/create-with-files
+ * Body: { directory, files: [{path, content, isBase64?}] }
+ */
+router.post('/create-with-files', (req, res) => {
+  try {
+    const { directory, files } = req.body;
+
+    if (!directory) {
+      return res.status(400).json({
+        success: false,
+        message: '请输入目录名称'
+      });
+    }
+
+    // 校验目录名：只允许英文、数字、横杠、下划线
+    if (!/^[a-zA-Z0-9_-]+$/.test(directory)) {
+      return res.status(400).json({
+        success: false,
+        message: '目录名只能包含英文、数字、横杠和下划线'
+      });
+    }
+
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供文件列表'
+      });
+    }
+
+    const result = skillService.createSkillWithFiles({ directory, files });
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Skills API] Create skill with files error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 获取技能文件列表
+ * GET /api/skills/:directory/files
+ */
+router.get('/:directory/files', (req, res) => {
+  try {
+    const { directory } = req.params;
+    const files = skillService.getSkillFiles(directory);
+
+    res.json({
+      success: true,
+      directory,
+      files
+    });
+  } catch (err) {
+    console.error('[Skills API] Get skill files error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 获取技能文件内容
+ * GET /api/skills/:directory/files/:filePath
+ * 注意：filePath 可能包含子目录，使用通配符
+ */
+router.get('/:directory/file/*', (req, res) => {
+  try {
+    const { directory } = req.params;
+    const filePath = req.params[0];
+
+    if (!filePath) {
+      return res.status(400).json({
+        success: false,
+        message: '请指定文件路径'
+      });
+    }
+
+    const result = skillService.getSkillFileContent(directory, filePath);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Skills API] Get skill file content error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 添加文件到技能
+ * POST /api/skills/:directory/files
+ * Body: { files: [{path, content, isBase64?}] }
+ */
+router.post('/:directory/files', (req, res) => {
+  try {
+    const { directory } = req.params;
+    const { files } = req.body;
+
+    if (!files || !Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供文件列表'
+      });
+    }
+
+    const result = skillService.addSkillFiles(directory, files);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Skills API] Add skill files error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 删除技能中的文件
+ * DELETE /api/skills/:directory/file/*
+ */
+router.delete('/:directory/file/*', (req, res) => {
+  try {
+    const { directory } = req.params;
+    const filePath = req.params[0];
+
+    if (!filePath) {
+      return res.status(400).json({
+        success: false,
+        message: '请指定文件路径'
+      });
+    }
+
+    const result = skillService.deleteSkillFile(directory, filePath);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Skills API] Delete skill file error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+/**
+ * 更新技能文件内容
+ * PUT /api/skills/:directory/file/*
+ * Body: { content, isBase64? }
+ */
+router.put('/:directory/file/*', (req, res) => {
+  try {
+    const { directory } = req.params;
+    const filePath = req.params[0];
+    const { content, isBase64 = false } = req.body;
+
+    if (!filePath) {
+      return res.status(400).json({
+        success: false,
+        message: '请指定文件路径'
+      });
+    }
+
+    if (content === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供文件内容'
+      });
+    }
+
+    const result = skillService.updateSkillFile(directory, filePath, content, isBase64);
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (err) {
+    console.error('[Skills API] Update skill file error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
 // ==================== 格式转换 API ====================
 
 /**

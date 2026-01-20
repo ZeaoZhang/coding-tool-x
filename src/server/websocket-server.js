@@ -175,7 +175,10 @@ function startWebSocketServer(httpServer) {
       console.log(`✅ WebSocket server started on ws://127.0.0.1:${port}/ws`);
     }
 
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
+      const clientIp = req.socket.remoteAddress;
+      console.log(`[WebSocket] New connection from ${clientIp}`);
+
       wsClients.add(ws);
 
       // 标记客户端存活

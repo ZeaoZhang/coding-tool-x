@@ -11,6 +11,7 @@ const {
   checkHasMessagesCache,
   rememberHasMessages
 } = require('./session-cache');
+const { globalCache, CacheKeys } = require('./enhanced-cache');
 const { PATHS } = require('../../config/paths');
 
 // Base directory for cc-tool data
@@ -82,15 +83,15 @@ function saveForkRelations(relations) {
   fs.writeFileSync(relationsFile, JSON.stringify(relations, null, 2), 'utf8');
 }
 
-// Get all projects with stats
-function getProjects(config) {
+// Get all projects with stats (async version)
+async function getProjects(config) {
   const projectsDir = config.projectsDir;
 
   if (!fs.existsSync(projectsDir)) {
     return [];
   }
 
-  const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
+  const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
   return entries
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name);
@@ -283,32 +284,43 @@ function extractCwdFromSessionHeader(sessionFile) {
   return null;
 }
 
-// Get projects with detailed stats (with caching)
-function getProjectsWithStats(config, options = {}) {
+// Get projects with detailed stats (with caching) - async version
+async function getProjectsWithStats(config, options = {}) {
   if (!options.force) {
+    // Check enhanced cache first
+    const cacheKey = `${CacheKeys.PROJECTS}${config.projectsDir}`;
+    const enhancedCached = globalCache.get(cacheKey);
+    if (enhancedCached) {
+      return enhancedCached;
+    }
+
+    // Check old cache
     const cached = getCachedProjects(config);
     if (cached) {
+      globalCache.set(cacheKey, cached, 300000); // 5分钟
       return cached;
     }
   }
 
-  const data = buildProjectsWithStats(config);
+  const data = await buildProjectsWithStats(config);
   setCachedProjects(config, data);
+  globalCache.set(`${CacheKeys.PROJECTS}${config.projectsDir}`, data, 300000);
   return data;
 }
 
-function buildProjectsWithStats(config) {
+async function buildProjectsWithStats(config) {
   const projectsDir = config.projectsDir;
 
   if (!fs.existsSync(projectsDir)) {
     return [];
   }
 
-  const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
+  const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
 
-  return entries
+  // Process all projects concurrently
+  const projectPromises = entries
     .filter(entry => entry.isDirectory())
-    .map(entry => {
+    .map(async (entry) => {
       const projectName = entry.name;
       const projectPath = path.join(projectsDir, projectName);
 
@@ -320,24 +332,29 @@ function buildProjectsWithStats(config) {
       let lastUsed = null;
 
       try {
-        const files = fs.readdirSync(projectPath);
+        const files = await fs.promises.readdir(projectPath);
         const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
 
-        // Filter: only count sessions that have actual messages (not just file-history-snapshots)
-        const sessionFilesWithMessages = jsonlFiles.filter(f => {
-          const filePath = path.join(projectPath, f);
-          return hasActualMessages(filePath);
-        });
+        // Filter: only count sessions that have actual messages (in parallel)
+        const sessionChecks = await Promise.all(
+          jsonlFiles.map(async (f) => {
+            const filePath = path.join(projectPath, f);
+            const hasMessages = await hasActualMessages(filePath);
+            return hasMessages ? f : null;
+          })
+        );
 
+        const sessionFilesWithMessages = sessionChecks.filter(f => f !== null);
         sessionCount = sessionFilesWithMessages.length;
 
         // Find most recent session (only from sessions with messages)
         if (sessionFilesWithMessages.length > 0) {
-          const stats = sessionFilesWithMessages.map(f => {
+          const statPromises = sessionFilesWithMessages.map(async (f) => {
             const filePath = path.join(projectPath, f);
-            const stat = fs.statSync(filePath);
+            const stat = await fs.promises.stat(filePath);
             return stat.mtime.getTime();
           });
+          const stats = await Promise.all(statPromises);
           lastUsed = Math.max(...stats);
         }
       } catch (err) {
@@ -351,8 +368,10 @@ function buildProjectsWithStats(config) {
         sessionCount,
         lastUsed
       };
-    })
-    .sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)); // Sort by last used
+    });
+
+  const projects = await Promise.all(projectPromises);
+  return projects.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)); // Sort by last used
 }
 
 // 获取 Claude 项目/会话数量（轻量统计）
@@ -383,16 +402,27 @@ function getProjectAndSessionCounts(config) {
   return { projectCount, sessionCount };
 }
 
-// Check if a session file has actual messages (not just file-history-snapshots)
-function hasActualMessages(filePath) {
+// Check if a session file has actual messages (async with enhanced caching)
+async function hasActualMessages(filePath) {
   try {
-    const stats = fs.statSync(filePath);
-    const cached = checkHasMessagesCache(filePath, stats);
+    const stats = await fs.promises.stat(filePath);
+
+    // Check enhanced cache first
+    const cacheKey = `${CacheKeys.HAS_MESSAGES}${filePath}:${stats.mtime.getTime()}`;
+    const cached = globalCache.get(cacheKey);
     if (typeof cached === 'boolean') {
       return cached;
     }
 
-    const result = scanSessionFileForMessages(filePath);
+    // Check old cache mechanism
+    const oldCached = checkHasMessagesCache(filePath, stats);
+    if (typeof oldCached === 'boolean') {
+      globalCache.set(cacheKey, oldCached, 600000); // 10分钟
+      return oldCached;
+    }
+
+    const result = await scanSessionFileForMessagesAsync(filePath);
+    globalCache.set(cacheKey, result, 600000);
     rememberHasMessages(filePath, stats, result);
     return result;
   } catch (err) {
@@ -434,30 +464,74 @@ function scanSessionFileForMessages(filePath) {
   }
 }
 
-// Get sessions for a project
-function getSessionsForProject(config, projectName) {
+// Async version using streams for better performance
+function scanSessionFileForMessagesAsync(filePath) {
+  return new Promise((resolve) => {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 64 * 1024 });
+    const pattern = /"type"\s*:\s*"(user|assistant|summary)"/;
+    let found = false;
+    let leftover = '';
+
+    stream.on('data', (chunk) => {
+      if (found) return;
+      const combined = leftover + chunk;
+      if (pattern.test(combined)) {
+        found = true;
+        stream.destroy();
+        resolve(true);
+      }
+      leftover = combined.slice(-64);
+    });
+
+    stream.on('end', () => {
+      if (!found) resolve(false);
+    });
+
+    stream.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+// Get sessions for a project - async version
+async function getSessionsForProject(config, projectName) {
+  // Check cache first
+  const cacheKey = `${CacheKeys.SESSIONS}${projectName}`;
+  const cached = globalCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const projectConfig = { ...config, currentProject: projectName };
   const sessions = getAllSessions(projectConfig);
   const forkRelations = getForkRelations();
   const savedOrder = getSessionOrder(projectName);
 
-  // Parse session info and calculate total size, filter out sessions with no messages
+  // Parse session info and calculate total size, filter out sessions with no messages (in parallel)
   let totalSize = 0;
-  const sessionsWithInfo = sessions
-    .filter(session => hasActualMessages(session.filePath))
-    .map(session => {
-      const info = parseSessionInfoFast(session.filePath);
-      totalSize += session.size || 0;
-      return {
-        sessionId: session.sessionId,
-        mtime: session.mtime,
-        size: session.size,
-        filePath: session.filePath,
-        gitBranch: info.gitBranch || null,
-        firstMessage: info.firstMessage || null,
-        forkedFrom: forkRelations[session.sessionId] || null
-      };
-    });
+
+  const sessionChecks = await Promise.all(
+    sessions.map(async (session) => {
+      const hasMessages = await hasActualMessages(session.filePath);
+      return hasMessages ? session : null;
+    })
+  );
+
+  const validSessions = sessionChecks.filter(s => s !== null);
+
+  const sessionsWithInfo = validSessions.map(session => {
+    const info = parseSessionInfoFast(session.filePath);
+    totalSize += session.size || 0;
+    return {
+      sessionId: session.sessionId,
+      mtime: session.mtime,
+      size: session.size,
+      filePath: session.filePath,
+      gitBranch: info.gitBranch || null,
+      firstMessage: info.firstMessage || null,
+      forkedFrom: forkRelations[session.sessionId] || null
+    };
+  });
 
   // Apply saved order if exists
   let orderedSessions = sessionsWithInfo;
@@ -478,10 +552,14 @@ function getSessionsForProject(config, projectName) {
     orderedSessions = ordered;
   }
 
-  return {
+  const result = {
     sessions: orderedSessions,
     totalSize
   };
+
+  // Cache for 2 minutes
+  globalCache.set(cacheKey, result, 120000);
+  return result;
 }
 
 // Delete a session

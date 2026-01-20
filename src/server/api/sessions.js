@@ -45,10 +45,10 @@ module.exports = (config) => {
   });
 
   // GET /api/sessions/:projectName - Get sessions for a project
-  router.get('/:projectName', (req, res) => {
+  router.get('/:projectName', async (req, res) => {
     try {
       const { projectName } = req.params;
-      const result = getSessionsForProject(config, projectName);
+      const result = await getSessionsForProject(config, projectName);
       const aliases = loadAliases();
 
       // Parse project path info
@@ -222,8 +222,8 @@ module.exports = (config) => {
   });
 
   // GET /api/sessions/:projectName/:sessionId/messages - Get session messages with pagination
-router.get('/:projectName/:sessionId/messages', async (req, res) => {
-  try {
+  router.get('/:projectName/:sessionId/messages', async (req, res) => {
+    try {
       const { projectName, sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 
@@ -271,86 +271,86 @@ router.get('/:projectName/:sessionId/messages', async (req, res) => {
       }
 
       // Read and parse session file
-    const allMessages = [];
-    const metadata = {};
+      const allMessages = [];
+      const metadata = {};
 
-    const stream = fs.createReadStream(sessionFile, { encoding: 'utf8' });
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+      const stream = fs.createReadStream(sessionFile, { encoding: 'utf8' });
+      const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
-    try {
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        try {
-          const json = JSON.parse(line);
+      try {
+        for await (const line of rl) {
+          if (!line.trim()) continue;
+          try {
+            const json = JSON.parse(line);
 
-          if (json.type === 'summary' && json.summary) {
-            metadata.summary = json.summary;
-          }
-          if (json.gitBranch) {
-            metadata.gitBranch = json.gitBranch;
-          }
-          if (json.cwd) {
-            metadata.cwd = json.cwd;
-          }
-
-          if (json.type === 'user' || json.type === 'assistant') {
-            const message = {
-              type: json.type,
-              content: null,
-              timestamp: json.timestamp || null,
-              model: json.model || null
-            };
-
-            if (json.type === 'user') {
-              if (typeof json.message?.content === 'string') {
-                message.content = json.message.content;
-              } else if (Array.isArray(json.message?.content)) {
-                const parts = [];
-                for (const item of json.message.content) {
-                  if (item.type === 'text' && item.text) {
-                    parts.push(item.text);
-                  } else if (item.type === 'tool_result') {
-                    const resultContent = typeof item.content === 'string'
-                      ? item.content
-                      : JSON.stringify(item.content, null, 2);
-                    parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
-                  } else if (item.type === 'image') {
-                    parts.push('[图片]');
-                  }
-                }
-                message.content = parts.join('\n\n') || '[工具交互]';
-              }
-            } else if (json.type === 'assistant') {
-              if (Array.isArray(json.message?.content)) {
-                const parts = [];
-                for (const item of json.message.content) {
-                  if (item.type === 'text' && item.text) {
-                    parts.push(item.text);
-                  } else if (item.type === 'tool_use') {
-                    const inputStr = JSON.stringify(item.input, null, 2);
-                    parts.push(`**[调用工具: ${item.name}]**\n\`\`\`json\n${inputStr}\n\`\`\``);
-                  } else if (item.type === 'thinking' && item.thinking) {
-                    parts.push(`**[思考]**\n${item.thinking}`);
-                  }
-                }
-                message.content = parts.join('\n\n') || '[处理中...]';
-              } else if (typeof json.message?.content === 'string') {
-                message.content = json.message.content;
-              }
+            if (json.type === 'summary' && json.summary) {
+              metadata.summary = json.summary;
+            }
+            if (json.gitBranch) {
+              metadata.gitBranch = json.gitBranch;
+            }
+            if (json.cwd) {
+              metadata.cwd = json.cwd;
             }
 
-            if (message.content && message.content !== 'Warmup') {
-              allMessages.push(message);
+            if (json.type === 'user' || json.type === 'assistant') {
+              const message = {
+                type: json.type,
+                content: null,
+                timestamp: json.timestamp || null,
+                model: json.model || null
+              };
+
+              if (json.type === 'user') {
+                if (typeof json.message?.content === 'string') {
+                  message.content = json.message.content;
+                } else if (Array.isArray(json.message?.content)) {
+                  const parts = [];
+                  for (const item of json.message.content) {
+                    if (item.type === 'text' && item.text) {
+                      parts.push(item.text);
+                    } else if (item.type === 'tool_result') {
+                      const resultContent = typeof item.content === 'string'
+                        ? item.content
+                        : JSON.stringify(item.content, null, 2);
+                      parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
+                    } else if (item.type === 'image') {
+                      parts.push('[图片]');
+                    }
+                  }
+                  message.content = parts.join('\n\n') || '[工具交互]';
+                }
+              } else if (json.type === 'assistant') {
+                if (Array.isArray(json.message?.content)) {
+                  const parts = [];
+                  for (const item of json.message.content) {
+                    if (item.type === 'text' && item.text) {
+                      parts.push(item.text);
+                    } else if (item.type === 'tool_use') {
+                      const inputStr = JSON.stringify(item.input, null, 2);
+                      parts.push(`**[调用工具: ${item.name}]**\n\`\`\`json\n${inputStr}\n\`\`\``);
+                    } else if (item.type === 'thinking' && item.thinking) {
+                      parts.push(`**[思考]**\n${item.thinking}`);
+                    }
+                  }
+                  message.content = parts.join('\n\n') || '[处理中...]';
+                } else if (typeof json.message?.content === 'string') {
+                  message.content = json.message.content;
+                }
+              }
+
+              if (message.content && message.content !== 'Warmup') {
+                allMessages.push(message);
+              }
             }
+          } catch (err) {
+            // Skip invalid lines
           }
-        } catch (err) {
-          // Skip invalid lines
         }
+      } finally {
+        rl.close();
+        stream.destroy();
       }
-    } finally {
-      rl.close();
-      stream.destroy();
-    }
 
       // Sort messages (desc = newest first)
       if (order === 'desc') {
