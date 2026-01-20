@@ -26,7 +26,8 @@ function exportAllConfigs() {
     const customConfigTemplates = allConfigTemplates.filter(t => !t.isBuiltin);
 
     // 获取所有频道配置
-    const channels = channelsService.getChannels();
+    const channelsData = channelsService.getAllChannels();
+    const channels = channelsData?.channels || [];
 
     const exportData = {
       version: CONFIG_VERSION,
@@ -131,7 +132,8 @@ function importConfigs(importData, options = {}) {
     // 导入频道配置
     for (const channel of channels) {
       try {
-        const existingChannels = channelsService.getChannels();
+        const channelsData = channelsService.getAllChannels();
+        const existingChannels = channelsData?.channels || [];
         const existing = existingChannels.find(c => c.id === channel.id);
 
         if (existing && !overwrite) {
@@ -142,7 +144,9 @@ function importConfigs(importData, options = {}) {
         if (existing && overwrite) {
           channelsService.updateChannel(channel.id, channel);
         } else {
-          channelsService.createChannel(channel);
+          // createChannel 需要单独的参数，不是一个对象
+          const { name, baseUrl, apiKey, websiteUrl, ...extraConfig } = channel;
+          channelsService.createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig);
         }
         results.channels.success++;
       } catch (err) {

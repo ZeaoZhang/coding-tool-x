@@ -18,7 +18,7 @@
       </n-form-item>
 
       <n-form-item label="执行权限" path="permissionTemplate">
-        <n-select v-model:value="formData.permissionTemplate" :options="permissionOptions" placeholder="选择命令执行权限模式">
+        <n-select v-model:value="formData.permissionTemplate" :options="permissionOptions" placeholder="选择命令执行权限模式" @update:value="handlePermissionTemplateChange">
           <template #action>
             <div class="permission-info">
               <n-text depth="3" style="font-size: 11px;">权限设置将应用到 .claude/settings.json</n-text>
@@ -102,7 +102,7 @@ const formRules = {
 }
 
 const templateOptions = computed(() => templates.value.map(t => ({
-  label: t.name + (t.isBuiltin ? ' (内置)' : ''),
+  label: t.name,
   value: t.id
 })))
 
@@ -112,7 +112,7 @@ const permissionOptions = computed(() => {
     return [];
   }
   return permissionTemplates.value.map(tpl => ({
-    label: `${tpl.name} - ${tpl.description}`,
+    label: tpl.name,
     value: tpl.id
   }));
 })
@@ -148,6 +148,15 @@ function handleSelectExisting(idx, value) {
   proj.name = opt.path.split('/').pop()
   proj.isGitRepo = opt.isGitRepo
   proj.createWorktree = opt.isGitRepo
+}
+
+// 处理权限模板选择
+function handlePermissionTemplateChange(value) {
+  if (!value) return
+  const template = permissionTemplates.value.find(t => t.id === value)
+  if (template) {
+    message.success(`已应用模板：${template.name}`)
+  }
 }
 
 async function handleSubmit() {
