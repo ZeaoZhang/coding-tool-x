@@ -54,7 +54,6 @@
                     :rows="10"
                     :min-height="220"
                     :placeholder="`输入 ${ai.fileName} 内容`"
-                    :default-editing="!isEdit"
                   />
                 </n-collapse-transition>
               </div>

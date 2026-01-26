@@ -108,6 +108,11 @@ function saveTerminalCommands(commands) {
  * @returns {string} 启动命令
  */
 function getCommandForChannel(channel, sessionId = null, cwd = null) {
+  // Add support for plain shell (do not auto-run any command)
+  if (channel === 'shell') {
+    return null;
+  }
+
   const commands = loadTerminalCommands();
   const channelConfig = commands[channel] || commands.claude;
 

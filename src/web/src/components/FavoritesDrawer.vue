@@ -23,6 +23,7 @@
               hide-delete
               @set-alias="handleSetAlias"
               @launch="handleLaunch('claude', session)"
+              @launch-web="(session, targetTool) => handleLaunchWeb('claude', session, targetTool)"
             >
               <template #actions-extra>
                 <n-button
@@ -61,6 +62,7 @@
               hide-delete
               @set-alias="handleSetAlias"
               @launch="handleLaunch('codex', session)"
+              @launch-web="(session, targetTool) => handleLaunchWeb('codex', session, targetTool)"
             >
               <template #actions-extra>
                 <n-button
@@ -99,6 +101,7 @@
               hide-delete
               @set-alias="handleSetAlias"
               @launch="handleLaunch('gemini', session)"
+              @launch-web="(session, targetTool) => handleLaunchWeb('gemini', session, targetTool)"
             >
               <template #actions-extra>
                 <n-button
@@ -152,7 +155,8 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   NDrawer, NDrawerContent, NEmpty, NIcon, NTag, NText,
   NButton, NSpace, NModal, NInput
@@ -178,6 +182,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:visible'])
+const router = useRouter()
 
 const drawerVisible = computed({
   get: () => props.visible,
@@ -261,6 +266,23 @@ async function handleLaunch(channel, session) {
   } catch (err) {
     message.error('启动失败: ' + err.message)
   }
+}
+
+function handleLaunchWeb(channel, session, targetTool = null) {
+  const targetChannel = targetTool || channel
+  router.push({
+    name: 'terminal-session',
+    params: {
+      channel: targetChannel,
+      projectName: encodeURIComponent(session.projectName),
+      sessionId: session.sessionId
+    },
+    query: {
+      targetTool: targetTool || undefined,
+      cwd: session.projectFullPath || undefined,
+      openTs: Date.now().toString()
+    }
+  })
 }
 
 async function handleRemoveFavorite(channel, session) {

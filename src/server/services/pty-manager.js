@@ -225,6 +225,7 @@ class PtyManager {
       // 标记为已退出，稍后清理
       terminal.exited = true;
       terminal.exitCode = exitCode;
+      terminal.exitedAt = Date.now();
     });
 
     this.terminals.set(terminalId, terminal);

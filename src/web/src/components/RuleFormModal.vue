@@ -58,7 +58,6 @@
           :rows="12"
           :min-height="200"
           placeholder="规则内容，用 Markdown 格式编写&#10;&#10;示例:&#10;# 代码风格&#10;&#10;- 使用 2 空格缩进&#10;- 函数命名使用 camelCase&#10;- 组件命名使用 PascalCase"
-          :default-editing="!isEdit"
         />
       </n-form-item>
     </n-form>

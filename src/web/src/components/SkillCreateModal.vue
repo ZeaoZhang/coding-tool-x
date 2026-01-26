@@ -53,7 +53,6 @@
               :rows="10"
               :min-height="200"
               placeholder="输入技能的详细指令内容，支持 Markdown 格式..."
-              :default-editing="true"
             />
           </n-form-item>
         </n-form>

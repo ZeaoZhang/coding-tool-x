@@ -84,7 +84,6 @@
             :rows="16"
             :min-height="300"
             placeholder="# 系统提示词&#10;&#10;在这里编写你的系统提示词..."
-            :default-editing="!isEditing"
           />
         </div>
       </div>

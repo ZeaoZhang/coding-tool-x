@@ -611,51 +611,72 @@ function removeProjectFromWorkspace(workspaceId, projectName, removeWorktrees = 
 
 /**
  * 获取所有渠道（Claude/Codex/Gemini）的项目并集
- * @returns {Array} 去重后的项目列表
+ * @returns {Promise<Array>} 去重后的项目列表
  */
-function getAllAvailableProjects() {
-  const { NATIVE_PATHS } = require('../../config/paths');
+async function getAllAvailableProjects() {
+  const { loadConfig } = require('../../config/loader');
   const sessionsService = require('./sessions');
+  const codexSessionsService = require('./codex-sessions');
+  const geminiSessionsService = require('./gemini-sessions');
+  const { isCodexInstalled } = require('./codex-config');
+  const { isGeminiInstalled } = require('./gemini-config');
 
   const allProjects = [];
-  const seenPaths = new Set();
+  const seenKeys = new Set();
 
-  // 定义渠道配置
-  const channels = [
-    { name: 'claude', projectsDir: NATIVE_PATHS.claude.projects },
-    { name: 'codex', projectsDir: NATIVE_PATHS.codex.sessions },
-    { name: 'gemini', projectsDir: NATIVE_PATHS.gemini.tmp }
-  ];
+  function addProject(channel, project) {
+    if (!project || !project.name) return;
 
-  for (const channel of channels) {
-    try {
-      if (!fs.existsSync(channel.projectsDir)) {
-        continue;
-      }
+    const projectPath = project.fullPath || project.path || null;
+    const keyBase = projectPath || project.name;
+    const projectKey = `${channel}:${keyBase}`;
+    if (seenKeys.has(projectKey)) return;
+    seenKeys.add(projectKey);
 
-      const config = { projectsDir: channel.projectsDir };
-      const projects = sessionsService.getProjectsWithStats(config, { force: true });
+    const displayName = project.displayName || (projectPath ? path.basename(projectPath) : project.name);
+    const lastUsedValue = project.lastUsed || project.lastUpdated || null;
+    const lastUsed = typeof lastUsedValue === 'string'
+      ? new Date(lastUsedValue).getTime()
+      : (lastUsedValue || 0);
 
-      for (const proj of projects) {
-        // 使用 fullPath + channel 组合去重,允许同一项目在不同渠道显示
-        const projectPath = proj.fullPath;
-        const projectKey = `${projectPath}:${channel.name}`;
-        if (projectPath && !seenPaths.has(projectKey)) {
-          seenPaths.add(projectKey);
-          allProjects.push({
-            name: proj.name,
-            displayName: proj.displayName,
-            fullPath: projectPath,
-            channel: channel.name,
-            sessionCount: proj.sessionCount || 0,
-            lastUsed: proj.lastUsed,
-            isGitRepo: isGitRepo(projectPath)
-          });
-        }
-      }
-    } catch (error) {
-      console.error(`获取 ${channel.name} 项目失败:`, error.message);
+    allProjects.push({
+      name: project.name,
+      displayName,
+      fullPath: projectPath || project.name,
+      channel,
+      sessionCount: project.sessionCount || 0,
+      lastUsed,
+      isGitRepo: projectPath ? isGitRepo(projectPath) : false
+    });
+  }
+
+  try {
+    const config = loadConfig();
+    const claudeProjects = await sessionsService.getProjectsWithStats(config, { force: true });
+    const list = Array.isArray(claudeProjects) ? claudeProjects : [];
+    list.forEach(project => addProject('claude', project));
+  } catch (error) {
+    console.error('获取 claude 项目失败:', error.message);
+  }
+
+  try {
+    if (isCodexInstalled()) {
+      const codexProjects = codexSessionsService.getProjects();
+      const list = Array.isArray(codexProjects) ? codexProjects : [];
+      list.forEach(project => addProject('codex', project));
     }
+  } catch (error) {
+    console.error('获取 codex 项目失败:', error.message);
+  }
+
+  try {
+    if (isGeminiInstalled()) {
+      const geminiProjects = geminiSessionsService.getProjects();
+      const list = Array.isArray(geminiProjects) ? geminiProjects : [];
+      list.forEach(project => addProject('gemini', project));
+    }
+  } catch (error) {
+    console.error('获取 gemini 项目失败:', error.message);
   }
 
   // 按最后使用时间排序

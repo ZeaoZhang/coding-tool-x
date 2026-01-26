@@ -26,22 +26,20 @@
     </div>
 
     <div class="tabs-actions">
-      <!-- 新建终端下拉 -->
-      <n-dropdown :options="newTabOptions" @select="handleNewTab" placement="bottom-end">
-        <n-button text size="small" class="add-tab-btn">
-          <template #icon>
-            <n-icon :size="16"><AddOutline /></n-icon>
-          </template>
-          <span class="btn-label">新建</span>
-        </n-button>
-      </n-dropdown>
+      <!-- 新建终端按钮 -->
+      <n-button text size="small" class="add-tab-btn" @click="handleNewTab('shell')">
+        <template #icon>
+          <n-icon :size="16"><AddOutline /></n-icon>
+        </template>
+        <span class="btn-label">新建</span>
+      </n-button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { h, computed } from 'vue'
-import { NIcon, NButton, NDropdown } from 'naive-ui'
+import { computed } from 'vue'
+import { NIcon, NButton } from 'naive-ui'
 import {
   CloseOutline,
   AddOutline,
@@ -82,6 +80,8 @@ function getChannelColor(channel) {
       return '#10a37f'
     case 'gemini':
       return '#4285f4'
+    case 'shell':
+      return '#888888'
     default:
       return '#18a058'
   }
@@ -92,7 +92,8 @@ function getDefaultTitle(tab) {
   const channelName = {
     claude: 'Claude',
     codex: 'Codex',
-    gemini: 'Gemini'
+    gemini: 'Gemini',
+    shell: 'Terminal'
   }[tab.channel] || 'Terminal'
 
   if (tab.sessionId) {
@@ -100,25 +101,6 @@ function getDefaultTitle(tab) {
   }
   return channelName
 }
-
-// 新建标签选项
-const newTabOptions = computed(() => [
-  {
-    label: 'Claude Code',
-    key: 'claude',
-    icon: () => h(NIcon, { color: '#18a058' }, { default: () => h(TerminalOutline) })
-  },
-  {
-    label: 'Codex CLI',
-    key: 'codex',
-    icon: () => h(NIcon, { color: '#10a37f' }, { default: () => h(CodeSlashOutline) })
-  },
-  {
-    label: 'Gemini CLI',
-    key: 'gemini',
-    icon: () => h(NIcon, { color: '#4285f4' }, { default: () => h(SparklesOutline) })
-  }
-])
 
 function handleNewTab(channel) {
   emit('add', { channel })

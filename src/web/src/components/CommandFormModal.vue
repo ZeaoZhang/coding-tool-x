@@ -66,7 +66,6 @@
           :rows="8"
           :min-height="180"
           placeholder="命令的提示词内容，可使用 $ARGUMENTS、$1、$2 等变量&#10;&#10;示例:&#10;请执行以下操作: $ARGUMENTS&#10;&#10;! 开头的行会作为 bash 命令执行&#10;@ 开头的行会引用指定文件"
-          :default-editing="!isEdit"
         />
       </n-form-item>
     </n-form>
