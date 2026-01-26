@@ -199,9 +199,9 @@
 
       <!-- Left Content Area (Router View) -->
       <div class="left-content">
-        <router-view v-slot="{ Component, route }">
+        <router-view v-slot="{ Component }">
           <keep-alive :include="['Terminal']">
-            <component :is="Component" :key="route.name === 'terminal' ? 'terminal-keep' : route.fullPath" />
+            <component :is="Component" :key="routeViewKey" />
           </keep-alive>
         </router-view>
       </div>
@@ -486,6 +486,10 @@ const route = useRoute()
 // 导航状态
 const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => route.meta.channel || null)
+const terminalRouteNames = new Set(['terminal', 'terminal-channel', 'terminal-session'])
+const routeViewKey = computed(() => (
+  terminalRouteNames.has(route.name) ? 'terminal-keep' : route.fullPath
+))
 
 // 是否显示右侧面板（首页不显示）
 const shouldShowRightPanel = computed(() => {

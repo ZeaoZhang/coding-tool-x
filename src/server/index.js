@@ -264,7 +264,7 @@ function autoRestoreProxies() {
 }
 
 // 启动时执行健康检查
-function performStartupHealthCheck() {
+async function performStartupHealthCheck() {
   const { healthCheckAllProjects } = require('./services/health-check');
   const { getProjects } = require('./services/sessions');
 
@@ -273,7 +273,7 @@ function performStartupHealthCheck() {
 
     // 获取所有项目
     const config = loadConfig();
-    const projects = getProjects(config);
+    const projects = await getProjects(config);
 
     if (projects.length === 0) {
       console.log(chalk.gray('   未发现项目，跳过健康检查'));

@@ -17,6 +17,7 @@
           :hide-delete="true"
           @set-alias="handleSetAlias"
           @launch="handleLaunchSession"
+          @launch-web="handleLaunchWebSession"
         />
       </div>
 
@@ -35,6 +36,7 @@
 
 <script setup>
 import { ref, computed, watch, h } from 'vue'
+import { useRouter } from 'vue-router'
 import { NDrawer, NDrawerContent, NSpin, NEmpty, NIcon, NInput } from 'naive-ui'
 import { ChatbubblesOutline } from '@vicons/ionicons5'
 import SessionCard from './SessionCard.vue'
@@ -62,6 +64,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible'])
 
+const router = useRouter()
 const show = ref(false)
 const sessions = ref([])
 const loading = ref(false)
@@ -163,6 +166,23 @@ async function handleLaunchSession(session) {
   } catch (err) {
     message.error('启动失败: ' + err.message)
   }
+}
+
+function handleLaunchWebSession(session, targetTool = null) {
+  const channel = targetTool || props.channel
+  router.push({
+    name: 'terminal-session',
+    params: {
+      channel,
+      projectName: encodeURIComponent(session.projectName),
+      sessionId: session.sessionId
+    },
+    query: {
+      targetTool: targetTool || undefined,
+      cwd: session.projectFullPath || undefined,
+      openTs: Date.now().toString()
+    }
+  })
 }
 </script>
 

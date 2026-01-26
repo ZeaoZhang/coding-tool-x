@@ -8,6 +8,18 @@
     @update:show="emit('update:show', $event)"
   >
     <n-form ref="formRef" :model="formData" :rules="formRules">
+      <n-form-item label="选择已有项目">
+        <n-select
+          v-model:value="selectedProjectPath"
+          :options="projectOptions"
+          :loading="loadingProjects"
+          placeholder="选择已有项目路径"
+          filterable
+          clearable
+          @update:value="handleProjectSelect"
+        />
+      </n-form-item>
+
       <n-form-item label="目标项目路径" path="targetPath">
         <n-input
           v-model:value="formData.targetPath"
@@ -120,10 +132,11 @@ import { ref, watch, computed } from 'vue'
 import {
   NModal, NForm, NFormItem, NInput, NButton, NSpace, NCard,
   NTag, NText, NDivider, NUl, NLi, NAlert, NCheckboxGroup, NCheckbox, NIcon,
-  useMessage
+  NSelect, useMessage
 } from 'naive-ui'
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { applyTemplate, previewTemplate } from '@/api/config-templates'
+import { getAvailableProjects } from '@/api/workspaces'
 
 const props = defineProps({
   show: Boolean,
@@ -137,6 +150,9 @@ const formRef = ref(null)
 const loadingPreview = ref(false)
 const applying = ref(false)
 const previewData = ref(null)
+const loadingProjects = ref(false)
+const existingProjects = ref([])
+const selectedProjectPath = ref(null)
 
 // AI 配置类型信息
 const AI_CONFIG_INFO = {
@@ -169,6 +185,21 @@ const formRules = {
   targetPath: { required: true, message: '请输入目标路径', trigger: 'blur' }
 }
 
+const projectOptions = computed(() => {
+  const seen = new Set()
+  const options = []
+  for (const project of existingProjects.value) {
+    const projectPath = project.fullPath || project.path || project.name
+    if (!projectPath || seen.has(projectPath)) continue
+    seen.add(projectPath)
+    options.push({
+      label: `${project.displayName || project.name} (${project.channel})`,
+      value: projectPath
+    })
+  }
+  return options
+})
+
 // 获取 AI 配置标签类型
 function getAiConfigTagType(type) {
   const typeMap = {
@@ -185,6 +216,8 @@ watch(() => props.show, (newVal) => {
     formData.value.targetPath = ''
     formData.value.aiConfigTypes = getDefaultAiConfigTypes()
     previewData.value = null
+    selectedProjectPath.value = null
+    loadProjects()
   }
 })
 
@@ -192,6 +225,28 @@ watch(() => props.show, (newVal) => {
 watch(() => props.template, () => {
   formData.value.aiConfigTypes = getDefaultAiConfigTypes()
 })
+
+async function loadProjects() {
+  loadingProjects.value = true
+  try {
+    const res = await getAvailableProjects()
+    if (res.success) {
+      existingProjects.value = Array.isArray(res.data) ? res.data : []
+    } else {
+      existingProjects.value = []
+    }
+  } catch (error) {
+    existingProjects.value = []
+  } finally {
+    loadingProjects.value = false
+  }
+}
+
+function handleProjectSelect(value) {
+  if (value) {
+    formData.value.targetPath = value
+  }
+}
 
 // 预览
 async function handlePreview() {

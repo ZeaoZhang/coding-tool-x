@@ -17,7 +17,7 @@
               {{ formatSize(store.totalSize) }}
             </n-tag>
             <!-- 新建会话按钮 -->
-            <n-button type="primary" size="small" @click="showCreateSessionDialog = true" style="margin-left: 12px;">
+            <n-button type="primary" size="small" :loading="creatingSession" @click="handleCreateSession" style="margin-left: 12px;">
               <template #icon>
                 <n-icon><AddOutline /></n-icon>
               </template>
@@ -166,16 +166,16 @@
                 </n-button>
                 <n-button
                   size="small"
-                  :type="isFavorite(currentChannel, projectName, session.sessionId) ? 'warning' : 'default'"
+                  :type="isFavorite(currentChannel, effectiveProjectName, session.sessionId) ? 'warning' : 'default'"
                   @click.stop="handleToggleFavorite(session)"
                 >
                   <template #icon>
                     <n-icon>
-                      <Star v-if="isFavorite(currentChannel, projectName, session.sessionId)" />
+                      <Star v-if="isFavorite(currentChannel, effectiveProjectName, session.sessionId)" />
                       <StarOutline v-else />
                     </n-icon>
                   </template>
-                  {{ isFavorite(currentChannel, projectName, session.sessionId) ? '已收藏' : '收藏' }}
+                  {{ isFavorite(currentChannel, effectiveProjectName, session.sessionId) ? '已收藏' : '收藏' }}
                 </n-button>
                 <n-button size="small" @click.stop="handleFork(session.sessionId)">
                   <template #icon>
@@ -268,58 +268,14 @@
       ref="chatHistoryRef"
       v-if="selectedSessionId"
       v-model:show="showChatHistory"
-      :project-name="props.projectName"
+      :project-name="effectiveProjectName"
       :session-id="selectedSessionId"
       :session-alias="selectedSessionAlias"
       :channel="currentChannel"
       @error="handleChatHistoryError"
     />
 
-    <!-- Create Session Dialog -->
-    <n-modal
-      v-model:show="showCreateSessionDialog"
-      preset="card"
-      title="新建会话"
-      style="width: 500px;"
-      :mask-closable="false"
-    >
-      <n-space vertical size="large">
-        <div>
-          <n-text strong>选择工具类型</n-text>
-          <n-radio-group v-model:value="newSessionToolType" style="margin-top: 12px;">
-            <n-space vertical>
-              <n-radio value="claude">
-                <div>
-                  <div style="font-weight: 500;">Claude Code</div>
-                  <n-text depth="3" style="font-size: 12px;">Anthropic Claude Code CLI</n-text>
-                </div>
-              </n-radio>
-              <n-radio value="codex">
-                <div>
-                  <div style="font-weight: 500;">Codex</div>
-                  <n-text depth="3" style="font-size: 12px;">OpenAI Codex CLI</n-text>
-                </div>
-              </n-radio>
-              <n-radio value="gemini">
-                <div>
-                  <div style="font-weight: 500;">Gemini</div>
-                  <n-text depth="3" style="font-size: 12px;">Google Gemini CLI</n-text>
-                </div>
-              </n-radio>
-            </n-space>
-          </n-radio-group>
-        </div>
-      </n-space>
 
-      <template #footer>
-        <n-space justify="end">
-          <n-button @click="showCreateSessionDialog = false">取消</n-button>
-          <n-button type="primary" :loading="creatingSession" @click="handleCreateSession">
-            创建
-          </n-button>
-        </n-space>
-      </template>
-    </n-modal>
   </div>
 </template>
 
@@ -328,7 +284,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NButton, NIcon, NH2, NText, NInput, NSpin, NAlert, NEmpty,
-  NTag, NSpace, NModal, NTooltip, NDropdown, NRadioGroup, NRadio
+  NTag, NSpace, NModal, NTooltip, NDropdown
 } from 'naive-ui'
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
@@ -340,7 +296,7 @@ import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
-import { searchSessions as searchSessionsApi, launchTerminal, launchSession, createSession } from '../api/sessions'
+import { searchSessions as searchSessionsApi, launchTerminal, launchSession } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
@@ -357,6 +313,8 @@ const { addFavorite, removeFavorite, isFavorite } = useFavorites()
 
 // 当前渠道
 const currentChannel = computed(() => route.meta.channel || 'claude')
+const resolvedProjectName = ref(props.projectName)
+const effectiveProjectName = computed(() => resolvedProjectName.value || props.projectName)
 
 // 启动方式下拉选项（支持工具选择）
 const launchOptions = [
@@ -434,9 +392,7 @@ const selectedSessionId = ref('')
 const selectedSessionAlias = ref('')
 const chatHistoryRef = ref(null)
 
-// Create session dialog state
-const showCreateSessionDialog = ref(false)
-const newSessionToolType = ref('claude')
+// Create session state
 const creatingSession = ref(false)
 
 // Project display name (使用后端解析的名称)
@@ -446,8 +402,59 @@ const projectDisplayName = computed(() => {
 
 // Full project path (使用后端解析的路径)
 const displayProjectPath = computed(() => {
-  return store.currentProjectInfo?.fullPath || props.projectName
+  return store.currentProjectInfo?.fullPath || effectiveProjectName.value
 })
+
+async function ensureProjectNameResolved() {
+  if (!store.projects.length) {
+    await store.fetchProjects()
+  }
+
+  const exactMatch = store.projects.find(p => p.name === props.projectName)
+  if (exactMatch) {
+    resolvedProjectName.value = exactMatch.name
+    return exactMatch.name
+  }
+
+  const displayMatch = store.projects.find(p =>
+    p.displayName === props.projectName || p.fullPath === props.projectName
+  )
+  if (displayMatch) {
+    resolvedProjectName.value = displayMatch.name
+    if (displayMatch.name !== props.projectName) {
+      await router.replace({
+        name: `${currentChannel.value}-sessions`,
+        params: { projectName: displayMatch.name }
+      })
+    }
+    return displayMatch.name
+  }
+
+  resolvedProjectName.value = props.projectName
+  return props.projectName
+}
+
+async function loadSessions() {
+  const projectName = await ensureProjectNameResolved()
+  await store.fetchSessions(projectName)
+}
+
+function isLikelyPath(value) {
+  if (!value || typeof value !== 'string') return false
+  return value.includes('/') || value.includes('\\') || value.startsWith('~')
+}
+
+function resolveLaunchCwd() {
+  const infoPath = store.currentProjectInfo?.fullPath
+  if (isLikelyPath(infoPath)) return infoPath
+
+  const matchedProject = store.projects.find(p => p.name === effectiveProjectName.value)
+  const listPath = matchedProject?.fullPath || matchedProject?.path
+  if (isLikelyPath(listPath)) return listPath
+
+  if (isLikelyPath(displayProjectPath.value)) return displayProjectPath.value
+  return null
+}
 
 // Sync with store
 watch(() => store.sessionsWithAlias, (newSessions) => {
@@ -479,7 +486,7 @@ async function handleSearch() {
   searching.value = true
   try {
     // 增加上下文长度到 35 (15 + 20)
-    const data = await searchSessionsApi(props.projectName, searchQuery.value, 35, currentChannel.value)
+    const data = await searchSessionsApi(effectiveProjectName.value, searchQuery.value, 35, currentChannel.value)
     searchResults.value = data
     showSearchResults.value = true
   } catch (err) {
@@ -546,7 +553,7 @@ function handleChatHistoryError(errorMsg) {
 
 async function handleLaunchTerminal(sessionId, targetTool = null) {
   try {
-    await launchSession(props.projectName, sessionId, targetTool, false, currentChannel.value)
+    await launchSession(effectiveProjectName.value, sessionId, targetTool, false, currentChannel.value)
     message.success(`已启动终端 (${targetTool || currentChannel.value})`)
   } catch (err) {
     message.error('启动失败: ' + err.message)
@@ -560,12 +567,13 @@ function handleLaunchWebTerminal(sessionId, targetTool = null) {
     name: 'terminal-session',
     params: {
       channel,
-      projectName: encodeURIComponent(props.projectName),
+      projectName: encodeURIComponent(effectiveProjectName.value),
       sessionId
     },
     query: {
       targetTool: targetTool || undefined,
-      cwd: displayProjectPath.value || undefined
+      cwd: displayProjectPath.value || undefined,
+      openTs: Date.now().toString()
     }
   })
 }
@@ -587,30 +595,26 @@ function handleDelete(sessionId) {
   })
 }
 
-// 创建新会话
+// 创建新会话并打开 Web 终端
 async function handleCreateSession() {
   creatingSession.value = true
 
   try {
-    const result = await createSession(props.projectName, newSessionToolType.value, currentChannel.value)
+    const channel = currentChannel.value || 'claude'
+    const cwd = resolveLaunchCwd()
 
-    if (result.success) {
-      message.success(`新会话创建成功: ${result.sessionId.substring(0, 8)}`)
-
-      // 刷新会话列表
-      await store.fetchSessions(props.projectName)
-
-      // 关闭对话框
-      showCreateSessionDialog.value = false
-
-      // 重置工具类型
-      newSessionToolType.value = 'claude'
-    } else {
-      message.error('创建失败')
-    }
+    await router.push({
+      name: 'terminal-channel',
+      params: { channel },
+      query: {
+        cwd: cwd || undefined,
+        projectName: effectiveProjectName.value || undefined,
+        openTs: Date.now().toString()
+      }
+    })
   } catch (err) {
-    console.error('Failed to create session:', err)
-    message.error('创建失败: ' + err.message)
+    console.error('Failed to open terminal:', err)
+    message.error('打开终端失败: ' + err.message)
   } finally {
     creatingSession.value = false
   }
@@ -619,16 +623,16 @@ async function handleCreateSession() {
 // 切换收藏状态
 async function handleToggleFavorite(session) {
   const channel = currentChannel.value
-  const favorited = isFavorite(channel, props.projectName, session.sessionId)
+  const favorited = isFavorite(channel, effectiveProjectName.value, session.sessionId)
 
   try {
     if (favorited) {
-      await removeFavorite(channel, props.projectName, session.sessionId)
+      await removeFavorite(channel, effectiveProjectName.value, session.sessionId)
       message.success('已取消收藏')
     } else {
       const sessionData = {
         sessionId: session.sessionId,
-        projectName: props.projectName,
+        projectName: effectiveProjectName.value,
         projectDisplayName: projectDisplayName.value,
         projectFullPath: displayProjectPath.value,
         alias: session.alias || '',
@@ -682,7 +686,7 @@ async function refreshDataWithScrollPreservation() {
   const scrollTop = contentEl.value?.scrollTop || 0
 
   // Fetch data
-  await store.fetchSessions(props.projectName)
+  await loadSessions()
 
   // Restore scroll position after DOM update
   await nextTick()
@@ -706,9 +710,9 @@ async function refreshDataWithScrollPreservation() {
 // }
 
 // 监听 channel 变化
-watch(currentChannel, (newChannel) => {
+watch([currentChannel, () => props.projectName], ([newChannel]) => {
   store.setChannel(newChannel)
-  store.fetchSessions(props.projectName)
+  loadSessions()
 }, { immediate: true })
 
 onMounted(() => {

@@ -83,7 +83,6 @@
           :rows="8"
           :min-height="180"
           placeholder="代理的系统提示词，定义代理的行为和能力"
-          :default-editing="!isEdit"
         />
       </n-form-item>
     </n-form>

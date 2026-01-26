@@ -302,10 +302,19 @@ async function getProjectsWithStats(config, options = {}) {
     }
   }
 
-  const data = await buildProjectsWithStats(config);
-  setCachedProjects(config, data);
-  globalCache.set(`${CacheKeys.PROJECTS}${config.projectsDir}`, data, 300000);
-  return data;
+  try {
+    const data = await buildProjectsWithStats(config);
+    if (!Array.isArray(data)) {
+      console.warn(`[getProjectsWithStats] Unexpected non-array result for ${config.projectsDir}, returning empty array.`);
+      return [];
+    }
+    setCachedProjects(config, data);
+    globalCache.set(`${CacheKeys.PROJECTS}${config.projectsDir}`, data, 300000);
+    return data;
+  } catch (err) {
+    console.error(`[getProjectsWithStats] Failed to build projects for ${config.projectsDir}:`, err);
+    return [];
+  }
 }
 
 async function buildProjectsWithStats(config) {

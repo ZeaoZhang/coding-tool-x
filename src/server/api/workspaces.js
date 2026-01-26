@@ -109,9 +109,9 @@ router.get('/check-git/*', (req, res) => {
  * GET /api/workspaces/available-projects
  * 获取所有渠道（Claude/Codex/Gemini）的项目并集
  */
-router.get('/available-projects', (req, res) => {
+router.get('/available-projects', async (req, res) => {
   try {
-    const projects = workspaceService.getAllAvailableProjects();
+    const projects = await workspaceService.getAllAvailableProjects();
     res.json({
       success: true,
       data: projects

@@ -196,7 +196,7 @@ async function loadData() {
       getPermissionTemplates()
     ]);
     if (tplRes.success) templates.value = tplRes.data || [];
-    if (projRes.success) existingProjects.value = projRes.data || [];
+    if (projRes.success) existingProjects.value = Array.isArray(projRes.data) ? projRes.data : [];
     if (permRes.success) permissionTemplates.value = permRes.data || [];
   } catch (err) {
     console.error('加载数据失败:', err);
