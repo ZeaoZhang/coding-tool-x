@@ -29,3 +29,32 @@ export async function getRecentStatistics(days = 7) {
   const response = await client.get('/statistics/recent', { params: { days } })
   return response.data
 }
+
+/**
+ * Get model-level statistics for today
+ * @returns {Promise} Statistics by model
+ */
+export async function getModelStats() {
+  const response = await client.get('/statistics/models')
+  return response.data
+}
+
+/**
+ * Get model-level statistics for a specific tool type
+ * @param {string} toolType - 'claude', 'codex', or 'gemini'
+ * @returns {Promise} Statistics by model for tool type
+ */
+export async function getToolModelStats(toolType) {
+  const response = await client.get(`/statistics/models/${toolType}`)
+  return response.data
+}
+
+/**
+ * Get historical model statistics
+ * @param {number} days - Number of days to fetch
+ * @returns {Promise} Historical statistics
+ */
+export async function getModelStatsHistory(days = 7) {
+  const response = await client.get('/statistics/models/history', { params: { days } })
+  return response.data
+}

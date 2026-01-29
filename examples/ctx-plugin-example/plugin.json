@@ -1,0 +1,83 @@
+{
+  "name": "ctx-plugin-example",
+  "version": "1.0.0",
+  "description": "Example plugin template demonstrating plugin architecture",
+  "author": "ctx-team",
+  "license": "MIT",
+  "main": "index.js",
+  "keywords": [
+    "ctx",
+    "plugin",
+    "example",
+    "template"
+  ],
+  "ctx": {
+    "apiVersion": "1.0",
+    "hooks": [
+      "init",
+      "beforeCommand",
+      "afterCommand"
+    ],
+    "commands": [
+      {
+        "name": "hello",
+        "description": "Say hello from the example plugin",
+        "usage": "ctx hello [name]",
+        "aliases": [
+          "hi",
+          "greet"
+        ]
+      },
+      {
+        "name": "config-demo",
+        "description": "Demonstrate plugin configuration usage",
+        "usage": "ctx config-demo",
+        "aliases": [
+          "cfg"
+        ]
+      }
+    ],
+    "config": {
+      "greeting": {
+        "type": "string",
+        "default": "Hello",
+        "description": "Custom greeting message"
+      },
+      "language": {
+        "type": "string",
+        "default": "en",
+        "description": "Plugin language (en, es, fr)",
+        "enum": [
+          "en",
+          "es",
+          "fr"
+        ]
+      },
+      "logLevel": {
+        "type": "string",
+        "default": "info",
+        "description": "Plugin logging level",
+        "enum": [
+          "debug",
+          "info",
+          "warn",
+          "error"
+        ]
+      },
+      "enableFeatures": {
+        "type": "object",
+        "default": {
+          "greetings": true,
+          "analytics": false
+        },
+        "description": "Feature toggles for the plugin"
+      }
+    },
+    "permissions": [
+      "readConfig",
+      "writeConfig",
+      "executeCommands",
+      "accessHooks"
+    ]
+  }
+}

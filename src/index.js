@@ -10,8 +10,6 @@ const { showMainMenu } = require('./ui/menu');
 const { handleList } = require('./commands/list');
 const { handleSearch } = require('./commands/search');
 const { switchProject } = require('./commands/switch');
-const { handleUI } = require('./commands/ui');
-const { handleProxyStart, handleProxyStop, handleProxyStatus } = require('./commands/proxy');
 const { resetConfig } = require('./reset-config');
 const { handleChannelManagement, handleAddChannel, handleChannelStatus } = require('./commands/channels');
 const { handleToggleProxy } = require('./commands/toggle-proxy');
@@ -23,7 +21,10 @@ const { handleLogs } = require('./commands/logs');
 const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
 const { workspaceMenu } = require('./commands/workspace');
+const PluginManager = require('./plugins/plugin-manager');
+const eventBus = require('./plugins/event-bus');
 const chalk = require('chalk');
+const inquirer = require('inquirer');
 const path = require('path');
 const fs = require('fs');
 
@@ -77,8 +78,20 @@ function showHelp() {
   console.log(chalk.yellow('🛠️  其他命令:'));
   console.log('  ctx doctor              系统诊断');
   console.log('  ctx reset               重置配置');
+  console.log('  ctx security reset      关闭访问密码');
   console.log('  ctx --version, -v       显示版本');
   console.log('  ctx --help, -h          显示帮助\n');
+
+  console.log(chalk.yellow('🔌 插件管理:'));
+  console.log('  ctx plugin list         列出已安装插件');
+  console.log('  ctx plugin install <url>  从 Git 安装插件');
+  console.log('  ctx plugin remove <name>  卸载插件');
+  console.log('  ctx plugin enable <name>  启用插件');
+  console.log('  ctx plugin disable <name> 禁用插件');
+  console.log('  ctx plugin info <name>    查看插件详情');
+  console.log('  ctx plugin config <name>  配置插件');
+  console.log('  ctx plugin update <name>  更新插件');
+  console.log('  ctx plugin update --all   更新所有插件\n');
 
   console.log(chalk.yellow('💡 快速开始:'));
   console.log(chalk.gray('  $ ctx start          # 后台启动服务（推荐）'));
@@ -107,7 +120,9 @@ process.on('uncaughtException', (err) => {
 });
 
 // 处理 SIGINT 信号（Ctrl+C）
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
+  eventBus.emitSync('cli:shutdown', {});
+  PluginManager.shutdownPlugins();
   process.exit(0);
 });
 
@@ -133,6 +148,19 @@ async function main() {
   // reset 命令 - 恢复默认配置
   if (args[0] === 'reset') {
     await resetConfig();
+    return;
+  }
+
+  // security 命令 - 安全设置
+  if (args[0] === 'security') {
+    const { showSecurityHelp, handleSecurityReset } = require('./commands/security');
+    const subCommand = args[1] || 'help';
+
+    if (subCommand === 'reset' || subCommand === 'disable' || subCommand === 'off') {
+      await handleSecurityReset();
+    } else {
+      showSecurityHelp();
+    }
     return;
   }
 
@@ -171,6 +199,7 @@ async function main() {
       await handleRestart();
     } else {
       // 默认前台运行
+      const { handleUI } = require('./commands/ui');
       await handleUI();
     }
     return;
@@ -252,6 +281,7 @@ async function main() {
 
   // 代理命令
   if (args[0] === 'proxy') {
+    const { handleProxyStart, handleProxyStop, handleProxyStatus } = require('./commands/proxy');
     const subCommand = args[1] || 'start';
 
     switch (subCommand) {
@@ -274,12 +304,45 @@ async function main() {
     }
   }
 
+  // plugin 命令 - 插件管理
+  if (args[0] === 'plugin') {
+    const { handlePluginCommand } = require('./commands/plugin');
+    await handlePluginCommand(args.slice(1));
+    return;
+  }
+
   // 加载配置
   let config = loadConfig();
+
+  // 初始化插件系统
+  const pluginResult = PluginManager.initializePlugins({ config, args });
+  if (pluginResult.loaded > 0) {
+    console.log(chalk.gray(`[Plugin] 已加载 ${pluginResult.loaded} 个插件`));
+  }
+  if (pluginResult.failed.length > 0) {
+    console.log(chalk.yellow(`[Plugin] ${pluginResult.failed.length} 个插件加载失败`));
+  }
+
+  // 检查是否为插件注册的命令
+  if (args[0] && PluginManager.isPluginCommand(args[0])) {
+    eventBus.emitSync('cli:command:before', { command: args[0], args: args.slice(1), config });
+    const result = await PluginManager.executePluginCommand(args[0], args.slice(1));
+    eventBus.emitSync('cli:command:after', { command: args[0], args: args.slice(1), result });
+    if (!result.success) {
+      console.error(chalk.red(result.error));
+      process.exit(1);
+    }
+    return;
+  }
 
   while (true) {
     // 显示主菜单
     const action = await showMainMenu(config);
+
+    // 发送命令开始事件
+    eventBus.emitSync('cli:command:before', { command: action, args: [], config });
+
+    let result = { success: true };
 
     switch (action) {
       case 'list':
@@ -342,9 +405,11 @@ async function main() {
         await handleAddChannel();
         break;
 
-      case 'ui':
+      case 'ui': {
+        const { handleUI } = require('./commands/ui');
         await handleUI();
         break;
+      }
 
       case 'port-config':
         await handlePortConfig();
@@ -354,15 +419,194 @@ async function main() {
         await resetConfig();
         break;
 
+      case 'plugin-menu': {
+        const { handlePluginCommand } = require('./commands/plugin');
+
+        // Show plugin management submenu
+        const pluginAction = await inquirer.prompt([{
+          type: 'list',
+          name: 'action',
+          message: chalk.cyan('选择插件操作:'),
+          choices: [
+            { name: '📋 列出已安装插件', value: 'list' },
+            { name: '📦 安装插件', value: 'install' },
+            { name: '🗑️  卸载插件', value: 'remove' },
+            { name: '🔄 启用/禁用插件', value: 'toggle' },
+            { name: 'ℹ️  查看插件信息', value: 'info' },
+            { name: '⬆️  更新插件', value: 'update' },
+            { name: '⚙️  配置插件', value: 'config' },
+            { name: '◀️  返回主菜单', value: 'back' }
+          ]
+        }]);
+
+        if (pluginAction.action === 'back') {
+          break;
+        }
+
+        // Build args array based on action
+        let args = [pluginAction.action];
+
+        switch (pluginAction.action) {
+          case 'list':
+            // No additional args needed
+            await handlePluginCommand(args);
+            break;
+
+          case 'install': {
+            const installPrompt = await inquirer.prompt([{
+              type: 'input',
+              name: 'url',
+              message: '请输入插件 Git URL:',
+              validate: (input) => {
+                if (!input || input.trim() === '') {
+                  return '请输入有效的 Git URL';
+                }
+                if (!input.match(/^https?:\/\//)) {
+                  return '请输入完整的 URL (http:// 或 https://)';
+                }
+                return true;
+              }
+            }]);
+            args.push(installPrompt.url);
+            await handlePluginCommand(args);
+            break;
+          }
+
+          case 'remove': {
+            const removePrompt = await inquirer.prompt([{
+              type: 'input',
+              name: 'name',
+              message: '请输入要卸载的插件名称:',
+              validate: (input) => {
+                if (!input || input.trim() === '') {
+                  return '请输入插件名称';
+                }
+                return true;
+              }
+            }]);
+            args.push(removePrompt.name);
+            await handlePluginCommand(args);
+            break;
+          }
+
+          case 'toggle': {
+            const toggleChoice = await inquirer.prompt([{
+              type: 'list',
+              name: 'operation',
+              message: '选择操作:',
+              choices: [
+                { name: '✅ 启用插件', value: 'enable' },
+                { name: '❌ 禁用插件', value: 'disable' }
+              ]
+            }]);
+
+            const togglePrompt = await inquirer.prompt([{
+              type: 'input',
+              name: 'name',
+              message: '请输入插件名称:',
+              validate: (input) => {
+                if (!input || input.trim() === '') {
+                  return '请输入插件名称';
+                }
+                return true;
+              }
+            }]);
+
+            args = [toggleChoice.operation, togglePrompt.name];
+            await handlePluginCommand(args);
+            break;
+          }
+
+          case 'info': {
+            const infoPrompt = await inquirer.prompt([{
+              type: 'input',
+              name: 'name',
+              message: '请输入插件名称:',
+              validate: (input) => {
+                if (!input || input.trim() === '') {
+                  return '请输入插件名称';
+                }
+                return true;
+              }
+            }]);
+            args.push(infoPrompt.name);
+            await handlePluginCommand(args);
+            break;
+          }
+
+          case 'update': {
+            const updateChoice = await inquirer.prompt([{
+              type: 'list',
+              name: 'option',
+              message: '选择更新选项:',
+              choices: [
+                { name: '🔄 更新指定插件', value: 'single' },
+                { name: '🔄 更新所有插件', value: 'all' }
+              ]
+            }]);
+
+            if (updateChoice.option === 'all') {
+              args.push('--all');
+            } else {
+              const updatePrompt = await inquirer.prompt([{
+                type: 'input',
+                name: 'name',
+                message: '请输入插件名称:',
+                validate: (input) => {
+                  if (!input || input.trim() === '') {
+                    return '请输入插件名称';
+                  }
+                  return true;
+                }
+              }]);
+              args.push(updatePrompt.name);
+            }
+            await handlePluginCommand(args);
+            break;
+          }
+
+          case 'config': {
+            const configPrompt = await inquirer.prompt([{
+              type: 'input',
+              name: 'name',
+              message: '请输入插件名称:',
+              validate: (input) => {
+                if (!input || input.trim() === '') {
+                  return '请输入插件名称';
+                }
+                return true;
+              }
+            }]);
+            args.push(configPrompt.name);
+            await handlePluginCommand(args);
+            break;
+          }
+        }
+
+        // Wait for user to continue
+        await inquirer.prompt([{
+          type: 'input',
+          name: 'continue',
+          message: chalk.gray('按 Enter 继续...')
+        }]);
+        break;
+      }
+
       case 'exit':
         console.log('\n👋 再见！\n');
+        eventBus.emitSync('cli:shutdown', {});
+        PluginManager.shutdownPlugins();
         process.exit(0);
         break;
 
       default:
         console.log('未知操作');
+        result = { success: false, error: '未知操作' };
         break;
     }
+
+    // 发送命令完成事件
+    eventBus.emitSync('cli:command:after', { command: action, args: [], result });
   }
 }
 

@@ -5,11 +5,257 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const AdmZip = require('adm-zip');
 const permissionTemplatesService = require('./permission-templates-service');
 const configTemplatesService = require('./config-templates-service');
 const channelsService = require('./channels');
+const { AgentsService } = require('./agents-service');
+const { CommandsService } = require('./commands-service');
+const { RulesService } = require('./rules-service');
+const { SkillService } = require('./skill-service');
 
-const CONFIG_VERSION = '1.0.0';
+const CONFIG_VERSION = '1.1.0';
+const SKILL_FILE_ENCODING = 'base64';
+const SKILL_IGNORE_DIRS = new Set(['.git']);
+const SKILL_IGNORE_FILES = new Set(['.DS_Store']);
+const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const LEGACY_CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
+const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+const CC_UI_CONFIG_PATH = path.join(CC_TOOL_DIR, 'ui-config.json');
+const CC_TERMINAL_CONFIG_PATH = path.join(CC_TOOL_DIR, 'terminal-config.json');
+const CC_TERMINAL_COMMANDS_PATH = path.join(CC_TOOL_DIR, 'terminal-commands.json');
+const CC_PROMPTS_PATH = path.join(CC_TOOL_DIR, 'prompts.json');
+const CC_SECURITY_PATH = path.join(CC_TOOL_DIR, 'security.json');
+const LEGACY_UI_CONFIG_PATH = path.join(LEGACY_CC_TOOL_DIR, 'ui-config.json');
+const LEGACY_NOTIFY_HOOK_PATH = path.join(LEGACY_CC_TOOL_DIR, 'notify-hook.js');
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function readJsonFileSafe(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(content);
+  } catch (err) {
+    return null;
+  }
+}
+
+function readTextFileSafe(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeJsonFileAbsolute(filePath, data, overwrite, options = {}) {
+  if (data === undefined) {
+    return 'failed';
+  }
+  if (fs.existsSync(filePath) && !overwrite) return 'skipped';
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  if (options.mode) {
+    try {
+      fs.chmodSync(filePath, options.mode);
+    } catch (err) {
+      // ignore chmod errors
+    }
+  }
+  return 'success';
+}
+
+function writeTextFileAbsolute(filePath, content, overwrite, options = {}) {
+  if (content === undefined || content === null) {
+    return 'failed';
+  }
+  if (fs.existsSync(filePath) && !overwrite) return 'skipped';
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, content, 'utf8');
+  if (options.mode) {
+    try {
+      fs.chmodSync(filePath, options.mode);
+    } catch (err) {
+      // ignore chmod errors
+    }
+  }
+  return 'success';
+}
+
+function getConfigFilePath() {
+  try {
+    const loaderPath = require.resolve('../../config/loader');
+    return path.resolve(path.dirname(loaderPath), '../../config.json');
+  } catch (err) {
+    return null;
+  }
+}
+
+function buildExportReadme(exportData) {
+  const exportedAt = exportData.exportedAt ? new Date(exportData.exportedAt).toLocaleString('zh-CN') : '';
+  return `# Coding Tool 配置导出包
+
+导出时间: ${exportedAt}
+版本: ${exportData.version || CONFIG_VERSION}
+
+## 📦 包含内容
+- 权限模板、配置模板、频道配置、工作区、收藏
+- Agents / Skills / Commands / Rules
+- MCP 服务器配置
+- UI 配置（主题、面板显示、排序等）
+- 终端配置与 CLI 命令配置
+- Prompts 预设
+- 安全配置
+- 高级配置（端口、日志、性能等）
+- Claude Hooks 配置（如通知脚本）
+
+> 注意：配置包可能包含 API Key、Webhook 等敏感信息，请妥善保管。
+`;
+}
+
+function resolveSafePath(baseDir, relativePath) {
+  if (!relativePath || typeof relativePath !== 'string') return null;
+  const normalized = path.normalize(relativePath);
+  if (path.isAbsolute(normalized)) return null;
+  const resolved = path.resolve(baseDir, normalized);
+  const relative = path.relative(baseDir, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return resolved;
+}
+
+function buildAgentContent(agent) {
+  const lines = ['---'];
+  if (agent.name) lines.push(`name: ${agent.name}`);
+  if (agent.description) lines.push(`description: "${agent.description}"`);
+  if (agent.tools) lines.push(`tools: ${agent.tools}`);
+  if (agent.model) lines.push(`model: ${agent.model}`);
+  if (agent.permissionMode) lines.push(`permissionMode: ${agent.permissionMode}`);
+  if (agent.skills) lines.push(`skills: ${agent.skills}`);
+  lines.push('---');
+  const body = agent.systemPrompt || '';
+  return `${lines.join('\n')}\n\n${body}`;
+}
+
+function buildCommandContent(command) {
+  const frontmatter = {};
+  if (command.description) frontmatter.description = command.description;
+  if (command.allowedTools) frontmatter['allowed-tools'] = command.allowedTools;
+  if (command.argumentHint) frontmatter['argument-hint'] = command.argumentHint;
+
+  const lines = [];
+  if (Object.keys(frontmatter).length > 0) {
+    lines.push('---');
+    if (frontmatter.description) {
+      lines.push(`description: "${frontmatter.description}"`);
+    }
+    if (frontmatter['allowed-tools']) {
+      lines.push(`allowed-tools: ${frontmatter['allowed-tools']}`);
+    }
+    if (frontmatter['argument-hint']) {
+      lines.push(`argument-hint: ${frontmatter['argument-hint']}`);
+    }
+    lines.push('---');
+    lines.push('');
+  }
+
+  const body = command.body || '';
+  return `${lines.join('\n')}${body}`;
+}
+
+function buildRuleContent(rule) {
+  const lines = [];
+  if (rule.paths) {
+    lines.push('---');
+    lines.push(`paths: ${rule.paths}`);
+    lines.push('---');
+    lines.push('');
+  }
+  const body = rule.body || '';
+  return `${lines.join('\n')}${body}`;
+}
+
+function collectSkillFiles(baseDir) {
+  const files = [];
+  const stack = [baseDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (err) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (SKILL_IGNORE_DIRS.has(entry.name)) {
+          continue;
+        }
+        stack.push(path.join(currentDir, entry.name));
+      } else if (entry.isFile()) {
+        if (SKILL_IGNORE_FILES.has(entry.name)) {
+          continue;
+        }
+        const fullPath = path.join(currentDir, entry.name);
+        const relativePath = path.relative(baseDir, fullPath);
+        try {
+          const content = fs.readFileSync(fullPath);
+          files.push({
+            path: relativePath,
+            encoding: SKILL_FILE_ENCODING,
+            content: content.toString(SKILL_FILE_ENCODING)
+          });
+        } catch (err) {
+          continue;
+        }
+      }
+    }
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return files;
+}
+
+function exportSkillsSnapshot() {
+  const skillService = new SkillService();
+  const installedSkills = skillService.getInstalledSkills();
+  const baseDir = skillService.installDir;
+
+  return installedSkills.map((skill) => {
+    const directory = skill.directory;
+    const skillDir = resolveSafePath(baseDir, directory);
+    if (!skillDir || !fs.existsSync(skillDir)) {
+      return null;
+    }
+    return {
+      directory,
+      name: skill.name || directory,
+      description: skill.description || '',
+      files: collectSkillFiles(skillDir)
+    };
+  }).filter(Boolean);
+}
+
+function writeTextFile(baseDir, relativePath, content, overwrite) {
+  if (!content && content !== '') {
+    return 'failed';
+  }
+  const targetPath = resolveSafePath(baseDir, relativePath);
+  if (!targetPath) return 'failed';
+  if (fs.existsSync(targetPath) && !overwrite) return 'skipped';
+
+  ensureDir(path.dirname(targetPath));
+  fs.writeFileSync(targetPath, content, 'utf8');
+  return 'success';
+}
 
 /**
  * 导出所有配置为JSON
@@ -38,20 +284,49 @@ function exportAllConfigs() {
     const favorites = favoritesService.loadFavorites();
 
     // 获取 Agents 配置
-    const agentsService = require('./agents-service');
-    const agents = agentsService.getAllAgents();
+    const agentsService = new AgentsService();
+    const { agents: rawAgents } = agentsService.listAgents();
+    const agents = rawAgents.map(agent => ({
+      fileName: agent.fileName,
+      name: agent.name,
+      description: agent.description,
+      tools: agent.tools,
+      model: agent.model,
+      permissionMode: agent.permissionMode,
+      skills: agent.skills,
+      path: agent.path,
+      systemPrompt: agent.systemPrompt,
+      fullContent: agent.fullContent
+    }));
 
     // 获取 Skills 配置
-    const skillService = require('./skill-service');
-    const skills = skillService.getAllSkills();
+    const skills = exportSkillsSnapshot();
 
     // 获取 Commands 配置
-    const commandsService = require('./commands-service');
-    const commands = commandsService.getAllCommands();
+    const commandsService = new CommandsService();
+    const { commands: rawCommands } = commandsService.listCommands();
+    const commands = rawCommands.map(command => ({
+      name: command.name,
+      namespace: command.namespace,
+      description: command.description,
+      allowedTools: command.allowedTools,
+      argumentHint: command.argumentHint,
+      path: command.path,
+      body: command.body,
+      fullContent: command.fullContent
+    }));
 
     // 获取 Rules 配置
-    const rulesService = require('./rules-service');
-    const rules = rulesService.getAllRules();
+    const rulesService = new RulesService();
+    const { rules: rawRules } = rulesService.listRules();
+    const rules = rawRules.map(rule => ({
+      fileName: rule.fileName,
+      directory: rule.directory,
+      paths: rule.paths,
+      path: rule.path,
+      body: rule.body,
+      fullContent: rule.fullContent
+    }));
 
     // 获取 MCP 配置
     const mcpService = require('./mcp-service');
@@ -73,6 +348,27 @@ function exportAllConfigs() {
       }
     }
 
+    // 获取 UI / 前端配置
+    const { loadUIConfig } = require('./ui-config');
+    const { loadTerminalConfig } = require('./terminal-config');
+    const { loadTerminalCommands } = require('./terminal-commands');
+    const { loadConfig } = require('../../config/loader');
+
+    const uiConfigFile = readJsonFileSafe(CC_UI_CONFIG_PATH);
+    const uiConfig = uiConfigFile || loadUIConfig();
+    const terminalConfig = loadTerminalConfig();
+    const terminalCommands = loadTerminalCommands();
+    const prompts = readJsonFileSafe(CC_PROMPTS_PATH);
+    const security = readJsonFileSafe(CC_SECURITY_PATH);
+    const appConfig = loadConfig();
+
+    const claudeSettings = readJsonFileSafe(CLAUDE_SETTINGS_PATH);
+    const claudeHooks = {
+      uiConfig: readJsonFileSafe(LEGACY_UI_CONFIG_PATH),
+      notifyScript: readTextFileSafe(LEGACY_NOTIFY_HOOK_PATH),
+      stopHook: claudeSettings?.hooks?.Stop || null
+    };
+
     const exportData = {
       version: CONFIG_VERSION,
       exportedAt: new Date().toISOString(),
@@ -87,7 +383,14 @@ function exportAllConfigs() {
         commands: commands || [],
         rules: rules || [],
         mcpServers: mcpServers || [],
-        markdownFiles: markdownFiles
+        markdownFiles: markdownFiles,
+        uiConfig: uiConfig,
+        terminalConfig: terminalConfig,
+        terminalCommands: terminalCommands,
+        prompts: prompts,
+        security: security,
+        appConfig: appConfig,
+        claudeHooks: claudeHooks
       }
     };
 
@@ -102,6 +405,30 @@ function exportAllConfigs() {
       message: error.message
     };
   }
+}
+
+/**
+ * 导出所有配置为 ZIP
+ * @returns {Object} { success, data: Buffer, filename }
+ */
+function exportAllConfigsZip() {
+  const result = exportAllConfigs();
+  if (!result.success) {
+    return result;
+  }
+
+  const exportData = result.data;
+  const zip = new AdmZip();
+  const jsonContent = JSON.stringify(exportData, null, 2);
+
+  zip.addFile('config.json', Buffer.from(jsonContent, 'utf8'));
+  zip.addFile('README.md', Buffer.from(buildExportReadme(exportData), 'utf8'));
+
+  return {
+    success: true,
+    data: zip.toBuffer(),
+    filename: `ctx-config-${new Date().toISOString().split('T')[0]}.zip`
+  };
 }
 
 /**
@@ -123,7 +450,14 @@ function importConfigs(importData, options = {}) {
     commands: { success: 0, failed: 0, skipped: 0 },
     rules: { success: 0, failed: 0, skipped: 0 },
     mcpServers: { success: 0, failed: 0, skipped: 0 },
-    markdownFiles: { success: 0, failed: 0, skipped: 0 }
+    markdownFiles: { success: 0, failed: 0, skipped: 0 },
+    uiConfig: { success: 0, failed: 0, skipped: 0 },
+    terminalConfig: { success: 0, failed: 0, skipped: 0 },
+    terminalCommands: { success: 0, failed: 0, skipped: 0 },
+    prompts: { success: 0, failed: 0, skipped: 0 },
+    security: { success: 0, failed: 0, skipped: 0 },
+    appConfig: { success: 0, failed: 0, skipped: 0 },
+    claudeHooks: { success: 0, failed: 0, skipped: 0 }
   };
 
   try {
@@ -143,7 +477,14 @@ function importConfigs(importData, options = {}) {
       commands = [],
       rules = [],
       mcpServers = [],
-      markdownFiles = {}
+      markdownFiles = {},
+      uiConfig = null,
+      terminalConfig = null,
+      terminalCommands = null,
+      prompts = null,
+      security = null,
+      appConfig = null,
+      claudeHooks = null
     } = importData.data;
 
     // 导入权限模板
@@ -251,15 +592,24 @@ function importConfigs(importData, options = {}) {
     }
 
     // 导入 Agents
-    if (agents && agents.length > 0 && overwrite) {
+    if (agents && agents.length > 0) {
       try {
-        const agentsService = require('./agents-service');
+        const agentsService = new AgentsService();
+        const baseDir = agentsService.userAgentsDir;
+
         for (const agent of agents) {
-          try {
-            agentsService.saveAgent(agent);
+          const relativePath = agent.path || agent.fileName || agent.name;
+          const filePath = relativePath && relativePath.endsWith('.md')
+            ? relativePath
+            : (relativePath ? `${relativePath}.md` : null);
+          const content = agent.fullContent || agent.content || buildAgentContent(agent);
+
+          const status = filePath ? writeTextFile(baseDir, filePath, content, overwrite) : 'failed';
+          if (status === 'success') {
             results.agents.success++;
-          } catch (err) {
-            console.error(`[ConfigImport] 导入 Agent 失败: ${agent.name}`, err);
+          } else if (status === 'skipped') {
+            results.agents.skipped++;
+          } else {
             results.agents.failed++;
           }
         }
@@ -269,16 +619,55 @@ function importConfigs(importData, options = {}) {
     }
 
     // 导入 Skills
-    if (skills && skills.length > 0 && overwrite) {
+    if (skills && skills.length > 0) {
       try {
-        const skillService = require('./skill-service');
+        const skillService = new SkillService();
+        const baseDir = skillService.installDir;
+        ensureDir(baseDir);
+
         for (const skill of skills) {
-          try {
-            skillService.saveSkill(skill);
-            results.skills.success++;
-          } catch (err) {
-            console.error(`[ConfigImport] 导入 Skill 失败: ${skill.name}`, err);
+          const directory = skill.directory;
+          const skillDir = resolveSafePath(baseDir, directory);
+          if (!skillDir) {
             results.skills.failed++;
+            continue;
+          }
+
+          if (fs.existsSync(skillDir)) {
+            if (!overwrite) {
+              results.skills.skipped++;
+              continue;
+            }
+            fs.rmSync(skillDir, { recursive: true, force: true });
+          }
+
+          ensureDir(skillDir);
+          const files = Array.isArray(skill.files) ? skill.files : [];
+          let failed = false;
+
+          for (const file of files) {
+            const filePath = resolveSafePath(skillDir, file.path);
+            if (!filePath) {
+              failed = true;
+              break;
+            }
+            ensureDir(path.dirname(filePath));
+            try {
+              if (file.encoding === SKILL_FILE_ENCODING) {
+                fs.writeFileSync(filePath, Buffer.from(file.content || '', SKILL_FILE_ENCODING));
+              } else {
+                fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
+              }
+            } catch (err) {
+              failed = true;
+              break;
+            }
+          }
+
+          if (failed || files.length === 0) {
+            results.skills.failed++;
+          } else {
+            results.skills.success++;
           }
         }
       } catch (err) {
@@ -287,15 +676,25 @@ function importConfigs(importData, options = {}) {
     }
 
     // 导入 Commands
-    if (commands && commands.length > 0 && overwrite) {
+    if (commands && commands.length > 0) {
       try {
-        const commandsService = require('./commands-service');
+        const commandsService = new CommandsService();
+        const baseDir = commandsService.userCommandsDir;
+
         for (const command of commands) {
-          try {
-            commandsService.saveCommand(command);
+          const relativePath = command.path || (
+            command.namespace
+              ? path.join(command.namespace, `${command.name}.md`)
+              : `${command.name}.md`
+          );
+          const content = command.fullContent || command.content || buildCommandContent(command);
+
+          const status = relativePath ? writeTextFile(baseDir, relativePath, content, overwrite) : 'failed';
+          if (status === 'success') {
             results.commands.success++;
-          } catch (err) {
-            console.error(`[ConfigImport] 导入 Command 失败: ${command.name}`, err);
+          } else if (status === 'skipped') {
+            results.commands.skipped++;
+          } else {
             results.commands.failed++;
           }
         }
@@ -305,15 +704,25 @@ function importConfigs(importData, options = {}) {
     }
 
     // 导入 Rules
-    if (rules && rules.length > 0 && overwrite) {
+    if (rules && rules.length > 0) {
       try {
-        const rulesService = require('./rules-service');
+        const rulesService = new RulesService();
+        const baseDir = rulesService.userRulesDir;
+
         for (const rule of rules) {
-          try {
-            rulesService.saveRule(rule);
+          const relativePath = rule.path || (
+            rule.directory
+              ? path.join(rule.directory, `${rule.fileName || rule.name}.md`)
+              : `${rule.fileName || rule.name}.md`
+          );
+          const content = rule.fullContent || rule.content || buildRuleContent(rule);
+
+          const status = relativePath ? writeTextFile(baseDir, relativePath, content, overwrite) : 'failed';
+          if (status === 'success') {
             results.rules.success++;
-          } catch (err) {
-            console.error(`[ConfigImport] 导入 Rule 失败: ${rule.name}`, err);
+          } else if (status === 'skipped') {
+            results.rules.skipped++;
+          } else {
             results.rules.failed++;
           }
         }
@@ -355,6 +764,162 @@ function importConfigs(importData, options = {}) {
       }
     }
 
+    // 导入 UI 配置
+    if (uiConfig && typeof uiConfig === 'object') {
+      try {
+        if (fs.existsSync(CC_UI_CONFIG_PATH) && !overwrite) {
+          results.uiConfig.skipped++;
+        } else {
+          const { saveUIConfig } = require('./ui-config');
+          saveUIConfig(uiConfig);
+          results.uiConfig.success++;
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入 UI 配置失败:', err);
+        results.uiConfig.failed++;
+      }
+    }
+
+    // 导入终端配置
+    if (terminalConfig && typeof terminalConfig === 'object') {
+      try {
+        if (fs.existsSync(CC_TERMINAL_CONFIG_PATH) && !overwrite) {
+          results.terminalConfig.skipped++;
+        } else {
+          const { saveTerminalConfig } = require('./terminal-config');
+          saveTerminalConfig(terminalConfig);
+          results.terminalConfig.success++;
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入终端配置失败:', err);
+        results.terminalConfig.failed++;
+      }
+    }
+
+    // 导入终端命令配置
+    if (terminalCommands && typeof terminalCommands === 'object') {
+      try {
+        if (fs.existsSync(CC_TERMINAL_COMMANDS_PATH) && !overwrite) {
+          results.terminalCommands.skipped++;
+        } else {
+          const { saveTerminalCommands } = require('./terminal-commands');
+          const ok = saveTerminalCommands(terminalCommands);
+          if (ok) {
+            results.terminalCommands.success++;
+          } else {
+            results.terminalCommands.failed++;
+          }
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入终端命令配置失败:', err);
+        results.terminalCommands.failed++;
+      }
+    }
+
+    // 导入 Prompts 配置
+    if (prompts && typeof prompts === 'object') {
+      try {
+        const status = writeJsonFileAbsolute(CC_PROMPTS_PATH, prompts, overwrite);
+        if (status === 'success') {
+          results.prompts.success++;
+        } else if (status === 'skipped') {
+          results.prompts.skipped++;
+        } else {
+          results.prompts.failed++;
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入 Prompts 失败:', err);
+        results.prompts.failed++;
+      }
+    }
+
+    // 导入安全配置
+    if (security && typeof security === 'object') {
+      try {
+        const status = writeJsonFileAbsolute(CC_SECURITY_PATH, security, overwrite, { mode: 0o600 });
+        if (status === 'success') {
+          results.security.success++;
+        } else if (status === 'skipped') {
+          results.security.skipped++;
+        } else {
+          results.security.failed++;
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入安全配置失败:', err);
+        results.security.failed++;
+      }
+    }
+
+    // 导入高级配置（config.json）
+    if (appConfig && typeof appConfig === 'object') {
+      try {
+        const configFilePath = getConfigFilePath();
+        if (configFilePath && fs.existsSync(configFilePath) && !overwrite) {
+          results.appConfig.skipped++;
+        } else {
+          const { saveConfig } = require('../../config/loader');
+          saveConfig(appConfig);
+          results.appConfig.success++;
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入高级配置失败:', err);
+        results.appConfig.failed++;
+      }
+    }
+
+    // 导入 Claude Hooks 配置
+    if (claudeHooks && typeof claudeHooks === 'object') {
+      let didWrite = false;
+      let didSkip = false;
+      let didFail = false;
+
+      try {
+        if (claudeHooks.uiConfig && typeof claudeHooks.uiConfig === 'object') {
+          const status = writeJsonFileAbsolute(LEGACY_UI_CONFIG_PATH, claudeHooks.uiConfig, overwrite);
+          if (status === 'success') didWrite = true;
+          else if (status === 'skipped') didSkip = true;
+          else didFail = true;
+        }
+
+        if (claudeHooks.notifyScript !== undefined && claudeHooks.notifyScript !== null) {
+          const status = writeTextFileAbsolute(LEGACY_NOTIFY_HOOK_PATH, claudeHooks.notifyScript, overwrite, { mode: 0o755 });
+          if (status === 'success') didWrite = true;
+          else if (status === 'skipped') didSkip = true;
+          else didFail = true;
+        }
+
+        if (claudeHooks.stopHook !== undefined) {
+          if (!overwrite && fs.existsSync(CLAUDE_SETTINGS_PATH)) {
+            didSkip = true;
+          } else {
+            const settings = readJsonFileSafe(CLAUDE_SETTINGS_PATH) || {};
+            settings.hooks = settings.hooks || {};
+            if (claudeHooks.stopHook) {
+              settings.hooks.Stop = claudeHooks.stopHook;
+            } else if (settings.hooks.Stop) {
+              delete settings.hooks.Stop;
+              if (Object.keys(settings.hooks).length === 0) {
+                delete settings.hooks;
+              }
+            }
+            writeJsonFileAbsolute(CLAUDE_SETTINGS_PATH, settings, true);
+            didWrite = true;
+          }
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入 Claude Hooks 失败:', err);
+        didFail = true;
+      }
+
+      if (didFail) {
+        results.claudeHooks.failed++;
+      } else if (didWrite) {
+        results.claudeHooks.success++;
+      } else if (didSkip) {
+        results.claudeHooks.skipped++;
+      }
+    }
+
     return {
       success: true,
       results,
@@ -387,7 +952,14 @@ function generateImportSummary(results) {
     { key: 'commands', label: 'Commands' },
     { key: 'rules', label: 'Rules' },
     { key: 'mcpServers', label: 'MCP服务器' },
-    { key: 'markdownFiles', label: 'Markdown文件' }
+    { key: 'markdownFiles', label: 'Markdown文件' },
+    { key: 'uiConfig', label: 'UI配置' },
+    { key: 'terminalConfig', label: '终端配置' },
+    { key: 'terminalCommands', label: '终端命令' },
+    { key: 'prompts', label: 'Prompts' },
+    { key: 'security', label: '安全配置' },
+    { key: 'appConfig', label: '高级配置' },
+    { key: 'claudeHooks', label: 'Claude Hooks' }
   ];
 
   for (const { key, label } of types) {
@@ -411,5 +983,6 @@ function generateImportSummary(results) {
 
 module.exports = {
   exportAllConfigs,
+  exportAllConfigsZip,
   importConfigs
 };

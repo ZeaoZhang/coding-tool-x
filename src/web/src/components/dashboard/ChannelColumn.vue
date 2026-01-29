@@ -314,6 +314,14 @@
         </div>
       </div>
 
+      <!-- Model Usage Chart -->
+      <div class="card chart-card" v-if="Object.keys(modelStats).length > 0">
+        <ModelUsageChart
+          :channel-type="channelType"
+          :model-stats="modelStats"
+        />
+      </div>
+
       <!-- 实时日志 -->
       <div v-if="showLogs" class="card logs-card">
         <div class="card-header compact">
@@ -444,6 +452,7 @@ import {
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
+import ModelUsageChart from './ModelUsageChart.vue'
 import {
   getUIConfig,
   updateNestedUIConfig
@@ -564,6 +573,13 @@ const isAnimating = ref({
   requests: false,
   tokens: false,
   cost: false
+})
+
+// 模型统计数据（用于图表）
+const modelStats = computed(() => {
+  const toolType = props.channelType === 'claude' ? 'claude' :
+                   props.channelType === 'codex' ? 'codex' : 'gemini'
+  return dashboardData.value?.todayStats?.[toolType]?.byModel || {}
 })
 
 // 数字滚动动画函数
@@ -1700,16 +1716,39 @@ onUnmounted(() => {
   border-left: 2px solid transparent;
 }
 
-.stats-card-claude {
+/* 图表卡片样式 */
+.chart-card {
+  border-left: 2px solid transparent;
+}
+
+.stats-card-claude,
+.chart-card:has(+ .stats-card-claude),
+.card:has(.panel-card):nth-child(4) {
   border-left-color: #18a058;
 }
 
-.stats-card-codex {
+.stats-card-codex,
+.chart-card:has(+ .stats-card-codex),
+.card:has(.panel-card):nth-child(4) {
   border-left-color: #3b82f6;
 }
 
-.stats-card-gemini {
+.stats-card-gemini,
+.chart-card:has(+ .stats-card-gemini),
+.card:has(.panel-card):nth-child(4) {
   border-left-color: #a855f7;
+}
+
+.chart-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.chart-card :deep(.panel-card) {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
 }
 
 /* 请求数值颜色 */

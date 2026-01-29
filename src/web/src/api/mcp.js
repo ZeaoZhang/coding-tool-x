@@ -102,3 +102,38 @@ export async function exportServers(format = 'json') {
 export function getExportDownloadUrl(format = 'json') {
   return `/api/mcp/export/download?format=${format}`
 }
+
+/**
+ * Get tools list from MCP server
+ * @param {string} serverId - Server ID
+ * @returns {Promise<{tools: Array, duration: number, status: string}>}
+ */
+export async function getServerTools(serverId) {
+  const response = await client.get(`/mcp/servers/${serverId}/tools`)
+  return response.data
+}
+
+/**
+ * Test a tool on MCP server
+ * @param {string} serverId - Server ID
+ * @param {string} toolName - Tool name
+ * @param {Object} args - Tool arguments
+ * @returns {Promise<{result: Object, duration: number, isError: boolean}>}
+ */
+export async function testServerTool(serverId, toolName, args = {}) {
+  const response = await client.post(`/mcp/servers/${serverId}/tools/test`, {
+    toolName,
+    arguments: args
+  })
+  return response.data
+}
+
+/**
+ * Get full server info including capabilities
+ * @param {string} serverId - Server ID
+ * @returns {Promise<{capabilities: Object, tools: Array, serverInfo: Object}>}
+ */
+export async function getServerInfo(serverId) {
+  const response = await client.get(`/mcp/servers/${serverId}/info`)
+  return response.data
+}

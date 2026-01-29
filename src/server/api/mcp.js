@@ -333,4 +333,67 @@ router.get('/export/download', (req, res) => {
   }
 });
 
+/**
+ * GET /api/mcp/servers/:id/tools
+ * 获取 MCP 服务器的工具列表
+ */
+router.get('/servers/:id/tools', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await mcpService.getServerTools(id);
+    res.json(result);
+  } catch (err) {
+    res.status(404).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/mcp/servers/:id/tools/test
+ * 测试 MCP 服务器的工具
+ */
+router.post('/servers/:id/tools/test', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { toolName, arguments: args } = req.body;
+
+    if (!toolName) {
+      return res.status(400).json({ success: false, error: '缺少 toolName 参数' });
+    }
+
+    const result = await mcpService.callServerTool(id, toolName, args || {});
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/mcp/servers/:id/info
+ * 获取 MCP 服务器的详细信息
+ */
+router.get('/servers/:id/info', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await mcpService.getServerTools(id);
+
+    const serverData = mcpService.getServer(id);
+
+    res.json({
+      success: true,
+      capabilities: {
+        tools: true,
+        resources: false,
+        prompts: false
+      },
+      tools: result.tools,
+      serverInfo: serverData ? {
+        name: serverData.name || id,
+        type: serverData.server?.type || 'stdio'
+      } : {}
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;

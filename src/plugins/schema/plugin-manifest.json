@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/zhangzeao/coding-tool/blob/main/src/plugins/schema/plugin-manifest.json",
+  "title": "CTX Plugin Manifest",
+  "description": "Schema for Coding-Tool-X (ctx) plugin manifest file",
+  "type": "object",
+  "required": ["name", "version", "description", "main", "ctx"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Plugin name in kebab-case, must start with 'ctx-plugin-'",
+      "pattern": "^ctx-plugin-[a-z0-9-]+$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.-]+)?(\\+[a-zA-Z0-9.-]+)?$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of what the plugin does",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "main": {
+      "type": "string",
+      "description": "Entry point JavaScript file (relative to plugin root)",
+      "pattern": "^(?!.*\\.\\.)(?!.*\\.\\/)[a-zA-Z0-9_-]+(?:\\/[a-zA-Z0-9_-]+)*\\.js$"
+    },
+    "ctx": {
+      "type": "object",
+      "description": "CTX-specific metadata",
+      "required": ["minVersion", "hooks"],
+      "properties": {
+        "minVersion": {
+          "type": "string",
+          "description": "Minimum CTX version required",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "hooks": {
+          "type": "array",
+          "description": "Lifecycle hooks this plugin subscribes to",
+          "items": {
+            "type": "string",
+            "enum": [
+              "cli:init",
+              "cli:shutdown",
+              "cli:command:before",
+              "cli:command:after",
+              "config:loaded",
+              "config:saved",
+              "proxy:start",
+              "proxy:stop"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "author": {
+      "type": "string",
+      "description": "Author name and optional email"
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier"
+    },
+    "repository": {
+      "type": "string",
+      "description": "Git repository URL",
+      "format": "uri"
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "npm dependencies (will be installed automatically)",
+      "patternProperties": {
+        "^[a-z0-9-_@/]+$": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "description": "Default configuration values for this plugin"
+    },
+    "commands": {
+      "type": "array",
+      "description": "CLI commands registered by this plugin",
+      "items": {
+        "type": "object",
+        "required": ["name", "description"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$",
+            "description": "Command name (kebab-case)"
+          },
+          "description": {
+            "type": "string",
+            "description": "Command description shown in help"
+          },
+          "usage": {
+            "type": "string",
+            "description": "Usage example"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

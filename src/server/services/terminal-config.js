@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { detectAvailableTerminals, getDefaultTerminal } = require('./terminal-detector');
+const { detectAvailableTerminals, getDefaultTerminal, getSystemShell } = require('./terminal-detector');
 
 /**
  * 获取配置文件路径
@@ -77,6 +77,78 @@ function getSelectedTerminal() {
   return selectedTerminal || getDefaultTerminal();
 }
 
+function getSystemRoot() {
+  return process.env.SystemRoot || process.env.windir || null;
+}
+
+function resolveWindowsShellPath(selectedTerminalId) {
+  const systemRoot = getSystemRoot();
+
+  if (selectedTerminalId === 'cmd') {
+    const candidates = [];
+    if (process.env.COMSPEC) {
+      candidates.push(process.env.COMSPEC);
+    }
+    if (systemRoot) {
+      candidates.push(path.join(systemRoot, 'System32', 'cmd.exe'));
+    }
+    return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+  }
+
+  if (selectedTerminalId === 'powershell') {
+    const candidates = [];
+    if (systemRoot) {
+      candidates.push(path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'));
+    }
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    candidates.push(path.join(programFiles, 'PowerShell', '7', 'pwsh.exe'));
+    return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+  }
+
+  if (selectedTerminalId === 'git-bash') {
+    const terminals = detectAvailableTerminals();
+    const gitBash = terminals.find(t => t.id === 'git-bash');
+    if (gitBash && gitBash.executablePath && fs.existsSync(gitBash.executablePath)) {
+      return gitBash.executablePath;
+    }
+  }
+
+  return null;
+}
+
+function getWebTerminalShellConfig() {
+  const config = loadTerminalConfig();
+  const selectedTerminalId = config.selectedTerminal;
+
+  if (!selectedTerminalId) {
+    return {};
+  }
+
+  if (selectedTerminalId === 'system-shell') {
+    const shell = getSystemShell();
+    if (shell) {
+      return { shell };
+    }
+    return {};
+  }
+
+  if (process.platform !== 'win32') {
+    return {};
+  }
+
+  const shell = resolveWindowsShellPath(selectedTerminalId);
+  if (!shell) {
+    return {};
+  }
+
+  const args = [];
+  if (selectedTerminalId === 'git-bash') {
+    args.push('--login', '-i');
+  }
+
+  return { shell, args };
+}
+
 /**
  * 获取终端启动命令（填充参数后）
  * @param {string} cwd - 工作目录
@@ -91,7 +163,14 @@ function getTerminalLaunchCommand(cwd, sessionId, toolType, customCliCommand) {
     throw new Error('No terminal available');
   }
 
+  if (terminal.supportsLocalLaunch === false || terminal.id === 'system-shell') {
+    throw new Error('系统 Shell 仅用于 Web 终端，请使用 Web 终端启动会话');
+  }
+
   let command = terminal.command;
+  if (!command) {
+    throw new Error('未配置终端启动命令');
+  }
 
   // 根据工具类型构建 CLI 命令
   let cliCommand;
@@ -136,5 +215,6 @@ module.exports = {
   loadTerminalConfig,
   saveTerminalConfig,
   getSelectedTerminal,
+  getWebTerminalShellConfig,
   getTerminalLaunchCommand
 };

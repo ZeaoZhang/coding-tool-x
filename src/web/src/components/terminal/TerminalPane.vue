@@ -56,6 +56,12 @@ let currentTerminalId = null
 let resizeObserver = null
 let reconnectTimer = null
 let shouldReconnect = true  // 控制是否允许重连
+let lastSentCols = null
+let lastSentRows = null
+let serverCols = null
+let serverRows = null
+let allowResize = false
+let pendingResize = null
 
 // 深色主题配色 (Catppuccin Mocha)
 const darkTheme = {
@@ -152,23 +158,73 @@ function initTerminal() {
 
   // 监听终端大小变化
   terminal.onResize(({ cols, rows }) => {
-    if (ws && ws.readyState === WebSocket.OPEN && currentTerminalId) {
-      ws.send(JSON.stringify({
-        type: 'terminal:resize',
-        terminalId: currentTerminalId,
-        cols,
-        rows
-      }))
-    }
+    handleResize(cols, rows)
   })
 
   // 监听容器大小变化
   resizeObserver = new ResizeObserver(() => {
-    if (fitAddon) {
+    if (fitAddon && isContainerVisible()) {
       fitAddon.fit()
     }
   })
   resizeObserver.observe(containerRef.value)
+}
+
+function isContainerVisible() {
+  if (!containerRef.value) return false
+  const rect = containerRef.value.getBoundingClientRect()
+  return rect.width > 20 && rect.height > 20
+}
+
+function updateServerSize(metadata) {
+  if (!metadata) return
+  if (Number.isFinite(metadata.cols)) {
+    serverCols = metadata.cols
+  }
+  if (Number.isFinite(metadata.rows)) {
+    serverRows = metadata.rows
+  }
+}
+
+function sendResizeIfNeeded(cols, rows) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !currentTerminalId) return
+  if (Number.isFinite(serverCols) && Number.isFinite(serverRows) && cols === serverCols && rows === serverRows) {
+    lastSentCols = cols
+    lastSentRows = rows
+    return
+  }
+  if (lastSentCols === cols && lastSentRows === rows) return
+  ws.send(JSON.stringify({
+    type: 'terminal:resize',
+    terminalId: currentTerminalId,
+    cols,
+    rows
+  }))
+  lastSentCols = cols
+  lastSentRows = rows
+}
+
+function handleResize(cols, rows) {
+  if (!isContainerVisible()) {
+    pendingResize = { cols, rows }
+    return
+  }
+  if (!allowResize) {
+    pendingResize = { cols, rows }
+    return
+  }
+  sendResizeIfNeeded(cols, rows)
+}
+
+function syncSizeWithServer() {
+  if (!terminal) return
+  const cols = terminal.cols
+  const rows = terminal.rows
+  if (!isContainerVisible()) {
+    pendingResize = { cols, rows }
+    return
+  }
+  sendResizeIfNeeded(cols, rows)
 }
 
 // 连接 WebSocket
@@ -190,10 +246,7 @@ function connectWebSocket() {
 
     // 如果有传入的 terminalId，绑定到现有终端
     if (props.terminalId) {
-      ws.send(JSON.stringify({
-        type: 'terminal:attach',
-        terminalId: props.terminalId
-      }))
+      sendAttach(props.terminalId)
     } else {
       // 创建新终端
       ws.send(JSON.stringify({
@@ -238,6 +291,30 @@ function connectWebSocket() {
   }
 }
 
+function sendAttach(terminalId) {
+  if (!terminalId || !ws || ws.readyState !== WebSocket.OPEN) return
+  lastSentCols = null
+  lastSentRows = null
+  serverCols = null
+  serverRows = null
+  allowResize = false
+  pendingResize = null
+  if (terminal) {
+    terminal.clear()
+    terminal.reset()
+  }
+  const payload = {
+    type: 'terminal:attach',
+    terminalId
+  }
+  if (terminal && Number.isFinite(terminal.cols) && Number.isFinite(terminal.rows)
+    && terminal.cols > 0 && terminal.rows > 0) {
+    payload.cols = terminal.cols
+    payload.rows = terminal.rows
+  }
+  ws.send(JSON.stringify(payload))
+}
+
 // 处理 WebSocket 消息
 function handleMessage(message) {
   switch (message.type) {
@@ -247,14 +324,14 @@ function handleMessage(message) {
       connecting.value = false
       emit('created', { terminalId: message.terminalId, metadata: message.metadata })
 
-      // 发送初始大小
-      if (terminal && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'terminal:resize',
-          terminalId: currentTerminalId,
-          cols: terminal.cols,
-          rows: terminal.rows
-        }))
+      updateServerSize(message.metadata)
+      allowResize = true
+      if (pendingResize) {
+        const { cols, rows } = pendingResize
+        pendingResize = null
+        handleResize(cols, rows)
+      } else {
+        syncSizeWithServer()
       }
       break
 
@@ -262,6 +339,15 @@ function handleMessage(message) {
       currentTerminalId = message.terminalId
       connected.value = true
       connecting.value = false
+      updateServerSize(message.metadata)
+      allowResize = true
+      if (pendingResize) {
+        const { cols, rows } = pendingResize
+        pendingResize = null
+        handleResize(cols, rows)
+      } else {
+        syncSizeWithServer()
+      }
       break
 
     case 'terminal:output':
@@ -355,12 +441,9 @@ onBeforeUnmount(() => {
 
 // 监听 terminalId 变化
 watch(() => props.terminalId, (newId) => {
-  if (newId && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: 'terminal:attach',
-      terminalId: newId
-    }))
-  }
+  if (!newId || !ws || ws.readyState !== WebSocket.OPEN) return
+  if (newId === currentTerminalId) return
+  sendAttach(newId)
 })
 
 // 监听主题变化，动态更新终端主题

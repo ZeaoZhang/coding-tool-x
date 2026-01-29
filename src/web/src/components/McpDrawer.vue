@@ -73,6 +73,7 @@
                 class="server-card"
                 :class="{ dragging: draggedIndex === index }"
                 draggable="true"
+                @click="openServerDetail(server)"
                 @dragstart="handleDragStart($event, index)"
                 @dragend="handleDragEnd"
                 @dragover="handleDragOver($event, index)"
@@ -109,7 +110,7 @@
                           quaternary
                           size="tiny"
                           :loading="testingServers[server.id]"
-                          @click="handleTestServer(server)"
+                          @click.stop="handleTestServer(server)"
                         >
                           <template #icon>
                             <n-icon><PlayOutline /></n-icon>
@@ -118,12 +119,12 @@
                       </template>
                       测试连接
                     </n-tooltip>
-                    <n-button quaternary size="tiny" @click="openEditForm(server)">
+                    <n-button quaternary size="tiny" @click.stop="openEditForm(server)">
                       <template #icon>
                         <n-icon><CreateOutline /></n-icon>
                       </template>
                     </n-button>
-                    <n-button quaternary size="tiny" @click="confirmDelete(server)">
+                    <n-button quaternary size="tiny" @click.stop="confirmDelete(server)">
                       <template #icon>
                         <n-icon><TrashOutline /></n-icon>
                       </template>
@@ -303,6 +304,12 @@
       </div>
     </template>
   </n-modal>
+
+  <!-- 服务器详情抽屉 -->
+  <McpServerDetailDrawer
+    v-model:visible="showDetailDrawer"
+    :server="selectedServer"
+  />
 </template>
 
 <script setup>
@@ -319,6 +326,7 @@ import {
 } from '../api/mcp'
 import message, { dialog } from '../utils/message'
 import McpFormDrawer from './McpFormDrawer.vue'
+import McpServerDetailDrawer from './McpServerDetailDrawer.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const { drawerWidth } = useResponsiveDrawer(560)
@@ -364,6 +372,10 @@ const importing = ref(false)
 // 导出相关
 const showExportModal = ref(false)
 const exportData = ref({ format: '', content: '', filename: '' })
+
+// 服务器详情抽屉
+const showDetailDrawer = ref(false)
+const selectedServer = ref(null)
 
 const serverList = computed(() => {
   return Object.values(servers.value).sort((a, b) => {
@@ -626,6 +638,12 @@ function openEditForm(server) {
 // 保存成功回调
 function handleSaved() {
   loadServers()
+}
+
+// 打开服务器详情
+function openServerDetail(server) {
+  selectedServer.value = server
+  showDetailDrawer.value = true
 }
 
 // 解析粘贴的配置
@@ -919,12 +937,13 @@ watch(showPasteModal, (val) => {
   border: 1px solid var(--border-primary);
   border-radius: 8px;
   transition: all 0.2s ease;
-  cursor: grab;
+  cursor: pointer;
 }
 
 .server-card:hover {
   border-color: rgba(24, 160, 88, 0.3);
   box-shadow: 0 2px 8px rgba(24, 160, 88, 0.08);
+  transform: translateY(-1px);
 }
 
 .server-card.dragging {

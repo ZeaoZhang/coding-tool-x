@@ -74,16 +74,17 @@ router.get('/init', async (req, res) => {
       Promise.resolve(getGeminiCounts())
     ]);
 
-    // 格式化统计数据：取 summary 中的数据
+    // 格式化统计数据：取 summary 和 byModel 中的数据
     const formatStats = (stats) => {
       if (stats && stats.summary) {
         return {
           requests: stats.summary.requests || 0,
           tokens: stats.summary.tokens || 0,
-          cost: stats.summary.cost || 0
+          cost: stats.summary.cost || 0,
+          byModel: stats.byModel || {}
         };
       }
-      return { requests: 0, tokens: 0, cost: 0 };
+      return { requests: 0, tokens: 0, cost: 0, byModel: {} };
     };
 
     res.json({

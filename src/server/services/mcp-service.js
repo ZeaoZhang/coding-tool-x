@@ -11,6 +11,7 @@ const toml = require('@iarna/toml');
 const { spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
+const { McpClient } = require('./mcp-client');
 
 // MCP 配置文件路径
 const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -20,6 +21,11 @@ const MCP_SERVERS_FILE = path.join(CC_TOOL_DIR, 'mcp-servers.json');
 const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
 const CODEX_CONFIG_PATH = path.join(os.homedir(), '.codex', 'config.toml');
 const GEMINI_CONFIG_PATH = path.join(os.homedir(), '.gemini', 'settings.json');
+
+// MCP 客户端连接池
+// serverId -> { client, timestamp }
+const mcpClientPool = new Map();
+const POOL_TTL = 5 * 60 * 1000; // 5 minutes
 
 // MCP 预设模板
 const MCP_PRESETS = [
@@ -1054,6 +1060,201 @@ async function testHttpServer(spec) {
 }
 
 /**
+ * Get tools list from MCP server
+ * @param {string} serverId - Server ID from config
+ * @returns {Promise<{tools: Array, duration: number, status: string}>}
+ */
+async function getServerTools(serverId) {
+  const server = getServer(serverId);
+  if (!server) {
+    throw new Error(`MCP 服务器 "${serverId}" 不存在`);
+  }
+
+  const startTime = Date.now();
+  const spec = server.server;
+
+  try {
+    // Check if we have a cached connection
+    const cached = mcpClientPool.get(serverId);
+    const now = Date.now();
+
+    let client;
+    let needsInitialization = false;
+
+    if (cached && now - cached.timestamp < POOL_TTL && cached.client.connected) {
+      // Reuse existing connection
+      client = cached.client;
+      console.log(`[MCP] Reusing pooled connection for "${serverId}"`);
+    } else {
+      // Create new connection
+      if (cached) {
+        // Clean up expired connection
+        try {
+          await cached.client.disconnect();
+        } catch (err) {
+          console.error(`[MCP] Error disconnecting expired client: ${err.message}`);
+        }
+        mcpClientPool.delete(serverId);
+      }
+
+      // Create new client with 10s timeout
+      client = new McpClient(spec, { timeout: 10000 });
+      needsInitialization = true;
+      console.log(`[MCP] Creating new connection for "${serverId}"`);
+    }
+
+    // Connect and initialize if needed
+    if (needsInitialization) {
+      await client.connect();
+      await client.initialize();
+
+      // Cache the connection
+      mcpClientPool.set(serverId, {
+        client,
+        timestamp: Date.now()
+      });
+    }
+
+    // Get tools list
+    const tools = await client.listTools();
+
+    return {
+      tools,
+      duration: Date.now() - startTime,
+      status: 'online'
+    };
+
+  } catch (err) {
+    // Clean up failed connection from pool
+    const cached = mcpClientPool.get(serverId);
+    if (cached) {
+      try {
+        await cached.client.disconnect();
+      } catch (e) {
+        // ignore
+      }
+      mcpClientPool.delete(serverId);
+    }
+
+    return {
+      tools: [],
+      duration: Date.now() - startTime,
+      status: 'error',
+      error: err.message
+    };
+  }
+}
+
+/**
+ * Execute a tool on MCP server
+ * @param {string} serverId - Server ID
+ * @param {string} toolName - Tool name
+ * @param {Object} arguments - Tool arguments
+ * @returns {Promise<{result: Object, duration: number, isError: boolean, truncated?: boolean, truncatedSize?: number}>}
+ */
+async function callServerTool(serverId, toolName, arguments = {}) {
+  const server = getServer(serverId);
+  if (!server) {
+    throw new Error(`MCP 服务器 "${serverId}" 不存在`);
+  }
+
+  const startTime = Date.now();
+  const spec = server.server;
+
+  try {
+    // Check if we have a cached connection
+    const cached = mcpClientPool.get(serverId);
+    const now = Date.now();
+
+    let client;
+    let needsInitialization = false;
+
+    if (cached && now - cached.timestamp < POOL_TTL && cached.client.connected) {
+      // Reuse existing connection
+      client = cached.client;
+      // Update timestamp
+      cached.timestamp = now;
+      console.log(`[MCP] Reusing pooled connection for "${serverId}"`);
+    } else {
+      // Create new connection
+      if (cached) {
+        // Clean up expired connection
+        try {
+          await cached.client.disconnect();
+        } catch (err) {
+          console.error(`[MCP] Error disconnecting expired client: ${err.message}`);
+        }
+        mcpClientPool.delete(serverId);
+      }
+
+      // Create new client with 30s timeout
+      client = new McpClient(spec, { timeout: 30000 });
+      needsInitialization = true;
+      console.log(`[MCP] Creating new connection for "${serverId}"`);
+    }
+
+    // Connect and initialize if needed
+    if (needsInitialization) {
+      await client.connect();
+      await client.initialize();
+
+      // Cache the connection
+      mcpClientPool.set(serverId, {
+        client,
+        timestamp: Date.now()
+      });
+    }
+
+    // Call the tool
+    const result = await client.callTool(toolName, arguments);
+
+    const duration = Date.now() - startTime;
+
+    // Check result size, truncate if > 10KB
+    const resultStr = JSON.stringify(result);
+    if (resultStr.length > 10 * 1024) {
+      return {
+        result: {
+          ...result,
+          truncated: true
+        },
+        truncatedSize: resultStr.length,
+        duration,
+        isError: result.isError || false
+      };
+    }
+
+    return {
+      result,
+      duration,
+      isError: result.isError || false
+    };
+
+  } catch (err) {
+    // Clean up failed connection from pool
+    const cached = mcpClientPool.get(serverId);
+    if (cached) {
+      try {
+        await cached.client.disconnect();
+      } catch (e) {
+        // ignore
+      }
+      mcpClientPool.delete(serverId);
+    }
+
+    return {
+      result: {
+        error: err.message,
+        code: err.code,
+        data: err.data
+      },
+      duration: Date.now() - startTime,
+      isError: true
+    };
+  }
+}
+
+/**
  * 更新服务器状态
  */
 async function updateServerStatus(serverId, status) {
@@ -1182,6 +1383,8 @@ module.exports = {
   validateServerSpec,
   // 新增功能
   testServer,
+  getServerTools,
+  callServerTool,
   updateServerStatus,
   updateServerOrder,
   exportServers

@@ -19,6 +19,61 @@ function detectAvailableTerminals() {
 }
 
 /**
+ * 获取系统 Shell 路径
+ */
+function getSystemShell() {
+  if (process.platform === 'win32') {
+    const candidates = [];
+    if (process.env.COMSPEC) {
+      candidates.push(process.env.COMSPEC);
+    }
+    const systemRoot = process.env.SystemRoot || process.env.windir;
+    if (systemRoot) {
+      candidates.push(path.join(systemRoot, 'System32', 'cmd.exe'));
+    }
+    return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+  }
+
+  if (process.env.SHELL && fs.existsSync(process.env.SHELL)) {
+    return process.env.SHELL;
+  }
+
+  const commonShells = [
+    '/bin/zsh',
+    '/bin/bash',
+    '/bin/sh',
+    '/usr/bin/zsh',
+    '/usr/bin/bash',
+    '/usr/bin/sh'
+  ];
+
+  for (const shell of commonShells) {
+    if (fs.existsSync(shell)) {
+      return shell;
+    }
+  }
+
+  return null;
+}
+
+function createSystemShellEntry(isDefault = false) {
+  const shell = getSystemShell();
+  if (!shell) {
+    return null;
+  }
+
+  return {
+    id: 'system-shell',
+    name: '系统 Shell',
+    available: true,
+    isDefault,
+    command: 'Web 终端（系统 Shell）',
+    supportsLocalLaunch: false,
+    shell
+  };
+}
+
+/**
  * Windows 终端检测
  * 只保留经过验证、确定能自动执行命令的终端
  */
@@ -80,6 +135,11 @@ function detectWindowsTerminals() {
       });
       break;
     }
+  }
+
+  const systemShell = createSystemShellEntry(false);
+  if (systemShell) {
+    terminals.push(systemShell);
   }
 
   return terminals;
@@ -245,6 +305,11 @@ function detectMacTerminals() {
     // Rio 不可用
   }
 
+  const systemShell = createSystemShellEntry(false);
+  if (systemShell) {
+    terminals.push(systemShell);
+  }
+
   return terminals;
 }
 
@@ -253,6 +318,8 @@ function detectMacTerminals() {
  */
 function detectLinuxTerminals() {
   const terminals = [];
+
+  const systemShell = createSystemShellEntry(false);
 
   const terminalConfigs = [
     { id: 'gnome-terminal', name: 'GNOME Terminal', cmd: 'gnome-terminal', args: '-- bash -c "cd \'{cwd}\' && claude -r {sessionId}; exec bash"' },
@@ -288,6 +355,13 @@ function detectLinuxTerminals() {
     }
   });
 
+  if (systemShell) {
+    if (!terminals.find(t => t.isDefault)) {
+      systemShell.isDefault = true;
+    }
+    terminals.push(systemShell);
+  }
+
   return terminals;
 }
 
@@ -302,5 +376,6 @@ function getDefaultTerminal() {
 
 module.exports = {
   detectAvailableTerminals,
-  getDefaultTerminal
+  getDefaultTerminal,
+  getSystemShell
 };
