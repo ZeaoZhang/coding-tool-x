@@ -109,6 +109,7 @@ async function startServer(port) {
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
   app.use('/api/ui-config', require('./api/ui-config'));
+  app.use('/api/security', require('./api/security'));
   app.use('/api/channels', require('./api/channels'));
   app.use('/api/proxy', require('./api/proxy'));
   app.use('/api/codex/proxy', require('./api/codex-proxy'));
@@ -133,6 +134,7 @@ async function startServer(port) {
   app.use('/api/commands', require('./api/commands'));
   app.use('/api/agents', require('./api/agents'));
   app.use('/api/rules', require('./api/rules'));
+  app.use('/api/plugins', require('./api/plugins'));
 
   // Web 终端 API
   app.use('/api/terminal', require('./api/terminal'));

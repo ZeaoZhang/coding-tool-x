@@ -140,6 +140,13 @@
           @click="showMcpDrawer = true"
         />
 
+        <!-- Plugins Button -->
+        <HeaderButton
+          :icon="ExtensionPuzzleOutline"
+          tooltip="插件管理"
+          @click="showPluginsDrawer = true"
+        />
+
         <!-- Config Templates Button -->
         <HeaderButton
           :icon="LayersOutline"
@@ -254,6 +261,7 @@
     <CommandsDrawer v-model:visible="showCommandsDrawer" />
     <AgentsDrawer v-model:visible="showAgentsDrawer" />
     <RulesDrawer v-model:visible="showRulesDrawer" />
+    <PluginsDrawer v-model:visible="showPluginsDrawer" />
 
     <!-- Help Modal -->
     <n-modal v-model:show="showHelpModal" preset="card" title="CODING-TOOL 使用帮助" style="width: 800px; max-width: 90vw;">
@@ -436,7 +444,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, ShieldCheckmarkOutline, CloudDownloadOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, ShieldCheckmarkOutline, CloudDownloadOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -448,6 +456,7 @@ import SkillsDrawer from './SkillsDrawer.vue'
 import CommandsDrawer from './CommandsDrawer.vue'
 import AgentsDrawer from './AgentsDrawer.vue'
 import RulesDrawer from './RulesDrawer.vue'
+import PluginsDrawer from './PluginsDrawer.vue'
 import WorkspaceDrawer from './WorkspaceDrawer.vue'
 import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
 import ConfigExportDrawer from './ConfigExportDrawer.vue'
@@ -511,6 +520,7 @@ const showSkillsDrawer = ref(false)
 const showCommandsDrawer = ref(false)
 const showAgentsDrawer = ref(false)
 const showRulesDrawer = ref(false)
+const showPluginsDrawer = ref(false)
 
 // 环境变量冲突检测
 const envConflicts = ref([])
@@ -665,6 +675,7 @@ onMounted(() => {
   window.addEventListener('open-commands-drawer', openCommandsDrawer)
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
   window.addEventListener('open-rules-drawer', openRulesDrawer)
+  window.addEventListener('open-plugins-drawer', openPluginsDrawer)
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
@@ -677,6 +688,7 @@ onUnmounted(() => {
   window.removeEventListener('open-commands-drawer', openCommandsDrawer)
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
   window.removeEventListener('open-rules-drawer', openRulesDrawer)
+  window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
 })
 
 function openSkillsDrawer() {
@@ -693,6 +705,10 @@ function openAgentsDrawer() {
 
 function openRulesDrawer() {
   showRulesDrawer.value = true
+}
+
+function openPluginsDrawer() {
+  showPluginsDrawer.value = true
 }
 </script>
 
