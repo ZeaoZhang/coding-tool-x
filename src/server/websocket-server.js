@@ -392,6 +392,7 @@ function broadcastSchedulerState(source, schedulerState) {
 // ============ 终端 WebSocket 消息处理 ============
 
 const { getCommandForChannel } = require('./services/terminal-commands');
+const { getWebTerminalShellConfig } = require('./services/terminal-config');
 
 /**
  * 处理终端相关的 WebSocket 消息
@@ -444,13 +445,16 @@ function handleTerminalCreate(ws, message) {
     // 获取启动命令
     const startCommand = getCommandForChannel(channel, sessionId, workDir);
 
+    const shellConfig = getWebTerminalShellConfig();
+
     // 创建终端
     const terminal = ptyManager.create({
       cwd: workDir,
       channel,
       sessionId,
       projectName,
-      startCommand
+      startCommand,
+      ...shellConfig
     });
 
     // 绑定 WebSocket
@@ -476,7 +480,7 @@ function handleTerminalCreate(ws, message) {
  * 绑定到已有终端
  */
 function handleTerminalAttach(ws, message) {
-  const { terminalId } = message;
+  const { terminalId, includeHistory, cols, rows } = message;
 
   if (!terminalId) {
     ws.send(JSON.stringify({
@@ -498,7 +502,14 @@ function handleTerminalAttach(ws, message) {
 
   // 绑定 WebSocket
   ws.terminalId = terminalId;
-  ptyManager.attachWebSocket(terminalId, ws);
+  const shouldIncludeHistory = typeof includeHistory === 'boolean' ? includeHistory : true;
+  if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
+    ptyManager.resize(terminalId, cols, rows);
+  }
+  ptyManager.attachWebSocket(terminalId, ws, {
+    includeHistory: shouldIncludeHistory,
+    trimLastLine: true
+  });
 
   ws.send(JSON.stringify({
     type: 'terminal:attached',

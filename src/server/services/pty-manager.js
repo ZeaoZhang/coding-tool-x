@@ -10,6 +10,8 @@ const fs = require('fs');
 // 尝试加载 node-pty，如果失败则提示
 let pty = null;
 let ptyError = null;
+let HeadlessTerminal = null;
+let headlessError = null;
 
 try {
   // 优先使用 @lydell/node-pty (支持更新的 Node.js 版本)
@@ -24,6 +26,14 @@ try {
   }
 }
 
+try {
+  const headless = require('@xterm/headless');
+  HeadlessTerminal = headless.Terminal || headless.default?.Terminal || headless.default || null;
+} catch (err) {
+  headlessError = err.message;
+  console.warn('Warning: @xterm/headless failed to load:', err.message);
+}
+
 class PtyManager {
   constructor() {
     // 终端进程池: terminalId -> { pty, ws, metadata }
@@ -32,6 +42,139 @@ class PtyManager {
 
     // 清理已退出的进程
     this.cleanupInterval = setInterval(() => this.cleanupDeadTerminals(), 30000);
+    // 避免在未启用 Web 终端时阻止进程退出
+    if (typeof this.cleanupInterval.unref === 'function') {
+      this.cleanupInterval.unref();
+    }
+  }
+
+  resolveWorkingDirectory(cwd) {
+    const fallback = os.homedir();
+    if (typeof cwd !== 'string') {
+      return fallback;
+    }
+
+    const trimmed = cwd.trim();
+    if (!trimmed) {
+      return fallback;
+    }
+
+    let normalized = trimmed;
+
+    // 展开 ~
+    if (normalized === '~') {
+      normalized = os.homedir();
+    } else if (normalized.startsWith('~/') || normalized.startsWith('~\\')) {
+      normalized = path.join(os.homedir(), normalized.slice(2));
+    }
+
+    // 先尝试直接使用（支持相对路径）
+    try {
+      if (fs.existsSync(normalized) && fs.statSync(normalized).isDirectory()) {
+        return path.isAbsolute(normalized) ? normalized : path.resolve(process.cwd(), normalized);
+      }
+    } catch (err) {
+      // 忽略错误，继续尝试其他候选路径
+    }
+
+    // 相对路径：优先按进程 cwd 解析，其次按用户 home 解析（用于 .codex 这类隐藏目录）
+    if (!path.isAbsolute(normalized)) {
+      const candidates = [
+        path.resolve(process.cwd(), normalized),
+        path.resolve(os.homedir(), normalized)
+      ];
+
+      for (const candidate of candidates) {
+        try {
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+            return candidate;
+          }
+        } catch (err) {
+          // 忽略错误
+        }
+      }
+    }
+
+    return normalized;
+  }
+
+  createScreen(cols, rows) {
+    if (!HeadlessTerminal) {
+      return null;
+    }
+    try {
+      return new HeadlessTerminal({
+        cols: Math.max(cols, 80),
+        rows: Math.max(rows, 24),
+        scrollback: 10000,
+        convertEol: true
+      });
+    } catch (err) {
+      console.warn('Failed to create headless terminal:', err.message);
+      return null;
+    }
+  }
+
+  buildScreenSnapshot(terminal) {
+    if (!terminal?.screen || !terminal.screen.buffer?.active) {
+      return { data: '' };
+    }
+    const screen = terminal.screen;
+    const buffer = screen.buffer.active;
+    const end = buffer.length;
+    const cols = screen.cols || terminal.metadata?.cols || 80;
+    const rows = screen.rows || terminal.metadata?.rows || 24;
+    const cursorLineIndex = Math.max(0, (buffer.baseY || 0) + (buffer.cursorY || 0));
+    const cursorCol = Math.max(0, buffer.cursorX || 0);
+    const lastLineIndex = end > 0 ? end - 1 : -1;
+    let output = '';
+    let hasOutput = false;
+    for (let i = 0; i <= lastLineIndex; i++) {
+      const line = buffer.getLine(i);
+      if (!line) {
+        if (hasOutput) {
+          output += '\r\n';
+        } else {
+          output = '';
+          hasOutput = true;
+        }
+        continue;
+      }
+      let text = '';
+      try {
+        text = line.translateToString(true);
+      } catch (err) {
+        try {
+          text = line.translateToString(false);
+        } catch (err2) {
+          text = '';
+        }
+      }
+      const isWrapped = Boolean(line.isWrapped);
+      if (!hasOutput) {
+        output = text;
+        hasOutput = true;
+      } else if (isWrapped) {
+        output += text;
+      } else {
+        output += '\r\n' + text;
+      }
+    }
+    const data = hasOutput ? output : '';
+    const topIndex = Math.max(0, lastLineIndex - rows + 1);
+    let cursorRow = cursorLineIndex - topIndex + 1;
+    if (!Number.isFinite(cursorRow)) {
+      cursorRow = rows;
+    }
+    cursorRow = Math.min(Math.max(cursorRow, 1), rows);
+    const cursorColSafe = Math.min(Math.max(cursorCol + 1, 1), cols);
+    return {
+      data,
+      cursorRow,
+      cursorCol: cursorColSafe,
+      rows,
+      cols
+    };
   }
 
   /**
@@ -100,7 +243,7 @@ class PtyManager {
       throw new Error(`Cannot create terminal: ${errMsg}`);
     }
 
-    const {
+    let {
       cwd = os.homedir(),
       cols = 120,
       rows = 30,
@@ -119,7 +262,20 @@ class PtyManager {
       console.error('[PTY]', error);
       throw new Error(error);
     }
-    if (!fs.existsSync(cwd)) {
+
+    const originalCwd = cwd;
+    cwd = this.resolveWorkingDirectory(cwd);
+    if (originalCwd !== cwd) {
+      console.log(`[PTY] Resolved cwd: ${originalCwd} -> ${cwd}`);
+    }
+
+    try {
+      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+        const error = `Working directory not found: ${cwd}`;
+        console.error('[PTY]', error);
+        throw new Error(error);
+      }
+    } catch (err) {
       const error = `Working directory not found: ${cwd}`;
       console.error('[PTY]', error);
       throw new Error(error);
@@ -164,9 +320,14 @@ class PtyManager {
       pty: ptyProcess,
       ws: null,
       buffer: [], // 缓存未发送的输出（用于 WebSocket 断开期间）
-      history: [], // 持久历史记录（用于重连时恢复）
+      history: [], // 断线期间的输出缓冲（仅用于补发）
       historySize: 0, // 历史记录字节大小
       maxHistorySize: 100 * 1024, // 最大历史记录大小 100KB
+      screen: this.createScreen(cols, rows),
+      pendingOutput: [],
+      snapshotInProgress: false,
+      outputSeq: 0,
+      snapshotSeq: 0,
       metadata: {
         cwd,
         shell,
@@ -183,23 +344,36 @@ class PtyManager {
 
     // 监听 PTY 输出
     ptyProcess.onData((data) => {
-      // 始终保存到历史记录（用于重连时恢复）
-      terminal.history.push(data);
-      terminal.historySize += data.length;
-
-      // 如果历史记录超出限制，裁剪前面的内容
-      while (terminal.historySize > terminal.maxHistorySize && terminal.history.length > 1) {
-        const removed = terminal.history.shift();
-        terminal.historySize -= removed.length;
+      terminal.outputSeq += 1;
+      const outputEntry = { seq: terminal.outputSeq, data };
+      if (terminal.screen) {
+        terminal.screen.write(data);
       }
 
       if (terminal.ws && terminal.ws.readyState === 1) { // WebSocket.OPEN
-        terminal.ws.send(JSON.stringify({
-          type: 'terminal:output',
-          terminalId,
-          data
-        }));
-      } else {
+        if (terminal.snapshotInProgress) {
+          terminal.pendingOutput.push(outputEntry);
+        } else {
+          terminal.ws.send(JSON.stringify({
+            type: 'terminal:output',
+            terminalId,
+            data
+          }));
+        }
+        return;
+      }
+
+      if (!terminal.screen) {
+        // 仅在断开期间缓存输出，避免重连时重复回放
+        terminal.history.push(data);
+        terminal.historySize += data.length;
+
+        // 如果历史记录超出限制，裁剪前面的内容
+        while (terminal.historySize > terminal.maxHistorySize && terminal.history.length > 1) {
+          const removed = terminal.history.shift();
+          terminal.historySize -= removed.length;
+        }
+
         // 缓存输出，等待 WebSocket 连接
         terminal.buffer.push(data);
         // 限制缓存大小
@@ -254,7 +428,7 @@ class PtyManager {
    * @param {WebSocket} ws - WebSocket 连接
    * @returns {boolean} 是否成功
    */
-  attachWebSocket(terminalId, ws) {
+  attachWebSocket(terminalId, ws, options = {}) {
     const terminal = this.terminals.get(terminalId);
     if (!terminal) {
       console.warn(`Terminal ${terminalId} not found`);
@@ -262,20 +436,114 @@ class PtyManager {
     }
 
     terminal.ws = ws;
+    terminal.snapshotInProgress = false;
+    terminal.pendingOutput = [];
+    terminal.snapshotSeq = 0;
 
-    // 发送历史记录（用于重连时恢复之前的输出）
-    if (terminal.history.length > 0) {
-      const historyData = terminal.history.join('');
-      ws.send(JSON.stringify({
-        type: 'terminal:output',
-        terminalId,
-        data: historyData
-      }));
-      console.log(`Sent ${terminal.history.length} history chunks (${terminal.historySize} bytes) to terminal ${terminalId}`);
+    const { includeHistory = true, trimLastLine = false } = options;
+
+    const trimHistoryLastLine = (data) => {
+      if (!data) return '';
+      if (data.endsWith('\r\n')) {
+        return data.slice(0, -2);
+      }
+      if (data.endsWith('\n')) {
+        return data.slice(0, -1);
+      }
+      return data;
+    };
+
+    if (terminal.screen && includeHistory) {
+      terminal.snapshotInProgress = true;
+      terminal.pendingOutput = [];
+      terminal.snapshotSeq = terminal.outputSeq;
+      terminal.buffer = [];
+      terminal.history = [];
+      terminal.historySize = 0;
+
+      const sendSnapshot = () => {
+        try {
+          const snapshot = this.buildScreenSnapshot(terminal);
+          if (snapshot?.data && ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'terminal:output',
+              terminalId,
+              data: snapshot.data
+            }));
+          }
+          if (snapshot?.cursorRow && snapshot?.cursorCol && ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'terminal:output',
+              terminalId,
+              data: `\x1b[${snapshot.cursorRow};${snapshot.cursorCol}H`
+            }));
+          }
+          const pendingTail = terminal.pendingOutput
+            .filter(item => item && item.seq > terminal.snapshotSeq)
+            .map(item => item.data);
+          if (pendingTail.length > 0 && ws.readyState === 1) {
+            ws.send(JSON.stringify({
+              type: 'terminal:output',
+              terminalId,
+              data: pendingTail.join('')
+            }));
+          }
+        } catch (err) {
+          console.warn(`Failed to send terminal snapshot ${terminalId}:`, err.message);
+        } finally {
+          terminal.pendingOutput = [];
+          terminal.snapshotInProgress = false;
+          terminal.snapshotSeq = 0;
+        }
+      };
+
+      if (typeof terminal.screen.write === 'function') {
+        terminal.screen.write('', sendSnapshot);
+      } else {
+        sendSnapshot();
+      }
+    } else {
+      // 发送历史记录（用于重连时恢复之前的输出）
+      let sentHistory = false;
+      if (includeHistory) {
+        if (terminal.history.length > 0) {
+          let historyData = terminal.history.join('');
+          if (trimLastLine) {
+            historyData = trimHistoryLastLine(historyData);
+          }
+          if (historyData) {
+            ws.send(JSON.stringify({
+              type: 'terminal:output',
+              terminalId,
+              data: historyData
+            }));
+            console.log(`Sent ${terminal.history.length} history chunks (${terminal.historySize} bytes) to terminal ${terminalId}`);
+            sentHistory = true;
+          }
+        } else if (terminal.buffer.length > 0) {
+          let bufferData = terminal.buffer.join('');
+          if (trimLastLine) {
+            bufferData = trimHistoryLastLine(bufferData);
+          }
+          if (bufferData) {
+            ws.send(JSON.stringify({
+              type: 'terminal:output',
+              terminalId,
+              data: bufferData
+            }));
+            console.log(`Sent ${terminal.buffer.length} buffered chunks to terminal ${terminalId}`);
+            sentHistory = true;
+          }
+        }
+      }
+
+      // 清空临时缓冲区（已经包含在历史记录中了）
+      terminal.buffer = [];
+      if (sentHistory) {
+        terminal.history = [];
+        terminal.historySize = 0;
+      }
     }
-
-    // 清空临时缓冲区（已经包含在历史记录中了）
-    terminal.buffer = [];
 
     // 如果终端已退出，通知客户端
     if (terminal.exited) {
@@ -298,6 +566,9 @@ class PtyManager {
     const terminal = this.terminals.get(terminalId);
     if (terminal) {
       terminal.ws = null;
+      terminal.snapshotInProgress = false;
+      terminal.pendingOutput = [];
+      terminal.snapshotSeq = 0;
     }
   }
 
@@ -332,10 +603,16 @@ class PtyManager {
 
     const newCols = Math.max(cols, 80);
     const newRows = Math.max(rows, 24);
+    if (terminal.metadata.cols === newCols && terminal.metadata.rows === newRows) {
+      return true;
+    }
 
     terminal.pty.resize(newCols, newRows);
     terminal.metadata.cols = newCols;
     terminal.metadata.rows = newRows;
+    if (terminal.screen && typeof terminal.screen.resize === 'function') {
+      terminal.screen.resize(newCols, newRows);
+    }
 
     return true;
   }
@@ -368,6 +645,10 @@ class PtyManager {
       } catch (e) {
         console.warn(`Failed to kill terminal ${terminalId}:`, e.message);
       }
+    }
+
+    if (terminal.screen && typeof terminal.screen.dispose === 'function') {
+      terminal.screen.dispose();
     }
 
     this.terminals.delete(terminalId);
@@ -424,6 +705,9 @@ class PtyManager {
       if (terminal.exited && !terminal.ws) {
         const exitedTime = terminal.exitedAt || now;
         if (now - exitedTime > 5 * 60 * 1000) {
+          if (terminal.screen && typeof terminal.screen.dispose === 'function') {
+            terminal.screen.dispose();
+          }
           this.terminals.delete(id);
           console.log(`Cleaned up dead terminal ${id}`);
         }

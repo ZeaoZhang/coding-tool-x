@@ -44,7 +44,7 @@
                 </n-icon>
                 <div>
                   <h3 class="panel-title">终端工具</h3>
-                  <n-text depth="3" class="panel-subtitle">选择启动会话时使用的终端工具</n-text>
+                  <n-text depth="3" class="panel-subtitle">本地终端与 Web 终端将遵循此选择</n-text>
                 </div>
               </div>
             </div>
@@ -67,6 +67,13 @@
                       size="large"
                       @update:value="handleTerminalChange"
                     />
+                    <n-text
+                      v-if="selectedTerminalInfo && selectedTerminalInfo.supportsLocalLaunch === false"
+                      depth="3"
+                      style="font-size: 12px; margin-top: 8px; display: block;"
+                    >
+                      系统 Shell 仅用于 Web 终端，本地终端请改用其它选项
+                    </n-text>
                   </div>
 
                   <n-alert v-if="!availableTerminals.length && !loading" type="warning" :bordered="false" style="margin-top: 16px;">
@@ -671,6 +678,88 @@
                           />
                         </div>
                       </div>
+
+                      <!-- Per-Model Pricing -->
+                      <div style="margin-top: 16px;">
+                        <n-collapse>
+                          <n-collapse-item title="按模型自定义单价" name="models">
+                            <n-space vertical :size="12">
+                              <div v-for="model in getModelsForTool('claude')" :key="model">
+                                <n-card size="small" :bordered="true" style="background-color: var(--n-color-target);">
+                                  <template #header>
+                                    <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
+                                  </template>
+
+                                  <n-space vertical :size="12">
+                                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                                      <n-text depth="3" style="font-size: 12px;">模式</n-text>
+                                      <n-radio-group v-model:value="pricingSettings.claude.models[model].mode" size="small">
+                                        <n-radio value="auto">自动</n-radio>
+                                        <n-radio value="custom">自定义</n-radio>
+                                      </n-radio-group>
+                                    </div>
+
+                                    <div v-if="pricingSettings.claude.models[model].mode === 'custom'" class="model-pricing-fields">
+                                      <div class="option-field" style="margin-bottom: 8px;">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">输入 Tokens</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.claude.models[model].input"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                      <div class="option-field" style="margin-bottom: 8px;">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">输出 Tokens</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.claude.models[model].output"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                      <div class="option-field" style="margin-bottom: 8px;">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">缓存写入</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.claude.models[model].cacheCreation"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                      <div class="option-field">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">缓存命中</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.claude.models[model].cacheRead"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                    </div>
+                                  </n-space>
+                                </n-card>
+                              </div>
+                            </n-space>
+                          </n-collapse-item>
+                        </n-collapse>
+                      </div>
                     </div>
 
                     <!-- Codex -->
@@ -721,6 +810,62 @@
                           />
                         </div>
                       </div>
+
+                      <!-- Per-Model Pricing -->
+                      <div style="margin-top: 16px;">
+                        <n-collapse>
+                          <n-collapse-item title="按模型自定义单价" name="models">
+                            <n-space vertical :size="12">
+                              <div v-for="model in getModelsForTool('codex')" :key="model">
+                                <n-card size="small" :bordered="true" style="background-color: var(--n-color-target);">
+                                  <template #header>
+                                    <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
+                                  </template>
+
+                                  <n-space vertical :size="12">
+                                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                                      <n-text depth="3" style="font-size: 12px;">模式</n-text>
+                                      <n-radio-group v-model:value="pricingSettings.codex.models[model].mode" size="small">
+                                        <n-radio value="auto">自动</n-radio>
+                                        <n-radio value="custom">自定义</n-radio>
+                                      </n-radio-group>
+                                    </div>
+
+                                    <div v-if="pricingSettings.codex.models[model].mode === 'custom'" class="model-pricing-fields">
+                                      <div class="option-field" style="margin-bottom: 8px;">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">输入 Tokens</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.codex.models[model].input"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                      <div class="option-field">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">输出 Tokens</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.codex.models[model].output"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                    </div>
+                                  </n-space>
+                                </n-card>
+                              </div>
+                            </n-space>
+                          </n-collapse-item>
+                        </n-collapse>
+                      </div>
                     </div>
 
                     <!-- Gemini -->
@@ -770,6 +915,62 @@
                             style="width: 100%;"
                           />
                         </div>
+                      </div>
+
+                      <!-- Per-Model Pricing -->
+                      <div style="margin-top: 16px;">
+                        <n-collapse>
+                          <n-collapse-item title="按模型自定义单价" name="models">
+                            <n-space vertical :size="12">
+                              <div v-for="model in getModelsForTool('gemini')" :key="model">
+                                <n-card size="small" :bordered="true" style="background-color: var(--n-color-target);">
+                                  <template #header>
+                                    <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
+                                  </template>
+
+                                  <n-space vertical :size="12">
+                                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                                      <n-text depth="3" style="font-size: 12px;">模式</n-text>
+                                      <n-radio-group v-model:value="pricingSettings.gemini.models[model].mode" size="small">
+                                        <n-radio value="auto">自动</n-radio>
+                                        <n-radio value="custom">自定义</n-radio>
+                                      </n-radio-group>
+                                    </div>
+
+                                    <div v-if="pricingSettings.gemini.models[model].mode === 'custom'" class="model-pricing-fields">
+                                      <div class="option-field" style="margin-bottom: 8px;">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">输入 Tokens</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.gemini.models[model].input"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                      <div class="option-field">
+                                        <div class="option-label">
+                                          <n-text depth="2" style="font-size: 12px;">输出 Tokens</n-text>
+                                        </div>
+                                        <n-input-number
+                                          v-model:value="pricingSettings.gemini.models[model].output"
+                                          :precision="4"
+                                          :step="0.01"
+                                          :min="0"
+                                          size="small"
+                                          style="width: 100%;"
+                                        />
+                                      </div>
+                                    </div>
+                                  </n-space>
+                                </n-card>
+                              </div>
+                            </n-space>
+                          </n-collapse-item>
+                        </n-collapse>
                       </div>
                     </div>
                   </div>
@@ -847,8 +1048,142 @@
               </n-space>
             </div>
           </div>
+
+          <div v-show="activeMenu === 'security'" class="settings-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <n-icon size="24" color="#18a058">
+                  <ShieldCheckmarkOutline />
+                </n-icon>
+                <div>
+                  <h3 class="panel-title">安全设置</h3>
+                  <n-text depth="3" class="panel-subtitle">设置访问密码，保护关键配置</n-text>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-body">
+              <div v-if="securityLocked" class="security-locked">
+                <n-empty description="请输入密码后访问安全设置">
+                  <template #extra>
+                    <n-button type="primary" @click="openSecurityAuth">
+                      输入密码
+                    </n-button>
+                  </template>
+                </n-empty>
+              </div>
+
+              <div v-else class="setting-group">
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>访问保护</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      每次进入安全设置都需要输入密码验证
+                    </n-text>
+                  </div>
+                  <div class="security-status">
+                    <n-tag v-if="securityStatus.hasPassword" type="success" :bordered="false">
+                      已启用
+                    </n-tag>
+                    <n-tag v-else type="warning" :bordered="false">
+                      未启用
+                    </n-tag>
+                  </div>
+                </div>
+
+                <n-divider />
+
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>{{ securityStatus.hasPassword ? '修改密码' : '设置密码' }}</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      密码至少 4 位，建议包含数字与字母
+                    </n-text>
+                    <n-text depth="3" style="font-size: 12px; margin-top: 4px;">
+                      忘记密码可在终端执行 <n-text code>ctx security reset</n-text> 关闭密码
+                    </n-text>
+                  </div>
+
+                  <div class="security-form">
+                    <n-input
+                      v-if="securityStatus.hasPassword"
+                      v-model:value="securityForm.currentPassword"
+                      type="password"
+                      placeholder="当前密码"
+                      show-password-on="click"
+                    />
+                    <n-input
+                      v-model:value="securityForm.newPassword"
+                      type="password"
+                      placeholder="新密码"
+                      show-password-on="click"
+                    />
+                    <n-input
+                      v-model:value="securityForm.confirmPassword"
+                      type="password"
+                      placeholder="确认新密码"
+                      show-password-on="click"
+                    />
+                    <n-text v-if="securityFormError" depth="3" class="security-error">
+                      {{ securityFormError }}
+                    </n-text>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <n-space justify="end">
+                <n-button
+                  size="large"
+                  @click="show = false"
+                >
+                  取消
+                </n-button>
+                <n-button
+                  v-if="!securityLocked"
+                  type="primary"
+                  size="large"
+                  :loading="savingSecurity"
+                  :disabled="!securityFormReady"
+                  @click="handleSaveSecurity"
+                >
+                  <template #icon>
+                    <n-icon><SaveOutline /></n-icon>
+                  </template>
+                  保存密码
+                </n-button>
+              </n-space>
+            </div>
+          </div>
         </div>
       </div>
+      <n-modal
+        v-model:show="showSecurityAuthModal"
+        preset="card"
+        title="验证访问密码"
+        :mask-closable="false"
+      >
+        <div class="security-auth">
+          <n-text depth="3" style="font-size: 13px;">请输入访问密码</n-text>
+          <n-input
+            v-model:value="securityAuthPassword"
+            type="password"
+            placeholder="访问密码"
+            show-password-on="click"
+            @keydown.enter="handleSecurityVerify"
+          />
+          <n-text v-if="securityAuthError" depth="3" class="security-error">
+            {{ securityAuthError }}
+          </n-text>
+          <n-space justify="end" style="margin-top: 16px;">
+            <n-button @click="closeSecurityAuth">取消</n-button>
+            <n-button type="primary" :loading="verifyingSecurity" @click="handleSecurityVerify">
+              验证
+            </n-button>
+          </n-space>
+        </div>
+      </n-modal>
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -858,7 +1193,7 @@ import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
   NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber,
-  NRadio, NRadioGroup, NInput
+  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard
 } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
@@ -867,10 +1202,11 @@ import {
   SettingsOutline, TerminalOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
   SunnyOutline, MoonOutline, NotificationsOutline, RefreshOutline,
-  SparklesOutline
+  SparklesOutline, ShieldCheckmarkOutline
 } from '@vicons/ionicons5'
 import { getAvailableTerminals, saveTerminalConfig } from '../api/terminal'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import { getSecurityStatus, verifySecurityPassword, setSecurityPassword } from '../api/security'
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
@@ -965,23 +1301,87 @@ const originalNotificationSettings = ref({
 const savingNotification = ref(false)
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
 
+// 安全设置
+const securityStatus = ref({
+  hasPassword: false
+})
+const securityStatusLoaded = ref(false)
+const securityStatusLoading = ref(false)
+const securityAccessGranted = ref(false)
+const showSecurityAuthModal = ref(false)
+const securityAuthPassword = ref('')
+const securityAuthError = ref('')
+const verifyingSecurity = ref(false)
+const securityForm = ref({
+  currentPassword: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+const savingSecurity = ref(false)
+let securityStatusPromise = null
+
+// Model definitions
+const MODEL_DEFINITIONS = {
+  claude: ['claude-haiku-3-5-20241022', 'claude-sonnet-4-20250514', 'claude-sonnet-4-5-20250929', 'claude-opus-4-20250514'],
+  codex: ['gpt-4o-mini', 'gpt-4o', 'gpt-5-codex'],
+  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro']
+}
+
+// Helper function to format model names
+function formatModelName(model) {
+  if (model.includes('haiku')) return 'Haiku 3.5'
+  if (model.includes('sonnet-4-5')) return 'Sonnet 4.5'
+  if (model.includes('sonnet-4-20250514')) return 'Sonnet 4'
+  if (model.includes('sonnet')) return 'Sonnet'
+  if (model.includes('opus')) return 'Opus 4'
+  if (model.includes('4o-mini')) return 'GPT-4o Mini'
+  if (model.includes('4o')) return 'GPT-4o'
+  if (model.includes('5-codex')) return 'GPT-5 Codex'
+  if (model.includes('flash')) return 'Flash 2.5'
+  if (model.includes('pro')) return 'Pro 2.5'
+  return model
+}
+
+// Helper function to get models for a tool type
+function getModelsForTool(toolType) {
+  return MODEL_DEFINITIONS[toolType] || []
+}
+
+// Initialize per-model pricing structure
+function initializeModelPricing(toolType) {
+  const models = {}
+  getModelsForTool(toolType).forEach(model => {
+    models[model] = {
+      mode: 'auto',
+      input: 0,
+      output: 0,
+      cacheCreation: 0,
+      cacheRead: 0
+    }
+  })
+  return models
+}
+
 const pricingSettings = ref({
   claude: {
     mode: 'auto',
     input: 3,
     output: 15,
     cacheCreation: 3.75,
-    cacheRead: 0.3
+    cacheRead: 0.3,
+    models: initializeModelPricing('claude')
   },
   codex: {
     mode: 'auto',
     input: 2.5,
-    output: 10
+    output: 10,
+    models: initializeModelPricing('codex')
   },
   gemini: {
     mode: 'auto',
     input: 1.25,
-    output: 5
+    output: 5,
+    models: initializeModelPricing('gemini')
   }
 })
 const originalPricingSettings = ref(JSON.parse(JSON.stringify(pricingSettings.value)))
@@ -996,6 +1396,39 @@ const portsChanged = computed(() => {
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
     JSON.stringify(pricingSettings.value) !== JSON.stringify(originalPricingSettings.value)
+})
+
+const securityLocked = computed(() => {
+  return securityStatus.value.hasPassword && !securityAccessGranted.value
+})
+
+const securityFormError = computed(() => {
+  if (!securityForm.value.newPassword || !securityForm.value.confirmPassword) {
+    return ''
+  }
+  if (securityForm.value.newPassword.length < 4) {
+    return '密码至少 4 位'
+  }
+  if (securityForm.value.newPassword !== securityForm.value.confirmPassword) {
+    return '两次输入的新密码不一致'
+  }
+  return ''
+})
+
+const securityFormReady = computed(() => {
+  if (securityLocked.value) {
+    return false
+  }
+  if (!securityForm.value.newPassword || !securityForm.value.confirmPassword) {
+    return false
+  }
+  if (securityFormError.value) {
+    return false
+  }
+  if (securityStatus.value.hasPassword && !securityForm.value.currentPassword) {
+    return false
+  }
+  return true
 })
 
 // 菜单项配置
@@ -1019,6 +1452,11 @@ const menuItems = computed(() => [
     key: 'advanced',
     label: '高级设置',
     icon: markRaw(OptionsOutline)
+  },
+  {
+    key: 'security',
+    label: '安全设置',
+    icon: markRaw(ShieldCheckmarkOutline)
   }
 ])
 
@@ -1026,7 +1464,7 @@ const terminalOptions = computed(() => {
   return availableTerminals.value
     .filter(t => t.available)
     .map(t => ({
-      label: `${t.name}${t.isDefault ? ' (默认)' : ''}`,
+      label: `${t.name}${t.id === 'system-shell' ? ' (Web 终端)' : ''}${t.isDefault ? ' (默认)' : ''}`,
       value: t.id
     }))
 })
@@ -1037,6 +1475,21 @@ function normalizePrice(value, fallback) {
   }
   const parsed = parseFloat(value)
   return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function loadModelPricing(savedModels, toolType) {
+  const models = {}
+  getModelsForTool(toolType).forEach(model => {
+    const savedModel = savedModels?.[model]
+    models[model] = {
+      mode: savedModel?.mode === 'custom' ? 'custom' : 'auto',
+      input: normalizePrice(savedModel?.input, 0),
+      output: normalizePrice(savedModel?.output, 0),
+      cacheCreation: normalizePrice(savedModel?.cacheCreation, 0),
+      cacheRead: normalizePrice(savedModel?.cacheRead, 0)
+    }
+  })
+  return models
 }
 
 function clonePricing(value) {
@@ -1195,17 +1648,20 @@ async function loadPortsConfig() {
           input: normalizePrice(data.pricing?.claude?.input, 3),
           output: normalizePrice(data.pricing?.claude?.output, 15),
           cacheCreation: normalizePrice(data.pricing?.claude?.cacheCreation, 3.75),
-          cacheRead: normalizePrice(data.pricing?.claude?.cacheRead, 0.3)
+          cacheRead: normalizePrice(data.pricing?.claude?.cacheRead, 0.3),
+          models: loadModelPricing(data.pricing?.claude?.models, 'claude')
         },
         codex: {
           mode: data.pricing?.codex?.mode === 'custom' ? 'custom' : 'auto',
           input: normalizePrice(data.pricing?.codex?.input, 2.5),
-          output: normalizePrice(data.pricing?.codex?.output, 10)
+          output: normalizePrice(data.pricing?.codex?.output, 10),
+          models: loadModelPricing(data.pricing?.codex?.models, 'codex')
         },
         gemini: {
           mode: data.pricing?.gemini?.mode === 'custom' ? 'custom' : 'auto',
           input: normalizePrice(data.pricing?.gemini?.input, 1.25),
-          output: normalizePrice(data.pricing?.gemini?.output, 5)
+          output: normalizePrice(data.pricing?.gemini?.output, 5),
+          models: loadModelPricing(data.pricing?.gemini?.models, 'gemini')
         }
       }
       originalPricingSettings.value = clonePricing(pricingSettings.value)
@@ -1271,6 +1727,127 @@ async function handleSaveNotification() {
     message.error('保存失败：' + error.message)
   } finally {
     savingNotification.value = false
+  }
+}
+
+function resetSecurityForm() {
+  securityForm.value = {
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  }
+}
+
+function resetSecurityAuth() {
+  showSecurityAuthModal.value = false
+  securityAuthPassword.value = ''
+  securityAuthError.value = ''
+  verifyingSecurity.value = false
+}
+
+async function loadSecurityStatus(force = false) {
+  if (securityStatusLoading.value && securityStatusPromise) {
+    return securityStatusPromise
+  }
+  if (securityStatusLoaded.value && !force) {
+    return Promise.resolve()
+  }
+
+  securityStatusLoading.value = true
+  securityStatusPromise = (async () => {
+    try {
+      const response = await getSecurityStatus()
+      if (response.success) {
+        securityStatus.value = {
+          hasPassword: Boolean(response.hasPassword)
+        }
+        securityStatusLoaded.value = true
+      }
+    } catch (error) {
+      console.error('Failed to load security status:', error)
+    } finally {
+      securityStatusLoading.value = false
+      securityStatusPromise = null
+    }
+  })()
+  return securityStatusPromise
+}
+
+function openSecurityAuth() {
+  if (!securityStatus.value.hasPassword) {
+    securityAccessGranted.value = true
+    return
+  }
+  securityAuthPassword.value = ''
+  securityAuthError.value = ''
+  showSecurityAuthModal.value = true
+}
+
+function closeSecurityAuth() {
+  resetSecurityAuth()
+}
+
+async function handleSecurityVerify() {
+  if (!securityAuthPassword.value) {
+    securityAuthError.value = '请输入密码'
+    return
+  }
+
+  verifyingSecurity.value = true
+  securityAuthError.value = ''
+  try {
+    const response = await verifySecurityPassword(securityAuthPassword.value)
+    if (response.success) {
+      securityAccessGranted.value = true
+      resetSecurityAuth()
+    } else {
+      securityAuthError.value = response.error || '密码错误'
+    }
+  } catch (error) {
+    securityAuthError.value = error.response?.data?.error || '密码错误'
+  } finally {
+    verifyingSecurity.value = false
+  }
+}
+
+async function handleSecurityMenuEntry(force = false) {
+  await loadSecurityStatus(force)
+  if (securityStatus.value.hasPassword) {
+    securityAccessGranted.value = false
+    openSecurityAuth()
+  } else {
+    securityAccessGranted.value = true
+  }
+}
+
+async function handleSaveSecurity() {
+  if (!securityFormReady.value) {
+    message.warning('请完善密码信息')
+    return
+  }
+
+  const isUpdate = securityStatus.value.hasPassword
+  savingSecurity.value = true
+  try {
+    const payload = {
+      newPassword: securityForm.value.newPassword
+    }
+    if (securityStatus.value.hasPassword) {
+      payload.currentPassword = securityForm.value.currentPassword
+    }
+    const response = await setSecurityPassword(payload)
+    if (response.success) {
+      securityStatus.value.hasPassword = true
+      securityStatusLoaded.value = true
+      resetSecurityForm()
+      message.success(isUpdate ? '密码已更新' : '密码已设置')
+    } else {
+      message.error(response.error || '保存失败')
+    }
+  } catch (error) {
+    message.error(error.response?.data?.error || '保存失败')
+  } finally {
+    savingSecurity.value = false
   }
 }
 
@@ -1389,6 +1966,7 @@ async function handleDisableAutoStart() {
 // 加载设置
 onMounted(() => {
   loadPanelSettings()
+  loadSecurityStatus()
 })
 
 // 监听抽屉打开，加载数据
@@ -1399,6 +1977,26 @@ watch(show, (newVal) => {
     loadPortsConfig()
     loadAutoStartStatus()
     loadNotificationSettings()
+    if (activeMenu.value === 'security') {
+      handleSecurityMenuEntry(true)
+    } else {
+      loadSecurityStatus(true)
+    }
+  } else {
+    securityAccessGranted.value = false
+    resetSecurityAuth()
+    resetSecurityForm()
+  }
+})
+
+watch(activeMenu, (newVal, oldVal) => {
+  if (newVal === 'security') {
+    handleSecurityMenuEntry()
+  }
+  if (oldVal === 'security' && newVal !== 'security') {
+    securityAccessGranted.value = false
+    resetSecurityAuth()
+    resetSecurityForm()
   }
 })
 </script>
@@ -1957,6 +2555,38 @@ watch(show, (newVal) => {
   flex-direction: column;
   gap: 2px;
   padding: 4px 0;
+}
+
+/* 安全设置样式 */
+.security-locked {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
+.security-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.security-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 360px;
+}
+
+.security-error {
+  font-size: 12px;
+  color: #d03050;
+}
+
+.security-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Web 终端命令配置样式 */

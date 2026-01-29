@@ -9,6 +9,7 @@ const http = require('http');
 const { URL } = require('url');
 const path = require('path');
 const fs = require('fs');
+const { probeModelAvailability } = require('./model-detector');
 
 // 测试结果缓存
 const testResultsCache = new Map();
@@ -75,7 +76,7 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
 
     // 直接测试 API 功能（发送测试消息）
     // 不再单独测试网络连通性，因为直接 GET base_url 可能返回 404
-    const apiResult = await testAPIFunctionality(testUrl, channel.apiKey, sanitizedTimeout, channelType, channel.model);
+    const apiResult = await testAPIFunctionality(testUrl, channel.apiKey, sanitizedTimeout, channelType, channel.model, channel);
 
     const success = apiResult.success;
     const networkOk = apiResult.latency !== null; // 如果有延迟数据，说明网络是通的
@@ -90,7 +91,10 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
       statusCode: apiResult.statusCode || null,
       error: success ? null : (apiResult.error || '测试失败'),
       latency: apiResult.latency || null, // 无论成功失败都保留延迟数据
-      testedAt: Date.now()
+      testedAt: Date.now(),
+      testedModel: apiResult.testedModel,
+      availableModels: apiResult.availableModels,
+      modelDetectionMethod: apiResult.modelDetectionMethod
     };
 
     testResultsCache.set(channel.id, finalResult);
@@ -189,18 +193,38 @@ function testNetworkConnectivity(url, apiKey, timeout) {
  * @param {number} timeout - 超时时间
  * @param {string} channelType - 渠道类型：'claude' | 'codex' | 'gemini'
  * @param {string} model - 模型名称（可选，用于 Gemini）
+ * @param {Object} channel - 完整渠道配置（用于模型检测）
  */
-function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', model = null) {
+async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', model = null, channel = null) {
+  // Probe model availability if channel is provided
+  let modelProbe = null;
+  if (channel) {
+    try {
+      modelProbe = await probeModelAvailability(channel, channelType);
+    } catch (error) {
+      console.error('[SpeedTest] Model detection failed:', error.message);
+    }
+  }
+
   return new Promise((resolve) => {
     const startTime = Date.now();
     const parsedUrl = new URL(baseUrl);
     const isHttps = parsedUrl.protocol === 'https:';
     const httpModule = isHttps ? https : http;
 
+    // Helper to create result object with model info
+    const createResult = (result) => ({
+      ...result,
+      testedModel: testModel,
+      availableModels: modelProbe?.availableModels,
+      modelDetectionMethod: modelProbe?.cached ? 'cached' : 'probed'
+    });
+
     // 根据渠道类型确定 API 路径和请求格式
     let apiPath;
     let requestBody;
     let headers;
+    let testModel = null; // Track which model is actually being tested
 
     // Claude 渠道使用 Anthropic 格式
     if (channelType === 'claude') {
@@ -214,10 +238,11 @@ function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', 
 
       // 使用 Claude Code 的请求格式
       // user_id 必须符合特定格式: user_xxx_account__session_xxx
-      // 使用 claude-sonnet-4 模型测试，因为 haiku 可能没有配额
+      // 优先使用模型检测结果，否则回退到 claude-sonnet-4-20250514
+      testModel = modelProbe?.preferredTestModel || 'claude-sonnet-4-20250514';
       const sessionId = Math.random().toString(36).substring(2, 15);
       requestBody = JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: testModel,
         max_tokens: 10,
         stream: true,
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
@@ -249,12 +274,18 @@ function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', 
         const template = JSON.parse(fs.readFileSync(CODEX_REQUEST_TEMPLATE_PATH, 'utf-8'));
         // 生成新的 prompt_cache_key
         template.prompt_cache_key = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+        // 使用模型检测结果更新模型（如果有）
+        if (modelProbe?.preferredTestModel) {
+          template.model = modelProbe.preferredTestModel;
+        }
+        testModel = template.model; // Track the model being used
         requestBody = JSON.stringify(template);
       } catch (err) {
         console.error('[SpeedTest] Failed to load Codex template:', err.message);
         // 降级使用简化版本（可能会失败）
+        testModel = modelProbe?.preferredTestModel || 'gpt-5-codex';
         requestBody = JSON.stringify({
-          model: 'gpt-5-codex',
+          model: testModel,
           instructions: 'You are Codex.',
           input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
           max_output_tokens: 10,
@@ -274,10 +305,10 @@ function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', 
       if (!apiPath.endsWith('/chat/completions')) {
         apiPath = apiPath + (apiPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
       }
-      // 使用渠道配置的模型，如果没有则默认使用 gemini-2.5-pro
-      const geminiModel = model || 'gemini-2.5-pro';
+      // 优先使用模型检测结果，其次使用渠道配置的模型，最后默认使用 gemini-2.5-pro
+      testModel = modelProbe?.preferredTestModel || model || 'gemini-2.5-pro';
       requestBody = JSON.stringify({
-        model: geminiModel,
+        model: testModel,
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Hi' }]
       });
@@ -339,24 +370,24 @@ function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', 
             resolved = true;
             const latency = Date.now() - startTime;
             req.destroy();
-            resolve({
+            resolve(createResult({
               success: true,
               latency,
               error: null,
               statusCode: res.statusCode
-            });
+            }));
           } else if (chunkStr.includes('"detail"') || chunkStr.includes('"error"')) {
             // 流式响应中的错误
             resolved = true;
             const latency = Date.now() - startTime;
             req.destroy();
             const errMsg = parseErrorMessage(chunkStr) || '流式响应错误';
-            resolve({
+            resolve(createResult({
               success: false,
               latency,
               error: errMsg,
               statusCode: res.statusCode
-            });
+            }));
           }
         }
       });
@@ -372,106 +403,106 @@ function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'claude', 
           const errMsg = parseErrorMessage(data);
           if (errMsg && (errMsg.includes('error') || errMsg.includes('Error') ||
                          errMsg.includes('失败') || errMsg.includes('错误'))) {
-            resolve({
+            resolve(createResult({
               success: false,
               latency,
               error: errMsg,
               statusCode: res.statusCode
-            });
+            }));
           } else {
             // 真正的成功响应
-            resolve({
+            resolve(createResult({
               success: true,
               latency,
               error: null,
               statusCode: res.statusCode
-            });
+            }));
           }
         } else if (res.statusCode === 401) {
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: 'API Key 无效或已过期',
             statusCode: res.statusCode
-          });
+          }));
         } else if (res.statusCode === 403) {
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: 'API Key 权限不足',
             statusCode: res.statusCode
-          });
+          }));
         } else if (res.statusCode === 429) {
           // 请求过多 - 标记为失败
           const errMsg = parseErrorMessage(data) || '请求过多，服务限流中';
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: errMsg,
             statusCode: res.statusCode
-          });
+          }));
         } else if (res.statusCode === 503 || res.statusCode === 529) {
           // 服务暂时不可用/过载 - 标记为失败
           const errMsg = parseErrorMessage(data) || (res.statusCode === 503 ? '服务暂时不可用' : '服务过载');
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: errMsg,
             statusCode: res.statusCode
-          });
+          }));
         } else if (res.statusCode === 402) {
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: '账户余额不足',
             statusCode: res.statusCode
-          });
+          }));
         } else if (res.statusCode === 400) {
           // 请求参数错误
           const errMsg = parseErrorMessage(data) || '请求参数错误';
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: errMsg,
             statusCode: res.statusCode
-          });
+          }));
         } else if (res.statusCode >= 500) {
           // 5xx 服务器错误
           const errMsg = parseErrorMessage(data) || `服务器错误 (${res.statusCode})`;
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: errMsg,
             statusCode: res.statusCode
-          });
+          }));
         } else {
           // 其他错误
           const errMsg = parseErrorMessage(data) || `HTTP ${res.statusCode}`;
-          resolve({
+          resolve(createResult({
             success: false,
             latency,
             error: errMsg,
             statusCode: res.statusCode
-          });
+          }));
         }
       });
     });
 
     req.on('error', (error) => {
-      resolve({
+      resolve(createResult({
         success: false,
         latency: null,
         error: error.message || '请求失败'
-      });
+      }));
     });
 
     req.on('timeout', () => {
       req.destroy();
-      resolve({
+      resolve(createResult({
         success: false,
         latency: null,
         error: 'API 请求超时'
-      });
+      }));
     });
 
     req.write(requestBody);

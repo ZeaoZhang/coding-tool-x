@@ -22,17 +22,36 @@ const DEFAULT_CONFIG = {
       input: 3,
       output: 15,
       cacheCreation: 3.75,
-      cacheRead: 0.30
+      cacheRead: 0.30,
+      models: {
+        'claude-sonnet-4-20250514': { mode: 'auto' },
+        'claude-haiku-3-5-20241022': {
+          mode: 'custom',
+          input: 0.8,
+          output: 4,
+          cacheCreation: 1,
+          cacheRead: 0.08
+        },
+        'claude-opus-4-20250514': { mode: 'auto' }
+      }
     },
     codex: {
       mode: 'auto',
       input: 2.5,
-      output: 10
+      output: 10,
+      models: {
+        'gpt-5-codex': { mode: 'auto' },
+        'gpt-4o-mini': { mode: 'auto' }
+      }
     },
     gemini: {
       mode: 'auto',
       input: 1.25,
-      output: 5
+      output: 5,
+      models: {
+        'gemini-2.5-pro': { mode: 'auto' },
+        'gemini-2.5-flash': { mode: 'auto' }
+      }
     }
   }
 };

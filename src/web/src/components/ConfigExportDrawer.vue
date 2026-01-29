@@ -21,7 +21,7 @@
           <div class="section-header">
             <n-text strong>导出配置</n-text>
             <n-text depth="3" style="font-size: 12px;">
-              导出权限模板、配置模板、频道配置到JSON文件
+              导出所有前端配置为 ZIP（含 UI/终端/Prompts/安全等）
             </n-text>
           </div>
           <n-button
@@ -43,14 +43,14 @@
           <div class="section-header">
             <n-text strong>导入配置</n-text>
             <n-text depth="3" style="font-size: 12px;">
-              从JSON文件导入配置（支持覆盖已有配置）
+              从 JSON 或 ZIP 文件导入配置（支持覆盖已有配置）
             </n-text>
           </div>
 
           <n-upload
             :custom-request="handleFileUpload"
             :show-file-list="false"
-            accept=".json"
+            accept=".json,.zip"
           >
             <n-button>
               <template #icon>
@@ -109,7 +109,7 @@ import {
   CloudDownloadOutline, DownloadOutline, CloudUploadOutline
 } from '@vicons/ionicons5'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
-import { exportConfigs, previewImport, importConfigs } from '../api/config-export'
+import { exportConfigs, previewImport, previewImportZip, importConfigs, importConfigsZip } from '../api/config-export'
 import message from '../utils/message'
 
 const props = defineProps({
@@ -129,17 +129,19 @@ const exporting = ref(false)
 const importing = ref(false)
 const importPreview = ref(null)
 const importData = ref(null)
+const importZipFile = ref(null)
+const importType = ref(null)
 const overwriteExisting = ref(false)
 
 // 导出配置
 async function handleExport() {
   exporting.value = true
   try {
-    const blob = await exportConfigs()
+    const blob = await exportConfigs('zip')
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `ctx-config-${new Date().toISOString().split('T')[0]}.json`
+    a.download = `ctx-config-${new Date().toISOString().split('T')[0]}.zip`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -156,6 +158,28 @@ async function handleExport() {
 // 处理文件上传
 async function handleFileUpload({ file }) {
   try {
+    importPreview.value = null
+    importData.value = null
+    importZipFile.value = null
+    importType.value = null
+
+    const fileName = file.file.name || ''
+    const isZip = fileName.toLowerCase().endsWith('.zip')
+
+    if (isZip) {
+      const result = await previewImportZip(file.file)
+      if (result.success) {
+        importPreview.value = result.data
+        importZipFile.value = file.file
+        importData.value = null
+        importType.value = 'zip'
+        message.success('ZIP 配置解析成功')
+      } else {
+        message.error('ZIP 配置格式错误: ' + result.message)
+      }
+      return
+    }
+
     const text = await file.file.text()
     const data = JSON.parse(text)
 
@@ -164,6 +188,8 @@ async function handleFileUpload({ file }) {
     if (result.success) {
       importPreview.value = result.data
       importData.value = data
+      importZipFile.value = null
+      importType.value = 'json'
       message.success('配置文件解析成功')
     } else {
       message.error('配置文件格式错误: ' + result.message)
@@ -176,11 +202,13 @@ async function handleFileUpload({ file }) {
 
 // 确认导入
 async function handleImport() {
-  if (!importData.value) return
+  if (!importData.value && !importZipFile.value) return
 
   importing.value = true
   try {
-    const result = await importConfigs(importData.value, overwriteExisting.value)
+    const result = importType.value === 'zip'
+      ? await importConfigsZip(importZipFile.value, overwriteExisting.value)
+      : await importConfigs(importData.value, overwriteExisting.value)
     if (result.success) {
       message.success('配置导入成功: ' + result.message)
       cancelImport()
@@ -199,6 +227,8 @@ async function handleImport() {
 function cancelImport() {
   importPreview.value = null
   importData.value = null
+  importZipFile.value = null
+  importType.value = null
   overwriteExisting.value = false
 }
 </script>

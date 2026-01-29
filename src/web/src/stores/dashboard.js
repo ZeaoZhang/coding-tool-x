@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { getDashboardInit } from '../api/dashboard'
 
 const emptyCounts = () => ({ projectCount: 0, sessionCount: 0 })
-const emptyStats = () => ({ requests: 0, tokens: 0, cost: 0 })
+const emptyStats = () => ({ requests: 0, tokens: 0, cost: 0, byModel: {} })
 
 export const useDashboardStore = defineStore('dashboard', () => {
   const dashboardData = ref({
@@ -76,7 +76,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
         const formatStats = (stats = {}) => ({
           requests: stats.requests || 0,
           tokens: stats.tokens || 0,
-          cost: stats.cost || 0
+          cost: stats.cost || 0,
+          byModel: stats.byModel || {}
         })
 
         dashboardData.value = {

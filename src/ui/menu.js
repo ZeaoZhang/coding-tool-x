@@ -113,6 +113,7 @@ async function showMainMenu(config) {
         { name: chalk.cyan('查看调度状态'), value: 'channel-status' },
         { name: chalk.cyan(`是否开启动态切换 (${proxyStatusText})`), value: 'toggle-proxy' },
         { name: chalk.cyan('添加渠道'), value: 'add-channel' },
+        { name: chalk.blue('插件管理'), value: 'plugin-menu' },
         new inquirer.Separator(chalk.gray('─'.repeat(14))),
         { name: chalk.magenta('配置端口'), value: 'port-config' },
         { name: chalk.yellow('恢复默认配置'), value: 'reset' },

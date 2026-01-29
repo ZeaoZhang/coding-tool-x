@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const DEFAULT_CONFIG = require('./default');
+const eventBus = require('../plugins/event-bus');
 
 const CONFIG_FILE = path.join(__dirname, '../../config.json');
 
@@ -49,12 +50,15 @@ function loadConfig() {
         config.currentProject = config.defaultProject;
       }
 
+      eventBus.emitSync('config:loaded', { config });
       return config;
     }
   } catch (error) {
     console.error('加载配置文件失败，使用默认配置');
   }
-  return { ...DEFAULT_CONFIG, currentProject: DEFAULT_CONFIG.defaultProject };
+  const defaultConfig = { ...DEFAULT_CONFIG, currentProject: DEFAULT_CONFIG.defaultProject };
+  eventBus.emitSync('config:loaded', { config: defaultConfig });
+  return defaultConfig;
 }
 
 /**
@@ -63,6 +67,7 @@ function loadConfig() {
 function saveConfig(config) {
   try {
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+    eventBus.emitSync('config:saved', { config });
   } catch (error) {
     console.error('保存配置失败:', error.message);
   }

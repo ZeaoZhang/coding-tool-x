@@ -1,0 +1,7 @@
+{
+  "active": true,
+  "started_at": "2026-01-29T14:09:16.845Z",
+  "original_prompt": "autopilot: 目前已经实现了 claude code 的 plugin 的cli 管理，现在添加plugin前端页面，只需要插件列表，插件仓库列表和插件安装界面，放在claude code agents同级",
+  "reinforcement_count": 5,
+  "last_checked_at": "2026-01-29T14:09:16.845Z"
+}

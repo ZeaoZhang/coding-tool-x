@@ -36,6 +36,37 @@ function resolvePricing(toolKey, modelPricing = {}, defaultPricing = {}) {
   return base;
 }
 
+function resolveModelPricing(toolKey, model, hardcodedPricing = {}, defaultPricing = {}) {
+  const config = getPricingConfig(toolKey);
+
+  // 1. Check per-model config
+  const modelConfig = config?.models?.[model];
+  if (modelConfig && modelConfig.mode === 'custom') {
+    const result = { ...hardcodedPricing };
+    RATE_KEYS.forEach((key) => {
+      if (typeof modelConfig[key] === 'number' && Number.isFinite(modelConfig[key])) {
+        result[key] = modelConfig[key];
+      }
+    });
+    return result;
+  }
+
+  // 2. Fall back to tool-level config
+  if (config && config.mode === 'custom') {
+    const result = { ...hardcodedPricing };
+    RATE_KEYS.forEach((key) => {
+      if (typeof config[key] === 'number' && Number.isFinite(config[key])) {
+        result[key] = config[key];
+      }
+    });
+    return result;
+  }
+
+  // 3. Use hardcoded pricing
+  return { ...defaultPricing, ...hardcodedPricing };
+}
+
 module.exports = {
-  resolvePricing
+  resolvePricing,
+  resolveModelPricing
 };

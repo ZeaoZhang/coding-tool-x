@@ -8,9 +8,10 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { broadcastLog, broadcastSchedulerState } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
-const { resolvePricing } = require('./utils/pricing');
+const { resolvePricing, resolveModelPricing } = require('./utils/pricing');
 const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
+const eventBus = require('../plugins/event-bus');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -41,8 +42,8 @@ const ONE_MILLION = 1000000;
  * @returns {number} 成本（美元）
  */
 function calculateCost(model, tokens) {
-  const basePricing = PRICING[model] || {};
-  const pricing = resolvePricing('claude', basePricing, CLAUDE_BASE_PRICING);
+  const hardcodedPricing = PRICING[model] || {};
+  const pricing = resolveModelPricing('claude', model, hardcodedPricing, CLAUDE_BASE_PRICING);
 
   const inputRate = typeof pricing.input === 'number' ? pricing.input : CLAUDE_BASE_PRICING.input;
   const outputRate = typeof pricing.output === 'number' ? pricing.output : CLAUDE_BASE_PRICING.output;
@@ -399,6 +400,7 @@ async function startProxyServer(options = {}) {
       proxyServer.listen(port, '127.0.0.1', () => {
         console.log(`✅ Proxy server started on http://127.0.0.1:${port}`);
         saveProxyStartTime('claude', preserveStartTime);
+        eventBus.emitSync('proxy:start', { channel: 'claude', port });
         resolve({ success: true, port });
       });
 
@@ -438,6 +440,7 @@ async function stopProxyServer(options = {}) {
       if (clearStartTime) {
         clearProxyStartTime('claude');
       }
+      eventBus.emitSync('proxy:stop', { channel: 'claude' });
       proxyServer = null;
       proxyApp = null;
       const stoppedPort = currentPort;

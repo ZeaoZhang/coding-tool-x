@@ -7,6 +7,7 @@ import * as statisticsApi from './statistics'
 import * as versionApi from './version'
 import * as favoritesApi from './favorites'
 import * as uiConfigApi from './ui-config'
+import * as securityApi from './security'
 import * as pm2Api from './pm2'
 import * as dashboardApi from './dashboard'
 
@@ -20,6 +21,7 @@ const api = {
   ...versionApi,
   ...favoritesApi,
   ...uiConfigApi,
+  ...securityApi,
   ...pm2Api,
   ...dashboardApi
 }

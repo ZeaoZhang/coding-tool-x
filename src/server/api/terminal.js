@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 
 const { ptyManager } = require('../services/pty-manager');
+const { getWebTerminalShellConfig } = require('../services/terminal-config');
 const {
   loadTerminalCommands,
   saveTerminalCommands,
@@ -171,13 +172,16 @@ router.post('/create', (req, res) => {
     // 获取启动命令
     const startCommand = getCommandForChannel(channel, sessionId, workDir);
 
+    const shellConfig = getWebTerminalShellConfig();
+
     // 创建终端
     const terminal = ptyManager.create({
       cwd: workDir,
       channel,
       sessionId,
       projectName,
-      startCommand
+      startCommand,
+      ...shellConfig
     });
 
     res.json({

@@ -53,6 +53,8 @@ function readUIConfigFromFile() {
     const data = JSON.parse(content);
     // Merge with defaults to ensure all keys exist
     return {
+      ...DEFAULT_UI_CONFIG,
+      ...data,
       theme: data.theme || DEFAULT_UI_CONFIG.theme,
       panelVisibility: { ...DEFAULT_UI_CONFIG.panelVisibility, ...data.panelVisibility },
       channelLocks: { ...DEFAULT_UI_CONFIG.channelLocks, ...data.channelLocks },

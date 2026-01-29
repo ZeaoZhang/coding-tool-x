@@ -421,13 +421,14 @@ const denyInputValue = ref('')
 // 计算属性
 const projectOptions = computed(() => {
   return projects.value.map(p => {
-    // 优先使用项目名称，否则从路径提取
-    const name = p.name || p.path.split('/').pop() || p.path
+    const projectPath = p.fullPath || p.path || ''
+    const displayName = p.displayName || p.name || ''
+    const fallbackName = projectPath ? projectPath.split(/[\\/]/).pop() : ''
     return {
-      label: name,
-      value: p.path
+      label: displayName || fallbackName || projectPath || p.name,
+      value: projectPath
     }
-  })
+  }).filter(option => option.value)
 })
 
 const hasChanges = computed(() => {
