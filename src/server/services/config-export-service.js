@@ -15,13 +15,28 @@ const { CommandsService } = require('./commands-service');
 const { RulesService } = require('./rules-service');
 const { SkillService } = require('./skill-service');
 
-const CONFIG_VERSION = '1.1.0';
+const CONFIG_VERSION = '1.2.0';
 const SKILL_FILE_ENCODING = 'base64';
 const SKILL_IGNORE_DIRS = new Set(['.git']);
 const SKILL_IGNORE_FILES = new Set(['.DS_Store']);
 const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
 const LEGACY_CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
 const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+const LEGACY_PLUGINS_DIR = path.join(LEGACY_CC_TOOL_DIR, 'plugins', 'installed');
+const LEGACY_PLUGINS_REGISTRY = path.join(LEGACY_CC_TOOL_DIR, 'plugins', 'registry.json');
+const NATIVE_PLUGINS_REGISTRY = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
+const PLUGIN_IGNORE_DIRS = new Set(['.git', 'node_modules', '.DS_Store']);
+const PLUGIN_IGNORE_FILES = new Set(['.DS_Store']);
+const PLUGIN_SENSITIVE_PATTERNS = [
+  /\.env$/i,
+  /\.env\./i,
+  /credentials?\.json$/i,
+  /secrets?\.json$/i,
+  /\.key$/i,
+  /\.pem$/i,
+  /\.p12$/i,
+  /\.pfx$/i
+];
 const CC_UI_CONFIG_PATH = path.join(CC_TOOL_DIR, 'ui-config.json');
 const CC_TERMINAL_CONFIG_PATH = path.join(CC_TOOL_DIR, 'terminal-config.json');
 const CC_TERMINAL_COMMANDS_PATH = path.join(CC_TOOL_DIR, 'terminal-commands.json');
@@ -108,6 +123,7 @@ function buildExportReadme(exportData) {
 ## 📦 包含内容
 - 权限模板、配置模板、频道配置、工作区、收藏
 - Agents / Skills / Commands / Rules
+- 插件 (Plugins)
 - MCP 服务器配置
 - UI 配置（主题、面板显示、排序等）
 - 终端配置与 CLI 命令配置
@@ -224,6 +240,56 @@ function collectSkillFiles(baseDir) {
   return files;
 }
 
+function collectPluginFiles(pluginDir, basePath = '') {
+  const files = [];
+  const stack = [pluginDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (err) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (PLUGIN_IGNORE_DIRS.has(entry.name)) {
+          continue;
+        }
+        stack.push(path.join(currentDir, entry.name));
+      } else if (entry.isFile()) {
+        if (PLUGIN_IGNORE_FILES.has(entry.name)) {
+          continue;
+        }
+        const fullPath = path.join(currentDir, entry.name);
+        const relativePath = path.relative(pluginDir, fullPath);
+
+        // Skip sensitive files
+        const isSensitive = PLUGIN_SENSITIVE_PATTERNS.some(pattern => pattern.test(entry.name));
+        if (isSensitive) {
+          continue;
+        }
+
+        try {
+          const content = fs.readFileSync(fullPath);
+          files.push({
+            path: relativePath,
+            encoding: SKILL_FILE_ENCODING,
+            content: content.toString(SKILL_FILE_ENCODING)
+          });
+        } catch (err) {
+          continue;
+        }
+      }
+    }
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return files;
+}
+
 function exportSkillsSnapshot() {
   const skillService = new SkillService();
   const installedSkills = skillService.getInstalledSkills();
@@ -242,6 +308,113 @@ function exportSkillsSnapshot() {
       files: collectSkillFiles(skillDir)
     };
   }).filter(Boolean);
+}
+
+function exportLegacyPlugins() {
+  const plugins = [];
+
+  // Check if legacy plugins directory exists
+  if (!fs.existsSync(LEGACY_PLUGINS_DIR)) {
+    return plugins;
+  }
+
+  // Read registry.json if it exists
+  const registry = readJsonFileSafe(LEGACY_PLUGINS_REGISTRY) || {};
+
+  try {
+    const pluginDirs = fs.readdirSync(LEGACY_PLUGINS_DIR, { withFileTypes: true });
+
+    for (const entry of pluginDirs) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const pluginName = entry.name;
+      const pluginDir = path.join(LEGACY_PLUGINS_DIR, pluginName);
+      const manifestPath = path.join(pluginDir, 'plugin.json');
+
+      // Read plugin.json manifest
+      const manifest = readJsonFileSafe(manifestPath);
+      if (!manifest) {
+        continue;
+      }
+
+      // Collect all files in the plugin directory
+      const files = collectPluginFiles(pluginDir);
+
+      plugins.push({
+        type: 'legacy',
+        name: manifest.name || pluginName,
+        version: manifest.version || '1.0.0',
+        description: manifest.description || '',
+        author: manifest.author || '',
+        directory: pluginName,
+        manifest: manifest,
+        files: files,
+        registryEntry: registry[pluginName] || null
+      });
+    }
+  } catch (err) {
+    console.warn('[ConfigExport] Failed to export legacy plugins:', err.message);
+  }
+
+  return plugins;
+}
+
+function exportNativePlugins() {
+  const plugins = [];
+
+  // Read installed_plugins.json
+  const installedPlugins = readJsonFileSafe(NATIVE_PLUGINS_REGISTRY);
+  if (!installedPlugins || typeof installedPlugins !== 'object') {
+    return plugins;
+  }
+
+  try {
+    for (const [pluginId, pluginInfo] of Object.entries(installedPlugins)) {
+      if (!pluginInfo || !pluginInfo.installPath) {
+        continue;
+      }
+
+      const pluginDir = pluginInfo.installPath;
+      if (!fs.existsSync(pluginDir)) {
+        continue;
+      }
+
+      // Read package.json manifest
+      const manifestPath = path.join(pluginDir, 'package.json');
+      const manifest = readJsonFileSafe(manifestPath);
+      if (!manifest) {
+        continue;
+      }
+
+      // Collect all files in the plugin directory
+      const files = collectPluginFiles(pluginDir);
+
+      plugins.push({
+        type: 'native',
+        id: pluginId,
+        name: manifest.name || pluginId,
+        version: manifest.version || '1.0.0',
+        description: manifest.description || '',
+        author: manifest.author || '',
+        installPath: pluginDir,
+        manifest: manifest,
+        files: files,
+        registryEntry: pluginInfo
+      });
+    }
+  } catch (err) {
+    console.warn('[ConfigExport] Failed to export native plugins:', err.message);
+  }
+
+  return plugins;
+}
+
+function exportPluginsSnapshot() {
+  const legacyPlugins = exportLegacyPlugins();
+  const nativePlugins = exportNativePlugins();
+  return [...legacyPlugins, ...nativePlugins];
 }
 
 function writeTextFile(baseDir, relativePath, content, overwrite) {
@@ -332,6 +505,9 @@ function exportAllConfigs() {
     const mcpService = require('./mcp-service');
     const mcpServers = mcpService.getAllServers();
 
+    // 获取 Plugins 配置
+    const plugins = exportPluginsSnapshot();
+
     // 读取 Markdown 配置文件
     const { PATHS } = require('../../config/paths');
     const markdownFiles = {};
@@ -383,6 +559,7 @@ function exportAllConfigs() {
         commands: commands || [],
         rules: rules || [],
         mcpServers: mcpServers || [],
+        plugins: plugins || [],
         markdownFiles: markdownFiles,
         uiConfig: uiConfig,
         terminalConfig: terminalConfig,
@@ -450,6 +627,7 @@ function importConfigs(importData, options = {}) {
     commands: { success: 0, failed: 0, skipped: 0 },
     rules: { success: 0, failed: 0, skipped: 0 },
     mcpServers: { success: 0, failed: 0, skipped: 0 },
+    plugins: { success: 0, failed: 0, skipped: 0 },
     markdownFiles: { success: 0, failed: 0, skipped: 0 },
     uiConfig: { success: 0, failed: 0, skipped: 0 },
     terminalConfig: { success: 0, failed: 0, skipped: 0 },
@@ -675,6 +853,143 @@ function importConfigs(importData, options = {}) {
       }
     }
 
+    // 导入 Plugins
+    if (importData.data.plugins && importData.data.plugins.length > 0) {
+      const plugins = importData.data.plugins;
+
+      try {
+        for (const plugin of plugins) {
+          try {
+            const pluginType = plugin.type || 'legacy';
+
+            // Determine target directory based on plugin type
+            let targetDir;
+            let registryPath;
+
+            if (pluginType === 'legacy') {
+              targetDir = path.join(LEGACY_PLUGINS_DIR, plugin.directory || plugin.name);
+              registryPath = LEGACY_PLUGINS_REGISTRY;
+            } else if (pluginType === 'native') {
+              // SECURITY: Never trust installPath from import data - construct it safely
+              const pluginId = plugin.id || plugin.name;
+              if (!pluginId) {
+                console.warn('[ConfigImport] Native plugin missing id/name, skipping');
+                results.plugins.failed++;
+                continue;
+              }
+              targetDir = path.join(os.homedir(), '.claude', 'plugins', pluginId);
+              registryPath = NATIVE_PLUGINS_REGISTRY;
+            } else {
+              console.warn(`[ConfigImport] Unknown plugin type: ${pluginType}`);
+              results.plugins.failed++;
+              continue;
+            }
+
+            // Check if plugin exists
+            if (fs.existsSync(targetDir)) {
+              if (!overwrite) {
+                results.plugins.skipped++;
+                continue;
+              }
+              // Remove existing plugin directory
+              fs.rmSync(targetDir, { recursive: true, force: true });
+            }
+
+            // Create plugin directory
+            ensureDir(targetDir);
+
+            // Write all plugin files from base64 content
+            const files = Array.isArray(plugin.files) ? plugin.files : [];
+            let failed = false;
+
+            for (const file of files) {
+              const filePath = resolveSafePath(targetDir, file.path);
+              if (!filePath) {
+                failed = true;
+                break;
+              }
+
+              ensureDir(path.dirname(filePath));
+
+              try {
+                if (file.encoding === SKILL_FILE_ENCODING) {
+                  fs.writeFileSync(filePath, Buffer.from(file.content || '', SKILL_FILE_ENCODING));
+                } else {
+                  fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
+                }
+              } catch (err) {
+                console.error(`[ConfigImport] Failed to write plugin file ${file.path}:`, err);
+                failed = true;
+                break;
+              }
+            }
+
+            if (failed || files.length === 0) {
+              results.plugins.failed++;
+              continue;
+            }
+
+            // Update appropriate registry
+            try {
+              ensureDir(path.dirname(registryPath));
+
+              if (pluginType === 'legacy') {
+                // Update legacy registry.json
+                const registry = readJsonFileSafe(registryPath) || {};
+                const pluginKey = plugin.directory || plugin.name;
+
+                if (plugin.registryEntry) {
+                  registry[pluginKey] = plugin.registryEntry;
+                } else {
+                  registry[pluginKey] = {
+                    name: plugin.name,
+                    version: plugin.version,
+                    description: plugin.description,
+                    author: plugin.author,
+                    installedAt: new Date().toISOString()
+                  };
+                }
+
+                fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2), 'utf8');
+              } else if (pluginType === 'native') {
+                // Update native installed_plugins.json
+                const installedPlugins = readJsonFileSafe(registryPath) || {};
+                const pluginId = plugin.id || plugin.name;
+
+                if (plugin.registryEntry) {
+                  installedPlugins[pluginId] = {
+                    ...plugin.registryEntry,
+                    installPath: targetDir
+                  };
+                } else {
+                  installedPlugins[pluginId] = {
+                    name: plugin.name,
+                    version: plugin.version,
+                    description: plugin.description,
+                    author: plugin.author,
+                    installPath: targetDir,
+                    installedAt: new Date().toISOString()
+                  };
+                }
+
+                fs.writeFileSync(registryPath, JSON.stringify(installedPlugins, null, 2), 'utf8');
+              }
+
+              results.plugins.success++;
+            } catch (err) {
+              console.error(`[ConfigImport] Failed to update plugin registry for ${plugin.name}:`, err);
+              results.plugins.failed++;
+            }
+          } catch (err) {
+            console.error(`[ConfigImport] Failed to import plugin ${plugin.name}:`, err);
+            results.plugins.failed++;
+          }
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入 Plugins 失败:', err);
+      }
+    }
+
     // 导入 Commands
     if (commands && commands.length > 0) {
       try {
@@ -752,8 +1067,15 @@ function importConfigs(importData, options = {}) {
     // 导入 Markdown 文件
     if (markdownFiles && Object.keys(markdownFiles).length > 0 && overwrite) {
       const { PATHS } = require('../../config/paths');
+      // SECURITY: Whitelist allowed markdown files to prevent path traversal
+      const ALLOWED_MARKDOWN_FILES = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']);
       for (const [fileName, content] of Object.entries(markdownFiles)) {
         try {
+          if (!ALLOWED_MARKDOWN_FILES.has(fileName)) {
+            console.warn(`[ConfigImport] Skipping disallowed markdown file: ${fileName}`);
+            results.markdownFiles.failed++;
+            continue;
+          }
           const filePath = path.join(PATHS.base, fileName);
           fs.writeFileSync(filePath, content, 'utf8');
           results.markdownFiles.success++;
@@ -952,6 +1274,7 @@ function generateImportSummary(results) {
     { key: 'commands', label: 'Commands' },
     { key: 'rules', label: 'Rules' },
     { key: 'mcpServers', label: 'MCP服务器' },
+    { key: 'plugins', label: '插件' },
     { key: 'markdownFiles', label: 'Markdown文件' },
     { key: 'uiConfig', label: 'UI配置' },
     { key: 'terminalConfig', label: '终端配置' },
