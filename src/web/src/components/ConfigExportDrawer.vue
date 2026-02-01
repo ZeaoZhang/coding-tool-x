@@ -76,6 +76,10 @@
                 <n-text depth="3">频道:</n-text>
                 <n-text>{{ importPreview.counts.channels }}</n-text>
               </div>
+              <div class="stat-item">
+                <n-text depth="3">插件:</n-text>
+                <n-text>{{ importPreview.counts.plugins || 0 }}</n-text>
+              </div>
             </div>
 
             <n-checkbox v-model:checked="overwriteExisting" style="margin-top: 12px;">

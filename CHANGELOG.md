@@ -4,6 +4,29 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.0.1] - 2026-02-01
+
+### Added
+- 📦 **插件导出/导入功能** - 配置导出系统新增插件支持
+  - 支持导出 Legacy 插件 (`~/.claude/cc-tool/plugins/`)
+  - 支持导出 Native 插件 (`~/.claude/plugins/`)
+  - 完整文件快照（base64 编码）
+  - 自动过滤敏感文件（.env、credentials、keys）
+  - 支持插件导入并自动更新注册表
+  - UI 显示插件数量统计
+
+### Security
+- 🔒 **修复路径遍历漏洞** - 加强导入安全性
+  - 修复 Native 插件导入路径注入漏洞
+  - 修复 Markdown 文件路径遍历漏洞
+  - 添加 Markdown 文件白名单验证（仅允许 CLAUDE.md、AGENTS.md、GEMINI.md）
+  - 强化路径安全验证
+
+### Changed
+- 📊 **配置导出版本升级** - 从 v1.1.0 升级到 v1.2.0
+  - 新增 `plugins` 字段
+  - 保持向后兼容（v1.1.0 导出仍可导入）
+
 ## [2.6.0] - 2026-01-29
 
 ### Added

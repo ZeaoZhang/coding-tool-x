@@ -25,7 +25,8 @@ function buildPreviewSummary(data) {
     counts: {
       permissionTemplates: (data.data.permissionTemplates || []).length,
       configTemplates: (data.data.configTemplates || []).length,
-      channels: (data.data.channels || []).length
+      channels: (data.data.channels || []).length,
+      plugins: (data.data.plugins || []).length
     },
     items: {
       permissionTemplates: (data.data.permissionTemplates || []).map(t => ({
@@ -42,6 +43,11 @@ function buildPreviewSummary(data) {
         id: c.id,
         name: c.name,
         type: c.type
+      })),
+      plugins: (data.data.plugins || []).map(p => ({
+        name: p.name,
+        type: p.type,
+        version: p.version
       }))
     }
   };
