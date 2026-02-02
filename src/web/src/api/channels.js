@@ -160,6 +160,16 @@ export async function testClaudeChannelSpeed(channelId, timeout = 20000) {
 }
 
 /**
+ * 获取渠道可用模型列表
+ */
+export async function fetchChannelModels(channelId, channelType = 'claude') {
+  const response = await client.get(`/channels/${channelId}/models`, {
+    params: { type: channelType }
+  })
+  return response.data
+}
+
+/**
  * 测试所有 Claude 渠道速度
  */
 export async function testAllClaudeChannelsSpeed(timeout = 20000) {

@@ -7,11 +7,13 @@ const {
   updateChannel,
   deleteChannel,
   getCurrentSettings,
-  getBestChannelForRestore
+  getBestChannelForRestore,
+  updateClaudeSettingsWithModelConfig
 } = require('../services/channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
+const { fetchModelsFromProvider } = require('../services/model-detector');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
 
 // GET /api/channels - Get all channels with health status
@@ -147,6 +149,10 @@ router.post('/:id/apply-to-settings', async (req, res) => {
       const { stopProxyServer } = require('../proxy-server');
       await stopProxyServer({ clearStartTime: false });
 
+      // Re-apply channel settings after proxy stop to prevent race condition
+      // (stopProxyServer restores backup, then we overwrite it with current channel)
+      updateClaudeSettingsWithModelConfig(channel);
+
       console.log(`✅ 已停���动态切换，默认使用当前渠道`);
       broadcastLog({
         type: 'action',
@@ -212,6 +218,51 @@ router.post('/:id/speed-test', async (req, res) => {
   } catch (error) {
     console.error('Error testing channel speed:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/channels/:id/models - Get available models for a channel
+router.get('/:id/models', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const VALID_CHANNEL_TYPES = ['claude', 'codex', 'gemini', 'openai_compatible'];
+    const { type = 'claude' } = req.query;
+
+    if (!VALID_CHANNEL_TYPES.includes(type)) {
+      return res.status(400).json({ error: 'Invalid channel type', channelId: id });
+    }
+
+    const channels = getAllChannels();
+    const channel = channels.find(ch => ch.id === id);
+
+    if (!channel) {
+      return res.status(404).json({ error: '渠道不存在' });
+    }
+
+    // If no type specified or type is 'claude', auto-detect
+    let channelType = type;
+    if (!type || type === 'claude') {
+      const { detectChannelType } = require('../services/model-detector');
+      channelType = detectChannelType(channel);
+      console.log(`[API] Auto-detected channel type: ${channelType} for ${channel.name}`);
+    }
+
+    const result = await fetchModelsFromProvider(channel, channelType);
+
+    res.json({
+      channelId: id,
+      models: result.models,
+      supported: result.supported,
+      cached: result.cached,
+      fetchedAt: result.lastChecked || new Date().toISOString(),
+      error: result.error
+    });
+  } catch (error) {
+    console.error('Error fetching channel models:', error);
+    res.status(500).json({
+      error: '获取模型列表失败',
+      channelId: req.params.id
+    });
   }
 });
 

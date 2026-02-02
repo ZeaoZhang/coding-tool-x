@@ -193,10 +193,10 @@ function updateChannel(channelId, updates) {
     throw new Error('Channel not found');
   }
 
-  const channel = data.channels[index];
+  const oldChannel = data.channels[index];
 
   // 检查名称冲突
-  if (updates.name && updates.name !== channel.name) {
+  if (updates.name && updates.name !== oldChannel.name) {
     const existing = data.channels.find(c => c.name === updates.name && c.id !== channelId);
     if (existing) {
       throw new Error(`Channel name "${updates.name}" already exists`);
@@ -204,12 +204,42 @@ function updateChannel(channelId, updates) {
   }
 
   data.channels[index] = {
-    ...channel,
+    ...oldChannel,
     ...updates,
     id: channelId, // 保持 ID 不变
-    createdAt: channel.createdAt, // 保持创建时间
+    createdAt: oldChannel.createdAt, // 保持创建时间
     updatedAt: Date.now()
   };
+
+  // Get proxy status
+  const { getGeminiProxyStatus } = require('../gemini-proxy-server');
+  const proxyStatus = getGeminiProxyStatus();
+  const isProxyRunning = proxyStatus.running;
+
+  // Fix 1: Detect enabled toggle (false → true) when proxy is OFF
+  if (!isProxyRunning && !oldChannel.enabled && data.channels[index].enabled) {
+    console.log(`[Gemini Settings-sync] Proxy is OFF and channel "${data.channels[index].name}" was enabled, syncing .env...`);
+    applyChannelToSettings(channelId, data.channels);
+  }
+
+  // Fix 2: Single-channel enforcement when proxy is OFF
+  if (!isProxyRunning && data.channels[index].enabled && !oldChannel.enabled) {
+    // Disable all other channels
+    data.channels.forEach((ch, i) => {
+      if (i !== index && ch.enabled) {
+        ch.enabled = false;
+      }
+    });
+    console.log(`[Gemini Single-channel mode] Enabled "${data.channels[index].name}", disabled all others`);
+  }
+
+  // Fix 3: Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !data.channels[index].enabled && oldChannel.enabled) {
+    const enabledCount = data.channels.filter(ch => ch.enabled).length;
+    if (enabledCount === 0) {
+      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
+    }
+  }
 
   saveChannels(data);
 
@@ -217,6 +247,65 @@ function updateChannel(channelId, updates) {
   writeGeminiConfigForMultiChannel(data.channels);
 
   return data.channels[index];
+}
+
+/**
+ * 将指定渠道应用到 Gemini 配置文件
+ *
+ * @param {string} channelId - 渠道 ID
+ * @param {Array} channels - 渠道列表（可选，避免重复读取）
+ * @returns {Object} 应用的渠道
+ */
+function applyChannelToSettings(channelId, channels = null) {
+  const data = channels ? { channels } : loadChannels();
+  const channel = data.channels.find(c => c.id === channelId);
+
+  if (!channel) {
+    throw new Error('Channel not found');
+  }
+
+  const geminiDir = getGeminiDir();
+
+  if (!fs.existsSync(geminiDir)) {
+    fs.mkdirSync(geminiDir, { recursive: true });
+  }
+
+  const envPath = path.join(geminiDir, '.env');
+
+  // 构建 .env 内容
+  const envContent = `GOOGLE_GEMINI_BASE_URL=${channel.baseUrl}
+GEMINI_API_KEY=${channel.apiKey}
+GEMINI_MODEL=${channel.model}
+`;
+
+  fs.writeFileSync(envPath, envContent, 'utf8');
+
+  // 设置 .env 文件权限为 600 (仅所有者可读写)
+  if (process.platform !== 'win32') {
+    fs.chmodSync(envPath, 0o600);
+  }
+
+  // 确保 settings.json 存在并配置正确的认证模式
+  const settingsPath = path.join(geminiDir, 'settings.json');
+  let settings = {};
+
+  if (fs.existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    } catch (err) {
+      console.warn('[Gemini Channels] Failed to read settings.json, creating new');
+    }
+  }
+
+  // 设置认证模式为 gemini-api-key（第三方 API）
+  settings.security = settings.security || {};
+  settings.security.auth = settings.security.auth || {};
+  settings.security.auth.selectedType = 'gemini-api-key';
+
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+
+  console.log(`[Gemini Channels] Applied channel ${channel.name} to .env`);
+  return channel;
 }
 
 // 删除渠道
@@ -329,5 +418,6 @@ module.exports = {
   getEnabledChannels,
   saveChannelOrder,
   isProxyConfig,
-  getGeminiDir
+  getGeminiDir,
+  applyChannelToSettings
 };

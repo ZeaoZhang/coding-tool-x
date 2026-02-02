@@ -10,7 +10,7 @@ const { broadcastLog } = require('../websocket-server');
 
 module.exports = (config) => {
   // GET /api/sessions/search/global - Search sessions across all projects
-  router.get('/search/global', (req, res) => {
+  router.get('/search/global', async (req, res) => {
     try {
       const { keyword, context } = req.query;
 
@@ -19,7 +19,7 @@ module.exports = (config) => {
       }
 
       const contextLength = context ? parseInt(context) : 35;
-      const results = searchSessionsAcrossProjects(config, keyword, contextLength);
+      const results = await searchSessionsAcrossProjects(config, keyword, contextLength);
 
       res.json({
         keyword,
@@ -33,10 +33,10 @@ module.exports = (config) => {
   });
 
   // GET /api/sessions/recent - Get recent sessions across all projects
-  router.get('/recent/list', (req, res) => {
+  router.get('/recent/list', async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 5;
-      const sessions = getRecentSessions(config, limit);
+      const sessions = await getRecentSessions(config, limit);
       res.json({ sessions });
     } catch (error) {
       console.error('Error fetching recent sessions:', error);

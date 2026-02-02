@@ -140,12 +140,6 @@
           @click="showMcpDrawer = true"
         />
 
-        <!-- Plugins Button -->
-        <HeaderButton
-          :icon="ExtensionPuzzleOutline"
-          tooltip="插件管理"
-          @click="showPluginsDrawer = true"
-        />
 
         <!-- Config Templates Button -->
         <HeaderButton
@@ -230,7 +224,18 @@
     <RecentSessionsDrawer v-model:visible="showRecentDrawer" :channel="currentChannel" />
 
     <!-- Favorites Drawer -->
-    <FavoritesDrawer v-model:visible="showFavoritesDrawer" />
+    <FavoritesDrawer v-model:visible="showFavoritesDrawer" @view-history="handleViewHistoryFromFavorites" />
+
+    <!-- Chat History Drawer -->
+    <ChatHistoryDrawer
+      ref="chatHistoryRef"
+      v-if="chatHistorySession"
+      v-model:show="showChatHistory"
+      :project-name="chatHistorySession.projectName"
+      :session-id="chatHistorySession.sessionId"
+      :session-alias="chatHistorySession.alias"
+      :channel="chatHistoryChannel"
+    />
 
     <!-- Settings Drawer -->
     <SettingsDrawer v-model:visible="showSettingsDrawer" />
@@ -441,13 +446,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
 import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, ShieldCheckmarkOutline, CloudDownloadOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
+import ChatHistoryDrawer from './ChatHistoryDrawer.vue'
 import SettingsDrawer from './SettingsDrawer.vue'
 import McpDrawer from './McpDrawer.vue'
 import PromptsDrawer from './PromptsDrawer.vue'
@@ -521,6 +527,12 @@ const showCommandsDrawer = ref(false)
 const showAgentsDrawer = ref(false)
 const showRulesDrawer = ref(false)
 const showPluginsDrawer = ref(false)
+
+// Chat history drawer state
+const showChatHistory = ref(false)
+const chatHistorySession = ref(null)
+const chatHistoryChannel = ref(null)
+const chatHistoryRef = ref(null)
 
 // 环境变量冲突检测
 const envConflicts = ref([])
@@ -709,6 +721,16 @@ function openRulesDrawer() {
 
 function openPluginsDrawer() {
   showPluginsDrawer.value = true
+}
+
+// Handle view history from favorites
+function handleViewHistoryFromFavorites({ session, channel }) {
+  chatHistorySession.value = session
+  chatHistoryChannel.value = channel
+  showChatHistory.value = true
+  nextTick(() => {
+    chatHistoryRef.value?.open()
+  })
 }
 </script>
 

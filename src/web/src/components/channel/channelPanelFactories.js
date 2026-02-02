@@ -7,7 +7,8 @@ import {
   resetChannelHealth,
   testClaudeChannelSpeed,
   testCodexChannelSpeed,
-  testGeminiChannelSpeed
+  testGeminiChannelSpeed,
+  fetchChannelModels
 } from '../../api/channels'
 import { claudePresets, presetCategories, getPresetById } from '../../config/claudePresets'
 import {
@@ -167,6 +168,13 @@ const channelPanelFactories = {
             type: 'text',
             placeholder: 'https://（选填）',
             validate: (value) => validateHttpUrl('官网链接', value, { required: false })
+          },
+          {
+            key: 'speedTestModel',
+            label: '测速模型',
+            type: 'select',
+            placeholder: '选择用于测速的模型（留空则自动检测）',
+            description: '指定用于速度测试的模型，留空则使用自动检测'
           }
         ]
       },
@@ -179,25 +187,25 @@ const channelPanelFactories = {
           {
             key: 'modelConfig.model',
             label: '主模型',
-            type: 'text',
+            type: 'autocomplete',
             placeholder: '如 glm-4.6'
           },
           {
             key: 'modelConfig.haikuModel',
             label: 'Haiku 模型',
-            type: 'text',
+            type: 'autocomplete',
             placeholder: '如 glm-4.5-air'
           },
           {
             key: 'modelConfig.sonnetModel',
             label: 'Sonnet 模型',
-            type: 'text',
+            type: 'autocomplete',
             placeholder: '如 glm-4.6'
           },
           {
             key: 'modelConfig.opusModel',
             label: 'Opus 模型',
-            type: 'text',
+            type: 'autocomplete',
             placeholder: '如 glm-4.6'
           }
         ]
@@ -226,6 +234,7 @@ const channelPanelFactories = {
       baseUrl: 'https://api.anthropic.com',
       apiKey: '',
       websiteUrl: 'https://www.anthropic.com',
+      speedTestModel: '',
       modelConfig: {
         model: '',
         haikuModel: '',
@@ -235,7 +244,10 @@ const channelPanelFactories = {
       proxyUrl: '',
       maxConcurrency: null,
       weight: 1,
-      enabled: true
+      enabled: true,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null
     }),
     mapChannelToForm: (channel) => ({
       presetId: channel.presetId || 'official',
@@ -243,6 +255,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       websiteUrl: channel.websiteUrl || '',
+      speedTestModel: channel.speedTestModel || '',
       modelConfig: {
         model: channel.modelConfig?.model || '',
         haikuModel: channel.modelConfig?.haikuModel || '',
@@ -252,7 +265,10 @@ const channelPanelFactories = {
       proxyUrl: channel.proxyUrl || '',
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
-      enabled: channel.enabled !== false
+      enabled: channel.enabled !== false,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null
     }),
     onPresetChange: (presetId, form) => {
       const preset = getPresetById(presetId)
@@ -274,6 +290,40 @@ const channelPanelFactories = {
 
       return newForm
     },
+    fetchModelsForChannel: async (channelId, form) => {
+      form.modelsFetching = true
+      form.modelsFetchError = null
+      form.modelsFetchErrorHint = null
+      try {
+        const result = await fetchChannelModels(channelId, 'claude')
+        if (result.supported) {
+          form.availableModels = result.models.map(m => ({
+            label: m,
+            value: m
+          }))
+
+          // Show info message if using fallback default model
+          if (result.fallbackUsed && result.models.length > 0) {
+            form.modelsFetchError = result.error || '无法自动获取模型列表（API 端点受保护）'
+            form.modelsFetchErrorHint = result.errorHint || '建议手动输入模型名称，例如：claude-sonnet-4-5、claude-3-5-haiku-20241022、claude-3-opus-20240229'
+          }
+        } else {
+          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchErrorHint = result.errorHint
+        }
+      } catch (error) {
+        // Try to extract error details from response
+        const errorData = error.response?.data
+        if (errorData) {
+          form.modelsFetchError = errorData.error || error.message || '获取模型列表失败'
+          form.modelsFetchErrorHint = errorData.errorHint
+        } else {
+          form.modelsFetchError = error.message || '获取模型列表失败'
+        }
+      } finally {
+        form.modelsFetching = false
+      }
+    },
     testFn: testClaudeChannelSpeed,
     api: {
       fetch: async () => {
@@ -292,7 +342,8 @@ const channelPanelFactories = {
             enabled: form.enabled,
             presetId: form.presetId,
             modelConfig: form.modelConfig,
-            proxyUrl: form.proxyUrl || ''
+            proxyUrl: form.proxyUrl || '',
+            speedTestModel: form.speedTestModel || null
           }
         )
       },
@@ -307,7 +358,8 @@ const channelPanelFactories = {
           enabled: form.enabled,
           presetId: form.presetId,
           modelConfig: form.modelConfig,
-          proxyUrl: form.proxyUrl || ''
+          proxyUrl: form.proxyUrl || '',
+          speedTestModel: form.speedTestModel || null
         })
       },
       toggle: async (channel, enabled) => {

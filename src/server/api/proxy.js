@@ -36,7 +36,23 @@ function saveActiveChannelId(channelId) {
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
 }
 
-// 从 settings.json 找到当前激活的渠道
+
+// 加载上次激活的渠道ID
+function loadActiveChannelId() {
+  const filePath = path.join(os.homedir(), '.claude', 'cc-tool', 'active-channel.json');
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content);
+      return data.activeChannelId || null;
+    }
+  } catch (error) {
+    console.error('[Proxy] Error loading active channel ID:', error);
+  }
+  return null;
+}
+
+// 从 settings.json 找到当前激活的渠道（多级回退策略）
 function findActiveChannelFromSettings() {
   try {
     const settings = readSettings();
@@ -49,25 +65,57 @@ function findActiveChannelFromSettings() {
 
     // 如果 apiKey 仍为空，尝试从 apiKeyHelper 提取
     if (!apiKey && settings?.apiKeyHelper) {
-      const match = settings.apiKeyHelper.match(/['"]([^'"]+)['"]/);
+      const match = settings.apiKeyHelper.match(/['\"]([^'\"]+)['\"]/)
       if (match && match[1]) {
         apiKey = match[1];
       }
     }
 
     if (!baseUrl || !apiKey || baseUrl.includes('127.0.0.1')) {
+      console.log('[Proxy] Invalid settings: empty baseUrl/apiKey or localhost detected');
       return null;
     }
 
-    // 找到匹配的渠道
     const channels = getAllChannels();
-    const matchingChannel = channels.find(ch =>
+
+    // Level 1: Exact match (baseUrl + apiKey)
+    let matchingChannel = channels.find(ch =>
       ch.baseUrl === baseUrl && ch.apiKey === apiKey
     );
 
-    return matchingChannel;
+    if (matchingChannel) {
+      console.log(`[Proxy] Level 1 - Exact match: ${matchingChannel.name}`);
+      return matchingChannel;
+    }
+
+    // Level 2: Match by baseUrl only (when apiKey differs)
+    matchingChannel = channels.find(ch => ch.baseUrl === baseUrl);
+    if (matchingChannel) {
+      console.log(`[Proxy] Level 2 - Matched by baseUrl only: ${matchingChannel.name}`);
+      return matchingChannel;
+    }
+
+    // Level 3: Use active-channel.json for last known active channel
+    const activeChannelId = loadActiveChannelId();
+    if (activeChannelId) {
+      matchingChannel = channels.find(ch => ch.id === activeChannelId);
+      if (matchingChannel) {
+        console.log(`[Proxy] Level 3 - Using last active channel: ${matchingChannel.name}`);
+        return matchingChannel;
+      }
+    }
+
+    // Level 4: Return first enabled channel as last resort
+    matchingChannel = channels.find(ch => ch.enabled !== false);
+    if (matchingChannel) {
+      console.log(`[Proxy] Level 4 - Using first enabled channel: ${matchingChannel.name}`);
+      return matchingChannel;
+    }
+
+    console.log('[Proxy] No matching channel found after all fallback levels');
+    return null;
   } catch (err) {
-    console.error('Error finding active channel:', err);
+    console.error('[Proxy] Error finding active channel:', err);
     return null;
   }
 }
@@ -102,6 +150,15 @@ router.post('/start', async (req, res) => {
     if (!settingsExists()) {
       return res.status(400).json({
         error: 'Claude Code settings.json not found. Please run Claude Code at least once.'
+      });
+    }
+
+    // Fix 4: Validate enabled channels count before starting proxy
+    const allChannels = getAllChannels();
+    const enabledCount = allChannels.filter(ch => ch.enabled !== false).length;
+    if (enabledCount === 0) {
+      return res.status(400).json({
+        error: '没有启用的渠道。请至少启用一个渠道后再启动动态切换。'
       });
     }
 

@@ -21,6 +21,8 @@
               :show-project="true"
               hide-fork
               hide-delete
+              class="clickable-session"
+              @click="$emit('view-history', { session, channel: 'claude' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('claude', session)"
               @launch-web="(session, targetTool) => handleLaunchWeb('claude', session, targetTool)"
@@ -60,6 +62,8 @@
               :show-project="true"
               hide-fork
               hide-delete
+              class="clickable-session"
+              @click="$emit('view-history', { session, channel: 'codex' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('codex', session)"
               @launch-web="(session, targetTool) => handleLaunchWeb('codex', session, targetTool)"
@@ -99,6 +103,8 @@
               :show-project="true"
               hide-fork
               hide-delete
+              class="clickable-session"
+              @click="$emit('view-history', { session, channel: 'gemini' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('gemini', session)"
               @launch-web="(session, targetTool) => handleLaunchWeb('gemini', session, targetTool)"
@@ -181,7 +187,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:visible'])
+const emit = defineEmits(['update:visible', 'view-history'])
 const router = useRouter()
 
 const drawerVisible = computed({
@@ -361,5 +367,9 @@ async function handleRemoveFavorite(channel, session) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.clickable-session {
+  cursor: pointer;
 }
 </style>

@@ -6,6 +6,7 @@ import Terminal from '../views/Terminal.vue'
 import WorkspaceManager from '../views/WorkspaceManager.vue'
 import ConfigTemplates from '../views/ConfigTemplates.vue'
 import SkillManager from '../views/SkillManager.vue'
+import PluginManager from '../views/PluginManager.vue'
 
 const routes = [
   {
@@ -93,6 +94,12 @@ const routes = [
     path: '/skills',
     name: 'skills',
     component: SkillManager
+  },
+  // 插件管理路由
+  {
+    path: '/plugins',
+    name: 'plugins',
+    component: PluginManager
   },
   // 404 重定向到首页
   {

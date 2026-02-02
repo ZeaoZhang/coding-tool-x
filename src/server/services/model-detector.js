@@ -23,6 +23,78 @@ const MODEL_PRIORITY = {
   gemini: ['gemini-2.5-flash', 'gemini-2.5-pro']
 };
 
+const PROVIDER_CAPABILITIES = {
+  claude: {
+    supportsModelList: false,
+    modelListEndpoint: null,
+    fallbackStrategy: 'probe'
+  },
+  codex: {
+    supportsModelList: true,
+    modelListEndpoint: '/v1/models',
+    authHeader: 'Authorization: Bearer'
+  },
+  gemini: {
+    supportsModelList: false,
+    modelListEndpoint: null,
+    fallbackStrategy: 'probe'
+  },
+  openai_compatible: {
+    supportsModelList: true,
+    modelListEndpoint: '/v1/models',
+    authHeader: 'Authorization: Bearer'
+  }
+};
+
+/**
+ * Auto-detect channel type based on baseUrl
+ * @param {Object} channel - Channel configuration
+ * @returns {string} - 'claude' | 'codex' | 'gemini' | 'openai_compatible'
+ */
+function detectChannelType(channel) {
+  try {
+    // Parse the URL to extract hostname
+    const parsedUrl = new URL(channel.baseUrl);
+    const hostname = parsedUrl.hostname.toLowerCase();
+
+    // Check if it's official Anthropic API (hostname only, not path)
+    if (hostname.includes('anthropic.com') || hostname.includes('claude.ai')) {
+      return 'claude';
+    }
+
+    // Check if it's Gemini (hostname only)
+    if (hostname.includes('generativelanguage.googleapis.com') || hostname.includes('gemini')) {
+      return 'gemini';
+    }
+
+    // Check if it's OpenAI official (hostname only)
+    if (hostname.includes('api.openai.com')) {
+      return 'codex';
+    }
+
+    // All other third-party proxies default to OpenAI compatible
+    // Including: 88code, anyrouter, internal proxies, etc.
+    // This correctly handles URLs like https://code.newcli.com/claude/aws
+    return 'openai_compatible';
+  } catch (error) {
+    // If URL parsing fails, fall back to string matching on full URL
+    console.warn(`[ModelDetector] Failed to parse URL ${channel.baseUrl}: ${error.message}`);
+    const baseUrl = channel.baseUrl.toLowerCase();
+
+    if (baseUrl.includes('anthropic.com') || baseUrl.includes('claude.ai')) {
+      return 'claude';
+    }
+    if (baseUrl.includes('generativelanguage.googleapis.com')) {
+      return 'gemini';
+    }
+    if (baseUrl.includes('api.openai.com')) {
+      return 'codex';
+    }
+
+    return 'openai_compatible';
+  }
+}
+
 // Model name normalization mapping
 const MODEL_ALIASES = {
   // Claude variants
@@ -340,11 +412,253 @@ function getCachedModelInfo(channelId) {
   return null;
 }
 
+/**
+ * Fetch available models from provider's /v1/models endpoint
+ * @param {Object} channel - Channel configuration
+ * @param {string} channelType - 'claude' | 'codex' | 'gemini' | 'openai_compatible'
+ * @returns {Promise<Object>} { models: string[], supported: boolean, cached: boolean, error: string|null, fallbackUsed: boolean }
+ */
+async function fetchModelsFromProvider(channel, channelType) {
+  // If no type specified or type is 'claude', auto-detect
+  if (!channelType || channelType === 'claude') {
+    channelType = detectChannelType(channel);
+    console.log(`[ModelDetector] Auto-detected channel type: ${channelType} for ${channel.name}`);
+  }
+
+  // Check if provider supports model listing
+  const capability = PROVIDER_CAPABILITIES[channelType];
+  if (!capability || !capability.supportsModelList) {
+    return {
+      models: [],
+      supported: false,
+      fallbackUsed: true,
+      cached: false,
+      error: null
+    };
+  }
+
+  const cache = loadModelCache();
+  const cacheKey = channel.id;
+
+  // Check cache first
+  if (cache[cacheKey] && isCacheValid(cache[cacheKey]) && cache[cacheKey].fetchedModels) {
+    return {
+      models: cache[cacheKey].fetchedModels || [],
+      supported: true,
+      cached: true,
+      fallbackUsed: false,
+      error: null,
+      lastChecked: cache[cacheKey].lastChecked
+    };
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const baseUrl = channel.baseUrl.trim().replace(/\/+$/, '');
+      const endpoint = capability.modelListEndpoint;
+      const requestUrl = `${baseUrl}${endpoint}`;
+
+      const parsedUrl = new URL(requestUrl);
+      const isHttps = parsedUrl.protocol === 'https:';
+      const httpModule = isHttps ? https : http;
+
+      const headers = {
+        'User-Agent': 'Coding-Tool-ModelDetector/1.0',
+        'Accept': 'application/json'
+      };
+
+      // Add authentication header
+      if (capability.authHeader && channel.apiKey) {
+        headers['Authorization'] = `Bearer ${channel.apiKey}`;
+      }
+
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (isHttps ? 443 : 80),
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'GET',
+        timeout: TEST_TIMEOUT_MS,
+        headers
+      };
+
+      const req = httpModule.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          // Handle different status codes
+          if (res.statusCode === 200) {
+            try {
+              const response = JSON.parse(data);
+
+              // Parse OpenAI-compatible format: { data: [{ id: "model-name", ... }] }
+              let models = [];
+              if (response.data && Array.isArray(response.data)) {
+                models = response.data
+                  .map(item => item.id || item.model)
+                  .filter(Boolean);
+              }
+
+              // Update cache with fetched models
+              const cacheEntry = {
+                lastChecked: new Date().toISOString(),
+                fetchedModels: models,
+                availableModels: cache[cacheKey]?.availableModels || [],
+                preferredTestModel: cache[cacheKey]?.preferredTestModel || null
+              };
+
+              cache[cacheKey] = cacheEntry;
+              saveModelCache(cache);
+
+              console.log(`[ModelDetector] Fetched ${models.length} models from ${channel.name}`);
+
+              resolve({
+                models,
+                supported: true,
+                cached: false,
+                fallbackUsed: false,
+                error: null,
+                lastChecked: cacheEntry.lastChecked
+              });
+            } catch (parseError) {
+              console.error(`[ModelDetector] Failed to parse models response: ${parseError.message}`);
+              resolve({
+                models: [],
+                supported: true,
+                cached: false,
+                fallbackUsed: true,
+                error: `Parse error: ${parseError.message}`
+              });
+            }
+          } else if (res.statusCode === 401 || res.statusCode === 403) {
+            // Check if it's a Cloudflare protection issue
+            const bodyLower = data.toLowerCase();
+            const isCloudflare = bodyLower.includes('cloudflare') || bodyLower.includes('challenge') || bodyLower.includes('cf-ray');
+
+            let errorMessage;
+            let errorHint;
+
+            if (isCloudflare) {
+              errorMessage = 'Cloudflare 防护拦截，已使用默认模型';
+              errorHint = '该 API 端点受 Cloudflare 保护，已自动使用默认模型 claude-sonnet-4-5';
+              console.warn(`[ModelDetector] Cloudflare protection detected for ${channel.name}, using default model`);
+              resolve({
+                models: ['claude-sonnet-4-5'],
+                supported: true,
+                cached: false,
+                fallbackUsed: true,
+                error: errorMessage,
+                errorHint: errorHint,
+                statusCode: res.statusCode
+              });
+            } else if (res.statusCode === 401) {
+              errorMessage = 'API 密钥认证失败';
+              errorHint = '请检查 API 密钥是否正确配置';
+              console.error(`[ModelDetector] Authentication failed for ${channel.name}: ${res.statusCode} - ${errorMessage}`);
+              resolve({
+                models: [],
+                supported: true,
+                cached: false,
+                fallbackUsed: true,
+                error: errorMessage,
+                errorHint: errorHint,
+                statusCode: res.statusCode
+              });
+            } else {
+              errorMessage = '访问被拒绝';
+              errorHint = '请检查 API 密钥权限或联系服务提供商';
+              console.error(`[ModelDetector] Access denied for ${channel.name}: ${res.statusCode} - ${errorMessage}`);
+              resolve({
+                models: [],
+                supported: true,
+                cached: false,
+                fallbackUsed: true,
+                error: errorMessage,
+                errorHint: errorHint,
+                statusCode: res.statusCode
+              });
+            }
+          } else if (res.statusCode === 404) {
+            console.warn(`[ModelDetector] Model list endpoint not found for ${channel.name}`);
+            resolve({
+              models: [],
+              supported: false,
+              cached: false,
+              fallbackUsed: true,
+              error: '模型列表端点不存在',
+              errorHint: '该 API 可能不支持 /v1/models 接口，请手动输入模型名称',
+              statusCode: 404
+            });
+          } else if (res.statusCode === 429) {
+            console.warn(`[ModelDetector] Rate limited for ${channel.name}`);
+            resolve({
+              models: [],
+              supported: true,
+              cached: false,
+              fallbackUsed: true,
+              error: '请求频率限制',
+              errorHint: '请稍后再试或联系服务提供商提高限额',
+              statusCode: 429
+            });
+          } else {
+            console.error(`[ModelDetector] Unexpected status ${res.statusCode} for ${channel.name}`);
+            resolve({
+              models: [],
+              supported: true,
+              cached: false,
+              fallbackUsed: true,
+              error: `HTTP 错误 ${res.statusCode}`,
+              errorHint: '请检查 API 端点配置或联系服务提供商',
+              statusCode: res.statusCode
+            });
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        console.error(`[ModelDetector] Network error fetching models from ${channel.name}: ${error.message}`);
+        resolve({
+          models: [],
+          supported: true,
+          cached: false,
+          fallbackUsed: true,
+          error: `Network error: ${error.message}`
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        console.error(`[ModelDetector] Timeout fetching models from ${channel.name}`);
+        resolve({
+          models: [],
+          supported: true,
+          cached: false,
+          fallbackUsed: true,
+          error: 'Request timeout'
+        });
+      });
+
+      req.end();
+
+    } catch (error) {
+      console.error(`[ModelDetector] Error in fetchModelsFromProvider: ${error.message}`);
+      resolve({
+        models: [],
+        supported: true,
+        cached: false,
+        fallbackUsed: true,
+        error: error.message
+      });
+    }
+  });
+}
+
 module.exports = {
   probeModelAvailability,
   testModelAvailability,
   normalizeModelName,
   clearCache,
   getCachedModelInfo,
+  fetchModelsFromProvider,
+  detectChannelType,
   MODEL_PRIORITY
 };
