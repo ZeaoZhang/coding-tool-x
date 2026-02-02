@@ -15,6 +15,14 @@ export async function getPlugins() {
 }
 
 /**
+ * 获取市场插件列表
+ */
+export async function getMarketPlugins() {
+  const response = await client.get('/plugins/market')
+  return response.data
+}
+
+/**
  * 获取单个插件详情
  * @param {string} name - 插件名称
  */
@@ -25,10 +33,11 @@ export async function getPlugin(name) {
 
 /**
  * 安装插件
- * @param {string} gitUrl - Git 仓库地址
+ * @param {string} directory - 插件目录路径
+ * @param {object} repo - 仓库信息 { owner, name, branch }
  */
-export async function installPlugin(gitUrl) {
-  const response = await client.post('/plugins/install', { gitUrl })
+export async function installPlugin(directory, repo) {
+  const response = await client.post('/plugins/install', { directory, repo })
   return response.data
 }
 
@@ -82,9 +91,55 @@ export async function addPluginRepo(repo) {
 
 /**
  * 删除插件仓库
- * @param {string} id - 仓库ID
+ * @param {string} owner - 仓库所有者
+ * @param {string} name - 仓库名称
  */
-export async function removePluginRepo(id) {
-  const response = await client.delete(`/plugins/repos/${encodeURIComponent(id)}`)
+export async function removePluginRepo(owner, name) {
+  const response = await client.delete(`/plugins/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`)
+  return response.data
+}
+
+/**
+ * 切换插件仓库启用状态
+ * @param {string} owner - 仓库所有者
+ * @param {string} name - 仓库名称
+ * @param {boolean} enabled - 是否启用
+ */
+export async function togglePluginRepo(owner, name, enabled) {
+  const response = await client.put(`/plugins/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/toggle`, { enabled })
+  return response.data
+}
+
+/**
+ * 同步仓库到 Claude Code marketplace
+ */
+export async function syncPluginRepos() {
+  const response = await client.post('/plugins/repos/sync')
+  return response.data
+}
+
+/**
+ * 同步本地插件列表
+ */
+export async function syncPlugins() {
+  const response = await client.post('/plugins/sync')
+  return response.data
+}
+
+/**
+ * 获取插件 README
+ * @param {string} name - 插件名称
+ * @param {object} repoInfo - 仓库信息 { repoOwner, repoName, repoBranch, directory, source, repoUrl }
+ */
+export async function getPluginReadme(name, repoInfo = {}) {
+  const params = new URLSearchParams()
+  if (repoInfo.repoOwner) params.append('repoOwner', repoInfo.repoOwner)
+  if (repoInfo.repoName) params.append('repoName', repoInfo.repoName)
+  if (repoInfo.repoBranch) params.append('repoBranch', repoInfo.repoBranch)
+  if (repoInfo.directory) params.append('directory', repoInfo.directory)
+  if (repoInfo.source) params.append('source', repoInfo.source)
+  if (repoInfo.repoUrl) params.append('repoUrl', repoInfo.repoUrl)
+
+  const response = await client.get(`/plugins/${encodeURIComponent(name)}/readme?${params.toString()}`)
   return response.data
 }

@@ -187,7 +187,8 @@ function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
     maxConcurrency: extraConfig.maxConcurrency,
     presetId: extraConfig.presetId || 'official',
     modelConfig: extraConfig.modelConfig || null,
-    proxyUrl: extraConfig.proxyUrl || ''
+    proxyUrl: extraConfig.proxyUrl || '',
+    speedTestModel: extraConfig.speedTestModel || null
   });
 
   data.channels.push(newChannel);
@@ -203,6 +204,9 @@ function updateChannel(id, updates) {
     throw new Error('Channel not found');
   }
 
+  // Store old channel data before updates
+  const oldChannel = { ...data.channels[index] };
+
   const merged = { ...data.channels[index], ...updates };
   data.channels[index] = applyChannelDefaults({
     ...merged,
@@ -211,10 +215,49 @@ function updateChannel(id, updates) {
     enabled: merged.enabled,
     presetId: merged.presetId,
     modelConfig: merged.modelConfig,
-    proxyUrl: merged.proxyUrl
+    proxyUrl: merged.proxyUrl,
+    speedTestModel: merged.speedTestModel
   });
 
+  // Get proxy status
+  const { getProxyStatus } = require('../proxy-server');
+  const proxyStatus = getProxyStatus();
+  const isProxyRunning = proxyStatus.running;
+
+  // Fix 1: Detect enabled toggle (false → true) when proxy is OFF
+  if (!isProxyRunning && !oldChannel.enabled && data.channels[index].enabled) {
+    console.log(`[Settings-sync] Proxy is OFF and channel "${data.channels[index].name}" was enabled, syncing settings.json...`);
+    updateClaudeSettingsWithModelConfig(data.channels[index]);
+  }
+
+  // Fix 2: Single-channel enforcement when proxy is OFF
+  if (!isProxyRunning && data.channels[index].enabled && !oldChannel.enabled) {
+    // Disable all other channels
+    data.channels.forEach((ch, i) => {
+      if (i !== index && ch.enabled) {
+        ch.enabled = false;
+      }
+    });
+    console.log(`[Single-channel mode] Enabled "${data.channels[index].name}", disabled all others`);
+  }
+
+  // Fix 3: Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !data.channels[index].enabled && oldChannel.enabled) {
+    const enabledCount = data.channels.filter(ch => ch.enabled).length;
+    if (enabledCount === 0) {
+      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
+    }
+  }
+
   saveChannels(data);
+
+  // Auto-sync settings.json if this is the currently active channel
+  const currentSettings = getCurrentSettings();
+  if (currentSettings && currentSettings.baseUrl === oldChannel.baseUrl) {
+    console.log(`[Auto-sync] Channel "${data.channels[index].name}" is active, syncing settings.json...`);
+    updateClaudeSettingsWithModelConfig(data.channels[index]);
+  }
+
   return data.channels[index];
 }
 
@@ -343,5 +386,6 @@ module.exports = {
   deleteChannel,
   applyChannelToSettings,
   getBestChannelForRestore,
-  updateClaudeSettings
+  updateClaudeSettings,
+  updateClaudeSettingsWithModelConfig
 };

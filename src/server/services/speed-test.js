@@ -199,10 +199,22 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
   // Probe model availability if channel is provided
   let modelProbe = null;
   if (channel) {
-    try {
-      modelProbe = await probeModelAvailability(channel, channelType);
-    } catch (error) {
-      console.error('[SpeedTest] Model detection failed:', error.message);
+    // Check if speedTestModel is explicitly configured
+    if (channel.speedTestModel) {
+      // Use the explicitly configured model for speed testing
+      modelProbe = {
+        preferredTestModel: channel.speedTestModel,
+        availableModels: [channel.speedTestModel],
+        cached: false
+      };
+      console.log(`[SpeedTest] Using configured speedTestModel: ${channel.speedTestModel}`);
+    } else {
+      // Fall back to auto-detection
+      try {
+        modelProbe = await probeModelAvailability(channel, channelType);
+      } catch (error) {
+        console.error('[SpeedTest] Model detection failed:', error.message);
+      }
     }
   }
 
@@ -243,7 +255,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       const sessionId = Math.random().toString(36).substring(2, 15);
       requestBody = JSON.stringify({
         model: testModel,
-        max_tokens: 10,
+        max_tokens: 1,
         stream: true,
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
         system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
@@ -288,7 +300,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
           model: testModel,
           instructions: 'You are Codex.',
           input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
-          max_output_tokens: 10,
+          max_output_tokens: 1,
           stream: false,
           store: false
         });
@@ -309,7 +321,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       testModel = modelProbe?.preferredTestModel || model || 'gemini-2.5-pro';
       requestBody = JSON.stringify({
         model: testModel,
-        max_tokens: 10,
+        max_tokens: 1,
         messages: [{ role: 'user', content: 'Hi' }]
       });
       headers = {
@@ -325,7 +337,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       }
       requestBody = JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 10,
+        max_tokens: 1,
         messages: [{ role: 'user', content: 'Hi' }]
       });
       headers = {
@@ -359,6 +371,41 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
         }
       };
 
+      const UNEXPECTED_ERROR_PATTERNS = [
+        /unexpected/i,
+        /internal.*error/i,
+        /something.*went.*wrong/i,
+        /service.*unavailable/i,
+        /temporarily.*unavailable/i,
+        /try.*again.*later/i,
+        /server.*error/i,
+        /bad.*gateway/i,
+        /gateway.*timeout/i
+      ];
+
+      function containsUnexpectedError(responseBody) {
+        try {
+          const data = typeof responseBody === 'string' ? JSON.parse(responseBody) : responseBody;
+
+          // Check for explicit error field
+          if (data.error) {
+            return { hasError: true, message: data.error.message || data.error };
+          }
+
+          // Check message patterns
+          const message = data.message || data.detail || data.error_description || '';
+          for (const pattern of UNEXPECTED_ERROR_PATTERNS) {
+            if (pattern.test(message)) {
+              return { hasError: true, message };
+            }
+          }
+
+          return { hasError: false };
+        } catch {
+          return { hasError: false };
+        }
+      }
+
       res.on('data', chunk => {
         data += chunk;
         const chunkStr = chunk.toString();
@@ -377,17 +424,19 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
               statusCode: res.statusCode
             }));
           } else if (chunkStr.includes('"detail"') || chunkStr.includes('"error"')) {
-            // 流式响应中的错误
-            resolved = true;
-            const latency = Date.now() - startTime;
-            req.destroy();
-            const errMsg = parseErrorMessage(chunkStr) || '流式响应错误';
-            resolve(createResult({
-              success: false,
-              latency,
-              error: errMsg,
-              statusCode: res.statusCode
-            }));
+            // 流式响应中的错误 - 使用新的错误检测函数
+            const errorCheck = containsUnexpectedError(chunkStr);
+            if (errorCheck.hasError) {
+              resolved = true;
+              const latency = Date.now() - startTime;
+              req.destroy();
+              resolve(createResult({
+                success: false,
+                latency,
+                error: errorCheck.message,
+                statusCode: res.statusCode
+              }));
+            }
           }
         }
       });
@@ -399,14 +448,13 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
 
         // 严格判断：只有 2xx 且没有错误信息才算成功
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          // 检查响应体是否包含错误信息
-          const errMsg = parseErrorMessage(data);
-          if (errMsg && (errMsg.includes('error') || errMsg.includes('Error') ||
-                         errMsg.includes('失败') || errMsg.includes('错误'))) {
+          // 使用新的错误检测函数
+          const errorCheck = containsUnexpectedError(data);
+          if (errorCheck.hasError) {
             resolve(createResult({
               success: false,
               latency,
-              error: errMsg,
+              error: errorCheck.message,
               statusCode: res.statusCode
             }));
           } else {

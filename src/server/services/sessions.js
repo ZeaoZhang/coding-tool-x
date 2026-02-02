@@ -754,8 +754,8 @@ function searchSessions(config, projectName, keyword, contextLength = 15) {
 }
 
 // Get recent sessions across all projects
-function getRecentSessions(config, limit = 5) {
-  const projects = getProjects(config);
+async function getRecentSessions(config, limit = 5) {
+  const projects = await getProjects(config);
   const allSessions = [];
   const forkRelations = getForkRelations();
   const aliases = loadAliases();
@@ -797,24 +797,80 @@ function getRecentSessions(config, limit = 5) {
 }
 
 // Search sessions across all projects
-function searchSessionsAcrossProjects(config, keyword, contextLength = 35) {
-  const projects = getProjects(config);
+async function searchSessionsAcrossProjects(config, keyword, contextLength = 35) {
   const allResults = [];
 
-  projects.forEach(projectName => {
-    const projectResults = searchSessions(config, projectName, keyword, contextLength);
-    const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
+  try {
+    // Search in Claude projects
+    const claudeProjects = await getProjects(config);
+    claudeProjects.forEach(projectName => {
+      const projectResults = searchSessions(config, projectName, keyword, contextLength);
+      const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
 
-    // Add project info to each result
-    projectResults.forEach(result => {
-      allResults.push({
-        ...result,
-        projectName: projectName,
-        projectDisplayName: displayName,
-        projectFullPath: fullPath
+      // Add project info to each result
+      projectResults.forEach(result => {
+        allResults.push({
+          ...result,
+          projectName: projectName,
+          projectDisplayName: displayName,
+          projectFullPath: fullPath,
+          channel: 'claude'
+        });
       });
     });
-  });
+  } catch (error) {
+    console.error('Error searching Claude projects:', error);
+  }
+
+  try {
+    // Search in Codex projects
+    const codexProjectsDir = path.join(os.homedir(), '.codex', 'projects');
+    if (fs.existsSync(codexProjectsDir)) {
+      const codexConfig = { ...config, projectsDir: codexProjectsDir };
+      const codexProjects = await getProjects(codexConfig);
+      codexProjects.forEach(projectName => {
+        const projectResults = searchSessions(codexConfig, projectName, keyword, contextLength);
+        const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
+
+        projectResults.forEach(result => {
+          allResults.push({
+            ...result,
+            projectName: projectName,
+            projectDisplayName: displayName,
+            projectFullPath: fullPath,
+            channel: 'codex'
+          });
+        });
+      });
+    }
+  } catch (error) {
+    console.error('Error searching Codex projects:', error);
+  }
+
+  try {
+    // Search in Gemini projects
+    const geminiProjectsDir = path.join(os.homedir(), '.gemini', 'projects');
+    if (fs.existsSync(geminiProjectsDir)) {
+      const geminiConfig = { ...config, projectsDir: geminiProjectsDir };
+      const geminiProjects = await getProjects(geminiConfig);
+      geminiProjects.forEach(projectName => {
+        const projectResults = searchSessions(geminiConfig, projectName, keyword, contextLength);
+        const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
+
+        projectResults.forEach(result => {
+          allResults.push({
+            ...result,
+            projectName: projectName,
+            projectDisplayName: displayName,
+            projectFullPath: fullPath,
+            channel: 'gemini'
+          });
+        });
+      });
+    }
+  } catch (error) {
+    console.error('Error searching Gemini projects:', error);
+  }
 
   // Sort by match count
   allResults.sort((a, b) => b.matchCount - a.matchCount);

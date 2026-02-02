@@ -85,6 +85,35 @@
                 :placeholder="field.placeholder"
                 @update:value="handlePresetChange"
               />
+              <!-- 测速模型选择器 (支持手动输入) -->
+              <n-auto-complete
+                v-else-if="field.type === 'select' && field.key === 'speedTestModel'"
+                :value="state.formData.speedTestModel"
+                :options="state.formData.availableModels"
+                :placeholder="field.placeholder"
+                :loading="state.formData.modelsFetching"
+                clearable
+                @update:value="(val) => state.formData.speedTestModel = val"
+              >
+                <template v-if="state.formData.modelsFetchError" #empty>
+                  <div style="padding: 8px; color: #d03050; font-size: 12px;">
+                    <div style="font-weight: 500; margin-bottom: 4px;">
+                      {{ state.formData.modelsFetchError }}
+                    </div>
+                    <div v-if="state.formData.modelsFetchErrorHint" style="color: #666; font-size: 11px; line-height: 1.4;">
+                      {{ state.formData.modelsFetchErrorHint }}
+                    </div>
+                  </div>
+                </template>
+              </n-auto-complete>
+              <!-- 自动完成输入框 -->
+              <n-auto-complete
+                v-else-if="field.type === 'autocomplete'"
+                :value="getNestedValue(state.formData, field.key)"
+                :options="state.formData.availableModels"
+                :placeholder="field.placeholder"
+                @update:value="(val) => setNestedValue(state.formData, field.key, val)"
+              />
               <!-- 其他字段 -->
               <component
                 v-else
@@ -110,7 +139,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import {
   NButton,
   NIcon,
@@ -122,7 +151,8 @@ import {
   NInput,
   NSwitch,
   NInputNumber,
-  NSelect
+  NSelect,
+  NAutoComplete
 } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
@@ -144,6 +174,13 @@ const configFactory = channelPanelFactories[props.type] || channelPanelFactories
 const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
+
+// 监听对话框打开，自动获取模型列表
+watch(() => state.showDialog, async (newVal) => {
+  if (newVal && state.editingChannel && config.fetchModelsForChannel) {
+    await handleFetchModels()
+  }
+})
 
 // 预设选项（仅 Claude 有）
 const presetOptions = computed(() => {
@@ -176,6 +213,14 @@ function handlePresetChange(presetId) {
     Object.assign(state.formData, newForm)
   } else {
     state.formData.presetId = presetId
+  }
+}
+
+// 获取模型列表
+async function handleFetchModels() {
+  if (!state.editingChannel) return
+  if (config.fetchModelsForChannel) {
+    await config.fetchModelsForChannel(state.editingChannel.id, state.formData)
   }
 }
 

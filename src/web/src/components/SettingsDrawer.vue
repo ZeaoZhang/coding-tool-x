@@ -5,7 +5,7 @@
         <!-- 左侧菜单 -->
         <div class="settings-sidebar">
           <div class="sidebar-header">
-            <n-icon size="20" color="#18a058">
+            <n-icon size="20" color="var(--text-secondary)">
               <SettingsOutline />
             </n-icon>
             <span class="sidebar-title">设置分类</span>
@@ -39,7 +39,7 @@
           <div v-show="activeMenu === 'terminal'" class="settings-panel">
             <div class="panel-header">
               <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
+                <n-icon size="24" color="var(--text-secondary)">
                   <TerminalOutline />
                 </n-icon>
                 <div>
@@ -141,7 +141,7 @@
           <div v-show="activeMenu === 'appearance'" class="settings-panel">
             <div class="panel-header">
               <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
+                <n-icon size="24" color="var(--text-secondary)">
                   <ColorPaletteOutline />
                 </n-icon>
                 <div>
@@ -253,7 +253,7 @@
           <div v-show="activeMenu === 'notification'" class="settings-panel">
             <div class="panel-header">
               <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
+                <n-icon size="24" color="var(--text-secondary)">
                   <NotificationsOutline />
                 </n-icon>
                 <div>
@@ -422,7 +422,7 @@
           <div v-show="activeMenu === 'advanced'" class="settings-panel">
             <div class="panel-header">
               <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
+                <n-icon size="24" color="var(--text-secondary)">
                   <OptionsOutline />
                 </n-icon>
                 <div>
@@ -685,7 +685,7 @@
                           <n-collapse-item title="按模型自定义单价" name="models">
                             <n-space vertical :size="12">
                               <div v-for="model in getModelsForTool('claude')" :key="model">
-                                <n-card size="small" :bordered="true" style="background-color: var(--n-color-target);">
+                                <n-card size="small" :bordered="true">
                                   <template #header>
                                     <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
                                   </template>
@@ -700,56 +700,48 @@
                                     </div>
 
                                     <div v-if="pricingSettings.claude.models[model].mode === 'custom'" class="model-pricing-fields">
-                                      <div class="option-field" style="margin-bottom: 8px;">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">输入 Tokens</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输入 Tokens</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.claude.models[model].input"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
-                                      <div class="option-field" style="margin-bottom: 8px;">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">输出 Tokens</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输出 Tokens</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.claude.models[model].output"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
-                                      <div class="option-field" style="margin-bottom: 8px;">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">缓存写入</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">缓存写入</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.claude.models[model].cacheCreation"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
-                                      <div class="option-field">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">缓存命中</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">缓存命中</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.claude.models[model].cacheRead"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
                                     </div>
@@ -817,7 +809,7 @@
                           <n-collapse-item title="按模型自定义单价" name="models">
                             <n-space vertical :size="12">
                               <div v-for="model in getModelsForTool('codex')" :key="model">
-                                <n-card size="small" :bordered="true" style="background-color: var(--n-color-target);">
+                                <n-card size="small" :bordered="true">
                                   <template #header>
                                     <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
                                   </template>
@@ -832,30 +824,26 @@
                                     </div>
 
                                     <div v-if="pricingSettings.codex.models[model].mode === 'custom'" class="model-pricing-fields">
-                                      <div class="option-field" style="margin-bottom: 8px;">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">输入 Tokens</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输入 Tokens</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.codex.models[model].input"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
-                                      <div class="option-field">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">输出 Tokens</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输出 Tokens</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.codex.models[model].output"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
                                     </div>
@@ -923,7 +911,7 @@
                           <n-collapse-item title="按模型自定义单价" name="models">
                             <n-space vertical :size="12">
                               <div v-for="model in getModelsForTool('gemini')" :key="model">
-                                <n-card size="small" :bordered="true" style="background-color: var(--n-color-target);">
+                                <n-card size="small" :bordered="true">
                                   <template #header>
                                     <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
                                   </template>
@@ -938,30 +926,26 @@
                                     </div>
 
                                     <div v-if="pricingSettings.gemini.models[model].mode === 'custom'" class="model-pricing-fields">
-                                      <div class="option-field" style="margin-bottom: 8px;">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">输入 Tokens</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输入 Tokens</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.gemini.models[model].input"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
-                                      <div class="option-field">
-                                        <div class="option-label">
-                                          <n-text depth="2" style="font-size: 12px;">输出 Tokens</n-text>
-                                        </div>
+                                      <div class="model-pricing-row">
+                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输出 Tokens</n-text>
                                         <n-input-number
                                           v-model:value="pricingSettings.gemini.models[model].output"
                                           :precision="4"
                                           :step="0.01"
                                           :min="0"
                                           size="small"
-                                          style="width: 100%;"
+                                          style="flex: 1;"
                                         />
                                       </div>
                                     </div>
@@ -988,7 +972,7 @@
                   </div>
 
                   <div style="margin-top: 16px;">
-                    <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; border-left: 3px solid #18a058;">
+                    <div style="background: var(--bg-secondary); padding: 16px; border-radius: 8px; border-left: 3px solid var(--border-secondary);">
                       <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
                         <n-text strong style="flex: 1;">{{ autoStartStatus }}</n-text>
                         <n-button
@@ -1052,7 +1036,7 @@
           <div v-show="activeMenu === 'security'" class="settings-panel">
             <div class="panel-header">
               <div class="panel-title-row">
-                <n-icon size="24" color="#18a058">
+                <n-icon size="24" color="var(--text-secondary)">
                   <ShieldCheckmarkOutline />
                 </n-icon>
                 <div>
@@ -2070,16 +2054,16 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .menu-item.active {
-  background: rgba(24, 160, 88, 0.15);
+  background: rgba(148, 163, 184, 0.15);
 }
 
 [data-theme="dark"] .menu-item.active {
   background: linear-gradient(90deg,
-    rgba(5, 150, 105, 0.2) 0%,
-    rgba(16, 185, 129, 0.15) 100%
+    rgba(148, 163, 184, 0.2) 0%,
+    rgba(148, 163, 184, 0.15) 100%
   );
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.1);
 }
 
 .menu-item.active::before {
@@ -2090,17 +2074,17 @@ watch(activeMenu, (newVal, oldVal) => {
   transform: translateY(-50%);
   width: 3px;
   height: 60%;
-  background: #18a058;
+  background: var(--border-secondary);
   border-radius: 0 2px 2px 0;
 }
 
 [data-theme="dark"] .menu-item.active::before {
   background: linear-gradient(180deg,
-    rgba(52, 211, 153, 1) 0%,
-    rgba(16, 185, 129, 1) 50%,
-    rgba(5, 150, 105, 1) 100%
+    rgba(148, 163, 184, 0.9) 0%,
+    rgba(148, 163, 184, 0.7) 50%,
+    rgba(148, 163, 184, 0.5) 100%
   );
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 8px rgba(148, 163, 184, 0.3);
 }
 
 .menu-icon {
@@ -2110,16 +2094,16 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .menu-item:hover .menu-icon {
-  color: #18a058;
+  color: var(--text-primary);
   transform: scale(1.1);
 }
 
 .menu-item.active .menu-icon {
-  color: #18a058;
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .menu-item.active .menu-icon {
-  color: #34d399;
+  color: rgba(148, 163, 184, 0.9);
 }
 
 .menu-label {
@@ -2132,11 +2116,11 @@ watch(activeMenu, (newVal, oldVal) => {
 
 .menu-item.active .menu-label {
   font-weight: 600;
-  color: #18a058;
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .menu-item.active .menu-label {
-  color: #6ee7b7;
+  color: rgba(148, 163, 184, 0.95);
   font-weight: 600;
 }
 
@@ -2306,8 +2290,8 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .visibility-item:hover {
-  border-color: #18a058;
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
+  border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(148, 163, 184, 0.1);
 }
 
 .visibility-info {
@@ -2344,18 +2328,18 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .simple-theme-item:hover {
-  border-color: #18a058;
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
+  border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(148, 163, 184, 0.1);
 }
 
 .simple-theme-item.active {
-  border-color: #18a058;
-  background: rgba(24, 160, 88, 0.05);
+  border-color: var(--border-secondary);
+  background: rgba(148, 163, 184, 0.08);
 }
 
 [data-theme="dark"] .simple-theme-item.active {
-  border-color: #34d399;
-  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.15);
 }
 
 .simple-theme-item .theme-icon {
@@ -2365,16 +2349,16 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .simple-theme-item:hover .theme-icon {
-  color: #18a058;
+  color: var(--text-primary);
   transform: scale(1.1);
 }
 
 .simple-theme-item.active .theme-icon {
-  color: #18a058;
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .simple-theme-item.active .theme-icon {
-  color: #34d399;
+  color: rgba(148, 163, 184, 0.9);
 }
 
 .theme-text {
@@ -2438,8 +2422,8 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .option-field:hover {
-  border-color: #18a058;
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
+  border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(148, 163, 184, 0.1);
 }
 
 .option-label {
@@ -2604,8 +2588,8 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .command-config-card:hover {
-  border-color: rgba(24, 160, 88, 0.3);
-  box-shadow: 0 2px 8px rgba(24, 160, 88, 0.08);
+  border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(148, 163, 184, 0.1);
 }
 
 [data-theme="dark"] .command-config-card {
@@ -2614,8 +2598,8 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 [data-theme="dark"] .command-config-card:hover {
-  border-color: rgba(52, 211, 153, 0.3);
-  box-shadow: 0 2px 8px rgba(52, 211, 153, 0.1);
+  border-color: rgba(148, 163, 184, 0.3);
+  box-shadow: 0 2px 8px rgba(148, 163, 184, 0.1);
 }
 
 .command-card-header {
@@ -2649,5 +2633,44 @@ watch(activeMenu, (newVal, oldVal) => {
 .command-field :deep(.n-input .n-input__input-el) {
   font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
   font-size: 13px;
+}
+
+/* Per-model pricing fields styling */
+.model-pricing-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.model-pricing-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dark"] .model-pricing-row {
+  background: rgba(30, 41, 59, 0.3);
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+.model-pricing-row:hover {
+  border-color: var(--border-secondary);
+  background: var(--hover-bg);
+}
+
+[data-theme="dark"] .model-pricing-row:hover {
+  background: rgba(30, 41, 59, 0.5);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.model-pricing-row .n-input-number {
+  flex: 1;
+  min-width: 0;
 }
 </style>

@@ -1,229 +1,264 @@
 <template>
-  <div class="plugins-panel">
-    <!-- Header -->
-    <div class="panel-header">
+  <div class="plugins-panel" :class="{ 'in-drawer': inDrawer }">
+    <!-- 独立模式头部 -->
+    <div class="panel-header" v-if="!inDrawer">
       <div class="header-left">
-        <n-button v-if="!hideBack" quaternary size="small" @click="$emit('back')">
+        <n-button v-if="!hideBack" text @click="$emit('back')" class="back-btn">
           <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
         </n-button>
-        <h3 class="panel-title">Plugins</h3>
+        <span class="panel-title">Plugins 插件管理</span>
       </div>
-      <div class="header-actions">
-        <n-button size="small" quaternary @click="loadPlugins" :loading="loading">
+      <div class="header-right">
+        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
+          <template #icon><n-icon><GitBranchOutline /></n-icon></template>
+          仓库
+        </n-button>
+        <n-button text :focusable="false" @click="handleSync" :loading="syncing" class="action-btn">
+          <template #icon><n-icon><SyncOutline /></n-icon></template>
+          同步
+        </n-button>
+        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
-        </n-button>
-        <n-button size="small" type="primary" @click="showInstallModal = true">
-          <template #icon><n-icon><AddOutline /></n-icon></template>
-          安装插件
+          刷新
         </n-button>
       </div>
     </div>
 
-    <!-- Stats -->
+    <!-- 抽屉模式头部 -->
+    <div class="drawer-header-bar" v-if="inDrawer">
+      <div class="header-right">
+        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
+          <template #icon><n-icon><GitBranchOutline /></n-icon></template>
+          仓库
+        </n-button>
+        <n-button text :focusable="false" @click="handleSync" :loading="syncing" class="action-btn">
+          <template #icon><n-icon><SyncOutline /></n-icon></template>
+          同步
+        </n-button>
+        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
+          <template #icon><n-icon><RefreshOutline /></n-icon></template>
+          刷新
+        </n-button>
+      </div>
+    </div>
+
+    <!-- 统计栏 -->
     <div class="stats-bar">
-      <div class="stat-item">
-        <span class="stat-value">{{ plugins.length }}</span>
-        <span class="stat-label">总计</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-value enabled">{{ enabledCount }}</span>
-        <span class="stat-label">已启用</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-value disabled">{{ disabledCount }}</span>
-        <span class="stat-label">已禁用</span>
-      </div>
+      <span class="stats-text">
+        共 {{ plugins.length }} 个插件
+        <template v-if="plugins.length > 0">
+          · 已安装: {{ installedCount }} · 未安装: {{ plugins.length - installedCount }}
+        </template>
+      </span>
     </div>
 
-    <!-- Search -->
-    <div class="search-bar">
+    <!-- 搜索筛选 -->
+    <div class="filter-bar">
       <n-input
         v-model:value="searchQuery"
         placeholder="搜索插件..."
         clearable
         size="small"
+        class="search-input"
       >
-        <template #prefix>
-          <n-icon><SearchOutline /></n-icon>
-        </template>
+        <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
+      <n-select v-model:value="filterStatus" :options="filterOptions" size="small" class="filter-select" />
     </div>
 
-    <!-- Content -->
+    <!-- 内容区域 -->
     <div class="panel-content">
       <n-spin :show="loading">
-        <div v-if="filteredPlugins.length > 0" class="plugins-grid">
+        <div v-if="filteredPlugins.length === 0 && !loading" class="empty-state">
+          <n-empty :description="emptyText">
+            <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
+            <template #extra>
+              <n-button size="small" @click="showRepoManager = true" v-if="plugins.length === 0">配置仓库源</n-button>
+            </template>
+          </n-empty>
+        </div>
+        <div v-else class="card-list">
           <PluginCard
             v-for="plugin in filteredPlugins"
-            :key="plugin.name"
+            :key="plugin.key"
             :plugin="plugin"
-            @toggle="handleToggle(plugin, $event)"
-            @config="handleConfig(plugin)"
-            @uninstall="handleUninstall(plugin)"
+            :installing="!!installingKeys[plugin.key]"
+            :uninstalling="!!uninstallingKeys[plugin.key]"
+            @install="handleInstall"
+            @uninstall="handleUninstall"
+            @click="handleCardClick"
           />
         </div>
-        <n-empty v-else description="暂无插件" class="empty-state">
-          <template #icon>
-            <n-icon :size="48"><ExtensionPuzzleOutline /></n-icon>
-          </template>
-          <template #extra>
-            <n-button size="small" @click="showInstallModal = true">
-              安装第一个插件
-            </n-button>
-          </template>
-        </n-empty>
       </n-spin>
     </div>
 
-    <!-- Install Modal -->
-    <n-modal
-      v-model:show="showInstallModal"
-      preset="dialog"
-      title="安装插件"
-      positive-text="安装"
-      negative-text="取消"
-      :loading="installing"
-      @positive-click="handleInstall"
-    >
-      <n-form ref="formRef" :model="installForm" :rules="installRules">
-        <n-form-item label="Git 仓库地址" path="gitUrl">
-          <n-input
-            v-model:value="installForm.gitUrl"
-            placeholder="https://github.com/user/plugin.git"
-          />
-        </n-form-item>
-      </n-form>
-      <div class="install-hint">
-        支持 GitHub、GitLab 等 Git 仓库地址
-      </div>
-    </n-modal>
+    <!-- 底部提示 -->
+    <div class="panel-footer">
+      <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
+      <span>安装/卸载后需重启 Claude Code 生效</span>
+    </div>
+
+    <!-- 弹窗组件 -->
+    <PluginRepoManager v-model:visible="showRepoManager" @updated="loadData" />
+    <PluginDetailDrawer
+      v-model:visible="detailDrawerVisible"
+      :plugin="selectedPlugin"
+      @updated="loadData"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { NButton, NIcon, NInput, NSpin, NEmpty, NModal, NForm, NFormItem } from 'naive-ui'
-import { RefreshOutline, AddOutline, SearchOutline, ExtensionPuzzleOutline, ArrowBackOutline } from '@vicons/ionicons5'
+import { ref, computed, onMounted, watch } from 'vue'
+import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
+import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, SyncOutline } from '@vicons/ionicons5'
+import { getPlugins, getMarketPlugins, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
 import PluginCard from './PluginCard.vue'
-import { getPlugins, installPlugin, uninstallPlugin, togglePlugin } from '../api/plugins'
-import message from '../utils/message'
+import PluginRepoManager from './PluginRepoManager.vue'
+import PluginDetailDrawer from './PluginDetailDrawer.vue'
 
-defineProps({
-  hideBack: Boolean,
-  inDrawer: Boolean
+const props = defineProps({
+  inDrawer: { type: Boolean, default: false },
+  hideBack: { type: Boolean, default: false },
+  drawerVisible: { type: Boolean, default: false }
 })
 
 defineEmits(['back', 'updated'])
 
+const message = useMessage()
 const loading = ref(false)
-const installing = ref(false)
+const syncing = ref(false)
 const plugins = ref([])
 const searchQuery = ref('')
-const showInstallModal = ref(false)
-const formRef = ref(null)
+const filterStatus = ref('all')
+const showRepoManager = ref(false)
+const detailDrawerVisible = ref(false)
+const selectedPlugin = ref(null)
+const installingKeys = ref({})
+const uninstallingKeys = ref({})
 
-const installForm = ref({
-  gitUrl: ''
-})
+const filterOptions = [
+  { label: '全部', value: 'all' },
+  { label: '已安装', value: 'installed' },
+  { label: '未安装', value: 'uninstalled' }
+]
 
-const installRules = {
-  gitUrl: {
-    required: true,
-    message: '请输入 Git 仓库地址',
-    trigger: 'blur'
-  }
-}
-
-const enabledCount = computed(() => plugins.value.filter(p => p.enabled).length)
-const disabledCount = computed(() => plugins.value.filter(p => !p.enabled).length)
+const installedCount = computed(() => plugins.value.filter(p => p.installed).length)
 
 const filteredPlugins = computed(() => {
-  if (!searchQuery.value) return plugins.value
-  const query = searchQuery.value.toLowerCase()
-  return plugins.value.filter(p =>
-    p.name.toLowerCase().includes(query) ||
-    (p.description && p.description.toLowerCase().includes(query))
-  )
+  let result = plugins.value
+  if (filterStatus.value === 'installed') result = result.filter(p => p.installed)
+  else if (filterStatus.value === 'uninstalled') result = result.filter(p => !p.installed)
+  if (searchQuery.value.trim()) {
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(p => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q))
+  }
+  return [...result].sort((a, b) => (a.installed === b.installed ? 0 : a.installed ? -1 : 1))
 })
 
-async function loadPlugins() {
+const emptyText = computed(() => {
+  if (searchQuery.value) return '没有匹配的插件'
+  if (filterStatus.value === 'installed') return '暂无已安装的插件'
+  if (filterStatus.value === 'uninstalled') return '所有插件都已安装'
+  return '暂无可用插件，请配置仓库源'
+})
+
+async function loadData(force = false) {
   loading.value = true
   try {
-    const result = await getPlugins()
-    if (result.success) {
-      plugins.value = result.plugins || []
-    } else {
-      message.error(result.message || '加载插件列表失败')
+    // 并行获取已安装插件和市场插件
+    const [installedRes, marketRes] = await Promise.all([
+      getPlugins(force),
+      getMarketPlugins().catch(() => ({ success: true, plugins: [] }))
+    ])
+
+    const installedList = installedRes.success ? installedRes.plugins : []
+    const marketList = marketRes.success ? marketRes.plugins : []
+
+    // 创建市场插件的名称映射，用于合并详细信息
+    const marketByName = {}
+    for (const mp of marketList) {
+      marketByName[mp.name] = mp
     }
+
+    // 已安装插件：合并市场插件的详细信息
+    const installedPlugins = installedList.map(p => {
+      const marketInfo = marketByName[p.name] || {}
+      return {
+        ...marketInfo,  // 先用市场插件信息作为基础
+        ...p,           // 已安装插件信息覆盖
+        installed: true,
+        key: `installed-${p.name}`,
+        // 确保这些字段优先使用市场插件的值（如果已安装插件没有）
+        description: p.description || marketInfo.description || '',
+        repoOwner: p.repoOwner || marketInfo.repoOwner || '',
+        repoName: p.repoName || marketInfo.repoName || '',
+        repoBranch: p.repoBranch || marketInfo.repoBranch || 'main',
+        directory: p.directory || marketInfo.directory || p.installPath || ''
+      }
+    })
+
+    // 未安装的市场插件
+    const installedNames = new Set(installedList.map(p => p.name))
+    const uninstalledPlugins = marketList
+      .filter(p => !installedNames.has(p.name))
+      .map(p => ({
+        ...p,
+        installed: false,
+        key: `market-${p.repoOwner}-${p.pluginPath}`
+      }))
+
+    plugins.value = [...installedPlugins, ...uninstalledPlugins]
   } catch (err) {
-    message.error('加载插件列表失败: ' + err.message)
+    message.error('加载插件失败: ' + err.message)
   } finally {
     loading.value = false
   }
 }
 
-async function handleInstall() {
+async function handleSync() {
+  syncing.value = true
   try {
-    await formRef.value?.validate()
-  } catch {
-    return false
-  }
-
-  installing.value = true
-  try {
-    const result = await installPlugin(installForm.value.gitUrl)
-    if (result.success) {
-      message.success('插件安装成功')
-      showInstallModal.value = false
-      installForm.value.gitUrl = ''
-      loadPlugins()
-    } else {
-      message.error(result.message || '安装失败')
+    const res = await syncPluginRepos()
+    if (res.success) {
+      message.success('仓库同步成功')
+      await loadData(true)
     }
   } catch (err) {
-    message.error('安装失败: ' + err.message)
+    message.error('同步失败: ' + err.message)
   } finally {
-    installing.value = false
+    syncing.value = false
   }
-  return false
 }
 
-async function handleToggle(plugin, enabled) {
+async function handleInstall(plugin) {
+  if (!plugin.repoOwner) return message.error('缺少仓库信息')
+  installingKeys.value[plugin.key] = true
   try {
-    const result = await togglePlugin(plugin.name, enabled)
-    if (result.success) {
-      plugin.enabled = enabled
-      message.success(enabled ? '插件已启用' : '插件已禁用')
-    } else {
-      message.error(result.message || '操作失败')
-    }
-  } catch (err) {
-    message.error('操作失败: ' + err.message)
-  }
-}
-
-function handleConfig(plugin) {
-  message.info('配置功能开发中')
+    const res = await installPlugin(plugin.directory, { owner: plugin.repoOwner, name: plugin.repoName, branch: plugin.repoBranch || 'main' })
+    if (res.success) { message.success(`插件 "${plugin.name}" 安装成功`); await loadData(true) }
+  } catch (err) { message.error('安装失败: ' + err.message) }
+  finally { delete installingKeys.value[plugin.key] }
 }
 
 async function handleUninstall(plugin) {
-  if (!confirm(`确定要卸载插件 "${plugin.name}" 吗？`)) return
-
+  uninstallingKeys.value[plugin.key] = true
   try {
-    const result = await uninstallPlugin(plugin.name)
-    if (result.success) {
-      message.success('插件已卸载')
-      loadPlugins()
-    } else {
-      message.error(result.message || '卸载失败')
-    }
-  } catch (err) {
-    message.error('卸载失败: ' + err.message)
-  }
+    const res = await uninstallPlugin(plugin.directory)
+    if (res.success) { message.success(`插件 "${plugin.name}" 已卸载`); await loadData(true) }
+  } catch (err) { message.error('卸载失败: ' + err.message) }
+  finally { delete uninstallingKeys.value[plugin.key] }
 }
 
-onMounted(() => {
-  loadPlugins()
+function handleCardClick(plugin) {
+  selectedPlugin.value = plugin
+  detailDrawerVisible.value = true
+}
+
+onMounted(() => loadData())
+
+watch(() => props.drawerVisible, (val) => {
+  if (val) loadData()
 })
 </script>
 
@@ -231,89 +266,83 @@ onMounted(() => {
 .plugins-panel {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-primary);
 }
-
-.panel-header {
+.panel-header, .drawer-header-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 0 0 16px 0;
+  justify-content: space-between;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
 }
-
-.header-left {
+.drawer-header-bar { padding: 8px 12px; }
+.header-left, .header-right {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-
+.back-btn { padding: 4px; }
 .panel-title {
-  margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
 }
-
-.header-actions {
-  display: flex;
-  gap: 8px;
+.action-btn {
+  font-size: 12px;
+  padding: 4px 8px;
 }
-
 .stats-bar {
   display: flex;
-  gap: 24px;
-  padding: 16px 0;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-primary);
 }
-
-.stat-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.stat-value {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.stat-value.enabled {
-  color: var(--primary-color);
-}
-
-.stat-value.disabled {
+.plugins-panel.in-drawer .stats-bar { padding: 10px 12px; }
+.stats-text {
+  font-size: 12px;
   color: var(--text-tertiary);
 }
-
-.stat-label {
-  font-size: 12px;
-  color: var(--text-secondary);
+.filter-bar {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-primary);
 }
-
-.search-bar {
-  padding: 16px 0;
-}
-
+.plugins-panel.in-drawer .filter-bar { padding: 10px 12px; }
+.search-input { flex: 1; }
+.filter-select { width: 100px; }
 .panel-content {
   flex: 1;
   overflow-y: auto;
+  padding: 16px;
 }
-
-.plugins-grid {
-  display: grid;
-  grid-template-columns: 1fr;
+.plugins-panel.in-drawer .panel-content { padding: 12px; }
+.panel-content :deep(.n-spin-container) { min-height: 200px; }
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+.card-list {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
-
-.empty-state {
-  padding: 48px 0;
-}
-
-.install-hint {
-  margin-top: 8px;
-  font-size: 12px;
+.panel-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  font-size: 11px;
   color: var(--text-tertiary);
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
 }
+.plugins-panel.in-drawer .panel-footer { padding: 8px 12px; }
+.info-icon { color: var(--text-quaternary); }
 </style>

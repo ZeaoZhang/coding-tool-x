@@ -10,12 +10,13 @@
           size="small"
           @update:value="handleProxyToggle"
         />
-        <n-tag v-if="installedSkillsCount > 0" type="success" size="small" :bordered="false">
+        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
           {{ installedSkillsCount }} 技能
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <n-tooltip trigger="hover">
+        <!-- Skills: Claude 和 Codex 都支持 -->
+        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex'">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
               <template #icon><n-icon :size="18"><ExtensionPuzzleOutline /></n-icon></template>
@@ -23,31 +24,43 @@
           </template>
           Skills 技能
         </n-tooltip>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
-              <template #icon><n-icon :size="18"><TerminalOutline /></n-icon></template>
-            </n-button>
-          </template>
-          Commands 命令
-        </n-tooltip>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button text size="small" class="toolbar-btn" @click="handleShowAgents">
-              <template #icon><n-icon :size="18"><PersonOutline /></n-icon></template>
-            </n-button>
-          </template>
-          Agents 代理
-        </n-tooltip>
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-button text size="small" class="toolbar-btn" @click="handleShowRules">
-              <template #icon><n-icon :size="18"><BookOutline /></n-icon></template>
-            </n-button>
-          </template>
-          Rules 规则
-        </n-tooltip>
+        <!-- Claude Code 特有功能 -->
+        <template v-if="currentChannel === 'claude'">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text size="small" class="toolbar-btn" @click="handleShowPlugins">
+                <template #icon><n-icon :size="18"><CubeOutline /></n-icon></template>
+              </n-button>
+            </template>
+            Plugins 插件
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
+                <template #icon><n-icon :size="18"><TerminalOutline /></n-icon></template>
+              </n-button>
+            </template>
+            Commands 命令
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text size="small" class="toolbar-btn" @click="handleShowAgents">
+                <template #icon><n-icon :size="18"><PersonOutline /></n-icon></template>
+              </n-button>
+            </template>
+            Agents 代理
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button text size="small" class="toolbar-btn" @click="handleShowRules">
+                <template #icon><n-icon :size="18"><BookOutline /></n-icon></template>
+              </n-button>
+            </template>
+            Rules 规则
+          </n-tooltip>
+        </template>
         <div class="toolbar-divider" />
+        <!-- 通用功能 -->
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowRecent">
@@ -97,7 +110,8 @@ import {
   ExtensionPuzzleOutline,
   TerminalOutline,
   PersonOutline,
-  BookOutline
+  BookOutline,
+  CubeOutline
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
@@ -199,6 +213,11 @@ function handleShowAgents() {
 // 处理显示 Rules
 function handleShowRules() {
   window.dispatchEvent(new CustomEvent('open-rules-drawer'))
+}
+
+// 处理显示 Plugins
+function handleShowPlugins() {
+  window.dispatchEvent(new CustomEvent('open-plugins-drawer'))
 }
 
 onMounted(() => {

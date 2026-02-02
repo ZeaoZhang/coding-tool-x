@@ -341,7 +341,7 @@ router.get('/servers/:id/tools', async (req, res) => {
   try {
     const { id } = req.params;
     const result = await mcpService.getServerTools(id);
-    res.json(result);
+    res.json({ success: true, ...result });
   } catch (err) {
     res.status(404).json({ success: false, error: err.message });
   }

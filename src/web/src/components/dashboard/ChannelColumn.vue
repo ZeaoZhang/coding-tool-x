@@ -314,28 +314,37 @@
         </div>
       </div>
 
-      <!-- Model Usage Chart -->
-      <div class="card chart-card" v-if="Object.keys(modelStats).length > 0">
-        <ModelUsageChart
-          :channel-type="channelType"
-          :model-stats="modelStats"
-        />
+      <!-- Model Usage Chart (Collapsible) -->
+      <div class="card chart-card" :class="`chart-card-${channelType}`" v-if="Object.keys(modelStats).length > 0">
+        <n-collapse :default-expanded-names="[]" accordion>
+        </n-collapse>
       </div>
 
-      <!-- 实时日志 -->
+      <!-- 实时日志 (Collapsible) -->
       <div v-if="showLogs" class="card logs-card">
-        <div class="card-header compact">
-          <n-icon :size="14">
-            <RadioOutline />
-          </n-icon>
-          <h3 class="card-title">实时日志</h3>
-          <n-button text size="tiny" @click="clearLogs" style="margin-left: auto;">
-            <template #icon>
-              <n-icon :size="14"><TrashOutline /></n-icon>
+        <n-collapse :default-expanded-names="[]" accordion>
+          <n-collapse-item name="realtime-logs">
+            <template #header>
+              <div class="collapse-header">
+                <n-icon :size="14" style="margin-right: 8px;">
+                  <RadioOutline />
+                </n-icon>
+                <span class="collapse-title">实时日志</span>
+                <n-button
+                  text
+                  size="tiny"
+                  @click.stop="clearLogs"
+                  style="margin-left: auto;"
+                  title="清空日志"
+                >
+                  <template #icon>
+                    <n-icon :size="14"><TrashOutline /></n-icon>
+                  </template>
+                </n-button>
+              </div>
             </template>
-          </n-button>
-        </div>
-        <div class="logs-table-wrapper">
+            <div class="collapse-content scrollable-content">
+              <div class="logs-table-wrapper">
           <!-- 表头 -->
           <div class="logs-table-header" :class="`logs-header-${channelType}`">
             <div class="log-col col-channel" :class="`col-channel-${channelType}`">渠道</div>
@@ -397,7 +406,10 @@
               </template>
             </div>
           </div>
-        </div>
+              </div>
+            </div>
+          </n-collapse-item>
+        </n-collapse>
       </div>
     </div>
 
@@ -447,12 +459,12 @@ import {
   LockOpen,
   ReorderTwoOutline,
   ExtensionPuzzleOutline,
-  ServerOutline
+  ServerOutline,
+  StatsChartOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
-import ModelUsageChart from './ModelUsageChart.vue'
 import {
   getUIConfig,
   updateNestedUIConfig
@@ -1727,15 +1739,30 @@ onUnmounted(() => {
   border-left-color: #18a058;
 }
 
+/* Fallback for browsers without :has() support (Firefox < 121) */
+.chart-card.chart-card-claude {
+  border-left-color: #18a058;
+}
+
 .stats-card-codex,
 .chart-card:has(+ .stats-card-codex),
 .card:has(.panel-card):nth-child(4) {
   border-left-color: #3b82f6;
 }
 
+/* Fallback for browsers without :has() support (Firefox < 121) */
+.chart-card.chart-card-codex {
+  border-left-color: #3b82f6;
+}
+
 .stats-card-gemini,
 .chart-card:has(+ .stats-card-gemini),
 .card:has(.panel-card):nth-child(4) {
+  border-left-color: #a855f7;
+}
+
+/* Fallback for browsers without :has() support (Firefox < 121) */
+.chart-card.chart-card-gemini {
   border-left-color: #a855f7;
 }
 
@@ -2995,6 +3022,109 @@ onUnmounted(() => {
 
   .col-time {
     font-size: 7px;
+  }
+}
+
+/* Collapsible Panel Styles */
+.collapse-header {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-color-1);
+}
+
+.collapse-title {
+  flex: 1;
+}
+
+.collapse-content {
+  padding-top: 8px;
+}
+
+.scrollable-content {
+  max-height: 600px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Smooth scrollbar styling */
+.scrollable-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  transition: background 0.2s;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Collapse animation */
+.card :deep(.n-collapse) {
+  background: transparent;
+}
+
+.card :deep(.n-collapse-item) {
+  background: transparent;
+}
+
+.card :deep(.n-collapse-item__header) {
+  padding: 12px 16px;
+  background: transparent;
+  transition: all 0.3s ease;
+}
+
+.card :deep(.n-collapse-item__header:hover) {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.card :deep(.n-collapse-item__header-main) {
+  width: 100%;
+}
+
+.card :deep(.n-collapse-item__content-wrapper) {
+  padding: 0 16px 12px;
+}
+
+.card :deep(.n-collapse-item__content-inner) {
+  padding-top: 0;
+}
+
+/* Remove default card padding when using collapse */
+.chart-card:has(.n-collapse),
+.logs-card:has(.n-collapse) {
+  padding: 0;
+}
+
+/* Adjust logs table wrapper inside collapse */
+.collapse-content .logs-table-wrapper {
+  margin: 0;
+}
+
+/* Responsive adjustments for scrollable content */
+@media (max-width: 768px) {
+  .scrollable-content {
+    max-height: 400px;
+  }
+}
+
+@media (max-width: 480px) {
+  .scrollable-content {
+    max-height: 300px;
+  }
+
+  .collapse-header {
+    font-size: 11px;
   }
 }
 </style>

@@ -226,6 +226,37 @@ function updateChannel(channelId, updates) {
   };
 
   data.channels[index] = newChannel;
+
+  // Get proxy status
+  const { getCodexProxyStatus } = require('../codex-proxy-server');
+  const proxyStatus = getCodexProxyStatus();
+  const isProxyRunning = proxyStatus.running;
+
+  // Fix 1: Detect enabled toggle (false → true) when proxy is OFF
+  if (!isProxyRunning && !oldChannel.enabled && data.channels[index].enabled) {
+    console.log(`[Codex Settings-sync] Proxy is OFF and channel "${data.channels[index].name}" was enabled, syncing config.toml...`);
+    applyChannelToSettings(channelId);
+  }
+
+  // Fix 2: Single-channel enforcement when proxy is OFF
+  if (!isProxyRunning && data.channels[index].enabled && !oldChannel.enabled) {
+    // Disable all other channels
+    data.channels.forEach((ch, i) => {
+      if (i !== index && ch.enabled) {
+        ch.enabled = false;
+      }
+    });
+    console.log(`[Codex Single-channel mode] Enabled "${data.channels[index].name}", disabled all others`);
+  }
+
+  // Fix 3: Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !data.channels[index].enabled && oldChannel.enabled) {
+    const enabledCount = data.channels.filter(ch => ch.enabled).length;
+    if (enabledCount === 0) {
+      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
+    }
+  }
+
   saveChannels(data);
 
   // 处理环境变量更新
