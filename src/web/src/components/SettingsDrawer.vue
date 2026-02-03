@@ -1306,7 +1306,7 @@ let securityStatusPromise = null
 
 // Model definitions
 const MODEL_DEFINITIONS = {
-  claude: ['claude-haiku-3-5-20241022', 'claude-sonnet-4-20250514', 'claude-sonnet-4-5-20250929', 'claude-opus-4-20250514'],
+  claude: ['claude-haiku-3-5-20241022', 'claude-haiku-4-5-20250929', 'claude-sonnet-4-20250514', 'claude-sonnet-4-5-20250929', 'claude-opus-4-20250514', 'claude-opus-4-5-20250929'],
   codex: ['gpt-4o-mini', 'gpt-4o', 'gpt-5-codex'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-pro']
 }

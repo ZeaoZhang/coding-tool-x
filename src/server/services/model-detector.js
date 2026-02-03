@@ -13,11 +13,13 @@ const { URL } = require('url');
 // Model priority by channel type
 const MODEL_PRIORITY = {
   claude: [
-    'claude-haiku-3-5-20241022',
-    'claude-3-5-haiku-20241022',
-    'claude-sonnet-4-20250514',
+    'claude-opus-4-5-20250929',
     'claude-sonnet-4-5-20250929',
-    'claude-opus-4-20250514'
+    'claude-haiku-4-5-20250929',
+    'claude-sonnet-4-20250514',
+    'claude-opus-4-20250514',
+    'claude-haiku-3-5-20241022',
+    'claude-3-5-haiku-20241022'
   ],
   codex: ['gpt-4o-mini', 'gpt-4o', 'gpt-5-codex', 'o3'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-pro']

@@ -179,8 +179,34 @@ const channelPanelFactories = {
         ]
       },
       {
+        title: '模型重定向',
+        description: '仅在代理开启时生效，可将高成本模型重定向到低成本模型（如 opus → sonnet）节省 token',
+        collapsible: true,
+        showWhen: (form) => form.presetId === 'official',
+        fields: [
+          {
+            key: 'modelConfig.haikuModel',
+            label: 'Haiku 重定向',
+            type: 'autocomplete',
+            placeholder: '留空表示不重定向'
+          },
+          {
+            key: 'modelConfig.sonnetModel',
+            label: 'Sonnet 重定向',
+            type: 'autocomplete',
+            placeholder: '留空表示不重定向'
+          },
+          {
+            key: 'modelConfig.opusModel',
+            label: 'Opus 重定向',
+            type: 'autocomplete',
+            placeholder: '如 claude-sonnet-4-5'
+          }
+        ]
+      },
+      {
         title: '模型配置',
-        description: '非官方供应商需要配置模型映射',
+        description: '代理关闭时：模型映射（写入 settings.json）；代理开启时：模型重定向（如 opus → sonnet 节省 token）',
         collapsible: true,
         showWhen: (form) => form.presetId && form.presetId !== 'official',
         fields: [

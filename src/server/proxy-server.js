@@ -12,6 +12,7 @@ const { resolvePricing, resolveModelPricing } = require('./utils/pricing');
 const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const eventBus = require('../plugins/event-bus');
+const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -20,20 +21,52 @@ let currentPort = null;
 // 用于存储每个请求的元数据（用于 WebSocket 日志）
 const requestMetadata = new Map();
 
-// Claude API 定价（每百万 tokens 的价格，单位：美元）
-const PRICING = {
-  'claude-sonnet-4-5-20250929': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
-  'claude-sonnet-4-20250514': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
-  'claude-sonnet-3-5-20241022': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
-  'claude-sonnet-3-5-20240620': { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.30 },
-  'claude-opus-4-20250514': { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.50 },
-  'claude-opus-3-20240229': { input: 15, output: 75, cacheCreation: 18.75, cacheRead: 1.50 },
-  'claude-haiku-3-5-20241022': { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 },
-  'claude-3-5-haiku-20241022': { input: 0.8, output: 4, cacheCreation: 1, cacheRead: 0.08 }
-};
-
 const CLAUDE_BASE_PRICING = DEFAULT_CONFIG.pricing.claude;
 const ONE_MILLION = 1000000;
+
+/**
+ * 检测模型层级
+ * @param {string} modelName - 模型名称
+ * @returns {string|null} 模型层级 (opus/sonnet/haiku) 或 null
+ */
+function detectModelTier(modelName) {
+  if (!modelName) return null;
+  const lower = modelName.toLowerCase();
+  if (lower.includes('opus')) return 'opus';
+  if (lower.includes('sonnet')) return 'sonnet';
+  if (lower.includes('haiku')) return 'haiku';
+  return null;
+}
+
+/**
+ * 应用模型重定向
+ * @param {string} originalModel - 原始模型名称
+ * @param {object} modelConfig - 模型配置对象
+ * @returns {string} 重定向后的模型名称
+ */
+function redirectModel(originalModel, modelConfig) {
+  if (!modelConfig || !originalModel) return originalModel;
+
+  const tier = detectModelTier(originalModel);
+
+  // 优先级：层级特定配置 > 通用模型覆盖
+  if (tier === 'opus' && modelConfig.opusModel) {
+    return modelConfig.opusModel;
+  }
+  if (tier === 'sonnet' && modelConfig.sonnetModel) {
+    return modelConfig.sonnetModel;
+  }
+  if (tier === 'haiku' && modelConfig.haikuModel) {
+    return modelConfig.haikuModel;
+  }
+
+  // 回退到通用模型覆盖
+  if (modelConfig.model) {
+    return modelConfig.model;
+  }
+
+  return originalModel;
+}
 
 /**
  * 计算请求成本
@@ -42,7 +75,7 @@ const ONE_MILLION = 1000000;
  * @returns {number} 成本（美元）
  */
 function calculateCost(model, tokens) {
-  const hardcodedPricing = PRICING[model] || {};
+  const hardcodedPricing = CLAUDE_MODEL_PRICING[model] || {};
   const pricing = resolveModelPricing('claude', model, hardcodedPricing, CLAUDE_BASE_PRICING);
 
   const inputRate = typeof pricing.input === 'number' ? pricing.input : CLAUDE_BASE_PRICING.input;
@@ -168,6 +201,20 @@ async function startProxyServer(options = {}) {
 
         req.selectedChannel = channel;
         req.sessionId = sessionId || null;
+
+        // 应用模型重定向（当 proxy 开启时）
+        if (req.body && req.body.model && channel.modelConfig) {
+          const originalModel = req.body.model;
+          const redirectedModel = redirectModel(originalModel, channel.modelConfig);
+
+          if (redirectedModel !== originalModel) {
+            req.body.model = redirectedModel;
+            // 更新 rawBody 以匹配修改后的 body
+            req.rawBody = Buffer.from(JSON.stringify(req.body));
+            console.log(`[Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+          }
+        }
+
         let released = false;
 
         const release = () => {

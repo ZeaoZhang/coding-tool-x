@@ -216,7 +216,8 @@ function updateChannel(id, updates) {
     presetId: merged.presetId,
     modelConfig: merged.modelConfig,
     proxyUrl: merged.proxyUrl,
-    speedTestModel: merged.speedTestModel
+    speedTestModel: merged.speedTestModel,
+    updatedAt: Date.now()
   });
 
   // Get proxy status

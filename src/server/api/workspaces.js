@@ -278,13 +278,14 @@ router.put('/:id/last-used', (req, res) => {
  *   sourcePath: string,
  *   name?: string,
  *   createWorktree?: boolean,
- *   branch?: string
+ *   branch?: string,
+ *   baseBranch?: string
  * }
  */
 router.post('/:id/projects', (req, res) => {
   try {
     const { id } = req.params;
-    const { sourcePath, name, createWorktree, branch } = req.body;
+    const { sourcePath, name, createWorktree, branch, baseBranch } = req.body;
 
     if (!sourcePath || !sourcePath.trim()) {
       return res.status(400).json({
@@ -304,7 +305,8 @@ router.post('/:id/projects', (req, res) => {
       sourcePath,
       name,
       createWorktree,
-      branch
+      branch,
+      baseBranch
     });
 
     res.json({

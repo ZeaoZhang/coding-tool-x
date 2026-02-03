@@ -183,10 +183,80 @@ function createWorkspace(options) {
 
   const workspaceProjects = [];
 
+  /**
+   * 验证 worktree 分支冲突
+   * @param {Array} projects - 项目列表
+   * @returns {Array} 冲突列表 [{repo, branch, projects: [index1, index2]}]
+   */
+  function validateWorktreeBranches(projects) {
+    const repoMap = new Map();
+    const conflicts = [];
+
+    for (let i = 0; i < projects.length; i++) {
+      const proj = projects[i];
+      const { sourcePath, branch, createWorktree } = proj;
+
+      // Skip non-worktree projects
+      const isGit = isGitRepo(sourcePath);
+      const useWorktree = createWorktree !== undefined ? createWorktree : isGit;
+      if (!useWorktree || !isGit) continue;
+
+      // Resolve to absolute path to handle symlinks
+      const resolvedPath = fs.realpathSync(sourcePath);
+
+      // Determine target branch
+      let targetBranch = branch;
+      if (!targetBranch) {
+        try {
+          targetBranch = execSync('git rev-parse --abbrev-ref HEAD', {
+            cwd: sourcePath,
+            encoding: 'utf8'
+          }).trim();
+        } catch (e) {
+          targetBranch = 'main';
+        }
+      }
+
+      // Check for conflicts
+      if (!repoMap.has(resolvedPath)) {
+        repoMap.set(resolvedPath, new Map());
+      }
+
+      const branches = repoMap.get(resolvedPath);
+      if (branches.has(targetBranch)) {
+        const conflictingIndex = branches.get(targetBranch);
+        conflicts.push({
+          repo: resolvedPath,
+          branch: targetBranch,
+          projects: [conflictingIndex, i]
+        });
+      } else {
+        branches.set(targetBranch, i);
+      }
+    }
+
+    return conflicts;
+  }
+
+  // Validate branch uniqueness for worktree mode
+  const branchConflicts = validateWorktreeBranches(projects);
+  if (branchConflicts.length > 0) {
+    const conflict = branchConflicts[0];
+    const projectNames = conflict.projects.map(i => projects[i].name || `项目${i + 1}`).join(', ');
+    throw new Error(
+      `无法创建工作区：分支 '${conflict.branch}' 在同一仓库中被多个项目使用 (${projectNames})。\n` +
+      `仓库路径: ${conflict.repo}\n\n` +
+      `Git worktree 不允许在同一仓库的多个工作树中检出相同的分支。\n\n` +
+      `解决方案：\n` +
+      `1. 为不同项目指定不同的分支名\n` +
+      `2. 或者禁用其中一个项目的 worktree 模式（设置 createWorktree: false）`
+    );
+  }
+
   try {
     // 处理每个项目
     for (const proj of projects) {
-      const { sourcePath, name: linkName, branch } = proj;
+      const { sourcePath, name: linkName, branch, baseBranch } = proj;
       // useWorktree: 未指定时，Git 仓库默认 true，非 Git 仓库默认 false
       const isGit = isGitRepo(sourcePath);
       const useWorktree = proj.createWorktree !== undefined ? proj.createWorktree : isGit;
@@ -248,7 +318,15 @@ function createWorkspace(options) {
           } catch (error) {
             // 如果分支不存在，尝试创建新分支
             try {
-              execSync(`git worktree add "${worktreePath}" -b "${targetBranch}"`, {
+              // 构建 git worktree add 命令
+              let worktreeCmd = `git worktree add "${worktreePath}" -b "${targetBranch}"`;
+
+              // 如果指定了基础分支，添加到命令中
+              if (baseBranch && baseBranch.trim()) {
+                worktreeCmd += ` "${baseBranch}"`;
+              }
+
+              execSync(worktreeCmd, {
                 cwd: sourcePath,
                 stdio: 'pipe'
               });
@@ -258,7 +336,16 @@ function createWorkspace(options) {
                 path: worktreePath
               });
             } catch (err) {
-              // worktree 创建失败，回退到软链接模式
+              // Check if it's a "branch already checked out" error
+              if (err.message.includes('already checked out')) {
+                throw new Error(
+                  `无法创建 worktree：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
+                  `错误详情: ${err.message}\n\n` +
+                  `提示：请为此项目指定不同的分支名，或禁用 worktree 模式。`
+                );
+              }
+
+              // For other errors, provide clear message but allow fallback
               console.warn(`创建 worktree 失败，使用软链接: ${err.message}`);
               targetPath = sourcePath;
               worktrees = getGitWorktrees(sourcePath);
@@ -472,7 +559,7 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
     throw new Error('工作区不存在');
   }
 
-  const { sourcePath, name: linkName, branch } = projectConfig;
+  const { sourcePath, name: linkName, branch, baseBranch } = projectConfig;
   // useWorktree: 未指定时，Git 仓库默认 true，非 Git 仓库默认 false
   const isGit = isGitRepo(sourcePath);
   const useWorktree = projectConfig.createWorktree !== undefined ? projectConfig.createWorktree : isGit;
@@ -525,14 +612,48 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
         targetPath = worktreePath;
         worktrees.push({ branch: targetBranch, path: worktreePath });
       } catch (error) {
+        // Check if branch is already checked out elsewhere
+        if (error.message && error.message.includes('already checked out')) {
+          throw new Error(
+            `无法添加项目：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
+            `仓库路径: ${sourcePath}\n\n` +
+            `Git worktree 不允许在同一仓库的多个工作树中检出相同的分支。\n\n` +
+            `解决方案：\n` +
+            `1. 指定不同的分支名\n` +
+            `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
+          );
+        }
+
+        // Branch doesn't exist, try creating it
         try {
-          execSync(`git worktree add "${worktreePath}" -b "${targetBranch}"`, {
+          // 构建 git worktree add 命令
+          let worktreeCmd = `git worktree add "${worktreePath}" -b "${targetBranch}"`;
+
+          // 如果指定了基础分支，添加到命令中
+          if (baseBranch && baseBranch.trim()) {
+            worktreeCmd += ` "${baseBranch}"`;
+          }
+
+          execSync(worktreeCmd, {
             cwd: sourcePath,
             stdio: 'pipe'
           });
           targetPath = worktreePath;
           worktrees.push({ branch: targetBranch, path: worktreePath });
         } catch (err) {
+          // Check for "already checked out" error in create branch attempt
+          if (err.message && err.message.includes('already checked out')) {
+            throw new Error(
+              `无法添加项目：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
+              `仓库路径: ${sourcePath}\n\n` +
+              `Git worktree 不允许在同一仓库的多个工作树中检出相同的分支。\n\n` +
+              `解决方案：\n` +
+              `1. 指定不同的分支名\n` +
+              `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
+            );
+          }
+
+          // Other errors: fall back to symlink mode
           console.warn(`创建 worktree 失败，使用软链接: ${err.message}`);
           targetPath = sourcePath;
           worktrees = getGitWorktrees(sourcePath);

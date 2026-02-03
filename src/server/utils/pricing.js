@@ -1,5 +1,6 @@
 const { loadConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
+const { CLAUDE_MODEL_PRICING, CLAUDE_MODEL_ALIASES } = require('../../config/model-pricing');
 
 const RATE_KEYS = ['input', 'output', 'cacheCreation', 'cacheRead', 'cached', 'reasoning'];
 
@@ -39,7 +40,7 @@ function resolvePricing(toolKey, modelPricing = {}, defaultPricing = {}) {
 function resolveModelPricing(toolKey, model, hardcodedPricing = {}, defaultPricing = {}) {
   const config = getPricingConfig(toolKey);
 
-  // 1. Check per-model config
+  // 1. Check user custom config for specific model first
   const modelConfig = config?.models?.[model];
   if (modelConfig && modelConfig.mode === 'custom') {
     const result = { ...hardcodedPricing };
@@ -51,7 +52,7 @@ function resolveModelPricing(toolKey, model, hardcodedPricing = {}, defaultPrici
     return result;
   }
 
-  // 2. Fall back to tool-level config
+  // 2. Check user custom config for tool-level
   if (config && config.mode === 'custom') {
     const result = { ...hardcodedPricing };
     RATE_KEYS.forEach((key) => {
@@ -62,7 +63,16 @@ function resolveModelPricing(toolKey, model, hardcodedPricing = {}, defaultPrici
     return result;
   }
 
-  // 3. Use hardcoded pricing
+  // 3. Use centralized hardcoded pricing for known models (mode: 'auto')
+  // Normalize model name using aliases
+  const normalizedModel = CLAUDE_MODEL_ALIASES[model] || model;
+  const centralizedPricing = CLAUDE_MODEL_PRICING[normalizedModel];
+
+  if (centralizedPricing) {
+    return { ...defaultPricing, ...centralizedPricing };
+  }
+
+  // 4. Fall back to base pricing for unknown models
   return { ...defaultPricing, ...hardcodedPricing };
 }
 

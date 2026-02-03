@@ -278,7 +278,7 @@ watch(() => props.visible, (val) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 48px;
+  height: 48px;
 }
 
 .tool-index {
@@ -364,7 +364,7 @@ watch(() => props.visible, (val) => {
 }
 
 :deep(.n-collapse-item__header) {
-  padding: 12px 16px;
+  padding: 8px !important;
   background: transparent;
 }
 
