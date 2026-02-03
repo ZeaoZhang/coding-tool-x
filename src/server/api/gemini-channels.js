@@ -13,6 +13,7 @@ const { getChannelHealthStatus, resetChannelHealth } = require('../services/chan
 const { broadcastSchedulerState } = require('../websocket-server');
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
+const { clearGeminiRedirectCache } = require('../gemini-proxy-server');
 
 module.exports = (config) => {
   /**
@@ -86,6 +87,8 @@ module.exports = (config) => {
       const updates = req.body;
 
       const channel = updateChannel(channelId, updates);
+      // 清除该渠道的模型重定向日志缓存，使下次请求时重新打印
+      clearGeminiRedirectCache(channelId);
       res.json(channel);
       broadcastSchedulerState('gemini', getSchedulerState('gemini'));
     } catch (err) {

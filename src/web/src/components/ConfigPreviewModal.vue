@@ -55,6 +55,10 @@
             <n-icon size="20"><ServerOutline /></n-icon>
             <span>{{ template.mcpServers.length }} MCP Servers</span>
           </div>
+          <div class="stat-item" v-if="template.plugins?.length">
+            <n-icon size="20"><CubeOutline /></n-icon>
+            <span>{{ template.plugins.length }} Plugins</span>
+          </div>
         </div>
       </div>
 
@@ -116,6 +120,14 @@
             </div>
           </div>
         </n-collapse-item>
+        <n-collapse-item title="Plugins 列表" name="plugins" v-if="template.plugins?.length">
+          <div class="list-items">
+            <div v-for="(item, idx) in template.plugins" :key="idx" class="list-item">
+              {{ item.name || item }}
+              <span v-if="item.description" class="item-desc"> - {{ item.description }}</span>
+            </div>
+          </div>
+        </n-collapse-item>
       </n-collapse>
     </div>
 
@@ -138,7 +150,8 @@ import {
   PeopleOutline,
   TerminalOutline,
   ShieldCheckmarkOutline,
-  ServerOutline
+  ServerOutline,
+  CubeOutline
 } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -179,7 +192,7 @@ const hasDetails = computed(() => {
   const t = props.template
   if (!t) return false
   return hasAiConfigs.value || t.claudeMd?.content || t.skills?.length || t.agents?.length ||
-         t.commands?.length || t.rules?.length || t.mcpServers?.length
+         t.commands?.length || t.rules?.length || t.mcpServers?.length || t.plugins?.length
 })
 
 function handleApply() {
@@ -254,6 +267,10 @@ function handleApply() {
   border-radius: 4px;
   font-size: 13px;
   color: var(--text-primary);
+}
+.list-item .item-desc {
+  color: var(--text-tertiary);
+  font-size: 12px;
 }
 .markdown-content {
   max-height: 400px;

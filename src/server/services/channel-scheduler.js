@@ -74,7 +74,9 @@ function refreshChannels(source = 'claude') {
       baseUrl: ch.baseUrl,
       apiKey: ch.apiKey,
       weight: Math.max(1, Number(ch.weight) || 1),
-      maxConcurrency: ch.maxConcurrency ?? null
+      maxConcurrency: ch.maxConcurrency ?? null,
+      modelConfig: ch.modelConfig || null,
+      modelRedirects: ch.modelRedirects || []
     }));
 
   state.channels.forEach(ch => {

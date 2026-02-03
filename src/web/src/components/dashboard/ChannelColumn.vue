@@ -1815,6 +1815,23 @@ onUnmounted(() => {
   border-radius: 6px;
 }
 
+/* Make n-collapse fill the logs-card */
+.logs-card :deep(.n-collapse) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.logs-card :deep(.n-collapse-item) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
 .logs-card .card-header {
   background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
 }
@@ -1872,6 +1889,7 @@ onUnmounted(() => {
 
 .logs-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -3040,11 +3058,16 @@ onUnmounted(() => {
 }
 
 .collapse-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding-top: 8px;
 }
 
 .scrollable-content {
-  max-height: 600px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -3069,12 +3092,12 @@ onUnmounted(() => {
   background: rgba(0, 0, 0, 0.3);
 }
 
-/* Collapse animation */
-.card :deep(.n-collapse) {
+/* General collapse styling for cards (not logs-card) */
+.card:not(.logs-card) :deep(.n-collapse) {
   background: transparent;
 }
 
-.card :deep(.n-collapse-item) {
+.card:not(.logs-card) :deep(.n-collapse-item) {
   background: transparent;
 }
 
@@ -3092,12 +3115,29 @@ onUnmounted(() => {
   width: 100%;
 }
 
-.card :deep(.n-collapse-item__content-wrapper) {
+.card:not(.logs-card) :deep(.n-collapse-item__content-wrapper) {
   padding: 0 16px 12px;
 }
 
-.card :deep(.n-collapse-item__content-inner) {
+.card:not(.logs-card) :deep(.n-collapse-item__content-inner) {
   padding-top: 0;
+}
+
+/* logs-card specific: override padding to allow flex fill */
+.logs-card :deep(.n-collapse-item__content-wrapper) {
+  padding: 0 16px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.logs-card :deep(.n-collapse-item__content-inner) {
+  padding-top: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Remove default card padding when using collapse */
@@ -3111,18 +3151,8 @@ onUnmounted(() => {
   margin: 0;
 }
 
-/* Responsive adjustments for scrollable content */
-@media (max-width: 768px) {
-  .scrollable-content {
-    max-height: 400px;
-  }
-}
-
+/* Responsive adjustments for collapse header */
 @media (max-width: 480px) {
-  .scrollable-content {
-    max-height: 300px;
-  }
-
   .collapse-header {
     font-size: 11px;
   }

@@ -73,6 +73,7 @@
               v-for="field in section.fields"
               :key="field.key"
               :label="field.label"
+              :label-style="field.fullWidth ? { display: 'none' } : undefined"
               :required="field.required"
               :validation-status="getValidationStatus(field.key)"
               :feedback="getValidationMessage(field.key)"
@@ -85,13 +86,20 @@
                 :placeholder="field.placeholder"
                 @update:value="handlePresetChange"
               />
+              <!-- 模型重定向编辑器 -->
+              <ModelRedirectEditor
+                v-else-if="field.type === 'model-redirect'"
+                v-model="state.formData.modelRedirects"
+                :available-models="state.formData.availableModels"
+              />
               <!-- 测速模型选择器 (支持手动输入) -->
               <n-auto-complete
                 v-else-if="field.type === 'select' && field.key === 'speedTestModel'"
                 :value="state.formData.speedTestModel"
-                :options="state.formData.availableModels"
+                :options="getFilteredModelOptions(state.formData.speedTestModel)"
                 :placeholder="field.placeholder"
                 :loading="state.formData.modelsFetching"
+                :get-show="() => true"
                 clearable
                 @update:value="(val) => state.formData.speedTestModel = val"
               >
@@ -110,8 +118,9 @@
               <n-auto-complete
                 v-else-if="field.type === 'autocomplete'"
                 :value="getNestedValue(state.formData, field.key)"
-                :options="state.formData.availableModels"
+                :options="getFilteredModelOptions(getNestedValue(state.formData, field.key))"
                 :placeholder="field.placeholder"
+                :get-show="() => true"
                 @update:value="(val) => setNestedValue(state.formData, field.key, val)"
               />
               <!-- 其他字段 -->
@@ -157,6 +166,7 @@ import {
 import { AddOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import ChannelCard from './ChannelCard.vue'
+import ModelRedirectEditor from './ModelRedirectEditor.vue'
 import channelPanelFactories from './channelPanelFactories'
 import useChannelManager from '../../composables/useChannelManager'
 import { useChannelScheduler } from '../../composables/useChannelScheduler'
@@ -248,6 +258,19 @@ function setNestedValue(obj, path, value) {
     target = target[keys[i]]
   }
   target[keys[keys.length - 1]] = value
+}
+
+// 根据输入值过滤模型选项
+function getFilteredModelOptions(inputValue) {
+  const options = state.formData.availableModels || []
+  if (!inputValue || !options.length) {
+    return options
+  }
+  const searchTerm = inputValue.toLowerCase()
+  return options.filter(opt => {
+    const label = (opt.label || opt.value || '').toLowerCase()
+    return label.includes(searchTerm)
+  })
 }
 
 // 获取验证状态（支持嵌套路径）
