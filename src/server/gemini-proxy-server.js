@@ -18,6 +18,10 @@ let currentPort = null;
 // 用于存储每个请求的元数据
 const requestMetadata = new Map();
 
+// 用于缓存已打印过的模型重定向规则，避免重复打印
+// 格式: { channelId: { "originalModel": "redirectedModel", ... } }
+const printedGeminiRedirectCache = new Map();
+
 // Gemini 模型定价（每百万 tokens 的价格，单位：美元）
 const PRICING = {
   'gemini-2.5-pro': { input: 1.25, output: 5 },
@@ -45,6 +49,27 @@ function resolveGeminiTarget(baseUrl = '', requestPath = '') {
     target = target.slice(0, -3);
   }
   return target;
+}
+
+/**
+ * 应用模型重定向（精确匹配）
+ * @param {string} originalModel - 原始模型名称
+ * @param {object} channel - 渠道对象，包含 modelRedirects 数组
+ * @returns {string} 重定向后的模型名称
+ */
+function redirectModel(originalModel, channel) {
+  if (!originalModel) return originalModel;
+
+  const modelRedirects = channel?.modelRedirects;
+  if (Array.isArray(modelRedirects) && modelRedirects.length > 0) {
+    for (const rule of modelRedirects) {
+      if (rule.from && rule.to && rule.from === originalModel) {
+        return rule.to;
+      }
+    }
+  }
+
+  return originalModel;
 }
 
 /**
@@ -152,6 +177,27 @@ async function startGeminiProxyServer(options = {}) {
         res.on('error', release);
 
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
+
+        // 从 URL 中提取模型名称并应用重定向
+        // URL 格式: /models/gemini-2.5-pro:generateContent 或 /v1/models/gemini-2.5-pro:generateContent
+        const urlMatch = req.url.match(/\/models\/([\w.-]+)(:[^?]*)?/);
+        if (urlMatch) {
+          const originalModel = urlMatch[1];
+          const redirectedModel = redirectModel(originalModel, channel);
+
+          if (redirectedModel !== originalModel) {
+            // 替换 URL 中的模型名称
+            req.url = req.url.replace(`/models/${originalModel}`, `/models/${redirectedModel}`);
+
+            // 只在重定向规则变化时打印日志（避免每次请求都打印）
+            const cachedRedirects = printedGeminiRedirectCache.get(channel.id) || {};
+            if (cachedRedirects[originalModel] !== redirectedModel) {
+              cachedRedirects[originalModel] = redirectedModel;
+              printedGeminiRedirectCache.set(channel.id, cachedRedirects);
+              console.log(`[Gemini Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+            }
+          }
+        }
 
         const target = resolveGeminiTarget(channel.baseUrl, req.url);
 
@@ -511,8 +557,22 @@ function getGeminiProxyStatus() {
   };
 }
 
+/**
+ * 清除指定渠道的模型重定向日志缓存
+ * 用于在渠道配置更新后触发重新打印日志
+ * @param {string} channelId - 渠道 ID
+ */
+function clearGeminiRedirectCache(channelId) {
+  if (channelId) {
+    printedGeminiRedirectCache.delete(channelId);
+  } else {
+    printedGeminiRedirectCache.clear();
+  }
+}
+
 module.exports = {
   startGeminiProxyServer,
   stopGeminiProxyServer,
-  getGeminiProxyStatus
+  getGeminiProxyStatus,
+  clearGeminiRedirectCache
 };

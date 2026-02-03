@@ -114,7 +114,7 @@
         </n-card>
 
         <!-- MCP Servers -->
-        <n-card title="MCP Servers" size="small">
+        <n-card title="MCP Servers" size="small" style="margin-bottom: 16px">
           <template #header-extra>
             <n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag>
           </template>
@@ -124,6 +124,22 @@
             source-title="可用 MCP Servers"
             target-title="已选 MCP Servers"
           />
+        </n-card>
+
+        <!-- Plugins -->
+        <n-card title="Plugins" size="small">
+          <template #header-extra>
+            <n-tag size="small">已选 {{ formData.plugins.length }}</n-tag>
+          </template>
+          <n-transfer
+            v-model:value="selectedPluginNames"
+            :options="pluginOptions"
+            source-title="可用 Plugins"
+            target-title="已选 Plugins"
+          />
+          <n-text depth="3" style="font-size: 12px; margin-top: 8px; display: block">
+            插件将在应用模板后记录到配置中，需要手动安装
+          </n-text>
         </n-card>
       </n-form>
     </n-scrollbar>
@@ -193,6 +209,7 @@ function getDefaultFormData() {
     agents: [],
     commands: [],
     rules: [],
+    plugins: [],
     mcpServers: []
   }
 }
@@ -255,6 +272,16 @@ const mcpOptions = computed(() => {
   })
 })
 
+// Plugins 选项
+const pluginOptions = computed(() => {
+  const plugins = props.availableConfigs?.plugins || []
+  return plugins.map(p => ({
+    value: p.name,
+    label: p.description ? `${p.name} - ${p.description}` : p.name,
+    disabled: false
+  }))
+})
+
 const selectedSkillDirectories = computed({
   get: () => formData.value.skills.map(s => s.directory),
   set: (directories) => {
@@ -302,6 +329,18 @@ const selectedRuleFileNames = computed({
   }
 })
 
+// 选中的 plugin names
+const selectedPluginNames = computed({
+  get: () => formData.value.plugins.map(p => p.name),
+  set: (names) => {
+    const plugins = props.availableConfigs?.plugins || []
+    formData.value.plugins = names.map(n => {
+      const found = plugins.find(p => p.name === n)
+      return found ? { ...found } : { name: n }
+    })
+  }
+})
+
 // 监听 show 和 template 变化
 watch(() => props.show, (newVal) => {
   if (newVal) {
@@ -334,6 +373,7 @@ watch(() => props.show, (newVal) => {
         agents: props.template.agents ? [...props.template.agents] : [],
         commands: props.template.commands ? [...props.template.commands] : [],
         rules: props.template.rules ? [...props.template.rules] : [],
+        plugins: props.template.plugins ? [...props.template.plugins] : [],
         mcpServers: props.template.mcpServers ? [...props.template.mcpServers] : []
       }
     } else {

@@ -180,27 +180,14 @@ const channelPanelFactories = {
       },
       {
         title: '模型重定向',
-        description: '仅在代理开启时生效，可将高成本模型重定向到低成本模型（如 opus → sonnet）节省 token',
+        description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
         collapsible: true,
         showWhen: (form) => form.presetId === 'official',
         fields: [
           {
-            key: 'modelConfig.haikuModel',
-            label: 'Haiku 重定向',
-            type: 'autocomplete',
-            placeholder: '留空表示不重定向'
-          },
-          {
-            key: 'modelConfig.sonnetModel',
-            label: 'Sonnet 重定向',
-            type: 'autocomplete',
-            placeholder: '留空表示不重定向'
-          },
-          {
-            key: 'modelConfig.opusModel',
-            label: 'Opus 重定向',
-            type: 'autocomplete',
-            placeholder: '如 claude-sonnet-4-5'
+            key: 'modelRedirects',
+            type: 'model-redirect',
+            fullWidth: true
           }
         ]
       },
@@ -267,6 +254,7 @@ const channelPanelFactories = {
         sonnetModel: '',
         opusModel: ''
       },
+      modelRedirects: [],
       proxyUrl: '',
       maxConcurrency: null,
       weight: 1,
@@ -288,6 +276,7 @@ const channelPanelFactories = {
         sonnetModel: channel.modelConfig?.sonnetModel || '',
         opusModel: channel.modelConfig?.opusModel || ''
       },
+      modelRedirects: channel.modelRedirects || [],
       proxyUrl: channel.proxyUrl || '',
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
@@ -368,6 +357,7 @@ const channelPanelFactories = {
             enabled: form.enabled,
             presetId: form.presetId,
             modelConfig: form.modelConfig,
+            modelRedirects: form.modelRedirects || [],
             proxyUrl: form.proxyUrl || '',
             speedTestModel: form.speedTestModel || null
           }
@@ -384,6 +374,7 @@ const channelPanelFactories = {
           enabled: form.enabled,
           presetId: form.presetId,
           modelConfig: form.modelConfig,
+          modelRedirects: form.modelRedirects || [],
           proxyUrl: form.proxyUrl || '',
           speedTestModel: form.speedTestModel || null
         })
@@ -481,6 +472,18 @@ const channelPanelFactories = {
         ]
       },
       {
+        title: '模型重定向',
+        description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
+        collapsible: true,
+        fields: [
+          {
+            key: 'modelRedirects',
+            type: 'model-redirect',
+            fullWidth: true
+          }
+        ]
+      },
+      {
         title: '调度配置',
         fields: baseSections.schedule
       }
@@ -491,6 +494,7 @@ const channelPanelFactories = {
       baseUrl: '',
       apiKey: '',
       websiteUrl: '',
+      modelRedirects: [],
       maxConcurrency: null,
       weight: 1,
       enabled: true
@@ -501,6 +505,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       websiteUrl: channel.websiteUrl || '',
+      modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false
@@ -521,7 +526,8 @@ const channelPanelFactories = {
           {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
-            enabled: form.enabled
+            enabled: form.enabled,
+            modelRedirects: form.modelRedirects || []
           }
         )
       },
@@ -533,7 +539,8 @@ const channelPanelFactories = {
           websiteUrl: form.websiteUrl,
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
-          enabled: form.enabled
+          enabled: form.enabled,
+          modelRedirects: form.modelRedirects || []
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
@@ -617,6 +624,18 @@ const channelPanelFactories = {
         ]
       },
       {
+        title: '模型重定向',
+        description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
+        collapsible: true,
+        fields: [
+          {
+            key: 'modelRedirects',
+            type: 'model-redirect',
+            fullWidth: true
+          }
+        ]
+      },
+      {
         title: '调度配置',
         fields: baseSections.schedule
       }
@@ -627,6 +646,7 @@ const channelPanelFactories = {
       baseUrl: '',
       apiKey: '',
       websiteUrl: '',
+      modelRedirects: [],
       maxConcurrency: null,
       weight: 1,
       enabled: true
@@ -637,6 +657,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       websiteUrl: channel.websiteUrl || '',
+      modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false
@@ -657,7 +678,8 @@ const channelPanelFactories = {
           {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
-            enabled: form.enabled
+            enabled: form.enabled,
+            modelRedirects: form.modelRedirects || []
           }
         )
       },
@@ -670,7 +692,8 @@ const channelPanelFactories = {
           websiteUrl: form.websiteUrl,
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
-          enabled: form.enabled
+          enabled: form.enabled,
+          modelRedirects: form.modelRedirects || []
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),

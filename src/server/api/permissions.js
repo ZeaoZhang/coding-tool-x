@@ -30,16 +30,16 @@ const permissionTemplatesService = require('../services/permission-templates-ser
 const router = express.Router();
 
 // Claude Code 设置文件路径
-function getClaudeSettingsPath(projectPath, isLocal = false) {
+function getClaudeSettingsPath(projectPath) {
   if (projectPath) {
-    return path.join(projectPath, '.claude', isLocal ? 'settings.local.json' : 'settings.json');
+    return path.join(projectPath, '.claude', 'settings.json');
   }
   return path.join(os.homedir(), '.claude', 'settings.json');
 }
 
 // 读取 Claude Code settings.json
-function readClaudeSettings(projectPath, isLocal = false) {
-  const settingsPath = getClaudeSettingsPath(projectPath, isLocal);
+function readClaudeSettings(projectPath) {
+  const settingsPath = getClaudeSettingsPath(projectPath);
   try {
     if (fs.existsSync(settingsPath)) {
       const content = fs.readFileSync(settingsPath, 'utf-8');
@@ -52,15 +52,29 @@ function readClaudeSettings(projectPath, isLocal = false) {
 }
 
 // 保存 Claude Code settings.json
-function saveClaudeSettings(projectPath, settings, isLocal = false) {
-  const settingsPath = getClaudeSettingsPath(projectPath, isLocal);
+function saveClaudeSettings(projectPath, settings) {
+  const settingsPath = getClaudeSettingsPath(projectPath);
   const settingsDir = path.dirname(settingsPath);
 
-  if (!fs.existsSync(settingsDir)) {
-    fs.mkdirSync(settingsDir, { recursive: true });
-  }
+  try {
+    // 确保目录存在
+    if (!fs.existsSync(settingsDir)) {
+      fs.mkdirSync(settingsDir, { recursive: true });
+    }
 
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    // 写入文件
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+
+    // 验证文件已创建
+    if (!fs.existsSync(settingsPath)) {
+      throw new Error('文件写入后验证失败，文件未被创建');
+    }
+
+    return { success: true, path: settingsPath };
+  } catch (err) {
+    console.error('[Permissions API] Error saving Claude settings:', err);
+    throw new Error(`保存配置文件失败: ${err.message}`);
+  }
 }
 
 // 全局 all-allow 状态（内存中）
@@ -117,11 +131,11 @@ router.get('/', (req, res) => {
 /**
  * 保存项目的命令执行权限设置
  * POST /api/permissions
- * Body: { projectPath, settings: { allow, deny }, isLocal }
+ * Body: { projectPath, settings: { allow, deny } }
  */
 router.post('/', (req, res) => {
   try {
-    const { projectPath, settings: newPermissions, isLocal = false } = req.body;
+    const { projectPath, settings: newPermissions } = req.body;
 
     if (!projectPath) {
       return res.status(400).json({
@@ -138,7 +152,7 @@ router.post('/', (req, res) => {
     }
 
     // 读取现有设置
-    const settings = readClaudeSettings(projectPath, isLocal);
+    const settings = readClaudeSettings(projectPath);
 
     // 更新权限设置（使用 Claude Code 的标准格式）
     settings.permissions = {
@@ -147,12 +161,13 @@ router.post('/', (req, res) => {
     };
 
     // 保存设置
-    saveClaudeSettings(projectPath, settings, isLocal);
+    const saveResult = saveClaudeSettings(projectPath, settings);
 
     res.json({
       success: true,
       message: '权限设置已保存',
-      savedTo: isLocal ? '.claude/settings.local.json' : '.claude/settings.json'
+      savedTo: '.claude/settings.json',
+      fullPath: saveResult.path
     });
   } catch (err) {
     console.error('[Permissions API] Save permissions error:', err);

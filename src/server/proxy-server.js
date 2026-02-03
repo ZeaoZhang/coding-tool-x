@@ -21,6 +21,10 @@ let currentPort = null;
 // 用于存储每个请求的元数据（用于 WebSocket 日志）
 const requestMetadata = new Map();
 
+// 用于缓存已打印过的模型重定向规则，避免重复打印
+// 格式: { channelId: { "originalModel": "redirectedModel", ... } }
+const printedRedirectCache = new Map();
+
 const CLAUDE_BASE_PRICING = DEFAULT_CONFIG.pricing.claude;
 const ONE_MILLION = 1000000;
 
@@ -41,11 +45,25 @@ function detectModelTier(modelName) {
 /**
  * 应用模型重定向
  * @param {string} originalModel - 原始模型名称
- * @param {object} modelConfig - 模型配置对象
+ * @param {object} channel - 渠道对象，包含 modelConfig 和 modelRedirects
  * @returns {string} 重定向后的模型名称
  */
-function redirectModel(originalModel, modelConfig) {
-  if (!modelConfig || !originalModel) return originalModel;
+function redirectModel(originalModel, channel) {
+  if (!originalModel) return originalModel;
+
+  // 优先使用新的 modelRedirects 数组格式
+  const modelRedirects = channel?.modelRedirects;
+  if (Array.isArray(modelRedirects) && modelRedirects.length > 0) {
+    for (const rule of modelRedirects) {
+      if (rule.from && rule.to && rule.from === originalModel) {
+        return rule.to;
+      }
+    }
+  }
+
+  // 向后兼容：使用旧的 modelConfig 格式
+  const modelConfig = channel?.modelConfig;
+  if (!modelConfig) return originalModel;
 
   const tier = detectModelTier(originalModel);
 
@@ -203,15 +221,22 @@ async function startProxyServer(options = {}) {
         req.sessionId = sessionId || null;
 
         // 应用模型重定向（当 proxy 开启时）
-        if (req.body && req.body.model && channel.modelConfig) {
+        if (req.body && req.body.model) {
           const originalModel = req.body.model;
-          const redirectedModel = redirectModel(originalModel, channel.modelConfig);
+          const redirectedModel = redirectModel(originalModel, channel);
 
           if (redirectedModel !== originalModel) {
             req.body.model = redirectedModel;
             // 更新 rawBody 以匹配修改后的 body
             req.rawBody = Buffer.from(JSON.stringify(req.body));
-            console.log(`[Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+
+            // 只在重定向规则变化时打印日志（避免每次请求都打印）
+            const cachedRedirects = printedRedirectCache.get(channel.id) || {};
+            if (cachedRedirects[originalModel] !== redirectedModel) {
+              cachedRedirects[originalModel] = redirectedModel;
+              printedRedirectCache.set(channel.id, cachedRedirects);
+              console.log(`[Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+            }
           }
         }
 
@@ -512,8 +537,22 @@ function getProxyStatus() {
   };
 }
 
+/**
+ * 清除指定渠道的模型重定向日志缓存
+ * 用于在渠道配置更新后触发重新打印日志
+ * @param {string} channelId - 渠道 ID
+ */
+function clearRedirectCache(channelId) {
+  if (channelId) {
+    printedRedirectCache.delete(channelId);
+  } else {
+    printedRedirectCache.clear();
+  }
+}
+
 module.exports = {
   startProxyServer,
   stopProxyServer,
-  getProxyStatus
+  getProxyStatus,
+  clearRedirectCache
 };

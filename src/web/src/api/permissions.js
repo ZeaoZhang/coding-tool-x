@@ -24,13 +24,11 @@ export async function getPermissions(projectPath, cliType = 'claude') {
  * @param {object} settings - 权限设置
  *   - allow: string[] - 允许自动执行的命令（Claude Code 格式）
  *   - deny: string[] - 需要用户确认的命令
- * @param {boolean} isLocal - 是否保存到 settings.local.json
  */
-export async function savePermissions(projectPath, settings, isLocal = false) {
+export async function savePermissions(projectPath, settings) {
   const response = await client.post('/permissions', {
     projectPath,
-    settings,
-    isLocal
+    settings
   })
   return response.data
 }

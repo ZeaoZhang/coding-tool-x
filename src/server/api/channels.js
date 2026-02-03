@@ -15,6 +15,7 @@ const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } 
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
 const { fetchModelsFromProvider } = require('../services/model-detector');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
+const { clearRedirectCache } = require('../proxy-server');
 
 // GET /api/channels - Get all channels with health status
 router.get('/', (req, res) => {
@@ -102,6 +103,8 @@ router.put('/:id', (req, res) => {
     const updates = req.body;
 
     const channel = updateChannel(id, updates);
+    // 清除该渠道的模型重定向日志缓存，使下次请求时重新打印
+    clearRedirectCache(id);
     res.json({ channel });
     broadcastSchedulerState('claude', getSchedulerState('claude'));
   } catch (error) {

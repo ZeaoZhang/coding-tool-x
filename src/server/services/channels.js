@@ -187,6 +187,7 @@ function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
     maxConcurrency: extraConfig.maxConcurrency,
     presetId: extraConfig.presetId || 'official',
     modelConfig: extraConfig.modelConfig || null,
+    modelRedirects: extraConfig.modelRedirects || [],
     proxyUrl: extraConfig.proxyUrl || '',
     speedTestModel: extraConfig.speedTestModel || null
   });
@@ -215,6 +216,7 @@ function updateChannel(id, updates) {
     enabled: merged.enabled,
     presetId: merged.presetId,
     modelConfig: merged.modelConfig,
+    modelRedirects: merged.modelRedirects || [],
     proxyUrl: merged.proxyUrl,
     speedTestModel: merged.speedTestModel,
     updatedAt: Date.now()

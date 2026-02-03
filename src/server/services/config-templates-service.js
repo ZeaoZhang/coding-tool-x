@@ -13,8 +13,10 @@ const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { RulesService } = require('./rules-service');
 const { SkillService } = require('./skill-service');
+const { PluginsService } = require('./plugins-service');
 const mcpService = require('./mcp-service');
 const skillService = new SkillService();
+const pluginsService = new PluginsService();
 
 // 配置模板文件路径
 const TEMPLATES_FILE = path.join(PATHS.config, 'config-templates.json');
@@ -149,6 +151,7 @@ You are an experienced full-stack developer focused on delivering high-quality c
     rules: [],
     commands: [],
     agents: [],
+    plugins: [],
     mcpServers: ['github', 'context7', 'fetch', 'memory'],
     isBuiltin: true
   },
@@ -297,6 +300,7 @@ You are a senior technical architect focused on system design and technical plan
     rules: [],
     commands: [],
     agents: [],
+    plugins: [],
     mcpServers: ['context7', 'fetch', 'memory'],
     isBuiltin: true
   },
@@ -455,6 +459,7 @@ For each issue:
     rules: [],
     commands: [],
     agents: [],
+    plugins: [],
     mcpServers: ['github'],
     isBuiltin: true
   },
@@ -472,6 +477,7 @@ For each issue:
     rules: [],
     commands: [],
     agents: [],
+    plugins: [],
     mcpServers: [],
     isBuiltin: true
   }
@@ -567,6 +573,7 @@ function createCustomTemplate(template) {
     rules: template.rules || [],
     commands: template.commands || [],
     agents: template.agents || [],
+    plugins: template.plugins || [],
     mcpServers: template.mcpServers || [],
     isBuiltin: false,
     createdAt: new Date().toISOString()
@@ -637,6 +644,7 @@ function applyTemplate(targetDir, templateId) {
     rules: 0,
     commands: 0,
     agents: 0,
+    plugins: 0,
     mcpServers: 0
   };
 
@@ -656,6 +664,7 @@ function applyTemplate(targetDir, templateId) {
     rules: template.rules,
     commands: template.commands,
     agents: template.agents,
+    plugins: template.plugins,
     mcpServers: template.mcpServers
   };
 
@@ -693,7 +702,7 @@ function readCurrentConfig(targetDir) {
 
 /**
  * 获取所有可用配置（用于模板编辑器选择）
- * 返回用户级的 agents, commands, rules + MCP 服务器列表
+ * 返回用户级的 agents, commands, rules, plugins + MCP 服务器列表
  */
 function getAvailableConfigs() {
   const agentsService = new AgentsService();
@@ -705,6 +714,9 @@ function getAvailableConfigs() {
   const { commands } = commandsService.listCommands();
   const { rules } = rulesService.listRules();
   const installedSkills = skillService.getInstalledSkills();
+
+  // 获取已安装的插件和市场插件
+  const { plugins: installedPlugins } = pluginsService.listPlugins();
 
   // 获取 MCP 服务器
   const mcpServers = mcpService.getAllServers();
@@ -753,6 +765,14 @@ function getAvailableConfigs() {
       directory: r.directory,
       paths: r.paths,
       body: r.body
+    })),
+    plugins: installedPlugins.map(p => ({
+      name: p.name,
+      description: p.description || '',
+      version: p.version || '1.0.0',
+      marketplace: p.marketplace || null,
+      source: p.source || null,
+      repoUrl: p.repoUrl || null
     })),
     mcpServers: mcpServerList,
     mcpPresets
@@ -819,6 +839,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     agents: { applied: 0, files: [] },
     commands: { applied: 0, files: [] },
     rules: { applied: 0, files: [] },
+    plugins: { applied: 0, items: [] },
     mcpServers: { applied: 0 }
   };
 
@@ -910,7 +931,14 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     }
   }
 
-  // 5. 写入 MCP 配置到 .mcp.json
+  // 5. 记录 Plugins（插件只记录，不自动安装）
+  // 插件安装需要用户手动确认，这里只记录模板中包含的插件信息
+  if (template.plugins?.length > 0) {
+    results.plugins.applied = template.plugins.length;
+    results.plugins.items = template.plugins.map(p => p.name);
+  }
+
+  // 6. 写入 MCP 配置到 .mcp.json
   if (template.mcpServers?.length > 0) {
     const mcpConfig = { mcpServers: {} };
     const allServers = mcpService.getAllServers();
@@ -938,7 +966,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     }
   }
 
-  // 6. 创建配置记录文件
+  // 7. 创建配置记录文件
   const configRecord = {
     templateId: template.id,
     templateName: template.name,
@@ -949,6 +977,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     agents: template.agents?.map(a => a.fileName || a.name) || [],
     commands: template.commands?.map(c => c.name) || [],
     rules: template.rules?.map(r => r.fileName) || [],
+    plugins: template.plugins?.map(p => p.name) || [],
     mcpServers: template.mcpServers || []
   };
   const recordPath = path.join(targetDir, '.ctx-config.json');
@@ -984,6 +1013,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       agents: 0,
       commands: 0,
       rules: 0,
+      plugins: 0,
       mcpServers: 0
     }
   };
@@ -1086,6 +1116,11 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       preview.willCreate.push('.mcp.json');
     }
     preview.summary.mcpServers = template.mcpServers.length;
+  }
+
+  // 统计 Plugins（插件不写入文件，只记录数量）
+  if (template.plugins?.length > 0) {
+    preview.summary.plugins = template.plugins.length;
   }
 
   return preview;

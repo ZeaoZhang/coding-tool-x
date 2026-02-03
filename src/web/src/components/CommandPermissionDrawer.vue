@@ -96,18 +96,6 @@
             </n-text>
           </div>
 
-          <!-- 保存位置选择 -->
-          <div class="save-location-options">
-            <n-radio-group v-model:value="saveToLocal" size="small">
-              <n-radio-button :value="false">
-                settings.json (团队共享)
-              </n-radio-button>
-              <n-radio-button :value="true">
-                settings.local.json (个人)
-              </n-radio-button>
-            </n-radio-group>
-          </div>
-
           <!-- 允许自动执行的命令 -->
           <div class="permission-card allow-card">
             <div class="card-header">
@@ -366,7 +354,7 @@ import { ref, computed, watch, h } from 'vue'
 import {
   NDrawer, NDrawerContent, NSelect, NButton, NIcon, NText, NSpace,
   NAlert, NDynamicTags, NInput, NEmpty, NTag, NCollapse, NCollapseItem,
-  NRadioGroup, NRadioButton, NPopconfirm, NModal, NCard, NDivider
+  NPopconfirm, NModal, NCard, NDivider
 } from 'naive-ui'
 import {
   ShieldCheckmarkOutline, CheckmarkCircleOutline, HandLeftOutline,
@@ -397,7 +385,6 @@ const saving = ref(false)
 const projects = ref([])
 const selectedProject = ref(null)
 const allAllowEnabled = ref(false)
-const saveToLocal = ref(false)
 const permissions = ref({
   allow: [],
   deny: []
@@ -544,7 +531,7 @@ async function handleSave() {
 
   saving.value = true
   try {
-    const result = await savePermissions(selectedProject.value, permissions.value, saveToLocal.value)
+    const result = await savePermissions(selectedProject.value, permissions.value)
     if (result.success) {
       originalPermissions.value = JSON.parse(JSON.stringify(permissions.value))
       message.success(`权限设置已保存到 ${result.savedTo}`)
@@ -666,10 +653,6 @@ watch(visible, (val) => {
 
 .cli-card-header {
   margin-bottom: 4px;
-}
-
-.save-location-options {
-  margin-bottom: 8px;
 }
 
 .permission-card {

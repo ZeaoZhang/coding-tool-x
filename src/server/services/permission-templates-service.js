@@ -89,37 +89,6 @@ const BUILTIN_TEMPLATES = [
       ]
     },
     isBuiltin: true
-  },
-  {
-    id: 'mcp-full',
-    name: 'MCP 全功能',
-    description: '允许所有 MCP 工具和常用命令，适合使用 MCP 服务器的项目',
-    permissions: {
-      allow: [
-        'Read(*)',
-        'Edit(*)',
-        'Bash(cat:*)',
-        'Bash(ls:*)',
-        'Bash(find:*)',
-        'Bash(grep:*)',
-        'Bash(tree:*)',
-        'Bash(git:*)',
-        'Bash(npm:*)',
-        'Bash(pnpm:*)',
-        'Bash(yarn:*)',
-        'WebSearch',
-        'mcp__Serena__*',
-        'mcp__fetch__fetch',
-        'mcp__memory__*',
-        'mcp__github__*',
-        'mcp__context7__*'
-      ],
-      deny: [
-        'Bash(rm -rf:*)',
-        'Bash(sudo:*)'
-      ]
-    },
-    isBuiltin: true
   }
 ];
 

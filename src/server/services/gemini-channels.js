@@ -70,7 +70,8 @@ function loadChannels() {
         ...ch,
         enabled: ch.enabled !== false, // 默认启用
         weight: ch.weight || 1,
-        maxConcurrency: ch.maxConcurrency || null
+        maxConcurrency: ch.maxConcurrency || null,
+        modelRedirects: ch.modelRedirects || []
       }));
     }
     return data;
@@ -171,6 +172,7 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     enabled: extraConfig.enabled !== false, // 默认启用
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
+    modelRedirects: extraConfig.modelRedirects || [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -208,6 +210,7 @@ function updateChannel(channelId, updates) {
     ...updates,
     id: channelId, // 保持 ID 不变
     createdAt: oldChannel.createdAt, // 保持创建时间
+    modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
     updatedAt: Date.now()
   };
 
