@@ -238,8 +238,15 @@ class McpClient extends EventEmitter {
       }, this._timeout);
 
       try {
+        // 确保 PATH 不被覆盖，优先使用用户提供的 env，但保留 PATH
+        const mergedEnv = { ...process.env, ...env };
+        // 如果用户提供的 env 中有 PATH，将其追加到系统 PATH 前面
+        if (env && env.PATH && process.env.PATH) {
+          mergedEnv.PATH = `${env.PATH}:${process.env.PATH}`;
+        }
+
         this._child = spawn(command, args, {
-          env: { ...process.env, ...env },
+          env: mergedEnv,
           stdio: ['pipe', 'pipe', 'pipe'],
           cwd: cwd || process.cwd()
         });
@@ -267,7 +274,15 @@ class McpClient extends EventEmitter {
 
       this._child.on('error', (err) => {
         if (err.code === 'ENOENT') {
-          settle(new McpClientError(`Command "${command}" not found. Ensure it is installed and in PATH.`));
+          const pathHint = mergedEnv.PATH
+            ? `\n  Current PATH: ${mergedEnv.PATH.split(':').slice(0, 5).join(':')}\n  (showing first 5 entries)`
+            : '\n  PATH is not set!';
+          settle(new McpClientError(
+            `Command "${command}" not found. Please check:\n` +
+            `  1. Is "${command}" installed?\n` +
+            `  2. Try using absolute path (e.g., /usr/bin/node or $(which ${command}))\n` +
+            `  3. Check your PATH environment variable${pathHint}`
+          ));
         } else {
           settle(new McpClientError(`Failed to start process: ${err.message}`));
         }

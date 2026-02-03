@@ -1,13 +1,13 @@
 // 配置模板 API
-import axios from 'axios';
+import { client } from './client';
 
-const API_BASE = '/api/config-templates';
+const API_BASE = '/config-templates';
 
 /**
  * 获取所有配置模板
  */
 export async function getAllTemplates() {
-  const response = await axios.get(API_BASE);
+  const response = await client.get(API_BASE);
   return response.data;
 }
 
@@ -15,7 +15,7 @@ export async function getAllTemplates() {
  * 获取单个配置模板详情
  */
 export async function getTemplateById(id) {
-  const response = await axios.get(`${API_BASE}/${id}`);
+  const response = await client.get(`${API_BASE}/${id}`);
   return response.data;
 }
 
@@ -23,7 +23,7 @@ export async function getTemplateById(id) {
  * 创建自定义配置模板
  */
 export async function createTemplate(data) {
-  const response = await axios.post(API_BASE, data);
+  const response = await client.post(API_BASE, data);
   return response.data;
 }
 
@@ -31,7 +31,7 @@ export async function createTemplate(data) {
  * 更新自定义配置模板
  */
 export async function updateTemplate(id, data) {
-  const response = await axios.put(`${API_BASE}/${id}`, data);
+  const response = await client.put(`${API_BASE}/${id}`, data);
   return response.data;
 }
 
@@ -39,7 +39,7 @@ export async function updateTemplate(id, data) {
  * 删除自定义配置模板
  */
 export async function deleteTemplate(id) {
-  const response = await axios.delete(`${API_BASE}/${id}`);
+  const response = await client.delete(`${API_BASE}/${id}`);
   return response.data;
 }
 
@@ -47,7 +47,7 @@ export async function deleteTemplate(id) {
  * 获取可用的配置项（用于模板编辑器选择）
  */
 export async function getAvailableConfigs() {
-  const response = await axios.get(`${API_BASE}/available-configs`);
+  const response = await client.get(`${API_BASE}/available-configs`);
   return response.data;
 }
 
@@ -60,7 +60,7 @@ export async function getAvailableConfigs() {
 export async function applyTemplate(id, targetPath, aiConfigTypes = ['claude']) {
   // 兼容单值和数组
   const types = Array.isArray(aiConfigTypes) ? aiConfigTypes : [aiConfigTypes];
-  const response = await axios.post(`${API_BASE}/${id}/apply`, { targetPath, aiConfigTypes: types });
+  const response = await client.post(`${API_BASE}/${id}/apply`, { targetPath, aiConfigTypes: types });
   return response.data;
 }
 
@@ -73,6 +73,6 @@ export async function applyTemplate(id, targetPath, aiConfigTypes = ['claude']) 
 export async function previewTemplate(id, targetPath, aiConfigTypes = ['claude']) {
   // 兼容单值和数组
   const types = Array.isArray(aiConfigTypes) ? aiConfigTypes : [aiConfigTypes];
-  const response = await axios.post(`${API_BASE}/${id}/preview`, { targetPath, aiConfigTypes: types });
+  const response = await client.post(`${API_BASE}/${id}/preview`, { targetPath, aiConfigTypes: types });
   return response.data;
 }

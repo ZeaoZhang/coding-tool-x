@@ -97,29 +97,23 @@ export default function useChannelManager(config) {
 
   async function applyChannelOrder() {
     try {
-      const configData = await fetchUIConfig()
-      if (configData && state.channels.length > 0) {
-        const order = configData.channelOrder?.[config.storageKeys.orderConfigKey] || []
-        const ordered = []
-        order.forEach(id => {
-          const channel = state.channels.find(ch => ch.id === id)
-          if (channel) ordered.push(channel)
-        })
-        state.channels.forEach(channel => {
-          if (!ordered.find(ch => ch.id === channel.id)) {
-            ordered.push(channel)
-          }
+      if (state.channels.length > 0) {
+        // 按更新时间排序（最新的在前）
+        const sorted = [...state.channels].sort((a, b) => {
+          const aTime = a.updatedAt || a.createdAt || 0
+          const bTime = b.updatedAt || b.createdAt || 0
+          return bTime - aTime
         })
 
-        const enabled = ordered.filter(ch => ch.enabled !== false)
-        const disabled = ordered.filter(ch => ch.enabled === false)
+        const enabled = sorted.filter(ch => ch.enabled !== false)
+        const disabled = sorted.filter(ch => ch.enabled === false)
         disabled.forEach(ch => {
           state.collapsed[ch.id] = true
         })
         state.channels = [...enabled, ...disabled]
       }
     } catch (error) {
-      console.error('Failed to load channel order:', error)
+      console.error('Failed to apply channel order:', error)
     }
   }
 
@@ -299,8 +293,24 @@ export default function useChannelManager(config) {
     }
   }
 
-  function handleDragEnd() {
-    saveOrder()
+  async function handleDragEnd(event) {
+    // 拖拽改变顺序时，更新被移动渠道的 updatedAt
+    // 这样它会自动按更新时间重新排序
+    if (event && event.newIndex !== event.oldIndex) {
+      const movedChannel = state.channels[event.newIndex]
+      if (movedChannel) {
+        try {
+          // 更新渠道的 updatedAt 时间戳
+          await config.api.update(movedChannel.id, {
+            ...movedChannel,
+            updatedAt: Date.now()
+          })
+          await loadChannels()
+        } catch (error) {
+          console.error('Failed to update channel order:', error)
+        }
+      }
+    }
   }
 
   loadChannels()

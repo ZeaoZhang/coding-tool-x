@@ -24,15 +24,8 @@ const DEFAULT_CONFIG = {
       cacheCreation: 3.75,
       cacheRead: 0.30,
       models: {
-        'claude-sonnet-4-20250514': { mode: 'auto' },
-        'claude-haiku-3-5-20241022': {
-          mode: 'custom',
-          input: 0.8,
-          output: 4,
-          cacheCreation: 1,
-          cacheRead: 0.08
-        },
-        'claude-opus-4-20250514': { mode: 'auto' }
+        // All models use centralized pricing from src/config/model-pricing.js
+        // Add custom entries here only if you need to override official pricing
       }
     },
     codex: {

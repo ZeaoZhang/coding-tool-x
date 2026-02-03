@@ -25,14 +25,33 @@
       </template>
 
       <div class="git-options" v-if="project.isGitRepo">
-        <n-checkbox v-model:checked="project.createWorktree" size="small">创建 Git Worktree</n-checkbox>
-        <n-input
-          v-if="project.createWorktree"
-          v-model:value="project.branch"
-          placeholder="分支名"
-          size="small"
-          style="width: 150px"
-        />
+        <n-checkbox v-model:checked="project.createWorktree" size="small">
+          创建 Git Worktree
+        </n-checkbox>
+
+        <div v-if="project.createWorktree" class="branch-inputs">
+          <n-input
+            v-model:value="project.branch"
+            placeholder="分支名（留空使用当前分支）"
+            size="small"
+            style="flex: 1"
+          />
+          <n-input
+            v-model:value="project.baseBranch"
+            placeholder="基于分支（可选，如 main）"
+            size="small"
+            style="flex: 1"
+          />
+        </div>
+
+        <n-text v-if="project.createWorktree && project.branch" depth="3" style="font-size: 11px; margin-top: 4px">
+          <template v-if="project.baseBranch">
+            ℹ️ 如果分支 "{{ project.branch }}" 不存在，将基于 "{{ project.baseBranch }}" 创建
+          </template>
+          <template v-else>
+            ℹ️ 如果分支 "{{ project.branch }}" 不存在，将基于源仓库当前分支创建
+          </template>
+        </n-text>
       </div>
       <n-text v-if="project.isGitRepo" depth="3" style="font-size: 11px">✓ Git 仓库</n-text>
     </div>
@@ -93,7 +112,12 @@ async function checkGit() {
 }
 .git-options {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
+}
+.branch-inputs {
+  display: flex;
+  gap: 8px;
+  width: 100%;
 }
 </style>

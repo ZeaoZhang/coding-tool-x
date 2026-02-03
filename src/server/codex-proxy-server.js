@@ -11,6 +11,7 @@ const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordCodexRequest } = require('./services/codex-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, writeCodexConfigForMultiChannel } = require('./services/codex-channels');
+const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -20,6 +21,7 @@ let currentPort = null;
 const requestMetadata = new Map();
 
 // OpenAI 模型定价（每百万 tokens 的价格，单位：美元）
+// Claude 模型使用 config/model-pricing.js 中的集中定价
 const PRICING = {
   'gpt-4o': { input: 2.5, output: 10 },
   'gpt-4o-2024-11-20': { input: 2.5, output: 10 },
@@ -32,17 +34,55 @@ const PRICING = {
   'o1-pro': { input: 150, output: 600 },
   'o3': { input: 10, output: 40 },
   'o3-mini': { input: 1.1, output: 4.4 },
-  'o4-mini': { input: 1.1, output: 4.4 },
-  // Claude 模型（通过 OpenAI 格式访问）
-  'claude-sonnet-4-5-20250929': { input: 3, output: 15 },
-  'claude-sonnet-4-20250514': { input: 3, output: 15 },
-  'claude-opus-4-20250514': { input: 15, output: 75 },
-  'claude-3-5-sonnet-20241022': { input: 3, output: 15 },
-  'claude-3-5-haiku-20241022': { input: 0.8, output: 4 }
+  'o4-mini': { input: 1.1, output: 4.4 }
 };
 
 const CODEX_BASE_PRICING = DEFAULT_CONFIG.pricing.codex;
 const ONE_MILLION = 1000000;
+
+/**
+ * 检测模型层级
+ * @param {string} modelName - 模型名称
+ * @returns {string|null} 模型层级 (opus/sonnet/haiku) 或 null
+ */
+function detectModelTier(modelName) {
+  if (!modelName) return null;
+  const lower = modelName.toLowerCase();
+  if (lower.includes('opus')) return 'opus';
+  if (lower.includes('sonnet')) return 'sonnet';
+  if (lower.includes('haiku')) return 'haiku';
+  return null;
+}
+
+/**
+ * 应用模型重定向
+ * @param {string} originalModel - 原始模型名称
+ * @param {object} modelConfig - 模型配置对象
+ * @returns {string} 重定向后的模型名称
+ */
+function redirectModel(originalModel, modelConfig) {
+  if (!modelConfig || !originalModel) return originalModel;
+
+  const tier = detectModelTier(originalModel);
+
+  // 优先级：层级特定配置 > 通用模型覆盖
+  if (tier === 'opus' && modelConfig.opusModel) {
+    return modelConfig.opusModel;
+  }
+  if (tier === 'sonnet' && modelConfig.sonnetModel) {
+    return modelConfig.sonnetModel;
+  }
+  if (tier === 'haiku' && modelConfig.haikuModel) {
+    return modelConfig.haikuModel;
+  }
+
+  // 回退到通用模型覆盖
+  if (modelConfig.model) {
+    return modelConfig.model;
+  }
+
+  return originalModel;
+}
 
 /**
  * 解析 Codex 代理目标 URL
@@ -84,35 +124,56 @@ function resolveCodexTarget(baseUrl = '', requestPath = '') {
  * 计算请求成本
  */
 function calculateCost(model, tokens) {
-  // 尝试精确匹配
-  let pricing = PRICING[model];
+  let pricing;
 
-  // 如果没有精确匹配，尝试模糊匹配
-  if (!pricing) {
-    const modelLower = model.toLowerCase();
-    if (modelLower.includes('gpt-4o-mini')) {
-      pricing = PRICING['gpt-4o-mini'];
-    } else if (modelLower.includes('gpt-4o')) {
-      pricing = PRICING['gpt-4o'];
-    } else if (modelLower.includes('gpt-4')) {
-      pricing = PRICING['gpt-4'];
-    } else if (modelLower.includes('gpt-3.5')) {
-      pricing = PRICING['gpt-3.5-turbo'];
-    } else if (modelLower.includes('o1-mini')) {
-      pricing = PRICING['o1-mini'];
-    } else if (modelLower.includes('o1-pro')) {
-      pricing = PRICING['o1-pro'];
-    } else if (modelLower.includes('o1')) {
-      pricing = PRICING['o1'];
-    } else if (modelLower.includes('o3-mini')) {
-      pricing = PRICING['o3-mini'];
-    } else if (modelLower.includes('o3')) {
-      pricing = PRICING['o3'];
-    } else if (modelLower.includes('o4-mini')) {
-      pricing = PRICING['o4-mini'];
-    } else if (modelLower.includes('claude')) {
-      // Claude 模型默认使用 Sonnet 定价
-      pricing = PRICING['claude-sonnet-4-5-20250929'];
+  // 首先检查是否是 Claude 模型，使用集中定价
+  if (model.startsWith('claude-') || model.toLowerCase().includes('claude')) {
+    pricing = CLAUDE_MODEL_PRICING[model];
+
+    // 如果没有精确匹配，尝试模糊匹配 Claude 模型
+    if (!pricing) {
+      const modelLower = model.toLowerCase();
+      // 查找最接近的 Claude 模型
+      for (const [key, value] of Object.entries(CLAUDE_MODEL_PRICING)) {
+        if (key.toLowerCase().includes(modelLower) || modelLower.includes(key.toLowerCase())) {
+          pricing = value;
+          break;
+        }
+      }
+    }
+
+    // 如果仍然没有找到，使用默认 Sonnet 定价
+    if (!pricing) {
+      pricing = CLAUDE_MODEL_PRICING['claude-sonnet-4-5-20250929'];
+    }
+  } else {
+    // 非 Claude 模型，使用 PRICING 对象（OpenAI 等）
+    pricing = PRICING[model];
+
+    // 如果没有精确匹配，尝试模糊匹配
+    if (!pricing) {
+      const modelLower = model.toLowerCase();
+      if (modelLower.includes('gpt-4o-mini')) {
+        pricing = PRICING['gpt-4o-mini'];
+      } else if (modelLower.includes('gpt-4o')) {
+        pricing = PRICING['gpt-4o'];
+      } else if (modelLower.includes('gpt-4')) {
+        pricing = PRICING['gpt-4'];
+      } else if (modelLower.includes('gpt-3.5')) {
+        pricing = PRICING['gpt-3.5-turbo'];
+      } else if (modelLower.includes('o1-mini')) {
+        pricing = PRICING['o1-mini'];
+      } else if (modelLower.includes('o1-pro')) {
+        pricing = PRICING['o1-pro'];
+      } else if (modelLower.includes('o1')) {
+        pricing = PRICING['o1'];
+      } else if (modelLower.includes('o3-mini')) {
+        pricing = PRICING['o3-mini'];
+      } else if (modelLower.includes('o3')) {
+        pricing = PRICING['o3'];
+      } else if (modelLower.includes('o4-mini')) {
+        pricing = PRICING['o4-mini'];
+      }
     }
   }
 
@@ -125,6 +186,18 @@ function calculateCost(model, tokens) {
     (tokens.input || 0) * inputRate / ONE_MILLION +
     (tokens.output || 0) * outputRate / ONE_MILLION
   );
+}
+
+const jsonBodyParser = express.json({
+  limit: '100mb',
+  verify: (req, res, buf) => {
+    req.rawBody = Buffer.from(buf);
+  }
+});
+
+function shouldParseJson(req) {
+  const contentType = req.headers['content-type'] || '';
+  return req.method === 'POST' && contentType.includes('application/json');
 }
 
 // 启动 Codex 代理服务器
@@ -143,6 +216,14 @@ async function startCodexProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+
+    proxyApp.use((req, res, next) => {
+      if (shouldParseJson(req)) {
+        return jsonBodyParser(req, res, next);
+      }
+      return next();
+    });
+
     const proxy = httpProxy.createProxyServer({});
 
     proxy.on('proxyReq', (proxyReq, req) => {
@@ -163,12 +244,34 @@ async function startCodexProxyServer(options = {}) {
       if (!proxyReq.getHeader('content-type')) {
         proxyReq.setHeader('content-type', 'application/json');
       }
+
+      if (shouldParseJson(req) && (req.rawBody || req.body)) {
+        const bodyBuffer = req.rawBody
+          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
+          : Buffer.from(JSON.stringify(req.body));
+        proxyReq.setHeader('Content-Length', bodyBuffer.length);
+        proxyReq.write(bodyBuffer);
+        proxyReq.end();
+      }
     });
 
     proxyApp.use(async (req, res) => {
       try {
         const channel = await allocateChannel({ source: 'codex', enableSessionBinding: false });
         req.selectedChannel = channel;
+
+        // 应用模型重定向（当 proxy 开启时）
+        if (req.body && req.body.model && channel.modelConfig) {
+          const originalModel = req.body.model;
+          const redirectedModel = redirectModel(originalModel, channel.modelConfig);
+
+          if (redirectedModel !== originalModel) {
+            req.body.model = redirectedModel;
+            // 更新 rawBody 以匹配修改后的 body
+            req.rawBody = Buffer.from(JSON.stringify(req.body));
+            console.log(`[Codex Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+          }
+        }
 
         const release = (() => {
           let released = false;

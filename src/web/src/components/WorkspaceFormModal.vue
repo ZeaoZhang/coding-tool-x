@@ -130,6 +130,7 @@ function addProject(fromExisting) {
     name: '',
     createWorktree: false,
     branch: '',
+    baseBranch: '',
     isGitRepo: false,
     fromExisting,
     selectedKey: ''
@@ -178,7 +179,18 @@ async function handleSubmit() {
       message.error(res.message || '创建失败')
     }
   } catch (err) {
-    if (!err.errors) message.error('创建失败: ' + err.message)
+    // 显示详细的错误信息（包括分支冲突等）
+    const errorMsg = err.message || '创建失败'
+    // 如果错误信息包含换行符，使用 warning 类型以便显示更多内容
+    if (errorMsg.includes('\n')) {
+      message.warning(errorMsg, { duration: 8000 })
+    } else {
+      message.error(errorMsg)
+    }
+    // 如果是表单验证错误，不显示额外消息
+    if (err.errors) {
+      // 表单验证错误已由 naive-ui 处理
+    }
   } finally {
     submitting.value = false
   }
