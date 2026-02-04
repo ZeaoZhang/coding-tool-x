@@ -9,21 +9,37 @@ const os = require('os');
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const crypto = require('crypto');
 
 // Model priority by channel type
 const MODEL_PRIORITY = {
   claude: [
-    'claude-opus-4-5-20250929',
+    'claude-opus-4-5-20251101',
     'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20250929',
+    'claude-haiku-4-5-20251001',
     'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514',
-    'claude-haiku-3-5-20241022',
-    'claude-3-5-haiku-20241022'
+    'claude-opus-4-20250514'
   ],
-  codex: ['gpt-4o-mini', 'gpt-4o', 'gpt-5-codex', 'o3'],
-  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro']
+  codex: [
+    'gpt-5.2-codex',
+    'gpt-5.1-codex-max',
+    'gpt-5.1-codex-mini',
+    'gpt-5.1-codex',
+    'gpt-5-codex',
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-5'
+  ],
+  gemini: [
+    'gemini-3-pro',
+    'gemini-3-flash',
+    'gemini-3-deep-think',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash'
+  ]
 };
+// openai_compatible 复用 codex 的模型列表
+MODEL_PRIORITY.openai_compatible = MODEL_PRIORITY.codex;
 
 const PROVIDER_CAPABILITIES = {
   claude: {
@@ -133,6 +149,63 @@ const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const TEST_TIMEOUT_MS = 10000; // 10 seconds per model test
 
 /**
+ * Generate realistic User-Agent strings that mimic official SDKs
+ * @param {string} channelType - 'claude' | 'codex' | 'gemini' | 'openai_compatible'
+ * @returns {string} - User-Agent string
+ */
+function getRealisticUserAgent(channelType) {
+  const nodeVersion = process.version.slice(1); // e.g., "18.17.0"
+  const platform = process.platform; // e.g., "darwin", "linux", "win32"
+
+  switch (channelType) {
+    case 'claude':
+      // Mimics official Anthropic Python SDK
+      return `anthropic-sdk-python/0.39.0 python/3.11.4 ${platform}`;
+    case 'gemini':
+      // Mimics official Google SDK
+      return `google-generativeai/0.8.2 python/3.11.4 ${platform}`;
+    case 'codex':
+    case 'openai_compatible':
+    default:
+      // Mimics official OpenAI Python SDK
+      return `OpenAI/Python/1.56.0`;
+  }
+}
+
+/**
+ * Add a small random delay between requests to avoid rate limiting
+ * and appear more human-like (100-300ms)
+ * @returns {Promise<void>}
+ */
+async function randomDelay() {
+  const delay = 100 + Math.random() * 200;
+  return new Promise(resolve => setTimeout(resolve, delay));
+}
+
+/**
+ * Build common headers for API requests that look like legitimate SDK clients
+ * @param {string} channelType - Channel type
+ * @param {Object} channel - Channel configuration
+ * @returns {Object} - Headers object
+ */
+function buildRequestHeaders(channelType, channel) {
+  const headers = {
+    'User-Agent': getRealisticUserAgent(channelType),
+    'Accept': 'application/json',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
+    'X-Request-Id': crypto.randomUUID()
+  };
+
+  // For OpenAI-compatible APIs, add additional headers
+  if (channelType === 'codex' || channelType === 'openai_compatible') {
+    headers['OpenAI-Beta'] = 'assistants=v2';
+  }
+
+  return headers;
+}
+
+/**
  * Get cache file path
  */
 function getCacheFilePath() {
@@ -210,9 +283,10 @@ async function testModelAvailability(channel, channelType, model) {
       const baseUrl = channel.baseUrl.trim().replace(/\/+$/, '');
       let testUrl;
       let requestBody;
+      // Start with common headers that look like legitimate SDK clients
       let headers = {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Coding-Tool-ModelDetector/1.0'
+        ...buildRequestHeaders(channelType, channel),
+        'Content-Type': 'application/json'
       };
 
       // Construct API endpoint and request based on channel type
@@ -225,8 +299,11 @@ async function testModelAvailability(channel, channelType, model) {
           max_tokens: 1,
           messages: [{ role: 'user', content: 'test' }]
         });
-      } else if (channelType === 'codex') {
-        testUrl = `${baseUrl}/v1/chat/completions`;
+      } else if (channelType === 'codex' || channelType === 'openai_compatible') {
+        // 处理 baseUrl 已包含 /v1 的情况
+        testUrl = baseUrl.endsWith('/v1')
+          ? `${baseUrl}/chat/completions`
+          : `${baseUrl}/v1/chat/completions`;
         headers['Authorization'] = `Bearer ${channel.apiKey}`;
         requestBody = JSON.stringify({
           model: model,
@@ -344,9 +421,16 @@ async function probeModelAvailability(channel, channelType) {
   console.log(`[ModelDetector] Testing models for channel ${channel.name} (${channelType})...`);
 
   const availableModels = [];
+  let isFirstModel = true;
 
   // Test models in priority order
   for (const model of modelsToTest) {
+    // Add delay between model tests to avoid rate limiting (skip first)
+    if (!isFirstModel) {
+      await randomDelay();
+    }
+    isFirstModel = false;
+
     const isAvailable = await testModelAvailability(channel, channelType, model);
 
     if (isAvailable) {
@@ -421,8 +505,12 @@ function getCachedModelInfo(channelId) {
  * @returns {Promise<Object>} { models: string[], supported: boolean, cached: boolean, error: string|null, fallbackUsed: boolean }
  */
 async function fetchModelsFromProvider(channel, channelType) {
-  // If no type specified or type is 'claude', auto-detect
-  if (!channelType || channelType === 'claude') {
+  // PRESERVE original channel type for fallback model selection
+  const originalChannelType = channelType;
+
+  // Only auto-detect if channelType is NOT specified at all
+  // DO NOT auto-detect when channelType is 'claude' - respect the caller's intent
+  if (!channelType) {
     channelType = detectChannelType(channel);
     console.log(`[ModelDetector] Auto-detected channel type: ${channelType} for ${channel.name}`);
   }
@@ -457,17 +545,18 @@ async function fetchModelsFromProvider(channel, channelType) {
   return new Promise((resolve) => {
     try {
       const baseUrl = channel.baseUrl.trim().replace(/\/+$/, '');
-      const endpoint = capability.modelListEndpoint;
-      const requestUrl = `${baseUrl}${endpoint}`;
+      const endpoint = capability.modelListEndpoint; // e.g. '/v1/models'
+      // 避免路径重复：如果 baseUrl 已包含 /v1，则只拼接 /models
+      const requestUrl = baseUrl.endsWith('/v1') && endpoint.startsWith('/v1/')
+        ? `${baseUrl}${endpoint.slice(3)}`
+        : `${baseUrl}${endpoint}`;
 
       const parsedUrl = new URL(requestUrl);
       const isHttps = parsedUrl.protocol === 'https:';
       const httpModule = isHttps ? https : http;
 
-      const headers = {
-        'User-Agent': 'Coding-Tool-ModelDetector/1.0',
-        'Accept': 'application/json'
-      };
+      // Use realistic SDK headers to avoid anti-crawler detection
+      const headers = buildRequestHeaders(channelType, channel);
 
       // Add authentication header
       if (capability.authHeader && channel.apiKey) {
@@ -540,11 +629,15 @@ async function fetchModelsFromProvider(channel, channelType) {
             let errorHint;
 
             if (isCloudflare) {
-              errorMessage = 'Cloudflare 防护拦截，已使用默认模型';
-              errorHint = '该 API 端点受 Cloudflare 保护，已自动使用默认模型 claude-sonnet-4-5';
-              console.warn(`[ModelDetector] Cloudflare protection detected for ${channel.name}, using default model`);
+              // Use originalChannelType for fallback to ensure correct models
+              // This prevents Claude channels from getting Codex models when using third-party proxies
+              const fallbackModels = MODEL_PRIORITY[originalChannelType || channelType] || MODEL_PRIORITY.claude;
+              const fallbackLabel = fallbackModels[0] || 'unknown';
+              errorMessage = 'Cloudflare 防护拦截，已使用默认模型列表';
+              errorHint = `该 API 端点受 Cloudflare 保护，已自动使用默认模型列表`;
+              console.warn(`[ModelDetector] Cloudflare protection detected for ${channel.name}, using default models for ${originalChannelType || channelType}`);
               resolve({
-                models: ['claude-sonnet-4-5'],
+                models: fallbackModels,
                 supported: true,
                 cached: false,
                 fallbackUsed: true,

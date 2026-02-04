@@ -91,12 +91,13 @@
                 v-else-if="field.type === 'model-redirect'"
                 v-model="state.formData.modelRedirects"
                 :available-models="state.formData.availableModels"
+                :channel-type="config.type"
               />
               <!-- 测速模型选择器 (支持手动输入) -->
               <n-auto-complete
                 v-else-if="field.type === 'select' && field.key === 'speedTestModel'"
                 :value="state.formData.speedTestModel"
-                :options="getFilteredModelOptions(state.formData.speedTestModel)"
+                :options="getSpeedTestModelOptions(state.formData.speedTestModel, field.options)"
                 :placeholder="field.placeholder"
                 :loading="state.formData.modelsFetching"
                 :get-show="() => true"
@@ -263,6 +264,23 @@ function setNestedValue(obj, path, value) {
 // 根据输入值过滤模型选项
 function getFilteredModelOptions(inputValue) {
   const options = state.formData.availableModels || []
+  if (!inputValue || !options.length) {
+    return options
+  }
+  const searchTerm = inputValue.toLowerCase()
+  return options.filter(opt => {
+    const label = (opt.label || opt.value || '').toLowerCase()
+    return label.includes(searchTerm)
+  })
+}
+
+// 获取测速模型选项（优先使用动态获取的 availableModels，回退到字段配置的 options）
+function getSpeedTestModelOptions(inputValue, fieldOptions) {
+  // 优先使用动态获取的模型列表，如果为空则使用字段配置的默认选项
+  const options = (state.formData.availableModels && state.formData.availableModels.length > 0)
+    ? state.formData.availableModels
+    : (fieldOptions || [])
+
   if (!inputValue || !options.length) {
     return options
   }

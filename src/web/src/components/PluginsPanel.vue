@@ -13,9 +13,9 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleSync" :loading="syncing" class="action-btn">
-          <template #icon><n-icon><SyncOutline /></n-icon></template>
-          同步
+        <n-button text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
+          导入
         </n-button>
         <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
@@ -31,9 +31,9 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleSync" :loading="syncing" class="action-btn">
-          <template #icon><n-icon><SyncOutline /></n-icon></template>
-          同步
+        <n-button text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
+          导入
         </n-button>
         <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
@@ -48,6 +48,7 @@
         共 {{ plugins.length }} 个插件
         <template v-if="plugins.length > 0">
           · 已安装: {{ installedCount }} · 未安装: {{ plugins.length - installedCount }}
+          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
         </template>
       </span>
     </div>
@@ -111,8 +112,9 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
-import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, SyncOutline } from '@vicons/ionicons5'
+import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getPlugins, getMarketPlugins, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
+import { listItems, importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
@@ -127,7 +129,6 @@ defineEmits(['back', 'updated'])
 
 const message = useMessage()
 const loading = ref(false)
-const syncing = ref(false)
 const plugins = ref([])
 const searchQuery = ref('')
 const filterStatus = ref('all')
@@ -136,19 +137,24 @@ const detailDrawerVisible = ref(false)
 const selectedPlugin = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
+const registryMap = ref({})
+const importing = ref(false)
 
 const filterOptions = [
   { label: '全部', value: 'all' },
   { label: '已安装', value: 'installed' },
-  { label: '未安装', value: 'uninstalled' }
+  { label: '未安装', value: 'uninstalled' },
+  { label: '已托管', value: 'managed' }
 ]
 
 const installedCount = computed(() => plugins.value.filter(p => p.installed).length)
+const managedCount = computed(() => Object.keys(registryMap.value).length)
 
 const filteredPlugins = computed(() => {
   let result = plugins.value
   if (filterStatus.value === 'installed') result = result.filter(p => p.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(p => !p.installed)
+  else if (filterStatus.value === 'managed') result = result.filter(p => registryMap.value[p.name])
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(p => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q))
@@ -160,20 +166,33 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的插件'
   if (filterStatus.value === 'installed') return '暂无已安装的插件'
   if (filterStatus.value === 'uninstalled') return '所有插件都已安装'
+  if (filterStatus.value === 'managed') return '暂无托管的插件'
   return '暂无可用插件，请配置仓库源'
 })
 
 async function loadData(force = false) {
   loading.value = true
   try {
-    // 并行获取已安装插件和市场插件
-    const [installedRes, marketRes] = await Promise.all([
+    // 先同步仓库
+    await syncPluginRepos().catch(() => {})
+
+    // 并行获取已安装插件、市场插件和注册表信息
+    const [installedRes, marketRes, registryRes] = await Promise.all([
       getPlugins(force),
-      getMarketPlugins().catch(() => ({ success: true, plugins: [] }))
+      getMarketPlugins().catch(() => ({ success: true, plugins: [] })),
+      listItems('plugins')
     ])
 
     const installedList = installedRes.success ? installedRes.plugins : []
     const marketList = marketRes.success ? marketRes.plugins : []
+
+    // 处理注册表数据
+    if (registryRes.success) {
+      registryMap.value = {}
+      for (const [name, item] of Object.entries(registryRes.items || {})) {
+        registryMap.value[name] = item
+      }
+    }
 
     // 创建市场插件的名称映射，用于合并详细信息
     const marketByName = {}
@@ -185,11 +204,10 @@ async function loadData(force = false) {
     const installedPlugins = installedList.map(p => {
       const marketInfo = marketByName[p.name] || {}
       return {
-        ...marketInfo,  // 先用市场插件信息作为基础
-        ...p,           // 已安装插件信息覆盖
+        ...marketInfo,
+        ...p,
         installed: true,
         key: `installed-${p.name}`,
-        // 确保这些字段优先使用市场插件的值（如果已安装插件没有）
         description: p.description || marketInfo.description || '',
         repoOwner: p.repoOwner || marketInfo.repoOwner || '',
         repoName: p.repoName || marketInfo.repoName || '',
@@ -216,18 +234,20 @@ async function loadData(force = false) {
   }
 }
 
-async function handleSync() {
-  syncing.value = true
+async function handleImport() {
+  importing.value = true
   try {
-    const res = await syncPluginRepos()
+    const res = await importFromClaude('plugins')
     if (res.success) {
-      message.success('仓库同步成功')
+      message.success(`成功导入 ${res.imported} 个插件`)
       await loadData(true)
+    } else {
+      message.error(res.message || '导入失败')
     }
   } catch (err) {
-    message.error('同步失败: ' + err.message)
+    message.error('导入失败: ' + err.message)
   } finally {
-    syncing.value = false
+    importing.value = false
   }
 }
 

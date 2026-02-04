@@ -54,26 +54,49 @@ const props = defineProps({
   availableModels: {
     type: Array,
     default: () => []
+  },
+  channelType: {
+    type: String,
+    default: 'claude'
   }
 })
 
 const emit = defineEmits(['update:modelValue'])
 
-// 常用模型列表（当没有从 API 获取到时使用）
-const defaultModels = [
-  'claude-opus-4-5-20251101',
-  'claude-sonnet-4-5-20250929',
-  'claude-3-5-haiku-20241022',
-  'claude-3-opus-20240229',
-  'claude-3-5-sonnet-20241022',
-  'claude-3-haiku-20240307'
-]
+// 各渠道类型的默认模型列表
+const defaultModelsByType = {
+  claude: [
+    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-5-20250929',
+    'claude-haiku-4-5-20251001',
+    'claude-sonnet-4-20250514',
+    'claude-opus-4-20250514'
+  ],
+  codex: [
+    'gpt-5.2-codex',
+    'gpt-5.1-codex-max',
+    'gpt-5.1-codex-mini',
+    'gpt-5.1-codex',
+    'gpt-5-codex',
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-5'
+  ],
+  gemini: [
+    'gemini-3-pro',
+    'gemini-3-flash',
+    'gemini-3-deep-think',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash'
+  ]
+}
 
 const allOptions = computed(() => {
   if (props.availableModels && props.availableModels.length > 0) {
     return props.availableModels
   }
-  return defaultModels.map(m => ({ label: m, value: m }))
+  const defaults = defaultModelsByType[props.channelType] || defaultModelsByType.claude
+  return defaults.map(m => ({ label: m, value: m }))
 })
 
 // 根据输入值过滤选项

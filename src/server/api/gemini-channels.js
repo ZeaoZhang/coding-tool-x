@@ -14,6 +14,7 @@ const { broadcastSchedulerState } = require('../websocket-server');
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
 const { clearGeminiRedirectCache } = require('../gemini-proxy-server');
+const { fetchModelsFromProvider } = require('../services/model-detector');
 
 module.exports = (config) => {
   /**
@@ -39,6 +40,42 @@ module.exports = (config) => {
     } catch (err) {
       console.error('[Gemini Channels API] Failed to get channels:', err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/gemini/channels/:id/models
+   * 获取渠道可用模型列表
+   */
+  router.get('/:id/models', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const channels = getChannels().channels || [];
+      const channel = channels.find(ch => ch.id === id);
+
+      if (!channel) {
+        return res.status(404).json({ error: '渠道不存在' });
+      }
+
+      // Gemini 渠道尝试作为 OpenAI 兼容获取，失败则回退
+      const result = await fetchModelsFromProvider(channel, 'openai_compatible');
+
+      res.json({
+        channelId: id,
+        models: result.models,
+        supported: result.supported,
+        cached: result.cached,
+        fallbackUsed: result.fallbackUsed,
+        fetchedAt: result.lastChecked || new Date().toISOString(),
+        error: result.error,
+        errorHint: result.errorHint
+      });
+    } catch (error) {
+      console.error('[Gemini Channels API] Error fetching models:', error);
+      res.status(500).json({
+        error: '获取模型列表失败',
+        channelId: req.params.id
+      });
     }
   });
 
