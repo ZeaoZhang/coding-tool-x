@@ -1,5 +1,5 @@
 <template>
-  <div class="command-card" :class="{ 'is-project': command.scope === 'project' }" @click="emit('click', command)">
+  <div class="command-card" :class="{ 'is-project': command.scope === 'project', 'managed': registryInfo }" @click="emit('click', command)">
     <div class="card-main">
       <div class="card-header">
         <div class="command-name">/{{ command.name }}</div>
@@ -30,29 +30,73 @@
     </div>
 
     <div class="card-actions">
-      <n-button
-        size="tiny"
-        tertiary
-        @click.stop="emit('edit', command)"
-      >
-        编辑
-      </n-button>
-      <n-button
-        size="tiny"
-        tertiary
-        type="error"
-        :loading="props.deleting"
-        @click.stop="emit('delete', command)"
-      >
-        删除
-      </n-button>
+      <!-- 注册表管理模式 -->
+      <template v-if="registryInfo">
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-switch
+              :value="registryInfo.enabled"
+              size="small"
+              :loading="toggling"
+              @update:value="emit('toggle-enabled', command, $event)"
+              @click.stop
+            />
+          </template>
+          {{ registryInfo.enabled ? '已启用' : '已禁用' }}
+        </n-tooltip>
+        <div class="platform-icons">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
+                :class="{ active: registryInfo.platforms?.claude }"
+                @click.stop="emit('toggle-platform', command, 'claude', !registryInfo.platforms?.claude)"
+              >
+                <n-icon size="14"><LogoApple /></n-icon>
+              </span>
+            </template>
+            Claude Code {{ registryInfo.platforms?.claude ? '已启用' : '未启用' }}
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
+                :class="{ active: registryInfo.platforms?.codex }"
+                @click.stop="emit('toggle-platform', command, 'codex', !registryInfo.platforms?.codex)"
+              >
+                <n-icon size="14"><TerminalOutline /></n-icon>
+              </span>
+            </template>
+            Codex CLI {{ registryInfo.platforms?.codex ? '已启用' : '未启用' }}
+          </n-tooltip>
+        </div>
+      </template>
+      <!-- 原有模式 -->
+      <template v-else>
+        <n-button
+          size="tiny"
+          tertiary
+          @click.stop="emit('edit', command)"
+        >
+          编辑
+        </n-button>
+        <n-button
+          size="tiny"
+          tertiary
+          type="error"
+          :loading="props.deleting"
+          @click.stop="emit('delete', command)"
+        >
+          删除
+        </n-button>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup>
-import { NButton, NTag, NIcon } from 'naive-ui'
-import { HammerOutline, CodeOutline } from '@vicons/ionicons5'
+import { NButton, NTag, NIcon, NSwitch, NTooltip } from 'naive-ui'
+import { HammerOutline, CodeOutline, LogoApple, TerminalOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
   command: {
@@ -62,10 +106,18 @@ const props = defineProps({
   deleting: {
     type: Boolean,
     default: false
+  },
+  registryInfo: {
+    type: Object,
+    default: null
+  },
+  toggling: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['click', 'edit', 'delete'])
+const emit = defineEmits(['click', 'edit', 'delete', 'toggle-enabled', 'toggle-platform'])
 
 function truncateDesc(desc) {
   if (!desc) return ''
@@ -95,6 +147,10 @@ function truncateDesc(desc) {
 
 .command-card.is-project {
   border-left: 3px solid #18a058;
+}
+
+.command-card.managed {
+  border-left: 3px solid var(--primary-color);
 }
 
 .card-main {
@@ -152,5 +208,34 @@ function truncateDesc(desc) {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.platform-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.platform-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  transition: all 0.2s ease;
+}
+
+.platform-icon:hover {
+  background: var(--bg-quaternary);
+}
+
+.platform-icon.active {
+  color: var(--primary-color);
+  background: rgba(24, 160, 88, 0.1);
 }
 </style>

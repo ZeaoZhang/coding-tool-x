@@ -4,6 +4,25 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.0.6] - 2026-02-03
+
+### Added
+- ✨ **Codex/Gemini 模型重定向支持** - 为 Codex 和 Gemini 渠道添加模型重定向功能
+  - Codex 渠道面板新增"模型重定向"配置部分
+  - Gemini 渠道面板新增"模型重定向"配置部分
+  - Gemini 代理服务器支持 URL 中模型名称的重定向
+  - 后端服务层支持 `modelRedirects` 字段存储
+- ✨ **Codex/Gemini 测速模型配置** - 为 Codex 和 Gemini 渠道添加测速模型配置
+  - Codex 渠道面板新增"测速模型"输入框
+  - Gemini 渠道面板新增"测速模型"输入框
+  - 后端服务层支持 `speedTestModel` 字段存储
+
+### Changed
+- 🔇 **优化模型重定向日志输出** - 减少重复日志打印
+  - 添加日志缓存机制，相同重定向规则只打印一次
+  - 渠道配置更新时自动清除缓存，触发重新打印
+  - Claude、Codex、Gemini 三个代理服务器统一使用此机制
+
 ## [3.0.2] - 2026-02-01
 
 ### Fixed

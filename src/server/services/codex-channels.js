@@ -48,7 +48,8 @@ function loadChannels() {
         enabled: ch.enabled !== false, // 默认启用
         weight: ch.weight || 1,
         maxConcurrency: ch.maxConcurrency || null,
-        modelRedirects: ch.modelRedirects || []
+        modelRedirects: ch.modelRedirects || [],
+        speedTestModel: ch.speedTestModel || null
       }));
     }
     return data;
@@ -177,6 +178,7 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
     modelRedirects: extraConfig.modelRedirects || [],
+    speedTestModel: extraConfig.speedTestModel || null,
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -225,6 +227,7 @@ function updateChannel(channelId, updates) {
     id: channelId, // 保持 ID 不变
     createdAt: oldChannel.createdAt, // 保持创建时间
     modelRedirects: merged.modelRedirects || [],
+    speedTestModel: merged.speedTestModel !== undefined ? merged.speedTestModel : (oldChannel.speedTestModel || null),
     updatedAt: Date.now()
   };
 

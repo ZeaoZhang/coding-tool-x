@@ -17,6 +17,10 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
+          导入
+        </n-button>
         <n-button text @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
@@ -35,6 +39,10 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
+          导入
+        </n-button>
         <n-button text @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
@@ -48,6 +56,7 @@
         共 {{ skills.length }} 个技能
         <template v-if="skills.length > 0">
           · 已安装: {{ installedCount }} · 未安装: {{ skills.length - installedCount }}
+          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
         </template>
       </span>
     </div>
@@ -102,8 +111,9 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
-import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline } from '@vicons/ionicons5'
+import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getSkills, installSkill, uninstallSkill } from '../api/skills'
+import { listItems, importFromClaude } from '../api/config-registry'
 import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
 import SkillCreateModal from './SkillCreateModal.vue'
@@ -128,19 +138,24 @@ const showDetailModal = ref(false)
 const selectedSkill = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
+const registryMap = ref({})
+const importing = ref(false)
 
 const filterOptions = [
   { label: '全部', value: 'all' },
   { label: '已安装', value: 'installed' },
-  { label: '未安装', value: 'uninstalled' }
+  { label: '未安装', value: 'uninstalled' },
+  { label: '已托管', value: 'managed' }
 ]
 
 const installedCount = computed(() => skills.value.filter(s => s.installed).length)
+const managedCount = computed(() => Object.keys(registryMap.value).length)
 
 const filteredSkills = computed(() => {
   let result = skills.value
   if (filterStatus.value === 'installed') result = result.filter(s => s.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(s => !s.installed)
+  else if (filterStatus.value === 'managed') result = result.filter(s => registryMap.value[s.directory || s.name])
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
@@ -152,18 +167,45 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的技能'
   if (filterStatus.value === 'installed') return '暂无已安装的技能'
   if (filterStatus.value === 'uninstalled') return '所有技能都已安装'
+  if (filterStatus.value === 'managed') return '暂无托管的技能'
   return '暂无可用技能，请配置仓库源'
 })
 
 async function loadData(force = false) {
   loading.value = true
   try {
-    const res = await getSkills(force)
-    if (res.success) skills.value = res.skills || []
+    const [skillsRes, registryRes] = await Promise.all([
+      getSkills(force),
+      listItems('skills')
+    ])
+    if (skillsRes.success) skills.value = skillsRes.skills || []
+    if (registryRes.success) {
+      registryMap.value = {}
+      for (const [name, item] of Object.entries(registryRes.items || {})) {
+        registryMap.value[name] = item
+      }
+    }
   } catch (err) {
     message.error('加载技能失败: ' + err.message)
   } finally {
     loading.value = false
+  }
+}
+
+async function handleImport() {
+  importing.value = true
+  try {
+    const res = await importFromClaude('skills')
+    if (res.success) {
+      message.success(`成功导入 ${res.imported} 个技能`)
+      await loadData(true)
+    } else {
+      message.error(res.message || '导入失败')
+    }
+  } catch (err) {
+    message.error('导入失败: ' + err.message)
+  } finally {
+    importing.value = false
   }
 }
 

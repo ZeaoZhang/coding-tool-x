@@ -17,6 +17,12 @@
           </template>
           创建
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon>
+            <n-icon><CloudDownloadOutline /></n-icon>
+          </template>
+          导入
+        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -35,6 +41,12 @@
           </template>
           创建
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon>
+            <n-icon><CloudDownloadOutline /></n-icon>
+          </template>
+          导入
+        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -50,6 +62,7 @@
         共 {{ agents.length }} 个代理
         <template v-if="agents.length > 0">
           · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
+          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
         </template>
       </span>
     </div>
@@ -99,9 +112,13 @@
             :key="agent.path"
             :agent="agent"
             :deleting="!!deletingKeys[agent.path]"
+            :registry-info="registryMap[agent.name]"
+            :toggling="!!togglingKeys[agent.name]"
             @edit="handleEdit"
             @delete="handleDelete"
             @click="handleCardClick"
+            @toggle-enabled="handleToggleEnabled"
+            @toggle-platform="handleTogglePlatform"
           />
         </div>
       </n-spin>
@@ -171,9 +188,11 @@ import {
   SearchOutline,
   InformationCircleOutline,
   AddOutline,
-  PersonOutline
+  PersonOutline,
+  CloudDownloadOutline
 } from '@vicons/ionicons5'
 import { getAgents, deleteAgent } from '../api/agents'
+import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
 import message from '../utils/message'
 import AgentCard from './AgentCard.vue'
 import AgentFormModal from './AgentFormModal.vue'
@@ -204,22 +223,31 @@ const showDetailDrawer = ref(false)
 const selectedAgent = ref(null)
 const editingAgent = ref(null)
 const deletingKeys = ref({})
+const registryMap = ref({})
+const togglingKeys = ref({})
+const importing = ref(false)
 
 const scopeOptions = [
   { label: '全部', value: 'all' },
   { label: '用户级', value: 'user' },
-  { label: '项目级', value: 'project' }
+  { label: '项目级', value: 'project' },
+  { label: '已托管', value: 'managed' }
 ]
 
 const userCount = computed(() => agents.value.filter(a => a.scope === 'user').length)
 const projectCount = computed(() => agents.value.filter(a => a.scope === 'project').length)
+const managedCount = computed(() => Object.keys(registryMap.value).length)
 
 const filteredAgents = computed(() => {
   let result = agents.value
 
   // 按作用域筛选
-  if (filterScope.value !== 'all') {
-    result = result.filter(agent => agent.scope === filterScope.value)
+  if (filterScope.value === 'user') {
+    result = result.filter(agent => agent.scope === 'user')
+  } else if (filterScope.value === 'project') {
+    result = result.filter(agent => agent.scope === 'project')
+  } else if (filterScope.value === 'managed') {
+    result = result.filter(agent => registryMap.value[agent.name])
   }
 
   // 按搜索词筛选
@@ -239,20 +267,77 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的代理'
   if (filterScope.value === 'user') return '暂无用户级代理'
   if (filterScope.value === 'project') return '暂无项目级代理'
+  if (filterScope.value === 'managed') return '暂无托管的代理'
   return '暂无自定义代理'
 })
+
+async function handleImport() {
+  importing.value = true
+  try {
+    const res = await importFromClaude('agents')
+    if (res.success) {
+      message.success(`成功导入 ${res.imported} 个代理`)
+      await loadAgents()
+    } else {
+      message.error(res.message || '导入失败')
+    }
+  } catch (err) {
+    message.error('导入失败: ' + err.message)
+  } finally {
+    importing.value = false
+  }
+}
 
 async function loadAgents() {
   loading.value = true
   try {
-    const result = await getAgents(props.projectPath)
-    if (result.success) {
-      agents.value = result.agents || []
+    const [agentRes, registryRes] = await Promise.all([
+      getAgents(props.projectPath),
+      listItems('agents')
+    ])
+    if (agentRes.success) {
+      agents.value = agentRes.agents || []
+    }
+    if (registryRes.success) {
+      registryMap.value = {}
+      for (const [name, item] of Object.entries(registryRes.items || {})) {
+        registryMap.value[name] = item
+      }
     }
   } catch (err) {
     message.error('加载代理列表失败: ' + err.message)
   } finally {
     loading.value = false
+  }
+}
+
+async function handleToggleEnabled(agent, enabled) {
+  togglingKeys.value[agent.name] = true
+  try {
+    const res = await toggleEnabled('agents', agent.name, enabled)
+    if (res.success) {
+      message.success(enabled ? '已启用' : '已禁用')
+      await loadAgents()
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[agent.name]
+  }
+}
+
+async function handleTogglePlatform(agent, platform, enabled) {
+  togglingKeys.value[agent.name] = true
+  try {
+    const res = await togglePlatform('agents', agent.name, platform, enabled)
+    if (res.success) {
+      message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
+      await loadAgents()
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[agent.name]
   }
 }
 

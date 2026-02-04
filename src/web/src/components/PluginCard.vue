@@ -71,6 +71,9 @@ function truncate(text, len) {
 .plugin-card.installed {
   border-left: 3px solid var(--info-color, #2080f0);
 }
+.plugin-card.managed {
+  border-left: 3px solid var(--primary-color);
+}
 .card-header {
   display: flex;
   align-items: center;

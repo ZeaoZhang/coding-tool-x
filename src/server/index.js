@@ -154,6 +154,9 @@ async function startServer(port) {
   // 配置同步 API
   app.use('/api/config-sync', require('./api/config-sync'));
 
+  // 配置注册表 API (集中管理 skills/commands/agents/rules 的启用/禁用)
+  app.use('/api/config-registry', require('./api/config-registry'));
+
   // 健康检查 API
   app.use('/api/health-check', require('./api/health-check')(config));
 

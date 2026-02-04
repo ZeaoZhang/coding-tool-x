@@ -1,5 +1,5 @@
 <template>
-  <div class="skill-card" :class="{ installed: skill.installed }" @click="$emit('click', skill)">
+  <div class="skill-card" :class="{ installed: skill.installed, managed: skill.installed }" @click="$emit('click', skill)">
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ skill.name }}</span>
@@ -65,6 +65,9 @@ function truncate(text, len) {
 }
 .skill-card.installed {
   border-left: 3px solid var(--success-color);
+}
+.skill-card.managed {
+  border-left: 3px solid var(--primary-color);
 }
 .card-header {
   display: flex;

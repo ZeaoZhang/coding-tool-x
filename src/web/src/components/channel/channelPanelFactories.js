@@ -17,15 +17,45 @@ import {
   updateCodexChannel,
   deleteCodexChannel,
   applyCodexChannelToSettings,
-  resetCodexChannelHealth
+  resetCodexChannelHealth,
+  fetchCodexChannelModels
 } from '../../api/channels'
 import {
   getGeminiChannels,
   createGeminiChannel,
   updateGeminiChannel,
   deleteGeminiChannel,
-  resetGeminiChannelHealth
+  resetGeminiChannelHealth,
+  fetchGeminiChannelModels
 } from '../../api/channels'
+
+// 各渠道类型的默认模型列表
+const defaultModels = {
+  claude: [
+    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-5-20250929',
+    'claude-haiku-4-5-20251001',
+    'claude-sonnet-4-20250514',
+    'claude-opus-4-20250514'
+  ],
+  codex: [
+    'gpt-5.2-codex',
+    'gpt-5.1-codex-max',
+    'gpt-5.1-codex-mini',
+    'gpt-5.1-codex',
+    'gpt-5-codex',
+    'gpt-5.2',
+    'gpt-5.1',
+    'gpt-5'
+  ],
+  gemini: [
+    'gemini-3-pro',
+    'gemini-3-flash',
+    'gemini-3-deep-think',
+    'gemini-2.5-pro',
+    'gemini-2.5-flash'
+  ]
+}
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9-]+$/i
@@ -174,7 +204,9 @@ const channelPanelFactories = {
             label: '测速模型',
             type: 'select',
             placeholder: '选择用于测速的模型（留空则自动检测）',
-            description: '指定用于速度测试的模型，留空则使用自动检测'
+            description: '指定用于速度测试的模型，留空则使用自动检测',
+            options: defaultModels.claude.map(m => ({ label: m, value: m })),
+            clearable: true
           }
         ]
       },
@@ -311,29 +343,34 @@ const channelPanelFactories = {
       form.modelsFetchErrorHint = null
       try {
         const result = await fetchChannelModels(channelId, 'claude')
-        if (result.supported) {
+        if (result.models && result.models.length > 0) {
           form.availableModels = result.models.map(m => ({
             label: m,
             value: m
           }))
 
           // Show info message if using fallback default model
-          if (result.fallbackUsed && result.models.length > 0) {
+          if (result.fallbackUsed) {
             form.modelsFetchError = result.error || '无法自动获取模型列表（API 端点受保护）'
-            form.modelsFetchErrorHint = result.errorHint || '建议手动输入模型名称，例如：claude-sonnet-4-5、claude-3-5-haiku-20241022、claude-3-opus-20240229'
+            form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
           }
-        } else {
+        } else if (result.fallbackUsed || !result.supported) {
+          // Fetch failed, use default Claude models
+          form.availableModels = defaultModels.claude.map(m => ({ label: m, value: m }))
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
-          form.modelsFetchErrorHint = result.errorHint
+          form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
+        // On error, use default Claude models
+        form.availableModels = defaultModels.claude.map(m => ({ label: m, value: m }))
         // Try to extract error details from response
         const errorData = error.response?.data
         if (errorData) {
           form.modelsFetchError = errorData.error || error.message || '获取模型列表失败'
-          form.modelsFetchErrorHint = errorData.errorHint
+          form.modelsFetchErrorHint = errorData.errorHint || '已使用默认模型列表'
         } else {
           form.modelsFetchError = error.message || '获取模型列表失败'
+          form.modelsFetchErrorHint = '已使用默认模型列表'
         }
       } finally {
         form.modelsFetching = false
@@ -468,6 +505,15 @@ const channelPanelFactories = {
             type: 'text',
             placeholder: 'https://（选填）',
             validate: (value) => validateHttpUrl('官网链接', value, { required: false })
+          },
+          {
+            key: 'speedTestModel',
+            label: '测速模型',
+            type: 'select',
+            placeholder: '选择用于测速的模型（留空则使用默认）',
+            description: '指定用于速度测试的模型，留空则使用默认模型',
+            options: defaultModels.codex.map(m => ({ label: m, value: m })),
+            clearable: true
           }
         ]
       },
@@ -494,10 +540,15 @@ const channelPanelFactories = {
       baseUrl: '',
       apiKey: '',
       websiteUrl: '',
+      speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
       weight: 1,
-      enabled: true
+      enabled: true,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
     }),
     mapChannelToForm: (channel) => ({
       name: channel.name || '',
@@ -505,11 +556,47 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       websiteUrl: channel.websiteUrl || '',
+      speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
-      enabled: channel.enabled !== false
+      enabled: channel.enabled !== false,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
     }),
+    fetchModelsForChannel: async (channelId, form) => {
+      form.modelsFetching = true
+      form.modelsFetchError = null
+      form.modelsFetchErrorHint = null
+      try {
+        const result = await fetchCodexChannelModels(channelId)
+        if (result.models && result.models.length > 0) {
+          form.availableModels = result.models.map(m => ({
+            label: m,
+            value: m
+          }))
+          // 如果使用了回退，显示提示
+          if (result.fallbackUsed) {
+            form.modelsFetchError = result.error || '无法自动获取模型列表'
+            form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
+          }
+        } else if (result.fallbackUsed || !result.supported) {
+          // 获取失败，使用默认列表
+          form.availableModels = defaultModels.codex.map(m => ({ label: m, value: m }))
+          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
+        }
+      } catch (error) {
+        // 出错时使用默认列表
+        form.availableModels = defaultModels.codex.map(m => ({ label: m, value: m }))
+        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchErrorHint = '已使用默认模型列表'
+      } finally {
+        form.modelsFetching = false
+      }
+    },
     testFn: testCodexChannelSpeed,
     api: {
       fetch: async () => {
@@ -527,7 +614,8 @@ const channelPanelFactories = {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
             enabled: form.enabled,
-            modelRedirects: form.modelRedirects || []
+            modelRedirects: form.modelRedirects || [],
+            speedTestModel: form.speedTestModel || null
           }
         )
       },
@@ -540,7 +628,8 @@ const channelPanelFactories = {
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
-          modelRedirects: form.modelRedirects || []
+          modelRedirects: form.modelRedirects || [],
+          speedTestModel: form.speedTestModel || null
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
@@ -620,6 +709,15 @@ const channelPanelFactories = {
             type: 'text',
             placeholder: 'https://（选填）',
             validate: (value) => validateHttpUrl('官网链接', value, { required: false })
+          },
+          {
+            key: 'speedTestModel',
+            label: '测速模型',
+            type: 'select',
+            placeholder: '选择用于测速的模型（留空则使用 model 字段）',
+            description: '指定用于速度测试的模型，留空则使用上方配置的 Model',
+            options: defaultModels.gemini.map(m => ({ label: m, value: m })),
+            clearable: true
           }
         ]
       },
@@ -646,10 +744,15 @@ const channelPanelFactories = {
       baseUrl: '',
       apiKey: '',
       websiteUrl: '',
+      speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
       weight: 1,
-      enabled: true
+      enabled: true,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
     }),
     mapChannelToForm: (channel) => ({
       name: channel.name || '',
@@ -657,11 +760,47 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       websiteUrl: channel.websiteUrl || '',
+      speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
-      enabled: channel.enabled !== false
+      enabled: channel.enabled !== false,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
     }),
+    fetchModelsForChannel: async (channelId, form) => {
+      form.modelsFetching = true
+      form.modelsFetchError = null
+      form.modelsFetchErrorHint = null
+      try {
+        const result = await fetchGeminiChannelModels(channelId)
+        if (result.models && result.models.length > 0) {
+          form.availableModels = result.models.map(m => ({
+            label: m,
+            value: m
+          }))
+          // 如果使用了回退，显示提示
+          if (result.fallbackUsed) {
+            form.modelsFetchError = result.error || '无法自动获取模型列表'
+            form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
+          }
+        } else if (result.fallbackUsed || !result.supported) {
+          // 获取失败，使用默认列表
+          form.availableModels = defaultModels.gemini.map(m => ({ label: m, value: m }))
+          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
+        }
+      } catch (error) {
+        // 出错时使用默认列表
+        form.availableModels = defaultModels.gemini.map(m => ({ label: m, value: m }))
+        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchErrorHint = '已使用默认模型列表'
+      } finally {
+        form.modelsFetching = false
+      }
+    },
     testFn: testGeminiChannelSpeed,
     api: {
       fetch: async () => {
@@ -679,7 +818,8 @@ const channelPanelFactories = {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
             enabled: form.enabled,
-            modelRedirects: form.modelRedirects || []
+            modelRedirects: form.modelRedirects || [],
+            speedTestModel: form.speedTestModel || null
           }
         )
       },
@@ -693,7 +833,8 @@ const channelPanelFactories = {
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
-          modelRedirects: form.modelRedirects || []
+          modelRedirects: form.modelRedirects || [],
+          speedTestModel: form.speedTestModel || null
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),

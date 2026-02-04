@@ -15,6 +15,7 @@ const { broadcastSchedulerState, broadcastLog } = require('../websocket-server')
 const { isCodexInstalled } = require('../services/codex-config');
 const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
 const { clearCodexRedirectCache } = require('../codex-proxy-server');
+const { fetchModelsFromProvider } = require('../services/model-detector');
 
 module.exports = (config) => {
   /**
@@ -40,6 +41,42 @@ module.exports = (config) => {
     } catch (err) {
       console.error('[Codex Channels API] Failed to get channels:', err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/codex/channels/:id/models
+   * 获取渠道可用模型列表
+   */
+  router.get('/:id/models', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const channels = getChannels().channels || [];
+      const channel = channels.find(ch => ch.id === id);
+
+      if (!channel) {
+        return res.status(404).json({ error: '渠道不存在' });
+      }
+
+      // Codex 渠道大多数是 OpenAI 兼容的
+      const result = await fetchModelsFromProvider(channel, 'openai_compatible');
+
+      res.json({
+        channelId: id,
+        models: result.models,
+        supported: result.supported,
+        cached: result.cached,
+        fallbackUsed: result.fallbackUsed,
+        fetchedAt: result.lastChecked || new Date().toISOString(),
+        error: result.error,
+        errorHint: result.errorHint
+      });
+    } catch (error) {
+      console.error('[Codex Channels API] Error fetching models:', error);
+      res.status(500).json({
+        error: '获取模型列表失败',
+        channelId: req.params.id
+      });
     }
   });
 

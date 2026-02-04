@@ -17,6 +17,12 @@
           </template>
           创建
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon>
+            <n-icon><CloudDownloadOutline /></n-icon>
+          </template>
+          导入
+        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -35,6 +41,12 @@
           </template>
           创建
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon>
+            <n-icon><CloudDownloadOutline /></n-icon>
+          </template>
+          导入
+        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -50,6 +62,7 @@
         共 {{ commands.length }} 个命令
         <template v-if="commands.length > 0">
           · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
+          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
         </template>
       </span>
     </div>
@@ -99,9 +112,13 @@
             :key="cmd.path"
             :command="cmd"
             :deleting="!!deletingKeys[cmd.path]"
+            :registry-info="registryMap[cmd.name]"
+            :toggling="!!togglingKeys[cmd.name]"
             @edit="handleEdit"
             @delete="handleDelete"
             @click="handleCardClick"
+            @toggle-enabled="handleToggleEnabled"
+            @toggle-platform="handleTogglePlatform"
           />
         </div>
       </n-spin>
@@ -165,9 +182,11 @@ import {
   SearchOutline,
   InformationCircleOutline,
   AddOutline,
-  TerminalOutline
+  TerminalOutline,
+  CloudDownloadOutline
 } from '@vicons/ionicons5'
 import { getCommands, deleteCommand } from '../api/commands'
+import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
 import message from '../utils/message'
 import CommandCard from './CommandCard.vue'
 import CommandFormModal from './CommandFormModal.vue'
@@ -198,22 +217,31 @@ const showDetailDrawer = ref(false)
 const selectedCommand = ref(null)
 const editingCommand = ref(null)
 const deletingKeys = ref({})
+const registryMap = ref({})
+const togglingKeys = ref({})
+const importing = ref(false)
 
 const scopeOptions = [
   { label: '全部', value: 'all' },
   { label: '用户级', value: 'user' },
-  { label: '项目级', value: 'project' }
+  { label: '项目级', value: 'project' },
+  { label: '已托管', value: 'managed' }
 ]
 
 const userCount = computed(() => commands.value.filter(c => c.scope === 'user').length)
 const projectCount = computed(() => commands.value.filter(c => c.scope === 'project').length)
+const managedCount = computed(() => Object.keys(registryMap.value).length)
 
 const filteredCommands = computed(() => {
   let result = commands.value
 
   // 按作用域筛选
-  if (filterScope.value !== 'all') {
-    result = result.filter(cmd => cmd.scope === filterScope.value)
+  if (filterScope.value === 'user') {
+    result = result.filter(cmd => cmd.scope === 'user')
+  } else if (filterScope.value === 'project') {
+    result = result.filter(cmd => cmd.scope === 'project')
+  } else if (filterScope.value === 'managed') {
+    result = result.filter(cmd => registryMap.value[cmd.name])
   }
 
   // 按搜索词筛选
@@ -233,20 +261,77 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的命令'
   if (filterScope.value === 'user') return '暂无用户级命令'
   if (filterScope.value === 'project') return '暂无项目级命令'
+  if (filterScope.value === 'managed') return '暂无托管的命令'
   return '暂无自定义命令'
 })
+
+async function handleImport() {
+  importing.value = true
+  try {
+    const res = await importFromClaude('commands')
+    if (res.success) {
+      message.success(`成功导入 ${res.imported} 个命令`)
+      await loadCommands()
+    } else {
+      message.error(res.message || '导入失败')
+    }
+  } catch (err) {
+    message.error('导入失败: ' + err.message)
+  } finally {
+    importing.value = false
+  }
+}
 
 async function loadCommands() {
   loading.value = true
   try {
-    const result = await getCommands(props.projectPath)
-    if (result.success) {
-      commands.value = result.commands || []
+    const [cmdRes, registryRes] = await Promise.all([
+      getCommands(props.projectPath),
+      listItems('commands')
+    ])
+    if (cmdRes.success) {
+      commands.value = cmdRes.commands || []
+    }
+    if (registryRes.success) {
+      registryMap.value = {}
+      for (const [name, item] of Object.entries(registryRes.items || {})) {
+        registryMap.value[name] = item
+      }
     }
   } catch (err) {
     message.error('加载命令列表失败: ' + err.message)
   } finally {
     loading.value = false
+  }
+}
+
+async function handleToggleEnabled(cmd, enabled) {
+  togglingKeys.value[cmd.name] = true
+  try {
+    const res = await toggleEnabled('commands', cmd.name, enabled)
+    if (res.success) {
+      message.success(enabled ? '已启用' : '已禁用')
+      await loadCommands()
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[cmd.name]
+  }
+}
+
+async function handleTogglePlatform(cmd, platform, enabled) {
+  togglingKeys.value[cmd.name] = true
+  try {
+    const res = await togglePlatform('commands', cmd.name, platform, enabled)
+    if (res.success) {
+      message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
+      await loadCommands()
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[cmd.name]
   }
 }
 

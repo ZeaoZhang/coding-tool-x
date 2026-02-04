@@ -211,3 +211,19 @@ export async function testAllGeminiChannelsSpeed(timeout = 20000) {
   const response = await client.post('/gemini/channels/speed-test-all', { timeout }, { timeout: 120000 })
   return response.data
 }
+
+/**
+ * 获取 Codex 渠道可用模型列表
+ */
+export async function fetchCodexChannelModels(channelId) {
+  const response = await client.get(`/codex/channels/${channelId}/models`)
+  return response.data
+}
+
+/**
+ * 获取 Gemini 渠道可用模型列表
+ */
+export async function fetchGeminiChannelModels(channelId) {
+  const response = await client.get(`/gemini/channels/${channelId}/models`)
+  return response.data
+}

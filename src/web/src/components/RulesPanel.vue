@@ -17,6 +17,12 @@
           </template>
           创建
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon>
+            <n-icon><CloudDownloadOutline /></n-icon>
+          </template>
+          导入
+        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -35,6 +41,12 @@
           </template>
           创建
         </n-button>
+        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+          <template #icon>
+            <n-icon><CloudDownloadOutline /></n-icon>
+          </template>
+          导入
+        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -50,6 +62,7 @@
         共 {{ rules.length }} 条规则
         <template v-if="rules.length > 0">
           · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
+          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
         </template>
       </span>
     </div>
@@ -99,9 +112,13 @@
             :key="rule.path"
             :rule="rule"
             :deleting="!!deletingKeys[rule.path]"
+            :registry-info="registryMap[rule.name]"
+            :toggling="!!togglingKeys[rule.name]"
             @edit="handleEdit"
             @delete="handleDelete"
             @click="handleCardClick"
+            @toggle-enabled="handleToggleEnabled"
+            @toggle-platform="handleTogglePlatform"
           />
         </div>
       </n-spin>
@@ -162,9 +179,11 @@ import {
   SearchOutline,
   InformationCircleOutline,
   AddOutline,
-  BookOutline
+  BookOutline,
+  CloudDownloadOutline
 } from '@vicons/ionicons5'
 import { getRules, deleteRule } from '../api/rules'
+import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
 import message from '../utils/message'
 import RuleCard from './RuleCard.vue'
 import RuleFormModal from './RuleFormModal.vue'
@@ -188,6 +207,7 @@ const emit = defineEmits(['back', 'updated'])
 
 const rules = ref([])
 const loading = ref(false)
+const importing = ref(false)
 const searchQuery = ref('')
 const filterScope = ref('all')
 const showCreateModal = ref(false)
@@ -195,22 +215,30 @@ const showDetailDrawer = ref(false)
 const selectedRule = ref(null)
 const editingRule = ref(null)
 const deletingKeys = ref({})
+const registryMap = ref({})
+const togglingKeys = ref({})
 
 const scopeOptions = [
   { label: '全部', value: 'all' },
   { label: '用户级', value: 'user' },
-  { label: '项目级', value: 'project' }
+  { label: '项目级', value: 'project' },
+  { label: '已托管', value: 'managed' }
 ]
 
 const userCount = computed(() => rules.value.filter(r => r.scope === 'user').length)
 const projectCount = computed(() => rules.value.filter(r => r.scope === 'project').length)
+const managedCount = computed(() => Object.keys(registryMap.value).length)
 
 const filteredRules = computed(() => {
   let result = rules.value
 
   // 按作用域筛选
-  if (filterScope.value !== 'all') {
-    result = result.filter(rule => rule.scope === filterScope.value)
+  if (filterScope.value === 'user') {
+    result = result.filter(rule => rule.scope === 'user')
+  } else if (filterScope.value === 'project') {
+    result = result.filter(rule => rule.scope === 'project')
+  } else if (filterScope.value === 'managed') {
+    result = result.filter(rule => registryMap.value[rule.name])
   }
 
   // 按搜索词筛选
@@ -231,20 +259,77 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的规则'
   if (filterScope.value === 'user') return '暂无用户级规则'
   if (filterScope.value === 'project') return '暂无项目级规则'
+  if (filterScope.value === 'managed') return '暂无托管的规则'
   return '暂无规则文件'
 })
 
 async function loadRules() {
   loading.value = true
   try {
-    const result = await getRules(props.projectPath)
-    if (result.success) {
-      rules.value = result.rules || []
+    const [ruleRes, registryRes] = await Promise.all([
+      getRules(props.projectPath),
+      listItems('rules')
+    ])
+    if (ruleRes.success) {
+      rules.value = ruleRes.rules || []
+    }
+    if (registryRes.success) {
+      registryMap.value = {}
+      for (const [name, item] of Object.entries(registryRes.items || {})) {
+        registryMap.value[name] = item
+      }
     }
   } catch (err) {
     message.error('加载规则列表失败: ' + err.message)
   } finally {
     loading.value = false
+  }
+}
+
+async function handleImport() {
+  importing.value = true
+  try {
+    const res = await importFromClaude('rules')
+    if (res.success) {
+      message.success(`成功导入 ${res.imported} 条规则`)
+      await loadRules()
+    } else {
+      message.error(res.message || '导入失败')
+    }
+  } catch (err) {
+    message.error('导入失败: ' + err.message)
+  } finally {
+    importing.value = false
+  }
+}
+
+async function handleToggleEnabled(rule, enabled) {
+  togglingKeys.value[rule.name] = true
+  try {
+    const res = await toggleEnabled('rules', rule.name, enabled)
+    if (res.success) {
+      message.success(enabled ? '已启用' : '已禁用')
+      await loadRules()
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[rule.name]
+  }
+}
+
+async function handleTogglePlatform(rule, platform, enabled) {
+  togglingKeys.value[rule.name] = true
+  try {
+    const res = await togglePlatform('rules', rule.name, platform, enabled)
+    if (res.success) {
+      message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
+      await loadRules()
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[rule.name]
   }
 }
 
