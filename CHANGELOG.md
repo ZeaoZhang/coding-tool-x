@@ -4,6 +4,29 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.1.0] - 2026-02-04
+
+### Added
+- ✨ **OAuth 登录统一预设化** - 三种渠道统一通过预设下拉框选择 OAuth 登录
+  - Claude 渠道预设新增"Claude OAuth"选项，选择后自动显示 OAuth 认证面板
+  - Codex 渠道新增预设系统，支持"OpenAI / OpenAI OAuth / 自定义"预设
+  - Gemini 渠道新增预设系统，支持"Google AI / Google OAuth / 自定义"预设
+  - 三种渠道 UI 风格完全统一，均通过预设下拉框切换认证方式
+- ✨ **渠道自定义预设** - 所有渠道类型新增"自定义"预设选项
+  - Claude 渠道新增"自定义"预设，用户可手动填写所有字段
+  - Codex / Gemini 渠道同样支持自定义预设
+- ✨ **Codex/Gemini 预设配置文件** - 新增独立预设配置
+  - 新增 `codexPresets.js`，定义 Codex 渠道预设及分类
+  - 新增 `geminiPresets.js`，定义 Gemini 渠道预设及分类
+
+### Changed
+- 🎨 **OAuth 认证面板样式优化** - OAuth section 使用紫色渐变背景区分
+  - 认证方式 radio 按钮改为卡片式布局，选中状态高亮
+  - 选择 OAuth 预设后自动隐藏 API Key 输入框
+- 🔄 **移除 Codex/Gemini 独立认证方式 section** - 不再使用 radio-group 切换认证
+  - 改为通过预设下拉框选择，与 Claude 渠道保持一致
+  - 预设切换自动设置 `authType`，面板内容随之联动
+
 ## [3.0.6] - 2026-02-03
 
 ### Added

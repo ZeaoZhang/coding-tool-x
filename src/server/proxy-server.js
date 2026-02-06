@@ -13,6 +13,7 @@ const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const eventBus = require('../plugins/event-bus');
 const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
+const { getEffectiveApiKey } = require('./services/channels');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -185,9 +186,10 @@ async function startProxyServer(options = {}) {
         });
 
         proxyReq.removeHeader('x-api-key');
-        proxyReq.setHeader('x-api-key', selectedChannel.apiKey);
+        const effectiveKey = getEffectiveApiKey(selectedChannel);
+        proxyReq.setHeader('x-api-key', effectiveKey);
         proxyReq.removeHeader('authorization');
-        proxyReq.setHeader('authorization', `Bearer ${selectedChannel.apiKey}`);
+        proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
 
         if (!proxyReq.getHeader('anthropic-version')) {
           proxyReq.setHeader('anthropic-version', '2023-06-01');

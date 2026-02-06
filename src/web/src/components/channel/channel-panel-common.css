@@ -241,6 +241,48 @@
   background: var(--n-color-hover);
 }
 
+/* OAuth 认证 section 特殊样式 */
+.form-section.oauth-section {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
+  border-color: rgba(99, 102, 241, 0.2);
+}
+
+.form-section.oauth-section .section-title {
+  color: #6366f1;
+  border-bottom-color: rgba(99, 102, 241, 0.2);
+}
+
+/* 认证方式 radio group 样式优化 */
+.channel-form :deep(.n-radio-group) {
+  width: 100%;
+}
+
+.channel-form :deep(.n-radio-group .n-space) {
+  width: 100%;
+  display: flex;
+  gap: 16px;
+}
+
+.channel-form :deep(.n-radio) {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--n-border-color);
+  transition: all 0.2s ease;
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.channel-form :deep(.n-radio:hover) {
+  border-color: var(--n-primary-color);
+  background: var(--n-primary-color-suppl, rgba(24, 160, 88, 0.08));
+}
+
+.channel-form :deep(.n-radio.n-radio--checked) {
+  border-color: var(--n-primary-color);
+  background: var(--n-primary-color-suppl, rgba(24, 160, 88, 0.08));
+}
+
 .channel-form :deep(.n-form-item) {
   margin-bottom: 10px;
 }

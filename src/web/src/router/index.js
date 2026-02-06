@@ -56,6 +56,20 @@ const routes = [
     props: true,
     meta: { channel: 'gemini' }
   },
+  // OpenCode 渠道路由
+  {
+    path: '/opencode',
+    name: 'opencode-projects',
+    component: ProjectList,
+    meta: { channel: 'opencode' }
+  },
+  {
+    path: '/opencode/sessions/:projectName',
+    name: 'opencode-sessions',
+    component: SessionList,
+    props: true,
+    meta: { channel: 'opencode' }
+  },
   // Web 终端路由
   {
     path: '/terminal',

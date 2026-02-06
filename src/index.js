@@ -48,8 +48,10 @@ function showHelp() {
   console.log('  ctx status              查看服务状态\n');
 
   console.log(chalk.yellow('📱 UI 管理:'));
-  console.log('  ctx ui                  前台启动 Web UI（默认）');
+  console.log('  ctx ui                  前台启动 Web UI（仅本地访问）');
+  console.log('  ctx ui --host           前台启动 Web UI（允许 LAN 访问）');
   console.log('  ctx ui start            后台启动 Web UI');
+  console.log('  ctx ui start --host     后台启动 Web UI（允许 LAN 访问）');
   console.log('  ctx ui stop             停止 Web UI');
   console.log('  ctx ui restart          重启 Web UI\n');
 

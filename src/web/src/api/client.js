@@ -26,5 +26,6 @@ client.interceptors.response.use(
 export function getChannelPrefix(channel = 'claude') {
   if (channel === 'codex') return '/codex'
   if (channel === 'gemini') return '/gemini'
+  if (channel === 'opencode') return '/opencode'
   return ''
 }

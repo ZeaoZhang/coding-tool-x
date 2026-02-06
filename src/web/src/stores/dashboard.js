@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { getDashboardInit } from '../api/dashboard'
+import api from '../api'
 
 const emptyCounts = () => ({ projectCount: 0, sessionCount: 0 })
 const emptyStats = () => ({ requests: 0, tokens: 0, cost: 0, byModel: {} })
@@ -12,22 +13,26 @@ export const useDashboardStore = defineStore('dashboard', () => {
     channels: {
       claude: [],
       codex: [],
-      gemini: []
+      gemini: [],
+      opencode: []
     },
     proxyStatus: {
       claude: {},
       codex: {},
-      gemini: {}
+      gemini: {},
+      opencode: {}
     },
     todayStats: {
       claude: emptyStats(),
       codex: emptyStats(),
-      gemini: emptyStats()
+      gemini: emptyStats(),
+      opencode: emptyStats()
     },
     counts: {
       claude: emptyCounts(),
       codex: emptyCounts(),
-      gemini: emptyCounts()
+      gemini: emptyCounts(),
+      opencode: emptyCounts()
     }
   })
 
@@ -86,22 +91,26 @@ export const useDashboardStore = defineStore('dashboard', () => {
           channels: {
             claude: data.channels?.claude || [],
             codex: data.channels?.codex || [],
-            gemini: data.channels?.gemini || []
+            gemini: data.channels?.gemini || [],
+            opencode: data.channels?.opencode || []
           },
           proxyStatus: {
             claude: data.proxyStatus?.claude || {},
             codex: data.proxyStatus?.codex || {},
-            gemini: data.proxyStatus?.gemini || {}
+            gemini: data.proxyStatus?.gemini || {},
+            opencode: data.proxyStatus?.opencode || {}
           },
           todayStats: {
             claude: formatStats(data.todayStats?.claude),
             codex: formatStats(data.todayStats?.codex),
-            gemini: formatStats(data.todayStats?.gemini)
+            gemini: formatStats(data.todayStats?.gemini),
+            opencode: formatStats(data.todayStats?.opencode)
           },
           counts: {
             claude: data.counts?.claude || emptyCounts(),
             codex: data.counts?.codex || emptyCounts(),
-            gemini: data.counts?.gemini || emptyCounts()
+            gemini: data.counts?.gemini || emptyCounts(),
+            opencode: data.counts?.opencode || emptyCounts()
           }
         }
 
@@ -130,6 +139,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'gemini') {
         const response = await api.getGeminiChannels()
         if (response.success) dashboardData.value.channels.gemini = response.channels
+      } else if (channelType === 'opencode') {
+        const response = await api.getOpenCodeChannels()
+        if (response.success) dashboardData.value.channels.opencode = response.channels
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} channels:`, err)
@@ -147,6 +159,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'gemini') {
         const response = await api.getGeminiProxyStatus()
         if (response.success) dashboardData.value.proxyStatus.gemini = response
+      } else if (channelType === 'opencode') {
+        const response = await api.getOpenCodeProxyStatus()
+        if (response.success) dashboardData.value.proxyStatus.opencode = response
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} proxy status:`, err)
@@ -178,6 +193,15 @@ export const useDashboardStore = defineStore('dashboard', () => {
         const response = await api.getGeminiTodayStatistics()
         if (response.success) {
           dashboardData.value.todayStats.gemini = {
+            requests: response.requests || 0,
+            tokens: response.tokens || 0,
+            cost: response.cost || 0
+          }
+        }
+      } else if (channelType === 'opencode') {
+        const response = await api.getOpenCodeTodayStatistics()
+        if (response.success) {
+          dashboardData.value.todayStats.opencode = {
             requests: response.requests || 0,
             tokens: response.tokens || 0,
             cost: response.cost || 0

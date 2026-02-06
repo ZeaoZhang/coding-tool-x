@@ -10,6 +10,7 @@ const DEFAULT_CONFIG = require('../config/default');
 const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordGeminiRequest } = require('./services/gemini-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
+const { getEffectiveApiKey } = require('./services/gemini-channels');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -152,7 +153,8 @@ async function startGeminiProxyServer(options = {}) {
 
       proxyReq.removeHeader('authorization');
       proxyReq.removeHeader('x-goog-api-key');
-      proxyReq.setHeader('authorization', `Bearer ${activeChannel.apiKey}`);
+      const effectiveKey = getEffectiveApiKey(activeChannel);
+      proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
       if (!proxyReq.getHeader('content-type')) {
         proxyReq.setHeader('content-type', 'application/json');
       }

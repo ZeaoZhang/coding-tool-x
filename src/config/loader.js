@@ -31,6 +31,15 @@ function mergePricing(defaultPricing, overrides = {}) {
   return merged;
 }
 
+function mergeDefaultModels(defaultModels, overrides = {}) {
+  const merged = {};
+  Object.keys(defaultModels).forEach((key) => {
+    // If user config has this tool type, use it; otherwise use default
+    merged[key] = (overrides && overrides[key]) ? overrides[key] : defaultModels[key];
+  });
+  return merged;
+}
+
 /**
  * 加载配置
  */
@@ -44,6 +53,7 @@ function loadConfig() {
       // 合并 ports 配置
       config.ports = { ...DEFAULT_CONFIG.ports, ...userConfig.ports };
       config.pricing = mergePricing(DEFAULT_CONFIG.pricing, userConfig.pricing);
+      config.defaultModels = mergeDefaultModels(DEFAULT_CONFIG.defaultModels, userConfig.defaultModels);
 
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {

@@ -49,7 +49,8 @@ function loadChannels() {
         weight: ch.weight || 1,
         maxConcurrency: ch.maxConcurrency || null,
         modelRedirects: ch.modelRedirects || [],
-        speedTestModel: ch.speedTestModel || null
+        speedTestModel: ch.speedTestModel || null,
+        authType: ch.authType || 'apiKey' // 默认 API Key 认证
       }));
     }
     return data;
@@ -179,6 +180,9 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
     maxConcurrency: extraConfig.maxConcurrency || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
+    authType: extraConfig.authType || 'apiKey',
+    oauthProvider: extraConfig.oauthProvider || null,
+    oauthTokenId: extraConfig.oauthTokenId || null,
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -649,6 +653,26 @@ try {
   console.warn('[Codex Channels] Auto sync env vars failed:', err.message);
 }
 
+/**
+ * 获取渠道的有效 API Key
+ * 如果渠道使用 OAuth 认证，返回 OAuth 令牌；否则返回静态 API Key
+ *
+ * @param {Object} channel - 渠道对象
+ * @returns {string|null} 有效的 API Key
+ */
+function getEffectiveApiKey(channel) {
+  if (channel.authType === 'oauth' && channel.oauthTokenId) {
+    const { getToken, isTokenExpired } = require('./oauth-token-storage');
+    const token = getToken(channel.oauthTokenId);
+    if (token && !isTokenExpired(token)) {
+      return token.accessToken;
+    }
+    // OAuth 令牌无效或已过期，返回 null
+    return null;
+  }
+  return channel.apiKey;
+}
+
 module.exports = {
   getChannels,
   createChannel,
@@ -658,5 +682,6 @@ module.exports = {
   saveChannelOrder,
   syncAllChannelEnvVars,
   writeCodexConfigForMultiChannel,
-  applyChannelToSettings
+  applyChannelToSettings,
+  getEffectiveApiKey
 };

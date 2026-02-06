@@ -1006,6 +1006,55 @@
                     </div>
                   </div>
                 </div>
+
+                <n-divider />
+
+                <!-- 模型管理 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>模型管理</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      配置各工具类型的默认模型列表
+                    </n-text>
+                  </div>
+
+                  <n-space vertical :size="16" style="margin-top: 16px;">
+                    <div v-for="toolType in ['claude', 'codex', 'gemini', 'opencode']" :key="toolType" class="model-management-section">
+                      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <n-text strong>{{ toolTypeLabels[toolType] }}</n-text>
+                        <n-button size="small" @click="resetToolType(toolType)">
+                          <template #icon>
+                            <n-icon><RefreshOutline /></n-icon>
+                          </template>
+                          重置为默认
+                        </n-button>
+                      </div>
+                      <n-dynamic-tags
+                        v-model:value="editableModels[toolType]"
+                        :max="50"
+                      />
+                    </div>
+
+                    <n-space style="margin-top: 8px;">
+                      <n-button
+                        type="primary"
+                        :loading="savingModels"
+                        @click="saveDefaultModels"
+                      >
+                        <template #icon>
+                          <n-icon><SaveOutline /></n-icon>
+                        </template>
+                        保存模型配置
+                      </n-button>
+                      <n-button @click="resetAllModels">
+                        <template #icon>
+                          <n-icon><RefreshOutline /></n-icon>
+                        </template>
+                        全部重置
+                      </n-button>
+                    </n-space>
+                  </n-space>
+                </div>
               </div>
             </div>
 
@@ -1177,9 +1226,11 @@ import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
   NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber,
-  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard
+  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard,
+  NDynamicTags
 } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { useDefaultModels } from '../composables/useDefaultModels'
 
 const { drawerWidth, isMobile } = useResponsiveDrawer(680)
 import {
@@ -1304,11 +1355,20 @@ const securityForm = ref({
 const savingSecurity = ref(false)
 let securityStatusPromise = null
 
-// Model definitions
-const MODEL_DEFINITIONS = {
-  claude: ['claude-haiku-3-5-20241022', 'claude-haiku-4-5-20250929', 'claude-sonnet-4-20250514', 'claude-sonnet-4-5-20250929', 'claude-opus-4-20250514', 'claude-opus-4-5-20250929'],
-  codex: ['gpt-4o-mini', 'gpt-4o', 'gpt-5-codex'],
-  gemini: ['gemini-2.5-flash', 'gemini-2.5-pro']
+// Model management
+const { defaultModels, loadDefaultModels, getDefaultModels } = useDefaultModels()
+const editableModels = ref({
+  claude: [],
+  codex: [],
+  gemini: [],
+  opencode: []
+})
+const savingModels = ref(false)
+const toolTypeLabels = {
+  claude: 'Claude 模型',
+  codex: 'Codex 模型',
+  gemini: 'Gemini 模型',
+  opencode: 'OpenCode 模型'
 }
 
 // Helper function to format model names
@@ -1328,7 +1388,7 @@ function formatModelName(model) {
 
 // Helper function to get models for a tool type
 function getModelsForTool(toolType) {
-  return MODEL_DEFINITIONS[toolType] || []
+  return getDefaultModels(toolType) || []
 }
 
 // Initialize per-model pricing structure
@@ -1947,10 +2007,97 @@ async function handleDisableAutoStart() {
   }
 }
 
+// 加载默认模型配置
+async function loadDefaultModelsConfig() {
+  try {
+    await loadDefaultModels()
+    // Initialize editable models with loaded values
+    editableModels.value = {
+      claude: [...(getDefaultModels('claude') || [])],
+      codex: [...(getDefaultModels('codex') || [])],
+      gemini: [...(getDefaultModels('gemini') || [])],
+      opencode: [...(getDefaultModels('opencode') || [])]
+    }
+  } catch (err) {
+    console.error('Failed to load default models:', err)
+    message.error('加载模型配置失败')
+  }
+}
+
+// 保存默认模型配置
+async function saveDefaultModels() {
+  savingModels.value = true
+  try {
+    const response = await fetch('/api/config/default-models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ defaultModels: editableModels.value })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    const data = await response.json()
+    message.success('模型配置已保存')
+
+    // Reload to sync with backend
+    await loadDefaultModelsConfig()
+  } catch (err) {
+    console.error('Failed to save default models:', err)
+    message.error('保存失败：' + err.message)
+  } finally {
+    savingModels.value = false
+  }
+}
+
+// 重置单个工具类型的模型
+async function resetToolType(toolType) {
+  try {
+    const response = await fetch('/api/config/default-models/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toolType })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    message.success(`${toolTypeLabels[toolType]} 已重置为默认`)
+    await loadDefaultModelsConfig()
+  } catch (err) {
+    console.error('Failed to reset tool type:', err)
+    message.error('重置失败：' + err.message)
+  }
+}
+
+// 重置所有模型配置
+async function resetAllModels() {
+  try {
+    const response = await fetch('/api/config/default-models/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    message.success('所有模型配置已重置为默认')
+    await loadDefaultModelsConfig()
+  } catch (err) {
+    console.error('Failed to reset all models:', err)
+    message.error('重置失败：' + err.message)
+  }
+}
+
 // 加载设置
 onMounted(() => {
   loadPanelSettings()
   loadSecurityStatus()
+  loadDefaultModelsConfig()
 })
 
 // 监听抽屉打开，加载数据

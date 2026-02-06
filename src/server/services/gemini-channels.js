@@ -72,7 +72,8 @@ function loadChannels() {
         weight: ch.weight || 1,
         maxConcurrency: ch.maxConcurrency || null,
         modelRedirects: ch.modelRedirects || [],
-        speedTestModel: ch.speedTestModel || null
+        speedTestModel: ch.speedTestModel || null,
+        authType: ch.authType || 'apiKey'
       }));
     }
     return data;
@@ -118,6 +119,7 @@ function initializeFromEnv() {
         enabled: true,
         weight: 1,
         maxConcurrency: null,
+        authType: 'apiKey',
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -175,6 +177,9 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     maxConcurrency: extraConfig.maxConcurrency || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
+    authType: extraConfig.authType || 'apiKey',
+    oauthProvider: extraConfig.oauthProvider || null,
+    oauthTokenId: extraConfig.oauthTokenId || null,
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -392,6 +397,33 @@ function getEnabledChannels() {
   return data.channels.filter(c => c.enabled !== false);
 }
 
+/**
+ * 获取渠道的有效 API Key
+ * 如果是 OAuth 认证，尝试从 token 存储获取 access token
+ * 否则返回渠道配置的 apiKey
+ *
+ * @param {Object} channel - 渠道对象
+ * @returns {string|null} 有效的 API key 或 access token，OAuth 令牌无效/过期时返回 null
+ */
+function getEffectiveApiKey(channel) {
+  if (channel.authType === 'oauth' && channel.oauthTokenId) {
+    try {
+      const { getToken, isTokenExpired } = require('./oauth-token-storage');
+      const token = getToken(channel.oauthTokenId);
+      if (token && !isTokenExpired(token)) {
+        return token.accessToken;
+      }
+      // OAuth 令牌无效或已过期，返回 null（调用方应处理刷新或报错）
+      console.warn(`[Gemini Channels] OAuth token expired or not found for channel ${channel.name}`);
+      return null;
+    } catch (err) {
+      console.error('[Gemini Channels] Failed to get OAuth token:', err.message);
+      return null;
+    }
+  }
+  return channel.apiKey;
+}
+
 // 保存渠道顺序
 function saveChannelOrder(order) {
   const data = loadChannels();
@@ -422,6 +454,7 @@ module.exports = {
   updateChannel,
   deleteChannel,
   getEnabledChannels,
+  getEffectiveApiKey,
   saveChannelOrder,
   isProxyConfig,
   getGeminiDir,

@@ -20,6 +20,11 @@ export async function getGeminiTodayStatistics() {
   return response.data
 }
 
+export async function getOpenCodeTodayStatistics() {
+  const response = await client.get('/opencode/statistics/today')
+  return response.data
+}
+
 export async function getDailyStatistics(date) {
   const response = await client.get(`/statistics/daily/${date}`)
   return response.data
