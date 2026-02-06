@@ -30,6 +30,12 @@ const DEFAULT_COMMANDS = {
     newSession: 'gemini',
     resumeSession: 'gemini -r {sessionId}',
     description: 'Google Gemini CLI'
+  },
+  opencode: {
+    name: 'OpenCode',
+    newSession: 'opencode',
+    resumeSession: 'opencode -r {sessionId}',
+    description: 'OpenCode AI coding agent for the terminal'
   }
 };
 
@@ -58,7 +64,8 @@ function loadTerminalCommands() {
       return {
         claude: { ...DEFAULT_COMMANDS.claude, ...saved.claude },
         codex: { ...DEFAULT_COMMANDS.codex, ...saved.codex },
-        gemini: { ...DEFAULT_COMMANDS.gemini, ...saved.gemini }
+        gemini: { ...DEFAULT_COMMANDS.gemini, ...saved.gemini },
+        opencode: { ...DEFAULT_COMMANDS.opencode, ...saved.opencode }
       };
     }
   } catch (err) {
@@ -79,7 +86,7 @@ function saveTerminalCommands(commands) {
 
     // 验证配置格式
     const validated = {};
-    for (const channel of ['claude', 'codex', 'gemini']) {
+    for (const channel of ['claude', 'codex', 'gemini', 'opencode']) {
       if (commands[channel]) {
         validated[channel] = {
           name: commands[channel].name || DEFAULT_COMMANDS[channel].name,

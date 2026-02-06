@@ -13,8 +13,9 @@ const {
 const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
+const { startOpenCodeProxyServer } = require('./opencode-proxy-server');
 
-async function startServer(port) {
+async function startServer(port, host = '127.0.0.1') {
   const config = loadConfig();
   // 使用配置的端口，如果没有传入参数
   if (!port) {
@@ -103,6 +104,13 @@ async function startServer(port) {
   app.use('/api/gemini/channels', require('./api/gemini-channels')(config));
   app.use('/api/gemini/proxy', require('./api/gemini-proxy'));
 
+  // OpenCode API Routes
+  app.use('/api/opencode/projects', require('./api/opencode-projects')(config));
+  app.use('/api/opencode/sessions', require('./api/opencode-sessions')(config));
+  app.use('/api/opencode/channels', require('./api/opencode-channels')(config));
+  app.use('/api/opencode/proxy', require('./api/opencode-proxy'));
+  app.use('/api/opencode/statistics', require('./api/opencode-statistics'));
+
   // 会话格式转换 API
   app.use('/api/convert', require('./api/convert'));
 
@@ -154,6 +162,9 @@ async function startServer(port) {
   // 配置同步 API
   app.use('/api/config-sync', require('./api/config-sync'));
 
+  // OAuth API
+  app.use('/api/oauth', require('./api/oauth'));
+
   // 配置注册表 API (集中管理 skills/commands/agents/rules 的启用/禁用)
   app.use('/api/config-registry', require('./api/config-registry'));
 
@@ -170,9 +181,15 @@ async function startServer(port) {
   }
 
   // Start server
-  const server = app.listen(port, () => {
+  const server = app.listen(port, host, () => {
     console.log(`\n🚀 Coding-Tool Web UI running at:`);
-    console.log(`   http://localhost:${port}`);
+    if (host === '0.0.0.0') {
+      console.log(chalk.yellow(`   ⚠️  警告: 服务正在监听所有网络接口 (LAN 可访问)`));
+      console.log(`   http://localhost:${port}`);
+      console.log(chalk.gray(`   http://<your-ip>:${port} (LAN 访问)`));
+    } else {
+      console.log(`   http://localhost:${port}`);
+    }
 
     // 附加 WebSocket 服务器到同一个端口
     attachWebSocketServer(server);
@@ -265,6 +282,24 @@ function autoRestoreProxies() {
       });
   } else {
     console.log(chalk.gray('\n💡 提示: 如需使用 Gemini 代理，请在前端界面激活 Gemini 渠道'));
+  }
+
+  // 检查 OpenCode 代理状态文件
+  const opencodeActiveFile = path.join(ccToolDir, 'opencode-active-channel.json');
+  if (fs.existsSync(opencodeActiveFile)) {
+    console.log(chalk.cyan('\n🔄 检测到 OpenCode 代理状态文件，正在自动启动...'));
+    const opencodeProxyPort = config.ports?.opencodeProxy || 20091;
+    startOpenCodeProxyServer(opencodeProxyPort)
+      .then((result) => {
+        if (result.success) {
+          console.log(chalk.green(`✅ OpenCode 代理已自动启动，端口: ${result.port}`));
+        } else {
+          console.error(chalk.red(`❌ OpenCode 代理启动失败: ${result.error || 'Unknown error'}`));
+        }
+      })
+      .catch((err) => {
+        console.error(chalk.red(`❌ OpenCode 代理启动失败: ${err.message}`));
+      });
   }
 }
 

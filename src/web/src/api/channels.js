@@ -227,3 +227,90 @@ export async function fetchGeminiChannelModels(channelId) {
   const response = await client.get(`/gemini/channels/${channelId}/models`)
   return response.data
 }
+
+// ============================================
+// OpenCode Channel APIs
+// ============================================
+
+export async function getOpenCodeChannels() {
+  const response = await client.get('/opencode/channels')
+  return response.data
+}
+
+export async function getEnabledOpenCodeChannels() {
+  const data = await getOpenCodeChannels()
+  return {
+    channels: (data.channels || []).filter(ch => ch.enabled !== false)
+  }
+}
+
+export async function createOpenCodeChannel(name, baseUrl, apiKey, extra = {}) {
+  const response = await client.post('/opencode/channels', {
+    name,
+    baseUrl,
+    apiKey,
+    wireApi: extra.wireApi || 'openai',
+    enabled: extra.enabled !== false,
+    weight: extra.weight || 1,
+    maxConcurrency: extra.maxConcurrency || null,
+    model: extra.model || null,
+    authType: extra.authType || 'apiKey',
+    oauthProvider: extra.oauthProvider || null,
+    oauthTokenId: extra.oauthTokenId || null,
+    presetId: extra.presetId || null,
+    websiteUrl: extra.websiteUrl || ''
+  })
+  return response.data
+}
+
+export async function updateOpenCodeChannel(channelId, updates) {
+  const response = await client.put(`/opencode/channels/${channelId}`, updates)
+  return response.data
+}
+
+export async function deleteOpenCodeChannel(channelId) {
+  const response = await client.delete(`/opencode/channels/${channelId}`)
+  return response.data
+}
+
+export async function saveOpenCodeChannelOrder(order) {
+  const response = await client.post('/opencode/channels/order', { order })
+  return response.data
+}
+
+export async function resetOpenCodeChannelHealth(channelId) {
+  const response = await client.post(`/opencode/channels/${channelId}/reset-health`)
+  return response.data
+}
+
+export async function testOpenCodeChannelSpeed(channelId, timeout = 20000) {
+  const response = await client.post(`/opencode/channels/${channelId}/speed-test`, { timeout })
+  return response.data
+}
+
+export async function testAllOpenCodeChannelsSpeed(timeout = 20000) {
+  // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
+  const response = await client.post('/opencode/channels/speed-test-all', { timeout }, { timeout: 120000 })
+  return response.data
+}
+
+export async function fetchOpenCodeChannelModels(channelId) {
+  const response = await client.get(`/opencode/channels/${channelId}/models`)
+  return response.data
+}
+
+// OpenCode Proxy APIs
+export async function getOpenCodeProxyStatus() {
+  const response = await client.get('/opencode/proxy/status')
+  return response.data
+}
+
+export async function startOpenCodeProxy() {
+  const response = await client.post('/opencode/proxy/start')
+  return response.data
+}
+
+export async function stopOpenCodeProxy() {
+  const response = await client.post('/opencode/proxy/stop')
+  return response.data
+}

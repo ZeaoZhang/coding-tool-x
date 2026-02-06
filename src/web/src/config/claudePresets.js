@@ -10,6 +10,16 @@ export const claudePresets = [
     category: 'official',
     websiteUrl: 'https://www.anthropic.com',
     baseUrl: 'https://api.anthropic.com',
+    authType: 'apiKey',
+    env: {}
+  },
+  {
+    id: 'official_oauth',
+    name: 'Claude OAuth',
+    category: 'official',
+    websiteUrl: 'https://www.anthropic.com',
+    baseUrl: 'https://api.anthropic.com',
+    authType: 'oauth',
     env: {}
   },
   {
@@ -89,6 +99,15 @@ export const claudePresets = [
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'doubao-seed-code-preview-latest',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'doubao-seed-code-preview-latest'
     }
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    category: 'custom',
+    websiteUrl: '',
+    baseUrl: '',
+    authType: 'apiKey',
+    env: {}
   }
 ]
 
@@ -97,7 +116,8 @@ export const presetCategories = {
   official: '官方',
   cn_official: '国内官方',
   aggregator: '聚合服务',
-  third_party: '第三方'
+  third_party: '第三方',
+  custom: '自定义'
 }
 
 // 根据 ID 获取预设

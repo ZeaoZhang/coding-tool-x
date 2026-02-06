@@ -11,6 +11,9 @@ import {
   fetchChannelModels
 } from '../../api/channels'
 import { claudePresets, presetCategories, getPresetById } from '../../config/claudePresets'
+import { codexPresets, codexPresetCategories, getCodexPresetById } from '../../config/codexPresets'
+import { geminiPresets, geminiPresetCategories, getGeminiPresetById } from '../../config/geminiPresets'
+import { opencodePresets, opencodePresetCategories, getOpenCodePresetById } from '../../config/opencodePresets'
 import {
   getCodexChannels,
   createCodexChannel,
@@ -28,34 +31,18 @@ import {
   resetGeminiChannelHealth,
   fetchGeminiChannelModels
 } from '../../api/channels'
+import {
+  getOpenCodeChannels,
+  createOpenCodeChannel,
+  updateOpenCodeChannel,
+  deleteOpenCodeChannel,
+  resetOpenCodeChannelHealth,
+  fetchOpenCodeChannelModels,
+  testOpenCodeChannelSpeed
+} from '../../api/channels'
+import { useDefaultModels } from '../../composables/useDefaultModels.js'
 
-// 各渠道类型的默认模型列表
-const defaultModels = {
-  claude: [
-    'claude-opus-4-5-20251101',
-    'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20251001',
-    'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514'
-  ],
-  codex: [
-    'gpt-5.2-codex',
-    'gpt-5.1-codex-max',
-    'gpt-5.1-codex-mini',
-    'gpt-5.1-codex',
-    'gpt-5-codex',
-    'gpt-5.2',
-    'gpt-5.1',
-    'gpt-5'
-  ],
-  gemini: [
-    'gemini-3-pro',
-    'gemini-3-flash',
-    'gemini-3-deep-think',
-    'gemini-2.5-pro',
-    'gemini-2.5-flash'
-  ]
-}
+const { getDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9-]+$/i
@@ -174,6 +161,27 @@ const channelPanelFactories = {
         ]
       },
       {
+        title: 'OAuth 认证',
+        description: '使用 Claude 官方 OAuth 登录，无需 API Key',
+        showWhen: (form) => form.presetId === 'official_oauth',
+        fields: [
+          {
+            key: 'oauthLogin',
+            label: '',
+            type: 'oauth-login',
+            props: {
+              provider: 'claude'
+            }
+          },
+          {
+            key: 'oauthStatus',
+            label: 'Token 状态',
+            type: 'oauth-status',
+            showWhen: (form) => form.oauthTokenId
+          }
+        ]
+      },
+      {
         title: '基本信息',
         fields: [
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '输入渠道名称' },
@@ -190,7 +198,8 @@ const channelPanelFactories = {
             label: '接口密钥',
             type: 'password',
             required: true,
-            placeholder: 'sk-...'
+            placeholder: 'sk-...',
+            showWhen: (form) => form.authType !== 'oauth'
           },
           {
             key: 'websiteUrl',
@@ -205,7 +214,7 @@ const channelPanelFactories = {
             type: 'select',
             placeholder: '选择用于测速的模型（留空则自动检测）',
             description: '指定用于速度测试的模型，留空则使用自动检测',
-            options: defaultModels.claude.map(m => ({ label: m, value: m })),
+            options: getDefaultModels('claude').map(m => ({ label: m, value: m })),
             clearable: true
           }
         ]
@@ -214,7 +223,7 @@ const channelPanelFactories = {
         title: '模型重定向',
         description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
         collapsible: true,
-        showWhen: (form) => form.presetId === 'official',
+        showWhen: (form) => form.presetId === 'official' || form.presetId === 'official_oauth',
         fields: [
           {
             key: 'modelRedirects',
@@ -227,7 +236,7 @@ const channelPanelFactories = {
         title: '模型配置',
         description: '代理关闭时：模型映射（写入 settings.json）；代理开启时：模型重定向（如 opus → sonnet 节省 token）',
         collapsible: true,
-        showWhen: (form) => form.presetId && form.presetId !== 'official',
+        showWhen: (form) => form.presetId && form.presetId !== 'official' && form.presetId !== 'official_oauth',
         fields: [
           {
             key: 'modelConfig.model',
@@ -277,7 +286,10 @@ const channelPanelFactories = {
       presetId: 'official',
       name: 'Claude 官方',
       baseUrl: 'https://api.anthropic.com',
+      authType: 'apiKey',
       apiKey: '',
+      oauthProvider: null,
+      oauthTokenId: null,
       websiteUrl: 'https://www.anthropic.com',
       speedTestModel: '',
       modelConfig: {
@@ -299,7 +311,10 @@ const channelPanelFactories = {
       presetId: channel.presetId || 'official',
       name: channel.name || '',
       baseUrl: channel.baseUrl || '',
+      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
+      oauthProvider: channel.oauthProvider || null,
+      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
       speedTestModel: channel.speedTestModel || '',
       modelConfig: {
@@ -325,6 +340,8 @@ const channelPanelFactories = {
       newForm.name = preset.name
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
+      // 根据预设设置认证方式
+      newForm.authType = preset.authType || 'apiKey'
 
       if (preset.env) {
         newForm.modelConfig = {
@@ -356,13 +373,13 @@ const channelPanelFactories = {
           }
         } else if (result.fallbackUsed || !result.supported) {
           // Fetch failed, use default Claude models
-          form.availableModels = defaultModels.claude.map(m => ({ label: m, value: m }))
+          form.availableModels = getDefaultModels('claude').map(m => ({ label: m, value: m }))
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // On error, use default Claude models
-        form.availableModels = defaultModels.claude.map(m => ({ label: m, value: m }))
+        form.availableModels = getDefaultModels('claude').map(m => ({ label: m, value: m }))
         // Try to extract error details from response
         const errorData = error.response?.data
         if (errorData) {
@@ -396,7 +413,10 @@ const channelPanelFactories = {
             modelConfig: form.modelConfig,
             modelRedirects: form.modelRedirects || [],
             proxyUrl: form.proxyUrl || '',
-            speedTestModel: form.speedTestModel || null
+            speedTestModel: form.speedTestModel || null,
+            authType: form.authType || 'apiKey',
+            oauthProvider: form.oauthProvider || null,
+            oauthTokenId: form.oauthTokenId || null
           }
         )
       },
@@ -413,7 +433,10 @@ const channelPanelFactories = {
           modelConfig: form.modelConfig,
           modelRedirects: form.modelRedirects || [],
           proxyUrl: form.proxyUrl || '',
-          speedTestModel: form.speedTestModel || null
+          speedTestModel: form.speedTestModel || null,
+          authType: form.authType || 'apiKey',
+          oauthProvider: form.oauthProvider || null,
+          oauthTokenId: form.oauthTokenId || null
         })
       },
       toggle: async (channel, enabled) => {
@@ -470,7 +493,42 @@ const channelPanelFactories = {
     modalWidth: 600,
     formLabelWidth: 90,
     showApplyButton: true,
+    presets: codexPresets,
+    presetCategories: codexPresetCategories,
+    getPresetById: getCodexPresetById,
     formSections: [
+      {
+        title: '供应商预设',
+        fields: [
+          {
+            key: 'presetId',
+            label: '选择预设',
+            type: 'preset',
+            placeholder: '选择供应商预设'
+          }
+        ]
+      },
+      {
+        title: 'OAuth 认证',
+        description: '使用 Codex OAuth 登录，无需 API Key',
+        showWhen: (form) => form.authType === 'oauth',
+        fields: [
+          {
+            key: 'oauthLogin',
+            label: '',
+            type: 'oauth-login',
+            props: {
+              provider: 'codex'
+            }
+          },
+          {
+            key: 'oauthStatus',
+            label: 'Token 状态',
+            type: 'oauth-status',
+            showWhen: (form) => form.oauthTokenId
+          }
+        ]
+      },
       {
         title: '基本信息',
         fields: [
@@ -497,7 +555,8 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
-            placeholder: 'sk-...'
+            placeholder: 'sk-...',
+            showWhen: (form) => form.authType !== 'oauth'
           },
           {
             key: 'websiteUrl',
@@ -512,7 +571,7 @@ const channelPanelFactories = {
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用默认）',
             description: '指定用于速度测试的模型，留空则使用默认模型',
-            options: defaultModels.codex.map(m => ({ label: m, value: m })),
+            options: getDefaultModels('codex').map(m => ({ label: m, value: m })),
             clearable: true
           }
         ]
@@ -535,11 +594,15 @@ const channelPanelFactories = {
       }
     ],
     getInitialForm: () => ({
-      name: '',
-      providerKey: '',
-      baseUrl: '',
+      presetId: 'openai',
+      name: 'OpenAI',
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      authType: 'apiKey',
       apiKey: '',
-      websiteUrl: '',
+      oauthProvider: null,
+      oauthTokenId: null,
+      websiteUrl: 'https://platform.openai.com',
       speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
@@ -551,10 +614,14 @@ const channelPanelFactories = {
       modelsFetchErrorHint: null
     }),
     mapChannelToForm: (channel) => ({
+      presetId: channel.presetId || 'custom',
       name: channel.name || '',
       providerKey: channel.providerKey || '',
       baseUrl: channel.baseUrl || '',
+      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
+      oauthProvider: channel.oauthProvider || null,
+      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
@@ -566,6 +633,19 @@ const channelPanelFactories = {
       modelsFetchError: null,
       modelsFetchErrorHint: null
     }),
+    onPresetChange: (presetId, form) => {
+      const preset = getCodexPresetById(presetId)
+      if (!preset) return form
+
+      const newForm = { ...form, presetId }
+      newForm.name = preset.name
+      newForm.baseUrl = preset.baseUrl
+      newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.providerKey = preset.providerKey || ''
+      newForm.authType = preset.authType || 'apiKey'
+
+      return newForm
+    },
     fetchModelsForChannel: async (channelId, form) => {
       form.modelsFetching = true
       form.modelsFetchError = null
@@ -584,13 +664,13 @@ const channelPanelFactories = {
           }
         } else if (result.fallbackUsed || !result.supported) {
           // 获取失败，使用默认列表
-          form.availableModels = defaultModels.codex.map(m => ({ label: m, value: m }))
+          form.availableModels = getDefaultModels('codex').map(m => ({ label: m, value: m }))
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // 出错时使用默认列表
-        form.availableModels = defaultModels.codex.map(m => ({ label: m, value: m }))
+        form.availableModels = getDefaultModels('codex').map(m => ({ label: m, value: m }))
         form.modelsFetchError = error.message || '获取模型列表失败'
         form.modelsFetchErrorHint = '已使用默认模型列表'
       } finally {
@@ -615,7 +695,11 @@ const channelPanelFactories = {
             weight: normalizeWeight(form.weight),
             enabled: form.enabled,
             modelRedirects: form.modelRedirects || [],
-            speedTestModel: form.speedTestModel || null
+            speedTestModel: form.speedTestModel || null,
+            authType: form.authType || 'apiKey',
+            oauthProvider: form.oauthProvider || null,
+            oauthTokenId: form.oauthTokenId || null,
+            presetId: form.presetId || null
           }
         )
       },
@@ -629,7 +713,11 @@ const channelPanelFactories = {
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
           modelRedirects: form.modelRedirects || [],
-          speedTestModel: form.speedTestModel || null
+          speedTestModel: form.speedTestModel || null,
+          authType: form.authType || 'apiKey',
+          oauthProvider: form.oauthProvider || null,
+          oauthTokenId: form.oauthTokenId || null,
+          presetId: form.presetId || null
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
@@ -682,7 +770,42 @@ const channelPanelFactories = {
     modalWidth: 520,
     formLabelWidth: 90,
     showApplyButton: false,
+    presets: geminiPresets,
+    presetCategories: geminiPresetCategories,
+    getPresetById: getGeminiPresetById,
     formSections: [
+      {
+        title: '供应商预设',
+        fields: [
+          {
+            key: 'presetId',
+            label: '选择预设',
+            type: 'preset',
+            placeholder: '选择供应商预设'
+          }
+        ]
+      },
+      {
+        title: 'OAuth 认证',
+        description: '使用 Google OAuth 登录，无需 API Key',
+        showWhen: (form) => form.authType === 'oauth',
+        fields: [
+          {
+            key: 'oauthLogin',
+            label: '',
+            type: 'oauth-login',
+            props: {
+              provider: 'gemini'
+            }
+          },
+          {
+            key: 'oauthStatus',
+            label: 'Token 状态',
+            type: 'oauth-status',
+            showWhen: (form) => form.oauthTokenId
+          }
+        ]
+      },
       {
         title: '基本信息',
         fields: [
@@ -701,7 +824,8 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
-            placeholder: 'AIza...'
+            placeholder: 'AIza...',
+            showWhen: (form) => form.authType !== 'oauth'
           },
           {
             key: 'websiteUrl',
@@ -716,7 +840,7 @@ const channelPanelFactories = {
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用 model 字段）',
             description: '指定用于速度测试的模型，留空则使用上方配置的 Model',
-            options: defaultModels.gemini.map(m => ({ label: m, value: m })),
+            options: getDefaultModels('gemini').map(m => ({ label: m, value: m })),
             clearable: true
           }
         ]
@@ -739,11 +863,15 @@ const channelPanelFactories = {
       }
     ],
     getInitialForm: () => ({
-      name: '',
-      model: '',
-      baseUrl: '',
+      presetId: 'google',
+      name: 'Google AI',
+      model: 'gemini-2.5-pro',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      authType: 'apiKey',
       apiKey: '',
-      websiteUrl: '',
+      oauthProvider: null,
+      oauthTokenId: null,
+      websiteUrl: 'https://ai.google.dev',
       speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
@@ -755,10 +883,14 @@ const channelPanelFactories = {
       modelsFetchErrorHint: null
     }),
     mapChannelToForm: (channel) => ({
+      presetId: channel.presetId || 'custom',
       name: channel.name || '',
       model: channel.model || '',
       baseUrl: channel.baseUrl || '',
+      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
+      oauthProvider: channel.oauthProvider || null,
+      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
@@ -770,6 +902,18 @@ const channelPanelFactories = {
       modelsFetchError: null,
       modelsFetchErrorHint: null
     }),
+    onPresetChange: (presetId, form) => {
+      const preset = getGeminiPresetById(presetId)
+      if (!preset) return form
+
+      const newForm = { ...form, presetId }
+      newForm.name = preset.name
+      newForm.baseUrl = preset.baseUrl
+      newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.authType = preset.authType || 'apiKey'
+
+      return newForm
+    },
     fetchModelsForChannel: async (channelId, form) => {
       form.modelsFetching = true
       form.modelsFetchError = null
@@ -788,13 +932,13 @@ const channelPanelFactories = {
           }
         } else if (result.fallbackUsed || !result.supported) {
           // 获取失败，使用默认列表
-          form.availableModels = defaultModels.gemini.map(m => ({ label: m, value: m }))
+          form.availableModels = getDefaultModels('gemini').map(m => ({ label: m, value: m }))
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // 出错时使用默认列表
-        form.availableModels = defaultModels.gemini.map(m => ({ label: m, value: m }))
+        form.availableModels = getDefaultModels('gemini').map(m => ({ label: m, value: m }))
         form.modelsFetchError = error.message || '获取模型列表失败'
         form.modelsFetchErrorHint = '已使用默认模型列表'
       } finally {
@@ -819,7 +963,11 @@ const channelPanelFactories = {
             weight: normalizeWeight(form.weight),
             enabled: form.enabled,
             modelRedirects: form.modelRedirects || [],
-            speedTestModel: form.speedTestModel || null
+            speedTestModel: form.speedTestModel || null,
+            authType: form.authType || 'apiKey',
+            oauthProvider: form.oauthProvider || null,
+            oauthTokenId: form.oauthTokenId || null,
+            presetId: form.presetId || null
           }
         )
       },
@@ -834,7 +982,11 @@ const channelPanelFactories = {
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
           modelRedirects: form.modelRedirects || [],
-          speedTestModel: form.speedTestModel || null
+          speedTestModel: form.speedTestModel || null,
+          authType: form.authType || 'apiKey',
+          oauthProvider: form.oauthProvider || null,
+          oauthTokenId: form.oauthTokenId || null,
+          presetId: form.presetId || null
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),
@@ -861,6 +1013,265 @@ const channelPanelFactories = {
       {
         label: 'Key',
         value: helpers.maskApiKey(channel.apiKey),
+        mono: true,
+        action: channel.health?.status !== 'healthy'
+          ? () => helpers.handleResetHealth(channel)
+          : null,
+        actionLabel: '重置状态'
+      }
+    ])
+  }),
+  opencode: () => ({
+    type: 'opencode',
+    displayName: 'OpenCode',
+    schedulerSource: 'opencode',
+    storageKeys: {
+      localCollapse: 'opencodeChannelCollapse',
+      collapseConfigKey: 'opencode',
+      orderConfigKey: 'opencode'
+    },
+    emptyDescription: '暂无渠道',
+    showEmptyAction: true,
+    emptyActionText: '添加 OpenCode 渠道',
+    modalWidth: 600,
+    formLabelWidth: 95,
+    showApplyButton: false,
+    presets: opencodePresets,
+    presetCategories: opencodePresetCategories,
+    getPresetById: getOpenCodePresetById,
+    formSections: [
+      {
+        title: '供应商预设',
+        fields: [
+          {
+            key: 'presetId',
+            label: '选择预设',
+            type: 'preset',
+            placeholder: '选择供应商预设'
+          }
+        ]
+      },
+      {
+        title: 'OAuth 认证',
+        description: '使用 OAuth 登录，无需 API Key',
+        showWhen: (form) => form.authType === 'oauth',
+        fields: [
+          {
+            key: 'oauthLogin',
+            label: '',
+            type: 'oauth-login',
+            props: {
+              provider: (form) => form.oauthProvider || 'github_copilot'
+            }
+          },
+          {
+            key: 'oauthStatus',
+            label: 'Token 状态',
+            type: 'oauth-status',
+            showWhen: (form) => form.oauthTokenId
+          }
+        ]
+      },
+      {
+        title: '基本信息',
+        fields: [
+          { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
+          {
+            key: 'baseUrl',
+            label: 'Base URL',
+            type: 'text',
+            required: true,
+            placeholder: 'https://api.example.com/v1',
+            validate: (value) => validateHttpUrl('Base URL', value, { required: true })
+          },
+          {
+            key: 'apiKey',
+            label: 'API Key',
+            type: 'password',
+            required: true,
+            placeholder: 'sk-...',
+            showWhen: (form) => form.authType !== 'oauth'
+          },
+          {
+            key: 'websiteUrl',
+            label: '官网链接',
+            type: 'text',
+            placeholder: 'https://（选填）',
+            validate: (value) => validateHttpUrl('官网链接', value, { required: false })
+          },
+          {
+            key: 'model',
+            label: '默认模型',
+            type: 'autocomplete',
+            placeholder: '如 gpt-4o'
+          }
+        ]
+      },
+      {
+        title: '模型重定向',
+        description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
+        collapsible: true,
+        fields: [
+          {
+            key: 'modelRedirects',
+            type: 'model-redirect',
+            fullWidth: true
+          }
+        ]
+      },
+      {
+        title: '调度配置',
+        fields: baseSections.schedule
+      }
+    ],
+    getInitialForm: () => ({
+      presetId: 'openrouter',
+      name: 'OpenRouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      wireApi: 'openai',
+      authType: 'apiKey',
+      apiKey: '',
+      oauthProvider: null,
+      oauthTokenId: null,
+      websiteUrl: 'https://openrouter.ai',
+      model: '',
+      modelRedirects: [],
+      maxConcurrency: null,
+      weight: 1,
+      enabled: true,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null
+    }),
+    mapChannelToForm: (channel) => ({
+      presetId: channel.presetId || 'custom',
+      name: channel.name || '',
+      baseUrl: channel.baseUrl || '',
+      wireApi: channel.wireApi || 'openai',
+      authType: channel.authType || 'apiKey',
+      apiKey: channel.apiKey || '',
+      oauthProvider: channel.oauthProvider || null,
+      oauthTokenId: channel.oauthTokenId || null,
+      websiteUrl: channel.websiteUrl || '',
+      model: channel.model || '',
+      modelRedirects: channel.modelRedirects || [],
+      maxConcurrency: channel.maxConcurrency ?? null,
+      weight: channel.weight || 1,
+      enabled: channel.enabled !== false,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null
+    }),
+    onPresetChange: (presetId, form) => {
+      const preset = getOpenCodePresetById(presetId)
+      if (!preset) return form
+
+      const newForm = { ...form, presetId }
+      newForm.name = preset.name
+      newForm.baseUrl = preset.baseUrl
+      newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.wireApi = preset.wireApi || 'openai'
+      newForm.authType = preset.authType || 'apiKey'
+      newForm.oauthProvider = preset.oauthProvider || null
+
+      return newForm
+    },
+    fetchModelsForChannel: async (channelId, form) => {
+      form.modelsFetching = true
+      form.modelsFetchError = null
+      form.modelsFetchErrorHint = null
+      try {
+        const result = await fetchOpenCodeChannelModels(channelId)
+        if (result.models && result.models.length > 0) {
+          form.availableModels = result.models.map(m => ({
+            label: m,
+            value: m
+          }))
+          if (result.fallbackUsed) {
+            form.modelsFetchError = result.error || '无法自动获取模型列表'
+            form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
+          }
+        } else if (result.fallbackUsed || !result.supported) {
+          form.availableModels = getDefaultModels('opencode').map(m => ({ label: m, value: m }))
+          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
+        }
+      } catch (error) {
+        form.availableModels = getDefaultModels('opencode').map(m => ({ label: m, value: m }))
+        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchErrorHint = '已使用默认模型列表'
+      } finally {
+        form.modelsFetching = false
+      }
+    },
+    testFn: testOpenCodeChannelSpeed,
+    api: {
+      fetch: async () => {
+        const data = await getOpenCodeChannels()
+        return data.channels || []
+      },
+      create: async (form) => {
+        await createOpenCodeChannel(
+          form.name,
+          form.baseUrl,
+          form.apiKey,
+          {
+            wireApi: form.wireApi || 'openai',
+            maxConcurrency: normalizeConcurrency(form.maxConcurrency),
+            weight: normalizeWeight(form.weight),
+            enabled: form.enabled,
+            model: form.model || null,
+            modelRedirects: form.modelRedirects || [],
+            authType: form.authType || 'apiKey',
+            oauthProvider: form.oauthProvider || null,
+            oauthTokenId: form.oauthTokenId || null,
+            presetId: form.presetId || null,
+            websiteUrl: form.websiteUrl || ''
+          }
+        )
+      },
+      update: async (channel, form) => {
+        await updateOpenCodeChannel(channel.id, {
+          name: form.name,
+          baseUrl: form.baseUrl,
+          apiKey: form.apiKey,
+          wireApi: form.wireApi || 'openai',
+          websiteUrl: form.websiteUrl,
+          model: form.model || null,
+          maxConcurrency: normalizeConcurrency(form.maxConcurrency),
+          weight: normalizeWeight(form.weight),
+          enabled: form.enabled,
+          modelRedirects: form.modelRedirects || [],
+          authType: form.authType || 'apiKey',
+          oauthProvider: form.oauthProvider || null,
+          oauthTokenId: form.oauthTokenId || null,
+          presetId: form.presetId || null
+        })
+      },
+      toggle: async (channel, enabled) => updateOpenCodeChannel(channel.id, { enabled }),
+      remove: deleteOpenCodeChannel,
+      resetHealth: async (channel) => {
+        return resetOpenCodeChannelHealth(channel.id)
+      }
+    },
+    getHeaderTags: (channel, helpers) => {
+      const tags = []
+      if (channel.health?.status === 'frozen') {
+        tags.push({ text: helpers.formatFreeze(channel.health.freezeRemaining), type: 'error' })
+      } else if (channel.health?.status === 'checking') {
+        tags.push({ text: '检测中', type: 'warning' })
+      }
+      if (channel.enabled === false) {
+        tags.push({ text: '已禁用', type: 'default' })
+      }
+      return tags
+    },
+    buildInfoRows: (channel, helpers) => ([
+      { label: 'Model', value: channel.model || '(默认)', mono: true },
+      { label: 'URL', value: channel.baseUrl },
+      {
+        label: 'Key',
+        value: channel.authType === 'oauth' ? '(OAuth)' : helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)

@@ -362,6 +362,10 @@
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
+            <template v-else-if="channelType === 'opencode'">
+              <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
+              <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
+            </template>
             <div class="log-col col-time" :class="`col-time-${channelType}`">时间</div>
           </div>
           <!-- 日志内容 -->
@@ -399,6 +403,10 @@
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
                 </template>
                 <template v-else-if="channelType === 'gemini'">
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
+                </template>
+                <template v-else-if="channelType === 'opencode'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
                 </template>
@@ -472,12 +480,14 @@ import {
 import {
   updateChannel,
   updateCodexChannel,
-  updateGeminiChannel
+  updateGeminiChannel,
+  updateOpenCodeChannel
 } from '../../api/channels'
 import {
   getTodayStatistics,
   getCodexTodayStatistics,
-  getGeminiTodayStatistics
+  getGeminiTodayStatistics,
+  getOpenCodeTodayStatistics
 } from '../../api/statistics'
 import { getSkills, uninstallSkill } from '../../api/skills'
 import { getAllServers as getMcpServers, toggleServerApp } from '../../api/mcp'
@@ -486,7 +496,7 @@ const props = defineProps({
   channelType: {
     type: String,
     required: true,
-    validator: (value) => ['claude', 'codex', 'gemini'].includes(value)
+    validator: (value) => ['claude', 'codex', 'gemini', 'opencode'].includes(value)
   }
 })
 
@@ -496,9 +506,11 @@ const {
   claudeProxy,
   codexProxy,
   geminiProxy,
+  opencodeProxy,
   claudeChannels,
   codexChannels,
   geminiChannels,
+  opencodeChannels,
   schedulerState,
   getProxyState,
   startProxy,
@@ -529,6 +541,11 @@ const channelConfig = {
     title: 'Gemini-CLI',
     subtitle: '多模态AI助手',
     icon: SparklesOutline
+  },
+  opencode: {
+    title: 'OpenCode',
+    subtitle: 'AI 代码助手',
+    icon: CodeSlashOutline
   }
 }
 
@@ -541,6 +558,7 @@ const proxyState = computed(() => {
   if (props.channelType === 'claude') return claudeProxy.value
   if (props.channelType === 'codex') return codexProxy.value
   if (props.channelType === 'gemini') return geminiProxy.value
+  if (props.channelType === 'opencode') return opencodeProxy.value
   return {}
 })
 
@@ -549,6 +567,7 @@ const channelTypeName = computed(() => {
   if (props.channelType === 'claude') return 'Claude'
   if (props.channelType === 'codex') return 'Codex'
   if (props.channelType === 'gemini') return 'Gemini'
+  if (props.channelType === 'opencode') return 'OpenCode'
   return ''
 })
 
@@ -590,7 +609,8 @@ const isAnimating = ref({
 // 模型统计数据（用于图表）
 const modelStats = computed(() => {
   const toolType = props.channelType === 'claude' ? 'claude' :
-                   props.channelType === 'codex' ? 'codex' : 'gemini'
+                   props.channelType === 'codex' ? 'codex' :
+                   props.channelType === 'opencode' ? 'opencode' : 'gemini'
   return dashboardData.value?.todayStats?.[toolType]?.byModel || {}
 })
 
@@ -644,7 +664,7 @@ const mcpEnabledServers = ref([])
 
 // 平台标签
 const platformLabel = computed(() => {
-  const labels = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' }
+  const labels = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', opencode: 'OpenCode' }
   return labels[props.channelType] || ''
 })
 
@@ -854,7 +874,8 @@ const maxLogs = computed(() => logLimit.value)
 const logStreams = {
   claude: getLogs('claude'),
   codex: getLogs('codex'),
-  gemini: getLogs('gemini')
+  gemini: getLogs('gemini'),
+  opencode: getLogs('opencode')
 }
 const logsToDisplay = computed(() => {
   const stream = logStreams[props.channelType] || logStreams.claude
@@ -873,6 +894,7 @@ const channels = computed(() => {
   if (props.channelType === 'claude') list = claudeChannels.value || []
   else if (props.channelType === 'codex') list = codexChannels.value || []
   else if (props.channelType === 'gemini') list = geminiChannels.value || []
+  else if (props.channelType === 'opencode') list = opencodeChannels.value || []
 
   // 启用的排前面，禁用的排后面
   const enabled = list.filter(ch => ch.enabled !== false)
@@ -915,6 +937,8 @@ async function loadChannelStats() {
       statsData = await getCodexTodayStatistics()
     } else if (props.channelType === 'gemini') {
       statsData = await getGeminiTodayStatistics()
+    } else if (props.channelType === 'opencode') {
+      statsData = await getOpenCodeTodayStatistics()
     }
 
     // 从 byChannel 提取各渠道统计
@@ -1066,6 +1090,8 @@ async function handleQuickToggle(channel, enabled) {
       updateFn = updateCodexChannel
     } else if (props.channelType === 'gemini') {
       updateFn = updateGeminiChannel
+    } else if (props.channelType === 'opencode') {
+      updateFn = updateOpenCodeChannel
     }
 
     if (updateFn) {
@@ -1237,6 +1263,14 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #a855f7, rgba(168, 85, 247, 0.3));
 }
 
+.channel-header.opencode {
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.08) 0%, transparent 100%);
+}
+
+.channel-header.opencode::after {
+  background: linear-gradient(90deg, #ea580c, rgba(234, 88, 12, 0.3));
+}
+
 .header-icon {
   width: 32px;
   height: 32px;
@@ -1259,6 +1293,11 @@ onUnmounted(() => {
 
 .channel-header.gemini .header-icon {
   background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+  color: white;
+}
+
+.channel-header.opencode .header-icon {
+  background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
   color: white;
 }
 
@@ -1766,6 +1805,17 @@ onUnmounted(() => {
   border-left-color: #a855f7;
 }
 
+.stats-card-opencode,
+.chart-card:has(+ .stats-card-opencode),
+.card:has(.panel-card):nth-child(4) {
+  border-left-color: #ea580c;
+}
+
+/* Fallback for browsers without :has() support (Firefox < 121) */
+.chart-card.chart-card-opencode {
+  border-left-color: #ea580c;
+}
+
 .chart-card {
   padding: 0;
   overflow: hidden;
@@ -1874,6 +1924,11 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.logs-header-opencode .log-col {
+  color: rgba(234, 88, 12, 0.7);
+  font-weight: 600;
+}
+
 /* 暗色主题下稍微提亮 */
 [data-theme="dark"] .logs-header-claude .log-col {
   color: rgba(52, 211, 153, 0.65);
@@ -1885,6 +1940,10 @@ onUnmounted(() => {
 
 [data-theme="dark"] .logs-header-gemini .log-col {
   color: rgba(192, 132, 252, 0.65);
+}
+
+[data-theme="dark"] .logs-header-opencode .log-col {
+  color: rgba(251, 146, 60, 0.65);
 }
 
 .logs-container {
@@ -2157,6 +2216,22 @@ onUnmounted(() => {
 }
 
 .col-time-gemini {
+  flex: 1.8 1 60px;
+  min-width: 55px;
+}
+
+/* OpenCode 列宽 (4列: 渠道, 请求, 回复, 时间) */
+.col-channel-opencode {
+  flex: 2.5 1 70px;
+  min-width: 55px;
+}
+
+.col-token-opencode {
+  flex: 1.2 1 45px;
+  min-width: 40px;
+}
+
+.col-time-opencode {
   flex: 1.8 1 60px;
   min-width: 55px;
 }
@@ -2469,6 +2544,17 @@ onUnmounted(() => {
   background: radial-gradient(circle, rgba(168, 85, 247, 0.15) 0%, transparent 70%);
 }
 
+.locked-opencode {
+  background: linear-gradient(135deg,
+    rgba(234, 88, 12, 0.03) 0%,
+    var(--bg-secondary) 50%,
+    rgba(234, 88, 12, 0.02) 100%);
+}
+
+.locked-opencode::before {
+  background: radial-gradient(circle, rgba(234, 88, 12, 0.15) 0%, transparent 70%);
+}
+
 /* 锁定内容 */
 .locked-content {
   display: flex;
@@ -2573,6 +2659,26 @@ onUnmounted(() => {
 .locked-gemini .lock-icon .n-icon {
   color: #a855f7;
   filter: drop-shadow(0 2px 4px rgba(168, 85, 247, 0.3));
+}
+
+/* OpenCode 主题色 */
+.locked-opencode .lock-icon {
+  background: linear-gradient(135deg,
+    rgba(234, 88, 12, 0.12) 0%,
+    var(--bg-primary) 100%);
+  border-color: rgba(234, 88, 12, 0.25);
+  box-shadow:
+    0 8px 24px rgba(234, 88, 12, 0.15),
+    0 0 0 1px rgba(234, 88, 12, 0.1) inset;
+}
+
+.locked-opencode .lock-icon::before {
+  background: radial-gradient(circle, rgba(234, 88, 12, 0.3) 0%, transparent 60%);
+}
+
+.locked-opencode .lock-icon .n-icon {
+  color: #ea580c;
+  filter: drop-shadow(0 2px 4px rgba(234, 88, 12, 0.3));
 }
 
 .lock-icon .n-icon {

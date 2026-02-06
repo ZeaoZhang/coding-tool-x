@@ -42,9 +42,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { NAutoComplete, NButton, NIcon } from 'naive-ui'
 import { AddOutline, CloseOutline, ArrowForwardOutline } from '@vicons/ionicons5'
+import { useDefaultModels } from '../../composables/useDefaultModels.js'
 
 const props = defineProps({
   modelValue: {
@@ -63,39 +64,19 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue'])
 
-// 各渠道类型的默认模型列表
-const defaultModelsByType = {
-  claude: [
-    'claude-opus-4-5-20251101',
-    'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20251001',
-    'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514'
-  ],
-  codex: [
-    'gpt-5.2-codex',
-    'gpt-5.1-codex-max',
-    'gpt-5.1-codex-mini',
-    'gpt-5.1-codex',
-    'gpt-5-codex',
-    'gpt-5.2',
-    'gpt-5.1',
-    'gpt-5'
-  ],
-  gemini: [
-    'gemini-3-pro',
-    'gemini-3-flash',
-    'gemini-3-deep-think',
-    'gemini-2.5-pro',
-    'gemini-2.5-flash'
-  ]
-}
+// Use composable for default models
+const { getDefaultModels, loadDefaultModels } = useDefaultModels()
+
+// Load default models on mount
+onMounted(async () => {
+  await loadDefaultModels()
+})
 
 const allOptions = computed(() => {
   if (props.availableModels && props.availableModels.length > 0) {
     return props.availableModels
   }
-  const defaults = defaultModelsByType[props.channelType] || defaultModelsByType.claude
+  const defaults = getDefaultModels(props.channelType)
   return defaults.map(m => ({ label: m, value: m }))
 })
 

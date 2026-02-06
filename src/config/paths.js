@@ -31,14 +31,16 @@ const PATHS = {
   channels: {
     claude: path.join(CTX_BASE_DIR, 'channels.json'),
     codex: path.join(CTX_BASE_DIR, 'codex-channels.json'),
-    gemini: path.join(CTX_BASE_DIR, 'gemini-channels.json')
+    gemini: path.join(CTX_BASE_DIR, 'gemini-channels.json'),
+    opencode: path.join(CTX_BASE_DIR, 'opencode-channels.json')
   },
 
   // 激活渠道标记
   activeChannel: {
     claude: path.join(CTX_BASE_DIR, 'active-channel.json'),
     codex: path.join(CTX_BASE_DIR, 'codex-active-channel.json'),
-    gemini: path.join(CTX_BASE_DIR, 'gemini-active-channel.json')
+    gemini: path.join(CTX_BASE_DIR, 'gemini-active-channel.json'),
+    opencode: path.join(CTX_BASE_DIR, 'opencode-active-channel.json')
   },
 
   // 统计数据
@@ -46,10 +48,12 @@ const PATHS = {
     claude: path.join(CTX_BASE_DIR, 'statistics.json'),
     codex: path.join(CTX_BASE_DIR, 'codex-statistics.json'),
     gemini: path.join(CTX_BASE_DIR, 'gemini-statistics.json'),
+    opencode: path.join(CTX_BASE_DIR, 'opencode-statistics.json'),
     dailyStats: {
       claude: path.join(CTX_BASE_DIR, 'daily-stats'),
       codex: path.join(CTX_BASE_DIR, 'codex-daily-stats'),
-      gemini: path.join(CTX_BASE_DIR, 'gemini-daily-stats')
+      gemini: path.join(CTX_BASE_DIR, 'gemini-daily-stats'),
+      opencode: path.join(CTX_BASE_DIR, 'opencode-daily-stats')
     }
   },
 
@@ -84,7 +88,8 @@ const PATHS = {
   proxyRuntime: {
     claude: path.join(CTX_BASE_DIR, 'proxy-runtime.json'),
     codex: path.join(CTX_BASE_DIR, 'codex-proxy-runtime.json'),
-    gemini: path.join(CTX_BASE_DIR, 'gemini-proxy-runtime.json')
+    gemini: path.join(CTX_BASE_DIR, 'gemini-proxy-runtime.json'),
+    opencode: path.join(CTX_BASE_DIR, 'opencode-proxy-runtime.json')
   }
 };
 
@@ -111,6 +116,16 @@ const NATIVE_PATHS = {
     env: path.join(os.homedir(), '.gemini', '.env'),
     envBackup: path.join(os.homedir(), '.gemini', '.env.cc-tool-backup'),
     tmp: path.join(os.homedir(), '.gemini', 'tmp')
+  },
+
+  // OpenCode 原生配置
+  opencode: {
+    data: path.join(os.homedir(), '.local', 'share', 'opencode'),
+    config: path.join(os.homedir(), '.config', 'opencode'),
+    sessions: path.join(os.homedir(), '.local', 'share', 'opencode', 'storage', 'session'),
+    projects: path.join(os.homedir(), '.local', 'share', 'opencode', 'storage', 'project'),
+    messages: path.join(os.homedir(), '.local', 'share', 'opencode', 'storage', 'message'),
+    log: path.join(os.homedir(), '.local', 'share', 'opencode', 'log')
   }
 };
 

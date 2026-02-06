@@ -8,9 +8,9 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
 const { resolvePricing } = require('./utils/pricing');
-const { recordRequest: recordCodexRequest } = require('./services/codex-statistics-service');
+const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
-const { getEnabledChannels, writeCodexConfigForMultiChannel, getEffectiveApiKey } = require('./services/codex-channels');
+const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
 const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
@@ -41,7 +41,7 @@ const PRICING = {
   'o4-mini': { input: 1.1, output: 4.4 }
 };
 
-const CODEX_BASE_PRICING = DEFAULT_CONFIG.pricing.codex;
+const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
 const ONE_MILLION = 1000000;
 
 /**
@@ -103,9 +103,9 @@ function redirectModel(originalModel, channel) {
 }
 
 /**
- * 解析 Codex 代理目标 URL
+ * 解析 OpenCode 代理目标 URL
  *
- * Codex CLI 发送请求到我们的代理时，请求路径格式：
+ * OpenCode CLI 发送请求到我们的代理时，请求路径格式：
  * - /v1/responses (OpenAI Responses API)
  * - /v1/chat/completions (OpenAI Chat Completions API)
  *
@@ -120,7 +120,7 @@ function redirectModel(originalModel, channel) {
  *
  * 这个函数返回要传给 http-proxy 的 target，http-proxy 会自动拼接 req.url
  */
-function resolveCodexTarget(baseUrl = '', requestPath = '') {
+function resolveOpenCodeTarget(baseUrl = '', requestPath = '') {
   let target = baseUrl || '';
 
   // 移除末尾斜杠
@@ -196,9 +196,9 @@ function calculateCost(model, tokens) {
   }
 
   // 默认使用基础定价
-  pricing = resolvePricing('codex', pricing, CODEX_BASE_PRICING);
-  const inputRate = typeof pricing.input === 'number' ? pricing.input : CODEX_BASE_PRICING.input;
-  const outputRate = typeof pricing.output === 'number' ? pricing.output : CODEX_BASE_PRICING.output;
+  pricing = resolvePricing('opencode', pricing, OPENCODE_BASE_PRICING);
+  const inputRate = typeof pricing.input === 'number' ? pricing.input : OPENCODE_BASE_PRICING.input;
+  const outputRate = typeof pricing.output === 'number' ? pricing.output : OPENCODE_BASE_PRICING.output;
 
   return (
     (tokens.input || 0) * inputRate / ONE_MILLION +
@@ -218,19 +218,19 @@ function shouldParseJson(req) {
   return req.method === 'POST' && contentType.includes('application/json');
 }
 
-// 启动 Codex 代理服务器
-async function startCodexProxyServer(options = {}) {
+// 启动 OpenCode 代理服务器
+async function startOpenCodeProxyServer(options = {}) {
   // options.preserveStartTime - 是否保留现有的启动时间（用于切换渠道时）
   const preserveStartTime = options.preserveStartTime || false;
 
   if (proxyServer) {
-    console.log('Codex proxy server already running on port', currentPort);
+    console.log('OpenCode proxy server already running on port', currentPort);
     return { success: true, port: currentPort };
   }
 
   try {
     const config = loadConfig();
-    const port = config.ports?.codexProxy || 10089;
+    const port = config.ports?.opencodeProxy || 20091;
     currentPort = port;
 
     proxyApp = express();
@@ -248,7 +248,7 @@ async function startCodexProxyServer(options = {}) {
       const activeChannel = req.selectedChannel;
       if (!activeChannel) return;
 
-      const requestId = `codex-${Date.now()}-${Math.random()}`;
+      const requestId = `opencode-${Date.now()}-${Math.random()}`;
       requestMetadata.set(req, {
         id: requestId,
       channel: activeChannel.name,
@@ -276,11 +276,24 @@ async function startCodexProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({ source: 'codex', enableSessionBinding: false });
+        const channel = await allocateChannel({ source: 'opencode', enableSessionBinding: false });
         req.selectedChannel = channel;
 
+        // 检查 API key 是否有效（OAuth token 可能已过期）
+        const effectiveKey = getEffectiveApiKey(channel);
+        if (!effectiveKey) {
+          releaseChannel(channel.id, 'opencode');
+          broadcastSchedulerState('opencode', getSchedulerState('opencode'));
+          return res.status(401).json({
+            error: {
+              message: 'OAuth token expired or API key not configured. Please re-authenticate.',
+              type: 'authentication_error'
+            }
+          });
+        }
+
         // 应用模型重定向（当 proxy 开启时）
-        if (req.body && req.body.model) {
+        if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
           const originalModel = req.body.model;
           const redirectedModel = redirectModel(originalModel, channel);
 
@@ -294,7 +307,7 @@ async function startCodexProxyServer(options = {}) {
             if (cachedRedirects[originalModel] !== redirectedModel) {
               cachedRedirects[originalModel] = redirectedModel;
               printedRedirectCache.set(channel.id, cachedRedirects);
-              console.log(`[Codex Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+              console.log(`[OpenCode Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
             }
           }
         }
@@ -304,17 +317,17 @@ async function startCodexProxyServer(options = {}) {
           return () => {
             if (released) return;
             released = true;
-            releaseChannel(channel.id, 'codex');
-            broadcastSchedulerState('codex', getSchedulerState('codex'));
+            releaseChannel(channel.id, 'opencode');
+            broadcastSchedulerState('opencode', getSchedulerState('opencode'));
           };
         })();
 
         res.on('close', release);
         res.on('error', release);
 
-        broadcastSchedulerState('codex', getSchedulerState('codex'));
+        broadcastSchedulerState('opencode', getSchedulerState('opencode'));
 
-        const target = resolveCodexTarget(channel.baseUrl, req.url);
+        const target = resolveOpenCodeTarget(channel.baseUrl, req.url);
 
         proxy.web(req, res, {
           target,
@@ -324,8 +337,8 @@ async function startCodexProxyServer(options = {}) {
         }, (err) => {
           release();
           if (err) {
-            recordFailure(channel.id, 'codex', err);
-            console.error('Codex proxy error:', err);
+            recordFailure(channel.id, 'opencode', err);
+            console.error('OpenCode proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
                 error: {
@@ -337,11 +350,11 @@ async function startCodexProxyServer(options = {}) {
           }
         });
       } catch (error) {
-        console.error('Codex channel allocation error:', error);
+        console.error('OpenCode channel allocation error:', error);
         if (!res.headersSent) {
           res.status(503).json({
             error: {
-              message: error.message || 'No Codex channel available',
+              message: error.message || 'No OpenCode channel available',
               type: 'channel_pool_exhausted'
             }
           });
@@ -513,16 +526,16 @@ async function startCodexProxyServer(options = {}) {
               reasoningTokens: tokenData.reasoningTokens,
               totalTokens: tokenData.totalTokens,
               cost: cost,
-              source: 'codex'
+              source: 'opencode'
             });
           }
 
           const duration = Date.now() - metadata.startTime;
 
-          recordCodexRequest({
+          recordOpenCodeRequest({
             id: metadata.id,
             timestamp: new Date(metadata.startTime).toISOString(),
-            toolType: 'codex',
+            toolType: 'opencode',
             channel: metadata.channel,
             channelId: metadata.channelId,
             model: tokenData.model,
@@ -538,7 +551,7 @@ async function startCodexProxyServer(options = {}) {
             cost: cost
           });
 
-          recordSuccess(metadata.channelId, 'codex');
+          recordSuccess(metadata.channelId, 'opencode');
         }
 
         if (!isResponseClosed) {
@@ -552,18 +565,18 @@ async function startCodexProxyServer(options = {}) {
           console.error('Proxy response error:', err);
         }
         isResponseClosed = true;
-        recordFailure(metadata.channelId, 'codex', err);
+        recordFailure(metadata.channelId, 'opencode', err);
         requestMetadata.delete(req);
       });
     });
 
     // 处理代理错误
     proxy.on('error', (err, req, res) => {
-      console.error('Codex proxy error:', err);
+      console.error('OpenCode proxy error:', err);
       if (req && req.selectedChannel) {
-        recordFailure(req.selectedChannel.id, 'codex', err);
-        releaseChannel(req.selectedChannel.id, 'codex');
-        broadcastSchedulerState('codex', getSchedulerState('codex'));
+        recordFailure(req.selectedChannel.id, 'opencode', err);
+        releaseChannel(req.selectedChannel.id, 'opencode');
+        broadcastSchedulerState('opencode', getSchedulerState('opencode'));
       }
       if (res && !res.headersSent) {
         res.status(502).json({
@@ -580,29 +593,19 @@ async function startCodexProxyServer(options = {}) {
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
-        console.log(`Codex proxy server started on http://127.0.0.1:${port}`);
+        console.log(`OpenCode proxy server started on http://127.0.0.1:${port}`);
 
         // 保存代理启动时间（如果是切换渠道，保留原有启动时间）
-        saveProxyStartTime('codex', preserveStartTime);
-
-        // 启动代理时同步配置到 Codex 的 config.toml
-        try {
-          const enabledChannels = getEnabledChannels();
-          if (enabledChannels.length > 0) {
-            writeCodexConfigForMultiChannel(enabledChannels);
-          }
-        } catch (err) {
-          // ignore sync error
-        }
+        saveProxyStartTime('opencode', preserveStartTime);
 
         resolve({ success: true, port });
       });
 
       proxyServer.on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
-          console.error(chalk.red(`\nCodex proxy port ${port} is already in use`));
+          console.error(chalk.red(`\nOpenCode proxy port ${port} is already in use`));
         } else {
-          console.error('Failed to start Codex proxy server:', err);
+          console.error('Failed to start OpenCode proxy server:', err);
         }
         proxyServer = null;
         proxyApp = null;
@@ -611,29 +614,29 @@ async function startCodexProxyServer(options = {}) {
       });
     });
   } catch (err) {
-    console.error('Error starting Codex proxy server:', err);
+    console.error('Error starting OpenCode proxy server:', err);
     throw err;
   }
 }
 
-// 停止 Codex 代理服务器
-async function stopCodexProxyServer(options = {}) {
+// 停止 OpenCode 代理服务器
+async function stopOpenCodeProxyServer(options = {}) {
   // options.clearStartTime - 是否清除启动时间（默认 true）
   const clearStartTime = options.clearStartTime !== false;
 
   if (!proxyServer) {
-    return { success: true, message: 'Codex proxy server not running' };
+    return { success: true, message: 'OpenCode proxy server not running' };
   }
 
   requestMetadata.clear();
 
   return new Promise((resolve) => {
     proxyServer.close(() => {
-      console.log('Codex proxy server stopped');
+      console.log('OpenCode proxy server stopped');
 
       // 清除代理启动时间（仅当明确要求时）
       if (clearStartTime) {
-        clearProxyStartTime('codex');
+        clearProxyStartTime('opencode');
       }
 
       proxyServer = null;
@@ -646,15 +649,15 @@ async function stopCodexProxyServer(options = {}) {
 }
 
 // 获取代理服务器状态
-function getCodexProxyStatus() {
+function getOpenCodeProxyStatus() {
   const config = loadConfig();
-  const startTime = getProxyStartTime('codex');
-  const runtime = getProxyRuntime('codex');
+  const startTime = getProxyStartTime('opencode');
+  const runtime = getProxyRuntime('opencode');
 
   return {
     running: !!proxyServer,
     port: currentPort,
-    defaultPort: config.ports?.codexProxy || 10089,
+    defaultPort: config.ports?.opencodeProxy || 20091,
     startTime,
     runtime
   };
@@ -665,7 +668,7 @@ function getCodexProxyStatus() {
  * 用于在渠道配置更新后触发重新打印日志
  * @param {string} channelId - 渠道 ID
  */
-function clearCodexRedirectCache(channelId) {
+function clearOpenCodeRedirectCache(channelId) {
   if (channelId) {
     printedRedirectCache.delete(channelId);
   } else {
@@ -674,8 +677,8 @@ function clearCodexRedirectCache(channelId) {
 }
 
 module.exports = {
-  startCodexProxyServer,
-  stopCodexProxyServer,
-  getCodexProxyStatus,
-  clearCodexRedirectCache
+  startOpenCodeProxyServer,
+  stopOpenCodeProxyServer,
+  getOpenCodeProxyStatus,
+  clearOpenCodeRedirectCache
 };

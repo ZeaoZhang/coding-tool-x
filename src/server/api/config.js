@@ -37,6 +37,191 @@ function sanitizePricing(inputPricing, currentPricing) {
 }
 
 /**
+ * Validate model list
+ * @param {Array} models - Array of model names
+ * @param {string} toolType - Tool type (claude, codex, gemini, opencode)
+ * @returns {Object} { valid: boolean, cleaned: array, error?: string }
+ */
+function validateModelList(models, toolType) {
+  if (!Array.isArray(models)) {
+    return { valid: false, error: `${toolType}: models must be an array` };
+  }
+
+  if (models.length === 0) {
+    return { valid: false, error: `${toolType}: model list cannot be empty` };
+  }
+
+  if (models.length > 50) {
+    return { valid: false, error: `${toolType}: maximum 50 models allowed, got ${models.length}` };
+  }
+
+  const modelNamePattern = /^[a-zA-Z0-9._\-/:]+$/;
+  const cleaned = [];
+  const seen = new Set();
+
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+
+    if (typeof model !== 'string') {
+      return { valid: false, error: `${toolType}: model at index ${i} must be a string, got ${typeof model}` };
+    }
+
+    const trimmed = model.trim();
+
+    if (trimmed.length === 0) {
+      return { valid: false, error: `${toolType}: model at index ${i} is empty or whitespace` };
+    }
+
+    if (!modelNamePattern.test(trimmed)) {
+      return { valid: false, error: `${toolType}: model "${trimmed}" contains invalid characters (allowed: a-z A-Z 0-9 . _ - / :)` };
+    }
+
+    if (!seen.has(trimmed)) {
+      seen.add(trimmed);
+      cleaned.push(trimmed);
+    }
+  }
+
+  return { valid: true, cleaned };
+}
+
+/**
+ * GET /api/config/default-models
+ * 获取默认模型列表
+ */
+router.get('/default-models', (req, res) => {
+  try {
+    const config = loadConfig();
+    const defaultModels = config.defaultModels || DEFAULT_CONFIG.defaultModels;
+
+    res.json({ defaultModels });
+  } catch (error) {
+    console.error('[Config API] Failed to get default models:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/config/default-models
+ * 更新默认模型列表
+ */
+router.post('/default-models', (req, res) => {
+  try {
+    const { defaultModels } = req.body;
+
+    if (!defaultModels || typeof defaultModels !== 'object') {
+      return res.status(400).json({
+        error: 'defaultModels must be an object'
+      });
+    }
+
+    const validToolTypes = ['claude', 'codex', 'gemini', 'opencode'];
+    const providedTypes = Object.keys(defaultModels);
+
+    // Validate that only valid tool types are provided
+    for (const toolType of providedTypes) {
+      if (!validToolTypes.includes(toolType)) {
+        return res.status(400).json({
+          error: `Invalid tool type: ${toolType}. Valid types: ${validToolTypes.join(', ')}`
+        });
+      }
+    }
+
+    // Validate each model list
+    const validated = {};
+    const errors = {};
+
+    for (const toolType of providedTypes) {
+      const result = validateModelList(defaultModels[toolType], toolType);
+      if (!result.valid) {
+        errors[toolType] = result.error;
+      } else {
+        validated[toolType] = result.cleaned;
+      }
+    }
+
+    if (Object.keys(errors).length > 0) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: errors
+      });
+    }
+
+    // Load current config and merge
+    const config = loadConfig();
+    const newDefaultModels = {
+      ...(config.defaultModels || DEFAULT_CONFIG.defaultModels),
+      ...validated
+    };
+
+    // Save config
+    const newConfig = {
+      ...config,
+      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
+      defaultModels: newDefaultModels
+    };
+
+    saveConfig(newConfig);
+
+    res.json({
+      success: true,
+      defaultModels: newDefaultModels
+    });
+  } catch (error) {
+    console.error('[Config API] Failed to save default models:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/config/default-models/reset
+ * 重置默认模型列表
+ */
+router.post('/default-models/reset', (req, res) => {
+  try {
+    const { toolType } = req.body;
+
+    const config = loadConfig();
+    let newDefaultModels;
+
+    if (toolType) {
+      // Reset specific tool type
+      const validToolTypes = ['claude', 'codex', 'gemini', 'opencode'];
+      if (!validToolTypes.includes(toolType)) {
+        return res.status(400).json({
+          error: `Invalid tool type: ${toolType}. Valid types: ${validToolTypes.join(', ')}`
+        });
+      }
+
+      newDefaultModels = {
+        ...(config.defaultModels || DEFAULT_CONFIG.defaultModels),
+        [toolType]: DEFAULT_CONFIG.defaultModels[toolType]
+      };
+    } else {
+      // Reset all tool types
+      newDefaultModels = { ...DEFAULT_CONFIG.defaultModels };
+    }
+
+    // Save config
+    const newConfig = {
+      ...config,
+      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
+      defaultModels: newDefaultModels
+    };
+
+    saveConfig(newConfig);
+
+    res.json({
+      success: true,
+      defaultModels: newDefaultModels
+    });
+  } catch (error) {
+    console.error('[Config API] Failed to reset default models:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * GET /api/config/advanced
  * 获取高级配置（端口、日志、性能等）
  */

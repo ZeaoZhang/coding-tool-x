@@ -22,7 +22,7 @@ import ChannelColumn from '../components/dashboard/ChannelColumn.vue'
 import { useUIConfig } from '../composables/useUIConfig'
 
 const STORAGE_KEY = 'dashboardChannelOrder'
-const DEFAULT_ORDER = ['claude', 'codex', 'gemini']
+const DEFAULT_ORDER = ['claude', 'codex', 'gemini', 'opencode']
 
 const { uiConfig, updateConfig, loadUIConfig } = useUIConfig()
 
@@ -32,7 +32,7 @@ function getOrderFromStorage() {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       const order = JSON.parse(stored)
-      if (Array.isArray(order) && order.length === 3) {
+      if (Array.isArray(order) && order.length === 4) {
         return order
       }
     }
@@ -64,7 +64,7 @@ onMounted(async () => {
   await loadUIConfig()
 
   // 如果服务端有保存的顺序，使用服务端的
-  if (uiConfig.value.dashboardChannelOrder && Array.isArray(uiConfig.value.dashboardChannelOrder) && uiConfig.value.dashboardChannelOrder.length === 3) {
+  if (uiConfig.value.dashboardChannelOrder && Array.isArray(uiConfig.value.dashboardChannelOrder) && uiConfig.value.dashboardChannelOrder.length === 4) {
     const serverOrder = uiConfig.value.dashboardChannelOrder
     channelList.value = serverOrder.map(type => ({ type }))
     // 同步到 localStorage
@@ -86,7 +86,7 @@ onMounted(async () => {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   flex: 1;
   min-height: 0;
@@ -104,7 +104,13 @@ onMounted(async () => {
 }
 
 /* 响应式设计 */
-@media (max-width: 1400px) {
+@media (max-width: 1600px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 1200px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, 1fr);
   }

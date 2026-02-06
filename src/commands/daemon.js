@@ -72,11 +72,18 @@ async function handleStart() {
     const config = loadConfig();
     const port = config.ports?.webUI || 10099;
 
+    // 检查是否启用 LAN 访问 (--host 标志)
+    const enableHost = process.argv.includes('--host');
+    const pmArgs = ['ui', '--daemon'];
+    if (enableHost) {
+      pmArgs.push('--host');
+    }
+
     // 启动 PM2 进程
     pm2.start({
       name: PM2_APP_NAME,
       script: path.join(__dirname, '../index.js'),
-      args: ['ui', '--daemon'],
+      args: pmArgs,
       interpreter: 'node',
       autorestart: true,
       max_memory_restart: '500M',
@@ -97,6 +104,9 @@ async function handleStart() {
 
       console.log(chalk.green('\n✅ Coding-Tool 服务已启动（后台运行）\n'));
       console.log(chalk.gray(`Web UI: http://localhost:${port}`));
+      if (enableHost) {
+        console.log(chalk.yellow(`⚠️  LAN 访问已启用 (http://<your-ip>:${port})`));
+      }
       console.log(chalk.gray('\n可以安全关闭此终端窗口'));
       console.log(chalk.gray('\n常用命令:'));
       console.log(chalk.gray('  ') + chalk.cyan('ctx status') + chalk.gray('   - 查看服务状态'));

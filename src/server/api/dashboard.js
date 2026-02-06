@@ -9,18 +9,22 @@ const { getAllChannels } = require('../services/channels');
 const { getProxyStatus } = require('../proxy-server');
 const { getCodexProxyStatus } = require('../codex-proxy-server');
 const { getGeminiProxyStatus } = require('../gemini-proxy-server');
+const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
 const { getProjectAndSessionCounts: getClaudeCounts } = require('../services/sessions');
 const { getProjectAndSessionCounts: getCodexCounts } = require('../services/codex-sessions');
 const { getProjectAndSessionCounts: getGeminiCounts } = require('../services/gemini-sessions');
+const { getProjectAndSessionCounts: getOpenCodeCounts } = require('../services/opencode-sessions');
 
 // Channel-specific services
 const { getChannels: getCodexChannels } = require('../services/codex-channels');
 const { getChannels: getGeminiChannels } = require('../services/gemini-channels');
+const { getChannels: getOpenCodeChannels } = require('../services/opencode-channels');
 
 // Statistics
 const { getTodayStatistics } = require('../services/statistics-service');
 const { getTodayStatistics: getCodexTodayStatistics } = require('../services/codex-statistics-service');
 const { getTodayStatistics: getGeminiTodayStatistics } = require('../services/gemini-statistics-service');
+const { getTodayStatistics: getOpenCodeTodayStatistics } = require('../services/opencode-statistics-service');
 
 /**
  * GET /api/dashboard/init
@@ -37,15 +41,19 @@ router.get('/init', async (req, res) => {
       claudeChannels,
       codexChannels,
       geminiChannels,
+      opencodeChannels,
       claudeProxyStatus,
       codexProxyStatus,
       geminiProxyStatus,
+      opencodeProxyStatus,
       claudeTodayStats,
       codexTodayStats,
       geminiTodayStats,
+      opencodeTodayStats,
       claudeCounts,
       codexCounts,
-      geminiCounts
+      geminiCounts,
+      opencodeCounts
     ] = await Promise.all([
       // UI Config
       Promise.resolve(loadUIConfig()),
@@ -57,21 +65,25 @@ router.get('/init', async (req, res) => {
       Promise.resolve(getAllChannels()),
       Promise.resolve(getCodexChannels()),
       Promise.resolve(getGeminiChannels()),
+      Promise.resolve(getOpenCodeChannels()),
 
       // Proxy Status
       Promise.resolve(getProxyStatus()),
       Promise.resolve(getCodexProxyStatus()),
       Promise.resolve(getGeminiProxyStatus()),
+      Promise.resolve(getOpenCodeProxyStatus()),
 
       // Today Stats (所有平台)
       Promise.resolve(getTodayStatistics()),
       Promise.resolve(getCodexTodayStatistics()),
       Promise.resolve(getGeminiTodayStatistics()),
+      Promise.resolve(getOpenCodeTodayStatistics()),
 
       // 轻量级统计
       Promise.resolve(getClaudeCounts(config)),
       Promise.resolve(getCodexCounts()),
-      Promise.resolve(getGeminiCounts())
+      Promise.resolve(getGeminiCounts()),
+      Promise.resolve(getOpenCodeCounts())
     ]);
 
     // 格式化统计数据：取 summary 和 byModel 中的数据
@@ -95,22 +107,26 @@ router.get('/init', async (req, res) => {
         channels: {
           claude: claudeChannels,
           codex: codexChannels,
-          gemini: geminiChannels
+          gemini: geminiChannels,
+          opencode: opencodeChannels.channels || []
         },
         proxyStatus: {
           claude: claudeProxyStatus,
           codex: codexProxyStatus,
-          gemini: geminiProxyStatus
+          gemini: geminiProxyStatus,
+          opencode: opencodeProxyStatus
         },
         counts: {
           claude: claudeCounts || { projectCount: 0, sessionCount: 0 },
           codex: codexCounts || { projectCount: 0, sessionCount: 0 },
-          gemini: geminiCounts || { projectCount: 0, sessionCount: 0 }
+          gemini: geminiCounts || { projectCount: 0, sessionCount: 0 },
+          opencode: opencodeCounts || { projectCount: 0, sessionCount: 0 }
         },
         todayStats: {
           claude: formatStats(claudeTodayStats),
           codex: formatStats(codexTodayStats),
-          gemini: formatStats(geminiTodayStats)
+          gemini: formatStats(geminiTodayStats),
+          opencode: formatStats(opencodeTodayStats)
         }
       }
     });

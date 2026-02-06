@@ -66,6 +66,16 @@
         </div>
         <div
           class="nav-tab"
+          :class="{ active: currentChannel === 'opencode' }"
+          @click="router.push({ name: 'opencode-projects' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <CodeSlashOutline />
+          </n-icon>
+          <span class="nav-label">OpenCode</span>
+        </div>
+        <div
+          class="nav-tab"
           :class="{ active: currentRoute === 'terminal' }"
           @click="router.push({ name: 'terminal' })"
         >
@@ -485,6 +495,7 @@ const {
   claudeProxy,
   codexProxy,
   geminiProxy,
+  opencodeProxy,
   startProxy,
   stopProxy
 } = useGlobalState()
@@ -587,11 +598,13 @@ const globalLoading = ref(false) // 全局 loading 状态
 const effectiveProxyRunning = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.running
   if (currentChannel.value === 'gemini') return geminiProxy.value.running
+  if (currentChannel.value === 'opencode') return opencodeProxy.value.running
   return claudeProxy.value.running
 })
 const effectiveProxyLoading = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.loading
   if (currentChannel.value === 'gemini') return geminiProxy.value.loading
+  if (currentChannel.value === 'opencode') return opencodeProxy.value.loading
   return claudeProxy.value.loading
 })
 

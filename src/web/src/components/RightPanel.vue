@@ -88,6 +88,7 @@
         <ClaudeChannelPanel v-if="currentChannel === 'claude'" ref="claudePanelRef" @open-website="openWebsite" />
         <CodexChannelPanel v-else-if="currentChannel === 'codex'" ref="codexPanelRef" @open-website="openWebsite" />
         <GeminiChannelPanel v-else-if="currentChannel === 'gemini'" ref="geminiPanelRef" @open-website="openWebsite" />
+        <OpenCodeChannelPanel v-else-if="currentChannel === 'opencode'" ref="opencodePanelRef" @open-website="openWebsite" />
       </div>
     </div>
 
@@ -116,6 +117,7 @@ import {
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
+import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
 
@@ -149,6 +151,7 @@ const currentChannel = computed(() => route.meta.channel || 'claude')
 const claudePanelRef = ref(null)
 const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
+const opencodePanelRef = ref(null)
 const installedSkillsCount = ref(0)
 
 // 加载已安装技能数量
@@ -166,13 +169,15 @@ async function loadInstalledSkillsCount() {
 const channelRefs = {
   claude: claudePanelRef,
   codex: codexPanelRef,
-  gemini: geminiPanelRef
+  gemini: geminiPanelRef,
+  opencode: opencodePanelRef
 }
 
 const channelTitles = {
   claude: 'Claude 渠道管理',
   codex: 'Codex 渠道管理',
-  gemini: 'Gemini 渠道管理'
+  gemini: 'Gemini 渠道管理',
+  opencode: 'OpenCode 渠道管理'
 }
 
 const channelTitle = computed(() => channelTitles[currentChannel.value] || 'Claude 渠道管理')

@@ -8,9 +8,16 @@ async function handleUI() {
   // 检查是否为 daemon 模式（PM2 启动）
   const isDaemon = process.argv.includes('--daemon');
 
+  // 检查是否启用 LAN 访问 (--host 标志)
+  const enableHost = process.argv.includes('--host');
+  const host = enableHost ? '0.0.0.0' : '127.0.0.1';
+
   if (!isDaemon) {
     console.clear();
     console.log(chalk.cyan.bold('\n🌐 启动 Coding-Tool Web UI...\n'));
+    if (enableHost) {
+      console.log(chalk.yellow('⚠️  LAN 访问已启用 (--host)\n'));
+    }
   }
 
   // 从配置加载端口
@@ -19,7 +26,7 @@ async function handleUI() {
   const url = `http://localhost:${port}`;
 
   try {
-    await startServer(port);
+    await startServer(port, host);
 
     // 自动打开浏览器（仅非 daemon 模式）
     if (!isDaemon) {
