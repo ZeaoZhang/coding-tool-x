@@ -141,7 +141,7 @@
                 <div class="card-apps">
                   <span class="apps-label">生效范围:</span>
                   <n-tag
-                    v-for="app in ['claude', 'codex', 'gemini']"
+                    v-for="app in ['claude', 'codex', 'gemini', 'opencode']"
                     :key="app"
                     :type="preset.apps?.[app] ? 'success' : 'default'"
                     size="tiny"
@@ -244,7 +244,8 @@ const stats = computed(() => {
 const importOptions = [
   { label: '从 Claude 导入', key: 'claude' },
   { label: '从 Codex 导入', key: 'codex' },
-  { label: '从 Gemini 导入', key: 'gemini' }
+  { label: '从 Gemini 导入', key: 'gemini' },
+  { label: '从 OpenCode 导入', key: 'opencode' }
 ]
 
 // 截断内容用于预览
@@ -296,7 +297,7 @@ async function handleActivate(preset) {
 async function handleDeactivate() {
   dialog.warning({
     title: '移除提示词',
-    content: '确定要移除当前激活的提示词吗？这将删除各平台的提示词文件（CLAUDE.md、AGENTS.md、GEMINI.md）。',
+    content: '确定要移除当前激活的提示词吗？这将删除各平台的提示词文件（CLAUDE.md、AGENTS.md、GEMINI.md、OpenCode AGENTS.md）。',
     positiveText: '移除',
     negativeText: '取消',
     onPositiveClick: async () => {

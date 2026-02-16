@@ -8,6 +8,13 @@ const crypto = require('crypto');
  * 存储位置: ~/.claude/cc-tool/opencode-channels.json
  */
 
+function normalizeGatewaySourceType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'gemini') return 'gemini';
+  return 'codex';
+}
+
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
   const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -30,21 +37,34 @@ function loadChannels() {
     const data = JSON.parse(content);
     // 确保渠道有必要字段（兼容旧数据）
     if (data.channels) {
-      data.channels = data.channels.map(ch => ({
-        ...ch,
-        enabled: ch.enabled !== false,
-        weight: ch.weight || 1,
-        maxConcurrency: ch.maxConcurrency || null,
-        modelRedirects: ch.modelRedirects || [],
-        authType: ch.authType || 'apiKey',
-        wireApi: ch.wireApi || 'openai'  // OpenCode 默认使用 OpenAI 兼容格式
-      }));
+      data.channels = data.channels.map(ch => {
+        const normalized = {
+          ...ch,
+          enabled: ch.enabled !== false,
+          weight: ch.weight || 1,
+          maxConcurrency: ch.maxConcurrency || null,
+          modelRedirects: ch.modelRedirects || [],
+          speedTestModel: ch.speedTestModel || null,
+          wireApi: ch.wireApi || 'openai',  // OpenCode 默认使用 OpenAI 兼容格式
+          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType)
+        };
+        normalized.providerKey = deriveProviderKey(normalized);
+        return normalized;
+      });
     }
     return data;
   } catch (err) {
     console.error('[OpenCode Channels] Failed to parse channels file:', err);
     return { channels: [] };
   }
+}
+
+function deriveProviderKey(channel) {
+  const base = channel.wireApi || channel.providerKey || 'opencode';
+  if (typeof base === 'string' && base.startsWith('opencode_')) {
+    return base;
+  }
+  return `opencode_${base}`;
 }
 
 // 保存渠道数据
@@ -75,15 +95,16 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
     modelRedirects: extraConfig.modelRedirects || [],
+    speedTestModel: extraConfig.speedTestModel || null,
     model: extraConfig.model || null,
-    authType: extraConfig.authType || 'apiKey',
-    oauthProvider: extraConfig.oauthProvider || null,
-    oauthTokenId: extraConfig.oauthTokenId || null,
+    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType),
+    providerKey: extraConfig.providerKey || null,
     presetId: extraConfig.presetId || null,
     websiteUrl: extraConfig.websiteUrl || '',
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
+  newChannel.providerKey = extraConfig.providerKey || deriveProviderKey(newChannel);
 
   data.channels.push(newChannel);
   saveChannels(data);
@@ -102,21 +123,29 @@ function updateChannel(channelId, updates) {
 
   const oldChannel = data.channels[index];
 
-  data.channels[index] = {
+  const merged = {
     ...oldChannel,
     ...updates,
     id: channelId,
     createdAt: oldChannel.createdAt,
-    modelRedirects: updates.modelRedirects || oldChannel.modelRedirects || [],
+    modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
+    speedTestModel: updates.speedTestModel !== undefined ? updates.speedTestModel : (oldChannel.speedTestModel || null),
+    gatewaySourceType: normalizeGatewaySourceType(
+      updates.gatewaySourceType !== undefined
+        ? updates.gatewaySourceType
+        : oldChannel.gatewaySourceType
+    ),
     updatedAt: Date.now()
   };
+  merged.providerKey = updates.providerKey || deriveProviderKey(merged);
+  data.channels[index] = merged;
 
   saveChannels(data);
   return data.channels[index];
 }
 
 // 删除渠道
-function deleteChannel(channelId) {
+async function deleteChannel(channelId) {
   const data = loadChannels();
   const index = data.channels.findIndex(c => c.id === channelId);
 
@@ -161,18 +190,9 @@ function saveChannelOrder(order) {
 
 /**
  * 获取渠道的有效 API Key
- * OAuth 认证时返回 access token，否则返回静态 API Key
  */
-function getEffectiveApiKey(channel) {
-  if (channel.authType === 'oauth' && channel.oauthTokenId) {
-    const { getToken, isTokenExpired } = require('./oauth-token-storage');
-    const token = getToken(channel.oauthTokenId);
-    if (token && !isTokenExpired(token)) {
-      return token.accessToken;
-    }
-    return null;
-  }
-  return channel.apiKey;
+async function getEffectiveApiKey(channel) {
+  return channel.apiKey || null;
 }
 
 module.exports = {

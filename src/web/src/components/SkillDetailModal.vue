@@ -94,7 +94,11 @@ import { marked } from 'marked'
 
 const props = defineProps({
   visible: Boolean,
-  skill: Object // 传入的技能基本信息
+  skill: Object, // 传入的技能基本信息
+  platform: {
+    type: String,
+    default: 'claude'
+  }
 })
 
 const emit = defineEmits(['update:visible', 'updated'])
@@ -130,7 +134,7 @@ async function loadDetail() {
   error.value = ''
 
   try {
-    const result = await getSkillDetail(props.skill.directory)
+    const result = await getSkillDetail(props.skill.directory, props.platform)
     if (result.success) {
       detail.value = result
     } else {
@@ -152,7 +156,7 @@ async function handleInstall() {
       owner: props.skill.repoOwner,
       name: props.skill.repoName,
       branch: props.skill.repoBranch || 'main'
-    })
+    }, props.skill.fullDirectory || null, props.platform)
 
     if (result.success) {
       message.success('安装成功')
@@ -174,7 +178,7 @@ async function handleUninstall() {
 
   uninstalling.value = true
   try {
-    const result = await uninstallSkill(detail.value.directory)
+    const result = await uninstallSkill(detail.value.directory, props.platform)
 
     if (result.success) {
       message.success('卸载成功')

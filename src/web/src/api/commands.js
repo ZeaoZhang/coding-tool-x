@@ -10,9 +10,9 @@ import { client } from './client'
  * 获取命令列表
  * @param {string} projectPath - 项目路径（可选，用于获取项目级命令）
  */
-export async function getCommands(projectPath = null) {
+export async function getCommands(projectPath = null, platform = 'claude') {
   const response = await client.get('/commands', {
-    params: projectPath ? { projectPath } : {}
+    params: projectPath ? { projectPath, platform } : { platform }
   })
   return response.data
 }
@@ -22,8 +22,9 @@ export async function getCommands(projectPath = null) {
  * @param {string} projectPath - 项目路径（可选）
  * @param {boolean} forceRefresh - 是否强制刷新缓存
  */
-export async function getAllCommands(projectPath = null, forceRefresh = false) {
+export async function getAllCommands(projectPath = null, forceRefresh = false, platform = 'claude') {
   const params = {}
+  if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
   if (forceRefresh) params.refresh = '1'
 
@@ -35,9 +36,9 @@ export async function getAllCommands(projectPath = null, forceRefresh = false) {
  * 获取命令统计
  * @param {string} projectPath - 项目路径
  */
-export async function getCommandsStats(projectPath = null) {
+export async function getCommandsStats(projectPath = null, platform = 'claude') {
   const response = await client.get('/commands/stats', {
-    params: projectPath ? { projectPath } : {}
+    params: projectPath ? { projectPath, platform } : { platform }
   })
   return response.data
 }
@@ -49,8 +50,9 @@ export async function getCommandsStats(projectPath = null) {
  * @param {string} projectPath - 项目路径（项目级命令需要）
  * @param {string} namespace - 命名空间（可选）
  */
-export async function getCommand(name, scope, projectPath = null, namespace = null) {
+export async function getCommand(name, scope, projectPath = null, namespace = null, platform = 'claude') {
   const params = {}
+  if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
   if (namespace) params.namespace = namespace
 
@@ -62,8 +64,8 @@ export async function getCommand(name, scope, projectPath = null, namespace = nu
  * 创建命令
  * @param {object} data - { name, scope, projectPath?, namespace?, description?, allowedTools?, argumentHint?, body }
  */
-export async function createCommand(data) {
-  const response = await client.post('/commands', data)
+export async function createCommand(data, platform = 'claude') {
+  const response = await client.post('/commands', { ...data, platform })
   return response.data
 }
 
@@ -73,8 +75,8 @@ export async function createCommand(data) {
  * @param {string} scope - 作用域
  * @param {object} data - { projectPath?, namespace?, description?, allowedTools?, argumentHint?, body }
  */
-export async function updateCommand(name, scope, data) {
-  const response = await client.put(`/commands/${scope}/${name}`, data)
+export async function updateCommand(name, scope, data, platform = 'claude') {
+  const response = await client.put(`/commands/${scope}/${name}`, { ...data, platform })
   return response.data
 }
 
@@ -85,8 +87,9 @@ export async function updateCommand(name, scope, data) {
  * @param {string} projectPath - 项目路径
  * @param {string} namespace - 命名空间
  */
-export async function deleteCommand(name, scope, projectPath = null, namespace = null) {
+export async function deleteCommand(name, scope, projectPath = null, namespace = null, platform = 'claude') {
   const params = {}
+  if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
   if (namespace) params.namespace = namespace
 
@@ -99,8 +102,8 @@ export async function deleteCommand(name, scope, projectPath = null, namespace =
 /**
  * 获取仓库列表
  */
-export async function getCommandRepos() {
-  const response = await client.get('/commands/repos')
+export async function getCommandRepos(platform = 'claude') {
+  const response = await client.get('/commands/repos', { params: { platform } })
   return response.data
 }
 
@@ -108,8 +111,8 @@ export async function getCommandRepos() {
  * 添加仓库
  * @param {object} repo - { owner, name, branch, directory, enabled }
  */
-export async function addCommandRepo(repo) {
-  const response = await client.post('/commands/repos', repo)
+export async function addCommandRepo(repo, platform = 'claude') {
+  const response = await client.post('/commands/repos', { ...repo, platform })
   return response.data
 }
 
@@ -119,9 +122,9 @@ export async function addCommandRepo(repo) {
  * @param {string} name
  * @param {string} [directory] - 子目录路径
  */
-export async function removeCommandRepo(owner, name, directory = '') {
+export async function removeCommandRepo(owner, name, directory = '', platform = 'claude') {
   const response = await client.delete(`/commands/repos/${owner}/${name}`, {
-    params: { directory }
+    params: { directory, platform }
   })
   return response.data
 }
@@ -133,8 +136,8 @@ export async function removeCommandRepo(owner, name, directory = '') {
  * @param {boolean} enabled
  * @param {string} [directory] - 子目录路径
  */
-export async function toggleCommandRepo(owner, name, enabled, directory = '') {
-  const response = await client.put(`/commands/repos/${owner}/${name}/toggle`, { enabled, directory })
+export async function toggleCommandRepo(owner, name, enabled, directory = '', platform = 'claude') {
+  const response = await client.put(`/commands/repos/${owner}/${name}/toggle`, { enabled, directory, platform })
   return response.data
 }
 
@@ -142,8 +145,8 @@ export async function toggleCommandRepo(owner, name, enabled, directory = '') {
  * 从远程仓库安装命令
  * @param {object} command - 命令对象
  */
-export async function installCommand(command) {
-  const response = await client.post('/commands/install', command)
+export async function installCommand(command, platform = 'claude') {
+  const response = await client.post('/commands/install', { ...command, platform })
   return response.data
 }
 
@@ -151,8 +154,8 @@ export async function installCommand(command) {
  * 卸载命令
  * @param {string} path - 命令的相对路径
  */
-export async function uninstallCommand(path) {
-  const response = await client.post('/commands/uninstall', { path })
+export async function uninstallCommand(path, platform = 'claude') {
+  const response = await client.post('/commands/uninstall', { path, platform })
   return response.data
 }
 
@@ -161,8 +164,8 @@ export async function uninstallCommand(path) {
  * @param {string} content - 命令内容
  * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
  */
-export async function convertCommandFormat(content, targetFormat) {
-  const response = await client.post('/commands/convert', { content, targetFormat })
+export async function convertCommandFormat(content, targetFormat, platform = 'claude') {
+  const response = await client.post('/commands/convert', { content, targetFormat, platform })
   return response.data
 }
 
@@ -170,7 +173,7 @@ export async function convertCommandFormat(content, targetFormat) {
  * 检测命令格式
  * @param {string} content - 命令内容
  */
-export async function detectCommandFormat(content) {
-  const response = await client.post('/commands/detect-format', { content })
+export async function detectCommandFormat(content, platform = 'claude') {
+  const response = await client.post('/commands/detect-format', { content, platform })
   return response.data
 }

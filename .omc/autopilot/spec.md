@@ -1,344 +1,490 @@
-# Product Specification: Configurable Default Models
+# OAuth Multi-Account Support - Issue Analysis & Fix Specification
 
-## Requirements Analysis
+## Executive Summary
 
-### 1. Functional Requirements
-
-#### Core Functionality
-- **FR1**: System must support configurable default model lists per tool type (Claude, Codex, Gemini, OpenCode)
-- **FR2**: Configuration must be editable through Web UI settings panel
-- **FR3**: Model lists must be used consistently across all UI components:
-  - Channel creation/editing dropdowns
-  - Model redirect editor autocomplete
-  - Pricing configuration model lists
-- **FR4**: System must provide sensible defaults matching current hardcoded behavior
-- **FR5**: Users must be able to add custom model names (for new models not yet in defaults)
-- **FR6**: Users must be able to reset to built-in defaults per tool type or globally
-- **FR7**: Configuration must persist across application restarts
-
-#### Data Flow
-- **FR8**: Backend must be single source of truth for model lists
-- **FR9**: Frontend must fetch model lists via API on application initialization
-- **FR10**: Changes made in settings must propagate to all consuming components without page refresh
-
-### 2. Non-Functional Requirements
-
-#### Performance
-- **NFR1**: Model list fetch must complete within 500ms on local network
-- **NFR2**: Settings save operation must complete within 1 second
-- **NFR3**: Frontend must cache model lists to avoid repeated API calls
-
-#### Usability
-- **NFR4**: UI must provide autocomplete/suggestions when adding models
-- **NFR5**: UI must prevent empty model lists (at least one model required per tool type)
-- **NFR6**: UI must show clear feedback on save success/failure
-- **NFR7**: Model names must be validated to prevent typos/invalid formats
-
-#### Maintainability
-- **NFR8**: Solution must follow existing codebase patterns (config structure, API design, Vue composables)
-- **NFR9**: Code must be documented with clear comments explaining the configuration schema
-- **NFR10**: Solution must support easy addition of new tool types in future
-
-#### Reliability
-- **NFR11**: System must gracefully handle API failures (fallback to built-in defaults)
-- **NFR12**: Invalid configuration must not crash the application
-- **NFR13**: Backward compatibility: existing config.json files without defaultModels key must work unchanged
-
-### 3. Implicit Requirements
-
-#### User Experience
-- **IR1**: Users should not need to restart the application after changing model lists
-- **IR2**: The UI should indicate which models are built-in defaults vs user-customized
-- **IR3**: Bulk operations (reset all, import/export) would improve UX but are out of scope for Phase 1
-
-#### Data Integrity
-- **IR4**: Model lists should be deduplicated automatically
-- **IR5**: Whitespace should be trimmed from model names
-- **IR6**: Empty strings should be filtered out
-- **IR7**: Maximum list length should be enforced to prevent abuse (50 models per type)
-
-#### Security
-- **IR8**: Model name validation should prevent injection attacks (restrict to alphanumeric + common separators)
-- **IR9**: API endpoints should validate input structure before saving
-
-#### Integration
-- **IR10**: Solution should not break existing channel functionality
-- **IR11**: Model redirect rules should continue to work with custom models
-- **IR12**: Pricing configuration should handle unknown models gracefully
-
-### 4. Out of Scope
-
-#### Phase 1 Exclusions
-- **OOS1**: Dynamic model discovery from API providers (e.g., fetching available models from Claude API)
-- **OOS2**: Model capability metadata (context window, pricing, features)
-- **OOS3**: Model deprecation warnings or version recommendations
-- **OOS4**: Import/export of model configurations
-- **OOS5**: Model aliases or display name customization
-- **OOS6**: Per-channel model list overrides (all channels share same defaults)
-- **OOS7**: Model usage statistics or recommendations based on history
-- **OOS8**: Integration with external model registries or catalogs
-
-#### Explicitly NOT Changing
-- **OOS9**: Channel model selection logic (still uses channel-specific model field)
-- **OOS10**: Proxy server model routing behavior
-- **OOS11**: Model pricing calculation formulas
-- **OOS12**: Authentication or authorization for model access
+The recent OAuth token exchange fix (changing from `openai-api-key` to `codex-cli`) works correctly for single-account scenarios, but the analysis revealed **8 critical issues** affecting multi-account support and token management.
 
 ---
 
-## Technical Specification
+## Critical Issues Identified
 
-### Summary
+### 1. **No Account Identity Tracking** [CRITICAL]
 
-The codebase has **three independent, hardcoded model lists** that are never synchronized: `channelPanelFactories.js:45-77` (channel creation dropdowns), `ModelRedirectEditor.vue:67-92` (redirect autocomplete), and `SettingsDrawer.vue:1308-1312` (pricing per-model config). The backend has zero awareness of model lists. This specification defines a single backend-owned `defaultModels` config key, a new API surface on the existing `/api/config` router, and a frontend consumption pattern that replaces all three hardcoded sources.
+**Problem**: The system never decodes the `id_token` JWT to extract user identity (email, sub, organization).
 
-### Current State Analysis
+**Impact**:
+- Users cannot distinguish between multiple accounts
+- No way to detect duplicate logins for the same account
+- Token list shows only masked access tokens (indistinguishable)
 
-#### Three Divergent Hardcoded Lists
+**Evidence**:
+- `oauth.js:136` stores `id_token` as opaque string
+- Token object has no `email`, `sub`, or `name` fields
+- UI displays tokens with no human-readable identifier
 
-| Location | File:Line | Tool Types | Purpose |
-|----------|-----------|------------|---------|
-| Channel Panel Factories | `src/web/src/components/channel/channelPanelFactories.js:45-77` | claude, codex, gemini, opencode | Dropdown options when creating/editing channels |
-| Model Redirect Editor | `src/web/src/components/channel/ModelRedirectEditor.vue:67-92` | claude, codex, gemini (missing opencode) | Autocomplete for model redirect rules |
-| Settings Drawer (Pricing) | `src/web/src/components/SettingsDrawer.vue:1308-1312` | claude, codex, gemini (missing opencode) | Per-model pricing configuration |
+### 2. **Token ID Collision Risk** [CRITICAL]
 
-These lists are already **out of sync** with each other.
+**Problem**: Token IDs use `token-${Date.now()}` which can collide if two OAuth callbacks complete within the same millisecond.
 
-#### Existing Config Infrastructure
+**Impact**: Second token overwrites the first, losing user data
 
-- **Config file**: `config.json` (project root)
-- **Loader**: `src/config/loader.js` -- `loadConfig()` merges `DEFAULT_CONFIG` with `config.json`
-- **Default**: `src/config/default.js` -- exports `DEFAULT_CONFIG` object
-- **API**: `src/server/api/config.js` -- `GET/POST /api/config/advanced`
-- **Frontend**: `SettingsDrawer.vue` calls `fetch('/api/config/advanced')` directly
+**Evidence**: `oauth-token-storage.js:49`
 
-### Architecture
+### 3. **No Token Deduplication** [HIGH]
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  config.json (single source of truth)                       │
-│  { ..., "defaultModels": { claude: [...], codex: [...] } }  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ loadConfig() / saveConfig()
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Backend: src/server/api/config.js                          │
-│  GET  /api/config/default-models  → returns merged lists    │
-│  POST /api/config/default-models  → validates & saves       │
-│  POST /api/config/default-models/reset → reset to defaults  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTP JSON
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Frontend: useDefaultModels.js composable (cache layer)     │
-│  - Fetches once on app init                                 │
-│  - Caches in reactive ref                                   │
-│  - Provides getDefaultModels(toolType) helper              │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Frontend consumers (all read from composable)              │
-│  - SettingsDrawer.vue       (edit UI)                       │
-│  - channelPanelFactories.js (dropdown options)              │
-│  - ModelRedirectEditor.vue  (autocomplete options)          │
-└─────────────────────────────────────────────────────────────┘
-```
+**Problem**: Re-authenticating the same account creates duplicate tokens instead of updating the existing one.
 
-### Implementation Plan
+**Impact**:
+- Unbounded token accumulation
+- Orphaned tokens when channels are deleted
+- Confusion about which token to use
 
-#### 1. Backend Changes
+**Evidence**: No check for existing tokens by account identity before creating new ones
 
-**File: `src/config/default.js`**
-- Add `defaultModels` key to `DEFAULT_CONFIG` with current hardcoded lists
+### 4. **Provider Identity Confusion** [HIGH]
 
-**File: `src/config/loader.js`**
-- Add `mergeDefaultModels()` function (similar to `mergePricing()`)
-- Call merge function in `loadConfig()`
+**Problem**: `codex` and `openai_chatgpt` providers share identical OAuth configuration (same client ID, callback port, `requestedToken`).
 
-**File: `src/server/api/config.js`**
-- Add `GET /api/config/default-models` route
-- Add `POST /api/config/default-models` route with validation
-- Add `POST /api/config/default-models/reset` route
+**Impact**:
+- Tokens are functionally identical but stored under different provider labels
+- Cross-provider token sharing doesn't work due to provider filtering
+- User confusion about which provider to use
 
-#### 2. Frontend Changes
+**Evidence**: `oauth-providers.js:17-33` and `oauth-providers.js:75-94`
 
-**File: `src/web/src/composables/useDefaultModels.js`** (NEW)
-- Create composable with fetch/cache logic
-- Export `getDefaultModels(toolType)` helper
-- Include built-in fallback for offline scenarios
+### 5. **No Referential Integrity** [MEDIUM]
 
-**File: `src/web/src/components/SettingsDrawer.vue`**
-- Add "Default Models" section to advanced settings
-- Use `n-dynamic-tags` for model list editing
-- Replace `MODEL_DEFINITIONS` with composable import
+**Problem**:
+- Deleting a channel doesn't clean up its OAuth token
+- Deleting a token doesn't clear `oauthTokenId` on channels
+- Channel can reference deleted token, token can reference deleted channel
 
-**File: `src/web/src/components/channel/channelPanelFactories.js`**
-- Remove hardcoded `defaultModels` object
-- Import and use `useDefaultModels()` composable
+**Impact**: Dangling references, orphaned tokens, confusing UI state
 
-**File: `src/web/src/components/channel/ModelRedirectEditor.vue`**
-- Remove hardcoded `defaultModelsByType` object
-- Import and use `useDefaultModels()` composable
+**Evidence**: `opencode-channels.js:138-150` (delete channel has no token cleanup)
 
-### Data Schema
+### 6. **No Automatic Token Refresh** [MEDIUM]
 
-#### Config File Format (`config.json`)
+**Problem**: `getEffectiveApiKey()` returns `null` on expired tokens instead of attempting refresh.
 
-```json
-{
-  "defaultModels": {
-    "claude": [
-      "claude-opus-4-6",
-      "claude-opus-4-5-20251101",
-      "claude-sonnet-4-5-20250929",
-      "claude-haiku-4-5-20251001",
-      "claude-sonnet-4-20250514",
-      "claude-opus-4-20250514"
-    ],
-    "codex": [
-      "gpt-5.2-codex",
-      "gpt-5.1-codex-max",
-      "gpt-5.1-codex-mini",
-      "gpt-5.1-codex",
-      "gpt-5-codex",
-      "gpt-5.2",
-      "gpt-5.1",
-      "gpt-5"
-    ],
-    "gemini": [
-      "gemini-3-pro",
-      "gemini-3-flash",
-      "gemini-3-deep-think",
-      "gemini-2.5-pro",
-      "gemini-2.5-flash"
-    ],
-    "opencode": [
-      "gpt-4o",
-      "gpt-4o-mini",
-      "claude-3-5-sonnet",
-      "claude-3-opus",
-      "deepseek-chat"
-    ]
+**Impact**: Users see opaque API failures instead of clear "token expired" messages
+
+**Evidence**: `opencode-channels.js:185-205`
+
+### 7. **Concurrent Flow Port Collision** [MEDIUM]
+
+**Problem**: Both `codex` and `openai_chatgpt` use port 1455. Concurrent OAuth flows will conflict.
+
+**Impact**: Second flow fails or hijacks the first
+
+**Evidence**: `oauth-providers.js:32` and `oauth-providers.js:92`
+
+### 8. **Token File Race Condition** [LOW]
+
+**Problem**: `saveToken()` does read-modify-write without file locking.
+
+**Impact**: Concurrent OAuth callbacks can lose tokens
+
+**Evidence**: `oauth-token-storage.js:47-61`
+
+---
+
+## Solution Design
+
+### Phase 1: Critical Fixes (Must Have)
+
+#### Fix 1.1: Decode ID Token for Account Identity
+
+**File**: `src/server/services/oauth-service.js`
+
+Add function to decode JWT (no verification needed for display):
+
+```javascript
+function decodeIdToken(idToken) {
+  try {
+    const parts = idToken.split('.');
+    if (parts.length !== 3) return null;
+
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    return {
+      sub: payload.sub,           // Unique user ID
+      email: payload.email,       // User email
+      name: payload.name,         // Display name
+      organizations: payload.organizations  // For Claude
+    };
+  } catch (err) {
+    console.warn('Failed to decode id_token:', err);
+    return null;
   }
 }
 ```
 
-### API Contract
+**File**: `src/server/api/oauth.js`
 
-#### GET /api/config/default-models
+Update token storage to include decoded identity (line 131-141):
 
-**Response (200):**
-```json
-{
-  "defaultModels": {
-    "claude": ["..."],
-    "codex": ["..."],
-    "gemini": ["..."],
-    "opencode": ["..."]
+```javascript
+const userInfo = decodeIdToken(tokenData.id_token);
+
+const tokenId = await saveToken({
+  provider: flow.provider,
+  channelId: flow.channelId,
+  accessToken: tokenData.access_token,
+  refreshToken: tokenData.refresh_token,
+  idToken: tokenData.id_token,
+  expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+  scope: tokenData.scope,
+  platformApiKey: apiKey,
+  platformApiKeyExpiresAt: apiKeyExpiresAt,
+  // NEW: Add user identity
+  userEmail: userInfo?.email,
+  userSub: userInfo?.sub,
+  userName: userInfo?.name
+});
+```
+
+#### Fix 1.2: Use UUID for Token IDs
+
+**File**: `src/server/services/oauth-token-storage.js`
+
+Replace `token-${Date.now()}` with `crypto.randomUUID()` (line 49):
+
+```javascript
+const { randomUUID } = require('crypto');
+
+async function saveToken(tokenData) {
+  const tokens = await loadTokens();
+  const tokenId = randomUUID();  // CHANGED: Use UUID instead of timestamp
+  // ...
+}
+```
+
+#### Fix 1.3: Token Deduplication
+
+**File**: `src/server/services/oauth-token-storage.js`
+
+Add function to find existing token by account:
+
+```javascript
+async function findTokenByAccount(provider, userSub) {
+  const tokens = await loadTokens();
+  return Object.entries(tokens).find(([id, token]) =>
+    token.provider === provider && token.userSub === userSub
+  )?.[0];  // Return token ID if found
+}
+```
+
+**File**: `src/server/api/oauth.js`
+
+Check for existing token before creating new one (after line 131):
+
+```javascript
+const userInfo = decodeIdToken(tokenData.id_token);
+
+// Check if token already exists for this account
+let tokenId;
+if (userInfo?.sub) {
+  tokenId = await findTokenByAccount(flow.provider, userInfo.sub);
+}
+
+if (tokenId) {
+  // Update existing token
+  await updateToken(tokenId, {
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    idToken: tokenData.id_token,
+    expiresAt: Date.now() + (tokenData.expires_in || 3600) * 1000,
+    platformApiKey: apiKey,
+    platformApiKeyExpiresAt: apiKeyExpiresAt
+  });
+} else {
+  // Create new token
+  tokenId = await saveToken({ /* ... */ });
+}
+```
+
+#### Fix 1.4: Clarify Provider Relationship
+
+**Decision**: Merge `codex` and `openai_chatgpt` into a single provider since they're identical.
+
+**File**: `src/server/config/oauth-providers.js`
+
+Option A: Keep both but document they're aliases:
+
+```javascript
+// Lines 17-33: codex provider
+// Add comment:
+// NOTE: 'codex' and 'openai_chatgpt' are aliases for the same OAuth client.
+// Tokens are interchangeable between Codex CLI and OpenCode ChatGPT channels.
+
+// Lines 75-94: openai_chatgpt provider
+// Add comment:
+// NOTE: This is an alias for 'codex' provider. Uses the same OAuth client.
+```
+
+Option B: Normalize provider name on token save:
+
+```javascript
+// In oauth-service.js, normalize provider name:
+function normalizeProvider(provider) {
+  if (provider === 'openai_chatgpt') return 'codex';
+  return provider;
+}
+```
+
+**Recommendation**: Option B (normalize to `codex`) for cleaner token management.
+
+### Phase 2: High-Priority Fixes (Should Have)
+
+#### Fix 2.1: Referential Integrity
+
+**File**: `src/server/services/opencode-channels.js`
+
+Update `deleteChannel()` to clean up token (line 138-150):
+
+```javascript
+async function deleteChannel(id) {
+  const channels = await loadChannels();
+  const channel = channels[id];
+
+  if (channel?.oauthTokenId) {
+    // Clean up associated OAuth token
+    const { deleteToken } = require('./oauth-token-storage');
+    await deleteToken(channel.oauthTokenId);
+  }
+
+  delete channels[id];
+  await saveChannels(channels);
+  return true;
+}
+```
+
+**File**: `src/server/services/oauth-token-storage.js`
+
+Add `deleteToken()` function and update channels on token delete:
+
+```javascript
+async function deleteToken(tokenId) {
+  const tokens = await loadTokens();
+  delete tokens[tokenId];
+  await saveTokens(tokens);
+
+  // Clear oauthTokenId on affected channels
+  const { clearTokenFromChannels } = require('./opencode-channels');
+  await clearTokenFromChannels(tokenId);
+
+  return true;
+}
+
+// Export
+module.exports = {
+  // ... existing exports
+  deleteToken
+};
+```
+
+**File**: `src/server/services/opencode-channels.js`
+
+Add helper to clear token references:
+
+```javascript
+async function clearTokenFromChannels(tokenId) {
+  const channels = await loadChannels();
+  let modified = false;
+
+  for (const [id, channel] of Object.entries(channels)) {
+    if (channel.oauthTokenId === tokenId) {
+      channel.oauthTokenId = null;
+      modified = true;
+    }
+  }
+
+  if (modified) {
+    await saveChannels(channels);
+  }
+}
+
+module.exports = {
+  // ... existing exports
+  clearTokenFromChannels
+};
+```
+
+#### Fix 2.2: Automatic Token Refresh
+
+**File**: `src/server/services/opencode-channels.js`
+
+Update `getEffectiveApiKey()` to attempt refresh (line 185-205):
+
+```javascript
+async function getEffectiveApiKey(channel) {
+  if (channel.authType === 'oauth' && channel.oauthTokenId) {
+    const { getToken, isTokenExpired, refreshToken } = require('./oauth-token-storage');
+    let token = await getToken(channel.oauthTokenId);
+
+    if (!token) return null;
+
+    // Check if token is expired
+    if (isTokenExpired(token)) {
+      // Attempt automatic refresh
+      try {
+        const refreshed = await refreshToken(channel.oauthTokenId);
+        if (refreshed) {
+          token = refreshed;
+        } else {
+          return null;  // Refresh failed
+        }
+      } catch (err) {
+        console.error('Token refresh failed:', err);
+        return null;
+      }
+    }
+
+    // Return platformApiKey if available, otherwise accessToken
+    return token.platformApiKey || token.accessToken;
+  }
+
+  // Fallback to direct API key
+  return channel.apiKey || null;
+}
+```
+
+**File**: `src/server/services/oauth-token-storage.js`
+
+Add `refreshToken()` function:
+
+```javascript
+async function refreshToken(tokenId) {
+  const token = await getToken(tokenId);
+  if (!token?.refreshToken) return null;
+
+  const { refreshOAuthToken } = require('./oauth-service');
+  const refreshed = await refreshOAuthToken(token.provider, token.refreshToken);
+
+  if (refreshed) {
+    await updateToken(tokenId, {
+      accessToken: refreshed.access_token,
+      refreshToken: refreshed.refresh_token || token.refreshToken,
+      idToken: refreshed.id_token,
+      expiresAt: Date.now() + (refreshed.expires_in || 3600) * 1000
+    });
+    return await getToken(tokenId);
+  }
+
+  return null;
+}
+```
+
+### Phase 3: Medium-Priority Fixes (Nice to Have)
+
+#### Fix 3.1: Serialize OAuth Flows Per Port
+
+**File**: `src/server/services/oauth-service.js`
+
+Add port-based flow queue:
+
+```javascript
+const activeCallbackPorts = new Set();
+
+async function startFlow(provider, channelId, mode) {
+  const config = getProviderConfig(provider);
+
+  // Check if callback port is already in use
+  if (activeCallbackPorts.has(config.callbackPort)) {
+    throw new Error(`OAuth flow already in progress for port ${config.callbackPort}. Please wait.`);
+  }
+
+  activeCallbackPorts.add(config.callbackPort);
+
+  // ... rest of function
+
+  // Clean up on flow completion/failure
+  flows.get(stateId).cleanup = () => {
+    activeCallbackPorts.delete(config.callbackPort);
+  };
+}
+```
+
+#### Fix 3.2: File Locking for Token Storage
+
+**File**: `src/server/services/oauth-token-storage.js`
+
+Use `proper-lockfile` for atomic writes:
+
+```javascript
+const lockfile = require('proper-lockfile');
+
+async function saveTokens(tokens) {
+  const release = await lockfile.lock(TOKEN_FILE, { retries: 3 });
+  try {
+    await fs.writeFile(TOKEN_FILE, JSON.stringify(tokens, null, 2));
+    await fs.chmod(TOKEN_FILE, 0o600);
+  } finally {
+    await release();
   }
 }
 ```
 
-#### POST /api/config/default-models
+---
 
-**Request:**
-```json
-{
-  "defaultModels": {
-    "claude": ["model-a", "model-b"]
-  }
-}
-```
+## Implementation Plan
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "defaultModels": { "claude": ["model-a", "model-b"], "...": "..." }
-}
-```
+### Priority 1: Critical Fixes (Day 1)
+1. ✅ Decode ID token for account identity
+2. ✅ Use UUID for token IDs
+3. ✅ Implement token deduplication
+4. ✅ Normalize provider names (codex/openai_chatgpt)
 
-**Response (400):**
-```json
-{
-  "error": "Validation failed",
-  "details": { "claude": "Model list cannot be empty" }
-}
-```
+### Priority 2: High-Priority Fixes (Day 2)
+5. ✅ Add referential integrity (token-channel cleanup)
+6. ✅ Implement automatic token refresh
 
-#### POST /api/config/default-models/reset
+### Priority 3: Medium-Priority Fixes (Day 3)
+7. ✅ Serialize OAuth flows per port
+8. ✅ Add file locking for token storage
 
-**Request:**
-```json
-{
-  "toolType": "claude"
-}
-```
-Or omit `toolType` to reset all.
+### Priority 4: Verification (Day 4)
+9. ✅ Architect review
+10. ✅ Manual testing with multiple accounts
+11. ✅ Update documentation
 
-**Response (200):**
-```json
-{
-  "success": true,
-  "defaultModels": { "...": "..." }
-}
-```
+---
 
-### Validation Rules
+## Testing Strategy
 
-| Rule | Implementation | Error Message |
-|------|---------------|---------------|
-| Non-empty list | `array.length === 0` check | `"${toolType} model list cannot be empty"` |
-| String entries only | `typeof entry === 'string'` filter | Silently strip non-strings |
-| Trim whitespace | `.trim()` on each entry | Silently trim |
-| Remove empty strings | `.filter(m => m.trim())` | Silently remove |
-| Deduplicate | `[...new Set(array)]` | Silently deduplicate |
-| Max list length | `array.length <= 50` | `"${toolType} model list exceeds maximum of 50 entries"` |
-| Model name format | `/^[a-zA-Z0-9._\-/:]+$/` | `"Invalid model name: ${name}"` |
-| Valid tool types only | Whitelist `['claude','codex','gemini','opencode']` | Silently ignore unknown keys |
+### Test Cases
 
-### Migration Strategy
+1. **Single account, single channel**: Should work as before
+2. **Single account, multiple channels**: Channels should share the same token
+3. **Multiple accounts, multiple channels**: Each account gets its own token
+4. **Re-authentication**: Should update existing token, not create duplicate
+5. **Token expiry**: Should auto-refresh transparently
+6. **Channel deletion**: Should clean up orphaned tokens
+7. **Token deletion**: Should clear references from channels
+8. **Concurrent OAuth flows**: Second flow should queue or fail gracefully
 
-**Backward Compatibility**: Existing `config.json` files without `defaultModels` key will automatically use built-in defaults via spread merge in `loadConfig()`. No migration script needed.
+---
 
-**Frontend Migration**: Replace hardcoded lists incrementally:
-1. Create `useDefaultModels.js` composable
-2. Replace `channelPanelFactories.js` hardcoded list
-3. Replace `ModelRedirectEditor.vue` hardcoded list
-4. Replace `SettingsDrawer.vue` MODEL_DEFINITIONS
+## Success Metrics
 
-**Fallback**: If API call fails, composable returns built-in defaults embedded in the composable file.
+- ✅ Users can distinguish between multiple accounts (email displayed)
+- ✅ Re-authentication updates existing token (no duplicates)
+- ✅ Token-channel references remain valid (no dangling pointers)
+- ✅ Expired tokens refresh automatically
+- ✅ No token ID collisions
+- ✅ No race conditions on concurrent operations
 
-### Files to Modify
+---
 
-| File | Change Type |
-|------|-------------|
-| `src/config/default.js` | Add `defaultModels` key |
-| `src/config/loader.js` | Add merge function |
-| `src/server/api/config.js` | Add 3 new routes |
-| `src/web/src/components/SettingsDrawer.vue` | Add UI section, replace MODEL_DEFINITIONS |
-| `src/web/src/components/channel/channelPanelFactories.js` | Replace hardcoded list |
-| `src/web/src/components/channel/ModelRedirectEditor.vue` | Replace hardcoded list |
+## Files to Modify
 
-### Files to Create
-
-| File | Purpose |
+| File | Changes |
 |------|---------|
-| `src/web/src/composables/useDefaultModels.js` | Fetch/cache/expose model lists |
-
----
-
-## Success Criteria
-
-- [ ] All three hardcoded model lists replaced with single backend config
-- [ ] Settings UI allows adding/removing models per tool type
-- [ ] Reset to defaults works per tool type and globally
-- [ ] Changes propagate to all consumers without page refresh
-- [ ] Existing config.json files work without modification
-- [ ] API failures gracefully fall back to built-in defaults
-- [ ] Model name validation prevents invalid entries
-- [ ] No breaking changes to existing channel/redirect functionality
+| `src/server/services/oauth-service.js` | Add `decodeIdToken()`, normalize provider names, port serialization |
+| `src/server/services/oauth-token-storage.js` | UUID token IDs, deduplication, `deleteToken()`, `refreshToken()`, file locking |
+| `src/server/api/oauth.js` | Store user identity, check for existing tokens |
+| `src/server/services/opencode-channels.js` | Token cleanup on delete, auto-refresh in `getEffectiveApiKey()` |
+| `src/server/config/oauth-providers.js` | Document provider aliases |
 
 ---
 

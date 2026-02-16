@@ -64,8 +64,7 @@
             v-if="!section.showWhen || section.showWhen(state.formData)"
             class="form-section"
             :class="{
-              collapsible: section.collapsible,
-              'oauth-section': section.title.includes('OAuth')
+              collapsible: section.collapsible
             }"
           >
             <div class="section-title">
@@ -128,21 +127,6 @@
                 :get-show="() => true"
                 @update:value="(val) => setNestedValue(state.formData, field.key, val)"
               />
-              <!-- OAuth Login Button -->
-              <OAuthLoginButton
-                v-else-if="field.type === 'oauth-login'"
-                :provider="field.props?.provider || config.type"
-                :channel-id="state.editingChannel?.id"
-                @success="handleOAuthSuccess"
-                @error="(err) => console.error('OAuth error:', err)"
-              />
-              <!-- OAuth Status Badge -->
-              <OAuthStatusBadge
-                v-else-if="field.type === 'oauth-status'"
-                :token-id="getNestedValue(state.formData, field.key)"
-                @refresh="handleOAuthRefresh"
-                @disconnect="handleOAuthDisconnect"
-              />
               <!-- Radio Group -->
               <n-radio-group
                 v-else-if="field.type === 'radio-group'"
@@ -202,8 +186,6 @@ import { AddOutline } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import ChannelCard from './ChannelCard.vue'
 import ModelRedirectEditor from './ModelRedirectEditor.vue'
-import OAuthLoginButton from './OAuthLoginButton.vue'
-import OAuthStatusBadge from './OAuthStatusBadge.vue'
 import channelPanelFactories from './channelPanelFactories'
 import useChannelManager from '../../composables/useChannelManager'
 import { useChannelScheduler } from '../../composables/useChannelScheduler'
@@ -327,21 +309,6 @@ function getSpeedTestModelOptions(inputValue, fieldOptions) {
   })
 }
 
-// OAuth 成功回调处理
-function handleOAuthSuccess(tokenId) {
-  state.formData.oauthTokenId = tokenId
-}
-
-// OAuth 断开连接回调
-function handleOAuthDisconnect() {
-  state.formData.oauthTokenId = null
-}
-
-// OAuth 刷新回调
-function handleOAuthRefresh() {
-  // 刷新后可能需要重新加载状态，这里暂时不做额外处理
-}
-
 // 获取验证状态（支持嵌套路径）
 function getValidationStatus(key) {
   const flatKey = key.replace(/\./g, '_')
@@ -386,10 +353,6 @@ function resolveFieldComponent(field) {
       return NInputNumber
     case 'switch':
       return NSwitch
-    case 'oauth-login':
-      return OAuthLoginButton
-    case 'oauth-status':
-      return OAuthStatusBadge
     case 'radio-group':
       return NRadioGroup
     default:

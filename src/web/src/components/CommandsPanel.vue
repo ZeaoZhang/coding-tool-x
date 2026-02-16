@@ -17,7 +17,7 @@
           </template>
           创建
         </n-button>
-        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
           <template #icon>
             <n-icon><CloudDownloadOutline /></n-icon>
           </template>
@@ -41,7 +41,7 @@
           </template>
           创建
         </n-button>
-        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
           <template #icon>
             <n-icon><CloudDownloadOutline /></n-icon>
           </template>
@@ -127,7 +127,7 @@
     <!-- 提示信息 -->
     <div class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
-      <span>使用 /命令名 在 Claude Code 中调用</span>
+      <span>{{ commandUsageHint }}</span>
     </div>
 
     <!-- 创建/编辑弹窗 -->
@@ -135,6 +135,7 @@
       v-model:visible="showCreateModal"
       :command="editingCommand"
       :project-path="projectPath"
+      :platform="currentPlatform"
       @saved="handleSaved"
     />
 
@@ -171,7 +172,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   NButton, NInput, NSelect, NIcon, NSpin, NEmpty,
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode
@@ -207,6 +209,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'updated'])
+const route = useRoute()
 
 const commands = ref([])
 const loading = ref(false)
@@ -220,6 +223,17 @@ const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
 const importing = ref(false)
+
+const currentPlatform = computed(() => {
+  const channel = route.meta.channel
+  return channel === 'opencode' ? 'opencode' : 'claude'
+})
+
+const commandUsageHint = computed(() =>
+  currentPlatform.value === 'opencode'
+    ? '使用 /命令名 在 OpenCode 中调用'
+    : '使用 /命令名 在 Claude Code 中调用'
+)
 
 const scopeOptions = [
   { label: '全部', value: 'all' },
@@ -266,6 +280,9 @@ const emptyText = computed(() => {
 })
 
 async function handleImport() {
+  if (currentPlatform.value !== 'claude') {
+    return
+  }
   importing.value = true
   try {
     const res = await importFromClaude('commands')
@@ -286,7 +303,7 @@ async function loadCommands() {
   loading.value = true
   try {
     const [cmdRes, registryRes] = await Promise.all([
-      getCommands(props.projectPath),
+      getCommands(props.projectPath, currentPlatform.value),
       listItems('commands')
     ])
     if (cmdRes.success) {
@@ -347,7 +364,7 @@ function handleEdit(cmd) {
 async function handleDelete(cmd) {
   deletingKeys.value[cmd.path] = true
   try {
-    const result = await deleteCommand(cmd.name, cmd.scope, props.projectPath, cmd.namespace)
+    const result = await deleteCommand(cmd.name, cmd.scope, props.projectPath, cmd.namespace, currentPlatform.value)
     if (result.success) {
       message.success('命令已删除')
       await loadCommands()
@@ -376,6 +393,10 @@ function handleBack() {
 }
 
 onMounted(() => {
+  loadCommands()
+})
+
+watch(currentPlatform, () => {
   loadCommands()
 })
 </script>

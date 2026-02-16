@@ -12,6 +12,7 @@ const { spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
 const { McpClient } = require('./mcp-client');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 // MCP 配置文件路径
 const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -21,6 +22,12 @@ const MCP_SERVERS_FILE = path.join(CC_TOOL_DIR, 'mcp-servers.json');
 const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
 const CODEX_CONFIG_PATH = path.join(os.homedir(), '.codex', 'config.toml');
 const GEMINI_CONFIG_PATH = path.join(os.homedir(), '.gemini', 'settings.json');
+const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
+const OPENCODE_CONFIG_PATHS = {
+  jsonc: path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc'),
+  json: path.join(OPENCODE_CONFIG_DIR, 'opencode.json'),
+  legacy: path.join(OPENCODE_CONFIG_DIR, 'config.json')
+};
 
 // MCP 客户端连接池
 // serverId -> { client, timestamp }
@@ -301,15 +308,140 @@ function writeTomlFile(filePath, data) {
   fs.renameSync(tempPath, filePath);
 }
 
+/**
+ * 去除 JSONC 注释
+ */
+function stripJsonComments(input) {
+  let result = '';
+  let inString = false;
+  let quote = '';
+  let index = 0;
+
+  while (index < input.length) {
+    const ch = input[index];
+    const next = input[index + 1];
+
+    if (inString) {
+      result += ch;
+      if (ch === '\\') {
+        if (next) {
+          result += next;
+          index += 2;
+          continue;
+        }
+      } else if (ch === quote) {
+        inString = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === '\'') {
+      inString = true;
+      quote = ch;
+      result += ch;
+      index += 1;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      index += 2;
+      while (index < input.length && input[index] !== '\n') {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      index += 2;
+      while (index < input.length - 1 && !(input[index] === '*' && input[index + 1] === '/')) {
+        index += 1;
+      }
+      index += 2;
+      continue;
+    }
+
+    result += ch;
+    index += 1;
+  }
+
+  return result;
+}
+
+/**
+ * 选择 OpenCode 配置文件路径
+ */
+function selectOpenCodeConfigPath() {
+  if (fs.existsSync(OPENCODE_CONFIG_PATHS.jsonc)) return OPENCODE_CONFIG_PATHS.jsonc;
+  if (fs.existsSync(OPENCODE_CONFIG_PATHS.json)) return OPENCODE_CONFIG_PATHS.json;
+  if (fs.existsSync(OPENCODE_CONFIG_PATHS.legacy)) return OPENCODE_CONFIG_PATHS.legacy;
+  return OPENCODE_CONFIG_PATHS.json;
+}
+
+/**
+ * 读取 OpenCode 配置
+ */
+function readOpenCodeConfig() {
+  const filePath = selectOpenCodeConfigPath();
+
+  if (!fs.existsSync(filePath)) {
+    return { path: filePath, config: {} };
+  }
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    if (!raw.trim()) {
+      return { path: filePath, config: {} };
+    }
+
+    const content = filePath.endsWith('.jsonc') ? stripJsonComments(raw) : raw;
+    return {
+      path: filePath,
+      config: JSON.parse(content)
+    };
+  } catch (err) {
+    console.error(`[MCP] Failed to read OpenCode config:`, err.message);
+    return { path: filePath, config: {} };
+  }
+}
+
+/**
+ * 写入 OpenCode 配置（保持 JSON 格式）
+ */
+function writeOpenCodeConfig(filePath, data) {
+  ensureDir(path.dirname(filePath));
+  const tempPath = filePath + '.tmp';
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tempPath, filePath);
+}
+
 // ============================================================================
 // MCP 数据管理
 // ============================================================================
+
+function normalizeServerApps(apps = {}) {
+  return {
+    claude: apps.claude !== undefined ? !!apps.claude : true,
+    codex: !!apps.codex,
+    gemini: !!apps.gemini,
+    opencode: !!apps.opencode
+  };
+}
 
 /**
  * 获取所有 MCP 服务器
  */
 function getAllServers() {
-  return readJsonFile(MCP_SERVERS_FILE, {});
+  const servers = readJsonFile(MCP_SERVERS_FILE, {});
+
+  for (const server of Object.values(servers)) {
+    if (!server || typeof server !== 'object') {
+      continue;
+    }
+    server.apps = normalizeServerApps(server.apps);
+  }
+
+  return servers;
 }
 
 /**
@@ -341,7 +473,9 @@ async function saveServer(server) {
 
   // 确保 apps 字段存在
   if (!server.apps) {
-    server.apps = { claude: true, codex: false, gemini: false };
+    server.apps = { claude: true, codex: false, gemini: false, opencode: false };
+  } else {
+    server.apps = normalizeServerApps(server.apps);
   }
 
   servers[server.id] = server;
@@ -384,7 +518,7 @@ async function toggleServerApp(serverId, app, enabled) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
   }
 
-  if (!['claude', 'codex', 'gemini'].includes(app)) {
+  if (!['claude', 'codex', 'gemini', 'opencode'].includes(app)) {
     throw new Error(`无效的平台: ${app}`);
   }
 
@@ -466,6 +600,12 @@ async function syncServerToAllPlatforms(server) {
   } else {
     await removeServerFromPlatform(server.id, 'gemini');
   }
+
+  if (apps.opencode) {
+    await syncServerToPlatform(server, 'opencode');
+  } else {
+    await removeServerFromPlatform(server.id, 'opencode');
+  }
 }
 
 /**
@@ -475,6 +615,7 @@ async function removeServerFromAllPlatforms(serverId) {
   await removeServerFromPlatform(serverId, 'claude');
   await removeServerFromPlatform(serverId, 'codex');
   await removeServerFromPlatform(serverId, 'gemini');
+  await removeServerFromPlatform(serverId, 'opencode');
 }
 
 /**
@@ -491,6 +632,9 @@ async function syncServerToPlatform(server, platform) {
         break;
       case 'gemini':
         syncToGeminiConfig(server);
+        break;
+      case 'opencode':
+        syncToOpenCodeConfig(server);
         break;
     }
     console.log(`[MCP] Synced "${server.id}" to ${platform}`);
@@ -514,6 +658,9 @@ async function removeServerFromPlatform(serverId, platform) {
         break;
       case 'gemini':
         removeFromGeminiConfig(serverId);
+        break;
+      case 'opencode':
+        removeFromOpenCodeConfig(serverId);
         break;
     }
     console.log(`[MCP] Removed "${serverId}" from ${platform}`);
@@ -648,6 +795,143 @@ function removeFromGeminiConfig(serverId) {
 }
 
 // ============================================================================
+// OpenCode 配置同步
+// ============================================================================
+
+/**
+ * 转换为 OpenCode 配置格式
+ */
+function convertToOpenCodeFormat(spec) {
+  const sourceType = spec.type || 'stdio';
+
+  if (sourceType === 'local' || sourceType === 'remote') {
+    const result = { ...spec };
+    result.enabled = spec.enabled !== false;
+    if (sourceType === 'local' && typeof result.command === 'string') {
+      result.command = result.command ? [result.command] : [];
+    }
+    return result;
+  }
+
+  if (sourceType === 'stdio') {
+    const command = [];
+    if (spec.command) {
+      command.push(spec.command);
+    }
+    if (Array.isArray(spec.args) && spec.args.length > 0) {
+      command.push(...spec.args);
+    }
+
+    const result = {
+      type: 'local',
+      command,
+      enabled: true
+    };
+
+    if (spec.env && Object.keys(spec.env).length > 0) {
+      result.environment = spec.env;
+    }
+    if (spec.cwd) {
+      result.cwd = spec.cwd;
+    }
+
+    return result;
+  }
+
+  const result = {
+    type: 'remote',
+    url: spec.url || '',
+    enabled: true
+  };
+
+  if (spec.headers && Object.keys(spec.headers).length > 0) {
+    result.headers = spec.headers;
+  }
+
+  return result;
+}
+
+/**
+ * 从 OpenCode 格式转换到通用格式
+ */
+function convertFromOpenCodeFormat(spec) {
+  const sourceType = spec.type || (Array.isArray(spec.command) ? 'local' : 'remote');
+
+  if (sourceType === 'local') {
+    const result = { type: 'stdio' };
+    if (Array.isArray(spec.command) && spec.command.length > 0) {
+      result.command = spec.command[0];
+      if (spec.command.length > 1) {
+        result.args = spec.command.slice(1);
+      }
+    } else if (typeof spec.command === 'string') {
+      result.command = spec.command;
+    } else {
+      result.command = '';
+    }
+
+    if (spec.environment && typeof spec.environment === 'object') {
+      result.env = spec.environment;
+    } else if (spec.env && typeof spec.env === 'object') {
+      result.env = spec.env;
+    }
+    if (spec.cwd) {
+      result.cwd = spec.cwd;
+    }
+    return result;
+  }
+
+  if (sourceType === 'remote') {
+    const result = {
+      type: 'http',
+      url: spec.url || ''
+    };
+    if (spec.headers && typeof spec.headers === 'object') {
+      result.headers = spec.headers;
+    }
+    return result;
+  }
+
+  // 已经是通用格式时直接兼容处理
+  if (sourceType === 'stdio' || sourceType === 'http' || sourceType === 'sse') {
+    return convertFromCodexFormat(spec);
+  }
+
+  return {
+    type: 'stdio',
+    command: ''
+  };
+}
+
+/**
+ * 同步到 OpenCode 配置
+ */
+function syncToOpenCodeConfig(server) {
+  const { path: configPath, config } = readOpenCodeConfig();
+  const nextConfig = config && typeof config === 'object' ? config : {};
+
+  if (!nextConfig.mcp || typeof nextConfig.mcp !== 'object') {
+    nextConfig.mcp = {};
+  }
+
+  nextConfig.mcp[server.id] = convertToOpenCodeFormat(server.server);
+  writeOpenCodeConfig(configPath, nextConfig);
+}
+
+/**
+ * 从 OpenCode 配置移除
+ */
+function removeFromOpenCodeConfig(serverId) {
+  const { path: configPath, config } = readOpenCodeConfig();
+  const nextConfig = config && typeof config === 'object' ? config : {};
+
+  if (nextConfig.mcp && nextConfig.mcp[serverId]) {
+    delete nextConfig.mcp[serverId];
+    writeOpenCodeConfig(configPath, nextConfig);
+  }
+}
+
+// ============================================================================
 // 导入功能
 // ============================================================================
 
@@ -667,6 +951,9 @@ async function importFromPlatform(platform) {
       break;
     case 'gemini':
       importedCount = importFromGemini(servers);
+      break;
+    case 'opencode':
+      importedCount = importFromOpenCode(servers);
       break;
     default:
       throw new Error(`无效的平台: ${platform}`);
@@ -700,7 +987,7 @@ function importFromClaude(servers) {
         id,
         name: id,
         server: spec,
-        apps: { claude: true, codex: false, gemini: false },
+        apps: { claude: true, codex: false, gemini: false, opencode: false },
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -735,7 +1022,7 @@ function importFromCodex(servers) {
         id,
         name: id,
         server: convertedSpec,
-        apps: { claude: false, codex: true, gemini: false },
+        apps: { claude: false, codex: true, gemini: false, opencode: false },
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -767,7 +1054,39 @@ function importFromGemini(servers) {
         id,
         name: id,
         server: spec,
-        apps: { claude: false, codex: false, gemini: true },
+        apps: { claude: false, codex: false, gemini: true, opencode: false },
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      count++;
+    }
+  }
+
+  return count;
+}
+
+/**
+ * 从 OpenCode 导入
+ */
+function importFromOpenCode(servers) {
+  const { config } = readOpenCodeConfig();
+  const mcpServers = config.mcp || {};
+  let count = 0;
+
+  for (const [id, spec] of Object.entries(mcpServers)) {
+    const convertedSpec = convertFromOpenCodeFormat(spec || {});
+
+    if (servers[id]) {
+      if (!servers[id].apps.opencode) {
+        servers[id].apps.opencode = true;
+        count++;
+      }
+    } else {
+      servers[id] = {
+        id,
+        name: id,
+        server: convertedSpec,
+        apps: { claude: false, codex: false, gemini: false, opencode: true },
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -838,7 +1157,8 @@ function getStats() {
     total: serverList.length,
     claude: serverList.filter(s => s.apps?.claude).length,
     codex: serverList.filter(s => s.apps?.codex).length,
-    gemini: serverList.filter(s => s.apps?.gemini).length
+    gemini: serverList.filter(s => s.apps?.gemini).length,
+    opencode: serverList.filter(s => s.apps?.opencode).length
   };
 }
 
@@ -1300,7 +1620,7 @@ function updateServerOrder(serverIds) {
 
 /**
  * 导出所有 MCP 配置
- * @param {string} format - 导出格式: 'json' | 'claude' | 'codex'
+ * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode'
  */
 function exportServers(format = 'json') {
   const servers = getAllServers();
@@ -1310,6 +1630,8 @@ function exportServers(format = 'json') {
       return exportForClaude(servers);
     case 'codex':
       return exportForCodex(servers);
+    case 'opencode':
+      return exportForOpenCode(servers);
     case 'json':
     default:
       return exportAsJson(servers);
@@ -1368,6 +1690,25 @@ function exportForCodex(servers) {
     format: 'codex',
     content: toml.stringify({ mcp_servers }),
     filename: 'codex-mcp-config.toml'
+  };
+}
+
+/**
+ * 导出为 OpenCode 格式
+ */
+function exportForOpenCode(servers) {
+  const mcp = {};
+
+  for (const [id, server] of Object.entries(servers)) {
+    if (server.apps?.opencode) {
+      mcp[id] = convertToOpenCodeFormat(server.server);
+    }
+  }
+
+  return {
+    format: 'opencode',
+    content: JSON.stringify({ mcp }, null, 2),
+    filename: 'opencode-mcp-config.json'
   };
 }
 

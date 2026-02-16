@@ -5,6 +5,14 @@ const {
   stopOpenCodeProxyServer,
   getOpenCodeProxyStatus
 } = require('../opencode-proxy-server');
+const {
+  configExists,
+  hasBackup,
+  setProxyConfig,
+  restoreSettings,
+  isProxyConfig,
+  getCurrentProxyPort
+} = require('../services/opencode-settings-manager');
 const { getChannels, getEnabledChannels } = require('../services/opencode-channels');
 const fs = require('fs');
 const path = require('path');
@@ -46,9 +54,16 @@ router.get('/status', (req, res) => {
     const { channels } = getChannels();
     const enabledChannels = channels.filter(ch => ch.enabled !== false);
     const activeChannel = enabledChannels[0];
+    const configStatus = {
+      isProxyConfig: isProxyConfig(),
+      configExists: configExists(),
+      hasBackup: hasBackup(),
+      currentProxyPort: getCurrentProxyPort()
+    };
 
     res.json({
       proxy: proxyStatus,
+      config: configStatus,
       activeChannel: sanitizeChannel(activeChannel),
       enabledChannelsCount: enabledChannels.length,
       totalChannelsCount: channels.length
@@ -82,7 +97,10 @@ router.post('/start', async (req, res) => {
       return res.status(500).json({ error: 'Failed to start OpenCode proxy server' });
     }
 
-    // 4. 广播状态更新
+    // 4. 设置代理配置（写入 OpenCode 配置文件）
+    setProxyConfig(proxyResult.port);
+
+    // 5. 广播状态更新
     const { broadcastProxyState } = require('../websocket-server');
     const updatedStatus = getOpenCodeProxyStatus();
     const { channels: allChannels } = getChannels();
@@ -114,7 +132,13 @@ router.post('/stop', async (req, res) => {
     // 3. 删除激活渠道文件
     removeActiveChannelFile();
 
-    // 4. 广播状态更新
+    // 4. 恢复原始配置
+    if (hasBackup()) {
+      restoreSettings();
+      console.log('[OpenCode Proxy] Restored settings from backup');
+    }
+
+    // 5. 广播状态更新
     const { broadcastProxyState } = require('../websocket-server');
     const updatedStatus = getOpenCodeProxyStatus();
     broadcastProxyState('opencode', updatedStatus, activeChannel, channels);

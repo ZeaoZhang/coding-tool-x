@@ -182,9 +182,32 @@ export default function useChannelManager(config) {
 
   function runValidation() {
     let valid = true
+    const getNestedValue = (obj, path) => {
+      if (!path || typeof path !== 'string' || !path.includes('.')) return obj[path]
+      const keys = path.split('.')
+      let value = obj
+      for (const key of keys) {
+        value = value?.[key]
+      }
+      return value
+    }
+    const isSectionVisible = (section) => !section.showWhen || section.showWhen(state.formData)
+    const isFieldVisible = (field) => !field.showWhen || field.showWhen(state.formData)
+    const clearFieldValidation = (field) => {
+      const flatKey = field.key.replace(/\./g, '_')
+      delete validation[field.key]
+      delete validation[flatKey]
+    }
+
     config.formSections.forEach(section => {
+      const sectionVisible = isSectionVisible(section)
       section.fields.forEach(field => {
-        const value = state.formData[field.key]
+        if (!sectionVisible || !isFieldVisible(field)) {
+          clearFieldValidation(field)
+          return
+        }
+
+        const value = getNestedValue(state.formData, field.key)
         let errorMessage = ''
         if (field.required) {
           errorMessage = field.customRequiredMessage
@@ -201,7 +224,7 @@ export default function useChannelManager(config) {
           }
           valid = false
         } else {
-          delete validation[field.key]
+          clearFieldValidation(field)
         }
       })
     })

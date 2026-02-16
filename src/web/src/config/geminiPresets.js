@@ -8,24 +8,14 @@ export const geminiPresets = [
     name: 'Google AI',
     category: 'official',
     websiteUrl: 'https://ai.google.dev',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    authType: 'apiKey'
-  },
-  {
-    id: 'google_oauth',
-    name: 'Google OAuth',
-    category: 'official',
-    websiteUrl: 'https://ai.google.dev',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    authType: 'oauth'
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta'
   },
   {
     id: 'custom',
     name: '自定义',
     category: 'custom',
     websiteUrl: '',
-    baseUrl: '',
-    authType: 'apiKey'
+    baseUrl: ''
   }
 ]
 

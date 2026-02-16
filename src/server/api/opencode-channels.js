@@ -11,11 +11,25 @@ const { isOpenCodeInstalled } = require('../services/opencode-sessions');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
-const { testChannelSpeed, testMultipleChannels } = require('../services/speed-test');
+const { testChannelSpeed } = require('../services/speed-test');
 const { clearOpenCodeRedirectCache } = require('../opencode-proxy-server');
-const { fetchModelsFromProvider } = require('../services/model-detector');
+const {
+  fetchModelsFromProvider,
+  probeModelAvailability
+} = require('../services/model-detector');
 
 module.exports = (config) => {
+  function resolveGatewaySourceType(channel) {
+    const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
+    if (value === 'claude') return 'claude';
+    if (value === 'gemini') return 'gemini';
+    return 'codex';
+  }
+
+  function mapGatewaySourceTypeToSpeedTestType(channel) {
+    return resolveGatewaySourceType(channel);
+  }
+
   /**
    * GET /api/opencode/channels
    * 获取所有 OpenCode 渠道
@@ -81,10 +95,64 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'Channel not found' });
       }
 
-      const result = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const gatewaySourceType = resolveGatewaySourceType(channel);
+      let result;
+
+      if (gatewaySourceType === 'codex') {
+        const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+        const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
+
+        if (listedModels.length > 0) {
+          result = listResult;
+        } else {
+          const probe = await probeModelAvailability(channel, 'codex');
+          const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+
+          if (probedModels.length > 0) {
+            result = {
+              models: probedModels,
+              supported: true,
+              cached: !!probe.cached,
+              fallbackUsed: false,
+              lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+              error: null,
+              errorHint: listResult.error
+                ? '模型列表接口不可用，已自动切换为模型探测结果'
+                : null
+            };
+          } else {
+            result = {
+              models: [],
+              supported: false,
+              cached: !!probe.cached || !!listResult.cached,
+              fallbackUsed: false,
+              lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+              error: listResult.error || '无法探测到可用模型',
+              errorHint: listResult.errorHint || '请手动填写模型名称，或检查网关类型与 API 端点配置'
+            };
+          }
+        }
+      } else {
+        const probe = await probeModelAvailability(channel, gatewaySourceType);
+        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+        const models = probedModels;
+
+        result = {
+          models,
+          supported: probedModels.length > 0,
+          cached: !!probe.cached,
+          fallbackUsed: false,
+          lastChecked: probe.lastChecked || new Date().toISOString(),
+          error: probedModels.length > 0 ? null : '无法探测到可用模型',
+          errorHint: probedModels.length > 0
+            ? null
+            : '请手动填写模型名称，或检查网关类型与 API 端点配置'
+        };
+      }
 
       res.json({
         channelId: channelId,
+        gatewaySourceType,
         models: result.models,
         supported: result.supported,
         cached: result.cached,
@@ -108,26 +176,39 @@ module.exports = (config) => {
    */
   router.post('/', (req, res) => {
     try {
-      const { name, baseUrl, apiKey, wireApi, enabled, weight, maxConcurrency, model, authType, oauthProvider, oauthTokenId, presetId, websiteUrl } = req.body;
+      const {
+        name,
+        baseUrl,
+        apiKey,
+        wireApi,
+        enabled,
+        weight,
+        maxConcurrency,
+        model,
+        gatewaySourceType,
+        modelRedirects,
+        speedTestModel,
+        presetId,
+        websiteUrl
+      } = req.body;
 
       if (!name || !baseUrl) {
         return res.status(400).json({ error: 'Missing required fields: name and baseUrl' });
       }
 
-      // apiKey 可以为空（OAuth 认证时）
-      if (!apiKey && authType !== 'oauth') {
-        return res.status(400).json({ error: 'API Key is required for non-OAuth channels' });
+      if (!apiKey) {
+        return res.status(400).json({ error: 'API Key is required' });
       }
 
-      const channel = createChannel(name, baseUrl, apiKey || '', {
+      const channel = createChannel(name, baseUrl, apiKey, {
         wireApi: wireApi || 'openai',
         enabled,
         weight,
         maxConcurrency,
         model,
-        authType: authType || 'apiKey',
-        oauthProvider,
-        oauthTokenId,
+        gatewaySourceType,
+        modelRedirects: modelRedirects || [],
+        speedTestModel: speedTestModel || null,
         presetId,
         websiteUrl
       });
@@ -163,10 +244,10 @@ module.exports = (config) => {
    * DELETE /api/opencode/channels/:channelId
    * 删除渠道
    */
-  router.delete('/:channelId', (req, res) => {
+  router.delete('/:channelId', async (req, res) => {
     try {
       const { channelId } = req.params;
-      const result = deleteChannel(channelId);
+      const result = await deleteChannel(channelId);
       res.json(result);
       broadcastSchedulerState('opencode', getSchedulerState('opencode'));
     } catch (err) {
@@ -226,7 +307,8 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'Channel not found' });
       }
 
-      const result = await testChannelSpeed(channel, 'opencode', timeout);
+      const speedTestType = mapGatewaySourceTypeToSpeedTestType(channel);
+      const result = await testChannelSpeed(channel, timeout, speedTestType);
       res.json(result);
     } catch (error) {
       console.error('[OpenCode Channels API] Speed test failed:', error);
@@ -242,8 +324,20 @@ module.exports = (config) => {
     try {
       const { timeout = 20000 } = req.body;
       const channels = getChannels().channels || [];
+      const results = await Promise.all(
+        channels.map(channel => {
+          const speedTestType = mapGatewaySourceTypeToSpeedTestType(channel);
+          return testChannelSpeed(channel, timeout, speedTestType);
+        })
+      );
 
-      const results = await testMultipleChannels(channels, 'opencode', timeout);
+      // 与 testMultipleChannels 保持一致的排序：成功在前，成功按延迟升序
+      results.sort((a, b) => {
+        if (a.success && !b.success) return -1;
+        if (!a.success && b.success) return 1;
+        if (a.success && b.success) return (a.latency || Infinity) - (b.latency || Infinity);
+        return 0;
+      });
       
       // 添加摘要统计
       const successResults = results.filter(r => r.success);

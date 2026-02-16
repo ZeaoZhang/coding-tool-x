@@ -26,8 +26,8 @@
 
       <n-form-item label="作用域" path="scope">
         <n-radio-group v-model:value="formData.scope" :disabled="isEdit">
-          <n-radio value="user">用户级 (~/.claude/commands/)</n-radio>
-          <n-radio value="project">项目级 (.claude/commands/)</n-radio>
+          <n-radio value="user">{{ userScopeLabel }}</n-radio>
+          <n-radio value="project">{{ projectScopeLabel }}</n-radio>
         </n-radio-group>
       </n-form-item>
 
@@ -46,14 +46,14 @@
         />
       </n-form-item>
 
-      <n-form-item label="允许的工具" path="allowedTools">
+      <n-form-item v-if="props.platform !== 'opencode'" label="允许的工具" path="allowedTools">
         <n-input
           v-model:value="formData.allowedTools"
           placeholder="如: Bash, Edit, Read (逗号分隔)"
         />
       </n-form-item>
 
-      <n-form-item label="参数提示" path="argumentHint">
+      <n-form-item v-if="props.platform !== 'opencode'" label="参数提示" path="argumentHint">
         <n-input
           v-model:value="formData.argumentHint"
           placeholder="如: add [id] | remove [id]"
@@ -100,6 +100,10 @@ const props = defineProps({
   projectPath: {
     type: String,
     default: null
+  },
+  platform: {
+    type: String,
+    default: 'claude'
   }
 })
 
@@ -111,6 +115,16 @@ const visible = computed({
 })
 
 const isEdit = computed(() => !!props.command)
+const userScopeLabel = computed(() =>
+  props.platform === 'opencode'
+    ? '用户级 (~/.config/opencode/commands/)'
+    : '用户级 (~/.claude/commands/)'
+)
+const projectScopeLabel = computed(() =>
+  props.platform === 'opencode'
+    ? '项目级 (.opencode/commands/)'
+    : '项目级 (.claude/commands/)'
+)
 
 const formRef = ref(null)
 const saving = ref(false)
@@ -187,10 +201,10 @@ async function handleSubmit() {
     }
 
     if (isEdit.value) {
-      await updateCommand(formData.value.name, formData.value.scope, data)
+      await updateCommand(formData.value.name, formData.value.scope, data, props.platform)
       message.success('命令更新成功')
     } else {
-      await createCommand(data)
+      await createCommand(data, props.platform)
       message.success('命令创建成功')
     }
 

@@ -8,7 +8,24 @@ const express = require('express');
 const { CommandsService } = require('../services/commands-service');
 
 const router = express.Router();
-const commandsService = new CommandsService();
+const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const commandServices = new Map();
+
+function resolvePlatform(rawPlatform) {
+  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+}
+
+function getPlatform(req) {
+  return resolvePlatform(req.query?.platform || req.body?.platform);
+}
+
+function getCommandsService(req) {
+  const platform = getPlatform(req);
+  if (!commandServices.has(platform)) {
+    commandServices.set(platform, new CommandsService(platform));
+  }
+  return { platform, service: commandServices.get(platform) };
+}
 
 /**
  * 获取命令列表
@@ -17,11 +34,13 @@ const commandsService = new CommandsService();
  */
 router.get('/', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { projectPath } = req.query;
-    const result = commandsService.listCommands(projectPath || null);
+    const result = service.listCommands(projectPath || null);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -39,11 +58,13 @@ router.get('/', (req, res) => {
  */
 router.get('/stats', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { projectPath } = req.query;
-    const stats = commandsService.getStats(projectPath || null);
+    const stats = service.getStats(projectPath || null);
 
     res.json({
       success: true,
+      platform,
       ...stats
     });
   } catch (err) {
@@ -62,6 +83,7 @@ router.get('/stats', (req, res) => {
  */
 router.get('/:scope/:name', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { scope, name } = req.params;
     const { projectPath, namespace } = req.query;
 
@@ -79,7 +101,7 @@ router.get('/:scope/:name', (req, res) => {
       });
     }
 
-    const command = commandsService.getCommand(name, scope, projectPath || null, namespace || null);
+    const command = service.getCommand(name, scope, projectPath || null, namespace || null);
 
     if (!command) {
       return res.status(404).json({
@@ -90,6 +112,7 @@ router.get('/:scope/:name', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       command
     });
   } catch (err) {
@@ -108,7 +131,8 @@ router.get('/:scope/:name', (req, res) => {
  */
 router.post('/', (req, res) => {
   try {
-    const { name, scope, projectPath, namespace, description, allowedTools, argumentHint, body } = req.body;
+    const { platform, service } = getCommandsService(req);
+    const { name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body } = req.body;
 
     if (!name) {
       return res.status(400).json({
@@ -131,7 +155,7 @@ router.post('/', (req, res) => {
       });
     }
 
-    const command = commandsService.createCommand({
+    const command = service.createCommand({
       name,
       scope,
       projectPath: projectPath || null,
@@ -139,11 +163,15 @@ router.post('/', (req, res) => {
       description: description || '',
       allowedTools: allowedTools || '',
       argumentHint: argumentHint || '',
+      agent: agent || '',
+      model: model || '',
+      subtask: typeof subtask === 'boolean' ? subtask : undefined,
       body: body || ''
     });
 
     res.json({
       success: true,
+      platform,
       command,
       message: '命令创建成功'
     });
@@ -162,8 +190,9 @@ router.post('/', (req, res) => {
  */
 router.put('/:scope/:name', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { scope, name } = req.params;
-    const { projectPath, namespace, description, allowedTools, argumentHint, body } = req.body;
+    const { projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body } = req.body;
 
     if (!['user', 'project'].includes(scope)) {
       return res.status(400).json({
@@ -179,7 +208,7 @@ router.put('/:scope/:name', (req, res) => {
       });
     }
 
-    const command = commandsService.updateCommand({
+    const command = service.updateCommand({
       name,
       scope,
       projectPath: projectPath || null,
@@ -187,11 +216,15 @@ router.put('/:scope/:name', (req, res) => {
       description: description || '',
       allowedTools: allowedTools || '',
       argumentHint: argumentHint || '',
+      agent: agent || '',
+      model: model || '',
+      subtask: typeof subtask === 'boolean' ? subtask : undefined,
       body: body || ''
     });
 
     res.json({
       success: true,
+      platform,
       command,
       message: '命令更新成功'
     });
@@ -210,6 +243,7 @@ router.put('/:scope/:name', (req, res) => {
  */
 router.delete('/:scope/:name', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { scope, name } = req.params;
     const { projectPath, namespace } = req.query;
 
@@ -227,9 +261,10 @@ router.delete('/:scope/:name', (req, res) => {
       });
     }
 
-    const result = commandsService.deleteCommand(name, scope, projectPath || null, namespace || null);
+    const result = service.deleteCommand(name, scope, projectPath || null, namespace || null);
 
     res.json({
+      platform,
       success: result.success,
       message: result.message
     });
@@ -251,12 +286,14 @@ router.delete('/:scope/:name', (req, res) => {
  */
 router.get('/all', async (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { projectPath, refresh } = req.query;
     const forceRefresh = refresh === '1';
-    const result = await commandsService.listAllCommands(projectPath || null, forceRefresh);
+    const result = await service.listAllCommands(projectPath || null, forceRefresh);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -274,9 +311,11 @@ router.get('/all', async (req, res) => {
  */
 router.get('/repos', (req, res) => {
   try {
-    const repos = commandsService.getRepos();
+    const { platform, service } = getCommandsService(req);
+    const repos = service.getRepos();
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -295,6 +334,7 @@ router.get('/repos', (req, res) => {
  */
 router.post('/repos', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
 
     if (!owner || !name) {
@@ -304,10 +344,11 @@ router.post('/repos', (req, res) => {
       });
     }
 
-    const repos = commandsService.addRepo({ owner, name, branch, directory, enabled });
+    const repos = service.addRepo({ owner, name, branch, directory, enabled });
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -326,12 +367,14 @@ router.post('/repos', (req, res) => {
  */
 router.delete('/repos/:owner/:name', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { owner, name } = req.params;
     const { directory = '' } = req.query;
-    const repos = commandsService.removeRepo(owner, name, directory);
+    const repos = service.removeRepo(owner, name, directory);
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -350,13 +393,15 @@ router.delete('/repos/:owner/:name', (req, res) => {
  */
 router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { owner, name } = req.params;
     const { enabled, directory = '' } = req.body;
 
-    const repos = commandsService.toggleRepo(owner, name, directory, enabled);
+    const repos = service.toggleRepo(owner, name, directory, enabled);
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -375,6 +420,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
  */
 router.post('/install', async (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const command = req.body;
 
     if (!command || !command.repoOwner || !command.repoName) {
@@ -384,10 +430,11 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const result = await commandsService.installFromRemote(command);
+    const result = await service.installFromRemote(command);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -406,6 +453,7 @@ router.post('/install', async (req, res) => {
  */
 router.post('/uninstall', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { path } = req.body;
 
     if (!path) {
@@ -415,10 +463,11 @@ router.post('/uninstall', (req, res) => {
       });
     }
 
-    const result = commandsService.uninstallCommand(path);
+    const result = service.uninstallCommand(path);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -441,6 +490,7 @@ router.post('/uninstall', (req, res) => {
  */
 router.post('/convert', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { content, targetFormat } = req.body;
 
     if (!content) {
@@ -457,10 +507,11 @@ router.post('/convert', (req, res) => {
       });
     }
 
-    const result = commandsService.convertCommandFormat(content, targetFormat);
+    const result = service.convertCommandFormat(content, targetFormat);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -479,6 +530,7 @@ router.post('/convert', (req, res) => {
  */
 router.post('/detect-format', (req, res) => {
   try {
+    const { platform, service } = getCommandsService(req);
     const { content } = req.body;
 
     if (!content) {
@@ -488,10 +540,11 @@ router.post('/detect-format', (req, res) => {
       });
     }
 
-    const format = commandsService.detectFormat(content);
+    const format = service.detectFormat(content);
 
     res.json({
       success: true,
+      platform,
       format
     });
   } catch (err) {

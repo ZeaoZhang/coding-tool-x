@@ -17,7 +17,7 @@
           </template>
           创建
         </n-button>
-        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
           <template #icon>
             <n-icon><CloudDownloadOutline /></n-icon>
           </template>
@@ -41,7 +41,7 @@
           </template>
           创建
         </n-button>
-        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
           <template #icon>
             <n-icon><CloudDownloadOutline /></n-icon>
           </template>
@@ -127,7 +127,7 @@
     <!-- 提示信息 -->
     <div class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
-      <span>使用 Task tool 调用自定义代理</span>
+      <span>{{ agentUsageHint }}</span>
     </div>
 
     <!-- 创建/编辑弹窗 -->
@@ -135,6 +135,7 @@
       v-model:visible="showCreateModal"
       :agent="editingAgent"
       :project-path="projectPath"
+      :platform="currentPlatform"
       @saved="handleSaved"
     />
 
@@ -177,7 +178,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   NButton, NInput, NSelect, NIcon, NSpin, NEmpty,
   NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode
@@ -213,6 +215,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'updated'])
+const route = useRoute()
 
 const agents = ref([])
 const loading = ref(false)
@@ -226,6 +229,17 @@ const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
 const importing = ref(false)
+
+const currentPlatform = computed(() => {
+  const channel = route.meta.channel
+  return channel === 'opencode' ? 'opencode' : 'claude'
+})
+
+const agentUsageHint = computed(() =>
+  currentPlatform.value === 'opencode'
+    ? '使用 @agent 或 Task 在 OpenCode 中调用'
+    : '使用 Task tool 调用自定义代理'
+)
 
 const scopeOptions = [
   { label: '全部', value: 'all' },
@@ -272,6 +286,9 @@ const emptyText = computed(() => {
 })
 
 async function handleImport() {
+  if (currentPlatform.value !== 'claude') {
+    return
+  }
   importing.value = true
   try {
     const res = await importFromClaude('agents')
@@ -292,7 +309,7 @@ async function loadAgents() {
   loading.value = true
   try {
     const [agentRes, registryRes] = await Promise.all([
-      getAgents(props.projectPath),
+      getAgents(props.projectPath, currentPlatform.value),
       listItems('agents')
     ])
     if (agentRes.success) {
@@ -353,7 +370,7 @@ function handleEdit(agent) {
 async function handleDelete(agent) {
   deletingKeys.value[agent.path] = true
   try {
-    const result = await deleteAgent(agent.fileName, agent.scope, props.projectPath)
+    const result = await deleteAgent(agent.fileName, agent.scope, props.projectPath, currentPlatform.value)
     if (result.success) {
       message.success('代理已删除')
       await loadAgents()
@@ -382,6 +399,10 @@ function handleBack() {
 }
 
 onMounted(() => {
+  loadAgents()
+})
+
+watch(currentPlatform, () => {
   loadAgents()
 })
 </script>

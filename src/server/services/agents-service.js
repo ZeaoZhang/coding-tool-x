@@ -1,11 +1,7 @@
 /**
  * Agents 服务
  *
- * 管理 Claude Code 自定义代理的 CRUD 操作
- * 代理目录:
- * - 用户级: ~/.claude/agents/
- * - 项目级: .claude/agents/
- *
+ * 管理 Claude/OpenCode 自定义代理的 CRUD 操作
  * 支持从 GitHub 仓库扫描和安装代理
  */
 
@@ -13,12 +9,37 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { RepoScannerBase } = require('./repo-scanner-base');
-
-// 代理目录路径
-const USER_AGENTS_DIR = path.join(os.homedir(), '.claude', 'agents');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
+const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
+
+const PLATFORM_CONFIG = {
+  claude: {
+    userAgentsDir: path.join(os.homedir(), '.claude', 'agents'),
+    projectAgentsDir: (projectPath) => path.join(projectPath, '.claude', 'agents'),
+    repoType: 'agents'
+  },
+  opencode: {
+    userAgentsDir: path.join(OPENCODE_CONFIG_DIR, 'agents'),
+    legacyUserAgentsDir: path.join(OPENCODE_CONFIG_DIR, 'agent'),
+    projectAgentsDir: (projectPath) => {
+      const modern = path.join(projectPath, '.opencode', 'agents');
+      const legacy = path.join(projectPath, '.opencode', 'agent');
+      if (fs.existsSync(legacy) && !fs.existsSync(modern)) {
+        return legacy;
+      }
+      return modern;
+    },
+    repoType: 'opencode-agents'
+  }
+};
+
+function normalizePlatform(platform) {
+  return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
+}
 
 /**
  * 确保目录存在
@@ -74,11 +95,11 @@ function parseFrontmatter(content) {
 /**
  * 生成 frontmatter 字符串
  */
-function generateFrontmatter(data) {
+function generateFrontmatter(data, platform = 'claude') {
   const lines = ['---'];
 
-  // 必需字段
-  if (data.name) {
+  // Claude 下写入 name，OpenCode 以文件名作为 agent id
+  if (platform !== 'opencode' && data.name) {
     lines.push(`name: ${data.name}`);
   }
   if (data.description) {
@@ -164,10 +185,10 @@ function scanAgentsDir(dir, basePath, scope) {
  * Agents 仓库扫描器
  */
 class AgentsRepoScanner extends RepoScannerBase {
-  constructor() {
+  constructor(platform, installDir) {
     super({
-      type: 'agents',
-      installDir: USER_AGENTS_DIR,
+      type: PLATFORM_CONFIG[platform]?.repoType || 'agents',
+      installDir,
       markerFile: null, // 直接扫描 .md 文件
       fileExtension: '.md',
       defaultRepos: DEFAULT_REPOS
@@ -248,10 +269,26 @@ class AgentsRepoScanner extends RepoScannerBase {
  * Agents 服务类
  */
 class AgentsService {
-  constructor() {
-    this.userAgentsDir = USER_AGENTS_DIR;
-    this.repoScanner = new AgentsRepoScanner();
+  constructor(platform = 'claude') {
+    this.platform = normalizePlatform(platform);
+    const config = PLATFORM_CONFIG[this.platform];
+
+    this.userAgentsDir = config.userAgentsDir;
+    if (this.platform === 'opencode') {
+      const legacyUserDir = config.legacyUserAgentsDir;
+      if (legacyUserDir && fs.existsSync(legacyUserDir) && !fs.existsSync(this.userAgentsDir)) {
+        this.userAgentsDir = legacyUserDir;
+      }
+    }
+
+    this.projectAgentsDir = config.projectAgentsDir;
+    this.repoScanner = new AgentsRepoScanner(this.platform, this.userAgentsDir);
     ensureDir(this.userAgentsDir);
+  }
+
+  getProjectAgentsDir(projectPath) {
+    if (!projectPath) return null;
+    return this.projectAgentsDir(projectPath);
   }
 
   /**
@@ -267,7 +304,7 @@ class AgentsService {
 
     // 获取项目级代理（如果提供了项目路径）
     if (projectPath) {
-      const projectAgentsDir = path.join(projectPath, '.claude', 'agents');
+      const projectAgentsDir = this.getProjectAgentsDir(projectPath);
       const projectAgents = scanAgentsDir(projectAgentsDir, projectAgentsDir, 'project');
       agents.push(...projectAgents);
     }
@@ -331,7 +368,7 @@ class AgentsService {
   getAgent(fileName, scope, projectPath = null) {
     const baseDir = scope === 'user'
       ? this.userAgentsDir
-      : path.join(projectPath, '.claude', 'agents');
+      : this.getProjectAgentsDir(projectPath);
 
     const filePath = path.join(baseDir, `${fileName}.md`);
 
@@ -382,7 +419,7 @@ class AgentsService {
 
     const baseDir = scope === 'user'
       ? this.userAgentsDir
-      : path.join(projectPath, '.claude', 'agents');
+      : this.getProjectAgentsDir(projectPath);
 
     ensureDir(baseDir);
 
@@ -400,7 +437,7 @@ class AgentsService {
     if (permissionMode) frontmatterData.permissionMode = permissionMode;
     if (skills) frontmatterData.skills = skills;
 
-    const content = generateFrontmatter(frontmatterData) + '\n\n' + (systemPrompt || '');
+    const content = generateFrontmatter(frontmatterData, this.platform) + '\n\n' + (systemPrompt || '');
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
@@ -413,7 +450,7 @@ class AgentsService {
   updateAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt }) {
     const baseDir = scope === 'user'
       ? this.userAgentsDir
-      : path.join(projectPath, '.claude', 'agents');
+      : this.getProjectAgentsDir(projectPath);
 
     const filePath = path.join(baseDir, `${fileName}.md`);
 
@@ -431,7 +468,7 @@ class AgentsService {
     if (permissionMode) frontmatterData.permissionMode = permissionMode;
     if (skills) frontmatterData.skills = skills;
 
-    const content = generateFrontmatter(frontmatterData) + '\n\n' + (systemPrompt || '');
+    const content = generateFrontmatter(frontmatterData, this.platform) + '\n\n' + (systemPrompt || '');
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
@@ -444,7 +481,7 @@ class AgentsService {
   deleteAgent(fileName, scope, projectPath = null) {
     const baseDir = scope === 'user'
       ? this.userAgentsDir
-      : path.join(projectPath, '.claude', 'agents');
+      : this.getProjectAgentsDir(projectPath);
 
     const filePath = path.join(baseDir, `${fileName}.md`);
 

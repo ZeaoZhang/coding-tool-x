@@ -115,7 +115,11 @@ import { getSkillRepos, addSkillRepo, removeSkillRepo, toggleSkillRepo } from '.
 import message from '../utils/message'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  platform: {
+    type: String,
+    default: 'claude'
+  }
 })
 
 const emit = defineEmits(['update:visible', 'updated'])
@@ -132,11 +136,21 @@ const newRepo = ref({
   branch: 'main'
 })
 
-const recommendedRepos = [
-  { owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main' },
-  { owner: 'ComposioHQ', name: 'awesome-claude-skills', description: '社区精选', branch: 'master' },
-  { owner: 'cexll', name: 'myclaude', description: '多智能体工作流', branch: 'master' }
-]
+const recommendedRepos = computed(() => {
+  if (props.platform === 'codex') {
+    return []
+  }
+  if (props.platform === 'opencode') {
+    return [
+      { owner: 'sst', name: 'opencode', description: 'OpenCode 官方示例', branch: 'dev', directory: '.opencode/skill' }
+    ]
+  }
+  return [
+    { owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main' },
+    { owner: 'ComposioHQ', name: 'awesome-claude-skills', description: '社区精选', branch: 'master' },
+    { owner: 'cexll', name: 'myclaude', description: '多智能体工作流', branch: 'master' }
+  ]
+})
 
 const canAdd = computed(() => {
   const input = newRepo.value.input.trim()
@@ -147,7 +161,7 @@ const canAdd = computed(() => {
 
 async function loadRepos() {
   try {
-    const result = await getSkillRepos()
+    const result = await getSkillRepos(props.platform)
     if (result.success) {
       repos.value = result.repos || []
     }
@@ -169,7 +183,7 @@ async function handleAdd() {
       name,
       branch: newRepo.value.branch || 'main',
       enabled: true
-    })
+    }, props.platform)
 
     if (result.success) {
       repos.value = result.repos
@@ -187,7 +201,7 @@ async function handleAdd() {
 
 async function handleRemove(repo) {
   try {
-    const result = await removeSkillRepo(repo.owner, repo.name)
+    const result = await removeSkillRepo(repo.owner, repo.name, repo.directory || '', props.platform)
     if (result.success) {
       repos.value = result.repos
       message.success('仓库已删除')
@@ -200,7 +214,7 @@ async function handleRemove(repo) {
 
 async function handleToggle(repo, enabled) {
   try {
-    const result = await toggleSkillRepo(repo.owner, repo.name, enabled)
+    const result = await toggleSkillRepo(repo.owner, repo.name, enabled, repo.directory || '', props.platform)
     if (result.success) {
       repos.value = result.repos
       emit('updated')
@@ -221,8 +235,9 @@ async function quickAdd(rec) {
       owner: rec.owner,
       name: rec.name,
       branch: rec.branch,
+      directory: rec.directory || '',
       enabled: true
-    })
+    }, props.platform)
 
     if (result.success) {
       repos.value = result.repos

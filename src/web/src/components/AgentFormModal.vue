@@ -24,8 +24,8 @@
 
       <n-form-item label="作用域" path="scope">
         <n-radio-group v-model:value="formData.scope" :disabled="isEdit">
-          <n-radio value="user">用户级 (~/.claude/agents/)</n-radio>
-          <n-radio value="project">项目级 (.claude/agents/)</n-radio>
+          <n-radio value="user">{{ userScopeLabel }}</n-radio>
+          <n-radio value="project">{{ projectScopeLabel }}</n-radio>
         </n-radio-group>
       </n-form-item>
 
@@ -61,7 +61,7 @@
         />
       </n-form-item>
 
-      <n-form-item label="权限模式" path="permissionMode">
+      <n-form-item v-if="props.platform !== 'opencode'" label="权限模式" path="permissionMode">
         <n-select
           v-model:value="formData.permissionMode"
           :options="permissionOptions"
@@ -70,7 +70,7 @@
         />
       </n-form-item>
 
-      <n-form-item label="技能" path="skills">
+      <n-form-item v-if="props.platform !== 'opencode'" label="技能" path="skills">
         <n-input
           v-model:value="formData.skills"
           placeholder="自动加载的技能 (逗号分隔)"
@@ -117,6 +117,10 @@ const props = defineProps({
   projectPath: {
     type: String,
     default: null
+  },
+  platform: {
+    type: String,
+    default: 'claude'
   }
 })
 
@@ -128,6 +132,16 @@ const visible = computed({
 })
 
 const isEdit = computed(() => !!props.agent)
+const userScopeLabel = computed(() =>
+  props.platform === 'opencode'
+    ? '用户级 (~/.config/opencode/agents/)'
+    : '用户级 (~/.claude/agents/)'
+)
+const projectScopeLabel = computed(() =>
+  props.platform === 'opencode'
+    ? '项目级 (.opencode/agents/)'
+    : '项目级 (.claude/agents/)'
+)
 
 const formRef = ref(null)
 const saving = ref(false)
@@ -233,10 +247,10 @@ async function handleSubmit() {
     }
 
     if (isEdit.value) {
-      await updateAgent(formData.value.fileName, formData.value.scope, data)
+      await updateAgent(formData.value.fileName, formData.value.scope, data, props.platform)
       message.success('代理更新成功')
     } else {
-      await createAgent(data)
+      await createAgent(data, props.platform)
       message.success('代理创建成功')
     }
 

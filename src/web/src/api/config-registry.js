@@ -1,6 +1,6 @@
 /**
  * Config Registry API
- * Unified config management for skills, commands, agents, and rules
+ * Unified config management for skills, commands, agents, rules, and plugins
  */
 
 import { client } from './client'
@@ -15,7 +15,7 @@ export async function getStats() {
 
 /**
  * List all items for a config type
- * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules'
+ * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules' | 'plugins'
  */
 export async function listItems(type) {
   const response = await client.get(`/config-registry/${type}`)
@@ -24,7 +24,7 @@ export async function listItems(type) {
 
 /**
  * Import configs from Claude Code native directories
- * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules'
+ * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules' | 'plugins'
  */
 export async function importFromClaude(type) {
   const response = await client.post(`/config-registry/${type}/import`)
@@ -33,7 +33,7 @@ export async function importFromClaude(type) {
 
 /**
  * Toggle enabled/disabled status
- * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules'
+ * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules' | 'plugins'
  * @param {string} name - item name/path
  * @param {boolean} enabled - new enabled state
  */
@@ -45,9 +45,9 @@ export async function toggleEnabled(type, name, enabled) {
 
 /**
  * Toggle platform for an item
- * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules'
+ * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules' | 'plugins'
  * @param {string} name - item name/path
- * @param {string} platform - 'claude' | 'codex'
+ * @param {string} platform - 'claude' | 'codex' | 'opencode'
  * @param {boolean} enabled - new platform state
  */
 export async function togglePlatform(type, name, platform, enabled) {
@@ -58,7 +58,7 @@ export async function togglePlatform(type, name, platform, enabled) {
 
 /**
  * Force sync all items of a type
- * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules'
+ * @param {string} type - 'skills' | 'commands' | 'agents' | 'rules' | 'plugins'
  */
 export async function syncAll(type) {
   const response = await client.post(`/config-registry/${type}/sync`)

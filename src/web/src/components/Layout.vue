@@ -70,7 +70,7 @@
           @click="router.push({ name: 'opencode-projects' })"
         >
           <n-icon :size="18" class="nav-icon">
-            <CodeSlashOutline />
+            <ExtensionPuzzleOutline />
           </n-icon>
           <span class="nav-label">OpenCode</span>
         </div>
@@ -258,6 +258,9 @@
 
     <!-- Speed Test Drawer -->
     <SpeedTestDrawer v-model:visible="showSpeedTestDrawer" />
+
+    <!-- OpenCode Gateway Convert Drawer -->
+    <GatewayConvertDrawer v-model:visible="showGatewayConvertDrawer" />
 
     <!-- Workspace Drawer -->
     <WorkspaceDrawer v-model:visible="showWorkspaceDrawer" />
@@ -468,6 +471,7 @@ import SettingsDrawer from './SettingsDrawer.vue'
 import McpDrawer from './McpDrawer.vue'
 import PromptsDrawer from './PromptsDrawer.vue'
 import SpeedTestDrawer from './SpeedTestDrawer.vue'
+import GatewayConvertDrawer from './GatewayConvertDrawer.vue'
 import SkillsDrawer from './SkillsDrawer.vue'
 import CommandsDrawer from './CommandsDrawer.vue'
 import AgentsDrawer from './AgentsDrawer.vue'
@@ -528,6 +532,7 @@ const showSettingsDrawer = ref(false)
 const showMcpDrawer = ref(false)
 const showPromptsDrawer = ref(false)
 const showSpeedTestDrawer = ref(false)
+const showGatewayConvertDrawer = ref(false)
 const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
@@ -701,6 +706,7 @@ onMounted(() => {
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
   window.addEventListener('open-rules-drawer', openRulesDrawer)
   window.addEventListener('open-plugins-drawer', openPluginsDrawer)
+  window.addEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
@@ -714,6 +720,7 @@ onUnmounted(() => {
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
   window.removeEventListener('open-rules-drawer', openRulesDrawer)
   window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
+  window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 })
 
 function openSkillsDrawer() {
@@ -734,6 +741,10 @@ function openRulesDrawer() {
 
 function openPluginsDrawer() {
   showPluginsDrawer.value = true
+}
+
+function openGatewayConvertDrawer() {
+  showGatewayConvertDrawer.value = true
 }
 
 // Handle view history from favorites

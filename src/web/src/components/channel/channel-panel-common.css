@@ -241,18 +241,7 @@
   background: var(--n-color-hover);
 }
 
-/* OAuth 认证 section 特殊样式 */
-.form-section.oauth-section {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
-  border-color: rgba(99, 102, 241, 0.2);
-}
-
-.form-section.oauth-section .section-title {
-  color: #6366f1;
-  border-bottom-color: rgba(99, 102, 241, 0.2);
-}
-
-/* 认证方式 radio group 样式优化 */
+/* radio group 样式优化 */
 .channel-form :deep(.n-radio-group) {
   width: 100%;
 }

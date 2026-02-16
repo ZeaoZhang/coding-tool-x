@@ -159,7 +159,8 @@ const selectedProjectPath = ref(null)
 const AI_CONFIG_INFO = {
   claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
-  gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
+  gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
+  opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
 }
 
 // 获取可用的 AI 配置列表
@@ -206,7 +207,8 @@ function getAiConfigTagType(type) {
   const typeMap = {
     claude: 'warning',
     codex: 'success',
-    gemini: 'info'
+    gemini: 'info',
+    opencode: 'error'
   }
   return typeMap[type] || 'default'
 }

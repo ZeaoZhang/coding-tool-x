@@ -87,9 +87,13 @@
             :skill="skill"
             :installing="!!installingKeys[skill.key]"
             :uninstalling="!!uninstallingKeys[skill.key]"
+            :registry-info="registryMap[skill.directory || skill.name]"
+            :toggling="!!togglingKeys[skill.directory || skill.name]"
             @install="handleInstall"
             @uninstall="handleUninstall"
             @click="handleCardClick"
+            @toggle-enabled="handleToggleEnabled"
+            @toggle-platform="handleTogglePlatform"
           />
         </div>
       </n-spin>
@@ -98,22 +102,23 @@
     <!-- 底部提示 -->
     <div class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
-      <span>安装/卸载后需重启 Claude Code 生效</span>
+      <span>安装/卸载后需重启 {{ currentPlatformLabel }} 生效</span>
     </div>
 
     <!-- 弹窗组件 -->
-    <SkillRepoManager v-model:visible="showRepoManager" @updated="loadData" />
-    <SkillCreateModal v-model:visible="showCreateModal" @created="loadData" />
-    <SkillDetailModal v-model:visible="showDetailModal" :skill="selectedSkill" @updated="loadData" />
+    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
+    <SkillCreateModal v-model:visible="showCreateModal" :platform="currentPlatform" @created="loadData" />
+    <SkillDetailModal v-model:visible="showDetailModal" :skill="selectedSkill" :platform="currentPlatform" @updated="loadData" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getSkills, installSkill, uninstallSkill } from '../api/skills'
-import { listItems, importFromClaude } from '../api/config-registry'
+import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
 import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
 import SkillCreateModal from './SkillCreateModal.vue'
@@ -127,6 +132,7 @@ const props = defineProps({
 
 defineEmits(['back', 'updated'])
 
+const route = useRoute()
 const message = useMessage()
 const loading = ref(false)
 const skills = ref([])
@@ -138,14 +144,30 @@ const showDetailModal = ref(false)
 const selectedSkill = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
+const togglingKeys = ref({})
 const registryMap = ref({})
 const importing = ref(false)
+
+const currentPlatform = computed(() => {
+  const channel = route.meta.channel
+  if (channel === 'codex' || channel === 'opencode') return channel
+  return 'claude'
+})
+
+const currentPlatformLabel = computed(() => {
+  const map = {
+    claude: 'Claude Code',
+    codex: 'Codex CLI',
+    opencode: 'OpenCode'
+  }
+  return map[currentPlatform.value] || 'Claude Code'
+})
 
 const filterOptions = [
   { label: '全部', value: 'all' },
   { label: '已安装', value: 'installed' },
   { label: '未安装', value: 'uninstalled' },
-  { label: '已托管', value: 'managed' }
+  { label: '自定义', value: 'custom' }
 ]
 
 const installedCount = computed(() => skills.value.filter(s => s.installed).length)
@@ -155,7 +177,7 @@ const filteredSkills = computed(() => {
   let result = skills.value
   if (filterStatus.value === 'installed') result = result.filter(s => s.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(s => !s.installed)
-  else if (filterStatus.value === 'managed') result = result.filter(s => registryMap.value[s.directory || s.name])
+  else if (filterStatus.value === 'custom') result = result.filter(s => !s.repoOwner)
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
@@ -167,7 +189,7 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的技能'
   if (filterStatus.value === 'installed') return '暂无已安装的技能'
   if (filterStatus.value === 'uninstalled') return '所有技能都已安装'
-  if (filterStatus.value === 'managed') return '暂无托管的技能'
+  if (filterStatus.value === 'custom') return '暂无自定义技能'
   return '暂无可用技能，请配置仓库源'
 })
 
@@ -175,7 +197,7 @@ async function loadData(force = false) {
   loading.value = true
   try {
     const [skillsRes, registryRes] = await Promise.all([
-      getSkills(force),
+      getSkills(force, currentPlatform.value),
       listItems('skills')
     ])
     if (skillsRes.success) skills.value = skillsRes.skills || []
@@ -213,7 +235,12 @@ async function handleInstall(skill) {
   if (!skill.repoOwner) return message.error('缺少仓库信息')
   installingKeys.value[skill.key] = true
   try {
-    const res = await installSkill(skill.directory, { owner: skill.repoOwner, name: skill.repoName, branch: skill.repoBranch || 'main' })
+    const res = await installSkill(
+      skill.directory,
+      { owner: skill.repoOwner, name: skill.repoName, branch: skill.repoBranch || 'main' },
+      skill.fullDirectory || null,
+      currentPlatform.value
+    )
     if (res.success) { message.success(`技能 "${skill.name}" 安装成功`); await loadData(true) }
   } catch (err) { message.error('安装失败: ' + err.message) }
   finally { delete installingKeys.value[skill.key] }
@@ -222,10 +249,42 @@ async function handleInstall(skill) {
 async function handleUninstall(skill) {
   uninstallingKeys.value[skill.key] = true
   try {
-    const res = await uninstallSkill(skill.directory)
+    const res = await uninstallSkill(skill.directory, currentPlatform.value)
     if (res.success) { message.success(`技能 "${skill.name}" 已卸载`); await loadData(true) }
   } catch (err) { message.error('卸载失败: ' + err.message) }
   finally { delete uninstallingKeys.value[skill.key] }
+}
+
+async function handleToggleEnabled(skill, enabled) {
+  const key = skill.directory || skill.name
+  togglingKeys.value[key] = true
+  try {
+    const res = await toggleEnabled('skills', key, enabled)
+    if (res.success) {
+      message.success(enabled ? '已启用' : '已禁用')
+      await loadData(true)
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[key]
+  }
+}
+
+async function handleTogglePlatform(skill, platform, enabled) {
+  const key = skill.directory || skill.name
+  togglingKeys.value[key] = true
+  try {
+    const res = await togglePlatform('skills', key, platform, enabled)
+    if (res.success) {
+      message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
+      await loadData(true)
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[key]
+  }
 }
 
 function handleCardClick(skill) {
@@ -237,6 +296,10 @@ onMounted(() => loadData())
 
 watch(() => props.drawerVisible, (val) => {
   if (val) loadData()
+})
+
+watch(() => currentPlatform.value, () => {
+  loadData(true)
 })
 </script>
 

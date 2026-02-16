@@ -153,7 +153,7 @@ async function startGeminiProxyServer(options = {}) {
 
       proxyReq.removeHeader('authorization');
       proxyReq.removeHeader('x-goog-api-key');
-      const effectiveKey = getEffectiveApiKey(activeChannel);
+      const effectiveKey = req.effectiveApiKey;
       proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
       if (!proxyReq.getHeader('content-type')) {
         proxyReq.setHeader('content-type', 'application/json');
@@ -179,6 +179,18 @@ async function startGeminiProxyServer(options = {}) {
         res.on('error', release);
 
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
+
+        const effectiveKey = getEffectiveApiKey(channel);
+        if (!effectiveKey) {
+          release();
+          return res.status(401).json({
+            error: {
+              message: 'API key not configured or expired. Please update your channel key.',
+              type: 'authentication_error'
+            }
+          });
+        }
+        req.effectiveApiKey = effectiveKey;
 
         // 从 URL 中提取模型名称并应用重定向
         // URL 格式: /models/gemini-2.5-pro:generateContent 或 /v1/models/gemini-2.5-pro:generateContent

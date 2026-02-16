@@ -123,7 +123,11 @@ import { getPluginRepos, addPluginRepo, removePluginRepo, togglePluginRepo, sync
 import message from '../utils/message'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  platform: {
+    type: String,
+    default: 'claude'
+  }
 })
 
 const emit = defineEmits(['update:visible', 'updated'])
@@ -141,9 +145,17 @@ const newRepo = ref({
   branch: 'main'
 })
 
-const recommendedRepos = [
-  { owner: 'anthropics', name: 'claude-plugins-official', url: 'https://github.com/anthropics/claude-plugins-official', description: '官方插件库', branch: 'main' }
-]
+const recommendedRepos = computed(() => {
+  if (props.platform === 'opencode') {
+    return [
+      { owner: 'awesome-opencode', name: 'awesome-opencode', url: 'https://github.com/awesome-opencode/awesome-opencode', description: 'OpenCode 生态聚合', branch: 'main' },
+      { owner: 'sst', name: 'opencode', url: 'https://github.com/sst/opencode', description: 'OpenCode 官方仓库', branch: 'dev' }
+    ]
+  }
+  return [
+    { owner: 'anthropics', name: 'claude-plugins-official', url: 'https://github.com/anthropics/claude-plugins-official', description: '官方插件库', branch: 'main' }
+  ]
+})
 
 const canAdd = computed(() => {
   const input = newRepo.value.input.trim()
@@ -160,7 +172,7 @@ const canAdd = computed(() => {
 
 async function loadRepos() {
   try {
-    const result = await getPluginRepos()
+    const result = await getPluginRepos(props.platform)
     if (result.success) {
       repos.value = result.repos || []
     }
@@ -172,7 +184,7 @@ async function loadRepos() {
 async function handleSync() {
   syncing.value = true
   try {
-    const result = await syncPluginRepos()
+    const result = await syncPluginRepos(props.platform)
     if (result.success) {
       message.success('仓库同步成功')
       emit('updated')
@@ -214,7 +226,7 @@ async function handleAdd() {
       url,
       branch: newRepo.value.branch || 'main',
       enabled: true
-    })
+    }, props.platform)
 
     if (result.success) {
       repos.value = result.repos
@@ -232,7 +244,7 @@ async function handleAdd() {
 
 async function handleRemove(repo) {
   try {
-    const result = await removePluginRepo(repo.owner, repo.name)
+    const result = await removePluginRepo(repo.owner, repo.name, props.platform)
     if (result.success) {
       repos.value = result.repos
       message.success('仓库已删除')
@@ -245,7 +257,7 @@ async function handleRemove(repo) {
 
 async function handleToggle(repo, enabled) {
   try {
-    const result = await togglePluginRepo(repo.owner, repo.name, enabled)
+    const result = await togglePluginRepo(repo.owner, repo.name, enabled, props.platform)
     if (result.success) {
       repos.value = result.repos
       emit('updated')
@@ -268,7 +280,7 @@ async function quickAdd(rec) {
       url: rec.url,
       branch: rec.branch,
       enabled: true
-    })
+    }, props.platform)
 
     if (result.success) {
       repos.value = result.repos

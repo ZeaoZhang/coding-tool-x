@@ -177,7 +177,7 @@ router.post('/import/:platform', async (req, res) => {
   try {
     const { platform } = req.params;
 
-    if (!['claude', 'codex', 'gemini'].includes(platform)) {
+    if (!['claude', 'codex', 'gemini', 'opencode'].includes(platform)) {
       return res.status(400).json({
         success: false,
         error: `无效的平台: ${platform}`
@@ -283,7 +283,7 @@ router.get('/export', (req, res) => {
   try {
     const format = req.query.format || 'json';
 
-    if (!['json', 'claude', 'codex'].includes(format)) {
+    if (!['json', 'claude', 'codex', 'opencode'].includes(format)) {
       return res.status(400).json({
         success: false,
         error: `无效的导出格式: ${format}`
@@ -312,7 +312,7 @@ router.get('/export/download', (req, res) => {
   try {
     const format = req.query.format || 'json';
 
-    if (!['json', 'claude', 'codex'].includes(format)) {
+    if (!['json', 'claude', 'codex', 'opencode'].includes(format)) {
       return res.status(400).json({
         success: false,
         error: `无效的导出格式: ${format}`

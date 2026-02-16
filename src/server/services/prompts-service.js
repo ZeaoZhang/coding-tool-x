@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 // Prompts 配置文件路径
 const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -16,6 +17,16 @@ const PROMPTS_FILE = path.join(CC_TOOL_DIR, 'prompts.json');
 const CLAUDE_PROMPT_PATH = path.join(os.homedir(), '.claude', 'CLAUDE.md');
 const CODEX_PROMPT_PATH = path.join(os.homedir(), '.codex', 'AGENTS.md');
 const GEMINI_PROMPT_PATH = path.join(os.homedir(), '.gemini', 'GEMINI.md');
+const OPENCODE_PROMPT_PATH = path.join(NATIVE_PATHS.opencode.config, 'AGENTS.md');
+
+function normalizeApps(apps = {}, defaults = { claude: true, codex: true, gemini: true, opencode: false }) {
+  return {
+    claude: apps.claude !== undefined ? !!apps.claude : defaults.claude,
+    codex: apps.codex !== undefined ? !!apps.codex : defaults.codex,
+    gemini: apps.gemini !== undefined ? !!apps.gemini : defaults.gemini,
+    opencode: apps.opencode !== undefined ? !!apps.opencode : defaults.opencode
+  };
+}
 
 // 内置模板（不是"默认"，只是可选模板）
 const BUILTIN_TEMPLATES = [
@@ -38,7 +49,7 @@ const BUILTIN_TEMPLATES = [
 2. 具体问题列表（按严重程度排序）
 3. 改进建议和示例代码
 `,
-    apps: { claude: true, codex: true, gemini: true },
+    apps: { claude: true, codex: true, gemini: true, opencode: true },
     isBuiltin: true
   },
   {
@@ -62,7 +73,7 @@ const BUILTIN_TEMPLATES = [
 - 建议的解决方案
 - 预防措施
 `,
-    apps: { claude: true, codex: true, gemini: true },
+    apps: { claude: true, codex: true, gemini: true, opencode: true },
     isBuiltin: true
   },
   {
@@ -85,7 +96,7 @@ const BUILTIN_TEMPLATES = [
 - 简化条件表达式
 - 消除重复代码
 `,
-    apps: { claude: true, codex: true, gemini: true },
+    apps: { claude: true, codex: true, gemini: true, opencode: true },
     isBuiltin: true
   }
 ];
@@ -198,7 +209,7 @@ function initPromptsData() {
         name: '当前使用',
         description: '从现有配置导入',
         content: existingContent,
-        apps: { claude: true, codex: false, gemini: false },
+        apps: normalizeApps({ claude: true, codex: false, gemini: false, opencode: false }),
         isBuiltin: false,
         isImported: true,
         createdAt: Date.now(),
@@ -210,6 +221,25 @@ function initPromptsData() {
 
     writeJsonFile(PROMPTS_FILE, initialData);
     return initialData;
+  }
+
+  let updated = false;
+  for (const preset of Object.values(data.presets || {})) {
+    const normalizedApps = normalizeApps(preset.apps);
+    if (
+      !preset.apps ||
+      preset.apps.claude !== normalizedApps.claude ||
+      preset.apps.codex !== normalizedApps.codex ||
+      preset.apps.gemini !== normalizedApps.gemini ||
+      preset.apps.opencode !== normalizedApps.opencode
+    ) {
+      preset.apps = normalizedApps;
+      updated = true;
+    }
+  }
+
+  if (updated) {
+    writeJsonFile(PROMPTS_FILE, data);
   }
 
   return data;
@@ -288,9 +318,7 @@ function savePreset(preset) {
   preset.updatedAt = Date.now();
 
   // 确保 apps 字段存在
-  if (!preset.apps) {
-    preset.apps = { claude: true, codex: true, gemini: true };
-  }
+  preset.apps = normalizeApps(preset.apps);
 
   data.presets[preset.id] = preset;
   writeJsonFile(PROMPTS_FILE, data);
@@ -359,7 +387,8 @@ async function deactivatePrompt() {
   const results = {
     claude: deleteFile(CLAUDE_PROMPT_PATH),
     codex: deleteFile(CODEX_PROMPT_PATH),
-    gemini: deleteFile(GEMINI_PROMPT_PATH)
+    gemini: deleteFile(GEMINI_PROMPT_PATH),
+    opencode: deleteFile(OPENCODE_PROMPT_PATH)
   };
 
   console.log('[Prompts] Deactivated and removed prompt files:', results);
@@ -375,7 +404,8 @@ async function deactivatePrompt() {
  * 同步预设到所有已启用的平台
  */
 async function syncPresetToAllPlatforms(preset) {
-  const { apps, content } = preset;
+  const apps = normalizeApps(preset.apps);
+  const { content } = preset;
 
   if (apps.claude) {
     writeTextFile(CLAUDE_PROMPT_PATH, content);
@@ -391,6 +421,11 @@ async function syncPresetToAllPlatforms(preset) {
     writeTextFile(GEMINI_PROMPT_PATH, content);
     console.log('[Prompts] Synced to Gemini:', GEMINI_PROMPT_PATH);
   }
+
+  if (apps.opencode) {
+    writeTextFile(OPENCODE_PROMPT_PATH, content);
+    console.log('[Prompts] Synced to OpenCode:', OPENCODE_PROMPT_PATH);
+  }
 }
 
 /**
@@ -404,6 +439,8 @@ function readPlatformPrompt(platform) {
       return readTextFile(CODEX_PROMPT_PATH, '');
     case 'gemini':
       return readTextFile(GEMINI_PROMPT_PATH, '');
+    case 'opencode':
+      return readTextFile(OPENCODE_PROMPT_PATH, '');
     default:
       throw new Error(`无效的平台: ${platform}`);
   }
@@ -428,6 +465,11 @@ function getPlatformStatus() {
       path: GEMINI_PROMPT_PATH,
       exists: fs.existsSync(GEMINI_PROMPT_PATH),
       content: readTextFile(GEMINI_PROMPT_PATH, '')
+    },
+    opencode: {
+      path: OPENCODE_PROMPT_PATH,
+      exists: fs.existsSync(OPENCODE_PROMPT_PATH),
+      content: readTextFile(OPENCODE_PROMPT_PATH, '')
     }
   };
 }
@@ -450,7 +492,7 @@ function importFromPlatform(platform, presetName) {
     name: presetName || `从 ${platform} 导入`,
     description: `从 ${platform} 导入的提示词`,
     content,
-    apps: { claude: false, codex: false, gemini: false },
+    apps: normalizeApps({ claude: false, codex: false, gemini: false, opencode: false }),
     isBuiltin: false,
     createdAt: Date.now(),
     updatedAt: Date.now()

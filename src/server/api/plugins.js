@@ -8,7 +8,24 @@ const express = require('express');
 const { PluginsService } = require('../services/plugins-service');
 
 const router = express.Router();
-const pluginsService = new PluginsService();
+const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const pluginServices = new Map();
+
+function resolvePlatform(rawPlatform) {
+  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+}
+
+function getPlatform(req) {
+  return resolvePlatform(req.query?.platform || req.body?.platform);
+}
+
+function getPluginsService(req) {
+  const platform = getPlatform(req);
+  if (!pluginServices.has(platform)) {
+    pluginServices.set(platform, new PluginsService(platform));
+  }
+  return { platform, service: pluginServices.get(platform) };
+}
 
 /**
  * 获取插件列表
@@ -16,10 +33,12 @@ const pluginsService = new PluginsService();
  */
 router.get('/', (req, res) => {
   try {
-    const result = pluginsService.listPlugins();
+    const { platform, service } = getPluginsService(req);
+    const result = service.listPlugins();
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -37,10 +56,12 @@ router.get('/', (req, res) => {
  */
 router.get('/market', async (req, res) => {
   try {
-    const plugins = await pluginsService.getMarketPlugins();
+    const { platform, service } = getPluginsService(req);
+    const plugins = await service.getMarketPlugins();
 
     res.json({
       success: true,
+      platform,
       plugins
     });
   } catch (err) {
@@ -55,26 +76,29 @@ router.get('/market', async (req, res) => {
 /**
  * 安装插件
  * POST /api/plugins/install
- * Body: { directory, repo: { owner, name, branch } }
+ * Body: { directory, repo: { owner, name, branch } } or { source }
  */
 router.post('/install', async (req, res) => {
   try {
-    const { directory, repo, gitUrl } = req.body;
+    const { platform, service } = getPluginsService(req);
+    const { directory, repo, gitUrl, source } = req.body;
 
     // Support both new format (directory + repo) and legacy format (gitUrl)
     let installUrl;
-    if (directory && repo) {
+    if (source) {
+      installUrl = source;
+    } else if (directory && repo) {
       installUrl = `https://github.com/${repo.owner}/${repo.name}/tree/${repo.branch || 'main'}/${directory}`;
     } else if (gitUrl) {
       installUrl = gitUrl;
     } else {
       return res.status(400).json({
         success: false,
-        message: 'Either (directory + repo) or gitUrl is required'
+        message: 'Either source, (directory + repo), or gitUrl is required'
       });
     }
 
-    const result = await pluginsService.installPlugin(installUrl);
+    const result = await service.installPlugin(installUrl);
 
     if (!result.success) {
       return res.status(400).json({
@@ -85,6 +109,7 @@ router.post('/install', async (req, res) => {
 
     res.json({
       success: true,
+      platform,
       plugin: result.plugin,
       message: `Plugin "${result.plugin.name}" installed successfully`
     });
@@ -105,9 +130,11 @@ router.post('/install', async (req, res) => {
  */
 router.get('/repos', (req, res) => {
   try {
-    const repos = pluginsService.getRepos();
+    const { platform, service } = getPluginsService(req);
+    const repos = service.getRepos();
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -126,6 +153,7 @@ router.get('/repos', (req, res) => {
  */
 router.post('/repos', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const repo = req.body;
 
     if (!repo || !repo.url) {
@@ -135,10 +163,11 @@ router.post('/repos', (req, res) => {
       });
     }
 
-    const repos = pluginsService.addRepo(repo);
+    const repos = service.addRepo(repo);
 
     res.json({
       success: true,
+      platform,
       repos,
       message: 'Repository added successfully'
     });
@@ -157,12 +186,14 @@ router.post('/repos', (req, res) => {
  */
 router.delete('/repos/:owner/:name', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { owner, name } = req.params;
 
-    const repos = pluginsService.removeRepo(owner, name);
+    const repos = service.removeRepo(owner, name);
 
     res.json({
       success: true,
+      platform,
       repos,
       message: 'Repository removed successfully'
     });
@@ -182,6 +213,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
  */
 router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { owner, name } = req.params;
     const { enabled } = req.body;
 
@@ -192,10 +224,11 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
       });
     }
 
-    const repos = pluginsService.toggleRepo(owner, name, enabled);
+    const repos = service.toggleRepo(owner, name, enabled);
 
     res.json({
       success: true,
+      platform,
       repos,
       message: `Repository ${enabled ? 'enabled' : 'disabled'} successfully`
     });
@@ -214,10 +247,12 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
  */
 router.post('/repos/sync', async (req, res) => {
   try {
-    const result = await pluginsService.syncRepos();
+    const { platform, service } = getPluginsService(req);
+    const result = await service.syncRepos();
 
     res.json({
       success: true,
+      platform,
       ...result,
       message: 'Repositories synced successfully'
     });
@@ -236,10 +271,12 @@ router.post('/repos/sync', async (req, res) => {
  */
 router.post('/sync', async (req, res) => {
   try {
-    const result = await pluginsService.syncPlugins();
+    const { platform, service } = getPluginsService(req);
+    const result = await service.syncPlugins();
 
     res.json({
       success: true,
+      platform,
       ...result,
       message: 'Plugins synced successfully'
     });
@@ -259,6 +296,7 @@ router.post('/sync', async (req, res) => {
  */
 router.get('/:name/readme', async (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { name } = req.params;
     const { repoOwner, repoName, repoBranch, directory, source, repoUrl } = req.query;
 
@@ -272,10 +310,11 @@ router.get('/:name/readme', async (req, res) => {
       repoUrl
     };
 
-    const readme = await pluginsService.getPluginReadme(pluginInfo);
+    const readme = await service.getPluginReadme(pluginInfo);
 
     res.json({
       success: true,
+      platform,
       readme
     });
   } catch (err) {
@@ -294,9 +333,10 @@ router.get('/:name/readme', async (req, res) => {
  */
 router.get('/:name', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { name } = req.params;
 
-    const plugin = pluginsService.getPlugin(name);
+    const plugin = service.getPlugin(name);
 
     if (!plugin) {
       return res.status(404).json({
@@ -307,6 +347,7 @@ router.get('/:name', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       plugin
     });
   } catch (err) {
@@ -324,9 +365,10 @@ router.get('/:name', (req, res) => {
  */
 router.delete('/:name', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { name } = req.params;
 
-    const result = pluginsService.uninstallPlugin(name);
+    const result = service.uninstallPlugin(name);
 
     if (!result.success) {
       return res.status(400).json({
@@ -337,6 +379,7 @@ router.delete('/:name', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       message: result.message
     });
   } catch (err) {
@@ -355,6 +398,7 @@ router.delete('/:name', (req, res) => {
  */
 router.put('/:name/toggle', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { name } = req.params;
     const { enabled } = req.body;
 
@@ -365,10 +409,11 @@ router.put('/:name/toggle', (req, res) => {
       });
     }
 
-    const plugin = pluginsService.togglePlugin(name, enabled);
+    const plugin = service.togglePlugin(name, enabled);
 
     res.json({
       success: true,
+      platform,
       plugin,
       message: `Plugin "${name}" ${enabled ? 'enabled' : 'disabled'} successfully`
     });
@@ -388,6 +433,7 @@ router.put('/:name/toggle', (req, res) => {
  */
 router.put('/:name/config', (req, res) => {
   try {
+    const { platform, service } = getPluginsService(req);
     const { name } = req.params;
     const { config } = req.body;
 
@@ -398,10 +444,11 @@ router.put('/:name/config', (req, res) => {
       });
     }
 
-    const result = pluginsService.updatePluginConfig(name, config);
+    const result = service.updatePluginConfig(name, config);
 
     res.json({
       success: true,
+      platform,
       message: result.message
     });
   } catch (err) {

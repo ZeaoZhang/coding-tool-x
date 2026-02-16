@@ -55,7 +55,7 @@ export async function getAvailableConfigs() {
  * 应用模板到项目目录
  * @param {string} id - 模板 ID
  * @param {string} targetPath - 目标项目路径
- * @param {string|string[]} aiConfigTypes - AI 配置类型(s): 'claude' | 'codex' | 'gemini' 或数组
+ * @param {string|string[]} aiConfigTypes - AI 配置类型(s): 'claude' | 'codex' | 'gemini' | 'opencode' 或数组
  */
 export async function applyTemplate(id, targetPath, aiConfigTypes = ['claude']) {
   // 兼容单值和数组
@@ -68,7 +68,7 @@ export async function applyTemplate(id, targetPath, aiConfigTypes = ['claude']) 
  * 预览模板应用效果
  * @param {string} id - 模板 ID
  * @param {string} targetPath - 目标项目路径
- * @param {string|string[]} aiConfigTypes - AI 配置类型(s): 'claude' | 'codex' | 'gemini' 或数组
+ * @param {string|string[]} aiConfigTypes - AI 配置类型(s): 'claude' | 'codex' | 'gemini' | 'opencode' 或数组
  */
 export async function previewTemplate(id, targetPath, aiConfigTypes = ['claude']) {
   // 兼容单值和数组

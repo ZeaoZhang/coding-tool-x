@@ -545,7 +545,7 @@ const channelConfig = {
   opencode: {
     title: 'OpenCode',
     subtitle: 'AI 代码助手',
-    icon: CodeSlashOutline
+    icon: ExtensionPuzzleOutline
   }
 }
 
@@ -670,9 +670,9 @@ const platformLabel = computed(() => {
 
 // 加载已安装技能
 async function loadInstalledSkills() {
-  if (props.channelType !== 'claude') return
+  if (!['claude', 'codex', 'opencode'].includes(props.channelType)) return
   try {
-    const result = await getSkills()
+    const result = await getSkills(false, props.channelType)
     if (result.success && result.skills) {
       const installed = result.skills.filter(s => s.installed)
       installedSkillsCount.value = installed.length
@@ -719,7 +719,7 @@ async function handleMcpToggle(server, enabled) {
 async function handleUninstallSkill(skill) {
   skill._uninstalling = true
   try {
-    const result = await uninstallSkill(skill.directory)
+    const result = await uninstallSkill(skill.directory, props.channelType)
     if (result.success) {
       message.success(`已卸载 ${skill.name}`)
       // 刷新列表
