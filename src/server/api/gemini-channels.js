@@ -12,9 +12,32 @@ const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
 const { isGeminiInstalled } = require('../services/gemini-config');
-const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
+const { testChannelSpeed, getLatencyLevel } = require('../services/speed-test');
 const { clearGeminiRedirectCache } = require('../gemini-proxy-server');
-const { fetchModelsFromProvider } = require('../services/model-detector');
+const {
+  fetchModelsFromProvider,
+  probeModelAvailability,
+  getModelPriority,
+  detectChannelType
+} = require('../services/model-detector');
+
+function mapDetectedTypeToGatewayType(detectedType, fallback = 'gemini') {
+  if (detectedType === 'claude') return 'claude';
+  if (detectedType === 'codex') return 'codex';
+  if (detectedType === 'gemini') return 'gemini';
+  if (detectedType === 'openai_compatible') return 'codex';
+  return fallback;
+}
+
+function resolveGatewaySourceType(channel) {
+  const normalized = String(channel?.gatewaySourceType || '').trim().toLowerCase();
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'gemini') return 'gemini';
+
+  const detected = detectChannelType(channel || {});
+  return mapDetectedTypeToGatewayType(detected, 'gemini');
+}
 
 module.exports = (config) => {
   /**
@@ -57,11 +80,66 @@ module.exports = (config) => {
         return res.status(404).json({ error: '渠道不存在' });
       }
 
-      // Gemini 渠道尝试作为 OpenAI 兼容获取，失败则回退
-      const result = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const gatewaySourceType = resolveGatewaySourceType(channel);
+      let result;
+
+      if (gatewaySourceType === 'codex') {
+        const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+        const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
+
+        if (listedModels.length > 0) {
+          result = listResult;
+        } else {
+          const probe = await probeModelAvailability(channel, 'codex');
+          const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+
+          if (probedModels.length > 0) {
+            result = {
+              models: probedModels,
+              supported: true,
+              cached: !!probe.cached,
+              fallbackUsed: false,
+              lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+              error: null,
+              errorHint: listResult.error
+                ? '模型列表接口不可用，已自动切换为模型探测结果'
+                : null
+            };
+          } else {
+            const fallbackModels = getModelPriority('codex');
+            result = {
+              models: fallbackModels,
+              supported: false,
+              cached: !!probe.cached || !!listResult.cached,
+              fallbackUsed: true,
+              lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+              error: listResult.error || '无法探测可用模型，已使用默认模型列表',
+              errorHint: listResult.errorHint || '该入口不支持模型列表接口，已回退到默认模型优先级'
+            };
+          }
+        }
+      } else {
+        const probe = await probeModelAvailability(channel, gatewaySourceType);
+        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+        const fallbackModels = getModelPriority(gatewaySourceType);
+        const models = probedModels.length > 0 ? probedModels : fallbackModels;
+
+        result = {
+          models,
+          supported: probedModels.length > 0,
+          cached: !!probe.cached,
+          fallbackUsed: probedModels.length === 0,
+          lastChecked: probe.lastChecked || new Date().toISOString(),
+          error: probedModels.length > 0 ? null : '无法探测可用模型，已使用默认模型列表',
+          errorHint: probedModels.length > 0
+            ? null
+            : '该入口不支持模型列表接口，已回退到默认模型优先级'
+        };
+      }
 
       res.json({
         channelId: id,
+        gatewaySourceType,
         models: result.models,
         supported: result.supported,
         cached: result.cached,
@@ -90,17 +168,38 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
-      const { name, baseUrl, apiKey, model, websiteUrl, enabled, weight, maxConcurrency } = req.body;
+      const {
+        name,
+        baseUrl,
+        apiKey,
+        model,
+        websiteUrl,
+        enabled,
+        weight,
+        maxConcurrency,
+        modelRedirects,
+        speedTestModel,
+        presetId,
+        gatewaySourceType
+      } = req.body;
 
-      if (!name || !baseUrl || !apiKey) {
-        return res.status(400).json({ error: 'Missing required fields: name, baseUrl, apiKey' });
+      if (!name || !baseUrl) {
+        return res.status(400).json({ error: 'Missing required fields: name, baseUrl' });
+      }
+
+      if (!apiKey) {
+        return res.status(400).json({ error: 'Missing required fields: apiKey' });
       }
 
       const channel = createChannel(name, baseUrl, apiKey, model || 'gemini-2.5-pro', {
         websiteUrl,
         enabled,
         weight,
-        maxConcurrency
+        maxConcurrency,
+        modelRedirects: modelRedirects || [],
+        speedTestModel: speedTestModel || null,
+        presetId: presetId || null,
+        gatewaySourceType
       });
       res.json(channel);
       broadcastSchedulerState('gemini', getSchedulerState('gemini'));
@@ -138,14 +237,14 @@ module.exports = (config) => {
    * DELETE /api/gemini/channels/:channelId
    * 删除渠道
    */
-  router.delete('/:channelId', (req, res) => {
+  router.delete('/:channelId', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
       const { channelId } = req.params;
-      const result = deleteChannel(channelId);
+      const result = await deleteChannel(channelId);
       res.json(result);
       broadcastSchedulerState('gemini', getSchedulerState('gemini'));
     } catch (err) {
@@ -215,8 +314,10 @@ module.exports = (config) => {
         return res.status(404).json({ error: '渠道不存在' });
       }
 
-      const result = await testChannelSpeed(channel, timeout, 'gemini');
+      const speedTestType = resolveGatewaySourceType(channel);
+      const result = await testChannelSpeed(channel, timeout, speedTestType);
       result.level = getLatencyLevel(result.latency);
+      result.gatewaySourceType = speedTestType;
 
       res.json(result);
     } catch (error) {
@@ -243,10 +344,22 @@ module.exports = (config) => {
         return res.json({ results: [], message: '没有可测试的渠道' });
       }
 
-      // Gemini 渠道使用 'gemini' 类型
-      const results = await testMultipleChannels(channels, timeout, 'gemini');
-      results.forEach(r => {
-        r.level = getLatencyLevel(r.latency);
+      const results = await Promise.all(
+        channels.map(async channel => {
+          const speedTestType = resolveGatewaySourceType(channel);
+          const result = await testChannelSpeed(channel, timeout, speedTestType);
+          result.level = getLatencyLevel(result.latency);
+          result.gatewaySourceType = speedTestType;
+          return result;
+        })
+      );
+
+      // 成功在前，成功结果按延迟升序
+      results.sort((a, b) => {
+        if (a.success && !b.success) return -1;
+        if (!a.success && b.success) return 1;
+        if (a.success && b.success) return (a.latency || Infinity) - (b.latency || Infinity);
+        return 0;
       });
 
       res.json({

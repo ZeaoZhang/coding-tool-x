@@ -10,10 +10,13 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const crypto = require('crypto');
+const zlib = require('zlib');
+const { loadConfig } = require('../../config/loader');
 
-// Model priority by channel type
+// 内置模型优先级（当配置缺失时兜底）
 const MODEL_PRIORITY = {
   claude: [
+    'claude-opus-4-6',
     'claude-opus-4-5-20251101',
     'claude-sonnet-4-5-20250929',
     'claude-haiku-4-5-20251001',
@@ -40,6 +43,60 @@ const MODEL_PRIORITY = {
 };
 // openai_compatible 复用 codex 的模型列表
 MODEL_PRIORITY.openai_compatible = MODEL_PRIORITY.codex;
+
+function normalizeModelToolType(type) {
+  const value = String(type || '').trim().toLowerCase();
+  if (value === 'openai_compatible') return 'codex';
+  if (value === 'claude' || value === 'codex' || value === 'gemini' || value === 'opencode') {
+    return value;
+  }
+  return '';
+}
+
+/**
+ * 获取模型优先级列表（优先读取用户配置的 defaultModels）
+ * @param {string} channelType - 渠道类型
+ * @param {Object} options - 可选参数
+ * @param {string} options.toolType - 显式工具类型（claude/codex/gemini/opencode）
+ * @returns {string[]}
+ */
+function getModelPriority(channelType, options = {}) {
+  const preferredToolType = normalizeModelToolType(options.toolType);
+  const normalizedChannelType = normalizeModelToolType(channelType);
+  const candidateTypes = [];
+
+  if (preferredToolType) {
+    candidateTypes.push(preferredToolType);
+  }
+  if (normalizedChannelType && !candidateTypes.includes(normalizedChannelType)) {
+    candidateTypes.push(normalizedChannelType);
+  }
+  if (String(channelType || '').trim().toLowerCase() === 'openai_compatible' && !candidateTypes.includes('openai_compatible')) {
+    candidateTypes.push('openai_compatible');
+  }
+
+  try {
+    const config = loadConfig();
+    const defaultModels = config?.defaultModels || {};
+    for (const toolType of candidateTypes) {
+      const models = defaultModels[toolType];
+      if (Array.isArray(models) && models.length > 0) {
+        return [...models];
+      }
+    }
+  } catch (error) {
+    console.warn(`[ModelDetector] Failed to load default models config: ${error.message}`);
+  }
+
+  for (const toolType of candidateTypes) {
+    const models = MODEL_PRIORITY[toolType];
+    if (Array.isArray(models) && models.length > 0) {
+      return [...models];
+    }
+  }
+
+  return [];
+}
 
 const PROVIDER_CAPABILITIES = {
   claude: {
@@ -205,6 +262,30 @@ function buildRequestHeaders(channelType, channel) {
   return headers;
 }
 
+function createDecodedStream(res) {
+  const encoding = String(res.headers['content-encoding'] || '').toLowerCase();
+  if (encoding.includes('gzip')) return res.pipe(zlib.createGunzip());
+  if (encoding.includes('deflate')) return res.pipe(zlib.createInflate());
+  if (encoding.includes('br') && typeof zlib.createBrotliDecompress === 'function') {
+    return res.pipe(zlib.createBrotliDecompress());
+  }
+  return res;
+}
+
+function collectResponseBody(res) {
+  return new Promise((resolve, reject) => {
+    const stream = createDecodedStream(res);
+    let data = '';
+
+    stream.on('data', chunk => {
+      data += chunk.toString('utf8');
+    });
+    stream.on('end', () => resolve(data));
+    stream.on('error', reject);
+    res.on('error', reject);
+  });
+}
+
 /**
  * Get cache file path
  */
@@ -338,34 +419,74 @@ async function testModelAvailability(channel, channelType, model) {
       };
 
       const req = httpModule.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          // Success: 200-299 status codes
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(true);
-          } else if (res.statusCode === 400 || res.statusCode === 404) {
-            // 400/404 often means model not found or invalid
-            try {
-              const response = JSON.parse(data);
-              const errorMsg = (response.error?.message || '').toLowerCase();
-
-              // Check for model-specific errors
-              if (errorMsg.includes('model') &&
-                  (errorMsg.includes('not found') || errorMsg.includes('invalid') || errorMsg.includes('does not exist'))) {
-                resolve(false);
-              } else {
-                // Other 400 errors might be auth/validation issues, not model issues
-                resolve(true);
-              }
-            } catch {
-              resolve(false);
+        collectResponseBody(res)
+          .then((data) => {
+            // Success: 200-299 status codes
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              return resolve(true);
             }
-          } else {
+
+            if (res.statusCode === 400 || res.statusCode === 404) {
+              const extractErrorMessage = () => {
+                const fallback = String(data || '');
+                try {
+                  const response = JSON.parse(data || '{}');
+                  if (typeof response === 'string') return response;
+                  if (typeof response?.error?.message === 'string') return response.error.message;
+                  if (typeof response?.error === 'string') return response.error;
+                  if (typeof response?.message === 'string') return response.message;
+                  if (typeof response?.detail === 'string') return response.detail;
+                  return fallback;
+                } catch {
+                  return fallback;
+                }
+              };
+
+              const errorMsg = extractErrorMessage().toLowerCase();
+              const modelLower = String(model || '').toLowerCase();
+              const hasModelContext = errorMsg.includes('model')
+                || errorMsg.includes('模型')
+                || (modelLower && errorMsg.includes(modelLower));
+              const modelUnavailableHints = [
+                'not found',
+                'does not exist',
+                'invalid model',
+                'unsupported model',
+                'not supported',
+                'model unavailable',
+                'deprecated',
+                'decommission',
+                'retired',
+                'offline',
+                'unknown model',
+                '下线',
+                '已下线',
+                '已停用',
+                '已废弃',
+                '已淘汰',
+                '模型不存在',
+                '无效模型',
+                '不支持',
+                '不可用',
+                '请切换'
+              ];
+
+              if (res.statusCode === 404) {
+                return resolve(false);
+              }
+
+              if (hasModelContext && modelUnavailableHints.some(hint => errorMsg.includes(hint))) {
+                return resolve(false);
+              }
+
+              // 其他 400 错误大多是认证或参数问题，不能据此判定模型不可用
+              return resolve(true);
+            }
+
             // Other errors (401, 403, 500, etc.) are inconclusive
-            resolve(false);
-          }
-        });
+            return resolve(false);
+          })
+          .catch(() => resolve(false));
       });
 
       req.on('error', () => resolve(false));
@@ -392,12 +513,14 @@ async function testModelAvailability(channel, channelType, model) {
  * @param {string} channelType - 'claude' | 'codex' | 'gemini'
  * @returns {Promise<Object>} { availableModels: string[], preferredTestModel: string|null, cached: boolean }
  */
-async function probeModelAvailability(channel, channelType) {
+async function probeModelAvailability(channel, channelType, options = {}) {
+  const forceRefresh = !!options.forceRefresh;
+  const toolType = options.toolType;
   const cache = loadModelCache();
   const cacheKey = channel.id;
 
   // Return cached result if valid
-  if (cache[cacheKey] && isCacheValid(cache[cacheKey])) {
+  if (!forceRefresh && cache[cacheKey] && isCacheValid(cache[cacheKey])) {
     return {
       availableModels: cache[cacheKey].availableModels || [],
       preferredTestModel: cache[cacheKey].preferredTestModel || null,
@@ -407,7 +530,7 @@ async function probeModelAvailability(channel, channelType) {
   }
 
   // Get model priority list for this channel type
-  const modelsToTest = MODEL_PRIORITY[channelType] || [];
+  const modelsToTest = getModelPriority(channelType, { toolType });
   if (modelsToTest.length === 0) {
     console.warn(`[ModelDetector] No models defined for channel type: ${channelType}`);
     return {
@@ -505,9 +628,6 @@ function getCachedModelInfo(channelId) {
  * @returns {Promise<Object>} { models: string[], supported: boolean, cached: boolean, error: string|null, fallbackUsed: boolean }
  */
 async function fetchModelsFromProvider(channel, channelType) {
-  // PRESERVE original channel type for fallback model selection
-  const originalChannelType = channelType;
-
   // Only auto-detect if channelType is NOT specified at all
   // DO NOT auto-detect when channelType is 'claude' - respect the caller's intent
   if (!channelType) {
@@ -559,8 +679,10 @@ async function fetchModelsFromProvider(channel, channelType) {
       const headers = buildRequestHeaders(channelType, channel);
 
       // Add authentication header
-      if (capability.authHeader && channel.apiKey) {
-        headers['Authorization'] = `Bearer ${channel.apiKey}`;
+      if (capability.authHeader) {
+        if (channel.apiKey) {
+          headers['Authorization'] = `Bearer ${channel.apiKey}`;
+        }
       }
 
       const options = {
@@ -573,72 +695,67 @@ async function fetchModelsFromProvider(channel, channelType) {
       };
 
       const req = httpModule.request(options, (res) => {
-        let data = '';
-        res.on('data', chunk => { data += chunk; });
-        res.on('end', () => {
-          // Handle different status codes
-          if (res.statusCode === 200) {
-            try {
-              const response = JSON.parse(data);
+        collectResponseBody(res)
+          .then((data) => {
+            // Handle different status codes
+            if (res.statusCode === 200) {
+              try {
+                const response = JSON.parse(data);
 
-              // Parse OpenAI-compatible format: { data: [{ id: "model-name", ... }] }
-              let models = [];
-              if (response.data && Array.isArray(response.data)) {
-                models = response.data
-                  .map(item => item.id || item.model)
-                  .filter(Boolean);
+                // Parse OpenAI-compatible format: { data: [{ id: "model-name", ... }] }
+                let models = [];
+                if (response.data && Array.isArray(response.data)) {
+                  models = response.data
+                    .map(item => item.id || item.model)
+                    .filter(Boolean);
+                }
+
+                // Update cache with fetched models
+                const cacheEntry = {
+                  lastChecked: new Date().toISOString(),
+                  fetchedModels: models,
+                  availableModels: cache[cacheKey]?.availableModels || [],
+                  preferredTestModel: cache[cacheKey]?.preferredTestModel || null
+                };
+
+                cache[cacheKey] = cacheEntry;
+                saveModelCache(cache);
+
+                console.log(`[ModelDetector] Fetched ${models.length} models from ${channel.name}`);
+
+                resolve({
+                  models,
+                  supported: true,
+                  cached: false,
+                  fallbackUsed: false,
+                  error: null,
+                  lastChecked: cacheEntry.lastChecked
+                });
+              } catch (parseError) {
+                console.error(`[ModelDetector] Failed to parse models response: ${parseError.message}`);
+                resolve({
+                  models: [],
+                  supported: true,
+                  cached: false,
+                  fallbackUsed: true,
+                  error: `Parse error: ${parseError.message}`
+                });
               }
-
-              // Update cache with fetched models
-              const cacheEntry = {
-                lastChecked: new Date().toISOString(),
-                fetchedModels: models,
-                availableModels: cache[cacheKey]?.availableModels || [],
-                preferredTestModel: cache[cacheKey]?.preferredTestModel || null
-              };
-
-              cache[cacheKey] = cacheEntry;
-              saveModelCache(cache);
-
-              console.log(`[ModelDetector] Fetched ${models.length} models from ${channel.name}`);
-
-              resolve({
-                models,
-                supported: true,
-                cached: false,
-                fallbackUsed: false,
-                error: null,
-                lastChecked: cacheEntry.lastChecked
-              });
-            } catch (parseError) {
-              console.error(`[ModelDetector] Failed to parse models response: ${parseError.message}`);
-              resolve({
-                models: [],
-                supported: true,
-                cached: false,
-                fallbackUsed: true,
-                error: `Parse error: ${parseError.message}`
-              });
-            }
-          } else if (res.statusCode === 401 || res.statusCode === 403) {
-            // Check if it's a Cloudflare protection issue
-            const bodyLower = data.toLowerCase();
-            const isCloudflare = bodyLower.includes('cloudflare') || bodyLower.includes('challenge') || bodyLower.includes('cf-ray');
+            } else if (res.statusCode === 401 || res.statusCode === 403) {
+              // Check if it's a Cloudflare protection issue
+              const bodyLower = data.toLowerCase();
+              const isCloudflare = bodyLower.includes('cloudflare') || bodyLower.includes('challenge') || bodyLower.includes('cf-ray');
 
             let errorMessage;
             let errorHint;
 
             if (isCloudflare) {
-              // Use originalChannelType for fallback to ensure correct models
-              // This prevents Claude channels from getting Codex models when using third-party proxies
-              const fallbackModels = MODEL_PRIORITY[originalChannelType || channelType] || MODEL_PRIORITY.claude;
-              const fallbackLabel = fallbackModels[0] || 'unknown';
-              errorMessage = 'Cloudflare 防护拦截，已使用默认模型列表';
-              errorHint = `该 API 端点受 Cloudflare 保护，已自动使用默认模型列表`;
-              console.warn(`[ModelDetector] Cloudflare protection detected for ${channel.name}, using default models for ${originalChannelType || channelType}`);
+              errorMessage = 'Cloudflare 防护拦截，无法自动获取模型列表';
+              errorHint = '该 API 端点受 Cloudflare 保护，请手动填写模型名称';
+              console.warn(`[ModelDetector] Cloudflare protection detected for ${channel.name}, no fallback models injected`);
               resolve({
-                models: fallbackModels,
-                supported: true,
+                models: [],
+                supported: false,
                 cached: false,
                 fallbackUsed: true,
                 error: errorMessage,
@@ -672,41 +789,51 @@ async function fetchModelsFromProvider(channel, channelType) {
                 statusCode: res.statusCode
               });
             }
-          } else if (res.statusCode === 404) {
-            console.warn(`[ModelDetector] Model list endpoint not found for ${channel.name}`);
-            resolve({
-              models: [],
-              supported: false,
-              cached: false,
-              fallbackUsed: true,
-              error: '模型列表端点不存在',
-              errorHint: '该 API 可能不支持 /v1/models 接口，请手动输入模型名称',
-              statusCode: 404
-            });
-          } else if (res.statusCode === 429) {
-            console.warn(`[ModelDetector] Rate limited for ${channel.name}`);
+            } else if (res.statusCode === 404) {
+              console.warn(`[ModelDetector] Model list endpoint not found for ${channel.name}`);
+              resolve({
+                models: [],
+                supported: false,
+                cached: false,
+                fallbackUsed: true,
+                error: '模型列表端点不存在',
+                errorHint: '该 API 可能不支持 /v1/models 接口，请手动输入模型名称',
+                statusCode: 404
+              });
+            } else if (res.statusCode === 429) {
+              console.warn(`[ModelDetector] Rate limited for ${channel.name}`);
+              resolve({
+                models: [],
+                supported: true,
+                cached: false,
+                fallbackUsed: true,
+                error: '请求频率限制',
+                errorHint: '请稍后再试或联系服务提供商提高限额',
+                statusCode: 429
+              });
+            } else {
+              console.error(`[ModelDetector] Unexpected status ${res.statusCode} for ${channel.name}`);
+              resolve({
+                models: [],
+                supported: true,
+                cached: false,
+                fallbackUsed: true,
+                error: `HTTP 错误 ${res.statusCode}`,
+                errorHint: '请检查 API 端点配置或联系服务提供商',
+                statusCode: res.statusCode
+              });
+            }
+          })
+          .catch((error) => {
+            console.error(`[ModelDetector] Failed to read models response: ${error.message}`);
             resolve({
               models: [],
               supported: true,
               cached: false,
               fallbackUsed: true,
-              error: '请求频率限制',
-              errorHint: '请稍后再试或联系服务提供商提高限额',
-              statusCode: 429
+              error: `Read error: ${error.message}`
             });
-          } else {
-            console.error(`[ModelDetector] Unexpected status ${res.statusCode} for ${channel.name}`);
-            resolve({
-              models: [],
-              supported: true,
-              cached: false,
-              fallbackUsed: true,
-              error: `HTTP 错误 ${res.statusCode}`,
-              errorHint: '请检查 API 端点配置或联系服务提供商',
-              statusCode: res.statusCode
-            });
-          }
-        });
+          });
       });
 
       req.on('error', (error) => {
@@ -750,6 +877,7 @@ async function fetchModelsFromProvider(channel, channelType) {
 module.exports = {
   probeModelAvailability,
   testModelAvailability,
+  getModelPriority,
   normalizeModelName,
   clearCache,
   getCachedModelInfo,

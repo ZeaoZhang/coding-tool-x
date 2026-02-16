@@ -40,7 +40,7 @@
           <span class="stats-text">
             共 {{ serverCount }} 个服务器
             <template v-if="serverCount > 0">
-              · Claude: {{ stats.claude }} · Codex: {{ stats.codex }} · Gemini: {{ stats.gemini }}
+              · Claude: {{ stats.claude }} · Codex: {{ stats.codex }} · Gemini: {{ stats.gemini }} · OpenCode: {{ stats.opencode }}
             </template>
           </span>
           <n-dropdown trigger="click" :options="syncOptions" @select="handleSync">
@@ -164,6 +164,14 @@
                       @update:value="(v) => toggleApp(server.id, 'gemini', v)"
                     />
                     <span class="app-label">Gemini</span>
+                  </label>
+                  <label class="app-toggle" @click.stop>
+                    <n-switch
+                      size="small"
+                      :value="server.apps?.opencode"
+                      @update:value="(v) => toggleApp(server.id, 'opencode', v)"
+                    />
+                    <span class="app-label">OpenCode</span>
                   </label>
                 </div>
               </div>
@@ -398,7 +406,8 @@ const stats = computed(() => {
   return {
     claude: list.filter(s => s.apps?.claude).length,
     codex: list.filter(s => s.apps?.codex).length,
-    gemini: list.filter(s => s.apps?.gemini).length
+    gemini: list.filter(s => s.apps?.gemini).length,
+    opencode: list.filter(s => s.apps?.opencode).length
   }
 })
 
@@ -415,13 +424,15 @@ const selectAll = computed({
 const syncOptions = [
   { label: '同步 Claude 已有配置', key: 'claude' },
   { label: '同步 Codex 已有配置', key: 'codex' },
-  { label: '同步 Gemini 已有配置', key: 'gemini' }
+  { label: '同步 Gemini 已有配置', key: 'gemini' },
+  { label: '同步 OpenCode 已有配置', key: 'opencode' }
 ]
 
 const exportOptions = [
   { label: '导出为 JSON (通用)', key: 'json' },
   { label: '导出为 Claude 格式', key: 'claude' },
-  { label: '导出为 Codex 格式 (TOML)', key: 'codex' }
+  { label: '导出为 Codex 格式 (TOML)', key: 'codex' },
+  { label: '导出为 OpenCode 格式', key: 'opencode' }
 ]
 
 // 获取状态文本
@@ -712,7 +723,7 @@ function handleParse() {
       const server = {
         id: id,
         name: id,
-        apps: { claude: true, codex: false, gemini: false },
+        apps: { claude: true, codex: false, gemini: false, opencode: false },
         server: {
           type: config.type || 'stdio'
         }

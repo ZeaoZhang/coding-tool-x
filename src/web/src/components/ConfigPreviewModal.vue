@@ -165,7 +165,8 @@ const emit = defineEmits(['update:show', 'apply'])
 const AI_CONFIG_INFO = {
   claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
-  gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
+  gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
+  opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
 }
 
 // 检查是否有新的 aiConfigs 结构

@@ -8,27 +8,85 @@
     "webUI": 19999,
     "proxy": 20088,
     "codexProxy": 20089,
-    "geminiProxy": 20090
+    "geminiProxy": 20090,
+    "opencodeProxy": 20091
   },
   "maxLogs": 100,
   "statsInterval": 30,
+  "defaultModels": {
+    "claude": [
+      "claude-opus-4-6",
+      "claude-opus-4-5-20251101",
+      "claude-sonnet-4-5-20250929",
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-4-20250514",
+      "claude-opus-4-20250514"
+    ],
+    "codex": [
+      "gpt-5.2-codex",
+      "gpt-5.1-codex-max",
+      "gpt-5.1-codex-mini",
+      "gpt-5.1-codex",
+      "gpt-5-codex",
+      "gpt-5.2",
+      "gpt-5.1",
+      "gpt-5"
+    ],
+    "gemini": [
+      "gemini-3-pro",
+      "gemini-3-flash",
+      "gemini-3-deep-think",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash"
+    ],
+    "opencode": [
+      "gpt-4o",
+      "gpt-4o-mini",
+      "claude-3-5-sonnet",
+      "claude-3-opus",
+      "deepseek-chat"
+    ]
+  },
   "pricing": {
     "claude": {
       "mode": "auto",
       "input": 3,
       "output": 15,
       "cacheCreation": 3.75,
-      "cacheRead": 0.3
+      "cacheRead": 0.3,
+      "models": {}
     },
     "codex": {
       "mode": "auto",
       "input": 2.5,
-      "output": 10
+      "output": 10,
+      "models": {
+        "gpt-5-codex": {
+          "mode": "auto"
+        },
+        "gpt-4o-mini": {
+          "mode": "auto"
+        }
+      }
     },
     "gemini": {
       "mode": "auto",
       "input": 1.25,
-      "output": 5
+      "output": 5,
+      "models": {
+        "gemini-2.5-pro": {
+          "mode": "auto"
+        },
+        "gemini-2.5-flash": {
+          "mode": "auto"
+        }
+      }
+    },
+    "opencode": {
+      "mode": "auto",
+      "input": 2.5,
+      "output": 10,
+      "models": {}
     }
   },
   "enableSessionBinding": true

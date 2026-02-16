@@ -186,7 +186,8 @@ const saving = ref(false)
 const AI_CONFIG_LIST = [
   { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
   { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
-  { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' }
+  { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
+  { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
 ]
 
 const isEdit = computed(() => !!props.template?.id && !props.template?.isBuiltin)
@@ -201,7 +202,8 @@ function getDefaultFormData() {
     aiConfigs: {
       claude: { enabled: false, content: '' },
       codex: { enabled: false, content: '' },
-      gemini: { enabled: false, content: '' }
+      gemini: { enabled: false, content: '' },
+      opencode: { enabled: false, content: '' }
     },
     // 兼容旧字段
     claudeMd: { enabled: false, content: '' },
@@ -349,12 +351,13 @@ watch(() => props.show, (newVal) => {
       let aiConfigs = {
         claude: { enabled: false, content: '' },
         codex: { enabled: false, content: '' },
-        gemini: { enabled: false, content: '' }
+        gemini: { enabled: false, content: '' },
+        opencode: { enabled: false, content: '' }
       }
 
       // 优先使用新的 aiConfigs
       if (props.template.aiConfigs) {
-        for (const key of ['claude', 'codex', 'gemini']) {
+        for (const key of ['claude', 'codex', 'gemini', 'opencode']) {
           if (props.template.aiConfigs[key]) {
             aiConfigs[key] = { ...props.template.aiConfigs[key] }
           }

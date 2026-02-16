@@ -10,13 +10,13 @@
           size="small"
           @update:value="handleProxyToggle"
         />
-        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
+        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
           {{ installedSkillsCount }} 技能
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <!-- Skills: Claude 和 Codex 都支持 -->
-        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex'">
+        <!-- Skills: Claude / Codex / OpenCode 支持 -->
+        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
               <template #icon><n-icon :size="18"><ExtensionPuzzleOutline /></n-icon></template>
@@ -24,8 +24,8 @@
           </template>
           Skills 技能
         </n-tooltip>
-        <!-- Claude Code 特有功能 -->
-        <template v-if="currentChannel === 'claude'">
+        <!-- Claude / OpenCode 共享功能 -->
+        <template v-if="currentChannel === 'claude' || currentChannel === 'opencode'">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowPlugins">
@@ -50,6 +50,9 @@
             </template>
             Agents 代理
           </n-tooltip>
+        </template>
+        <!-- Claude Code 特有功能 -->
+        <template v-if="currentChannel === 'claude'">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowRules">
@@ -61,6 +64,14 @@
         </template>
         <div class="toolbar-divider" />
         <!-- 通用功能 -->
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button text size="small" class="toolbar-btn" @click="handleShowGatewayConvert">
+              <template #icon><n-icon :size="18"><GitCompareOutline /></n-icon></template>
+            </n-button>
+          </template>
+          网关转换
+        </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowRecent">
@@ -112,7 +123,8 @@ import {
   TerminalOutline,
   PersonOutline,
   BookOutline,
-  CubeOutline
+  CubeOutline,
+  GitCompareOutline
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
@@ -156,8 +168,12 @@ const installedSkillsCount = ref(0)
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
+  if (!['claude', 'codex', 'opencode'].includes(currentChannel.value)) {
+    installedSkillsCount.value = 0
+    return
+  }
   try {
-    const result = await getSkills()
+    const result = await getSkills(false, currentChannel.value)
     if (result.success && result.skills) {
       installedSkillsCount.value = result.skills.filter(s => s.installed).length
     }
@@ -225,6 +241,10 @@ function handleShowPlugins() {
   window.dispatchEvent(new CustomEvent('open-plugins-drawer'))
 }
 
+function handleShowGatewayConvert() {
+  window.dispatchEvent(new CustomEvent('open-gateway-convert-drawer'))
+}
+
 onMounted(() => {
   loadInstalledSkillsCount()
 })
@@ -234,6 +254,7 @@ function refreshChannel(channel) {
 }
 
 watch(() => currentChannel.value, refreshChannel)
+watch(() => currentChannel.value, loadInstalledSkillsCount)
 </script>
 
 <style scoped>

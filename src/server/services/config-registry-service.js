@@ -27,6 +27,37 @@ const CLAUDE_DIRS = {
 
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'rules', 'plugins'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+
+const PLATFORM_SUPPORT = {
+  skills: { claude: true, codex: true, opencode: true },
+  commands: { claude: true, codex: true, opencode: true },
+  agents: { claude: true, codex: false, opencode: true },
+  rules: { claude: true, codex: false, opencode: false },
+  plugins: { claude: true, codex: false, opencode: true }
+};
+
+function normalizePlatforms(type, platforms = {}) {
+  const support = PLATFORM_SUPPORT[type] || {};
+  const normalized = {
+    claude: !!platforms.claude,
+    codex: !!platforms.codex,
+    opencode: !!platforms.opencode
+  };
+
+  for (const platform of SUPPORTED_PLATFORMS) {
+    if (support[platform] === false) {
+      normalized[platform] = false;
+    }
+  }
+
+  // Default to Claude enabled when no platform explicitly configured
+  if (!platforms || Object.keys(platforms).length === 0) {
+    normalized.claude = true;
+  }
+
+  return normalized;
+}
 
 // Default registry structure
 const DEFAULT_REGISTRY = {
@@ -86,6 +117,13 @@ class ConfigRegistryService {
         for (const type of CONFIG_TYPES) {
           if (!data[type]) {
             data[type] = {};
+          }
+
+          for (const [name, item] of Object.entries(data[type])) {
+            if (!item || typeof item !== 'object') {
+              continue;
+            }
+            data[type][name].platforms = normalizePlatforms(type, item.platforms);
           }
         }
 
@@ -147,12 +185,12 @@ class ConfigRegistryService {
 
     const existing = registry[type][name];
     const entry = {
+      ...data,
       enabled: data.enabled !== undefined ? data.enabled : true,
-      platforms: data.platforms || { claude: true, codex: false },
+      platforms: normalizePlatforms(type, data.platforms),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
-      source: data.source || 'local',
-      ...data
+      source: data.source || 'local'
     };
 
     registry[type][name] = entry;
@@ -244,7 +282,7 @@ class ConfigRegistryService {
    * Toggle platform support for an item
    * @param {string} type - Config type
    * @param {string} name - Item name/key
-   * @param {string} platform - Platform name (claude, codex)
+   * @param {string} platform - Platform name (claude, codex, opencode)
    * @param {boolean} enabled - New platform status
    * @returns {Object} Updated entry
    */
@@ -253,8 +291,12 @@ class ConfigRegistryService {
       throw new Error(`Invalid config type: ${type}`);
     }
 
-    if (!['claude', 'codex'].includes(platform)) {
+    if (!SUPPORTED_PLATFORMS.includes(platform)) {
       throw new Error(`Invalid platform: ${platform}`);
+    }
+
+    if (PLATFORM_SUPPORT[type] && PLATFORM_SUPPORT[type][platform] === false) {
+      throw new Error(`Platform "${platform}" is not supported for ${type}`);
     }
 
     const registry = this._readRegistry();
@@ -265,7 +307,7 @@ class ConfigRegistryService {
     }
 
     if (!entry.platforms) {
-      entry.platforms = { claude: true, codex: false };
+      entry.platforms = normalizePlatforms(type, {});
     }
 
     entry.platforms[platform] = enabled;
@@ -353,7 +395,7 @@ class ConfigRegistryService {
           // Add to registry
           registry.skills[name] = {
             enabled: true,
-            platforms: { claude: true, codex: false },
+            platforms: normalizePlatforms('skills', { claude: true }),
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             source: 'imported'
@@ -409,7 +451,7 @@ class ConfigRegistryService {
           // Add to registry
           registry.plugins[name] = {
             enabled: true,
-            platforms: { claude: true, codex: false },
+            platforms: normalizePlatforms('plugins', { claude: true }),
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             source: 'imported'
@@ -473,7 +515,7 @@ class ConfigRegistryService {
             // Add to registry
             registry[type][name] = {
               enabled: true,
-              platforms: { claude: true, codex: false },
+              platforms: normalizePlatforms(type, { claude: true }),
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               source: 'imported'
@@ -523,7 +565,8 @@ class ConfigRegistryService {
       byType: {},
       byPlatform: {
         claude: 0,
-        codex: 0
+        codex: 0,
+        opencode: 0
       }
     };
 
@@ -534,13 +577,15 @@ class ConfigRegistryService {
         enabled: items.filter(i => i.enabled).length,
         disabled: items.filter(i => !i.enabled).length,
         claude: items.filter(i => i.platforms?.claude).length,
-        codex: items.filter(i => i.platforms?.codex).length
+        codex: items.filter(i => i.platforms?.codex).length,
+        opencode: items.filter(i => i.platforms?.opencode).length
       };
 
       stats.byType[type] = typeStats;
       stats.total += typeStats.total;
       stats.byPlatform.claude += typeStats.claude;
       stats.byPlatform.codex += typeStats.codex;
+      stats.byPlatform.opencode += typeStats.opencode;
     }
 
     return stats;
@@ -660,7 +705,7 @@ class ConfigRegistryService {
         if (!registry.skills[name]) {
           registry.skills[name] = {
             enabled: true,
-            platforms: { claude: true, codex: false },
+            platforms: normalizePlatforms('skills', { claude: true }),
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             source: 'synced'
@@ -697,7 +742,7 @@ class ConfigRegistryService {
         if (!registry.plugins[name]) {
           registry.plugins[name] = {
             enabled: true,
-            platforms: { claude: true, codex: false },
+            platforms: normalizePlatforms('plugins', { claude: true }),
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             source: 'synced'
@@ -739,7 +784,7 @@ class ConfigRegistryService {
           if (!registry[type][name]) {
             registry[type][name] = {
               enabled: true,
-              platforms: { claude: true, codex: false },
+              platforms: normalizePlatforms(type, { claude: true }),
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
               source: 'synced'
@@ -757,6 +802,7 @@ class ConfigRegistryService {
 module.exports = {
   ConfigRegistryService,
   CONFIG_TYPES,
+  SUPPORTED_PLATFORMS,
   CONFIGS_DIR,
   REGISTRY_FILE
 };

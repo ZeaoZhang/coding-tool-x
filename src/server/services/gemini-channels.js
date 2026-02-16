@@ -16,6 +16,14 @@ const crypto = require('crypto');
  * - 使用 weight 和 maxConcurrency 控制负载均衡
  */
 
+function normalizeGatewaySourceType(value, fallback = 'gemini') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'gemini') return 'gemini';
+  return fallback;
+}
+
 // 获取 Gemini 配置目录
 function getGeminiDir() {
   return path.join(os.homedir(), '.gemini');
@@ -66,15 +74,17 @@ function loadChannels() {
     const data = JSON.parse(content);
     // 确保渠道有 enabled 字段（兼容旧数据）
     if (data.channels) {
-      data.channels = data.channels.map(ch => ({
-        ...ch,
-        enabled: ch.enabled !== false, // 默认启用
-        weight: ch.weight || 1,
-        maxConcurrency: ch.maxConcurrency || null,
-        modelRedirects: ch.modelRedirects || [],
-        speedTestModel: ch.speedTestModel || null,
-        authType: ch.authType || 'apiKey'
-      }));
+      data.channels = data.channels.map(ch => {
+        return {
+          ...ch,
+          enabled: ch.enabled !== false, // 默认启用
+          weight: ch.weight || 1,
+          maxConcurrency: ch.maxConcurrency || null,
+          modelRedirects: ch.modelRedirects || [],
+          speedTestModel: ch.speedTestModel || null,
+          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'gemini')
+        };
+      });
     }
     return data;
   } catch (err) {
@@ -119,7 +129,7 @@ function initializeFromEnv() {
         enabled: true,
         weight: 1,
         maxConcurrency: null,
-        authType: 'apiKey',
+        gatewaySourceType: 'gemini',
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -177,9 +187,7 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     maxConcurrency: extraConfig.maxConcurrency || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
-    authType: extraConfig.authType || 'apiKey',
-    oauthProvider: extraConfig.oauthProvider || null,
-    oauthTokenId: extraConfig.oauthTokenId || null,
+    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'gemini'),
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -212,15 +220,17 @@ function updateChannel(channelId, updates) {
     }
   }
 
-  data.channels[index] = {
-    ...oldChannel,
-    ...updates,
+  const merged = { ...oldChannel, ...updates };
+  const nextChannel = {
+    ...merged,
     id: channelId, // 保持 ID 不变
     createdAt: oldChannel.createdAt, // 保持创建时间
     modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
     speedTestModel: updates.speedTestModel !== undefined ? updates.speedTestModel : (oldChannel.speedTestModel || null),
+    gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
     updatedAt: Date.now()
   };
+  data.channels[index] = nextChannel;
 
   // Get proxy status
   const { getGeminiProxyStatus } = require('../gemini-proxy-server');
@@ -284,8 +294,9 @@ function applyChannelToSettings(channelId, channels = null) {
   const envPath = path.join(geminiDir, '.env');
 
   // 构建 .env 内容
+  const effectiveApiKey = getEffectiveApiKey(channel) || '';
   const envContent = `GOOGLE_GEMINI_BASE_URL=${channel.baseUrl}
-GEMINI_API_KEY=${channel.apiKey}
+GEMINI_API_KEY=${effectiveApiKey}
 GEMINI_MODEL=${channel.model}
 `;
 
@@ -320,7 +331,7 @@ GEMINI_MODEL=${channel.model}
 }
 
 // 删除渠道
-function deleteChannel(channelId) {
+async function deleteChannel(channelId) {
   const data = loadChannels();
 
   const index = data.channels.findIndex(c => c.id === channelId);
@@ -359,8 +370,9 @@ function writeGeminiConfigForMultiChannel(allChannels) {
   }
 
   // 构建 .env 内容
+  const effectiveApiKey = getEffectiveApiKey(defaultChannel) || '';
   const envContent = `GOOGLE_GEMINI_BASE_URL=${defaultChannel.baseUrl}
-GEMINI_API_KEY=${defaultChannel.apiKey}
+GEMINI_API_KEY=${effectiveApiKey}
 GEMINI_MODEL=${defaultChannel.model}
 `;
 
@@ -397,31 +409,8 @@ function getEnabledChannels() {
   return data.channels.filter(c => c.enabled !== false);
 }
 
-/**
- * 获取渠道的有效 API Key
- * 如果是 OAuth 认证，尝试从 token 存储获取 access token
- * 否则返回渠道配置的 apiKey
- *
- * @param {Object} channel - 渠道对象
- * @returns {string|null} 有效的 API key 或 access token，OAuth 令牌无效/过期时返回 null
- */
 function getEffectiveApiKey(channel) {
-  if (channel.authType === 'oauth' && channel.oauthTokenId) {
-    try {
-      const { getToken, isTokenExpired } = require('./oauth-token-storage');
-      const token = getToken(channel.oauthTokenId);
-      if (token && !isTokenExpired(token)) {
-        return token.accessToken;
-      }
-      // OAuth 令牌无效或已过期，返回 null（调用方应处理刷新或报错）
-      console.warn(`[Gemini Channels] OAuth token expired or not found for channel ${channel.name}`);
-      return null;
-    } catch (err) {
-      console.error('[Gemini Channels] Failed to get OAuth token:', err.message);
-      return null;
-    }
-  }
-  return channel.apiKey;
+  return channel.apiKey || null;
 }
 
 // 保存渠道顺序

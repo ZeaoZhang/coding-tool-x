@@ -57,17 +57,20 @@ function normalizeNumber(value, defaultValue, max = null) {
   return num;
 }
 
+function normalizeGatewaySourceType(value, fallback = 'claude') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'gemini') return 'gemini';
+  return fallback;
+}
+
 function applyChannelDefaults(channel) {
   const normalized = { ...channel };
   if (normalized.enabled === undefined) {
     normalized.enabled = true;
   } else {
     normalized.enabled = !!normalized.enabled;
-  }
-
-  // OAuth 字段默认值（向后兼容）
-  if (!normalized.authType) {
-    normalized.authType = 'apiKey';
   }
 
   normalized.weight = normalizeNumber(normalized.weight, 1, 100);
@@ -79,6 +82,8 @@ function applyChannelDefaults(channel) {
   } else {
     normalized.maxConcurrency = normalizeNumber(normalized.maxConcurrency, 1, 100);
   }
+
+  normalized.gatewaySourceType = normalizeGatewaySourceType(normalized.gatewaySourceType, 'claude');
 
   return normalized;
 }
@@ -195,10 +200,7 @@ function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
     modelRedirects: extraConfig.modelRedirects || [],
     proxyUrl: extraConfig.proxyUrl || '',
     speedTestModel: extraConfig.speedTestModel || null,
-    // OAuth 支持
-    authType: extraConfig.authType || 'apiKey',
-    oauthProvider: extraConfig.oauthProvider || null,
-    oauthTokenId: extraConfig.oauthTokenId || null
+    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'claude')
   });
 
   data.channels.push(newChannel);
@@ -218,7 +220,7 @@ function updateChannel(id, updates) {
   const oldChannel = { ...data.channels[index] };
 
   const merged = { ...data.channels[index], ...updates };
-  data.channels[index] = applyChannelDefaults({
+  const nextChannel = applyChannelDefaults({
     ...merged,
     weight: merged.weight,
     maxConcurrency: merged.maxConcurrency,
@@ -228,8 +230,10 @@ function updateChannel(id, updates) {
     modelRedirects: merged.modelRedirects || [],
     proxyUrl: merged.proxyUrl,
     speedTestModel: merged.speedTestModel,
+    gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'claude'),
     updatedAt: Date.now()
   });
+  data.channels[index] = nextChannel;
 
   // Get proxy status
   const { getProxyStatus } = require('../proxy-server');
@@ -273,7 +277,7 @@ function updateChannel(id, updates) {
   return data.channels[index];
 }
 
-function deleteChannel(id) {
+async function deleteChannel(id) {
   const data = loadChannels();
   const index = data.channels.findIndex(ch => ch.id === id);
 
@@ -283,6 +287,7 @@ function deleteChannel(id) {
 
   data.channels.splice(index, 1);
   saveChannels(data);
+
   return { success: true };
 }
 
@@ -390,25 +395,8 @@ function updateClaudeSettings(baseUrl, apiKey) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
-/**
- * 获取渠道的有效 API Key
- * 如果渠道使用 OAuth 认证，返回有效的 OAuth 令牌；否则返回静态 API Key
- *
- * @param {Object} channel - 渠道对象
- * @returns {string|null} 有效的 API Key，OAuth 令牌无效/过期时返回 null
- */
 function getEffectiveApiKey(channel) {
-  if (channel.authType === 'oauth' && channel.oauthTokenId) {
-    const { getToken, isTokenExpired } = require('./oauth-token-storage');
-    const token = getToken(channel.oauthTokenId);
-    if (token && !isTokenExpired(token)) {
-      return token.accessToken;
-    }
-    // OAuth 令牌无效或已过期，返回 null（调用方应处理刷新或报错）
-    console.warn(`[Channels] OAuth token expired or not found for channel ${channel.name}`);
-    return null;
-  }
-  return channel.apiKey;
+  return channel.apiKey || null;
 }
 
 module.exports = {

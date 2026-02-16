@@ -19,22 +19,61 @@ const {
   convertSkillToCodex,
   convertSkillToClaude
 } = require('./format-converter');
+const { NATIVE_PATHS } = require('../../config/paths');
 
-// 默认仓库源 - 只预设官方仓库，其他由用户手动添加
-// directory 字段支持指定仓库子目录
-const DEFAULT_REPOS = [
-  { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
-];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const OPENCODE_SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function normalizePlatform(platform) {
+  return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
+}
+
+function cloneRepos(repos = []) {
+  return repos.map(repo => ({ ...repo }));
+}
+
+const DEFAULT_REPOS_BY_PLATFORM = {
+  claude: [
+    { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
+  ],
+  codex: [
+    { owner: 'openai', name: 'skills', branch: 'main', directory: 'skills/.curated', enabled: true }
+  ],
+  opencode: [
+    { owner: 'darrenhinde', name: 'OpenAgentsControl', branch: 'main', directory: '.opencode/skill', enabled: true }
+  ]
+};
+
+const PLATFORM_CONFIG = {
+  claude: {
+    installDir: path.join(os.homedir(), '.claude', 'skills'),
+    reposFile: 'skill-repos.json',
+    cacheFile: 'skills-cache.json'
+  },
+  codex: {
+    installDir: path.join(os.homedir(), '.codex', 'skills'),
+    reposFile: 'codex-skill-repos.json',
+    cacheFile: 'codex-skills-cache.json'
+  },
+  opencode: {
+    installDir: path.join(NATIVE_PATHS.opencode.config, 'skills'),
+    reposFile: 'opencode-skill-repos.json',
+    cacheFile: 'opencode-skills-cache.json'
+  }
+};
 
 // 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
 
 class SkillService {
-  constructor() {
-    this.installDir = path.join(os.homedir(), '.claude', 'skills');
+  constructor(platform = 'claude') {
+    this.platform = normalizePlatform(platform);
     this.configDir = path.join(os.homedir(), '.claude', 'cc-tool');
-    this.reposConfigPath = path.join(this.configDir, 'skill-repos.json');
-    this.cachePath = path.join(this.configDir, 'skills-cache.json');
+
+    const platformConfig = PLATFORM_CONFIG[this.platform];
+    this.installDir = platformConfig.installDir;
+    this.reposConfigPath = path.join(this.configDir, platformConfig.reposFile);
+    this.cachePath = path.join(this.configDir, platformConfig.cacheFile);
 
     // 内存缓存
     this.skillsCache = null;
@@ -60,12 +99,14 @@ class SkillService {
     try {
       if (fs.existsSync(this.reposConfigPath)) {
         const data = JSON.parse(fs.readFileSync(this.reposConfigPath, 'utf-8'));
-        return data.repos || DEFAULT_REPOS;
+        if (Array.isArray(data.repos)) {
+          return data.repos;
+        }
       }
     } catch (err) {
       console.error('[SkillService] Load repos config error:', err.message);
     }
-    return DEFAULT_REPOS;
+    return cloneRepos(DEFAULT_REPOS_BY_PLATFORM[this.platform] || DEFAULT_REPOS_BY_PLATFORM.claude);
   }
 
   /**
@@ -624,6 +665,46 @@ class SkillService {
     };
   }
 
+  normalizeSkillDirectoryName(directory) {
+    if (!directory) return '';
+    return String(directory).replace(/\\/g, '/').split('/').pop();
+  }
+
+  validateOpenCodeSkillMetadata({ name, description }, directory) {
+    const expectedName = this.normalizeSkillDirectoryName(directory);
+    const normalizedName = typeof name === 'string' ? name.trim() : '';
+    const normalizedDescription = typeof description === 'string' ? description.trim() : '';
+
+    if (!expectedName) {
+      return '技能目录不能为空';
+    }
+    if (!normalizedName) {
+      return 'SKILL.md frontmatter 缺少 name';
+    }
+    if (!normalizedDescription) {
+      return 'SKILL.md frontmatter 缺少 description';
+    }
+    if (normalizedName.length < 1 || normalizedName.length > 64) {
+      return 'name 必须为 1-64 个字符';
+    }
+    if (!OPENCODE_SKILL_NAME_REGEX.test(normalizedName)) {
+      return 'name 必须为小写字母/数字，并使用单个连字符连接';
+    }
+    if (normalizedName !== expectedName) {
+      return `name 必须与目录名一致（期望: ${expectedName}）`;
+    }
+    if (normalizedDescription.length < 1 || normalizedDescription.length > 1024) {
+      return 'description 必须为 1-1024 个字符';
+    }
+
+    return null;
+  }
+
+  validateOpenCodeSkillContent(content, directory) {
+    const metadata = this.parseSkillMd(content);
+    return this.validateOpenCodeSkillMetadata(metadata, directory);
+  }
+
   /**
    * 转换技能格式
    * @param {string} content - 技能内容
@@ -799,6 +880,22 @@ class SkillService {
       fs.mkdirSync(dest, { recursive: true });
       this.copyDirRecursive(sourceDir, dest);
 
+      if (this.platform === 'codex') {
+        this.convertInstalledSkillToCodex(dest);
+      } else if (this.platform === 'opencode') {
+        const skillMdPath = path.join(dest, 'SKILL.md');
+        if (fs.existsSync(skillMdPath)) {
+          const validationError = this.validateOpenCodeSkillContent(
+            fs.readFileSync(skillMdPath, 'utf-8'),
+            directory
+          );
+          if (validationError) {
+            fs.rmSync(dest, { recursive: true, force: true });
+            throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
+          }
+        }
+      }
+
       // 清除缓存，让列表刷新
       this.skillsCache = null;
       this.cacheTime = 0;
@@ -880,23 +977,72 @@ class SkillService {
   }
 
   /**
+   * 将安装后的 SKILL.md 转换为 Codex 兼容格式
+   */
+  convertInstalledSkillToCodex(skillDir) {
+    const skillMdPath = path.join(skillDir, 'SKILL.md');
+    if (!fs.existsSync(skillMdPath)) return;
+
+    try {
+      const content = fs.readFileSync(skillMdPath, 'utf-8');
+      const converted = convertSkillToCodex(content);
+      fs.writeFileSync(skillMdPath, converted.content, 'utf-8');
+    } catch (err) {
+      console.warn('[SkillService] Convert skill to codex format failed:', err.message);
+    }
+  }
+
+  /**
    * 创建自定义技能
    */
   createCustomSkill({ name, directory, description, content }) {
     const dest = path.join(this.installDir, directory);
+    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
       throw new Error(`技能目录 "${directory}" 已存在`);
     }
 
+    if (this.platform === 'opencode') {
+      if (!OPENCODE_SKILL_NAME_REGEX.test(normalizedDirectory)) {
+        throw new Error('OpenCode skill 目录名必须是小写字母/数字，并使用单个连字符连接');
+      }
+    }
+
+    const normalizedDescription = (description || '').trim();
+    const skillName = this.platform === 'opencode'
+      ? normalizedDirectory
+      : (name || directory);
+
+    if (this.platform === 'opencode') {
+      const validationError = this.validateOpenCodeSkillMetadata(
+        {
+          name: skillName,
+          description: normalizedDescription
+        },
+        normalizedDirectory
+      );
+      if (validationError) {
+        throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
+      }
+    }
+
     // 创建目录
     fs.mkdirSync(dest, { recursive: true });
 
     // 生成 SKILL.md 内容
-    const skillMdContent = `---
-name: "${name}"
-description: "${description}"
+    const skillMdContent = this.platform === 'opencode'
+      ? `---
+name: ${skillName}
+description: "${normalizedDescription}"
+---
+
+${content}
+`
+      : `---
+name: "${skillName}"
+description: "${normalizedDescription}"
 ---
 
 ${content}
@@ -904,6 +1050,10 @@ ${content}
 
     // 写入文件
     fs.writeFileSync(path.join(dest, 'SKILL.md'), skillMdContent, 'utf-8');
+
+    if (this.platform === 'codex') {
+      this.convertInstalledSkillToCodex(dest);
+    }
 
     // 清除缓存，让列表刷新
     this.skillsCache = null;
@@ -920,6 +1070,7 @@ ${content}
    */
   createSkillWithFiles({ directory, files }) {
     const dest = path.join(this.installDir, directory);
+    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
@@ -932,6 +1083,21 @@ ${content}
     );
     if (!hasSkillMd) {
       throw new Error('技能必须包含 SKILL.md 文件');
+    }
+
+    if (this.platform === 'opencode') {
+      if (!OPENCODE_SKILL_NAME_REGEX.test(normalizedDirectory)) {
+        throw new Error('OpenCode skill 目录名必须是小写字母/数字，并使用单个连字符连接');
+      }
+
+      const skillMdFile = files.find(f => f.path === 'SKILL.md' || f.path.endsWith('/SKILL.md'));
+      const skillMdContent = skillMdFile
+        ? (skillMdFile.isBase64 ? Buffer.from(skillMdFile.content, 'base64').toString('utf-8') : skillMdFile.content)
+        : '';
+      const validationError = this.validateOpenCodeSkillContent(skillMdContent, normalizedDirectory);
+      if (validationError) {
+        throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
+      }
     }
 
     // 创建目录
@@ -954,6 +1120,10 @@ ${content}
       } else {
         fs.writeFileSync(filePath, file.content, 'utf-8');
       }
+    }
+
+    if (this.platform === 'codex') {
+      this.convertInstalledSkillToCodex(dest);
     }
 
     // 清除缓存
@@ -1060,9 +1230,23 @@ ${content}
    */
   addSkillFiles(directory, files) {
     const skillPath = path.join(this.installDir, directory);
+    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     if (!fs.existsSync(skillPath)) {
       throw new Error(`技能 "${directory}" 不存在`);
+    }
+
+    if (this.platform === 'opencode') {
+      const incomingSkillMd = files.find(f => f.path === 'SKILL.md' || f.path.endsWith('/SKILL.md'));
+      if (incomingSkillMd) {
+        const content = incomingSkillMd.isBase64
+          ? Buffer.from(incomingSkillMd.content, 'base64').toString('utf-8')
+          : incomingSkillMd.content;
+        const validationError = this.validateOpenCodeSkillContent(content, normalizedDirectory);
+        if (validationError) {
+          throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
+        }
+      }
     }
 
     const added = [];
@@ -1137,6 +1321,7 @@ ${content}
    */
   updateSkillFile(directory, filePath, content, isBase64 = false) {
     const skillPath = path.join(this.installDir, directory);
+    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     if (!fs.existsSync(skillPath)) {
       throw new Error(`技能 "${directory}" 不存在`);
@@ -1146,6 +1331,14 @@ ${content}
 
     if (!fs.existsSync(fullPath)) {
       throw new Error(`文件 "${filePath}" 不存在`);
+    }
+
+    if (this.platform === 'opencode' && /(^|\/)SKILL\.md$/i.test(filePath)) {
+      const textContent = isBase64 ? Buffer.from(content, 'base64').toString('utf-8') : content;
+      const validationError = this.validateOpenCodeSkillContent(textContent, normalizedDirectory);
+      if (validationError) {
+        throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
+      }
     }
 
     if (isBase64) {
@@ -1205,48 +1398,108 @@ ${content}
       };
     }
 
-    // 如果本地没有，尝试从缓存的技能列表中获取仓库信息
-    const cachedSkill = this.skillsCache?.find(s => s.directory === directory);
+    const normalizeRepoPath = (input = '') =>
+      String(input)
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .replace(/\/+$/, '');
 
-    if (cachedSkill && cachedSkill.repoOwner && cachedSkill.repoName) {
-      // 从 GitHub 获取内容
+    const parseRemoteSkillContent = (content, repo) => {
+      const metadata = this.parseSkillMd(content);
+      const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
+      const body = bodyMatch ? bodyMatch[1].trim() : content;
+
+      return {
+        directory,
+        name: metadata.name || directory,
+        description: metadata.description || '',
+        content: body,
+        fullContent: content,
+        installed: false,
+        source: 'github',
+        repoOwner: repo.owner,
+        repoName: repo.name
+      };
+    };
+
+    const tryLoadRemoteDetailFromRepo = async (repo, extraCandidateDirs = []) => {
       try {
-        const repo = {
-          owner: cachedSkill.repoOwner,
-          name: cachedSkill.repoName,
-          branch: cachedSkill.repoBranch || 'main'
-        };
-
-        // 获取文件树找到 SKILL.md 的 SHA
         const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${repo.branch}?recursive=1`;
         const tree = await this.fetchGitHubApi(treeUrl);
+        if (!tree?.tree) return null;
 
-        const skillFile = tree.tree?.find(item =>
-          item.type === 'blob' && item.path === `${directory}/SKILL.md`
-        );
+        const normalizedDirectory = normalizeRepoPath(directory);
+        const candidateDirs = new Set();
+        candidateDirs.add(normalizedDirectory);
 
-        if (skillFile) {
-          const content = await this.fetchBlobContent(skillFile.sha, repo, skillFile.path);
-          const metadata = this.parseSkillMd(content);
-
-          const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
-          const body = bodyMatch ? bodyMatch[1].trim() : content;
-
-          return {
-            directory,
-            name: metadata.name || directory,
-            description: metadata.description || '',
-            content: body,
-            fullContent: content,
-            installed: false,
-            source: 'github',
-            repoOwner: repo.owner,
-            repoName: repo.name
-          };
+        for (const candidate of extraCandidateDirs) {
+          const normalized = normalizeRepoPath(candidate);
+          if (normalized) candidateDirs.add(normalized);
         }
+
+        if (repo.directory) {
+          candidateDirs.add(normalizeRepoPath(`${repo.directory}/${normalizedDirectory}`));
+        }
+
+        let skillFile = null;
+        for (const candidateDir of candidateDirs) {
+          if (!candidateDir) continue;
+          skillFile = tree.tree.find(item =>
+            item.type === 'blob' && item.path === `${candidateDir}/SKILL.md`
+          );
+          if (skillFile) break;
+        }
+
+        if (!skillFile) {
+          const targetBaseName = normalizedDirectory.split('/').pop();
+          skillFile = tree.tree.find(item => {
+            if (item.type !== 'blob' || !item.path.endsWith('/SKILL.md')) return false;
+            const parts = item.path.split('/');
+            const parentDir = parts.length >= 2 ? parts[parts.length - 2] : '';
+            return parentDir === targetBaseName;
+          });
+        }
+
+        if (!skillFile) return null;
+
+        const content = await this.fetchBlobContent(skillFile.sha, repo, skillFile.path);
+        return parseRemoteSkillContent(content, repo);
       } catch (err) {
         console.warn('[SkillService] Fetch remote skill detail error:', err.message);
+        return null;
       }
+    };
+
+    // 先尝试使用缓存中的 repo 信息（最快）
+    const cachedSkill = this.skillsCache?.find(s => s.directory === directory);
+    if (cachedSkill && cachedSkill.repoOwner && cachedSkill.repoName) {
+      const cachedRepo = {
+        owner: cachedSkill.repoOwner,
+        name: cachedSkill.repoName,
+        branch: cachedSkill.repoBranch || 'main',
+        directory: cachedSkill.repoDirectory || ''
+      };
+
+      const detail = await tryLoadRemoteDetailFromRepo(cachedRepo, [
+        cachedSkill.fullDirectory || '',
+        cachedSkill.repoDirectory ? `${cachedSkill.repoDirectory}/${directory}` : ''
+      ]);
+      if (detail) return detail;
+    }
+
+    // 缓存缺失或过期时，回退到遍历仓库配置，避免详情页报错
+    const repos = this.loadRepos().filter(repo => repo.enabled !== false);
+    for (const repo of repos) {
+      const detail = await tryLoadRemoteDetailFromRepo(
+        {
+          owner: repo.owner,
+          name: repo.name,
+          branch: repo.branch || 'main',
+          directory: repo.directory || ''
+        },
+        [repo.directory ? `${repo.directory}/${directory}` : '']
+      );
+      if (detail) return detail;
     }
 
     throw new Error('技能不存在或无法获取');
@@ -1264,5 +1517,6 @@ ${content}
 
 module.exports = {
   SkillService,
-  DEFAULT_REPOS
+  DEFAULT_REPOS: DEFAULT_REPOS_BY_PLATFORM.claude,
+  DEFAULT_REPOS_BY_PLATFORM
 };

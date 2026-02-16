@@ -6,7 +6,7 @@
  */
 
 const express = require('express');
-const { ConfigRegistryService, CONFIG_TYPES } = require('../services/config-registry-service');
+const { ConfigRegistryService, CONFIG_TYPES, SUPPORTED_PLATFORMS } = require('../services/config-registry-service');
 const { ConfigSyncManager } = require('../services/config-sync-manager');
 
 const router = express.Router();
@@ -17,7 +17,7 @@ const syncManager = new ConfigSyncManager();
 const VALID_TYPES = CONFIG_TYPES;
 
 // Valid platforms
-const VALID_PLATFORMS = ['claude', 'codex'];
+const VALID_PLATFORMS = SUPPORTED_PLATFORMS;
 
 /**
  * Validate config type parameter
@@ -199,10 +199,14 @@ router.put('/:type/:name/toggle', async (req, res) => {
       if (item.platforms?.codex) {
         syncManager.syncToCodex(type, name);
       }
+      if (item.platforms?.opencode) {
+        syncManager.syncToOpenCode(type, name);
+      }
     } else {
       // Remove from all platforms
       syncManager.removeFromClaude(type, name);
       syncManager.removeFromCodex(type, name);
+      syncManager.removeFromOpenCode(type, name);
     }
 
     res.json({
@@ -220,7 +224,7 @@ router.put('/:type/:name/toggle', async (req, res) => {
 
 /**
  * PUT /api/config-registry/:type/:name/platform/:platform
- * Toggle platform (claude/codex) for an item
+ * Toggle platform (claude/codex/opencode) for an item
  * Body: { enabled: boolean }
  * - Updates registry
  * - If enabling platform: sync to that platform (if item is enabled)
@@ -275,6 +279,8 @@ router.put('/:type/:name/platform/:platform', async (req, res) => {
         syncManager.syncToClaude(type, name);
       } else if (platform === 'codex') {
         syncManager.syncToCodex(type, name);
+      } else if (platform === 'opencode') {
+        syncManager.syncToOpenCode(type, name);
       }
     } else {
       // Remove from this platform
@@ -282,6 +288,8 @@ router.put('/:type/:name/platform/:platform', async (req, res) => {
         syncManager.removeFromClaude(type, name);
       } else if (platform === 'codex') {
         syncManager.removeFromCodex(type, name);
+      } else if (platform === 'opencode') {
+        syncManager.removeFromOpenCode(type, name);
       }
     }
 

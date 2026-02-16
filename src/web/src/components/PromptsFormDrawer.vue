@@ -68,6 +68,11 @@
               <span class="app-name">Gemini</span>
               <span class="app-path">~/.gemini/GEMINI.md</span>
             </label>
+            <label class="app-toggle">
+              <n-switch v-model:value="form.apps.opencode" />
+              <span class="app-name">OpenCode</span>
+              <span class="app-path">~/.config/opencode/AGENTS.md</span>
+            </label>
           </div>
         </div>
 
@@ -146,7 +151,8 @@ const form = reactive({
   apps: {
     claude: true,
     codex: true,
-    gemini: true
+    gemini: true,
+    opencode: true
   }
 })
 
@@ -160,14 +166,15 @@ function initForm() {
     form.apps = {
       claude: props.editingPreset.apps?.claude ?? true,
       codex: props.editingPreset.apps?.codex ?? true,
-      gemini: props.editingPreset.apps?.gemini ?? true
+      gemini: props.editingPreset.apps?.gemini ?? true,
+      opencode: props.editingPreset.apps?.opencode ?? true
     }
   } else {
     form.id = ''
     form.name = ''
     form.description = ''
     form.content = ''
-    form.apps = { claude: true, codex: true, gemini: true }
+    form.apps = { claude: true, codex: true, gemini: true, opencode: true }
   }
   idError.value = ''
 }

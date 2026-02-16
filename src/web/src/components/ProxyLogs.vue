@@ -117,7 +117,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import { TrashOutline, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
-import { getTodayStatistics } from '../api/statistics'
+import { getTodayStatistics, getOpenCodeTodayStatistics } from '../api/statistics'
 import { clearProxyLogs } from '../api/proxy'
 import message from '../utils/message'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -126,7 +126,7 @@ import { useGlobalState } from '../composables/useGlobalState'
 const props = defineProps({
   source: {
     type: String,
-    default: 'claude' // 'claude' or 'codex'
+    default: 'claude' // 'claude' | 'codex' | 'gemini' | 'opencode'
   }
 })
 
@@ -134,7 +134,8 @@ const { getLogs, wsConnected, clearLogsState, logLimit } = useGlobalState()
 const logStreams = {
   claude: getLogs('claude'),
   codex: getLogs('codex'),
-  gemini: getLogs('gemini')
+  gemini: getLogs('gemini'),
+  opencode: getLogs('opencode')
 }
 
 const filteredLogs = computed(() => {
@@ -164,6 +165,15 @@ function formatNumber(num) {
 // 加载今日统计数据（根据 source 过滤）
 async function loadTodayStats() {
   try {
+    if (props.source === 'opencode') {
+      const stats = await getOpenCodeTodayStatistics()
+      todayStats.value = {
+        requests: stats?.summary?.requests || 0,
+        tokens: stats?.summary?.tokens || 0
+      }
+      return
+    }
+
     const stats = await getTodayStatistics()
 
     // 根据 source 获取对应工具类型的统计

@@ -4,24 +4,28 @@
  * Manages file synchronization between cc-tool central storage and CLI directories:
  * - Claude Code: ~/.claude/{skills,commands,agents,rules}/
  * - Codex CLI: ~/.codex/skills/, ~/.codex/prompts/
+ * - OpenCode CLI: ~/.config/opencode/{skills,commands,agents,plugins}/
  *
  * Config types:
  * - skills: directory-based (each skill is a dir with SKILL.md)
  * - commands: file-based (.md), may be nested in subdirectories
  * - agents: file-based (.md), flat directory
  * - rules: file-based (.md), may be nested in subdirectories
+ * - plugins: directory-based
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { convertSkillToCodex, convertCommandToCodex } = require('./format-converter');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 // Paths
 const HOME = os.homedir();
 const CC_TOOL_CONFIGS = path.join(HOME, '.claude', 'cc-tool', 'configs');
 const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');
+const OPENCODE_DIR = NATIVE_PATHS.opencode.config;
 
 // Config type definitions
 const CONFIG_TYPES = {
@@ -31,7 +35,10 @@ const CONFIG_TYPES = {
     claudeTarget: 'skills',
     codexTarget: 'skills',
     codexSupported: true,
-    convertForCodex: true
+    convertForCodex: true,
+    opencodeTarget: 'skills',
+    opencodeLegacyTarget: 'skill',
+    opencodeSupported: true
   },
   commands: {
     isDirectory: false,
@@ -39,19 +46,34 @@ const CONFIG_TYPES = {
     claudeTarget: 'commands',
     codexTarget: 'prompts',
     codexSupported: true,
-    convertForCodex: true
+    convertForCodex: true,
+    opencodeTarget: 'commands',
+    opencodeLegacyTarget: 'command',
+    opencodeSupported: true
   },
   agents: {
     isDirectory: false,
     extension: '.md',
     claudeTarget: 'agents',
-    codexSupported: false
+    codexSupported: false,
+    opencodeTarget: 'agents',
+    opencodeLegacyTarget: 'agent',
+    opencodeSupported: true
   },
   rules: {
     isDirectory: false,
     extension: '.md',
     claudeTarget: 'rules',
-    codexSupported: false
+    codexSupported: false,
+    opencodeSupported: false
+  },
+  plugins: {
+    isDirectory: true,
+    claudeTarget: 'plugins',
+    codexSupported: false,
+    opencodeTarget: 'plugins',
+    opencodeLegacyTarget: 'plugin',
+    opencodeSupported: true
   }
 };
 
@@ -60,6 +82,7 @@ class ConfigSyncManager {
     this.ccToolConfigs = CC_TOOL_CONFIGS;
     this.claudeDir = CLAUDE_CODE_DIR;
     this.codexDir = CODEX_DIR;
+    this.opencodeDir = OPENCODE_DIR;
     this.configTypes = CONFIG_TYPES;
   }
 
@@ -263,9 +286,95 @@ class ConfigSyncManager {
   }
 
   /**
+   * Sync a config item to OpenCode CLI
+   * Supports skills, commands, agents, plugins
+   * @param {string} type - Config type
+   * @param {string} name - Item name
+   * @returns {Object} Result with success status
+   */
+  syncToOpenCode(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    if (!config.opencodeSupported) {
+      console.log(`[ConfigSyncManager] ${type} not supported by OpenCode, skipping`);
+      return { success: true, skipped: true, reason: 'Not supported by OpenCode' };
+    }
+
+    const sourcePath = path.join(this.ccToolConfigs, type, name);
+    if (!fs.existsSync(sourcePath)) {
+      console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
+      return { success: false, error: 'Source not found' };
+    }
+
+    try {
+      const targetBaseDir = this._getOpenCodeTypeBaseDir(config);
+      const targetPath = path.join(targetBaseDir, name);
+
+      if (config.isDirectory) {
+        this._ensureDir(path.dirname(targetPath));
+        this._copyDirRecursive(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to OpenCode (directory)`);
+      } else {
+        this._ensureDir(path.dirname(targetPath));
+        this._copyFile(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to OpenCode (file)`);
+      }
+
+      return { success: true, target: targetPath };
+    } catch (err) {
+      console.error(`[ConfigSyncManager] Sync to OpenCode failed:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Remove a config item from OpenCode CLI
+   * @param {string} type - Config type
+   * @param {string} name - Item name
+   * @returns {Object} Result with success status
+   */
+  removeFromOpenCode(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    if (!config.opencodeSupported) {
+      return { success: true, skipped: true, reason: 'Not supported by OpenCode' };
+    }
+
+    const targetBaseDir = this._getOpenCodeTypeBaseDir(config);
+    const targetPath = path.join(targetBaseDir, name);
+
+    if (!fs.existsSync(targetPath)) {
+      console.log(`[ConfigSyncManager] Target not found (already removed): ${targetPath}`);
+      return { success: true, message: 'Already removed' };
+    }
+
+    try {
+      if (config.isDirectory) {
+        this._removeRecursive(targetPath);
+        console.log(`[ConfigSyncManager] Removed ${type}/${name} from OpenCode (directory)`);
+      } else {
+        fs.unlinkSync(targetPath);
+        console.log(`[ConfigSyncManager] Removed ${type}/${name} from OpenCode (file)`);
+        this._cleanupEmptyParents(path.dirname(targetPath), targetBaseDir);
+      }
+
+      return { success: true };
+    } catch (err) {
+      console.error(`[ConfigSyncManager] Remove from OpenCode failed:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Batch sync based on registry data
    * @param {string} type - Config type
-   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex } } }
+   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, opencode } } }
    * @returns {Object} Results summary
    */
   syncAll(type, registryItems) {
@@ -319,6 +428,20 @@ class ConfigSyncManager {
             results.removed.push({ type, name, platform: 'codex' });
           }
         }
+
+        if (platforms.opencode) {
+          const result = this.syncToOpenCode(type, name);
+          if (result.success && !result.skipped) {
+            results.synced.push({ type, name, platform: 'opencode' });
+          } else if (!result.success) {
+            results.errors.push({ type, name, platform: 'opencode', error: result.error });
+          }
+        } else {
+          const result = this.removeFromOpenCode(type, name);
+          if (result.success && !result.message && !result.skipped) {
+            results.removed.push({ type, name, platform: 'opencode' });
+          }
+        }
       } else {
         // Item disabled, remove from all platforms
         const claudeResult = this.removeFromClaude(type, name);
@@ -329,6 +452,11 @@ class ConfigSyncManager {
         const codexResult = this.removeFromCodex(type, name);
         if (codexResult.success && !codexResult.message && !codexResult.skipped) {
           results.removed.push({ type, name, platform: 'codex' });
+        }
+
+        const opencodeResult = this.removeFromOpenCode(type, name);
+        if (opencodeResult.success && !opencodeResult.message && !opencodeResult.skipped) {
+          results.removed.push({ type, name, platform: 'opencode' });
         }
       }
     }
@@ -410,6 +538,29 @@ class ConfigSyncManager {
   }
 
   /**
+   * Resolve OpenCode base target directory for a config type.
+   * OpenCode supports both plural (new) and singular (legacy) folder names.
+   */
+  _getOpenCodeTypeBaseDir(config) {
+    const modernDir = path.join(this.opencodeDir, config.opencodeTarget);
+    // 技能目录强制使用 modern/plural 形式，避免 legacy 目录带来的跨平台历史污染
+    if (config === this.configTypes.skills) {
+      return modernDir;
+    }
+
+    if (!config.opencodeLegacyTarget) {
+      return modernDir;
+    }
+
+    const legacyDir = path.join(this.opencodeDir, config.opencodeLegacyTarget);
+    if (fs.existsSync(legacyDir) && !fs.existsSync(modernDir)) {
+      return legacyDir;
+    }
+
+    return modernDir;
+  }
+
+  /**
    * Recursively remove a file or directory
    */
   _removeRecursive(target) {
@@ -452,5 +603,6 @@ module.exports = {
   CONFIG_TYPES,
   CC_TOOL_CONFIGS,
   CLAUDE_CODE_DIR,
-  CODEX_DIR
+  CODEX_DIR,
+  OPENCODE_DIR
 };

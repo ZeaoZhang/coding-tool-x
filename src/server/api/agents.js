@@ -8,7 +8,24 @@ const express = require('express');
 const { AgentsService } = require('../services/agents-service');
 
 const router = express.Router();
-const agentsService = new AgentsService();
+const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const agentServices = new Map();
+
+function resolvePlatform(rawPlatform) {
+  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+}
+
+function getPlatform(req) {
+  return resolvePlatform(req.query?.platform || req.body?.platform);
+}
+
+function getAgentsService(req) {
+  const platform = getPlatform(req);
+  if (!agentServices.has(platform)) {
+    agentServices.set(platform, new AgentsService(platform));
+  }
+  return { platform, service: agentServices.get(platform) };
+}
 
 /**
  * 获取代理列表
@@ -17,11 +34,13 @@ const agentsService = new AgentsService();
  */
 router.get('/', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { projectPath } = req.query;
-    const result = agentsService.listAgents(projectPath || null);
+    const result = service.listAgents(projectPath || null);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -39,11 +58,13 @@ router.get('/', (req, res) => {
  */
 router.get('/stats', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { projectPath } = req.query;
-    const stats = agentsService.getStats(projectPath || null);
+    const stats = service.getStats(projectPath || null);
 
     res.json({
       success: true,
+      platform,
       ...stats
     });
   } catch (err) {
@@ -61,6 +82,7 @@ router.get('/stats', (req, res) => {
  */
 router.get('/:scope/:fileName', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { scope, fileName } = req.params;
     const { projectPath } = req.query;
 
@@ -78,7 +100,7 @@ router.get('/:scope/:fileName', (req, res) => {
       });
     }
 
-    const agent = agentsService.getAgent(fileName, scope, projectPath || null);
+    const agent = service.getAgent(fileName, scope, projectPath || null);
 
     if (!agent) {
       return res.status(404).json({
@@ -89,6 +111,7 @@ router.get('/:scope/:fileName', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       agent
     });
   } catch (err) {
@@ -107,6 +130,7 @@ router.get('/:scope/:fileName', (req, res) => {
  */
 router.post('/', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt } = req.body;
 
     if (!fileName) {
@@ -130,7 +154,7 @@ router.post('/', (req, res) => {
       });
     }
 
-    const agent = agentsService.createAgent({
+    const agent = service.createAgent({
       fileName,
       scope,
       projectPath: projectPath || null,
@@ -145,6 +169,7 @@ router.post('/', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       agent,
       message: '代理创建成功'
     });
@@ -163,6 +188,7 @@ router.post('/', (req, res) => {
  */
 router.put('/:scope/:fileName', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { scope, fileName } = req.params;
     const { projectPath, name, description, tools, model, permissionMode, skills, systemPrompt } = req.body;
 
@@ -180,7 +206,7 @@ router.put('/:scope/:fileName', (req, res) => {
       });
     }
 
-    const agent = agentsService.updateAgent({
+    const agent = service.updateAgent({
       fileName,
       scope,
       projectPath: projectPath || null,
@@ -195,6 +221,7 @@ router.put('/:scope/:fileName', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       agent,
       message: '代理更新成功'
     });
@@ -213,6 +240,7 @@ router.put('/:scope/:fileName', (req, res) => {
  */
 router.delete('/:scope/:fileName', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { scope, fileName } = req.params;
     const { projectPath } = req.query;
 
@@ -230,9 +258,10 @@ router.delete('/:scope/:fileName', (req, res) => {
       });
     }
 
-    const result = agentsService.deleteAgent(fileName, scope, projectPath || null);
+    const result = service.deleteAgent(fileName, scope, projectPath || null);
 
     res.json({
+      platform,
       success: result.success,
       message: result.message
     });
@@ -254,12 +283,14 @@ router.delete('/:scope/:fileName', (req, res) => {
  */
 router.get('/all', async (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { projectPath, refresh } = req.query;
     const forceRefresh = refresh === '1';
-    const result = await agentsService.listAllAgents(projectPath || null, forceRefresh);
+    const result = await service.listAllAgents(projectPath || null, forceRefresh);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -277,9 +308,11 @@ router.get('/all', async (req, res) => {
  */
 router.get('/repos', (req, res) => {
   try {
-    const repos = agentsService.getRepos();
+    const { platform, service } = getAgentsService(req);
+    const repos = service.getRepos();
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -298,6 +331,7 @@ router.get('/repos', (req, res) => {
  */
 router.post('/repos', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
 
     if (!owner || !name) {
@@ -307,10 +341,11 @@ router.post('/repos', (req, res) => {
       });
     }
 
-    const repos = agentsService.addRepo({ owner, name, branch, directory, enabled });
+    const repos = service.addRepo({ owner, name, branch, directory, enabled });
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -329,12 +364,14 @@ router.post('/repos', (req, res) => {
  */
 router.delete('/repos/:owner/:name', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { owner, name } = req.params;
     const { directory = '' } = req.query;
-    const repos = agentsService.removeRepo(owner, name, directory);
+    const repos = service.removeRepo(owner, name, directory);
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -353,13 +390,15 @@ router.delete('/repos/:owner/:name', (req, res) => {
  */
 router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { owner, name } = req.params;
     const { enabled, directory = '' } = req.body;
 
-    const repos = agentsService.toggleRepo(owner, name, directory, enabled);
+    const repos = service.toggleRepo(owner, name, directory, enabled);
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -378,6 +417,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
  */
 router.post('/install', async (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const agent = req.body;
 
     if (!agent || !agent.repoOwner || !agent.repoName) {
@@ -387,10 +427,11 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const result = await agentsService.installFromRemote(agent);
+    const result = await service.installFromRemote(agent);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -409,6 +450,7 @@ router.post('/install', async (req, res) => {
  */
 router.post('/uninstall', (req, res) => {
   try {
+    const { platform, service } = getAgentsService(req);
     const { fileName } = req.body;
 
     if (!fileName) {
@@ -418,10 +460,11 @@ router.post('/uninstall', (req, res) => {
       });
     }
 
-    const result = agentsService.uninstallAgent(fileName);
+    const result = service.uninstallAgent(fileName);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {

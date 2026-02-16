@@ -6,7 +6,24 @@ const express = require('express');
 const { SkillService } = require('../services/skill-service');
 
 const router = express.Router();
-const skillService = new SkillService();
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const skillServices = new Map();
+
+function resolvePlatform(rawPlatform) {
+  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+}
+
+function getPlatform(req) {
+  return resolvePlatform(req.query?.platform || req.body?.platform);
+}
+
+function getSkillService(req) {
+  const platform = getPlatform(req);
+  if (!skillServices.has(platform)) {
+    skillServices.set(platform, new SkillService(platform));
+  }
+  return { platform, service: skillServices.get(platform) };
+}
 
 /**
  * 获取技能列表
@@ -15,10 +32,12 @@ const skillService = new SkillService();
  */
 router.get('/', async (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const forceRefresh = req.query.refresh === '1';
-    const skills = await skillService.listSkills(forceRefresh);
+    const skills = await service.listSkills(forceRefresh);
     res.json({
       success: true,
+      platform,
       skills,
       total: skills.length,
       installed: skills.filter(s => s.installed).length
@@ -38,6 +57,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/detail/*', async (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const directory = req.params[0]; // 获取通配符匹配的路径
     if (!directory) {
       return res.status(400).json({
@@ -46,9 +66,10 @@ router.get('/detail/*', async (req, res) => {
       });
     }
 
-    const result = await skillService.getSkillDetail(directory);
+    const result = await service.getSkillDetail(directory);
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -66,9 +87,11 @@ router.get('/detail/*', async (req, res) => {
  */
 router.get('/installed', (req, res) => {
   try {
-    const skills = skillService.getInstalledSkills();
+    const { platform, service } = getSkillService(req);
+    const skills = service.getInstalledSkills();
     res.json({
       success: true,
+      platform,
       skills
     });
   } catch (err) {
@@ -89,6 +112,7 @@ router.get('/installed', (req, res) => {
  */
 router.post('/install', async (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory, fullDirectory, repo } = req.body;
 
     if (!directory) {
@@ -105,7 +129,7 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const result = await skillService.installSkill(
+    const result = await service.installSkill(
       directory,
       {
         owner: repo.owner,
@@ -117,6 +141,7 @@ router.post('/install', async (req, res) => {
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -135,6 +160,7 @@ router.post('/install', async (req, res) => {
  */
 router.post('/create', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { name, directory, description, content } = req.body;
 
     if (!directory) {
@@ -159,7 +185,7 @@ router.post('/create', (req, res) => {
       });
     }
 
-    const result = skillService.createCustomSkill({
+    const result = service.createCustomSkill({
       name: name || directory,
       directory,
       description: description || '',
@@ -168,6 +194,7 @@ router.post('/create', (req, res) => {
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -186,6 +213,7 @@ router.post('/create', (req, res) => {
  */
 router.post('/uninstall', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory } = req.body;
 
     if (!directory) {
@@ -195,10 +223,11 @@ router.post('/uninstall', (req, res) => {
       });
     }
 
-    const result = skillService.uninstallSkill(directory);
+    const result = service.uninstallSkill(directory);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -216,9 +245,11 @@ router.post('/uninstall', (req, res) => {
  */
 router.get('/repos', (req, res) => {
   try {
-    const repos = skillService.loadRepos();
+    const { platform, service } = getSkillService(req);
+    const repos = service.loadRepos();
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -238,6 +269,7 @@ router.get('/repos', (req, res) => {
  */
 router.post('/repos', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
 
     if (!owner || !name) {
@@ -247,10 +279,11 @@ router.post('/repos', (req, res) => {
       });
     }
 
-    const repos = skillService.addRepo({ owner, name, branch, directory, enabled });
+    const repos = service.addRepo({ owner, name, branch, directory, enabled });
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -269,12 +302,14 @@ router.post('/repos', (req, res) => {
  */
 router.delete('/repos/:owner/:name', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { owner, name } = req.params;
     const { directory = '' } = req.query;
-    const repos = skillService.removeRepo(owner, name, directory);
+    const repos = service.removeRepo(owner, name, directory);
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -294,13 +329,15 @@ router.delete('/repos/:owner/:name', (req, res) => {
  */
 router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { owner, name } = req.params;
     const { enabled, directory = '' } = req.body;
 
-    const repos = skillService.toggleRepo(owner, name, directory, enabled);
+    const repos = service.toggleRepo(owner, name, directory, enabled);
 
     res.json({
       success: true,
+      platform,
       repos
     });
   } catch (err) {
@@ -321,6 +358,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
  */
 router.post('/create-with-files', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory, files } = req.body;
 
     if (!directory) {
@@ -345,10 +383,11 @@ router.post('/create-with-files', (req, res) => {
       });
     }
 
-    const result = skillService.createSkillWithFiles({ directory, files });
+    const result = service.createSkillWithFiles({ directory, files });
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -366,11 +405,13 @@ router.post('/create-with-files', (req, res) => {
  */
 router.get('/:directory/files', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory } = req.params;
-    const files = skillService.getSkillFiles(directory);
+    const files = service.getSkillFiles(directory);
 
     res.json({
       success: true,
+      platform,
       directory,
       files
     });
@@ -390,6 +431,7 @@ router.get('/:directory/files', (req, res) => {
  */
 router.get('/:directory/file/*', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory } = req.params;
     const filePath = req.params[0];
 
@@ -400,10 +442,11 @@ router.get('/:directory/file/*', (req, res) => {
       });
     }
 
-    const result = skillService.getSkillFileContent(directory, filePath);
+    const result = service.getSkillFileContent(directory, filePath);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -422,6 +465,7 @@ router.get('/:directory/file/*', (req, res) => {
  */
 router.post('/:directory/files', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory } = req.params;
     const { files } = req.body;
 
@@ -432,10 +476,11 @@ router.post('/:directory/files', (req, res) => {
       });
     }
 
-    const result = skillService.addSkillFiles(directory, files);
+    const result = service.addSkillFiles(directory, files);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -453,6 +498,7 @@ router.post('/:directory/files', (req, res) => {
  */
 router.delete('/:directory/file/*', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory } = req.params;
     const filePath = req.params[0];
 
@@ -463,10 +509,11 @@ router.delete('/:directory/file/*', (req, res) => {
       });
     }
 
-    const result = skillService.deleteSkillFile(directory, filePath);
+    const result = service.deleteSkillFile(directory, filePath);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -485,6 +532,7 @@ router.delete('/:directory/file/*', (req, res) => {
  */
 router.put('/:directory/file/*', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { directory } = req.params;
     const filePath = req.params[0];
     const { content, isBase64 = false } = req.body;
@@ -503,10 +551,11 @@ router.put('/:directory/file/*', (req, res) => {
       });
     }
 
-    const result = skillService.updateSkillFile(directory, filePath, content, isBase64);
+    const result = service.updateSkillFile(directory, filePath, content, isBase64);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {
@@ -529,6 +578,7 @@ router.put('/:directory/file/*', (req, res) => {
  */
 router.post('/convert', (req, res) => {
   try {
+    const { platform, service } = getSkillService(req);
     const { content, targetFormat } = req.body;
 
     if (!content) {
@@ -545,10 +595,11 @@ router.post('/convert', (req, res) => {
       });
     }
 
-    const result = skillService.convertSkillFormat(content, targetFormat);
+    const result = service.convertSkillFormat(content, targetFormat);
 
     res.json({
       success: true,
+      platform,
       ...result
     });
   } catch (err) {

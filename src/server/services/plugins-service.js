@@ -11,18 +11,263 @@ const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 const CLAUDE_PLUGINS_DIR = path.join(os.homedir(), '.claude', 'plugins');
 const CLAUDE_INSTALLED_FILE = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
 const CLAUDE_MARKETPLACES_FILE = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
+const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
+const DEFAULT_REPOS_BY_PLATFORM = {
+  claude: [],
+  opencode: [
+    {
+      owner: 'Tommertom',
+      name: 'opencode-plugin-marketplace',
+      url: 'https://github.com/Tommertom/opencode-plugin-marketplace',
+      branch: 'main',
+      enabled: true,
+      source: 'opencode-default'
+    },
+    {
+      owner: 'avifenesh',
+      name: 'awesome-slash',
+      url: 'https://github.com/avifenesh/awesome-slash',
+      branch: 'main',
+      enabled: true,
+      source: 'opencode-default'
+    },
+    {
+      owner: 'NeoLabHQ',
+      name: 'context-engineering-kit',
+      url: 'https://github.com/NeoLabHQ/context-engineering-kit',
+      branch: 'master',
+      enabled: true,
+      source: 'opencode-default'
+    }
+  ]
+};
+
+function cloneRepos(repos = []) {
+  return repos.map(repo => ({ ...repo }));
+}
+
+function stripJsonComments(input = '') {
+  let result = '';
+  let inString = false;
+  let stringChar = '';
+  let i = 0;
+
+  while (i < input.length) {
+    const ch = input[i];
+    const next = input[i + 1];
+
+    if (inString) {
+      result += ch;
+      if (ch === '\\') {
+        if (next) {
+          result += next;
+          i += 2;
+          continue;
+        }
+      } else if (ch === stringChar) {
+        inString = false;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === '\'') {
+      inString = true;
+      stringChar = ch;
+      result += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      i += 2;
+      while (i < input.length && input[i] !== '\n') i += 1;
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < input.length - 1 && !(input[i] === '*' && input[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+
+    result += ch;
+    i += 1;
+  }
+
+  return result;
+}
 
 class PluginsService {
+  constructor(platform = 'claude') {
+    this.platform = ['claude', 'opencode'].includes(platform) ? platform : 'claude';
+    this.ccToolConfigDir = path.join(os.homedir(), '.claude', 'cc-tool');
+    this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
+    this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
+  }
+
+  _ensureDir(dirPath) {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+
+  _isOpenCode() {
+    return this.platform === 'opencode';
+  }
+
+  _getOpenCodePluginsDir() {
+    if (fs.existsSync(this.opencodeLegacyPluginsDir) && !fs.existsSync(this.opencodePluginsDir)) {
+      return this.opencodeLegacyPluginsDir;
+    }
+    return this.opencodePluginsDir;
+  }
+
+  _getOpenCodeConfigPath() {
+    const jsonc = path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc');
+    const json = path.join(OPENCODE_CONFIG_DIR, 'opencode.json');
+    const config = path.join(OPENCODE_CONFIG_DIR, 'config.json');
+    if (fs.existsSync(jsonc)) return jsonc;
+    if (fs.existsSync(json)) return json;
+    if (fs.existsSync(config)) return config;
+    return json;
+  }
+
+  _readOpenCodeConfig() {
+    const filePath = this._getOpenCodeConfigPath();
+    if (!fs.existsSync(filePath)) return { filePath, config: {} };
+
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      if (!raw.trim()) return { filePath, config: {} };
+      if (filePath.endsWith('.jsonc')) {
+        return { filePath, config: JSON.parse(stripJsonComments(raw)) };
+      }
+      return { filePath, config: JSON.parse(raw) };
+    } catch (err) {
+      console.error('[PluginsService] Failed to read opencode config:', err.message);
+      return { filePath, config: {} };
+    }
+  }
+
+  _writeOpenCodeConfig(filePath, config) {
+    this._ensureDir(path.dirname(filePath));
+    fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
+  }
+
+  _listOpenCodeConfiguredPlugins() {
+    const { config } = this._readOpenCodeConfig();
+    if (!Array.isArray(config.plugin)) return [];
+    return config.plugin.filter(Boolean);
+  }
+
+  _setOpenCodeConfiguredPlugins(plugins) {
+    const { filePath, config } = this._readOpenCodeConfig();
+    const nextConfig = (config && typeof config === 'object') ? { ...config } : {};
+    nextConfig.plugin = Array.from(new Set((plugins || []).filter(Boolean)));
+    this._writeOpenCodeConfig(filePath, nextConfig);
+  }
+
+  _listOpenCodeLocalPlugins() {
+    const pluginsDir = this._getOpenCodePluginsDir();
+    if (!fs.existsSync(pluginsDir)) return [];
+
+    const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+    const plugins = [];
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const fullPath = path.join(pluginsDir, entry.name);
+
+      if (entry.isDirectory()) {
+        const pkgPath = path.join(fullPath, 'package.json');
+        let packageName = entry.name;
+        let description = '';
+        let version = '1.0.0';
+        if (fs.existsSync(pkgPath)) {
+          try {
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            packageName = pkg.name || packageName;
+            description = pkg.description || '';
+            version = pkg.version || version;
+          } catch (err) {
+            // ignore invalid package.json
+          }
+        }
+        plugins.push({
+          name: packageName,
+          directory: entry.name,
+          installPath: fullPath,
+          source: 'opencode-local',
+          version,
+          description,
+          installed: true,
+          enabled: true,
+          pluginType: 'local'
+        });
+        continue;
+      }
+
+      const ext = path.extname(entry.name).toLowerCase();
+      if (['.js', '.mjs', '.cjs', '.ts'].includes(ext)) {
+        plugins.push({
+          name: entry.name.replace(ext, ''),
+          directory: entry.name,
+          installPath: fullPath,
+          source: 'opencode-local',
+          version: '1.0.0',
+          description: '',
+          installed: true,
+          enabled: true,
+          pluginType: 'local'
+        });
+      }
+    }
+
+    return plugins;
+  }
+
   /**
    * List all installed plugins with their status
    * Reads from Claude Code's native installed_plugins.json
    * @returns {Object} { plugins: Array }
    */
   listPlugins() {
+    if (this._isOpenCode()) {
+      const plugins = [];
+      const seen = new Set();
+
+      for (const pkg of this._listOpenCodeConfiguredPlugins()) {
+        if (seen.has(pkg)) continue;
+        seen.add(pkg);
+        plugins.push({
+          name: pkg,
+          directory: pkg,
+          source: 'opencode-config',
+          version: 'latest',
+          description: '',
+          installed: true,
+          enabled: true,
+          pluginType: 'npm'
+        });
+      }
+
+      for (const plugin of this._listOpenCodeLocalPlugins()) {
+        if (!seen.has(plugin.name)) {
+          seen.add(plugin.name);
+          plugins.push(plugin);
+        }
+      }
+
+      return { plugins };
+    }
+
     const plugins = [];
 
     // Read Claude Code's installed_plugins.json
@@ -101,6 +346,12 @@ class PluginsService {
    * @returns {Object|null} Plugin details or null
    */
   getPlugin(name) {
+    if (this._isOpenCode()) {
+      const plugin = this.listPlugins().plugins.find(p => p.name === name || p.directory === name);
+      if (!plugin) return null;
+      return plugin;
+    }
+
     const plugin = getPlugin(name);
     if (!plugin) {
       return null;
@@ -136,6 +387,36 @@ class PluginsService {
    * @returns {Promise<Object>} Installation result
    */
   async installPlugin(source, repoInfo = null) {
+    if (this._isOpenCode()) {
+      if (repoInfo && repoInfo.owner && repoInfo.name && repoInfo.directory) {
+        return this._installFromGitHubDirectory(repoInfo, { installRoot: this._getOpenCodePluginsDir() });
+      }
+
+      const treeMatch = source.match(/github\.com\/([^\/]+)\/([^\/]+)\/tree\/([^\/]+)\/(.+)/);
+      if (treeMatch) {
+        const [, owner, name, branch, directory] = treeMatch;
+        return this._installFromGitHubDirectory({ owner, name, branch, directory }, { installRoot: this._getOpenCodePluginsDir() });
+      }
+
+      // OpenCode 原生支持 npm 包名，通过 opencode.json 的 plugin 数组管理
+      if (!/^https?:\/\//.test(source)) {
+        const plugins = this._listOpenCodeConfiguredPlugins();
+        if (!plugins.includes(source)) {
+          plugins.push(source);
+          this._setOpenCodeConfiguredPlugins(plugins);
+        }
+        return {
+          success: true,
+          plugin: { name: source, version: 'latest', description: '' }
+        };
+      }
+
+      return {
+        success: false,
+        error: 'OpenCode plugin install expects npm package name or GitHub tree URL'
+      };
+    }
+
     // If repoInfo is provided, download from GitHub directly
     if (repoInfo && repoInfo.owner && repoInfo.name && repoInfo.directory) {
       return await this._installFromGitHubDirectory(repoInfo);
@@ -156,10 +437,11 @@ class PluginsService {
    * Install plugin from GitHub directory
    * @private
    */
-  async _installFromGitHubDirectory(repoInfo) {
+  async _installFromGitHubDirectory(repoInfo, options = {}) {
     const { owner, name, branch, directory } = repoInfo;
     const https = require('https');
     const pluginName = directory.split('/').pop();
+    const installRoot = options.installRoot || INSTALLED_DIR;
 
     try {
       // Fetch plugin.json from the directory
@@ -174,7 +456,7 @@ class PluginsService {
       }
 
       // Create plugin directory
-      const pluginDir = path.join(INSTALLED_DIR, manifest.name || pluginName);
+      const pluginDir = path.join(installRoot, manifest.name || pluginName);
       if (!fs.existsSync(pluginDir)) {
         fs.mkdirSync(pluginDir, { recursive: true });
       }
@@ -196,14 +478,16 @@ class PluginsService {
         fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
       }
 
-      // Register plugin
-      const { addPlugin } = require('../../plugins/registry');
-      addPlugin(manifest.name || pluginName, {
-        version: manifest.version || '1.0.0',
-        enabled: true,
-        installedAt: new Date().toISOString(),
-        source: `https://github.com/${owner}/${name}/tree/${branch}/${directory}`
-      });
+      if (!this._isOpenCode()) {
+        // Register plugin for Claude plugin runtime
+        const { addPlugin } = require('../../plugins/registry');
+        addPlugin(manifest.name || pluginName, {
+          version: manifest.version || '1.0.0',
+          enabled: true,
+          installedAt: new Date().toISOString(),
+          source: `https://github.com/${owner}/${name}/tree/${branch}/${directory}`
+        });
+      }
 
       return {
         success: true,
@@ -250,6 +534,43 @@ class PluginsService {
    * @returns {Object} Uninstallation result
    */
   uninstallPlugin(name) {
+    if (this._isOpenCode()) {
+      const pluginsDir = this._getOpenCodePluginsDir();
+      let removed = false;
+
+      // Remove from opencode config.plugin (npm plugins)
+      const configured = this._listOpenCodeConfiguredPlugins();
+      const next = configured.filter(p => p !== name);
+      if (next.length !== configured.length) {
+        this._setOpenCodeConfiguredPlugins(next);
+        removed = true;
+      }
+
+      // Remove local plugin directory/file
+      if (fs.existsSync(pluginsDir)) {
+        const directPath = path.join(pluginsDir, name);
+        if (fs.existsSync(directPath)) {
+          fs.rmSync(directPath, { recursive: true, force: true });
+          removed = true;
+        } else {
+          const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+          for (const entry of entries) {
+            const baseName = entry.name.replace(path.extname(entry.name), '');
+            if (entry.name === name || baseName === name) {
+              fs.rmSync(path.join(pluginsDir, entry.name), { recursive: true, force: true });
+              removed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      return {
+        success: true,
+        message: removed ? 'Plugin removed successfully' : 'Plugin not found'
+      };
+    }
+
     return uninstallPluginCore(name);
   }
 
@@ -260,6 +581,22 @@ class PluginsService {
    * @returns {Object} Updated plugin info
    */
   togglePlugin(name, enabled) {
+    if (this._isOpenCode()) {
+      const configured = this._listOpenCodeConfiguredPlugins();
+      const exists = configured.includes(name);
+      if (enabled && !exists) {
+        configured.push(name);
+        this._setOpenCodeConfiguredPlugins(configured);
+      } else if (!enabled && exists) {
+        this._setOpenCodeConfiguredPlugins(configured.filter(p => p !== name));
+      }
+
+      return {
+        name,
+        enabled
+      };
+    }
+
     const plugin = getPlugin(name);
     if (!plugin) {
       throw new Error(`Plugin "${name}" not found`);
@@ -280,6 +617,17 @@ class PluginsService {
    * @returns {Object} Result
    */
   updatePluginConfig(name, config) {
+    if (this._isOpenCode()) {
+      const configDir = path.join(OPENCODE_CONFIG_DIR, 'plugins-config');
+      this._ensureDir(configDir);
+      const configFile = path.join(configDir, `${name}.json`);
+      fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
+      return {
+        success: true,
+        message: `Configuration updated for plugin "${name}"`
+      };
+    }
+
     const plugin = getPlugin(name);
     if (!plugin) {
       throw new Error(`Plugin "${name}" not found`);
@@ -305,12 +653,15 @@ class PluginsService {
    * @returns {string} Config file path
    */
   getReposConfigPath() {
-    const os = require('os');
-    const configDir = path.join(os.homedir(), '.claude', 'cc-tool');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
+    this._ensureDir(this.ccToolConfigDir);
+    if (this._isOpenCode()) {
+      return path.join(this.ccToolConfigDir, 'opencode-plugin-repos.json');
     }
-    return path.join(configDir, 'plugin-repos.json');
+    return path.join(this.ccToolConfigDir, 'plugin-repos.json');
+  }
+
+  _getDefaultRepos() {
+    return cloneRepos(DEFAULT_REPOS_BY_PLATFORM[this.platform] || DEFAULT_REPOS_BY_PLATFORM.claude);
   }
 
   /**
@@ -319,14 +670,19 @@ class PluginsService {
    */
   loadReposConfig() {
     const configPath = this.getReposConfigPath();
+    const defaultRepos = this._getDefaultRepos();
     if (!fs.existsSync(configPath)) {
-      return { repos: [] };
+      return { repos: defaultRepos };
     }
     try {
-      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (parsed && Array.isArray(parsed.repos)) {
+        return parsed;
+      }
+      return { repos: defaultRepos };
     } catch (err) {
       console.error('Failed to load repos config:', err);
-      return { repos: [] };
+      return { repos: defaultRepos };
     }
   }
 
@@ -358,8 +714,8 @@ class PluginsService {
       }
     }
 
-    // 2. Load Claude Code's native marketplace config
-    if (fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
+    // 2. Load Claude Code's native marketplace config (Claude only)
+    if (!this._isOpenCode() && fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
       try {
         const marketplaces = JSON.parse(fs.readFileSync(CLAUDE_MARKETPLACES_FILE, 'utf8'));
 
@@ -484,6 +840,10 @@ class PluginsService {
    * @returns {Promise<Object>} Sync results
    */
   async syncRepos() {
+    if (this._isOpenCode()) {
+      return { success: true, results: [] };
+    }
+
     const repos = this.getRepos();
     const results = [];
     const { execSync } = require('child_process');
@@ -589,6 +949,73 @@ class PluginsService {
     }
   }
 
+  _parseGitHubRepo(url = '') {
+    const match = url.match(/github\.com\/([^\/]+)\/([^\/#?]+)/i);
+    if (!match) return null;
+    return {
+      owner: match[1],
+      name: match[2].replace(/\.git$/, '')
+    };
+  }
+
+  async _fetchOpenCodeMarketplacePlugins(repo, branch) {
+    if (!this._isOpenCode()) return [];
+
+    let entries;
+    try {
+      const indexUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/contents/plugins?ref=${branch}`;
+      entries = await this._fetchJson(indexUrl);
+    } catch (err) {
+      return [];
+    }
+
+    if (!Array.isArray(entries)) return [];
+
+    const manifestFiles = entries.filter(
+      item => item.type === 'file' && item.name.endsWith('.plugin.json')
+    );
+    if (manifestFiles.length === 0) return [];
+
+    const results = await Promise.allSettled(
+      manifestFiles.map(async (file) => {
+        const fileUrl = file.download_url ||
+          `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${file.path}`;
+        const manifest = await this._fetchJson(fileUrl);
+
+        const author = Array.isArray(manifest.authors)
+          ? manifest.authors.map(item => item?.name).filter(Boolean).join(', ')
+          : '';
+        const firstCategory = Array.isArray(manifest.categories) ? manifest.categories[0] : '';
+        const repoUrl = manifest.links?.repository || `https://github.com/${repo.owner}/${repo.name}`;
+        // OpenCode supports npm package plugins via opencode.json "plugin" array.
+        // Use package name as install source so UI install button is enabled.
+        const installSource = String(manifest.name || '').trim();
+        const githubRepo = this._parseGitHubRepo(repoUrl);
+
+        return {
+          name: manifest.name || file.name.replace(/\.plugin\.json$/, ''),
+          displayName: manifest.displayName || '',
+          description: manifest.description || '',
+          author: author || repo.owner,
+          version: manifest.version || manifest.opencode?.minimumVersion || '1.0.0',
+          category: firstCategory ? String(firstCategory).toLowerCase() : 'general',
+          repoUrl,
+          repoOwner: '',
+          repoName: '',
+          repoBranch: githubRepo ? 'main' : branch,
+          directory: file.path,
+          installSource,
+          marketplaceFormat: 'opencode-plugin-json',
+          isInstalled: false
+        };
+      })
+    );
+
+    return results
+      .filter(item => item.status === 'fulfilled' && item.value)
+      .map(item => item.value);
+  }
+
   /**
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
@@ -629,7 +1056,16 @@ class PluginsService {
           // marketplace.json not found, try legacy format
         }
 
-        // Legacy format: each directory is a plugin with plugin.json
+        // OpenCode plugin marketplace format: plugins/*.plugin.json
+        if (this._isOpenCode()) {
+          const openCodeMarketplacePlugins = await this._fetchOpenCodeMarketplacePlugins(repo, branch);
+          if (openCodeMarketplacePlugins.length > 0) {
+            marketPlugins.push(...openCodeMarketplacePlugins);
+            continue;
+          }
+        }
+
+        // Legacy format: each directory is a plugin with plugin.json/package.json
         const apiUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/contents?ref=${branch}`;
         const contents = await this._fetchJson(apiUrl);
         const pluginDirs = contents.filter(item => item.type === 'dir' && !item.name.startsWith('.'));
@@ -654,7 +1090,28 @@ class PluginsService {
               isInstalled: false
             });
           } catch (e) {
-            // No plugin.json in this directory, skip
+            // OpenCode 仓库常见 package.json 格式
+            if (this._isOpenCode()) {
+              try {
+                const pkgUrl = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${branch}/${dir.name}/package.json`;
+                const pkg = await this._fetchJson(pkgUrl);
+                const pluginName = pkg.name || dir.name;
+                marketPlugins.push({
+                  name: pluginName,
+                  description: pkg.description || '',
+                  author: pkg.author || repo.owner,
+                  version: pkg.version || '1.0.0',
+                  repoUrl: `https://github.com/${repo.owner}/${repo.name}`,
+                  repoOwner: repo.owner,
+                  repoName: repo.name,
+                  repoBranch: branch,
+                  directory: dir.name,
+                  isInstalled: false
+                });
+              } catch (pkgErr) {
+                // neither plugin.json nor package.json
+              }
+            }
           }
         }
       } catch (err) {

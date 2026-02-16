@@ -257,7 +257,7 @@ async function startCodexProxyServer(options = {}) {
       });
 
       proxyReq.removeHeader('authorization');
-      const effectiveKey = getEffectiveApiKey(activeChannel);
+      const effectiveKey = req.effectiveApiKey;
       proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
       proxyReq.setHeader('openai-beta', 'responses=experimental');
       if (!proxyReq.getHeader('content-type')) {
@@ -279,6 +279,33 @@ async function startCodexProxyServer(options = {}) {
         const channel = await allocateChannel({ source: 'codex', enableSessionBinding: false });
         req.selectedChannel = channel;
 
+        const release = (() => {
+          let released = false;
+          return () => {
+            if (released) return;
+            released = true;
+            releaseChannel(channel.id, 'codex');
+            broadcastSchedulerState('codex', getSchedulerState('codex'));
+          };
+        })();
+
+        res.on('close', release);
+        res.on('error', release);
+
+        broadcastSchedulerState('codex', getSchedulerState('codex'));
+
+        const effectiveKey = getEffectiveApiKey(channel);
+        if (!effectiveKey) {
+          release();
+          return res.status(401).json({
+            error: {
+              message: 'API key not configured or expired. Please update your channel key.',
+              type: 'authentication_error'
+            }
+          });
+        }
+        req.effectiveApiKey = effectiveKey;
+
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {
           const originalModel = req.body.model;
@@ -298,21 +325,6 @@ async function startCodexProxyServer(options = {}) {
             }
           }
         }
-
-        const release = (() => {
-          let released = false;
-          return () => {
-            if (released) return;
-            released = true;
-            releaseChannel(channel.id, 'codex');
-            broadcastSchedulerState('codex', getSchedulerState('codex'));
-          };
-        })();
-
-        res.on('close', release);
-        res.on('error', release);
-
-        broadcastSchedulerState('codex', getSchedulerState('codex'));
 
         const target = resolveCodexTarget(channel.baseUrl, req.url);
 

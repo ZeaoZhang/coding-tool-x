@@ -69,6 +69,18 @@
             </template>
             Codex CLI {{ registryInfo.platforms?.codex ? '已启用' : '未启用' }}
           </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
+                :class="{ active: registryInfo.platforms?.opencode }"
+                @click.stop="emit('toggle-platform', command, 'opencode', !registryInfo.platforms?.opencode)"
+              >
+                <n-icon size="14"><CodeSlashOutline /></n-icon>
+              </span>
+            </template>
+            OpenCode {{ registryInfo.platforms?.opencode ? '已启用' : '未启用' }}
+          </n-tooltip>
         </div>
       </template>
       <!-- 原有模式 -->
@@ -96,7 +108,7 @@
 
 <script setup>
 import { NButton, NTag, NIcon, NSwitch, NTooltip } from 'naive-ui'
-import { HammerOutline, CodeOutline, LogoApple, TerminalOutline } from '@vicons/ionicons5'
+import { HammerOutline, CodeOutline, LogoApple, TerminalOutline, CodeSlashOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
   command: {

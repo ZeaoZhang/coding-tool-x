@@ -9,17 +9,7 @@ export const codexPresets = [
     category: 'official',
     websiteUrl: 'https://platform.openai.com',
     baseUrl: 'https://api.openai.com/v1',
-    providerKey: 'openai',
-    authType: 'apiKey'
-  },
-  {
-    id: 'openai_oauth',
-    name: 'OpenAI OAuth',
-    category: 'official',
-    websiteUrl: 'https://platform.openai.com',
-    baseUrl: 'https://api.openai.com/v1',
-    providerKey: 'openai',
-    authType: 'oauth'
+    providerKey: 'openai'
   },
   {
     id: 'custom',
@@ -27,8 +17,7 @@ export const codexPresets = [
     category: 'custom',
     websiteUrl: '',
     baseUrl: '',
-    providerKey: '',
-    authType: 'apiKey'
+    providerKey: ''
   }
 ]
 

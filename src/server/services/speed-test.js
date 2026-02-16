@@ -10,6 +10,10 @@ const { URL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const { probeModelAvailability } = require('./model-detector');
+const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
+const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
+const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
+const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
 
 // 测试结果缓存
 const testResultsCache = new Map();
@@ -28,6 +32,20 @@ const MAX_TIMEOUT = 60000;
 function sanitizeTimeout(timeout) {
   const ms = timeout || DEFAULT_TIMEOUT;
   return Math.min(Math.max(ms, MIN_TIMEOUT), MAX_TIMEOUT);
+}
+
+function resolveEffectiveApiKey(channel, channelType) {
+  switch (channelType) {
+    case 'codex':
+      return getCodexEffectiveApiKey(channel);
+    case 'gemini':
+      return getGeminiEffectiveApiKey(channel);
+    case 'opencode':
+      return getOpenCodeEffectiveApiKey(channel);
+    case 'claude':
+    default:
+      return getClaudeEffectiveApiKey(channel);
+  }
 }
 
 /**
@@ -74,9 +92,31 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
       };
     }
 
+    const effectiveApiKey = resolveEffectiveApiKey(channel, channelType);
+    if (!effectiveApiKey) {
+      return {
+        channelId: channel.id,
+        channelName: channel.name,
+        success: false,
+        networkOk: false,
+        apiOk: false,
+        error: 'API Key 未配置',
+        latency: null,
+        statusCode: null,
+        testedAt: Date.now()
+      };
+    }
+
     // 直接测试 API 功能（发送测试消息）
     // 不再单独测试网络连通性，因为直接 GET base_url 可能返回 404
-    const apiResult = await testAPIFunctionality(testUrl, channel.apiKey, sanitizedTimeout, channelType, channel.model, channel);
+    const apiResult = await testAPIFunctionality(
+      testUrl,
+      effectiveApiKey,
+      sanitizedTimeout,
+      channelType,
+      channel.model,
+      channel
+    );
 
     const success = apiResult.success;
     const networkOk = apiResult.latency !== null; // 如果有延迟数据，说明网络是通的

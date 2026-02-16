@@ -20,6 +20,14 @@ const { injectEnvToShell, removeEnvFromShell, isProxyConfig } = require('./codex
  * - 使用 weight 和 maxConcurrency 控制负载均衡
  */
 
+function normalizeGatewaySourceType(value, fallback = 'codex') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'gemini') return 'gemini';
+  return fallback;
+}
+
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
   const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
@@ -43,15 +51,17 @@ function loadChannels() {
     const data = JSON.parse(content);
     // 确保渠道有 enabled 字段（兼容旧数据）
     if (data.channels) {
-      data.channels = data.channels.map(ch => ({
-        ...ch,
-        enabled: ch.enabled !== false, // 默认启用
-        weight: ch.weight || 1,
-        maxConcurrency: ch.maxConcurrency || null,
-        modelRedirects: ch.modelRedirects || [],
-        speedTestModel: ch.speedTestModel || null,
-        authType: ch.authType || 'apiKey' // 默认 API Key 认证
-      }));
+      data.channels = data.channels.map(ch => {
+        return {
+          ...ch,
+          enabled: ch.enabled !== false, // 默认启用
+          weight: ch.weight || 1,
+          maxConcurrency: ch.maxConcurrency || null,
+          modelRedirects: ch.modelRedirects || [],
+          speedTestModel: ch.speedTestModel || null,
+          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'codex')
+        };
+      });
     }
     return data;
   } catch (err) {
@@ -111,6 +121,7 @@ function initializeFromConfig() {
           enabled: config.model_provider === providerKey, // 当前激活的渠道启用
           weight: 1,
           maxConcurrency: null,
+          gatewaySourceType: 'codex',
           createdAt: Date.now(),
           updatedAt: Date.now()
         });
@@ -180,9 +191,7 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
     maxConcurrency: extraConfig.maxConcurrency || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
-    authType: extraConfig.authType || 'apiKey',
-    oauthProvider: extraConfig.oauthProvider || null,
-    oauthTokenId: extraConfig.oauthTokenId || null,
+    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'codex'),
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
@@ -191,8 +200,8 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
   saveChannels(data);
 
   // 注入该渠道的环境变量（用于直接使用 codex 命令）
-  if (apiKey && envKey) {
-    const injectResult = injectEnvToShell(envKey, apiKey);
+  if (newChannel.enabled !== false && newChannel.apiKey && envKey) {
+    const injectResult = injectEnvToShell(envKey, newChannel.apiKey);
     if (injectResult.success) {
       console.log(`[Codex Channels] Environment variable ${envKey} injected for new channel`);
     } else {
@@ -232,6 +241,7 @@ function updateChannel(channelId, updates) {
     createdAt: oldChannel.createdAt, // 保持创建时间
     modelRedirects: merged.modelRedirects || [],
     speedTestModel: merged.speedTestModel !== undefined ? merged.speedTestModel : (oldChannel.speedTestModel || null),
+    gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'codex'),
     updatedAt: Date.now()
   };
 
@@ -273,19 +283,23 @@ function updateChannel(channelId, updates) {
   // 如果 envKey 或 apiKey 变化，需要更新环境变量
   const oldEnvKey = oldChannel.envKey;
   const newEnvKey = newChannel.envKey;
-  const oldApiKey = oldChannel.apiKey;
   const newApiKey = newChannel.apiKey;
+  const shouldRemoveOldEnv =
+    !!oldEnvKey && (
+      oldEnvKey !== newEnvKey ||
+      !newApiKey ||
+      newChannel.enabled === false
+    );
 
-  // 如果 envKey 改变，删除旧的，注入新的
-  if (oldEnvKey !== newEnvKey && oldEnvKey) {
+  // 禁用或 key 变化时都要清理旧环境变量，避免残留
+  if (shouldRemoveOldEnv) {
     const removeResult = removeEnvFromShell(oldEnvKey);
     if (removeResult.success) {
       console.log(`[Codex Channels] Old environment variable ${oldEnvKey} removed`);
     }
   }
 
-  // 如果有新的 API Key，注入到环境变量
-  if (newApiKey && newEnvKey) {
+  if (newChannel.enabled !== false && newApiKey && newEnvKey) {
     const injectResult = injectEnvToShell(newEnvKey, newApiKey);
     if (injectResult.success) {
       console.log(`[Codex Channels] Environment variable ${newEnvKey} updated`);
@@ -299,7 +313,7 @@ function updateChannel(channelId, updates) {
 }
 
 // 删除渠道
-function deleteChannel(channelId) {
+async function deleteChannel(channelId) {
   const data = loadChannels();
 
   const index = data.channels.findIndex(c => c.id === channelId);
@@ -453,6 +467,12 @@ ${tomlContent}`;
 
   // 更新所有渠道的 API Key
   for (const channel of allChannels) {
+    if (channel.envKey && !channel.apiKey) {
+      delete auth[channel.envKey];
+    }
+  }
+
+  for (const channel of allChannels) {
     if (channel.apiKey) {
       auth[channel.envKey] = channel.apiKey;
     }
@@ -512,7 +532,10 @@ function syncAllChannelEnvVars() {
     const results = [];
 
     for (const channel of channels) {
-      if (channel.apiKey && channel.envKey) {
+      if (!channel.envKey) continue;
+
+      const shouldInject = channel.enabled !== false && !!channel.apiKey;
+      if (shouldInject) {
         const injectResult = injectEnvToShell(channel.envKey, channel.apiKey);
         if (injectResult.success) {
           syncedCount++;
@@ -520,7 +543,11 @@ function syncAllChannelEnvVars() {
         } else {
           results.push({ envKey: channel.envKey, success: false, error: injectResult.error });
         }
+        continue;
       }
+
+      // 清理已停用或缺失 key 的渠道环境变量，避免残留
+      removeEnvFromShell(channel.envKey);
     }
 
     console.log(`[Codex Channels] Synced ${syncedCount} environment variables`);
@@ -624,19 +651,21 @@ ${tomlContent}`;
     }
   }
 
-  // 添加当前渠道的 API Key
   if (channel.apiKey && channel.envKey) {
     auth[channel.envKey] = channel.apiKey;
+  } else if (channel.envKey) {
+    delete auth[channel.envKey];
   }
 
   fs.writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8');
 
-  // 注入环境变量到 shell 配置文件
   if (channel.apiKey && channel.envKey) {
     const injectResult = injectEnvToShell(channel.envKey, channel.apiKey);
     if (injectResult.success) {
       console.log(`[Codex Channels] Environment variable ${channel.envKey} injected`);
     }
+  } else if (channel.envKey) {
+    removeEnvFromShell(channel.envKey);
   }
 
   return channel;
@@ -653,24 +682,8 @@ try {
   console.warn('[Codex Channels] Auto sync env vars failed:', err.message);
 }
 
-/**
- * 获取渠道的有效 API Key
- * 如果渠道使用 OAuth 认证，返回 OAuth 令牌；否则返回静态 API Key
- *
- * @param {Object} channel - 渠道对象
- * @returns {string|null} 有效的 API Key
- */
 function getEffectiveApiKey(channel) {
-  if (channel.authType === 'oauth' && channel.oauthTokenId) {
-    const { getToken, isTokenExpired } = require('./oauth-token-storage');
-    const token = getToken(channel.oauthTokenId);
-    if (token && !isTokenExpired(token)) {
-      return token.accessToken;
-    }
-    // OAuth 令牌无效或已过期，返回 null
-    return null;
-  }
-  return channel.apiKey;
+  return channel.apiKey || null;
 }
 
 module.exports = {

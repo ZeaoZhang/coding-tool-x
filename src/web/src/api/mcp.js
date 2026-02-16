@@ -89,7 +89,7 @@ export async function updateServerOrder(serverIds) {
 
 /**
  * 导出 MCP 配置
- * @param {string} format - 导出格式: 'json' | 'claude' | 'codex'
+ * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode'
  */
 export async function exportServers(format = 'json') {
   const response = await client.get('/mcp/export', { params: { format } })

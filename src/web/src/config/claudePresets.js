@@ -10,16 +10,6 @@ export const claudePresets = [
     category: 'official',
     websiteUrl: 'https://www.anthropic.com',
     baseUrl: 'https://api.anthropic.com',
-    authType: 'apiKey',
-    env: {}
-  },
-  {
-    id: 'official_oauth',
-    name: 'Claude OAuth',
-    category: 'official',
-    websiteUrl: 'https://www.anthropic.com',
-    baseUrl: 'https://api.anthropic.com',
-    authType: 'oauth',
     env: {}
   },
   {
@@ -106,7 +96,6 @@ export const claudePresets = [
     category: 'custom',
     websiteUrl: '',
     baseUrl: '',
-    authType: 'apiKey',
     env: {}
   }
 ]

@@ -163,9 +163,10 @@ export async function testClaudeChannelSpeed(channelId, timeout = 20000) {
  * 获取渠道可用模型列表
  */
 export async function fetchChannelModels(channelId, channelType = 'claude') {
-  const response = await client.get(`/channels/${channelId}/models`, {
-    params: { type: channelType }
-  })
+  const requestConfig = channelType
+    ? { params: { type: channelType } }
+    : undefined
+  const response = await client.get(`/channels/${channelId}/models`, requestConfig)
   return response.data
 }
 
@@ -250,13 +251,13 @@ export async function createOpenCodeChannel(name, baseUrl, apiKey, extra = {}) {
     baseUrl,
     apiKey,
     wireApi: extra.wireApi || 'openai',
+    gatewaySourceType: extra.gatewaySourceType || 'codex',
     enabled: extra.enabled !== false,
     weight: extra.weight || 1,
     maxConcurrency: extra.maxConcurrency || null,
     model: extra.model || null,
-    authType: extra.authType || 'apiKey',
-    oauthProvider: extra.oauthProvider || null,
-    oauthTokenId: extra.oauthTokenId || null,
+    modelRedirects: extra.modelRedirects || [],
+    speedTestModel: extra.speedTestModel || null,
     presetId: extra.presetId || null,
     websiteUrl: extra.websiteUrl || ''
   })

@@ -10,6 +10,7 @@ const {
   isProxyConfig: isCodexProxyConfig,
   setProxyConfig: setCodexProxyConfig
 } = require('./services/codex-settings-manager');
+const { setProxyConfig: setOpenCodeProxyConfig } = require('./services/opencode-settings-manager');
 const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
@@ -162,9 +163,6 @@ async function startServer(port, host = '127.0.0.1') {
   // 配置同步 API
   app.use('/api/config-sync', require('./api/config-sync'));
 
-  // OAuth API
-  app.use('/api/oauth', require('./api/oauth'));
-
   // 配置注册表 API (集中管理 skills/commands/agents/rules 的启用/禁用)
   app.use('/api/config-registry', require('./api/config-registry'));
 
@@ -293,6 +291,14 @@ function autoRestoreProxies() {
       .then((result) => {
         if (result.success) {
           console.log(chalk.green(`✅ OpenCode 代理已自动启动，端口: ${result.port}`));
+          try {
+            const cfgResult = setOpenCodeProxyConfig(result.port);
+            if (cfgResult?.success) {
+              console.log(chalk.gray('   已同步 OpenCode 配置文件'));
+            }
+          } catch (err) {
+            console.error(chalk.red(`❌ OpenCode 代理配置同步失败: ${err.message}`));
+          }
         } else {
           console.error(chalk.red(`❌ OpenCode 代理启动失败: ${result.error || 'Unknown error'}`));
         }

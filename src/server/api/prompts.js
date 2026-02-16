@@ -203,7 +203,7 @@ router.get('/platform/:platform', (req, res) => {
   try {
     const { platform } = req.params;
 
-    if (!['claude', 'codex', 'gemini'].includes(platform)) {
+    if (!['claude', 'codex', 'gemini', 'opencode'].includes(platform)) {
       return res.status(400).json({
         success: false,
         error: `无效的平台: ${platform}`
@@ -234,7 +234,7 @@ router.post('/import/:platform', (req, res) => {
     const { platform } = req.params;
     const { name } = req.body;
 
-    if (!['claude', 'codex', 'gemini'].includes(platform)) {
+    if (!['claude', 'codex', 'gemini', 'opencode'].includes(platform)) {
       return res.status(400).json({
         success: false,
         error: `无效的平台: ${platform}`

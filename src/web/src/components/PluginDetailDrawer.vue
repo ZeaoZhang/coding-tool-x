@@ -102,6 +102,10 @@ const props = defineProps({
   plugin: {
     type: Object,
     default: null
+  },
+  platform: {
+    type: String,
+    default: 'claude'
   }
 })
 
@@ -128,7 +132,7 @@ watch(() => props.visible, async (newVisible) => {
         source: props.plugin.source,
         repoUrl: props.plugin.repoUrl
       }
-      const response = await getPluginReadme(props.plugin.name, repoInfo)
+      const response = await getPluginReadme(props.plugin.name, repoInfo, props.platform)
       readmeContent.value = response.readme || ''
     } catch (error) {
       console.error('Failed to fetch README:', error)

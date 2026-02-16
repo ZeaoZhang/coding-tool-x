@@ -186,7 +186,7 @@ async function startProxyServer(options = {}) {
         });
 
         proxyReq.removeHeader('x-api-key');
-        const effectiveKey = getEffectiveApiKey(selectedChannel);
+        const effectiveKey = req.effectiveApiKey;
         proxyReq.setHeader('x-api-key', effectiveKey);
         proxyReq.removeHeader('authorization');
         proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
@@ -221,6 +221,30 @@ async function startProxyServer(options = {}) {
 
         req.selectedChannel = channel;
         req.sessionId = sessionId || null;
+        let released = false;
+
+        const release = () => {
+          if (released) return;
+          released = true;
+          releaseChannel(channel.id, 'claude');
+          // 广播调度状态（请求结束）
+          broadcastSchedulerState('claude', getSchedulerState('claude'));
+        };
+
+        req.__releaseChannel = release;
+
+        res.on('close', release);
+        res.on('error', release);
+
+        const effectiveKey = getEffectiveApiKey(channel);
+        if (!effectiveKey) {
+          release();
+          return res.status(401).json({
+            error: 'API key not configured or expired. Please update your channel key.',
+            type: 'authentication_error'
+          });
+        }
+        req.effectiveApiKey = effectiveKey;
 
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {
@@ -241,21 +265,6 @@ async function startProxyServer(options = {}) {
             }
           }
         }
-
-        let released = false;
-
-        const release = () => {
-          if (released) return;
-          released = true;
-          releaseChannel(channel.id, 'claude');
-          // 广播调度状态（请求结束）
-          broadcastSchedulerState('claude', getSchedulerState('claude'));
-        };
-
-        req.__releaseChannel = release;
-
-        res.on('close', release);
-        res.on('error', release);
 
         const proxyOptions = {
           target: channel.baseUrl,

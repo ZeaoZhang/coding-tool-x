@@ -1,11 +1,7 @@
 /**
  * Commands 服务
  *
- * 管理 Claude Code 自定义命令的 CRUD 操作
- * 命令目录:
- * - 用户级: ~/.claude/commands/
- * - 项目级: .claude/commands/
- *
+ * 管理 Claude/OpenCode 自定义命令的 CRUD 操作
  * 支持从 GitHub 仓库扫描和安装命令
  */
 
@@ -13,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { RepoScannerBase } = require('./repo-scanner-base');
+const { NATIVE_PATHS } = require('../../config/paths');
 const {
   parseCommandContent,
   detectCommandFormat,
@@ -21,11 +18,35 @@ const {
   parseFrontmatter
 } = require('./format-converter');
 
-// 命令目录路径
-const USER_COMMANDS_DIR = path.join(os.homedir(), '.claude', 'commands');
-
 // 默认仓库源
 const DEFAULT_REPOS = [];
+const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
+
+const PLATFORM_CONFIG = {
+  claude: {
+    userCommandsDir: path.join(os.homedir(), '.claude', 'commands'),
+    projectCommandsDir: (projectPath) => path.join(projectPath, '.claude', 'commands'),
+    repoType: 'commands'
+  },
+  opencode: {
+    userCommandsDir: path.join(OPENCODE_CONFIG_DIR, 'commands'),
+    legacyUserCommandsDir: path.join(OPENCODE_CONFIG_DIR, 'command'),
+    projectCommandsDir: (projectPath) => {
+      const modern = path.join(projectPath, '.opencode', 'commands');
+      const legacy = path.join(projectPath, '.opencode', 'command');
+      if (fs.existsSync(legacy) && !fs.existsSync(modern)) {
+        return legacy;
+      }
+      return modern;
+    },
+    repoType: 'opencode-commands'
+  }
+};
+
+function normalizePlatform(platform) {
+  return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
+}
 
 /**
  * 确保目录存在
@@ -59,6 +80,9 @@ function generateCommandFrontmatter(data) {
   }
   if (data.agent) {
     lines.push(`agent: ${data.agent}`);
+  }
+  if (typeof data.subtask === 'boolean') {
+    lines.push(`subtask: ${data.subtask}`);
   }
 
   lines.push('---');
@@ -105,6 +129,9 @@ function scanCommandsDir(dir, basePath, scope) {
             description: frontmatter.description || '',
             allowedTools: frontmatter['allowed-tools'] || '',
             argumentHint: frontmatter['argument-hint'] || '',
+            agent: frontmatter.agent || '',
+            model: frontmatter.model || '',
+            subtask: frontmatter.subtask || '',
             body,
             fullContent: content,
             updatedAt: fs.statSync(fullPath).mtime.getTime()
@@ -125,10 +152,10 @@ function scanCommandsDir(dir, basePath, scope) {
  * Commands 仓库扫描器
  */
 class CommandsRepoScanner extends RepoScannerBase {
-  constructor() {
+  constructor(platform, installDir) {
     super({
-      type: 'commands',
-      installDir: USER_COMMANDS_DIR,
+      type: PLATFORM_CONFIG[platform]?.repoType || 'commands',
+      installDir,
       markerFile: null, // 直接扫描 .md 文件
       fileExtension: '.md',
       defaultRepos: DEFAULT_REPOS
@@ -159,6 +186,9 @@ class CommandsRepoScanner extends RepoScannerBase {
         description: frontmatter.description || '',
         allowedTools: frontmatter['allowed-tools'] || '',
         argumentHint: frontmatter['argument-hint'] || '',
+        agent: frontmatter.agent || '',
+        model: frontmatter.model || '',
+        subtask: frontmatter.subtask || '',
         body,
         fullContent: content,
         installed: this.isInstalled(relativePath),
@@ -208,10 +238,26 @@ class CommandsRepoScanner extends RepoScannerBase {
  * Commands 服务类
  */
 class CommandsService {
-  constructor() {
-    this.userCommandsDir = USER_COMMANDS_DIR;
-    this.repoScanner = new CommandsRepoScanner();
+  constructor(platform = 'claude') {
+    this.platform = normalizePlatform(platform);
+    const config = PLATFORM_CONFIG[this.platform];
+
+    this.userCommandsDir = config.userCommandsDir;
+    if (this.platform === 'opencode') {
+      const legacyUserDir = config.legacyUserCommandsDir;
+      if (legacyUserDir && fs.existsSync(legacyUserDir) && !fs.existsSync(this.userCommandsDir)) {
+        this.userCommandsDir = legacyUserDir;
+      }
+    }
+
+    this.projectCommandsDir = config.projectCommandsDir;
+    this.repoScanner = new CommandsRepoScanner(this.platform, this.userCommandsDir);
     ensureDir(this.userCommandsDir);
+  }
+
+  getProjectCommandsDir(projectPath) {
+    if (!projectPath) return null;
+    return this.projectCommandsDir(projectPath);
   }
 
   /**
@@ -227,7 +273,7 @@ class CommandsService {
 
     // 获取项目级命令（如果提供了项目路径）
     if (projectPath) {
-      const projectCommandsDir = path.join(projectPath, '.claude', 'commands');
+      const projectCommandsDir = this.getProjectCommandsDir(projectPath);
       const projectCommands = scanCommandsDir(projectCommandsDir, projectCommandsDir, 'project');
       commands.push(...projectCommands);
     }
@@ -295,7 +341,7 @@ class CommandsService {
   getCommand(name, scope, projectPath = null, namespace = null) {
     const baseDir = scope === 'user'
       ? this.userCommandsDir
-      : path.join(projectPath, '.claude', 'commands');
+      : this.getProjectCommandsDir(projectPath);
 
     const relativePath = namespace
       ? path.join(namespace, `${name}.md`)
@@ -319,6 +365,9 @@ class CommandsService {
       description: frontmatter.description || '',
       allowedTools: frontmatter['allowed-tools'] || '',
       argumentHint: frontmatter['argument-hint'] || '',
+      agent: frontmatter.agent || '',
+      model: frontmatter.model || '',
+      subtask: frontmatter.subtask || '',
       body,
       fullContent: content,
       updatedAt: fs.statSync(fullPath).mtime.getTime()
@@ -328,7 +377,7 @@ class CommandsService {
   /**
    * 创建命令
    */
-  createCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, body }) {
+  createCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body }) {
     if (!name || !name.trim()) {
       throw new Error('命令名称不能为空');
     }
@@ -340,7 +389,7 @@ class CommandsService {
 
     const baseDir = scope === 'user'
       ? this.userCommandsDir
-      : path.join(projectPath, '.claude', 'commands');
+      : this.getProjectCommandsDir(projectPath);
 
     const targetDir = namespace ? path.join(baseDir, namespace) : baseDir;
     ensureDir(targetDir);
@@ -355,8 +404,13 @@ class CommandsService {
     // 生成文件内容
     const frontmatterData = {};
     if (description) frontmatterData.description = description;
-    if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
-    if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
+    if (this.platform !== 'opencode') {
+      if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
+      if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
+    }
+    if (agent) frontmatterData.agent = agent;
+    if (model) frontmatterData.model = model;
+    if (typeof subtask === 'boolean') frontmatterData.subtask = subtask;
 
     let content = '';
     if (Object.keys(frontmatterData).length > 0) {
@@ -372,10 +426,10 @@ class CommandsService {
   /**
    * 更新命令
    */
-  updateCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, body }) {
+  updateCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body }) {
     const baseDir = scope === 'user'
       ? this.userCommandsDir
-      : path.join(projectPath, '.claude', 'commands');
+      : this.getProjectCommandsDir(projectPath);
 
     const relativePath = namespace
       ? path.join(namespace, `${name}.md`)
@@ -390,8 +444,13 @@ class CommandsService {
     // 生成文件内容
     const frontmatterData = {};
     if (description) frontmatterData.description = description;
-    if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
-    if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
+    if (this.platform !== 'opencode') {
+      if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
+      if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
+    }
+    if (agent) frontmatterData.agent = agent;
+    if (model) frontmatterData.model = model;
+    if (typeof subtask === 'boolean') frontmatterData.subtask = subtask;
 
     let content = '';
     if (Object.keys(frontmatterData).length > 0) {
@@ -410,7 +469,7 @@ class CommandsService {
   deleteCommand(name, scope, projectPath = null, namespace = null) {
     const baseDir = scope === 'user'
       ? this.userCommandsDir
-      : path.join(projectPath, '.claude', 'commands');
+      : this.getProjectCommandsDir(projectPath);
 
     const relativePath = namespace
       ? path.join(namespace, `${name}.md`)

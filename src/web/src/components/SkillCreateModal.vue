@@ -25,11 +25,11 @@
               :maxlength="50"
             />
             <template #feedback>
-              只能包含英文、数字、横杠和下划线
+              {{ isOpenCode ? 'OpenCode 要求小写字母/数字，可用单个 - 连接（如 my-skill）' : '只能包含英文、数字、横杠和下划线' }}
             </template>
           </n-form-item>
 
-          <n-form-item label="技能名称" path="name">
+          <n-form-item v-if="!isOpenCode" label="技能名称" path="name">
             <n-input
               v-model:value="simpleFormData.name"
               placeholder="显示名称，可以是中文"
@@ -73,7 +73,7 @@
               :maxlength="50"
             />
             <template #feedback>
-              只能包含英文、数字、横杠和下划线
+              {{ isOpenCode ? 'OpenCode 要求小写字母/数字，可用单个 - 连接（如 my-skill）' : '只能包含英文、数字、横杠和下划线' }}
             </template>
           </n-form-item>
 
@@ -246,7 +246,11 @@ import message from '../utils/message'
 import MarkdownEditor from './MarkdownEditor.vue'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  platform: {
+    type: String,
+    default: 'claude'
+  }
 })
 
 const emit = defineEmits(['update:visible', 'created'])
@@ -317,6 +321,8 @@ const newFileContent = ref('')
 const hasSkillMd = computed(() => {
   return advancedFormData.value.files.some(f => f.path === 'SKILL.md')
 })
+const isOpenCode = computed(() => props.platform === 'opencode')
+const OPENCODE_SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 // 判断是否是文本文件
 function isTextFile(path) {
@@ -422,7 +428,17 @@ function addNewFile() {
 
 // 添加 SKILL.md 模板
 function addSkillMdTemplate() {
-  const template = `---
+  const template = isOpenCode.value
+    ? `---
+name: ${advancedFormData.value.directory || 'my-skill'}
+description: "Skill description"
+---
+
+# Skill Instructions
+
+Describe when this skill should be used and what it should do.
+`
+    : `---
 name: "${advancedFormData.value.directory || '我的技能'}"
 description: "技能描述"
 ---
@@ -431,6 +447,7 @@ description: "技能描述"
 
 在这里编写你的技能内容...
 `
+
   advancedFormData.value.files.unshift({
     path: 'SKILL.md',
     content: template,
@@ -455,14 +472,28 @@ async function submitSimpleMode() {
     return
   }
 
+  if (isOpenCode.value) {
+    const directory = simpleFormData.value.directory?.trim()
+    if (!OPENCODE_SKILL_NAME_REGEX.test(directory || '')) {
+      message.error('OpenCode skill 目录必须是小写字母/数字，可用单个 - 连接')
+      return
+    }
+    if (!simpleFormData.value.description?.trim()) {
+      message.error('OpenCode skill 需要填写 description')
+      return
+    }
+  }
+
   submitting.value = true
   try {
     const result = await createCustomSkill({
-      name: simpleFormData.value.name || simpleFormData.value.directory,
+      name: isOpenCode.value
+        ? simpleFormData.value.directory
+        : (simpleFormData.value.name || simpleFormData.value.directory),
       directory: simpleFormData.value.directory,
       description: simpleFormData.value.description,
       content: simpleFormData.value.content
-    })
+    }, props.platform)
 
     if (result.success) {
       message.success('技能创建成功')
@@ -490,6 +521,14 @@ async function submitAdvancedMode() {
     return
   }
 
+  if (isOpenCode.value) {
+    const directory = advancedFormData.value.directory?.trim()
+    if (!OPENCODE_SKILL_NAME_REGEX.test(directory || '')) {
+      message.error('OpenCode skill 目录必须是小写字母/数字，可用单个 - 连接')
+      return
+    }
+  }
+
   submitting.value = true
   try {
     const result = await createSkillWithFiles({
@@ -499,7 +538,7 @@ async function submitAdvancedMode() {
         content: f.content,
         isBase64: f.isBase64
       }))
-    })
+    }, props.platform)
 
     if (result.success) {
       message.success(`技能创建成功，包含 ${result.fileCount} 个文件`)

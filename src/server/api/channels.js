@@ -12,10 +12,33 @@ const {
 } = require('../services/channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
-const { testChannelSpeed, testMultipleChannels, getLatencyLevel } = require('../services/speed-test');
-const { fetchModelsFromProvider } = require('../services/model-detector');
+const { testChannelSpeed, getLatencyLevel } = require('../services/speed-test');
+const {
+  fetchModelsFromProvider,
+  probeModelAvailability,
+  getModelPriority,
+  detectChannelType
+} = require('../services/model-detector');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
 const { clearRedirectCache } = require('../proxy-server');
+
+function mapDetectedTypeToGatewayType(detectedType, fallback = 'claude') {
+  if (detectedType === 'claude') return 'claude';
+  if (detectedType === 'codex') return 'codex';
+  if (detectedType === 'gemini') return 'gemini';
+  if (detectedType === 'openai_compatible') return 'codex';
+  return fallback;
+}
+
+function resolveGatewaySourceType(channel) {
+  const normalized = String(channel?.gatewaySourceType || '').trim().toLowerCase();
+  if (normalized === 'claude') return 'claude';
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'gemini') return 'gemini';
+
+  const detected = detectChannelType(channel || {});
+  return mapDetectedTypeToGatewayType(detected, 'claude');
+}
 
 // GET /api/channels - Get all channels with health status
 router.get('/', (req, res) => {
@@ -66,16 +89,40 @@ router.get('/current', (req, res) => {
 // POST /api/channels - Create new channel
 router.post('/', (req, res) => {
   try {
-    const { name, baseUrl, apiKey, websiteUrl, enabled, weight, maxConcurrency } = req.body;
+    const {
+      name,
+      baseUrl,
+      apiKey,
+      websiteUrl,
+      enabled,
+      weight,
+      maxConcurrency,
+      presetId,
+      modelConfig,
+      modelRedirects,
+      proxyUrl,
+      speedTestModel,
+      gatewaySourceType
+    } = req.body;
 
-    if (!name || !baseUrl || !apiKey) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!name || !baseUrl) {
+      return res.status(400).json({ error: 'Missing required fields: name, baseUrl' });
+    }
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'Missing required fields: apiKey' });
     }
 
     const channel = createChannel(name, baseUrl, apiKey, websiteUrl, {
       enabled,
       weight,
-      maxConcurrency
+      maxConcurrency,
+      presetId,
+      modelConfig,
+      modelRedirects: modelRedirects || [],
+      proxyUrl: proxyUrl || '',
+      speedTestModel: speedTestModel || null,
+      gatewaySourceType
     });
     res.json({ channel });
     broadcastSchedulerState('claude', getSchedulerState('claude'));
@@ -114,10 +161,10 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /api/channels/:id - Delete channel
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = deleteChannel(id);
+    const result = await deleteChannel(id);
     res.json(result);
     broadcastSchedulerState('claude', getSchedulerState('claude'));
   } catch (error) {
@@ -213,9 +260,10 @@ router.post('/:id/speed-test', async (req, res) => {
       return res.status(404).json({ error: '渠道不存在' });
     }
 
-    // Claude 渠道使用 'claude' 类型
-    const result = await testChannelSpeed(channel, timeout, 'claude');
+    const speedTestType = resolveGatewaySourceType(channel);
+    const result = await testChannelSpeed(channel, timeout, speedTestType);
     result.level = getLatencyLevel(result.latency);
+    result.gatewaySourceType = speedTestType;
 
     res.json(result);
   } catch (error) {
@@ -228,12 +276,6 @@ router.post('/:id/speed-test', async (req, res) => {
 router.get('/:id/models', async (req, res) => {
   try {
     const { id } = req.params;
-    const VALID_CHANNEL_TYPES = ['claude', 'codex', 'gemini', 'openai_compatible'];
-    const { type = 'claude' } = req.query;
-
-    if (!VALID_CHANNEL_TYPES.includes(type)) {
-      return res.status(400).json({ error: 'Invalid channel type', channelId: id });
-    }
 
     const channels = getAllChannels();
     const channel = channels.find(ch => ch.id === id);
@@ -242,23 +284,73 @@ router.get('/:id/models', async (req, res) => {
       return res.status(404).json({ error: '渠道不存在' });
     }
 
-    // If no type specified or type is 'claude', auto-detect
-    let channelType = type;
-    if (!type || type === 'claude') {
-      const { detectChannelType } = require('../services/model-detector');
-      channelType = detectChannelType(channel);
-      console.log(`[API] Auto-detected channel type: ${channelType} for ${channel.name}`);
-    }
+    const gatewaySourceType = resolveGatewaySourceType(channel);
+    let result;
 
-    const result = await fetchModelsFromProvider(channel, channelType);
+    if (gatewaySourceType === 'codex') {
+      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
+
+      if (listedModels.length > 0) {
+        result = listResult;
+      } else {
+        const probe = await probeModelAvailability(channel, 'codex');
+        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+
+        if (probedModels.length > 0) {
+          result = {
+            models: probedModels,
+            supported: true,
+            cached: !!probe.cached,
+            fallbackUsed: false,
+            lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+            error: null,
+            errorHint: listResult.error
+              ? '模型列表接口不可用，已自动切换为模型探测结果'
+              : null
+          };
+        } else {
+          const fallbackModels = getModelPriority('codex');
+          result = {
+            models: fallbackModels,
+            supported: false,
+            cached: !!probe.cached || !!listResult.cached,
+            fallbackUsed: true,
+            lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+            error: listResult.error || '无法探测可用模型，已使用默认模型列表',
+            errorHint: listResult.errorHint || '该入口不支持模型列表接口，已回退到默认模型优先级'
+          };
+        }
+      }
+    } else {
+      const probe = await probeModelAvailability(channel, gatewaySourceType);
+      const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+      const fallbackModels = getModelPriority(gatewaySourceType);
+      const models = probedModels.length > 0 ? probedModels : fallbackModels;
+
+      result = {
+        models,
+        supported: probedModels.length > 0,
+        cached: !!probe.cached,
+        fallbackUsed: probedModels.length === 0,
+        lastChecked: probe.lastChecked || new Date().toISOString(),
+        error: probedModels.length > 0 ? null : '无法探测可用模型，已使用默认模型列表',
+        errorHint: probedModels.length > 0
+          ? null
+          : '该入口不支持模型列表接口，已回退到默认模型优先级'
+      };
+    }
 
     res.json({
       channelId: id,
+      gatewaySourceType,
       models: result.models,
       supported: result.supported,
+      fallbackUsed: result.fallbackUsed,
       cached: result.cached,
       fetchedAt: result.lastChecked || new Date().toISOString(),
-      error: result.error
+      error: result.error,
+      errorHint: result.errorHint
     });
   } catch (error) {
     console.error('Error fetching channel models:', error);
@@ -279,11 +371,22 @@ router.post('/speed-test-all', async (req, res) => {
       return res.json({ results: [], message: '没有可测试的渠道' });
     }
 
-    // Claude 渠道使用 'claude' 类型
-    const results = await testMultipleChannels(channels, timeout, 'claude');
-    // 添加延迟等级
-    results.forEach(r => {
-      r.level = getLatencyLevel(r.latency);
+    const results = await Promise.all(
+      channels.map(async channel => {
+        const speedTestType = resolveGatewaySourceType(channel);
+        const result = await testChannelSpeed(channel, timeout, speedTestType);
+        result.level = getLatencyLevel(result.latency);
+        result.gatewaySourceType = speedTestType;
+        return result;
+      })
+    );
+
+    // 与其他渠道保持一致：成功在前，成功结果按延迟升序
+    results.sort((a, b) => {
+      if (a.success && !b.success) return -1;
+      if (!a.success && b.success) return 1;
+      if (a.success && b.success) return (a.latency || Infinity) - (b.latency || Infinity);
+      return 0;
     });
 
     res.json({

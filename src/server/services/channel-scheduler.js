@@ -75,10 +75,8 @@ function refreshChannels(source = 'claude') {
   state.channels = raw
     .filter(ch => ch.enabled !== false)
     .map(ch => ({
-      id: ch.id,
-      name: ch.name,
-      baseUrl: ch.baseUrl,
-      apiKey: ch.apiKey,
+      // 保留渠道完整字段，避免 proxy 等运行时配置在调度层丢失
+      ...ch,
       weight: Math.max(1, Number(ch.weight) || 1),
       maxConcurrency: ch.maxConcurrency ?? null,
       modelConfig: ch.modelConfig || null,

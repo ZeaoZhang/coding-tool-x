@@ -1,5 +1,5 @@
 <template>
-  <div class="plugin-card" :class="{ installed: plugin.installed }" @click="$emit('click', plugin)">
+  <div class="plugin-card" :class="{ installed: plugin.installed, managed: !!registryInfo }" @click="$emit('click', plugin)">
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ plugin.name }}</span>
@@ -20,7 +20,7 @@
           size="small"
           type="primary"
           :loading="installing"
-          :disabled="!plugin.repoOwner"
+          :disabled="!canInstall(plugin)"
           :focusable="false"
           @click="$emit('install', plugin)"
         >安装</n-button>
@@ -32,23 +32,70 @@
         <span class="meta-item">{{ plugin.directory }}</span>
         <a v-if="plugin.readmeUrl" class="meta-link" :href="plugin.readmeUrl" target="_blank" @click.stop>GitHub</a>
       </div>
+      <div class="managed-actions" v-if="registryInfo">
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-switch
+              :value="registryInfo.enabled"
+              size="small"
+              :loading="toggling"
+              @update:value="$emit('toggle-enabled', plugin, $event)"
+              @click.stop
+            />
+          </template>
+          {{ registryInfo.enabled ? '已启用' : '已禁用' }}
+        </n-tooltip>
+        <div class="platform-icons">
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
+                :class="{ active: registryInfo.platforms?.claude }"
+                @click.stop="$emit('toggle-platform', plugin, 'claude', !registryInfo.platforms?.claude)"
+              >
+                <n-icon size="14"><LogoApple /></n-icon>
+              </span>
+            </template>
+            Claude Code {{ registryInfo.platforms?.claude ? '已启用' : '未启用' }}
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
+                :class="{ active: registryInfo.platforms?.opencode }"
+                @click.stop="$emit('toggle-platform', plugin, 'opencode', !registryInfo.platforms?.opencode)"
+              >
+                <n-icon size="14"><CodeSlashOutline /></n-icon>
+              </span>
+            </template>
+            OpenCode {{ registryInfo.platforms?.opencode ? '已启用' : '未启用' }}
+          </n-tooltip>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { NTag, NButton } from 'naive-ui'
+import { NTag, NButton, NTooltip, NSwitch, NIcon } from 'naive-ui'
+import { LogoApple, CodeSlashOutline } from '@vicons/ionicons5'
 
 defineProps({
   plugin: { type: Object, required: true },
   installing: { type: Boolean, default: false },
-  uninstalling: { type: Boolean, default: false }
+  uninstalling: { type: Boolean, default: false },
+  registryInfo: { type: Object, default: null },
+  toggling: { type: Boolean, default: false }
 })
 
-defineEmits(['click', 'install', 'uninstall'])
+defineEmits(['click', 'install', 'uninstall', 'toggle-enabled', 'toggle-platform'])
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
+}
+
+function canInstall(plugin) {
+  return !!(plugin?.installSource || plugin?.repoOwner)
 }
 </script>
 
@@ -124,5 +171,40 @@ function truncate(text, len) {
 }
 .meta-link:hover {
   text-decoration: underline;
+}
+
+.managed-actions {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.platform-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.platform-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.platform-icon:hover {
+  background: var(--bg-quaternary);
+}
+
+.platform-icon.active {
+  color: var(--primary-color);
+  background: rgba(24, 160, 88, 0.1);
 }
 </style>

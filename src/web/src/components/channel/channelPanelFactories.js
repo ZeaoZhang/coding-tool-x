@@ -90,6 +90,16 @@ function validateProviderKey(value) {
   return ''
 }
 
+function buildAuthPayload(form) {
+  return {
+    apiKey: form.apiKey || ''
+  }
+}
+
+function applyPresetAuth(form) {
+  return { ...form }
+}
+
 const baseSections = {
   schedule: [
     {
@@ -161,27 +171,6 @@ const channelPanelFactories = {
         ]
       },
       {
-        title: 'OAuth 认证',
-        description: '使用 Claude 官方 OAuth 登录，无需 API Key',
-        showWhen: (form) => form.presetId === 'official_oauth',
-        fields: [
-          {
-            key: 'oauthLogin',
-            label: '',
-            type: 'oauth-login',
-            props: {
-              provider: 'claude'
-            }
-          },
-          {
-            key: 'oauthStatus',
-            label: 'Token 状态',
-            type: 'oauth-status',
-            showWhen: (form) => form.oauthTokenId
-          }
-        ]
-      },
-      {
         title: '基本信息',
         fields: [
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '输入渠道名称' },
@@ -198,8 +187,7 @@ const channelPanelFactories = {
             label: '接口密钥',
             type: 'password',
             required: true,
-            placeholder: 'sk-...',
-            showWhen: (form) => form.authType !== 'oauth'
+            placeholder: 'sk-...'
           },
           {
             key: 'websiteUrl',
@@ -223,7 +211,7 @@ const channelPanelFactories = {
         title: '模型重定向',
         description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
         collapsible: true,
-        showWhen: (form) => form.presetId === 'official' || form.presetId === 'official_oauth',
+        showWhen: (form) => form.presetId === 'official',
         fields: [
           {
             key: 'modelRedirects',
@@ -236,7 +224,7 @@ const channelPanelFactories = {
         title: '模型配置',
         description: '代理关闭时：模型映射（写入 settings.json）；代理开启时：模型重定向（如 opus → sonnet 节省 token）',
         collapsible: true,
-        showWhen: (form) => form.presetId && form.presetId !== 'official' && form.presetId !== 'official_oauth',
+        showWhen: (form) => form.presetId && form.presetId !== 'official',
         fields: [
           {
             key: 'modelConfig.model',
@@ -286,10 +274,7 @@ const channelPanelFactories = {
       presetId: 'official',
       name: 'Claude 官方',
       baseUrl: 'https://api.anthropic.com',
-      authType: 'apiKey',
       apiKey: '',
-      oauthProvider: null,
-      oauthTokenId: null,
       websiteUrl: 'https://www.anthropic.com',
       speedTestModel: '',
       modelConfig: {
@@ -300,6 +285,7 @@ const channelPanelFactories = {
       },
       modelRedirects: [],
       proxyUrl: '',
+      gatewaySourceType: 'claude',
       maxConcurrency: null,
       weight: 1,
       enabled: true,
@@ -311,10 +297,7 @@ const channelPanelFactories = {
       presetId: channel.presetId || 'official',
       name: channel.name || '',
       baseUrl: channel.baseUrl || '',
-      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
-      oauthProvider: channel.oauthProvider || null,
-      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
       speedTestModel: channel.speedTestModel || '',
       modelConfig: {
@@ -325,6 +308,7 @@ const channelPanelFactories = {
       },
       modelRedirects: channel.modelRedirects || [],
       proxyUrl: channel.proxyUrl || '',
+      gatewaySourceType: channel.gatewaySourceType || 'claude',
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false,
@@ -340,8 +324,7 @@ const channelPanelFactories = {
       newForm.name = preset.name
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
-      // 根据预设设置认证方式
-      newForm.authType = preset.authType || 'apiKey'
+      newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'claude'
 
       if (preset.env) {
         newForm.modelConfig = {
@@ -352,14 +335,14 @@ const channelPanelFactories = {
         }
       }
 
-      return newForm
+      return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
       try {
-        const result = await fetchChannelModels(channelId, 'claude')
+        const result = await fetchChannelModels(channelId, form.gatewaySourceType || null)
         if (result.models && result.models.length > 0) {
           form.availableModels = result.models.map(m => ({
             label: m,
@@ -400,10 +383,11 @@ const channelPanelFactories = {
         return data.channels || []
       },
       create: async (form) => {
+        const authPayload = buildAuthPayload(form)
         await createClaudeChannel(
           form.name,
           form.baseUrl,
-          form.apiKey,
+          authPayload.apiKey,
           form.websiteUrl || undefined,
           {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
@@ -414,17 +398,16 @@ const channelPanelFactories = {
             modelRedirects: form.modelRedirects || [],
             proxyUrl: form.proxyUrl || '',
             speedTestModel: form.speedTestModel || null,
-            authType: form.authType || 'apiKey',
-            oauthProvider: form.oauthProvider || null,
-            oauthTokenId: form.oauthTokenId || null
+            gatewaySourceType: form.gatewaySourceType || 'claude'
           }
         )
       },
       update: async (channel, form) => {
+        const authPayload = buildAuthPayload(form)
         await updateClaudeChannel(channel.id, {
           name: form.name,
           baseUrl: form.baseUrl,
-          apiKey: form.apiKey,
+          apiKey: authPayload.apiKey,
           websiteUrl: form.websiteUrl,
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
@@ -434,9 +417,7 @@ const channelPanelFactories = {
           modelRedirects: form.modelRedirects || [],
           proxyUrl: form.proxyUrl || '',
           speedTestModel: form.speedTestModel || null,
-          authType: form.authType || 'apiKey',
-          oauthProvider: form.oauthProvider || null,
-          oauthTokenId: form.oauthTokenId || null
+          gatewaySourceType: form.gatewaySourceType || 'claude'
         })
       },
       toggle: async (channel, enabled) => {
@@ -509,27 +490,6 @@ const channelPanelFactories = {
         ]
       },
       {
-        title: 'OAuth 认证',
-        description: '使用 Codex OAuth 登录，无需 API Key',
-        showWhen: (form) => form.authType === 'oauth',
-        fields: [
-          {
-            key: 'oauthLogin',
-            label: '',
-            type: 'oauth-login',
-            props: {
-              provider: 'codex'
-            }
-          },
-          {
-            key: 'oauthStatus',
-            label: 'Token 状态',
-            type: 'oauth-status',
-            showWhen: (form) => form.oauthTokenId
-          }
-        ]
-      },
-      {
         title: '基本信息',
         fields: [
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
@@ -555,8 +515,7 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
-            placeholder: 'sk-...',
-            showWhen: (form) => form.authType !== 'oauth'
+            placeholder: 'sk-...'
           },
           {
             key: 'websiteUrl',
@@ -598,11 +557,9 @@ const channelPanelFactories = {
       name: 'OpenAI',
       providerKey: 'openai',
       baseUrl: 'https://api.openai.com/v1',
-      authType: 'apiKey',
       apiKey: '',
-      oauthProvider: null,
-      oauthTokenId: null,
       websiteUrl: 'https://platform.openai.com',
+      gatewaySourceType: 'codex',
       speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
@@ -618,11 +575,9 @@ const channelPanelFactories = {
       name: channel.name || '',
       providerKey: channel.providerKey || '',
       baseUrl: channel.baseUrl || '',
-      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
-      oauthProvider: channel.oauthProvider || null,
-      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
+      gatewaySourceType: channel.gatewaySourceType || 'codex',
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
@@ -642,9 +597,8 @@ const channelPanelFactories = {
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
       newForm.providerKey = preset.providerKey || ''
-      newForm.authType = preset.authType || 'apiKey'
-
-      return newForm
+      newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'codex'
+      return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
       form.modelsFetching = true
@@ -684,11 +638,12 @@ const channelPanelFactories = {
         return data.channels || []
       },
       create: async (form) => {
+        const authPayload = buildAuthPayload(form)
         await createCodexChannel(
           form.name,
           form.providerKey,
           form.baseUrl,
-          form.apiKey,
+          authPayload.apiKey,
           form.websiteUrl || '',
           {
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
@@ -696,28 +651,25 @@ const channelPanelFactories = {
             enabled: form.enabled,
             modelRedirects: form.modelRedirects || [],
             speedTestModel: form.speedTestModel || null,
-            authType: form.authType || 'apiKey',
-            oauthProvider: form.oauthProvider || null,
-            oauthTokenId: form.oauthTokenId || null,
-            presetId: form.presetId || null
+            presetId: form.presetId || null,
+            gatewaySourceType: form.gatewaySourceType || 'codex'
           }
         )
       },
       update: async (channel, form) => {
+        const authPayload = buildAuthPayload(form)
         await updateCodexChannel(channel.id, {
           name: form.name,
           baseUrl: form.baseUrl,
-          apiKey: form.apiKey,
+          apiKey: authPayload.apiKey,
           websiteUrl: form.websiteUrl,
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
-          authType: form.authType || 'apiKey',
-          oauthProvider: form.oauthProvider || null,
-          oauthTokenId: form.oauthTokenId || null,
-          presetId: form.presetId || null
+          presetId: form.presetId || null,
+          gatewaySourceType: form.gatewaySourceType || 'codex'
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
@@ -786,27 +738,6 @@ const channelPanelFactories = {
         ]
       },
       {
-        title: 'OAuth 认证',
-        description: '使用 Google OAuth 登录，无需 API Key',
-        showWhen: (form) => form.authType === 'oauth',
-        fields: [
-          {
-            key: 'oauthLogin',
-            label: '',
-            type: 'oauth-login',
-            props: {
-              provider: 'gemini'
-            }
-          },
-          {
-            key: 'oauthStatus',
-            label: 'Token 状态',
-            type: 'oauth-status',
-            showWhen: (form) => form.oauthTokenId
-          }
-        ]
-      },
-      {
         title: '基本信息',
         fields: [
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
@@ -824,8 +755,7 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
-            placeholder: 'AIza...',
-            showWhen: (form) => form.authType !== 'oauth'
+            placeholder: 'AIza...'
           },
           {
             key: 'websiteUrl',
@@ -867,11 +797,9 @@ const channelPanelFactories = {
       name: 'Google AI',
       model: 'gemini-2.5-pro',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-      authType: 'apiKey',
       apiKey: '',
-      oauthProvider: null,
-      oauthTokenId: null,
       websiteUrl: 'https://ai.google.dev',
+      gatewaySourceType: 'gemini',
       speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
@@ -887,11 +815,9 @@ const channelPanelFactories = {
       name: channel.name || '',
       model: channel.model || '',
       baseUrl: channel.baseUrl || '',
-      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
-      oauthProvider: channel.oauthProvider || null,
-      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
+      gatewaySourceType: channel.gatewaySourceType || 'gemini',
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
@@ -910,9 +836,8 @@ const channelPanelFactories = {
       newForm.name = preset.name
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
-      newForm.authType = preset.authType || 'apiKey'
-
-      return newForm
+      newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'gemini'
+      return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
       form.modelsFetching = true
@@ -952,10 +877,11 @@ const channelPanelFactories = {
         return data.channels || []
       },
       create: async (form) => {
+        const authPayload = buildAuthPayload(form)
         await createGeminiChannel(
           form.name,
           form.baseUrl,
-          form.apiKey,
+          authPayload.apiKey,
           form.model,
           form.websiteUrl || '',
           {
@@ -964,29 +890,26 @@ const channelPanelFactories = {
             enabled: form.enabled,
             modelRedirects: form.modelRedirects || [],
             speedTestModel: form.speedTestModel || null,
-            authType: form.authType || 'apiKey',
-            oauthProvider: form.oauthProvider || null,
-            oauthTokenId: form.oauthTokenId || null,
-            presetId: form.presetId || null
+            presetId: form.presetId || null,
+            gatewaySourceType: form.gatewaySourceType || 'gemini'
           }
         )
       },
       update: async (channel, form) => {
+        const authPayload = buildAuthPayload(form)
         await updateGeminiChannel(channel.id, {
           name: form.name,
           model: form.model,
           baseUrl: form.baseUrl,
-          apiKey: form.apiKey,
+          apiKey: authPayload.apiKey,
           websiteUrl: form.websiteUrl,
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
-          authType: form.authType || 'apiKey',
-          oauthProvider: form.oauthProvider || null,
-          oauthTokenId: form.oauthTokenId || null,
-          presetId: form.presetId || null
+          presetId: form.presetId || null,
+          gatewaySourceType: form.gatewaySourceType || 'gemini'
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),
@@ -1052,27 +975,6 @@ const channelPanelFactories = {
         ]
       },
       {
-        title: 'OAuth 认证',
-        description: '使用 OAuth 登录，无需 API Key',
-        showWhen: (form) => form.authType === 'oauth',
-        fields: [
-          {
-            key: 'oauthLogin',
-            label: '',
-            type: 'oauth-login',
-            props: {
-              provider: (form) => form.oauthProvider || 'github_copilot'
-            }
-          },
-          {
-            key: 'oauthStatus',
-            label: 'Token 状态',
-            type: 'oauth-status',
-            showWhen: (form) => form.oauthTokenId
-          }
-        ]
-      },
-      {
         title: '基本信息',
         fields: [
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
@@ -1089,8 +991,7 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
-            placeholder: 'sk-...',
-            showWhen: (form) => form.authType !== 'oauth'
+            placeholder: 'sk-...'
           },
           {
             key: 'websiteUrl',
@@ -1104,6 +1005,15 @@ const channelPanelFactories = {
             label: '默认模型',
             type: 'autocomplete',
             placeholder: '如 gpt-4o'
+          },
+          {
+            key: 'speedTestModel',
+            label: '测速模型',
+            type: 'select',
+            placeholder: '选择用于测速的模型（留空则使用默认模型）',
+            description: '指定用于速度测试的模型，留空则自动检测',
+            options: [],
+            clearable: true
           }
         ]
       },
@@ -1129,38 +1039,38 @@ const channelPanelFactories = {
       name: 'OpenRouter',
       baseUrl: 'https://openrouter.ai/api/v1',
       wireApi: 'openai',
-      authType: 'apiKey',
       apiKey: '',
-      oauthProvider: null,
-      oauthTokenId: null,
       websiteUrl: 'https://openrouter.ai',
       model: '',
+      gatewaySourceType: 'codex',
+      speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
       weight: 1,
       enabled: true,
       availableModels: [],
       modelsFetching: false,
-      modelsFetchError: null
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
     }),
     mapChannelToForm: (channel) => ({
       presetId: channel.presetId || 'custom',
       name: channel.name || '',
       baseUrl: channel.baseUrl || '',
       wireApi: channel.wireApi || 'openai',
-      authType: channel.authType || 'apiKey',
       apiKey: channel.apiKey || '',
-      oauthProvider: channel.oauthProvider || null,
-      oauthTokenId: channel.oauthTokenId || null,
       websiteUrl: channel.websiteUrl || '',
       model: channel.model || '',
+      gatewaySourceType: channel.gatewaySourceType || 'codex',
+      speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false,
       availableModels: [],
       modelsFetching: false,
-      modelsFetchError: null
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
     }),
     onPresetChange: (presetId, form) => {
       const preset = getOpenCodePresetById(presetId)
@@ -1171,10 +1081,8 @@ const channelPanelFactories = {
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
       newForm.wireApi = preset.wireApi || 'openai'
-      newForm.authType = preset.authType || 'apiKey'
-      newForm.oauthProvider = preset.oauthProvider || null
-
-      return newForm
+      newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'codex'
+      return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
       form.modelsFetching = true
@@ -1189,17 +1097,17 @@ const channelPanelFactories = {
           }))
           if (result.fallbackUsed) {
             form.modelsFetchError = result.error || '无法自动获取模型列表'
-            form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
+            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
           }
         } else if (result.fallbackUsed || !result.supported) {
-          form.availableModels = getDefaultModels('opencode').map(m => ({ label: m, value: m }))
+          form.availableModels = []
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
-          form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
+          form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
         }
       } catch (error) {
-        form.availableModels = getDefaultModels('opencode').map(m => ({ label: m, value: m }))
+        form.availableModels = []
         form.modelsFetchError = error.message || '获取模型列表失败'
-        form.modelsFetchErrorHint = '已使用默认模型列表'
+        form.modelsFetchErrorHint = '请手动填写模型名称'
       } finally {
         form.modelsFetching = false
       }
@@ -1211,40 +1119,40 @@ const channelPanelFactories = {
         return data.channels || []
       },
       create: async (form) => {
+        const authPayload = buildAuthPayload(form)
         await createOpenCodeChannel(
           form.name,
           form.baseUrl,
-          form.apiKey,
+          authPayload.apiKey,
           {
             wireApi: form.wireApi || 'openai',
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
             enabled: form.enabled,
             model: form.model || null,
+            gatewaySourceType: form.gatewaySourceType || 'codex',
             modelRedirects: form.modelRedirects || [],
-            authType: form.authType || 'apiKey',
-            oauthProvider: form.oauthProvider || null,
-            oauthTokenId: form.oauthTokenId || null,
+            speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
             websiteUrl: form.websiteUrl || ''
           }
         )
       },
       update: async (channel, form) => {
+        const authPayload = buildAuthPayload(form)
         await updateOpenCodeChannel(channel.id, {
           name: form.name,
           baseUrl: form.baseUrl,
-          apiKey: form.apiKey,
+          apiKey: authPayload.apiKey,
           wireApi: form.wireApi || 'openai',
           websiteUrl: form.websiteUrl,
           model: form.model || null,
+          gatewaySourceType: form.gatewaySourceType || 'codex',
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
           modelRedirects: form.modelRedirects || [],
-          authType: form.authType || 'apiKey',
-          oauthProvider: form.oauthProvider || null,
-          oauthTokenId: form.oauthTokenId || null,
+          speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null
         })
       },
@@ -1267,11 +1175,12 @@ const channelPanelFactories = {
       return tags
     },
     buildInfoRows: (channel, helpers) => ([
+      { label: 'Provider', value: channel.providerKey || channel.wireApi || 'opencode', mono: true },
       { label: 'Model', value: channel.model || '(默认)', mono: true },
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: channel.authType === 'oauth' ? '(OAuth)' : helpers.maskApiKey(channel.apiKey),
+        value: helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)

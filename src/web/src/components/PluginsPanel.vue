@@ -13,7 +13,7 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
+        <n-button v-if="currentPlatform === 'claude'" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -31,7 +31,7 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
+        <n-button v-if="currentPlatform === 'claude'" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -85,9 +85,13 @@
             :plugin="plugin"
             :installing="!!installingKeys[plugin.key]"
             :uninstalling="!!uninstallingKeys[plugin.key]"
+            :registry-info="registryMap[plugin.directory || plugin.name]"
+            :toggling="!!togglingKeys[plugin.directory || plugin.name]"
             @install="handleInstall"
             @uninstall="handleUninstall"
             @click="handleCardClick"
+            @toggle-enabled="handleToggleEnabled"
+            @toggle-platform="handleTogglePlatform"
           />
         </div>
       </n-spin>
@@ -96,14 +100,15 @@
     <!-- 底部提示 -->
     <div class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
-      <span>安装/卸载后需重启 Claude Code 生效</span>
+      <span>安装/卸载后需重启 {{ currentPlatformLabel }} 生效</span>
     </div>
 
     <!-- 弹窗组件 -->
-    <PluginRepoManager v-model:visible="showRepoManager" @updated="loadData" />
+    <PluginRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
     <PluginDetailDrawer
       v-model:visible="detailDrawerVisible"
       :plugin="selectedPlugin"
+      :platform="currentPlatform"
       @updated="loadData"
     />
   </div>
@@ -111,10 +116,11 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getPlugins, getMarketPlugins, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
-import { listItems, importFromClaude } from '../api/config-registry'
+import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
@@ -127,6 +133,7 @@ const props = defineProps({
 
 defineEmits(['back', 'updated'])
 
+const route = useRoute()
 const message = useMessage()
 const loading = ref(false)
 const plugins = ref([])
@@ -137,8 +144,17 @@ const detailDrawerVisible = ref(false)
 const selectedPlugin = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
+const togglingKeys = ref({})
 const registryMap = ref({})
 const importing = ref(false)
+
+const currentPlatform = computed(() => {
+  return route.meta.channel === 'opencode' ? 'opencode' : 'claude'
+})
+
+const currentPlatformLabel = computed(() => {
+  return currentPlatform.value === 'opencode' ? 'OpenCode' : 'Claude Code'
+})
 
 const filterOptions = [
   { label: '全部', value: 'all' },
@@ -154,7 +170,7 @@ const filteredPlugins = computed(() => {
   let result = plugins.value
   if (filterStatus.value === 'installed') result = result.filter(p => p.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(p => !p.installed)
-  else if (filterStatus.value === 'managed') result = result.filter(p => registryMap.value[p.name])
+  else if (filterStatus.value === 'managed') result = result.filter(p => registryMap.value[p.directory || p.name])
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(p => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q))
@@ -174,12 +190,12 @@ async function loadData(force = false) {
   loading.value = true
   try {
     // 先同步仓库
-    await syncPluginRepos().catch(() => {})
+    await syncPluginRepos(currentPlatform.value).catch(() => {})
 
     // 并行获取已安装插件、市场插件和注册表信息
     const [installedRes, marketRes, registryRes] = await Promise.all([
-      getPlugins(force),
-      getMarketPlugins().catch(() => ({ success: true, plugins: [] })),
+      getPlugins(currentPlatform.value),
+      getMarketPlugins(currentPlatform.value).catch(() => ({ success: true, plugins: [] })),
       listItems('plugins')
     ])
 
@@ -223,7 +239,7 @@ async function loadData(force = false) {
       .map(p => ({
         ...p,
         installed: false,
-        key: `market-${p.repoOwner}-${p.pluginPath}`
+        key: `market-${p.repoOwner || 'repo'}-${p.repoName || 'name'}-${p.directory || p.name}`
       }))
 
     plugins.value = [...installedPlugins, ...uninstalledPlugins]
@@ -235,6 +251,9 @@ async function loadData(force = false) {
 }
 
 async function handleImport() {
+  if (currentPlatform.value !== 'claude') {
+    return
+  }
   importing.value = true
   try {
     const res = await importFromClaude('plugins')
@@ -252,10 +271,16 @@ async function handleImport() {
 }
 
 async function handleInstall(plugin) {
-  if (!plugin.repoOwner) return message.error('缺少仓库信息')
+  if (!plugin.installSource && !plugin.repoOwner) return message.error('缺少可安装来源')
   installingKeys.value[plugin.key] = true
   try {
-    const res = await installPlugin(plugin.directory, { owner: plugin.repoOwner, name: plugin.repoName, branch: plugin.repoBranch || 'main' })
+    const res = plugin.installSource
+      ? await installPlugin('', null, currentPlatform.value, plugin.installSource)
+      : await installPlugin(
+        plugin.directory,
+        { owner: plugin.repoOwner, name: plugin.repoName, branch: plugin.repoBranch || 'main' },
+        currentPlatform.value
+      )
     if (res.success) { message.success(`插件 "${plugin.name}" 安装成功`); await loadData(true) }
   } catch (err) { message.error('安装失败: ' + err.message) }
   finally { delete installingKeys.value[plugin.key] }
@@ -264,10 +289,42 @@ async function handleInstall(plugin) {
 async function handleUninstall(plugin) {
   uninstallingKeys.value[plugin.key] = true
   try {
-    const res = await uninstallPlugin(plugin.directory)
+    const res = await uninstallPlugin(plugin.directory || plugin.name, currentPlatform.value)
     if (res.success) { message.success(`插件 "${plugin.name}" 已卸载`); await loadData(true) }
   } catch (err) { message.error('卸载失败: ' + err.message) }
   finally { delete uninstallingKeys.value[plugin.key] }
+}
+
+async function handleToggleEnabled(plugin, enabled) {
+  const key = plugin.directory || plugin.name
+  togglingKeys.value[key] = true
+  try {
+    const res = await toggleEnabled('plugins', key, enabled)
+    if (res.success) {
+      message.success(enabled ? '已启用' : '已禁用')
+      await loadData(true)
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[key]
+  }
+}
+
+async function handleTogglePlatform(plugin, platform, enabled) {
+  const key = plugin.directory || plugin.name
+  togglingKeys.value[key] = true
+  try {
+    const res = await togglePlatform('plugins', key, platform, enabled)
+    if (res.success) {
+      message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
+      await loadData(true)
+    }
+  } catch (err) {
+    message.error('切换失败: ' + err.message)
+  } finally {
+    delete togglingKeys.value[key]
+  }
 }
 
 function handleCardClick(plugin) {
@@ -279,6 +336,10 @@ onMounted(() => loadData())
 
 watch(() => props.drawerVisible, (val) => {
   if (val) loadData()
+})
+
+watch(() => currentPlatform.value, () => {
+  loadData(true)
 })
 </script>
 
