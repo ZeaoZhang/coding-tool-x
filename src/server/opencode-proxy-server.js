@@ -351,6 +351,81 @@ function normalizeToolChoiceToClaude(toolChoice) {
   return undefined;
 }
 
+function generateToolCallId() {
+  return `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function parseToolArguments(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function normalizeToolResultContent(value) {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function buildAssistantToolUseMessageFromFunctionCall(item) {
+  const functionPayload = (item?.function && typeof item.function === 'object')
+    ? item.function
+    : item;
+  const name = functionPayload?.name || item?.name;
+  if (!name) return null;
+
+  const callId = functionPayload?.call_id || item?.call_id || functionPayload?.id || item?.id || generateToolCallId();
+  const argumentsSource = functionPayload?.arguments ?? item?.arguments ?? functionPayload?.input ?? item?.input;
+  const input = parseToolArguments(argumentsSource);
+
+  return {
+    role: 'assistant',
+    content: [
+      {
+        type: 'tool_use',
+        id: callId,
+        name,
+        input
+      }
+    ]
+  };
+}
+
+function buildUserToolResultMessage(item) {
+  const callId = item?.call_id || item?.tool_call_id || item?.id || generateToolCallId();
+  const outputSource = item?.output ?? item?.content ?? '';
+  const content = normalizeToolResultContent(outputSource);
+
+  return {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: callId,
+        content
+      }
+    ]
+  };
+}
+
 function normalizeOpenCodeMessages(pathname, payload = {}) {
   const systemParts = [];
   const messages = [];
@@ -379,6 +454,17 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
     } else if (Array.isArray(payload.input)) {
       payload.input.forEach(item => {
         if (!item || typeof item !== 'object') return;
+        if (item.type === 'function_call') {
+          const assistantToolUse = buildAssistantToolUseMessageFromFunctionCall(item);
+          if (assistantToolUse) {
+            messages.push(assistantToolUse);
+          }
+          return;
+        }
+        if (item.type === 'function_call_output') {
+          messages.push(buildUserToolResultMessage(item));
+          return;
+        }
         if (item.type === 'message' || item.role) {
           appendMessage(item.role, item.content);
         }
@@ -389,6 +475,40 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
   if (isChatCompletionsPath(pathname) && Array.isArray(payload.messages)) {
     payload.messages.forEach(message => {
       if (!message || typeof message !== 'object') return;
+      if (message.role === 'tool') {
+        messages.push(buildUserToolResultMessage(message));
+        return;
+      }
+      if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        const assistantContent = [];
+        const text = extractText(message.content);
+        if (text) {
+          assistantContent.push({ type: 'text', text });
+        }
+
+        message.tool_calls.forEach(toolCall => {
+          if (!toolCall || typeof toolCall !== 'object') return;
+          const functionPayload = (toolCall.function && typeof toolCall.function === 'object')
+            ? toolCall.function
+            : toolCall;
+          const name = functionPayload.name || toolCall.name;
+          if (!name) return;
+          assistantContent.push({
+            type: 'tool_use',
+            id: toolCall.id || functionPayload.call_id || generateToolCallId(),
+            name,
+            input: parseToolArguments(functionPayload.arguments ?? functionPayload.input)
+          });
+        });
+
+        if (assistantContent.length > 0) {
+          messages.push({
+            role: 'assistant',
+            content: assistantContent
+          });
+        }
+        return;
+      }
       appendMessage(message.role, message.content);
     });
   }
@@ -696,17 +816,43 @@ function postJson(url, headers, payload, timeoutMs = 120000) {
   });
 }
 
+function extractClaudeResponseContent(claudeResponse = {}) {
+  const textFragments = [];
+  const functionCalls = [];
+
+  if (!Array.isArray(claudeResponse.content)) {
+    return { text: '', functionCalls: [] };
+  }
+
+  claudeResponse.content.forEach(block => {
+    if (!block || typeof block !== 'object') return;
+
+    if (typeof block.text === 'string' && block.text.trim()) {
+      textFragments.push(block.text);
+    }
+
+    if (block.type === 'tool_use' && block.name) {
+      const callId = String(block.id || generateToolCallId());
+      const argsObject = (block.input && typeof block.input === 'object' && !Array.isArray(block.input))
+        ? block.input
+        : {};
+      functionCalls.push({
+        id: `fc_${callId}`,
+        call_id: callId,
+        name: block.name,
+        arguments: JSON.stringify(argsObject)
+      });
+    }
+  });
+
+  return {
+    text: textFragments.join('\n').trim(),
+    functionCalls
+  };
+}
+
 function extractClaudeResponseText(claudeResponse = {}) {
-  if (!Array.isArray(claudeResponse.content)) return '';
-  return claudeResponse.content
-    .map(block => {
-      if (!block || typeof block !== 'object') return '';
-      if (typeof block.text === 'string') return block.text;
-      return '';
-    })
-    .filter(Boolean)
-    .join('\n')
-    .trim();
+  return extractClaudeResponseContent(claudeResponse).text;
 }
 
 function extractGeminiResponseText(geminiResponse = {}) {
@@ -761,11 +907,40 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
   const inputTokens = Number(claudeResponse?.usage?.input_tokens || 0);
   const outputTokens = Number(claudeResponse?.usage?.output_tokens || 0);
   const totalTokens = Number(claudeResponse?.usage?.total_tokens || (inputTokens + outputTokens));
-  const text = extractClaudeResponseText(claudeResponse);
+  const parsedContent = extractClaudeResponseContent(claudeResponse);
+  const text = parsedContent.text;
   const model = claudeResponse.model || fallbackModel || '';
   const responseId = `resp_${String(claudeResponse.id || Date.now()).replace(/[^a-zA-Z0-9_]/g, '')}`;
   const messageId = claudeResponse.id || `msg_${Date.now()}`;
   const createdAt = Math.floor(Date.now() / 1000);
+  const output = [];
+
+  if (text || parsedContent.functionCalls.length === 0) {
+    output.push({
+      id: messageId,
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text,
+          annotations: []
+        }
+      ]
+    });
+  }
+
+  parsedContent.functionCalls.forEach(call => {
+    output.push({
+      id: call.id,
+      type: 'function_call',
+      status: 'completed',
+      arguments: call.arguments,
+      call_id: call.call_id,
+      name: call.name
+    });
+  });
 
   return {
     id: responseId,
@@ -773,21 +948,7 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
     created_at: createdAt,
     status: 'completed',
     model,
-    output: [
-      {
-        id: messageId,
-        type: 'message',
-        status: 'completed',
-        role: 'assistant',
-        content: [
-          {
-            type: 'output_text',
-            text,
-            annotations: []
-          }
-        ]
-      }
-    ],
+    output,
     usage: {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
@@ -839,10 +1000,27 @@ function buildOpenAiChatCompletionsObject(claudeResponse = {}, fallbackModel = '
   const inputTokens = Number(claudeResponse?.usage?.input_tokens || 0);
   const outputTokens = Number(claudeResponse?.usage?.output_tokens || 0);
   const totalTokens = Number(claudeResponse?.usage?.total_tokens || (inputTokens + outputTokens));
-  const text = extractClaudeResponseText(claudeResponse);
+  const parsedContent = extractClaudeResponseContent(claudeResponse);
+  const text = parsedContent.text;
   const model = claudeResponse.model || fallbackModel || '';
   const chatId = `chatcmpl_${String(claudeResponse.id || Date.now()).replace(/[^a-zA-Z0-9_]/g, '')}`;
   const created = Math.floor(Date.now() / 1000);
+  const hasToolCalls = parsedContent.functionCalls.length > 0;
+  const message = {
+    role: 'assistant',
+    content: text || (hasToolCalls ? null : '')
+  };
+
+  if (hasToolCalls) {
+    message.tool_calls = parsedContent.functionCalls.map(call => ({
+      id: call.call_id,
+      type: 'function',
+      function: {
+        name: call.name,
+        arguments: call.arguments
+      }
+    }));
+  }
 
   return {
     id: chatId,
@@ -852,11 +1030,8 @@ function buildOpenAiChatCompletionsObject(claudeResponse = {}, fallbackModel = '
     choices: [
       {
         index: 0,
-        message: {
-          role: 'assistant',
-          content: text
-        },
-        finish_reason: mapClaudeStopReasonToChatFinishReason(claudeResponse.stop_reason)
+        message,
+        finish_reason: hasToolCalls ? 'tool_calls' : mapClaudeStopReasonToChatFinishReason(claudeResponse.stop_reason)
       }
     ],
     usage: {
@@ -980,7 +1155,14 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
 }
 
 function sendResponsesSse(res, responseObject) {
-  const text = responseObject?.output?.[0]?.content?.[0]?.text || '';
+  const outputItems = Array.isArray(responseObject?.output) ? responseObject.output : [];
+  const text = outputItems
+    .filter(item => item?.type === 'message')
+    .map(item => item?.content?.[0]?.text || '')
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  const functionCalls = outputItems.filter(item => item?.type === 'function_call');
 
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -1005,6 +1187,17 @@ function sendResponsesSse(res, responseObject) {
       delta: text
     };
     res.write(`data: ${JSON.stringify(deltaPayload)}\n\n`);
+  }
+
+  if (functionCalls.length > 0) {
+    functionCalls.forEach((item, index) => {
+      const payload = {
+        type: 'response.output_item.added',
+        output_index: index,
+        item
+      };
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    });
   }
 
   const completedPayload = {
