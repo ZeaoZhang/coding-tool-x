@@ -54,4 +54,4 @@ router.get('/daily/:date', (req, res) => {
   }
 });
 
-module.exports = (config) => router;
+module.exports = router;

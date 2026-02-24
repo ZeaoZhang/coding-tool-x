@@ -233,7 +233,8 @@ router.get('/advanced', (req, res) => {
         webUI: config.ports?.webUI || 10099,
         proxy: config.ports?.proxy || 10088,
         codexProxy: config.ports?.codexProxy || 10089,
-        geminiProxy: config.ports?.geminiProxy || 10090
+        geminiProxy: config.ports?.geminiProxy || 10090,
+        opencodeProxy: config.ports?.opencodeProxy || 20091
       },
       maxLogs: config.maxLogs || 100,
       statsInterval: config.statsInterval || 30,

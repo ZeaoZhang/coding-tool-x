@@ -73,7 +73,7 @@
 
 ### Added
 - 📦 **插件导出/导入功能** - 配置导出系统新增插件支持
-  - 支持导出 Legacy 插件 (`~/.claude/cc-tool/plugins/`)
+  - 支持导出 Legacy 插件 (`~/.cc-tool/plugins/`)
   - 支持导出 Native 插件 (`~/.claude/plugins/`)
   - 完整文件快照（base64 编码）
   - 自动过滤敏感文件（.env、credentials、keys）

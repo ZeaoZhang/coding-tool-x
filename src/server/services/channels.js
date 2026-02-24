@@ -4,7 +4,7 @@ const os = require('os');
 const { isProxyConfig } = require('./settings-manager');
 
 function getChannelsFilePath() {
-  const dir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const dir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -12,7 +12,7 @@ function getChannelsFilePath() {
 }
 
 function getActiveChannelIdPath() {
-  const dir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const dir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

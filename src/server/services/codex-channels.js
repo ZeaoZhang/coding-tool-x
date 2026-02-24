@@ -30,7 +30,7 @@ function normalizeGatewaySourceType(value, fallback = 'codex') {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const ccToolDir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

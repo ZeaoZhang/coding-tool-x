@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-const SECURITY_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const SECURITY_DIR = path.join(os.homedir(), '.cc-tool');
 const SECURITY_FILE = path.join(SECURITY_DIR, 'security.json');
 
 const DEFAULT_SECURITY_CONFIG = {

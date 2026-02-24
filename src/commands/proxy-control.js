@@ -11,12 +11,17 @@ const CHANNEL_CONFIG = {
   codex: {
     name: 'Codex',
     icon: '🔵',
-    apiPath: '/api/codex-proxy'
+    apiPath: '/api/codex/proxy'
   },
   gemini: {
     name: 'Gemini',
     icon: '🟣',
-    apiPath: '/api/gemini-proxy'
+    apiPath: '/api/gemini/proxy'
+  },
+  opencode: {
+    name: 'OpenCode',
+    icon: '🟠',
+    apiPath: '/api/opencode/proxy'
   }
 };
 
@@ -80,7 +85,7 @@ function httpRequest(method, path, data = null) {
  */
 async function checkUIService() {
   try {
-    await httpRequest('GET', '/api/ping');
+    await httpRequest('GET', '/api/proxy/status');
     return true;
   } catch (err) {
     return false;
@@ -94,7 +99,7 @@ async function handleProxyStart(channel) {
   const channelInfo = CHANNEL_CONFIG[channel];
   if (!channelInfo) {
     console.error(chalk.red(`\n❌ 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini\n'));
+    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode\n'));
     process.exit(1);
   }
 
@@ -203,7 +208,8 @@ async function handleProxyStatus(channel) {
 
   try {
     const response = await httpRequest('GET', `${channelInfo.apiPath}/status`);
-    const status = response.data;
+    const payload = response.data || {};
+    const status = payload.proxy || payload;
 
     console.log(chalk.bold.cyan(`\n╔══════════════════════════════════════╗`));
     console.log(chalk.bold.cyan(`║      ${channelInfo.name} 代理服务状态           ║`));

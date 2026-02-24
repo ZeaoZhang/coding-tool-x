@@ -290,7 +290,7 @@ function collectResponseBody(res) {
  * Get cache file path
  */
 function getCacheFilePath() {
-  const dir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const dir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

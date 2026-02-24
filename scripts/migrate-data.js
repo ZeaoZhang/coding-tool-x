@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 数据迁移脚本
- * 从 ~/.claude/cc-tool 迁移数据到 ~/.claude/ctx
+ * 从 ~/.claude/ctx 与 ~/.claude/cc-tool 迁移数据到 ~/.cc-tool
  * 保留原始文件不动
  */
 
@@ -10,8 +10,11 @@ const path = require('path');
 const os = require('os');
 
 // 源目录和目标目录
-const SOURCE_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
-const TARGET_DIR = path.join(os.homedir(), '.claude', 'ctx');
+const SOURCE_DIRS = [
+  path.join(os.homedir(), '.claude', 'ctx'),
+  path.join(os.homedir(), '.claude', 'cc-tool')
+];
+const TARGET_DIR = path.join(os.homedir(), '.cc-tool');
 
 // 颜色输出
 const colors = {
@@ -95,45 +98,44 @@ function formatSize(bytes) {
 function main() {
   log('\n🚀 CTX 数据迁移工具', 'blue');
   log('=' .repeat(60), 'blue');
-  log(`源目录: ${SOURCE_DIR}`, 'yellow');
+  SOURCE_DIRS.forEach((dir, index) => {
+    log(`源目录${index + 1}: ${dir}`, 'yellow');
+  });
   log(`目标目录: ${TARGET_DIR}`, 'yellow');
   log('=' .repeat(60) + '\n', 'blue');
 
   // 检查源目录是否存在
-  if (!fs.existsSync(SOURCE_DIR)) {
+  const existingSources = SOURCE_DIRS.filter(dir => fs.existsSync(dir));
+  if (existingSources.length === 0) {
     log('❌ 源目录不存在，无需迁移', 'red');
-    log(`   ${SOURCE_DIR}`, 'red');
+    SOURCE_DIRS.forEach(dir => log(`   ${dir}`, 'red'));
     log('\n这可能是因为：', 'yellow');
     log('  1. 这是首次安装，还没有旧数据', 'yellow');
     log('  2. 已经迁移过了\n', 'yellow');
     return;
   }
 
-  // 检查目标目录
-  if (fs.existsSync(TARGET_DIR)) {
-    log('⚠️  目标目录已存在', 'yellow');
-    log(`   ${TARGET_DIR}`, 'yellow');
-
-    // 询问是否覆盖（简化版，直接跳过）
-    log('\n已跳过迁移，目标目录已存在数据', 'yellow');
-    log('如需重新迁移，请先删除目标目录：', 'yellow');
-    log(`   rm -rf "${TARGET_DIR}"\n`, 'yellow');
-    return;
-  }
-
   // 获取源目录大小
-  const sourceSize = getDirectorySize(SOURCE_DIR);
-  log(`📦 源目录大小: ${formatSize(sourceSize)}\n`, 'blue');
+  const sourceSize = existingSources.reduce((total, dir) => total + getDirectorySize(dir), 0);
+  log(`📦 源目录总大小: ${formatSize(sourceSize)}\n`, 'blue');
 
   // 开始迁移
   log('📂 开始迁移数据...\n', 'blue');
 
   try {
-    const result = copyDirectory(SOURCE_DIR, TARGET_DIR);
+    let totalFiles = 0;
+    let totalDirs = 0;
+
+    for (const sourceDir of existingSources) {
+      log(`➡️  合并目录: ${sourceDir}`, 'blue');
+      const result = copyDirectory(sourceDir, TARGET_DIR);
+      totalFiles += result.files;
+      totalDirs += result.dirs;
+    }
 
     log('\n✅ 迁移完成！', 'green');
     log('=' .repeat(60), 'green');
-    log(`已复制: ${result.files} 个文件, ${result.dirs} 个目录`, 'green');
+    log(`已复制: ${totalFiles} 个文件, ${totalDirs} 个目录`, 'green');
     log(`总大小: ${formatSize(sourceSize)}`, 'green');
     log('=' .repeat(60) + '\n', 'green');
 
@@ -152,7 +154,7 @@ function main() {
     log('  2. 检查项目列表和会话是否正常', 'blue');
     log('  3. 测试代理功能: ctx proxy start', 'blue');
     log('\n💡 提示:', 'yellow');
-    log(`  - 原始数据保留在: ${SOURCE_DIR}`, 'yellow');
+    SOURCE_DIRS.forEach(dir => log(`  - 原始数据保留在: ${dir}`, 'yellow'));
     log(`  - 如有问题可以回退`, 'yellow');
     log(`  - 确认无误后可删除旧目录释放空间\n`, 'yellow');
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # 路径迁移自动化脚本
-# 将所有 ~/.claude/cc-tool 路径替换为 ~/.ctx
+# 将历史目录统一迁移为 ~/.cc-tool
 
 echo "🚀 开始路径迁移..."
 
@@ -20,11 +20,11 @@ echo "🔄 开始替换路径..."
 find $DIRS -type f -name "*.js" -exec sed -i.bak \
   "s/path\.join(os\.homedir(), '\.claude', 'cc-tool')/require('..\/..\/config\/paths').PATHS.base/g" {} \;
 
-# 2. 替换 .claude/logs 为 .ctx/logs
+# 2. 替换 .claude/logs 为 .cc-tool/logs
 find $DIRS -type f -name "*.js" -exec sed -i.bak \
-  "s/\.claude\/logs/\.ctx\/logs/g" {} \;
+  "s/\.claude\/logs/\.cc-tool\/logs/g" {} \;
 
-# 3. 替换 .claude/projects 为 .ctx/projects
+# 3. 替换 .claude/projects 为 .cc-tool/projects
 find $DIRS -type f -name "*.js" -exec sed -i.bak \
   "s/path\.join(os\.homedir(), '\.claude', 'projects')/require('..\/..\/config\/paths').PATHS.projects/g" {} \;
 

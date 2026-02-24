@@ -10,7 +10,7 @@ const os = require('os');
 const { NATIVE_PATHS } = require('../../config/paths');
 
 // Prompts 配置文件路径
-const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
 const PROMPTS_FILE = path.join(CC_TOOL_DIR, 'prompts.json');
 
 // 各平台提示词文件路径

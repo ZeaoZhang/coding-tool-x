@@ -4,13 +4,14 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 
-const LOGS_DIR = path.join(os.homedir(), '.claude/logs');
+const LOGS_DIR = path.join(os.homedir(), '.cc-tool', 'logs');
 
 const LOG_FILES = {
   ui: 'cc-tool-out.log',
   claude: 'claude-proxy.log',
   codex: 'codex-proxy.log',
-  gemini: 'gemini-proxy.log'
+  gemini: 'gemini-proxy.log',
+  opencode: 'opencode-proxy.log'
 };
 
 /**
@@ -46,7 +47,7 @@ async function handleLogs(type = null, options = {}) {
   const logFile = LOG_FILES[type];
   if (!logFile) {
     console.error(chalk.red(`\n❌ 无效的日志类型: ${type}\n`));
-    console.log(chalk.gray('支持的类型: ui, claude, codex, gemini\n'));
+    console.log(chalk.gray('支持的类型: ui, claude, codex, gemini, opencode\n'));
     process.exit(1);
   }
 
@@ -249,7 +250,8 @@ function getTypeColor(type) {
     ui: chalk.blue,
     claude: chalk.green,
     codex: chalk.cyan,
-    gemini: chalk.magenta
+    gemini: chalk.magenta,
+    opencode: chalk.yellow
   };
   return colors[type] || chalk.gray;
 }

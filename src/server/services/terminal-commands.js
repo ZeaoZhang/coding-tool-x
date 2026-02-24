@@ -8,7 +8,7 @@ const path = require('path');
 const os = require('os');
 
 // 配置文件路径
-const CONFIG_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const CONFIG_DIR = path.join(os.homedir(), '.cc-tool');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'terminal-commands.json');
 
 // 默认命令配置
