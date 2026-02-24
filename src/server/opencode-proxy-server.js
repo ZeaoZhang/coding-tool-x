@@ -816,12 +816,47 @@ function postJson(url, headers, payload, timeoutMs = 120000) {
   });
 }
 
+function postJsonStream(url, headers, payload, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const isHttps = target.protocol === 'https:';
+    const client = isHttps ? https : http;
+    const body = JSON.stringify(payload || {});
+    const request = client.request({
+      hostname: target.hostname,
+      port: target.port || (isHttps ? 443 : 80),
+      path: `${target.pathname}${target.search}`,
+      method: 'POST',
+      timeout: timeoutMs,
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    }, (response) => {
+      resolve({
+        statusCode: response.statusCode || 500,
+        headers: response.headers || {},
+        response
+      });
+    });
+
+    request.on('error', reject);
+    request.on('timeout', () => {
+      request.destroy(new Error('Gateway request timeout'));
+    });
+    request.write(body);
+    request.end();
+  });
+}
+
 function extractClaudeResponseContent(claudeResponse = {}) {
   const textFragments = [];
   const functionCalls = [];
+  const reasoningItems = [];
 
   if (!Array.isArray(claudeResponse.content)) {
-    return { text: '', functionCalls: [] };
+    return { text: '', functionCalls: [], reasoningItems: [] };
   }
 
   claudeResponse.content.forEach(block => {
@@ -843,11 +878,22 @@ function extractClaudeResponseContent(claudeResponse = {}) {
         arguments: JSON.stringify(argsObject)
       });
     }
+
+    if (block.type === 'thinking') {
+      const thinkingText = String(block.thinking || block.text || '').trim();
+      if (thinkingText) {
+        reasoningItems.push({
+          id: `rs_${Date.now()}_${reasoningItems.length}`,
+          text: thinkingText
+        });
+      }
+    }
   });
 
   return {
     text: textFragments.join('\n').trim(),
-    functionCalls
+    functionCalls,
+    reasoningItems
   };
 }
 
@@ -909,11 +955,25 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
   const totalTokens = Number(claudeResponse?.usage?.total_tokens || (inputTokens + outputTokens));
   const parsedContent = extractClaudeResponseContent(claudeResponse);
   const text = parsedContent.text;
+  const reasoningTokens = parsedContent.reasoningItems.reduce((acc, item) => acc + Math.floor((item.text || '').length / 4), 0);
   const model = claudeResponse.model || fallbackModel || '';
   const responseId = `resp_${String(claudeResponse.id || Date.now()).replace(/[^a-zA-Z0-9_]/g, '')}`;
   const messageId = claudeResponse.id || `msg_${Date.now()}`;
   const createdAt = Math.floor(Date.now() / 1000);
   const output = [];
+
+  parsedContent.reasoningItems.forEach(item => {
+    output.push({
+      id: item.id,
+      type: 'reasoning',
+      summary: [
+        {
+          type: 'summary_text',
+          text: item.text
+        }
+      ]
+    });
+  });
 
   if (text || parsedContent.functionCalls.length === 0) {
     output.push({
@@ -952,7 +1012,8 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
     usage: {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      total_tokens: totalTokens
+      total_tokens: totalTokens,
+      ...(reasoningTokens > 0 ? { output_tokens_details: { reasoning_tokens: reasoningTokens } } : {})
     }
   };
 }
@@ -1154,6 +1215,21 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
   });
 }
 
+function setSseHeaders(res) {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+}
+
+function writeSseData(res, payload) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function writeSseDone(res) {
+  res.write('data: [DONE]\n\n');
+}
+
 function sendResponsesSse(res, responseObject) {
   const outputItems = Array.isArray(responseObject?.output) ? responseObject.output : [];
   const text = outputItems
@@ -1164,10 +1240,7 @@ function sendResponsesSse(res, responseObject) {
     .trim();
   const functionCalls = outputItems.filter(item => item?.type === 'function_call');
 
-  res.status(200);
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  setSseHeaders(res);
 
   const createdPayload = {
     type: 'response.created',
@@ -1179,14 +1252,14 @@ function sendResponsesSse(res, responseObject) {
       status: 'in_progress'
     }
   };
-  res.write(`data: ${JSON.stringify(createdPayload)}\n\n`);
+  writeSseData(res, createdPayload);
 
   if (text) {
     const deltaPayload = {
       type: 'response.output_text.delta',
       delta: text
     };
-    res.write(`data: ${JSON.stringify(deltaPayload)}\n\n`);
+    writeSseData(res, deltaPayload);
   }
 
   if (functionCalls.length > 0) {
@@ -1196,7 +1269,7 @@ function sendResponsesSse(res, responseObject) {
         output_index: index,
         item
       };
-      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      writeSseData(res, payload);
     });
   }
 
@@ -1204,21 +1277,20 @@ function sendResponsesSse(res, responseObject) {
     type: 'response.completed',
     response: responseObject
   };
-  res.write(`data: ${JSON.stringify(completedPayload)}\n\n`);
-  res.write('data: [DONE]\n\n');
+  writeSseData(res, completedPayload);
+  writeSseDone(res);
   res.end();
 }
 
 function sendChatCompletionsSse(res, responseObject) {
-  const text = responseObject?.choices?.[0]?.message?.content || '';
+  const message = responseObject?.choices?.[0]?.message || {};
+  const text = message?.content || '';
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
   const finishReason = responseObject?.choices?.[0]?.finish_reason || 'stop';
 
-  res.status(200);
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
+  setSseHeaders(res);
 
-  const chunk = {
+  const firstChunk = {
     id: responseObject.id,
     object: 'chat.completion.chunk',
     created: responseObject.created,
@@ -1228,15 +1300,636 @@ function sendChatCompletionsSse(res, responseObject) {
         index: 0,
         delta: {
           role: 'assistant',
-          content: text
+          ...(text ? { content: text } : {}),
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
         },
+        finish_reason: null
+      }
+    ]
+  };
+  writeSseData(res, firstChunk);
+
+  const doneChunk = {
+    id: responseObject.id,
+    object: 'chat.completion.chunk',
+    created: responseObject.created,
+    model: responseObject.model,
+    choices: [
+      {
+        index: 0,
+        delta: {},
         finish_reason: finishReason
       }
     ]
   };
-  res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-  res.write('data: [DONE]\n\n');
+  writeSseData(res, doneChunk);
+  writeSseDone(res);
   res.end();
+}
+
+function nextResponsesSequence(state) {
+  state.sequence = Number(state.sequence || 0) + 1;
+  return state.sequence;
+}
+
+function createClaudeResponsesStreamState(fallbackModel = '') {
+  return {
+    sequence: 0,
+    responseId: '',
+    createdAt: Math.floor(Date.now() / 1000),
+    model: fallbackModel || '',
+    inputTokens: 0,
+    outputTokens: 0,
+    usageSeen: false,
+    blockTypeByIndex: new Map(),
+    messageIdByIndex: new Map(),
+    messageTextByIndex: new Map(),
+    functionCallIdByIndex: new Map(),
+    functionNameByIndex: new Map(),
+    functionArgsByIndex: new Map(),
+    reasoningIdByIndex: new Map(),
+    reasoningTextByIndex: new Map(),
+    completed: false,
+    completedResponse: null
+  };
+}
+
+function sortedNumericKeys(map) {
+  return Array.from(map.keys())
+    .map(v => Number(v))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
+}
+
+function normalizeFunctionArgumentsString(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return '{}';
+  try {
+    return JSON.stringify(JSON.parse(raw));
+  } catch {
+    return raw;
+  }
+}
+
+function buildResponsesOutputFromClaudeStreamState(state) {
+  const output = [];
+
+  sortedNumericKeys(state.reasoningIdByIndex).forEach(index => {
+    const reasoningId = state.reasoningIdByIndex.get(index) || `rs_${state.responseId || 'response'}_${index}`;
+    const text = state.reasoningTextByIndex.get(index) || '';
+    output.push({
+      id: reasoningId,
+      type: 'reasoning',
+      summary: [
+        {
+          type: 'summary_text',
+          text
+        }
+      ]
+    });
+  });
+
+  sortedNumericKeys(state.messageIdByIndex).forEach(index => {
+    const messageId = state.messageIdByIndex.get(index) || `msg_${state.responseId || 'response'}_${index}`;
+    const text = state.messageTextByIndex.get(index) || '';
+    if (!text && state.functionCallIdByIndex.size > 0) {
+      return;
+    }
+    output.push({
+      id: messageId,
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text,
+          annotations: []
+        }
+      ]
+    });
+  });
+
+  sortedNumericKeys(state.functionCallIdByIndex).forEach(index => {
+    const callId = state.functionCallIdByIndex.get(index) || generateToolCallId();
+    const name = state.functionNameByIndex.get(index) || '';
+    const args = normalizeFunctionArgumentsString(state.functionArgsByIndex.get(index));
+    output.push({
+      id: `fc_${callId}`,
+      type: 'function_call',
+      status: 'completed',
+      arguments: args,
+      call_id: callId,
+      name
+    });
+  });
+
+  if (output.length === 0) {
+    output.push({
+      id: `msg_${state.responseId || Date.now()}_0`,
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text: '',
+          annotations: []
+        }
+      ]
+    });
+  }
+
+  return output;
+}
+
+function buildCompletedResponsesObjectFromStreamState(state) {
+  const output = buildResponsesOutputFromClaudeStreamState(state);
+  const reasoningTokens = sortedNumericKeys(state.reasoningTextByIndex)
+    .map(index => state.reasoningTextByIndex.get(index) || '')
+    .reduce((acc, text) => acc + Math.floor(text.length / 4), 0);
+  const totalTokens = Number(state.inputTokens || 0) + Number(state.outputTokens || 0);
+
+  const response = {
+    id: state.responseId || `resp_${Date.now()}`,
+    object: 'response',
+    created_at: Number(state.createdAt) || Math.floor(Date.now() / 1000),
+    status: 'completed',
+    model: state.model || '',
+    output
+  };
+
+  if (state.usageSeen || totalTokens > 0 || reasoningTokens > 0) {
+    response.usage = {
+      input_tokens: Number(state.inputTokens || 0),
+      output_tokens: Number(state.outputTokens || 0),
+      total_tokens: totalTokens
+    };
+    if (reasoningTokens > 0) {
+      response.usage.output_tokens_details = { reasoning_tokens: reasoningTokens };
+    }
+  }
+
+  return response;
+}
+
+function processClaudeResponsesSseEvent(parsed, state, res) {
+  if (!parsed || typeof parsed !== 'object') return;
+
+  const type = parsed.type;
+  if (!type) return;
+
+  if (type === 'message_start') {
+    const message = parsed.message && typeof parsed.message === 'object' ? parsed.message : {};
+    state.responseId = message.id || state.responseId || `resp_${Date.now()}`;
+    state.model = message.model || state.model;
+    state.createdAt = Math.floor(Date.now() / 1000);
+
+    if (message.usage && typeof message.usage === 'object') {
+      if (Number.isFinite(Number(message.usage.input_tokens))) {
+        state.inputTokens = Number(message.usage.input_tokens);
+        state.usageSeen = true;
+      }
+      if (Number.isFinite(Number(message.usage.output_tokens))) {
+        state.outputTokens = Number(message.usage.output_tokens);
+        state.usageSeen = true;
+      }
+    }
+
+    writeSseData(res, {
+      type: 'response.created',
+      sequence_number: nextResponsesSequence(state),
+      response: {
+        id: state.responseId,
+        object: 'response',
+        created_at: state.createdAt,
+        model: state.model,
+        status: 'in_progress'
+      }
+    });
+
+    writeSseData(res, {
+      type: 'response.in_progress',
+      sequence_number: nextResponsesSequence(state),
+      response: {
+        id: state.responseId,
+        object: 'response',
+        created_at: state.createdAt,
+        model: state.model,
+        status: 'in_progress'
+      }
+    });
+    return;
+  }
+
+  if (type === 'content_block_start') {
+    const index = Number(parsed.index);
+    const blockIndex = Number.isFinite(index) ? index : 0;
+    const block = parsed.content_block && typeof parsed.content_block === 'object' ? parsed.content_block : {};
+    const blockType = block.type;
+    state.blockTypeByIndex.set(blockIndex, blockType);
+
+    if (blockType === 'text') {
+      const messageId = `msg_${state.responseId || Date.now()}_${blockIndex}`;
+      state.messageIdByIndex.set(blockIndex, messageId);
+      if (!state.messageTextByIndex.has(blockIndex)) {
+        state.messageTextByIndex.set(blockIndex, '');
+      }
+
+      writeSseData(res, {
+        type: 'response.output_item.added',
+        sequence_number: nextResponsesSequence(state),
+        output_index: blockIndex,
+        item: {
+          id: messageId,
+          type: 'message',
+          status: 'in_progress',
+          role: 'assistant',
+          content: []
+        }
+      });
+
+      writeSseData(res, {
+        type: 'response.content_part.added',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: blockIndex,
+        content_index: 0,
+        part: {
+          type: 'output_text',
+          text: '',
+          annotations: [],
+          logprobs: []
+        }
+      });
+      return;
+    }
+
+    if (blockType === 'tool_use') {
+      const callId = String(block.id || generateToolCallId());
+      const name = block.name || '';
+      state.functionCallIdByIndex.set(blockIndex, callId);
+      state.functionNameByIndex.set(blockIndex, name);
+      if (!state.functionArgsByIndex.has(blockIndex)) {
+        state.functionArgsByIndex.set(blockIndex, '');
+      }
+      if (block.input && typeof block.input === 'object' && !Array.isArray(block.input)) {
+        state.functionArgsByIndex.set(blockIndex, JSON.stringify(block.input));
+      }
+
+      writeSseData(res, {
+        type: 'response.output_item.added',
+        sequence_number: nextResponsesSequence(state),
+        output_index: blockIndex,
+        item: {
+          id: `fc_${callId}`,
+          type: 'function_call',
+          status: 'in_progress',
+          arguments: '',
+          call_id: callId,
+          name
+        }
+      });
+      return;
+    }
+
+    if (blockType === 'thinking') {
+      const reasoningId = `rs_${state.responseId || Date.now()}_${blockIndex}`;
+      state.reasoningIdByIndex.set(blockIndex, reasoningId);
+      if (!state.reasoningTextByIndex.has(blockIndex)) {
+        state.reasoningTextByIndex.set(blockIndex, '');
+      }
+
+      writeSseData(res, {
+        type: 'response.output_item.added',
+        sequence_number: nextResponsesSequence(state),
+        output_index: blockIndex,
+        item: {
+          id: reasoningId,
+          type: 'reasoning',
+          status: 'in_progress',
+          summary: []
+        }
+      });
+
+      writeSseData(res, {
+        type: 'response.reasoning_summary_part.added',
+        sequence_number: nextResponsesSequence(state),
+        item_id: reasoningId,
+        output_index: blockIndex,
+        summary_index: 0,
+        part: {
+          type: 'summary_text',
+          text: ''
+        }
+      });
+    }
+    return;
+  }
+
+  if (type === 'content_block_delta') {
+    const index = Number(parsed.index);
+    const blockIndex = Number.isFinite(index) ? index : 0;
+    const delta = parsed.delta && typeof parsed.delta === 'object' ? parsed.delta : {};
+    const deltaType = delta.type;
+
+    if (deltaType === 'text_delta') {
+      const text = typeof delta.text === 'string' ? delta.text : '';
+      if (!text) return;
+      const previous = state.messageTextByIndex.get(blockIndex) || '';
+      state.messageTextByIndex.set(blockIndex, previous + text);
+      const messageId = state.messageIdByIndex.get(blockIndex) || `msg_${state.responseId || Date.now()}_${blockIndex}`;
+      state.messageIdByIndex.set(blockIndex, messageId);
+
+      writeSseData(res, {
+        type: 'response.output_text.delta',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: blockIndex,
+        content_index: 0,
+        delta: text,
+        logprobs: []
+      });
+      return;
+    }
+
+    if (deltaType === 'input_json_delta') {
+      const partialJson = typeof delta.partial_json === 'string' ? delta.partial_json : '';
+      const previous = state.functionArgsByIndex.get(blockIndex) || '';
+      state.functionArgsByIndex.set(blockIndex, previous + partialJson);
+      const callId = state.functionCallIdByIndex.get(blockIndex) || generateToolCallId();
+      state.functionCallIdByIndex.set(blockIndex, callId);
+
+      writeSseData(res, {
+        type: 'response.function_call_arguments.delta',
+        sequence_number: nextResponsesSequence(state),
+        item_id: `fc_${callId}`,
+        output_index: blockIndex,
+        delta: partialJson
+      });
+      return;
+    }
+
+    if (deltaType === 'thinking_delta') {
+      const thinking = typeof delta.thinking === 'string' ? delta.thinking : '';
+      if (!thinking) return;
+      const previous = state.reasoningTextByIndex.get(blockIndex) || '';
+      state.reasoningTextByIndex.set(blockIndex, previous + thinking);
+      const reasoningId = state.reasoningIdByIndex.get(blockIndex) || `rs_${state.responseId || Date.now()}_${blockIndex}`;
+      state.reasoningIdByIndex.set(blockIndex, reasoningId);
+
+      writeSseData(res, {
+        type: 'response.reasoning_summary_text.delta',
+        sequence_number: nextResponsesSequence(state),
+        item_id: reasoningId,
+        output_index: blockIndex,
+        summary_index: 0,
+        delta: thinking
+      });
+    }
+    return;
+  }
+
+  if (type === 'content_block_stop') {
+    const index = Number(parsed.index);
+    const blockIndex = Number.isFinite(index) ? index : 0;
+    const blockType = state.blockTypeByIndex.get(blockIndex);
+
+    if (blockType === 'text') {
+      const messageId = state.messageIdByIndex.get(blockIndex) || `msg_${state.responseId || Date.now()}_${blockIndex}`;
+      const text = state.messageTextByIndex.get(blockIndex) || '';
+
+      writeSseData(res, {
+        type: 'response.output_text.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: blockIndex,
+        content_index: 0,
+        text,
+        logprobs: []
+      });
+
+      writeSseData(res, {
+        type: 'response.content_part.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: blockIndex,
+        content_index: 0,
+        part: {
+          type: 'output_text',
+          text,
+          annotations: [],
+          logprobs: []
+        }
+      });
+
+      writeSseData(res, {
+        type: 'response.output_item.done',
+        sequence_number: nextResponsesSequence(state),
+        output_index: blockIndex,
+        item: {
+          id: messageId,
+          type: 'message',
+          status: 'completed',
+          role: 'assistant',
+          content: [
+            {
+              type: 'output_text',
+              text,
+              annotations: []
+            }
+          ]
+        }
+      });
+      return;
+    }
+
+    if (blockType === 'tool_use') {
+      const callId = state.functionCallIdByIndex.get(blockIndex) || generateToolCallId();
+      const name = state.functionNameByIndex.get(blockIndex) || '';
+      const args = normalizeFunctionArgumentsString(state.functionArgsByIndex.get(blockIndex));
+
+      writeSseData(res, {
+        type: 'response.function_call_arguments.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: `fc_${callId}`,
+        output_index: blockIndex,
+        arguments: args
+      });
+
+      writeSseData(res, {
+        type: 'response.output_item.done',
+        sequence_number: nextResponsesSequence(state),
+        output_index: blockIndex,
+        item: {
+          id: `fc_${callId}`,
+          type: 'function_call',
+          status: 'completed',
+          arguments: args,
+          call_id: callId,
+          name
+        }
+      });
+      return;
+    }
+
+    if (blockType === 'thinking') {
+      const reasoningId = state.reasoningIdByIndex.get(blockIndex) || `rs_${state.responseId || Date.now()}_${blockIndex}`;
+      const text = state.reasoningTextByIndex.get(blockIndex) || '';
+
+      writeSseData(res, {
+        type: 'response.reasoning_summary_text.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: reasoningId,
+        output_index: blockIndex,
+        summary_index: 0,
+        text
+      });
+
+      writeSseData(res, {
+        type: 'response.reasoning_summary_part.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: reasoningId,
+        output_index: blockIndex,
+        summary_index: 0,
+        part: {
+          type: 'summary_text',
+          text
+        }
+      });
+    }
+    return;
+  }
+
+  if (type === 'message_delta') {
+    const usage = parsed.usage && typeof parsed.usage === 'object' ? parsed.usage : {};
+    if (Number.isFinite(Number(usage.input_tokens))) {
+      state.inputTokens = Number(usage.input_tokens);
+      state.usageSeen = true;
+    }
+    if (Number.isFinite(Number(usage.output_tokens))) {
+      state.outputTokens = Number(usage.output_tokens);
+      state.usageSeen = true;
+    }
+    return;
+  }
+
+  if (type === 'message_stop') {
+    const completedResponse = buildCompletedResponsesObjectFromStreamState(state);
+    state.completed = true;
+    state.completedResponse = completedResponse;
+    writeSseData(res, {
+      type: 'response.completed',
+      sequence_number: nextResponsesSequence(state),
+      response: completedResponse
+    });
+  }
+}
+
+async function relayClaudeResponsesStream(upstreamResponse, res, fallbackModel = '') {
+  setSseHeaders(res);
+  const state = createClaudeResponsesStreamState(fallbackModel);
+  const stream = createDecodedStream(upstreamResponse);
+
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    let settled = false;
+
+    const safeResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const safeReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const processSseBlock = (block) => {
+      if (!block || !block.trim()) return;
+      const dataLines = block
+        .split('\n')
+        .map(line => line.trimEnd())
+        .filter(line => line.trim().startsWith('data:'))
+        .map(line => line.replace(/^data:\s?/, ''));
+      if (dataLines.length === 0) return;
+      const payload = dataLines.join('\n').trim();
+      if (!payload || payload === '[DONE]') return;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      processClaudeResponsesSseEvent(parsed, state, res);
+    };
+
+    stream.on('data', (chunk) => {
+      buffer += chunk.toString('utf8').replace(/\r\n/g, '\n');
+      let separatorIndex = buffer.indexOf('\n\n');
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        processSseBlock(block);
+        separatorIndex = buffer.indexOf('\n\n');
+      }
+    });
+
+    stream.on('end', () => {
+      if (buffer.trim()) {
+        processSseBlock(buffer);
+      }
+
+      if (!state.completed) {
+        const completedResponse = buildCompletedResponsesObjectFromStreamState(state);
+        state.completed = true;
+        state.completedResponse = completedResponse;
+        writeSseData(res, {
+          type: 'response.completed',
+          sequence_number: nextResponsesSequence(state),
+          response: completedResponse
+        });
+      }
+
+      if (!res.writableEnded) {
+        writeSseDone(res);
+        res.end();
+      }
+
+      safeResolve(state.completedResponse || buildCompletedResponsesObjectFromStreamState(state));
+    });
+
+    stream.on('error', (error) => {
+      if (!res.writableEnded) {
+        writeSseData(res, {
+          type: 'error',
+          error: {
+            message: `Claude stream decode error: ${error.message || String(error)}`
+          }
+        });
+        writeSseDone(res);
+        res.end();
+      }
+      safeReject(error);
+    });
+
+    upstreamResponse.on('error', (error) => {
+      if (!res.writableEnded) {
+        writeSseData(res, {
+          type: 'error',
+          error: {
+            message: `Claude stream upstream error: ${error.message || String(error)}`
+          }
+        });
+        writeSseDone(res);
+        res.end();
+      }
+      safeReject(error);
+    });
+  });
 }
 
 async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
@@ -1254,17 +1947,69 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const startTime = Date.now();
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
+  const streamResponses = wantsStream && isResponsesPath(pathname);
   const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload);
+  claudePayload.stream = streamResponses;
 
   const headers = {
     'x-api-key': effectiveKey,
     'authorization': `Bearer ${effectiveKey}`,
     'anthropic-version': '2023-06-01',
     'anthropic-beta': 'claude-code-20250219,interleaved-thinking-2025-05-14',
-    'accept': 'application/json',
+    'accept': streamResponses ? 'text/event-stream' : 'application/json',
     'accept-encoding': 'gzip, deflate, br',
     'user-agent': 'claude-cli/2.0.53 (external, cli)'
   };
+
+  if (streamResponses) {
+    let streamUpstream;
+    try {
+      streamUpstream = await postJsonStream(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000);
+    } catch (error) {
+      recordFailure(channel.id, 'opencode', error);
+      sendOpenAiStyleError(res, 502, `Claude gateway network error: ${error.message}`, 'proxy_error');
+      return true;
+    }
+
+    const statusCode = Number(streamUpstream.statusCode) || 500;
+    if (statusCode < 200 || statusCode >= 300) {
+      let rawBody = '';
+      try {
+        rawBody = await collectHttpResponseBody(streamUpstream.response);
+      } catch {
+        rawBody = '';
+      }
+
+      let parsedError = null;
+      try {
+        parsedError = rawBody ? JSON.parse(rawBody) : null;
+      } catch {
+        parsedError = null;
+      }
+      const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
+      recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
+      sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
+      return true;
+    }
+
+    try {
+      const streamedResponseObject = await relayClaudeResponsesStream(streamUpstream.response, res, originalPayload.model || '');
+      publishOpenCodeUsageLog({
+        requestId,
+        channel,
+        model: streamedResponseObject?.model || originalPayload.model || '',
+        usage: streamedResponseObject?.usage || {},
+        startTime
+      });
+      recordSuccess(channel.id, 'opencode');
+    } catch (error) {
+      recordFailure(channel.id, 'opencode', error);
+      if (!res.headersSent) {
+        sendOpenAiStyleError(res, 502, `Claude stream relay error: ${error.message}`, 'proxy_error');
+      }
+    }
+    return true;
+  }
 
   let upstream;
   try {
