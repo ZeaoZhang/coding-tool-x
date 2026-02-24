@@ -2,7 +2,7 @@
  * 环境变量检测服务
  *
  * 检测系统中可能导致 API 配置冲突的环境变量
- * 支持 macOS/Linux 的 shell 配置文件检测
+ * 支持 macOS/Linux/Windows 的 shell 配置文件检测
  */
 
 const fs = require('fs');
@@ -43,13 +43,23 @@ const EXACT_SENSITIVE_VARS = [
 ];
 
 // 需要检测的 shell 配置文件
-const SHELL_CONFIG_FILES = [
-  '.bashrc',
-  '.bash_profile',
-  '.zshrc',
-  '.zprofile',
-  '.profile'
-];
+const SHELL_CONFIG_FILES = process.platform === 'win32'
+  ? [
+      '.bashrc',
+      '.bash_profile',
+      '.zshrc',
+      '.zprofile',
+      '.profile',
+      path.join('Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1'),
+      path.join('Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1')
+    ]
+  : [
+      '.bashrc',
+      '.bash_profile',
+      '.zshrc',
+      '.zprofile',
+      '.profile'
+    ];
 
 // 系统级配置文件
 const SYSTEM_CONFIG_FILES = [
@@ -120,7 +130,7 @@ function checkShellConfigs(keywords) {
   const homeDir = os.homedir();
 
   for (const fileName of SHELL_CONFIG_FILES) {
-    const filePath = path.join(homeDir, fileName);
+    const filePath = path.isAbsolute(fileName) ? fileName : path.join(homeDir, fileName);
     const fileConflicts = parseConfigFile(filePath, keywords);
     conflicts.push(...fileConflicts);
   }
@@ -165,10 +175,14 @@ function parseConfigFile(filePath, keywords) {
         continue;
       }
 
-      // 匹配 export VAR=value 或 VAR=value 格式
+      // 匹配 sh/bash/zsh 的 export VAR=value 或 VAR=value
       const exportMatch = trimmed.match(/^(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$/);
-      if (exportMatch) {
-        const [, varName, varValue] = exportMatch;
+      // 匹配 PowerShell 的 $env:VAR = value
+      const psMatch = trimmed.match(/^\$env:([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$/i);
+      const matched = exportMatch || psMatch;
+
+      if (matched) {
+        const [, varName, varValue] = matched;
 
         if (matchesKeywords(varName, keywords)) {
           conflicts.push({
