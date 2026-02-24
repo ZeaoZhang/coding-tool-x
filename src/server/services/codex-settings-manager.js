@@ -35,6 +35,167 @@ function hasBackup() {
   return fs.existsSync(getConfigBackupPath()) || fs.existsSync(getAuthBackupPath());
 }
 
+const INVALID_ENV_NAME_PATTERN = /[\r\n]/;
+const SHELL_MARKER_PREFIX = '# Added by Coding-Tool for Codex';
+
+function normalizeEnvName(envName) {
+  const normalized = String(envName || '').trim();
+  if (!normalized || INVALID_ENV_NAME_PATTERN.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function ensureParentDir(filePath) {
+  const dirPath = path.dirname(filePath);
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function writeFileAtomic(filePath, content) {
+  ensureParentDir(filePath);
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+
+  try {
+    fs.writeFileSync(tempPath, content, 'utf8');
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (cleanupErr) {
+        // ignore cleanup errors
+      }
+    }
+  }
+}
+
+function normalizeHomePath(filePath) {
+  const normalizedPath = String(filePath || '').replace(/\\/g, '/');
+  const normalizedHome = os.homedir().replace(/\\/g, '/');
+  if (normalizedPath.startsWith(normalizedHome)) {
+    return `~${normalizedPath.slice(normalizedHome.length)}`;
+  }
+  return filePath;
+}
+
+function compactBlankLines(lines) {
+  const compacted = [];
+  let previousIsBlank = false;
+
+  for (const line of lines) {
+    const isBlank = line.trim() === '';
+    if (isBlank) {
+      if (!previousIsBlank) {
+        compacted.push('');
+      }
+      previousIsBlank = true;
+      continue;
+    }
+
+    compacted.push(line);
+    previousIsBlank = false;
+  }
+
+  while (compacted.length > 0 && compacted[compacted.length - 1].trim() === '') {
+    compacted.pop();
+  }
+
+  return compacted;
+}
+
+function isPowerShellProfile(filePath) {
+  return String(filePath || '').toLowerCase().endsWith('.ps1');
+}
+
+function getShellConfigCandidates() {
+  const homeDir = os.homedir();
+  const shell = String(process.env.SHELL || '').toLowerCase();
+  const candidates = [];
+
+  if (process.platform === 'win32') {
+    if (shell.includes('zsh')) {
+      candidates.push(path.join(homeDir, '.zshrc'));
+    }
+
+    if (shell.includes('bash')) {
+      candidates.push(path.join(homeDir, '.bashrc'));
+      candidates.push(path.join(homeDir, '.bash_profile'));
+    }
+
+    candidates.push(path.join(homeDir, 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1'));
+    candidates.push(path.join(homeDir, 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1'));
+    candidates.push(path.join(homeDir, '.bashrc'));
+    candidates.push(path.join(homeDir, '.profile'));
+  } else if (shell.includes('zsh')) {
+    candidates.push(path.join(homeDir, '.zshrc'));
+    candidates.push(path.join(homeDir, '.zprofile'));
+    candidates.push(path.join(homeDir, '.profile'));
+  } else if (shell.includes('bash')) {
+    if (process.platform === 'darwin') {
+      candidates.push(path.join(homeDir, '.bash_profile'));
+      candidates.push(path.join(homeDir, '.bashrc'));
+    } else {
+      candidates.push(path.join(homeDir, '.bashrc'));
+      candidates.push(path.join(homeDir, '.bash_profile'));
+    }
+    candidates.push(path.join(homeDir, '.profile'));
+  } else {
+    candidates.push(path.join(homeDir, '.zshrc'));
+    candidates.push(path.join(homeDir, '.bashrc'));
+    candidates.push(path.join(homeDir, '.bash_profile'));
+    candidates.push(path.join(homeDir, '.profile'));
+  }
+
+  return [...new Set(candidates)];
+}
+
+function getShellReloadCommand(configPath) {
+  if (!configPath) {
+    return process.platform === 'win32' ? '重启终端' : 'source ~/.zshrc';
+  }
+
+  const displayPath = normalizeHomePath(configPath);
+  const normalized = String(displayPath || '').replace(/\\/g, '/').toLowerCase();
+
+  if (normalized.endsWith('microsoft.powershell_profile.ps1')) {
+    return '. $PROFILE';
+  }
+  if (normalized.endsWith('/.zshrc')) {
+    return 'source ~/.zshrc';
+  }
+  if (normalized.endsWith('/.bash_profile')) {
+    return 'source ~/.bash_profile';
+  }
+  if (normalized.endsWith('/.bashrc')) {
+    return 'source ~/.bashrc';
+  }
+  if (normalized.endsWith('/.profile')) {
+    return 'source ~/.profile';
+  }
+
+  if (process.platform === 'win32') {
+    return '. $PROFILE';
+  }
+
+  return `source ${displayPath}`;
+}
+
+function escapeShellValue(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, '\\$')
+    .replace(/`/g, '\\`');
+}
+
+function escapePowerShellValue(value) {
+  return String(value ?? '')
+    .replace(/`/g, '``')
+    .replace(/"/g, '`"');
+}
+
 // 读取 config.toml
 function readConfig() {
   try {
@@ -182,28 +343,28 @@ function restoreSettings() {
 
 // 获取用户的 shell 配置文件路径
 function getShellConfigPath() {
-  const shell = process.env.SHELL || '';
-  if (shell.includes('zsh')) {
-    return path.join(os.homedir(), '.zshrc');
-  } else if (shell.includes('bash')) {
-    // macOS 使用 .bash_profile，Linux 使用 .bashrc
-    const bashProfile = path.join(os.homedir(), '.bash_profile');
-    const bashrc = path.join(os.homedir(), '.bashrc');
-    if (fs.existsSync(bashProfile)) {
-      return bashProfile;
-    }
-    return bashrc;
-  }
-  // 默认使用 .zshrc (macOS 默认)
-  return path.join(os.homedir(), '.zshrc');
+  const candidates = getShellConfigCandidates();
+  const existing = candidates.find(filePath => fs.existsSync(filePath));
+  return existing || candidates[0];
 }
 
 // 注入环境变量到 shell 配置文件
 function injectEnvToShell(envName, envValue) {
+  const normalizedEnvName = normalizeEnvName(envName);
+  if (!normalizedEnvName) {
+    return {
+      success: false,
+      error: `Invalid environment variable name: ${envName}`,
+      isFirstTime: false
+    };
+  }
+
   const configPath = getShellConfigPath();
-  const exportLine = `export ${envName}="${envValue}"`;
-  // 使用更具体的标记，包含环境变量名，方便后续精确移除
-  const marker = `# Added by Coding-Tool for Codex [${envName}]`;
+  const marker = `${SHELL_MARKER_PREFIX} [${normalizedEnvName}]`;
+  const usePowerShell = isPowerShellProfile(configPath);
+  const exportLine = usePowerShell
+    ? `$env:${normalizedEnvName} = "${escapePowerShellValue(envValue)}"`
+    : `export ${normalizedEnvName}="${escapeShellValue(envValue)}"`;
 
   try {
     let content = '';
@@ -211,23 +372,52 @@ function injectEnvToShell(envName, envValue) {
       content = fs.readFileSync(configPath, 'utf8');
     }
 
-    // 检查是否已经存在这个环境变量配置
-    const regex = new RegExp(`^export ${envName}=`, 'm');
-    const alreadyExists = regex.test(content);
+    const envKeyEscaped = String(normalizedEnvName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const envLineRegex = usePowerShell
+      ? new RegExp(`^\\s*\\$env:${envKeyEscaped}\\s*=`, 'i')
+      : new RegExp(`^\\s*(?:export\\s+)?${envKeyEscaped}=`);
 
-    if (alreadyExists) {
-      // 已存在，替换它（保留原有的标记注释）
-      content = content.replace(
-        new RegExp(`^(# Added by Coding-Tool for Codex \\[${envName}\\]\n)?export ${envName}=.*$`, 'm'),
-        `${marker}\n${exportLine}`
-      );
-    } else {
-      // 不存在，追加到文件末尾
-      content = content.trimEnd() + `\n\n${marker}\n${exportLine}\n`;
+    const originalLines = content ? content.split(/\r?\n/) : [];
+    const cleanedLines = [];
+    let existed = false;
+
+    for (let i = 0; i < originalLines.length; i++) {
+      const currentLine = originalLines[i];
+      const trimmedLine = currentLine.trim();
+
+      if (trimmedLine === marker) {
+        const nextLine = originalLines[i + 1] || '';
+        if (envLineRegex.test(nextLine.trim())) {
+          i += 1;
+        }
+        existed = true;
+        continue;
+      }
+
+      if (envLineRegex.test(trimmedLine)) {
+        existed = true;
+        continue;
+      }
+
+      cleanedLines.push(currentLine);
     }
 
-    fs.writeFileSync(configPath, content, 'utf8');
-    return { success: true, path: configPath, isFirstTime: !alreadyExists };
+    while (cleanedLines.length > 0 && cleanedLines[cleanedLines.length - 1].trim() === '') {
+      cleanedLines.pop();
+    }
+
+    if (cleanedLines.length > 0) {
+      cleanedLines.push('');
+    }
+
+    cleanedLines.push(marker, exportLine);
+
+    const nextContent = `${cleanedLines.join('\n')}\n`;
+    if (nextContent !== content) {
+      writeFileAtomic(configPath, nextContent);
+    }
+
+    return { success: true, path: configPath, isFirstTime: !existed };
   } catch (err) {
     // 不抛出错误，只是警告，因为这不是致命问题
     console.warn(`[Codex] Failed to inject env to shell config: ${err.message}`);
@@ -237,6 +427,14 @@ function injectEnvToShell(envName, envValue) {
 
 // 从 shell 配置文件移除环境变量
 function removeEnvFromShell(envName) {
+  const normalizedEnvName = normalizeEnvName(envName);
+  if (!normalizedEnvName) {
+    return {
+      success: false,
+      error: `Invalid environment variable name: ${envName}`
+    };
+  }
+
   const configPath = getShellConfigPath();
 
   try {
@@ -244,24 +442,46 @@ function removeEnvFromShell(envName) {
       return { success: true };
     }
 
-    let content = fs.readFileSync(configPath, 'utf8');
+    const content = fs.readFileSync(configPath, 'utf8');
+    const usePowerShell = isPowerShellProfile(configPath);
+    const marker = `${SHELL_MARKER_PREFIX} [${normalizedEnvName}]`;
+    const envKeyEscaped = String(normalizedEnvName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const envLineRegex = usePowerShell
+      ? new RegExp(`^\\s*\\$env:${envKeyEscaped}\\s*=`, 'i')
+      : new RegExp(`^\\s*(?:export\\s+)?${envKeyEscaped}=`);
 
-    // 移除具体标记的环境变量（推荐方式）
-    content = content.replace(
-      new RegExp(`\\n?# Added by Coding-Tool for Codex \\[${envName}\\]\\nexport ${envName}=.*\\n?`, 'g'),
-      '\n'
-    );
+    const originalLines = content ? content.split(/\r?\n/) : [];
+    const cleanedLines = [];
+    let changed = false;
 
-    // 如果没有标记，也尝试移除（兼容旧数据）
-    content = content.replace(
-      new RegExp(`^export ${envName}=.*\\n?`, 'gm'),
-      ''
-    );
+    for (let i = 0; i < originalLines.length; i++) {
+      const currentLine = originalLines[i];
+      const trimmedLine = currentLine.trim();
 
-    // 清理多余的空行
-    content = content.replace(/\n\n\n+/g, '\n\n');
+      if (trimmedLine === marker) {
+        const nextLine = originalLines[i + 1] || '';
+        if (envLineRegex.test(nextLine.trim())) {
+          i += 1;
+        }
+        changed = true;
+        continue;
+      }
 
-    fs.writeFileSync(configPath, content, 'utf8');
+      if (envLineRegex.test(trimmedLine)) {
+        changed = true;
+        continue;
+      }
+
+      cleanedLines.push(currentLine);
+    }
+
+    if (!changed) {
+      return { success: true };
+    }
+
+    const normalized = compactBlankLines(cleanedLines);
+    const nextContent = normalized.length > 0 ? `${normalized.join('\n')}\n` : '';
+    writeFileAtomic(configPath, nextContent);
     return { success: true };
   } catch (err) {
     console.warn(`[Codex] Failed to remove env from shell config: ${err.message}`);
@@ -306,8 +526,8 @@ function setProxyConfig(proxyPort) {
     const shellInjectResult = injectEnvToShell('CC_PROXY_KEY', 'PROXY_KEY');
 
     // 获取 shell 配置文件路径用于提示信息
-    const shellConfigPath = getShellConfigPath();
-    const sourceCommand = process.env.SHELL?.includes('zsh') ? 'source ~/.zshrc' : 'source ~/.bashrc';
+    const shellConfigPath = shellInjectResult.path || getShellConfigPath();
+    const sourceCommand = getShellReloadCommand(shellConfigPath);
 
     console.log(`Codex settings updated to use proxy on port ${proxyPort}`);
     return {

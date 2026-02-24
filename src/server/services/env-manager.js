@@ -11,6 +11,67 @@ const os = require('os');
 // 备份目录
 const BACKUP_DIR = path.join(os.homedir(), '.claude', 'cc-tool', 'env-backups');
 
+function ensureParentDir(filePath) {
+  const dirPath = path.dirname(filePath);
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function writeFileAtomic(filePath, content) {
+  ensureParentDir(filePath);
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+
+  try {
+    fs.writeFileSync(tempPath, content, 'utf-8');
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.unlinkSync(tempPath);
+      } catch (cleanupErr) {
+        // ignore cleanup errors
+      }
+    }
+  }
+}
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isPowerShellProfile(filePath) {
+  return String(filePath || '').toLowerCase().endsWith('.ps1');
+}
+
+function matchesVarAssignment(line, varName, usePowerShell) {
+  if (!line || !varName) {
+    return false;
+  }
+
+  const escaped = escapeRegex(varName);
+  const regex = usePowerShell
+    ? new RegExp(`^\\s*\\$env:${escaped}\\s*=`, 'i')
+    : new RegExp(`^\\s*(?:export\\s+)?${escaped}=`);
+  return regex.test(line.trim());
+}
+
+function formatExportLine(varName, value, usePowerShell) {
+  if (usePowerShell) {
+    const escapedValue = String(value ?? '')
+      .replace(/`/g, '``')
+      .replace(/"/g, '`"');
+    return `$env:${varName} = "${escapedValue}"`;
+  }
+
+  const escapedValue = String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, '\\$')
+    .replace(/`/g, '\\`');
+  return `export ${varName}="${escapedValue}"`;
+}
+
 /**
  * 确保备份目录存在
  */
@@ -112,8 +173,13 @@ function getOriginalValue(conflict) {
 
     if (line) {
       const match = line.match(/^(?:export\s+)?[A-Z_][A-Z0-9_]*=(.*)$/);
-      if (match) {
+      if (match && match[1] !== undefined) {
         return cleanValue(match[1]);
+      }
+
+      const psMatch = line.match(/^\s*\$env:[A-Z_][A-Z0-9_]*\s*=\s*(.*)$/i);
+      if (psMatch && psMatch[1] !== undefined) {
+        return cleanValue(psMatch[1]);
       }
     }
   } catch (err) {
@@ -162,18 +228,44 @@ function removeVarsFromFile(filePath, vars) {
   }
 
   const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
+  const usePowerShell = isPowerShellProfile(filePath);
 
-  // 收集要删除的行号
-  const lineNumbersToRemove = new Set(vars.map(v => v.lineNumber));
+  // 收集要删除的行号（优先使用行号，行号不匹配时按变量名回退）
+  const lineNumbersToRemove = new Set();
+  for (const item of vars) {
+    const varName = String(item.varName || '').trim();
+    if (!varName) continue;
 
-  // 过滤掉要删除的行
-  const newLines = lines.filter((_, index) => !lineNumbersToRemove.has(index + 1));
+    const lineIndex = Number(item.lineNumber) - 1;
+    if (
+      Number.isInteger(lineIndex) &&
+      lineIndex >= 0 &&
+      lineIndex < lines.length &&
+      matchesVarAssignment(lines[lineIndex], varName, usePowerShell)
+    ) {
+      lineNumbersToRemove.add(lineIndex);
+      continue;
+    }
 
-  // 写回文件
-  fs.writeFileSync(filePath, newLines.join('\n'), 'utf-8');
+    const fallbackIndex = lines.findIndex(line => matchesVarAssignment(line, varName, usePowerShell));
+    if (fallbackIndex >= 0) {
+      lineNumbersToRemove.add(fallbackIndex);
+    }
+  }
 
-  console.log(`[EnvManager] Removed ${vars.length} var(s) from ${filePath}`);
+  if (lineNumbersToRemove.size === 0) {
+    console.log(`[EnvManager] No matching vars found in ${filePath}, skip writing`);
+    return;
+  }
+
+  const newLines = lines.filter((_, index) => !lineNumbersToRemove.has(index));
+  const nextContent = newLines.join('\n');
+  if (nextContent !== content) {
+    writeFileAtomic(filePath, nextContent);
+  }
+
+  console.log(`[EnvManager] Removed ${lineNumbersToRemove.size} var(s) from ${filePath}`);
 }
 
 /**
@@ -255,21 +347,36 @@ function restoreFromBackup(backupPath) {
  * 恢复环境变量到文件
  */
 function restoreVarToFile(filePath, varName, value) {
+  const usePowerShell = isPowerShellProfile(filePath);
+  const exportLine = formatExportLine(varName, value, usePowerShell);
   let content = '';
 
   if (fs.existsSync(filePath)) {
     content = fs.readFileSync(filePath, 'utf-8');
-    // 确保末尾有换行
-    if (!content.endsWith('\n')) {
-      content += '\n';
+  }
+
+  const lines = content ? content.split(/\r?\n/) : [];
+  let replaced = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (matchesVarAssignment(lines[i], varName, usePowerShell)) {
+      lines[i] = exportLine;
+      replaced = true;
     }
   }
 
-  // 添加环境变量
-  const exportLine = `export ${varName}="${value}"`;
-  content += exportLine + '\n';
+  if (!replaced) {
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+      lines.pop();
+    }
+    if (lines.length > 0) {
+      lines.push('');
+    }
+    lines.push(exportLine);
+  }
 
-  fs.writeFileSync(filePath, content, 'utf-8');
+  const nextContent = `${lines.join('\n')}\n`;
+  writeFileAtomic(filePath, nextContent);
 
   console.log(`[EnvManager] Restored ${varName} to ${filePath}`);
 }

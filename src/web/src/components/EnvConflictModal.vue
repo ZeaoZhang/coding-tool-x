@@ -30,7 +30,7 @@
         <div class="alert-content">
           <p class="alert-title">这些环境变量来自当前进程，请按以下步骤处理：</p>
           <ol class="alert-list">
-            <li>检查配置文件（~/.zshrc 或 ~/.bashrc）中是否有 export 这些变量</li>
+            <li>检查对应 shell 配置文件（如 ~/.zshrc、~/.bashrc 或 PowerShell Profile）中是否有这些变量</li>
             <li>如果有，删除或注释掉相关行</li>
             <li><strong>重启终端</strong>，然后重新运行 <code>ct</code></li>
           </ol>
