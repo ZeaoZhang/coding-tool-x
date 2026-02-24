@@ -6,7 +6,7 @@ const os = require('os');
  * Codex 统计服务 - 数据采集和存储
  *
  * 文件结构：
- * ~/.claude/cc-tool/
+ * ~/.cc-tool/
  *   ├── codex-statistics.json         # Codex 总体统计
  *   └── codex-daily-stats/
  *       ├── 2025-12-05.json           # 每日汇总统计
@@ -15,7 +15,7 @@ const os = require('os');
 
 // 获取基础目录
 function getBaseDir() {
-  const dir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const dir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

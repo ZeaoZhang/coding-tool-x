@@ -3,6 +3,7 @@ const path = require('path');
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
+const { ensureStorageDirMigrated } = require('../config/paths');
 const { startWebSocketServer: attachWebSocketServer } = require('./websocket-server');
 const { isPortInUse, killProcessByPort, waitForPortRelease } = require('../utils/port-helper');
 const { isProxyConfig } = require('./services/settings-manager');
@@ -17,6 +18,7 @@ const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer } = require('./opencode-proxy-server');
 
 async function startServer(port, host = '127.0.0.1') {
+  ensureStorageDirMigrated();
   const config = loadConfig();
   // 使用配置的端口，如果没有传入参数
   if (!port) {
@@ -221,7 +223,7 @@ function autoRestoreProxies() {
   const fs = require('fs');
   const path = require('path');
 
-  const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const ccToolDir = path.join(os.homedir(), '.cc-tool');
 
   // 检查 Claude 代理状态文件
   const claudeActiveFile = path.join(ccToolDir, 'active-channel.json');

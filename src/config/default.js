@@ -7,7 +7,7 @@ const DEFAULT_CONFIG = {
   defaultProject: null,
   maxDisplaySessions: 100,
   pageSize: 15,
-  currentCliType: 'claude',  // 当前CLI工具类型: claude, codex, gemini
+  currentCliType: 'claude',  // 当前CLI工具类型: claude, codex, gemini, opencode
   ports: {
     webUI: 19999,       // Web UI 页面端口 (同时用于 WebSocket)
     proxy: 20088,       // Claude 代理服务端口

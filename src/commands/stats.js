@@ -2,6 +2,14 @@ const chalk = require('chalk');
 const http = require('http');
 const { loadConfig } = require('../config/loader');
 
+const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode'];
+const TOOL_ENDPOINTS = {
+  claude: '/api/statistics',
+  codex: '/api/codex/statistics',
+  gemini: '/api/gemini/statistics',
+  opencode: '/api/opencode/statistics'
+};
+
 /**
  * HTTP 请求辅助函数
  */
@@ -62,11 +70,165 @@ function httpRequest(method, path, data = null) {
  */
 async function checkUIService() {
   try {
-    await httpRequest('GET', '/api/ping');
+    await httpRequest('GET', '/api/proxy/status');
     return true;
   } catch (err) {
     return false;
   }
+}
+
+function validateToolType(type) {
+  if (!type) return true;
+  return TOOL_TYPES.includes(type);
+}
+
+function getDateString(offsetDays = 0) {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - offsetDays);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function emptySummary() {
+  return {
+    requests: 0,
+    tokens: 0,
+    cost: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheCreation: 0,
+    cacheRead: 0,
+    reasoningTokens: 0,
+    cachedTokens: 0
+  };
+}
+
+function normalizeNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function extractSummary(stats) {
+  const summary = emptySummary();
+  const sourceSummary = stats?.summary || {};
+  const sourceGlobal = stats?.global || {};
+
+  summary.requests = normalizeNumber(
+    sourceSummary.totalRequests !== undefined ? sourceSummary.totalRequests : sourceSummary.requests
+  ) || normalizeNumber(sourceGlobal.totalRequests);
+
+  summary.tokens = normalizeNumber(
+    sourceSummary.totalTokens !== undefined ? sourceSummary.totalTokens : sourceSummary.tokens
+  ) || normalizeNumber(sourceGlobal.totalTokens);
+
+  summary.cost = normalizeNumber(
+    sourceSummary.totalCost !== undefined ? sourceSummary.totalCost : sourceSummary.cost
+  ) || normalizeNumber(sourceGlobal.totalCost);
+
+  summary.inputTokens = normalizeNumber(sourceSummary.inputTokens ?? sourceSummary.input);
+  summary.outputTokens = normalizeNumber(sourceSummary.outputTokens ?? sourceSummary.output);
+  summary.cacheCreation = normalizeNumber(sourceSummary.cacheCreation ?? sourceSummary.cache_creation);
+  summary.cacheRead = normalizeNumber(sourceSummary.cacheRead ?? sourceSummary.cache_read);
+  summary.reasoningTokens = normalizeNumber(sourceSummary.reasoningTokens ?? sourceSummary.reasoning);
+  summary.cachedTokens = normalizeNumber(sourceSummary.cachedTokens ?? sourceSummary.cached);
+
+  const detailedTotal =
+    summary.inputTokens +
+    summary.outputTokens +
+    summary.cacheCreation +
+    summary.cacheRead +
+    summary.reasoningTokens +
+    summary.cachedTokens;
+
+  if (!summary.tokens && detailedTotal > 0) {
+    summary.tokens = detailedTotal;
+  }
+
+  return summary;
+}
+
+function mergeSummaries(target, source) {
+  target.requests += normalizeNumber(source.requests);
+  target.tokens += normalizeNumber(source.tokens);
+  target.cost += normalizeNumber(source.cost);
+  target.inputTokens += normalizeNumber(source.inputTokens);
+  target.outputTokens += normalizeNumber(source.outputTokens);
+  target.cacheCreation += normalizeNumber(source.cacheCreation);
+  target.cacheRead += normalizeNumber(source.cacheRead);
+  target.reasoningTokens += normalizeNumber(source.reasoningTokens);
+  target.cachedTokens += normalizeNumber(source.cachedTokens);
+  return target;
+}
+
+function getRangeDays(timeRange) {
+  if (timeRange === 'week') return 7;
+  if (timeRange === 'month') return 30;
+  return 0;
+}
+
+async function fetchToolStats(toolType, timeRange) {
+  const endpointBase = TOOL_ENDPOINTS[toolType];
+  if (!endpointBase) {
+    throw new Error(`不支持的渠道类型: ${toolType}`);
+  }
+
+  if (timeRange === 'today') {
+    const response = await httpRequest('GET', `${endpointBase}/today`);
+    return extractSummary(response.data);
+  }
+
+  if (timeRange === 'all') {
+    const response = await httpRequest('GET', `${endpointBase}/summary`);
+    return extractSummary(response.data);
+  }
+
+  const days = getRangeDays(timeRange);
+  const merged = emptySummary();
+  for (let i = 0; i < days; i++) {
+    const date = getDateString(i);
+    const response = await httpRequest('GET', `${endpointBase}/daily/${date}`);
+    const dailySummary = extractSummary(response.data);
+    mergeSummaries(merged, dailySummary);
+  }
+  return merged;
+}
+
+async function fetchOverallStats(timeRange) {
+  const byToolType = {};
+  const summary = emptySummary();
+
+  for (const toolType of TOOL_TYPES) {
+    const toolSummary = await fetchToolStats(toolType, timeRange);
+    byToolType[toolType] = toolSummary;
+    mergeSummaries(summary, toolSummary);
+  }
+
+  return { summary, byToolType };
+}
+
+function buildDisplayPayload(type, timeRange, data) {
+  if (type) {
+    return {
+      type,
+      timeRange,
+      summary: data,
+      byToolType: null
+    };
+  }
+
+  return {
+    type: null,
+    timeRange,
+    summary: data.summary,
+    byToolType: data.byToolType
+  };
 }
 
 /**
@@ -84,23 +246,22 @@ async function handleStats(type = null, options = {}) {
   const timeRange = options.today ? 'today' : options.week ? 'week' : options.month ? 'month' : 'all';
 
   try {
-    let endpoint = '/api/statistics';
-    if (type) {
-      // 特定渠道统计
-      if (!['claude', 'codex', 'gemini'].includes(type)) {
-        console.error(chalk.red(`\n❌ 无效的渠道类型: ${type}\n`));
-        console.log(chalk.gray('支持的类型: claude, codex, gemini\n'));
-        process.exit(1);
-      }
-      endpoint += `/${type}`;
+    if (!validateToolType(type)) {
+      console.error(chalk.red(`\n❌ 无效的渠道类型: ${type}\n`));
+      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode\n'));
+      process.exit(1);
     }
 
-    endpoint += `?range=${timeRange}`;
+    let payload;
+    if (type) {
+      const summary = await fetchToolStats(type, timeRange);
+      payload = buildDisplayPayload(type, timeRange, summary);
+    } else {
+      const overall = await fetchOverallStats(timeRange);
+      payload = buildDisplayPayload(null, timeRange, overall);
+    }
 
-    const response = await httpRequest('GET', endpoint);
-    const stats = response.data;
-
-    displayStats(stats, type, timeRange);
+    displayStats(payload);
   } catch (error) {
     console.error(chalk.red(`\n❌ 获取统计失败: ${error.message}\n`));
     process.exit(1);
@@ -110,7 +271,9 @@ async function handleStats(type = null, options = {}) {
 /**
  * 显示统计信息
  */
-function displayStats(stats, type, timeRange) {
+function displayStats(stats) {
+  const type = stats.type;
+  const timeRange = stats.timeRange;
   const title = type ? `${type.toUpperCase()} 统计信息` : '总体统计信息';
   const rangeText = {
     today: '今日',
@@ -132,51 +295,44 @@ function displayStats(stats, type, timeRange) {
 
   // 请求统计
   console.log(chalk.bold('📊 请求统计:'));
-  console.log(chalk.gray(`  总请求数: `) + chalk.cyan(summary.totalRequests || 0));
-  console.log(chalk.gray(`  成功请求: `) + chalk.green(summary.successfulRequests || 0));
-  console.log(chalk.gray(`  失败请求: `) + chalk.red(summary.failedRequests || 0));
+  console.log(chalk.gray('  总请求数: ') + chalk.cyan(formatNumber(summary.requests)));
 
   // Token 使用
-  if (summary.totalTokens !== undefined) {
+  if (summary.tokens !== undefined) {
     console.log(chalk.bold('\n🎯 Token 使用:'));
-    console.log(chalk.gray(`  输入 Tokens: `) + chalk.cyan(formatNumber(summary.inputTokens || 0)));
-    console.log(chalk.gray(`  输出 Tokens: `) + chalk.cyan(formatNumber(summary.outputTokens || 0)));
-    console.log(chalk.gray(`  缓存创建: `) + chalk.cyan(formatNumber(summary.cacheCreation || 0)));
-    console.log(chalk.gray(`  缓存读取: `) + chalk.cyan(formatNumber(summary.cacheRead || 0)));
-    console.log(chalk.gray(`  总计: `) + chalk.bold.cyan(formatNumber(summary.totalTokens || 0)));
+    console.log(chalk.gray('  输入 Tokens: ') + chalk.cyan(formatNumber(summary.inputTokens || 0)));
+    console.log(chalk.gray('  输出 Tokens: ') + chalk.cyan(formatNumber(summary.outputTokens || 0)));
+    console.log(chalk.gray('  缓存创建: ') + chalk.cyan(formatNumber(summary.cacheCreation || 0)));
+    console.log(chalk.gray('  缓存读取: ') + chalk.cyan(formatNumber(summary.cacheRead || 0)));
+    console.log(chalk.gray('  推理 Tokens: ') + chalk.cyan(formatNumber(summary.reasoningTokens || 0)));
+    console.log(chalk.gray('  缓存 Tokens: ') + chalk.cyan(formatNumber(summary.cachedTokens || 0)));
+    console.log(chalk.gray('  总计: ') + chalk.bold.cyan(formatNumber(summary.tokens || 0)));
   }
 
   // 成本统计
-  if (summary.totalCost !== undefined) {
+  if (summary.cost !== undefined) {
     console.log(chalk.bold('\n💰 成本统计:'));
-    console.log(chalk.gray(`  总成本: `) + chalk.yellow(`$${(summary.totalCost || 0).toFixed(4)}`));
-    if (summary.averageCost !== undefined) {
-      console.log(chalk.gray(`  平均成本: `) + chalk.yellow(`$${(summary.averageCost || 0).toFixed(4)}`));
-    }
+    console.log(chalk.gray('  总成本: ') + chalk.yellow(`$${normalizeNumber(summary.cost).toFixed(4)}`));
   }
 
-  // 按渠道统计（仅在总体统计时显示）
-  if (!type && stats.byChannel) {
-    console.log(chalk.bold('\n📡 按渠道统计:'));
-    Object.entries(stats.byChannel).forEach(([channel, data]) => {
-      const icon = channel === 'claude' ? '🟢' : channel === 'codex' ? '🔵' : '🟣';
-      console.log(chalk.gray(`  ${icon} ${channel.toUpperCase()}:`));
-      console.log(chalk.gray(`     请求: ${data.requests || 0}  |  Tokens: ${formatNumber(data.tokens || 0)}  |  成本: $${(data.cost || 0).toFixed(4)}`));
-    });
-  }
-
-  // 最近活动
-  if (stats.recentActivity && stats.recentActivity.length > 0) {
-    console.log(chalk.bold('\n🕐 最近活动:'));
-    stats.recentActivity.slice(0, 5).forEach(activity => {
-      const time = new Date(activity.timestamp).toLocaleString('zh-CN');
-      console.log(chalk.gray(`  ${time}  |  ${activity.channel}  |  ${formatNumber(activity.tokens)} tokens  |  $${activity.cost.toFixed(4)}`));
+  if (!type && stats.byToolType) {
+    const iconMap = { claude: '🟢', codex: '🔵', gemini: '🟣', opencode: '🟠' };
+    console.log(chalk.bold('\n📡 分渠道汇总:'));
+    TOOL_TYPES.forEach((toolType) => {
+      const item = stats.byToolType[toolType] || emptySummary();
+      console.log(chalk.gray(`  ${iconMap[toolType]} ${toolType.toUpperCase()}:`));
+      console.log(
+        chalk.gray(
+          `     请求: ${formatNumber(item.requests)}  |  Tokens: ${formatNumber(item.tokens)}  |  成本: $${normalizeNumber(item.cost).toFixed(4)}`
+        )
+      );
     });
   }
 
   console.log(chalk.gray('\n💡 提示:'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats --today') + chalk.gray(' 查看今日统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats claude') + chalk.gray(' 查看特定渠道'));
+  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats opencode') + chalk.gray(' 查看 OpenCode 统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats export') + chalk.gray(' 导出统计数据\n'));
 }
 
@@ -184,7 +340,8 @@ function displayStats(stats, type, timeRange) {
  * 格式化数字
  */
 function formatNumber(num) {
-  return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const normalized = normalizeNumber(num);
+  return normalized.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 /**
@@ -200,15 +357,32 @@ async function handleStatsExport(type = null, format = 'json') {
   }
 
   try {
-    const endpoint = type ? `/api/statistics/${type}/export` : '/api/statistics/export';
-    const response = await httpRequest('GET', `${endpoint}?format=${format}`);
+    if (!validateToolType(type)) {
+      console.error(chalk.red(`\n❌ 无效的渠道类型: ${type}\n`));
+      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode\n'));
+      process.exit(1);
+    }
+
+    const exportFormat = format || 'json';
+    if (exportFormat !== 'json') {
+      console.log(chalk.yellow(`⚠️ 暂不支持 ${exportFormat} 格式，已回退为 json`));
+    }
+
+    let payload;
+    if (type) {
+      const summary = await fetchToolStats(type, 'all');
+      payload = buildDisplayPayload(type, 'all', summary);
+    } else {
+      const overall = await fetchOverallStats('all');
+      payload = buildDisplayPayload(null, 'all', overall);
+    }
 
     const fs = require('fs');
     const path = require('path');
-    const filename = `cc-tool-stats-${type || 'all'}-${Date.now()}.${format}`;
+    const filename = `cc-tool-stats-${type || 'all'}-${Date.now()}.json`;
     const filepath = path.join(process.cwd(), filename);
 
-    fs.writeFileSync(filepath, JSON.stringify(response.data, null, 2));
+    fs.writeFileSync(filepath, JSON.stringify(payload, null, 2));
 
     console.log(chalk.green(`✅ 统计数据已导出\n`));
     console.log(chalk.gray(`文件路径: ${filepath}\n`));

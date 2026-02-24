@@ -44,7 +44,7 @@ Three-layer architecture:
 ┌─────────────────────────────────────────────────────────┐
 │ Data Layer (File System)                                │
 │ ~/.claude/projects/     - Claude Code projects          │
-│ ~/.claude/cc-tool/      - Config (aliases, channels)    │
+│ ~/.cc-tool/      - Config (aliases, channels)    │
 │ ~/.claude/logs/         - Application logs              │
 └─────────────────────────────────────────────────────────┘
 ```

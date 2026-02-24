@@ -42,7 +42,7 @@ class RepoScannerBase {
     this.fileExtension = options.fileExtension || '.md';
     this.defaultRepos = options.defaultRepos || [];
 
-    this.configDir = path.join(os.homedir(), '.claude', 'cc-tool');
+    this.configDir = path.join(os.homedir(), '.cc-tool');
     this.reposConfigPath = path.join(this.configDir, `${this.type}-repos.json`);
     this.cachePath = path.join(this.configDir, `${this.type}-cache.json`);
 

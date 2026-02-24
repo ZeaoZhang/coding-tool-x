@@ -5,7 +5,8 @@ const { loadConfig } = require('../config/loader');
 const SETTINGS_MANAGERS = {
   claude: () => require('../server/services/settings-manager'),
   codex: () => require('../server/services/codex-settings-manager'),
-  gemini: () => require('../server/services/gemini-settings-manager')
+  gemini: () => require('../server/services/gemini-settings-manager'),
+  opencode: () => require('../server/services/opencode-settings-manager')
 };
 
 /**
@@ -31,6 +32,14 @@ function getProxyServices(cliType) {
       stopProxyServer: stopGeminiProxyServer,
       defaultPort: 10090
     };
+  } else if (cliType === 'opencode') {
+    const { getOpenCodeProxyStatus, startOpenCodeProxyServer, stopOpenCodeProxyServer } = require('../server/opencode-proxy-server');
+    return {
+      getProxyStatus: getOpenCodeProxyStatus,
+      startProxyServer: startOpenCodeProxyServer,
+      stopProxyServer: stopOpenCodeProxyServer,
+      defaultPort: 20091
+    };
   }
 }
 
@@ -51,6 +60,10 @@ async function handleToggleProxy() {
   const config = loadConfig();
   const cliType = config.currentCliType || 'claude';
   const services = getProxyServices(cliType);
+  if (!services) {
+    console.log(chalk.red(`\n❌ 当前 CLI 类型 (${cliType}) 暂不支持动态切换\n`));
+    return;
+  }
 
   const proxyStatus = services.getProxyStatus();
 
@@ -72,7 +85,13 @@ async function handleStartProxy(cliType, services) {
   console.log(chalk.bold.cyan('║        开启动态切换        ║'));
   console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
 
-  const toolName = cliType === 'claude' ? 'Claude Code' : (cliType === 'codex' ? 'Codex' : 'Gemini');
+  const toolNameMap = {
+    claude: 'Claude Code',
+    codex: 'Codex',
+    gemini: 'Gemini',
+    opencode: 'OpenCode'
+  };
+  const toolName = toolNameMap[cliType] || 'Claude Code';
   const defaultPort = services.defaultPort;
 
   console.log(chalk.cyan('动态切换功能说明:'));
@@ -153,7 +172,13 @@ async function handleStopProxy(cliType, services) {
   console.log(chalk.bold.cyan('║        关闭动态切换        ║'));
   console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
 
-  const toolName = cliType === 'claude' ? 'Claude Code' : (cliType === 'codex' ? 'Codex' : 'Gemini');
+  const toolNameMap = {
+    claude: 'Claude Code',
+    codex: 'Codex',
+    gemini: 'Gemini',
+    opencode: 'OpenCode'
+  };
+  const toolName = toolNameMap[cliType] || 'Claude Code';
   const proxyStatus = services.getProxyStatus();
 
   console.log(chalk.cyan('当前状态:'));

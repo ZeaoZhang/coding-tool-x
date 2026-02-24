@@ -506,6 +506,22 @@
                         </template>
                       </n-input-number>
                     </div>
+
+                    <!-- OpenCode 代理端口 -->
+                    <div class="port-field">
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">OpenCode 代理</n-text>
+                      <n-input-number
+                        v-model:value="ports.opencodeProxy"
+                        :min="1024"
+                        :max="65535"
+                        :show-button="false"
+                        placeholder="20091"
+                      >
+                        <template #prefix>
+                          <n-icon><OptionsOutline /></n-icon>
+                        </template>
+                      </n-input-number>
+                    </div>
                   </div>
                 </div>
 
@@ -1278,13 +1294,15 @@ const ports = ref({
   webUI: 10099,
   proxy: 10088,
   codexProxy: 10089,
-  geminiProxy: 10090
+  geminiProxy: 10090,
+  opencodeProxy: 20091
 })
 const originalPorts = ref({
   webUI: 10099,
   proxy: 10088,
   codexProxy: 10089,
-  geminiProxy: 10090
+  geminiProxy: 10090,
+  opencodeProxy: 20091
 })
 const savingPorts = ref(false)
 
@@ -1436,6 +1454,7 @@ const portsChanged = computed(() => {
     ports.value.proxy !== originalPorts.value.proxy ||
     ports.value.codexProxy !== originalPorts.value.codexProxy ||
     ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
+    ports.value.opencodeProxy !== originalPorts.value.opencodeProxy ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
@@ -1675,7 +1694,8 @@ async function loadPortsConfig() {
         webUI: data.ports?.webUI || 10099,
         proxy: data.ports?.proxy || 10088,
         codexProxy: data.ports?.codexProxy || 10089,
-        geminiProxy: data.ports?.geminiProxy || 10090
+        geminiProxy: data.ports?.geminiProxy || 10090,
+        opencodeProxy: data.ports?.opencodeProxy || 20091
       }
       originalPorts.value = { ...ports.value }
 

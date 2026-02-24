@@ -15,7 +15,7 @@ const packageJson = require('../../package.json');
 function createPluginContext(pluginName, pluginConfig, pluginDir) {
   const commandRegistry = new Map();
 
-  // Storage API - persists plugin data to ~/.claude/cc-tool/plugins/config/<plugin-name>.json
+  // Storage API - persists plugin data to ~/.cc-tool/plugins/config/<plugin-name>.json
   const storage = createStorageAPI(pluginName);
 
   // Logger API - prefixed logging

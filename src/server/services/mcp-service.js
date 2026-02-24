@@ -15,7 +15,7 @@ const { McpClient } = require('./mcp-client');
 const { NATIVE_PATHS } = require('../../config/paths');
 
 // MCP 配置文件路径
-const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
 const MCP_SERVERS_FILE = path.join(CC_TOOL_DIR, 'mcp-servers.json');
 
 // 各平台配置文件路径

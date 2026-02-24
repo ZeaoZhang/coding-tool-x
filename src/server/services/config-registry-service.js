@@ -1,10 +1,10 @@
 /**
  * Config Registry Service
  *
- * Manages a unified config registry at ~/.claude/cc-tool/config-registry.json
+ * Manages a unified config registry at ~/.cc-tool/config-registry.json
  * that tracks skills, commands, agents, rules with enable/disable and per-platform support.
  *
- * Storage directories: ~/.claude/cc-tool/configs/{skills,commands,agents,rules}/
+ * Storage directories: ~/.cc-tool/configs/{skills,commands,agents,rules}/
  */
 
 const fs = require('fs');
@@ -12,7 +12,7 @@ const path = require('path');
 const os = require('os');
 
 // Configuration paths
-const CC_TOOL_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
 const REGISTRY_FILE = path.join(CC_TOOL_DIR, 'config-registry.json');
 const CONFIGS_DIR = path.join(CC_TOOL_DIR, 'configs');
 

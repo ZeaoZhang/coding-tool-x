@@ -91,8 +91,8 @@ async function handleStart() {
         NODE_ENV: 'production',
         CC_TOOL_PORT: port
       },
-      output: path.join(require('os').homedir(), '.claude/logs/cc-tool-out.log'),
-      error: path.join(require('os').homedir(), '.claude/logs/cc-tool-error.log'),
+      output: path.join(require('os').homedir(), '.cc-tool/logs/cc-tool-out.log'),
+      error: path.join(require('os').homedir(), '.cc-tool/logs/cc-tool-error.log'),
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss'
     }, (err) => {

@@ -207,7 +207,7 @@ async function checkClaudeConfig() {
  * 检查日志目录
  */
 async function checkLogsDirectory() {
-  const logsDir = path.join(os.homedir(), '.claude/logs');
+  const logsDir = path.join(os.homedir(), '.cc-tool', 'logs');
   const exists = fs.existsSync(logsDir);
 
   if (exists) {

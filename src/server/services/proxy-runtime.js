@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 
 function getRuntimeFilePath(proxyType) {
-  const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const ccToolDir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

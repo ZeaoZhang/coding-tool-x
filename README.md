@@ -405,7 +405,7 @@ ctx logs --clear      # 清空日志
 <summary>如何备份配置？</summary>
 
 直接复制以下目录即可备份所有配置和数据：
-- 配置：`~/.claude/cc-tool/`
+- 配置：`~/.cc-tool/`
 - 日志：`~/.claude/logs/`
 
 </details>

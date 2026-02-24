@@ -21,6 +21,7 @@ const { handleLogs } = require('./commands/logs');
 const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
 const { workspaceMenu } = require('./commands/workspace');
+const { ensureStorageDirMigrated } = require('./config/paths');
 const PluginManager = require('./plugins/plugin-manager');
 const eventBus = require('./plugins/event-bus');
 const chalk = require('chalk');
@@ -61,7 +62,8 @@ function showHelp() {
   console.log('  ctx claude status       查看 Claude 代理状态');
   console.log('  ctx codex start         启动 Codex 代理');
   console.log('  ctx gemini start        启动 Gemini 代理');
-  console.log(chalk.gray('  (codex/gemini 命令与 claude 类似)\n'));
+  console.log('  ctx opencode start      启动 OpenCode 代理');
+  console.log(chalk.gray('  (codex/gemini/opencode 命令与 claude 类似)\n'));
 
   console.log(chalk.yellow('📋 日志管理:'));
   console.log('  ctx logs                查看所有日志');
@@ -132,6 +134,8 @@ process.on('SIGINT', async () => {
  * 主函数
  */
 async function main() {
+  ensureStorageDirMigrated();
+
   // 处理命令行参数
   const args = process.argv.slice(2);
 
@@ -207,8 +211,8 @@ async function main() {
     return;
   }
 
-  // claude/codex/gemini 代理管理命令
-  const channels = ['claude', 'codex', 'gemini'];
+  // claude/codex/gemini/opencode 代理管理命令
+  const channels = ['claude', 'codex', 'gemini', 'opencode'];
   if (channels.includes(args[0])) {
     const channel = args[0];
     const action = args[1] || 'status';

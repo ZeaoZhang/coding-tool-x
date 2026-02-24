@@ -27,7 +27,7 @@ let wsClients = new Set();
 
 // 日志持久化文件路径
 function getLogsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const ccToolDir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

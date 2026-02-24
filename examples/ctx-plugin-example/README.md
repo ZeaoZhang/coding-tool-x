@@ -18,10 +18,10 @@ This example plugin showcases:
 
 ```bash
 # Clone or copy this directory to your plugins folder
-cp -r ctx-plugin-example ~/.claude/cc-tool/plugins/
+cp -r ctx-plugin-example ~/.cc-tool/plugins/
 
 # Or symlink for development
-ln -s /path/to/examples/ctx-plugin-example ~/.claude/cc-tool/plugins/
+ln -s /path/to/examples/ctx-plugin-example ~/.cc-tool/plugins/
 ```
 
 ### Via NPM (when published)
@@ -33,7 +33,7 @@ ctx plugin install ctx-plugin-example
 
 ## Plugin Activation
 
-Plugins are automatically loaded from `~/.claude/cc-tool/plugins/` on application startup.
+Plugins are automatically loaded from `~/.cc-tool/plugins/` on application startup.
 
 To manually enable/disable:
 
@@ -84,7 +84,7 @@ ctx config-demo
 
 ## Configuration
 
-Configure the plugin via `~/.claude/cc-tool/ctx-config.json` or environment variables:
+Configure the plugin via `~/.cc-tool/ctx-config.json` or environment variables:
 
 ### `greeting` (string)
 - **Default:** `"Hello"`
@@ -134,7 +134,7 @@ Configure the plugin via `~/.claude/cc-tool/ctx-config.json` or environment vari
 
 ## Configuration File Example
 
-Add to `~/.claude/cc-tool/ctx-config.json`:
+Add to `~/.cc-tool/ctx-config.json`:
 
 ```json
 {
@@ -329,7 +329,7 @@ function hookHandler(data) {
 ### Plugin not loading
 ```bash
 # Check plugin is in correct directory
-ls ~/.claude/cc-tool/plugins/ctx-plugin-example/
+ls ~/.cc-tool/plugins/ctx-plugin-example/
 
 # View activation errors in logs
 ctx logs
@@ -347,7 +347,7 @@ ctx plugin enable ctx-plugin-example
 ### Configuration not working
 ```bash
 # Verify config file location
-cat ~/.claude/cc-tool/ctx-config.json
+cat ~/.cc-tool/ctx-config.json
 
 # Check plugin config section exists
 # Check config key matches plugin.json schema

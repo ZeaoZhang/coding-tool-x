@@ -3,6 +3,49 @@ const inquirer = require('inquirer');
 const chalk = require('chalk');
 const packageInfo = require('../../package.json');
 
+function normalizeCliType(type) {
+  if (type === 'claude' || type === 'codex' || type === 'gemini' || type === 'opencode') {
+    return type;
+  }
+  return 'claude';
+}
+
+function pickActiveChannel(channels) {
+  if (!Array.isArray(channels) || channels.length === 0) {
+    return null;
+  }
+  return channels.find(channel => channel.enabled !== false) || channels[0];
+}
+
+function getChannelAndProxyStatus(cliType) {
+  const currentType = normalizeCliType(cliType);
+
+  if (currentType === 'claude') {
+    const { getCurrentChannel } = require('../server/services/channels');
+    const { getProxyStatus } = require('../server/proxy-server');
+    return { channel: getCurrentChannel(), proxyStatus: getProxyStatus() };
+  }
+
+  if (currentType === 'codex') {
+    const { getChannels } = require('../server/services/codex-channels');
+    const { getCodexProxyStatus } = require('../server/codex-proxy-server');
+    const data = getChannels();
+    return { channel: pickActiveChannel(data?.channels), proxyStatus: getCodexProxyStatus() };
+  }
+
+  if (currentType === 'gemini') {
+    const { getChannels } = require('../server/services/gemini-channels');
+    const { getGeminiProxyStatus } = require('../server/gemini-proxy-server');
+    const data = getChannels();
+    return { channel: pickActiveChannel(data?.channels), proxyStatus: getGeminiProxyStatus() };
+  }
+
+  const { getChannels } = require('../server/services/opencode-channels');
+  const { getOpenCodeProxyStatus } = require('../server/opencode-proxy-server');
+  const data = getChannels();
+  return { channel: pickActiveChannel(data?.channels), proxyStatus: getOpenCodeProxyStatus() };
+}
+
 /**
  * 显示主菜单
  */
@@ -15,10 +58,11 @@ async function showMainMenu(config) {
   const cliTypes = {
     claude: { name: 'Claude Code', color: 'cyan' },
     codex: { name: 'Codex', color: 'green' },
-    gemini: { name: 'Gemini', color: 'magenta' }
+    gemini: { name: 'Gemini', color: 'magenta' },
+    opencode: { name: 'OpenCode', color: 'yellow' }
   };
-  const currentType = config.currentCliType || 'claude';
-  const typeInfo = cliTypes[currentType];
+  const currentType = normalizeCliType(config.currentCliType || 'claude');
+  const typeInfo = cliTypes[currentType] || cliTypes.claude;
   console.log(chalk[typeInfo.color](`当前类型: ${typeInfo.name}`));
 
   const projectName = config.currentProject
@@ -28,27 +72,7 @@ async function showMainMenu(config) {
 
   // 显示当前渠道和代理状态（根据类型显示对应的渠道和代理）
   try {
-    let getCurrentChannelFunc, getProxyStatusFunc;
-
-    if (currentType === 'claude') {
-      const { getCurrentChannel } = require('../server/services/channels');
-      const { getProxyStatus } = require('../server/proxy-server');
-      getCurrentChannelFunc = getCurrentChannel;
-      getProxyStatusFunc = getProxyStatus;
-    } else if (currentType === 'codex') {
-      const { getActiveCodexChannel } = require('../server/services/codex-channels');
-      const { getCodexProxyStatus } = require('../server/codex-proxy-server');
-      getCurrentChannelFunc = getActiveCodexChannel;
-      getProxyStatusFunc = getCodexProxyStatus;
-    } else if (currentType === 'gemini') {
-      const { getActiveGeminiChannel } = require('../server/services/gemini-channels');
-      const { getGeminiProxyStatus } = require('../server/gemini-proxy-server');
-      getCurrentChannelFunc = getActiveGeminiChannel;
-      getProxyStatusFunc = getGeminiProxyStatus;
-    }
-
-    const currentChannel = getCurrentChannelFunc();
-    const proxyStatus = getProxyStatusFunc();
+    const { channel: currentChannel, proxyStatus } = getChannelAndProxyStatus(currentType);
 
     if (currentChannel) {
       console.log(chalk.gray(`当前渠道: ${currentChannel.name}`));
@@ -68,22 +92,7 @@ async function showMainMenu(config) {
   // 获取代理状态，用于显示动态切换的状态（根据当前类型）
   let proxyStatusText = '未开启';
   try {
-    let proxyStatus;
-
-    if (currentType === 'claude') {
-      // 清除缓存确保获取最新状态
-      delete require.cache[require.resolve('../server/proxy-server')];
-      const { getProxyStatus } = require('../server/proxy-server');
-      proxyStatus = getProxyStatus();
-    } else if (currentType === 'codex') {
-      delete require.cache[require.resolve('../server/codex-proxy-server')];
-      const { getCodexProxyStatus } = require('../server/codex-proxy-server');
-      proxyStatus = getCodexProxyStatus();
-    } else if (currentType === 'gemini') {
-      delete require.cache[require.resolve('../server/gemini-proxy-server')];
-      const { getGeminiProxyStatus } = require('../server/gemini-proxy-server');
-      proxyStatus = getGeminiProxyStatus();
-    }
+    const { proxyStatus } = getChannelAndProxyStatus(currentType);
 
     if (proxyStatus && proxyStatus.running) {
       proxyStatusText = '已开启';

@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const FAVORITES_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const FAVORITES_DIR = path.join(os.homedir(), '.cc-tool');
 const FAVORITES_FILE = path.join(FAVORITES_DIR, 'favorites.json');
 
 // 内存缓存
@@ -12,7 +12,8 @@ let cacheInitialized = false;
 const DEFAULT_FAVORITES = {
   claude: [],
   codex: [],
-  gemini: []
+  gemini: [],
+  opencode: []
 };
 
 // Ensure favorites directory exists
@@ -36,7 +37,8 @@ function readFavoritesFromFile() {
     return {
       claude: data.claude || [],
       codex: data.codex || [],
-      gemini: data.gemini || []
+      gemini: data.gemini || [],
+      opencode: data.opencode || []
     };
   } catch (error) {
     console.error('Error reading favorites file:', error);

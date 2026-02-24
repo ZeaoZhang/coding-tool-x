@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 路径迁移脚本
- * 将所有硬编码的 ~/.claude/cc-tool 路径替换为使用 paths.js 配置
+ * 将所有硬编码的 ~/.cc-tool 路径替换为使用 paths.js 配置
  */
 
 const fs = require('fs');

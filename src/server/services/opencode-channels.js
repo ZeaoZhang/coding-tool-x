@@ -5,7 +5,7 @@ const crypto = require('crypto');
 
 /**
  * OpenCode 渠道管理服务
- * 存储位置: ~/.claude/cc-tool/opencode-channels.json
+ * 存储位置: ~/.cc-tool/opencode-channels.json
  */
 
 function normalizeGatewaySourceType(value) {
@@ -17,7 +17,7 @@ function normalizeGatewaySourceType(value) {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.claude', 'cc-tool');
+  const ccToolDir = path.join(os.homedir(), '.cc-tool');
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

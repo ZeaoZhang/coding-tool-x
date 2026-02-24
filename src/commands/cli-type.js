@@ -6,7 +6,8 @@ const { loadConfig, saveConfig } = require('../config/loader');
 const CLI_TYPES = {
   claude: { name: 'Claude Code', color: 'cyan' },
   codex: { name: 'Codex', color: 'green' },
-  gemini: { name: 'Gemini', color: 'magenta' }
+  gemini: { name: 'Gemini', color: 'magenta' },
+  opencode: { name: 'OpenCode', color: 'yellow' }
 };
 
 /**
@@ -20,8 +21,9 @@ async function handleSwitchCliType() {
 
   const config = loadConfig();
   const currentType = config.currentCliType || 'claude';
+  const currentTypeInfo = CLI_TYPES[currentType] || CLI_TYPES.claude;
 
-  console.log(chalk.gray(`当前类型: ${CLI_TYPES[currentType].name}\n`));
+  console.log(chalk.gray(`当前类型: ${currentTypeInfo.name}\n`));
 
   // 构建类型选项
   const choices = Object.entries(CLI_TYPES).map(([type, info]) => {

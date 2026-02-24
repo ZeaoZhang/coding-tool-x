@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const UI_CONFIG_DIR = path.join(os.homedir(), '.claude', 'cc-tool');
+const UI_CONFIG_DIR = path.join(os.homedir(), '.cc-tool');
 const UI_CONFIG_FILE = path.join(UI_CONFIG_DIR, 'ui-config.json');
 
 // Default UI config

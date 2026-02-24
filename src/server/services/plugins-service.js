@@ -107,7 +107,7 @@ function stripJsonComments(input = '') {
 class PluginsService {
   constructor(platform = 'claude') {
     this.platform = ['claude', 'opencode'].includes(platform) ? platform : 'claude';
-    this.ccToolConfigDir = path.join(os.homedir(), '.claude', 'cc-tool');
+    this.ccToolConfigDir = path.join(os.homedir(), '.cc-tool');
     this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
     this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
   }

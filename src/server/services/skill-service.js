@@ -68,7 +68,7 @@ const CACHE_TTL = 5 * 60 * 1000;
 class SkillService {
   constructor(platform = 'claude') {
     this.platform = normalizePlatform(platform);
-    this.configDir = path.join(os.homedir(), '.claude', 'cc-tool');
+    this.configDir = path.join(os.homedir(), '.cc-tool');
 
     const platformConfig = PLATFORM_CONFIG[this.platform];
     this.installDir = platformConfig.installDir;

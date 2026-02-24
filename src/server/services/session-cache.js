@@ -11,7 +11,7 @@ let hasMessagesPersisted = {};
 let hasMessagesPersistTimer = null;
 
 function getCcToolDir() {
-  return path.join(os.homedir(), '.claude', 'cc-tool');
+  return path.join(os.homedir(), '.cc-tool');
 }
 
 function ensureDirExists(dir) {

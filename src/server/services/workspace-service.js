@@ -739,8 +739,10 @@ async function getAllAvailableProjects() {
   const sessionsService = require('./sessions');
   const codexSessionsService = require('./codex-sessions');
   const geminiSessionsService = require('./gemini-sessions');
+  const opencodeSessionsService = require('./opencode-sessions');
   const { isCodexInstalled } = require('./codex-config');
   const { isGeminiInstalled } = require('./gemini-config');
+  const { isOpenCodeInstalled } = require('./opencode-sessions');
 
   const allProjects = [];
   const seenKeys = new Set();
@@ -800,6 +802,16 @@ async function getAllAvailableProjects() {
     console.error('获取 gemini 项目失败:', error.message);
   }
 
+  try {
+    if (isOpenCodeInstalled()) {
+      const opencodeProjects = opencodeSessionsService.getProjects();
+      const list = Array.isArray(opencodeProjects) ? opencodeProjects : [];
+      list.forEach(project => addProject('opencode', project));
+    }
+  } catch (error) {
+    console.error('获取 opencode 项目失败:', error.message);
+  }
+
   // 按最后使用时间排序
   allProjects.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
 
@@ -809,7 +821,7 @@ async function getAllAvailableProjects() {
 /**
  * 在工作区中启动 CLI 工具
  * @param {string} workspaceId 工作区 ID
- * @param {string} tool 工具名称 (claude/codex/gemini)
+ * @param {string} tool 工具名称 (claude/codex/gemini/opencode)
  * @param {string} projectName 可选，工作区内的项目名
  * @returns {object} 启动信息
  */
@@ -840,7 +852,8 @@ function getLaunchCommand(workspaceId, tool, projectName = null) {
   const commands = {
     claude: 'claude',
     codex: 'codex',
-    gemini: 'gemini'
+    gemini: 'gemini',
+    opencode: 'opencode'
   };
 
   const cmd = commands[tool];

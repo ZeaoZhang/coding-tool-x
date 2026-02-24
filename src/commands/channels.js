@@ -47,6 +47,22 @@ function getChannelServices(cliType) {
       updateChannel,
       getProxyStatus: getGeminiProxyStatus
     };
+  } else if (cliType === 'opencode') {
+    const {
+      getChannels,
+      createChannel,
+      updateChannel
+    } = require('../server/services/opencode-channels');
+    const { getOpenCodeProxyStatus } = require('../server/opencode-proxy-server');
+    return {
+      getAllChannels: () => {
+        const result = getChannels();
+        return Array.isArray(result?.channels) ? result.channels : [];
+      },
+      createChannel,
+      updateChannel,
+      getProxyStatus: getOpenCodeProxyStatus
+    };
   }
 }
 
@@ -62,6 +78,11 @@ async function handleChannelManagement() {
   const config = loadConfig();
   const cliType = config.currentCliType || 'claude';
   const services = getChannelServices(cliType);
+  if (!services || typeof services.createChannel !== 'function') {
+    console.log(chalk.red(`当前 CLI 类型 (${cliType}) 暂不支持添加渠道`));
+    await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
+    return;
+  }
   if (!services || typeof services.getAllChannels !== 'function') {
     console.log(chalk.red(`当前 CLI 类型 (${cliType}) 暂不支持渠道管理`));
     await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
@@ -200,6 +221,31 @@ async function handleAddChannel() {
         modelAnswer.model.trim(),
         { websiteUrl: answers.websiteUrl.trim() || undefined }
       );
+    } else if (cliType === 'opencode') {
+      const extraAnswers = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'wireApi',
+          message: 'Wire API (默认: openai):',
+          default: 'openai'
+        },
+        {
+          type: 'input',
+          name: 'model',
+          message: '默认模型（可选，直接回车跳过）:'
+        }
+      ]);
+
+      channel = services.createChannel(
+        answers.name.trim(),
+        answers.baseUrl.trim(),
+        answers.apiKey.trim(),
+        {
+          wireApi: extraAnswers.wireApi.trim() || 'openai',
+          model: extraAnswers.model.trim() || null,
+          websiteUrl: answers.websiteUrl.trim() || undefined
+        }
+      );
     }
 
     console.log(chalk.green(`\n✅ 渠道添加成功: ${channel.name}\n`));
@@ -237,7 +283,8 @@ async function handleChannelStatus() {
     const sources = [
       { key: 'claude', label: 'Claude (Claude Code)' },
       { key: 'codex', label: 'Codex (OpenAI)' },
-      { key: 'gemini', label: 'Gemini' }
+      { key: 'gemini', label: 'Gemini' },
+      { key: 'opencode', label: 'OpenCode' }
     ];
 
     sources.forEach((source) => {
