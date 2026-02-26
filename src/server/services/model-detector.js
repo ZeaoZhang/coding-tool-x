@@ -408,14 +408,9 @@ function createClaudeProbeAttempts(channel, model) {
     'User-Agent': 'claude-cli/2.0.53 (external, cli)'
   };
 
-  const standardBody = buildClaudeProbePayload(model);
   const legacyBody = buildClaudeProbePayload(model, {
     includeSystem: true,
     systemAsArray: true,
-    includeMetadata: true
-  });
-  const strictBody = buildClaudeProbePayload(model, {
-    includeSystem: true,
     includeMetadata: true
   });
 
@@ -424,42 +419,6 @@ function createClaudeProbeAttempts(channel, model) {
       label: 'claude-code-legacy-beta',
       url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
       body: legacyBody,
-      headers: {
-        ...commonHeaders,
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'x-app': 'cli',
-        'x-stainless-lang': 'js',
-        'x-stainless-runtime': 'node'
-      }
-    },
-    {
-      label: 'claude-code-legacy',
-      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: false }),
-      body: legacyBody,
-      headers: {
-        ...commonHeaders,
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'x-app': 'cli',
-        'x-stainless-lang': 'js',
-        'x-stainless-runtime': 'node'
-      }
-    },
-    {
-      label: 'claude-gateway',
-      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: false }),
-      body: standardBody,
-      headers: commonHeaders
-    },
-    {
-      label: 'claude-gateway-beta',
-      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
-      body: standardBody,
-      headers: commonHeaders
-    },
-    {
-      label: 'claude-code-strict',
-      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
-      body: strictBody,
       headers: {
         ...commonHeaders,
         'anthropic-dangerous-direct-browser-access': 'true',
