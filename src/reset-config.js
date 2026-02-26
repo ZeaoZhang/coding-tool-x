@@ -1,10 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { PATHS, ensureStorageDirMigrated } = require('./config/paths');
 
 // 恢复配置到默认状态
 async function resetConfig() {
   console.log('\n开始恢复默认配置...\n');
+  ensureStorageDirMigrated();
 
   try {
     // 1. 尝试停止代理服务器（如果正在运行）
@@ -42,10 +44,10 @@ async function resetConfig() {
         console.log('检测到代理配置，尝试恢复到正常渠道...');
 
         // 读取激活的渠道
-        const activeChannelPath = path.join(os.homedir(), '.claude', 'cc-tool', 'active-channel.json');
+        const activeChannelPath = PATHS.activeChannel.claude;
         if (fs.existsSync(activeChannelPath)) {
           const activeChannelData = JSON.parse(fs.readFileSync(activeChannelPath, 'utf8'));
-          const channelsPath = path.join(os.homedir(), '.claude', 'cc-tool', 'channels.json');
+          const channelsPath = PATHS.channels.claude;
 
           if (fs.existsSync(channelsPath)) {
             const channelsData = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));

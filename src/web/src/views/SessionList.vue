@@ -177,7 +177,7 @@
                   </template>
                   {{ isFavorite(currentChannel, effectiveProjectName, session.sessionId) ? '已收藏' : '收藏' }}
                 </n-button>
-                <n-button size="small" @click.stop="handleFork(session.sessionId)">
+                <n-button v-if="currentChannel !== 'opencode'" size="small" @click.stop="handleFork(session.sessionId)">
                   <template #icon>
                     <n-icon><GitBranchOutline /></n-icon>
                   </template>
@@ -316,53 +316,84 @@ const currentChannel = computed(() => route.meta.channel || 'claude')
 const resolvedProjectName = ref(props.projectName)
 const effectiveProjectName = computed(() => resolvedProjectName.value || props.projectName)
 
-// 启动方式下拉选项（支持工具选择）
-const launchOptions = [
-  {
-    type: 'group',
-    label: 'Web 终端',
-    key: 'web-group',
-    children: [
+// 启动方式下拉选项（按渠道展示可用项）
+const launchOptions = computed(() => {
+  if (currentChannel.value === 'opencode') {
+    return [
       {
-        label: 'Claude Code',
-        key: 'web-claude',
-        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        type: 'group',
+        label: 'Web 终端',
+        key: 'web-group',
+        children: [
+          {
+            label: 'OpenCode',
+            key: 'web-opencode',
+            icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+          }
+        ]
       },
       {
-        label: 'Codex',
-        key: 'web-codex',
-        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-      },
-      {
-        label: 'Gemini',
-        key: 'web-gemini',
-        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-      }
-    ]
-  },
-  {
-    type: 'group',
-    label: '本地终端',
-    key: 'local-group',
-    children: [
-      {
-        label: 'Claude Code',
-        key: 'local-claude',
-        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-      },
-      {
-        label: 'Codex',
-        key: 'local-codex',
-        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-      },
-      {
-        label: 'Gemini',
-        key: 'local-gemini',
-        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        type: 'group',
+        label: '本地终端',
+        key: 'local-group',
+        children: [
+          {
+            label: 'OpenCode',
+            key: 'local-opencode',
+            icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+          }
+        ]
       }
     ]
   }
-]
+
+  return [
+    {
+      type: 'group',
+      label: 'Web 终端',
+      key: 'web-group',
+      children: [
+        {
+          label: 'Claude Code',
+          key: 'web-claude',
+          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        },
+        {
+          label: 'Codex',
+          key: 'web-codex',
+          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        },
+        {
+          label: 'Gemini',
+          key: 'web-gemini',
+          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        }
+      ]
+    },
+    {
+      type: 'group',
+      label: '本地终端',
+      key: 'local-group',
+      children: [
+        {
+          label: 'Claude Code',
+          key: 'local-claude',
+          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        },
+        {
+          label: 'Codex',
+          key: 'local-codex',
+          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        },
+        {
+          label: 'Gemini',
+          key: 'local-gemini',
+          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        }
+      ]
+    }
+  ]
+})
 
 // 处理启动选择
 function handleLaunchSelect(key, sessionId) {
@@ -528,6 +559,11 @@ async function confirmAlias() {
 }
 
 async function handleFork(sessionId) {
+  if (currentChannel.value === 'opencode') {
+    message.warning('OpenCode 当前不支持该 Fork 操作')
+    return
+  }
+
   try {
     await store.forkSession(sessionId)
     message.success('Fork 成功!')

@@ -34,6 +34,20 @@ function sanitizeTimeout(timeout) {
   return Math.min(Math.max(ms, MIN_TIMEOUT), MAX_TIMEOUT);
 }
 
+function normalizeNonEmptyString(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function resolveExplicitModel(channel, model) {
+  return (
+    normalizeNonEmptyString(model)
+    || normalizeNonEmptyString(channel?.model)
+    || normalizeNonEmptyString(channel?.modelConfig?.model)
+  );
+}
+
 function resolveEffectiveApiKey(channel, channelType) {
   switch (channelType) {
     case 'codex':
@@ -239,19 +253,31 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
   // Probe model availability if channel is provided
   let modelProbe = null;
   if (channel) {
-    // Check if speedTestModel is explicitly configured
-    if (channel.speedTestModel) {
+    const configuredSpeedTestModel = normalizeNonEmptyString(channel.speedTestModel);
+    const explicitModel = resolveExplicitModel(channel, model);
+
+    // 优先使用 speedTestModel，避免测速时额外探测
+    if (configuredSpeedTestModel) {
       // Use the explicitly configured model for speed testing
       modelProbe = {
-        preferredTestModel: channel.speedTestModel,
-        availableModels: [channel.speedTestModel],
-        cached: false
+        preferredTestModel: configuredSpeedTestModel,
+        availableModels: [configuredSpeedTestModel],
+        cached: false,
+        method: 'configured'
       };
-      console.log(`[SpeedTest] Using configured speedTestModel: ${channel.speedTestModel}`);
+      console.log(`[SpeedTest] Using configured speedTestModel: ${configuredSpeedTestModel}`);
+    } else if (explicitModel) {
+      modelProbe = {
+        preferredTestModel: explicitModel,
+        availableModels: [explicitModel],
+        cached: false,
+        method: 'configured'
+      };
+      console.log(`[SpeedTest] Using explicit model: ${explicitModel}`);
     } else {
       // Fall back to auto-detection
       try {
-        modelProbe = await probeModelAvailability(channel, channelType);
+        modelProbe = await probeModelAvailability(channel, channelType, { stopOnFirstAvailable: true });
       } catch (error) {
         console.error('[SpeedTest] Model detection failed:', error.message);
       }
@@ -269,7 +295,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       ...result,
       testedModel: testModel,
       availableModels: modelProbe?.availableModels,
-      modelDetectionMethod: modelProbe?.cached ? 'cached' : 'probed'
+      modelDetectionMethod: modelProbe?.method || (modelProbe?.cached ? 'cached' : 'probed')
     });
 
     // 根据渠道类型确定 API 路径和请求格式
@@ -291,12 +317,13 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       // 使用 Claude Code 的请求格式
       // user_id 必须符合特定格式: user_xxx_account__session_xxx
       // 优先使用模型检测结果，否则回退到 claude-sonnet-4-20250514
-      testModel = modelProbe?.preferredTestModel || 'claude-sonnet-4-20250514';
+      testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'claude-sonnet-4-20250514';
       const sessionId = Math.random().toString(36).substring(2, 15);
       requestBody = JSON.stringify({
         model: testModel,
         max_tokens: 1,
-        stream: true,
+        // 测速只需要验证连通性，使用非流式可减少长连接超时概率
+        stream: false,
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
         system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
         metadata: { user_id: `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}` }

@@ -359,7 +359,7 @@ module.exports = (config) => {
 
       try {
         // 获取终端启动命令
-        const { command, terminalId, terminalName } = getTerminalLaunchCommand(projectPath, null, geminiCommand);
+        const { command, terminalId, terminalName } = getTerminalLaunchCommand(projectPath, null, 'gemini', geminiCommand);
 
         console.log(`[Gemini] Launching terminal: ${terminalName} (${terminalId})`);
         console.log(`[Gemini] Resuming session: ${sessionId} (index ${resumeIndex})`);

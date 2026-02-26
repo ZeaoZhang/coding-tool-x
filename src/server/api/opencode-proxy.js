@@ -14,9 +14,9 @@ const {
   getCurrentProxyPort
 } = require('../services/opencode-settings-manager');
 const { getChannels, getEnabledChannels } = require('../services/opencode-channels');
+const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 function sanitizeChannel(channel) {
   if (!channel) return null;
@@ -30,17 +30,19 @@ function sanitizeChannel(channel) {
 
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.opencode;
+  const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const filePath = path.join(dir, 'opencode-active-channel.json');
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
 }
 
 // 删除激活渠道文件
 function removeActiveChannelFile() {
-  const filePath = path.join(os.homedir(), '.claude', 'cc-tool', 'opencode-active-channel.json');
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.opencode;
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
     console.log('[OpenCode Proxy] Removed opencode-active-channel.json');
@@ -98,7 +100,8 @@ router.post('/start', async (req, res) => {
     }
 
     // 4. 设置代理配置（写入 OpenCode 配置文件）
-    setProxyConfig(proxyResult.port);
+    const activeModel = currentChannel.model || currentChannel.speedTestModel || null;
+    setProxyConfig(proxyResult.port, { model: activeModel });
 
     // 5. 广播状态更新
     const { broadcastProxyState } = require('../websocket-server');

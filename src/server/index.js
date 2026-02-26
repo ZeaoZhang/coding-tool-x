@@ -16,13 +16,30 @@ const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer } = require('./opencode-proxy-server');
+const { createRemoteMutationGuard, createRemoteRouteGuard } = require('./services/network-access');
 
-async function startServer(port, host = '127.0.0.1') {
+function isInteractivePortConflictMode(options = {}) {
+  if (options.interactive === false) {
+    return false;
+  }
+  if (process.argv.includes('--daemon')) {
+    return false;
+  }
+  return Boolean(process.stdin && process.stdin.isTTY && process.stdout && process.stdout.isTTY);
+}
+
+function printPortConflictHelp(port) {
+  console.log(chalk.yellow('\n💡 解决方案:'));
+  console.log(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
+  console.log(chalk.gray(`   2. 或手动关闭占用端口 ${port} 的程序\n`));
+}
+
+async function startServer(port, host = '127.0.0.1', options = {}) {
   ensureStorageDirMigrated();
   const config = loadConfig();
   // 使用配置的端口，如果没有传入参数
   if (!port) {
-    port = config.ports?.webUI || 10099;
+    port = config.ports?.webUI || 19999;
   }
 
   // 检查端口是否被占用
@@ -30,25 +47,35 @@ async function startServer(port, host = '127.0.0.1') {
   if (portInUse) {
     console.log(chalk.yellow(`\n⚠️  端口 ${port} 已被占用\n`));
 
-    // 询问用户是否关闭占用端口的进程
-    const { shouldKill } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'shouldKill',
-        message: '是否关闭占用该端口的进程并启动服务？',
-        choices: [
-          { name: '是，关闭进程并启动', value: true },
-          { name: '否，取消启动', value: false }
-        ],
-        default: 0 // 默认选择"是"
-      }
-    ]);
+    const interactiveMode = isInteractivePortConflictMode(options);
+    let shouldKill = false;
+
+    if (options.forceKillPort === true) {
+      shouldKill = true;
+    } else if (interactiveMode) {
+      // 询问用户是否关闭占用端口的进程
+      const answer = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'shouldKill',
+          message: '是否关闭占用该端口的进程并启动服务？',
+          choices: [
+            { name: '是，关闭进程并启动', value: true },
+            { name: '否，取消启动', value: false }
+          ],
+          default: 0 // 默认选择"是"
+        }
+      ]);
+      shouldKill = answer.shouldKill;
+    } else {
+      console.error(chalk.red('❌ 当前为非交互模式，无法确认端口清理操作，已取消启动。'));
+      printPortConflictHelp(port);
+      process.exit(1);
+    }
 
     if (!shouldKill) {
       console.log(chalk.gray('\n已取消启动'));
-      console.log(chalk.yellow('\n💡 解决方案:'));
-      console.log(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
-      console.log(chalk.gray(`   2. 或手动关闭占用端口 ${port} 的程序\n`));
+      printPortConflictHelp(port);
       process.exit(0);
     }
 
@@ -76,6 +103,9 @@ async function startServer(port, host = '127.0.0.1') {
   }
 
   const app = express();
+  const lanMode = host === '0.0.0.0';
+  const allowRemoteMutation = process.env.CC_TOOL_ALLOW_REMOTE_WRITE === 'true';
+  const allowRemoteTerminal = process.env.CC_TOOL_ALLOW_REMOTE_TERMINAL === 'true';
 
   // Middleware
   app.use(express.json({ limit: '100mb' }));
@@ -91,6 +121,20 @@ async function startServer(port, host = '127.0.0.1') {
     }
     next();
   });
+
+  if (lanMode) {
+    app.use('/api', createRemoteMutationGuard({
+      enabled: true,
+      allowRemoteMutation,
+      message: '出于安全考虑，LAN 模式默认仅允许本机执行写操作。可设置 CC_TOOL_ALLOW_REMOTE_WRITE=true 覆盖。'
+    }));
+
+    app.use('/api/terminal', createRemoteRouteGuard({
+      enabled: true,
+      allowRemoteAccess: allowRemoteTerminal,
+      message: '出于安全考虑，Web 终端仅允许本机访问。可设置 CC_TOOL_ALLOW_REMOTE_TERMINAL=true 覆盖。'
+    }));
+  }
 
   // API Routes
   app.use('/api/projects', require('./api/projects')(config));
@@ -192,8 +236,15 @@ async function startServer(port, host = '127.0.0.1') {
     }
 
     // 附加 WebSocket 服务器到同一个端口
-    attachWebSocketServer(server);
+    attachWebSocketServer(server, { host, allowRemoteTerminal });
     console.log(`   ws://localhost:${port}/ws\n`);
+
+    if (host === '0.0.0.0' && !allowRemoteMutation) {
+      console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程写操作默认禁用'));
+    }
+    if (host === '0.0.0.0' && !allowRemoteTerminal) {
+      console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程 Web 终端默认禁用'));
+    }
 
     // 自动恢复代理状态
     autoRestoreProxies();
@@ -229,7 +280,7 @@ function autoRestoreProxies() {
   const claudeActiveFile = path.join(ccToolDir, 'active-channel.json');
   if (fs.existsSync(claudeActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 Claude 代理状态文件，正在自动启动...'));
-    const proxyPort = config.ports?.proxy || 10088;
+    const proxyPort = config.ports?.proxy || 20088;
     startProxyServer(proxyPort)
       .then(() => {
         console.log(chalk.green(`✅ Claude 代理已自动启动，端口: ${proxyPort}`));
@@ -243,7 +294,7 @@ function autoRestoreProxies() {
   const codexActiveFile = path.join(ccToolDir, 'codex-active-channel.json');
   if (fs.existsSync(codexActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 Codex 代理状态文件，正在自动启动...'));
-    const codexProxyPort = config.ports?.codexProxy || 10089;
+    const codexProxyPort = config.ports?.codexProxy || 20089;
     startCodexProxyServer(codexProxyPort)
       .then((result) => {
         const port = result?.port || codexProxyPort;
@@ -268,7 +319,7 @@ function autoRestoreProxies() {
   const geminiActiveFile = path.join(ccToolDir, 'gemini-active-channel.json');
   if (fs.existsSync(geminiActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 Gemini 代理状态文件，正在自动启动...'));
-    const geminiProxyPort = config.ports?.geminiProxy || 10090;
+    const geminiProxyPort = config.ports?.geminiProxy || 20090;
     startGeminiProxyServer(geminiProxyPort)
       .then((result) => {
         if (result.success) {

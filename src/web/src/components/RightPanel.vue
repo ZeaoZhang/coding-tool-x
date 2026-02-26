@@ -64,7 +64,7 @@
         </template>
         <div class="toolbar-divider" />
         <!-- 通用功能 -->
-        <n-tooltip trigger="hover">
+        <n-tooltip trigger="hover" v-if="currentChannel === 'opencode'">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowGatewayConvert">
               <template #icon><n-icon :size="18"><GitCompareOutline /></n-icon></template>
@@ -242,6 +242,9 @@ function handleShowPlugins() {
 }
 
 function handleShowGatewayConvert() {
+  if (currentChannel.value !== 'opencode') {
+    return
+  }
   window.dispatchEvent(new CustomEvent('open-gateway-convert-drawer'))
 }
 

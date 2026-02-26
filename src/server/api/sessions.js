@@ -189,6 +189,9 @@ module.exports = (config) => {
     try {
       const { projectName } = req.params;
       const { order } = req.body;
+      if (!Array.isArray(order)) {
+        return res.status(400).json({ error: 'order must be an array' });
+      }
       saveSessionOrder(projectName, order);
       res.json({ success: true });
     } catch (error) {

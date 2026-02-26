@@ -151,7 +151,7 @@ function hasBackup() {
     || fs.existsSync(getBackupPath(CONFIG_PATHS.config));
 }
 
-function setProxyConfig(proxyPort) {
+function setProxyConfig(proxyPort, options = {}) {
   const filePath = selectConfigPath();
   backupConfig(filePath);
 
@@ -170,6 +170,11 @@ function setProxyConfig(proxyPort) {
 
   next.provider.openai.options.baseURL = `http://127.0.0.1:${proxyPort}/v1`;
   next.provider.openai.options.apiKey = 'PROXY_KEY';
+
+  // Write model so OpenCode's /model shows the active model
+  if (options.model) {
+    next.provider.openai.model = options.model;
+  }
 
   writeConfig(filePath, next);
 

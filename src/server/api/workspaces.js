@@ -3,7 +3,34 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const workspaceService = require('../services/workspace-service');
+
+function normalizeBranchName(branchName) {
+  if (typeof branchName !== 'string') {
+    return '';
+  }
+  return branchName.trim();
+}
+
+function validateBranchName(branchName) {
+  const normalized = normalizeBranchName(branchName);
+  if (!normalized) {
+    return { valid: false, normalized, message: '分支名不能为空' };
+  }
+  if (normalized.length > 255) {
+    return { valid: false, normalized, message: '分支名长度不能超过 255 个字符' };
+  }
+
+  try {
+    execFileSync('git', ['check-ref-format', '--branch', normalized], {
+      stdio: 'ignore'
+    });
+    return { valid: true, normalized };
+  } catch (error) {
+    return { valid: false, normalized, message: `非法分支名: ${normalized}` };
+  }
+}
 
 /**
  * GET /api/workspaces
@@ -204,6 +231,30 @@ router.post('/', (req, res) => {
           message: '创建 worktree 时必须指定分支名'
         });
       }
+
+      const normalizedBranch = normalizeBranchName(proj.branch);
+      if (normalizedBranch) {
+        const branchValidation = validateBranchName(normalizedBranch);
+        if (!branchValidation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: branchValidation.message
+          });
+        }
+        proj.branch = branchValidation.normalized;
+      }
+
+      const normalizedBaseBranch = normalizeBranchName(proj.baseBranch);
+      if (normalizedBaseBranch) {
+        const baseBranchValidation = validateBranchName(normalizedBaseBranch);
+        if (!baseBranchValidation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: `基础分支不合法: ${baseBranchValidation.normalized}`
+          });
+        }
+        proj.baseBranch = baseBranchValidation.normalized;
+      }
     }
 
     const workspace = workspaceService.createWorkspace({
@@ -286,6 +337,8 @@ router.post('/:id/projects', (req, res) => {
   try {
     const { id } = req.params;
     const { sourcePath, name, createWorktree, branch, baseBranch } = req.body;
+    const normalizedBranch = normalizeBranchName(branch);
+    const normalizedBaseBranch = normalizeBranchName(baseBranch);
 
     if (!sourcePath || !sourcePath.trim()) {
       return res.status(400).json({
@@ -294,19 +347,39 @@ router.post('/:id/projects', (req, res) => {
       });
     }
 
-    if (createWorktree && (!branch || !branch.trim())) {
+    if (createWorktree && !normalizedBranch) {
       return res.status(400).json({
         success: false,
         message: '创建 worktree 时必须指定分支名'
       });
     }
 
+    if (normalizedBranch) {
+      const branchValidation = validateBranchName(normalizedBranch);
+      if (!branchValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: branchValidation.message
+        });
+      }
+    }
+
+    if (normalizedBaseBranch) {
+      const baseBranchValidation = validateBranchName(normalizedBaseBranch);
+      if (!baseBranchValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: `基础分支不合法: ${baseBranchValidation.normalized}`
+        });
+      }
+    }
+
     const workspace = workspaceService.addProjectToWorkspace(id, {
       sourcePath,
       name,
       createWorktree,
-      branch,
-      baseBranch
+      branch: normalizedBranch || branch,
+      baseBranch: normalizedBaseBranch || baseBranch
     });
 
     res.json({

@@ -9,7 +9,7 @@ const { saveConfig } = require('../config/loader');
  * 切换项目
  */
 async function switchProject(config) {
-  const projects = getAvailableProjects(config);
+  const projects = await getAvailableProjects(config);
 
   if (projects.length === 0) {
     console.log(chalk.yellow('没有找到项目'));

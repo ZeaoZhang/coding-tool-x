@@ -15,9 +15,9 @@ const {
 } = require('../services/codex-settings-manager');
 const { getChannels, getEnabledChannels } = require('../services/codex-channels');
 const { clearAllLogs } = require('../websocket-server');
+const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 function sanitizeChannel(channel) {
   if (!channel) return null;
@@ -32,12 +32,22 @@ function sanitizeChannel(channel) {
 
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.codex;
+  const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const filePath = path.join(dir, 'codex-active-channel.json');
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
+}
+
+function removeActiveChannelFile() {
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.codex;
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+    console.log('[Codex Proxy] Removed codex-active-channel.json');
+  }
 }
 
 // 获取代理状态
@@ -147,11 +157,7 @@ router.post('/stop', async (req, res) => {
       console.log('[Codex Proxy] Restored settings from backup');
 
       // 删除 active-channel.json
-      const activeChannelPath = path.join(os.homedir(), '.claude', 'cc-tool', 'codex-active-channel.json');
-      if (fs.existsSync(activeChannelPath)) {
-        fs.unlinkSync(activeChannelPath);
-        console.log('[Codex Proxy] Removed codex-active-channel.json');
-      }
+      removeActiveChannelFile();
 
       const response = {
         success: true,

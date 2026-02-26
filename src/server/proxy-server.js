@@ -160,7 +160,7 @@ async function startProxyServer(options = {}) {
 
   try {
     const config = loadConfig();
-    const port = config.ports?.proxy || 10088;
+    const port = config.ports?.proxy || 20088;
     currentPort = port;
 
     proxyApp = express();
@@ -542,7 +542,7 @@ function getProxyStatus() {
   return {
     running: !!proxyServer,
     port: currentPort,
-    defaultPort: config.ports?.proxy || 10088,
+    defaultPort: config.ports?.proxy || 20088,
     startTime,
     runtime
   };

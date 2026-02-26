@@ -5,7 +5,14 @@
 <script setup>
 import { computed } from 'vue';
 import MarkdownIt from 'markdown-it';
-import hljs from 'highlight.js';
+import hljs from 'highlight.js/lib/core';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import json from 'highlight.js/lib/languages/json';
+import bash from 'highlight.js/lib/languages/bash';
+import python from 'highlight.js/lib/languages/python';
+import css from 'highlight.js/lib/languages/css';
+import xml from 'highlight.js/lib/languages/xml';
 import 'highlight.js/styles/github.css';
 
 const props = defineProps({
@@ -14,6 +21,23 @@ const props = defineProps({
     default: ''
   }
 });
+
+function registerLanguageIfNeeded(name, syntax) {
+  if (!hljs.getLanguage(name)) {
+    hljs.registerLanguage(name, syntax);
+  }
+}
+
+registerLanguageIfNeeded('javascript', javascript);
+registerLanguageIfNeeded('typescript', typescript);
+registerLanguageIfNeeded('json', json);
+registerLanguageIfNeeded('bash', bash);
+registerLanguageIfNeeded('shell', bash);
+registerLanguageIfNeeded('sh', bash);
+registerLanguageIfNeeded('python', python);
+registerLanguageIfNeeded('css', css);
+registerLanguageIfNeeded('xml', xml);
+registerLanguageIfNeeded('html', xml);
 
 // 初始化 Markdown 渲染器
 const md = new MarkdownIt({

@@ -1,20 +1,17 @@
 #!/usr/bin/env node
 /**
  * 数据迁移脚本
- * 从 ~/.claude/ctx 与 ~/.claude/cc-tool 迁移数据到 ~/.cc-tool
+ * 从历史目录迁移数据到 ~/.cc-tool
  * 保留原始文件不动
  */
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { LEGACY_BASE_DIRS, CC_TOOL_BASE_DIR } = require('../src/config/paths');
 
 // 源目录和目标目录
-const SOURCE_DIRS = [
-  path.join(os.homedir(), '.claude', 'ctx'),
-  path.join(os.homedir(), '.claude', 'cc-tool')
-];
-const TARGET_DIR = path.join(os.homedir(), '.cc-tool');
+const SOURCE_DIRS = Array.from(new Set([...LEGACY_BASE_DIRS]));
+const TARGET_DIR = CC_TOOL_BASE_DIR;
 
 // 颜色输出
 const colors = {

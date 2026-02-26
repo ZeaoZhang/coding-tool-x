@@ -6,21 +6,21 @@ const claudeProxy = ref({
   running: false,
   loading: false,
   activeChannel: null,
-  port: 10088
+  port: 20088
 })
 
 const codexProxy = ref({
   running: false,
   loading: false,
   activeChannel: null,
-  port: 10089
+  port: 20089
 })
 
 const geminiProxy = ref({
   running: false,
   loading: false,
   activeChannel: null,
-  port: 10090
+  port: 20090
 })
 
 let isInitialized = false
@@ -204,9 +204,9 @@ export function useProxyState() {
     try {
       const response = await axios.get('/api/config/advanced')
       if (response.data.ports) {
-        claudeProxy.value.port = response.data.ports.proxy || 10088
-        codexProxy.value.port = response.data.ports.codexProxy || 10089
-        geminiProxy.value.port = response.data.ports.geminiProxy || 10090
+        claudeProxy.value.port = response.data.ports.proxy || 20088
+        codexProxy.value.port = response.data.ports.codexProxy || 20089
+        geminiProxy.value.port = response.data.ports.geminiProxy || 20090
       }
     } catch (error) {
       console.error('Failed to load ports:', error)

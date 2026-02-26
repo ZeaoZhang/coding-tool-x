@@ -29,11 +29,34 @@ export default defineConfig({
     // 代码分割优化
     rollupOptions: {
       output: {
-        manualChunks: {
-          'naive-ui': ['naive-ui'],
-          'vue-vendor': ['vue', 'vue-router', 'pinia'],
-          'icons': ['@vicons/ionicons5'],
-          'vendors': ['axios', 'vuedraggable']
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return
+          }
+
+          if (id.includes('/naive-ui/')) {
+            return 'naive-ui'
+          }
+
+          if (id.includes('/@xterm/')) {
+            return 'xterm'
+          }
+
+          if (id.includes('/markdown-it/') || id.includes('/marked/') || id.includes('/highlight.js/')) {
+            return 'markdown'
+          }
+
+          if (id.includes('/@vicons/')) {
+            return 'icons'
+          }
+
+          if (id.includes('/vue-router/') || id.includes('/pinia/') || id.includes('/vue/')) {
+            return 'vue-vendor'
+          }
+
+          if (id.includes('/axios/') || id.includes('/vuedraggable/')) {
+            return 'vendors'
+          }
         }
       }
     },
@@ -53,4 +76,3 @@ export default defineConfig({
     devSourcemap: false
   }
 })
-

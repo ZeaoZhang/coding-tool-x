@@ -260,7 +260,10 @@
     <SpeedTestDrawer v-model:visible="showSpeedTestDrawer" />
 
     <!-- OpenCode Gateway Convert Drawer -->
-    <GatewayConvertDrawer v-model:visible="showGatewayConvertDrawer" />
+    <GatewayConvertDrawer
+      v-if="currentChannel === 'opencode'"
+      v-model:visible="showGatewayConvertDrawer"
+    />
 
     <!-- Workspace Drawer -->
     <WorkspaceDrawer v-model:visible="showWorkspaceDrawer" />
@@ -744,8 +747,17 @@ function openPluginsDrawer() {
 }
 
 function openGatewayConvertDrawer() {
+  if (currentChannel.value !== 'opencode') {
+    return
+  }
   showGatewayConvertDrawer.value = true
 }
+
+watch(() => currentChannel.value, (channel) => {
+  if (channel !== 'opencode' && showGatewayConvertDrawer.value) {
+    showGatewayConvertDrawer.value = false
+  }
+})
 
 // Handle view history from favorites
 function handleViewHistoryFromFavorites({ session, channel }) {
