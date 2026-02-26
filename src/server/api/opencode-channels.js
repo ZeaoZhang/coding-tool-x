@@ -15,10 +15,51 @@ const { testChannelSpeed } = require('../services/speed-test');
 const { clearOpenCodeRedirectCache } = require('../opencode-proxy-server');
 const {
   fetchModelsFromProvider,
-  probeModelAvailability
+  probeModelAvailability,
+  getModelPriority
 } = require('../services/model-detector');
 
 module.exports = (config) => {
+  function uniqueModels(models = []) {
+    const seen = new Set();
+    const result = [];
+    models.forEach((model) => {
+      if (typeof model !== 'string') return;
+      const trimmed = model.trim();
+      if (!trimmed) return;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      result.push(trimmed);
+    });
+    return result;
+  }
+
+  function collectChannelPreferredModels(channel) {
+    const candidates = [];
+    if (!channel || typeof channel !== 'object') return candidates;
+
+    candidates.push(channel.model);
+    candidates.push(channel.speedTestModel);
+
+    const modelConfig = channel.modelConfig;
+    if (modelConfig && typeof modelConfig === 'object') {
+      candidates.push(modelConfig.model);
+      candidates.push(modelConfig.opusModel);
+      candidates.push(modelConfig.sonnetModel);
+      candidates.push(modelConfig.haikuModel);
+    }
+
+    if (Array.isArray(channel.modelRedirects)) {
+      channel.modelRedirects.forEach((rule) => {
+        candidates.push(rule?.from);
+        candidates.push(rule?.to);
+      });
+    }
+
+    return uniqueModels(candidates);
+  }
+
   function resolveGatewaySourceType(channel) {
     const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
     if (value === 'claude') return 'claude';
@@ -96,6 +137,7 @@ module.exports = (config) => {
       }
 
       const gatewaySourceType = resolveGatewaySourceType(channel);
+      const preferredModels = collectChannelPreferredModels(channel);
       let result;
 
       if (gatewaySourceType === 'codex') {
@@ -105,8 +147,12 @@ module.exports = (config) => {
         if (listedModels.length > 0) {
           result = listResult;
         } else {
-          const probe = await probeModelAvailability(channel, 'codex');
+          const probe = await probeModelAvailability(channel, 'codex', {
+            stopOnFirstAvailable: true,
+            preferredModels
+          });
           const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+          const fallbackModels = uniqueModels([...preferredModels, ...getModelPriority('codex')]);
 
           if (probedModels.length > 0) {
             result = {
@@ -122,31 +168,38 @@ module.exports = (config) => {
             };
           } else {
             result = {
-              models: [],
+              models: fallbackModels,
               supported: false,
               cached: !!probe.cached || !!listResult.cached,
-              fallbackUsed: false,
+              fallbackUsed: true,
               lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
               error: listResult.error || '无法探测到可用模型',
-              errorHint: listResult.errorHint || '请手动填写模型名称，或检查网关类型与 API 端点配置'
+              errorHint: listResult.errorHint || '已回退到默认模型候选，请确认网关入口类型与 API Key 权限'
             };
           }
         }
       } else {
-        const probe = await probeModelAvailability(channel, gatewaySourceType);
+        const probe = await probeModelAvailability(channel, gatewaySourceType, {
+          stopOnFirstAvailable: true,
+          preferredModels
+        });
         const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-        const models = probedModels;
+        const fallbackModels = uniqueModels([
+          ...preferredModels,
+          ...getModelPriority(gatewaySourceType)
+        ]);
+        const models = probedModels.length > 0 ? probedModels : fallbackModels;
 
         result = {
           models,
           supported: probedModels.length > 0,
           cached: !!probe.cached,
-          fallbackUsed: false,
+          fallbackUsed: probedModels.length === 0,
           lastChecked: probe.lastChecked || new Date().toISOString(),
           error: probedModels.length > 0 ? null : '无法探测到可用模型',
           errorHint: probedModels.length > 0
             ? null
-            : '请手动填写模型名称，或检查网关类型与 API 端点配置'
+            : '已回退到默认模型候选，请确认网关入口类型与 API Key 权限'
         };
       }
 
