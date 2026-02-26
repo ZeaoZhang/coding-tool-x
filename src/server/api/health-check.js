@@ -7,10 +7,11 @@ module.exports = (config) => {
   /**
    * GET /api/health-check - 健康检查所有项目
    */
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     try {
-      const projects = getProjects(config);
-      const result = healthCheckAllProjects(projects);
+      const projects = await getProjects(config);
+      const projectList = Array.isArray(projects) ? projects : [];
+      const result = healthCheckAllProjects(projectList);
 
       res.json({
         success: true,

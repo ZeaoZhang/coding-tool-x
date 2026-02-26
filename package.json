@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node bin/ctx.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run test:basic && npm run test:api",
+    "test:basic": "node scripts/test-basic.js",
+    "test:api": "node scripts/test-api-consistency.js",
     "build:web": "cd src/web && npm run build",
     "dev:web": "cd src/web && npm run dev",
     "dev:server": "nodemon"

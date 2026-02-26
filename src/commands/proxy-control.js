@@ -30,7 +30,7 @@ const CHANNEL_CONFIG = {
  */
 function httpRequest(method, path, data = null) {
   const config = loadConfig();
-  const port = config.ports?.webUI || 10099;
+  const port = config.ports?.webUI || 19999;
 
   return new Promise((resolve, reject) => {
     const postData = data ? JSON.stringify(data) : null;

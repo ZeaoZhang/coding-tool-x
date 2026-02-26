@@ -50,7 +50,7 @@ npm install -g coding-tool-x
 
 ```bash
 git clone https://github.com/ZeaoZhang/coding-tool.git
-cd cc-tool
+cd coding-tool
 npm install && npm link
 ```
 
@@ -70,7 +70,7 @@ ctx --version
 ctx ui
 ```
 
-浏览器自动打开 `http://localhost:9999`，即可开始管理会话和渠道。
+浏览器自动打开 `http://localhost:19999`，即可开始管理会话和渠道。
 
 ### 命令行交互模式
 
@@ -130,6 +130,7 @@ ctx
 | 命令 | 描述 |
 |------|------|
 | `ctx doctor` | 运行系统诊断，检查配置和环境 |
+| `ctx port` | 配置 Web UI 和各代理端口 |
 | `ctx stats` | 查看使用统计（会话数、Token 等） |
 | `ctx reset` | 重置配置文件 |
 
@@ -353,7 +354,7 @@ ctx logs --follow     # 实时跟踪日志
 ctx logs --clear      # 清空日志
 ```
 
-日志文件存储在 `~/.claude/logs/` 目录。
+日志文件存储在 `~/.cc-tool/logs/` 目录。
 
 </details>
 
@@ -406,7 +407,7 @@ ctx logs --clear      # 清空日志
 
 直接复制以下目录即可备份所有配置和数据：
 - 配置：`~/.cc-tool/`
-- 日志：`~/.claude/logs/`
+- 日志：`~/.cc-tool/logs/`
 
 </details>
 

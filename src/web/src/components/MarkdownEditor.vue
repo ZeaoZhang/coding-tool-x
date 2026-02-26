@@ -40,7 +40,14 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { NInput, NIcon } from 'naive-ui'
 import { CreateOutline } from '@vicons/ionicons5'
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js'
+import hljs from 'highlight.js/lib/core'
+import javascript from 'highlight.js/lib/languages/javascript'
+import typescript from 'highlight.js/lib/languages/typescript'
+import json from 'highlight.js/lib/languages/json'
+import bash from 'highlight.js/lib/languages/bash'
+import python from 'highlight.js/lib/languages/python'
+import css from 'highlight.js/lib/languages/css'
+import xml from 'highlight.js/lib/languages/xml'
 
 const props = defineProps({
   modelValue: {
@@ -74,6 +81,23 @@ const emit = defineEmits(['update:modelValue', 'edit', 'blur'])
 
 const isEditing = ref(props.defaultEditing)
 const inputRef = ref(null)
+
+function registerLanguageIfNeeded(name, syntax) {
+  if (!hljs.getLanguage(name)) {
+    hljs.registerLanguage(name, syntax)
+  }
+}
+
+registerLanguageIfNeeded('javascript', javascript)
+registerLanguageIfNeeded('typescript', typescript)
+registerLanguageIfNeeded('json', json)
+registerLanguageIfNeeded('bash', bash)
+registerLanguageIfNeeded('shell', bash)
+registerLanguageIfNeeded('sh', bash)
+registerLanguageIfNeeded('python', python)
+registerLanguageIfNeeded('css', css)
+registerLanguageIfNeeded('xml', xml)
+registerLanguageIfNeeded('html', xml)
 
 // 初始化 Markdown 渲染器
 const md = new MarkdownIt({

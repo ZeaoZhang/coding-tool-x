@@ -1,15 +1,29 @@
 const express = require('express');
 const router = express.Router();
 const {
+  getProjects,
   getSessionsByProject,
   getSessionById,
+  getRecentSessions,
   searchSessions,
   deleteSession,
+  forkSession,
+  saveSessionOrder,
   isOpenCodeInstalled
 } = require('../services/opencode-sessions');
+const { loadAliases } = require('../services/alias');
+const { getTerminalLaunchCommand } = require('../services/terminal-config');
+const { broadcastLog } = require('../websocket-server');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+function isNotFoundError(error) {
+  if (!error || !error.message) {
+    return false;
+  }
+  return error.message === 'Session not found' || error.message === 'Project not found';
+}
 
 module.exports = (config) => {
   /**
@@ -23,21 +37,80 @@ module.exports = (config) => {
       }
 
       const { keyword } = req.query;
+      const parsedContextLength = req.query.context ? parseInt(req.query.context, 10) : 35;
+      const contextLength = Number.isFinite(parsedContextLength) ? parsedContextLength : 35;
 
       if (!keyword) {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = searchSessions(keyword);
+      const results = searchSessions(keyword, contextLength);
+      const totalMatches = results.reduce((sum, session) => sum + (session.matchCount || 0), 0);
 
       res.json({
         keyword,
-        totalMatches: results.length,
+        totalMatches,
         sessions: results,
         source: 'opencode'
       });
     } catch (err) {
       console.error('[OpenCode API] Failed to search sessions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/opencode/sessions/recent/list?limit=10
+   * 获取最近会话
+   */
+  router.get('/recent/list', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const limit = parseInt(req.query.limit, 10) || 5;
+      const sessions = getRecentSessions(limit);
+
+      res.json({
+        sessions,
+        source: 'opencode'
+      });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to get recent sessions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/opencode/sessions/:projectName/search
+   * 项目内搜索
+   */
+  router.get('/:projectName/search', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { projectName } = req.params;
+      const { keyword } = req.query;
+      const parsedContextLength = req.query.context ? parseInt(req.query.context, 10) : 35;
+      const contextLength = Number.isFinite(parsedContextLength) ? parsedContextLength : 35;
+
+      if (!keyword) {
+        return res.status(400).json({ error: 'Keyword is required' });
+      }
+
+      const results = searchSessions(keyword, contextLength, projectName);
+      const totalMatches = results.reduce((sum, session) => sum + (session.matchCount || 0), 0);
+
+      res.json({
+        keyword,
+        totalMatches,
+        sessions: results
+      });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to search project sessions:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -54,6 +127,9 @@ module.exports = (config) => {
 
       const { projectName } = req.params;
       const sessions = getSessionsByProject(projectName);
+      const aliases = loadAliases();
+      const projects = getProjects();
+      const project = projects.find(p => p.name === projectName);
 
       // 计算总大小
       const totalSize = sessions.reduce((sum, session) => {
@@ -63,12 +139,12 @@ module.exports = (config) => {
       res.json({
         sessions,
         totalSize,
-        aliases: {},
+        aliases,
         projectInfo: {
           name: projectName,
-          fullPath: projectName,
-          path: projectName,
-          displayName: projectName
+          fullPath: project?.fullPath || projectName,
+          path: project?.path || projectName,
+          displayName: project?.displayName || projectName
         }
       });
     } catch (err) {
@@ -90,6 +166,7 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
+      const session = getSessionById(sessionId);
 
       // 读取消息文件
       const messagesDir = path.join(
@@ -170,7 +247,7 @@ module.exports = (config) => {
         metadata: {
           gitBranch: null,
           gitRepository: null,
-          cwd: null,
+          cwd: session?.directory || null,
           model: 'opencode'
         },
         pagination: {
@@ -201,7 +278,123 @@ module.exports = (config) => {
 
       res.json(result);
     } catch (err) {
+      if (isNotFoundError(err)) {
+        console.warn('[OpenCode API] Delete session target not found:', err.message);
+        return res.status(404).json({ error: err.message });
+      }
       console.error('[OpenCode API] Failed to delete session:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/opencode/sessions/:projectName/:sessionId/fork
+   * Fork 一个会话
+   */
+  router.post('/:projectName/:sessionId/fork', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const result = forkSession(sessionId);
+      res.json(result);
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        console.warn('[OpenCode API] Fork session target not found:', err.message);
+        return res.status(404).json({ error: err.message });
+      }
+      console.error('[OpenCode API] Failed to fork session:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/opencode/sessions/:projectName/order
+   * 保存会话排序
+   */
+  router.post('/:projectName/order', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { projectName } = req.params;
+      const { order } = req.body;
+
+      if (!Array.isArray(order)) {
+        return res.status(400).json({ error: 'order must be an array' });
+      }
+
+      saveSessionOrder(projectName, order);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to save session order:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/opencode/sessions/:projectName/:sessionId/launch
+   * 启动会话（打开终端）
+   */
+  router.post('/:projectName/:sessionId/launch', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { exec } = require('child_process');
+      const { projectName, sessionId } = req.params;
+      const { targetTool } = req.body || {};
+
+      if (targetTool && targetTool !== 'opencode') {
+        return res.status(400).json({
+          error: 'OpenCode 会话暂不支持直接切换到其他 CLI，请使用 OpenCode 启动'
+        });
+      }
+
+      const session = getSessionById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      const projects = getProjects();
+      const project = projects.find(p => p.name === projectName);
+      const cwd = session.directory || project?.fullPath || os.homedir();
+      const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
+
+      const { command, terminalId, terminalName } = getTerminalLaunchCommand(
+        normalizedCwd,
+        sessionId,
+        'opencode'
+      );
+
+      broadcastLog({
+        type: 'action',
+        action: 'launch_opencode_session',
+        message: `启动 OpenCode 会话 ${sessionId.substring(0, 8)}`,
+        sessionId,
+        tool: 'opencode',
+        timestamp: Date.now()
+      });
+
+      const shellOption = process.platform === 'win32' ? { shell: 'cmd.exe' } : { shell: true };
+      exec(command, shellOption, (error) => {
+        if (error) {
+          console.error('[OpenCode] Failed to launch terminal:', error.message);
+        }
+      });
+
+      res.json({
+        success: true,
+        cwd,
+        terminal: terminalName,
+        terminalId
+      });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to launch session:', err);
       res.status(500).json({ error: err.message });
     }
   });

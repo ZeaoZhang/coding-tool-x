@@ -15,14 +15,14 @@ const SETTINGS_MANAGERS = {
 function getProxyServices(cliType) {
   if (cliType === 'claude') {
     const { getProxyStatus, startProxyServer, stopProxyServer } = require('../server/proxy-server');
-    return { getProxyStatus, startProxyServer, stopProxyServer, defaultPort: 10088 };
+    return { getProxyStatus, startProxyServer, stopProxyServer, defaultPort: 20088 };
   } else if (cliType === 'codex') {
     const { getCodexProxyStatus, startCodexProxyServer, stopCodexProxyServer } = require('../server/codex-proxy-server');
     return {
       getProxyStatus: getCodexProxyStatus,
       startProxyServer: startCodexProxyServer,
       stopProxyServer: stopCodexProxyServer,
-      defaultPort: 10089
+      defaultPort: 20089
     };
   } else if (cliType === 'gemini') {
     const { getGeminiProxyStatus, startGeminiProxyServer, stopGeminiProxyServer } = require('../server/gemini-proxy-server');
@@ -30,7 +30,7 @@ function getProxyServices(cliType) {
       getProxyStatus: getGeminiProxyStatus,
       startProxyServer: startGeminiProxyServer,
       stopProxyServer: stopGeminiProxyServer,
-      defaultPort: 10090
+      defaultPort: 20090
     };
   } else if (cliType === 'opencode') {
     const { getOpenCodeProxyStatus, startOpenCodeProxyServer, stopOpenCodeProxyServer } = require('../server/opencode-proxy-server');

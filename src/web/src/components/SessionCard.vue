@@ -151,6 +151,10 @@ const props = defineProps({
     type: Object,
     required: true
   },
+  channel: {
+    type: String,
+    default: 'claude'
+  },
   showProject: {
     type: Boolean,
     default: false
@@ -167,53 +171,84 @@ const props = defineProps({
 
 const emit = defineEmits(['set-alias', 'launch', 'launch-web', 'fork', 'delete', 'convert'])
 
-// 启动方式下拉选项（支持工具选择）
-const launchOptions = [
-  {
-    type: 'group',
-    label: 'Web 终端',
-    key: 'web-group',
-    children: [
+// 启动方式下拉选项（按渠道展示可用项）
+const launchOptions = computed(() => {
+  if (props.channel === 'opencode') {
+    return [
       {
-        label: 'Claude Code',
-        key: 'web-claude',
-        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        type: 'group',
+        label: 'Web 终端',
+        key: 'web-group',
+        children: [
+          {
+            label: 'OpenCode',
+            key: 'web-opencode',
+            icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+          }
+        ]
       },
       {
-        label: 'Codex',
-        key: 'web-codex',
-        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-      },
-      {
-        label: 'Gemini',
-        key: 'web-gemini',
-        icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-      }
-    ]
-  },
-  {
-    type: 'group',
-    label: '本地终端',
-    key: 'local-group',
-    children: [
-      {
-        label: 'Claude Code',
-        key: 'local-claude',
-        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-      },
-      {
-        label: 'Codex',
-        key: 'local-codex',
-        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-      },
-      {
-        label: 'Gemini',
-        key: 'local-gemini',
-        icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        type: 'group',
+        label: '本地终端',
+        key: 'local-group',
+        children: [
+          {
+            label: 'OpenCode',
+            key: 'local-opencode',
+            icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+          }
+        ]
       }
     ]
   }
-]
+
+  return [
+    {
+      type: 'group',
+      label: 'Web 终端',
+      key: 'web-group',
+      children: [
+        {
+          label: 'Claude Code',
+          key: 'web-claude',
+          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        },
+        {
+          label: 'Codex',
+          key: 'web-codex',
+          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        },
+        {
+          label: 'Gemini',
+          key: 'web-gemini',
+          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
+        }
+      ]
+    },
+    {
+      type: 'group',
+      label: '本地终端',
+      key: 'local-group',
+      children: [
+        {
+          label: 'Claude Code',
+          key: 'local-claude',
+          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        },
+        {
+          label: 'Codex',
+          key: 'local-codex',
+          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        },
+        {
+          label: 'Gemini',
+          key: 'local-gemini',
+          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
+        }
+      ]
+    }
+  ]
+})
 
 // 处理启动选择
 function handleLaunchSelect(key) {

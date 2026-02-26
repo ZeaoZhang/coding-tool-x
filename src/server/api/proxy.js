@@ -12,6 +12,7 @@ const {
 } = require('../services/settings-manager');
 const { getAllChannels } = require('../services/channels');
 const { clearAllLogs } = require('../websocket-server');
+const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -28,18 +29,20 @@ function sanitizeChannelForResponse(channel) {
 
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.claude;
+  const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const filePath = path.join(dir, 'active-channel.json');
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
 }
 
 
 // 加载上次激活的渠道ID
 function loadActiveChannelId() {
-  const filePath = path.join(os.homedir(), '.claude', 'cc-tool', 'active-channel.json');
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.claude;
   try {
     if (fs.existsSync(filePath)) {
       const content = fs.readFileSync(filePath, 'utf8');
@@ -246,7 +249,7 @@ router.post('/stop', async (req, res) => {
       }
     }
 
-    const activeChannelPath = path.join(os.homedir(), '.claude', 'cc-tool', 'active-channel.json');
+    const activeChannelPath = PATHS.activeChannel.claude;
     if (fs.existsSync(activeChannelPath)) {
       fs.unlinkSync(activeChannelPath);
       console.log('✅ Removed active-channel.json');

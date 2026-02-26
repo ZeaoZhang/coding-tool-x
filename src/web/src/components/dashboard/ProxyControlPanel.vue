@@ -109,9 +109,9 @@ const message = useMessage()
 const { claudeProxy, codexProxy, geminiProxy, schedulerState, startProxy, stopProxy } = useGlobalState()
 
 // 端口配置
-const claudePort = ref(10088)
-const codexPort = ref(10089)
-const geminiPort = ref(10090)
+const claudePort = ref(20088)
+const codexPort = ref(20089)
+const geminiPort = ref(20090)
 
 const claudeLoading = ref(false)
 const codexLoading = ref(false)
@@ -147,9 +147,9 @@ async function loadConfig() {
   try {
     const response = await axios.get('/api/config/advanced')
     if (response.data.ports) {
-      claudePort.value = response.data.ports.proxy || 10088
-      codexPort.value = response.data.ports.codexProxy || 10089
-      geminiPort.value = response.data.ports.geminiProxy || 10090
+      claudePort.value = response.data.ports.proxy || 20088
+      codexPort.value = response.data.ports.codexProxy || 20089
+      geminiPort.value = response.data.ports.geminiProxy || 20090
     }
   } catch (error) {
     console.error('Failed to load config:', error)

@@ -6,10 +6,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 
 // 备份目录
-const BACKUP_DIR = path.join(os.homedir(), '.claude', 'cc-tool', 'env-backups');
+const BACKUP_DIR = PATHS.envBackups;
 
 function ensureParentDir(filePath) {
   const dirPath = path.dirname(filePath);
@@ -76,6 +76,7 @@ function formatExportLine(varName, value, usePowerShell) {
  * 确保备份目录存在
  */
 function ensureBackupDir() {
+  ensureStorageDirMigrated();
   if (!fs.existsSync(BACKUP_DIR)) {
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
   }

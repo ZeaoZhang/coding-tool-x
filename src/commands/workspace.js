@@ -118,7 +118,7 @@ async function createWorkspace() {
     let continueAdding = true;
 
     while (continueAdding) {
-      const availableProjects = getProjectsWithStats(config);
+      const availableProjects = await getProjectsWithStats(config);
 
       if (availableProjects.length === 0) {
         console.log(chalk.yellow('\n没有可用的项目\n'));

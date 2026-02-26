@@ -126,7 +126,7 @@ async function startGeminiProxyServer(options = {}) {
 
   try {
     const config = loadConfig();
-    const port = config.ports?.geminiProxy || 10090;
+    const port = config.ports?.geminiProxy || 20090;
     currentPort = port;
 
     proxyApp = express();
@@ -565,7 +565,7 @@ function getGeminiProxyStatus() {
   return {
     running: !!proxyServer,
     port: currentPort,
-    defaultPort: config.ports?.geminiProxy || 10090,
+    defaultPort: config.ports?.geminiProxy || 20090,
     startTime,
     runtime
   };

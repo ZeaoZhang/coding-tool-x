@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 
 // Codex 配置文件路径
 function getConfigPath() {
@@ -250,7 +251,8 @@ function configToToml(config) {
 // 写入 config.toml
 function writeConfig(config) {
   try {
-    const content = configToToml(config);
+    const safeConfig = JSON.parse(JSON.stringify(config || {}));
+    const content = tomlStringify(safeConfig);
     fs.writeFileSync(getConfigPath(), content, 'utf8');
   } catch (err) {
     throw new Error('Failed to write config.toml: ' + err.message);
@@ -561,7 +563,7 @@ function isProxyConfig() {
     const currentProvider = config.model_provider;
     if (currentProvider && config.model_providers && config.model_providers[currentProvider]) {
       const baseUrl = config.model_providers[currentProvider].base_url || '';
-      if (baseUrl.includes('127.0.0.1') && baseUrl.includes('10089')) {
+      if (baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost')) {
         return true;
       }
     }

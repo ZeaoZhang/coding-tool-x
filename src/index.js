@@ -20,6 +20,7 @@ const { handleProxyStart: proxyStart, handleProxyStop: proxyStop, handleProxyRes
 const { handleLogs } = require('./commands/logs');
 const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
+const { handleUpdate } = require('./commands/update');
 const { workspaceMenu } = require('./commands/workspace');
 const { ensureStorageDirMigrated } = require('./config/paths');
 const PluginManager = require('./plugins/plugin-manager');
@@ -80,7 +81,9 @@ function showHelp() {
   console.log('  ctx stats export        导出统计数据\n');
 
   console.log(chalk.yellow('🛠️  其他命令:'));
+  console.log('  ctx update              检查并更新到最新版本');
   console.log('  ctx doctor              系统诊断');
+  console.log('  ctx port                配置端口');
   console.log('  ctx reset               重置配置');
   console.log('  ctx security reset      关闭访问密码');
   console.log('  ctx --version, -v       显示版本');
@@ -148,6 +151,47 @@ async function main() {
   // --help 或 -h - 显示帮助信息
   if (args[0] === '--help' || args[0] === '-h') {
     showHelp();
+    return;
+  }
+
+  // daemon 命令兼容（保持与 README 中旧命令一致）
+  if (args[0] === 'daemon') {
+    const subCommand = args[1] || 'status';
+
+    if (subCommand === 'start') {
+      await handleStart();
+      return;
+    }
+    if (subCommand === 'stop') {
+      await handleStop();
+      return;
+    }
+    if (subCommand === 'restart') {
+      await handleRestart();
+      return;
+    }
+    if (subCommand === 'status') {
+      await handleStatus();
+      return;
+    }
+    if (subCommand === 'logs') {
+      const options = {};
+      for (let i = 2; i < args.length; i++) {
+        if (args[i] === '--lines' && args[i + 1]) {
+          options.lines = parseInt(args[i + 1], 10);
+          i++;
+        } else if (args[i] === '--follow' || args[i] === '-f') {
+          options.follow = true;
+        } else if (args[i] === '--clear') {
+          options.clear = true;
+        }
+      }
+      await handleLogs('ui', options);
+      return;
+    }
+
+    console.log(chalk.red(`\n❌ 未知 daemon 子命令: ${subCommand}\n`));
+    console.log(chalk.gray('支持的命令: start, stop, restart, status, logs\n'));
     return;
   }
 
@@ -282,6 +326,19 @@ async function main() {
   // doctor 命令 - 系统诊断
   if (args[0] === 'doctor') {
     await handleDoctor();
+    return;
+  }
+
+  // update 命令 - 检查并更新到最新版本
+  if (args[0] === 'update') {
+    const checkOnly = args.includes('--check');
+    await handleUpdate({ checkOnly });
+    return;
+  }
+
+  // port 命令 - 配置端口
+  if (args[0] === 'port') {
+    await handlePortConfig();
     return;
   }
 

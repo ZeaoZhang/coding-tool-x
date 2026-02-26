@@ -12,6 +12,7 @@
           v-for="session in sessions"
           :key="session.sessionId"
           :session="session"
+          :channel="channel"
           :show-project="true"
           :hide-fork="true"
           :hide-delete="true"
@@ -77,6 +78,7 @@ function getChannelTitle() {
   if (props.channel === 'claude') return 'Claude 最新对话'
   if (props.channel === 'codex') return 'Codex 最新对话'
   if (props.channel === 'gemini') return 'Gemini 最新对话'
+  if (props.channel === 'opencode') return 'OpenCode 最新对话'
   return '最新对话'
 }
 

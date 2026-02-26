@@ -451,7 +451,7 @@
                         :min="1024"
                         :max="65535"
                         :show-button="false"
-                        placeholder="10099"
+                        placeholder="19999"
                       >
                         <template #prefix>
                           <n-icon><CheckmarkCircleOutline /></n-icon>
@@ -467,7 +467,7 @@
                         :min="1024"
                         :max="65535"
                         :show-button="false"
-                        placeholder="10088"
+                        placeholder="20088"
                       >
                         <template #prefix>
                           <n-icon><OptionsOutline /></n-icon>
@@ -483,7 +483,7 @@
                         :min="1024"
                         :max="65535"
                         :show-button="false"
-                        placeholder="10089"
+                        placeholder="20089"
                       >
                         <template #prefix>
                           <n-icon><OptionsOutline /></n-icon>
@@ -499,7 +499,7 @@
                         :min="1024"
                         :max="65535"
                         :show-button="false"
-                        placeholder="10090"
+                        placeholder="20090"
                       >
                         <template #prefix>
                           <n-icon><OptionsOutline /></n-icon>
@@ -1291,17 +1291,17 @@ const showLogs = ref(true)
 
 // 端口配置
 const ports = ref({
-  webUI: 10099,
-  proxy: 10088,
-  codexProxy: 10089,
-  geminiProxy: 10090,
+  webUI: 19999,
+  proxy: 20088,
+  codexProxy: 20089,
+  geminiProxy: 20090,
   opencodeProxy: 20091
 })
 const originalPorts = ref({
-  webUI: 10099,
-  proxy: 10088,
-  codexProxy: 10089,
-  geminiProxy: 10090,
+  webUI: 19999,
+  proxy: 20088,
+  codexProxy: 20089,
+  geminiProxy: 20090,
   opencodeProxy: 20091
 })
 const savingPorts = ref(false)
@@ -1691,10 +1691,10 @@ async function loadPortsConfig() {
     if (response.ok) {
       const data = await response.json()
       ports.value = {
-        webUI: data.ports?.webUI || 10099,
-        proxy: data.ports?.proxy || 10088,
-        codexProxy: data.ports?.codexProxy || 10089,
-        geminiProxy: data.ports?.geminiProxy || 10090,
+        webUI: data.ports?.webUI || 19999,
+        proxy: data.ports?.proxy || 20088,
+        codexProxy: data.ports?.codexProxy || 20089,
+        geminiProxy: data.ports?.geminiProxy || 20090,
         opencodeProxy: data.ports?.opencodeProxy || 20091
       }
       originalPorts.value = { ...ports.value }

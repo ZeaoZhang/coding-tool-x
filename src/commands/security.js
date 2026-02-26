@@ -1,9 +1,9 @@
 const chalk = require('chalk');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
 
-const SECURITY_FILE = path.join(os.homedir(), '.claude', 'cc-tool', 'security.json');
+const SECURITY_FILE = path.join(PATHS.base, 'security.json');
 
 function showSecurityHelp() {
   console.log(chalk.yellow('\n🔐 安全设置命令:'));
@@ -13,6 +13,7 @@ function showSecurityHelp() {
 
 async function handleSecurityReset() {
   console.log(chalk.cyan('\n🔐 安全设置 - 关闭访问密码\n'));
+  ensureStorageDirMigrated();
 
   if (!fs.existsSync(SECURITY_FILE)) {
     console.log(chalk.yellow('⚠️  未检测到安全配置文件'));

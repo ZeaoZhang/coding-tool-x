@@ -2,6 +2,7 @@ const pm2 = require('pm2');
 const path = require('path');
 const chalk = require('chalk');
 const { loadConfig } = require('../config/loader');
+const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
 
 const PM2_APP_NAME = 'cc-tool';
 
@@ -70,7 +71,7 @@ async function handleStart() {
     }
 
     const config = loadConfig();
-    const port = config.ports?.webUI || 10099;
+    const port = config.ports?.webUI || 19999;
 
     // 检查是否启用 LAN 访问 (--host 标志)
     const enableHost = process.argv.includes('--host');
@@ -218,7 +219,7 @@ async function handleStatus() {
     console.log(chalk.bold('📱 Web UI 服务:'));
     if (existing && existing.pm2_env.status === 'online') {
       console.log(chalk.green('  ✅ 状态: 运行中'));
-      console.log(chalk.gray(`  🌐 地址: http://localhost:${config.ports?.webUI || 10099}`));
+      console.log(chalk.gray(`  🌐 地址: http://localhost:${config.ports?.webUI || 19999}`));
       console.log(chalk.gray(`  🔑 进程 ID: ${existing.pid}`));
       console.log(chalk.gray(`  ⏱️  运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
       console.log(chalk.gray(`  💾 内存使用: ${formatMemory(existing.monit?.memory)}`));
@@ -229,21 +230,25 @@ async function handleStatus() {
 
     // 代理服务状态（从运行时文件检测）
     const fs = require('fs');
-    const os = require('os');
-    const claudeActive = fs.existsSync(path.join(os.homedir(), '.claude/.proxy-active-claude'));
-    const codexActive = fs.existsSync(path.join(os.homedir(), '.claude/.proxy-active-codex'));
-    const geminiActive = fs.existsSync(path.join(os.homedir(), '.claude/.proxy-active-gemini'));
+    ensureStorageDirMigrated();
+    const claudeActive = fs.existsSync(PATHS.activeChannel.claude);
+    const codexActive = fs.existsSync(PATHS.activeChannel.codex);
+    const geminiActive = fs.existsSync(PATHS.activeChannel.gemini);
+    const opencodeActive = fs.existsSync(PATHS.activeChannel.opencode);
 
     console.log(chalk.bold('\n🔌 代理服务:'));
 
     console.log(chalk.gray('  Claude:  ') + (claudeActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.proxy || 10088})`));
+      chalk.gray(` (http://localhost:${config.ports?.proxy || 20088})`));
 
     console.log(chalk.gray('  Codex:   ') + (codexActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.codexProxy || 10089})`));
+      chalk.gray(` (http://localhost:${config.ports?.codexProxy || 20089})`));
 
     console.log(chalk.gray('  Gemini:  ') + (geminiActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.geminiProxy || 10090})`));
+      chalk.gray(` (http://localhost:${config.ports?.geminiProxy || 20090})`));
+
+    console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
+      chalk.gray(` (http://localhost:${config.ports?.opencodeProxy || 20091})`));
 
     console.log(chalk.bold('\n💡 提示:'));
     console.log(chalk.gray('  • 代理服务通过 Web UI 界面控制'));

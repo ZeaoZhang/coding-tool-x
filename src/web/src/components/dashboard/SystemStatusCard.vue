@@ -86,7 +86,7 @@ import { NIcon, NText, NTag, NProgress } from 'naive-ui'
 import { SettingsOutline, GlobeOutline, GitNetworkOutline, TimeOutline, HardwareChipOutline } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 
-const webUIStatus = ref({ running: true, port: 10099 })
+const webUIStatus = ref({ running: true, port: 19999 })
 const wsStatus = ref({ connected: false, clients: 0 })
 const uptime = ref(0)
 const memoryUsage = ref(0)
@@ -115,7 +115,7 @@ function updateUptime() {
 function updateSystemInfo() {
   // Web UI 始终运行（如果能看到这个页面）
   webUIStatus.value.running = true
-  webUIStatus.value.port = parseInt(window.location.port) || 10099
+  webUIStatus.value.port = parseInt(window.location.port) || 19999
 
   // WebSocket 客户端数量（模拟）
   wsStatus.value.clients = wsStatus.value.connected ? 1 : 0

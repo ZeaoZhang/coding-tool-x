@@ -106,8 +106,8 @@ function writeTextFileAbsolute(filePath, content, overwrite, options = {}) {
 
 function getConfigFilePath() {
   try {
-    const loaderPath = require.resolve('../../config/loader');
-    return path.resolve(path.dirname(loaderPath), '../../config.json');
+    const { getConfigFilePath: resolveConfigPath } = require('../../config/loader');
+    return typeof resolveConfigPath === 'function' ? resolveConfigPath() : null;
   } catch (err) {
     return null;
   }
@@ -445,8 +445,7 @@ function exportAllConfigs() {
     const customConfigTemplates = allConfigTemplates.filter(t => !t.isBuiltin);
 
     // 获取所有频道配置
-    const channelsData = channelsService.getAllChannels();
-    const channels = channelsData?.channels || [];
+    const channels = channelsService.getAllChannels() || [];
 
     // 获取工作区配置
     const workspaceService = require('./workspace-service');
@@ -722,8 +721,7 @@ function importConfigs(importData, options = {}) {
     // 导入频道配置
     for (const channel of channels) {
       try {
-        const channelsData = channelsService.getAllChannels();
-        const existingChannels = channelsData?.channels || [];
+        const existingChannels = channelsService.getAllChannels() || [];
         const existing = existingChannels.find(c => c.id === channel.id);
 
         if (existing && !overwrite) {

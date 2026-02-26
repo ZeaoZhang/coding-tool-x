@@ -11,7 +11,7 @@ const { loadConfig } = require('../config/loader');
 const chalk = require('chalk');
 
 const config = loadConfig();
-const port = config.ports?.webUI || 10099;
+const port = config.ports?.webUI || 19999;
 
 console.log(chalk.cyan('\n🔧 开发模式：启动后端 API 服务器...\n'));
 

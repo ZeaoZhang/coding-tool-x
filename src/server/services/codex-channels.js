@@ -415,7 +415,7 @@ function writeCodexConfigForMultiChannel(allChannels) {
       // 回退默认的代理配置（使用默认端口），确保 provider 存在
       config.model_providers['cc-proxy'] = {
         name: 'cc-proxy',
-        base_url: 'http://127.0.0.1:10089/v1',
+        base_url: 'http://127.0.0.1:20089/v1',
         wire_api: 'responses',
         env_key: 'CC_PROXY_KEY'
       };

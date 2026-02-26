@@ -5,6 +5,11 @@ const path = require('path');
 const os = require('os');
 const { loadConfig } = require('../config/loader');
 const { ptyManager } = require('./services/pty-manager');
+const {
+  normalizeAddress,
+  isLoopbackAddress,
+  isLoopbackRequest
+} = require('./services/network-access');
 
 const MAX_PERSISTED_LOGS = 500;
 
@@ -24,6 +29,112 @@ function getMaxLogsLimit() {
 
 let wss = null;
 let wsClients = new Set();
+let websocketOptions = {
+  host: '127.0.0.1',
+  allowRemoteTerminal: false
+};
+
+function parseHostHeader(hostHeader) {
+  const value = String(hostHeader || '').trim();
+  if (!value) {
+    return { hostname: '', port: '' };
+  }
+
+  if (value.startsWith('[')) {
+    const closingBracket = value.indexOf(']');
+    if (closingBracket > 0) {
+      const hostname = value.slice(1, closingBracket);
+      const rest = value.slice(closingBracket + 1);
+      const port = rest.startsWith(':') ? rest.slice(1) : '';
+      return { hostname, port };
+    }
+  }
+
+  const separator = value.lastIndexOf(':');
+  if (separator > -1 && value.indexOf(':') === separator) {
+    return {
+      hostname: value.slice(0, separator),
+      port: value.slice(separator + 1)
+    };
+  }
+
+  return { hostname: value, port: '' };
+}
+
+function defaultPortForProtocol(protocol) {
+  if (protocol === 'https:') {
+    return '443';
+  }
+  return '80';
+}
+
+function isAllowedWebSocketOrigin(req) {
+  if (!req || !req.headers) {
+    return false;
+  }
+
+  const originHeader = req.headers.origin;
+  if (!originHeader) {
+    // 非浏览器客户端通常不会携带 Origin，仅允许本机来源
+    return isLoopbackRequest(req);
+  }
+
+  let originUrl;
+  try {
+    originUrl = new URL(originHeader);
+  } catch (error) {
+    return false;
+  }
+
+  if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
+    return false;
+  }
+
+  const requestHost = parseHostHeader(req.headers.host);
+  const requestProtocol = req.socket && req.socket.encrypted ? 'https:' : 'http:';
+  const requestHostname = normalizeAddress(requestHost.hostname).toLowerCase();
+  const requestPort = requestHost.port || defaultPortForProtocol(requestProtocol);
+
+  const originHostname = normalizeAddress(originUrl.hostname).toLowerCase();
+  const originPort = originUrl.port || defaultPortForProtocol(originUrl.protocol);
+
+  if (!requestHostname || !originHostname) {
+    return false;
+  }
+
+  // 同源直接放行
+  if (originHostname === requestHostname && originPort === requestPort) {
+    return true;
+  }
+
+  // 允许本机开发代理（例如 Vite 5000 -> 19999）
+  if (isLoopbackRequest(req) && isLoopbackAddress(originHostname) && isLoopbackAddress(requestHostname)) {
+    return true;
+  }
+
+  return false;
+}
+
+function installOriginGuard(server) {
+  if (!server || typeof server.shouldHandle !== 'function') {
+    return;
+  }
+
+  const originalShouldHandle = server.shouldHandle.bind(server);
+  server.shouldHandle = (req) => {
+    if (!originalShouldHandle(req)) {
+      return false;
+    }
+
+    const allowed = isAllowedWebSocketOrigin(req);
+    if (!allowed) {
+      const origin = req.headers.origin || 'unknown';
+      const clientIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : 'unknown';
+      console.warn(`[WebSocket] Rejected connection from ${clientIp}, origin: ${origin}`);
+    }
+    return allowed;
+  };
+}
 
 // 日志持久化文件路径
 function getLogsFilePath() {
@@ -141,11 +252,16 @@ function saveLogsToFile(logs) {
 let logsCache = [];
 
 // 启动 WebSocket 服务器（附加到现有的 HTTP 服务器）
-function startWebSocketServer(httpServer) {
+function startWebSocketServer(httpServer, options = {}) {
   if (wss) {
     console.log('WebSocket server already running');
     return;
   }
+
+  websocketOptions = {
+    host: options.host || '127.0.0.1',
+    allowRemoteTerminal: options.allowRemoteTerminal === true
+  };
 
   // 加载持久化的日志到缓存
   logsCache = loadPersistedLogs();
@@ -163,15 +279,17 @@ function startWebSocketServer(httpServer) {
         server: httpServer,
         path: '/ws'  // 指定 WebSocket 路径
       });
+      installOriginGuard(wss);
       console.log(`✅ WebSocket server attached to HTTP server at /ws`);
     } else {
       // 创建独立的 WebSocket 服务器，使用配置的 webUI 端口
       const config = loadConfig();
-      const port = config.ports?.webUI || 10099;
+      const port = config.ports?.webUI || 19999;
       wss = new WebSocket.Server({
         port,
         path: '/ws'
       });
+      installOriginGuard(wss);
       console.log(`✅ WebSocket server started on ws://127.0.0.1:${port}/ws`);
     }
 
@@ -185,6 +303,9 @@ function startWebSocketServer(httpServer) {
       ws.isAlive = true;
       // 终端绑定信息
       ws.terminalId = null;
+      const isLoopback = isLoopbackRequest(req);
+      const lanMode = websocketOptions.host === '0.0.0.0';
+      ws.terminalAllowed = !(lanMode && !isLoopback && !websocketOptions.allowRemoteTerminal);
 
       // 发送历史日志给新连接的客户端
       if (logsCache.length > 0) {
@@ -399,6 +520,14 @@ const { getWebTerminalShellConfig } = require('./services/terminal-config');
  */
 function handleTerminalMessage(ws, message) {
   const { type } = message;
+
+  if (String(type || '').startsWith('terminal:') && ws.terminalAllowed === false) {
+    ws.send(JSON.stringify({
+      type: 'terminal:error',
+      error: '出于安全考虑，LAN 模式下仅允许本机使用 Web 终端。可设置 CC_TOOL_ALLOW_REMOTE_TERMINAL=true 覆盖。'
+    }));
+    return;
+  }
 
   switch (type) {
     case 'terminal:create':

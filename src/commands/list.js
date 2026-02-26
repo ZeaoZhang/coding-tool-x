@@ -89,7 +89,7 @@ async function listRecentSessionsAcrossProjects(config, limit = null) {
   const maxSessions = limit || 15; // 默认显示15条最新对话
   const spinner = ora('加载最新对话...').start();
 
-  const sessions = getRecentSessions(config, maxSessions);
+  const sessions = await getRecentSessions(config, maxSessions);
 
   if (sessions.length === 0) {
     spinner.fail('暂无会话记录');

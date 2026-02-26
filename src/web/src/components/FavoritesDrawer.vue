@@ -18,6 +18,7 @@
               v-for="session in claudeFavorites"
               :key="`claude-${session.projectName}-${session.sessionId}`"
               :session="session"
+              channel="claude"
               :show-project="true"
               hide-fork
               hide-delete
@@ -59,6 +60,7 @@
               v-for="session in codexFavorites"
               :key="`codex-${session.projectName}-${session.sessionId}`"
               :session="session"
+              channel="codex"
               :show-project="true"
               hide-fork
               hide-delete
@@ -100,6 +102,7 @@
               v-for="session in geminiFavorites"
               :key="`gemini-${session.projectName}-${session.sessionId}`"
               :session="session"
+              channel="gemini"
               :show-project="true"
               hide-fork
               hide-delete

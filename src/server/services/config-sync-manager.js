@@ -18,11 +18,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { convertSkillToCodex, convertCommandToCodex } = require('./format-converter');
-const { NATIVE_PATHS } = require('../../config/paths');
+const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 
 // Paths
 const HOME = os.homedir();
-const CC_TOOL_CONFIGS = path.join(HOME, '.claude', 'cc-tool', 'configs');
+const CC_TOOL_CONFIGS = path.join(PATHS.base, 'configs');
 const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');
 const OPENCODE_DIR = NATIVE_PATHS.opencode.config;
@@ -79,6 +79,7 @@ const CONFIG_TYPES = {
 
 class ConfigSyncManager {
   constructor() {
+    ensureStorageDirMigrated();
     this.ccToolConfigs = CC_TOOL_CONFIGS;
     this.claudeDir = CLAUDE_CODE_DIR;
     this.codexDir = CODEX_DIR;

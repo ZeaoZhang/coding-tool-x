@@ -195,7 +195,7 @@ function parseLinesWithTail(headLines, tailLines) {
 /**
  * 获取所有可用的项目
  */
-function getAvailableProjects(config) {
+async function getAvailableProjects(config) {
   const projectsDir = config.projectsDir;
   if (!fs.existsSync(projectsDir)) {
     console.log(chalk.red(`项目目录不存在: ${projectsDir}`));
@@ -204,13 +204,14 @@ function getAvailableProjects(config) {
 
   // 获取项目列表和统计信息（包含解析后的名称）
   const { getProjectsWithStats, getProjectOrder } = require('../server/services/sessions');
-  const projects = getProjectsWithStats(config);
+  const projects = await getProjectsWithStats(config);
   const savedOrder = getProjectOrder(config);
+  const projectList = Array.isArray(projects) ? projects : [];
 
   // 按保存的顺序排列
   let orderedProjects = [];
   if (savedOrder.length > 0) {
-    const projectMap = new Map(projects.map(p => [p.name, p]));
+    const projectMap = new Map(projectList.map(p => [p.name, p]));
     for (const name of savedOrder) {
       if (projectMap.has(name)) {
         orderedProjects.push(projectMap.get(name));
@@ -220,7 +221,7 @@ function getAvailableProjects(config) {
     // 添加不在排序中的新项目
     orderedProjects.push(...projectMap.values());
   } else {
-    orderedProjects = projects;
+    orderedProjects = projectList;
   }
 
   // 转换为选项格式

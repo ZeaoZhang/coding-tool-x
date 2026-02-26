@@ -204,6 +204,30 @@ const MODEL_ALIASES = {
 
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const TEST_TIMEOUT_MS = 10000; // 10 seconds per model test
+const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,interleaved-thinking-2025-05-14';
+
+const MODEL_UNAVAILABLE_HINTS = [
+  'not found',
+  'does not exist',
+  'invalid model',
+  'unsupported model',
+  'not supported',
+  'model unavailable',
+  'deprecated',
+  'decommission',
+  'retired',
+  'offline',
+  'unknown model',
+  '下线',
+  '已下线',
+  '已停用',
+  '已废弃',
+  '已淘汰',
+  '模型不存在',
+  '无效模型',
+  '模型不可用',
+  '请切换'
+];
 
 /**
  * Generate realistic User-Agent strings that mimic official SDKs
@@ -260,6 +284,299 @@ function buildRequestHeaders(channelType, channel) {
   }
 
   return headers;
+}
+
+function buildOpenAiCompatibleUrl(baseUrl, endpoint) {
+  const trimmed = String(baseUrl || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    throw new Error('Invalid baseUrl');
+  }
+
+  const normalizedEndpoint = String(endpoint || '').startsWith('/')
+    ? String(endpoint)
+    : `/${endpoint}`;
+
+  if (trimmed.endsWith(normalizedEndpoint)) {
+    return trimmed;
+  }
+
+  const endpointWithoutV1 = normalizedEndpoint.startsWith('/v1/')
+    ? normalizedEndpoint.slice(3)
+    : normalizedEndpoint;
+
+  if (trimmed.endsWith(endpointWithoutV1)) {
+    return trimmed;
+  }
+
+  if (trimmed.endsWith('/v1') && normalizedEndpoint.startsWith('/v1/')) {
+    return `${trimmed}${normalizedEndpoint.slice(3)}`;
+  }
+
+  return `${trimmed}${normalizedEndpoint}`;
+}
+
+function buildClaudeMessagesUrl(baseUrl, options = {}) {
+  const withBeta = options.withBeta !== false;
+  const parsed = new URL(String(baseUrl || '').trim());
+  let pathname = parsed.pathname.replace(/\/+$/, '');
+
+  if (!pathname || pathname === '/') {
+    pathname = '/v1/messages';
+  } else if (pathname.endsWith('/messages')) {
+    // noop
+  } else if (pathname.endsWith('/v1')) {
+    pathname = `${pathname}/messages`;
+  } else {
+    pathname = `${pathname}/v1/messages`;
+  }
+
+  parsed.pathname = pathname;
+  if (withBeta) {
+    parsed.searchParams.set('beta', 'true');
+  }
+  return parsed.toString();
+}
+
+function buildGeminiGenerateContentUrl(baseUrl, model, apiKey = '') {
+  const modelName = String(model || '').trim();
+  if (!modelName) {
+    throw new Error('Model is required for Gemini probe');
+  }
+
+  const parsed = new URL(String(baseUrl || '').trim());
+  let pathname = parsed.pathname.replace(/\/+$/, '');
+  const modelsIndex = pathname.indexOf('/models');
+  if (modelsIndex >= 0) {
+    pathname = pathname.slice(0, modelsIndex);
+  }
+
+  let apiBasePath;
+  if (!pathname || pathname === '/') {
+    apiBasePath = '/v1beta';
+  } else if (pathname.endsWith('/v1beta') || pathname.endsWith('/v1')) {
+    apiBasePath = pathname;
+  } else {
+    apiBasePath = `${pathname}/v1beta`;
+  }
+
+  parsed.pathname = `${apiBasePath}/models/${encodeURIComponent(modelName)}:generateContent`;
+  if (apiKey) {
+    parsed.searchParams.set('key', apiKey);
+  }
+  return parsed.toString();
+}
+
+function createClaudeProbeAttempt(channel, model) {
+  const apiKey = channel.apiKey || '';
+  const sessionId = Math.random().toString(36).substring(2, 15);
+  const body = JSON.stringify({
+    model,
+    max_tokens: 1,
+    stream: false,
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+    system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
+    metadata: {
+      user_id: `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}`
+    }
+  });
+
+  return {
+    label: 'claude-code',
+    url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
+    body,
+    headers: {
+      ...buildRequestHeaders('claude', channel),
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'x-app': 'cli',
+      'x-stainless-lang': 'js',
+      'x-stainless-runtime': 'node',
+      'User-Agent': 'claude-cli/2.0.53 (external, cli)'
+    }
+  };
+}
+
+function createCodexProbeAttempts(channel, model) {
+  const apiKey = channel.apiKey || '';
+  const commonHeaders = {
+    ...buildRequestHeaders('codex', channel),
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+    'User-Agent': 'codex_cli_rs/0.65.0'
+  };
+
+  const responsesBody = JSON.stringify({
+    model,
+    instructions: 'You are Codex.',
+    input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
+    max_output_tokens: 1,
+    stream: false,
+    store: false
+  });
+
+  const chatBody = JSON.stringify({
+    model,
+    max_tokens: 1,
+    messages: [{ role: 'user', content: 'test' }]
+  });
+
+  return [
+    {
+      label: 'codex-responses',
+      url: buildOpenAiCompatibleUrl(channel.baseUrl, '/v1/responses'),
+      body: responsesBody,
+      headers: {
+        ...commonHeaders,
+        'openai-beta': 'responses=experimental'
+      }
+    },
+    {
+      label: 'codex-chat-fallback',
+      url: buildOpenAiCompatibleUrl(channel.baseUrl, '/v1/chat/completions'),
+      body: chatBody,
+      headers: commonHeaders
+    }
+  ];
+}
+
+function createGeminiProbeAttempt(channel, model) {
+  const apiKey = channel.apiKey || '';
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: 'test' }] }],
+    generationConfig: { maxOutputTokens: 1, temperature: 0 }
+  });
+
+  return {
+    label: 'gemini-generate-content',
+    url: buildGeminiGenerateContentUrl(channel.baseUrl, model, apiKey),
+    body,
+    headers: {
+      ...buildRequestHeaders('gemini', channel),
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+      'x-goog-api-key': apiKey,
+      'User-Agent': 'google-genai-sdk/0.8.0'
+    }
+  };
+}
+
+function buildProbeAttempts(channel, channelType, model) {
+  const normalizedType = String(channelType || '').trim().toLowerCase();
+  if (normalizedType === 'claude') {
+    return [createClaudeProbeAttempt(channel, model)];
+  }
+  if (normalizedType === 'codex' || normalizedType === 'openai_compatible') {
+    return createCodexProbeAttempts(channel, model);
+  }
+  if (normalizedType === 'gemini') {
+    return [createGeminiProbeAttempt(channel, model)];
+  }
+  return [];
+}
+
+function extractProbeErrorMessage(responseBody) {
+  const fallback = String(responseBody || '');
+  try {
+    const response = JSON.parse(responseBody || '{}');
+    if (typeof response === 'string') return response;
+    if (typeof response?.error?.message === 'string') return response.error.message;
+    if (typeof response?.error === 'string') return response.error;
+    if (typeof response?.message === 'string') return response.message;
+    if (typeof response?.detail === 'string') return response.detail;
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function classifyProbeResult(statusCode, responseBody, model) {
+  if (statusCode >= 200 && statusCode < 300) {
+    return 'available';
+  }
+
+  const errorMsg = extractProbeErrorMessage(responseBody).toLowerCase();
+  const modelLower = String(model || '').toLowerCase();
+  const hasModelContext = errorMsg.includes('model')
+    || errorMsg.includes('模型')
+    || (modelLower && errorMsg.includes(modelLower));
+
+  if (hasModelContext && MODEL_UNAVAILABLE_HINTS.some(hint => errorMsg.includes(hint))) {
+    return 'unavailable';
+  }
+
+  if (statusCode === 400 || statusCode === 404 || statusCode === 405 || statusCode === 415 || statusCode === 422 || statusCode === 501) {
+    return 'retry';
+  }
+
+  return 'retry';
+}
+
+function executeProbeAttempt(attempt) {
+  return new Promise((resolve) => {
+    try {
+      const parsedUrl = new URL(attempt.url);
+      const isHttps = parsedUrl.protocol === 'https:';
+      const httpModule = isHttps ? https : http;
+      const requestBody = String(attempt.body || '');
+      const headers = {
+        ...(attempt.headers || {}),
+        'Content-Length': Buffer.byteLength(requestBody)
+      };
+
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (isHttps ? 443 : 80),
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'POST',
+        timeout: TEST_TIMEOUT_MS,
+        headers
+      };
+
+      const req = httpModule.request(options, (res) => {
+        collectResponseBody(res)
+          .then((data) => {
+            resolve({
+              statusCode: res.statusCode || 0,
+              responseBody: data
+            });
+          })
+          .catch((error) => {
+            resolve({
+              statusCode: 0,
+              responseBody: '',
+              error
+            });
+          });
+      });
+
+      req.on('error', (error) => resolve({
+        statusCode: 0,
+        responseBody: '',
+        error
+      }));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({
+          statusCode: 0,
+          responseBody: '',
+          error: new Error('Request timeout')
+        });
+      });
+
+      req.write(requestBody);
+      req.end();
+    } catch (error) {
+      resolve({
+        statusCode: 0,
+        responseBody: '',
+        error
+      });
+    }
+  });
 }
 
 function createDecodedStream(res) {
@@ -359,149 +676,31 @@ function isCacheValid(cacheEntry) {
  * @returns {Promise<boolean>}
  */
 async function testModelAvailability(channel, channelType, model) {
-  return new Promise((resolve) => {
-    try {
-      const baseUrl = channel.baseUrl.trim().replace(/\/+$/, '');
-      let testUrl;
-      let requestBody;
-      // Start with common headers that look like legitimate SDK clients
-      let headers = {
-        ...buildRequestHeaders(channelType, channel),
-        'Content-Type': 'application/json'
-      };
+  try {
+    const attempts = buildProbeAttempts(channel, channelType, model);
+    if (!attempts.length) {
+      return false;
+    }
 
-      // Construct API endpoint and request based on channel type
-      if (channelType === 'claude') {
-        testUrl = `${baseUrl}/v1/messages`;
-        headers['x-api-key'] = channel.apiKey;
-        headers['anthropic-version'] = '2023-06-01';
-        requestBody = JSON.stringify({
-          model: model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'test' }]
-        });
-      } else if (channelType === 'codex' || channelType === 'openai_compatible') {
-        // 处理 baseUrl 已包含 /v1 的情况
-        testUrl = baseUrl.endsWith('/v1')
-          ? `${baseUrl}/chat/completions`
-          : `${baseUrl}/v1/chat/completions`;
-        headers['Authorization'] = `Bearer ${channel.apiKey}`;
-        requestBody = JSON.stringify({
-          model: model,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'test' }]
-        });
-      } else if (channelType === 'gemini') {
-        // Gemini uses API key in URL
-        testUrl = `${baseUrl}/v1beta/models/${model}:generateContent?key=${channel.apiKey}`;
-        requestBody = JSON.stringify({
-          contents: [{ parts: [{ text: 'test' }] }],
-          generationConfig: { maxOutputTokens: 1 }
-        });
-      } else {
-        return resolve(false);
+    for (const attempt of attempts) {
+      const result = await executeProbeAttempt(attempt);
+      if (result.error) {
+        continue;
       }
 
-      const parsedUrl = new URL(testUrl);
-      const isHttps = parsedUrl.protocol === 'https:';
-      const httpModule = isHttps ? https : http;
-
-      const options = {
-        hostname: parsedUrl.hostname,
-        port: parsedUrl.port || (isHttps ? 443 : 80),
-        path: parsedUrl.pathname + parsedUrl.search,
-        method: 'POST',
-        timeout: TEST_TIMEOUT_MS,
-        headers: {
-          ...headers,
-          'Content-Length': Buffer.byteLength(requestBody)
-        }
-      };
-
-      const req = httpModule.request(options, (res) => {
-        collectResponseBody(res)
-          .then((data) => {
-            // Success: 200-299 status codes
-            if (res.statusCode >= 200 && res.statusCode < 300) {
-              return resolve(true);
-            }
-
-            if (res.statusCode === 400 || res.statusCode === 404) {
-              const extractErrorMessage = () => {
-                const fallback = String(data || '');
-                try {
-                  const response = JSON.parse(data || '{}');
-                  if (typeof response === 'string') return response;
-                  if (typeof response?.error?.message === 'string') return response.error.message;
-                  if (typeof response?.error === 'string') return response.error;
-                  if (typeof response?.message === 'string') return response.message;
-                  if (typeof response?.detail === 'string') return response.detail;
-                  return fallback;
-                } catch {
-                  return fallback;
-                }
-              };
-
-              const errorMsg = extractErrorMessage().toLowerCase();
-              const modelLower = String(model || '').toLowerCase();
-              const hasModelContext = errorMsg.includes('model')
-                || errorMsg.includes('模型')
-                || (modelLower && errorMsg.includes(modelLower));
-              const modelUnavailableHints = [
-                'not found',
-                'does not exist',
-                'invalid model',
-                'unsupported model',
-                'not supported',
-                'model unavailable',
-                'deprecated',
-                'decommission',
-                'retired',
-                'offline',
-                'unknown model',
-                '下线',
-                '已下线',
-                '已停用',
-                '已废弃',
-                '已淘汰',
-                '模型不存在',
-                '无效模型',
-                '不支持',
-                '不可用',
-                '请切换'
-              ];
-
-              if (res.statusCode === 404) {
-                return resolve(false);
-              }
-
-              if (hasModelContext && modelUnavailableHints.some(hint => errorMsg.includes(hint))) {
-                return resolve(false);
-              }
-
-              // 其他 400 错误大多是认证或参数问题，不能据此判定模型不可用
-              return resolve(true);
-            }
-
-            // Other errors (401, 403, 500, etc.) are inconclusive
-            return resolve(false);
-          })
-          .catch(() => resolve(false));
-      });
-
-      req.on('error', () => resolve(false));
-      req.on('timeout', () => {
-        req.destroy();
-        resolve(false);
-      });
-
-      req.write(requestBody);
-      req.end();
-
-    } catch (error) {
-      resolve(false);
+      const verdict = classifyProbeResult(result.statusCode, result.responseBody, model);
+      if (verdict === 'available') {
+        return true;
+      }
+      if (verdict === 'unavailable') {
+        return false;
+      }
     }
-  });
+
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -516,6 +715,7 @@ async function testModelAvailability(channel, channelType, model) {
 async function probeModelAvailability(channel, channelType, options = {}) {
   const forceRefresh = !!options.forceRefresh;
   const toolType = options.toolType;
+  const stopOnFirstAvailable = !!options.stopOnFirstAvailable;
   const cache = loadModelCache();
   const cacheKey = channel.id;
 
@@ -559,6 +759,9 @@ async function probeModelAvailability(channel, channelType, options = {}) {
     if (isAvailable) {
       availableModels.push(model);
       console.log(`[ModelDetector] ✓ ${model} available`);
+      if (stopOnFirstAvailable) {
+        break;
+      }
     } else {
       console.log(`[ModelDetector] ✗ ${model} not available`);
     }

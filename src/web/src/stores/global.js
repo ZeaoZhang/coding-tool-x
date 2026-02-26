@@ -21,28 +21,28 @@ export const useGlobalStore = defineStore('global', () => {
   const claudeProxy = ref({
     running: false,
     activeChannel: null,
-    port: 10088,
+    port: 20088,
     runtime: null,
     startTime: null,
-    defaultPort: 10088
+    defaultPort: 20088
   })
 
   const codexProxy = ref({
     running: false,
     activeChannel: null,
-    port: 10089,
+    port: 20089,
     runtime: null,
     startTime: null,
-    defaultPort: 10089
+    defaultPort: 20089
   })
 
   const geminiProxy = ref({
     running: false,
     activeChannel: null,
-    port: 10090,
+    port: 20090,
     runtime: null,
     startTime: null,
-    defaultPort: 10090
+    defaultPort: 20090
   })
 
   const opencodeProxy = ref({

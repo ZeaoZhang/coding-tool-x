@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:10099';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:19999';
 
 /**
  * 获取支持的格式列表

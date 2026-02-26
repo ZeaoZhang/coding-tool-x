@@ -65,6 +65,30 @@ function normalizeGatewaySourceType(value, fallback = 'claude') {
   return fallback;
 }
 
+function extractApiKeyFromHelper(apiKeyHelper) {
+  if (typeof apiKeyHelper !== 'string' || !apiKeyHelper.trim()) {
+    return '';
+  }
+
+  const helper = apiKeyHelper.trim();
+  let match = helper.match(/^echo\s+["']([^"']+)["']$/);
+  if (match && match[1]) {
+    return match[1];
+  }
+
+  match = helper.match(/^printf\s+["'][^"']*["']\s+["']([^"']+)["']$/);
+  if (match && match[1]) {
+    return match[1];
+  }
+
+  return '';
+}
+
+function buildApiKeyHelperCommand() {
+  // 避免把明文 API Key 写入可执行命令，降低注入风险
+  return 'printf "%s" "${ANTHROPIC_AUTH_TOKEN:-${ANTHROPIC_API_KEY:-}}"';
+}
+
 function applyChannelDefaults(channel) {
   const normalized = { ...channel };
   if (normalized.enabled === undefined) {
@@ -149,10 +173,7 @@ function getCurrentSettings() {
                  '';
 
     if (!apiKey && settings.apiKeyHelper) {
-      const match = settings.apiKeyHelper.match(/['"]([^'"]+)['"]/);
-      if (match && match[1]) {
-        apiKey = match[1];
-      }
+      apiKey = extractApiKeyFromHelper(settings.apiKeyHelper);
     }
 
     if (!baseUrl && !apiKey) {
@@ -181,6 +202,23 @@ function getBestChannelForRestore() {
 function getAllChannels() {
   const data = loadChannels();
   return data.channels;
+}
+
+function getCurrentChannel() {
+  const channels = getAllChannels();
+  if (!Array.isArray(channels) || channels.length === 0) {
+    return null;
+  }
+
+  const activeChannelId = loadActiveChannelId();
+  if (activeChannelId) {
+    const matched = channels.find(ch => ch.id === activeChannelId);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return channels.find(ch => ch.enabled !== false) || channels[0];
 }
 
 function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
@@ -361,7 +399,7 @@ function updateClaudeSettingsWithModelConfig(channel) {
     delete settings.env.NO_PROXY;
   }
 
-  settings.apiKeyHelper = `echo '${apiKey}'`;
+  settings.apiKeyHelper = buildApiKeyHelperCommand();
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
@@ -390,7 +428,7 @@ function updateClaudeSettings(baseUrl, apiKey) {
     settings.env.ANTHROPIC_API_KEY = apiKey;
   }
 
-  settings.apiKeyHelper = `echo '${apiKey}'`;
+  settings.apiKeyHelper = buildApiKeyHelperCommand();
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
@@ -401,6 +439,7 @@ function getEffectiveApiKey(channel) {
 
 module.exports = {
   getAllChannels,
+  getCurrentChannel,
   getCurrentSettings,
   createChannel,
   updateChannel,

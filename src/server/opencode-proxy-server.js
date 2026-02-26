@@ -12,6 +12,7 @@ const { allocateChannel, releaseChannel, getSchedulerState } = require('./servic
 const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
+const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
 const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
@@ -526,12 +527,12 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
   };
 }
 
-function convertOpenCodePayloadToClaude(pathname, payload = {}) {
+function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = '') {
   const normalized = normalizeOpenCodeMessages(pathname, payload);
   const maxTokens = Number(payload.max_output_tokens ?? payload.max_tokens);
 
   const converted = {
-    model: payload.model || 'claude-sonnet-4-20250514',
+    model: payload.model || fallbackModel || 'claude-sonnet-4-20250514',
     max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.round(maxTokens) : 4096,
     stream: false,
     messages: normalized.messages
@@ -650,19 +651,163 @@ function normalizeStopSequences(stopValue) {
   return undefined;
 }
 
+function normalizeGeminiFunctionResponsePayload(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return { content: '' };
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return { content: value };
+    }
+    return { content: value };
+  }
+  return { content: normalizeToolResultContent(value) };
+}
+
 function buildGeminiContents(messages = []) {
   const contents = [];
+  const toolNameById = new Map();
+
   for (const message of messages) {
     if (!message || typeof message !== 'object') continue;
-    const text = extractText(message.content);
-    if (!text) continue;
     const role = message.role === 'assistant' ? 'model' : 'user';
-    contents.push({
-      role,
-      parts: [{ text }]
-    });
+    const contentBlocks = Array.isArray(message.content) ? message.content : [message.content];
+    const parts = [];
+
+    for (const block of contentBlocks) {
+      if (!block || typeof block !== 'object') {
+        const text = extractText(block);
+        if (text) {
+          parts.push({ text });
+        }
+        continue;
+      }
+
+      if (block.type === 'tool_use' && block.name) {
+        const callId = String(block.id || generateToolCallId());
+        const args = (block.input && typeof block.input === 'object' && !Array.isArray(block.input))
+          ? block.input
+          : {};
+        toolNameById.set(callId, block.name);
+        parts.push({
+          functionCall: {
+            name: block.name,
+            args
+          }
+        });
+        continue;
+      }
+
+      if (block.type === 'tool_result') {
+        const toolUseId = String(block.tool_use_id || block.id || '');
+        const toolName = block.name || toolNameById.get(toolUseId);
+        if (!toolName) {
+          const text = normalizeToolResultContent(block.content);
+          if (text) {
+            parts.push({ text });
+          }
+          continue;
+        }
+
+        parts.push({
+          functionResponse: {
+            name: toolName,
+            response: normalizeGeminiFunctionResponsePayload(block.content)
+          }
+        });
+        continue;
+      }
+
+      const text = extractText(block);
+      if (text) {
+        parts.push({ text });
+      }
+    }
+
+    if (parts.length === 0) continue;
+    contents.push({ role, parts });
   }
   return contents;
+}
+
+function cloneJsonCompatible(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function normalizeCodexResponsesInput(inputValue) {
+  if (typeof inputValue === 'string') {
+    return [
+      {
+        type: 'message',
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: inputValue
+          }
+        ]
+      }
+    ];
+  }
+
+  if (!Array.isArray(inputValue)) return undefined;
+  return inputValue.map(item => {
+    if (!item || typeof item !== 'object') return item;
+    const clonedItem = cloneJsonCompatible(item);
+    if (String(clonedItem?.role || '').trim().toLowerCase() === 'system') {
+      clonedItem.role = 'developer';
+    }
+    return clonedItem;
+  });
+}
+
+function convertOpenCodePayloadToCodexResponses(payload = {}, fallbackModel = '') {
+  const requestBody = cloneJsonCompatible((payload && typeof payload === 'object') ? payload : {});
+  if (requestBody.model === undefined && fallbackModel) {
+    requestBody.model = fallbackModel;
+  }
+
+  const normalizedInput = normalizeCodexResponsesInput(requestBody.input);
+  if (normalizedInput !== undefined) {
+    requestBody.input = normalizedInput;
+  }
+
+  requestBody.stream = true;
+  requestBody.store = false;
+  if (requestBody.parallel_tool_calls === undefined) {
+    requestBody.parallel_tool_calls = true;
+  }
+
+  const include = Array.isArray(requestBody.include)
+    ? requestBody.include.filter(item => typeof item === 'string' && item.trim())
+    : [];
+  if (!include.includes('reasoning.encrypted_content')) {
+    include.push('reasoning.encrypted_content');
+  }
+  requestBody.include = include;
+
+  delete requestBody.max_output_tokens;
+  delete requestBody.max_completion_tokens;
+  delete requestBody.temperature;
+  delete requestBody.top_p;
+  delete requestBody.service_tier;
+  delete requestBody.user;
+
+  return {
+    requestBody,
+    model: requestBody.model || fallbackModel || ''
+  };
 }
 
 function convertOpenCodePayloadToGemini(pathname, payload = {}, fallbackModel = '') {
@@ -723,9 +868,10 @@ function buildClaudeTargetUrl(baseUrl = '') {
   return `${trimmed}/v1/messages`;
 }
 
-function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '') {
+function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '', options = {}) {
   const modelName = String(model || '').trim();
   if (!modelName) return '';
+  const stream = !!options.stream;
 
   let targetUrl;
   try {
@@ -749,9 +895,13 @@ function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '') {
     apiBasePath = `${pathname}/v1beta`;
   }
 
-  targetUrl.pathname = `${apiBasePath}/models/${encodeURIComponent(modelName)}:generateContent`;
+  const method = stream ? 'streamGenerateContent' : 'generateContent';
+  targetUrl.pathname = `${apiBasePath}/models/${encodeURIComponent(modelName)}:${method}`;
   if (apiKey) {
     targetUrl.searchParams.set('key', apiKey);
+  }
+  if (stream) {
+    targetUrl.searchParams.set('alt', 'sse');
   }
 
   return targetUrl.toString();
@@ -901,37 +1051,87 @@ function extractClaudeResponseText(claudeResponse = {}) {
   return extractClaudeResponseContent(claudeResponse).text;
 }
 
-function extractGeminiResponseText(geminiResponse = {}) {
-  if (!Array.isArray(geminiResponse.candidates)) return '';
+function buildGeminiFunctionCallRecord(functionCall = {}, callIndex = 0) {
+  if (!functionCall || typeof functionCall !== 'object' || !functionCall.name) return null;
+  const callId = String(functionCall.id || functionCall.callId || `call_${callIndex + 1}`);
+  const argsObject = (functionCall.args && typeof functionCall.args === 'object' && !Array.isArray(functionCall.args))
+    ? functionCall.args
+    : {};
+
+  return {
+    id: `fc_${callId}`,
+    call_id: callId,
+    name: functionCall.name,
+    arguments: JSON.stringify(argsObject)
+  };
+}
+
+function extractGeminiResponseContent(geminiResponse = {}) {
   const fragments = [];
+  const functionCalls = [];
+  const reasoningItems = [];
+  let functionIndex = 0;
+  let reasoningIndex = 0;
+
+  if (!Array.isArray(geminiResponse.candidates)) {
+    return { text: '', functionCalls: [], reasoningItems: [] };
+  }
+
   for (const candidate of geminiResponse.candidates) {
     if (!candidate || typeof candidate !== 'object') continue;
     const parts = candidate.content?.parts;
     if (!Array.isArray(parts)) continue;
+
     for (const part of parts) {
-      if (typeof part?.text === 'string' && part.text.trim()) {
+      if (!part || typeof part !== 'object') continue;
+      if (part.functionCall && typeof part.functionCall === 'object') {
+        const functionCall = buildGeminiFunctionCallRecord(part.functionCall, functionIndex);
+        if (functionCall) {
+          functionCalls.push(functionCall);
+          functionIndex += 1;
+        }
+        continue;
+      }
+
+      if (typeof part.text === 'string' && part.text.trim() && part.thought === true) {
+        reasoningItems.push({
+          id: `rs_${Date.now()}_${reasoningIndex}`,
+          text: part.text
+        });
+        reasoningIndex += 1;
+        continue;
+      }
+
+      if (typeof part.text === 'string' && part.text.trim()) {
         fragments.push(part.text);
       }
     }
   }
-  return fragments.join('\n').trim();
+
+  return {
+    text: fragments.join('\n').trim(),
+    functionCalls,
+    reasoningItems
+  };
 }
 
-function extractGeminiFunctionCalls(geminiResponse = {}) {
-  if (!Array.isArray(geminiResponse.candidates)) return [];
-  const calls = [];
-  for (const candidate of geminiResponse.candidates) {
-    if (!candidate || typeof candidate !== 'object') continue;
-    const parts = candidate.content?.parts;
-    if (!Array.isArray(parts)) continue;
-    for (const part of parts) {
-      if (!part || typeof part !== 'object') continue;
-      const functionCall = part.functionCall;
-      if (!functionCall || typeof functionCall !== 'object' || !functionCall.name) continue;
-      calls.push(functionCall);
-    }
-  }
-  return calls;
+function extractGeminiUsage(geminiResponse = {}) {
+  const usageMetadata = (geminiResponse.usageMetadata && typeof geminiResponse.usageMetadata === 'object')
+    ? geminiResponse.usageMetadata
+    : {};
+  const inputTokens = Number(usageMetadata.promptTokenCount || 0);
+  const outputTokens = Number(usageMetadata.candidatesTokenCount || 0);
+  const totalTokens = Number(usageMetadata.totalTokenCount || (inputTokens + outputTokens));
+  const cachedTokens = Number(usageMetadata.cachedContentTokenCount || 0);
+  const reasoningTokens = Number(usageMetadata.thoughtsTokenCount || 0);
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    cachedTokens,
+    reasoningTokens
+  };
 }
 
 function mapClaudeStopReasonToChatFinishReason(stopReason) {
@@ -1019,14 +1219,57 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
 }
 
 function buildOpenAiResponsesObjectFromGemini(geminiResponse = {}, fallbackModel = '') {
-  const inputTokens = Number(geminiResponse?.usageMetadata?.promptTokenCount || 0);
-  const outputTokens = Number(geminiResponse?.usageMetadata?.candidatesTokenCount || 0);
-  const totalTokens = Number(geminiResponse?.usageMetadata?.totalTokenCount || (inputTokens + outputTokens));
-  const text = extractGeminiResponseText(geminiResponse);
+  const usage = extractGeminiUsage(geminiResponse);
+  const parsedContent = extractGeminiResponseContent(geminiResponse);
+  const text = parsedContent.text;
+  const reasoningTokens = usage.reasoningTokens > 0
+    ? usage.reasoningTokens
+    : parsedContent.reasoningItems.reduce((acc, item) => acc + Math.floor((item.text || '').length / 4), 0);
   const model = geminiResponse.modelVersion || fallbackModel || '';
   const responseId = `resp_${Date.now()}`;
   const messageId = `msg_${Date.now()}`;
   const createdAt = Math.floor(Date.now() / 1000);
+  const output = [];
+
+  parsedContent.reasoningItems.forEach(item => {
+    output.push({
+      id: item.id,
+      type: 'reasoning',
+      summary: [
+        {
+          type: 'summary_text',
+          text: item.text
+        }
+      ]
+    });
+  });
+
+  if (text || parsedContent.functionCalls.length === 0) {
+    output.push({
+      id: messageId,
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text,
+          annotations: []
+        }
+      ]
+    });
+  }
+
+  parsedContent.functionCalls.forEach(call => {
+    output.push({
+      id: call.id,
+      type: 'function_call',
+      status: 'completed',
+      arguments: call.arguments,
+      call_id: call.call_id,
+      name: call.name
+    });
+  });
 
   return {
     id: responseId,
@@ -1034,25 +1277,13 @@ function buildOpenAiResponsesObjectFromGemini(geminiResponse = {}, fallbackModel
     created_at: createdAt,
     status: 'completed',
     model,
-    output: [
-      {
-        id: messageId,
-        type: 'message',
-        status: 'completed',
-        role: 'assistant',
-        content: [
-          {
-            type: 'output_text',
-            text,
-            annotations: []
-          }
-        ]
-      }
-    ],
+    output,
     usage: {
-      input_tokens: inputTokens,
-      output_tokens: outputTokens,
-      total_tokens: totalTokens
+      input_tokens: usage.inputTokens,
+      output_tokens: usage.outputTokens,
+      total_tokens: usage.totalTokens,
+      ...(usage.cachedTokens > 0 ? { input_tokens_details: { cached_tokens: usage.cachedTokens } } : {}),
+      ...(reasoningTokens > 0 ? { output_tokens_details: { reasoning_tokens: reasoningTokens } } : {})
     }
   };
 }
@@ -1104,15 +1335,14 @@ function buildOpenAiChatCompletionsObject(claudeResponse = {}, fallbackModel = '
 }
 
 function buildOpenAiChatCompletionsObjectFromGemini(geminiResponse = {}, fallbackModel = '') {
-  const inputTokens = Number(geminiResponse?.usageMetadata?.promptTokenCount || 0);
-  const outputTokens = Number(geminiResponse?.usageMetadata?.candidatesTokenCount || 0);
-  const totalTokens = Number(geminiResponse?.usageMetadata?.totalTokenCount || (inputTokens + outputTokens));
-  const text = extractGeminiResponseText(geminiResponse);
+  const usage = extractGeminiUsage(geminiResponse);
+  const parsedContent = extractGeminiResponseContent(geminiResponse);
+  const text = parsedContent.text;
   const model = geminiResponse.modelVersion || fallbackModel || '';
   const chatId = `chatcmpl_${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
   const firstCandidate = Array.isArray(geminiResponse.candidates) ? geminiResponse.candidates[0] : null;
-  const functionCalls = extractGeminiFunctionCalls(geminiResponse);
+  const functionCalls = parsedContent.functionCalls;
   const hasToolCalls = functionCalls.length > 0;
 
   const message = {
@@ -1121,12 +1351,12 @@ function buildOpenAiChatCompletionsObjectFromGemini(geminiResponse = {}, fallbac
   };
 
   if (hasToolCalls) {
-    message.tool_calls = functionCalls.map((call, index) => ({
-      id: `call_${index + 1}`,
+    message.tool_calls = functionCalls.map(call => ({
+      id: call.call_id,
       type: 'function',
       function: {
         name: call.name,
-        arguments: JSON.stringify(call.args || {})
+        arguments: call.arguments
       }
     }));
   }
@@ -1144,9 +1374,9 @@ function buildOpenAiChatCompletionsObjectFromGemini(geminiResponse = {}, fallbac
       }
     ],
     usage: {
-      prompt_tokens: inputTokens,
-      completion_tokens: outputTokens,
-      total_tokens: totalTokens
+      prompt_tokens: usage.inputTokens,
+      completion_tokens: usage.outputTokens,
+      total_tokens: usage.totalTokens
     }
   };
 }
@@ -1165,6 +1395,8 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
   const inputTokens = Number(usage?.input_tokens || usage?.prompt_tokens || 0);
   const outputTokens = Number(usage?.output_tokens || usage?.completion_tokens || 0);
   const totalTokens = Number(usage?.total_tokens || (inputTokens + outputTokens));
+  const cachedTokens = Number(usage?.input_tokens_details?.cached_tokens || 0);
+  const reasoningTokens = Number(usage?.output_tokens_details?.reasoning_tokens || 0);
   const now = new Date();
   const time = now.toLocaleTimeString('zh-CN', {
     hour12: false,
@@ -1188,8 +1420,8 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
     model: model || '',
     inputTokens,
     outputTokens,
-    cachedTokens: 0,
-    reasoningTokens: 0,
+    cachedTokens,
+    reasoningTokens,
     totalTokens,
     cost,
     source: 'opencode'
@@ -1205,8 +1437,8 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
     tokens: {
       input: inputTokens,
       output: outputTokens,
-      reasoning: 0,
-      cached: 0,
+      reasoning: reasoningTokens,
+      cached: cachedTokens,
       total: totalTokens
     },
     duration: Date.now() - startTime,
@@ -1932,6 +2164,219 @@ async function relayClaudeResponsesStream(upstreamResponse, res, fallbackModel =
   });
 }
 
+function buildProxyAbsoluteTargetUrl(baseUrl = '', requestPath = '') {
+  const target = String(resolveOpenCodeTarget(baseUrl, requestPath) || '').trim().replace(/\/+$/, '');
+  if (!target || !/^https?:\/\//i.test(target)) return '';
+  const pathname = String(requestPath || '').trim();
+  const normalizedPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return `${target}${normalizedPath}`;
+}
+
+function patchCodexResponsesInstructionsEvent(parsed, originalPayload = {}) {
+  if (!parsed || typeof parsed !== 'object') return parsed;
+  const type = parsed.type;
+  if (type !== 'response.created' && type !== 'response.in_progress' && type !== 'response.completed') {
+    return parsed;
+  }
+  const response = parsed.response;
+  if (!response || typeof response !== 'object') return parsed;
+  if (!Object.prototype.hasOwnProperty.call(response, 'instructions')) return parsed;
+  if (typeof originalPayload.instructions !== 'string') return parsed;
+  return {
+    ...parsed,
+    response: {
+      ...response,
+      instructions: originalPayload.instructions
+    }
+  };
+}
+
+async function relayCodexResponsesStream(upstreamResponse, res, originalPayload = {}) {
+  setSseHeaders(res);
+  const stream = createDecodedStream(upstreamResponse);
+
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    let completedResponse = null;
+    let doneWritten = false;
+    let settled = false;
+
+    const safeResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const safeReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const processSseBlock = (block) => {
+      if (!block || !block.trim()) return;
+      const dataLines = block
+        .split('\n')
+        .map(line => line.trimEnd())
+        .filter(line => line.trim().startsWith('data:'))
+        .map(line => line.replace(/^data:\s?/, ''));
+      if (dataLines.length === 0) return;
+      const payload = dataLines.join('\n').trim();
+      if (!payload) return;
+
+      if (payload === '[DONE]') {
+        if (!doneWritten) {
+          writeSseDone(res);
+          doneWritten = true;
+        }
+        return;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      const patched = patchCodexResponsesInstructionsEvent(parsed, originalPayload);
+      if (patched?.type === 'response.completed' && patched?.response && typeof patched.response === 'object') {
+        completedResponse = patched.response;
+      }
+      writeSseData(res, patched);
+    };
+
+    stream.on('data', (chunk) => {
+      buffer += chunk.toString('utf8').replace(/\r\n/g, '\n');
+      let separatorIndex = buffer.indexOf('\n\n');
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        processSseBlock(block);
+        separatorIndex = buffer.indexOf('\n\n');
+      }
+    });
+
+    stream.on('end', () => {
+      if (buffer.trim()) {
+        processSseBlock(buffer);
+      }
+
+      if (!doneWritten && !res.writableEnded) {
+        writeSseDone(res);
+      }
+      if (!res.writableEnded) {
+        res.end();
+      }
+      safeResolve(completedResponse);
+    });
+
+    stream.on('error', (error) => {
+      if (!res.writableEnded) {
+        writeSseData(res, {
+          type: 'error',
+          error: {
+            message: `Codex stream decode error: ${error.message || String(error)}`
+          }
+        });
+        writeSseDone(res);
+        res.end();
+      }
+      safeReject(error);
+    });
+
+    upstreamResponse.on('error', (error) => {
+      if (!res.writableEnded) {
+        writeSseData(res, {
+          type: 'error',
+          error: {
+            message: `Codex stream upstream error: ${error.message || String(error)}`
+          }
+        });
+        writeSseDone(res);
+        res.end();
+      }
+      safeReject(error);
+    });
+  });
+}
+
+async function collectCodexResponsesNonStream(upstreamResponse, originalPayload = {}) {
+  const stream = createDecodedStream(upstreamResponse);
+
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    let rawBuffer = '';
+    let completedResponse = null;
+
+    const processSseBlock = (block) => {
+      if (!block || !block.trim()) return;
+      const dataLines = block
+        .split('\n')
+        .map(line => line.trimEnd())
+        .filter(line => line.trim().startsWith('data:'))
+        .map(line => line.replace(/^data:\s?/, ''));
+      if (dataLines.length === 0) return;
+      const payload = dataLines.join('\n').trim();
+      if (!payload || payload === '[DONE]') return;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      const patched = patchCodexResponsesInstructionsEvent(parsed, originalPayload);
+      if (patched?.type === 'response.completed' && patched?.response && typeof patched.response === 'object') {
+        completedResponse = patched.response;
+      }
+    };
+
+    stream.on('data', (chunk) => {
+      const textChunk = chunk.toString('utf8').replace(/\r\n/g, '\n');
+      rawBuffer += textChunk;
+      buffer += textChunk;
+      let separatorIndex = buffer.indexOf('\n\n');
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        processSseBlock(block);
+        separatorIndex = buffer.indexOf('\n\n');
+      }
+    });
+
+    stream.on('end', () => {
+      if (buffer.trim()) {
+        processSseBlock(buffer);
+      }
+      if (completedResponse) {
+        resolve(completedResponse);
+        return;
+      }
+
+      const trimmedRaw = rawBuffer.trim();
+      if (trimmedRaw) {
+        try {
+          const parsed = JSON.parse(trimmedRaw);
+          if (parsed?.response && typeof parsed.response === 'object') {
+            resolve(parsed.response);
+            return;
+          }
+          if (parsed && typeof parsed === 'object') {
+            resolve(parsed);
+            return;
+          }
+        } catch {
+          // ignore JSON fallback parse error
+        }
+      }
+      resolve(null);
+    });
+
+    stream.on('error', reject);
+    upstreamResponse.on('error', reject);
+  });
+}
+
 async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const pathname = getRequestPathname(req.url);
   if (!isResponsesPath(pathname) && !isChatCompletionsPath(pathname)) {
@@ -1948,7 +2393,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const streamResponses = wantsStream && isResponsesPath(pathname);
-  const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload);
+  const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload, channel.model);
   claudePayload.stream = streamResponses;
 
   const headers = {
@@ -2076,6 +2521,767 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   return true;
 }
 
+async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
+  const pathname = getRequestPathname(req.url);
+  if (!isResponsesPath(pathname)) {
+    return false;
+  }
+
+  if (!shouldParseJson(req)) {
+    sendOpenAiStyleError(res, 400, 'Codex gateway only supports JSON POST payload');
+    return true;
+  }
+
+  const requestId = `opencode-${Date.now()}-${Math.random()}`;
+  const startTime = Date.now();
+  const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
+  const wantsStream = !!originalPayload.stream;
+  const converted = convertOpenCodePayloadToCodexResponses(originalPayload, channel.model);
+  const targetModel = converted.model;
+
+  if (!targetModel) {
+    sendOpenAiStyleError(res, 400, 'Missing model in request and channel configuration');
+    return true;
+  }
+
+  const targetUrl = buildProxyAbsoluteTargetUrl(channel.baseUrl, pathname);
+  if (!targetUrl) {
+    sendOpenAiStyleError(res, 400, 'Failed to build Codex target URL');
+    return true;
+  }
+
+  const headers = {
+    authorization: `Bearer ${effectiveKey}`,
+    'openai-beta': 'responses=experimental',
+    accept: 'text/event-stream',
+    'accept-encoding': 'gzip, deflate, br',
+    'user-agent': 'codex-cli/1.0.0'
+  };
+
+  let streamUpstream;
+  try {
+    streamUpstream = await postJsonStream(targetUrl, headers, converted.requestBody, 120000);
+  } catch (error) {
+    recordFailure(channel.id, 'opencode', error);
+    sendOpenAiStyleError(res, 502, `Codex gateway network error: ${error.message}`, 'proxy_error');
+    return true;
+  }
+
+  const statusCode = Number(streamUpstream.statusCode) || 500;
+  if (statusCode < 200 || statusCode >= 300) {
+    let rawBody = '';
+    try {
+      rawBody = await collectHttpResponseBody(streamUpstream.response);
+    } catch {
+      rawBody = '';
+    }
+
+    let parsedError = null;
+    try {
+      parsedError = rawBody ? JSON.parse(rawBody) : null;
+    } catch {
+      parsedError = null;
+    }
+
+    const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
+    recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
+    sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
+    return true;
+  }
+
+  try {
+    if (wantsStream) {
+      const completedResponse = await relayCodexResponsesStream(streamUpstream.response, res, originalPayload);
+      publishOpenCodeUsageLog({
+        requestId,
+        channel,
+        model: completedResponse?.model || targetModel,
+        usage: completedResponse?.usage || {},
+        startTime
+      });
+      recordSuccess(channel.id, 'opencode');
+      return true;
+    }
+
+    const responseObject = await collectCodexResponsesNonStream(streamUpstream.response, originalPayload);
+    if (!responseObject || typeof responseObject !== 'object') {
+      recordFailure(channel.id, 'opencode', new Error('Invalid Codex gateway response'));
+      sendOpenAiStyleError(res, 502, 'Invalid Codex gateway response', 'proxy_error');
+      return true;
+    }
+    res.json(responseObject);
+    publishOpenCodeUsageLog({
+      requestId,
+      channel,
+      model: responseObject.model || targetModel,
+      usage: responseObject.usage || {},
+      startTime
+    });
+    recordSuccess(channel.id, 'opencode');
+    return true;
+  } catch (error) {
+    recordFailure(channel.id, 'opencode', error);
+    if (!res.headersSent) {
+      sendOpenAiStyleError(res, 502, `Codex stream relay error: ${error.message}`, 'proxy_error');
+    }
+    return true;
+  }
+}
+
+function createGeminiResponsesStreamState(fallbackModel = '') {
+  return {
+    sequence: 0,
+    responseId: `resp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    createdAt: Math.floor(Date.now() / 1000),
+    model: fallbackModel || '',
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    cachedTokens: 0,
+    reasoningTokens: 0,
+    usageSeen: false,
+    started: false,
+    completed: false,
+    completedResponse: null,
+    itemTypeByIndex: new Map(),
+    messageIdByIndex: new Map(),
+    messageTextByIndex: new Map(),
+    functionCallIdByIndex: new Map(),
+    functionNameByIndex: new Map(),
+    functionArgsByIndex: new Map(),
+    reasoningIdByIndex: new Map(),
+    reasoningTextByIndex: new Map()
+  };
+}
+
+function ensureGeminiResponsesStarted(state, res) {
+  if (state.started) return;
+  state.started = true;
+
+  const inProgressResponse = {
+    id: state.responseId,
+    object: 'response',
+    created_at: state.createdAt,
+    model: state.model,
+    status: 'in_progress'
+  };
+
+  writeSseData(res, {
+    type: 'response.created',
+    sequence_number: nextResponsesSequence(state),
+    response: inProgressResponse
+  });
+
+  writeSseData(res, {
+    type: 'response.in_progress',
+    sequence_number: nextResponsesSequence(state),
+    response: inProgressResponse
+  });
+}
+
+function mergeGeminiStreamText(previousValue, incomingValue) {
+  const previous = typeof previousValue === 'string' ? previousValue : '';
+  const incoming = typeof incomingValue === 'string' ? incomingValue : '';
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+  if (incoming.startsWith(previous)) return incoming;
+  return `${previous}${incoming}`;
+}
+
+function mergeGeminiStreamArguments(previousValue, incomingValue) {
+  const previous = typeof previousValue === 'string' ? previousValue : '';
+  const incoming = typeof incomingValue === 'string' ? incomingValue : '';
+  if (!incoming) return previous;
+  if (!previous) return incoming;
+  if (incoming.startsWith(previous)) return incoming;
+  if (previous.startsWith(incoming)) return previous;
+
+  const trimmed = incoming.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    return incoming;
+  }
+  return `${previous}${incoming}`;
+}
+
+function computeIncrementalDelta(previousValue, nextValue) {
+  const previous = typeof previousValue === 'string' ? previousValue : '';
+  const next = typeof nextValue === 'string' ? nextValue : '';
+  if (!next || next === previous) return '';
+  if (!previous) return next;
+  if (next.startsWith(previous)) return next.slice(previous.length);
+  return next;
+}
+
+function applyGeminiUsageMetadataToStreamState(parsed, state) {
+  const usageMetadata = (parsed?.usageMetadata && typeof parsed.usageMetadata === 'object')
+    ? parsed.usageMetadata
+    : null;
+  if (!usageMetadata) return;
+
+  if (Number.isFinite(Number(usageMetadata.promptTokenCount))) {
+    state.inputTokens = Number(usageMetadata.promptTokenCount);
+    state.usageSeen = true;
+  }
+  if (Number.isFinite(Number(usageMetadata.candidatesTokenCount))) {
+    state.outputTokens = Number(usageMetadata.candidatesTokenCount);
+    state.usageSeen = true;
+  }
+  if (Number.isFinite(Number(usageMetadata.totalTokenCount))) {
+    state.totalTokens = Number(usageMetadata.totalTokenCount);
+    state.usageSeen = true;
+  } else if (state.usageSeen) {
+    state.totalTokens = state.inputTokens + state.outputTokens;
+  }
+  if (Number.isFinite(Number(usageMetadata.cachedContentTokenCount))) {
+    state.cachedTokens = Number(usageMetadata.cachedContentTokenCount);
+    state.usageSeen = true;
+  }
+  if (Number.isFinite(Number(usageMetadata.thoughtsTokenCount))) {
+    state.reasoningTokens = Number(usageMetadata.thoughtsTokenCount);
+    state.usageSeen = true;
+  }
+}
+
+function processGeminiResponsesSseEvent(parsed, state, res) {
+  if (!parsed || typeof parsed !== 'object') return;
+  if (typeof parsed.modelVersion === 'string' && parsed.modelVersion.trim()) {
+    state.model = parsed.modelVersion;
+  }
+  ensureGeminiResponsesStarted(state, res);
+  applyGeminiUsageMetadataToStreamState(parsed, state);
+
+  const firstCandidate = Array.isArray(parsed.candidates)
+    ? parsed.candidates.find(candidate => candidate && typeof candidate === 'object')
+    : null;
+  if (!firstCandidate) return;
+
+  const parts = Array.isArray(firstCandidate.content?.parts) ? firstCandidate.content.parts : [];
+  parts.forEach((part, index) => {
+    if (!part || typeof part !== 'object') return;
+
+    if (part.functionCall && typeof part.functionCall === 'object') {
+      const existingType = state.itemTypeByIndex.get(index);
+      if (existingType && existingType !== 'function_call') return;
+      state.itemTypeByIndex.set(index, 'function_call');
+
+      const functionCall = part.functionCall;
+      const callId = String(
+        state.functionCallIdByIndex.get(index)
+        || functionCall.id
+        || functionCall.callId
+        || `call_${index + 1}`
+      );
+      const name = typeof functionCall.name === 'string'
+        ? functionCall.name
+        : (state.functionNameByIndex.get(index) || '');
+      const argsObject = (functionCall.args && typeof functionCall.args === 'object' && !Array.isArray(functionCall.args))
+        ? functionCall.args
+        : {};
+      const argsString = JSON.stringify(argsObject);
+      const previousArgs = state.functionArgsByIndex.get(index) || '';
+      const mergedArgs = mergeGeminiStreamArguments(previousArgs, argsString);
+      const delta = computeIncrementalDelta(previousArgs, mergedArgs);
+
+      if (!state.functionCallIdByIndex.has(index)) {
+        writeSseData(res, {
+          type: 'response.output_item.added',
+          sequence_number: nextResponsesSequence(state),
+          output_index: index,
+          item: {
+            id: `fc_${callId}`,
+            type: 'function_call',
+            status: 'in_progress',
+            arguments: '',
+            call_id: callId,
+            name
+          }
+        });
+      }
+
+      if (delta) {
+        writeSseData(res, {
+          type: 'response.function_call_arguments.delta',
+          sequence_number: nextResponsesSequence(state),
+          item_id: `fc_${callId}`,
+          output_index: index,
+          delta
+        });
+      }
+
+      state.functionCallIdByIndex.set(index, callId);
+      state.functionNameByIndex.set(index, name);
+      state.functionArgsByIndex.set(index, mergedArgs);
+      return;
+    }
+
+    if (typeof part.text !== 'string' || !part.text) {
+      return;
+    }
+
+    if (part.thought === true) {
+      const existingType = state.itemTypeByIndex.get(index);
+      if (existingType && existingType !== 'reasoning') return;
+      state.itemTypeByIndex.set(index, 'reasoning');
+
+      const reasoningId = state.reasoningIdByIndex.get(index) || `rs_${state.responseId}_${index}`;
+      const previousText = state.reasoningTextByIndex.get(index) || '';
+      const mergedText = mergeGeminiStreamText(previousText, part.text);
+      const delta = computeIncrementalDelta(previousText, mergedText);
+
+      if (!state.reasoningIdByIndex.has(index)) {
+        writeSseData(res, {
+          type: 'response.output_item.added',
+          sequence_number: nextResponsesSequence(state),
+          output_index: index,
+          item: {
+            id: reasoningId,
+            type: 'reasoning',
+            status: 'in_progress',
+            summary: []
+          }
+        });
+
+        writeSseData(res, {
+          type: 'response.reasoning_summary_part.added',
+          sequence_number: nextResponsesSequence(state),
+          item_id: reasoningId,
+          output_index: index,
+          summary_index: 0,
+          part: {
+            type: 'summary_text',
+            text: ''
+          }
+        });
+      }
+
+      if (delta) {
+        writeSseData(res, {
+          type: 'response.reasoning_summary_text.delta',
+          sequence_number: nextResponsesSequence(state),
+          item_id: reasoningId,
+          output_index: index,
+          summary_index: 0,
+          delta
+        });
+      }
+
+      state.reasoningIdByIndex.set(index, reasoningId);
+      state.reasoningTextByIndex.set(index, mergedText);
+      return;
+    }
+
+    const existingType = state.itemTypeByIndex.get(index);
+    if (existingType && existingType !== 'message') return;
+    state.itemTypeByIndex.set(index, 'message');
+
+    const messageId = state.messageIdByIndex.get(index) || `msg_${state.responseId}_${index}`;
+    const previousText = state.messageTextByIndex.get(index) || '';
+    const mergedText = mergeGeminiStreamText(previousText, part.text);
+    const delta = computeIncrementalDelta(previousText, mergedText);
+
+    if (!state.messageIdByIndex.has(index)) {
+      writeSseData(res, {
+        type: 'response.output_item.added',
+        sequence_number: nextResponsesSequence(state),
+        output_index: index,
+        item: {
+          id: messageId,
+          type: 'message',
+          status: 'in_progress',
+          role: 'assistant',
+          content: []
+        }
+      });
+
+      writeSseData(res, {
+        type: 'response.content_part.added',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: index,
+        content_index: 0,
+        part: {
+          type: 'output_text',
+          text: '',
+          annotations: [],
+          logprobs: []
+        }
+      });
+    }
+
+    if (delta) {
+      writeSseData(res, {
+        type: 'response.output_text.delta',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: index,
+        content_index: 0,
+        delta,
+        logprobs: []
+      });
+    }
+
+    state.messageIdByIndex.set(index, messageId);
+    state.messageTextByIndex.set(index, mergedText);
+  });
+}
+
+function buildCompletedResponsesObjectFromGeminiStreamState(state) {
+  const output = [];
+  sortedNumericKeys(state.itemTypeByIndex).forEach(index => {
+    const itemType = state.itemTypeByIndex.get(index);
+    if (itemType === 'message') {
+      const messageId = state.messageIdByIndex.get(index) || `msg_${state.responseId}_${index}`;
+      const text = state.messageTextByIndex.get(index) || '';
+      output.push({
+        id: messageId,
+        type: 'message',
+        status: 'completed',
+        role: 'assistant',
+        content: [
+          {
+            type: 'output_text',
+            text,
+            annotations: []
+          }
+        ]
+      });
+      return;
+    }
+
+    if (itemType === 'reasoning') {
+      const reasoningId = state.reasoningIdByIndex.get(index) || `rs_${state.responseId}_${index}`;
+      const text = state.reasoningTextByIndex.get(index) || '';
+      output.push({
+        id: reasoningId,
+        type: 'reasoning',
+        summary: [
+          {
+            type: 'summary_text',
+            text
+          }
+        ]
+      });
+      return;
+    }
+
+    if (itemType === 'function_call') {
+      const callId = state.functionCallIdByIndex.get(index) || `call_${index + 1}`;
+      const name = state.functionNameByIndex.get(index) || '';
+      const args = normalizeFunctionArgumentsString(state.functionArgsByIndex.get(index));
+      output.push({
+        id: `fc_${callId}`,
+        type: 'function_call',
+        status: 'completed',
+        arguments: args,
+        call_id: callId,
+        name
+      });
+    }
+  });
+
+  if (output.length === 0) {
+    output.push({
+      id: `msg_${state.responseId}_0`,
+      type: 'message',
+      status: 'completed',
+      role: 'assistant',
+      content: [
+        {
+          type: 'output_text',
+          text: '',
+          annotations: []
+        }
+      ]
+    });
+  }
+
+  const estimatedReasoningTokens = sortedNumericKeys(state.reasoningTextByIndex)
+    .map(index => state.reasoningTextByIndex.get(index) || '')
+    .reduce((acc, text) => acc + Math.floor(text.length / 4), 0);
+  const reasoningTokens = state.reasoningTokens > 0 ? state.reasoningTokens : estimatedReasoningTokens;
+  const totalTokens = state.totalTokens > 0
+    ? state.totalTokens
+    : Number(state.inputTokens || 0) + Number(state.outputTokens || 0);
+
+  const response = {
+    id: state.responseId,
+    object: 'response',
+    created_at: state.createdAt,
+    status: 'completed',
+    model: state.model || '',
+    output
+  };
+
+  if (state.usageSeen || totalTokens > 0 || state.cachedTokens > 0 || reasoningTokens > 0) {
+    response.usage = {
+      input_tokens: Number(state.inputTokens || 0),
+      output_tokens: Number(state.outputTokens || 0),
+      total_tokens: totalTokens
+    };
+    if (state.cachedTokens > 0) {
+      response.usage.input_tokens_details = {
+        cached_tokens: Number(state.cachedTokens || 0)
+      };
+    }
+    if (reasoningTokens > 0) {
+      response.usage.output_tokens_details = {
+        reasoning_tokens: Number(reasoningTokens || 0)
+      };
+    }
+  }
+
+  return response;
+}
+
+function finalizeGeminiResponsesStream(state, res) {
+  if (state.completed) {
+    return state.completedResponse || buildCompletedResponsesObjectFromGeminiStreamState(state);
+  }
+
+  ensureGeminiResponsesStarted(state, res);
+  sortedNumericKeys(state.itemTypeByIndex).forEach(index => {
+    const itemType = state.itemTypeByIndex.get(index);
+    if (itemType === 'message') {
+      const messageId = state.messageIdByIndex.get(index) || `msg_${state.responseId}_${index}`;
+      const text = state.messageTextByIndex.get(index) || '';
+      writeSseData(res, {
+        type: 'response.output_text.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: index,
+        content_index: 0,
+        text,
+        logprobs: []
+      });
+
+      writeSseData(res, {
+        type: 'response.content_part.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: messageId,
+        output_index: index,
+        content_index: 0,
+        part: {
+          type: 'output_text',
+          text,
+          annotations: [],
+          logprobs: []
+        }
+      });
+
+      writeSseData(res, {
+        type: 'response.output_item.done',
+        sequence_number: nextResponsesSequence(state),
+        output_index: index,
+        item: {
+          id: messageId,
+          type: 'message',
+          status: 'completed',
+          role: 'assistant',
+          content: [
+            {
+              type: 'output_text',
+              text,
+              annotations: []
+            }
+          ]
+        }
+      });
+      return;
+    }
+
+    if (itemType === 'reasoning') {
+      const reasoningId = state.reasoningIdByIndex.get(index) || `rs_${state.responseId}_${index}`;
+      const text = state.reasoningTextByIndex.get(index) || '';
+
+      writeSseData(res, {
+        type: 'response.reasoning_summary_text.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: reasoningId,
+        output_index: index,
+        summary_index: 0,
+        text
+      });
+
+      writeSseData(res, {
+        type: 'response.reasoning_summary_part.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: reasoningId,
+        output_index: index,
+        summary_index: 0,
+        part: {
+          type: 'summary_text',
+          text
+        }
+      });
+
+      writeSseData(res, {
+        type: 'response.output_item.done',
+        sequence_number: nextResponsesSequence(state),
+        output_index: index,
+        item: {
+          id: reasoningId,
+          type: 'reasoning',
+          status: 'completed',
+          summary: [
+            {
+              type: 'summary_text',
+              text
+            }
+          ]
+        }
+      });
+      return;
+    }
+
+    if (itemType === 'function_call') {
+      const callId = state.functionCallIdByIndex.get(index) || `call_${index + 1}`;
+      const name = state.functionNameByIndex.get(index) || '';
+      const args = normalizeFunctionArgumentsString(state.functionArgsByIndex.get(index));
+
+      writeSseData(res, {
+        type: 'response.function_call_arguments.done',
+        sequence_number: nextResponsesSequence(state),
+        item_id: `fc_${callId}`,
+        output_index: index,
+        arguments: args
+      });
+
+      writeSseData(res, {
+        type: 'response.output_item.done',
+        sequence_number: nextResponsesSequence(state),
+        output_index: index,
+        item: {
+          id: `fc_${callId}`,
+          type: 'function_call',
+          status: 'completed',
+          arguments: args,
+          call_id: callId,
+          name
+        }
+      });
+    }
+  });
+
+  const completedResponse = buildCompletedResponsesObjectFromGeminiStreamState(state);
+  state.completed = true;
+  state.completedResponse = completedResponse;
+  writeSseData(res, {
+    type: 'response.completed',
+    sequence_number: nextResponsesSequence(state),
+    response: completedResponse
+  });
+  return completedResponse;
+}
+
+async function relayGeminiResponsesStream(upstreamResponse, res, fallbackModel = '') {
+  setSseHeaders(res);
+  const state = createGeminiResponsesStreamState(fallbackModel);
+  const stream = createDecodedStream(upstreamResponse);
+
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    let settled = false;
+
+    const safeResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    const safeReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const processSseBlock = (block) => {
+      if (!block || !block.trim()) return;
+      const dataLines = block
+        .split('\n')
+        .map(line => line.trimEnd())
+        .filter(line => line.trim().startsWith('data:'))
+        .map(line => line.replace(/^data:\s?/, ''));
+      if (dataLines.length === 0) return;
+      const payload = dataLines.join('\n').trim();
+      if (!payload) return;
+
+      if (payload === '[DONE]') {
+        finalizeGeminiResponsesStream(state, res);
+        return;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        return;
+      }
+
+      if (Array.isArray(parsed)) {
+        parsed.forEach(item => processGeminiResponsesSseEvent(item, state, res));
+        return;
+      }
+      processGeminiResponsesSseEvent(parsed, state, res);
+    };
+
+    stream.on('data', (chunk) => {
+      buffer += chunk.toString('utf8').replace(/\r\n/g, '\n');
+      let separatorIndex = buffer.indexOf('\n\n');
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        buffer = buffer.slice(separatorIndex + 2);
+        processSseBlock(block);
+        separatorIndex = buffer.indexOf('\n\n');
+      }
+    });
+
+    stream.on('end', () => {
+      if (buffer.trim()) {
+        processSseBlock(buffer);
+      }
+
+      if (!state.completed) {
+        finalizeGeminiResponsesStream(state, res);
+      }
+
+      if (!res.writableEnded) {
+        writeSseDone(res);
+        res.end();
+      }
+
+      safeResolve(state.completedResponse || buildCompletedResponsesObjectFromGeminiStreamState(state));
+    });
+
+    stream.on('error', (error) => {
+      if (!res.writableEnded) {
+        writeSseData(res, {
+          type: 'error',
+          error: {
+            message: `Gemini stream decode error: ${error.message || String(error)}`
+          }
+        });
+        writeSseDone(res);
+        res.end();
+      }
+      safeReject(error);
+    });
+
+    upstreamResponse.on('error', (error) => {
+      if (!res.writableEnded) {
+        writeSseData(res, {
+          type: 'error',
+          error: {
+            message: `Gemini stream upstream error: ${error.message || String(error)}`
+          }
+        });
+        writeSseDone(res);
+        res.end();
+      }
+      safeReject(error);
+    });
+  });
+}
+
 async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   const pathname = getRequestPathname(req.url);
   if (!isResponsesPath(pathname) && !isChatCompletionsPath(pathname)) {
@@ -2091,6 +3297,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   const startTime = Date.now();
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
+  const streamResponses = wantsStream && isResponsesPath(pathname);
   const converted = convertOpenCodePayloadToGemini(pathname, originalPayload, channel.model);
   const targetModel = converted.model;
 
@@ -2099,7 +3306,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
     return true;
   }
 
-  const targetUrl = buildGeminiTargetUrl(channel.baseUrl, targetModel, effectiveKey);
+  const targetUrl = buildGeminiTargetUrl(channel.baseUrl, targetModel, effectiveKey, { stream: streamResponses });
   if (!targetUrl) {
     sendOpenAiStyleError(res, 400, 'Failed to build Gemini target URL');
     return true;
@@ -2108,10 +3315,60 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   const headers = {
     'x-goog-api-key': effectiveKey,
     'authorization': `Bearer ${effectiveKey}`,
-    'accept': 'application/json',
+    'accept': streamResponses ? 'text/event-stream' : 'application/json',
     'accept-encoding': 'gzip, deflate, br',
     'user-agent': 'google-genai-sdk/0.8.0'
   };
+
+  if (streamResponses) {
+    let streamUpstream;
+    try {
+      streamUpstream = await postJsonStream(targetUrl, headers, converted.requestBody, 120000);
+    } catch (error) {
+      recordFailure(channel.id, 'opencode', error);
+      sendOpenAiStyleError(res, 502, `Gemini gateway network error: ${error.message}`, 'proxy_error');
+      return true;
+    }
+
+    const statusCode = Number(streamUpstream.statusCode) || 500;
+    if (statusCode < 200 || statusCode >= 300) {
+      let rawBody = '';
+      try {
+        rawBody = await collectHttpResponseBody(streamUpstream.response);
+      } catch {
+        rawBody = '';
+      }
+
+      let parsedError = null;
+      try {
+        parsedError = rawBody ? JSON.parse(rawBody) : null;
+      } catch {
+        parsedError = null;
+      }
+      const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
+      recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
+      sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
+      return true;
+    }
+
+    try {
+      const streamedResponseObject = await relayGeminiResponsesStream(streamUpstream.response, res, originalPayload.model || targetModel);
+      publishOpenCodeUsageLog({
+        requestId,
+        channel,
+        model: streamedResponseObject?.model || originalPayload.model || targetModel || '',
+        usage: streamedResponseObject?.usage || {},
+        startTime
+      });
+      recordSuccess(channel.id, 'opencode');
+    } catch (error) {
+      recordFailure(channel.id, 'opencode', error);
+      if (!res.headersSent) {
+        sendOpenAiStyleError(res, 502, `Gemini stream relay error: ${error.message}`, 'proxy_error');
+      }
+    }
+    return true;
+  }
 
   let upstream;
   try {
@@ -2145,11 +3402,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 
   if (isResponsesPath(pathname)) {
     const responseObject = buildOpenAiResponsesObjectFromGemini(parsedBody, targetModel);
-    if (wantsStream) {
-      sendResponsesSse(res, responseObject);
-    } else {
-      res.json(responseObject);
-    }
+    res.json(responseObject);
     publishOpenCodeUsageLog({
       requestId,
       channel,
@@ -2231,7 +3484,8 @@ async function collectProxyModelList(channels = [], options = {}) {
 
   // 最后补充缓存探测到的模型（来自 channel-models.json）
   try {
-    const cachePath = path.join(os.homedir(), '.claude', 'cc-tool', 'channel-models.json');
+    ensureStorageDirMigrated();
+    const cachePath = path.join(PATHS.base, 'channel-models.json');
     if (fs.existsSync(cachePath)) {
       const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8') || '{}');
       for (const channel of channels) {
@@ -2397,6 +3651,12 @@ async function startOpenCodeProxyServer(options = {}) {
         broadcastSchedulerState('opencode', getSchedulerState('opencode'));
 
         const gatewaySourceType = normalizeGatewaySourceType(channel);
+        if (gatewaySourceType === 'codex') {
+          const handled = await handleCodexGatewayRequest(req, res, channel, effectiveKey);
+          if (handled) {
+            return;
+          }
+        }
         if (gatewaySourceType === 'claude') {
           const handled = await handleClaudeGatewayRequest(req, res, channel, effectiveKey);
           if (handled) {

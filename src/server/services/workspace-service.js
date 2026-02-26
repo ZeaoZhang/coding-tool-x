@@ -1,13 +1,32 @@
 // 多项目工作区服务
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const { PATHS } = require('../../config/paths');
 const configTemplatesService = require('./config-templates-service');
 const permissionTemplatesService = require('./permission-templates-service');
 
 // 工作区配置文件路径
 const WORKSPACES_CONFIG = path.join(PATHS.base, 'workspaces.json');
+
+function runGitCommand(args, options = {}) {
+  const execOptions = {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...options
+  };
+  return execFileSync('git', args, execOptions);
+}
+
+function resolveCurrentBranch(repoPath) {
+  try {
+    return runGitCommand(['rev-parse', '--abbrev-ref', 'HEAD'], {
+      cwd: repoPath
+    }).trim();
+  } catch (error) {
+    return 'main';
+  }
+}
 
 /**
  * 生成唯一工作区 ID
@@ -110,9 +129,8 @@ function getGitWorktrees(repoPath) {
     if (!isGitRepo(repoPath)) {
       return [];
     }
-    const output = execSync('git worktree list --porcelain', {
-      cwd: repoPath,
-      encoding: 'utf8'
+    const output = runGitCommand(['worktree', 'list', '--porcelain'], {
+      cwd: repoPath
     });
 
     const worktrees = [];
@@ -208,10 +226,7 @@ function createWorkspace(options) {
       let targetBranch = branch;
       if (!targetBranch) {
         try {
-          targetBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-            cwd: sourcePath,
-            encoding: 'utf8'
-          }).trim();
+          targetBranch = resolveCurrentBranch(sourcePath);
         } catch (e) {
           targetBranch = 'main';
         }
@@ -279,10 +294,7 @@ function createWorkspace(options) {
         let targetBranch = branch;
         if (!targetBranch) {
           try {
-            targetBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-              cwd: sourcePath,
-              encoding: 'utf8'
-            }).trim();
+            targetBranch = resolveCurrentBranch(sourcePath);
           } catch (e) {
             targetBranch = 'main';
           }
@@ -305,9 +317,8 @@ function createWorkspace(options) {
         } else {
           try {
             // 尝试检出已有分支
-            execSync(`git worktree add "${worktreePath}" "${targetBranch}"`, {
-              cwd: sourcePath,
-              stdio: 'pipe'
+            runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+              cwd: sourcePath
             });
 
             targetPath = worktreePath;
@@ -318,17 +329,12 @@ function createWorkspace(options) {
           } catch (error) {
             // 如果分支不存在，尝试创建新分支
             try {
-              // 构建 git worktree add 命令
-              let worktreeCmd = `git worktree add "${worktreePath}" -b "${targetBranch}"`;
-
-              // 如果指定了基础分支，添加到命令中
+              const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
               if (baseBranch && baseBranch.trim()) {
-                worktreeCmd += ` "${baseBranch}"`;
+                worktreeArgs.push(baseBranch.trim());
               }
-
-              execSync(worktreeCmd, {
-                cwd: sourcePath,
-                stdio: 'pipe'
+              runGitCommand(worktreeArgs, {
+                cwd: sourcePath
               });
               targetPath = worktreePath;
               worktrees.push({
@@ -494,9 +500,8 @@ function deleteWorkspace(id, removeFiles = false) {
           if (wt.path && wt.path.includes('-ws-')) {
             try {
               console.log(`清理 worktree: ${wt.path}`);
-              execSync(`git worktree remove "${wt.path}" --force`, {
-                cwd: proj.sourcePath,
-                stdio: 'pipe'
+              runGitCommand(['worktree', 'remove', wt.path, '--force'], {
+                cwd: proj.sourcePath
               });
             } catch (error) {
               console.error(`删除 worktree 失败: ${wt.path}`, error.message);
@@ -585,10 +590,7 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
     let targetBranch = branch;
     if (!targetBranch) {
       try {
-        targetBranch = execSync('git rev-parse --abbrev-ref HEAD', {
-          cwd: sourcePath,
-          encoding: 'utf8'
-        }).trim();
+        targetBranch = resolveCurrentBranch(sourcePath);
       } catch (e) {
         targetBranch = 'main';
       }
@@ -605,9 +607,8 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
       worktrees.push({ branch: targetBranch, path: worktreePath });
     } else {
       try {
-        execSync(`git worktree add "${worktreePath}" "${targetBranch}"`, {
-          cwd: sourcePath,
-          stdio: 'pipe'
+        runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+          cwd: sourcePath
         });
         targetPath = worktreePath;
         worktrees.push({ branch: targetBranch, path: worktreePath });
@@ -626,17 +627,12 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
 
         // Branch doesn't exist, try creating it
         try {
-          // 构建 git worktree add 命令
-          let worktreeCmd = `git worktree add "${worktreePath}" -b "${targetBranch}"`;
-
-          // 如果指定了基础分支，添加到命令中
+          const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
           if (baseBranch && baseBranch.trim()) {
-            worktreeCmd += ` "${baseBranch}"`;
+            worktreeArgs.push(baseBranch.trim());
           }
-
-          execSync(worktreeCmd, {
-            cwd: sourcePath,
-            stdio: 'pipe'
+          runGitCommand(worktreeArgs, {
+            cwd: sourcePath
           });
           targetPath = worktreePath;
           worktrees.push({ branch: targetBranch, path: worktreePath });
@@ -711,9 +707,8 @@ function removeProjectFromWorkspace(workspaceId, projectName, removeWorktrees = 
     for (const wt of project.worktrees) {
       if (fs.existsSync(wt.path)) {
         try {
-          execSync(`git worktree remove "${wt.path}" --force`, {
-            cwd: project.sourcePath,
-            stdio: 'pipe'
+          runGitCommand(['worktree', 'remove', wt.path, '--force'], {
+            cwd: project.sourcePath
           });
         } catch (error) {
           console.error(`删除 worktree 失败: ${wt.path}`, error.message);

@@ -4,7 +4,7 @@ const path = require('path');
 const os = require('os');
 const { exec } = require('child_process');
 const { promisify } = require('util');
-const { loadConfig } = require('../config/loader');
+const { loadConfig, getConfigFilePath } = require('../config/loader');
 const { isPortInUse } = require('../utils/port-helper');
 
 const execAsync = promisify(exec);
@@ -114,7 +114,7 @@ async function checkNodeVersion() {
  * 检查配置文件
  */
 async function checkConfigFiles() {
-  const configPath = path.join(os.homedir(), '.claude/config.json');
+  const configPath = getConfigFilePath();
   const exists = fs.existsSync(configPath);
 
   if (exists) {
@@ -130,7 +130,7 @@ async function checkConfigFiles() {
         name: '配置文件',
         status: 'fail',
         message: '配置文件存在但解析失败',
-        suggestion: '使用 ctx config reset 重置配置'
+        suggestion: '使用 ctx reset 重置配置'
       };
     }
   } else {
@@ -149,10 +149,11 @@ async function checkConfigFiles() {
 async function checkPorts() {
   const config = loadConfig();
   const ports = {
-    'Web UI': config.ports?.webUI || 10099,
-    'Claude Proxy': config.ports?.proxy || 10088,
-    'Codex Proxy': config.ports?.codexProxy || 10089,
-    'Gemini Proxy': config.ports?.geminiProxy || 10090
+    'Web UI': config.ports?.webUI || 19999,
+    'Claude Proxy': config.ports?.proxy || 20088,
+    'Codex Proxy': config.ports?.codexProxy || 20089,
+    'Gemini Proxy': config.ports?.geminiProxy || 20090,
+    'OpenCode Proxy': config.ports?.opencodeProxy || 20091
   };
 
   const conflicts = [];
@@ -175,7 +176,7 @@ async function checkPorts() {
       name: '端口检查',
       status: 'warning',
       message: `以下端口被占用: ${conflicts.join(', ')}`,
-      suggestion: '如果服务正在运行这是正常的；否则使用 ctx config port 修改端口'
+      suggestion: '如果服务正在运行这是正常的；否则运行 ctx port 修改端口'
     };
   }
 }

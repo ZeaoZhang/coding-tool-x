@@ -230,7 +230,7 @@ async function startCodexProxyServer(options = {}) {
 
   try {
     const config = loadConfig();
-    const port = config.ports?.codexProxy || 10089;
+    const port = config.ports?.codexProxy || 20089;
     currentPort = port;
 
     proxyApp = express();
@@ -666,7 +666,7 @@ function getCodexProxyStatus() {
   return {
     running: !!proxyServer,
     port: currentPort,
-    defaultPort: config.ports?.codexProxy || 10089,
+    defaultPort: config.ports?.codexProxy || 20089,
     startTime,
     runtime
   };

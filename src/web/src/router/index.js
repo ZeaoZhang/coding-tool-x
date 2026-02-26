@@ -1,12 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Home from '../views/Home.vue'
-import ProjectList from '../views/ProjectList.vue'
-import SessionList from '../views/SessionList.vue'
-import Terminal from '../views/Terminal.vue'
-import WorkspaceManager from '../views/WorkspaceManager.vue'
-import ConfigTemplates from '../views/ConfigTemplates.vue'
-import SkillManager from '../views/SkillManager.vue'
-import PluginManager from '../views/PluginManager.vue'
+
+const Home = () => import('../views/Home.vue')
+const ProjectList = () => import('../views/ProjectList.vue')
+const SessionList = () => import('../views/SessionList.vue')
+const Terminal = () => import('../views/Terminal.vue')
+const WorkspaceManager = () => import('../views/WorkspaceManager.vue')
+const ConfigTemplates = () => import('../views/ConfigTemplates.vue')
+const SkillManager = () => import('../views/SkillManager.vue')
+const PluginManager = () => import('../views/PluginManager.vue')
 
 const routes = [
   {

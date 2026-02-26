@@ -13,7 +13,7 @@ const { loadAliases } = require('../server/services/alias');
 async function searchSessionsAcrossProjects(config, keyword) {
   const spinner = ora(`🔍 正在搜索 "${keyword}"...`).start();
 
-  const projects = getProjects(config);
+  const projects = await getProjects(config);
   const aliases = loadAliases();
   const allResults = [];
 
