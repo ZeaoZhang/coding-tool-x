@@ -17,7 +17,7 @@ const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
-const { probeModelAvailability } = require('./services/model-detector');
+const { probeModelAvailability, getModelPriority } = require('./services/model-detector');
 const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
@@ -247,6 +247,42 @@ function isResponsesPath(pathname) {
 
 function isChatCompletionsPath(pathname) {
   return pathname === '/v1/chat/completions' || pathname === '/chat/completions';
+}
+
+function collectPreferredProbeModels(channel) {
+  const candidates = [];
+  if (!channel || typeof channel !== 'object') return candidates;
+
+  candidates.push(channel.model);
+  candidates.push(channel.speedTestModel);
+
+  const modelConfig = channel.modelConfig;
+  if (modelConfig && typeof modelConfig === 'object') {
+    candidates.push(modelConfig.model);
+    candidates.push(modelConfig.opusModel);
+    candidates.push(modelConfig.sonnetModel);
+    candidates.push(modelConfig.haikuModel);
+  }
+
+  if (Array.isArray(channel.modelRedirects)) {
+    channel.modelRedirects.forEach((rule) => {
+      candidates.push(rule?.from);
+      candidates.push(rule?.to);
+    });
+  }
+
+  const seen = new Set();
+  const models = [];
+  candidates.forEach((model) => {
+    if (typeof model !== 'string') return;
+    const trimmed = model.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    models.push(trimmed);
+  });
+  return models;
 }
 
 function extractTextFragments(value, fragments) {
@@ -3434,37 +3470,55 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 async function collectProxyModelList(channels = [], options = {}) {
   const seen = new Set();
   const models = [];
+  const channelModelMap = new Map();
 
   const add = (value) => {
     if (typeof value !== 'string') return;
     const trimmed = value.trim();
     if (!trimmed) return;
-    if (seen.has(trimmed)) return;
-    seen.add(trimmed);
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
     models.push(trimmed);
   };
 
-  // 仅返回渠道明确声明或探测到的模型，不再注入默认模型列表
+  const registerChannelModels = (channel, candidates = []) => {
+    if (!channel || typeof channel !== 'object') return;
+    const channelId = String(channel.id || '');
+    if (!channelId) return;
+
+    let modelSet = channelModelMap.get(channelId);
+    if (!modelSet) {
+      modelSet = new Set();
+      channelModelMap.set(channelId, modelSet);
+    }
+
+    if (!Array.isArray(candidates)) return;
+    candidates.forEach((value) => {
+      if (typeof value !== 'string') return;
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      if (modelSet.has(trimmed)) return;
+      modelSet.add(trimmed);
+      add(trimmed);
+    });
+  };
+
+  const ensureChannelFallbackModels = (channel) => {
+    if (!channel || typeof channel !== 'object') return;
+    const channelId = String(channel.id || '');
+    if (!channelId) return;
+    const modelSet = channelModelMap.get(channelId);
+    if (modelSet && modelSet.size > 0) return;
+
+    const channelType = normalizeGatewaySourceType(channel);
+    const fallbackModels = getModelPriority(channelType);
+    registerChannelModels(channel, fallbackModels);
+  };
+
+  // 先收集渠道显式声明的模型（channel.model/speedTestModel/modelRedirects/modelConfig）
   for (const channel of channels) {
-    add(channel?.model);
-    add(channel?.speedTestModel);
-
-    const modelRedirects = channel?.modelRedirects;
-    if (Array.isArray(modelRedirects)) {
-      modelRedirects.forEach(rule => {
-        add(rule?.from);
-        add(rule?.to);
-      });
-    }
-
-    // 向后兼容：旧版 modelConfig
-    const modelConfig = channel?.modelConfig;
-    if (modelConfig && typeof modelConfig === 'object') {
-      add(modelConfig.model);
-      add(modelConfig.opusModel);
-      add(modelConfig.sonnetModel);
-      add(modelConfig.haikuModel);
-    }
+    registerChannelModels(channel, collectPreferredProbeModels(channel));
   }
 
   const forceRefresh = options.forceRefresh === true;
@@ -3472,11 +3526,17 @@ async function collectProxyModelList(channels = [], options = {}) {
     await Promise.all(channels.map(async (channel) => {
       try {
         const channelType = normalizeGatewaySourceType(channel);
-        const probe = await probeModelAvailability(channel, channelType, { forceRefresh: true });
+        const probe = await probeModelAvailability(channel, channelType, {
+          forceRefresh: true,
+          stopOnFirstAvailable: true,
+          preferredModels: collectPreferredProbeModels(channel)
+        });
         const available = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
-        available.forEach(add);
+        registerChannelModels(channel, available);
       } catch (err) {
         console.warn(`[OpenCode Proxy] Live model probe failed for ${channel?.name || channel?.id || 'unknown'}:`, err.message);
+      } finally {
+        ensureChannelFallbackModels(channel);
       }
     }));
     return models;
@@ -3493,13 +3553,17 @@ async function collectProxyModelList(channels = [], options = {}) {
         if (!entry || typeof entry !== 'object') continue;
         const fetched = entry.fetchedModels;
         const probed = entry.availableModels;
-        if (Array.isArray(fetched)) fetched.forEach(add);
-        if (Array.isArray(probed)) probed.forEach(add);
+        const cachedModels = [];
+        if (Array.isArray(fetched)) cachedModels.push(...fetched);
+        if (Array.isArray(probed)) cachedModels.push(...probed);
+        registerChannelModels(channel, cachedModels);
       }
     }
   } catch (err) {
     console.warn('[OpenCode Proxy] Failed to load channel-models cache:', err.message);
   }
+
+  channels.forEach(ensureChannelFallbackModels);
 
   return models;
 }

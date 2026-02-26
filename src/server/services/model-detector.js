@@ -366,38 +366,109 @@ function buildGeminiGenerateContentUrl(baseUrl, model, apiKey = '') {
   return parsed.toString();
 }
 
-function createClaudeProbeAttempt(channel, model) {
-  const apiKey = channel.apiKey || '';
+function buildClaudeProbePayload(model, options = {}) {
+  const includeSystem = options.includeSystem === true;
+  const systemAsArray = options.systemAsArray === true;
+  const includeMetadata = options.includeMetadata === true;
   const sessionId = Math.random().toString(36).substring(2, 15);
-  const body = JSON.stringify({
+
+  const payload = {
     model,
     max_tokens: 1,
     stream: false,
-    messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
-    system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
-    metadata: {
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }]
+  };
+
+  if (includeSystem) {
+    const systemPrompt = "You are Claude Code, Anthropic's official CLI for Claude.";
+    payload.system = systemAsArray
+      ? [{ type: 'text', text: systemPrompt }]
+      : systemPrompt;
+  }
+
+  if (includeMetadata) {
+    payload.metadata = {
       user_id: `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}`
-    }
+    };
+  }
+
+  return JSON.stringify(payload);
+}
+
+function createClaudeProbeAttempts(channel, model) {
+  const apiKey = channel.apiKey || '';
+  const commonHeaders = {
+    ...buildRequestHeaders('claude', channel),
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'Authorization': `Bearer ${apiKey}`,
+    'anthropic-version': '2023-06-01',
+    'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
+    'Accept-Encoding': 'gzip, deflate, br',
+    'User-Agent': 'claude-cli/2.0.53 (external, cli)'
+  };
+
+  const standardBody = buildClaudeProbePayload(model);
+  const legacyBody = buildClaudeProbePayload(model, {
+    includeSystem: true,
+    systemAsArray: true,
+    includeMetadata: true
+  });
+  const strictBody = buildClaudeProbePayload(model, {
+    includeSystem: true,
+    includeMetadata: true
   });
 
-  return {
-    label: 'claude-code',
-    url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
-    body,
-    headers: {
-      ...buildRequestHeaders('claude', channel),
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'Authorization': `Bearer ${apiKey}`,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
-      'anthropic-dangerous-direct-browser-access': 'true',
-      'x-app': 'cli',
-      'x-stainless-lang': 'js',
-      'x-stainless-runtime': 'node',
-      'User-Agent': 'claude-cli/2.0.53 (external, cli)'
+  return [
+    {
+      label: 'claude-code-legacy-beta',
+      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
+      body: legacyBody,
+      headers: {
+        ...commonHeaders,
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+        'x-stainless-runtime': 'node'
+      }
+    },
+    {
+      label: 'claude-code-legacy',
+      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: false }),
+      body: legacyBody,
+      headers: {
+        ...commonHeaders,
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+        'x-stainless-runtime': 'node'
+      }
+    },
+    {
+      label: 'claude-gateway',
+      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: false }),
+      body: standardBody,
+      headers: commonHeaders
+    },
+    {
+      label: 'claude-gateway-beta',
+      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
+      body: standardBody,
+      headers: commonHeaders
+    },
+    {
+      label: 'claude-code-strict',
+      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
+      body: strictBody,
+      headers: {
+        ...commonHeaders,
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'x-app': 'cli',
+        'x-stainless-lang': 'js',
+        'x-stainless-runtime': 'node'
+      }
     }
-  };
+  ];
 }
 
 function createCodexProbeAttempts(channel, model) {
@@ -467,7 +538,7 @@ function createGeminiProbeAttempt(channel, model) {
 function buildProbeAttempts(channel, channelType, model) {
   const normalizedType = String(channelType || '').trim().toLowerCase();
   if (normalizedType === 'claude') {
-    return [createClaudeProbeAttempt(channel, model)];
+    return createClaudeProbeAttempts(channel, model);
   }
   if (normalizedType === 'codex' || normalizedType === 'openai_compatible') {
     return createCodexProbeAttempts(channel, model);
@@ -513,6 +584,35 @@ function classifyProbeResult(statusCode, responseBody, model) {
   }
 
   return 'retry';
+}
+
+function sanitizeProbeErrorMessage(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function buildProbeFailureDetail(attempt, result) {
+  if (!attempt || !result) return null;
+  const statusCode = Number(result.statusCode) || 0;
+  const message = result.error?.message
+    ? sanitizeProbeErrorMessage(result.error.message)
+    : sanitizeProbeErrorMessage(extractProbeErrorMessage(result.responseBody));
+
+  return {
+    attempt: attempt.label || 'unknown',
+    statusCode,
+    message
+  };
+}
+
+function formatProbeFailureDetail(detail) {
+  if (!detail) return '';
+  const parts = [];
+  if (detail.attempt) parts.push(`attempt=${detail.attempt}`);
+  if (detail.statusCode) parts.push(`status=${detail.statusCode}`);
+  if (detail.message) parts.push(`msg=${detail.message}`);
+  if (parts.length === 0) return '';
+  return ` (${parts.join(', ')})`;
 }
 
 function executeProbeAttempt(attempt) {
@@ -654,6 +754,25 @@ function normalizeModelName(model) {
   return MODEL_ALIASES[normalized] || model;
 }
 
+function normalizeModelCandidates(models = []) {
+  if (!Array.isArray(models)) return [];
+  const seen = new Set();
+  const normalized = [];
+
+  models.forEach((model) => {
+    if (typeof model !== 'string') return;
+    const trimmed = model.trim();
+    if (!trimmed) return;
+    const canonical = normalizeModelName(trimmed) || trimmed;
+    const dedupeKey = canonical.toLowerCase();
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    normalized.push(canonical);
+  });
+
+  return normalized;
+}
+
 /**
  * Check if cache entry is still valid
  * @param {Object} cacheEntry - Cache entry with lastChecked timestamp
@@ -675,32 +794,45 @@ function isCacheValid(cacheEntry) {
  * @param {string} model - Model name to test
  * @returns {Promise<boolean>}
  */
-async function testModelAvailability(channel, channelType, model) {
+async function testModelAvailabilityDetailed(channel, channelType, model) {
   try {
     const attempts = buildProbeAttempts(channel, channelType, model);
     if (!attempts.length) {
-      return false;
+      return { available: false, failureDetail: null };
     }
 
+    let failureDetail = null;
     for (const attempt of attempts) {
       const result = await executeProbeAttempt(attempt);
       if (result.error) {
+        if (!failureDetail) {
+          failureDetail = buildProbeFailureDetail(attempt, result);
+        }
         continue;
       }
 
       const verdict = classifyProbeResult(result.statusCode, result.responseBody, model);
       if (verdict === 'available') {
-        return true;
+        return { available: true, failureDetail: null };
+      }
+
+      if (!failureDetail) {
+        failureDetail = buildProbeFailureDetail(attempt, result);
       }
       if (verdict === 'unavailable') {
-        return false;
+        return { available: false, failureDetail };
       }
     }
 
-    return false;
+    return { available: false, failureDetail };
   } catch {
-    return false;
+    return { available: false, failureDetail: null };
   }
+}
+
+async function testModelAvailability(channel, channelType, model) {
+  const result = await testModelAvailabilityDetailed(channel, channelType, model);
+  return result.available;
 }
 
 /**
@@ -730,7 +862,9 @@ async function probeModelAvailability(channel, channelType, options = {}) {
   }
 
   // Get model priority list for this channel type
-  const modelsToTest = getModelPriority(channelType, { toolType });
+  const preferredModels = normalizeModelCandidates(options.preferredModels);
+  const priorityModels = normalizeModelCandidates(getModelPriority(channelType, { toolType }));
+  const modelsToTest = normalizeModelCandidates([...preferredModels, ...priorityModels]);
   if (modelsToTest.length === 0) {
     console.warn(`[ModelDetector] No models defined for channel type: ${channelType}`);
     return {
@@ -754,7 +888,8 @@ async function probeModelAvailability(channel, channelType, options = {}) {
     }
     isFirstModel = false;
 
-    const isAvailable = await testModelAvailability(channel, channelType, model);
+    const probeResult = await testModelAvailabilityDetailed(channel, channelType, model);
+    const isAvailable = probeResult.available;
 
     if (isAvailable) {
       availableModels.push(model);
@@ -763,7 +898,7 @@ async function probeModelAvailability(channel, channelType, options = {}) {
         break;
       }
     } else {
-      console.log(`[ModelDetector] ✗ ${model} not available`);
+      console.log(`[ModelDetector] ✗ ${model} not available${formatProbeFailureDetail(probeResult.failureDetail)}`);
     }
   }
 
