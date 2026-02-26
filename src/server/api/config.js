@@ -2,6 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
+const { getAllChannels } = require('../services/channels');
+const { getChannels: getCodexChannels } = require('../services/codex-channels');
+const { getChannels: getGeminiChannels } = require('../services/gemini-channels');
+const {
+  probeModelAvailability,
+  fetchModelsFromProvider,
+  getModelPriority
+} = require('../services/model-detector');
 
 function clampNumber(value, fallback) {
   const num = typeof value === 'number' ? value : parseFloat(value);
@@ -36,10 +44,114 @@ function sanitizePricing(inputPricing, currentPricing) {
   return sanitized;
 }
 
+function uniqueModels(models = []) {
+  const seen = new Set();
+  const result = [];
+
+  models.forEach((model) => {
+    if (typeof model !== 'string') return;
+    const trimmed = model.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(trimmed);
+  });
+
+  return result;
+}
+
+function collectChannelPreferredModels(channel) {
+  const candidates = [];
+  if (!channel || typeof channel !== 'object') return candidates;
+
+  candidates.push(channel.model);
+  candidates.push(channel.speedTestModel);
+
+  const modelConfig = channel.modelConfig;
+  if (modelConfig && typeof modelConfig === 'object') {
+    candidates.push(modelConfig.model);
+    candidates.push(modelConfig.opusModel);
+    candidates.push(modelConfig.sonnetModel);
+    candidates.push(modelConfig.haikuModel);
+  }
+
+  if (Array.isArray(channel.modelRedirects)) {
+    channel.modelRedirects.forEach((rule) => {
+      candidates.push(rule?.from);
+      candidates.push(rule?.to);
+    });
+  }
+
+  return uniqueModels(candidates);
+}
+
+function parseBooleanQuery(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+
+async function probeModelsForSingleChannel(channel, channelType, options = {}) {
+  const builtInPreferred = Array.isArray(DEFAULT_CONFIG.defaultModels?.[channelType])
+    ? DEFAULT_CONFIG.defaultModels[channelType]
+    : [];
+  const preferredModels = uniqueModels([
+    ...collectChannelPreferredModels(channel),
+    ...builtInPreferred
+  ]);
+
+  try {
+    if (channelType === 'codex') {
+      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const listedModels = Array.isArray(listResult?.models) ? listResult.models : [];
+      if (listedModels.length > 0) {
+        return uniqueModels(listedModels);
+      }
+    }
+
+    const probe = await probeModelAvailability(channel, channelType, {
+      forceRefresh: !!options.forceRefresh,
+      stopOnFirstAvailable: true,
+      preferredModels
+    });
+    const probedModels = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
+    if (probedModels.length > 0) {
+      return uniqueModels(probedModels);
+    }
+  } catch (error) {
+    console.warn(`[Config API] Probe failed for channel ${channel?.name || channel?.id || 'unknown'}: ${error.message}`);
+  }
+
+  return preferredModels;
+}
+
+async function probeModelsForChannels(channels = [], channelType, options = {}) {
+  const enabledChannels = (channels || []).filter(ch => ch && ch.enabled !== false);
+  if (enabledChannels.length === 0) return [];
+
+  const resultSets = await Promise.all(
+    enabledChannels.map(channel => probeModelsForSingleChannel(channel, channelType, options))
+  );
+  return uniqueModels(resultSets.flat());
+}
+
+function mergeProbedAndConfiguredModels(probedModels, configuredModels, toolType) {
+  const safeConfigured = Array.isArray(configuredModels) ? configuredModels : [];
+  const safeProbed = Array.isArray(probedModels) ? probedModels : [];
+  const builtInDefaults = Array.isArray(DEFAULT_CONFIG.defaultModels?.[toolType])
+    ? DEFAULT_CONFIG.defaultModels[toolType]
+    : [];
+  if (safeProbed.length > 0) {
+    return uniqueModels([...safeProbed, ...safeConfigured, ...builtInDefaults]);
+  }
+  return uniqueModels([...safeConfigured, ...getModelPriority(toolType), ...builtInDefaults]);
+}
+
 /**
  * Validate model list
  * @param {Array} models - Array of model names
- * @param {string} toolType - Tool type (claude, codex, gemini, opencode)
+ * @param {string} toolType - Tool type (claude, codex, gemini)
  * @returns {Object} { valid: boolean, cleaned: array, error?: string }
  */
 function validateModelList(models, toolType) {
@@ -89,12 +201,55 @@ function validateModelList(models, toolType) {
  * GET /api/config/default-models
  * 获取默认模型列表
  */
-router.get('/default-models', (req, res) => {
+router.get('/default-models', async (req, res) => {
   try {
     const config = loadConfig();
-    const defaultModels = config.defaultModels || DEFAULT_CONFIG.defaultModels;
+    const configuredDefaultModels = config.defaultModels || DEFAULT_CONFIG.defaultModels;
+    const probe = parseBooleanQuery(req.query.probe, false);
 
-    res.json({ defaultModels });
+    if (!probe) {
+      return res.json({
+        defaultModels: configuredDefaultModels,
+        probed: false
+      });
+    }
+
+    const forceRefresh = parseBooleanQuery(req.query.forceRefresh, true);
+    const [claudeChannels, codexData, geminiData] = await Promise.all([
+      Promise.resolve(getAllChannels()),
+      Promise.resolve(getCodexChannels()),
+      Promise.resolve(getGeminiChannels())
+    ]);
+
+    const [claudeProbed, codexProbed, geminiProbed] = await Promise.all([
+      probeModelsForChannels(claudeChannels || [], 'claude', { forceRefresh }),
+      probeModelsForChannels(codexData?.channels || [], 'codex', { forceRefresh }),
+      probeModelsForChannels(geminiData?.channels || [], 'gemini', { forceRefresh })
+    ]);
+
+    const defaultModels = {
+      claude: mergeProbedAndConfiguredModels(
+        claudeProbed,
+        configuredDefaultModels.claude,
+        'claude'
+      ),
+      codex: mergeProbedAndConfiguredModels(
+        codexProbed,
+        configuredDefaultModels.codex,
+        'codex'
+      ),
+      gemini: mergeProbedAndConfiguredModels(
+        geminiProbed,
+        configuredDefaultModels.gemini,
+        'gemini'
+      )
+    };
+
+    res.json({
+      defaultModels,
+      probed: true,
+      forceRefresh
+    });
   } catch (error) {
     console.error('[Config API] Failed to get default models:', error);
     res.status(500).json({ error: error.message });
@@ -115,7 +270,7 @@ router.post('/default-models', (req, res) => {
       });
     }
 
-    const validToolTypes = ['claude', 'codex', 'gemini', 'opencode'];
+    const validToolTypes = ['claude', 'codex', 'gemini'];
     const providedTypes = Object.keys(defaultModels);
 
     // Validate that only valid tool types are provided
@@ -186,7 +341,7 @@ router.post('/default-models/reset', (req, res) => {
 
     if (toolType) {
       // Reset specific tool type
-      const validToolTypes = ['claude', 'codex', 'gemini', 'opencode'];
+      const validToolTypes = ['claude', 'codex', 'gemini'];
       if (!validToolTypes.includes(toolType)) {
         return res.status(400).json({
           error: `Invalid tool type: ${toolType}. Valid types: ${validToolTypes.join(', ')}`

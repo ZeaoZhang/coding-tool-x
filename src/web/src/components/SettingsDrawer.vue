@@ -1035,7 +1035,7 @@
                   </div>
 
                   <n-space vertical :size="16" style="margin-top: 16px;">
-                    <div v-for="toolType in ['claude', 'codex', 'gemini', 'opencode']" :key="toolType" class="model-management-section">
+                    <div v-for="toolType in ['claude', 'codex', 'gemini']" :key="toolType" class="model-management-section">
                       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                         <n-text strong>{{ toolTypeLabels[toolType] }}</n-text>
                         <n-button size="small" @click="resetToolType(toolType)">
@@ -1378,15 +1378,13 @@ const { defaultModels, loadDefaultModels, getDefaultModels } = useDefaultModels(
 const editableModels = ref({
   claude: [],
   codex: [],
-  gemini: [],
-  opencode: []
+  gemini: []
 })
 const savingModels = ref(false)
 const toolTypeLabels = {
   claude: 'Claude 模型',
   codex: 'Codex 模型',
-  gemini: 'Gemini 模型',
-  opencode: 'OpenCode 模型'
+  gemini: 'Gemini 模型'
 }
 
 // Helper function to format model names
@@ -2030,13 +2028,12 @@ async function handleDisableAutoStart() {
 // 加载默认模型配置
 async function loadDefaultModelsConfig() {
   try {
-    await loadDefaultModels()
+    await loadDefaultModels({ probe: true, forceRefresh: true })
     // Initialize editable models with loaded values
     editableModels.value = {
       claude: [...(getDefaultModels('claude') || [])],
       codex: [...(getDefaultModels('codex') || [])],
-      gemini: [...(getDefaultModels('gemini') || [])],
-      opencode: [...(getDefaultModels('opencode') || [])]
+      gemini: [...(getDefaultModels('gemini') || [])]
     }
   } catch (err) {
     console.error('Failed to load default models:', err)

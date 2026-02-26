@@ -30,13 +30,6 @@ const FALLBACK_MODELS = {
     'gemini-3-deep-think',
     'gemini-2.5-pro',
     'gemini-2.5-flash'
-  ],
-  opencode: [
-    'gpt-4o',
-    'gpt-4o-mini',
-    'claude-3-5-sonnet',
-    'claude-3-opus',
-    'deepseek-chat'
   ]
 };
 
@@ -49,9 +42,12 @@ let fetchPromise = null;
  * Handles concurrent calls by returning the same promise
  * @returns {Promise<Object>} Default models configuration
  */
-async function loadDefaultModels() {
+async function loadDefaultModels(options = {}) {
+  const probe = options.probe !== false;
+  const forceRefresh = options.forceRefresh === true;
+
   // If already loaded, return cached value
-  if (defaultModels.value) return defaultModels.value;
+  if (!forceRefresh && defaultModels.value) return defaultModels.value;
 
   // If currently loading, return the existing promise
   if (fetchPromise) return fetchPromise;
@@ -60,7 +56,12 @@ async function loadDefaultModels() {
   loading.value = true;
   fetchPromise = (async () => {
     try {
-      const response = await fetch('/api/config/default-models');
+      const params = new URLSearchParams();
+      if (probe) params.set('probe', 'true');
+      if (forceRefresh) params.set('forceRefresh', 'true');
+      const query = params.toString();
+      const url = query ? `/api/config/default-models?${query}` : '/api/config/default-models';
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -81,7 +82,7 @@ async function loadDefaultModels() {
 
 /**
  * Get default models for a specific tool type
- * @param {string} toolType - Tool type: 'claude', 'codex', 'gemini', 'opencode'
+ * @param {string} toolType - Tool type: 'claude', 'codex', 'gemini'
  * @returns {Array<string>} Array of model names
  */
 function getDefaultModels(toolType) {

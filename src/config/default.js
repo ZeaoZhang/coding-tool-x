@@ -42,13 +42,6 @@ const DEFAULT_CONFIG = {
       'gemini-3-deep-think',
       'gemini-2.5-pro',
       'gemini-2.5-flash'
-    ],
-    opencode: [
-      'gpt-4o',
-      'gpt-4o-mini',
-      'claude-3-5-sonnet',
-      'claude-3-opus',
-      'deepseek-chat'
     ]
   },
   pricing: {
