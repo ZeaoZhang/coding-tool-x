@@ -100,6 +100,13 @@ function applyPresetAuth(form) {
   return { ...form }
 }
 
+function formatOpenCodeGatewaySourceType(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'claude') return 'Claude Code'
+  if (normalized === 'gemini') return 'Gemini'
+  return 'Codex'
+}
+
 const baseSections = {
   schedule: [
     {
@@ -1175,7 +1182,9 @@ const channelPanelFactories = {
       return tags
     },
     buildInfoRows: (channel, helpers) => ([
-      { label: 'Provider', value: channel.providerKey || channel.wireApi || 'opencode', mono: true },
+      { label: '入口协议', value: formatOpenCodeGatewaySourceType(channel.gatewaySourceType), mono: true },
+      { label: 'Wire API', value: channel.wireApi || 'openai', mono: true },
+      { label: 'Provider Key', value: channel.providerKey || '(未设置)', mono: true },
       { label: 'Model', value: channel.model || '(默认)', mono: true },
       { label: 'URL', value: channel.baseUrl },
       {
