@@ -43,7 +43,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   }
 
   // 检查端口是否被占用
-  const portInUse = await isPortInUse(port);
+  const portInUse = await isPortInUse(port, host);
   if (portInUse) {
     console.log(chalk.yellow(`\n⚠️  端口 ${port} 已被占用\n`));
 
@@ -91,7 +91,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 
     // 等待端口释放
     console.log(chalk.cyan('等待端口释放...'));
-    const released = await waitForPortRelease(port);
+    const released = await waitForPortRelease(port, 3000, host);
 
     if (!released) {
       console.error(chalk.red('\n❌ 端口释放超时'));
@@ -224,45 +224,56 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     });
   }
 
-  // Start server
-  const server = app.listen(port, host, () => {
-    console.log(`\n🚀 Coding-Tool Web UI running at:`);
-    if (host === '0.0.0.0') {
-      console.log(chalk.yellow(`   ⚠️  警告: 服务正在监听所有网络接口 (LAN 可访问)`));
-      console.log(`   http://localhost:${port}`);
-      console.log(chalk.gray(`   http://<your-ip>:${port} (LAN 访问)`));
-    } else {
-      console.log(`   http://localhost:${port}`);
-    }
+  // Start server（确保监听成功后才返回，避免命令误报“已启动”）
+  const server = app.listen(port, host);
+  await new Promise((resolve) => {
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
 
-    // 附加 WebSocket 服务器到同一个端口
-    attachWebSocketServer(server, { host, allowRemoteTerminal });
-    console.log(`   ws://localhost:${port}/ws\n`);
-
-    if (host === '0.0.0.0' && !allowRemoteMutation) {
-      console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程写操作默认禁用'));
-    }
-    if (host === '0.0.0.0' && !allowRemoteTerminal) {
-      console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程 Web 终端默认禁用'));
-    }
-
-    // 自动恢复代理状态
-    autoRestoreProxies();
-
-    // 启动时执行健康检查
-    performStartupHealthCheck();
-  });
-
-  // 监听端口占用错误
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(chalk.red(`\n❌ 端口 ${port} 已被占用`));
-      console.error(chalk.yellow('\n💡 解决方案:'));
-      console.error(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
-      console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
+    const onError = (err) => {
+      server.off('listening', onListening);
+      if (err.code === 'EADDRINUSE') {
+        console.error(chalk.red(`\n❌ 端口 ${port} 已被占用`));
+        console.error(chalk.yellow('\n💡 解决方案:'));
+        console.error(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
+        console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
+      } else {
+        console.error(chalk.red(`\n❌ 启动服务器失败: ${err.message}\n`));
+      }
       process.exit(1);
-    }
+    };
+
+    server.once('listening', onListening);
+    server.once('error', onError);
   });
+
+  console.log(`\n🚀 Coding-Tool Web UI running at:`);
+  if (host === '0.0.0.0') {
+    console.log(chalk.yellow(`   ⚠️  警告: 服务正在监听所有网络接口 (LAN 可访问)`));
+    console.log(`   http://localhost:${port}`);
+    console.log(chalk.gray(`   http://<your-ip>:${port} (LAN 访问)`));
+  } else {
+    console.log(`   http://localhost:${port}`);
+  }
+
+  // 附加 WebSocket 服务器到同一个端口
+  attachWebSocketServer(server, { host, allowRemoteTerminal });
+  console.log(`   ws://localhost:${port}/ws\n`);
+
+  if (host === '0.0.0.0' && !allowRemoteMutation) {
+    console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程写操作默认禁用'));
+  }
+  if (host === '0.0.0.0' && !allowRemoteTerminal) {
+    console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程 Web 终端默认禁用'));
+  }
+
+  // 自动恢复代理状态
+  autoRestoreProxies();
+
+  // 启动时执行健康检查
+  performStartupHealthCheck();
 
   return server;
 }

@@ -4,24 +4,38 @@ const net = require('net');
 /**
  * 检查端口是否被占用
  */
-function isPortInUse(port) {
+function isPortInUse(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
     const server = net.createServer();
+    let resolved = false;
+
+    const finish = (value) => {
+      if (!resolved) {
+        resolved = true;
+        resolve(value);
+      }
+    };
 
     server.once('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        resolve(true);
+        finish(true);
       } else {
-        resolve(false);
+        finish(false);
       }
     });
 
     server.once('listening', () => {
-      server.close();
-      resolve(false);
+      // 等待 close 完成后再返回，避免紧接着重新监听同端口时触发竞态
+      server.close((err) => {
+        if (err) {
+          finish(true);
+          return;
+        }
+        finish(false);
+      });
     });
 
-    server.listen(port);
+    server.listen(port, host);
   });
 }
 
@@ -72,11 +86,11 @@ function killProcessByPort(port) {
 /**
  * 等待端口释放
  */
-async function waitForPortRelease(port, timeout = 3000) {
+async function waitForPortRelease(port, timeout = 3000, host = '127.0.0.1') {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeout) {
-    const inUse = await isPortInUse(port);
+    const inUse = await isPortInUse(port, host);
     if (!inUse) {
       return true;
     }

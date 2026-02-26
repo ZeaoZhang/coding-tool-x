@@ -3,6 +3,7 @@ const path = require('path');
 const chalk = require('chalk');
 const { loadConfig } = require('../config/loader');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
+const { findProcessByPort } = require('../utils/port-helper');
 
 const PM2_APP_NAME = 'cc-tool';
 
@@ -51,6 +52,47 @@ async function getCCToolProcess() {
   return list.find(proc => proc.name === PM2_APP_NAME);
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isPortOwnedByPid(port, pid) {
+  if (!pid || pid <= 0) {
+    return false;
+  }
+  const pids = findProcessByPort(port);
+  return pids.includes(String(pid));
+}
+
+async function waitForServiceReady(port, timeoutMs = 6000, intervalMs = 300) {
+  const startAt = Date.now();
+  let lastProcess = null;
+  let stablePassCount = 0;
+
+  while (Date.now() - startAt < timeoutMs) {
+    lastProcess = await getCCToolProcess();
+    if (lastProcess && lastProcess.pm2_env.status === 'online') {
+      const ownsPort = isPortOwnedByPid(port, lastProcess.pid);
+      if (ownsPort) {
+        // 连续多次检查通过，避免“瞬时 online 但马上崩溃”的误报
+        stablePassCount += 1;
+      } else {
+        stablePassCount = 0;
+      }
+
+      if (stablePassCount >= 3) {
+        return { ready: true, process: lastProcess };
+      }
+    } else {
+      stablePassCount = 0;
+    }
+    await sleep(intervalMs);
+  }
+
+  lastProcess = await getCCToolProcess();
+  return { ready: false, process: lastProcess };
+}
+
 /**
  * 启动服务（后台）
  */
@@ -96,9 +138,31 @@ async function handleStart() {
       error: path.join(require('os').homedir(), '.cc-tool/logs/cc-tool-error.log'),
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss'
-    }, (err) => {
+    }, async (err) => {
       if (err) {
         console.error(chalk.red('\n❌ 启动服务失败:'), err.message);
+        disconnectPM2();
+        process.exit(1);
+      }
+
+      try {
+        const readyState = await waitForServiceReady(port);
+        if (!readyState.ready) {
+          const statusText = readyState.process?.pm2_env?.status || 'unknown';
+          console.error(chalk.red('\n❌ Coding-Tool 服务启动失败，进程未就绪\n'));
+          console.error(chalk.gray(`PM2 状态: ${statusText}`));
+          console.error(chalk.yellow('💡 请使用 ctx logs ui 查看详细日志\n'));
+
+          pm2.delete(PM2_APP_NAME, () => {
+            pm2.dump(() => {
+              disconnectPM2();
+              process.exit(1);
+            });
+          });
+          return;
+        }
+      } catch (checkError) {
+        console.error(chalk.red('\n❌ 启动后健康检查失败:'), checkError.message);
         disconnectPM2();
         process.exit(1);
       }
