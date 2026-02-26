@@ -12,11 +12,16 @@ const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
 const { isGeminiInstalled } = require('../services/gemini-config');
-const { testChannelSpeed, getLatencyLevel } = require('../services/speed-test');
+const {
+  testChannelSpeed,
+  getLatencyLevel,
+  sanitizeBatchConcurrency,
+  runWithConcurrencyLimit
+} = require('../services/speed-test');
 const { clearGeminiRedirectCache } = require('../gemini-proxy-server');
 const {
   probeModelAvailability,
-  getModelPriority
+  fetchModelsFromProvider
 } = require('../services/model-detector');
 const GEMINI_GATEWAY_SOURCE_TYPE = 'gemini';
 
@@ -62,22 +67,41 @@ module.exports = (config) => {
       }
 
       const gatewaySourceType = GEMINI_GATEWAY_SOURCE_TYPE;
-      const probe = await probeModelAvailability(channel, gatewaySourceType);
-      const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-      const fallbackModels = getModelPriority(gatewaySourceType);
-      const models = probedModels.length > 0 ? probedModels : fallbackModels;
+      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
+      let result;
 
-      const result = {
-        models,
-        supported: probedModels.length > 0,
-        cached: !!probe.cached,
-        fallbackUsed: probedModels.length === 0,
-        lastChecked: probe.lastChecked || new Date().toISOString(),
-        error: probedModels.length > 0 ? null : '无法探测可用模型，已使用默认模型列表',
-        errorHint: probedModels.length > 0
-          ? null
-          : 'Gemini 渠道模型探测失败，已回退到默认模型优先级'
-      };
+      if (listedModels.length > 0) {
+        result = {
+          models: listedModels,
+          supported: true,
+          cached: !!listResult.cached,
+          fallbackUsed: false,
+          lastChecked: listResult.lastChecked || new Date().toISOString(),
+          error: null,
+          errorHint: null
+        };
+      } else {
+        const usingConfiguredProbe = !!listResult.disabledByConfig;
+        const probe = await probeModelAvailability(channel, gatewaySourceType, {
+          stopOnFirstAvailable: false
+        });
+        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
+
+        result = {
+          models: probedModels,
+          supported: probedModels.length > 0,
+          cached: !!probe.cached || !!listResult.cached,
+          fallbackUsed: false,
+          lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+          error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
+          errorHint: probedModels.length > 0
+            ? (usingConfiguredProbe ? '已按设置跳过 /v1/models，使用默认模型探测结果' : '模型列表接口不可用，已自动切换为模型探测结果')
+            : (listResult.errorHint || (usingConfiguredProbe
+              ? '已按设置跳过 /v1/models，且默认模型探测无可用结果'
+              : '模型列表接口不可用且模型探测无可用结果'))
+        };
+      }
 
       res.json({
         channelId: id,
@@ -278,29 +302,36 @@ module.exports = (config) => {
         return res.json({ results: [], message: 'Gemini CLI not installed' });
       }
 
-      const { timeout = 10000 } = req.body;
+      const { timeout = 10000, concurrency } = req.body || {};
       const data = getChannels();
       const channels = data.channels || [];
+      const safeConcurrency = sanitizeBatchConcurrency(concurrency);
 
       if (channels.length === 0) {
         return res.json({ results: [], message: '没有可测试的渠道' });
       }
 
-      const results = await Promise.all(
-        channels.map(async channel => {
+      const results = await runWithConcurrencyLimit(
+        channels,
+        safeConcurrency,
+        async channel => {
           const speedTestType = GEMINI_GATEWAY_SOURCE_TYPE;
           const result = await testChannelSpeed(channel, timeout, speedTestType);
           result.level = getLatencyLevel(result.latency);
           result.gatewaySourceType = speedTestType;
           return result;
-        })
+        }
       );
 
       // 成功在前，成功结果按延迟升序
       results.sort((a, b) => {
         if (a.success && !b.success) return -1;
         if (!a.success && b.success) return 1;
-        if (a.success && b.success) return (a.latency || Infinity) - (b.latency || Infinity);
+        if (a.success && b.success) {
+          const aLatency = (a.latency === null || a.latency === undefined) ? Infinity : a.latency;
+          const bLatency = (b.latency === null || b.latency === undefined) ? Infinity : b.latency;
+          return aLatency - bLatency;
+        }
         return 0;
       });
 
@@ -310,7 +341,8 @@ module.exports = (config) => {
           total: results.length,
           success: results.filter(r => r.success).length,
           failed: results.filter(r => !r.success).length,
-          avgLatency: calculateAvgLatency(results)
+          avgLatency: calculateAvgLatency(results),
+          concurrency: safeConcurrency
         }
       });
     } catch (error) {
@@ -349,7 +381,9 @@ module.exports = (config) => {
 
 // 计算平均延迟
 function calculateAvgLatency(results) {
-  const successResults = results.filter(r => r.success && r.latency);
+  const successResults = results.filter(
+    r => r.success && r.latency !== null && r.latency !== undefined
+  );
   if (successResults.length === 0) return null;
   const sum = successResults.reduce((acc, r) => acc + r.latency, 0);
   return Math.round(sum / successResults.length);

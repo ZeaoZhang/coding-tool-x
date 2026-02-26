@@ -554,6 +554,33 @@
 
                 <n-divider />
 
+                <!-- 模型探测设置 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>模型探测</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      控制获取可用模型时，是否先请求渠道的 /v1/models 接口
+                    </n-text>
+                  </div>
+
+                  <div class="advanced-options">
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">使用 /v1/models 探测可用模型</n-text>
+                        <n-text depth="3" style="font-size: 12px;">
+                          {{ advancedSettings.useV1ModelsEndpoint ? '已启用：优先请求 /v1/models' : '已关闭：直接使用默认模型探测（推荐）' }}
+                        </n-text>
+                      </div>
+                      <n-switch
+                        v-model:value="advancedSettings.useV1ModelsEndpoint"
+                        size="medium"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
                 <!-- 日志和性能设置 -->
                 <div class="setting-item">
                   <div class="setting-label">
@@ -1322,12 +1349,14 @@ const autoStartHelp = computed(() => {
 const advancedSettings = ref({
   maxLogs: 100,
   statsInterval: 30,
-  enableSessionBinding: true // 默认开启
+  enableSessionBinding: true, // 默认开启
+  useV1ModelsEndpoint: false
 })
 const originalAdvancedSettings = ref({
   maxLogs: 100,
   statsInterval: 30,
-  enableSessionBinding: true
+  enableSessionBinding: true,
+  useV1ModelsEndpoint: false
 })
 
 // 通知设置
@@ -1456,6 +1485,7 @@ const portsChanged = computed(() => {
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
+    advancedSettings.value.useV1ModelsEndpoint !== originalAdvancedSettings.value.useV1ModelsEndpoint ||
     JSON.stringify(pricingSettings.value) !== JSON.stringify(originalPricingSettings.value)
 })
 
@@ -1664,6 +1694,9 @@ async function handleSessionBindingChange(value) {
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
         enableSessionBinding: value,
+        modelDiscovery: {
+          useV1ModelsEndpoint: advancedSettings.value.useV1ModelsEndpoint
+        },
         pricing: pricingSettings.value
       })
     })
@@ -1700,7 +1733,8 @@ async function loadPortsConfig() {
       advancedSettings.value = {
         maxLogs: data.maxLogs || 100,
         statsInterval: data.statsInterval || 30,
-        enableSessionBinding: data.enableSessionBinding !== false
+        enableSessionBinding: data.enableSessionBinding !== false,
+        useV1ModelsEndpoint: data.modelDiscovery?.useV1ModelsEndpoint === true
       }
       originalAdvancedSettings.value = { ...advancedSettings.value }
 
@@ -1927,6 +1961,9 @@ async function handleSavePorts() {
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
         enableSessionBinding: advancedSettings.value.enableSessionBinding,
+        modelDiscovery: {
+          useV1ModelsEndpoint: advancedSettings.value.useV1ModelsEndpoint
+        },
         pricing: pricingSettings.value
       })
     })
@@ -1941,6 +1978,9 @@ async function handleSavePorts() {
         detail: {
           maxLogs: advancedSettings.value.maxLogs,
           statsInterval: advancedSettings.value.statsInterval,
+          modelDiscovery: {
+            useV1ModelsEndpoint: advancedSettings.value.useV1ModelsEndpoint
+          },
           pricing: pricingSettings.value
         }
       }))

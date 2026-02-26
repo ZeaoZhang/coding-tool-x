@@ -1,0 +1,8 @@
+{"timestamp":"2026-02-26T09:11:05.549Z","type":"watcher_start","cwd":"/Users/zhangzeao/workspace/coding-tool","notify_script":"/Users/zhangzeao/.nvm/versions/node/v24.11.1/lib/node_modules/oh-my-codex/scripts/notify-hook.js","poll_ms":700,"once":false}
+{"timestamp":"2026-02-26T09:12:02.463Z","type":"watcher_start","cwd":"/Users/zhangzeao/workspace/coding-tool","notify_script":"/Users/zhangzeao/.nvm/versions/node/v24.11.1/lib/node_modules/oh-my-codex/scripts/notify-hook.js","poll_ms":700,"once":true}
+{"timestamp":"2026-02-26T09:12:02.481Z","type":"watcher_once_complete","seen_turns":0}
+{"timestamp":"2026-02-26T09:12:02.483Z","type":"watcher_stop","signal":"SIGTERM"}
+{"timestamp":"2026-02-26T09:16:12.055Z","type":"watcher_start","cwd":"/Users/zhangzeao/workspace/coding-tool","notify_script":"/Users/zhangzeao/.nvm/versions/node/v24.11.1/lib/node_modules/oh-my-codex/scripts/notify-hook.js","poll_ms":700,"once":false}
+{"timestamp":"2026-02-26T09:17:10.232Z","type":"watcher_start","cwd":"/Users/zhangzeao/workspace/coding-tool","notify_script":"/Users/zhangzeao/.nvm/versions/node/v24.11.1/lib/node_modules/oh-my-codex/scripts/notify-hook.js","poll_ms":700,"once":true}
+{"timestamp":"2026-02-26T09:17:10.253Z","type":"watcher_once_complete","seen_turns":0}
+{"timestamp":"2026-02-26T09:17:10.255Z","type":"watcher_stop","signal":"SIGTERM"}

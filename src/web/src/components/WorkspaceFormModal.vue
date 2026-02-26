@@ -17,16 +17,6 @@
         <n-select v-model:value="formData.configTemplateId" :options="templateOptions" placeholder="选择配置模板" clearable />
       </n-form-item>
 
-      <n-form-item label="执行权限" path="permissionTemplate">
-        <n-select v-model:value="formData.permissionTemplate" :options="permissionOptions" placeholder="选择命令执行权限模式" @update:value="handlePermissionTemplateChange">
-          <template #action>
-            <div class="permission-info">
-              <n-text depth="3" style="font-size: 11px;">权限设置将应用到 .claude/settings.json</n-text>
-            </div>
-          </template>
-        </n-select>
-      </n-form-item>
-
       <n-form-item label="项目列表" path="projects">
         <div class="projects-section">
           <div class="projects-actions">
@@ -61,9 +51,8 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { NModal, NForm, NFormItem, NInput, NSelect, NButton, NSpace, NText, useMessage } from 'naive-ui'
-import { createWorkspace, getAvailableProjects, checkGitRepo } from '../api/workspaces'
+import { createWorkspace, getAvailableProjects } from '../api/workspaces'
 import { getAllTemplates } from '../api/config-templates'
-import { getPermissionTemplates } from '../api/permissions'
 import ProjectItem from './ProjectItem.vue'
 
 const props = defineProps({
@@ -76,7 +65,6 @@ const message = useMessage()
 const formRef = ref(null)
 const submitting = ref(false)
 const templates = ref([])
-const permissionTemplates = ref([])
 const existingProjects = ref([])
 
 const visible = computed({
@@ -89,7 +77,6 @@ const formData = ref({
   description: '',
   baseDir: '',
   configTemplateId: null,
-  permissionTemplate: 'balanced',
   projects: []
 })
 
@@ -105,17 +92,6 @@ const templateOptions = computed(() => templates.value.map(t => ({
   label: t.name,
   value: t.id
 })))
-
-const permissionOptions = computed(() => {
-  // 从API加载的权限模板转换为下拉选项
-  if (!permissionTemplates.value || !Array.isArray(permissionTemplates.value)) {
-    return [];
-  }
-  return permissionTemplates.value.map(tpl => ({
-    label: tpl.name,
-    value: tpl.id
-  }));
-})
 
 const existingProjectOptions = computed(() => existingProjects.value.map(p => ({
   label: `${p.displayName || p.name} (${p.channel})${p.isGitRepo ? ' [Git]' : ''}`,
@@ -149,15 +125,6 @@ function handleSelectExisting(idx, value) {
   proj.name = opt.path.split('/').pop()
   proj.isGitRepo = opt.isGitRepo
   proj.createWorktree = opt.isGitRepo
-}
-
-// 处理权限模板选择
-function handlePermissionTemplateChange(value) {
-  if (!value) return
-  const template = permissionTemplates.value.find(t => t.id === value)
-  if (template) {
-    message.success(`已应用模板：${template.name}`)
-  }
 }
 
 async function handleSubmit() {
@@ -197,21 +164,19 @@ async function handleSubmit() {
 }
 
 function resetForm() {
-  formData.value = { name: '', description: '', baseDir: '', configTemplateId: null, permissionTemplate: 'balanced', projects: [] }
+  formData.value = { name: '', description: '', baseDir: '', configTemplateId: null, projects: [] }
 }
 
 async function loadData() {
   try {
-    const [tplRes, projRes, permRes] = await Promise.all([
+    const [tplRes, projRes] = await Promise.all([
       getAllTemplates(),
-      getAvailableProjects(),
-      getPermissionTemplates()
-    ]);
-    if (tplRes.success) templates.value = tplRes.data || [];
-    if (projRes.success) existingProjects.value = Array.isArray(projRes.data) ? projRes.data : [];
-    if (permRes.success) permissionTemplates.value = permRes.data || [];
+      getAvailableProjects()
+    ])
+    if (tplRes.success) templates.value = tplRes.data || []
+    if (projRes.success) existingProjects.value = Array.isArray(projRes.data) ? projRes.data : []
   } catch (err) {
-    console.error('加载数据失败:', err);
+    console.error('加载数据失败:', err)
   }
 }
 
@@ -233,9 +198,5 @@ watch(visible, (val) => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.permission-info {
-  padding: 6px 10px;
-  border-top: 1px solid var(--border-primary);
 }
 </style>

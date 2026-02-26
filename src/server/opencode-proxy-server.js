@@ -17,7 +17,7 @@ const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
-const { probeModelAvailability, getModelPriority } = require('./services/model-detector');
+const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
 const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
@@ -50,6 +50,16 @@ const PRICING = {
 
 const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
 const ONE_MILLION = 1000000;
+const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31';
+const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.44 (external, sdk-cli)';
+const CODEX_CLI_VERSION = '0.101.0';
+const CODEX_CLI_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464';
+const GEMINI_CLI_USER_AGENT = 'google-api-nodejs-client/9.15.1';
+const GEMINI_CLI_API_CLIENT = 'gl-node/22.17.0';
+const GEMINI_CLI_CLIENT_METADATA = 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI';
+const CLAUDE_SESSION_USER_ID_TTL_MS = 60 * 60 * 1000;
+const CLAUDE_SESSION_USER_ID_CACHE_MAX = 2000;
+const claudeSessionUserIdCache = new Map();
 
 /**
  * 检测模型层级
@@ -225,11 +235,129 @@ function shouldParseJson(req) {
   return req.method === 'POST' && contentType.includes('application/json');
 }
 
+function normalizeSessionKeyValue(value) {
+  const source = Array.isArray(value) ? value[0] : value;
+  return typeof source === 'string' ? source.trim() : '';
+}
+
+function extractSessionIdFromBody(body = {}) {
+  if (!body || typeof body !== 'object') return '';
+
+  return normalizeSessionKeyValue(
+    body.session_id ||
+    body.sessionId ||
+    body.conversation_id ||
+    body.conversationId ||
+    body.metadata?.session_id ||
+    body.metadata?.sessionId ||
+    body.metadata?.conversation_id ||
+    body.metadata?.conversationId ||
+    body.workspace?.workspace_id ||
+    body.project_id ||
+    body.projectId ||
+    ''
+  );
+}
+
+function extractSessionIdFromRequest(req, body = {}) {
+  if (!req || typeof req !== 'object') {
+    return extractSessionIdFromBody(body);
+  }
+
+  const headerSessionId = normalizeSessionKeyValue(
+    req.headers?.['x-session-id'] ||
+    req.headers?.['x-claude-session'] ||
+    req.headers?.['x-cc-session'] ||
+    req.headers?.['x-conversation-id'] ||
+    req.headers?.['x-session']
+  );
+
+  return headerSessionId || extractSessionIdFromBody(body);
+}
+
+function cleanupExpiredClaudeSessionUserIds(now = Date.now()) {
+  for (const [sessionKey, entry] of claudeSessionUserIdCache.entries()) {
+    if (!entry || typeof entry !== 'object') {
+      claudeSessionUserIdCache.delete(sessionKey);
+      continue;
+    }
+    const lastUsedAt = Number(entry.lastUsedAt);
+    if (!Number.isFinite(lastUsedAt) || now - lastUsedAt > CLAUDE_SESSION_USER_ID_TTL_MS) {
+      claudeSessionUserIdCache.delete(sessionKey);
+    }
+  }
+}
+
+function trimClaudeSessionUserIdCache() {
+  while (claudeSessionUserIdCache.size > CLAUDE_SESSION_USER_ID_CACHE_MAX) {
+    const oldestKey = claudeSessionUserIdCache.keys().next().value;
+    if (!oldestKey) break;
+    claudeSessionUserIdCache.delete(oldestKey);
+  }
+}
+
+function resolveClaudeUserIdBySession(sessionKey, preferredUserId = '') {
+  const normalizedSessionKey = normalizeSessionKeyValue(sessionKey);
+  const providedUserId = normalizeSessionKeyValue(preferredUserId);
+  const now = Date.now();
+
+  cleanupExpiredClaudeSessionUserIds(now);
+
+  if (!normalizedSessionKey) {
+    return providedUserId || buildClaudeCodeUserId();
+  }
+
+  const cached = claudeSessionUserIdCache.get(normalizedSessionKey);
+  if (cached && typeof cached.userId === 'string' && cached.userId.trim()) {
+    const userId = cached.userId.trim();
+    claudeSessionUserIdCache.delete(normalizedSessionKey);
+    claudeSessionUserIdCache.set(normalizedSessionKey, {
+      userId,
+      lastUsedAt: now
+    });
+    return userId;
+  }
+
+  const generatedUserId = providedUserId || buildClaudeCodeUserId();
+  claudeSessionUserIdCache.set(normalizedSessionKey, {
+    userId: generatedUserId,
+    lastUsedAt: now
+  });
+  trimClaudeSessionUserIdCache();
+  return generatedUserId;
+}
+
 function normalizeGatewaySourceType(channel) {
   const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
   if (value === 'claude') return 'claude';
   if (value === 'gemini') return 'gemini';
   return 'codex';
+}
+
+function mapStainlessOs() {
+  switch (process.platform) {
+    case 'darwin':
+      return 'MacOS';
+    case 'win32':
+      return 'Windows';
+    case 'linux':
+      return 'Linux';
+    default:
+      return `other::${process.platform}`;
+  }
+}
+
+function mapStainlessArch() {
+  switch (process.arch) {
+    case 'x64':
+      return 'x64';
+    case 'arm64':
+      return 'arm64';
+    case 'ia32':
+      return 'x86';
+    default:
+      return `other::${process.arch}`;
+  }
 }
 
 function getRequestPathname(urlPath = '') {
@@ -283,6 +411,11 @@ function collectPreferredProbeModels(channel) {
     models.push(trimmed);
   });
   return models;
+}
+
+function isConverterPresetChannel(channel) {
+  const presetId = String(channel?.presetId || '').trim().toLowerCase();
+  return presetId === 'entry_claude' || presetId === 'entry_codex' || presetId === 'entry_gemini';
 }
 
 function extractTextFragments(value, fragments) {
@@ -563,7 +696,21 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
   };
 }
 
-function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = '') {
+function buildClaudeCodeUserId() {
+  const sessionId = Math.random().toString(36).substring(2, 15);
+  return `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}`;
+}
+
+function normalizeClaudeMetadata(metadata, fallbackUserId = '') {
+  const normalized = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
+    ? { ...metadata }
+    : {};
+  const userId = typeof normalized.user_id === 'string' ? normalized.user_id.trim() : '';
+  normalized.user_id = userId || normalizeSessionKeyValue(fallbackUserId) || buildClaudeCodeUserId();
+  return normalized;
+}
+
+function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = '', options = {}) {
   const normalized = normalizeOpenCodeMessages(pathname, payload);
   const maxTokens = Number(payload.max_output_tokens ?? payload.max_tokens);
 
@@ -575,7 +722,13 @@ function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = 
   };
 
   if (normalized.system) {
-    converted.system = normalized.system;
+    // 部分 relay 仅接受 Claude system 的 block 数组格式，不接受纯字符串
+    converted.system = [
+      {
+        type: 'text',
+        text: normalized.system
+      }
+    ];
   }
 
   const tools = normalizeOpenAiToolsToClaude(payload.tools || []);
@@ -597,6 +750,9 @@ function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = 
   if (Number.isFinite(Number(payload.top_k))) {
     converted.top_k = Number(payload.top_k);
   }
+
+  // 某些 Claude relay 会校验 metadata.user_id 以识别 Claude Code 请求
+  converted.metadata = normalizeClaudeMetadata(payload.metadata, options.sessionUserId);
 
   return converted;
 }
@@ -824,6 +980,9 @@ function convertOpenCodePayloadToCodexResponses(payload = {}, fallbackModel = ''
   if (requestBody.parallel_tool_calls === undefined) {
     requestBody.parallel_tool_calls = true;
   }
+  if (typeof requestBody.instructions !== 'string') {
+    requestBody.instructions = '';
+  }
 
   const include = Array.isArray(requestBody.include)
     ? requestBody.include.filter(item => typeof item === 'string' && item.trim())
@@ -839,6 +998,9 @@ function convertOpenCodePayloadToCodexResponses(payload = {}, fallbackModel = ''
   delete requestBody.top_p;
   delete requestBody.service_tier;
   delete requestBody.user;
+  delete requestBody.previous_response_id;
+  delete requestBody.prompt_cache_retention;
+  delete requestBody.safety_identifier;
 
   return {
     requestBody,
@@ -897,14 +1059,96 @@ function convertOpenCodePayloadToGemini(pathname, payload = {}, fallbackModel = 
 }
 
 function buildClaudeTargetUrl(baseUrl = '') {
-  const trimmed = String(baseUrl || '').replace(/\/+$/, '');
-  if (!trimmed) return '/v1/messages';
-  if (trimmed.endsWith('/v1')) return `${trimmed}/messages`;
-  if (trimmed.endsWith('/messages')) return trimmed;
-  return `${trimmed}/v1/messages`;
+  let targetUrl;
+  try {
+    targetUrl = new URL(String(baseUrl || '').trim() || 'https://api.anthropic.com');
+  } catch {
+    targetUrl = new URL('https://api.anthropic.com');
+  }
+
+  let pathname = targetUrl.pathname.replace(/\/+$/, '');
+  if (!pathname || pathname === '/') {
+    pathname = '/v1/messages';
+  } else if (pathname.endsWith('/messages')) {
+    // noop
+  } else if (pathname.endsWith('/v1')) {
+    pathname = `${pathname}/messages`;
+  } else {
+    pathname = `${pathname}/v1/messages`;
+  }
+
+  targetUrl.pathname = pathname;
+  targetUrl.searchParams.set('beta', 'true');
+  return targetUrl.toString();
 }
 
-function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '', options = {}) {
+function shouldUseGeminiCliFormat(baseUrl = '') {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(String(baseUrl || '').trim() || 'https://generativelanguage.googleapis.com');
+  } catch {
+    return false;
+  }
+
+  const host = String(parsedUrl.hostname || '').toLowerCase();
+  const pathname = parsedUrl.pathname.replace(/\/+$/, '');
+
+  if (pathname.includes('/v1internal') || pathname.endsWith(':generateContent') || pathname.endsWith(':streamGenerateContent')) {
+    return true;
+  }
+  if (pathname.includes('/v1beta') || pathname.includes('/models/')) {
+    return false;
+  }
+  if (host.includes('cloudcode-pa.googleapis.com')) {
+    return true;
+  }
+  if (!pathname || pathname === '/') {
+    return !host.includes('generativelanguage.googleapis.com') && !host.includes('aiplatform.googleapis.com');
+  }
+  return false;
+}
+
+function buildGeminiCliTargetPath(parsedUrl, stream = false) {
+  let pathname = parsedUrl.pathname.replace(/\/+$/, '');
+  const method = stream ? 'streamGenerateContent' : 'generateContent';
+
+  if (!pathname || pathname === '/') {
+    return `/v1internal:${method}`;
+  }
+  if (pathname.endsWith(':streamGenerateContent')) {
+    return stream
+      ? pathname
+      : pathname.replace(/:streamGenerateContent$/, ':generateContent');
+  }
+  if (pathname.endsWith(':generateContent')) {
+    return stream
+      ? pathname.replace(/:generateContent$/, ':streamGenerateContent')
+      : pathname;
+  }
+  if (pathname.endsWith('/v1internal')) {
+    return `${pathname}:${method}`;
+  }
+  return `${pathname}/v1internal:${method}`;
+}
+
+function buildGeminiCliTargetUrl(baseUrl = '', options = {}) {
+  const stream = !!options.stream;
+
+  let targetUrl;
+  try {
+    targetUrl = new URL(String(baseUrl || '').trim() || 'https://cloudcode-pa.googleapis.com');
+  } catch {
+    targetUrl = new URL('https://cloudcode-pa.googleapis.com');
+  }
+
+  targetUrl.pathname = buildGeminiCliTargetPath(targetUrl, stream);
+  if (stream) {
+    targetUrl.searchParams.set('alt', 'sse');
+  }
+  return targetUrl.toString();
+}
+
+function buildGeminiNativeTargetUrl(baseUrl = '', model = '', apiKey = '', options = {}) {
   const modelName = String(model || '').trim();
   if (!modelName) return '';
   const stream = !!options.stream;
@@ -940,6 +1184,36 @@ function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '', options = {
     targetUrl.searchParams.set('alt', 'sse');
   }
 
+  return targetUrl.toString();
+}
+
+function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '', options = {}) {
+  if (options.useCli) {
+    return buildGeminiCliTargetUrl(baseUrl, options);
+  }
+  return buildGeminiNativeTargetUrl(baseUrl, model, apiKey, options);
+}
+
+function buildCodexTargetUrl(baseUrl = '') {
+  let targetUrl;
+  try {
+    targetUrl = new URL(String(baseUrl || '').trim());
+  } catch {
+    return '';
+  }
+
+  let pathname = targetUrl.pathname.replace(/\/+$/, '');
+  if (!pathname || pathname === '/') {
+    pathname = '/responses';
+  } else if (pathname.endsWith('/responses') || pathname.endsWith('/v1/responses')) {
+    // noop
+  } else if (pathname.endsWith('/v1')) {
+    pathname = `${pathname}/responses`;
+  } else {
+    pathname = `${pathname}/responses`;
+  }
+
+  targetUrl.pathname = pathname;
   return targetUrl.toString();
 }
 
@@ -2429,17 +2703,39 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const streamResponses = wantsStream && isResponsesPath(pathname);
-  const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload, channel.model);
+  const sessionKey = extractSessionIdFromRequest(req, originalPayload);
+  const sessionScope = normalizeSessionKeyValue(channel?.id || channel?.name || '');
+  const scopedSessionKey = sessionKey && sessionScope
+    ? `${sessionScope}::${sessionKey}`
+    : sessionKey;
+  const preferredUserId = normalizeSessionKeyValue(originalPayload?.metadata?.user_id);
+  const sessionUserId = resolveClaudeUserIdBySession(scopedSessionKey, preferredUserId);
+  const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload, channel.model, {
+    sessionUserId
+  });
   claudePayload.stream = streamResponses;
 
   const headers = {
     'x-api-key': effectiveKey,
     'authorization': `Bearer ${effectiveKey}`,
     'anthropic-version': '2023-06-01',
-    'anthropic-beta': 'claude-code-20250219,interleaved-thinking-2025-05-14',
+    'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
+    'anthropic-dangerous-direct-browser-access': 'true',
+    'x-app': 'cli',
+    'x-stainless-helper-method': 'stream',
+    'x-stainless-retry-count': '0',
+    'x-stainless-runtime-version': 'v24.3.0',
+    'x-stainless-package-version': '0.74.0',
+    'x-stainless-runtime': 'node',
+    'x-stainless-lang': 'js',
+    'x-stainless-arch': mapStainlessArch(),
+    'x-stainless-os': mapStainlessOs(),
+    'x-stainless-timeout': '600',
+    'content-type': 'application/json',
     'accept': streamResponses ? 'text/event-stream' : 'application/json',
-    'accept-encoding': 'gzip, deflate, br',
-    'user-agent': 'claude-cli/2.0.53 (external, cli)'
+    'accept-encoding': 'gzip, deflate, br, zstd',
+    'connection': 'keep-alive',
+    'user-agent': CLAUDE_CODE_USER_AGENT
   };
 
   if (streamResponses) {
@@ -2580,18 +2876,30 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
     return true;
   }
 
-  const targetUrl = buildProxyAbsoluteTargetUrl(channel.baseUrl, pathname);
+  const targetUrl = buildCodexTargetUrl(channel.baseUrl);
   if (!targetUrl) {
     sendOpenAiStyleError(res, 400, 'Failed to build Codex target URL');
     return true;
   }
+
+  const codexSessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 15)}`;
+  const promptCacheKey = (typeof converted.requestBody.prompt_cache_key === 'string' && converted.requestBody.prompt_cache_key.trim())
+    ? converted.requestBody.prompt_cache_key.trim()
+    : codexSessionId;
+  converted.requestBody.prompt_cache_key = promptCacheKey;
 
   const headers = {
     authorization: `Bearer ${effectiveKey}`,
     'openai-beta': 'responses=experimental',
     accept: 'text/event-stream',
     'accept-encoding': 'gzip, deflate, br',
-    'user-agent': 'codex-cli/1.0.0'
+    connection: 'Keep-Alive',
+    'content-type': 'application/json',
+    Version: CODEX_CLI_VERSION,
+    Session_id: promptCacheKey,
+    Conversation_id: promptCacheKey,
+    Originator: 'codex_cli_rs',
+    'user-agent': CODEX_CLI_USER_AGENT
   };
 
   let streamUpstream;
@@ -3336,30 +3644,54 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   const streamResponses = wantsStream && isResponsesPath(pathname);
   const converted = convertOpenCodePayloadToGemini(pathname, originalPayload, channel.model);
   const targetModel = converted.model;
+  const useGeminiCli = shouldUseGeminiCliFormat(channel.baseUrl);
 
   if (!targetModel) {
     sendOpenAiStyleError(res, 400, 'Missing model in request and channel configuration');
     return true;
   }
 
-  const targetUrl = buildGeminiTargetUrl(channel.baseUrl, targetModel, effectiveKey, { stream: streamResponses });
+  const targetUrl = buildGeminiTargetUrl(channel.baseUrl, targetModel, effectiveKey, {
+    stream: streamResponses,
+    useCli: useGeminiCli
+  });
   if (!targetUrl) {
     sendOpenAiStyleError(res, 400, 'Failed to build Gemini target URL');
     return true;
   }
 
-  const headers = {
-    'x-goog-api-key': effectiveKey,
-    'authorization': `Bearer ${effectiveKey}`,
-    'accept': streamResponses ? 'text/event-stream' : 'application/json',
-    'accept-encoding': 'gzip, deflate, br',
-    'user-agent': 'google-genai-sdk/0.8.0'
-  };
+  const geminiPayload = useGeminiCli
+    ? {
+      project: '',
+      model: targetModel,
+      request: converted.requestBody
+    }
+    : converted.requestBody;
+
+  const headers = useGeminiCli
+    ? {
+      'x-goog-api-key': effectiveKey,
+      'authorization': `Bearer ${effectiveKey}`,
+      'content-type': 'application/json',
+      'accept': streamResponses ? 'text/event-stream' : 'application/json',
+      'accept-encoding': 'gzip, deflate, br',
+      'user-agent': GEMINI_CLI_USER_AGENT,
+      'x-goog-api-client': GEMINI_CLI_API_CLIENT,
+      'client-metadata': GEMINI_CLI_CLIENT_METADATA
+    }
+    : {
+      'x-goog-api-key': effectiveKey,
+      'authorization': `Bearer ${effectiveKey}`,
+      'content-type': 'application/json',
+      'accept': streamResponses ? 'text/event-stream' : 'application/json',
+      'accept-encoding': 'gzip, deflate, br',
+      'user-agent': 'google-genai-sdk/0.8.0'
+    };
 
   if (streamResponses) {
     let streamUpstream;
     try {
-      streamUpstream = await postJsonStream(targetUrl, headers, converted.requestBody, 120000);
+      streamUpstream = await postJsonStream(targetUrl, headers, geminiPayload, 120000);
     } catch (error) {
       recordFailure(channel.id, 'opencode', error);
       sendOpenAiStyleError(res, 502, `Gemini gateway network error: ${error.message}`, 'proxy_error');
@@ -3408,7 +3740,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 
   let upstream;
   try {
-    upstream = await postJson(targetUrl, headers, converted.requestBody, 120000);
+    upstream = await postJson(targetUrl, headers, geminiPayload, 120000);
   } catch (error) {
     recordFailure(channel.id, 'opencode', error);
     sendOpenAiStyleError(res, 502, `Gemini gateway network error: ${error.message}`, 'proxy_error');
@@ -3470,7 +3802,6 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 async function collectProxyModelList(channels = [], options = {}) {
   const seen = new Set();
   const models = [];
-  const channelModelMap = new Map();
 
   const add = (value) => {
     if (typeof value !== 'string') return;
@@ -3482,88 +3813,38 @@ async function collectProxyModelList(channels = [], options = {}) {
     models.push(trimmed);
   };
 
-  const registerChannelModels = (channel, candidates = []) => {
-    if (!channel || typeof channel !== 'object') return;
-    const channelId = String(channel.id || '');
-    if (!channelId) return;
-
-    let modelSet = channelModelMap.get(channelId);
-    if (!modelSet) {
-      modelSet = new Set();
-      channelModelMap.set(channelId, modelSet);
-    }
-
-    if (!Array.isArray(candidates)) return;
-    candidates.forEach((value) => {
-      if (typeof value !== 'string') return;
-      const trimmed = value.trim();
-      if (!trimmed) return;
-      if (modelSet.has(trimmed)) return;
-      modelSet.add(trimmed);
-      add(trimmed);
-    });
-  };
-
-  const ensureChannelFallbackModels = (channel) => {
-    if (!channel || typeof channel !== 'object') return;
-    const channelId = String(channel.id || '');
-    if (!channelId) return;
-    const modelSet = channelModelMap.get(channelId);
-    if (modelSet && modelSet.size > 0) return;
-
-    const channelType = normalizeGatewaySourceType(channel);
-    const fallbackModels = getModelPriority(channelType);
-    registerChannelModels(channel, fallbackModels);
-  };
-
-  // 先收集渠道显式声明的模型（channel.model/speedTestModel/modelRedirects/modelConfig）
-  for (const channel of channels) {
-    registerChannelModels(channel, collectPreferredProbeModels(channel));
-  }
-
   const forceRefresh = options.forceRefresh === true;
-  if (forceRefresh) {
-    await Promise.all(channels.map(async (channel) => {
-      try {
-        const channelType = normalizeGatewaySourceType(channel);
-        const probe = await probeModelAvailability(channel, channelType, {
-          forceRefresh: true,
-          stopOnFirstAvailable: true,
-          preferredModels: collectPreferredProbeModels(channel)
-        });
-        const available = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
-        registerChannelModels(channel, available);
-      } catch (err) {
-        console.warn(`[OpenCode Proxy] Live model probe failed for ${channel?.name || channel?.id || 'unknown'}:`, err.message);
-      } finally {
-        ensureChannelFallbackModels(channel);
+  // 模型列表聚合改为串行探测，避免并发触发上游会话窗口限流
+  for (const channel of channels) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible', { forceRefresh });
+      const listedModels = Array.isArray(listResult?.models) ? listResult.models : [];
+      if (listedModels.length > 0) {
+        listedModels.forEach(add);
+        continue;
       }
-    }));
-    return models;
-  }
 
-  // 最后补充缓存探测到的模型（来自 channel-models.json）
-  try {
-    ensureStorageDirMigrated();
-    const cachePath = path.join(PATHS.base, 'channel-models.json');
-    if (fs.existsSync(cachePath)) {
-      const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8') || '{}');
-      for (const channel of channels) {
-        const entry = cache?.[channel?.id];
-        if (!entry || typeof entry !== 'object') continue;
-        const fetched = entry.fetchedModels;
-        const probed = entry.availableModels;
-        const cachedModels = [];
-        if (Array.isArray(fetched)) cachedModels.push(...fetched);
-        if (Array.isArray(probed)) cachedModels.push(...probed);
-        registerChannelModels(channel, cachedModels);
+      const shouldProbeByDefault = !!listResult?.disabledByConfig;
+
+      // 默认仅入口转换器渠道执行模型探测；若已禁用 /v1/models 则对全部渠道启用默认探测
+      if (!shouldProbeByDefault && !isConverterPresetChannel(channel)) {
+        continue;
       }
+
+      const channelType = normalizeGatewaySourceType(channel);
+      // eslint-disable-next-line no-await-in-loop
+      const probe = await probeModelAvailability(channel, channelType, {
+        forceRefresh,
+        stopOnFirstAvailable: false,
+        preferredModels: collectPreferredProbeModels(channel)
+      });
+      const available = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
+      available.forEach(add);
+    } catch (err) {
+      console.warn(`[OpenCode Proxy] Build model list failed for ${channel?.name || channel?.id || 'unknown'}:`, err.message);
     }
-  } catch (err) {
-    console.warn('[OpenCode Proxy] Failed to load channel-models cache:', err.message);
   }
-
-  channels.forEach(ensureChannelFallbackModels);
 
   return models;
 }
@@ -3642,7 +3923,7 @@ async function startOpenCodeProxyServer(options = {}) {
     proxyApp.get(['/v1/models', '/models'], async (req, res) => {
       try {
         const channels = getEnabledChannels();
-        const models = await collectProxyModelList(channels, { forceRefresh: true });
+        const models = await collectProxyModelList(channels, { forceRefresh: false });
         res.json({
           object: 'list',
           data: models.map(id => ({ id, object: 'model' }))
@@ -4089,5 +4370,6 @@ module.exports = {
   startOpenCodeProxyServer,
   stopOpenCodeProxyServer,
   getOpenCodeProxyStatus,
-  clearOpenCodeRedirectCache
+  clearOpenCodeRedirectCache,
+  collectProxyModelList
 };

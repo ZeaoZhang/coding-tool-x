@@ -4,6 +4,20 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.1.1] - 2026-02-26
+
+### Added
+- ⚙️ **模型探测策略开关** - 设置中新增“优先使用 `/v1/models` 探测可用模型”控制项，默认关闭并使用默认测速模型探测。
+
+### Changed
+- 🚦 **测速稳定性增强** - `speed-test-all` 调整为串行/小并发策略，降低上游并发窗口打满导致的偶发失败。
+- 🔍 **模型列表获取策略优化** - 转换渠道模型获取改为串行探测，避免并发探测触发限流。
+
+### Fixed
+- 🐛 **OpenCode 转 Claude 请求格式修复** - 修正 `system`、`metadata` 等结构转换，兼容 Claude Code 特征校验。
+- 🐛 **`metadata.user_id` 会话一致性修复** - 同一 `session` 复用同一 `user_id`，避免请求侧与测速侧身份不一致导致拒绝。
+- 🐛 **延迟显示修复** - 修复 `latency` 为 `0ms` 时错误显示的问题，改为 `null` 语义处理。
+
 ## [3.1.0] - 2026-02-04
 
 ### Added
@@ -161,9 +175,6 @@
 ## [2.4.0] - 2026-01-18
 
 ### Changed
-- ♻️ **权限模板应用提示优化** - 点击权限模板应用时增加智能提示
-  - 未选择项目时提示"请选择一个项目"
-  - 已选择项目时显示"已应用模板：{模板名称}"
 - 🎨 **移除内置/自定义模板区分** - 统一模板显示样式
   - 移除所有模板卡片和预览中的"内置"/"自定义"标签
   - 移除配置模板下拉选项中的"(内置)"后缀
@@ -174,8 +185,6 @@
   - 删除内置模板时添加隐藏标记，不影响自定义模板
 
 ### Technical
-- 更新 `PermissionTemplateFormModal.vue` 移除内置模板编辑限制
-- 更新 `CommandPermissionDrawer.vue` 添加模板应用前的项目选择检查
 - 更新 `ConfigTemplateCard.vue` 移除内置标签并允许所有模板编辑删除
 - 更新 `ConfigPreviewModal.vue` 移除内置/自定义标签显示
 - 更新 `WorkspaceFormModal.vue` 简化模板选项显示
@@ -184,21 +193,9 @@
 
 ## [2.3.0] - 2025-01-15
 
-### Added
-- 🛡️ **命令执行权限管理** - 新增 CommandPermissionDrawer 组件，支持配置 AI 自动执行和需要确认的命令
-  - 支持三种权限模板：安全模式、平衡模式、宽松模式
-  - 配置保存到项目 `.claude/settings.json`，支持 `settings.local.json` 个人配置
-  - 显示三种 CLI 工具的权限配置说明和全权限命令
-- 🏗️ **工作区创建权限选择** - 创建工作区时可选择命令执行权限模板
-  - 自动为工作区内所有项目应用权限配置
-
 ### Changed
 - 🧹 **移除 Web 终端命令设置** - 从设置抽屉中删除 "Web终端命令" 面板
 - 🧹 **移除系统维护设置** - 从设置抽屉中删除 "系统维护" 面板和旧文件扫描功能
-- 📝 **更新 CLI 权限文档** - 修正三个 CLI 工具的全权限命令说明：
-  - Claude Code: `--dangerously-skip-permissions`
-  - Codex CLI: `--dangerously-bypass-approvals-and-sandbox`
-  - Gemini CLI: `--yolo`
 
 ---
 

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai": {
+      "name": "MyOpenAIProxy",
+      "options": {
+        "baseURL": "http://127.0.0.1:20091/v1",
+        "apiKey": "PROXY_KEY"
+      },
+      "models": {
+        "claude-opus-4-6": {
+          "id": "claude-opus-4-6",
+          "name": "Claude Opus 4.6",
+          "temperature": true,
+          "reasoning": false,
+          "tool_call": true,
+          "attachment": true,
+          "release_date": "2026-02-01",
+          "limit": {
+            "context": 200000,
+            "output": 8192
+          },
+          "modalities": {
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "provider": {
+            "npm": "@ai-sdk/openai-compatible",
+            "api": "http://127.0.0.1:20091/v1"
+          },
+          "options": {}
+        }
+      }
+    }
+  }
+}

@@ -129,13 +129,6 @@
           @click="showWorkspaceDrawer = true"
         />
 
-        <!-- Permission Button -->
-        <HeaderButton
-          :icon="ShieldCheckmarkOutline"
-          tooltip="命令执行权限"
-          @click="showPermissionDrawer = true"
-        />
-
         <!-- Prompts Button -->
         <HeaderButton
           :icon="ChatboxOutline"
@@ -259,12 +252,6 @@
     <!-- Speed Test Drawer -->
     <SpeedTestDrawer v-model:visible="showSpeedTestDrawer" />
 
-    <!-- OpenCode Gateway Convert Drawer -->
-    <GatewayConvertDrawer
-      v-if="currentChannel === 'opencode'"
-      v-model:visible="showGatewayConvertDrawer"
-    />
-
     <!-- Workspace Drawer -->
     <WorkspaceDrawer v-model:visible="showWorkspaceDrawer" />
 
@@ -273,9 +260,6 @@
 
     <!-- Config Export/Import Drawer -->
     <ConfigExportDrawer v-model:visible="showConfigExportDrawer" />
-
-    <!-- Command Permission Drawer -->
-    <CommandPermissionDrawer v-model:visible="showPermissionDrawer" />
 
     <!-- Skills/Commands/Agents/Rules Drawers -->
     <SkillsDrawer v-model:visible="showSkillsDrawer" />
@@ -465,7 +449,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, ShieldCheckmarkOutline, CloudDownloadOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -474,7 +458,6 @@ import SettingsDrawer from './SettingsDrawer.vue'
 import McpDrawer from './McpDrawer.vue'
 import PromptsDrawer from './PromptsDrawer.vue'
 import SpeedTestDrawer from './SpeedTestDrawer.vue'
-import GatewayConvertDrawer from './GatewayConvertDrawer.vue'
 import SkillsDrawer from './SkillsDrawer.vue'
 import CommandsDrawer from './CommandsDrawer.vue'
 import AgentsDrawer from './AgentsDrawer.vue'
@@ -483,7 +466,6 @@ import PluginsDrawer from './PluginsDrawer.vue'
 import WorkspaceDrawer from './WorkspaceDrawer.vue'
 import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
 import ConfigExportDrawer from './ConfigExportDrawer.vue'
-import CommandPermissionDrawer from './CommandPermissionDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
@@ -535,11 +517,9 @@ const showSettingsDrawer = ref(false)
 const showMcpDrawer = ref(false)
 const showPromptsDrawer = ref(false)
 const showSpeedTestDrawer = ref(false)
-const showGatewayConvertDrawer = ref(false)
 const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
-const showPermissionDrawer = ref(false)
 const showConfigExportDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const showCommandsDrawer = ref(false)
@@ -709,7 +689,6 @@ onMounted(() => {
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
   window.addEventListener('open-rules-drawer', openRulesDrawer)
   window.addEventListener('open-plugins-drawer', openPluginsDrawer)
-  window.addEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
@@ -723,7 +702,6 @@ onUnmounted(() => {
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
   window.removeEventListener('open-rules-drawer', openRulesDrawer)
   window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
-  window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 })
 
 function openSkillsDrawer() {
@@ -745,19 +723,6 @@ function openRulesDrawer() {
 function openPluginsDrawer() {
   showPluginsDrawer.value = true
 }
-
-function openGatewayConvertDrawer() {
-  if (currentChannel.value !== 'opencode') {
-    return
-  }
-  showGatewayConvertDrawer.value = true
-}
-
-watch(() => currentChannel.value, (channel) => {
-  if (channel !== 'opencode' && showGatewayConvertDrawer.value) {
-    showGatewayConvertDrawer.value = false
-  }
-})
 
 // Handle view history from favorites
 function handleViewHistoryFromFavorites({ session, channel }) {

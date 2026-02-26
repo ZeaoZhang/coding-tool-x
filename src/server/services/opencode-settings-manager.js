@@ -10,6 +10,9 @@ const CONFIG_PATHS = {
 };
 const BACKUP_SUFFIX = '.cc-tool-backup';
 const EMPTY_SENTINEL = '__CC_TOOL_NO_FILE__';
+const PROXY_PROVIDER_ID = 'ctx-proxy';
+const LEGACY_PROVIDER_ID = 'openai';
+const PROXY_API_KEY = 'PROXY_KEY';
 
 function ensureConfigDir() {
   if (!fs.existsSync(CONFIG_DIR)) {
@@ -109,11 +112,65 @@ function normalizeOpenCodeModel(modelId) {
     return '';
   }
 
-  // OpenCode 要求格式为 provider/model，当前代理固定使用 openai provider。
-  if (normalized.includes('/')) {
+  // OpenCode 要求格式为 provider/model。这里统一绑定到 ctx-proxy provider，
+  // 避免落到内置 openai provider 的模型清单。
+  if (normalized.startsWith(`${PROXY_PROVIDER_ID}/`)) {
     return normalized;
   }
-  return `openai/${normalized}`;
+  return `${PROXY_PROVIDER_ID}/${normalized}`;
+}
+
+function isLocalProxyBaseUrl(url) {
+  const value = String(url || '').trim();
+  return value.includes('127.0.0.1') || value.includes('localhost');
+}
+
+function isLegacyProxyProvider(provider) {
+  if (!provider || typeof provider !== 'object') return false;
+  const apiKey = provider?.options?.apiKey;
+  const baseUrl = provider?.options?.baseURL;
+  return apiKey === PROXY_API_KEY && isLocalProxyBaseUrl(baseUrl);
+}
+
+function isManagedProxyProvider(provider) {
+  if (!provider || typeof provider !== 'object') return false;
+  const apiKey = provider?.options?.apiKey;
+  const baseUrl = provider?.options?.baseURL;
+  return apiKey === PROXY_API_KEY && isLocalProxyBaseUrl(baseUrl);
+}
+
+function isManagedProxyConfig(config) {
+  if (!config || typeof config !== 'object') return false;
+  return isManagedProxyProvider(config?.provider?.[PROXY_PROVIDER_ID])
+    || isLegacyProxyProvider(config?.provider?.[LEGACY_PROVIDER_ID]);
+}
+
+function buildModelsMap(models = [], fallbackModel = '') {
+  const map = {};
+  const seen = new Set();
+
+  const add = (value) => {
+    if (typeof value !== 'string') return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    map[trimmed] = { name: trimmed };
+  };
+
+  if (Array.isArray(models)) {
+    models.forEach(add);
+  }
+  add(fallbackModel);
+
+  return map;
+}
+
+function resolveProxyBaseUrl(config) {
+  return config?.provider?.[PROXY_PROVIDER_ID]?.options?.baseURL
+    || config?.provider?.[LEGACY_PROVIDER_ID]?.options?.baseURL
+    || '';
 }
 
 function backupConfig(filePath) {
@@ -121,6 +178,28 @@ function backupConfig(filePath) {
   const backupPath = getBackupPath(filePath);
 
   if (fs.existsSync(backupPath)) {
+    // 防止历史残留备份误伤：若当前配置已回到“非代理托管态”，刷新备份为当前真实配置。
+    // 这样 stop/restore 不会把用户配置恢复成陈旧快照（或空文件哨兵）。
+    try {
+      const backupContent = fs.readFileSync(backupPath, 'utf8');
+      if (backupContent === EMPTY_SENTINEL && fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf8');
+        fs.writeFileSync(backupPath, content, 'utf8');
+        return { success: true, alreadyExists: true };
+      }
+
+      const current = readConfig(filePath);
+      if (!isManagedProxyConfig(current)) {
+        if (fs.existsSync(filePath)) {
+          const content = fs.readFileSync(filePath, 'utf8');
+          fs.writeFileSync(backupPath, content, 'utf8');
+        } else {
+          fs.writeFileSync(backupPath, EMPTY_SENTINEL, 'utf8');
+        }
+      }
+    } catch (error) {
+      // ignore backup refresh errors, fallback to existing backup
+    }
     return { success: true, alreadyExists: true };
   }
 
@@ -174,27 +253,42 @@ function setProxyConfig(proxyPort, options = {}) {
   if (!next.provider || typeof next.provider !== 'object') {
     next.provider = {};
   }
-  if (!next.provider.openai || typeof next.provider.openai !== 'object') {
-    next.provider.openai = {};
-  }
-  if (!next.provider.openai.options || typeof next.provider.openai.options !== 'object') {
-    next.provider.openai.options = {};
+  // 清理历史 openai 代理注入，避免 /models 出现与代理无关的 openai 模型列表。
+  if (isLegacyProxyProvider(next.provider[LEGACY_PROVIDER_ID])) {
+    delete next.provider[LEGACY_PROVIDER_ID];
   }
 
-  next.provider.openai.options.baseURL = `http://127.0.0.1:${proxyPort}/v1`;
-  next.provider.openai.options.apiKey = 'PROXY_KEY';
-
-  // 清理历史错误字段，避免触发 OpenCode 配置校验失败
-  if (Object.prototype.hasOwnProperty.call(next.provider.openai, 'model')) {
-    delete next.provider.openai.model;
+  if (Object.prototype.hasOwnProperty.call(next.provider[LEGACY_PROVIDER_ID] || {}, 'model')) {
+    delete next.provider[LEGACY_PROVIDER_ID].model;
   }
 
-  // 写入顶层 model（OpenCode 要求 provider/model 格式）
-  if (options.model) {
-    const resolvedModel = normalizeOpenCodeModel(options.model);
+  const modelsMap = buildModelsMap(options.models, options.model);
+  const modelIds = Object.keys(modelsMap);
+
+  if (modelIds.length > 0) {
+    next.provider[PROXY_PROVIDER_ID] = {
+      npm: '@ai-sdk/openai-compatible',
+      name: 'CTX Proxy',
+      options: {
+        baseURL: `http://127.0.0.1:${proxyPort}/v1`,
+        apiKey: PROXY_API_KEY
+      },
+      models: modelsMap
+    };
+  } else {
+    // 无模型时不暴露 provider，避免出现误导性的 provider.openai/provider 列表。
+    delete next.provider[PROXY_PROVIDER_ID];
+  }
+
+  // 写入顶层 model（OpenCode 要求 provider/model 格式），无显式模型时兜底第一个模型。
+  const fallbackModel = options.model || modelIds[0] || '';
+  if (fallbackModel) {
+    const resolvedModel = normalizeOpenCodeModel(fallbackModel);
     if (resolvedModel) {
       next.model = resolvedModel;
     }
+  } else if (String(next.model || '').startsWith(`${PROXY_PROVIDER_ID}/`) || String(next.model || '').startsWith(`${LEGACY_PROVIDER_ID}/`)) {
+    delete next.model;
   }
 
   writeConfig(filePath, next);
@@ -217,8 +311,8 @@ function isProxyConfig() {
     const filePath = selectConfigPath();
     if (!fs.existsSync(filePath)) return false;
     const config = readConfig(filePath);
-    const baseUrl = config?.provider?.openai?.options?.baseURL || '';
-    return baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost');
+    const baseUrl = resolveProxyBaseUrl(config);
+    return isLocalProxyBaseUrl(baseUrl);
   } catch (err) {
     return false;
   }
@@ -229,7 +323,7 @@ function getCurrentProxyPort() {
     if (!isProxyConfig()) return null;
     const filePath = selectConfigPath();
     const config = readConfig(filePath);
-    const baseUrl = config?.provider?.openai?.options?.baseURL || '';
+    const baseUrl = resolveProxyBaseUrl(config);
     const match = baseUrl.match(/:(\d+)/);
     return match ? parseInt(match[1], 10) : null;
   } catch (err) {

@@ -4,32 +4,31 @@ import { ref } from 'vue';
 const defaultModels = ref(null);
 const loading = ref(false);
 
-// Built-in fallback defaults (same as backend DEFAULT_CONFIG)
+// 与后端默认配置保持一致的内置模型列表
 const FALLBACK_MODELS = {
   claude: [
     'claude-opus-4-6',
+    'claude-sonnet-4-6',
     'claude-opus-4-5-20251101',
     'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20251001',
-    'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514'
+    'claude-haiku-4-5-20251001'
   ],
   codex: [
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
-    'gpt-5.1-codex-mini',
     'gpt-5.1-codex',
+    'gpt-5.1-codex-mini',
     'gpt-5-codex',
     'gpt-5.2',
     'gpt-5.1',
     'gpt-5'
   ],
   gemini: [
-    'gemini-3-pro',
-    'gemini-3-flash',
-    'gemini-3-deep-think',
+    'gemini-3-pro-preview',
+    'gemini-3-flash-preview',
     'gemini-2.5-pro',
-    'gemini-2.5-flash'
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite'
   ]
 };
 

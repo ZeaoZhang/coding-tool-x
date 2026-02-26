@@ -200,9 +200,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // 配置模板 API
   app.use('/api/config-templates', require('./api/config-templates'));
 
-  // 命令执行权限 API
-  app.use('/api/permissions', require('./api/permissions'));
-
   // 配置导出/导入 API
   app.use('/api/config-export', require('./api/config-export'));
 
@@ -356,7 +353,21 @@ function autoRestoreProxies() {
         if (result.success) {
           console.log(chalk.green(`✅ OpenCode 代理已自动启动，端口: ${result.port}`));
           try {
-            const cfgResult = setOpenCodeProxyConfig(result.port);
+            const { getEnabledChannels: getEnabledOpenCodeChannels } = require('./services/opencode-channels');
+            const enabledChs = getEnabledOpenCodeChannels();
+            const allModels = [];
+            const seen = new Set();
+            enabledChs.forEach((ch) => {
+              [ch.model, ch.speedTestModel].forEach((m) => {
+                if (typeof m === 'string' && m.trim() && !seen.has(m.trim().toLowerCase())) {
+                  seen.add(m.trim().toLowerCase());
+                  allModels.push(m.trim());
+                }
+              });
+            });
+            const firstChannel = enabledChs[0];
+            const activeModel = firstChannel && (firstChannel.model || firstChannel.speedTestModel) || null;
+            const cfgResult = setOpenCodeProxyConfig(result.port, { model: activeModel, models: allModels });
             if (cfgResult?.success) {
               console.log(chalk.gray('   已同步 OpenCode 配置文件'));
             }

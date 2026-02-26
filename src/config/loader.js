@@ -49,6 +49,13 @@ function mergeDefaultModels(defaultModels, overrides = {}) {
   return merged;
 }
 
+function mergeModelDiscovery(defaultModelDiscovery, overrides = {}) {
+  return {
+    ...defaultModelDiscovery,
+    ...(overrides || {})
+  };
+}
+
 function readJsonFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
   return JSON.parse(content);
@@ -92,6 +99,7 @@ function loadConfig() {
       config.ports = { ...DEFAULT_CONFIG.ports, ...userConfig.ports };
       config.pricing = mergePricing(DEFAULT_CONFIG.pricing, userConfig.pricing);
       config.defaultModels = mergeDefaultModels(DEFAULT_CONFIG.defaultModels, userConfig.defaultModels);
+      config.modelDiscovery = mergeModelDiscovery(DEFAULT_CONFIG.modelDiscovery, userConfig.modelDiscovery);
 
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {

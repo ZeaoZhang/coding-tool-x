@@ -11,12 +11,15 @@ const { isOpenCodeInstalled } = require('../services/opencode-sessions');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
-const { testChannelSpeed } = require('../services/speed-test');
+const {
+  testChannelSpeed,
+  sanitizeBatchConcurrency,
+  runWithConcurrencyLimit
+} = require('../services/speed-test');
 const { clearOpenCodeRedirectCache } = require('../opencode-proxy-server');
 const {
   fetchModelsFromProvider,
-  probeModelAvailability,
-  getModelPriority
+  probeModelAvailability
 } = require('../services/model-detector');
 
 module.exports = (config) => {
@@ -69,6 +72,11 @@ module.exports = (config) => {
 
   function mapGatewaySourceTypeToSpeedTestType(channel) {
     return resolveGatewaySourceType(channel);
+  }
+
+  function isConverterPresetChannel(channel) {
+    const presetId = String(channel?.presetId || '').trim().toLowerCase();
+    return presetId === 'entry_claude' || presetId === 'entry_codex' || presetId === 'entry_gemini';
   }
 
   /**
@@ -138,68 +146,51 @@ module.exports = (config) => {
 
       const gatewaySourceType = resolveGatewaySourceType(channel);
       const preferredModels = collectChannelPreferredModels(channel);
+      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
+      const shouldProbeByDefault = !!listResult.disabledByConfig;
       let result;
 
-      if (gatewaySourceType === 'codex') {
-        const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
-        const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
-
-        if (listedModels.length > 0) {
-          result = listResult;
-        } else {
-          const probe = await probeModelAvailability(channel, 'codex', {
-            stopOnFirstAvailable: true,
-            preferredModels
-          });
-          const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-          const fallbackModels = uniqueModels([...preferredModels, ...getModelPriority('codex')]);
-
-          if (probedModels.length > 0) {
-            result = {
-              models: probedModels,
-              supported: true,
-              cached: !!probe.cached,
-              fallbackUsed: false,
-              lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
-              error: null,
-              errorHint: listResult.error
-                ? '模型列表接口不可用，已自动切换为模型探测结果'
-                : null
-            };
-          } else {
-            result = {
-              models: fallbackModels,
-              supported: false,
-              cached: !!probe.cached || !!listResult.cached,
-              fallbackUsed: true,
-              lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
-              error: listResult.error || '无法探测到可用模型',
-              errorHint: listResult.errorHint || '已回退到默认模型候选，请确认网关入口类型与 API Key 权限'
-            };
-          }
-        }
-      } else {
+      if (listedModels.length > 0) {
+        result = {
+          models: listedModels,
+          supported: true,
+          cached: !!listResult.cached,
+          fallbackUsed: false,
+          lastChecked: listResult.lastChecked || new Date().toISOString(),
+          error: null,
+          errorHint: null
+        };
+      } else if (shouldProbeByDefault || isConverterPresetChannel(channel)) {
         const probe = await probeModelAvailability(channel, gatewaySourceType, {
-          stopOnFirstAvailable: true,
+          stopOnFirstAvailable: false,
           preferredModels
         });
-        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-        const fallbackModels = uniqueModels([
-          ...preferredModels,
-          ...getModelPriority(gatewaySourceType)
-        ]);
-        const models = probedModels.length > 0 ? probedModels : fallbackModels;
+        const probedModels = Array.isArray(probe.availableModels) ? uniqueModels(probe.availableModels) : [];
 
         result = {
-          models,
+          models: probedModels,
           supported: probedModels.length > 0,
-          cached: !!probe.cached,
-          fallbackUsed: probedModels.length === 0,
-          lastChecked: probe.lastChecked || new Date().toISOString(),
-          error: probedModels.length > 0 ? null : '无法探测到可用模型',
+          cached: !!probe.cached || !!listResult.cached,
+          fallbackUsed: false,
+          lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+          error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
           errorHint: probedModels.length > 0
-            ? null
-            : '已回退到默认模型候选，请确认网关入口类型与 API Key 权限'
+            ? (shouldProbeByDefault ? '已按设置跳过 /v1/models，使用默认模型探测结果' : '模型列表接口不可用，已自动切换为模型探测结果')
+            : (listResult.errorHint || (shouldProbeByDefault
+              ? '已按设置跳过 /v1/models，且默认模型探测无可用结果'
+              : '模型列表接口不可用且模型探测无可用结果'))
+        };
+      } else {
+        // 非入口转换器渠道：只请求 /v1/models，失败则返回空列表
+        result = {
+          models: [],
+          supported: false,
+          cached: !!listResult.cached,
+          fallbackUsed: false,
+          lastChecked: listResult.lastChecked || new Date().toISOString(),
+          error: listResult.error || '该渠道未返回可用模型列表',
+          errorHint: listResult.errorHint || '此类型渠道不执行模型探测，请检查 /v1/models 接口'
         };
       }
 
@@ -375,32 +366,46 @@ module.exports = (config) => {
    */
   router.post('/speed-test-all', async (req, res) => {
     try {
-      const { timeout = 20000 } = req.body;
+      const { timeout = 20000, concurrency } = req.body || {};
       const channels = getChannels().channels || [];
-      const results = await Promise.all(
-        channels.map(channel => {
+      const safeConcurrency = sanitizeBatchConcurrency(concurrency);
+
+      const results = await runWithConcurrencyLimit(
+        channels,
+        safeConcurrency,
+        channel => {
           const speedTestType = mapGatewaySourceTypeToSpeedTestType(channel);
           return testChannelSpeed(channel, timeout, speedTestType);
-        })
+        }
       );
 
       // 与 testMultipleChannels 保持一致的排序：成功在前，成功按延迟升序
       results.sort((a, b) => {
         if (a.success && !b.success) return -1;
         if (!a.success && b.success) return 1;
-        if (a.success && b.success) return (a.latency || Infinity) - (b.latency || Infinity);
+        if (a.success && b.success) {
+          const aLatency = (a.latency === null || a.latency === undefined) ? Infinity : a.latency;
+          const bLatency = (b.latency === null || b.latency === undefined) ? Infinity : b.latency;
+          return aLatency - bLatency;
+        }
         return 0;
       });
       
       // 添加摘要统计
       const successResults = results.filter(r => r.success);
+      const successWithLatency = successResults.filter(
+        r => r.latency !== null && r.latency !== undefined
+      );
       const summary = {
         total: results.length,
         success: successResults.length,
         failed: results.length - successResults.length,
-        avgLatency: successResults.length > 0 
-          ? Math.round(successResults.reduce((sum, r) => sum + (r.latency || 0), 0) / successResults.length)
-          : 0
+        avgLatency: successWithLatency.length > 0
+          ? Math.round(
+            successWithLatency.reduce((sum, r) => sum + r.latency, 0) / successWithLatency.length
+          )
+          : null,
+        concurrency: safeConcurrency
       };
       
       res.json({ results, summary });

@@ -1,13 +1,12 @@
 /**
  * 配置导出/导入服务
- * 支持权限模板、配置模板、频道配置的导出与导入
+ * 支持配置模板、频道配置的导出与导入
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const AdmZip = require('adm-zip');
-const permissionTemplatesService = require('./permission-templates-service');
 const configTemplatesService = require('./config-templates-service');
 const channelsService = require('./channels');
 const { AgentsService } = require('./agents-service');
@@ -121,7 +120,7 @@ function buildExportReadme(exportData) {
 版本: ${exportData.version || CONFIG_VERSION}
 
 ## 📦 包含内容
-- 权限模板、配置模板、频道配置、工作区、收藏
+- 配置模板、频道配置、工作区、收藏
 - Agents / Skills / Commands / Rules
 - 插件 (Plugins)
 - MCP 服务器配置
@@ -436,10 +435,6 @@ function writeTextFile(baseDir, relativePath, content, overwrite) {
  */
 function exportAllConfigs() {
   try {
-    // 获取所有权限模板(只导出自定义模板)
-    const allPermissionTemplates = permissionTemplatesService.getAllTemplates();
-    const customPermissionTemplates = allPermissionTemplates.filter(t => !t.isBuiltin);
-
     // 获取所有配置模板(只导出自定义模板)
     const allConfigTemplates = configTemplatesService.getAllTemplates();
     const customConfigTemplates = allConfigTemplates.filter(t => !t.isBuiltin);
@@ -548,7 +543,6 @@ function exportAllConfigs() {
       version: CONFIG_VERSION,
       exportedAt: new Date().toISOString(),
       data: {
-        permissionTemplates: customPermissionTemplates,
         configTemplates: customConfigTemplates,
         channels: channels || [],
         workspaces: workspaces || { workspaces: [] },
@@ -616,7 +610,6 @@ function exportAllConfigsZip() {
 function importConfigs(importData, options = {}) {
   const { overwrite = true } = options; // 默认覆盖模式
   const results = {
-    permissionTemplates: { success: 0, failed: 0, skipped: 0 },
     configTemplates: { success: 0, failed: 0, skipped: 0 },
     channels: { success: 0, failed: 0, skipped: 0 },
     workspaces: { success: 0, failed: 0, skipped: 0 },
@@ -644,7 +637,6 @@ function importConfigs(importData, options = {}) {
     }
 
     const {
-      permissionTemplates = [],
       configTemplates = [],
       channels = [],
       workspaces = null,
@@ -663,33 +655,6 @@ function importConfigs(importData, options = {}) {
       appConfig = null,
       claudeHooks = null
     } = importData.data;
-
-    // 导入权限模板
-    for (const template of permissionTemplates) {
-      try {
-        const existing = permissionTemplatesService.getTemplateById(template.id);
-
-        if (existing && !overwrite) {
-          results.permissionTemplates.skipped++;
-          continue;
-        }
-
-        if (existing && overwrite) {
-          permissionTemplatesService.updateTemplate(template.id, template);
-        } else {
-          const newTemplate = {
-            ...template,
-            isBuiltin: false,
-            importedAt: new Date().toISOString()
-          };
-          permissionTemplatesService.createTemplate(newTemplate);
-        }
-        results.permissionTemplates.success++;
-      } catch (err) {
-        console.error(`[ConfigImport] 导入权限模板失败: ${template.name}`, err);
-        results.permissionTemplates.failed++;
-      }
-    }
 
     // 导入配置模板
     for (const template of configTemplates) {
@@ -1262,7 +1227,6 @@ function generateImportSummary(results) {
   const parts = [];
 
   const types = [
-    { key: 'permissionTemplates', label: '权限模板' },
     { key: 'configTemplates', label: '配置模板' },
     { key: 'channels', label: '频道' },
     { key: 'workspaces', label: '工作区' },

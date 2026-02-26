@@ -2,7 +2,10 @@
 
 # CODING-TOOL 发布脚本
 
-echo "📦 开始发布 CODING-TOOL v1.0.0..."
+PACKAGE_NAME=$(node -p "require('./package.json').name")
+PACKAGE_VERSION=$(node -p "require('./package.json').version")
+
+echo "📦 开始发布 ${PACKAGE_NAME} v${PACKAGE_VERSION}..."
 
 # 1. 构建前端
 echo ""
@@ -37,8 +40,8 @@ if [ $? -eq 0 ]; then
   echo "✅ 发布成功！"
   echo ""
   echo "📖 接下来："
-  echo "   1. 访问 https://www.npmjs.com/package/coding-tool-x 查看"
-  echo "   2. 测试安装: npm install -g coding-tool-x"
+  echo "   1. 访问 https://www.npmjs.com/package/${PACKAGE_NAME} 查看"
+  echo "   2. 测试安装: npm install -g ${PACKAGE_NAME}"
   echo "   3. 运行测试: ctx ui"
 else
   echo ""
