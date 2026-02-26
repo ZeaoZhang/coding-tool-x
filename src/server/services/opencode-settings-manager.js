@@ -103,6 +103,19 @@ function writeConfig(filePath, config) {
   fs.writeFileSync(filePath, content, 'utf8');
 }
 
+function normalizeOpenCodeModel(modelId) {
+  const normalized = String(modelId || '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  // OpenCode 要求格式为 provider/model，当前代理固定使用 openai provider。
+  if (normalized.includes('/')) {
+    return normalized;
+  }
+  return `openai/${normalized}`;
+}
+
 function backupConfig(filePath) {
   ensureConfigDir();
   const backupPath = getBackupPath(filePath);
@@ -171,9 +184,17 @@ function setProxyConfig(proxyPort, options = {}) {
   next.provider.openai.options.baseURL = `http://127.0.0.1:${proxyPort}/v1`;
   next.provider.openai.options.apiKey = 'PROXY_KEY';
 
-  // Write model so OpenCode's /model shows the active model
+  // 清理历史错误字段，避免触发 OpenCode 配置校验失败
+  if (Object.prototype.hasOwnProperty.call(next.provider.openai, 'model')) {
+    delete next.provider.openai.model;
+  }
+
+  // 写入顶层 model（OpenCode 要求 provider/model 格式）
   if (options.model) {
-    next.provider.openai.model = options.model;
+    const resolvedModel = normalizeOpenCodeModel(options.model);
+    if (resolvedModel) {
+      next.model = resolvedModel;
+    }
   }
 
   writeConfig(filePath, next);
