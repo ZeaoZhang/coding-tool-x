@@ -65,10 +65,6 @@
             <n-text strong style="font-size: 14px;">导入预览</n-text>
             <div class="preview-stats">
               <div class="stat-item">
-                <n-text depth="3">权限模板:</n-text>
-                <n-text>{{ importPreview.counts.permissionTemplates }}</n-text>
-              </div>
-              <div class="stat-item">
                 <n-text depth="3">配置模板:</n-text>
                 <n-text>{{ importPreview.counts.configTemplates }}</n-text>
               </div>

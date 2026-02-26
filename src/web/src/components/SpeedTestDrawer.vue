@@ -51,7 +51,7 @@
           </div>
           <div class="summary-item avg">
             <span class="summary-label">平均延迟</span>
-            <span class="summary-value">{{ testSummary.avgLatency ? testSummary.avgLatency + 'ms' : '-' }}</span>
+            <span class="summary-value">{{ testSummary.avgLatency !== null && testSummary.avgLatency !== undefined ? testSummary.avgLatency + 'ms' : '-' }}</span>
           </div>
         </div>
 
@@ -123,7 +123,7 @@
                       <span class="error-msg">{{ result.error }}</span>
                     </div>
                     <!-- 失败时也显示延迟，表明网络是通的 -->
-                    <span v-if="result.latency" class="error-latency">
+                    <span v-if="result.latency !== null && result.latency !== undefined" class="error-latency">
                       响应 {{ result.latency }}ms
                     </span>
                   </div>
@@ -280,7 +280,7 @@ async function runAllTests() {
             totalSummary.total += response.summary.total || 0
             totalSummary.success += response.summary.success || 0
             totalSummary.failed += response.summary.failed || 0
-            if (response.summary.avgLatency) {
+            if (response.summary.avgLatency !== null && response.summary.avgLatency !== undefined && (response.summary.success || 0) > 0) {
               totalLatency += response.summary.avgLatency * (response.summary.success || 0)
               latencyCount += response.summary.success || 0
             }
@@ -298,7 +298,11 @@ async function runAllTests() {
     results.value = allResults.sort((a, b) => {
       if (a.success && !b.success) return -1
       if (!a.success && b.success) return 1
-      if (a.success && b.success) return (a.latency || Infinity) - (b.latency || Infinity)
+      if (a.success && b.success) {
+        const aLatency = (a.latency === null || a.latency === undefined) ? Infinity : a.latency
+        const bLatency = (b.latency === null || b.latency === undefined) ? Infinity : b.latency
+        return aLatency - bLatency
+      }
       return 0
     })
 
@@ -344,7 +348,7 @@ function getLevelText(level) {
 
 // 计算延迟条宽度（最大 3000ms）
 function getLatencyWidth(latency) {
-  if (!latency) return 0
+  if (latency === null || latency === undefined) return 0
   return Math.min((latency / 3000) * 100, 100)
 }
 

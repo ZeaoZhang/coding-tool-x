@@ -64,14 +64,6 @@
         </template>
         <div class="toolbar-divider" />
         <!-- 通用功能 -->
-        <n-tooltip trigger="hover" v-if="currentChannel === 'opencode'">
-          <template #trigger>
-            <n-button text size="small" class="toolbar-btn" @click="handleShowGatewayConvert">
-              <template #icon><n-icon :size="18"><GitCompareOutline /></n-icon></template>
-            </n-button>
-          </template>
-          网关转换
-        </n-tooltip>
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowRecent">
@@ -124,7 +116,6 @@ import {
   PersonOutline,
   BookOutline,
   CubeOutline,
-  GitCompareOutline
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
@@ -239,13 +230,6 @@ function handleShowRules() {
 // 处理显示 Plugins
 function handleShowPlugins() {
   window.dispatchEvent(new CustomEvent('open-plugins-drawer'))
-}
-
-function handleShowGatewayConvert() {
-  if (currentChannel.value !== 'opencode') {
-    return
-  }
-  window.dispatchEvent(new CustomEvent('open-gateway-convert-drawer'))
 }
 
 onMounted(() => {

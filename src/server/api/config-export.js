@@ -23,17 +23,11 @@ function buildPreviewSummary(data) {
     version: data.version,
     exportedAt: data.exportedAt,
     counts: {
-      permissionTemplates: (data.data.permissionTemplates || []).length,
       configTemplates: (data.data.configTemplates || []).length,
       channels: (data.data.channels || []).length,
       plugins: (data.data.plugins || []).length
     },
     items: {
-      permissionTemplates: (data.data.permissionTemplates || []).map(t => ({
-        id: t.id,
-        name: t.name,
-        description: t.description
-      })),
       configTemplates: (data.data.configTemplates || []).map(t => ({
         id: t.id,
         name: t.name,

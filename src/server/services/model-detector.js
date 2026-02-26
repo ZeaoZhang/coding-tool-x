@@ -17,28 +17,27 @@ const { loadConfig } = require('../../config/loader');
 const MODEL_PRIORITY = {
   claude: [
     'claude-opus-4-6',
+    'claude-sonnet-4-6',
     'claude-opus-4-5-20251101',
     'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20251001',
-    'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514'
+    'claude-haiku-4-5-20251001'
   ],
   codex: [
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
-    'gpt-5.1-codex-mini',
     'gpt-5.1-codex',
+    'gpt-5.1-codex-mini',
     'gpt-5-codex',
     'gpt-5.2',
     'gpt-5.1',
     'gpt-5'
   ],
   gemini: [
-    'gemini-3-pro',
-    'gemini-3-flash',
-    'gemini-3-deep-think',
+    'gemini-3-pro-preview',
+    'gemini-3-flash-preview',
     'gemini-2.5-pro',
-    'gemini-2.5-flash'
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite'
   ]
 };
 // openai_compatible 复用 codex 的模型列表
@@ -81,21 +80,35 @@ function getModelPriority(channelType, options = {}) {
     for (const toolType of candidateTypes) {
       const models = defaultModels[toolType];
       if (Array.isArray(models) && models.length > 0) {
-        return [...models];
+        return normalizeModelCandidates(models);
       }
     }
   } catch (error) {
     console.warn(`[ModelDetector] Failed to load default models config: ${error.message}`);
   }
 
-  for (const toolType of candidateTypes) {
-    const models = MODEL_PRIORITY[toolType];
-    if (Array.isArray(models) && models.length > 0) {
-      return [...models];
-    }
-  }
-
   return [];
+}
+
+function getModelDiscoveryConfig() {
+  try {
+    const config = loadConfig();
+    return {
+      useV1ModelsEndpoint: config?.modelDiscovery?.useV1ModelsEndpoint === true
+    };
+  } catch (error) {
+    console.warn(`[ModelDetector] Failed to load modelDiscovery config: ${error.message}`);
+    return {
+      useV1ModelsEndpoint: false
+    };
+  }
+}
+
+function shouldUseV1ModelsEndpoint(options = {}) {
+  if (typeof options.useV1ModelsEndpoint === 'boolean') {
+    return options.useV1ModelsEndpoint;
+  }
+  return getModelDiscoveryConfig().useV1ModelsEndpoint;
 }
 
 const PROVIDER_CAPABILITIES = {
@@ -178,6 +191,8 @@ const MODEL_ALIASES = {
   'claude-3-haiku': 'claude-3-5-haiku-20241022',
   'claude-sonnet-4': 'claude-sonnet-4-20250514',
   'claude-4-sonnet': 'claude-sonnet-4-20250514',
+  'claude-sonnet-4-6': 'claude-sonnet-4-6',
+  'claude-4-6-sonnet': 'claude-sonnet-4-6',
   'claude-sonnet-4-5': 'claude-sonnet-4-5-20250929',
   'claude-4-5-sonnet': 'claude-sonnet-4-5-20250929',
   'claude-opus-4': 'claude-opus-4-20250514',
@@ -202,7 +217,6 @@ const MODEL_ALIASES = {
   'gemini-2-5-pro': 'gemini-2.5-pro'
 };
 
-const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const TEST_TIMEOUT_MS = 10000; // 10 seconds per model test
 const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,interleaved-thinking-2025-05-14';
 
@@ -448,12 +462,6 @@ function createCodexProbeAttempts(channel, model) {
     store: false
   });
 
-  const chatBody = JSON.stringify({
-    model,
-    max_tokens: 1,
-    messages: [{ role: 'user', content: 'test' }]
-  });
-
   return [
     {
       label: 'codex-responses',
@@ -463,12 +471,6 @@ function createCodexProbeAttempts(channel, model) {
         ...commonHeaders,
         'openai-beta': 'responses=experimental'
       }
-    },
-    {
-      label: 'codex-chat-fallback',
-      url: buildOpenAiCompatibleUrl(channel.baseUrl, '/v1/chat/completions'),
-      body: chatBody,
-      headers: commonHeaders
     }
   ];
 }
@@ -733,17 +735,44 @@ function normalizeModelCandidates(models = []) {
 }
 
 /**
- * Check if cache entry is still valid
- * @param {Object} cacheEntry - Cache entry with lastChecked timestamp
- * @returns {boolean}
+ * Stable stringify with key ordering to build deterministic cache signatures
  */
-function isCacheValid(cacheEntry) {
-  if (!cacheEntry || !cacheEntry.lastChecked) {
-    return false;
+function stableStringify(value) {
+  if (value === null || value === undefined) return 'null';
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(',')}]`;
   }
+  if (typeof value !== 'object') return JSON.stringify(value);
 
-  const age = Date.now() - new Date(cacheEntry.lastChecked).getTime();
-  return age < CACHE_DURATION_MS;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+}
+
+function buildChannelCacheSignature(channel, payload = {}) {
+  const base = {
+    id: channel?.id || '',
+    name: channel?.name || '',
+    baseUrl: channel?.baseUrl || '',
+    apiKey: channel?.apiKey || '',
+    gatewaySourceType: channel?.gatewaySourceType || '',
+    wireApi: channel?.wireApi || '',
+    model: channel?.model || '',
+    speedTestModel: channel?.speedTestModel || '',
+    presetId: channel?.presetId || '',
+    modelConfig: channel?.modelConfig || null,
+    modelRedirects: Array.isArray(channel?.modelRedirects) ? channel.modelRedirects : []
+  };
+  const raw = stableStringify({
+    channel: base,
+    payload
+  });
+
+  return crypto.createHash('sha1').update(raw).digest('hex');
+}
+
+function isSignatureCacheValid(cacheEntry, signatureKey, expectedSignature) {
+  if (!cacheEntry || !signatureKey || !expectedSignature) return false;
+  return cacheEntry[signatureKey] === expectedSignature;
 }
 
 /**
@@ -809,9 +838,17 @@ async function probeModelAvailability(channel, channelType, options = {}) {
   const stopOnFirstAvailable = !!options.stopOnFirstAvailable;
   const cache = loadModelCache();
   const cacheKey = channel.id;
+  const preferredModels = normalizeModelCandidates(options.preferredModels);
+  const probeSignature = buildChannelCacheSignature(channel, {
+    type: 'probe',
+    channelType: String(channelType || '').trim().toLowerCase(),
+    toolType: String(toolType || '').trim().toLowerCase(),
+    stopOnFirstAvailable,
+    preferredModels
+  });
 
-  // Return cached result if valid
-  if (!forceRefresh && cache[cacheKey] && isCacheValid(cache[cacheKey])) {
+  // Return cached result if channel and probe options are unchanged
+  if (!forceRefresh && isSignatureCacheValid(cache[cacheKey], 'probeSignature', probeSignature)) {
     return {
       availableModels: cache[cacheKey].availableModels || [],
       preferredTestModel: cache[cacheKey].preferredTestModel || null,
@@ -821,7 +858,6 @@ async function probeModelAvailability(channel, channelType, options = {}) {
   }
 
   // Get model priority list for this channel type
-  const preferredModels = normalizeModelCandidates(options.preferredModels);
   const priorityModels = normalizeModelCandidates(getModelPriority(channelType, { toolType }));
   const modelsToTest = normalizeModelCandidates([...preferredModels, ...priorityModels]);
   if (modelsToTest.length === 0) {
@@ -867,7 +903,10 @@ async function probeModelAvailability(channel, channelType, options = {}) {
   const cacheEntry = {
     lastChecked: new Date().toISOString(),
     availableModels,
-    preferredTestModel
+    preferredTestModel,
+    probeSignature,
+    fetchedModels: cache[cacheKey]?.fetchedModels || [],
+    listSignature: cache[cacheKey]?.listSignature || null
   };
 
   cache[cacheKey] = cacheEntry;
@@ -911,7 +950,7 @@ function getCachedModelInfo(channelId) {
   const cache = loadModelCache();
   const entry = cache[channelId];
 
-  if (entry && isCacheValid(entry)) {
+  if (entry && (Array.isArray(entry.availableModels) || Array.isArray(entry.fetchedModels))) {
     return entry;
   }
 
@@ -924,12 +963,26 @@ function getCachedModelInfo(channelId) {
  * @param {string} channelType - 'claude' | 'codex' | 'gemini' | 'openai_compatible'
  * @returns {Promise<Object>} { models: string[], supported: boolean, cached: boolean, error: string|null, fallbackUsed: boolean }
  */
-async function fetchModelsFromProvider(channel, channelType) {
+async function fetchModelsFromProvider(channel, channelType, options = {}) {
+  const forceRefresh = !!options.forceRefresh;
+  const useV1ModelsEndpoint = shouldUseV1ModelsEndpoint(options);
   // Only auto-detect if channelType is NOT specified at all
   // DO NOT auto-detect when channelType is 'claude' - respect the caller's intent
   if (!channelType) {
     channelType = detectChannelType(channel);
     console.log(`[ModelDetector] Auto-detected channel type: ${channelType} for ${channel.name}`);
+  }
+
+  if (!useV1ModelsEndpoint) {
+    return {
+      models: [],
+      supported: true,
+      fallbackUsed: true,
+      cached: false,
+      disabledByConfig: true,
+      error: '已关闭 /v1/models 模型列表探测',
+      errorHint: '当前使用默认模型探测策略'
+    };
   }
 
   // Check if provider supports model listing
@@ -946,9 +999,15 @@ async function fetchModelsFromProvider(channel, channelType) {
 
   const cache = loadModelCache();
   const cacheKey = channel.id;
+  const listSignature = buildChannelCacheSignature(channel, {
+    type: 'model-list',
+    channelType: String(channelType || '').trim().toLowerCase()
+  });
 
-  // Check cache first
-  if (cache[cacheKey] && isCacheValid(cache[cacheKey]) && cache[cacheKey].fetchedModels) {
+  // Check cache first, and only reuse when channel/list context is unchanged
+  if (!forceRefresh
+    && isSignatureCacheValid(cache[cacheKey], 'listSignature', listSignature)
+    && Array.isArray(cache[cacheKey].fetchedModels)) {
     return {
       models: cache[cacheKey].fetchedModels || [],
       supported: true,
@@ -1012,7 +1071,9 @@ async function fetchModelsFromProvider(channel, channelType) {
                   lastChecked: new Date().toISOString(),
                   fetchedModels: models,
                   availableModels: cache[cacheKey]?.availableModels || [],
-                  preferredTestModel: cache[cacheKey]?.preferredTestModel || null
+                  preferredTestModel: cache[cacheKey]?.preferredTestModel || null,
+                  probeSignature: cache[cacheKey]?.probeSignature || null,
+                  listSignature
                 };
 
                 cache[cacheKey] = cacheEntry;

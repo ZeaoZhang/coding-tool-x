@@ -7,8 +7,7 @@ const { getChannels: getCodexChannels } = require('../services/codex-channels');
 const { getChannels: getGeminiChannels } = require('../services/gemini-channels');
 const {
   probeModelAvailability,
-  fetchModelsFromProvider,
-  getModelPriority
+  fetchModelsFromProvider
 } = require('../services/model-detector');
 
 function clampNumber(value, fallback) {
@@ -42,6 +41,21 @@ function sanitizePricing(inputPricing, currentPricing) {
   });
 
   return sanitized;
+}
+
+function normalizeModelDiscovery(modelDiscovery, currentValue = DEFAULT_CONFIG.modelDiscovery) {
+  const current = currentValue && typeof currentValue === 'object'
+    ? currentValue
+    : DEFAULT_CONFIG.modelDiscovery;
+  const input = modelDiscovery && typeof modelDiscovery === 'object'
+    ? modelDiscovery
+    : {};
+
+  return {
+    useV1ModelsEndpoint: input.useV1ModelsEndpoint !== undefined
+      ? input.useV1ModelsEndpoint === true
+      : current.useV1ModelsEndpoint === true
+  };
 }
 
 function uniqueModels(models = []) {
@@ -112,7 +126,7 @@ async function probeModelsForSingleChannel(channel, channelType, options = {}) {
 
     const probe = await probeModelAvailability(channel, channelType, {
       forceRefresh: !!options.forceRefresh,
-      stopOnFirstAvailable: true,
+      stopOnFirstAvailable: false,
       preferredModels
     });
     const probedModels = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
@@ -130,9 +144,13 @@ async function probeModelsForChannels(channels = [], channelType, options = {}) 
   const enabledChannels = (channels || []).filter(ch => ch && ch.enabled !== false);
   if (enabledChannels.length === 0) return [];
 
-  const resultSets = await Promise.all(
-    enabledChannels.map(channel => probeModelsForSingleChannel(channel, channelType, options))
-  );
+  const resultSets = [];
+  // 模型探测改为串行，避免并发触发上游会话窗口限流
+  for (const channel of enabledChannels) {
+    // eslint-disable-next-line no-await-in-loop
+    const models = await probeModelsForSingleChannel(channel, channelType, options);
+    resultSets.push(models);
+  }
   return uniqueModels(resultSets.flat());
 }
 
@@ -145,7 +163,7 @@ function mergeProbedAndConfiguredModels(probedModels, configuredModels, toolType
   if (safeProbed.length > 0) {
     return uniqueModels([...safeProbed, ...safeConfigured, ...builtInDefaults]);
   }
-  return uniqueModels([...safeConfigured, ...getModelPriority(toolType), ...builtInDefaults]);
+  return uniqueModels([...safeConfigured, ...builtInDefaults]);
 }
 
 /**
@@ -215,17 +233,14 @@ router.get('/default-models', async (req, res) => {
     }
 
     const forceRefresh = parseBooleanQuery(req.query.forceRefresh, true);
-    const [claudeChannels, codexData, geminiData] = await Promise.all([
-      Promise.resolve(getAllChannels()),
-      Promise.resolve(getCodexChannels()),
-      Promise.resolve(getGeminiChannels())
-    ]);
+    const claudeChannels = getAllChannels();
+    const codexData = getCodexChannels();
+    const geminiData = getGeminiChannels();
 
-    const [claudeProbed, codexProbed, geminiProbed] = await Promise.all([
-      probeModelsForChannels(claudeChannels || [], 'claude', { forceRefresh }),
-      probeModelsForChannels(codexData?.channels || [], 'codex', { forceRefresh }),
-      probeModelsForChannels(geminiData?.channels || [], 'gemini', { forceRefresh })
-    ]);
+    // 各工具类型也按串行探测，进一步降低并发压力
+    const claudeProbed = await probeModelsForChannels(claudeChannels || [], 'claude', { forceRefresh });
+    const codexProbed = await probeModelsForChannels(codexData?.channels || [], 'codex', { forceRefresh });
+    const geminiProbed = await probeModelsForChannels(geminiData?.channels || [], 'gemini', { forceRefresh });
 
     const defaultModels = {
       claude: mergeProbedAndConfiguredModels(
@@ -383,6 +398,7 @@ router.post('/default-models/reset', (req, res) => {
 router.get('/advanced', (req, res) => {
   try {
     const config = loadConfig();
+    const modelDiscovery = normalizeModelDiscovery(config.modelDiscovery);
     res.json({
       ports: {
         webUI: config.ports?.webUI || 19999,
@@ -394,6 +410,7 @@ router.get('/advanced', (req, res) => {
       maxLogs: config.maxLogs || 100,
       statsInterval: config.statsInterval || 30,
       enableSessionBinding: config.enableSessionBinding !== false, // 默认开启
+      modelDiscovery,
       pricing: config.pricing || DEFAULT_CONFIG.pricing
     });
   } catch (error) {
@@ -408,7 +425,14 @@ router.get('/advanced', (req, res) => {
  */
 router.post('/advanced', (req, res) => {
   try {
-    const { ports, maxLogs, statsInterval, pricing, enableSessionBinding } = req.body;
+    const {
+      ports,
+      maxLogs,
+      statsInterval,
+      pricing,
+      enableSessionBinding,
+      modelDiscovery
+    } = req.body;
 
     // 验证端口
     if (ports) {
@@ -445,6 +469,10 @@ router.post('/advanced', (req, res) => {
     // 加载当前配置
     const config = loadConfig();
     const sanitizedPricing = sanitizePricing(pricing, config.pricing);
+    const normalizedModelDiscovery = normalizeModelDiscovery(
+      modelDiscovery,
+      config.modelDiscovery || DEFAULT_CONFIG.modelDiscovery
+    );
 
     let normalizedPorts = config.ports;
     if (ports) {
@@ -463,6 +491,7 @@ router.post('/advanced', (req, res) => {
       maxLogs: maxLogs !== undefined ? parseInt(maxLogs) : config.maxLogs,
       statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,
       enableSessionBinding: enableSessionBinding !== undefined ? enableSessionBinding : (config.enableSessionBinding !== false),
+      modelDiscovery: normalizedModelDiscovery,
       pricing: sanitizedPricing
     };
 
@@ -476,6 +505,7 @@ router.post('/advanced', (req, res) => {
         maxLogs: newConfig.maxLogs,
         statsInterval: newConfig.statsInterval,
         enableSessionBinding: newConfig.enableSessionBinding,
+        modelDiscovery: newConfig.modelDiscovery,
         pricing: newConfig.pricing
       }
     });

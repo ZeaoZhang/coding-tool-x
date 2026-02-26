@@ -200,7 +200,7 @@ router.get('/:id', (req, res, next) => {
  */
 router.post('/', (req, res) => {
   try {
-    const { name, description, baseDir, projects, configTemplateId, permissionTemplate } = req.body;
+    const { name, description, baseDir, projects, configTemplateId } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -262,8 +262,7 @@ router.post('/', (req, res) => {
       description,
       baseDir,
       projects,
-      configTemplateId,
-      permissionTemplate
+      configTemplateId
     });
 
     res.json({
