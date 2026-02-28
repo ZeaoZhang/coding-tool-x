@@ -142,6 +142,29 @@ function updateChannel(channelId, updates) {
   merged.providerKey = updates.providerKey || deriveProviderKey(merged);
   data.channels[index] = merged;
 
+  // Get proxy status
+  const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
+  const proxyStatus = getOpenCodeProxyStatus();
+  const isProxyRunning = proxyStatus.running;
+
+  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
+  if (!isProxyRunning && merged.enabled && !oldChannel.enabled) {
+    data.channels.forEach((ch, i) => {
+      if (i !== index && ch.enabled) {
+        ch.enabled = false;
+      }
+    });
+    console.log(`[OpenCode Single-channel mode] Enabled "${merged.name}", disabled all others`);
+  }
+
+  // Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !merged.enabled && oldChannel.enabled) {
+    const enabledCount = data.channels.filter(ch => ch.enabled).length;
+    if (enabledCount === 0) {
+      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
+    }
+  }
+
   saveChannels(data);
   return data.channels[index];
 }

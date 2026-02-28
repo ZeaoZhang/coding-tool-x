@@ -305,6 +305,10 @@ class PluginsService {
                 }
               }
 
+              // Read enabled state from CTX registry (defaults to true if not set)
+              const legacyInfo = getPlugin(name);
+              const enabledState = legacyInfo ? legacyInfo.enabled !== false : true;
+
               plugins.push({
                 name,
                 marketplace,
@@ -312,7 +316,7 @@ class PluginsService {
                 installPath: install.installPath,
                 installedAt: install.installedAt,
                 scope: install.scope,
-                enabled: true,
+                enabled: enabledState,
                 description,
                 source,
                 repoUrl
@@ -479,14 +483,45 @@ class PluginsService {
       }
 
       if (!this._isOpenCode()) {
-        // Register plugin for Claude plugin runtime
+        const installedPluginName = manifest.name || pluginName;
+        const installTimestamp = new Date().toISOString();
+        const sourceUrl = `https://github.com/${owner}/${name}/tree/${branch}/${directory}`;
+
+        // Register in CTX legacy registry (for listPlugins fallback)
         const { addPlugin } = require('../../plugins/registry');
-        addPlugin(manifest.name || pluginName, {
-          version: manifest.version || '1.0.0',
-          enabled: true,
-          installedAt: new Date().toISOString(),
-          source: `https://github.com/${owner}/${name}/tree/${branch}/${directory}`
-        });
+        try {
+          addPlugin(installedPluginName, {
+            version: manifest.version || '1.0.0',
+            enabled: true,
+            installedAt: installTimestamp,
+            source: sourceUrl
+          });
+        } catch (e) {
+          console.warn('[PluginsService] Legacy registry addPlugin warning:', e.message);
+        }
+
+        // Also register in Claude's native installed_plugins.json
+        try {
+          this._ensureDir(CLAUDE_PLUGINS_DIR);
+          let nativeData = { plugins: {} };
+          if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+            try {
+              nativeData = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+              if (!nativeData.plugins) nativeData.plugins = {};
+            } catch (e) { /* ignore parse error */ }
+          }
+          const nativeKey = `${installedPluginName}@ctx`;
+          nativeData.plugins[nativeKey] = [{
+            version: manifest.version || '1.0.0',
+            installPath: pluginDir,
+            installedAt: installTimestamp,
+            scope: 'user',
+            source: sourceUrl
+          }];
+          fs.writeFileSync(CLAUDE_INSTALLED_FILE, JSON.stringify(nativeData, null, 2), 'utf8');
+        } catch (e) {
+          console.error('[PluginsService] Failed to update native installed_plugins.json:', e.message);
+        }
       }
 
       return {
@@ -571,7 +606,64 @@ class PluginsService {
       };
     }
 
-    return uninstallPluginCore(name);
+    // Claude: Remove from native installed_plugins.json and delete install directories
+    let removed = false;
+    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        if (data.plugins) {
+          const keysToDelete = [];
+          const baseName = name.split('/').pop(); // handle "plugins/pr-review-toolkit" → "pr-review-toolkit"
+          for (const [key, installations] of Object.entries(data.plugins)) {
+            const [pluginName] = key.split('@');
+            if (pluginName === name || key === name || pluginName === baseName) {
+              keysToDelete.push(key);
+              // Delete install directories
+              if (Array.isArray(installations)) {
+                for (const install of installations) {
+                  if (install.installPath && fs.existsSync(install.installPath)) {
+                    try {
+                      fs.rmSync(install.installPath, { recursive: true, force: true });
+                    } catch (e) {
+                      console.error('[PluginsService] Failed to delete install dir:', e.message);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          if (keysToDelete.length > 0) {
+            for (const key of keysToDelete) {
+              delete data.plugins[key];
+            }
+            fs.writeFileSync(CLAUDE_INSTALLED_FILE, JSON.stringify(data, null, 2), 'utf8');
+            removed = true;
+          }
+        }
+      } catch (err) {
+        console.error('[PluginsService] Failed to update installed_plugins.json:', err.message);
+      }
+    }
+
+    // Also try legacy registry removal
+    try {
+      const legacyResult = uninstallPluginCore(name);
+      if (legacyResult.success) removed = true;
+    } catch (err) {
+      // Ignore legacy registry errors
+    }
+
+    if (!removed) {
+      return {
+        success: false,
+        error: `Plugin "${name}" not found`
+      };
+    }
+
+    return {
+      success: true,
+      message: 'Plugin uninstalled successfully'
+    };
   }
 
   /**
@@ -597,16 +689,49 @@ class PluginsService {
       };
     }
 
-    const plugin = getPlugin(name);
-    if (!plugin) {
+    // Claude: store enabled state in CTX registry
+    // First check if plugin exists in native installed_plugins.json
+    let pluginExists = false;
+    const baseName = name.split('/').pop();
+    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        if (data.plugins) {
+          for (const key of Object.keys(data.plugins)) {
+            const [pluginName] = key.split('@');
+            if (pluginName === name || key === name || pluginName === baseName) {
+              pluginExists = true;
+              break;
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    // Also check legacy registry
+    const legacyPlugin = getPlugin(name);
+    if (legacyPlugin) pluginExists = true;
+
+    if (!pluginExists) {
       throw new Error(`Plugin "${name}" not found`);
     }
 
-    updatePluginRegistry(name, { enabled });
+    // Store enabled state in CTX registry (upsert)
+    try {
+      const { addPlugin } = require('../../plugins/registry');
+      if (legacyPlugin) {
+        updatePluginRegistry(name, { enabled });
+      } else {
+        addPlugin(name, { version: '1.0.0', enabled, source: 'claude-native' });
+      }
+    } catch (e) {
+      console.warn('[PluginsService] Failed to update plugin registry:', e.message);
+    }
 
     return {
       name,
-      ...getPlugin(name)
+      enabled,
+      success: true
     };
   }
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="plugin-card" :class="{ installed: plugin.installed, managed: !!registryInfo }" @click="$emit('click', plugin)">
+  <div class="plugin-card" :class="{ installed: plugin.installed }" @click="$emit('click', plugin)">
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ plugin.name }}</span>
@@ -32,63 +32,20 @@
         <span class="meta-item">{{ plugin.directory }}</span>
         <a v-if="plugin.readmeUrl" class="meta-link" :href="plugin.readmeUrl" target="_blank" @click.stop>GitHub</a>
       </div>
-      <div class="managed-actions" v-if="registryInfo">
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-switch
-              :value="registryInfo.enabled"
-              size="small"
-              :loading="toggling"
-              @update:value="$emit('toggle-enabled', plugin, $event)"
-              @click.stop
-            />
-          </template>
-          {{ registryInfo.enabled ? '已启用' : '已禁用' }}
-        </n-tooltip>
-        <div class="platform-icons">
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="platform-icon"
-                :class="{ active: registryInfo.platforms?.claude }"
-                @click.stop="$emit('toggle-platform', plugin, 'claude', !registryInfo.platforms?.claude)"
-              >
-                <n-icon size="14"><LogoApple /></n-icon>
-              </span>
-            </template>
-            Claude Code {{ registryInfo.platforms?.claude ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="platform-icon"
-                :class="{ active: registryInfo.platforms?.opencode }"
-                @click.stop="$emit('toggle-platform', plugin, 'opencode', !registryInfo.platforms?.opencode)"
-              >
-                <n-icon size="14"><CodeSlashOutline /></n-icon>
-              </span>
-            </template>
-            OpenCode {{ registryInfo.platforms?.opencode ? '已启用' : '未启用' }}
-          </n-tooltip>
-        </div>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { NTag, NButton, NTooltip, NSwitch, NIcon } from 'naive-ui'
-import { LogoApple, CodeSlashOutline } from '@vicons/ionicons5'
+import { NTag, NButton, NIcon } from 'naive-ui'
 
 defineProps({
   plugin: { type: Object, required: true },
   installing: { type: Boolean, default: false },
-  uninstalling: { type: Boolean, default: false },
-  registryInfo: { type: Object, default: null },
-  toggling: { type: Boolean, default: false }
+  uninstalling: { type: Boolean, default: false }
 })
 
-defineEmits(['click', 'install', 'uninstall', 'toggle-enabled', 'toggle-platform'])
+defineEmits(['click', 'install', 'uninstall'])
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text

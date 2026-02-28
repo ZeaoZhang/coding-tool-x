@@ -278,25 +278,18 @@ function updateChannel(id, updates) {
   const proxyStatus = getProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Fix 1: Detect enabled toggle (false → true) when proxy is OFF
-  if (!isProxyRunning && !oldChannel.enabled && data.channels[index].enabled) {
-    console.log(`[Settings-sync] Proxy is OFF and channel "${data.channels[index].name}" was enabled, syncing settings.json...`);
-    updateClaudeSettingsWithModelConfig(data.channels[index]);
-  }
-
-  // Fix 2: Single-channel enforcement when proxy is OFF
-  if (!isProxyRunning && data.channels[index].enabled && !oldChannel.enabled) {
-    // Disable all other channels
+  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
+  if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
       }
     });
-    console.log(`[Single-channel mode] Enabled "${data.channels[index].name}", disabled all others`);
+    console.log(`[Single-channel mode] Enabled "${nextChannel.name}", disabled all others`);
   }
 
-  // Fix 3: Prevent disabling last enabled channel when proxy is OFF
-  if (!isProxyRunning && !data.channels[index].enabled && oldChannel.enabled) {
+  // Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !nextChannel.enabled && oldChannel.enabled) {
     const enabledCount = data.channels.filter(ch => ch.enabled).length;
     if (enabledCount === 0) {
       throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
@@ -305,11 +298,10 @@ function updateChannel(id, updates) {
 
   saveChannels(data);
 
-  // Auto-sync settings.json if this is the currently active channel
-  const currentSettings = getCurrentSettings();
-  if (currentSettings && currentSettings.baseUrl === oldChannel.baseUrl) {
-    console.log(`[Auto-sync] Channel "${data.channels[index].name}" is active, syncing settings.json...`);
-    updateClaudeSettingsWithModelConfig(data.channels[index]);
+  // Sync settings.json when proxy is OFF and the channel is (or just became) enabled
+  if (!isProxyRunning && nextChannel.enabled) {
+    console.log(`[Settings-sync] Proxy is OFF and channel "${nextChannel.name}" is enabled, syncing settings.json...`);
+    updateClaudeSettingsWithModelConfig(nextChannel);
   }
 
   return data.channels[index];
@@ -337,7 +329,10 @@ function applyChannelToSettings(id) {
     throw new Error('Channel not found');
   }
 
-  channel.enabled = true;
+  // In single-channel mode, only this channel should be enabled
+  data.channels.forEach(ch => {
+    ch.enabled = ch.id === id;
+  });
   saveChannels(data);
   updateClaudeSettingsWithModelConfig(channel);
 

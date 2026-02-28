@@ -237,25 +237,18 @@ function updateChannel(channelId, updates) {
   const proxyStatus = getGeminiProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Fix 1: Detect enabled toggle (false → true) when proxy is OFF
-  if (!isProxyRunning && !oldChannel.enabled && data.channels[index].enabled) {
-    console.log(`[Gemini Settings-sync] Proxy is OFF and channel "${data.channels[index].name}" was enabled, syncing .env...`);
-    applyChannelToSettings(channelId, data.channels);
-  }
-
-  // Fix 2: Single-channel enforcement when proxy is OFF
-  if (!isProxyRunning && data.channels[index].enabled && !oldChannel.enabled) {
-    // Disable all other channels
+  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
+  if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
       }
     });
-    console.log(`[Gemini Single-channel mode] Enabled "${data.channels[index].name}", disabled all others`);
+    console.log(`[Gemini Single-channel mode] Enabled "${nextChannel.name}", disabled all others`);
   }
 
-  // Fix 3: Prevent disabling last enabled channel when proxy is OFF
-  if (!isProxyRunning && !data.channels[index].enabled && oldChannel.enabled) {
+  // Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !nextChannel.enabled && oldChannel.enabled) {
     const enabledCount = data.channels.filter(ch => ch.enabled).length;
     if (enabledCount === 0) {
       throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
@@ -264,8 +257,14 @@ function updateChannel(channelId, updates) {
 
   saveChannels(data);
 
-  // 更新 Gemini 配置文件
-  writeGeminiConfigForMultiChannel(data.channels);
+  // Sync .env when proxy is OFF and the channel is (or just became) enabled
+  if (!isProxyRunning && nextChannel.enabled) {
+    console.log(`[Gemini Settings-sync] Proxy is OFF and channel "${nextChannel.name}" is enabled, syncing .env...`);
+    applyChannelToSettings(channelId, data.channels);
+  } else {
+    // 更新 Gemini 配置文件 (full rewrite for non-active-channel changes)
+    writeGeminiConfigForMultiChannel(data.channels);
+  }
 
   return data.channels[index];
 }
@@ -283,6 +282,15 @@ function applyChannelToSettings(channelId, channels = null) {
 
   if (!channel) {
     throw new Error('Channel not found');
+  }
+
+  // In single-channel mode, only this channel should be enabled
+  data.channels.forEach(ch => {
+    ch.enabled = ch.id === channelId;
+  });
+  // Only persist when we loaded from disk (not when called with in-memory channels from updateChannel)
+  if (!channels) {
+    saveChannels(data);
   }
 
   const geminiDir = getGeminiDir();
