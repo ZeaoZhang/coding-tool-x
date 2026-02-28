@@ -252,25 +252,18 @@ function updateChannel(channelId, updates) {
   const proxyStatus = getCodexProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Fix 1: Detect enabled toggle (false → true) when proxy is OFF
-  if (!isProxyRunning && !oldChannel.enabled && data.channels[index].enabled) {
-    console.log(`[Codex Settings-sync] Proxy is OFF and channel "${data.channels[index].name}" was enabled, syncing config.toml...`);
-    applyChannelToSettings(channelId);
-  }
-
-  // Fix 2: Single-channel enforcement when proxy is OFF
-  if (!isProxyRunning && data.channels[index].enabled && !oldChannel.enabled) {
-    // Disable all other channels
+  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
+  if (!isProxyRunning && newChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
       }
     });
-    console.log(`[Codex Single-channel mode] Enabled "${data.channels[index].name}", disabled all others`);
+    console.log(`[Codex Single-channel mode] Enabled "${newChannel.name}", disabled all others`);
   }
 
-  // Fix 3: Prevent disabling last enabled channel when proxy is OFF
-  if (!isProxyRunning && !data.channels[index].enabled && oldChannel.enabled) {
+  // Prevent disabling last enabled channel when proxy is OFF
+  if (!isProxyRunning && !newChannel.enabled && oldChannel.enabled) {
     const enabledCount = data.channels.filter(ch => ch.enabled).length;
     if (enabledCount === 0) {
       throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
@@ -278,6 +271,12 @@ function updateChannel(channelId, updates) {
   }
 
   saveChannels(data);
+
+  // Sync config.toml when proxy is OFF and the channel is (or just became) enabled
+  if (!isProxyRunning && newChannel.enabled) {
+    console.log(`[Codex Settings-sync] Proxy is OFF and channel "${newChannel.name}" is enabled, syncing config.toml...`);
+    applyChannelToSettings(channelId);
+  }
 
   // 处理环境变量更新
   // 如果 envKey 或 apiKey 变化，需要更新环境变量
@@ -572,6 +571,12 @@ function applyChannelToSettings(channelId) {
   if (!channel) {
     throw new Error('Channel not found');
   }
+
+  // In single-channel mode, only this channel should be enabled
+  data.channels.forEach(ch => {
+    ch.enabled = ch.id === channelId;
+  });
+  saveChannels(data);
 
   const codexDir = getCodexDir();
 

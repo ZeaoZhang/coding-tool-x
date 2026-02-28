@@ -48,7 +48,6 @@
         共 {{ plugins.length }} 个插件
         <template v-if="plugins.length > 0">
           · 已安装: {{ installedCount }} · 未安装: {{ plugins.length - installedCount }}
-          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
         </template>
       </span>
     </div>
@@ -85,13 +84,9 @@
             :plugin="plugin"
             :installing="!!installingKeys[plugin.key]"
             :uninstalling="!!uninstallingKeys[plugin.key]"
-            :registry-info="registryMap[plugin.directory || plugin.name]"
-            :toggling="!!togglingKeys[plugin.directory || plugin.name]"
             @install="handleInstall"
             @uninstall="handleUninstall"
             @click="handleCardClick"
-            @toggle-enabled="handleToggleEnabled"
-            @toggle-platform="handleTogglePlatform"
           />
         </div>
       </n-spin>
@@ -120,7 +115,7 @@ import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getPlugins, getMarketPlugins, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
-import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
+import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
@@ -144,8 +139,6 @@ const detailDrawerVisible = ref(false)
 const selectedPlugin = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
-const togglingKeys = ref({})
-const registryMap = ref({})
 const importing = ref(false)
 const loadRequestId = ref(0)
 
@@ -160,18 +153,15 @@ const currentPlatformLabel = computed(() => {
 const filterOptions = [
   { label: '全部', value: 'all' },
   { label: '已安装', value: 'installed' },
-  { label: '未安装', value: 'uninstalled' },
-  { label: '已托管', value: 'managed' }
+  { label: '未安装', value: 'uninstalled' }
 ]
 
 const installedCount = computed(() => plugins.value.filter(p => p.installed).length)
-const managedCount = computed(() => Object.keys(registryMap.value).length)
 
 const filteredPlugins = computed(() => {
   let result = plugins.value
   if (filterStatus.value === 'installed') result = result.filter(p => p.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(p => !p.installed)
-  else if (filterStatus.value === 'managed') result = result.filter(p => registryMap.value[p.directory || p.name])
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(p => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q))
@@ -183,7 +173,6 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的插件'
   if (filterStatus.value === 'installed') return '暂无已安装的插件'
   if (filterStatus.value === 'uninstalled') return '所有插件都已安装'
-  if (filterStatus.value === 'managed') return '暂无托管的插件'
   return '暂无可用插件，请配置仓库源'
 })
 
@@ -192,27 +181,13 @@ async function loadData(force = false) {
   const platform = currentPlatform.value
   loading.value = true
   try {
-    // 仅在用户主动刷新时同步仓库，避免启动时因离线而卡住
     if (force) {
       await syncPluginRepos(platform).catch(() => {})
     }
 
-    // 先获取本地可用数据，保证离线也能立即使用
-    const [installedRes, registryRes] = await Promise.all([
-      getPlugins(platform),
-      listItems('plugins')
-    ])
-
+    const installedRes = await getPlugins(platform)
     const installedList = installedRes.success ? installedRes.plugins : []
     let marketList = []
-
-    // 处理注册表数据
-    if (registryRes.success) {
-      registryMap.value = {}
-      for (const [name, item] of Object.entries(registryRes.items || {})) {
-        registryMap.value[name] = item
-      }
-    }
 
     const mergePluginLists = (installed, market) => {
       const marketByName = {}
@@ -247,10 +222,8 @@ async function loadData(force = false) {
       return [...installedPlugins, ...uninstalledPlugins]
     }
 
-    // 先渲染已安装插件（离线可用）
     plugins.value = mergePluginLists(installedList, marketList)
 
-    // 再后台加载市场插件（失败不影响可用性，也不阻塞离线使用）
     getMarketPlugins(platform)
       .catch(() => ({ success: true, plugins: [] }))
       .then((marketRes) => {
@@ -268,9 +241,7 @@ async function loadData(force = false) {
 }
 
 async function handleImport() {
-  if (currentPlatform.value !== 'claude') {
-    return
-  }
+  if (currentPlatform.value !== 'claude') return
   importing.value = true
   try {
     const res = await importFromClaude('plugins')
@@ -299,6 +270,7 @@ async function handleInstall(plugin) {
         currentPlatform.value
       )
     if (res.success) { message.success(`插件 "${plugin.name}" 安装成功`); await loadData(true) }
+    else { message.error(res.message || '安装失败') }
   } catch (err) { message.error('安装失败: ' + err.message) }
   finally { delete installingKeys.value[plugin.key] }
 }
@@ -306,42 +278,11 @@ async function handleInstall(plugin) {
 async function handleUninstall(plugin) {
   uninstallingKeys.value[plugin.key] = true
   try {
-    const res = await uninstallPlugin(plugin.directory || plugin.name, currentPlatform.value)
+    const res = await uninstallPlugin(plugin.name, currentPlatform.value)
     if (res.success) { message.success(`插件 "${plugin.name}" 已卸载`); await loadData(true) }
+    else { message.error(res.message || res.error || '卸载失败') }
   } catch (err) { message.error('卸载失败: ' + err.message) }
   finally { delete uninstallingKeys.value[plugin.key] }
-}
-
-async function handleToggleEnabled(plugin, enabled) {
-  const key = plugin.directory || plugin.name
-  togglingKeys.value[key] = true
-  try {
-    const res = await toggleEnabled('plugins', key, enabled)
-    if (res.success) {
-      message.success(enabled ? '已启用' : '已禁用')
-      await loadData(true)
-    }
-  } catch (err) {
-    message.error('切换失败: ' + err.message)
-  } finally {
-    delete togglingKeys.value[key]
-  }
-}
-
-async function handleTogglePlatform(plugin, platform, enabled) {
-  const key = plugin.directory || plugin.name
-  togglingKeys.value[key] = true
-  try {
-    const res = await togglePlatform('plugins', key, platform, enabled)
-    if (res.success) {
-      message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
-      await loadData(true)
-    }
-  } catch (err) {
-    message.error('切换失败: ' + err.message)
-  } finally {
-    delete togglingKeys.value[key]
-  }
 }
 
 function handleCardClick(plugin) {
@@ -350,7 +291,6 @@ function handleCardClick(plugin) {
 }
 
 onMounted(() => {
-  // 抽屉模式下仅在打开时加载，避免应用启动时触发网络依赖
   if (!props.inDrawer || props.drawerVisible) {
     loadData()
   }

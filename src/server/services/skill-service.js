@@ -34,7 +34,7 @@ const DEFAULT_REPOS_BY_PLATFORM = {
     { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
   ],
   codex: [
-    { owner: 'openai', name: 'skills', branch: 'main', directory: 'skills/.curated', enabled: true }
+    { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
   ],
   opencode: [
     { owner: 'darrenhinde', name: 'OpenAgentsControl', branch: 'main', directory: '.opencode/skill', enabled: true }

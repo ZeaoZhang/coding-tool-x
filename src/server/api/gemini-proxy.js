@@ -136,6 +136,13 @@ router.post('/stop', async (req, res) => {
       restoreSettings();
       console.log('[Gemini Proxy] Restored settings from backup');
 
+      // Enforce single-channel mode: apply the active channel and disable all others
+      if (activeChannel) {
+        const { applyChannelToSettings } = require('../services/gemini-channels');
+        applyChannelToSettings(activeChannel.id);
+        console.log(`[Gemini Proxy] Single-channel mode enforced: ${activeChannel.name}`);
+      }
+
       // 删除 gemini-active-channel.json
       removeActiveChannelFile();
 

@@ -229,6 +229,10 @@ router.post('/stop', async (req, res) => {
           ch.baseUrl === currentSettings.baseUrl && ch.apiKey === currentSettings.apiKey
         );
       }
+      // Fallback: use first enabled channel
+      if (!restoredChannel) {
+        restoredChannel = channels.find(ch => ch.enabled !== false) || channels[0];
+      }
     } else {
       // 没有备份，选择权重最高的启用渠道
       const { getBestChannelForRestore, updateClaudeSettings } = require('../services/channels');
@@ -238,6 +242,13 @@ router.post('/stop', async (req, res) => {
         updateClaudeSettings(restoredChannel.baseUrl, restoredChannel.apiKey);
         console.log(`✅ Restored settings to best channel: ${restoredChannel.name}`);
       }
+    }
+
+    // Enforce single-channel mode: disable all channels except the restored one
+    if (restoredChannel) {
+      const { applyChannelToSettings } = require('../services/channels');
+      applyChannelToSettings(restoredChannel.id);
+      console.log(`✅ Single-channel mode enforced: ${restoredChannel.name}`);
     }
 
     // 3. 删除备份文件和active-channel.json
