@@ -147,6 +147,7 @@ const loading = ref(false)
 const chartType = ref('bar')
 const isFullscreen = ref(false)
 const trendData = ref({ labels: [], series: [], totals: {} })
+const allMetricsTotals = ref({ tokens: 0, cost: 0, requests: 0 })
 
 const rangePresets = [
   { value: '1d', label: '1d' },
@@ -212,8 +213,20 @@ async function fetchData() {
   const { granularity, step } = getGranularity(startDate, endDate)
   loading.value = true
   try {
-    const result = await getTrendStatistics({ startDate, endDate, granularity, step, groupBy: groupBy.value, metric: metric.value })
-    trendData.value = result
+    const params = { startDate, endDate, granularity, step, groupBy: groupBy.value }
+    const [mainResult, tokensResult, costResult, requestsResult] = await Promise.all([
+      getTrendStatistics({ ...params, metric: metric.value }),
+      getTrendStatistics({ ...params, metric: 'tokens' }),
+      getTrendStatistics({ ...params, metric: 'cost' }),
+      getTrendStatistics({ ...params, metric: 'requests' })
+    ])
+    trendData.value = mainResult
+    const sumSeries = (r) => (r.series || []).reduce((sum, s) => sum + (s.data || []).reduce((a, b) => a + b, 0), 0)
+    allMetricsTotals.value = {
+      tokens: sumSeries(tokensResult),
+      cost: sumSeries(costResult),
+      requests: sumSeries(requestsResult)
+    }
   } catch (err) {
     console.error('Failed to fetch trend statistics:', err)
     trendData.value = { labels: [], series: [], totals: {} }
@@ -236,20 +249,13 @@ onMounted(fetchData)
 
 // Summary stats
 const summaryStats = computed(() => {
-  const series = trendData.value.series || []
   const labels = trendData.value.labels || []
-  if (series.length === 0) return { tokens: 0, cost: 0, requests: 0, avgPerDay: 0 }
-
-  // Sum all series all data points
-  const total = series.reduce((sum, s) => sum + (s.data || []).reduce((a, b) => a + b, 0), 0)
-
-  // Unique day count from labels
   const uniqueDays = new Set(labels.map(l => l.split(' ')[0])).size || 1
-  const avgPerDay = total / uniqueDays
-
-  if (metric.value === 'tokens') return { tokens: total, cost: 0, requests: 0, avgPerDay }
-  if (metric.value === 'cost') return { tokens: 0, cost: total, requests: 0, avgPerDay }
-  return { tokens: 0, cost: 0, requests: total, avgPerDay }
+  const { tokens, cost, requests } = allMetricsTotals.value
+  const avgPerDay = metric.value === 'tokens' ? tokens / uniqueDays
+    : metric.value === 'cost' ? cost / uniqueDays
+    : requests / uniqueDays
+  return { tokens, cost, requests, avgPerDay }
 })
 
 // Format helpers
@@ -325,7 +331,7 @@ const barOption = computed(() => ({
     type: 'value',
     axisLabel: { fontSize: 11, formatter: formatAxisValue }
   },
-  dataZoom: trendData.value.labels.length > 30 ? [{ type: 'inside' }, { type: 'slider', height: 20, bottom: '8%' }] : [],
+  dataZoom: trendData.value.labels.length > 30 ? [{ type: 'inside' }] : [],
   series: trendData.value.series.map((s, i) => ({
     name: s.name,
     type: chartType.value,
