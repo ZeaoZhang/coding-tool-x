@@ -7,11 +7,11 @@ const { allocateChannel, releaseChannel, getSchedulerState } = require('./servic
 const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
-const { resolvePricing } = require('./utils/pricing');
+const { resolveModelPricing } = require('./utils/pricing');
 const { recordRequest: recordCodexRequest } = require('./services/codex-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
+const { createDecodedStream } = require('./services/response-decoder');
 const { getEnabledChannels, writeCodexConfigForMultiChannel, getEffectiveApiKey } = require('./services/codex-channels');
-const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -25,7 +25,7 @@ const requestMetadata = new Map();
 const printedRedirectCache = new Map();
 
 // OpenAI 模型定价（每百万 tokens 的价格，单位：美元）
-// Claude 模型使用 config/model-pricing.js 中的集中定价
+// 作为 model-metadata 未覆盖时的兜底值
 const PRICING = {
   'gpt-4o': { input: 2.5, output: 10 },
   'gpt-4o-2024-11-20': { input: 2.5, output: 10 },
@@ -142,61 +142,33 @@ function resolveCodexTarget(baseUrl = '', requestPath = '') {
  * 计算请求成本
  */
 function calculateCost(model, tokens) {
-  let pricing;
-
-  // 首先检查是否是 Claude 模型，使用集中定价
-  if (model.startsWith('claude-') || model.toLowerCase().includes('claude')) {
-    pricing = CLAUDE_MODEL_PRICING[model];
-
-    // 如果没有精确匹配，尝试模糊匹配 Claude 模型
-    if (!pricing) {
-      const modelLower = model.toLowerCase();
-      // 查找最接近的 Claude 模型
-      for (const [key, value] of Object.entries(CLAUDE_MODEL_PRICING)) {
-        if (key.toLowerCase().includes(modelLower) || modelLower.includes(key.toLowerCase())) {
-          pricing = value;
-          break;
-        }
-      }
-    }
-
-    // 如果仍然没有找到，使用默认 Sonnet 定价
-    if (!pricing) {
-      pricing = CLAUDE_MODEL_PRICING['claude-sonnet-4-5-20250929'];
-    }
-  } else {
-    // 非 Claude 模型，使用 PRICING 对象（OpenAI 等）
-    pricing = PRICING[model];
-
-    // 如果没有精确匹配，尝试模糊匹配
-    if (!pricing) {
-      const modelLower = model.toLowerCase();
-      if (modelLower.includes('gpt-4o-mini')) {
-        pricing = PRICING['gpt-4o-mini'];
-      } else if (modelLower.includes('gpt-4o')) {
-        pricing = PRICING['gpt-4o'];
-      } else if (modelLower.includes('gpt-4')) {
-        pricing = PRICING['gpt-4'];
-      } else if (modelLower.includes('gpt-3.5')) {
-        pricing = PRICING['gpt-3.5-turbo'];
-      } else if (modelLower.includes('o1-mini')) {
-        pricing = PRICING['o1-mini'];
-      } else if (modelLower.includes('o1-pro')) {
-        pricing = PRICING['o1-pro'];
-      } else if (modelLower.includes('o1')) {
-        pricing = PRICING['o1'];
-      } else if (modelLower.includes('o3-mini')) {
-        pricing = PRICING['o3-mini'];
-      } else if (modelLower.includes('o3')) {
-        pricing = PRICING['o3'];
-      } else if (modelLower.includes('o4-mini')) {
-        pricing = PRICING['o4-mini'];
-      }
+  let fallbackPricing = PRICING[model];
+  if (!fallbackPricing) {
+    const modelLower = String(model || '').toLowerCase();
+    if (modelLower.includes('gpt-4o-mini')) {
+      fallbackPricing = PRICING['gpt-4o-mini'];
+    } else if (modelLower.includes('gpt-4o')) {
+      fallbackPricing = PRICING['gpt-4o'];
+    } else if (modelLower.includes('gpt-4')) {
+      fallbackPricing = PRICING['gpt-4'];
+    } else if (modelLower.includes('gpt-3.5')) {
+      fallbackPricing = PRICING['gpt-3.5-turbo'];
+    } else if (modelLower.includes('o1-mini')) {
+      fallbackPricing = PRICING['o1-mini'];
+    } else if (modelLower.includes('o1-pro')) {
+      fallbackPricing = PRICING['o1-pro'];
+    } else if (modelLower.includes('o1')) {
+      fallbackPricing = PRICING['o1'];
+    } else if (modelLower.includes('o3-mini')) {
+      fallbackPricing = PRICING['o3-mini'];
+    } else if (modelLower.includes('o3')) {
+      fallbackPricing = PRICING['o3'];
+    } else if (modelLower.includes('o4-mini')) {
+      fallbackPricing = PRICING['o4-mini'];
     }
   }
 
-  // 默认使用基础定价
-  pricing = resolvePricing('codex', pricing, CODEX_BASE_PRICING);
+  const pricing = resolveModelPricing('codex', model, fallbackPricing, CODEX_BASE_PRICING);
   const inputRate = typeof pricing.input === 'number' ? pricing.input : CODEX_BASE_PRICING.input;
   const outputRate = typeof pricing.output === 'number' ? pricing.output : CODEX_BASE_PRICING.output;
 
@@ -402,14 +374,15 @@ async function startCodexProxyServer(options = {}) {
         totalTokens: 0,
         model: ''
       };
+      const parsedStream = createDecodedStream(proxyRes);
 
-      proxyRes.on('data', (chunk) => {
+      parsedStream.on('data', (chunk) => {
         // 如果响应已关闭，停止处理
         if (isResponseClosed) {
           return;
         }
 
-        buffer += chunk.toString();
+        buffer += chunk.toString('utf8');
 
         // 检查是否是 SSE 流
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
@@ -475,7 +448,7 @@ async function startCodexProxyServer(options = {}) {
         }
       });
 
-      proxyRes.on('end', () => {
+      parsedStream.on('end', () => {
         // 如果不是流式响应，尝试从完整响应中解析
         if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
           try {
@@ -558,7 +531,7 @@ async function startCodexProxyServer(options = {}) {
         }
       });
 
-      proxyRes.on('error', (err) => {
+      parsedStream.on('error', (err) => {
         // 忽略代理响应错误（可能是网络问题）
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);

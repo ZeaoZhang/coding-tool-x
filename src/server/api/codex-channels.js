@@ -20,11 +20,12 @@ const {
   runWithConcurrencyLimit
 } = require('../services/speed-test');
 const { clearCodexRedirectCache } = require('../codex-proxy-server');
-const {
-  fetchModelsFromProvider,
-  probeModelAvailability,
-} = require('../services/model-detector');
+const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const CODEX_GATEWAY_SOURCE_TYPE = 'codex';
+
+function getDefaultCodexModel() {
+  return getDefaultSpeedTestModelByToolType('codex');
+}
 
 module.exports = (config) => {
   /**
@@ -68,45 +69,16 @@ module.exports = (config) => {
       }
 
       const gatewaySourceType = CODEX_GATEWAY_SOURCE_TYPE;
-      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
-      const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
-      let result;
-
-      if (listedModels.length > 0) {
-        result = listResult;
-      } else {
-        const usingConfiguredProbe = !!listResult.disabledByConfig;
-        const probe = await probeModelAvailability(channel, 'codex');
-        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-
-        if (probedModels.length > 0) {
-          result = {
-            models: probedModels,
-            supported: true,
-            cached: !!probe.cached,
-            fallbackUsed: false,
-            lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
-            error: null,
-            errorHint: listResult.error
-              ? (usingConfiguredProbe
-                ? '已按设置跳过 /v1/models，使用默认模型探测结果'
-                : '模型列表接口不可用，已自动切换为模型探测结果')
-              : null
-          };
-        } else {
-          result = {
-            models: [],
-            supported: false,
-            cached: !!probe.cached || !!listResult.cached,
-            fallbackUsed: false,
-            lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
-            error: listResult.error || '无法探测可用模型',
-            errorHint: listResult.errorHint || (usingConfiguredProbe
-              ? '已按设置跳过 /v1/models，且默认模型探测无可用结果'
-              : '模型列表接口不可用且模型探测无可用结果')
-          };
-        }
-      }
+      const models = [getDefaultCodexModel()];
+      const result = {
+        models,
+        supported: models.length > 0,
+        cached: false,
+        fallbackUsed: false,
+        lastChecked: new Date().toISOString(),
+        error: models.length > 0 ? null : '未配置默认模型列表',
+        errorHint: models.length > 0 ? null : '请在设置中配置 Codex 默认模型'
+      };
 
       res.json({
         channelId: id,

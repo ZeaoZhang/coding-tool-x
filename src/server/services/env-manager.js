@@ -124,11 +124,15 @@ function deleteEnvVars(conflicts) {
     }
   }
 
+  // 同步清理当前服务进程中的同名变量，避免“删除后立即复检仍提示冲突”
+  const clearedProcessVars = clearProcessEnvVars(conflicts);
+
   return {
     backupPath: backupInfo.backupPath,
     timestamp: backupInfo.timestamp,
     results,
-    processConflictsSkipped: processConflicts.length
+    processConflictsSkipped: processConflicts.length,
+    clearedProcessVars
   };
 }
 
@@ -218,6 +222,30 @@ function groupByFile(conflicts) {
   }
 
   return groups;
+}
+
+/**
+ * 清理当前 Node 进程中的环境变量
+ */
+function clearProcessEnvVars(conflicts) {
+  const names = new Set();
+
+  for (const conflict of conflicts || []) {
+    const varName = String(conflict?.varName || '').trim();
+    if (varName) {
+      names.add(varName);
+    }
+  }
+
+  const cleared = [];
+  for (const varName of names) {
+    if (Object.prototype.hasOwnProperty.call(process.env, varName)) {
+      delete process.env[varName];
+      cleared.push(varName);
+    }
+  }
+
+  return cleared;
 }
 
 /**

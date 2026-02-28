@@ -3,6 +3,9 @@
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ template.name }}</span>
+        <n-tag v-if="template.cliType" size="small" :color="cliTypeStyle(template.cliType)" round>
+          {{ cliTypeLabel(template.cliType) }}
+        </n-tag>
       </div>
       <div class="card-actions" @click.stop>
         <n-button size="small" type="primary" @click="$emit('apply', template)">应用</n-button>
@@ -14,22 +17,22 @@
     <div class="card-body">
       <div class="description" v-if="template.description">{{ truncate(template.description, 80) }}</div>
       <div class="stats">
-        <span v-if="template.claudeMd?.enabled">CLAUDE.md</span>
+        <span v-if="activeAiConfigFile">{{ activeAiConfigFile }}</span>
         <span v-if="template.skills?.length">{{ template.skills.length }} Skills</span>
         <span v-if="template.agents?.length">{{ template.agents.length }} Agents</span>
         <span v-if="template.commands?.length">{{ template.commands.length }} Commands</span>
         <span v-if="template.rules?.length">{{ template.rules.length }} Rules</span>
         <span v-if="template.mcpServers?.length">{{ template.mcpServers.length }} MCP</span>
-        <span v-if="template.plugins?.length">{{ template.plugins.length }} Plugins</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { NButton } from 'naive-ui'
+import { computed } from 'vue'
+import { NButton, NTag } from 'naive-ui'
 
-defineProps({
+const props = defineProps({
   template: { type: Object, required: true },
   deleting: { type: Boolean, default: false }
 })
@@ -39,6 +42,41 @@ defineEmits(['click', 'apply', 'preview', 'edit', 'delete'])
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
 }
+
+const CLI_TYPE_MAP = {
+  claude: { label: 'Claude', color: '#cc785c', textColor: '#fff', borderColor: '#cc785c' },
+  codex: { label: 'Codex', color: '#10a37f', textColor: '#fff', borderColor: '#10a37f' },
+  gemini: { label: 'Gemini', color: '#4285f4', textColor: '#fff', borderColor: '#4285f4' },
+  opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' }
+}
+
+const CLI_AI_FILE = {
+  claude: 'CLAUDE.md',
+  codex: 'AGENTS.md',
+  gemini: 'GEMINI.md',
+  opencode: '.opencode/AGENTS.md'
+}
+
+function cliTypeLabel(type) {
+  return CLI_TYPE_MAP[type]?.label || type
+}
+
+function cliTypeStyle(type) {
+  const style = CLI_TYPE_MAP[type]
+  if (!style) return {}
+  return { color: style.color, textColor: style.textColor, borderColor: style.borderColor }
+}
+
+const activeAiConfigFile = computed(() => {
+  const t = props.template
+  const cliType = t?.cliType
+  if (!cliType || cliType === 'all') return null
+  const aiCfg = t?.aiConfigs?.[cliType]
+  if (aiCfg?.enabled) return CLI_AI_FILE[cliType] || null
+  // fallback: legacy claudeMd
+  if (cliType === 'claude' && t?.claudeMd?.enabled) return 'CLAUDE.md'
+  return null
+})
 </script>
 
 <style scoped>

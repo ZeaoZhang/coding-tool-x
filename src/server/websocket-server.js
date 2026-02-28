@@ -33,6 +33,29 @@ let websocketOptions = {
   host: '127.0.0.1',
   allowRemoteTerminal: false
 };
+const HISTORY_CHUNK_SIZE = 50;
+
+function sendPersistedLogsInChunks(ws, logs) {
+  let index = 0;
+
+  const sendChunk = () => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const end = Math.min(index + HISTORY_CHUNK_SIZE, logs.length);
+    for (let i = index; i < end; i++) {
+      ws.send(JSON.stringify(logs[i]));
+    }
+    index = end;
+
+    if (index < logs.length) {
+      setImmediate(sendChunk);
+    }
+  };
+
+  setImmediate(sendChunk);
+}
 
 function parseHostHeader(hostHeader) {
   const value = String(hostHeader || '').trim();
@@ -309,11 +332,7 @@ function startWebSocketServer(httpServer, options = {}) {
 
       // 发送历史日志给新连接的客户端
       if (logsCache.length > 0) {
-        logsCache.forEach(log => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(log));
-          }
-        });
+        sendPersistedLogsInChunks(ws, logsCache);
       }
 
       // 处理客户端消息

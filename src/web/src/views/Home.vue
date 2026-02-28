@@ -84,6 +84,34 @@ onMounted(async () => {
   flex-direction: column;
 }
 
+.dashboard-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.analytics-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--primary-color, #18a058);
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(24, 160, 88, 0.08);
+  transition: background 0.2s;
+}
+
+.analytics-link:hover {
+  background: rgba(24, 160, 88, 0.15);
+}
+
+.analytics-link-icon {
+  font-size: 14px;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

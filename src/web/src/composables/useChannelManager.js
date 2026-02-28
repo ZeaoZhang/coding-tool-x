@@ -30,6 +30,7 @@ export default function useChannelManager(config) {
   const state = reactive({
     channels: [],
     loading: false,
+    toggling: {},
     collapsed: getLocalCollapse(config.storageKeys.localCollapse),
     showDialog: false,
     editingChannel: null,
@@ -53,9 +54,8 @@ export default function useChannelManager(config) {
 
   // 监听 schedulerState 变化
   const stopWatch = watch(
-    () => globalStore.schedulerState[config.schedulerSource],
-    updateChannelHealth,
-    { deep: true }
+    () => globalStore.schedulerState[config.schedulerSource]?.channels,
+    updateChannelHealth
   )
 
   async function loadChannels() {
@@ -75,7 +75,7 @@ export default function useChannelManager(config) {
 
   let lastUIConfig = null
   let lastUIConfigTime = 0
-  const UI_CONFIG_TTL = 3000
+  const UI_CONFIG_TTL = 60000
 
   async function fetchUIConfig() {
     const now = Date.now()
@@ -253,6 +253,8 @@ export default function useChannelManager(config) {
   }
 
   async function handleToggleEnabled(channel, value) {
+    if (!channel || state.toggling[channel.id]) return
+    state.toggling[channel.id] = true
     try {
       const enabled = typeof value === 'boolean' ? value : channel.enabled === false
       await config.api.toggle(channel, enabled)
@@ -265,6 +267,8 @@ export default function useChannelManager(config) {
       await loadChannels()
     } catch (error) {
       message.error(resolveError(error))
+    } finally {
+      state.toggling[channel.id] = false
     }
   }
 
@@ -336,8 +340,7 @@ export default function useChannelManager(config) {
     }
   }
 
-  loadChannels()
-  loadCollapseSettings()
+  Promise.all([loadChannels(), loadCollapseSettings()])
 
   // 清理 watch
   onUnmounted(() => {

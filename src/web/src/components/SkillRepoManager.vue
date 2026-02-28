@@ -2,7 +2,7 @@
   <n-modal
     v-model:show="visible"
     preset="card"
-    title="仓库管理"
+    title="技能仓库管理"
     :bordered="false"
     :closable="true"
     style="width: 480px; max-width: 90vw;"
@@ -11,35 +11,38 @@
     <div class="repo-manager">
       <!-- 仓库列表 -->
       <div class="repo-list">
-        <div
-          v-for="repo in repos"
-          :key="`${repo.owner}/${repo.name}`"
-          class="repo-item"
-        >
-          <div class="repo-main">
-            <n-switch
-              :value="repo.enabled"
-              size="small"
-              @update:value="(val) => handleToggle(repo, val)"
-            />
-            <div class="repo-info">
-              <div class="repo-name">{{ repo.owner }}/{{ repo.name }}</div>
-              <div class="repo-branch">{{ repo.branch }}</div>
-            </div>
-          </div>
-          <n-button
-            text
-            type="error"
-            size="tiny"
-            @click="handleRemove(repo)"
+        <n-spin :show="loadingRepos">
+          <div
+            v-for="repo in repos"
+            :key="`${repo.owner}/${repo.name}/${repo.directory || ''}`"
+            class="repo-item"
           >
-            删除
-          </n-button>
-        </div>
+            <div class="repo-main">
+              <n-switch
+                :value="repo.enabled"
+                size="small"
+                @update:value="(val) => handleToggle(repo, val)"
+              />
+              <div class="repo-info">
+                <div class="repo-name">{{ repo.owner }}/{{ repo.name }}</div>
+                <div class="repo-branch">{{ repo.branch }}</div>
+              </div>
+            </div>
+            <n-button
+              text
+              type="error"
+              size="tiny"
+              :focusable="false"
+              @click="handleRemove(repo)"
+            >
+              删除
+            </n-button>
+          </div>
 
-        <div v-if="repos.length === 0" class="empty-hint">
-          暂无仓库，请添加
-        </div>
+          <div v-if="repos.length === 0" class="empty-hint">
+            暂无仓库，请添加
+          </div>
+        </n-spin>
       </div>
 
       <!-- 添加仓库 -->
@@ -48,7 +51,7 @@
         <div class="add-form">
           <n-input
             v-model:value="newRepo.input"
-            placeholder="owner/repo"
+            placeholder="owner/repo 或 GitHub URL"
             size="small"
             class="repo-input"
             @keyup.enter="handleAdd"
@@ -64,13 +67,14 @@
             size="small"
             :disabled="!canAdd"
             :loading="adding"
+            :focusable="false"
             @click="handleAdd"
           >
             添加
           </n-button>
         </div>
         <div class="add-hint">
-          格式: owner/repo，例如 anthropics/skills
+          格式: owner/repo 或完整 GitHub URL
         </div>
       </div>
 
@@ -87,7 +91,7 @@
         <div class="recommended-list">
           <div
             v-for="rec in recommendedRepos"
-            :key="`${rec.owner}/${rec.name}`"
+            :key="`${rec.owner}/${rec.name}/${rec.directory || ''}`"
             class="recommended-item"
             :class="{ added: isRepoAdded(rec) }"
             @click="!isRepoAdded(rec) && quickAdd(rec)"
@@ -109,7 +113,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert } from 'naive-ui'
+import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert, NSpin } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { getSkillRepos, addSkillRepo, removeSkillRepo, toggleSkillRepo } from '../api/skills'
 import message from '../utils/message'
@@ -130,6 +134,7 @@ const visible = computed({
 })
 
 const repos = ref([])
+const loadingRepos = ref(false)
 const adding = ref(false)
 const newRepo = ref({
   input: '',
@@ -138,7 +143,9 @@ const newRepo = ref({
 
 const recommendedRepos = computed(() => {
   if (props.platform === 'codex') {
-    return []
+    return [
+      { owner: 'openai', name: 'skills', description: 'Codex 官方技能库', branch: 'main', directory: 'skills/.curated' }
+    ]
   }
   if (props.platform === 'opencode') {
     return [
@@ -155,18 +162,45 @@ const recommendedRepos = computed(() => {
 const canAdd = computed(() => {
   const input = newRepo.value.input.trim()
   if (!input) return false
+
+  if (input.includes('github.com')) {
+    return input.match(/github\.com\/([^\/]+)\/([^\/\.]+)/)
+  }
+
   const parts = input.split('/')
   return parts.length === 2 && parts[0] && parts[1]
 })
 
+function parseRepoInput(input) {
+  let owner = ''
+  let name = ''
+
+  if (input.includes('github.com')) {
+    const match = input.match(/github\.com\/([^\/]+)\/([^\/\.]+)/)
+    if (match) {
+      owner = match[1]
+      name = match[2]
+    }
+  } else {
+    const parts = input.split('/')
+    owner = parts[0]
+    name = parts[1]
+  }
+
+  return { owner, name }
+}
+
 async function loadRepos() {
+  loadingRepos.value = true
   try {
     const result = await getSkillRepos(props.platform)
     if (result.success) {
       repos.value = result.repos || []
     }
   } catch (err) {
-    console.error('Load repos error:', err)
+    message.error('加载仓库失败: ' + err.message)
+  } finally {
+    loadingRepos.value = false
   }
 }
 
@@ -174,7 +208,7 @@ async function handleAdd() {
   if (!canAdd.value) return
 
   const input = newRepo.value.input.trim()
-  const [owner, name] = input.split('/')
+  const { owner, name } = parseRepoInput(input)
 
   adding.value = true
   try {
@@ -225,7 +259,9 @@ async function handleToggle(repo, enabled) {
 }
 
 function isRepoAdded(rec) {
-  return repos.value.some(r => r.owner === rec.owner && r.name === rec.name)
+  return repos.value.some(
+    r => r.owner === rec.owner && r.name === rec.name && (r.directory || '') === (rec.directory || '')
+  )
 }
 
 async function quickAdd(rec) {
@@ -257,6 +293,10 @@ function handleClose() {
 
 watch(() => props.visible, (val) => {
   if (val) loadRepos()
+})
+
+watch(() => props.platform, () => {
+  if (props.visible) loadRepos()
 })
 
 onMounted(() => {

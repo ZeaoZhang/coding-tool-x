@@ -104,16 +104,6 @@ export async function toggleSkillRepo(owner, name, enabled, directory = '', plat
   return response.data
 }
 
-/**
- * 转换技能格式
- * @param {string} content - 技能内容
- * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
- */
-export async function convertSkillFormat(content, targetFormat, platform = 'claude') {
-  const response = await client.post('/skills/convert', { content, targetFormat, platform })
-  return response.data
-}
-
 // ==================== 多文件技能管理 ====================
 
 /**

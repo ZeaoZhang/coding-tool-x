@@ -158,22 +158,3 @@ export async function uninstallCommand(path, platform = 'claude') {
   const response = await client.post('/commands/uninstall', { path, platform })
   return response.data
 }
-
-/**
- * 转换命令格式
- * @param {string} content - 命令内容
- * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
- */
-export async function convertCommandFormat(content, targetFormat, platform = 'claude') {
-  const response = await client.post('/commands/convert', { content, targetFormat, platform })
-  return response.data
-}
-
-/**
- * 检测命令格式
- * @param {string} content - 命令内容
- */
-export async function detectCommandFormat(content, platform = 'claude') {
-  const response = await client.post('/commands/detect-format', { content, platform })
-  return response.data
-}

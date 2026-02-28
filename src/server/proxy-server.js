@@ -8,11 +8,11 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { broadcastLog, broadcastSchedulerState } = require('./websocket-server');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
-const { resolvePricing, resolveModelPricing } = require('./utils/pricing');
+const { resolveModelPricing } = require('./utils/pricing');
 const { recordRequest } = require('./services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
+const { createDecodedStream } = require('./services/response-decoder');
 const eventBus = require('../plugins/event-bus');
-const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 const { getEffectiveApiKey } = require('./services/channels');
 
 let proxyServer = null;
@@ -94,8 +94,7 @@ function redirectModel(originalModel, channel) {
  * @returns {number} 成本（美元）
  */
 function calculateCost(model, tokens) {
-  const hardcodedPricing = CLAUDE_MODEL_PRICING[model] || {};
-  const pricing = resolveModelPricing('claude', model, hardcodedPricing, CLAUDE_BASE_PRICING);
+  const pricing = resolveModelPricing('claude', model, {}, CLAUDE_BASE_PRICING);
 
   const inputRate = typeof pricing.input === 'number' ? pricing.input : CLAUDE_BASE_PRICING.input;
   const outputRate = typeof pricing.output === 'number' ? pricing.output : CLAUDE_BASE_PRICING.output;
@@ -334,11 +333,12 @@ async function startProxyServer(options = {}) {
         cacheRead: 0,
         model: ''
       };
+      const parsedStream = createDecodedStream(proxyRes);
 
-      proxyRes.on('data', (chunk) => {
+      parsedStream.on('data', (chunk) => {
         if (isResponseClosed) return;
 
-        buffer += chunk.toString();
+        buffer += chunk.toString('utf8');
 
         const events = buffer.split('\n\n');
         buffer = events.pop() || '';
@@ -448,9 +448,9 @@ async function startProxyServer(options = {}) {
         }
       };
 
-      proxyRes.on('end', finalize);
+      parsedStream.on('end', finalize);
 
-      proxyRes.on('error', (err) => {
+      parsedStream.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);
         }

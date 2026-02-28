@@ -63,3 +63,13 @@ export async function getModelStatsHistory(days = 7) {
   const response = await client.get('/statistics/models/history', { params: { days } })
   return response.data
 }
+
+export async function getTrendStatistics(params) {
+  const response = await client.get('/statistics/trend', { params })
+  return response.data
+}
+
+export function getTrendExportUrl(params) {
+  const query = new URLSearchParams(params).toString()
+  return `/api/statistics/trend/export?${query}`
+}

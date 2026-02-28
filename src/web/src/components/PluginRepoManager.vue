@@ -17,36 +17,38 @@
     <div class="repo-manager">
       <!-- 仓库列表 -->
       <div class="repo-list">
-        <div
-          v-for="repo in repos"
-          :key="`${repo.owner}/${repo.name}`"
-          class="repo-item"
-        >
-          <div class="repo-main">
-            <n-switch
-              :value="repo.enabled"
-              size="small"
-              @update:value="(val) => handleToggle(repo, val)"
-            />
-            <div class="repo-info">
-              <div class="repo-name">{{ repo.owner }}/{{ repo.name }}</div>
-              <div class="repo-branch">{{ repo.branch }}</div>
-            </div>
-          </div>
-          <n-button
-            text
-            type="error"
-            size="tiny"
-            :focusable="false"
-            @click="handleRemove(repo)"
+        <n-spin :show="loadingRepos">
+          <div
+            v-for="repo in repos"
+            :key="`${repo.owner}/${repo.name}`"
+            class="repo-item"
           >
-            删除
-          </n-button>
-        </div>
+            <div class="repo-main">
+              <n-switch
+                :value="repo.enabled"
+                size="small"
+                @update:value="(val) => handleToggle(repo, val)"
+              />
+              <div class="repo-info">
+                <div class="repo-name">{{ repo.owner }}/{{ repo.name }}</div>
+                <div class="repo-branch">{{ repo.branch }}</div>
+              </div>
+            </div>
+            <n-button
+              text
+              type="error"
+              size="tiny"
+              :focusable="false"
+              @click="handleRemove(repo)"
+            >
+              删除
+            </n-button>
+          </div>
 
-        <div v-if="repos.length === 0" class="empty-hint">
-          暂无仓库，请添加
-        </div>
+          <div v-if="repos.length === 0" class="empty-hint">
+            暂无仓库，请添加
+          </div>
+        </n-spin>
       </div>
 
       <!-- 添加仓库 -->
@@ -117,7 +119,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert } from 'naive-ui'
+import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert, NSpin } from 'naive-ui'
 import { AddOutline, SyncOutline } from '@vicons/ionicons5'
 import { getPluginRepos, addPluginRepo, removePluginRepo, togglePluginRepo, syncPluginRepos } from '../api/plugins'
 import message from '../utils/message'
@@ -138,6 +140,7 @@ const visible = computed({
 })
 
 const repos = ref([])
+const loadingRepos = ref(false)
 const adding = ref(false)
 const syncing = ref(false)
 const newRepo = ref({
@@ -171,13 +174,16 @@ const canAdd = computed(() => {
 })
 
 async function loadRepos() {
+  loadingRepos.value = true
   try {
     const result = await getPluginRepos(props.platform)
     if (result.success) {
       repos.value = result.repos || []
     }
   } catch (err) {
-    console.error('Load repos error:', err)
+    message.error('加载仓库失败: ' + err.message)
+  } finally {
+    loadingRepos.value = false
   }
 }
 
@@ -300,6 +306,10 @@ function handleClose() {
 
 watch(() => props.visible, (val) => {
   if (val) loadRepos()
+})
+
+watch(() => props.platform, () => {
+  if (props.visible) loadRepos()
 })
 
 onMounted(() => {

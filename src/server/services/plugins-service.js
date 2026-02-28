@@ -703,45 +703,54 @@ class PluginsService {
   getRepos() {
     const repos = [];
     const seenRepos = new Set();
+    const pushRepo = (repo) => {
+      if (!repo || !repo.owner || !repo.name) return;
+      const key = `${repo.owner}/${repo.name}`;
+      if (seenRepos.has(key)) return;
+      repos.push(repo);
+      seenRepos.add(key);
+    };
+    const parseRepoUrl = (url) => {
+      if (!url || typeof url !== 'string') return null;
+      const match = url.match(/github\.com\/([^\/]+)\/([^\/\.]+)/);
+      if (!match) return null;
+      return { owner: match[1], name: match[2], url };
+    };
 
     // 1. Load our own config
     const config = this.loadReposConfig();
     for (const repo of config.repos || []) {
-      const key = `${repo.owner}/${repo.name}`;
-      if (!seenRepos.has(key)) {
-        repos.push(repo);
-        seenRepos.add(key);
-      }
+      pushRepo(repo);
     }
 
     // 2. Load Claude Code's native marketplace config (Claude only)
     if (!this._isOpenCode() && fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
       try {
         const marketplaces = JSON.parse(fs.readFileSync(CLAUDE_MARKETPLACES_FILE, 'utf8'));
-
-        for (const [marketplaceName, marketplaceData] of Object.entries(marketplaces)) {
-          if (marketplaceData.source && marketplaceData.source.url) {
-            const url = marketplaceData.source.url;
-            const match = url.match(/github\.com\/([^\/]+)\/([^\/\.]+)/);
-
-            if (match) {
-              const [, owner, name] = match;
-              const key = `${owner}/${name}`;
-
-              if (!seenRepos.has(key)) {
-                repos.push({
-                  owner,
-                  name,
-                  url,
-                  branch: 'main', // Default branch
-                  enabled: true,
-                  source: 'claude-native',
-                  lastUpdated: marketplaceData.lastUpdated
-                });
-                seenRepos.add(key);
-              }
-            }
+        const entries = [];
+        if (Array.isArray(marketplaces)) {
+          entries.push(...marketplaces.map(item => ({ key: '', data: item })));
+        } else if (marketplaces && typeof marketplaces === 'object') {
+          entries.push(...Object.entries(marketplaces).map(([key, data]) => ({ key, data })));
+          if (Array.isArray(marketplaces.marketplaces)) {
+            entries.push(...marketplaces.marketplaces.map(item => ({ key: item?.name || '', data: item })));
           }
+        }
+
+        for (const { key, data } of entries) {
+          const sourceUrl = data?.source?.url || data?.url || data?.repoUrl || data?.repository;
+          const parsed = parseRepoUrl(sourceUrl);
+          if (!parsed) continue;
+          pushRepo({
+            owner: parsed.owner,
+            name: parsed.name,
+            url: parsed.url,
+            branch: data?.source?.branch || data?.branch || 'main',
+            enabled: data?.enabled !== false,
+            source: 'claude-native',
+            marketplace: key || data?.name || '',
+            lastUpdated: data?.lastUpdated
+          });
         }
       } catch (err) {
         console.error('[PluginsService] Failed to read known_marketplaces.json:', err.message);

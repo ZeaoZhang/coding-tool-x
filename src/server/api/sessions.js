@@ -391,7 +391,6 @@ module.exports = (config) => {
   router.post('/:projectName/:sessionId/launch', async (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
-      const { targetTool } = req.body; // 'claude', 'codex', 或 'gemini'
       const { exec } = require('child_process');
       const path = require('path');
       const fs = require('fs');
@@ -440,66 +439,10 @@ module.exports = (config) => {
         });
       }
 
-      // 判断会话来源类型
-      let sourceType = 'claude'; // 默认
-      if (sessionFile.includes('/.codex/') || sessionFile.includes('\\.codex\\')) {
-        sourceType = 'codex';
-      } else if (sessionFile.includes('/.gemini/') || sessionFile.includes('\\.gemini\\')) {
-        sourceType = 'gemini';
-      }
-
-      // 如果指定了 targetTool 且与 sourceType 不同，则需要转换
-      let finalSessionFile = sessionFile;
-      let finalSessionId = sessionId;
-
-      if (targetTool && targetTool !== sourceType) {
-        console.log(`跨工具启动：${sourceType} -> ${targetTool}，会话 ${sessionId}`);
-
-        try {
-          const { convertSession } = require('../services/session-converter');
-
-          // 执行转换
-          const convertResult = await convertSession(
-            sourceType,
-            targetTool,
-            sessionId,
-            {
-              sourcePath: sessionFile,
-              preserveTimestamps: true,
-              targetProjectPath: fullPath
-            }
-          );
-
-          if (convertResult.success) {
-            finalSessionFile = convertResult.targetPath;
-            finalSessionId = convertResult.targetSessionId;
-            console.log(`转换成功：${finalSessionFile}`);
-
-            // 广播转换日志
-            broadcastLog({
-              type: 'action',
-              action: 'auto_convert_session',
-              message: `自动转换会话：${sourceType} -> ${targetTool}`,
-              sessionId: finalSessionId,
-              timestamp: Date.now()
-            });
-          } else {
-            return res.status(500).json({
-              error: '会话转换失败：' + (convertResult.error || '未知错误')
-            });
-          }
-        } catch (convertError) {
-          console.error('会话转换出错：', convertError);
-          return res.status(500).json({
-            error: '会话转换出错：' + convertError.message
-          });
-        }
-      }
-
       // Extract working directory from session file
       let cwd = fullPath; // Default to project directory
       try {
-        const content = fs.readFileSync(finalSessionFile, 'utf8');
+        const content = fs.readFileSync(sessionFile, 'utf8');
         const firstLine = content.split('\n')[0];
         if (firstLine) {
           const json = JSON.parse(firstLine);
@@ -514,15 +457,15 @@ module.exports = (config) => {
       // 确保会话文件在 cwd 的 .claude/sessions/ 目录下
       // 这样 claude -r 才能找到文件
       const cwdSessionsDir = path.join(cwd, '.claude', 'sessions');
-      const cwdSessionFile = path.join(cwdSessionsDir, finalSessionId + '.jsonl');
+      const cwdSessionFile = path.join(cwdSessionsDir, sessionId + '.jsonl');
 
       // 如果会话文件不在 cwd 的 sessions 目录，复制过去
-      if (finalSessionFile !== cwdSessionFile && !fs.existsSync(cwdSessionFile)) {
+      if (sessionFile !== cwdSessionFile && !fs.existsSync(cwdSessionFile)) {
         try {
           if (!fs.existsSync(cwdSessionsDir)) {
             fs.mkdirSync(cwdSessionsDir, { recursive: true });
           }
-          fs.copyFileSync(finalSessionFile, cwdSessionFile);
+          fs.copyFileSync(sessionFile, cwdSessionFile);
           console.log(`[Launch] Copied session to cwd: ${cwdSessionFile}`);
         } catch (copyError) {
           console.warn('[Launch] Failed to copy session file to cwd:', copyError.message);
@@ -536,16 +479,16 @@ module.exports = (config) => {
 
       // Get alias
       const aliases = loadAliases();
-      const alias = aliases[finalSessionId];
+      const alias = aliases[sessionId];
 
       // 广播行为日志
       broadcastLog({
         type: 'action',
         action: 'launch_session',
-        message: `启动会话 ${alias || finalSessionId.substring(0, 8)} (${targetTool || sourceType})`,
-        sessionId: finalSessionId,
+        message: `启动会话 ${alias || sessionId.substring(0, 8)} (claude)`,
+        sessionId,
         alias: alias || null,
-        tool: targetTool || sourceType,
+        tool: 'claude',
         timestamp: Date.now()
       });
 
@@ -556,11 +499,11 @@ module.exports = (config) => {
         // Windows 路径需要转换为反斜杠格式
         const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
 
-        // 获取启动命令（需要传入 targetTool）
+        // 获取 Claude 会话启动命令
         const { command, terminalId, terminalName } = getTerminalLaunchCommand(
           normalizedCwd,
-          finalSessionId,
-          targetTool || sourceType
+          sessionId,
+          'claude'
         );
 
         console.log(`Launching terminal: ${terminalName} (${terminalId})`);

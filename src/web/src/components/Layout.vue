@@ -84,6 +84,16 @@
           </n-icon>
           <span class="nav-label">Terminal</span>
         </div>
+        <div
+          class="nav-tab"
+          :class="{ active: currentRoute === 'analytics' }"
+          @click="router.push({ name: 'analytics' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <StatsChartOutline />
+          </n-icon>
+          <span class="nav-label">Analytics</span>
+        </div>
       </div>
 
       <div class="header-actions">
@@ -449,7 +459,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -503,7 +513,7 @@ const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => route.meta.channel || null)
 const terminalRouteNames = new Set(['terminal', 'terminal-channel', 'terminal-session'])
 const routeViewKey = computed(() => (
-  terminalRouteNames.has(route.name) ? 'terminal-keep' : route.fullPath
+  terminalRouteNames.has(route.name) ? 'terminal-keep' : route.path
 ))
 
 // 是否显示右侧面板（首页不显示）

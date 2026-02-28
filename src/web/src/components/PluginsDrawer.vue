@@ -11,7 +11,7 @@
           <span>Plugins</span>
         </div>
       </template>
-      <PluginsPanel @back="visible = false" :hide-back="true" :in-drawer="true" />
+      <PluginsPanel @back="visible = false" :hide-back="true" :in-drawer="true" :drawer-visible="visible" />
     </n-drawer-content>
   </n-drawer>
 </template>

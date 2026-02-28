@@ -88,17 +88,6 @@
         </n-button>
       </n-dropdown>
 
-      <!-- Convert Button -->
-      <n-button
-        size="small"
-        @click="$emit('convert', session)"
-      >
-        <template #icon>
-          <n-icon><SwapHorizontalOutline /></n-icon>
-        </template>
-        转换
-      </n-button>
-
       <!-- Fork Button (only show if not hideFork) -->
       <n-button
         v-if="!hideFork"
@@ -142,8 +131,7 @@ import {
   TrashOutline,
   ChevronDownOutline,
   DesktopOutline,
-  GlobeOutline,
-  SwapHorizontalOutline
+  GlobeOutline
 } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -169,39 +157,17 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['set-alias', 'launch', 'launch-web', 'fork', 'delete', 'convert'])
+const emit = defineEmits(['set-alias', 'launch', 'launch-web', 'fork', 'delete'])
 
 // 启动方式下拉选项（按渠道展示可用项）
 const launchOptions = computed(() => {
-  if (props.channel === 'opencode') {
-    return [
-      {
-        type: 'group',
-        label: 'Web 终端',
-        key: 'web-group',
-        children: [
-          {
-            label: 'OpenCode',
-            key: 'web-opencode',
-            icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-          }
-        ]
-      },
-      {
-        type: 'group',
-        label: '本地终端',
-        key: 'local-group',
-        children: [
-          {
-            label: 'OpenCode',
-            key: 'local-opencode',
-            icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-          }
-        ]
-      }
-    ]
-  }
-
+  const toolLabel = props.channel === 'codex'
+    ? 'Codex'
+    : props.channel === 'gemini'
+      ? 'Gemini'
+      : props.channel === 'opencode'
+        ? 'OpenCode'
+        : 'Claude Code'
   return [
     {
       type: 'group',
@@ -209,18 +175,8 @@ const launchOptions = computed(() => {
       key: 'web-group',
       children: [
         {
-          label: 'Claude Code',
-          key: 'web-claude',
-          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-        },
-        {
-          label: 'Codex',
-          key: 'web-codex',
-          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-        },
-        {
-          label: 'Gemini',
-          key: 'web-gemini',
+          label: toolLabel,
+          key: 'web-current',
           icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
         }
       ]
@@ -231,18 +187,8 @@ const launchOptions = computed(() => {
       key: 'local-group',
       children: [
         {
-          label: 'Claude Code',
-          key: 'local-claude',
-          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-        },
-        {
-          label: 'Codex',
-          key: 'local-codex',
-          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-        },
-        {
-          label: 'Gemini',
-          key: 'local-gemini',
+          label: toolLabel,
+          key: 'local-current',
           icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
         }
       ]
@@ -252,12 +198,10 @@ const launchOptions = computed(() => {
 
 // 处理启动选择
 function handleLaunchSelect(key) {
-  const [launchMode, targetTool] = key.split('-')
-
-  if (launchMode === 'web') {
-    emit('launch-web', props.session, targetTool)
+  if (key.startsWith('web-')) {
+    emit('launch-web', props.session)
   } else {
-    emit('launch', props.session, targetTool)
+    emit('launch', props.session)
   }
 }
 

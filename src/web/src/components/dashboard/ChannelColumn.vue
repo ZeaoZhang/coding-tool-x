@@ -206,8 +206,13 @@
                         size="small"
                         :value="channel.enabled !== false"
                         @update:value="value => handleQuickToggle(channel, value)"
+                        :loading="isQuickToggleLoading(channel.id)"
+                        :disabled="isQuickToggleLoading(channel.id)"
                         style="margin-left: auto;"
                       />
+                    </div>
+                    <div v-if="isQuickToggleLoading(channel.id)" class="channel-switching-tip">
+                      正在切换渠道状态...
                     </div>
                     <!-- 渠道统计指标 -->
                     <div class="channel-metrics">
@@ -320,31 +325,27 @@
         </n-collapse>
       </div>
 
-      <!-- 实时日志 (Collapsible) -->
+      <!-- 实时日志 -->
       <div v-if="showLogs" class="card logs-card">
-        <n-collapse :default-expanded-names="[]" accordion>
-          <n-collapse-item name="realtime-logs">
-            <template #header>
-              <div class="collapse-header">
-                <n-icon :size="14" style="margin-right: 8px;">
-                  <RadioOutline />
-                </n-icon>
-                <span class="collapse-title">实时日志</span>
-                <n-button
-                  text
-                  size="tiny"
-                  @click.stop="clearLogs"
-                  style="margin-left: auto;"
-                  title="清空日志"
-                >
-                  <template #icon>
-                    <n-icon :size="14"><TrashOutline /></n-icon>
-                  </template>
-                </n-button>
-              </div>
+        <div class="card-header compact">
+          <n-icon :size="14">
+            <RadioOutline />
+          </n-icon>
+          <h3 class="card-title">实时日志</h3>
+          <n-button
+            text
+            size="tiny"
+            @click.stop="clearLogs"
+            style="margin-left: auto;"
+            title="清空日志"
+          >
+            <template #icon>
+              <n-icon :size="14"><TrashOutline /></n-icon>
             </template>
-            <div class="collapse-content scrollable-content">
-              <div class="logs-table-wrapper">
+          </n-button>
+        </div>
+        <div class="card-body logs-card-body">
+          <div class="logs-table-wrapper">
           <!-- 表头 -->
           <div class="logs-table-header" :class="`logs-header-${channelType}`">
             <div class="log-col col-channel" :class="`col-channel-${channelType}`">渠道</div>
@@ -414,10 +415,8 @@
               </template>
             </div>
           </div>
-              </div>
-            </div>
-          </n-collapse-item>
-        </n-collapse>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -491,6 +490,34 @@ import {
 } from '../../api/statistics'
 import { getSkills, uninstallSkill } from '../../api/skills'
 import { getAllServers as getMcpServers, toggleServerApp } from '../../api/mcp'
+
+let mcpServersCache = null
+let mcpServersInFlight = null
+
+async function fetchMcpServers(force = false) {
+  if (!force && mcpServersCache) {
+    return mcpServersCache
+  }
+  if (!force && mcpServersInFlight) {
+    return mcpServersInFlight
+  }
+
+  const request = getMcpServers()
+    .then((result) => {
+      if (result?.success && result.servers) {
+        mcpServersCache = Object.values(result.servers)
+      } else {
+        mcpServersCache = []
+      }
+      return mcpServersCache
+    })
+    .finally(() => {
+      mcpServersInFlight = null
+    })
+
+  mcpServersInFlight = request
+  return request
+}
 
 const props = defineProps({
   channelType: {
@@ -684,17 +711,13 @@ async function loadInstalledSkills() {
 }
 
 // 加载 MCP 服务
-async function loadMcpServers() {
+async function loadMcpServers(force = false) {
   try {
-    const result = await getMcpServers()
-    if (result.success && result.servers) {
-      // servers 是对象格式，需要转换为数组
-      const serverList = Object.values(result.servers)
-      // 根据当前平台筛选已启用的服务
-      const enabled = serverList.filter(s => s.apps?.[props.channelType] === true)
-      mcpEnabledCount.value = enabled.length
-      mcpEnabledServers.value = enabled.slice(0, 10).map(s => ({ ...s, _toggling: false }))
-    }
+    const serverList = await fetchMcpServers(force)
+    // 根据当前平台筛选已启用的服务
+    const enabled = serverList.filter(s => s.apps?.[props.channelType] === true)
+    mcpEnabledCount.value = enabled.length
+    mcpEnabledServers.value = enabled.slice(0, 10).map(s => ({ ...s, _toggling: false }))
   } catch (err) {
     console.error('Failed to load MCP servers:', err)
   }
@@ -707,7 +730,7 @@ async function handleMcpToggle(server, enabled) {
     await toggleServerApp(server.id, props.channelType, enabled)
     message.success(enabled ? `已启用 ${server.name}` : `已禁用 ${server.name}`)
     // 刷新列表
-    await loadMcpServers()
+    await loadMcpServers(true)
   } catch (err) {
     message.error('操作失败: ' + (err.message || '未知错误'))
   } finally {
@@ -1081,7 +1104,23 @@ function goToChannelPage() {
 }
 
 // 快捷切换渠道状态
+const quickToggleLoading = ref({})
+
+function isQuickToggleLoading(channelId) {
+  return !!quickToggleLoading.value[channelId]
+}
+
+function setQuickToggleLoading(channelId, value) {
+  if (!channelId) return
+  quickToggleLoading.value = {
+    ...quickToggleLoading.value,
+    [channelId]: !!value
+  }
+}
+
 async function handleQuickToggle(channel, enabled) {
+  if (!channel || isQuickToggleLoading(channel.id)) return
+  setQuickToggleLoading(channel.id, true)
   try {
     let updateFn
     if (props.channelType === 'claude') {
@@ -1102,6 +1141,8 @@ async function handleQuickToggle(channel, enabled) {
     }
   } catch (error) {
     message.error('操作失败: ' + error.message)
+  } finally {
+    setQuickToggleLoading(channel.id, false)
   }
 }
 
@@ -1148,13 +1189,11 @@ function openSkillsManager() {
 }
 
 onMounted(async () => {
-  // 先加载 dashboard 聚合数据（只有第一个组件会真正发起请求，其他复用缓存）
-  await loadDashboard()
-
-  // 从缓存数据加载
-  await loadStats()
-  // 加载渠道统计数据
-  await loadChannelStats()
+  // 并行加载：loadDashboard（有缓存防重）和 loadChannelStats 同时发起
+  await Promise.all([
+    loadDashboard().then(() => loadStats()),
+    loadChannelStats()
+  ])
   // 加载已安装技能和 MCP 服务（仅 Claude）
   loadInstalledSkills()
   loadMcpServers()
@@ -1865,21 +1904,12 @@ onUnmounted(() => {
   border-radius: 6px;
 }
 
-/* Make n-collapse fill the logs-card */
-.logs-card :deep(.n-collapse) {
+.logs-card-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: transparent;
-}
-
-.logs-card :deep(.n-collapse-item) {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: transparent;
+  padding: 0;
 }
 
 .logs-card .card-header {
@@ -2815,6 +2845,12 @@ onUnmounted(() => {
   color: #f59e0b;
 }
 
+.channel-switching-tip {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 0 2px;
+}
+
 .channel-quick-item.disabled .channel-metrics .metric-value {
   color: var(--text-tertiary);
 }
@@ -3149,55 +3185,6 @@ onUnmounted(() => {
   }
 }
 
-/* Collapsible Panel Styles */
-.collapse-header {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  font-weight: 500;
-  font-size: 13px;
-  color: var(--text-color-1);
-}
-
-.collapse-title {
-  flex: 1;
-}
-
-.collapse-content {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  padding-top: 8px;
-}
-
-.scrollable-content {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-/* Smooth scrollbar styling */
-.scrollable-content::-webkit-scrollbar {
-  width: 6px;
-}
-
-.scrollable-content::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 3px;
-}
-
-.scrollable-content::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 3px;
-  transition: background 0.2s;
-}
-
-.scrollable-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
-}
-
 /* General collapse styling for cards (not logs-card) */
 .card:not(.logs-card) :deep(.n-collapse) {
   background: transparent;
@@ -3229,38 +3216,8 @@ onUnmounted(() => {
   padding-top: 0;
 }
 
-/* logs-card specific: override padding to allow flex fill */
-.logs-card :deep(.n-collapse-item__content-wrapper) {
-  padding: 0 16px;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.logs-card :deep(.n-collapse-item__content-inner) {
-  padding-top: 0;
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
 /* Remove default card padding when using collapse */
-.chart-card:has(.n-collapse),
-.logs-card:has(.n-collapse) {
+.chart-card:has(.n-collapse) {
   padding: 0;
-}
-
-/* Adjust logs table wrapper inside collapse */
-.collapse-content .logs-table-wrapper {
-  margin: 0;
-}
-
-/* Responsive adjustments for collapse header */
-@media (max-width: 480px) {
-  .collapse-header {
-    font-size: 11px;
-  }
 }
 </style>

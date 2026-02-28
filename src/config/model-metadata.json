@@ -1,0 +1,125 @@
+{
+  "lastUpdated": "2026-02-27",
+  "defaultModels": {
+    "claude": [
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-opus-4-5-20251101",
+      "claude-sonnet-4-5-20250929",
+      "claude-haiku-4-5-20251001"
+    ],
+    "codex": [
+      "gpt-5.3-codex",
+      "gpt-5.2-codex",
+      "gpt-5.1-codex-max",
+      "gpt-5.1-codex",
+      "gpt-5.1-codex-mini",
+      "gpt-5-codex",
+      "gpt-5.2",
+      "gpt-5.1",
+      "gpt-5"
+    ],
+    "gemini": [
+      "gemini-3.1-pro",
+      "gemini-3-pro-preview",
+      "gemini-3-flash-preview",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite"
+    ]
+  },
+  "defaultSpeedTestModels": {
+    "claude": "claude-haiku-4-5",
+    "codex": "gpt-5.2",
+    "gemini": "gemini-2.5-pro"
+  },
+  "aliases": {
+    "claude-opus-4-6": "claude-opus-4-6",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-opus-4-5": "claude-opus-4-5-20251101",
+    "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001"
+  },
+  "models": {
+    "claude-opus-4-6": {
+      "limit": { "context": 200000, "output": 32000 },
+      "pricing": { "input": 15, "output": 75, "cacheCreation": 18.75, "cacheRead": 1.5 }
+    },
+    "claude-sonnet-4-6": {
+      "limit": { "context": 200000, "output": 64000 },
+      "pricing": { "input": 3, "output": 15, "cacheCreation": 3.75, "cacheRead": 0.3 }
+    },
+    "claude-opus-4-5-20251101": {
+      "limit": { "context": 200000, "output": 32000 },
+      "pricing": { "input": 5, "output": 25, "cacheCreation": 6.25, "cacheRead": 0.5 }
+    },
+    "claude-sonnet-4-5-20250929": {
+      "limit": { "context": 200000, "output": 64000 },
+      "pricing": { "input": 3, "output": 15, "cacheCreation": 3.75, "cacheRead": 0.3 }
+    },
+    "claude-haiku-4-5-20251001": {
+      "limit": { "context": 200000, "output": 8096 },
+      "pricing": { "input": 1, "output": 5, "cacheCreation": 1.25, "cacheRead": 0.1 }
+    },
+    "gpt-5": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gpt-5.1": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gpt-5.2": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gpt-5-codex": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gpt-5.1-codex": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gpt-5.1-codex-mini": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 1.5, "output": 6 }
+    },
+    "gpt-5.1-codex-max": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 3, "output": 12 }
+    },
+    "gpt-5.2-codex": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gpt-5.3-codex": {
+      "limit": { "context": 1000000, "output": 32768 },
+      "pricing": { "input": 2, "output": 8 }
+    },
+    "gemini-3.1-pro": {
+      "limit": { "context": 2097152, "output": 65536 },
+      "pricing": { "input": 2.5, "output": 15 }
+    },
+    "gemini-3-pro-preview": {
+      "limit": { "context": 2097152, "output": 65536 },
+      "pricing": { "input": 2.5, "output": 15 }
+    },
+    "gemini-3-flash-preview": {
+      "limit": { "context": 1048576, "output": 65536 },
+      "pricing": { "input": 0.3, "output": 1.2 }
+    },
+    "gemini-2.5-pro": {
+      "limit": { "context": 1048576, "output": 65536 },
+      "pricing": { "input": 1.25, "output": 10 }
+    },
+    "gemini-2.5-flash": {
+      "limit": { "context": 1048576, "output": 65536 },
+      "pricing": { "input": 0.15, "output": 0.6 }
+    },
+    "gemini-2.5-flash-lite": {
+      "limit": { "context": 1048576, "output": 65536 },
+      "pricing": { "input": 0.1, "output": 0.4 }
+    }
+  }
+}

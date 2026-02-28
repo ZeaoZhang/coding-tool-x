@@ -378,9 +378,246 @@ function getTodayStatistics() {
   return loadDailyStats(today);
 }
 
+/**
+ * 从统计对象中提取指定指标值
+ */
+function extractMetric(stats, metric) {
+  if (!stats) return 0;
+  if (metric === 'tokens') return stats.tokens?.total || stats.tokens || 0;
+  if (metric === 'cost') return stats.cost || 0;
+  if (metric === 'requests') return stats.requests || 0;
+  return 0;
+}
+
+/**
+ * 从 JSONL 日志文件读取指定日期+小时的数据（按 model 或 channel 聚合）
+ */
+function readJsonlForHour(year, month, day, hour, groupBy) {
+  const filePath = getRequestLogFilePath(year, month, day);
+  const result = {};
+
+  try {
+    if (!fs.existsSync(filePath)) return result;
+    const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+
+      const ts = new Date(entry.timestamp);
+      if (ts.getHours() !== hour) continue;
+
+      let key;
+      if (groupBy === 'model') key = entry.model || 'unknown';
+      else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
+      else continue;
+
+      if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
+      result[key].tokens.total += entry.tokens?.total || 0;
+      result[key].cost += entry.cost || 0;
+      result[key].requests += 1;
+    }
+  } catch (err) {
+    console.error('Failed to read JSONL for hour:', err);
+  }
+
+  return result;
+}
+
+/**
+ * 获取趋势统计数据
+ * @param {Object} options
+ * @param {string} options.startDate - YYYY-MM-DD
+ * @param {string} options.endDate - YYYY-MM-DD
+ * @param {string} options.granularity - 'day' | 'hour'
+ * @param {string} options.groupBy - 'model' | 'channel' | 'toolType'
+ * @param {string} options.metric - 'tokens' | 'cost' | 'requests'
+ */
+
+// 工具类型到 daily-stats 目录前缀的映射
+const TOOL_PREFIXES = {
+  'claude-code': '',
+  'codex': 'codex-',
+  'gemini': 'gemini-',
+  'opencode': 'opencode-'
+};
+
+// 加载指定工具的某天统计（toolPrefix 为 '' | 'codex-' | 'gemini-' | 'opencode-'）
+function loadDailyStatsByTool(dateStr, toolPrefix) {
+  const dir = path.join(os.homedir(), '.cc-tool', `${toolPrefix}daily-stats`);
+  const filePath = path.join(dir, `${dateStr}.json`);
+  try {
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+  } catch (e) {}
+  return null;
+}
+
+// 合并所有工具的某天 daily-stats，groupBy 决定合并维度
+// 对于 toolType 分组：key 就是工具名（claude-code/codex/gemini/opencode）
+// 对于 model/channel 分组：合并各工具的 byModel/byChannel，key 可能重名（不同工具用同名模型）则加前缀
+function mergeAllToolsDailyStats(dateStr, groupBy) {
+  const merged = {};
+
+  for (const [toolType, prefix] of Object.entries(TOOL_PREFIXES)) {
+    const stats = loadDailyStatsByTool(dateStr, prefix);
+    if (!stats) continue;
+
+    if (groupBy === 'toolType') {
+      // key = toolType，汇总整天 summary
+      if (!merged[toolType]) merged[toolType] = { requests: 0, tokens: { total: 0 }, cost: 0 };
+      const s = stats.summary || {};
+      merged[toolType].requests += s.requests || 0;
+      merged[toolType].tokens.total += (s.tokens && typeof s.tokens === 'object' ? s.tokens.total : s.tokens) || 0;
+      merged[toolType].cost += s.cost || 0;
+    } else if (groupBy === 'model') {
+      const byModel = stats.byModel || {};
+      for (const [model, mStats] of Object.entries(byModel)) {
+        if (!merged[model]) merged[model] = { requests: 0, tokens: { total: 0 }, cost: 0 };
+        merged[model].requests += mStats.requests || 0;
+        const t = mStats.tokens || {};
+        merged[model].tokens.total += (typeof t === 'object' ? t.total : t) || 0;
+        merged[model].cost += mStats.cost || 0;
+      }
+    } else if (groupBy === 'channel') {
+      const byChannel = stats.byChannel || {};
+      for (const [chId, chStats] of Object.entries(byChannel)) {
+        const key = chStats.name || chId;
+        if (!merged[key]) merged[key] = { requests: 0, tokens: { total: 0 }, cost: 0 };
+        merged[key].requests += chStats.requests || 0;
+        const t = chStats.tokens || {};
+        merged[key].tokens.total += (typeof t === 'object' ? t.total : t) || 0;
+        merged[key].cost += chStats.cost || 0;
+      }
+    }
+  }
+  return merged;
+}
+
+async function getTrendStatistics({ startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens' }) {
+  step = parseInt(step) || 1;
+  const labels = [];
+  const seriesMap = {}; // { dimensionName: number[] }
+  const totals = {};
+
+  const start = new Date(startDate + 'T00:00:00');
+  const end = new Date(endDate + 'T00:00:00');
+
+  // Iterate each day
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const dateStr = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+
+    if (granularity === 'day') {
+      labels.push(dateStr);
+      const byDimension = mergeAllToolsDailyStats(dateStr, groupBy);
+
+      // Accumulate dimensions seen so far with 0 for this label position
+      const labelIdx = labels.length - 1;
+
+      // Fill existing series with 0 for this position first
+      for (const key of Object.keys(seriesMap)) {
+        seriesMap[key].push(0);
+      }
+
+      for (const [key, stats] of Object.entries(byDimension)) {
+        const val = extractMetric(stats, metric);
+        if (!seriesMap[key]) {
+          // New dimension: backfill with zeros for previous labels
+          seriesMap[key] = new Array(labelIdx).fill(0);
+          seriesMap[key].push(val);
+        } else {
+          // Already pushed 0 above, replace last element
+          seriesMap[key][labelIdx] = val;
+        }
+        totals[key] = (totals[key] || 0) + val;
+      }
+    } else {
+      // granularity === 'hour'
+      for (let h = 0; h < 24; h += step) {
+        const hourEnd = Math.min(h + step, 24);
+        const hourStr = h.toString().padStart(2, '0');
+        const label = step === 1
+          ? `${dateStr} ${hourStr}:00`
+          : `${dateStr} ${hourStr}:00-${String(hourEnd).padStart(2, '0')}:00`;
+        labels.push(label);
+        const labelIdx = labels.length - 1;
+
+        // Fill existing series with 0 for this label
+        for (const key of Object.keys(seriesMap)) {
+          seriesMap[key].push(0);
+        }
+
+        // Accumulate all hours in this step bucket
+        for (let hh = h; hh < hourEnd; hh++) {
+          const hhStr = hh.toString().padStart(2, '0');
+          let byDimension = {};
+
+          if (groupBy === 'toolType') {
+            // 合并所有工具的该小时数据
+            for (const [toolType, prefix] of Object.entries(TOOL_PREFIXES)) {
+              const ds = loadDailyStatsByTool(dateStr, prefix);
+              const hourData = ds?.hourly?.[hhStr];
+              const val = hourData ? extractMetric(hourData, metric) : 0;
+              if (val > 0) {
+                if (!byDimension[toolType]) byDimension[toolType] = { requests: 0, tokens: { total: 0 }, cost: 0 };
+                byDimension[toolType].requests += hourData.requests || 0;
+                byDimension[toolType].tokens.total += (hourData.tokens?.total || 0);
+                byDimension[toolType].cost += hourData.cost || 0;
+              }
+            }
+          } else {
+            byDimension = readJsonlForHour(year, month, day, hh, groupBy);
+          }
+
+          for (const [key, stats] of Object.entries(byDimension)) {
+            const val = extractMetric(stats, metric);
+            if (!seriesMap[key]) {
+              seriesMap[key] = new Array(labelIdx).fill(0);
+              seriesMap[key].push(val);
+            } else {
+              if (seriesMap[key].length <= labelIdx) seriesMap[key].push(0);
+              seriesMap[key][labelIdx] = (seriesMap[key][labelIdx] || 0) + val;
+            }
+            totals[key] = (totals[key] || 0) + val;
+          }
+        } // end hh loop
+      } // end h loop
+    } // end else (hour granularity)
+  } // end for day loop
+
+  // Sort series by total desc, keep top 10, merge rest into 'Other'
+  const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const top10 = sorted.slice(0, 10);
+  const rest = sorted.slice(10);
+
+  const series = top10.map(([name]) => ({
+    name,
+    data: seriesMap[name] || []
+  }));
+
+  if (rest.length > 0) {
+    const otherData = labels.map((_, i) =>
+      rest.reduce((sum, [name]) => sum + (seriesMap[name]?.[i] || 0), 0)
+    );
+    const otherTotal = rest.reduce((sum, [, total]) => sum + total, 0);
+    series.push({ name: 'Other', data: otherData });
+    totals['Other'] = otherTotal;
+    // Remove merged keys from totals
+    for (const [name] of rest) delete totals[name];
+  }
+
+  return { labels, series, totals };
+}
+
 module.exports = {
   recordRequest,
   getStatistics,
   getDailyStatistics,
-  getTodayStatistics
+  getTodayStatistics,
+  getTrendStatistics
 };

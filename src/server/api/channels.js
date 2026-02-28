@@ -18,13 +18,14 @@ const {
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
-const {
-  probeModelAvailability,
-  fetchModelsFromProvider
-} = require('../services/model-detector');
+const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
 const { clearRedirectCache } = require('../proxy-server');
 const CLAUDE_GATEWAY_SOURCE_TYPE = 'claude';
+
+function getDefaultClaudeModel() {
+  return getDefaultSpeedTestModelByToolType('claude');
+}
 
 // GET /api/channels - Get all channels with health status
 router.get('/', (req, res) => {
@@ -271,41 +272,17 @@ router.get('/:id/models', async (req, res) => {
     }
 
     const gatewaySourceType = CLAUDE_GATEWAY_SOURCE_TYPE;
-    const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
-    const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
-    let result;
-
-    if (listedModels.length > 0) {
-      result = {
-        models: listedModels,
-        supported: true,
-        cached: !!listResult.cached,
-        fallbackUsed: false,
-        lastChecked: listResult.lastChecked || new Date().toISOString(),
-        error: null,
-        errorHint: null
-      };
-    } else {
-      const usingConfiguredProbe = !!listResult.disabledByConfig;
-      const probe = await probeModelAvailability(channel, gatewaySourceType, {
-        stopOnFirstAvailable: false
-      });
-      const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-
-      result = {
-        models: probedModels,
-        supported: probedModels.length > 0,
-        cached: !!probe.cached || !!listResult.cached,
-        fallbackUsed: probedModels.length > 0,
-        lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
-        error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
-        errorHint: probedModels.length > 0
-          ? (usingConfiguredProbe ? '已按设置跳过 /v1/models，使用默认模型探测结果' : '模型列表接口不可用，已使用模型探测结果')
-          : (listResult.errorHint || (usingConfiguredProbe
-            ? '已按设置跳过 /v1/models，且默认模型探测无可用结果'
-            : '模型列表接口不可用且模型探测无可用结果'))
-      };
-    }
+    const models = [getDefaultClaudeModel()];
+    const now = new Date().toISOString();
+    const result = {
+      models,
+      supported: models.length > 0,
+      cached: false,
+      fallbackUsed: false,
+      lastChecked: now,
+      error: models.length > 0 ? null : '未配置默认模型列表',
+      errorHint: models.length > 0 ? null : '请在设置中配置 Claude 默认模型'
+    };
 
     res.json({
       channelId: id,

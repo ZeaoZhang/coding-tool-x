@@ -318,35 +318,13 @@ const effectiveProjectName = computed(() => resolvedProjectName.value || props.p
 
 // 启动方式下拉选项（按渠道展示可用项）
 const launchOptions = computed(() => {
-  if (currentChannel.value === 'opencode') {
-    return [
-      {
-        type: 'group',
-        label: 'Web 终端',
-        key: 'web-group',
-        children: [
-          {
-            label: 'OpenCode',
-            key: 'web-opencode',
-            icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-          }
-        ]
-      },
-      {
-        type: 'group',
-        label: '本地终端',
-        key: 'local-group',
-        children: [
-          {
-            label: 'OpenCode',
-            key: 'local-opencode',
-            icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-          }
-        ]
-      }
-    ]
-  }
-
+  const toolLabel = currentChannel.value === 'codex'
+    ? 'Codex'
+    : currentChannel.value === 'gemini'
+      ? 'Gemini'
+      : currentChannel.value === 'opencode'
+        ? 'OpenCode'
+        : 'Claude Code'
   return [
     {
       type: 'group',
@@ -354,18 +332,8 @@ const launchOptions = computed(() => {
       key: 'web-group',
       children: [
         {
-          label: 'Claude Code',
-          key: 'web-claude',
-          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-        },
-        {
-          label: 'Codex',
-          key: 'web-codex',
-          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-        },
-        {
-          label: 'Gemini',
-          key: 'web-gemini',
+          label: toolLabel,
+          key: 'web-current',
           icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
         }
       ]
@@ -376,18 +344,8 @@ const launchOptions = computed(() => {
       key: 'local-group',
       children: [
         {
-          label: 'Claude Code',
-          key: 'local-claude',
-          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-        },
-        {
-          label: 'Codex',
-          key: 'local-codex',
-          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-        },
-        {
-          label: 'Gemini',
-          key: 'local-gemini',
+          label: toolLabel,
+          key: 'local-current',
           icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
         }
       ]
@@ -397,12 +355,10 @@ const launchOptions = computed(() => {
 
 // 处理启动选择
 function handleLaunchSelect(key, sessionId) {
-  const [launchMode, targetTool] = key.split('-')
-
-  if (launchMode === 'web') {
-    handleLaunchWebTerminal(sessionId, targetTool)
+  if (key.startsWith('web-')) {
+    handleLaunchWebTerminal(sessionId)
   } else {
-    handleLaunchTerminal(sessionId, targetTool)
+    handleLaunchTerminal(sessionId)
   }
 }
 
@@ -587,18 +543,18 @@ function handleChatHistoryError(errorMsg) {
   message.error(errorMsg)
 }
 
-async function handleLaunchTerminal(sessionId, targetTool = null) {
+async function handleLaunchTerminal(sessionId) {
   try {
-    await launchSession(effectiveProjectName.value, sessionId, targetTool, false, currentChannel.value)
-    message.success(`已启动终端 (${targetTool || currentChannel.value})`)
+    await launchSession(effectiveProjectName.value, sessionId, false, currentChannel.value)
+    message.success(`已启动终端 (${currentChannel.value})`)
   } catch (err) {
     message.error('启动失败: ' + err.message)
   }
 }
 
 // 启动 Web 终端
-function handleLaunchWebTerminal(sessionId, targetTool = null) {
-  const channel = targetTool || currentChannel.value
+function handleLaunchWebTerminal(sessionId) {
+  const channel = currentChannel.value
   router.push({
     name: 'terminal-session',
     params: {
@@ -607,7 +563,6 @@ function handleLaunchWebTerminal(sessionId, targetTool = null) {
       sessionId
     },
     query: {
-      targetTool: targetTool || undefined,
       cwd: displayProjectPath.value || undefined,
       openTs: Date.now().toString()
     }
