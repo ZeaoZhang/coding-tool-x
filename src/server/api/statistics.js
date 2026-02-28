@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getStatistics, getDailyStatistics, getTodayStatistics } = require('../services/statistics-service');
+const { getStatistics, getDailyStatistics, getTodayStatistics, getTrendStatistics } = require('../services/statistics-service');
 
 /**
  * 获取总体统计数据
@@ -85,6 +85,120 @@ router.get('/recent', (req, res) => {
   } catch (error) {
     console.error('Failed to get recent statistics:', error);
     res.status(500).json({ error: 'Failed to get recent statistics' });
+  }
+});
+
+/**
+ * 获取趋势统计数据
+ * GET /api/statistics/trend
+ *
+ * @query {string} startDate - YYYY-MM-DD (required)
+ * @query {string} endDate - YYYY-MM-DD (required)
+ * @query {string} granularity - 'day' | 'hour' (default: 'day')
+ * @query {string} groupBy - 'model' | 'channel' | 'toolType' (default: 'model')
+ * @query {string} metric - 'tokens' | 'cost' | 'requests' (default: 'tokens')
+ */
+router.get('/trend', async (req, res) => {
+  try {
+    const { startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens' } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+    if (diffDays < 1) {
+      return res.status(400).json({ error: 'endDate must be >= startDate' });
+    }
+
+    if (granularity === 'hour' && diffDays > 7) {
+      return res.status(400).json({ error: 'Hour granularity is limited to 7 days' });
+    }
+
+    if (diffDays > 90) {
+      return res.status(400).json({ error: 'Date range cannot exceed 90 days' });
+    }
+
+    const result = await getTrendStatistics({ startDate, endDate, granularity, step, groupBy, metric });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Failed to get trend statistics:', error);
+    res.status(500).json({ error: 'Failed to get trend statistics' });
+  }
+});
+
+/**
+ * 导出趋势统计数据
+ * GET /api/statistics/trend/export
+ *
+ * @query {string} startDate - YYYY-MM-DD (required)
+ * @query {string} endDate - YYYY-MM-DD (required)
+ * @query {string} granularity - 'day' | 'hour' (default: 'day')
+ * @query {string} groupBy - 'model' | 'channel' | 'toolType' (default: 'model')
+ * @query {string} metric - 'tokens' | 'cost' | 'requests' (default: 'tokens')
+ * @query {string} format - 'csv' | 'json' (default: 'csv')
+ */
+router.get('/trend/export', async (req, res) => {
+  try {
+    const { startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens', format = 'csv' } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+
+    if (diffDays < 1) {
+      return res.status(400).json({ error: 'endDate must be >= startDate' });
+    }
+
+    if (granularity === 'hour' && diffDays > 7) {
+      return res.status(400).json({ error: 'Hour granularity is limited to 7 days' });
+    }
+
+    if (diffDays > 90) {
+      return res.status(400).json({ error: 'Date range cannot exceed 90 days' });
+    }
+
+    const result = await getTrendStatistics({ startDate, endDate, granularity, step, groupBy, metric });
+
+    const filename = `analytics-${startDate}-${endDate}-${groupBy}-${metric}.${format}`;
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json');
+      return res.json(result);
+    }
+
+    // CSV format
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    const seriesNames = result.series.map(s => s.name);
+    const header = ['Date/Time', ...seriesNames, 'Total'].join(',');
+    const rows = result.labels.map((label, i) => {
+      const values = result.series.map(s => s.data[i] || 0);
+      const total = values.reduce((a, b) => a + b, 0);
+      return [label, ...values, total].join(',');
+    });
+
+    res.send([header, ...rows].join('\n'));
+  } catch (error) {
+    console.error('Failed to export trend statistics:', error);
+    res.status(500).json({ error: 'Failed to export trend statistics' });
   }
 });
 

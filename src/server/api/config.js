@@ -44,9 +44,12 @@ function sanitizePricing(inputPricing, currentPricing) {
 }
 
 function normalizeModelDiscovery(modelDiscovery, currentValue = DEFAULT_CONFIG.modelDiscovery) {
+  const defaultModelDiscovery = DEFAULT_CONFIG.modelDiscovery && typeof DEFAULT_CONFIG.modelDiscovery === 'object'
+    ? DEFAULT_CONFIG.modelDiscovery
+    : { useV1ModelsEndpoint: false };
   const current = currentValue && typeof currentValue === 'object'
     ? currentValue
-    : DEFAULT_CONFIG.modelDiscovery;
+    : defaultModelDiscovery;
   const input = modelDiscovery && typeof modelDiscovery === 'object'
     ? modelDiscovery
     : {};

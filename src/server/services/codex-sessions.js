@@ -3,6 +3,15 @@ const path = require('path');
 const { getCodexDir } = require('./codex-config');
 const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL } = require('./codex-parser');
 
+const COUNTS_CACHE_TTL_MS = 30 * 1000;
+const FAST_META_READ_BYTES = 64 * 1024;
+const EMPTY_COUNTS = Object.freeze({ projectCount: 0, sessionCount: 0 });
+
+let countsCache = {
+  expiresAt: 0,
+  value: EMPTY_COUNTS
+};
+
 /**
  * 获取会话目录
  */
@@ -437,6 +446,7 @@ function deleteProject(projectName) {
     console.error('[Codex] Failed to clean session order:', err.message);
   }
 
+  invalidateProjectAndSessionCountsCache();
   return { success: true, deletedCount };
 }
 
@@ -524,6 +534,7 @@ function deleteSession(sessionId) {
     // 忽略别名不存在的错误
   }
 
+  invalidateProjectAndSessionCountsCache();
   return { success: true };
 }
 
@@ -577,6 +588,7 @@ function forkSession(sessionId) {
   forkRelations[newSessionId] = sessionId;
   saveForkRelations(forkRelations);
 
+  invalidateProjectAndSessionCountsCache();
   return {
     newSessionId,
     forkedFrom: sessionId,
@@ -628,19 +640,106 @@ function saveProjectOrder(order) {
   saveClaudeProjectOrder({ projectsDir: getCodexDir() }, order);
 }
 
+function invalidateProjectAndSessionCountsCache() {
+  countsCache.expiresAt = 0;
+}
+
+function extractCodexProjectNameFromMeta(metaPayload = {}) {
+  const repoUrl = metaPayload?.git?.repository_url || metaPayload?.git?.repositoryUrl;
+  if (typeof repoUrl === 'string' && repoUrl.trim()) {
+    const parsedName = repoUrl.split('/').pop();
+    if (parsedName) {
+      const normalized = parsedName.replace(/\.git$/i, '').trim();
+      if (normalized) return normalized;
+    }
+  }
+
+  const cwd = metaPayload?.cwd;
+  if (typeof cwd === 'string' && cwd.trim()) {
+    return path.basename(cwd.trim());
+  }
+
+  return '';
+}
+
+function readSessionMetaPayloadFast(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(FAST_META_READ_BYTES);
+    const bytesRead = fs.readSync(fd, buffer, 0, FAST_META_READ_BYTES, 0);
+    if (bytesRead <= 0) return null;
+
+    const chunk = buffer.toString('utf8', 0, bytesRead);
+    const lines = chunk.split('\n');
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch (err) {
+        continue;
+      }
+      if (parsed?.type === 'session_meta' && parsed?.payload && typeof parsed.payload === 'object') {
+        return parsed.payload;
+      }
+    }
+  } catch (err) {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (err) {
+        // ignore close errors
+      }
+    }
+  }
+
+  return null;
+}
+
+function calculateProjectAndSessionCounts() {
+  const sessions = scanSessionFiles();
+  if (sessions.length === 0) {
+    return EMPTY_COUNTS;
+  }
+
+  const projectNames = new Set();
+  sessions.forEach((session) => {
+    const payload = readSessionMetaPayloadFast(session.filePath);
+    const projectName = extractCodexProjectNameFromMeta(payload || {});
+    if (projectName) {
+      projectNames.add(projectName);
+    }
+  });
+
+  return {
+    projectCount: projectNames.size,
+    sessionCount: sessions.length
+  };
+}
+
 /**
  * 获取 Codex 项目与会话数量（用于仪表盘轻量统计）
  */
 function getProjectAndSessionCounts() {
+  const now = Date.now();
+  if (countsCache.expiresAt > now) {
+    return countsCache.value;
+  }
+
   try {
-    const projects = getProjects();
-    const sessions = scanSessionFiles();
-    return {
-      projectCount: projects.length,
-      sessionCount: sessions.length
+    const counts = calculateProjectAndSessionCounts();
+    countsCache = {
+      value: counts,
+      expiresAt: now + COUNTS_CACHE_TTL_MS
     };
+    return counts;
   } catch (err) {
-    return { projectCount: 0, sessionCount: 0 };
+    return countsCache.value || EMPTY_COUNTS;
   }
 }
 

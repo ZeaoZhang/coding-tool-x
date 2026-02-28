@@ -19,16 +19,6 @@ const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
 
-function pushUniqueModel(allModels, seen, modelId) {
-  if (typeof modelId !== 'string') return;
-  const trimmed = modelId.trim();
-  if (!trimmed) return;
-  const key = trimmed.toLowerCase();
-  if (seen.has(key)) return;
-  seen.add(key);
-  allModels.push(trimmed);
-}
-
 function sanitizeChannel(channel) {
   if (!channel) return null;
   return {
@@ -111,35 +101,54 @@ router.post('/start', async (req, res) => {
     }
 
     // 4. 设置代理配置（写入 OpenCode 配置文件）
-    // 收集所有启用渠道配置的模型
-    const allModels = [];
-    const seen = new Set();
-    enabledChannels.forEach((ch) => {
-      const candidates = [
-        ch.model,
-        ch.speedTestModel
-      ];
-      if (ch.modelConfig && typeof ch.modelConfig === 'object') {
-        candidates.push(ch.modelConfig.model, ch.modelConfig.opusModel, ch.modelConfig.sonnetModel, ch.modelConfig.haikuModel);
-      }
-      if (Array.isArray(ch.modelRedirects)) {
-        ch.modelRedirects.forEach(r => { candidates.push(r && r.from); candidates.push(r && r.to); });
-      }
-      candidates.forEach((m) => pushUniqueModel(allModels, seen, m));
-    });
+    // 收集每个渠道的模型列表，生成 per-channel provider 配置
 
-    // 若渠道未显式填写模型，回退使用代理聚合模型（含 /v1/models 与模型探测结果）。
+    // 若渠道未显式填写模型，回退使用代理聚合模型（来自 /v1/models）。
+    let detectedModels = [];
     try {
-      const detectedModels = await collectProxyModelList(enabledChannels, { forceRefresh: false });
-      if (Array.isArray(detectedModels)) {
-        detectedModels.forEach(modelId => pushUniqueModel(allModels, seen, modelId));
-      }
+      detectedModels = await collectProxyModelList(enabledChannels, {
+        useCacheOnly: true
+      }) || [];
     } catch (error) {
       console.warn('[OpenCode Proxy] Failed to collect proxy models before writing config:', error.message);
     }
 
-    const activeModel = currentChannel.model || currentChannel.speedTestModel || allModels[0] || null;
-    setProxyConfig(proxyResult.port, { model: activeModel, models: allModels });
+    const channelPayloads = enabledChannels.map((ch) => {
+      let models;
+      if (Array.isArray(ch.allowedModels) && ch.allowedModels.length > 0) {
+        models = ch.allowedModels;
+      } else {
+        const seen = new Set();
+        const collected = [];
+        const add = (m) => {
+          if (typeof m !== 'string') return;
+          const t = m.trim();
+          if (!t) return;
+          const k = t.toLowerCase();
+          if (seen.has(k)) return;
+          seen.add(k);
+          collected.push(t);
+        };
+        [ch.model, ch.speedTestModel].forEach(add);
+        if (ch.modelConfig && typeof ch.modelConfig === 'object') {
+          [ch.modelConfig.model, ch.modelConfig.opusModel, ch.modelConfig.sonnetModel, ch.modelConfig.haikuModel].forEach(add);
+        }
+        if (Array.isArray(ch.modelRedirects)) {
+          ch.modelRedirects.forEach(r => { add(r && r.from); add(r && r.to); });
+        }
+        detectedModels.forEach(add);
+        models = collected;
+      }
+      return {
+        name: ch.name,
+        providerKey: ch.providerKey || ch.name,
+        model: ch.model || null,
+        models
+      };
+    });
+
+    const activeModel = currentChannel.model || currentChannel.speedTestModel || null;
+    setProxyConfig(proxyResult.port, { channels: channelPayloads, model: activeModel });
 
     // 5. 广播状态更新
     const { broadcastProxyState } = require('../websocket-server');

@@ -31,22 +31,29 @@ const uiConfig = ref({
 })
 
 let isLoaded = false
+let loadPromise = null
 
 // 加载 UI 配置
 async function loadUIConfig() {
   if (isLoaded) return uiConfig.value
+  if (loadPromise) return loadPromise
 
-  try {
-    const response = await getUIConfig()
-    if (response.success && response.config) {
-      uiConfig.value = response.config
-      isLoaded = true
+  loadPromise = (async () => {
+    try {
+      const response = await getUIConfig()
+      if (response.success && response.config) {
+        uiConfig.value = response.config
+        isLoaded = true
+      }
+    } catch (err) {
+      console.error('Failed to load UI config:', err)
+    } finally {
+      loadPromise = null
     }
-  } catch (err) {
-    console.error('Failed to load UI config:', err)
-  }
+    return uiConfig.value
+  })()
 
-  return uiConfig.value
+  return loadPromise
 }
 
 export function useUIConfig() {

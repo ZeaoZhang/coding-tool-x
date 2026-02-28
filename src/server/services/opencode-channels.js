@@ -46,7 +46,8 @@ function loadChannels() {
           modelRedirects: ch.modelRedirects || [],
           speedTestModel: ch.speedTestModel || null,
           wireApi: ch.wireApi || 'openai',  // OpenCode 默认使用 OpenAI 兼容格式
-          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType)
+          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType),
+          allowedModels: ch.allowedModels || []
         };
         normalized.providerKey = deriveProviderKey(normalized);
         return normalized;
@@ -101,6 +102,7 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
     providerKey: extraConfig.providerKey || null,
     presetId: extraConfig.presetId || null,
     websiteUrl: extraConfig.websiteUrl || '',
+    allowedModels: extraConfig.allowedModels || [],
     createdAt: Date.now(),
     updatedAt: Date.now()
   };

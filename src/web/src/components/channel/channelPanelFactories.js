@@ -42,7 +42,7 @@ import {
 } from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
 
-const { getDefaultModels } = useDefaultModels()
+const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9-]+$/i
@@ -105,6 +105,33 @@ function formatOpenCodeGatewaySourceType(value) {
   if (normalized === 'claude') return 'Claude Code'
   if (normalized === 'gemini') return 'Gemini'
   return 'Codex'
+}
+
+function buildModelOptions(models = []) {
+  return models.map((model) => ({ label: model, value: model }))
+}
+
+function mergeModelOptions(...optionGroups) {
+  const seen = new Set()
+  const merged = []
+  for (const options of optionGroups) {
+    for (const option of options || []) {
+      const value = String(option?.value || '').trim()
+      if (!value) continue
+      const key = value.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push({
+        label: option?.label || value,
+        value
+      })
+    }
+  }
+  return merged
+}
+
+function getToolModelOptions(toolType) {
+  return buildModelOptions(getAllModelsByToolType(toolType))
 }
 
 const baseSections = {
@@ -209,7 +236,7 @@ const channelPanelFactories = {
             type: 'select',
             placeholder: '选择用于测速的模型（留空则自动检测）',
             description: '指定用于速度测试的模型，留空则使用自动检测',
-            options: getDefaultModels('claude').map(m => ({ label: m, value: m })),
+            options: getToolModelOptions('claude'),
             clearable: true
           }
         ]
@@ -345,16 +372,22 @@ const channelPanelFactories = {
       return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
+      await loadDefaultModels()
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
+      if (!channelId) {
+        form.availableModels = getToolModelOptions('claude')
+        form.modelsFetching = false
+        return
+      }
       try {
         const result = await fetchChannelModels(channelId, form.gatewaySourceType || null)
         if (result.models && result.models.length > 0) {
-          form.availableModels = result.models.map(m => ({
-            label: m,
-            value: m
-          }))
+          form.availableModels = mergeModelOptions(
+            buildModelOptions(result.models),
+            getToolModelOptions('claude')
+          )
 
           // Show info message if using fallback default model
           if (result.fallbackUsed) {
@@ -363,13 +396,13 @@ const channelPanelFactories = {
           }
         } else if (result.fallbackUsed || !result.supported) {
           // Fetch failed, use default Claude models
-          form.availableModels = getDefaultModels('claude').map(m => ({ label: m, value: m }))
+          form.availableModels = getToolModelOptions('claude')
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // On error, use default Claude models
-        form.availableModels = getDefaultModels('claude').map(m => ({ label: m, value: m }))
+        form.availableModels = getToolModelOptions('claude')
         // Try to extract error details from response
         const errorData = error.response?.data
         if (errorData) {
@@ -537,7 +570,7 @@ const channelPanelFactories = {
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用默认）',
             description: '指定用于速度测试的模型，留空则使用默认模型',
-            options: getDefaultModels('codex').map(m => ({ label: m, value: m })),
+            options: getToolModelOptions('codex'),
             clearable: true
           }
         ]
@@ -608,16 +641,22 @@ const channelPanelFactories = {
       return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
+      await loadDefaultModels()
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
+      if (!channelId) {
+        form.availableModels = getToolModelOptions('codex')
+        form.modelsFetching = false
+        return
+      }
       try {
         const result = await fetchCodexChannelModels(channelId)
         if (result.models && result.models.length > 0) {
-          form.availableModels = result.models.map(m => ({
-            label: m,
-            value: m
-          }))
+          form.availableModels = mergeModelOptions(
+            buildModelOptions(result.models),
+            getToolModelOptions('codex')
+          )
           // 如果使用了回退，显示提示
           if (result.fallbackUsed) {
             form.modelsFetchError = result.error || '无法自动获取模型列表'
@@ -625,13 +664,13 @@ const channelPanelFactories = {
           }
         } else if (result.fallbackUsed || !result.supported) {
           // 获取失败，使用默认列表
-          form.availableModels = getDefaultModels('codex').map(m => ({ label: m, value: m }))
+          form.availableModels = getToolModelOptions('codex')
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // 出错时使用默认列表
-        form.availableModels = getDefaultModels('codex').map(m => ({ label: m, value: m }))
+        form.availableModels = getToolModelOptions('codex')
         form.modelsFetchError = error.message || '获取模型列表失败'
         form.modelsFetchErrorHint = '已使用默认模型列表'
       } finally {
@@ -777,7 +816,7 @@ const channelPanelFactories = {
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用 model 字段）',
             description: '指定用于速度测试的模型，留空则使用上方配置的 Model',
-            options: getDefaultModels('gemini').map(m => ({ label: m, value: m })),
+            options: getToolModelOptions('gemini'),
             clearable: true
           }
         ]
@@ -847,16 +886,22 @@ const channelPanelFactories = {
       return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
+      await loadDefaultModels()
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
+      if (!channelId) {
+        form.availableModels = getToolModelOptions('gemini')
+        form.modelsFetching = false
+        return
+      }
       try {
         const result = await fetchGeminiChannelModels(channelId)
         if (result.models && result.models.length > 0) {
-          form.availableModels = result.models.map(m => ({
-            label: m,
-            value: m
-          }))
+          form.availableModels = mergeModelOptions(
+            buildModelOptions(result.models),
+            getToolModelOptions('gemini')
+          )
           // 如果使用了回退，显示提示
           if (result.fallbackUsed) {
             form.modelsFetchError = result.error || '无法自动获取模型列表'
@@ -864,13 +909,13 @@ const channelPanelFactories = {
           }
         } else if (result.fallbackUsed || !result.supported) {
           // 获取失败，使用默认列表
-          form.availableModels = getDefaultModels('gemini').map(m => ({ label: m, value: m }))
+          form.availableModels = getToolModelOptions('gemini')
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // 出错时使用默认列表
-        form.availableModels = getDefaultModels('gemini').map(m => ({ label: m, value: m }))
+        form.availableModels = getToolModelOptions('gemini')
         form.modelsFetchError = error.message || '获取模型列表失败'
         form.modelsFetchErrorHint = '已使用默认模型列表'
       } finally {
@@ -1010,8 +1055,10 @@ const channelPanelFactories = {
           {
             key: 'model',
             label: '默认模型',
-            type: 'autocomplete',
-            placeholder: '如 gpt-4o'
+            type: 'select',
+            placeholder: '选择或输入默认模型（留空则由调度器决定）',
+            options: [],
+            clearable: true
           },
           {
             key: 'speedTestModel',
@@ -1021,6 +1068,13 @@ const channelPanelFactories = {
             description: '指定用于速度测试的模型，留空则自动检测',
             options: [],
             clearable: true
+          },
+          {
+            key: 'allowedModels',
+            label: '可用模型',
+            type: 'model-multi-select',
+            placeholder: '选择注册到 OpenCode 的模型（留空则使用检测到的所有模型）',
+            description: '选择哪些模型注册到 opencode.json 的 provider 配置中'
           }
         ]
       },
@@ -1052,6 +1106,7 @@ const channelPanelFactories = {
       gatewaySourceType: 'codex',
       speedTestModel: '',
       modelRedirects: [],
+      allowedModels: [],
       maxConcurrency: null,
       weight: 1,
       enabled: true,
@@ -1071,6 +1126,7 @@ const channelPanelFactories = {
       gatewaySourceType: channel.gatewaySourceType || 'codex',
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
+      allowedModels: channel.allowedModels || [],
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false,
@@ -1092,27 +1148,52 @@ const channelPanelFactories = {
       return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form) => {
+      await loadDefaultModels()
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
+
+      const presetId = form.presetId || ''
+      const isEntryChannel = ['entry_claude', 'entry_codex', 'entry_gemini'].includes(presetId)
+
+      if (isEntryChannel) {
+        const sourceType = form.gatewaySourceType || 'codex'
+        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
+        form.availableModels = getToolModelOptions(modelType)
+        form.modelsFetching = false
+        return
+      }
+
+      if (!channelId) {
+        const sourceType = form.gatewaySourceType || 'codex'
+        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
+        form.availableModels = getToolModelOptions(modelType)
+        form.modelsFetching = false
+        return
+      }
+
       try {
         const result = await fetchOpenCodeChannelModels(channelId)
+        const sourceType = form.gatewaySourceType || 'codex'
+        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
         if (result.models && result.models.length > 0) {
-          form.availableModels = result.models.map(m => ({
-            label: m,
-            value: m
-          }))
+          form.availableModels = mergeModelOptions(
+            buildModelOptions(result.models),
+            getToolModelOptions(modelType)
+          )
           if (result.fallbackUsed) {
             form.modelsFetchError = result.error || '无法自动获取模型列表'
             form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
           }
         } else if (result.fallbackUsed || !result.supported) {
-          form.availableModels = []
+          form.availableModels = getToolModelOptions(modelType)
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
         }
       } catch (error) {
-        form.availableModels = []
+        const sourceType = form.gatewaySourceType || 'codex'
+        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
+        form.availableModels = getToolModelOptions(modelType)
         form.modelsFetchError = error.message || '获取模型列表失败'
         form.modelsFetchErrorHint = '请手动填写模型名称'
       } finally {
@@ -1141,7 +1222,8 @@ const channelPanelFactories = {
             modelRedirects: form.modelRedirects || [],
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
-            websiteUrl: form.websiteUrl || ''
+            websiteUrl: form.websiteUrl || '',
+            allowedModels: form.allowedModels || []
           }
         )
       },
@@ -1160,7 +1242,8 @@ const channelPanelFactories = {
           enabled: form.enabled,
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
-          presetId: form.presetId || null
+          presetId: form.presetId || null,
+          allowedModels: form.allowedModels || []
         })
       },
       toggle: async (channel, enabled) => updateOpenCodeChannel(channel.id, { enabled }),

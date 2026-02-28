@@ -17,130 +17,139 @@
           <n-form-item label="描述" path="description">
             <n-input v-model:value="formData.description" type="textarea" :rows="2" placeholder="输入模版描述" />
           </n-form-item>
+          <n-form-item label="CLI 工具" path="cliType">
+            <n-select v-model:value="formData.cliType" :options="CLI_TYPE_OPTIONS" placeholder="选择 CLI 工具类型" />
+          </n-form-item>
         </n-card>
 
-        <!-- AI 配置文件 -->
-        <n-card title="AI 配置文件" size="small" style="margin-bottom: 16px">
-          <n-tabs type="line" animated>
-            <n-tab-pane
-              v-for="ai in AI_CONFIG_LIST"
-              :key="ai.key"
-              :name="ai.key"
-            >
-              <template #tab>
-                <n-space align="center" :size="4">
-                  <n-icon :size="16" :color="ai.color"><DocumentTextOutline /></n-icon>
-                  <span>{{ ai.name }}</span>
-                  <n-badge
-                    v-if="formData.aiConfigs[ai.key]?.enabled"
-                    dot
-                    type="success"
-                    :offset="[-2, 0]"
-                  />
-                </n-space>
-              </template>
-              <div class="ai-config-pane">
-                <div class="ai-config-header">
-                  <n-space align="center">
-                    <n-switch v-model:value="formData.aiConfigs[ai.key].enabled" />
-                    <n-text :depth="formData.aiConfigs[ai.key].enabled ? 1 : 3">
-                      启用 {{ ai.fileName }}
-                    </n-text>
-                  </n-space>
-                </div>
-                <n-collapse-transition :show="formData.aiConfigs[ai.key].enabled">
-                  <MarkdownEditor
-                    v-model="formData.aiConfigs[ai.key].content"
-                    :rows="10"
-                    :min-height="220"
-                    :placeholder="`输入 ${ai.fileName} 内容`"
-                  />
-                </n-collapse-transition>
-              </div>
-            </n-tab-pane>
-          </n-tabs>
+        <!-- 未选择 CLI 工具时的提示 -->
+        <n-card v-if="!formData.cliType" size="small" style="margin-bottom: 16px">
+          <n-empty description="请先选择 CLI 工具类型以显示配置项" />
         </n-card>
 
-        <!-- Skills -->
-        <n-card title="Skills" size="small" style="margin-bottom: 16px">
-          <template #header-extra>
-            <n-tag size="small">已选 {{ formData.skills.length }}</n-tag>
-          </template>
-          <n-transfer
-            v-model:value="selectedSkillDirectories"
-            :options="skillOptions"
-            source-title="可用 Skills"
-            target-title="已选 Skills"
-          />
-        </n-card>
+        <!-- Claude Code 配置 -->
+        <template v-if="formData.cliType === 'claude'">
+          <!-- CLAUDE.md -->
+          <n-card title="CLAUDE.md" size="small" style="margin-bottom: 16px">
+            <div class="ai-config-header">
+              <n-space align="center">
+                <n-switch v-model:value="formData.aiConfigs.claude.enabled" />
+                <n-text :depth="formData.aiConfigs.claude.enabled ? 1 : 3">启用 CLAUDE.md</n-text>
+              </n-space>
+            </div>
+            <n-collapse-transition :show="formData.aiConfigs.claude.enabled">
+              <MarkdownEditor v-model="formData.aiConfigs.claude.content" :rows="10" :min-height="220" placeholder="输入 CLAUDE.md 内容" />
+            </n-collapse-transition>
+          </n-card>
+          <!-- Skills -->
+          <n-card title="Skills" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
+          </n-card>
+          <!-- Agents -->
+          <n-card title="Agents" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.agents.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedAgentFileNames" :options="agentOptions" source-title="可用 Agents" target-title="已选 Agents" />
+          </n-card>
+          <!-- Commands -->
+          <n-card title="Commands" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.commands.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Commands" target-title="已选 Commands" />
+          </n-card>
+          <!-- Rules -->
+          <n-card title="Rules" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.rules.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedRuleFileNames" :options="ruleOptions" source-title="可用 Rules" target-title="已选 Rules" />
+          </n-card>
+          <!-- MCP Servers -->
+          <n-card title="MCP Servers" size="small">
+            <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
+            <n-transfer v-model:value="formData.mcpServers" :options="mcpOptions" source-title="可用 MCP Servers" target-title="已选 MCP Servers" />
+          </n-card>
+        </template>
 
-        <!-- Agents -->
-        <n-card title="Agents" size="small" style="margin-bottom: 16px">
-          <template #header-extra>
-            <n-tag size="small">已选 {{ formData.agents.length }}</n-tag>
-          </template>
-          <n-transfer
-            v-model:value="selectedAgentFileNames"
-            :options="agentOptions"
-            source-title="可用 Agents"
-            target-title="已选 Agents"
-          />
-        </n-card>
+        <!-- Codex 配置 -->
+        <template v-if="formData.cliType === 'codex'">
+          <!-- AGENTS.md -->
+          <n-card title="AGENTS.md" size="small" style="margin-bottom: 16px">
+            <div class="ai-config-header">
+              <n-space align="center">
+                <n-switch v-model:value="formData.aiConfigs.codex.enabled" />
+                <n-text :depth="formData.aiConfigs.codex.enabled ? 1 : 3">启用 AGENTS.md</n-text>
+              </n-space>
+            </div>
+            <n-collapse-transition :show="formData.aiConfigs.codex.enabled">
+              <MarkdownEditor v-model="formData.aiConfigs.codex.content" :rows="10" :min-height="220" placeholder="输入 AGENTS.md 内容" />
+            </n-collapse-transition>
+          </n-card>
+          <!-- Skills -->
+          <n-card title="Skills" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
+          </n-card>
+          <!-- MCP Servers -->
+          <n-card title="MCP Servers" size="small">
+            <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
+            <n-transfer v-model:value="formData.mcpServers" :options="mcpOptions" source-title="可用 MCP Servers" target-title="已选 MCP Servers" />
+          </n-card>
+        </template>
 
-        <!-- Commands -->
-        <n-card title="Commands" size="small" style="margin-bottom: 16px">
-          <template #header-extra>
-            <n-tag size="small">已选 {{ formData.commands.length }}</n-tag>
-          </template>
-          <n-transfer
-            v-model:value="selectedCommandNames"
-            :options="commandOptions"
-            source-title="可用 Commands"
-            target-title="已选 Commands"
-          />
-        </n-card>
+        <!-- Gemini 配置 -->
+        <template v-if="formData.cliType === 'gemini'">
+          <!-- GEMINI.md -->
+          <n-card title="GEMINI.md" size="small" style="margin-bottom: 16px">
+            <div class="ai-config-header">
+              <n-space align="center">
+                <n-switch v-model:value="formData.aiConfigs.gemini.enabled" />
+                <n-text :depth="formData.aiConfigs.gemini.enabled ? 1 : 3">启用 GEMINI.md</n-text>
+              </n-space>
+            </div>
+            <n-collapse-transition :show="formData.aiConfigs.gemini.enabled">
+              <MarkdownEditor v-model="formData.aiConfigs.gemini.content" :rows="10" :min-height="220" placeholder="输入 GEMINI.md 内容" />
+            </n-collapse-transition>
+          </n-card>
+          <!-- MCP Servers -->
+          <n-card title="MCP Servers" size="small">
+            <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
+            <n-transfer v-model:value="formData.mcpServers" :options="mcpOptions" source-title="可用 MCP Servers" target-title="已选 MCP Servers" />
+          </n-card>
+        </template>
 
-        <!-- Rules -->
-        <n-card title="Rules" size="small" style="margin-bottom: 16px">
-          <template #header-extra>
-            <n-tag size="small">已选 {{ formData.rules.length }}</n-tag>
-          </template>
-          <n-transfer
-            v-model:value="selectedRuleFileNames"
-            :options="ruleOptions"
-            source-title="可用 Rules"
-            target-title="已选 Rules"
-          />
-        </n-card>
-
-        <!-- MCP Servers -->
-        <n-card title="MCP Servers" size="small" style="margin-bottom: 16px">
-          <template #header-extra>
-            <n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag>
-          </template>
-          <n-transfer
-            v-model:value="formData.mcpServers"
-            :options="mcpOptions"
-            source-title="可用 MCP Servers"
-            target-title="已选 MCP Servers"
-          />
-        </n-card>
-
-        <!-- Plugins -->
-        <n-card title="Plugins" size="small">
-          <template #header-extra>
-            <n-tag size="small">已选 {{ formData.plugins.length }}</n-tag>
-          </template>
-          <n-transfer
-            v-model:value="selectedPluginNames"
-            :options="pluginOptions"
-            source-title="可用 Plugins"
-            target-title="已选 Plugins"
-          />
-          <n-text depth="3" style="font-size: 12px; margin-top: 8px; display: block">
-            插件将在应用模板后记录到配置中，需要手动安装
-          </n-text>
-        </n-card>
+        <!-- OpenCode 配置 -->
+        <template v-if="formData.cliType === 'opencode'">
+          <!-- .opencode/AGENTS.md -->
+          <n-card title=".opencode/AGENTS.md" size="small" style="margin-bottom: 16px">
+            <div class="ai-config-header">
+              <n-space align="center">
+                <n-switch v-model:value="formData.aiConfigs.opencode.enabled" />
+                <n-text :depth="formData.aiConfigs.opencode.enabled ? 1 : 3">启用 .opencode/AGENTS.md</n-text>
+              </n-space>
+            </div>
+            <n-collapse-transition :show="formData.aiConfigs.opencode.enabled">
+              <MarkdownEditor v-model="formData.aiConfigs.opencode.content" :rows="10" :min-height="220" placeholder="输入 .opencode/AGENTS.md 内容" />
+            </n-collapse-transition>
+          </n-card>
+          <!-- Skills -->
+          <n-card title="Skills" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
+          </n-card>
+          <!-- Agents -->
+          <n-card title="Agents" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.agents.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedAgentFileNames" :options="agentOptions" source-title="可用 Agents" target-title="已选 Agents" />
+          </n-card>
+          <!-- Commands -->
+          <n-card title="Commands" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.commands.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Commands" target-title="已选 Commands" />
+          </n-card>
+          <!-- MCP Servers -->
+          <n-card title="MCP Servers" size="small">
+            <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
+            <n-transfer v-model:value="formData.mcpServers" :options="mcpOptions" source-title="可用 MCP Servers" target-title="已选 MCP Servers" />
+          </n-card>
+        </template>
       </n-form>
     </n-scrollbar>
 
@@ -159,11 +168,10 @@
 import { ref, computed, watch } from 'vue'
 import {
   NModal, NScrollbar, NForm, NFormItem, NInput, NCard, NSwitch,
-  NCollapseTransition, NTransfer, NTag, NSpace, NButton, NTabs, NTabPane,
-  NIcon, NText, NBadge,
+  NCollapseTransition, NTransfer, NTag, NSpace, NButton,
+  NIcon, NText, NSelect, NEmpty,
   useMessage
 } from 'naive-ui'
-import { DocumentTextOutline } from '@vicons/ionicons5'
 import { createTemplate, updateTemplate } from '@/api/config-templates'
 import MarkdownEditor from './MarkdownEditor.vue'
 
@@ -182,12 +190,12 @@ const message = useMessage()
 const formRef = ref(null)
 const saving = ref(false)
 
-// AI 配置类型列表
-const AI_CONFIG_LIST = [
-  { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
-  { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
-  { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
-  { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
+// CLI 工具类型选项（无"通用"选项）
+const CLI_TYPE_OPTIONS = [
+  { label: 'Claude Code', value: 'claude' },
+  { label: 'Codex', value: 'codex' },
+  { label: 'Gemini', value: 'gemini' },
+  { label: 'OpenCode', value: 'opencode' }
 ]
 
 const isEdit = computed(() => !!props.template?.id && !props.template?.isBuiltin)
@@ -199,26 +207,26 @@ function getDefaultFormData() {
   return {
     name: '',
     description: '',
+    cliType: '',
     aiConfigs: {
       claude: { enabled: false, content: '' },
       codex: { enabled: false, content: '' },
       gemini: { enabled: false, content: '' },
       opencode: { enabled: false, content: '' }
     },
-    // 兼容旧字段
     claudeMd: { enabled: false, content: '' },
     skills: [],
     agents: [],
     commands: [],
     rules: [],
-    plugins: [],
     mcpServers: []
   }
 }
 
 // 表单规则
 const formRules = {
-  name: { required: true, message: '请输入模版名称', trigger: 'blur' }
+  name: { required: true, message: '请输入模版名称', trigger: 'blur' },
+  cliType: { required: true, message: '请选择 CLI 工具类型', trigger: 'change' }
 }
 
 // Transfer 选项
@@ -265,23 +273,12 @@ const mcpOptions = computed(() => {
     ...servers.map(s => ({ value: s.id, label: s.name || s.id })),
     ...presets.map(p => ({ value: p.id, label: `${p.name} (预设)` }))
   ]
-  // 去重
   const seen = new Set()
   return combined.filter(item => {
     if (seen.has(item.value)) return false
     seen.add(item.value)
     return true
   })
-})
-
-// Plugins 选项
-const pluginOptions = computed(() => {
-  const plugins = props.availableConfigs?.plugins || []
-  return plugins.map(p => ({
-    value: p.name,
-    label: p.description ? `${p.name} - ${p.description}` : p.name,
-    disabled: false
-  }))
 })
 
 const selectedSkillDirectories = computed({
@@ -295,7 +292,6 @@ const selectedSkillDirectories = computed({
   }
 })
 
-// 选中的 agent fileNames
 const selectedAgentFileNames = computed({
   get: () => formData.value.agents.map(a => a.fileName),
   set: (fileNames) => {
@@ -307,7 +303,6 @@ const selectedAgentFileNames = computed({
   }
 })
 
-// 选中的 command names
 const selectedCommandNames = computed({
   get: () => formData.value.commands.map(c => c.namespace ? `${c.namespace}/${c.name}` : c.name),
   set: (names) => {
@@ -319,7 +314,6 @@ const selectedCommandNames = computed({
   }
 })
 
-// 选中的 rule fileNames
 const selectedRuleFileNames = computed({
   get: () => formData.value.rules.map(r => r.directory ? `${r.directory}/${r.fileName}` : r.fileName),
   set: (names) => {
@@ -331,23 +325,10 @@ const selectedRuleFileNames = computed({
   }
 })
 
-// 选中的 plugin names
-const selectedPluginNames = computed({
-  get: () => formData.value.plugins.map(p => p.name),
-  set: (names) => {
-    const plugins = props.availableConfigs?.plugins || []
-    formData.value.plugins = names.map(n => {
-      const found = plugins.find(p => p.name === n)
-      return found ? { ...found } : { name: n }
-    })
-  }
-})
-
 // 监听 show 和 template 变化
 watch(() => props.show, (newVal) => {
   if (newVal) {
     if (props.template) {
-      // 处理 AI 配置
       let aiConfigs = {
         claude: { enabled: false, content: '' },
         codex: { enabled: false, content: '' },
@@ -355,7 +336,6 @@ watch(() => props.show, (newVal) => {
         opencode: { enabled: false, content: '' }
       }
 
-      // 优先使用新的 aiConfigs
       if (props.template.aiConfigs) {
         for (const key of ['claude', 'codex', 'gemini', 'opencode']) {
           if (props.template.aiConfigs[key]) {
@@ -363,20 +343,19 @@ watch(() => props.show, (newVal) => {
           }
         }
       } else if (props.template.claudeMd) {
-        // 兼容旧的 claudeMd 字段
         aiConfigs.claude = { ...props.template.claudeMd }
       }
 
       formData.value = {
         name: props.template.name || '',
         description: props.template.description || '',
+        cliType: props.template.cliType || '',
         aiConfigs,
         claudeMd: props.template.claudeMd ? { ...props.template.claudeMd } : { enabled: false, content: '' },
         skills: props.template.skills ? [...props.template.skills] : [],
         agents: props.template.agents ? [...props.template.agents] : [],
         commands: props.template.commands ? [...props.template.commands] : [],
         rules: props.template.rules ? [...props.template.rules] : [],
-        plugins: props.template.plugins ? [...props.template.plugins] : [],
         mcpServers: props.template.mcpServers ? [...props.template.mcpServers] : []
       }
     } else {
@@ -417,9 +396,6 @@ async function handleSave() {
 </script>
 
 <style scoped>
-.ai-config-pane {
-  padding: 12px 0;
-}
 .ai-config-header {
   margin-bottom: 12px;
 }

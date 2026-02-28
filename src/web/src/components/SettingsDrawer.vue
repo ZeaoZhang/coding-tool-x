@@ -554,33 +554,6 @@
 
                 <n-divider />
 
-                <!-- 模型探测设置 -->
-                <div class="setting-item">
-                  <div class="setting-label">
-                    <n-text strong>模型探测</n-text>
-                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      控制获取可用模型时，是否先请求渠道的 /v1/models 接口
-                    </n-text>
-                  </div>
-
-                  <div class="advanced-options">
-                    <div class="option-field">
-                      <div class="option-label">
-                        <n-text depth="2" style="font-size: 13px;">使用 /v1/models 探测可用模型</n-text>
-                        <n-text depth="3" style="font-size: 12px;">
-                          {{ advancedSettings.useV1ModelsEndpoint ? '已启用：优先请求 /v1/models' : '已关闭：直接使用默认模型探测（推荐）' }}
-                        </n-text>
-                      </div>
-                      <n-switch
-                        v-model:value="advancedSettings.useV1ModelsEndpoint"
-                        size="medium"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <n-divider />
-
                 <!-- 日志和性能设置 -->
                 <div class="setting-item">
                   <div class="setting-label">
@@ -633,378 +606,6 @@
 
                 <n-divider />
 
-                <!-- 成本计算设置 -->
-                <div class="setting-item">
-                  <div class="setting-label">
-                    <n-text strong>成本计算</n-text>
-                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      自定义每百万 Tokens 的单价（USD），便于估算当日成本
-                    </n-text>
-                  </div>
-
-                  <div class="pricing-section">
-                    <!-- Claude -->
-                    <div class="pricing-card claude-card">
-                      <div class="pricing-card-header">
-                        <div>
-                          <n-text strong style="font-size: 15px;">Claude</n-text>
-                          <n-text depth="3" style="font-size: 12px; display: block;">USD / 1M Tokens</n-text>
-                        </div>
-                        <div class="pricing-toggle">
-                          <n-text depth="3" style="font-size: 12px; margin-right: 8px;">自定义单价</n-text>
-                          <n-switch
-                            size="small"
-                            :checked-value="'custom'"
-                            :unchecked-value="'auto'"
-                            v-model:value="pricingSettings.claude.mode"
-                          />
-                        </div>
-                      </div>
-                      <div class="pricing-hint">
-                        {{ pricingSettings.claude.mode === 'custom' ? '立即按自定义单价计算成本' : '使用官方定价自动计算' }}
-                      </div>
-                      <div class="pricing-grid">
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">输入 Tokens</n-text>
-                            <n-text depth="3" style="font-size: 12px;">Input</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.claude.input"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.claude.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">输出 Tokens</n-text>
-                            <n-text depth="3" style="font-size: 12px;">Output</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.claude.output"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.claude.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">缓存写入</n-text>
-                            <n-text depth="3" style="font-size: 12px;">Cache Write</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.claude.cacheCreation"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.claude.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">缓存命中</n-text>
-                            <n-text depth="3" style="font-size: 12px;">Cache Hit</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.claude.cacheRead"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.claude.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                      </div>
-
-                      <!-- Per-Model Pricing -->
-                      <div style="margin-top: 16px;">
-                        <n-collapse>
-                          <n-collapse-item title="按模型自定义单价" name="models">
-                            <n-space vertical :size="12">
-                              <div v-for="model in getModelsForTool('claude')" :key="model">
-                                <n-card size="small" :bordered="true">
-                                  <template #header>
-                                    <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
-                                  </template>
-
-                                  <n-space vertical :size="12">
-                                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                                      <n-text depth="3" style="font-size: 12px;">模式</n-text>
-                                      <n-radio-group v-model:value="pricingSettings.claude.models[model].mode" size="small">
-                                        <n-radio value="auto">自动</n-radio>
-                                        <n-radio value="custom">自定义</n-radio>
-                                      </n-radio-group>
-                                    </div>
-
-                                    <div v-if="pricingSettings.claude.models[model].mode === 'custom'" class="model-pricing-fields">
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输入 Tokens</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.claude.models[model].input"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输出 Tokens</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.claude.models[model].output"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">缓存写入</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.claude.models[model].cacheCreation"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">缓存命中</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.claude.models[model].cacheRead"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                    </div>
-                                  </n-space>
-                                </n-card>
-                              </div>
-                            </n-space>
-                          </n-collapse-item>
-                        </n-collapse>
-                      </div>
-                    </div>
-
-                    <!-- Codex -->
-                    <div class="pricing-card codex-card">
-                      <div class="pricing-card-header">
-                        <div>
-                          <n-text strong style="font-size: 15px;">Codex</n-text>
-                          <n-text depth="3" style="font-size: 12px; display: block;">USD / 1M Tokens</n-text>
-                        </div>
-                        <div class="pricing-toggle">
-                          <n-text depth="3" style="font-size: 12px; margin-right: 8px;">自定义单价</n-text>
-                          <n-switch
-                            size="small"
-                            :checked-value="'custom'"
-                            :unchecked-value="'auto'"
-                            v-model:value="pricingSettings.codex.mode"
-                          />
-                        </div>
-                      </div>
-                      <div class="pricing-hint">
-                        {{ pricingSettings.codex.mode === 'custom' ? '自定义单价' : '使用官方单价' }}
-                      </div>
-                      <div class="pricing-grid">
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">输入 Tokens</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.codex.input"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.codex.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">输出 Tokens</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.codex.output"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.codex.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                      </div>
-
-                      <!-- Per-Model Pricing -->
-                      <div style="margin-top: 16px;">
-                        <n-collapse>
-                          <n-collapse-item title="按模型自定义单价" name="models">
-                            <n-space vertical :size="12">
-                              <div v-for="model in getModelsForTool('codex')" :key="model">
-                                <n-card size="small" :bordered="true">
-                                  <template #header>
-                                    <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
-                                  </template>
-
-                                  <n-space vertical :size="12">
-                                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                                      <n-text depth="3" style="font-size: 12px;">模式</n-text>
-                                      <n-radio-group v-model:value="pricingSettings.codex.models[model].mode" size="small">
-                                        <n-radio value="auto">自动</n-radio>
-                                        <n-radio value="custom">自定义</n-radio>
-                                      </n-radio-group>
-                                    </div>
-
-                                    <div v-if="pricingSettings.codex.models[model].mode === 'custom'" class="model-pricing-fields">
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输入 Tokens</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.codex.models[model].input"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输出 Tokens</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.codex.models[model].output"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                    </div>
-                                  </n-space>
-                                </n-card>
-                              </div>
-                            </n-space>
-                          </n-collapse-item>
-                        </n-collapse>
-                      </div>
-                    </div>
-
-                    <!-- Gemini -->
-                    <div class="pricing-card gemini-card">
-                      <div class="pricing-card-header">
-                        <div>
-                          <n-text strong style="font-size: 15px;">Gemini</n-text>
-                          <n-text depth="3" style="font-size: 12px; display: block;">USD / 1M Tokens</n-text>
-                        </div>
-                        <div class="pricing-toggle">
-                          <n-text depth="3" style="font-size: 12px; margin-right: 8px;">自定义单价</n-text>
-                          <n-switch
-                            size="small"
-                            :checked-value="'custom'"
-                            :unchecked-value="'auto'"
-                            v-model:value="pricingSettings.gemini.mode"
-                          />
-                        </div>
-                      </div>
-                      <div class="pricing-hint">
-                        {{ pricingSettings.gemini.mode === 'custom' ? '自定义单价' : '使用官方单价' }}
-                      </div>
-                      <div class="pricing-grid">
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">输入 Tokens</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.gemini.input"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.gemini.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                        <div class="option-field">
-                          <div class="option-label">
-                            <n-text depth="2" style="font-size: 13px;">输出 Tokens</n-text>
-                          </div>
-                          <n-input-number
-                            v-model:value="pricingSettings.gemini.output"
-                            :precision="4"
-                            :step="0.01"
-                            :min="0"
-                            :disabled="pricingSettings.gemini.mode !== 'custom'"
-                            style="width: 100%;"
-                          />
-                        </div>
-                      </div>
-
-                      <!-- Per-Model Pricing -->
-                      <div style="margin-top: 16px;">
-                        <n-collapse>
-                          <n-collapse-item title="按模型自定义单价" name="models">
-                            <n-space vertical :size="12">
-                              <div v-for="model in getModelsForTool('gemini')" :key="model">
-                                <n-card size="small" :bordered="true">
-                                  <template #header>
-                                    <n-text strong style="font-size: 14px;">{{ formatModelName(model) }}</n-text>
-                                  </template>
-
-                                  <n-space vertical :size="12">
-                                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                                      <n-text depth="3" style="font-size: 12px;">模式</n-text>
-                                      <n-radio-group v-model:value="pricingSettings.gemini.models[model].mode" size="small">
-                                        <n-radio value="auto">自动</n-radio>
-                                        <n-radio value="custom">自定义</n-radio>
-                                      </n-radio-group>
-                                    </div>
-
-                                    <div v-if="pricingSettings.gemini.models[model].mode === 'custom'" class="model-pricing-fields">
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输入 Tokens</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.gemini.models[model].input"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                      <div class="model-pricing-row">
-                                        <n-text depth="2" style="font-size: 12px; min-width: 80px;">输出 Tokens</n-text>
-                                        <n-input-number
-                                          v-model:value="pricingSettings.gemini.models[model].output"
-                                          :precision="4"
-                                          :step="0.01"
-                                          :min="0"
-                                          size="small"
-                                          style="flex: 1;"
-                                        />
-                                      </div>
-                                    </div>
-                                  </n-space>
-                                </n-card>
-                              </div>
-                            </n-space>
-                          </n-collapse-item>
-                        </n-collapse>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <n-divider />
-
                 <!-- 开机自启设置 -->
                 <div class="setting-item">
                   <div class="setting-label">
@@ -1048,55 +649,6 @@
                       </n-text>
                     </div>
                   </div>
-                </div>
-
-                <n-divider />
-
-                <!-- 模型管理 -->
-                <div class="setting-item">
-                  <div class="setting-label">
-                    <n-text strong>模型管理</n-text>
-                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      配置各工具类型的默认模型列表
-                    </n-text>
-                  </div>
-
-                  <n-space vertical :size="16" style="margin-top: 16px;">
-                    <div v-for="toolType in ['claude', 'codex', 'gemini']" :key="toolType" class="model-management-section">
-                      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                        <n-text strong>{{ toolTypeLabels[toolType] }}</n-text>
-                        <n-button size="small" @click="resetToolType(toolType)">
-                          <template #icon>
-                            <n-icon><RefreshOutline /></n-icon>
-                          </template>
-                          重置为默认
-                        </n-button>
-                      </div>
-                      <n-dynamic-tags
-                        v-model:value="editableModels[toolType]"
-                        :max="50"
-                      />
-                    </div>
-
-                    <n-space style="margin-top: 8px;">
-                      <n-button
-                        type="primary"
-                        :loading="savingModels"
-                        @click="saveDefaultModels"
-                      >
-                        <template #icon>
-                          <n-icon><SaveOutline /></n-icon>
-                        </template>
-                        保存模型配置
-                      </n-button>
-                      <n-button @click="resetAllModels">
-                        <template #icon>
-                          <n-icon><RefreshOutline /></n-icon>
-                        </template>
-                        全部重置
-                      </n-button>
-                    </n-space>
-                  </n-space>
                 </div>
               </div>
             </div>
@@ -1232,6 +784,234 @@
               </n-space>
             </div>
           </div>
+
+          <!-- 模型设置 -->
+          <div v-show="activeMenu === 'model-settings'" class="settings-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <n-icon size="24" color="var(--text-secondary)">
+                  <SparklesOutline />
+                </n-icon>
+                <div>
+                  <h3 class="panel-title">模型设置</h3>
+                  <n-text depth="3" class="panel-subtitle">管理默认测速模型、模型上下文窗口和定价信息</n-text>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-body">
+              <n-spin :show="modelMetaLoading">
+                <!-- 默认测速模型 -->
+                <div class="setting-item" style="margin-bottom: 12px;">
+                  <div class="model-meta-section">
+                    <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">默认测速模型</n-text>
+                    <div class="speed-test-defaults">
+                      <div
+                        v-for="tool in speedTestToolRows"
+                        :key="tool.key"
+                        class="speed-test-default-row"
+                      >
+                        <div class="speed-test-default-label">
+                          <n-text depth="3" style="font-size: 12px;">{{ tool.label }}</n-text>
+                        </div>
+                        <n-select
+                          v-model:value="defaultSpeedTestModels[tool.key]"
+                          :options="speedTestModelOptions[tool.key]"
+                          :placeholder="`选择${tool.label}默认测速模型`"
+                          :disabled="(speedTestModelOptions[tool.key] || []).length === 0"
+                          size="small"
+                          filterable
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 搜索和筛选 -->
+                <div class="setting-item" style="margin-bottom: 12px;">
+                  <n-input
+                    v-model:value="modelMetaSearch"
+                    placeholder="搜索模型 ID..."
+                    clearable
+                    size="small"
+                  />
+                </div>
+
+                <!-- 分类筛选 -->
+                <div class="setting-item" style="margin-bottom: 16px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                    <n-radio-group v-model:value="modelMetaFilter" size="small">
+                      <n-radio value="all">全部</n-radio>
+                      <n-radio value="claude">Claude</n-radio>
+                      <n-radio value="openai">OpenAI</n-radio>
+                      <n-radio value="gemini">Gemini</n-radio>
+                      <n-radio value="overrides">自定义</n-radio>
+                    </n-radio-group>
+                    <n-button size="small" type="primary" @click="openAddModelMetaModal">
+                      <template #icon>
+                        <n-icon><AddOutline /></n-icon>
+                      </template>
+                      新增
+                    </n-button>
+                  </div>
+                </div>
+
+                <div v-if="filteredModelMeta.length === 0" class="setting-item">
+                  <n-empty description="没有匹配的模型" />
+                </div>
+
+                <!-- 模型列表 -->
+                <n-collapse v-else>
+                  <n-collapse-item
+                    v-for="modelId in filteredModelMeta"
+                    :key="modelId"
+                    :name="modelId"
+                  >
+                    <template #header>
+                      <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+                        <n-text style="font-size: 13px; font-family: monospace;">{{ modelId }}</n-text>
+                        <n-tag v-if="modelMetaOverrides[modelId]" type="warning" size="tiny" :bordered="false">自定义</n-tag>
+                      </div>
+                    </template>
+                    <template #header-extra>
+                      <n-space :size="8">
+                        <n-button
+                          v-if="modelMetaOverrides[modelId] && isBuiltInModel(modelId)"
+                          size="tiny"
+                          quaternary
+                          type="warning"
+                          @click.stop="handleResetModelMeta(modelId)"
+                        >
+                          重置
+                        </n-button>
+                        <n-button
+                          v-if="isCustomModel(modelId)"
+                          size="tiny"
+                          quaternary
+                          type="error"
+                          @click.stop="handleDeleteModelMeta(modelId)"
+                        >
+                          删除
+                        </n-button>
+                      </n-space>
+                    </template>
+
+                    <div class="model-meta-editor">
+                      <!-- Context Window -->
+                      <div class="model-meta-section">
+                        <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">上下文限制</n-text>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                          <div>
+                            <n-text depth="3" style="font-size: 11px;">Context 窗口 (tokens)</n-text>
+                            <n-input-number
+                              :value="getModelMetaField(modelId, 'limit', 'context')"
+                              @update:value="v => setModelMetaField(modelId, 'limit', 'context', v)"
+                              :min="1000"
+                              :step="1000"
+                              size="small"
+                              :show-button="false"
+                              style="width: 100%;"
+                            />
+                          </div>
+                          <div>
+                            <n-text depth="3" style="font-size: 11px;">Max Output (tokens)</n-text>
+                            <n-input-number
+                              :value="getModelMetaField(modelId, 'limit', 'output')"
+                              @update:value="v => setModelMetaField(modelId, 'limit', 'output', v)"
+                              :min="100"
+                              :step="1000"
+                              size="small"
+                              :show-button="false"
+                              style="width: 100%;"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Pricing -->
+                      <div class="model-meta-section" style="margin-top: 12px;">
+                        <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">定价（USD / 百万 tokens）</n-text>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                          <div>
+                            <n-text depth="3" style="font-size: 11px;">输入价格</n-text>
+                            <n-input-number
+                              :value="getModelMetaField(modelId, 'pricing', 'input')"
+                              @update:value="v => setModelMetaField(modelId, 'pricing', 'input', v)"
+                              :min="0"
+                              :step="0.1"
+                              :precision="4"
+                              size="small"
+                              :show-button="false"
+                              style="width: 100%;"
+                            />
+                          </div>
+                          <div>
+                            <n-text depth="3" style="font-size: 11px;">输出价格</n-text>
+                            <n-input-number
+                              :value="getModelMetaField(modelId, 'pricing', 'output')"
+                              @update:value="v => setModelMetaField(modelId, 'pricing', 'output', v)"
+                              :min="0"
+                              :step="0.1"
+                              :precision="4"
+                              size="small"
+                              :show-button="false"
+                              style="width: 100%;"
+                            />
+                          </div>
+                          <div>
+                            <n-text depth="3" style="font-size: 11px;">缓存写入价格</n-text>
+                            <n-input-number
+                              :value="getModelMetaField(modelId, 'pricing', 'cacheCreation')"
+                              @update:value="v => setModelMetaField(modelId, 'pricing', 'cacheCreation', v)"
+                              :min="0"
+                              :step="0.1"
+                              :precision="4"
+                              size="small"
+                              :show-button="false"
+                              style="width: 100%;"
+                            />
+                          </div>
+                          <div>
+                            <n-text depth="3" style="font-size: 11px;">缓存读取价格</n-text>
+                            <n-input-number
+                              :value="getModelMetaField(modelId, 'pricing', 'cacheRead')"
+                              @update:value="v => setModelMetaField(modelId, 'pricing', 'cacheRead', v)"
+                              :min="0"
+                              :step="0.01"
+                              :precision="4"
+                              size="small"
+                              :show-button="false"
+                              style="width: 100%;"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </n-collapse-item>
+                </n-collapse>
+              </n-spin>
+            </div>
+
+            <div class="panel-footer">
+              <n-space justify="end">
+                <n-button size="large" @click="handleResetAllModelMeta" :disabled="Object.keys(modelMetaOverrides).length === 0">
+                  重置全部
+                </n-button>
+                <n-button
+                  type="primary"
+                  size="large"
+                  :loading="savingModelMeta"
+                  :disabled="!modelSettingsDirty"
+                  @click="handleSaveModelMeta"
+                >
+                  <template #icon>
+                    <n-icon><SaveOutline /></n-icon>
+                  </template>
+                  保存设置
+                </n-button>
+              </n-space>
+            </div>
+          </div>
         </div>
       </div>
       <n-modal
@@ -1260,6 +1040,103 @@
           </n-space>
         </div>
       </n-modal>
+      <n-modal
+        v-model:show="showAddModelMetaModal"
+        preset="card"
+        title="新增模型设置"
+        style="width: 560px;"
+        :mask-closable="false"
+      >
+        <n-space vertical :size="12">
+          <div>
+            <n-text depth="3" style="font-size: 12px;">模型 ID</n-text>
+            <n-input
+              v-model:value="newModelMetaForm.modelId"
+              placeholder="例如：gpt-4.1-mini"
+              clearable
+            />
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <n-text depth="3" style="font-size: 12px;">Context 窗口</n-text>
+              <n-input-number
+                v-model:value="newModelMetaForm.context"
+                :min="1000"
+                :step="1000"
+                :show-button="false"
+                style="width: 100%;"
+              />
+            </div>
+            <div>
+              <n-text depth="3" style="font-size: 12px;">Max Output</n-text>
+              <n-input-number
+                v-model:value="newModelMetaForm.output"
+                :min="100"
+                :step="100"
+                :show-button="false"
+                style="width: 100%;"
+              />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <n-text depth="3" style="font-size: 12px;">输入价格</n-text>
+              <n-input-number
+                v-model:value="newModelMetaForm.inputPrice"
+                :min="0"
+                :step="0.1"
+                :precision="4"
+                :show-button="false"
+                style="width: 100%;"
+              />
+            </div>
+            <div>
+              <n-text depth="3" style="font-size: 12px;">输出价格</n-text>
+              <n-input-number
+                v-model:value="newModelMetaForm.outputPrice"
+                :min="0"
+                :step="0.1"
+                :precision="4"
+                :show-button="false"
+                style="width: 100%;"
+              />
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <n-text depth="3" style="font-size: 12px;">缓存写入价格</n-text>
+              <n-input-number
+                v-model:value="newModelMetaForm.cacheCreationPrice"
+                :min="0"
+                :step="0.1"
+                :precision="4"
+                :show-button="false"
+                style="width: 100%;"
+              />
+            </div>
+            <div>
+              <n-text depth="3" style="font-size: 12px;">缓存读取价格</n-text>
+              <n-input-number
+                v-model:value="newModelMetaForm.cacheReadPrice"
+                :min="0"
+                :step="0.01"
+                :precision="4"
+                :show-button="false"
+                style="width: 100%;"
+              />
+            </div>
+          </div>
+          <n-text v-if="newModelMetaError" depth="3" class="security-error">
+            {{ newModelMetaError }}
+          </n-text>
+          <n-space justify="end">
+            <n-button @click="closeAddModelMetaModal">取消</n-button>
+            <n-button type="primary" :disabled="!!newModelMetaError" @click="handleAddModelMeta">
+              新增
+            </n-button>
+          </n-space>
+        </n-space>
+      </n-modal>
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -1269,18 +1146,16 @@ import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
   NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber,
-  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard,
-  NDynamicTags
+  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard
 } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
-import { useDefaultModels } from '../composables/useDefaultModels'
 
 const { drawerWidth, isMobile } = useResponsiveDrawer(680)
 import {
   SettingsOutline, TerminalOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
-  SunnyOutline, MoonOutline, NotificationsOutline, RefreshOutline,
-  SparklesOutline, ShieldCheckmarkOutline
+  SunnyOutline, MoonOutline, NotificationsOutline,
+  SparklesOutline, ShieldCheckmarkOutline, AddOutline
 } from '@vicons/ionicons5'
 import { getAvailableTerminals, saveTerminalConfig } from '../api/terminal'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
@@ -1288,6 +1163,22 @@ import { getSecurityStatus, verifySecurityPassword, setSecurityPassword } from '
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
+import { client } from '../api/client'
+
+async function fetchModelSettings() {
+  const resp = await client.get('/settings/model-settings')
+  return resp.data
+}
+
+async function saveModelSettingsPayload(payload) {
+  const resp = await client.post('/settings/model-settings', payload)
+  return resp.data
+}
+
+async function deleteModelMetadataOverride(modelId) {
+  const resp = await client.delete(`/settings/model-settings/${encodeURIComponent(modelId)}`)
+  return resp.data
+}
 
 const props = defineProps({
   visible: {
@@ -1349,14 +1240,12 @@ const autoStartHelp = computed(() => {
 const advancedSettings = ref({
   maxLogs: 100,
   statsInterval: 30,
-  enableSessionBinding: true, // 默认开启
-  useV1ModelsEndpoint: false
+  enableSessionBinding: true // 默认开启
 })
 const originalAdvancedSettings = ref({
   maxLogs: 100,
   statsInterval: 30,
-  enableSessionBinding: true,
-  useV1ModelsEndpoint: false
+  enableSessionBinding: true
 })
 
 // 通知设置
@@ -1402,78 +1291,298 @@ const securityForm = ref({
 const savingSecurity = ref(false)
 let securityStatusPromise = null
 
-// Model management
-const { defaultModels, loadDefaultModels, getDefaultModels } = useDefaultModels()
-const editableModels = ref({
-  claude: [],
-  codex: [],
-  gemini: []
+// ─── 模型设置管理 ──────────────────────────────────────────────────────────
+const modelMetaLoading = ref(false)
+const savingModelMeta = ref(false)
+// Built-in + overrides merged table, keyed by model ID
+const modelMetaTable = ref({})
+// User overrides only (what's saved to config)
+const modelMetaOverrides = ref({})
+// Local edits: { [modelId]: { limit?: {...}, pricing?: {...} } }
+const modelMetaEdits = ref({})
+const modelMetaSearch = ref('')
+const modelMetaFilter = ref('all')
+const showAddModelMetaModal = ref(false)
+const newModelMetaForm = ref(createDefaultNewModelMeta())
+const builtInModelIds = ref(new Set())
+const defaultSpeedTestModels = ref({
+  claude: '',
+  codex: '',
+  gemini: ''
 })
-const savingModels = ref(false)
-const toolTypeLabels = {
-  claude: 'Claude 模型',
-  codex: 'Codex 模型',
-  gemini: 'Gemini 模型'
-}
+const originalDefaultSpeedTestModels = ref({
+  claude: '',
+  codex: '',
+  gemini: ''
+})
+const speedTestToolRows = [
+  { key: 'claude', label: 'Claude Code' },
+  { key: 'codex', label: 'Codex' },
+  { key: 'gemini', label: 'Gemini CLI' }
+]
 
-// Helper function to format model names
-function formatModelName(model) {
-  if (model.includes('haiku')) return 'Haiku 3.5'
-  if (model.includes('sonnet-4-5')) return 'Sonnet 4.5'
-  if (model.includes('sonnet-4-20250514')) return 'Sonnet 4'
-  if (model.includes('sonnet')) return 'Sonnet'
-  if (model.includes('opus')) return 'Opus 4'
-  if (model.includes('4o-mini')) return 'GPT-4o Mini'
-  if (model.includes('4o')) return 'GPT-4o'
-  if (model.includes('5-codex')) return 'GPT-5 Codex'
-  if (model.includes('flash')) return 'Flash 2.5'
-  if (model.includes('pro')) return 'Pro 2.5'
-  return model
-}
-
-// Helper function to get models for a tool type
-function getModelsForTool(toolType) {
-  return getDefaultModels(toolType) || []
-}
-
-// Initialize per-model pricing structure
-function initializeModelPricing(toolType) {
-  const models = {}
-  getModelsForTool(toolType).forEach(model => {
-    models[model] = {
-      mode: 'auto',
-      input: 0,
-      output: 0,
-      cacheCreation: 0,
-      cacheRead: 0
-    }
-  })
-  return models
-}
-
-const pricingSettings = ref({
-  claude: {
-    mode: 'auto',
-    input: 3,
-    output: 15,
-    cacheCreation: 3.75,
-    cacheRead: 0.3,
-    models: initializeModelPricing('claude')
-  },
-  codex: {
-    mode: 'auto',
-    input: 2.5,
-    output: 10,
-    models: initializeModelPricing('codex')
-  },
-  gemini: {
-    mode: 'auto',
-    input: 1.25,
-    output: 5,
-    models: initializeModelPricing('gemini')
+const modelMetaDirty = computed(() => Object.keys(modelMetaEdits.value).length > 0)
+const modelSettingsDirty = computed(() => {
+  return modelMetaDirty.value || JSON.stringify(defaultSpeedTestModels.value) !== JSON.stringify(originalDefaultSpeedTestModels.value)
+})
+const newModelMetaError = computed(() => {
+  const modelId = String(newModelMetaForm.value.modelId || '').trim()
+  if (!modelId) return '请输入模型 ID'
+  const duplicate = Object.keys(modelMetaTable.value).find(id => id.toLowerCase() === modelId.toLowerCase())
+  if (duplicate) return `模型已存在：${duplicate}`
+  if (!Number.isFinite(newModelMetaForm.value.context) || newModelMetaForm.value.context <= 0) return 'Context 窗口必须为正数'
+  if (!Number.isFinite(newModelMetaForm.value.output) || newModelMetaForm.value.output <= 0) return 'Max Output 必须为正数'
+  if (newModelMetaForm.value.inputPrice < 0 || newModelMetaForm.value.outputPrice < 0 || newModelMetaForm.value.cacheCreationPrice < 0 || newModelMetaForm.value.cacheReadPrice < 0) {
+    return '价格不能为负数'
   }
+  return ''
 })
-const originalPricingSettings = ref(JSON.parse(JSON.stringify(pricingSettings.value)))
+
+function createDefaultNewModelMeta() {
+  return {
+    modelId: '',
+    context: 128000,
+    output: 8192,
+    inputPrice: 0,
+    outputPrice: 0,
+    cacheCreationPrice: 0,
+    cacheReadPrice: 0
+  }
+}
+
+function openAddModelMetaModal() {
+  newModelMetaForm.value = createDefaultNewModelMeta()
+  showAddModelMetaModal.value = true
+}
+
+function closeAddModelMetaModal() {
+  showAddModelMetaModal.value = false
+}
+
+function handleAddModelMeta() {
+  if (newModelMetaError.value) return
+
+  const modelId = String(newModelMetaForm.value.modelId || '').trim()
+  const meta = {
+    limit: {
+      context: newModelMetaForm.value.context,
+      output: newModelMetaForm.value.output
+    },
+    pricing: {
+      input: newModelMetaForm.value.inputPrice,
+      output: newModelMetaForm.value.outputPrice,
+      cacheCreation: newModelMetaForm.value.cacheCreationPrice,
+      cacheRead: newModelMetaForm.value.cacheReadPrice
+    }
+  }
+
+  modelMetaTable.value[modelId] = meta
+  modelMetaEdits.value[modelId] = {
+    limit: { ...meta.limit },
+    pricing: { ...meta.pricing }
+  }
+  modelMetaSearch.value = modelId
+  showAddModelMetaModal.value = false
+  message.success('模型已新增，请点击“保存设置”使其生效')
+}
+
+function isBuiltInModel(modelId) {
+  return builtInModelIds.value.has(modelId)
+}
+
+function isCustomModel(modelId) {
+  return !isBuiltInModel(modelId)
+}
+
+const filteredModelMeta = computed(() => {
+  const allIds = Object.keys(modelMetaTable.value)
+  const search = modelMetaSearch.value.trim().toLowerCase()
+  const filter = modelMetaFilter.value
+
+  return allIds.filter(id => {
+    if (search && !id.toLowerCase().includes(search)) return false
+    if (filter === 'claude') return id.startsWith('claude-')
+    if (filter === 'openai') return id.startsWith('gpt-') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')
+    if (filter === 'gemini') return id.startsWith('gemini-')
+    if (filter === 'overrides') return !!modelMetaOverrides.value[id]
+    return true
+  })
+})
+
+function getModelProviderById(modelId) {
+  const id = String(modelId || '').trim().toLowerCase()
+  if (id.startsWith('claude-')) return 'claude'
+  if (id.startsWith('gemini-')) return 'gemini'
+  if (id.startsWith('gpt-') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 'codex'
+  return ''
+}
+
+const speedTestModelOptions = computed(() => {
+  const grouped = {
+    claude: [],
+    codex: [],
+    gemini: []
+  }
+
+  for (const [modelId, meta] of Object.entries(modelMetaTable.value || {})) {
+    if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue
+    const provider = getModelProviderById(modelId)
+    if (!provider || !grouped[provider]) continue
+    grouped[provider].push({
+      label: modelId,
+      value: modelId
+    })
+  }
+
+  for (const key of Object.keys(grouped)) {
+    grouped[key].sort((a, b) => a.label.localeCompare(b.label))
+  }
+
+  return grouped
+})
+
+function normalizeDefaultSpeedTestModelSelection() {
+  const next = { ...defaultSpeedTestModels.value }
+  let changed = false
+
+  for (const tool of speedTestToolRows) {
+    const options = speedTestModelOptions.value[tool.key] || []
+    if (options.length === 0) continue
+    const optionValues = new Set(options.map(item => item.value))
+    if (!optionValues.has(next[tool.key])) {
+      next[tool.key] = options[0].value
+      changed = true
+    }
+  }
+
+  if (changed) {
+    defaultSpeedTestModels.value = next
+  }
+}
+
+function getModelMetaField(modelId, section, field) {
+  // Local edit takes priority
+  if (modelMetaEdits.value[modelId]?.[section]?.[field] !== undefined) {
+    return modelMetaEdits.value[modelId][section][field]
+  }
+  // Then from merged table
+  return modelMetaTable.value[modelId]?.[section]?.[field] ?? null
+}
+
+function setModelMetaField(modelId, section, field, value) {
+  if (!modelMetaEdits.value[modelId]) {
+    // Start from the current merged values
+    const current = modelMetaTable.value[modelId] || {}
+    modelMetaEdits.value[modelId] = {
+      limit: { ...(current.limit || {}) },
+      pricing: { ...(current.pricing || {}) }
+    }
+  }
+  if (!modelMetaEdits.value[modelId][section]) {
+    modelMetaEdits.value[modelId][section] = {}
+  }
+  modelMetaEdits.value[modelId][section][field] = value
+}
+
+async function loadModelMetadata() {
+  modelMetaLoading.value = true
+  try {
+    const data = await fetchModelSettings()
+    modelMetaTable.value = data.models || {}
+    modelMetaOverrides.value = data.overrides || {}
+    builtInModelIds.value = new Set(data.builtinModelIds || [])
+    defaultSpeedTestModels.value = {
+      claude: typeof data.defaultSpeedTestModels?.claude === 'string' ? data.defaultSpeedTestModels.claude : '',
+      codex: typeof data.defaultSpeedTestModels?.codex === 'string' ? data.defaultSpeedTestModels.codex : '',
+      gemini: typeof data.defaultSpeedTestModels?.gemini === 'string' ? data.defaultSpeedTestModels.gemini : ''
+    }
+    normalizeDefaultSpeedTestModelSelection()
+    originalDefaultSpeedTestModels.value = { ...defaultSpeedTestModels.value }
+    modelMetaEdits.value = {}
+  } catch (err) {
+    console.error('Failed to load model metadata:', err)
+  } finally {
+    modelMetaLoading.value = false
+  }
+}
+
+async function handleSaveModelMeta() {
+  savingModelMeta.value = true
+  try {
+    // Merge edits into existing overrides
+    const newOverrides = { ...modelMetaOverrides.value }
+    for (const [modelId, edits] of Object.entries(modelMetaEdits.value)) {
+      const existing = newOverrides[modelId] || {}
+      newOverrides[modelId] = {
+        limit: { ...(existing.limit || {}), ...(edits.limit || {}) },
+        pricing: { ...(existing.pricing || {}), ...(edits.pricing || {}) }
+      }
+    }
+    await saveModelSettingsPayload({
+      overrides: newOverrides,
+      defaultSpeedTestModels: defaultSpeedTestModels.value
+    })
+    modelMetaOverrides.value = newOverrides
+    originalDefaultSpeedTestModels.value = { ...defaultSpeedTestModels.value }
+    modelMetaEdits.value = {}
+    // Refresh merged table
+    await loadModelMetadata()
+    message.success('模型设置已保存')
+  } catch (err) {
+    console.error('Failed to save model metadata:', err)
+    message.error('保存失败：' + err.message)
+  } finally {
+    savingModelMeta.value = false
+  }
+}
+
+async function handleResetModelMeta(modelId) {
+  try {
+    await deleteModelMetadataOverride(modelId)
+    delete modelMetaOverrides.value[modelId]
+    delete modelMetaEdits.value[modelId]
+    await loadModelMetadata()
+    message.success(`${modelId} 已重置为内置默认值`)
+  } catch (err) {
+    message.error('重置失败：' + err.message)
+  }
+}
+
+async function handleResetAllModelMeta() {
+  try {
+    await saveModelSettingsPayload({
+      overrides: {},
+      defaultSpeedTestModels: defaultSpeedTestModels.value
+    })
+    modelMetaOverrides.value = {}
+    modelMetaEdits.value = {}
+    await loadModelMetadata()
+    message.success('全部模型设置已重置为内置默认值')
+  } catch (err) {
+    message.error('重置失败：' + err.message)
+  }
+}
+
+async function handleDeleteModelMeta(modelId) {
+  try {
+    const hasOverride = !!modelMetaOverrides.value[modelId]
+    if (hasOverride) {
+      await deleteModelMetadataOverride(modelId)
+      delete modelMetaOverrides.value[modelId]
+    }
+
+    delete modelMetaEdits.value[modelId]
+    if (isCustomModel(modelId)) {
+      delete modelMetaTable.value[modelId]
+    } else if (hasOverride) {
+      await loadModelMetadata()
+    }
+
+    message.success(`已删除模型：${modelId}`)
+  } catch (err) {
+    message.error('删除失败：' + err.message)
+  }
+}
 
 // 检查配置是否有修改
 const portsChanged = computed(() => {
@@ -1484,9 +1593,7 @@ const portsChanged = computed(() => {
     ports.value.opencodeProxy !== originalPorts.value.opencodeProxy ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
-    advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
-    advancedSettings.value.useV1ModelsEndpoint !== originalAdvancedSettings.value.useV1ModelsEndpoint ||
-    JSON.stringify(pricingSettings.value) !== JSON.stringify(originalPricingSettings.value)
+    advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
 })
 
 const securityLocked = computed(() => {
@@ -1548,6 +1655,11 @@ const menuItems = computed(() => [
     key: 'security',
     label: '安全设置',
     icon: markRaw(ShieldCheckmarkOutline)
+  },
+  {
+    key: 'model-settings',
+    label: '模型设置',
+    icon: markRaw(SparklesOutline)
   }
 ])
 
@@ -1559,33 +1671,6 @@ const terminalOptions = computed(() => {
       value: t.id
     }))
 })
-
-function normalizePrice(value, fallback) {
-  if (typeof value === 'number' && !Number.isNaN(value)) {
-    return value
-  }
-  const parsed = parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function loadModelPricing(savedModels, toolType) {
-  const models = {}
-  getModelsForTool(toolType).forEach(model => {
-    const savedModel = savedModels?.[model]
-    models[model] = {
-      mode: savedModel?.mode === 'custom' ? 'custom' : 'auto',
-      input: normalizePrice(savedModel?.input, 0),
-      output: normalizePrice(savedModel?.output, 0),
-      cacheCreation: normalizePrice(savedModel?.cacheCreation, 0),
-      cacheRead: normalizePrice(savedModel?.cacheRead, 0)
-    }
-  })
-  return models
-}
-
-function clonePricing(value) {
-  return JSON.parse(JSON.stringify(value))
-}
 
 const selectedTerminalInfo = computed(() => {
   return availableTerminals.value.find(t => t.id === selectedTerminal.value)
@@ -1693,11 +1778,7 @@ async function handleSessionBindingChange(value) {
         ports: ports.value,
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
-        enableSessionBinding: value,
-        modelDiscovery: {
-          useV1ModelsEndpoint: advancedSettings.value.useV1ModelsEndpoint
-        },
-        pricing: pricingSettings.value
+        enableSessionBinding: value
       })
     })
     if (response.ok) {
@@ -1733,34 +1814,9 @@ async function loadPortsConfig() {
       advancedSettings.value = {
         maxLogs: data.maxLogs || 100,
         statsInterval: data.statsInterval || 30,
-        enableSessionBinding: data.enableSessionBinding !== false,
-        useV1ModelsEndpoint: data.modelDiscovery?.useV1ModelsEndpoint === true
+        enableSessionBinding: data.enableSessionBinding !== false
       }
       originalAdvancedSettings.value = { ...advancedSettings.value }
-
-      pricingSettings.value = {
-        claude: {
-          mode: data.pricing?.claude?.mode === 'custom' ? 'custom' : 'auto',
-          input: normalizePrice(data.pricing?.claude?.input, 3),
-          output: normalizePrice(data.pricing?.claude?.output, 15),
-          cacheCreation: normalizePrice(data.pricing?.claude?.cacheCreation, 3.75),
-          cacheRead: normalizePrice(data.pricing?.claude?.cacheRead, 0.3),
-          models: loadModelPricing(data.pricing?.claude?.models, 'claude')
-        },
-        codex: {
-          mode: data.pricing?.codex?.mode === 'custom' ? 'custom' : 'auto',
-          input: normalizePrice(data.pricing?.codex?.input, 2.5),
-          output: normalizePrice(data.pricing?.codex?.output, 10),
-          models: loadModelPricing(data.pricing?.codex?.models, 'codex')
-        },
-        gemini: {
-          mode: data.pricing?.gemini?.mode === 'custom' ? 'custom' : 'auto',
-          input: normalizePrice(data.pricing?.gemini?.input, 1.25),
-          output: normalizePrice(data.pricing?.gemini?.output, 5),
-          models: loadModelPricing(data.pricing?.gemini?.models, 'gemini')
-        }
-      }
-      originalPricingSettings.value = clonePricing(pricingSettings.value)
     }
   } catch (error) {
     console.error('Failed to load advanced config:', error)
@@ -1960,28 +2016,19 @@ async function handleSavePorts() {
         ports: ports.value,
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
-        enableSessionBinding: advancedSettings.value.enableSessionBinding,
-        modelDiscovery: {
-          useV1ModelsEndpoint: advancedSettings.value.useV1ModelsEndpoint
-        },
-        pricing: pricingSettings.value
+        enableSessionBinding: advancedSettings.value.enableSessionBinding
       })
     })
 
     if (response.ok) {
       originalPorts.value = { ...ports.value }
       originalAdvancedSettings.value = { ...advancedSettings.value }
-      originalPricingSettings.value = clonePricing(pricingSettings.value)
 
       // 广播配置更新事件
       window.dispatchEvent(new CustomEvent('advanced-config-change', {
         detail: {
           maxLogs: advancedSettings.value.maxLogs,
-          statsInterval: advancedSettings.value.statsInterval,
-          modelDiscovery: {
-            useV1ModelsEndpoint: advancedSettings.value.useV1ModelsEndpoint
-          },
-          pricing: pricingSettings.value
+          statsInterval: advancedSettings.value.statsInterval
         }
       }))
 
@@ -2065,96 +2112,11 @@ async function handleDisableAutoStart() {
   }
 }
 
-// 加载默认模型配置
-async function loadDefaultModelsConfig() {
-  try {
-    await loadDefaultModels({ probe: true, forceRefresh: true })
-    // Initialize editable models with loaded values
-    editableModels.value = {
-      claude: [...(getDefaultModels('claude') || [])],
-      codex: [...(getDefaultModels('codex') || [])],
-      gemini: [...(getDefaultModels('gemini') || [])]
-    }
-  } catch (err) {
-    console.error('Failed to load default models:', err)
-    message.error('加载模型配置失败')
-  }
-}
-
-// 保存默认模型配置
-async function saveDefaultModels() {
-  savingModels.value = true
-  try {
-    const response = await fetch('/api/config/default-models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ defaultModels: editableModels.value })
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    const data = await response.json()
-    message.success('模型配置已保存')
-
-    // Reload to sync with backend
-    await loadDefaultModelsConfig()
-  } catch (err) {
-    console.error('Failed to save default models:', err)
-    message.error('保存失败：' + err.message)
-  } finally {
-    savingModels.value = false
-  }
-}
-
-// 重置单个工具类型的模型
-async function resetToolType(toolType) {
-  try {
-    const response = await fetch('/api/config/default-models/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ toolType })
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    message.success(`${toolTypeLabels[toolType]} 已重置为默认`)
-    await loadDefaultModelsConfig()
-  } catch (err) {
-    console.error('Failed to reset tool type:', err)
-    message.error('重置失败：' + err.message)
-  }
-}
-
-// 重置所有模型配置
-async function resetAllModels() {
-  try {
-    const response = await fetch('/api/config/default-models/reset', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
-
-    message.success('所有模型配置已重置为默认')
-    await loadDefaultModelsConfig()
-  } catch (err) {
-    console.error('Failed to reset all models:', err)
-    message.error('重置失败：' + err.message)
-  }
-}
-
 // 加载设置
 onMounted(() => {
   loadPanelSettings()
   loadSecurityStatus()
-  loadDefaultModelsConfig()
+  loadModelMetadata()
 })
 
 // 监听抽屉打开，加载数据
@@ -2165,6 +2127,7 @@ watch(show, (newVal) => {
     loadPortsConfig()
     loadAutoStartStatus()
     loadNotificationSettings()
+    loadModelMetadata()
     if (activeMenu.value === 'security') {
       handleSecurityMenuEntry(true)
     } else {
@@ -2638,84 +2601,6 @@ watch(activeMenu, (newVal, oldVal) => {
   margin-right: 16px;
 }
 
-.pricing-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pricing-card {
-  border: 1px solid var(--border-primary);
-  border-radius: 10px;
-  padding: 14px;
-  background: var(--bg-primary);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.pricing-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pricing-hint {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.pricing-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.pricing-grid .option-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
-  transition: all 0.2s ease;
-}
-
-.pricing-grid .option-field:hover {
-  border-color: var(--border-secondary);
-  background: var(--hover-bg);
-}
-
-.pricing-grid .option-label {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  margin-right: 12px;
-  flex: 1;
-}
-
-.pricing-grid .option-field .n-input-number {
-  width: 120px !important;
-  flex-shrink: 0;
-}
-
-[data-theme="dark"] .pricing-grid .option-field {
-  background: rgba(30, 41, 59, 0.3);
-  border-color: rgba(148, 163, 184, 0.12);
-}
-
-[data-theme="dark"] .pricing-grid .option-field:hover {
-  background: rgba(30, 41, 59, 0.5);
-  border-color: rgba(148, 163, 184, 0.2);
-}
-
-.pricing-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
 
 /* 通知设置样式 */
 .notification-options {
@@ -2839,42 +2724,38 @@ watch(activeMenu, (newVal, oldVal) => {
   font-size: 13px;
 }
 
-/* Per-model pricing fields styling */
-.model-pricing-fields {
+/* Model metadata editor */
+.model-meta-editor {
+  padding: 4px 2px 8px;
+}
+
+.model-meta-section {
+  background: var(--bg-secondary, rgba(0,0,0,0.03));
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.speed-test-defaults {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 8px;
 }
 
-.model-pricing-row {
-  display: flex;
+.speed-test-default-row {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 10px;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  transition: all 0.2s ease;
 }
 
-[data-theme="dark"] .model-pricing-row {
-  background: rgba(30, 41, 59, 0.3);
-  border-color: rgba(148, 163, 184, 0.12);
-}
-
-.model-pricing-row:hover {
-  border-color: var(--border-secondary);
-  background: var(--hover-bg);
-}
-
-[data-theme="dark"] .model-pricing-row:hover {
-  background: rgba(30, 41, 59, 0.5);
-  border-color: rgba(148, 163, 184, 0.2);
-}
-
-.model-pricing-row .n-input-number {
-  flex: 1;
+.speed-test-default-label {
   min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .speed-test-default-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
 }
 </style>

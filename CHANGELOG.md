@@ -4,6 +4,47 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.1.3] - 2026-02-28
+
+### Added
+- ✨ **用量分析页面** - 新增独立 `/analytics` 页面，支持按模型/渠道/工具类型的 Token 用量、费用、请求数趋势图表
+- ✨ **多工具数据聚合** - 分析图表合并 Claude / Codex / Gemini / OpenCode 四个工具的统计数据
+- ✨ **堆叠柱状图 & 累计趋势图** - 基于 ECharts，支持柱状图/折线图切换、全屏展示
+- ✨ **灵活时间范围** - 支持 1d/3d/7d/30d/90d 及自定义日期区间，自动选择小时/天粒度
+- ✨ **数据导出** - 支持 CSV 和 JSON 格式导出趋势数据
+
+### Changed
+- 🔄 **1天视图步长调整** - 从每2小时改为每4小时，减少数据点密度
+- 🔄 **3天视图步长调整** - 从每6小时改为每12小时，图表更清晰
+- 🔄 **X 轴日期格式精简** - 从 `2026-02-06` 改为 `02/06`，小时标签改为 `02/06 14:00`
+
+### Fixed
+- 🐛 **步长参数未传递** - 修复后端路由未解构 `step` 参数导致步长设置无效的问题
+
+## [3.1.2] - 2026-02-27
+
+### Added
+- ✨ **模型元数据覆盖 API** - 新增 `GET/POST/DELETE /api/settings/model-metadata`，支持自定义模型定价与参数限制
+- ✨ **Prompt Caching 支持** - 自动注入 `cache_control` 断点，与 OpenCode SDK 缓存策略对齐
+- ✨ **推理努力级别支持** - 支持 `reasoning_effort` 参数向 Claude/Gemini 的转换
+- ✨ **渠道允许模型列表** - 渠道新增 `allowedModels` 字段，支持显式指定可用模型
+- ✨ **Chat Completions 流式中继** - 实现标准 OpenAI `chat/completions` 流式响应转换
+- ✨ **Gemini 内置工具支持** - 支持 `googleSearch`、`codeExecution`、`urlContext` 等原生工具
+- ✨ **多媒体内容规范化** - 支持 Base64 和 URL 形式的图像、文档内容块转换
+
+### Changed
+- 🔄 **OpenCode 会话数据迁移至 SQLite** - 从文件系统 JSON 迁移到 SQLite 查询，提升性能与一致性
+- 🔄 **模型定价配置统一管理** - 从 `model-metadata.js` 动态生成定价表，消除重复维护
+- 🔄 **渠道变更自动同步代理配置** - 创建/更新/删除渠道后自动刷新 OpenCode 代理设置
+
+### Fixed
+- 🐛 **Token 统计修复** - 修复缓存 Token 重复计算，正确处理 `cacheCreation` / `cacheRead` 统计
+- 🐛 **代理流式响应压缩冲突** - 禁用上游 `accept-encoding`，防止双消费者竞争导致响应异常
+- 🐛 **Gateway 路径规范化** - 修复末尾斜杠问题，确保 `/v1/responses` 与 `/responses` 路径正确识别
+- 🐛 **环境变量冲突误报** - 修复删除配置后仍提示冲突的问题，同步清理进程中的同名变量
+- 🐛 **Shell 配置文件检查补全** - 补充 `.bash_login`、`.zshenv`、`.zlogin` 等遗漏文件检查
+- 🐛 **Chat Completions 流终止消息** - 补充最终 usage chunk，满足 `stream_options.include_usage` 规范
+
 ## [3.1.1] - 2026-02-26
 
 ### Added

@@ -18,6 +18,12 @@
           <span class="label">描述：</span>
           <span class="value">{{ template.description }}</span>
         </div>
+        <div class="info-row" v-if="template.cliType">
+          <span class="label">CLI 工具：</span>
+          <n-tag size="small" :color="cliTypeStyle(template.cliType)" round>
+            {{ cliTypeLabel(template.cliType) }}
+          </n-tag>
+        </div>
       </div>
 
       <!-- 配置统计 -->
@@ -54,10 +60,6 @@
           <div class="stat-item" v-if="template.mcpServers?.length">
             <n-icon size="20"><ServerOutline /></n-icon>
             <span>{{ template.mcpServers.length }} MCP Servers</span>
-          </div>
-          <div class="stat-item" v-if="template.plugins?.length">
-            <n-icon size="20"><CubeOutline /></n-icon>
-            <span>{{ template.plugins.length }} Plugins</span>
           </div>
         </div>
       </div>
@@ -120,14 +122,6 @@
             </div>
           </div>
         </n-collapse-item>
-        <n-collapse-item title="Plugins 列表" name="plugins" v-if="template.plugins?.length">
-          <div class="list-items">
-            <div v-for="(item, idx) in template.plugins" :key="idx" class="list-item">
-              {{ item.name || item }}
-              <span v-if="item.description" class="item-desc"> - {{ item.description }}</span>
-            </div>
-          </div>
-        </n-collapse-item>
       </n-collapse>
     </div>
 
@@ -142,7 +136,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { NModal, NIcon, NCollapse, NCollapseItem, NButton, NSpace } from 'naive-ui'
+import { NModal, NIcon, NCollapse, NCollapseItem, NButton, NSpace, NTag } from 'naive-ui'
 import MarkdownViewer from './MarkdownViewer.vue'
 import {
   DocumentTextOutline,
@@ -150,8 +144,7 @@ import {
   PeopleOutline,
   TerminalOutline,
   ShieldCheckmarkOutline,
-  ServerOutline,
-  CubeOutline
+  ServerOutline
 } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -193,8 +186,25 @@ const hasDetails = computed(() => {
   const t = props.template
   if (!t) return false
   return hasAiConfigs.value || t.claudeMd?.content || t.skills?.length || t.agents?.length ||
-         t.commands?.length || t.rules?.length || t.mcpServers?.length || t.plugins?.length
+         t.commands?.length || t.rules?.length || t.mcpServers?.length
 })
+
+const CLI_TYPE_MAP = {
+  claude: { label: 'Claude', color: '#cc785c', textColor: '#fff', borderColor: '#cc785c' },
+  codex: { label: 'Codex', color: '#10a37f', textColor: '#fff', borderColor: '#10a37f' },
+  gemini: { label: 'Gemini', color: '#4285f4', textColor: '#fff', borderColor: '#4285f4' },
+  opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' }
+}
+
+function cliTypeLabel(type) {
+  return CLI_TYPE_MAP[type]?.label || type
+}
+
+function cliTypeStyle(type) {
+  const style = CLI_TYPE_MAP[type]
+  if (!style) return {}
+  return { color: style.color, textColor: style.textColor, borderColor: style.borderColor }
+}
 
 function handleApply() {
   emit('apply', props.template)

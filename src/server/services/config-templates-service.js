@@ -28,6 +28,7 @@ const BUILTIN_TEMPLATES = [
     id: 'full-stack',
     name: '全栈开发',
     description: '前后端全栈开发配置，包含代码编辑、文档查询、版本控制等常用工具',
+    cliType: 'claude',
     // 兼容旧字段
     claudeMd: { enabled: false, content: '' },
     // 新的多 AI 配置
@@ -159,6 +160,7 @@ You are an experienced full-stack developer focused on delivering high-quality c
     id: 'architecture',
     name: '方案设计',
     description: '专注于技术方案设计、架构评审、系统设计，适合需求分析和技术决策场景',
+    cliType: 'claude',
     claudeMd: { enabled: false, content: '' },
     aiConfigs: {
       claude: {
@@ -308,6 +310,7 @@ You are a senior technical architect focused on system design and technical plan
     id: 'code-review',
     name: '代码审查',
     description: '专注于代码审查、质量评估、安全检查，适合 PR Review 和代码质量改进',
+    cliType: 'claude',
     claudeMd: { enabled: false, content: '' },
     aiConfigs: {
       claude: {
@@ -467,6 +470,7 @@ For each issue:
     id: 'minimal',
     name: '最小配置',
     description: '纯净环境，不添加任何额外配置，适合已有完善配置的项目',
+    cliType: 'claude',
     claudeMd: { enabled: false, content: '' },
     aiConfigs: {
       claude: { enabled: false, content: '' },
@@ -619,6 +623,7 @@ function createCustomTemplate(template) {
     id,
     name: template.name,
     description: template.description || '',
+    cliType: template.cliType || 'claude',
     claudeMd: template.claudeMd || { enabled: false, content: '' },
     aiConfigs: normalizeAiConfigs(template.aiConfigs, template.claudeMd),
     skills: template.skills || [],
@@ -651,6 +656,7 @@ function updateCustomTemplate(id, updates) {
   custom[index] = {
     ...custom[index],
     ...updates,
+    cliType: updates.cliType !== undefined ? updates.cliType : (custom[index].cliType || 'claude'),
     aiConfigs: normalizeAiConfigs(updates.aiConfigs || custom[index].aiConfigs, updates.claudeMd || custom[index].claudeMd),
     id: custom[index].id, // 保持 ID 不变
     isBuiltin: false,
@@ -971,12 +977,15 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     }
   }
 
-  // 2. 写入 Agents
+  // 2. 写入 Agents（根据选中的 AI 类型决定写入哪些目录）
   if (template.agents?.length > 0) {
-    const agentTargets = [
-      { baseDir: path.join(targetDir, '.claude', 'agents'), prefix: '.claude/agents' },
-      { baseDir: path.join(targetDir, '.opencode', 'agents'), prefix: '.opencode/agents' }
-    ];
+    const agentTargets = [];
+    if (aiConfigTypes.includes('claude')) {
+      agentTargets.push({ baseDir: path.join(targetDir, '.claude', 'agents'), prefix: '.claude/agents' });
+    }
+    if (aiConfigTypes.includes('opencode')) {
+      agentTargets.push({ baseDir: path.join(targetDir, '.opencode', 'agents'), prefix: '.opencode/agents' });
+    }
 
     for (const target of agentTargets) {
       ensureDir(target.baseDir);
@@ -994,12 +1003,15 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     }
   }
 
-  // 3. 写入 Commands
+  // 3. 写入 Commands（根据选中的 AI 类型决定写入哪些目录）
   if (template.commands?.length > 0) {
-    const commandTargets = [
-      { baseDir: path.join(targetDir, '.claude', 'commands'), prefix: '.claude/commands' },
-      { baseDir: path.join(targetDir, '.opencode', 'commands'), prefix: '.opencode/commands' }
-    ];
+    const commandTargets = [];
+    if (aiConfigTypes.includes('claude')) {
+      commandTargets.push({ baseDir: path.join(targetDir, '.claude', 'commands'), prefix: '.claude/commands' });
+    }
+    if (aiConfigTypes.includes('opencode')) {
+      commandTargets.push({ baseDir: path.join(targetDir, '.opencode', 'commands'), prefix: '.opencode/commands' });
+    }
 
     for (const target of commandTargets) {
       ensureDir(target.baseDir);
@@ -1189,16 +1201,16 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     preview.summary.skills = template.skills.length;
   }
 
-  // 检查 Agents
+  // 检查 Agents（根据选中的 AI 类型决定预览哪些目录）
   if (template.agents?.length > 0) {
+    const agentPrefixes = [];
+    if (aiConfigTypes.includes('claude')) agentPrefixes.push('.claude/agents');
+    if (aiConfigTypes.includes('opencode')) agentPrefixes.push('.opencode/agents');
+
     for (const agent of template.agents) {
       const fileName = agent.fileName || agent.name.toLowerCase().replace(/\s+/g, '-');
-      const relativePaths = [
-        `.claude/agents/${fileName}.md`,
-        `.opencode/agents/${fileName}.md`
-      ];
-
-      for (const relativePath of relativePaths) {
+      for (const prefix of agentPrefixes) {
+        const relativePath = `${prefix}/${fileName}.md`;
         const fullPath = path.join(targetDir, relativePath);
         if (fs.existsSync(fullPath)) {
           preview.willOverwrite.push(relativePath);
@@ -1210,19 +1222,17 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     }
   }
 
-  // 检查 Commands
+  // 检查 Commands（根据选中的 AI 类型决定预览哪些目录）
   if (template.commands?.length > 0) {
-    for (const command of template.commands) {
-      const relativePaths = [
-        command.namespace
-          ? `.claude/commands/${command.namespace}/${command.name}.md`
-          : `.claude/commands/${command.name}.md`,
-        command.namespace
-          ? `.opencode/commands/${command.namespace}/${command.name}.md`
-          : `.opencode/commands/${command.name}.md`
-      ];
+    const commandPrefixes = [];
+    if (aiConfigTypes.includes('claude')) commandPrefixes.push('.claude/commands');
+    if (aiConfigTypes.includes('opencode')) commandPrefixes.push('.opencode/commands');
 
-      for (const relativePath of relativePaths) {
+    for (const command of template.commands) {
+      for (const prefix of commandPrefixes) {
+        const relativePath = command.namespace
+          ? `${prefix}/${command.namespace}/${command.name}.md`
+          : `${prefix}/${command.name}.md`;
         const fullPath = path.join(targetDir, relativePath);
         if (fs.existsSync(fullPath)) {
           preview.willOverwrite.push(relativePath);

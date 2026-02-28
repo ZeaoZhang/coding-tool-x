@@ -77,7 +77,6 @@
             <n-tag v-if="previewData.summary.commands" type="info" size="small">{{ previewData.summary.commands }} Commands</n-tag>
             <n-tag v-if="previewData.summary.rules" type="info" size="small">{{ previewData.summary.rules }} Rules</n-tag>
             <n-tag v-if="previewData.summary.mcpServers" type="warning" size="small">{{ previewData.summary.mcpServers }} MCP</n-tag>
-            <n-tag v-if="previewData.summary.plugins" type="default" size="small">{{ previewData.summary.plugins }} Plugins</n-tag>
           </n-space>
         </div>
 

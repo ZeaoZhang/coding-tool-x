@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 
 // 各平台需要检测的环境变量关键词
 const PLATFORM_KEYWORDS = {
@@ -47,8 +48,11 @@ const SHELL_CONFIG_FILES = process.platform === 'win32'
   ? [
       '.bashrc',
       '.bash_profile',
+      '.bash_login',
       '.zshrc',
+      '.zshenv',
       '.zprofile',
+      '.zlogin',
       '.profile',
       path.join('Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1'),
       path.join('Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1')
@@ -56,8 +60,11 @@ const SHELL_CONFIG_FILES = process.platform === 'win32'
   : [
       '.bashrc',
       '.bash_profile',
+      '.bash_login',
       '.zshrc',
+      '.zshenv',
       '.zprofile',
+      '.zlogin',
       '.profile'
     ];
 
@@ -86,8 +93,10 @@ function checkEnvConflicts(platform = null) {
   // 3. 检测系统配置文件
   conflicts.push(...checkSystemConfigs(keywords));
 
-  // 去重（同一变量可能在多处定义）
-  return deduplicateConflicts(conflicts);
+  // 去重 + 只保留“真实冲突”（同名变量在多个来源且值不一致）
+  const deduplicated = deduplicateConflicts(conflicts);
+  const realConflicts = filterRealConflicts(deduplicated);
+  return sanitizeConflicts(realConflicts);
 }
 
 /**
@@ -108,10 +117,15 @@ function checkProcessEnv(keywords) {
   const conflicts = [];
 
   for (const [key, value] of Object.entries(process.env)) {
+    if (!hasNonEmptyValue(value)) {
+      continue;
+    }
+
     if (matchesKeywords(key, keywords)) {
       conflicts.push({
         varName: key,
         varValue: maskSensitiveValue(value),
+        valueFingerprint: hashValue(value),
         sourceType: 'process',
         sourcePath: 'Process Environment',
         platform: detectPlatform(key)
@@ -183,11 +197,18 @@ function parseConfigFile(filePath, keywords) {
 
       if (matched) {
         const [, varName, varValue] = matched;
+        const normalizedValue = cleanValue(varValue);
+
+        // 空值通常是占位或已清理状态，不再视为冲突
+        if (!hasNonEmptyValue(normalizedValue)) {
+          continue;
+        }
 
         if (matchesKeywords(varName, keywords)) {
           conflicts.push({
             varName,
-            varValue: maskSensitiveValue(cleanValue(varValue)),
+            varValue: maskSensitiveValue(normalizedValue),
+            valueFingerprint: hashValue(normalizedValue),
             sourceType: 'file',
             sourcePath: `${filePath}:${i + 1}`,
             filePath,
@@ -219,15 +240,15 @@ function parseConfigFile(filePath, keywords) {
 function matchesKeywords(varName, keywords) {
   const upperName = varName.toUpperCase();
 
-  // 首先检查是否包含平台关键词
-  const hasKeyword = keywords.some(keyword => upperName.includes(keyword));
-  if (!hasKeyword) {
-    return false;
-  }
-
   // 检查是否精确匹配已知敏感变量
   if (EXACT_SENSITIVE_VARS.includes(upperName)) {
     return true;
+  }
+
+  // 首先检查是否命中平台关键词（按 token 匹配，避免 OPENAI2 误判为 OPENAI）
+  const hasKeyword = keywords.some(keyword => matchesKeywordToken(upperName, keyword));
+  if (!hasKeyword) {
+    return false;
   }
 
   // 检查是否以敏感后缀结尾
@@ -236,6 +257,16 @@ function matchesKeywords(varName, keywords) {
   );
 
   return hasSensitiveSuffix;
+}
+
+function matchesKeywordToken(varName, keyword) {
+  const token = String(keyword || '').trim().toUpperCase();
+  if (!token) return false;
+
+  return varName === token ||
+    varName.startsWith(`${token}_`) ||
+    varName.endsWith(`_${token}`) ||
+    varName.includes(`_${token}_`);
 }
 
 /**
@@ -267,12 +298,69 @@ function cleanValue(value) {
 }
 
 /**
+ * 判断值是否为非空
+ */
+function hasNonEmptyValue(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+/**
  * 遮蔽敏感值
  */
 function maskSensitiveValue(value) {
   if (!value) return '';
   if (value.length <= 8) return '****';
   return value.substring(0, 4) + '****' + value.substring(value.length - 4);
+}
+
+function hashValue(value) {
+  return crypto
+    .createHash('sha256')
+    .update(String(value ?? ''), 'utf8')
+    .digest('hex');
+}
+
+function filterRealConflicts(conflicts) {
+  const grouped = new Map();
+
+  for (const conflict of conflicts) {
+    const key = String(conflict.varName || '').toUpperCase();
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(conflict);
+  }
+
+  const results = [];
+  for (const group of grouped.values()) {
+    if (group.length < 2) {
+      continue;
+    }
+
+    const sourceCount = new Set(group.map(item => item.sourcePath)).size;
+    if (sourceCount < 2) {
+      continue;
+    }
+
+    const valueVariants = new Set(
+      group
+        .map(item => item.valueFingerprint)
+        .filter(Boolean)
+    );
+
+    // 同名变量在多个来源但值一致，不算冲突
+    if (valueVariants.size <= 1) {
+      continue;
+    }
+
+    results.push(...group);
+  }
+
+  return results;
+}
+
+function sanitizeConflicts(conflicts) {
+  return conflicts.map(({ valueFingerprint, ...rest }) => rest);
 }
 
 /**

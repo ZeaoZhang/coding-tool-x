@@ -170,8 +170,8 @@ async function handleLaunchSession(session) {
   }
 }
 
-function handleLaunchWebSession(session, targetTool = null) {
-  const channel = targetTool || props.channel
+function handleLaunchWebSession(session) {
+  const channel = props.channel
   router.push({
     name: 'terminal-session',
     params: {
@@ -180,7 +180,6 @@ function handleLaunchWebSession(session, targetTool = null) {
       sessionId: session.sessionId
     },
     query: {
-      targetTool: targetTool || undefined,
       cwd: session.projectFullPath || undefined,
       openTs: Date.now().toString()
     }

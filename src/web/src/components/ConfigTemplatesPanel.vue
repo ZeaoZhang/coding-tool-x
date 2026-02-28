@@ -50,6 +50,7 @@
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
       <n-select v-model:value="filterType" :options="filterOptions" size="small" class="filter-select" />
+      <n-select v-model:value="filterCliType" :options="cliTypeFilterOptions" size="small" class="filter-select" />
     </div>
 
     <!-- 内容区域 -->
@@ -118,6 +119,16 @@ const templates = ref([])
 const availableConfigs = ref({})
 const searchQuery = ref('')
 const filterType = ref('all')
+const filterCliType = ref('')
+
+const cliTypeFilterOptions = [
+  { label: '全部 CLI', value: '' },
+  { label: 'Claude Code', value: 'claude' },
+  { label: 'Codex', value: 'codex' },
+  { label: 'Gemini', value: 'gemini' },
+  { label: 'OpenCode', value: 'opencode' }
+]
+
 const deletingId = ref(null)
 
 const showFormModal = ref(false)
@@ -139,6 +150,7 @@ const filteredTemplates = computed(() => {
   let result = templates.value
   if (filterType.value === 'builtin') result = result.filter(t => t.isBuiltin)
   else if (filterType.value === 'custom') result = result.filter(t => !t.isBuiltin)
+  if (filterCliType.value) result = result.filter(t => t.cliType === filterCliType.value)
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(t => t.name?.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q))

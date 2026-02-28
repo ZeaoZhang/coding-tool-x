@@ -1,10 +1,1 @@
-{
-  "version": 1,
-  "active": true,
-  "skill": "ralph",
-  "keyword": "KEEP GOING",
-  "phase": "reviewing",
-  "activated_at": "2026-02-26T09:38:55.862Z",
-  "updated_at": "2026-02-26T09:40:46.258Z",
-  "source": "keyword-detector"
-}
+{"version":1,"active":false}

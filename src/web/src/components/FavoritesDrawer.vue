@@ -26,7 +26,7 @@
               @click="$emit('view-history', { session, channel: 'claude' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('claude', session)"
-              @launch-web="(session, targetTool) => handleLaunchWeb('claude', session, targetTool)"
+              @launch-web="(session) => handleLaunchWeb('claude', session)"
             >
               <template #actions-extra>
                 <n-button
@@ -68,7 +68,7 @@
               @click="$emit('view-history', { session, channel: 'codex' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('codex', session)"
-              @launch-web="(session, targetTool) => handleLaunchWeb('codex', session, targetTool)"
+              @launch-web="(session) => handleLaunchWeb('codex', session)"
             >
               <template #actions-extra>
                 <n-button
@@ -110,7 +110,7 @@
               @click="$emit('view-history', { session, channel: 'gemini' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('gemini', session)"
-              @launch-web="(session, targetTool) => handleLaunchWeb('gemini', session, targetTool)"
+              @launch-web="(session) => handleLaunchWeb('gemini', session)"
             >
               <template #actions-extra>
                 <n-button
@@ -277,17 +277,15 @@ async function handleLaunch(channel, session) {
   }
 }
 
-function handleLaunchWeb(channel, session, targetTool = null) {
-  const targetChannel = targetTool || channel
+function handleLaunchWeb(channel, session) {
   router.push({
     name: 'terminal-session',
     params: {
-      channel: targetChannel,
+      channel,
       projectName: encodeURIComponent(session.projectName),
       sessionId: session.sessionId
     },
     query: {
-      targetTool: targetTool || undefined,
       cwd: session.projectFullPath || undefined,
       openTs: Date.now().toString()
     }

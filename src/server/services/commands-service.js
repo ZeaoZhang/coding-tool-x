@@ -12,9 +12,6 @@ const { RepoScannerBase } = require('./repo-scanner-base');
 const { NATIVE_PATHS } = require('../../config/paths');
 const {
   parseCommandContent,
-  detectCommandFormat,
-  convertCommandToCodex,
-  convertCommandToClaude,
   parseFrontmatter
 } = require('./format-converter');
 
@@ -569,32 +566,6 @@ class CommandsService {
 
   // ==================== 格式转换 ====================
 
-  /**
-   * 转换命令格式
-   * @param {string} content - 命令内容
-   * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
-   */
-  convertCommandFormat(content, targetFormat) {
-    const sourceFormat = detectCommandFormat(content);
-
-    if (sourceFormat === targetFormat) {
-      return { content, warnings: [], format: targetFormat };
-    }
-
-    if (targetFormat === 'codex') {
-      return convertCommandToCodex(content);
-    } else {
-      return convertCommandToClaude(content);
-    }
-  }
-
-  /**
-   * 检测命令格式
-   * @param {string} content - 命令内容
-   */
-  detectFormat(content) {
-    return detectCommandFormat(content);
-  }
 }
 
 module.exports = {

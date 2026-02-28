@@ -56,6 +56,8 @@
         <n-switch
           size="small"
           :value="channel.enabled !== false"
+          :loading="toggling"
+          :disabled="toggling"
           @update:value="$emit('toggle-enabled', $event)"
         />
       </div>
@@ -166,6 +168,10 @@ const props = defineProps({
   testFn: {
     type: Function,
     default: null
+  },
+  toggling: {
+    type: Boolean,
+    default: false
   }
 })
 

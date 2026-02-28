@@ -3,7 +3,7 @@
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ skill.name }}</span>
-        <n-tag v-if="skill.installed" type="success" size="small">已安装</n-tag>
+        <n-tag v-if="skill.installed" type="info" size="small">已安装</n-tag>
         <n-tag v-if="skill.repoOwner" type="info" size="small">{{ skill.repoOwner }}</n-tag>
       </div>
       <div class="card-actions" @click.stop>
@@ -12,6 +12,7 @@
           size="small"
           type="error"
           :loading="uninstalling"
+          :focusable="false"
           @click="$emit('uninstall', skill)"
         >卸载</n-button>
         <n-button
@@ -19,7 +20,8 @@
           size="small"
           type="primary"
           :loading="installing"
-          :disabled="!skill.repoOwner"
+          :disabled="!canInstall(skill)"
+          :focusable="false"
           @click="$emit('install', skill)"
         >安装</n-button>
       </div>
@@ -102,6 +104,10 @@ defineEmits(['click', 'install', 'uninstall', 'toggle-enabled', 'toggle-platform
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
+}
+
+function canInstall(skill) {
+  return !!(skill?.repoOwner || skill?.installSource)
 }
 </script>
 

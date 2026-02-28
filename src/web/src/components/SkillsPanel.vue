@@ -9,19 +9,19 @@
         <span class="panel-title">Skills 技能管理</span>
       </div>
       <div class="header-right">
-        <n-button text @click="showCreateModal = true" class="action-btn">
+        <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
         </n-button>
-        <n-button text @click="showRepoManager = true" class="action-btn">
+        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button text @click="loadData(true)" :loading="loading" class="action-btn">
+        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
@@ -31,19 +31,19 @@
     <!-- 抽屉模式头部 -->
     <div class="drawer-header-bar" v-if="inDrawer">
       <div class="header-right">
-        <n-button text @click="showCreateModal = true" class="action-btn">
+        <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
         </n-button>
-        <n-button text @click="showRepoManager = true" class="action-btn">
+        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text @click="handleImport" :loading="importing" class="action-btn">
+        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button text @click="loadData(true)" :loading="loading" class="action-btn">
+        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
@@ -147,6 +147,7 @@ const uninstallingKeys = ref({})
 const togglingKeys = ref({})
 const registryMap = ref({})
 const importing = ref(false)
+const loadRequestId = ref(0)
 
 const currentPlatform = computed(() => {
   const channel = route.meta.channel
@@ -167,7 +168,7 @@ const filterOptions = [
   { label: '全部', value: 'all' },
   { label: '已安装', value: 'installed' },
   { label: '未安装', value: 'uninstalled' },
-  { label: '自定义', value: 'custom' }
+  { label: '已托管', value: 'managed' }
 ]
 
 const installedCount = computed(() => skills.value.filter(s => s.installed).length)
@@ -177,7 +178,7 @@ const filteredSkills = computed(() => {
   let result = skills.value
   if (filterStatus.value === 'installed') result = result.filter(s => s.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(s => !s.installed)
-  else if (filterStatus.value === 'custom') result = result.filter(s => !s.repoOwner)
+  else if (filterStatus.value === 'managed') result = result.filter(s => registryMap.value[s.directory || s.name])
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
@@ -189,17 +190,20 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的技能'
   if (filterStatus.value === 'installed') return '暂无已安装的技能'
   if (filterStatus.value === 'uninstalled') return '所有技能都已安装'
-  if (filterStatus.value === 'custom') return '暂无自定义技能'
+  if (filterStatus.value === 'managed') return '暂无托管的技能'
   return '暂无可用技能，请配置仓库源'
 })
 
 async function loadData(force = false) {
+  const requestId = ++loadRequestId.value
+  const platform = currentPlatform.value
   loading.value = true
   try {
     const [skillsRes, registryRes] = await Promise.all([
-      getSkills(force, currentPlatform.value),
+      getSkills(force, platform),
       listItems('skills')
     ])
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
     if (skillsRes.success) skills.value = skillsRes.skills || []
     if (registryRes.success) {
       registryMap.value = {}
@@ -210,11 +214,16 @@ async function loadData(force = false) {
   } catch (err) {
     message.error('加载技能失败: ' + err.message)
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId.value) {
+      loading.value = false
+    }
   }
 }
 
 async function handleImport() {
+  if (currentPlatform.value !== 'claude') {
+    return
+  }
   importing.value = true
   try {
     const res = await importFromClaude('skills')
@@ -292,14 +301,19 @@ function handleCardClick(skill) {
   showDetailModal.value = true
 }
 
-onMounted(() => loadData())
+onMounted(() => {
+  // 抽屉模式下仅在打开时加载，避免应用启动时触发网络依赖
+  if (!props.inDrawer || props.drawerVisible) {
+    loadData()
+  }
+})
 
 watch(() => props.drawerVisible, (val) => {
   if (val) loadData()
 })
 
 watch(() => currentPlatform.value, () => {
-  loadData(true)
+  loadData()
 })
 </script>
 

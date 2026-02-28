@@ -13,7 +13,7 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button v-if="currentPlatform === 'claude'" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
+        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -31,7 +31,7 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button v-if="currentPlatform === 'claude'" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
+        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -147,6 +147,7 @@ const uninstallingKeys = ref({})
 const togglingKeys = ref({})
 const registryMap = ref({})
 const importing = ref(false)
+const loadRequestId = ref(0)
 
 const currentPlatform = computed(() => {
   return route.meta.channel === 'opencode' ? 'opencode' : 'claude'
@@ -187,20 +188,23 @@ const emptyText = computed(() => {
 })
 
 async function loadData(force = false) {
+  const requestId = ++loadRequestId.value
+  const platform = currentPlatform.value
   loading.value = true
   try {
-    // 先同步仓库
-    await syncPluginRepos(currentPlatform.value).catch(() => {})
+    // 仅在用户主动刷新时同步仓库，避免启动时因离线而卡住
+    if (force) {
+      await syncPluginRepos(platform).catch(() => {})
+    }
 
-    // 并行获取已安装插件、市场插件和注册表信息
-    const [installedRes, marketRes, registryRes] = await Promise.all([
-      getPlugins(currentPlatform.value),
-      getMarketPlugins(currentPlatform.value).catch(() => ({ success: true, plugins: [] })),
+    // 先获取本地可用数据，保证离线也能立即使用
+    const [installedRes, registryRes] = await Promise.all([
+      getPlugins(platform),
       listItems('plugins')
     ])
 
     const installedList = installedRes.success ? installedRes.plugins : []
-    const marketList = marketRes.success ? marketRes.plugins : []
+    let marketList = []
 
     // 处理注册表数据
     if (registryRes.success) {
@@ -210,43 +214,56 @@ async function loadData(force = false) {
       }
     }
 
-    // 创建市场插件的名称映射，用于合并详细信息
-    const marketByName = {}
-    for (const mp of marketList) {
-      marketByName[mp.name] = mp
+    const mergePluginLists = (installed, market) => {
+      const marketByName = {}
+      for (const mp of market) {
+        marketByName[mp.name] = mp
+      }
+
+      const installedPlugins = installed.map(p => {
+        const marketInfo = marketByName[p.name] || {}
+        return {
+          ...marketInfo,
+          ...p,
+          installed: true,
+          key: `installed-${p.name}`,
+          description: p.description || marketInfo.description || '',
+          repoOwner: p.repoOwner || marketInfo.repoOwner || '',
+          repoName: p.repoName || marketInfo.repoName || '',
+          repoBranch: p.repoBranch || marketInfo.repoBranch || 'main',
+          directory: p.directory || marketInfo.directory || p.installPath || ''
+        }
+      })
+
+      const installedNames = new Set(installed.map(p => p.name))
+      const uninstalledPlugins = market
+        .filter(p => !installedNames.has(p.name))
+        .map(p => ({
+          ...p,
+          installed: false,
+          key: `market-${p.repoOwner || 'repo'}-${p.repoName || 'name'}-${p.directory || p.name}`
+        }))
+
+      return [...installedPlugins, ...uninstalledPlugins]
     }
 
-    // 已安装插件：合并市场插件的详细信息
-    const installedPlugins = installedList.map(p => {
-      const marketInfo = marketByName[p.name] || {}
-      return {
-        ...marketInfo,
-        ...p,
-        installed: true,
-        key: `installed-${p.name}`,
-        description: p.description || marketInfo.description || '',
-        repoOwner: p.repoOwner || marketInfo.repoOwner || '',
-        repoName: p.repoName || marketInfo.repoName || '',
-        repoBranch: p.repoBranch || marketInfo.repoBranch || 'main',
-        directory: p.directory || marketInfo.directory || p.installPath || ''
-      }
-    })
+    // 先渲染已安装插件（离线可用）
+    plugins.value = mergePluginLists(installedList, marketList)
 
-    // 未安装的市场插件
-    const installedNames = new Set(installedList.map(p => p.name))
-    const uninstalledPlugins = marketList
-      .filter(p => !installedNames.has(p.name))
-      .map(p => ({
-        ...p,
-        installed: false,
-        key: `market-${p.repoOwner || 'repo'}-${p.repoName || 'name'}-${p.directory || p.name}`
-      }))
-
-    plugins.value = [...installedPlugins, ...uninstalledPlugins]
+    // 再后台加载市场插件（失败不影响可用性，也不阻塞离线使用）
+    getMarketPlugins(platform)
+      .catch(() => ({ success: true, plugins: [] }))
+      .then((marketRes) => {
+        if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
+        marketList = marketRes.success ? marketRes.plugins : []
+        plugins.value = mergePluginLists(installedList, marketList)
+      })
   } catch (err) {
     message.error('加载插件失败: ' + err.message)
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId.value) {
+      loading.value = false
+    }
   }
 }
 
@@ -332,14 +349,19 @@ function handleCardClick(plugin) {
   detailDrawerVisible.value = true
 }
 
-onMounted(() => loadData())
+onMounted(() => {
+  // 抽屉模式下仅在打开时加载，避免应用启动时触发网络依赖
+  if (!props.inDrawer || props.drawerVisible) {
+    loadData()
+  }
+})
 
 watch(() => props.drawerVisible, (val) => {
   if (val) loadData()
 })
 
 watch(() => currentPlatform.value, () => {
-  loadData(true)
+  loadData()
 })
 </script>
 

@@ -11,29 +11,44 @@ export const useFavoritesStore = defineStore('favorites', () => {
 
   const isLoaded = ref(false)
   const loading = ref(false)
+  let loadPromise = null
 
   async function loadFavorites(force = false) {
     if (isLoaded.value && !force) {
       return favorites.value
     }
-    loading.value = true
-    try {
-      const response = await getAllFavorites()
-      if (response.success && response.favorites) {
-        favorites.value = {
-          claude: response.favorites.claude || [],
-          codex: response.favorites.codex || [],
-          gemini: response.favorites.gemini || []
+    if (loadPromise && !force) {
+      return loadPromise
+    }
+
+    let currentPromise = null
+    const runLoad = async () => {
+      loading.value = true
+      try {
+        const response = await getAllFavorites()
+        if (response.success && response.favorites) {
+          favorites.value = {
+            claude: response.favorites.claude || [],
+            codex: response.favorites.codex || [],
+            gemini: response.favorites.gemini || []
+          }
+        }
+        isLoaded.value = true
+        return favorites.value
+      } catch (err) {
+        console.error('Failed to load favorites:', err)
+        throw err
+      } finally {
+        loading.value = false
+        if (loadPromise === currentPromise) {
+          loadPromise = null
         }
       }
-      isLoaded.value = true
-      return favorites.value
-    } catch (err) {
-      console.error('Failed to load favorites:', err)
-      throw err
-    } finally {
-      loading.value = false
     }
+
+    currentPromise = runLoad()
+    loadPromise = currentPromise
+    return currentPromise
   }
 
   async function addFavorite(channel, sessionData) {

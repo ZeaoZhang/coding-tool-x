@@ -12,6 +12,7 @@ const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
 const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
 const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
 const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
+const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 
 // 测试结果缓存
 const testResultsCache = new Map();
@@ -85,6 +86,21 @@ function resolveExplicitModel(channel, model) {
     || normalizeNonEmptyString(channel?.model)
     || normalizeNonEmptyString(channel?.modelConfig?.model)
   );
+}
+
+function resolveToolTypeForSpeedTest(channelType, channel) {
+  if (channelType === 'claude' || channelType === 'codex' || channelType === 'gemini') {
+    return channelType;
+  }
+  const gatewaySourceType = normalizeNonEmptyString(channel?.gatewaySourceType);
+  if (gatewaySourceType === 'claude' || gatewaySourceType === 'codex' || gatewaySourceType === 'gemini') {
+    return gatewaySourceType;
+  }
+  return 'codex';
+}
+
+function getConfiguredDefaultSpeedTestModel(toolType) {
+  return normalizeNonEmptyString(getDefaultSpeedTestModelByToolType(toolType));
 }
 
 function resolveEffectiveApiKey(channel, channelType) {
@@ -441,6 +457,21 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       };
       console.log(`[SpeedTest] Using explicit model: ${explicitModel}`);
     } else {
+      const defaultSpeedTestModel = getConfiguredDefaultSpeedTestModel(
+        resolveToolTypeForSpeedTest(channelType, channel)
+      );
+      if (defaultSpeedTestModel) {
+        modelProbe = {
+          preferredTestModel: defaultSpeedTestModel,
+          availableModels: [defaultSpeedTestModel],
+          cached: false,
+          method: 'default_config'
+        };
+        console.log(`[SpeedTest] Using default speedTestModel from config: ${defaultSpeedTestModel}`);
+      }
+    }
+
+    if (!modelProbe) {
       // Fall back to auto-detection
       try {
         modelProbe = await probeModelAvailability(channel, channelType, { stopOnFirstAvailable: true });
@@ -512,7 +543,9 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     }
     apiPath += '?beta=true';
 
-    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'claude-sonnet-4-20250514';
+    testModel = modelProbe?.preferredTestModel
+      || normalizeNonEmptyString(model)
+      || getConfiguredDefaultSpeedTestModel('claude');
     const sessionId = Math.random().toString(36).substring(2, 15);
     primaryRequestConfig = {
       apiPath,
@@ -550,7 +583,9 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     };
   } else if (channelType === 'codex') {
     const apiPath = buildCodexResponsesPath(parsedUrl);
-    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-5-codex';
+    testModel = modelProbe?.preferredTestModel
+      || normalizeNonEmptyString(model)
+      || getConfiguredDefaultSpeedTestModel('codex');
     const codexSessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
     const baseBody = {
@@ -588,7 +623,9 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       isStreamingResponse: true
     };
   } else if (channelType === 'gemini') {
-    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gemini-2.5-pro';
+    testModel = modelProbe?.preferredTestModel
+      || normalizeNonEmptyString(model)
+      || getConfiguredDefaultSpeedTestModel('gemini');
     const useCliFormat = shouldUseGeminiCliFormat(parsedUrl);
 
     const cliRequestConfig = {

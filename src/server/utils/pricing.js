@@ -1,79 +1,70 @@
 const { loadConfig } = require('../../config/loader');
-const DEFAULT_CONFIG = require('../../config/default');
-const { CLAUDE_MODEL_PRICING, CLAUDE_MODEL_ALIASES } = require('../../config/model-pricing');
+const { resolveModelMetadata } = require('../../config/model-metadata');
 
-const RATE_KEYS = ['input', 'output', 'cacheCreation', 'cacheRead', 'cached', 'reasoning'];
+function normalizeModelId(model) {
+  return String(model || '').trim().toLowerCase();
+}
 
-function getPricingConfig(toolKey) {
+function getModelMetadataOverride(overrides, model) {
+  if (!overrides || typeof overrides !== 'object') return null;
+  const modelId = normalizeModelId(model);
+  if (!modelId) return null;
+
+  let directMatch = null;
+  for (const [id, override] of Object.entries(overrides)) {
+    if (normalizeModelId(id) === modelId) {
+      directMatch = override;
+      break;
+    }
+  }
+  if (directMatch) return directMatch;
+
+  let bestMatch = null;
+  let bestLen = 0;
+  for (const [id, override] of Object.entries(overrides)) {
+    const key = normalizeModelId(id);
+    if (!key) continue;
+    if (modelId.startsWith(key) || key.startsWith(modelId)) {
+      if (key.length > bestLen) {
+        bestLen = key.length;
+        bestMatch = override;
+      }
+    }
+  }
+  return bestMatch;
+}
+
+function resolveMetadataPricing(model) {
+  if (!model) return null;
+
+  const builtInPricing = resolveModelMetadata(model)?.pricing || null;
+
   try {
     const config = loadConfig();
-    if (config.pricing && config.pricing[toolKey]) {
-      return config.pricing[toolKey];
-    }
+    const override = getModelMetadataOverride(config.modelMetadataOverrides, model);
+    const overridePricing = override?.pricing || null;
+    if (!builtInPricing && !overridePricing) return null;
+    return {
+      ...(builtInPricing || {}),
+      ...(overridePricing || {})
+    };
   } catch (err) {
-    console.error('[Pricing] Failed to load pricing config:', err);
+    console.error('[Pricing] Failed to load model metadata overrides:', err);
+    return builtInPricing;
   }
-  return DEFAULT_CONFIG.pricing[toolKey];
 }
 
-function resolvePricing(toolKey, modelPricing = {}, defaultPricing = {}) {
-  const base = { ...defaultPricing, ...(modelPricing || {}) };
-  const pricingConfig = getPricingConfig(toolKey);
-
-  if (!pricingConfig) {
-    return base;
-  }
-
-  if (pricingConfig.mode === 'custom') {
-    const result = { ...base };
-    RATE_KEYS.forEach((key) => {
-      if (typeof pricingConfig[key] === 'number' && Number.isFinite(pricingConfig[key])) {
-        result[key] = pricingConfig[key];
-      }
-    });
-    return result;
-  }
-
-  return base;
+function resolvePricing(_toolKey, modelPricing = {}, defaultPricing = {}) {
+  return { ...defaultPricing, ...(modelPricing || {}) };
 }
 
-function resolveModelPricing(toolKey, model, hardcodedPricing = {}, defaultPricing = {}) {
-  const config = getPricingConfig(toolKey);
-
-  // 1. Check user custom config for specific model first
-  const modelConfig = config?.models?.[model];
-  if (modelConfig && modelConfig.mode === 'custom') {
-    const result = { ...hardcodedPricing };
-    RATE_KEYS.forEach((key) => {
-      if (typeof modelConfig[key] === 'number' && Number.isFinite(modelConfig[key])) {
-        result[key] = modelConfig[key];
-      }
-    });
-    return result;
-  }
-
-  // 2. Check user custom config for tool-level
-  if (config && config.mode === 'custom') {
-    const result = { ...hardcodedPricing };
-    RATE_KEYS.forEach((key) => {
-      if (typeof config[key] === 'number' && Number.isFinite(config[key])) {
-        result[key] = config[key];
-      }
-    });
-    return result;
-  }
-
-  // 3. Use centralized hardcoded pricing for known models (mode: 'auto')
-  // Normalize model name using aliases
-  const normalizedModel = CLAUDE_MODEL_ALIASES[model] || model;
-  const centralizedPricing = CLAUDE_MODEL_PRICING[normalizedModel];
-
-  if (centralizedPricing) {
-    return { ...defaultPricing, ...centralizedPricing };
-  }
-
-  // 4. Fall back to base pricing for unknown models
-  return { ...defaultPricing, ...hardcodedPricing };
+function resolveModelPricing(_toolKey, model, fallbackPricing = {}, defaultPricing = {}) {
+  const pricingFromMetadata = resolveMetadataPricing(model);
+  return {
+    ...defaultPricing,
+    ...(fallbackPricing || {}),
+    ...(pricingFromMetadata || {})
+  };
 }
 
 module.exports = {

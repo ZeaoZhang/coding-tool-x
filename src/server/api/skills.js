@@ -567,48 +567,4 @@ router.put('/:directory/file/*', (req, res) => {
   }
 });
 
-// ==================== 格式转换 API ====================
-
-/**
- * 转换技能格式
- * POST /api/skills/convert
- * Body: { content, targetFormat }
- * - content: 技能内容
- * - targetFormat: 目标格式 ('claude' | 'codex')
- */
-router.post('/convert', (req, res) => {
-  try {
-    const { platform, service } = getSkillService(req);
-    const { content, targetFormat } = req.body;
-
-    if (!content) {
-      return res.status(400).json({
-        success: false,
-        message: '请提供技能内容'
-      });
-    }
-
-    if (!['claude', 'codex'].includes(targetFormat)) {
-      return res.status(400).json({
-        success: false,
-        message: '目标格式必须是 claude 或 codex'
-      });
-    }
-
-    const result = service.convertSkillFormat(content, targetFormat);
-
-    res.json({
-      success: true,
-      platform,
-      ...result
-    });
-  } catch (err) {
-    console.error('[Skills API] Convert skill error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
-  }
-});
-
 module.exports = router;

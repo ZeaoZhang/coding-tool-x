@@ -37,6 +37,11 @@
           <div class="col col-token" :class="`col-token-${source}`">缓存</div>
           <div class="col col-token" :class="`col-token-${source}`">总计</div>
         </template>
+        <template v-else-if="source === 'opencode'">
+          <div class="col col-token" :class="`col-token-${source}`">推理</div>
+          <div class="col col-token" :class="`col-token-${source}`">缓存</div>
+          <div class="col col-token" :class="`col-token-${source}`">总计</div>
+        </template>
         <div class="col col-time" :class="`col-time-${source}`">时间</div>
       </div>
 
@@ -84,6 +89,11 @@
                     <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
                   </template>
                   <template v-else-if="source === 'gemini'">
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
+                  </template>
+                  <template v-else-if="source === 'opencode'">
+                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.reasoning || 0 }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
                   </template>
@@ -580,6 +590,29 @@ onUnmounted(() => {
   padding-right: 6px;
 }
 
+/* OpenCode 渠道列宽 (7列，需要压缩) */
+.col-channel-opencode {
+  flex: 0 0 75px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.col-token-opencode {
+  flex: 0 0 58px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-time-opencode {
+  flex: 0 0 92px;
+  min-width: 92px;
+  font-family: monospace;
+  font-size: 11px;
+  justify-content: flex-end;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
 /* 通用样式（保留以防兼容性问题） */
 .col-channel {
   min-width: 0;
@@ -704,15 +737,18 @@ onUnmounted(() => {
     min-width: 80px;
   }
 
-  .col-channel-codex {
+  .col-channel-codex,
+  .col-channel-opencode {
     flex: 0 0 65px;
   }
 
-  .col-token-codex {
+  .col-token-codex,
+  .col-token-opencode {
     flex: 0 0 48px;
   }
 
-  .col-time-codex {
+  .col-time-codex,
+  .col-time-opencode {
     flex: 0 0 75px;
     min-width: 75px;
   }
@@ -767,7 +803,8 @@ onUnmounted(() => {
   /* 更紧凑的列宽 */
   .col-channel-claude,
   .col-channel-gemini,
-  .col-channel-codex {
+  .col-channel-codex,
+  .col-channel-opencode {
     flex: 0 0 60px;
   }
 
@@ -779,14 +816,16 @@ onUnmounted(() => {
 
   .col-token-claude,
   .col-token-gemini,
-  .col-token-codex {
+  .col-token-codex,
+  .col-token-opencode {
     flex: 0 0 40px;
     font-size: 9px;
   }
 
   .col-time-claude,
   .col-time-gemini,
-  .col-time-codex {
+  .col-time-codex,
+  .col-time-opencode {
     flex: 0 0 65px;
     min-width: 65px;
     font-size: 9px;
@@ -852,7 +891,8 @@ onUnmounted(() => {
   /* 超紧凑列宽 */
   .col-channel-claude,
   .col-channel-gemini,
-  .col-channel-codex {
+  .col-channel-codex,
+  .col-channel-opencode {
     flex: 0 0 50px;
   }
 
@@ -864,14 +904,16 @@ onUnmounted(() => {
 
   .col-token-claude,
   .col-token-gemini,
-  .col-token-codex {
+  .col-token-codex,
+  .col-token-opencode {
     flex: 0 0 32px;
     font-size: 8px;
   }
 
   .col-time-claude,
   .col-time-gemini,
-  .col-time-codex {
+  .col-time-codex,
+  .col-time-opencode {
     flex: 0 0 55px;
     min-width: 55px;
     font-size: 8px;
@@ -921,20 +963,23 @@ onUnmounted(() => {
   /* 隐藏部分 Token 列 */
   .col-channel-claude,
   .col-channel-gemini,
-  .col-channel-codex {
+  .col-channel-codex,
+  .col-channel-opencode {
     flex: 0 0 45px;
   }
 
   .col-token-claude,
   .col-token-gemini,
-  .col-token-codex {
+  .col-token-codex,
+  .col-token-opencode {
     flex: 0 0 28px;
     font-size: 7px;
   }
 
   .col-time-claude,
   .col-time-gemini,
-  .col-time-codex {
+  .col-time-codex,
+  .col-time-opencode {
     flex: 0 0 48px;
     min-width: 48px;
     font-size: 7px;

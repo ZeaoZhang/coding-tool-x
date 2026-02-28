@@ -38,6 +38,7 @@
             :show-apply-button="config.showApplyButton"
             :channel-type="config.type"
             :test-fn="config.testFn"
+            :toggling="!!state.toggling[element.id]"
             @toggle-collapse="actions.toggleCollapse(element.id)"
             @apply="actions.handleApplyToSettings(element)"
             @edit="actions.handleEdit(element)"
@@ -96,6 +97,18 @@
                 :available-models="state.formData.availableModels"
                 :channel-type="config.type"
               />
+              <!-- 多选模型选择器 -->
+              <n-select
+                v-else-if="field.type === 'model-multi-select'"
+                v-model:value="state.formData.allowedModels"
+                :options="state.formData.availableModels || []"
+                :placeholder="field.placeholder"
+                :loading="state.formData.modelsFetching"
+                multiple
+                filterable
+                clearable
+                tag
+              />
               <!-- 测速模型选择器 (支持手动输入) -->
               <n-auto-complete
                 v-else-if="field.type === 'select' && field.key === 'speedTestModel'"
@@ -106,6 +119,28 @@
                 :get-show="() => true"
                 clearable
                 @update:value="(val) => state.formData.speedTestModel = val"
+              >
+                <template v-if="state.formData.modelsFetchError" #empty>
+                  <div style="padding: 8px; color: #d03050; font-size: 12px;">
+                    <div style="font-weight: 500; margin-bottom: 4px;">
+                      {{ state.formData.modelsFetchError }}
+                    </div>
+                    <div v-if="state.formData.modelsFetchErrorHint" style="color: #666; font-size: 11px; line-height: 1.4;">
+                      {{ state.formData.modelsFetchErrorHint }}
+                    </div>
+                  </div>
+                </template>
+              </n-auto-complete>
+              <!-- 默认模型选择器 (支持手动输入) -->
+              <n-auto-complete
+                v-else-if="field.type === 'select' && field.key === 'model'"
+                :value="state.formData.model"
+                :options="getSpeedTestModelOptions(state.formData.model, field.options)"
+                :placeholder="field.placeholder"
+                :loading="state.formData.modelsFetching"
+                :get-show="() => true"
+                clearable
+                @update:value="(val) => state.formData.model = val"
               >
                 <template v-if="state.formData.modelsFetchError" #empty>
                   <div style="padding: 8px; color: #d03050; font-size: 12px;">
@@ -206,7 +241,7 @@ const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
 
 // 监听对话框打开，自动获取模型列表
 watch(() => state.showDialog, async (newVal) => {
-  if (newVal && state.editingChannel && config.fetchModelsForChannel) {
+  if (newVal && config.fetchModelsForChannel) {
     await handleFetchModels()
   }
 })
@@ -236,20 +271,21 @@ const presetOptions = computed(() => {
 })
 
 // 预设变化处理
-function handlePresetChange(presetId) {
+async function handlePresetChange(presetId) {
   if (config.onPresetChange) {
     const newForm = config.onPresetChange(presetId, state.formData)
     Object.assign(state.formData, newForm)
   } else {
     state.formData.presetId = presetId
   }
+  // 预设切换后重新获取模型列表（入口类型切换时需要更新可用模型）
+  await handleFetchModels()
 }
 
 // 获取模型列表
 async function handleFetchModels() {
-  if (!state.editingChannel) return
   if (config.fetchModelsForChannel) {
-    await config.fetchModelsForChannel(state.editingChannel.id, state.formData)
+    await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData)
   }
 }
 
@@ -292,12 +328,28 @@ function getFilteredModelOptions(inputValue) {
   })
 }
 
-// 获取测速模型选项（优先使用动态获取的 availableModels，回退到字段配置的 options）
+// 获取测速模型选项（合并动态可用模型与字段配置模型）
 function getSpeedTestModelOptions(inputValue, fieldOptions) {
-  // 优先使用动态获取的模型列表，如果为空则使用字段配置的默认选项
-  const options = (state.formData.availableModels && state.formData.availableModels.length > 0)
-    ? state.formData.availableModels
-    : (fieldOptions || [])
+  const merged = []
+  const seen = new Set()
+  const appendOptions = (options) => {
+    for (const opt of options || []) {
+      const value = String(opt?.value || '').trim()
+      if (!value) continue
+      const key = value.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push({
+        label: opt?.label || value,
+        value
+      })
+    }
+  }
+
+  // 合并动态模型 + 字段配置模型，避免仅展示单个默认模型
+  appendOptions(state.formData.availableModels || [])
+  appendOptions(fieldOptions || [])
+  const options = merged
 
   if (!inputValue || !options.length) {
     return options

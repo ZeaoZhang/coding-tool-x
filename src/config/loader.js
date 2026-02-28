@@ -49,9 +49,9 @@ function mergeDefaultModels(defaultModels, overrides = {}) {
   return merged;
 }
 
-function mergeModelDiscovery(defaultModelDiscovery, overrides = {}) {
+function mergeDefaultSpeedTestModels(defaultModels, overrides = {}) {
   return {
-    ...defaultModelDiscovery,
+    ...defaultModels,
     ...(overrides || {})
   };
 }
@@ -99,7 +99,10 @@ function loadConfig() {
       config.ports = { ...DEFAULT_CONFIG.ports, ...userConfig.ports };
       config.pricing = mergePricing(DEFAULT_CONFIG.pricing, userConfig.pricing);
       config.defaultModels = mergeDefaultModels(DEFAULT_CONFIG.defaultModels, userConfig.defaultModels);
-      config.modelDiscovery = mergeModelDiscovery(DEFAULT_CONFIG.modelDiscovery, userConfig.modelDiscovery);
+      config.defaultSpeedTestModels = mergeDefaultSpeedTestModels(
+        DEFAULT_CONFIG.defaultSpeedTestModels,
+        userConfig.defaultSpeedTestModels
+      );
 
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {

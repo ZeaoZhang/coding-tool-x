@@ -19,11 +19,12 @@ const {
   runWithConcurrencyLimit
 } = require('../services/speed-test');
 const { clearGeminiRedirectCache } = require('../gemini-proxy-server');
-const {
-  probeModelAvailability,
-  fetchModelsFromProvider
-} = require('../services/model-detector');
+const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const GEMINI_GATEWAY_SOURCE_TYPE = 'gemini';
+
+function getDefaultGeminiModel() {
+  return getDefaultSpeedTestModelByToolType('gemini');
+}
 
 module.exports = (config) => {
   /**
@@ -67,41 +68,16 @@ module.exports = (config) => {
       }
 
       const gatewaySourceType = GEMINI_GATEWAY_SOURCE_TYPE;
-      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
-      const listedModels = Array.isArray(listResult.models) ? listResult.models : [];
-      let result;
-
-      if (listedModels.length > 0) {
-        result = {
-          models: listedModels,
-          supported: true,
-          cached: !!listResult.cached,
-          fallbackUsed: false,
-          lastChecked: listResult.lastChecked || new Date().toISOString(),
-          error: null,
-          errorHint: null
-        };
-      } else {
-        const usingConfiguredProbe = !!listResult.disabledByConfig;
-        const probe = await probeModelAvailability(channel, gatewaySourceType, {
-          stopOnFirstAvailable: false
-        });
-        const probedModels = Array.isArray(probe.availableModels) ? probe.availableModels : [];
-
-        result = {
-          models: probedModels,
-          supported: probedModels.length > 0,
-          cached: !!probe.cached || !!listResult.cached,
-          fallbackUsed: false,
-          lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
-          error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
-          errorHint: probedModels.length > 0
-            ? (usingConfiguredProbe ? '已按设置跳过 /v1/models，使用默认模型探测结果' : '模型列表接口不可用，已自动切换为模型探测结果')
-            : (listResult.errorHint || (usingConfiguredProbe
-              ? '已按设置跳过 /v1/models，且默认模型探测无可用结果'
-              : '模型列表接口不可用且模型探测无可用结果'))
-        };
-      }
+      const models = [getDefaultGeminiModel()];
+      const result = {
+        models,
+        supported: models.length > 0,
+        cached: false,
+        fallbackUsed: false,
+        lastChecked: new Date().toISOString(),
+        error: models.length > 0 ? null : '未配置默认模型列表',
+        errorHint: models.length > 0 ? null : '请在设置中配置 Gemini 默认模型'
+      };
 
       res.json({
         channelId: id,
@@ -157,7 +133,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Missing required fields: apiKey' });
       }
 
-      const channel = createChannel(name, baseUrl, apiKey, model || 'gemini-2.5-pro', {
+      const channel = createChannel(name, baseUrl, apiKey, model || getDefaultGeminiModel(), {
         websiteUrl,
         enabled,
         weight,

@@ -1,15 +1,24 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 
 /**
  * OpenCode 会话服务
- * 读取 OpenCode CLI 的原生会话数据
+ * 读取 OpenCode SQLite 会话数据
  */
 
 const PROJECT_ORDER_FILE = path.join(PATHS.base, 'opencode-project-order.json');
 const SESSION_ORDER_FILE = path.join(PATHS.base, 'opencode-session-order.json');
+const OPENCODE_DB_PATH = path.join(NATIVE_PATHS.opencode.data, 'opencode.db');
+const COUNTS_CACHE_TTL_MS = 30 * 1000;
+const EMPTY_COUNTS = Object.freeze({ projectCount: 0, sessionCount: 0 });
+
+let countsCache = {
+  expiresAt: 0,
+  value: EMPTY_COUNTS
+};
 
 function ensureParentDir(filePath) {
   const dir = path.dirname(filePath);
@@ -34,27 +43,6 @@ function writeJsonSafe(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function copyDirectoryRecursive(sourceDir, targetDir) {
-  if (!fs.existsSync(sourceDir)) {
-    return;
-  }
-
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
-  }
-
-  const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
-  for (const entry of entries) {
-    const sourcePath = path.join(sourceDir, entry.name);
-    const targetPath = path.join(targetDir, entry.name);
-    if (entry.isDirectory()) {
-      copyDirectoryRecursive(sourcePath, targetPath);
-    } else {
-      fs.copyFileSync(sourcePath, targetPath);
-    }
-  }
-}
-
 function sortByOrder(items, order, fallbackCompare) {
   const fallbackSorted = [...items].sort(fallbackCompare);
   if (!Array.isArray(order) || order.length === 0) {
@@ -72,6 +60,17 @@ function sortByOrder(items, order, fallbackCompare) {
   });
 }
 
+function parseJsonMaybe(raw, fallback = null) {
+  if (typeof raw !== 'string') {
+    return fallback;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    return fallback;
+  }
+}
+
 function extractTextContent(content) {
   if (typeof content === 'string') {
     return content;
@@ -86,6 +85,116 @@ function extractTextContent(content) {
   return '';
 }
 
+function extractTextFromPartData(partData) {
+  if (!partData || typeof partData !== 'object') {
+    return '';
+  }
+
+  if (typeof partData.text === 'string' && partData.text.trim()) {
+    return partData.text.trim();
+  }
+
+  if (typeof partData.content === 'string' && partData.content.trim()) {
+    return partData.content.trim();
+  }
+
+  if (Array.isArray(partData.content)) {
+    return partData.content
+      .filter(item => item && item.type === 'text' && typeof item.text === 'string')
+      .map(item => item.text)
+      .join('\n')
+      .trim();
+  }
+
+  return '';
+}
+
+function extractTextFromMessageData(messageData) {
+  if (!messageData || typeof messageData !== 'object') {
+    return '';
+  }
+
+  const contentText = extractTextContent(messageData.content);
+  if (contentText) {
+    return contentText;
+  }
+
+  if (typeof messageData.text === 'string' && messageData.text.trim()) {
+    return messageData.text.trim();
+  }
+
+  return '';
+}
+
+function normalizeTimestampMs(input) {
+  const value = Number(input);
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  return value > 1e12 ? value : value * 1000;
+}
+
+function toIsoTime(input) {
+  const ts = normalizeTimestampMs(input);
+  if (!ts) {
+    return null;
+  }
+  try {
+    return new Date(ts).toISOString();
+  } catch (err) {
+    return null;
+  }
+}
+
+function sqlQuote(value) {
+  if (value === null || value === undefined) {
+    return 'NULL';
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(Math.trunc(value)) : 'NULL';
+  }
+  if (typeof value === 'boolean') {
+    return value ? '1' : '0';
+  }
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runSqliteQuery(sql) {
+  if (!isOpenCodeInstalled()) {
+    return [];
+  }
+
+  try {
+    const output = execFileSync('sqlite3', ['-json', OPENCODE_DB_PATH, sql], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024
+    }).trim();
+
+    if (!output) {
+      return [];
+    }
+
+    const parsed = JSON.parse(output);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error('[OpenCode Sessions] SQLite query failed:', err.message);
+    return [];
+  }
+}
+
+function runSqliteExec(sql) {
+  if (!isOpenCodeInstalled()) {
+    throw new Error('OpenCode CLI not installed');
+  }
+
+  execFileSync('sqlite3', [OPENCODE_DB_PATH, sql], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    maxBuffer: 10 * 1024 * 1024
+  });
+}
+
 function buildContext(text, keyword, contextLength = 35) {
   if (!text || !keyword) {
     return null;
@@ -96,24 +205,24 @@ function buildContext(text, keyword, contextLength = 35) {
     ? parsedContextLength
     : 35;
 
-  const lowerText = text.toLowerCase();
-  const lowerKeyword = keyword.toLowerCase();
+  const lowerText = String(text).toLowerCase();
+  const lowerKeyword = String(keyword).toLowerCase();
   const index = lowerText.indexOf(lowerKeyword);
   if (index === -1) {
     return null;
   }
 
   const start = Math.max(0, index - safeContextLength);
-  const end = Math.min(text.length, index + keyword.length + safeContextLength);
-  let context = text.slice(start, end);
+  const end = Math.min(lowerText.length, index + lowerKeyword.length + safeContextLength);
+  let context = String(text).slice(start, end);
   if (start > 0) context = `...${context}`;
-  if (end < text.length) context = `${context}...`;
+  if (end < String(text).length) context = `${context}...`;
   return context;
 }
 
 // 检查 OpenCode 是否安装
 function isOpenCodeInstalled() {
-  return fs.existsSync(NATIVE_PATHS.opencode.data);
+  return fs.existsSync(OPENCODE_DB_PATH);
 }
 
 // 获取 OpenCode 数据目录
@@ -121,23 +230,14 @@ function getOpenCodeDataDir() {
   return NATIVE_PATHS.opencode.data;
 }
 
-// 获取会话存储目录
+// 兼容导出：保留旧路径函数
 function getSessionsDir() {
   return path.join(getOpenCodeDataDir(), 'storage', 'session');
 }
 
-// 获取项目存储目录
+// 兼容导出：保留旧路径函数
 function getProjectsDir() {
   return path.join(getOpenCodeDataDir(), 'storage', 'project');
-}
-
-// 获取消息存储目录
-function getMessagesRootDir() {
-  return NATIVE_PATHS.opencode.messages;
-}
-
-function getMessageDir(sessionId) {
-  return path.join(getMessagesRootDir(), sessionId);
 }
 
 function getProjectOrder() {
@@ -202,43 +302,156 @@ function removeProjectFromOrder(projectId) {
   }
 }
 
-function getProjectEntries() {
-  const projectsDir = getProjectsDir();
-  if (!fs.existsSync(projectsDir)) {
-    return [];
-  }
+function invalidateProjectAndSessionCountsCache() {
+  countsCache.expiresAt = 0;
+}
 
-  const files = fs.readdirSync(projectsDir).filter(file => file.endsWith('.json'));
-  const entries = [];
-  for (const file of files) {
-    const filePath = path.join(projectsDir, file);
-    const data = readJsonSafe(filePath, null);
-    if (!data || !data.id) {
-      continue;
-    }
-    entries.push({ filePath, data });
-  }
-  return entries;
+function queryProjectAndSessionCounts() {
+  const rows = runSqliteQuery(`
+    SELECT
+      (SELECT COUNT(*) FROM project) AS project_count,
+      (SELECT COUNT(*) FROM session WHERE time_archived IS NULL) AS session_count
+  `);
+
+  const row = rows[0] || {};
+  return {
+    projectCount: Number(row.project_count) || 0,
+    sessionCount: Number(row.session_count) || 0
+  };
+}
+
+function getProjectRows() {
+  return runSqliteQuery(`
+    SELECT
+      p.id,
+      p.worktree,
+      p.name,
+      p.time_created,
+      p.time_updated,
+      COALESCE(s.session_count, 0) AS session_count
+    FROM project p
+    LEFT JOIN (
+      SELECT project_id, COUNT(*) AS session_count
+      FROM session
+      WHERE time_archived IS NULL
+      GROUP BY project_id
+    ) s ON s.project_id = p.id
+  `);
+}
+
+function getSessionRowsByProjectId(projectId) {
+  return runSqliteQuery(`
+    SELECT
+      s.id,
+      s.project_id,
+      s.parent_id,
+      s.slug,
+      s.directory,
+      s.title,
+      s.version,
+      s.share_url,
+      s.summary_additions,
+      s.summary_deletions,
+      s.summary_files,
+      s.summary_diffs,
+      s.revert,
+      s.permission,
+      s.time_created,
+      s.time_updated,
+      s.time_compacting,
+      s.time_archived
+    FROM session s
+    WHERE s.project_id = ${sqlQuote(projectId)}
+      AND s.time_archived IS NULL
+    ORDER BY s.time_updated DESC
+  `);
+}
+
+function getSessionRowById(sessionId) {
+  const rows = runSqliteQuery(`
+    SELECT
+      s.id,
+      s.project_id,
+      s.parent_id,
+      s.slug,
+      s.directory,
+      s.title,
+      s.version,
+      s.share_url,
+      s.summary_additions,
+      s.summary_deletions,
+      s.summary_files,
+      s.summary_diffs,
+      s.revert,
+      s.permission,
+      s.time_created,
+      s.time_updated,
+      s.time_compacting,
+      s.time_archived
+    FROM session s
+    WHERE s.id = ${sqlQuote(sessionId)}
+    LIMIT 1
+  `);
+
+  return rows[0] || null;
+}
+
+function getMessageRowsBySessionId(sessionId) {
+  return runSqliteQuery(`
+    SELECT
+      id,
+      session_id,
+      time_created,
+      time_updated,
+      data
+    FROM message
+    WHERE session_id = ${sqlQuote(sessionId)}
+    ORDER BY time_created ASC
+  `);
+}
+
+function getPartRowsBySessionId(sessionId) {
+  return runSqliteQuery(`
+    SELECT
+      id,
+      message_id,
+      session_id,
+      time_created,
+      time_updated,
+      data
+    FROM part
+    WHERE session_id = ${sqlQuote(sessionId)}
+    ORDER BY time_created ASC
+  `);
+}
+
+function normalizeSession(session, projectId = null) {
+  return {
+    sessionId: session.id,
+    projectName: projectId || session.project_id,
+    mtime: toIsoTime(session.time_updated) || new Date().toISOString(),
+    size: 0,
+    filePath: '',
+    gitBranch: null,
+    firstMessage: session.title || session.slug || null,
+    forkedFrom: null,
+    directory: session.directory,
+    slug: session.slug,
+    source: 'opencode'
+  };
 }
 
 // 获取所有项目
 function getProjects() {
-  const projects = [];
-  const entries = getProjectEntries();
-
-  for (const entry of entries) {
-    const project = entry.data;
-    const projectSessions = getSessionsByProjectId(project.id);
-    projects.push({
-      name: project.id,
-      displayName: project.id,
-      fullPath: project.worktree || '/',
-      path: project.worktree || '/',
-      sessionCount: projectSessions.length,
-      lastUsed: project.time?.updated || project.time?.created || 0,
-      source: 'opencode'
-    });
-  }
+  const projects = getProjectRows().map((project) => ({
+    name: project.id,
+    displayName: project.name || project.id,
+    fullPath: project.worktree || '/',
+    path: project.worktree || '/',
+    sessionCount: Number(project.session_count) || 0,
+    lastUsed: Number(project.time_updated) || Number(project.time_created) || 0,
+    source: 'opencode'
+  }));
 
   return sortByOrder(
     projects,
@@ -249,30 +462,13 @@ function getProjects() {
 
 // 根据项目ID获取会话列表
 function getSessionsByProjectId(projectId) {
-  const sessionsDir = path.join(getSessionsDir(), projectId);
-  const sessions = [];
-
-  if (!fs.existsSync(sessionsDir)) {
-    return sessions;
-  }
-
-  const files = fs.readdirSync(sessionsDir).filter(file => file.endsWith('.json'));
-  for (const file of files) {
-    const filePath = path.join(sessionsDir, file);
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const session = JSON.parse(content);
-      sessions.push(normalizeSession(session, filePath, projectId));
-    } catch (err) {
-      console.error(`[OpenCode Sessions] Failed to parse session file ${file}:`, err);
-    }
-  }
+  const sessions = getSessionRowsByProjectId(projectId).map(session => normalizeSession(session, projectId));
+  const order = getSessionOrder(projectId);
 
   const fallbackSorted = sessions.sort(
     (a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime()
   );
 
-  const order = getSessionOrder(projectId);
   if (order.length === 0) {
     return fallbackSorted;
   }
@@ -288,72 +484,20 @@ function getSessionsByProjectId(projectId) {
   });
 }
 
-// 归一化会话格式（与 Claude Code 格式一致）
-function normalizeSession(session, filePath, projectId = null) {
-  const mtime = session.time?.updated
-    ? new Date(session.time.updated).toISOString()
-    : new Date().toISOString();
-
-  let size = 0;
-  try {
-    if (filePath && fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath);
-      size = stats.size;
-    }
-  } catch (err) {
-    // 忽略错误
-  }
-
-  return {
-    sessionId: session.id,
-    projectName: projectId,
-    mtime,
-    size,
-    filePath: filePath || '',
-    gitBranch: null,
-    firstMessage: session.title || session.slug || null,
-    forkedFrom: null,
-    directory: session.directory,
-    slug: session.slug,
-    source: 'opencode'
-  };
-}
-
 // 根据项目名获取会话列表
 function getSessionsByProject(projectName) {
   return getSessionsByProjectId(projectName);
 }
 
 function getSessionLocation(sessionId) {
-  const sessionsRoot = getSessionsDir();
-  if (!fs.existsSync(sessionsRoot)) {
+  const session = getSessionRowById(sessionId);
+  if (!session) {
     return null;
   }
-
-  const projectDirs = fs.readdirSync(sessionsRoot, { withFileTypes: true });
-  for (const projectDir of projectDirs) {
-    if (!projectDir.isDirectory()) continue;
-
-    const projectPath = path.join(sessionsRoot, projectDir.name);
-    const directPath = path.join(projectPath, `${sessionId}.json`);
-    if (fs.existsSync(directPath)) {
-      const sessionData = readJsonSafe(directPath, null);
-      if (sessionData && sessionData.id === sessionId) {
-        return { projectId: projectDir.name, sessionPath: directPath, sessionData };
-      }
-    }
-
-    const files = fs.readdirSync(projectPath).filter(file => file.endsWith('.json'));
-    for (const file of files) {
-      const sessionPath = path.join(projectPath, file);
-      const sessionData = readJsonSafe(sessionPath, null);
-      if (sessionData && sessionData.id === sessionId) {
-        return { projectId: projectDir.name, sessionPath, sessionData };
-      }
-    }
-  }
-
-  return null;
+  return {
+    projectId: session.project_id,
+    sessionData: session
+  };
 }
 
 // 根据会话ID获取会话详情
@@ -363,26 +507,92 @@ function getSessionById(sessionId) {
     return null;
   }
 
-  return normalizeSession(location.sessionData, location.sessionPath, location.projectId);
+  return normalizeSession(location.sessionData, location.projectId);
+}
+
+function buildSessionMessages(sessionId) {
+  const messages = getMessageRowsBySessionId(sessionId);
+  const parts = getPartRowsBySessionId(sessionId);
+
+  const partsByMessageId = new Map();
+  for (const part of parts) {
+    if (!partsByMessageId.has(part.message_id)) {
+      partsByMessageId.set(part.message_id, []);
+    }
+    partsByMessageId.get(part.message_id).push(part);
+  }
+
+  const converted = [];
+
+  for (const row of messages) {
+    const messageData = parseJsonMaybe(row.data, {});
+    const role = messageData?.role;
+    if (role !== 'user' && role !== 'assistant') {
+      continue;
+    }
+
+    const messageParts = partsByMessageId.get(row.id) || [];
+    const partTexts = [];
+    for (const part of messageParts) {
+      const partData = parseJsonMaybe(part.data, null);
+      const text = extractTextFromPartData(partData);
+      if (text) {
+        partTexts.push(text);
+      }
+    }
+
+    const fallbackText = extractTextFromMessageData(messageData);
+    const content = partTexts.join('\n').trim() || fallbackText || '[空消息]';
+
+    const timestamp = toIsoTime(
+      messageData?.time?.created || row.time_created || row.time_updated
+    );
+
+    converted.push({
+      type: role,
+      role,
+      content,
+      timestamp,
+      model: role === 'assistant'
+        ? (messageData?.model?.modelID || messageData?.modelID || messageData?.model || 'opencode')
+        : null
+    });
+  }
+
+  return converted;
+}
+
+function getSessionMessages(sessionId) {
+  const location = getSessionLocation(sessionId);
+  if (!location) {
+    throw new Error('Session not found');
+  }
+
+  return buildSessionMessages(sessionId).map(({ type, content, timestamp, model }) => ({
+    type,
+    content,
+    timestamp,
+    model
+  }));
 }
 
 // 获取项目和会话数量统计
 function getProjectAndSessionCounts() {
+  const now = Date.now();
+  if (countsCache.expiresAt > now) {
+    return countsCache.value;
+  }
+
   try {
-    const projects = getProjects();
-    let sessionCount = 0;
-
-    for (const project of projects) {
-      sessionCount += project.sessionCount || 0;
-    }
-
-    return {
-      projectCount: projects.length,
-      sessionCount
+    const counts = queryProjectAndSessionCounts();
+    countsCache = {
+      value: counts,
+      expiresAt: now + COUNTS_CACHE_TTL_MS
     };
+    return counts;
   } catch (err) {
     console.error('[OpenCode Sessions] Failed to get counts:', err);
-    return { projectCount: 0, sessionCount: 0 };
+    return countsCache.value || EMPTY_COUNTS;
   }
 }
 
@@ -420,12 +630,10 @@ function deleteSession(sessionId) {
     throw new Error('Session not found');
   }
 
-  fs.unlinkSync(location.sessionPath);
-
-  const messageDir = getMessageDir(sessionId);
-  if (fs.existsSync(messageDir)) {
-    fs.rmSync(messageDir, { recursive: true, force: true });
-  }
+  runSqliteExec(`
+    PRAGMA foreign_keys = ON;
+    DELETE FROM session WHERE id = ${sqlQuote(sessionId)};
+  `);
 
   try {
     const { deleteAlias } = require('./alias');
@@ -450,6 +658,7 @@ function deleteSession(sessionId) {
     // ignore fork relation cleanup errors
   }
 
+  invalidateProjectAndSessionCountsCache();
   return { success: true, projectName: location.projectId, sessionId };
 }
 
@@ -459,27 +668,98 @@ function forkSession(sessionId) {
     throw new Error('Session not found');
   }
 
-  const now = new Date().toISOString();
-  const newSessionId = crypto.randomUUID();
   const source = location.sessionData;
-  const nextSession = {
-    ...source,
-    id: newSessionId,
-    time: {
-      ...(source.time || {}),
-      created: now,
-      updated: now
-    }
-  };
+  const messages = getMessageRowsBySessionId(sessionId);
+  const parts = getPartRowsBySessionId(sessionId);
+  const now = Date.now();
+  const newSessionId = `ses_${crypto.randomUUID().replace(/-/g, '')}`;
 
-  const targetPath = path.join(path.dirname(location.sessionPath), `${newSessionId}.json`);
-  fs.writeFileSync(targetPath, JSON.stringify(nextSession, null, 2), 'utf8');
-
-  const sourceMessageDir = getMessageDir(sessionId);
-  const targetMessageDir = getMessageDir(newSessionId);
-  if (fs.existsSync(sourceMessageDir)) {
-    copyDirectoryRecursive(sourceMessageDir, targetMessageDir);
+  const messageIdMap = new Map();
+  for (const message of messages) {
+    messageIdMap.set(message.id, `msg_${crypto.randomUUID().replace(/-/g, '')}`);
   }
+
+  const statements = [];
+  statements.push('PRAGMA foreign_keys = ON;');
+  statements.push('BEGIN IMMEDIATE;');
+
+  statements.push(`
+    INSERT INTO session (
+      id, project_id, parent_id, slug, directory, title, version, share_url,
+      summary_additions, summary_deletions, summary_files, summary_diffs,
+      revert, permission, time_created, time_updated, time_compacting, time_archived
+    ) VALUES (
+      ${sqlQuote(newSessionId)},
+      ${sqlQuote(source.project_id)},
+      ${sqlQuote(source.parent_id)},
+      ${sqlQuote(source.slug)},
+      ${sqlQuote(source.directory)},
+      ${sqlQuote(source.title)},
+      ${sqlQuote(source.version)},
+      ${sqlQuote(source.share_url)},
+      ${sqlQuote(source.summary_additions)},
+      ${sqlQuote(source.summary_deletions)},
+      ${sqlQuote(source.summary_files)},
+      ${sqlQuote(source.summary_diffs)},
+      ${sqlQuote(source.revert)},
+      ${sqlQuote(source.permission)},
+      ${sqlQuote(now)},
+      ${sqlQuote(now)},
+      ${sqlQuote(source.time_compacting)},
+      NULL
+    );
+  `);
+
+  for (const message of messages) {
+    const newMessageId = messageIdMap.get(message.id);
+    const messageData = parseJsonMaybe(message.data, null);
+
+    let serializedData = message.data;
+    if (messageData && typeof messageData === 'object') {
+      if (typeof messageData.parentID === 'string' && messageIdMap.has(messageData.parentID)) {
+        messageData.parentID = messageIdMap.get(messageData.parentID);
+      }
+      if (typeof messageData.id === 'string') {
+        messageData.id = newMessageId;
+      }
+      serializedData = JSON.stringify(messageData);
+    }
+
+    statements.push(`
+      INSERT INTO message (id, session_id, time_created, time_updated, data)
+      VALUES (
+        ${sqlQuote(newMessageId)},
+        ${sqlQuote(newSessionId)},
+        ${sqlQuote(message.time_created)},
+        ${sqlQuote(message.time_updated)},
+        ${sqlQuote(serializedData)}
+      );
+    `);
+  }
+
+  for (const part of parts) {
+    const newPartId = `prt_${crypto.randomUUID().replace(/-/g, '')}`;
+    const targetMessageId = messageIdMap.get(part.message_id);
+    if (!targetMessageId) {
+      continue;
+    }
+
+    statements.push(`
+      INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+      VALUES (
+        ${sqlQuote(newPartId)},
+        ${sqlQuote(targetMessageId)},
+        ${sqlQuote(newSessionId)},
+        ${sqlQuote(part.time_created)},
+        ${sqlQuote(part.time_updated)},
+        ${sqlQuote(part.data)}
+      );
+    `);
+  }
+
+  statements.push('COMMIT;');
+
+  runSqliteExec(statements.join('\n'));
 
   try {
     const { getForkRelations, saveForkRelations } = require('./sessions');
@@ -493,35 +773,32 @@ function forkSession(sessionId) {
   const existingOrder = getSessionOrder(location.projectId);
   saveSessionOrder(location.projectId, [newSessionId, ...existingOrder.filter(id => id !== newSessionId)]);
 
+  invalidateProjectAndSessionCountsCache();
   return {
     success: true,
     newSessionId,
     forkedFrom: sessionId,
     projectName: location.projectId,
-    newFilePath: targetPath
+    newFilePath: null
   };
 }
 
 function deleteProject(projectId) {
-  const projectSessionDir = path.join(getSessionsDir(), projectId);
-  if (!fs.existsSync(projectSessionDir)) {
+  const projectRows = runSqliteQuery(`
+    SELECT id FROM project WHERE id = ${sqlQuote(projectId)} LIMIT 1
+  `);
+
+  if (projectRows.length === 0) {
     throw new Error('Project not found');
   }
 
-  const sessionFiles = fs.readdirSync(projectSessionDir).filter(file => file.endsWith('.json'));
-  const deletedSessionIds = [];
+  const sessionRows = runSqliteQuery(`
+    SELECT id FROM session WHERE project_id = ${sqlQuote(projectId)}
+  `);
 
-  for (const file of sessionFiles) {
-    const sessionPath = path.join(projectSessionDir, file);
-    const session = readJsonSafe(sessionPath, null);
-    const sessionId = session?.id || path.basename(file, '.json');
-    deletedSessionIds.push(sessionId);
+  const deletedSessionIds = sessionRows.map(row => row.id);
 
-    const messageDir = getMessageDir(sessionId);
-    if (fs.existsSync(messageDir)) {
-      fs.rmSync(messageDir, { recursive: true, force: true });
-    }
-
+  for (const sessionId of deletedSessionIds) {
     try {
       const { deleteAlias } = require('./alias');
       deleteAlias(sessionId);
@@ -530,14 +807,10 @@ function deleteProject(projectId) {
     }
   }
 
-  fs.rmSync(projectSessionDir, { recursive: true, force: true });
-
-  const projectEntries = getProjectEntries();
-  for (const entry of projectEntries) {
-    if (entry.data.id === projectId) {
-      fs.rmSync(entry.filePath, { force: true });
-    }
-  }
+  runSqliteExec(`
+    PRAGMA foreign_keys = ON;
+    DELETE FROM project WHERE id = ${sqlQuote(projectId)};
+  `);
 
   removeProjectFromOrder(projectId);
 
@@ -555,6 +828,7 @@ function deleteProject(projectId) {
     // ignore relation cleanup errors
   }
 
+  invalidateProjectAndSessionCountsCache();
   return {
     success: true,
     projectName: projectId,
@@ -589,6 +863,7 @@ function searchSessions(keyword, contextLength = 35, projectFilter = null) {
         session.slug,
         session.directory
       ];
+
       for (const text of quickChecks) {
         const context = buildContext(text, searchKeyword, contextLength);
         if (context) {
@@ -600,26 +875,18 @@ function searchSessions(keyword, contextLength = 35, projectFilter = null) {
         }
       }
 
-      const messageDir = getMessageDir(session.sessionId);
-      if (fs.existsSync(messageDir)) {
-        const messageFiles = fs.readdirSync(messageDir)
-          .filter(file => file.endsWith('.json'))
-          .sort();
-        for (const messageFile of messageFiles) {
-          const messagePath = path.join(messageDir, messageFile);
-          const message = readJsonSafe(messagePath, null);
-          if (!message) continue;
-
-          const text = extractTextContent(message.content);
-          const context = buildContext(text, searchKeyword, contextLength);
-          if (!context) continue;
-
-          matches.push({
-            role: message.role === 'user' ? 'user' : 'assistant',
-            context,
-            timestamp: message.time?.created || null
-          });
+      const sessionMessages = buildSessionMessages(session.sessionId);
+      for (const message of sessionMessages) {
+        const context = buildContext(message.content, searchKeyword, contextLength);
+        if (!context) {
+          continue;
         }
+
+        matches.push({
+          role: message.role,
+          context,
+          timestamp: message.timestamp
+        });
       }
 
       if (matches.length > 0) {
@@ -651,6 +918,7 @@ module.exports = {
   getSessionsByProject,
   getSessionsByProjectId,
   getSessionById,
+  getSessionMessages,
   getRecentSessions,
   normalizeSession,
   getProjectAndSessionCounts,

@@ -7,9 +7,10 @@ const { allocateChannel, releaseChannel, getSchedulerState } = require('./servic
 const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
-const { resolvePricing } = require('./utils/pricing');
+const { resolveModelPricing } = require('./utils/pricing');
 const { recordRequest: recordGeminiRequest } = require('./services/gemini-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
+const { createDecodedStream } = require('./services/response-decoder');
 const { getEffectiveApiKey } = require('./services/gemini-channels');
 
 let proxyServer = null;
@@ -24,6 +25,7 @@ const requestMetadata = new Map();
 const printedGeminiRedirectCache = new Map();
 
 // Gemini 模型定价（每百万 tokens 的价格，单位：美元）
+// 作为 model-metadata 未覆盖时的兜底值
 const PRICING = {
   'gemini-2.5-pro': { input: 1.25, output: 5 },
   'gemini-2.5-flash': { input: 0.075, output: 0.3 },
@@ -78,33 +80,33 @@ function redirectModel(originalModel, channel) {
  */
 function calculateCost(model, tokens) {
   // 尝试精确匹配
-  let pricing = PRICING[model];
+  let fallbackPricing = PRICING[model];
 
   // 如果没有精确匹配，尝试模糊匹配
-  if (!pricing) {
-    const modelLower = model.toLowerCase();
+  if (!fallbackPricing) {
+    const modelLower = String(model || '').toLowerCase();
     if (modelLower.includes('gemini-2.5-pro')) {
-      pricing = PRICING['gemini-2.5-pro'];
+      fallbackPricing = PRICING['gemini-2.5-pro'];
     } else if (modelLower.includes('gemini-2.5-flash')) {
-      pricing = PRICING['gemini-2.5-flash'];
+      fallbackPricing = PRICING['gemini-2.5-flash'];
     } else if (modelLower.includes('gemini-2.0-flash-thinking')) {
-      pricing = PRICING['gemini-2.0-flash-thinking-exp-1219'];
+      fallbackPricing = PRICING['gemini-2.0-flash-thinking-exp-1219'];
     } else if (modelLower.includes('gemini-2.0-flash')) {
-      pricing = PRICING['gemini-2.0-flash-exp'];
+      fallbackPricing = PRICING['gemini-2.0-flash-exp'];
     } else if (modelLower.includes('gemini-1.5-pro')) {
-      pricing = PRICING['gemini-1.5-pro'];
+      fallbackPricing = PRICING['gemini-1.5-pro'];
     } else if (modelLower.includes('gemini-1.5-flash-8b')) {
-      pricing = PRICING['gemini-1.5-flash-8b'];
+      fallbackPricing = PRICING['gemini-1.5-flash-8b'];
     } else if (modelLower.includes('gemini-1.5-flash')) {
-      pricing = PRICING['gemini-1.5-flash'];
+      fallbackPricing = PRICING['gemini-1.5-flash'];
     } else if (modelLower.includes('gemini-1.0-pro')) {
-      pricing = PRICING['gemini-1.0-pro'];
+      fallbackPricing = PRICING['gemini-1.0-pro'];
     } else if (modelLower.includes('gemini-pro')) {
-      pricing = PRICING['gemini-pro'];
+      fallbackPricing = PRICING['gemini-pro'];
     }
   }
 
-  pricing = resolvePricing('gemini', pricing, GEMINI_BASE_PRICING);
+  const pricing = resolveModelPricing('gemini', model, fallbackPricing, GEMINI_BASE_PRICING);
   const inputRate = typeof pricing.input === 'number' ? pricing.input : GEMINI_BASE_PRICING.input;
   const outputRate = typeof pricing.output === 'number' ? pricing.output : GEMINI_BASE_PRICING.output;
 
@@ -289,14 +291,15 @@ async function startGeminiProxyServer(options = {}) {
         totalTokens: 0,
         model: ''
       };
+      const parsedStream = createDecodedStream(proxyRes);
 
-      proxyRes.on('data', (chunk) => {
+      parsedStream.on('data', (chunk) => {
         // 如果响应已关闭，停止处理
         if (isResponseClosed) {
           return;
         }
 
-        buffer += chunk.toString();
+        buffer += chunk.toString('utf8');
 
         // 检查是否是 SSE 流
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
@@ -360,7 +363,7 @@ async function startGeminiProxyServer(options = {}) {
         }
       });
 
-      proxyRes.on('end', () => {
+      parsedStream.on('end', () => {
         // 如果不是流式响应，尝试从完整响应中解析
         if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
           try {
@@ -467,7 +470,7 @@ async function startGeminiProxyServer(options = {}) {
         }
       });
 
-      proxyRes.on('error', (err) => {
+      parsedStream.on('error', (err) => {
         // 忽略代理响应错误（可能是网络问题）
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);

@@ -8,6 +8,7 @@ const WorkspaceManager = () => import('../views/WorkspaceManager.vue')
 const ConfigTemplates = () => import('../views/ConfigTemplates.vue')
 const SkillManager = () => import('../views/SkillManager.vue')
 const PluginManager = () => import('../views/PluginManager.vue')
+const Analytics = () => import('../views/Analytics.vue')
 
 const routes = [
   {
@@ -115,6 +116,12 @@ const routes = [
     path: '/plugins',
     name: 'plugins',
     component: PluginManager
+  },
+  // 用量分析路由
+  {
+    path: '/analytics',
+    name: 'analytics',
+    component: Analytics
   },
   // 404 重定向到首页
   {

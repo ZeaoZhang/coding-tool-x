@@ -236,11 +236,6 @@ onMounted(() => {
   loadInstalledSkillsCount()
 })
 
-function refreshChannel(channel) {
-  channelRefs[channel]?.value?.refresh?.()
-}
-
-watch(() => currentChannel.value, refreshChannel)
 watch(() => currentChannel.value, loadInstalledSkillsCount)
 </script>
 

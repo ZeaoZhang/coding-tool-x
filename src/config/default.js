@@ -1,6 +1,7 @@
 // 默认配置
 const path = require('path');
 const os = require('os');
+const modelMetadataConfig = require('./model-metadata.json');
 
 const DEFAULT_CONFIG = {
   projectsDir: path.join(os.homedir(), '.claude', 'projects'),
@@ -17,35 +18,14 @@ const DEFAULT_CONFIG = {
   },
   maxLogs: 100,
   statsInterval: 30,
-  defaultModels: {
-    claude: [
-      'claude-opus-4-6',
-      'claude-sonnet-4-6',
-      'claude-opus-4-5-20251101',
-      'claude-sonnet-4-5-20250929',
-      'claude-haiku-4-5-20251001'
-    ],
-    codex: [
-      'gpt-5.2-codex',
-      'gpt-5.1-codex-max',
-      'gpt-5.1-codex',
-      'gpt-5.1-codex-mini',
-      'gpt-5-codex',
-      'gpt-5.2',
-      'gpt-5.1',
-      'gpt-5'
-    ],
-    gemini: [
-      'gemini-3-pro-preview',
-      'gemini-3-flash-preview',
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite'
-    ]
-  },
   modelDiscovery: {
-    // 是否优先使用 /v1/models 获取可用模型；默认关闭，直接走默认模型探测
     useV1ModelsEndpoint: false
+  },
+  defaultModels: modelMetadataConfig.defaultModels || { claude: [], codex: [], gemini: [] },
+  defaultSpeedTestModels: modelMetadataConfig.defaultSpeedTestModels || {
+    claude: 'claude-haiku-4-5',
+    codex: 'gpt-5.2',
+    gemini: 'gemini-2.5-pro'
   },
   pricing: {
     claude: {

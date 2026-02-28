@@ -48,6 +48,14 @@ class PtyManager {
     }
   }
 
+  isDirectoryPath(candidate) {
+    try {
+      return fs.existsSync(candidate) && fs.statSync(candidate).isDirectory();
+    } catch (err) {
+      return false;
+    }
+  }
+
   resolveWorkingDirectory(cwd) {
     const fallback = os.homedir();
     if (typeof cwd !== 'string') {
@@ -69,28 +77,22 @@ class PtyManager {
     }
 
     // 先尝试直接使用（支持相对路径）
-    try {
-      if (fs.existsSync(normalized) && fs.statSync(normalized).isDirectory()) {
-        return path.isAbsolute(normalized) ? normalized : path.resolve(process.cwd(), normalized);
-      }
-    } catch (err) {
-      // 忽略错误，继续尝试其他候选路径
+    if (this.isDirectoryPath(normalized)) {
+      return path.isAbsolute(normalized) ? normalized : path.resolve(process.cwd(), normalized);
     }
 
     // 相对路径：优先按进程 cwd 解析，其次按用户 home 解析（用于 .codex 这类隐藏目录）
     if (!path.isAbsolute(normalized)) {
       const candidates = [
         path.resolve(process.cwd(), normalized),
+        path.resolve(process.cwd(), '..', normalized),
+        path.resolve(process.cwd(), '..', '..', normalized),
         path.resolve(os.homedir(), normalized)
       ];
 
       for (const candidate of candidates) {
-        try {
-          if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-            return candidate;
-          }
-        } catch (err) {
-          // 忽略错误
+        if (this.isDirectoryPath(candidate)) {
+          return candidate;
         }
       }
     }
@@ -269,16 +271,18 @@ class PtyManager {
       console.log(`[PTY] Resolved cwd: ${originalCwd} -> ${cwd}`);
     }
 
-    try {
-      if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+    if (!this.isDirectoryPath(cwd)) {
+      const fallbackCandidates = [process.cwd(), os.homedir()];
+      const fallbackCwd = fallbackCandidates.find((candidate) => this.isDirectoryPath(candidate));
+
+      if (fallbackCwd) {
+        console.warn(`[PTY] Working directory not found: ${cwd}, fallback to ${fallbackCwd}`);
+        cwd = fallbackCwd;
+      } else {
         const error = `Working directory not found: ${cwd}`;
         console.error('[PTY]', error);
         throw new Error(error);
       }
-    } catch (err) {
-      const error = `Working directory not found: ${cwd}`;
-      console.error('[PTY]', error);
-      throw new Error(error);
     }
 
     console.log(`[PTY] Creating terminal: shell=${shell}, cwd=${cwd}`);

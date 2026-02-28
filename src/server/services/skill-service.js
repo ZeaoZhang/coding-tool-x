@@ -15,9 +15,6 @@ const { pipeline } = require('stream/promises');
 const AdmZip = require('adm-zip');
 const {
   parseSkillContent,
-  detectSkillFormat,
-  convertSkillToCodex,
-  convertSkillToClaude
 } = require('./format-converter');
 const { NATIVE_PATHS } = require('../../config/paths');
 
@@ -706,25 +703,6 @@ class SkillService {
   }
 
   /**
-   * 转换技能格式
-   * @param {string} content - 技能内容
-   * @param {string} targetFormat - 目标格式 ('claude' | 'codex')
-   */
-  convertSkillFormat(content, targetFormat) {
-    const sourceFormat = detectSkillFormat(content);
-
-    if (sourceFormat === targetFormat) {
-      return { content, warnings: [], format: targetFormat };
-    }
-
-    if (targetFormat === 'codex') {
-      return convertSkillToCodex(content);
-    } else {
-      return convertSkillToClaude(content);
-    }
-  }
-
-  /**
    * 检查技能是否已安装
    */
   isInstalled(directory) {
@@ -880,9 +858,7 @@ class SkillService {
       fs.mkdirSync(dest, { recursive: true });
       this.copyDirRecursive(sourceDir, dest);
 
-      if (this.platform === 'codex') {
-        this.convertInstalledSkillToCodex(dest);
-      } else if (this.platform === 'opencode') {
+      if (this.platform === 'opencode') {
         const skillMdPath = path.join(dest, 'SKILL.md');
         if (fs.existsSync(skillMdPath)) {
           const validationError = this.validateOpenCodeSkillContent(
@@ -977,22 +953,6 @@ class SkillService {
   }
 
   /**
-   * 将安装后的 SKILL.md 转换为 Codex 兼容格式
-   */
-  convertInstalledSkillToCodex(skillDir) {
-    const skillMdPath = path.join(skillDir, 'SKILL.md');
-    if (!fs.existsSync(skillMdPath)) return;
-
-    try {
-      const content = fs.readFileSync(skillMdPath, 'utf-8');
-      const converted = convertSkillToCodex(content);
-      fs.writeFileSync(skillMdPath, converted.content, 'utf-8');
-    } catch (err) {
-      console.warn('[SkillService] Convert skill to codex format failed:', err.message);
-    }
-  }
-
-  /**
    * 创建自定义技能
    */
   createCustomSkill({ name, directory, description, content }) {
@@ -1050,10 +1010,6 @@ ${content}
 
     // 写入文件
     fs.writeFileSync(path.join(dest, 'SKILL.md'), skillMdContent, 'utf-8');
-
-    if (this.platform === 'codex') {
-      this.convertInstalledSkillToCodex(dest);
-    }
 
     // 清除缓存，让列表刷新
     this.skillsCache = null;
@@ -1120,10 +1076,6 @@ ${content}
       } else {
         fs.writeFileSync(filePath, file.content, 'utf-8');
       }
-    }
-
-    if (this.platform === 'codex') {
-      this.convertInstalledSkillToCodex(dest);
     }
 
     // 清除缓存

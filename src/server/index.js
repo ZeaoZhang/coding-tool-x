@@ -15,7 +15,7 @@ const { setProxyConfig: setOpenCodeProxyConfig } = require('./services/opencode-
 const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
-const { startOpenCodeProxyServer } = require('./opencode-proxy-server');
+const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
 const { createRemoteMutationGuard, createRemoteRouteGuard } = require('./services/network-access');
 
 function isInteractivePortConflictMode(options = {}) {
@@ -158,9 +158,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/opencode/proxy', require('./api/opencode-proxy'));
   app.use('/api/opencode/statistics', require('./api/opencode-statistics'));
 
-  // 会话格式转换 API
-  app.use('/api/convert', require('./api/convert'));
-
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
   app.use('/api/ui-config', require('./api/ui-config'));
@@ -269,8 +266,8 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // 自动恢复代理状态
   autoRestoreProxies();
 
-  // 启动时执行健康检查
-  performStartupHealthCheck();
+  // 延迟执行健康检查，避免阻塞启动
+  setTimeout(() => performStartupHealthCheck(), 2000);
 
   return server;
 }
@@ -349,7 +346,7 @@ function autoRestoreProxies() {
     console.log(chalk.cyan('\n🔄 检测到 OpenCode 代理状态文件，正在自动启动...'));
     const opencodeProxyPort = config.ports?.opencodeProxy || 20091;
     startOpenCodeProxyServer(opencodeProxyPort)
-      .then((result) => {
+      .then(async (result) => {
         if (result.success) {
           console.log(chalk.green(`✅ OpenCode 代理已自动启动，端口: ${result.port}`));
           try {
@@ -365,6 +362,15 @@ function autoRestoreProxies() {
                 }
               });
             });
+            const detectedModels = await collectProxyModelList(enabledChs, { useCacheOnly: true });
+            if (Array.isArray(detectedModels)) {
+              detectedModels.forEach((m) => {
+                if (typeof m === 'string' && m.trim() && !seen.has(m.trim().toLowerCase())) {
+                  seen.add(m.trim().toLowerCase());
+                  allModels.push(m.trim());
+                }
+              });
+            }
             const firstChannel = enabledChs[0];
             const activeModel = firstChannel && (firstChannel.model || firstChannel.speedTestModel) || null;
             const cfgResult = setOpenCodeProxyConfig(result.port, { model: activeModel, models: allModels });

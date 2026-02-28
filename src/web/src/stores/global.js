@@ -7,6 +7,7 @@ let ws = null
 let reconnectAttempts = 0
 let isReceivingHistory = false
 let historyTimer = null
+const channelSourceByName = Object.create(null)
 
 function computeTodayRange() {
   const start = new Date()
@@ -58,6 +59,24 @@ export const useGlobalStore = defineStore('global', () => {
   const codexChannels = ref([])
   const geminiChannels = ref([])
   const opencodeChannels = ref([])
+
+  function rebuildChannelSourceCache() {
+    Object.keys(channelSourceByName).forEach((key) => {
+      delete channelSourceByName[key]
+    })
+    claudeChannels.value.forEach((ch) => {
+      if (ch?.name) channelSourceByName[ch.name] = 'claude'
+    })
+    codexChannels.value.forEach((ch) => {
+      if (ch?.name) channelSourceByName[ch.name] = 'codex'
+    })
+    geminiChannels.value.forEach((ch) => {
+      if (ch?.name) channelSourceByName[ch.name] = 'gemini'
+    })
+    opencodeChannels.value.forEach((ch) => {
+      if (ch?.name) channelSourceByName[ch.name] = 'opencode'
+    })
+  }
 
   // 调度状态（实时并发信息）
   const schedulerState = reactive({
@@ -145,10 +164,8 @@ export const useGlobalStore = defineStore('global', () => {
     }
 
     if (data.channel) {
-      if (claudeChannels.value.find(ch => ch.name === data.channel)) return 'claude'
-      if (codexChannels.value.find(ch => ch.name === data.channel)) return 'codex'
-      if (geminiChannels.value.find(ch => ch.name === data.channel)) return 'gemini'
-      if (opencodeChannels.value.find(ch => ch.name === data.channel)) return 'opencode'
+      const source = channelSourceByName[data.channel]
+      if (source) return source
     }
 
     if (data.action?.includes('opencode')) return 'opencode'
@@ -251,16 +268,28 @@ export const useGlobalStore = defineStore('global', () => {
 
     if (source === 'claude') {
       patchProxyState(claudeProxy, proxy, activeChannel)
-      if (channels) claudeChannels.value = channels
+      if (channels) {
+        claudeChannels.value = channels
+        rebuildChannelSourceCache()
+      }
     } else if (source === 'codex') {
       patchProxyState(codexProxy, proxy, activeChannel)
-      if (channels) codexChannels.value = channels
+      if (channels) {
+        codexChannels.value = channels
+        rebuildChannelSourceCache()
+      }
     } else if (source === 'gemini') {
       patchProxyState(geminiProxy, proxy, activeChannel)
-      if (channels) geminiChannels.value = channels
+      if (channels) {
+        geminiChannels.value = channels
+        rebuildChannelSourceCache()
+      }
     } else if (source === 'opencode') {
       patchProxyState(opencodeProxy, proxy, activeChannel)
-      if (channels) opencodeChannels.value = channels
+      if (channels) {
+        opencodeChannels.value = channels
+        rebuildChannelSourceCache()
+      }
     }
   }
 
@@ -314,6 +343,7 @@ export const useGlobalStore = defineStore('global', () => {
       codexChannels.value = codexRes.data.channels || []
       geminiChannels.value = geminiRes.data.channels || []
       opencodeChannels.value = opencodeRes.data.channels || []
+      rebuildChannelSourceCache()
 
       if (claudePool.data?.scheduler) {
         schedulerState.claude = claudePool.data.scheduler
@@ -485,7 +515,17 @@ export function initializeGlobalStore() {
   if (isInitialized) return
   const store = useGlobalStore()
   store.connectWebSocket()
-  store.loadChannels()
-  store.loadAdvancedConfig()
+  queueMicrotask(() => {
+    const runDeferredLoads = () => {
+      store.loadChannels()
+      store.loadAdvancedConfig()
+    }
+
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(runDeferredLoads, { timeout: 1000 })
+      return
+    }
+    setTimeout(runDeferredLoads, 0)
+  })
   isInitialized = true
 }
