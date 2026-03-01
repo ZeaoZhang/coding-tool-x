@@ -170,43 +170,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   async function refreshStats(channelType) {
     try {
+      const parseStats = (response = {}) => {
+        const summary = response.summary || {}
+        return {
+          requests: summary.requests || 0,
+          tokens: summary.tokens || 0,
+          cost: summary.cost || 0,
+          byModel: response.byModel || {}
+        }
+      }
+
       if (channelType === 'claude') {
         const response = await api.getTodayStatistics()
-        if (response.success) {
-          const summary = response.summary || {}
-          dashboardData.value.todayStats.claude = {
-            requests: summary.requests || 0,
-            tokens: summary.tokens || 0,
-            cost: summary.cost || 0
-          }
-        }
+        dashboardData.value.todayStats.claude = parseStats(response)
       } else if (channelType === 'codex') {
         const response = await api.getCodexTodayStatistics()
-        if (response.success) {
-          dashboardData.value.todayStats.codex = {
-            requests: response.requests || 0,
-            tokens: response.tokens || 0,
-            cost: response.cost || 0
-          }
-        }
+        dashboardData.value.todayStats.codex = parseStats(response)
       } else if (channelType === 'gemini') {
         const response = await api.getGeminiTodayStatistics()
-        if (response.success) {
-          dashboardData.value.todayStats.gemini = {
-            requests: response.requests || 0,
-            tokens: response.tokens || 0,
-            cost: response.cost || 0
-          }
-        }
+        dashboardData.value.todayStats.gemini = parseStats(response)
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeTodayStatistics()
-        if (response.success) {
-          dashboardData.value.todayStats.opencode = {
-            requests: response.requests || 0,
-            tokens: response.tokens || 0,
-            cost: response.cost || 0
-          }
-        }
+        dashboardData.value.todayStats.opencode = parseStats(response)
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} stats:`, err)

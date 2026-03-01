@@ -16,17 +16,11 @@ const {
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
-const {
-  clearOpenCodeRedirectCache,
-  collectProxyModelList,
-  getOpenCodeProxyStatus
-} = require('../opencode-proxy-server');
-const { setProxyConfig } = require('../services/opencode-settings-manager');
+const { clearOpenCodeRedirectCache } = require('../opencode-proxy-server');
 const {
   fetchModelsFromProvider,
-  clearCache
+  probeModelAvailability
 } = require('../services/model-detector');
-const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 
 module.exports = (config) => {
   function uniqueModels(models = []) {
@@ -44,6 +38,31 @@ module.exports = (config) => {
     return result;
   }
 
+  function collectChannelPreferredModels(channel) {
+    const candidates = [];
+    if (!channel || typeof channel !== 'object') return candidates;
+
+    candidates.push(channel.model);
+    candidates.push(channel.speedTestModel);
+
+    const modelConfig = channel.modelConfig;
+    if (modelConfig && typeof modelConfig === 'object') {
+      candidates.push(modelConfig.model);
+      candidates.push(modelConfig.opusModel);
+      candidates.push(modelConfig.sonnetModel);
+      candidates.push(modelConfig.haikuModel);
+    }
+
+    if (Array.isArray(channel.modelRedirects)) {
+      channel.modelRedirects.forEach((rule) => {
+        candidates.push(rule?.from);
+        candidates.push(rule?.to);
+      });
+    }
+
+    return uniqueModels(candidates);
+  }
+
   function resolveGatewaySourceType(channel) {
     const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
     if (value === 'claude') return 'claude';
@@ -55,80 +74,9 @@ module.exports = (config) => {
     return resolveGatewaySourceType(channel);
   }
 
-  function isConverterEntryChannel(channel) {
+  function isConverterPresetChannel(channel) {
     const presetId = String(channel?.presetId || '').trim().toLowerCase();
     return presetId === 'entry_claude' || presetId === 'entry_codex' || presetId === 'entry_gemini';
-  }
-
-  function getDefaultModelsByGatewaySourceType(gatewaySourceType) {
-    if (gatewaySourceType === 'claude') return [getDefaultSpeedTestModelByToolType('claude')];
-    if (gatewaySourceType === 'gemini') return [getDefaultSpeedTestModelByToolType('gemini')];
-    return [getDefaultSpeedTestModelByToolType('codex')];
-  }
-
-  function refreshEditedChannelModelCache(channelId) {
-    if (!channelId) return;
-    clearCache(channelId);
-  }
-
-  async function syncOpenCodeProxyConfigByCache() {
-    const proxyStatus = getOpenCodeProxyStatus();
-    if (!proxyStatus?.running || !Number.isFinite(proxyStatus?.port)) {
-      return;
-    }
-
-    const channels = getChannels().channels || [];
-    const enabledChannels = channels.filter(ch => ch.enabled !== false);
-
-    // Collect per-channel model lists for per-channel provider generation
-    let detectedModels = [];
-    try {
-      detectedModels = await collectProxyModelList(enabledChannels, { useCacheOnly: true }) || [];
-    } catch (error) {
-      console.warn('[OpenCode Channels API] Failed to collect cached models while syncing proxy config:', error.message);
-    }
-
-    const channelPayloads = enabledChannels.map((ch) => {
-      let models;
-      if (Array.isArray(ch.allowedModels) && ch.allowedModels.length > 0) {
-        // User explicitly selected models for this channel
-        models = ch.allowedModels;
-      } else {
-        // Fall back to configured + detected models
-        models = uniqueModels([
-          ch.model,
-          ch.speedTestModel,
-          ...(Array.isArray(ch.modelRedirects)
-            ? ch.modelRedirects.flatMap(r => [r?.from, r?.to])
-            : []),
-          ...detectedModels
-        ]);
-      }
-      return {
-        name: ch.name,
-        providerKey: ch.providerKey || ch.name,
-        model: ch.model || null,
-        models
-      };
-    });
-
-    const currentChannel = enabledChannels[0];
-    const activeModel = currentChannel?.model || currentChannel?.speedTestModel || null;
-    setProxyConfig(proxyStatus.port, { channels: channelPayloads, model: activeModel });
-  }
-
-  async function refreshEditedChannelAndSyncProxy(channelId) {
-    try {
-      await refreshEditedChannelModelCache(channelId);
-    } catch (error) {
-      console.warn('[OpenCode Channels API] Refresh edited channel model cache failed:', error.message);
-    }
-
-    try {
-      await syncOpenCodeProxyConfigByCache();
-    } catch (error) {
-      console.warn('[OpenCode Channels API] Sync proxy config after channel edit failed:', error.message);
-    }
   }
 
   /**
@@ -197,24 +145,10 @@ module.exports = (config) => {
       }
 
       const gatewaySourceType = resolveGatewaySourceType(channel);
-      if (isConverterEntryChannel(channel)) {
-        const models = uniqueModels(getDefaultModelsByGatewaySourceType(gatewaySourceType));
-        const now = new Date().toISOString();
-        return res.json({
-          channelId: channelId,
-          gatewaySourceType,
-          models,
-          supported: models.length > 0,
-          cached: false,
-          fallbackUsed: false,
-          fetchedAt: now,
-          error: models.length > 0 ? null : '未配置默认模型列表',
-          errorHint: models.length > 0 ? null : '请在设置中配置对应工具类型的默认模型'
-        });
-      }
-
+      const preferredModels = collectChannelPreferredModels(channel);
       const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
       const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
+      const shouldProbeByDefault = !!listResult.disabledByConfig;
       let result;
 
       if (listedModels.length > 0) {
@@ -227,7 +161,28 @@ module.exports = (config) => {
           error: null,
           errorHint: null
         };
+      } else if (shouldProbeByDefault || isConverterPresetChannel(channel)) {
+        const probe = await probeModelAvailability(channel, gatewaySourceType, {
+          stopOnFirstAvailable: false,
+          preferredModels
+        });
+        const probedModels = Array.isArray(probe.availableModels) ? uniqueModels(probe.availableModels) : [];
+
+        result = {
+          models: probedModels,
+          supported: probedModels.length > 0,
+          cached: !!probe.cached || !!listResult.cached,
+          fallbackUsed: false,
+          lastChecked: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+          error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
+          errorHint: probedModels.length > 0
+            ? (shouldProbeByDefault ? '已按设置跳过 /v1/models，使用默认模型探测结果' : '模型列表接口不可用，已自动切换为模型探测结果')
+            : (listResult.errorHint || (shouldProbeByDefault
+              ? '已按设置跳过 /v1/models，且默认模型探测无可用结果'
+              : '模型列表接口不可用且模型探测无可用结果'))
+        };
       } else {
+        // 非入口转换器渠道：只请求 /v1/models，失败则返回空列表
         result = {
           models: [],
           supported: false,
@@ -235,7 +190,7 @@ module.exports = (config) => {
           fallbackUsed: false,
           lastChecked: listResult.lastChecked || new Date().toISOString(),
           error: listResult.error || '该渠道未返回可用模型列表',
-          errorHint: listResult.errorHint || '仅 OpenCode 非转换入口使用 /v1/models，请检查接口配置'
+          errorHint: listResult.errorHint || '此类型渠道不执行模型探测，请检查 /v1/models 接口'
         };
       }
 
@@ -263,7 +218,7 @@ module.exports = (config) => {
    * POST /api/opencode/channels
    * 创建新渠道
    */
-  router.post('/', async (req, res) => {
+  router.post('/', (req, res) => {
     try {
       const {
         name,
@@ -278,8 +233,7 @@ module.exports = (config) => {
         modelRedirects,
         speedTestModel,
         presetId,
-        websiteUrl,
-        allowedModels
+        websiteUrl
       } = req.body;
 
       if (!name || !baseUrl) {
@@ -300,12 +254,9 @@ module.exports = (config) => {
         modelRedirects: modelRedirects || [],
         speedTestModel: speedTestModel || null,
         presetId,
-        websiteUrl,
-        allowedModels: allowedModels || []
+        websiteUrl
       });
 
-      clearOpenCodeRedirectCache(channel.id);
-      await refreshEditedChannelAndSyncProxy(channel.id);
       res.json(channel);
       broadcastSchedulerState('opencode', getSchedulerState('opencode'));
     } catch (err) {
@@ -318,14 +269,13 @@ module.exports = (config) => {
    * PUT /api/opencode/channels/:channelId
    * 更新渠道
    */
-  router.put('/:channelId', async (req, res) => {
+  router.put('/:channelId', (req, res) => {
     try {
       const { channelId } = req.params;
       const updates = req.body;
 
       const channel = updateChannel(channelId, updates);
       clearOpenCodeRedirectCache(channelId);
-      await refreshEditedChannelAndSyncProxy(channelId);
       res.json(channel);
       broadcastSchedulerState('opencode', getSchedulerState('opencode'));
     } catch (err) {
@@ -342,8 +292,6 @@ module.exports = (config) => {
     try {
       const { channelId } = req.params;
       const result = await deleteChannel(channelId);
-      clearOpenCodeRedirectCache(channelId);
-      await refreshEditedChannelAndSyncProxy(channelId);
       res.json(result);
       broadcastSchedulerState('opencode', getSchedulerState('opencode'));
     } catch (err) {

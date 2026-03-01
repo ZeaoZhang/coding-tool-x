@@ -61,7 +61,6 @@
               <n-checkbox value="skills" :disabled="syncOptions.target === 'workspace'">
                 Skills
               </n-checkbox>
-              <n-checkbox value="rules">Rules</n-checkbox>
               <n-checkbox value="agents">Agents</n-checkbox>
               <n-checkbox value="commands">Commands</n-checkbox>
             </n-space>
@@ -90,27 +89,6 @@
                     <span class="config-item-name">{{ item.name }}</span>
                     <span class="config-item-desc">{{ item.description }}</span>
                     <n-tag size="small" type="info">{{ item.files }} 文件</n-tag>
-                  </n-checkbox>
-                </n-space>
-              </n-checkbox-group>
-            </n-collapse-item>
-          </n-collapse>
-
-          <!-- Rules -->
-          <n-collapse v-if="syncOptions.configTypes.includes('rules') && availableConfigs.rules?.length" default-expanded-names="rules">
-            <n-collapse-item title="Rules" name="rules">
-              <template #header-extra>
-                <n-badge :value="selectedItems.rules?.length || 0" :max="99" />
-              </template>
-              <n-checkbox-group v-model:value="selectedItems.rules">
-                <n-space vertical>
-                  <n-checkbox 
-                    v-for="item in availableConfigs.rules" 
-                    :key="item.path"
-                    :value="item"
-                  >
-                    <span class="config-item-name">{{ item.name }}</span>
-                    <span class="config-item-path">{{ item.path }}</span>
                   </n-checkbox>
                 </n-space>
               </n-checkbox-group>
@@ -259,7 +237,7 @@ const syncing = ref(false)
 const syncOptions = ref({
   source: 'global',
   target: 'workspace',
-  configTypes: ['rules', 'agents', 'commands'],
+  configTypes: ['agents', 'commands'],
   overwrite: false
 })
 
@@ -269,7 +247,6 @@ const availableConfigs = ref(null)
 // 选中的项目
 const selectedItems = ref({
   skills: [],
-  rules: [],
   agents: [],
   commands: []
 })
@@ -280,7 +257,6 @@ const preview = ref(null)
 // 计算选中数量
 const totalSelected = computed(() => {
   return (selectedItems.value.skills?.length || 0) +
-         (selectedItems.value.rules?.length || 0) +
          (selectedItems.value.agents?.length || 0) +
          (selectedItems.value.commands?.length || 0)
 })
@@ -434,14 +410,13 @@ watch(() => props.visible, (val) => {
     preview.value = null
     selectedItems.value = {
       skills: [],
-      rules: [],
       agents: [],
       commands: []
     }
     syncOptions.value = {
       source: 'global',
       target: 'workspace',
-      configTypes: ['rules', 'agents', 'commands'],
+      configTypes: ['agents', 'commands'],
       overwrite: false
     }
   }

@@ -11,17 +11,11 @@
         <span class="panel-title">Custom Agents</span>
       </div>
       <div class="header-right">
-        <n-button text @click="showCreateModal = true" class="action-btn">
+        <n-button text @click="openCreateModal" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
           </template>
           创建
-        </n-button>
-        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
-          <template #icon>
-            <n-icon><CloudDownloadOutline /></n-icon>
-          </template>
-          导入
         </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
@@ -35,17 +29,11 @@
     <!-- Drawer 模式下的简化头部 -->
     <div class="drawer-header-bar" v-if="props.inDrawer">
       <div class="header-right">
-        <n-button text @click="showCreateModal = true" class="action-btn">
+        <n-button text @click="openCreateModal" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
           </template>
           创建
-        </n-button>
-        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
-          <template #icon>
-            <n-icon><CloudDownloadOutline /></n-icon>
-          </template>
-          导入
         </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
@@ -99,7 +87,7 @@
               </n-icon>
             </template>
             <template #extra>
-              <n-button size="small" @click="showCreateModal = true">
+              <n-button size="small" @click="openCreateModal">
                 创建第一个代理
               </n-button>
             </template>
@@ -109,11 +97,11 @@
         <div v-else class="agents-grid">
           <AgentCard
             v-for="agent in filteredAgents"
-            :key="agent.path"
+            :key="getAgentUiKey(agent)"
             :agent="agent"
-            :deleting="!!deletingKeys[agent.path]"
-            :registry-info="registryMap[agent.name]"
-            :toggling="!!togglingKeys[agent.name]"
+            :deleting="!!deletingKeys[getAgentUiKey(agent)]"
+            :registry-info="registryMap[getRegistryKeyForAgent(agent)]"
+            :toggling="!!togglingKeys[getRegistryKeyForAgent(agent)]"
             @edit="handleEdit"
             @delete="handleDelete"
             @click="handleCardClick"
@@ -132,7 +120,8 @@
 
     <!-- 创建/编辑弹窗 -->
     <AgentFormModal
-      v-model:visible="showCreateModal"
+      :visible="showCreateModal"
+      @update:visible="handleModalVisibleChange"
       :agent="editingAgent"
       :project-path="projectPath"
       :platform="currentPlatform"
@@ -143,12 +132,23 @@
     <n-drawer v-model:show="showDetailDrawer" :width="550">
       <n-drawer-content :title="selectedAgent?.name || '代理详情'">
         <template v-if="selectedAgent">
+          <n-alert
+            v-if="currentPlatform === 'codex' && selectedAgent.configReadError"
+            type="warning"
+            :bordered="false"
+            style="margin-bottom: 12px;"
+          >
+            {{ selectedAgent.configReadError }}
+          </n-alert>
           <n-descriptions bordered :column="1">
             <n-descriptions-item label="作用域">
               {{ selectedAgent.scope === 'user' ? '用户级' : '项目级' }}
             </n-descriptions-item>
             <n-descriptions-item label="文件名">
-              {{ selectedAgent.fileName }}.md
+              {{ currentPlatform === 'codex' ? `[agents.${selectedAgent.fileName}]` : `${selectedAgent.fileName}.md` }}
+            </n-descriptions-item>
+            <n-descriptions-item label="config_file" v-if="currentPlatform === 'codex' && selectedAgent.configFile">
+              {{ selectedAgent.configFile }}
             </n-descriptions-item>
             <n-descriptions-item label="描述" v-if="selectedAgent.description">
               {{ selectedAgent.description }}
@@ -168,9 +168,16 @@
           </n-descriptions>
 
           <div class="detail-section">
-            <h4>系统提示词</h4>
-            <n-code :code="selectedAgent.systemPrompt || '(无内容)'" language="markdown" word-wrap />
+            <h4>{{ currentPlatform === 'codex' ? 'Agent Config (TOML)' : '系统提示词' }}</h4>
+            <n-code
+              :code="currentPlatform === 'codex' ? (selectedAgent.fullContent || '(无内容)') : (selectedAgent.systemPrompt || '(无内容)')"
+              :language="currentPlatform === 'codex' ? 'toml' : 'markdown'"
+              word-wrap
+            />
           </div>
+        </template>
+        <template v-else-if="detailLoading">
+          <n-spin :show="true" size="small" />
         </template>
       </n-drawer-content>
     </n-drawer>
@@ -182,7 +189,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NButton, NInput, NSelect, NIcon, NSpin, NEmpty,
-  NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode
+  NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode, NAlert
 } from 'naive-ui'
 import {
   ArrowBackOutline,
@@ -190,11 +197,10 @@ import {
   SearchOutline,
   InformationCircleOutline,
   AddOutline,
-  PersonOutline,
-  CloudDownloadOutline
+  PersonOutline
 } from '@vicons/ionicons5'
-import { getAgents, deleteAgent } from '../api/agents'
-import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
+import { getAgents, getAgent, deleteAgent } from '../api/agents'
+import { listItems, toggleEnabled, togglePlatform, syncAll } from '../api/config-registry'
 import message from '../utils/message'
 import AgentCard from './AgentCard.vue'
 import AgentFormModal from './AgentFormModal.vue'
@@ -224,15 +230,17 @@ const filterScope = ref('all')
 const showCreateModal = ref(false)
 const showDetailDrawer = ref(false)
 const selectedAgent = ref(null)
+const detailLoading = ref(false)
 const editingAgent = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
-const importing = ref(false)
 
 const currentPlatform = computed(() => {
   const channel = route.meta.channel
-  return channel === 'opencode' ? 'opencode' : 'claude'
+  if (channel === 'codex') return 'codex'
+  if (channel === 'opencode') return 'opencode'
+  return 'claude'
 })
 
 const agentUsageHint = computed(() =>
@@ -252,6 +260,43 @@ const userCount = computed(() => agents.value.filter(a => a.scope === 'user').le
 const projectCount = computed(() => agents.value.filter(a => a.scope === 'project').length)
 const managedCount = computed(() => Object.keys(registryMap.value).length)
 
+function getAgentUiKey(agent) {
+  if (!agent) {
+    return ''
+  }
+
+  const scope = typeof agent.scope === 'string' && agent.scope.trim() ? agent.scope.trim() : 'unknown'
+  const relativePath = typeof agent.path === 'string' && agent.path.trim() ? agent.path.trim() : ''
+  const fileName = typeof agent.fileName === 'string' && agent.fileName.trim() ? agent.fileName.trim() : ''
+  return `${scope}:${relativePath || fileName}`
+}
+
+function getRegistryKeyForAgent(agent) {
+  if (!agent) {
+    return ''
+  }
+
+  const candidates = []
+  if (typeof agent.path === 'string' && agent.path.trim()) {
+    candidates.push(agent.path.trim())
+  }
+  if (typeof agent.fileName === 'string' && agent.fileName.trim()) {
+    const fileName = agent.fileName.trim()
+    candidates.push(`${fileName}.md`, fileName)
+  }
+  if (typeof agent.name === 'string' && agent.name.trim()) {
+    candidates.push(agent.name.trim())
+  }
+
+  for (const candidate of candidates) {
+    if (registryMap.value[candidate]) {
+      return candidate
+    }
+  }
+
+  return candidates[0] || ''
+}
+
 const filteredAgents = computed(() => {
   let result = agents.value
 
@@ -261,7 +306,7 @@ const filteredAgents = computed(() => {
   } else if (filterScope.value === 'project') {
     result = result.filter(agent => agent.scope === 'project')
   } else if (filterScope.value === 'managed') {
-    result = result.filter(agent => registryMap.value[agent.name])
+    result = result.filter(agent => registryMap.value[getRegistryKeyForAgent(agent)])
   }
 
   // 按搜索词筛选
@@ -284,26 +329,6 @@ const emptyText = computed(() => {
   if (filterScope.value === 'managed') return '暂无托管的代理'
   return '暂无自定义代理'
 })
-
-async function handleImport() {
-  if (currentPlatform.value !== 'claude') {
-    return
-  }
-  importing.value = true
-  try {
-    const res = await importFromClaude('agents')
-    if (res.success) {
-      message.success(`成功导入 ${res.imported} 个代理`)
-      await loadAgents()
-    } else {
-      message.error(res.message || '导入失败')
-    }
-  } catch (err) {
-    message.error('导入失败: ' + err.message)
-  } finally {
-    importing.value = false
-  }
-}
 
 async function loadAgents() {
   loading.value = true
@@ -329,9 +354,15 @@ async function loadAgents() {
 }
 
 async function handleToggleEnabled(agent, enabled) {
-  togglingKeys.value[agent.name] = true
+  const registryKey = getRegistryKeyForAgent(agent)
+  if (!registryKey) {
+    message.error('未找到代理对应的托管配置键')
+    return
+  }
+
+  togglingKeys.value[registryKey] = true
   try {
-    const res = await toggleEnabled('agents', agent.name, enabled)
+    const res = await toggleEnabled('agents', registryKey, enabled)
     if (res.success) {
       message.success(enabled ? '已启用' : '已禁用')
       await loadAgents()
@@ -339,14 +370,20 @@ async function handleToggleEnabled(agent, enabled) {
   } catch (err) {
     message.error('切换失败: ' + err.message)
   } finally {
-    delete togglingKeys.value[agent.name]
+    delete togglingKeys.value[registryKey]
   }
 }
 
 async function handleTogglePlatform(agent, platform, enabled) {
-  togglingKeys.value[agent.name] = true
+  const registryKey = getRegistryKeyForAgent(agent)
+  if (!registryKey) {
+    message.error('未找到代理对应的托管配置键')
+    return
+  }
+
+  togglingKeys.value[registryKey] = true
   try {
-    const res = await togglePlatform('agents', agent.name, platform, enabled)
+    const res = await togglePlatform('agents', registryKey, platform, enabled)
     if (res.success) {
       message.success(`${platform} ${enabled ? '已启用' : '已禁用'}`)
       await loadAgents()
@@ -354,21 +391,42 @@ async function handleTogglePlatform(agent, platform, enabled) {
   } catch (err) {
     message.error('切换失败: ' + err.message)
   } finally {
-    delete togglingKeys.value[agent.name]
+    delete togglingKeys.value[registryKey]
   }
 }
 
-function handleRefresh() {
-  loadAgents()
+async function handleRefresh() {
+  loading.value = true
+  try {
+    const syncResult = await syncAll('agents')
+    if (!syncResult?.success) {
+      message.warning(syncResult?.message || '同步失败，已继续刷新列表')
+    }
+  } catch (err) {
+    message.warning('同步失败，已继续刷新列表: ' + err.message)
+  }
+  await loadAgents()
 }
 
-function handleEdit(agent) {
-  editingAgent.value = agent
+function openCreateModal() {
+  editingAgent.value = null
   showCreateModal.value = true
 }
 
+function handleModalVisibleChange(visible) {
+  showCreateModal.value = visible
+  if (!visible) {
+    editingAgent.value = null
+  }
+}
+
+function handleEdit(agent) {
+  loadAgentDetail(agent, true)
+}
+
 async function handleDelete(agent) {
-  deletingKeys.value[agent.path] = true
+  const key = getAgentUiKey(agent)
+  deletingKeys.value[key] = true
   try {
     const result = await deleteAgent(agent.fileName, agent.scope, props.projectPath, currentPlatform.value)
     if (result.success) {
@@ -379,13 +437,54 @@ async function handleDelete(agent) {
   } catch (err) {
     message.error('删除失败: ' + err.message)
   } finally {
-    delete deletingKeys.value[agent.path]
+    delete deletingKeys.value[key]
+  }
+}
+
+async function loadAgentDetail(agent, forEdit = false) {
+  if (!agent) return
+
+  if (currentPlatform.value !== 'codex') {
+    if (forEdit) {
+      editingAgent.value = agent
+      showCreateModal.value = true
+      return
+    }
+    selectedAgent.value = agent
+    showDetailDrawer.value = true
+    return
+  }
+
+  detailLoading.value = true
+  if (!forEdit) {
+    selectedAgent.value = null
+    showDetailDrawer.value = true
+  }
+
+  try {
+    const detailRes = await getAgent(agent.fileName, agent.scope, props.projectPath, currentPlatform.value)
+    const nextAgent = detailRes?.agent || agent
+    if (forEdit) {
+      editingAgent.value = nextAgent
+      showCreateModal.value = true
+    } else {
+      selectedAgent.value = nextAgent
+    }
+  } catch (err) {
+    message.error('加载代理详情失败: ' + err.message)
+    if (forEdit) {
+      editingAgent.value = agent
+      showCreateModal.value = true
+    } else {
+      selectedAgent.value = agent
+    }
+  } finally {
+    detailLoading.value = false
   }
 }
 
 function handleCardClick(agent) {
-  selectedAgent.value = agent
-  showDetailDrawer.value = true
+  loadAgentDetail(agent, false)
 }
 
 function handleSaved() {

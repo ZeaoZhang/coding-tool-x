@@ -2,7 +2,7 @@
  * Config Registry API 路由
  *
  * Exposes config registry functionality via REST API.
- * Manages skills, commands, agents, rules with enable/disable and per-platform support.
+ * Manages skills, commands, agents, plugins with enable/disable and per-platform support.
  */
 
 const express = require('express');
@@ -66,7 +66,7 @@ router.get('/stats', async (req, res) => {
 
 /**
  * GET /api/config-registry/:type
- * List all items for a config type (skills, commands, agents, rules)
+ * List all items for a config type (skills, commands, agents, plugins)
  * Returns { success: true, items: { name: registryEntry } }
  */
 router.get('/:type', async (req, res) => {
@@ -199,6 +199,9 @@ router.put('/:type/:name/toggle', async (req, res) => {
       if (item.platforms?.codex) {
         syncManager.syncToCodex(type, name);
       }
+      if (item.platforms?.gemini) {
+        syncManager.syncToGemini(type, name);
+      }
       if (item.platforms?.opencode) {
         syncManager.syncToOpenCode(type, name);
       }
@@ -206,6 +209,7 @@ router.put('/:type/:name/toggle', async (req, res) => {
       // Remove from all platforms
       syncManager.removeFromClaude(type, name);
       syncManager.removeFromCodex(type, name);
+      syncManager.removeFromGemini(type, name);
       syncManager.removeFromOpenCode(type, name);
     }
 
@@ -224,7 +228,7 @@ router.put('/:type/:name/toggle', async (req, res) => {
 
 /**
  * PUT /api/config-registry/:type/:name/platform/:platform
- * Toggle platform (claude/codex/opencode) for an item
+ * Toggle platform (claude/codex/gemini/opencode) for an item
  * Body: { enabled: boolean }
  * - Updates registry
  * - If enabling platform: sync to that platform (if item is enabled)
@@ -279,6 +283,8 @@ router.put('/:type/:name/platform/:platform', async (req, res) => {
         syncManager.syncToClaude(type, name);
       } else if (platform === 'codex') {
         syncManager.syncToCodex(type, name);
+      } else if (platform === 'gemini') {
+        syncManager.syncToGemini(type, name);
       } else if (platform === 'opencode') {
         syncManager.syncToOpenCode(type, name);
       }
@@ -288,6 +294,8 @@ router.put('/:type/:name/platform/:platform', async (req, res) => {
         syncManager.removeFromClaude(type, name);
       } else if (platform === 'codex') {
         syncManager.removeFromCodex(type, name);
+      } else if (platform === 'gemini') {
+        syncManager.removeFromGemini(type, name);
       } else if (platform === 'opencode') {
         syncManager.removeFromOpenCode(type, name);
       }

@@ -16,7 +16,8 @@ const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
-const { createRemoteMutationGuard, createRemoteRouteGuard } = require('./services/network-access');
+const { createRemoteMutationGuard } = require('./services/network-access');
+const { createApiRequestLogger } = require('./services/request-logger');
 
 function isInteractivePortConflictMode(options = {}) {
   if (options.interactive === false) {
@@ -105,7 +106,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   const app = express();
   const lanMode = host === '0.0.0.0';
   const allowRemoteMutation = process.env.CC_TOOL_ALLOW_REMOTE_WRITE === 'true';
-  const allowRemoteTerminal = process.env.CC_TOOL_ALLOW_REMOTE_TERMINAL === 'true';
 
   // Middleware
   app.use(express.json({ limit: '100mb' }));
@@ -122,6 +122,9 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     next();
   });
 
+  // API 请求日志（由 CC_TOOL_LOG_API_REQUESTS=true 环境变量控制，默认关闭）
+  app.use('/api', createApiRequestLogger());
+
   if (lanMode) {
     app.use('/api', createRemoteMutationGuard({
       enabled: true,
@@ -129,11 +132,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
       message: '出于安全考虑，LAN 模式默认仅允许本机执行写操作。可设置 CC_TOOL_ALLOW_REMOTE_WRITE=true 覆盖。'
     }));
 
-    app.use('/api/terminal', createRemoteRouteGuard({
-      enabled: true,
-      allowRemoteAccess: allowRemoteTerminal,
-      message: '出于安全考虑，Web 终端仅允许本机访问。可设置 CC_TOOL_ALLOW_REMOTE_TERMINAL=true 覆盖。'
-    }));
   }
 
   // API Routes
@@ -167,6 +165,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/codex/proxy', require('./api/codex-proxy'));
   app.use('/api/settings', require('./api/settings'));
   app.use('/api/config', require('./api/config'));
+  app.use('/api/convert', require('./api/convert'));
   app.use('/api/statistics', require('./api/statistics'));
   app.use('/api/codex/statistics', require('./api/codex-statistics'));
   app.use('/api/gemini/statistics', require('./api/gemini-statistics'));
@@ -185,11 +184,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // Claude Code 专有功能 API
   app.use('/api/commands', require('./api/commands'));
   app.use('/api/agents', require('./api/agents'));
-  app.use('/api/rules', require('./api/rules'));
   app.use('/api/plugins', require('./api/plugins'));
-
-  // Web 终端 API
-  app.use('/api/terminal', require('./api/terminal'));
 
   // 工作区 API
   app.use('/api/workspaces', require('./api/workspaces'));
@@ -203,7 +198,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // 配置同步 API
   app.use('/api/config-sync', require('./api/config-sync'));
 
-  // 配置注册表 API (集中管理 skills/commands/agents/rules 的启用/禁用)
+  // 配置注册表 API (集中管理 skills/commands/agents/plugins 的启用/禁用)
   app.use('/api/config-registry', require('./api/config-registry'));
 
   // 健康检查 API
@@ -253,16 +248,12 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   }
 
   // 附加 WebSocket 服务器到同一个端口
-  attachWebSocketServer(server, { host, allowRemoteTerminal });
+  attachWebSocketServer(server, { host });
   console.log(`   ws://localhost:${port}/ws\n`);
 
   if (host === '0.0.0.0' && !allowRemoteMutation) {
     console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程写操作默认禁用'));
   }
-  if (host === '0.0.0.0' && !allowRemoteTerminal) {
-    console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程 Web 终端默认禁用'));
-  }
-
   // 自动恢复代理状态
   autoRestoreProxies();
 

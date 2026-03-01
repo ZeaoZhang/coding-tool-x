@@ -12,6 +12,15 @@ const {
 const { isCodexInstalled } = require('../services/codex-config');
 const { loadAliases } = require('../services/alias');
 
+const DEBUG_CODEX_PERF = process.env.DEBUG_CODEX_PERF === '1';
+
+function logPerf(route, startMs, detail = '') {
+  if (!DEBUG_CODEX_PERF) return;
+  const duration = Date.now() - startMs;
+  const suffix = detail ? ` | ${detail}` : '';
+  console.log(`[Codex Perf] ${route}: ${duration}ms${suffix}`);
+}
+
 module.exports = (config) => {
   // ============================================
   // 静态路由必须放在参数路由之前
@@ -102,8 +111,10 @@ module.exports = (config) => {
    * 获取项目的所有会话
    */
   router.get('/:projectName', (req, res) => {
+    const startMs = Date.now();
     try {
       if (!isCodexInstalled()) {
+        logPerf('GET /api/codex/sessions/:projectName', startMs, 'codex not installed');
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
@@ -117,6 +128,7 @@ module.exports = (config) => {
 
       // 获取别名
       const aliases = loadAliases();
+      logPerf('GET /api/codex/sessions/:projectName', startMs, `project=${projectName}, sessions=${sessions.length}`);
 
       res.json({
         sessions,
@@ -130,6 +142,7 @@ module.exports = (config) => {
       });
     } catch (err) {
       console.error('[Codex API] Failed to get sessions:', err);
+      logPerf('GET /api/codex/sessions/:projectName', startMs, `error=${err.message}`);
       res.status(500).json({ error: err.message });
     }
   });
@@ -194,8 +207,10 @@ module.exports = (config) => {
    * 获取会话的消息列表
    */
   router.get('/:projectName/:sessionId/messages', (req, res) => {
+    const startMs = Date.now();
     try {
       if (!isCodexInstalled()) {
+        logPerf('GET /api/codex/sessions/:projectName/:sessionId/messages', startMs, 'codex not installed');
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
@@ -205,6 +220,7 @@ module.exports = (config) => {
       const session = getSessionById(sessionId);
 
       if (!session) {
+        logPerf('GET /api/codex/sessions/:projectName/:sessionId/messages', startMs, `session=${sessionId}, not found`);
         return res.status(404).json({ error: 'Session not found' });
       }
 
@@ -307,8 +323,14 @@ module.exports = (config) => {
           hasMore: end < totalMessages
         }
       });
+      logPerf(
+        'GET /api/codex/sessions/:projectName/:sessionId/messages',
+        startMs,
+        `session=${sessionId}, total=${totalMessages}, page=${pageNum}, returned=${paginatedMessages.length}`
+      );
     } catch (err) {
       console.error('[Codex API] Failed to get session messages:', err);
+      logPerf('GET /api/codex/sessions/:projectName/:sessionId/messages', startMs, `error=${err.message}`);
       res.status(500).json({ error: err.message });
     }
   });
@@ -381,7 +403,7 @@ module.exports = (config) => {
 
   /**
    * POST /api/codex/sessions/:projectName/:sessionId/launch
-   * 启动会话（打开终端）
+   * 获取会话启动命令（用于复制）
    */
   router.post('/:projectName/:sessionId/launch', (req, res) => {
     try {
@@ -390,9 +412,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const { exec } = require('child_process');
       const fs = require('fs');
-      const path = require('path');
 
       // 获取会话详情
       const session = getSessionById(sessionId);
@@ -434,55 +454,27 @@ module.exports = (config) => {
       broadcastLog({
         type: 'action',
         action: 'launch_codex_session',
-        message: `启动 Codex 会话 ${alias || sessionId.substring(0, 8)}`,
+        message: `复制 Codex 会话启动命令 ${alias || sessionId.substring(0, 8)}`,
         sessionId: sessionId,
         alias: alias || null,
         timestamp: Date.now()
       });
 
-      // 使用配置的终端工具启动
-      const { getTerminalLaunchCommand } = require('../services/terminal-config');
+      const command = `codex resume ${sessionId}`;
+      const quotedCwd = `"${String(cwd).replace(/"/g, '\\"')}"`;
+      const copyCommand = `cd ${quotedCwd} && ${command}`;
 
-      try {
-        // Windows 路径需要转换为反斜杠格式
-        const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
-
-        // 获取启动命令（使用 sessionId 作为占位符）
-        const { command, terminalId, terminalName } = getTerminalLaunchCommand(normalizedCwd, sessionId);
-
-        // 将命令中的 'claude -r' 替换为 'codex resume'
-        const codexCommand = command
-          .replace(/claude\s+-r\s+/g, 'codex resume ')
-          .replace(/claude\s+--resume\s+/g, 'codex resume ');
-
-        console.log(`[Codex] Launching terminal: ${terminalName} (${terminalId})`);
-        console.log(`[Codex] Command: ${codexCommand}`);
-
-        // 异步执行命令，不等待结果
-        const shellOption = process.platform === 'win32' ? { shell: 'cmd.exe' } : { shell: true };
-        exec(codexCommand, shellOption, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`[Codex] Failed to launch terminal ${terminalName}:`, error.message);
-          }
-        });
-
-        // 立即返回成功响应
-        res.json({
-          success: true,
-          cwd,
-          sessionFile: session.filePath,
-          terminal: terminalName,
-          terminalId,
-          sessionId
-        });
-      } catch (terminalError) {
-        console.error('[Codex] Failed to get terminal command:', terminalError);
-        return res.status(500).json({
-          error: '无法启动终端：' + terminalError.message
-        });
-      }
+      res.json({
+        success: true,
+        cwd,
+        sessionFile: session.filePath,
+        sessionId,
+        tool: 'codex',
+        command,
+        copyCommand
+      });
     } catch (err) {
-      console.error('[Codex API] Failed to launch session:', err);
+      console.error('[Codex API] Failed to prepare launch command:', err);
       res.status(500).json({ error: err.message });
     }
   });

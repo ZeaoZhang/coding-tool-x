@@ -71,12 +71,12 @@
             >
               {{ aiCfg.fileName }}
             </n-tag>
-            <n-tag v-if="previewData.summary.claudeMd" type="success" size="small">CLAUDE.md</n-tag>
             <n-tag v-if="previewData.summary.skills" type="info" size="small">{{ previewData.summary.skills }} Skills</n-tag>
             <n-tag v-if="previewData.summary.agents" type="info" size="small">{{ previewData.summary.agents }} Agents</n-tag>
             <n-tag v-if="previewData.summary.commands" type="info" size="small">{{ previewData.summary.commands }} Commands</n-tag>
-            <n-tag v-if="previewData.summary.rules" type="info" size="small">{{ previewData.summary.rules }} Rules</n-tag>
+            <n-tag v-if="previewData.summary.plugins" type="warning" size="small">{{ previewData.summary.plugins }} Plugins</n-tag>
             <n-tag v-if="previewData.summary.mcpServers" type="warning" size="small">{{ previewData.summary.mcpServers }} MCP</n-tag>
+            <n-tag v-if="previewData.summary.skipped" type="error" size="small">{{ previewData.summary.skipped }} Skipped</n-tag>
           </n-space>
         </div>
 
@@ -107,6 +107,25 @@
           style="margin-top: 8px"
         >
           以上文件将被覆盖，请确认后再应用
+        </n-alert>
+
+        <div v-if="previewData.skipped?.length">
+          <n-text type="error">将跳过：</n-text>
+          <n-ul style="margin: 4px 0">
+            <n-li v-for="(item, index) in previewData.skipped" :key="`${item.type}-${item.item}-${index}`">
+              <n-text>{{ item.type }}: </n-text>
+              <n-text code>{{ item.item }}</n-text>
+              <n-text depth="3"> - {{ item.reason }}</n-text>
+            </n-li>
+          </n-ul>
+        </div>
+
+        <n-alert
+          v-if="previewData.skipped?.length"
+          type="info"
+          style="margin-top: 8px"
+        >
+          本次将进行部分应用，以上项会被跳过。
         </n-alert>
       </n-space>
     </n-card>
@@ -162,14 +181,25 @@ const AI_CONFIG_INFO = {
   opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
 }
 
-// 获取可用的 AI 配置列表
+// 获取可用的 AI 配置列表（优先展示当前 CLI 对应配置）
 const availableAiConfigs = computed(() => {
   const aiConfigs = props.template?.aiConfigs
   if (!aiConfigs) return []
 
-  return Object.entries(aiConfigs)
+  const allEnabled = Object.entries(aiConfigs)
     .filter(([, cfg]) => cfg?.enabled && cfg?.content)
     .map(([key]) => AI_CONFIG_INFO[key])
+    .filter(Boolean)
+
+  const cliType = props.template?.cliType
+  if (cliType && cliType !== 'all') {
+    const preferred = aiConfigs[cliType]
+    if (preferred?.enabled && preferred?.content && AI_CONFIG_INFO[cliType]) {
+      return [AI_CONFIG_INFO[cliType]]
+    }
+  }
+
+  return allEnabled
 })
 
 // 获取默认选中的 AI 配置类型（全部选中）
@@ -291,8 +321,13 @@ async function handleApply() {
       formData.value.aiConfigTypes  // 传递数组
     )
     if (res.success) {
-      message.success('模版应用成功')
-      emit('success')
+      const skipped = res.data?.results?.skipped || []
+      if (skipped.length > 0) {
+        message.warning(`模版已部分应用，${skipped.length} 项已跳过`)
+      } else {
+        message.success('模版应用成功')
+      }
+      emit('success', res.data || null)
     } else {
       message.error(res.message || '应用失败')
     }

@@ -152,6 +152,11 @@ const recommendedRepos = computed(() => {
       { owner: 'sst', name: 'opencode', description: 'OpenCode 官方示例', branch: 'dev', directory: '.opencode/skill' }
     ]
   }
+  if (props.platform === 'gemini') {
+    return [
+      { owner: 'google-gemini', name: 'gemini-cli', description: 'Gemini 官方技能库', branch: 'main', directory: '.gemini/skills' }
+    ]
+  }
   return [
     { owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main' },
     { owner: 'ComposioHQ', name: 'awesome-claude-skills', description: '社区精选', branch: 'master' },

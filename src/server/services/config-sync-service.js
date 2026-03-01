@@ -1,16 +1,14 @@
 /**
  * 配置同步服务
  *
- * 支持 skills, rules, agents, commands 的在工作区和全局之间同步
+ * 支持 skills, agents, commands 的在工作区和全局之间同步
  * 
  * 配置位置:
  * - 全局: ~/.claude/
  *   - skills/
- *   - rules/
  *   - agents/
  *   - commands/
  * - 工作区: <project>/.claude/
- *   - rules/
  *   - agents/
  *   - commands/
  */
@@ -29,12 +27,6 @@ const CONFIG_TYPES = {
         projectDir: null, // skills 不支持项目级
         isDirectory: true, // skills 是目录结构
         markerFile: 'SKILL.md'
-    },
-    rules: {
-        globalDir: 'rules',
-        projectDir: 'rules',
-        isDirectory: false,
-        fileExtension: '.md'
     },
     agents: {
         globalDir: 'agents',
@@ -96,7 +88,6 @@ class ConfigSyncService {
     getAvailableConfigs(source, projectPath = null) {
         const result = {
             skills: [],
-            rules: [],
             agents: [],
             commands: []
         };
@@ -124,7 +115,7 @@ class ConfigSyncService {
                 // Skills: 扫描目录
                 result[type] = this._scanSkillsDir(dir);
             } else {
-                // Rules/Agents/Commands: 扫描 md 文件
+                // Agents/Commands: 扫描 md 文件
                 result[type] = this._scanMdFiles(dir, config.fileExtension);
             }
         }
@@ -171,7 +162,7 @@ class ConfigSyncService {
     }
 
     /**
-     * 扫描 md 文件（rules/agents/commands）
+     * 扫描 md 文件（agents/commands）
      */
     _scanMdFiles(dir, extension = '.md') {
         const items = [];
@@ -304,7 +295,7 @@ class ConfigSyncService {
      * @param {string} options.target - 'global' 或 'workspace'
      * @param {string[]} options.configTypes - 要同步的配置类型
      * @param {string} options.projectPath - 工作区路径
-     * @param {Object} options.selectedItems - 选中的项目 { skills: [], rules: [], ... }
+     * @param {Object} options.selectedItems - 选中的项目 { skills: [], agents: [], ... }
      * @returns {Object} 预览结果
      */
     previewSync(options) {
@@ -379,7 +370,7 @@ class ConfigSyncService {
             // Skills
             return path.join(baseDir, item.directory);
         } else {
-            // Rules/Agents/Commands
+            // Agents/Commands
             return path.join(baseDir, item.path);
         }
     }
@@ -479,7 +470,7 @@ class ConfigSyncService {
             // Skills
             return path.join(baseDir, item.directory);
         } else {
-            // Rules/Agents/Commands
+            // Agents/Commands
             return path.join(baseDir, item.path);
         }
     }
@@ -491,17 +482,15 @@ class ConfigSyncService {
         const globalConfigs = this.getAvailableConfigs('global');
         const workspaceConfigs = projectPath
             ? this.getAvailableConfigs('workspace', projectPath)
-            : { skills: [], rules: [], agents: [], commands: [] };
+            : { skills: [], agents: [], commands: [] };
 
         return {
             global: {
                 skills: globalConfigs.skills.length,
-                rules: globalConfigs.rules.length,
                 agents: globalConfigs.agents.length,
                 commands: globalConfigs.commands.length
             },
             workspace: {
-                rules: workspaceConfigs.rules.length,
                 agents: workspaceConfigs.agents.length,
                 commands: workspaceConfigs.commands.length
             }

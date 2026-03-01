@@ -13,7 +13,6 @@ const {
 } = require('../services/gemini-sessions');
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { loadAliases } = require('../services/alias');
-const { getTerminalLaunchCommand } = require('../services/terminal-config');
 
 module.exports = (config) => {
   /**
@@ -305,7 +304,7 @@ module.exports = (config) => {
 
   /**
    * POST /api/gemini/sessions/:projectHash/:sessionId/launch
-   * 启动会话（打开终端）
+   * 获取会话启动命令（用于复制）
    */
   router.post('/:projectHash/:sessionId/launch', (req, res) => {
     try {
@@ -313,7 +312,6 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
-      const { exec } = require('child_process');
       const { projectHash, sessionId } = req.params;
 
       // 获取会话详情
@@ -355,40 +353,21 @@ module.exports = (config) => {
       const resumeIndex = sessionIndex + 1;
 
       // 构建 Gemini CLI 命令（使用 --resume <index> 恢复特定会话）
-      const geminiCommand = `gemini --resume ${resumeIndex}`;
+      const command = `gemini --resume ${resumeIndex}`;
+      const quotedCwd = `"${String(projectPath).replace(/"/g, '\\"')}"`;
+      const copyCommand = `cd ${quotedCwd} && ${command}`;
 
-      try {
-        // 获取终端启动命令
-        const { command, terminalId, terminalName } = getTerminalLaunchCommand(projectPath, null, 'gemini', geminiCommand);
-
-        console.log(`[Gemini] Launching terminal: ${terminalName} (${terminalId})`);
-        console.log(`[Gemini] Resuming session: ${sessionId} (index ${resumeIndex})`);
-        console.log(`[Gemini] Command: ${command}`);
-
-        // 异步执行命令，不等待结果
-        const shellOption = process.platform === 'win32' ? { shell: 'cmd.exe' } : { shell: true };
-        exec(command, shellOption, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`[Gemini] Failed to launch terminal ${terminalName}:`, error.message);
-          }
-        });
-
-        // 立即返回成功响应
-        res.json({
-          success: true,
-          sessionId,
-          projectPath,
-          terminal: terminalName,
-          terminalId
-        });
-      } catch (terminalError) {
-        console.error('[Gemini] Failed to get terminal command:', terminalError);
-        return res.status(500).json({
-          error: 'Failed to launch terminal: ' + terminalError.message
-        });
-      }
+      res.json({
+        success: true,
+        sessionId,
+        projectPath,
+        cwd: projectPath,
+        tool: 'gemini',
+        command,
+        copyCommand
+      });
     } catch (err) {
-      console.error('[Gemini API] Failed to launch session:', err);
+      console.error('[Gemini API] Failed to prepare launch command:', err);
       res.status(500).json({ error: err.message });
     }
   });

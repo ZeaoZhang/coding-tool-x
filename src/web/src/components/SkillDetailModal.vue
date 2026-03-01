@@ -91,6 +91,7 @@ import { AlertCircleOutline, FolderOutline, CopyOutline } from '@vicons/ionicons
 import { getSkillDetail, installSkill, uninstallSkill } from '../api/skills'
 import message from '../utils/message'
 import { marked } from 'marked'
+import { copyTextToClipboard } from '../utils/clipboard'
 
 const props = defineProps({
   visible: Boolean,
@@ -195,14 +196,19 @@ async function handleUninstall() {
   }
 }
 
-function copyContent() {
+async function copyContent() {
   if (!detail.value?.content) return
 
-  navigator.clipboard.writeText(detail.value.content).then(() => {
+  try {
+    const copyResult = await copyTextToClipboard(detail.value.content)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+      return
+    }
     message.success('已复制到剪贴板')
-  }).catch(() => {
+  } catch {
     message.error('复制失败')
-  })
+  }
 }
 
 function handleClose() {

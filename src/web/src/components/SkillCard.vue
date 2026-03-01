@@ -74,6 +74,18 @@
             <template #trigger>
               <span
                 class="platform-icon"
+                :class="{ active: registryInfo.platforms?.gemini }"
+                @click.stop="$emit('toggle-platform', skill, 'gemini', !registryInfo.platforms?.gemini)"
+              >
+                <n-icon size="14"><LogoGoogle /></n-icon>
+              </span>
+            </template>
+            Gemini CLI {{ registryInfo.platforms?.gemini ? '已启用' : '未启用' }}
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
                 :class="{ active: registryInfo.platforms?.opencode }"
                 @click.stop="$emit('toggle-platform', skill, 'opencode', !registryInfo.platforms?.opencode)"
               >
@@ -90,7 +102,7 @@
 
 <script setup>
 import { NTag, NButton, NTooltip, NSwitch, NIcon } from 'naive-ui'
-import { LogoApple, TerminalOutline, CodeSlashOutline } from '@vicons/ionicons5'
+import { LogoApple, TerminalOutline, CodeSlashOutline, LogoGoogle } from '@vicons/ionicons5'
 
 defineProps({
   skill: { type: Object, required: true },

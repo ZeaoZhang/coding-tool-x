@@ -2,8 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const { getCodexDir } = require('./codex-config');
 const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL } = require('./codex-parser');
+const { globalCache, CacheKeys } = require('./enhanced-cache');
 
 const COUNTS_CACHE_TTL_MS = 30 * 1000;
+const SCAN_FILES_CACHE_TTL_MS = 15 * 1000;
+const ALL_SESSIONS_CACHE_TTL_MS = 20 * 1000;
+const PROJECTS_CACHE_TTL_MS = 300 * 1000;
+const PROJECT_SESSIONS_CACHE_TTL_MS = 120 * 1000;
 const FAST_META_READ_BYTES = 64 * 1024;
 const EMPTY_COUNTS = Object.freeze({ projectCount: 0, sessionCount: 0 });
 
@@ -11,6 +16,28 @@ let countsCache = {
   expiresAt: 0,
   value: EMPTY_COUNTS
 };
+
+let scanFilesCache = {
+  expiresAt: 0,
+  value: []
+};
+
+let sessionFileIndexCache = {
+  expiresAt: 0,
+  value: new Map()
+};
+
+let allSessionsCache = {
+  expiresAt: 0,
+  value: []
+};
+
+const CODEX_PROJECTS_CACHE_KEY = `${CacheKeys.PROJECTS}codex`;
+const codexSessionCacheKeys = new Set();
+
+function getCodexSessionsCacheKey(projectName) {
+  return `${CacheKeys.SESSIONS}codex:${projectName}`;
+}
 
 /**
  * 获取会话目录
@@ -53,10 +80,15 @@ function scanDirectoryRecursive(dir) {
  * @returns {Array} 会话文件路径数组
  */
 function scanSessionFiles() {
+  const now = Date.now();
+  if (scanFilesCache.expiresAt > now) {
+    return scanFilesCache.value;
+  }
+
   const sessionsDir = getSessionsDir();
   const files = scanDirectoryRecursive(sessionsDir);
 
-  return files.map(filePath => {
+  const parsed = files.map(filePath => {
     const filename = path.basename(filePath);
     // Codex 文件名格式：rollout-YYYY-MM-DDTHH-MM-SS-uuid.jsonl
     // 时间戳：19个字符（2025-11-22T12-34-56）
@@ -64,13 +96,40 @@ function scanSessionFiles() {
 
     if (!match) return null;
 
+    let size = 0;
+    let mtime = null;
+    let mtimeMs = 0;
+    try {
+      const stats = fs.statSync(filePath);
+      size = stats.size;
+      mtime = stats.mtime.toISOString();
+      mtimeMs = stats.mtime.getTime();
+    } catch (err) {
+      // ignore stat errors
+    }
+
     return {
       filePath,
       timestamp: match[1],
       sessionId: match[2],
-      date: match[1].split('T')[0]
+      date: match[1].split('T')[0],
+      size,
+      mtime,
+      mtimeMs
     };
   }).filter(Boolean);
+
+  const expiresAt = now + SCAN_FILES_CACHE_TTL_MS;
+  scanFilesCache = {
+    expiresAt,
+    value: parsed
+  };
+  sessionFileIndexCache = {
+    expiresAt,
+    value: new Map(parsed.map(file => [file.sessionId, file]))
+  };
+
+  return parsed;
 }
 
 /**
@@ -78,11 +137,37 @@ function scanSessionFiles() {
  * @returns {Array} 会话对象数组
  */
 function getAllSessions() {
+  const now = Date.now();
+  if (allSessionsCache.expiresAt > now) {
+    return allSessionsCache.value;
+  }
+
   const files = scanSessionFiles();
 
-  return files.map(file => {
-    // 使用轻量级解析，只获取元数据
-    const session = parseSessionMeta(file.filePath);
+  const parsed = files.map(file => {
+    const fastSummary = readSessionMetaSummaryFast(file.filePath);
+    let session = null;
+
+    if (fastSummary && fastSummary.payload) {
+      session = {
+        filePath: file.filePath,
+        meta: normalizeSessionMetaFromPayload(fastSummary.payload, file.timestamp),
+        tokens: null,
+        messageCount: 0,
+        preview: fastSummary.preview || '',
+        size: file.size || 0,
+        mtime: file.mtime || null,
+        mtimeMs: file.mtimeMs || 0
+      };
+    } else {
+      // 回退完整解析，保证兼容性
+      session = parseSessionMeta(file.filePath);
+      if (session) {
+        session.size = file.size || 0;
+        session.mtime = file.mtime || null;
+        session.mtimeMs = file.mtimeMs || 0;
+      }
+    }
 
     if (!session) return null;
 
@@ -92,6 +177,13 @@ function getAllSessions() {
       date: file.date
     };
   }).filter(Boolean);
+
+  allSessionsCache = {
+    expiresAt: now + ALL_SESSIONS_CACHE_TTL_MS,
+    value: parsed
+  };
+
+  return parsed;
 }
 
 /**
@@ -103,16 +195,18 @@ function normalizeSession(codexSession) {
   const { meta, sessionId, preview, filePath } = codexSession;
 
   // 获取文件大小和修改时间
-  let size = 0;
-  let mtime = meta.timestamp;
-  try {
-    if (filePath && fs.existsSync(filePath)) {
-      const stats = fs.statSync(filePath);
-      size = stats.size;
-      mtime = stats.mtime.toISOString();
+  let size = Number.isFinite(codexSession.size) ? codexSession.size : 0;
+  let mtime = codexSession.mtime || meta.timestamp || null;
+  if ((!size || !mtime) && filePath) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const stats = fs.statSync(filePath);
+        size = size || stats.size;
+        mtime = mtime || stats.mtime.toISOString();
+      }
+    } catch (err) {
+      // 忽略错误
     }
-  } catch (err) {
-    // 忽略错误
   }
 
   return {
@@ -134,6 +228,11 @@ function normalizeSession(codexSession) {
  * @returns {Array} 项目对象数组
  */
 function getProjects() {
+  const cached = globalCache.get(CODEX_PROJECTS_CACHE_KEY);
+  if (cached) {
+    return cached;
+  }
+
   const sessions = getAllSessions();
   const projectMap = new Map();
 
@@ -141,17 +240,9 @@ function getProjects() {
     const meta = session.meta;
 
     // 优先使用 Git 仓库名，否则使用 cwd 的最后一级目录
-    let projectName;
-    let projectPath = meta.cwd;
-
-    if (meta.git?.repositoryUrl) {
-      // 从 Git URL 提取项目名
-      const repoUrl = meta.git.repositoryUrl;
-      projectName = repoUrl.split('/').pop().replace('.git', '');
-    } else {
-      // 使用目录名
-      projectName = path.basename(meta.cwd);
-    }
+    const projectName = extractCodexProjectNameFromMeta(meta);
+    const projectPath = (typeof meta.cwd === 'string' && meta.cwd.trim()) ? meta.cwd.trim() : projectName;
+    if (!projectName) return;
 
     if (!projectMap.has(projectName)) {
       projectMap.set(projectName, {
@@ -161,7 +252,6 @@ function getProjects() {
         path: projectPath,
         gitRepo: meta.git?.repositoryUrl,
         branch: meta.git?.branch,
-        sessions: [],
         sessionCount: 0,
         lastUsed: null,
         source: 'codex'
@@ -169,11 +259,10 @@ function getProjects() {
     }
 
     const project = projectMap.get(projectName);
-    project.sessions.push(session);
     project.sessionCount++;
 
     // 更新最后活动时间
-    const sessionTime = new Date(session.meta.timestamp).getTime();
+    const sessionTime = session.mtimeMs || new Date(session.meta.timestamp || 0).getTime() || 0;
     if (!project.lastUsed || sessionTime > project.lastUsed) {
       project.lastUsed = sessionTime;
     }
@@ -198,11 +287,14 @@ function getProjects() {
 
     // 添加剩余的新项目（不在保存顺序中的）
     ordered.push(...projectsMap.values());
+    globalCache.set(CODEX_PROJECTS_CACHE_KEY, ordered, PROJECTS_CACHE_TTL_MS);
     return ordered;
   }
 
   // 默认按最后活动时间排序
-  return projects.sort((a, b) => b.lastUsed - a.lastUsed);
+  const sorted = projects.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
+  globalCache.set(CODEX_PROJECTS_CACHE_KEY, sorted, PROJECTS_CACHE_TTL_MS);
+  return sorted;
 }
 
 /**
@@ -211,6 +303,12 @@ function getProjects() {
  * @returns {Array} 归一化的会话数组
  */
 function getSessionsByProject(projectName) {
+  const cacheKey = getCodexSessionsCacheKey(projectName);
+  const cached = globalCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const sessions = getAllSessions();
 
   // 获取 fork 关系
@@ -223,13 +321,7 @@ function getSessionsByProject(projectName) {
   // 过滤并归一化会话
   const filteredSessions = sessions
     .filter(session => {
-      // 根据 Git 仓库名或目录名匹配
-      let sessionProjectName;
-      if (session.meta.git?.repositoryUrl) {
-        sessionProjectName = session.meta.git.repositoryUrl.split('/').pop().replace('.git', '');
-      } else {
-        sessionProjectName = path.basename(session.meta.cwd);
-      }
+      const sessionProjectName = extractCodexProjectNameFromMeta(session.meta);
       return sessionProjectName === projectName;
     })
     .map(session => {
@@ -242,38 +334,33 @@ function getSessionsByProject(projectName) {
   // 应用保存的排序
   let orderedSessions = filteredSessions;
   if (savedOrder.length > 0) {
-    const ordered = [];
+    const orderedFromSaved = [];
     const sessionMap = new Map(filteredSessions.map(s => [s.sessionId, s]));
 
-    // 提取新会话（不在保存顺序中的），按时间倒序排列
-    const newSessions = [];
     for (const sessionId of savedOrder) {
-      if (sessionMap.has(sessionId)) {
+      const session = sessionMap.get(sessionId);
+      if (session) {
+        orderedFromSaved.push(session);
         sessionMap.delete(sessionId);
       }
     }
-    newSessions.push(...sessionMap.values());
+
+    const newSessions = [...sessionMap.values()];
     newSessions.sort((a, b) => {
       return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
     });
 
     // 新会话在前，旧会话在后（按保存顺序）
-    ordered.push(...newSessions);
-
-    for (const sessionId of savedOrder) {
-      const session = filteredSessions.find(s => s.sessionId === sessionId);
-      if (session) {
-        ordered.push(session);
-      }
-    }
-
-    orderedSessions = ordered;
+    orderedSessions = [...newSessions, ...orderedFromSaved];
   } else {
     // 默认按时间倒序
     orderedSessions.sort((a, b) => {
       return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
     });
   }
+
+  globalCache.set(cacheKey, orderedSessions, PROJECT_SESSIONS_CACHE_TTL_MS);
+  codexSessionCacheKeys.add(cacheKey);
 
   return orderedSessions;
 }
@@ -284,8 +371,7 @@ function getSessionsByProject(projectName) {
  * @returns {Object|null} 归一化的会话对象
  */
 function getSessionById(sessionId) {
-  const files = scanSessionFiles();
-  const file = files.find(f => f.sessionId === sessionId);
+  const file = findSessionFileById(sessionId);
 
   if (!file) {
     return null;
@@ -370,12 +456,7 @@ function deleteProject(projectName) {
 
   // 找到该项目下的所有会话
   const projectSessions = sessions.filter(session => {
-    let sessionProjectName;
-    if (session.meta.git?.repositoryUrl) {
-      sessionProjectName = session.meta.git.repositoryUrl.split('/').pop().replace('.git', '');
-    } else {
-      sessionProjectName = path.basename(session.meta.cwd);
-    }
+    const sessionProjectName = extractCodexProjectNameFromMeta(session.meta);
     return sessionProjectName === projectName;
   });
 
@@ -447,6 +528,7 @@ function deleteProject(projectName) {
   }
 
   invalidateProjectAndSessionCountsCache();
+  invalidateCodexSessionCaches();
   return { success: true, deletedCount };
 }
 
@@ -469,14 +551,10 @@ function getRecentSessions(limit = 5) {
     const normalized = normalizeSession(session);
 
     // 添加项目信息
-    let projectName;
-    let projectPath = session.meta.cwd;
-
-    if (session.meta.git?.repositoryUrl) {
-      projectName = session.meta.git.repositoryUrl.split('/').pop().replace('.git', '');
-    } else {
-      projectName = path.basename(session.meta.cwd);
-    }
+    const projectName = extractCodexProjectNameFromMeta(session.meta) || 'Unknown';
+    const projectPath = (typeof session.meta.cwd === 'string' && session.meta.cwd.trim())
+      ? session.meta.cwd
+      : projectName;
 
     return {
       ...normalized,
@@ -500,8 +578,7 @@ function getRecentSessions(limit = 5) {
  * @returns {Object} 删除结果 { success: true }
  */
 function deleteSession(sessionId) {
-  const files = scanSessionFiles();
-  const targetFile = files.find(f => f.sessionId === sessionId);
+  const targetFile = findSessionFileById(sessionId);
 
   if (!targetFile) {
     throw new Error('Session not found');
@@ -535,6 +612,7 @@ function deleteSession(sessionId) {
   }
 
   invalidateProjectAndSessionCountsCache();
+  invalidateCodexSessionCaches();
   return { success: true };
 }
 
@@ -544,8 +622,7 @@ function deleteSession(sessionId) {
  * @returns {Object} Fork 结果 { newSessionId, forkedFrom }
  */
 function forkSession(sessionId) {
-  const files = scanSessionFiles();
-  const sourceFile = files.find(f => f.sessionId === sessionId);
+  const sourceFile = findSessionFileById(sessionId);
 
   if (!sourceFile) {
     throw new Error('Session not found');
@@ -589,6 +666,7 @@ function forkSession(sessionId) {
   saveForkRelations(forkRelations);
 
   invalidateProjectAndSessionCountsCache();
+  invalidateCodexSessionCaches();
   return {
     newSessionId,
     forkedFrom: sessionId,
@@ -616,6 +694,9 @@ function saveSessionOrder(projectName, order) {
   const { saveSessionOrder: saveClaudeSessionOrder } = require('./sessions');
   // 复用 Claude Code 的排序存储，使用 "codex-" 前缀区分
   saveClaudeSessionOrder(`codex-${projectName}`, order);
+  const cacheKey = getCodexSessionsCacheKey(projectName);
+  globalCache.delete(cacheKey);
+  codexSessionCacheKeys.delete(cacheKey);
 }
 
 /**
@@ -638,10 +719,30 @@ function saveProjectOrder(order) {
   const { getCodexDir } = require('./codex-config');
   // 复用 Claude Code 的排序存储
   saveClaudeProjectOrder({ projectsDir: getCodexDir() }, order);
+  globalCache.delete(CODEX_PROJECTS_CACHE_KEY);
 }
 
 function invalidateProjectAndSessionCountsCache() {
   countsCache.expiresAt = 0;
+}
+
+function invalidateCodexSessionCaches(options = {}) {
+  scanFilesCache.expiresAt = 0;
+  sessionFileIndexCache.expiresAt = 0;
+  allSessionsCache.expiresAt = 0;
+  globalCache.delete(CODEX_PROJECTS_CACHE_KEY);
+
+  if (options.projectName) {
+    const cacheKey = getCodexSessionsCacheKey(options.projectName);
+    globalCache.delete(cacheKey);
+    codexSessionCacheKeys.delete(cacheKey);
+    return;
+  }
+
+  for (const key of codexSessionCacheKeys) {
+    globalCache.delete(key);
+  }
+  codexSessionCacheKeys.clear();
 }
 
 function extractCodexProjectNameFromMeta(metaPayload = {}) {
@@ -662,7 +763,47 @@ function extractCodexProjectNameFromMeta(metaPayload = {}) {
   return '';
 }
 
-function readSessionMetaPayloadFast(filePath) {
+function normalizeSessionMetaFromPayload(payload = {}, fallbackTimestamp = null) {
+  return {
+    sessionId: payload.id,
+    timestamp: payload.timestamp || normalizeTimestampFromFilename(fallbackTimestamp),
+    cwd: payload.cwd,
+    cliVersion: payload.cli_version,
+    provider: payload.model_provider,
+    git: payload.git ? {
+      branch: payload.git.branch,
+      commitHash: payload.git.commit_hash || payload.git.commitHash,
+      repositoryUrl: payload.git.repository_url || payload.git.repositoryUrl
+    } : null
+  };
+}
+
+function normalizeTimestampFromFilename(raw = '') {
+  if (!raw || typeof raw !== 'string') return null;
+  const [date, timePart] = raw.split('T');
+  if (!date || !timePart) return null;
+  return `${date}T${timePart.replace(/-/g, ':')}Z`;
+}
+
+function extractCodexPreviewFromResponseItem(payload = {}) {
+  if (payload?.type !== 'message' || payload?.role !== 'user') {
+    return '';
+  }
+
+  const contentParts = Array.isArray(payload.content) ? payload.content : [];
+  const text = contentParts
+    .map(item => item?.text || item?.input_text || '')
+    .join('\n')
+    .trim();
+
+  if (!text || text === 'Warmup' || text.startsWith('<environment_context>')) {
+    return '';
+  }
+
+  return text.substring(0, 100);
+}
+
+function readSessionMetaSummaryFast(filePath) {
   let fd;
   try {
     fd = fs.openSync(filePath, 'r');
@@ -673,6 +814,9 @@ function readSessionMetaPayloadFast(filePath) {
     const chunk = buffer.toString('utf8', 0, bytesRead);
     const lines = chunk.split('\n');
 
+    let payload = null;
+    let preview = '';
+
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
@@ -682,10 +826,22 @@ function readSessionMetaPayloadFast(filePath) {
       } catch (err) {
         continue;
       }
-      if (parsed?.type === 'session_meta' && parsed?.payload && typeof parsed.payload === 'object') {
-        return parsed.payload;
+
+      if (!payload && parsed?.type === 'session_meta' && parsed?.payload && typeof parsed.payload === 'object') {
+        payload = parsed.payload;
+      }
+
+      if (!preview && parsed?.type === 'response_item' && parsed?.payload) {
+        preview = extractCodexPreviewFromResponseItem(parsed.payload) || preview;
+      }
+
+      if (payload && preview) {
+        break;
       }
     }
+
+    if (!payload) return null;
+    return { payload, preview };
   } catch (err) {
     return null;
   } finally {
@@ -697,7 +853,23 @@ function readSessionMetaPayloadFast(filePath) {
       }
     }
   }
+}
 
+function readSessionMetaPayloadFast(filePath) {
+  const summary = readSessionMetaSummaryFast(filePath);
+  return summary?.payload || null;
+}
+
+function findSessionFileById(sessionId) {
+  const now = Date.now();
+  if (sessionFileIndexCache.expiresAt > now) {
+    return sessionFileIndexCache.value.get(sessionId) || null;
+  }
+
+  scanSessionFiles();
+  if (sessionFileIndexCache.expiresAt > Date.now()) {
+    return sessionFileIndexCache.value.get(sessionId) || null;
+  }
   return null;
 }
 

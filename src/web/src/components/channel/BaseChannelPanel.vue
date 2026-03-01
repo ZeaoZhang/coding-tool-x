@@ -21,6 +21,7 @@
         v-model="state.channels"
         item-key="id"
         class="channels-list"
+        v-bind="dragOptions"
         ghost-class="ghost"
         chosen-class="chosen"
         drag-class="drag"
@@ -238,6 +239,14 @@ const configFactory = channelPanelFactories[props.type] || channelPanelFactories
 const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
+const dragOptions = {
+  // Keep channel cards reorder-only inside the panel list.
+  group: { name: `${config.type}-channels`, pull: false, put: false },
+  forceFallback: true,
+  fallbackOnBody: false,
+  fallbackTolerance: 4,
+  scroll: true
+}
 
 // 监听对话框打开，自动获取模型列表
 watch(() => state.showDialog, async (newVal) => {

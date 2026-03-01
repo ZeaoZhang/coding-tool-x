@@ -1,4 +1,5 @@
 import { client, getChannelPrefix } from './client'
+import { copyTextToClipboard } from '../utils/clipboard'
 
 export async function getSessions(projectName, channel = 'claude') {
   const prefix = getChannelPrefix(channel)
@@ -28,9 +29,9 @@ export async function forkSession(projectName, sessionId, channel = 'claude') {
   return response.data
 }
 
-export async function createSession(projectName, toolType = 'claude', channel = 'claude') {
-  const prefix = getChannelPrefix(channel)
-  const response = await client.post(`${prefix}/sessions/${projectName}/create`, { toolType })
+export async function createSession(projectName, toolType = 'claude') {
+  // 新建会话统一走 Claude 通用 sessions API，由 toolType 区分实际 CLI 类型
+  const response = await client.post(`/sessions/${projectName}/create`, { toolType })
   return response.data
 }
 
@@ -64,10 +65,42 @@ export async function searchSessionsGlobally(keyword, contextLength = 35, channe
   return response.data
 }
 
-export async function launchTerminal(projectName, sessionId, channel = 'claude') {
+export async function getSessionLaunchCommand(projectName, sessionId, channel = 'claude') {
   const prefix = getChannelPrefix(channel)
   const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/launch`)
   return response.data
+}
+
+function quoteForShell(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`
+}
+
+export function formatLaunchCommandForCopy(launchData) {
+  if (!launchData || typeof launchData !== 'object') {
+    return ''
+  }
+
+  if (typeof launchData.copyCommand === 'string' && launchData.copyCommand.trim()) {
+    return launchData.copyCommand
+  }
+
+  const command = typeof launchData.command === 'string' ? launchData.command.trim() : ''
+  if (!command) {
+    return ''
+  }
+
+  const cwd = typeof launchData.cwd === 'string' ? launchData.cwd.trim() : ''
+  return cwd ? `cd ${quoteForShell(cwd)} && ${command}` : command
+}
+
+export async function copySessionLaunchCommand(projectName, sessionId, channel = 'claude') {
+  const data = await getSessionLaunchCommand(projectName, sessionId, channel)
+  const text = formatLaunchCommandForCopy(data)
+  if (!text) {
+    throw new Error('未获取到可复制的启动命令')
+  }
+  const copyResult = await copyTextToClipboard(text)
+  return { text, data, copyResult }
 }
 
 export async function getSessionMessages(projectName, sessionId, page = 1, limit = 20, order = 'desc', channel = 'claude') {

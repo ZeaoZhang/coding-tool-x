@@ -6,7 +6,7 @@ const express = require('express');
 const { SkillService } = require('../services/skill-service');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const skillServices = new Map();
 
 function resolvePlatform(rawPlatform) {

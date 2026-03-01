@@ -53,6 +53,7 @@
 import { ref, computed, watch } from 'vue'
 import { NModal, NDescriptions, NDescriptionsItem, NTag, NDivider, NSpace, NButton, NText, NEmpty, useMessage } from 'naive-ui'
 import { getWorkspace, getLaunchCommand } from '../api/workspaces'
+import { copyTextToClipboard } from '../utils/clipboard'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
@@ -90,7 +91,11 @@ async function launchCLI(tool) {
     const res = await getLaunchCommand(props.workspace.id, tool)
     if (res.success) {
       const cmd = `cd "${res.data.cwd}" && ${res.data.command}`
-      await navigator.clipboard.writeText(cmd)
+      const copyResult = await copyTextToClipboard(cmd)
+      if (copyResult?.method === 'manual') {
+        message.warning('自动复制失败，已弹出手动复制框')
+        return
+      }
       message.success('启动命令已复制到剪贴板')
     } else {
       message.error(res.message || '获取命令失败')

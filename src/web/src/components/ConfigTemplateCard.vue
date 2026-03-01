@@ -21,7 +21,6 @@
         <span v-if="template.skills?.length">{{ template.skills.length }} Skills</span>
         <span v-if="template.agents?.length">{{ template.agents.length }} Agents</span>
         <span v-if="template.commands?.length">{{ template.commands.length }} Commands</span>
-        <span v-if="template.rules?.length">{{ template.rules.length }} Rules</span>
         <span v-if="template.mcpServers?.length">{{ template.mcpServers.length }} MCP</span>
       </div>
     </div>

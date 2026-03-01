@@ -76,16 +76,6 @@
         </div>
         <div
           class="nav-tab"
-          :class="{ active: currentRoute === 'terminal' }"
-          @click="router.push({ name: 'terminal' })"
-        >
-          <n-icon :size="18" class="nav-icon">
-            <TerminalOutline />
-          </n-icon>
-          <span class="nav-label">Terminal</span>
-        </div>
-        <div
-          class="nav-tab"
           :class="{ active: currentRoute === 'analytics' }"
           @click="router.push({ name: 'analytics' })"
         >
@@ -214,9 +204,7 @@
       <!-- Left Content Area (Router View) -->
       <div class="left-content">
         <router-view v-slot="{ Component }">
-          <keep-alive :include="['Terminal']">
-            <component :is="Component" :key="routeViewKey" />
-          </keep-alive>
+          <component :is="Component" :key="routeViewKey" />
         </router-view>
       </div>
 
@@ -262,6 +250,12 @@
     <!-- Speed Test Drawer -->
     <SpeedTestDrawer v-model:visible="showSpeedTestDrawer" />
 
+    <!-- OpenCode Gateway Convert Drawer -->
+    <GatewayConvertDrawer
+      v-if="currentChannel === 'opencode'"
+      v-model:visible="showGatewayConvertDrawer"
+    />
+
     <!-- Workspace Drawer -->
     <WorkspaceDrawer v-model:visible="showWorkspaceDrawer" />
 
@@ -271,11 +265,10 @@
     <!-- Config Export/Import Drawer -->
     <ConfigExportDrawer v-model:visible="showConfigExportDrawer" />
 
-    <!-- Skills/Commands/Agents/Rules Drawers -->
+    <!-- Skills/Commands/Agents Drawers -->
     <SkillsDrawer v-model:visible="showSkillsDrawer" />
     <CommandsDrawer v-model:visible="showCommandsDrawer" />
     <AgentsDrawer v-model:visible="showAgentsDrawer" />
-    <RulesDrawer v-model:visible="showRulesDrawer" />
     <PluginsDrawer v-model:visible="showPluginsDrawer" />
 
     <!-- Help Modal -->
@@ -395,7 +388,7 @@
             <li><strong>多类型支持</strong>：统一管理 Claude Code、Codex、Gemini 三种工具的项目和会话</li>
             <li><strong>项目管理</strong>：查看所有项目，支持拖拽排序、搜索过滤、删除项目</li>
             <li><strong>会话管理</strong>：查看项目会话列表，支持搜索、Fork、删除、重命名</li>
-            <li><strong>快速启动</strong>：点击会话直接在终端中启动对应的 AI 工具</li>
+            <li><strong>快速启动</strong>：点击会话可直接复制对应 AI 工具启动命令</li>
             <li><strong>动态切换</strong>：每种工具独立的渠道管理，可在右侧面板快速切换 API 渠道</li>
             <li><strong>实时日志</strong>：查看各类型代理的实时请求日志、token 消耗和成本统计</li>
             <li><strong>全局搜索</strong>：使用 <kbd>⌘/Ctrl</kbd> + <kbd>K</kbd> 在所有项目中搜索对话内容</li>
@@ -459,7 +452,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, TerminalOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -468,10 +461,10 @@ import SettingsDrawer from './SettingsDrawer.vue'
 import McpDrawer from './McpDrawer.vue'
 import PromptsDrawer from './PromptsDrawer.vue'
 import SpeedTestDrawer from './SpeedTestDrawer.vue'
+import GatewayConvertDrawer from './GatewayConvertDrawer.vue'
 import SkillsDrawer from './SkillsDrawer.vue'
 import CommandsDrawer from './CommandsDrawer.vue'
 import AgentsDrawer from './AgentsDrawer.vue'
-import RulesDrawer from './RulesDrawer.vue'
 import PluginsDrawer from './PluginsDrawer.vue'
 import WorkspaceDrawer from './WorkspaceDrawer.vue'
 import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
@@ -511,10 +504,7 @@ const route = useRoute()
 // 导航状态
 const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => route.meta.channel || null)
-const terminalRouteNames = new Set(['terminal', 'terminal-channel', 'terminal-session'])
-const routeViewKey = computed(() => (
-  terminalRouteNames.has(route.name) ? 'terminal-keep' : route.path
-))
+const routeViewKey = computed(() => route.path)
 
 // 是否显示右侧面板（首页不显示）
 const shouldShowRightPanel = computed(() => {
@@ -527,6 +517,7 @@ const showSettingsDrawer = ref(false)
 const showMcpDrawer = ref(false)
 const showPromptsDrawer = ref(false)
 const showSpeedTestDrawer = ref(false)
+const showGatewayConvertDrawer = ref(false)
 const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
@@ -534,7 +525,6 @@ const showConfigExportDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const showCommandsDrawer = ref(false)
 const showAgentsDrawer = ref(false)
-const showRulesDrawer = ref(false)
 const showPluginsDrawer = ref(false)
 
 // Chat history drawer state
@@ -697,8 +687,8 @@ onMounted(() => {
   window.addEventListener('open-skills-drawer', openSkillsDrawer)
   window.addEventListener('open-commands-drawer', openCommandsDrawer)
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
-  window.addEventListener('open-rules-drawer', openRulesDrawer)
   window.addEventListener('open-plugins-drawer', openPluginsDrawer)
+  window.addEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
@@ -710,8 +700,8 @@ onUnmounted(() => {
   window.removeEventListener('open-skills-drawer', openSkillsDrawer)
   window.removeEventListener('open-commands-drawer', openCommandsDrawer)
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
-  window.removeEventListener('open-rules-drawer', openRulesDrawer)
   window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
+  window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 })
 
 function openSkillsDrawer() {
@@ -726,13 +716,22 @@ function openAgentsDrawer() {
   showAgentsDrawer.value = true
 }
 
-function openRulesDrawer() {
-  showRulesDrawer.value = true
-}
-
 function openPluginsDrawer() {
   showPluginsDrawer.value = true
 }
+
+function openGatewayConvertDrawer() {
+  if (currentChannel.value !== 'opencode') {
+    return
+  }
+  showGatewayConvertDrawer.value = true
+}
+
+watch(() => currentChannel.value, (channel) => {
+  if (channel !== 'opencode' && showGatewayConvertDrawer.value) {
+    showGatewayConvertDrawer.value = false
+  }
+})
 
 // Handle view history from favorites
 function handleViewHistoryFromFavorites({ session, channel }) {

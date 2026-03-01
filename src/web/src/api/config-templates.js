@@ -36,7 +36,7 @@ export async function updateTemplate(id, data) {
 }
 
 /**
- * 删除自定义配置模板
+ * 删除配置模板
  */
 export async function deleteTemplate(id) {
   const response = await client.delete(`${API_BASE}/${id}`);

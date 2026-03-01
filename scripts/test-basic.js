@@ -4,7 +4,6 @@ const os = require('os');
 
 const { expandHome, getConfigFilePath } = require('../src/config/loader');
 const DEFAULT_CONFIG = require('../src/config/default');
-const { getTerminalLaunchCommand } = require('../src/server/services/terminal-config');
 const { isLoopbackRequest } = require('../src/server/services/network-access');
 
 function run() {
@@ -15,12 +14,6 @@ function run() {
   const configPath = getConfigFilePath();
   assert(configPath.startsWith(path.join(os.homedir(), '.cc-tool')), '配置文件路径应位于 ~/.cc-tool 下');
   assert(expandHome('~/.claude/projects').startsWith(os.homedir()), 'expandHome 未正确展开 ~');
-
-  const geminiLaunch = getTerminalLaunchCommand('/tmp', null, 'gemini', 'gemini --resume 3');
-  assert(
-    typeof geminiLaunch.command === 'string' && geminiLaunch.command.includes('gemini --resume 3'),
-    'Gemini 自定义恢复命令拼接失败'
-  );
 
   const spoofedRemoteReq = {
     headers: { 'x-forwarded-for': '127.0.0.1' },

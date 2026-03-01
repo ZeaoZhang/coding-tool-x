@@ -119,23 +119,6 @@ onMounted(() => {
   /* 主色 */
   --primary-color: #18a058;
 
-  /* Terminal 相关变量 - 浅色主题 (Catppuccin Latte) */
-  --terminal-bg: #eff1f5;
-  --terminal-tabs-bg: #e6e9ef;
-  --terminal-tab-bg: #eff1f5;
-  --terminal-tab-hover: #dce0e8;
-  --terminal-tab-active-border: #9ca0b0;
-  --terminal-border: #ccd0da;
-  --terminal-text: #4c4f69;
-  --terminal-text-muted: #6c6f85;
-  --terminal-overlay-bg: rgba(239, 241, 245, 0.9);
-  --terminal-scrollbar: rgba(64, 160, 43, 0.3);
-  --terminal-scrollbar-hover: rgba(64, 160, 43, 0.5);
-  --terminal-btn-hover: rgba(156, 160, 176, 0.3);
-  --terminal-item-bg: rgba(220, 224, 232, 0.5);
-  --terminal-item-border: rgba(204, 208, 218, 0.8);
-  --terminal-item-hover: rgba(220, 224, 232, 0.8);
-  --terminal-icon-bg: rgba(239, 241, 245, 0.8);
 }
 
 /* 全局 CSS 变量 - 暗色主题 */
@@ -174,23 +157,6 @@ onMounted(() => {
   /* 主色 */
   --primary-color: #18a058;
 
-  /* Terminal 相关变量 - 深色主题 (Catppuccin Mocha) */
-  --terminal-bg: #1e1e2e;
-  --terminal-tabs-bg: #181825;
-  --terminal-tab-bg: #1e1e2e;
-  --terminal-tab-hover: #313244;
-  --terminal-tab-active-border: #45475a;
-  --terminal-border: #313244;
-  --terminal-text: #cdd6f4;
-  --terminal-text-muted: #a6adc8;
-  --terminal-overlay-bg: rgba(30, 30, 46, 0.9);
-  --terminal-scrollbar: rgba(166, 227, 161, 0.3);
-  --terminal-scrollbar-hover: rgba(166, 227, 161, 0.5);
-  --terminal-btn-hover: rgba(69, 71, 90, 0.5);
-  --terminal-item-bg: rgba(69, 71, 90, 0.3);
-  --terminal-item-border: rgba(69, 71, 90, 0.5);
-  --terminal-item-hover: rgba(69, 71, 90, 0.5);
-  --terminal-icon-bg: rgba(30, 30, 46, 0.5);
 }
 
 body {

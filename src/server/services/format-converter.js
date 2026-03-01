@@ -34,55 +34,169 @@ function parseFrontmatter(content) {
   const frontmatterText = match[1];
   result.body = match[2].trim();
 
-  // 解析 YAML（支持嵌套 metadata）
+  // 解析 YAML（支持嵌套对象 + description 多行/块标量）
   const lines = frontmatterText.split('\n');
   let currentParent = null;
 
-  for (const line of lines) {
-    // 检测缩进（嵌套对象）
-    const indentMatch = line.match(/^(\s*)/);
-    const indent = indentMatch ? indentMatch[1].length : 0;
-
-    // 跳过空行
-    if (!line.trim()) continue;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const indent = line.match(/^(\s*)/)?.[1].length || 0;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
     const colonIndex = line.indexOf(':');
     if (colonIndex === -1) continue;
 
     const key = line.slice(0, colonIndex).trim();
-    let value = line.slice(colonIndex + 1).trim();
-
-    // 检测是否是嵌套对象开始（值为空）
-    if (!value && indent === 0) {
-      currentParent = key;
-      result.frontmatter[key] = {};
-      continue;
-    }
+    const rawValue = line.slice(colonIndex + 1).trim();
 
     // 处理嵌套属性
     if (indent > 0 && currentParent && typeof result.frontmatter[currentParent] === 'object') {
-      // 去除引号
-      if ((value.startsWith('"') && value.endsWith('"')) ||
-          (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1);
-      }
-      result.frontmatter[currentParent][key] = value;
+      result.frontmatter[currentParent][key] = unquoteYamlValue(rawValue);
       continue;
     }
 
-    // 重置当前父级
     currentParent = null;
 
-    // 去除引号
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
+    // YAML block scalar: >, >-, |, |- 等
+    if (/^[>|][+-]?$/.test(rawValue)) {
+      const parsed = parseMultilineYamlValue(lines, i + 1, indent, rawValue);
+      result.frontmatter[key] = parsed.value;
+      i = parsed.nextIndex - 1;
+      continue;
     }
 
-    result.frontmatter[key] = value;
+    // 空值：可能是嵌套对象，也可能是多行文本（Gemini description 常见）
+    if (!rawValue && indent === 0) {
+      const nextInfo = findNextNonEmptyLine(lines, i + 1);
+      if (nextInfo && nextInfo.indent > indent) {
+        if (shouldParseAsMultilineText(key, nextInfo.trimmed)) {
+          const parsed = parseMultilineYamlValue(lines, i + 1, indent);
+          result.frontmatter[key] = parsed.value;
+          i = parsed.nextIndex - 1;
+          continue;
+        }
+
+        currentParent = key;
+        result.frontmatter[key] = {};
+        continue;
+      }
+    }
+
+    result.frontmatter[key] = unquoteYamlValue(rawValue);
   }
 
   return result;
+}
+
+function unquoteYamlValue(value) {
+  if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function findNextNonEmptyLine(lines, startIndex) {
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    return {
+      index: i,
+      indent: line.match(/^(\s*)/)?.[1].length || 0,
+      trimmed
+    };
+  }
+  return null;
+}
+
+function shouldParseAsMultilineText(key, nextTrimmedLine) {
+  // Gemini skill frontmatter 常见：
+  // description:
+  //   多行描述...
+  if (key === 'description') {
+    return true;
+  }
+
+  // 嵌套对象一般是 "childKey: value" 结构
+  if (/^[A-Za-z0-9_-]+\s*:/.test(nextTrimmedLine)) {
+    return false;
+  }
+
+  return true;
+}
+
+function parseMultilineYamlValue(lines, startIndex, parentIndent, blockStyle = null) {
+  let endIndex = startIndex;
+  const collected = [];
+
+  while (endIndex < lines.length) {
+    const line = lines[endIndex];
+    const indent = line.match(/^(\s*)/)?.[1].length || 0;
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      collected.push('');
+      endIndex++;
+      continue;
+    }
+
+    if (indent <= parentIndent) {
+      break;
+    }
+
+    collected.push(line);
+    endIndex++;
+  }
+
+  if (collected.length === 0) {
+    return { value: '', nextIndex: endIndex };
+  }
+
+  // 去掉公共缩进
+  const baseIndent = collected
+    .filter(line => line.trim() !== '')
+    .reduce((min, line) => {
+      const indent = line.match(/^(\s*)/)?.[1].length || 0;
+      return Math.min(min, indent);
+    }, Infinity);
+
+  const normalizedLines = collected.map(line => {
+    if (!line) return '';
+    return line.slice(Math.min(baseIndent, line.length));
+  });
+
+  const style = blockStyle ? blockStyle[0] : null;
+  const chomp = blockStyle && blockStyle.length > 1 ? blockStyle[1] : null;
+  let value = '';
+
+  if (style === '>') {
+    value = foldYamlLines(normalizedLines);
+  } else {
+    value = normalizedLines.join('\n');
+  }
+
+  if (chomp !== '+') {
+    value = value.replace(/\n+$/g, '');
+  }
+
+  return { value: value.trim(), nextIndex: endIndex };
+}
+
+function foldYamlLines(lines) {
+  if (lines.length === 0) return '';
+
+  let output = lines[0];
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i - 1] === '' || lines[i] === '') {
+      output += '\n' + lines[i];
+    } else {
+      output += ' ' + lines[i];
+    }
+  }
+
+  return output;
 }
 
 /**

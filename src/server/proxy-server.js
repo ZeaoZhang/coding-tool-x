@@ -1,6 +1,9 @@
 const express = require('express');
 const httpProxy = require('http-proxy');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const chalk = require('chalk');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { allocateChannel, releaseChannel, getSchedulerState } = require('./services/channel-scheduler');
@@ -14,6 +17,7 @@ const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRunt
 const { createDecodedStream } = require('./services/response-decoder');
 const eventBus = require('../plugins/event-bus');
 const { getEffectiveApiKey } = require('./services/channels');
+const { persistProxyRequestSnapshot } = require('./services/request-logger');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -149,6 +153,77 @@ function extractSessionId(req) {
   return null;
 }
 
+function pickClaudeRequestHeaders(headers = {}) {
+  return { ...headers };
+}
+
+function toSerializable(value) {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function extractClaudeRequestBody(req) {
+  if (req?.body !== undefined) {
+    return req.body;
+  }
+  if (req?.rawBody) {
+    const bodyBuffer = Buffer.isBuffer(req.rawBody)
+      ? req.rawBody
+      : Buffer.from(req.rawBody);
+    return bodyBuffer.toString('utf8');
+  }
+  return null;
+}
+
+function serializeFullClaudeRequest(req) {
+  const rawBodyBuffer = req?.rawBody
+    ? (Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody))
+    : null;
+
+  return {
+    method: req?.method || null,
+    url: req?.url || null,
+    originalUrl: req?.originalUrl || null,
+    path: req?.path || null,
+    httpVersion: req?.httpVersion || null,
+    headers: pickClaudeRequestHeaders(req?.headers || {}),
+    rawHeaders: Array.isArray(req?.rawHeaders) ? [...req.rawHeaders] : null,
+    query: toSerializable(req?.query),
+    params: toSerializable(req?.params),
+    body: toSerializable(extractClaudeRequestBody(req)),
+    rawBody: rawBodyBuffer ? rawBodyBuffer.toString('utf8') : null
+  };
+}
+
+function persistClaudeRequestSnapshot(payload) {
+  persistProxyRequestSnapshot('claude', payload);
+}
+
+function buildClaudeRequestSummary(req, sessionId = null) {
+  const body = req && req.body && typeof req.body === 'object' ? req.body : {};
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const contentLengthHeader = req?.headers?.['content-length'];
+  const contentLength = contentLengthHeader !== undefined && contentLengthHeader !== null
+    ? Number(contentLengthHeader)
+    : (req?.rawBody ? req.rawBody.length : null);
+
+  return {
+    method: req?.method || null,
+    path: req?.originalUrl || req?.url || null,
+    model: body.model || null,
+    stream: body.stream === true,
+    maxTokens: body.max_tokens ?? body.maxTokens ?? null,
+    messageCount: messages.length,
+    hasSystem: body.system !== undefined && body.system !== null,
+    sessionId: sessionId || null,
+    contentLength: Number.isFinite(contentLength) ? contentLength : null
+  };
+}
+
 async function startProxyServer(options = {}) {
   const preserveStartTime = options.preserveStartTime || false;
 
@@ -244,6 +319,31 @@ async function startProxyServer(options = {}) {
           });
         }
         req.effectiveApiKey = effectiveKey;
+
+        const now = new Date();
+        const time = now.toLocaleTimeString('zh-CN', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+        const requestSnapshot = serializeFullClaudeRequest(req);
+        broadcastLog({
+          type: 'action',
+          action: 'claude_request_received',
+          message: '收到 Claude Code 请求',
+          time,
+          channel: channel.name,
+          source: 'claude',
+          requestSummary: buildClaudeRequestSummary(req, sessionId)
+        });
+        persistClaudeRequestSnapshot({
+          timestamp: Date.now(),
+          source: 'claude',
+          channel: channel.name,
+          sessionId: sessionId || null,
+          request: requestSnapshot
+        });
 
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {

@@ -18,7 +18,7 @@ const {
 } = require('./format-converter');
 const { NATIVE_PATHS } = require('../../config/paths');
 
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const OPENCODE_SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 function normalizePlatform(platform) {
@@ -36,6 +36,9 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   codex: [
     { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
   ],
+  gemini: [
+    { owner: 'google-gemini', name: 'gemini-cli', branch: 'main', directory: '.gemini/skills', enabled: true }
+  ],
   opencode: [
     { owner: 'darrenhinde', name: 'OpenAgentsControl', branch: 'main', directory: '.opencode/skill', enabled: true }
   ]
@@ -51,6 +54,11 @@ const PLATFORM_CONFIG = {
     installDir: path.join(os.homedir(), '.codex', 'skills'),
     reposFile: 'codex-skill-repos.json',
     cacheFile: 'codex-skills-cache.json'
+  },
+  gemini: {
+    installDir: path.join(os.homedir(), '.gemini', 'skills'),
+    reposFile: 'gemini-skill-repos.json',
+    cacheFile: 'gemini-skills-cache.json'
   },
   opencode: {
     installDir: path.join(NATIVE_PATHS.opencode.config, 'skills'),

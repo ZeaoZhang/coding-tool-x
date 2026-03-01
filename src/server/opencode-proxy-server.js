@@ -5,6 +5,7 @@ const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const zlib = require('zlib');
 const chalk = require('chalk');
 const { broadcastLog, broadcastSchedulerState } = require('./websocket-server');
@@ -13,12 +14,13 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
-const { resolveModelPricing } = require('./utils/pricing');
-const { getDefaultSpeedTestModelByToolType } = require('../config/model-metadata');
+const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
-const { fetchModelsFromProvider, getCachedModelInfo } = require('./services/model-detector');
+const { persistProxyRequestSnapshot } = require('./services/request-logger');
+const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
+const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -32,7 +34,7 @@ const requestMetadata = new Map();
 const printedRedirectCache = new Map();
 
 // OpenAI 模型定价（每百万 tokens 的价格，单位：美元）
-// 作为 model-metadata 未覆盖时的兜底值
+// Claude 模型使用 config/model-pricing.js 中的集中定价
 const PRICING = {
   'gpt-4o': { input: 2.5, output: 10 },
   'gpt-4o-2024-11-20': { input: 2.5, output: 10 },
@@ -50,8 +52,29 @@ const PRICING = {
 
 const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
 const ONE_MILLION = 1000000;
-const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31';
-const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.44 (external, sdk-cli)';
+const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.59 (external, cli)';
+const CLAUDE_MESSAGES_BETA_FLAGS = Object.freeze([
+  'claude-code-20250219',
+  'interleaved-thinking-2025-05-14',
+  'prompt-caching-scope-2026-01-05',
+  'effort-2025-11-24'
+]);
+const CLAUDE_ADVANCED_TOOL_USE_BETA = 'advanced-tool-use-2025-11-20';
+const CLAUDE_COUNT_TOKENS_BETA_FLAGS = Object.freeze([
+  'claude-code-20250219',
+  'token-counting-2024-11-01'
+]);
+const DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude.";
+const DEFAULT_CLAUDE_CODE_TOOL_NAMES = Object.freeze([
+  'Task',
+  'Bash',
+  'Glob',
+  'Grep',
+  'Read',
+  'Edit',
+  'Write',
+  'ToolSearch'
+]);
 const CODEX_CLI_VERSION = '0.101.0';
 const CODEX_CLI_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464';
 const GEMINI_CLI_USER_AGENT = 'google-api-nodejs-client/9.15.1';
@@ -60,21 +83,14 @@ const GEMINI_CLI_CLIENT_METADATA = 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UN
 const CLAUDE_SESSION_USER_ID_TTL_MS = 60 * 60 * 1000;
 const CLAUDE_SESSION_USER_ID_CACHE_MAX = 2000;
 const claudeSessionUserIdCache = new Map();
-const FILE_EXTENSION_MIME_TYPES = {
-  '.pdf': 'application/pdf',
-  '.txt': 'text/plain',
-  '.md': 'text/markdown',
-  '.csv': 'text/csv',
-  '.json': 'application/json',
-  '.xml': 'application/xml',
-  '.html': 'text/html',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml'
-};
+const CLAUDE_USER_ID_ACCOUNT_RE = /^user_([0-9a-f]{64})_account__session_[a-z0-9._-]+$/i;
+const CLAUDE_USER_ID_FULL_RE = /^user_[0-9a-f]{64}_account__session_[a-z0-9._-]+$/i;
+const CLAUDE_TEMPLATE_SYSTEM_MIN_CHARS = 1000;
+const CLAUDE_TEMPLATE_CACHE_TTL_MS = 30 * 1000;
+let cachedClaudeAccountId = '';
+let cachedClaudeUserId = '';
+let cachedClaudeRequestTemplate = null;
+let cachedClaudeRequestTemplateAt = 0;
 
 /**
  * 检测模型层级
@@ -174,46 +190,66 @@ function resolveOpenCodeTarget(baseUrl = '', requestPath = '') {
  * 计算请求成本
  */
 function calculateCost(model, tokens) {
-  let fallbackPricing = PRICING[model];
-  if (!fallbackPricing) {
-    const modelLower = String(model || '').toLowerCase();
-    if (modelLower.includes('gpt-4o-mini')) {
-      fallbackPricing = PRICING['gpt-4o-mini'];
-    } else if (modelLower.includes('gpt-4o')) {
-      fallbackPricing = PRICING['gpt-4o'];
-    } else if (modelLower.includes('gpt-4')) {
-      fallbackPricing = PRICING['gpt-4'];
-    } else if (modelLower.includes('gpt-3.5')) {
-      fallbackPricing = PRICING['gpt-3.5-turbo'];
-    } else if (modelLower.includes('o1-mini')) {
-      fallbackPricing = PRICING['o1-mini'];
-    } else if (modelLower.includes('o1-pro')) {
-      fallbackPricing = PRICING['o1-pro'];
-    } else if (modelLower.includes('o1')) {
-      fallbackPricing = PRICING['o1'];
-    } else if (modelLower.includes('o3-mini')) {
-      fallbackPricing = PRICING['o3-mini'];
-    } else if (modelLower.includes('o3')) {
-      fallbackPricing = PRICING['o3'];
-    } else if (modelLower.includes('o4-mini')) {
-      fallbackPricing = PRICING['o4-mini'];
+  let pricing;
+
+  // 首先检查是否是 Claude 模型，使用集中定价
+  if (model.startsWith('claude-') || model.toLowerCase().includes('claude')) {
+    pricing = CLAUDE_MODEL_PRICING[model];
+
+    // 如果没有精确匹配，尝试模糊匹配 Claude 模型
+    if (!pricing) {
+      const modelLower = model.toLowerCase();
+      // 查找最接近的 Claude 模型
+      for (const [key, value] of Object.entries(CLAUDE_MODEL_PRICING)) {
+        if (key.toLowerCase().includes(modelLower) || modelLower.includes(key.toLowerCase())) {
+          pricing = value;
+          break;
+        }
+      }
+    }
+
+    // 如果仍然没有找到，使用默认 Sonnet 定价
+    if (!pricing) {
+      pricing = CLAUDE_MODEL_PRICING['claude-sonnet-4-5-20250929'];
+    }
+  } else {
+    // 非 Claude 模型，使用 PRICING 对象（OpenAI 等）
+    pricing = PRICING[model];
+
+    // 如果没有精确匹配，尝试模糊匹配
+    if (!pricing) {
+      const modelLower = model.toLowerCase();
+      if (modelLower.includes('gpt-4o-mini')) {
+        pricing = PRICING['gpt-4o-mini'];
+      } else if (modelLower.includes('gpt-4o')) {
+        pricing = PRICING['gpt-4o'];
+      } else if (modelLower.includes('gpt-4')) {
+        pricing = PRICING['gpt-4'];
+      } else if (modelLower.includes('gpt-3.5')) {
+        pricing = PRICING['gpt-3.5-turbo'];
+      } else if (modelLower.includes('o1-mini')) {
+        pricing = PRICING['o1-mini'];
+      } else if (modelLower.includes('o1-pro')) {
+        pricing = PRICING['o1-pro'];
+      } else if (modelLower.includes('o1')) {
+        pricing = PRICING['o1'];
+      } else if (modelLower.includes('o3-mini')) {
+        pricing = PRICING['o3-mini'];
+      } else if (modelLower.includes('o3')) {
+        pricing = PRICING['o3'];
+      } else if (modelLower.includes('o4-mini')) {
+        pricing = PRICING['o4-mini'];
+      }
     }
   }
 
-  const pricing = resolveModelPricing('opencode', model, fallbackPricing, OPENCODE_BASE_PRICING);
+  // 默认使用基础定价
+  pricing = resolvePricing('opencode', pricing, OPENCODE_BASE_PRICING);
   const inputRate = typeof pricing.input === 'number' ? pricing.input : OPENCODE_BASE_PRICING.input;
   const outputRate = typeof pricing.output === 'number' ? pricing.output : OPENCODE_BASE_PRICING.output;
-  const cacheCreationRate = typeof pricing.cacheCreation === 'number' ? pricing.cacheCreation : inputRate * 1.25;
-  const cacheReadRate = typeof pricing.cacheRead === 'number' ? pricing.cacheRead : inputRate * 0.1;
-
-  const cacheCreationTokens = tokens.cacheCreation || 0;
-  const cacheReadTokens = tokens.cacheRead || 0;
-  const regularInputTokens = Math.max(0, (tokens.input || 0) - cacheCreationTokens - cacheReadTokens);
 
   return (
-    regularInputTokens * inputRate / ONE_MILLION +
-    cacheCreationTokens * cacheCreationRate / ONE_MILLION +
-    cacheReadTokens * cacheReadRate / ONE_MILLION +
+    (tokens.input || 0) * inputRate / ONE_MILLION +
     (tokens.output || 0) * outputRate / ONE_MILLION
   );
 }
@@ -233,6 +269,141 @@ function shouldParseJson(req) {
 function normalizeSessionKeyValue(value) {
   const source = Array.isArray(value) ? value[0] : value;
   return typeof source === 'string' ? source.trim() : '';
+}
+
+function resolveClaudeAccountIdFromUserId(userId = '') {
+  const value = normalizeSessionKeyValue(userId);
+  if (!value) return '';
+  const matched = value.match(CLAUDE_USER_ID_ACCOUNT_RE);
+  return matched ? matched[1].toLowerCase() : '';
+}
+
+function resolveClaudeAccountIdFromLogs() {
+  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
+  if (!fs.existsSync(logsPath)) return '';
+
+  try {
+    const content = fs.readFileSync(logsPath, 'utf8');
+    const lines = content.trim().split('\n');
+    const accountIdCount = new Map();
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const userId = parsed?.request?.body?.metadata?.user_id;
+        const accountId = resolveClaudeAccountIdFromUserId(userId);
+        if (accountId) {
+          accountIdCount.set(accountId, (accountIdCount.get(accountId) || 0) + 1);
+        }
+      } catch {
+        // ignore malformed line
+      }
+    }
+
+    const ranked = Array.from(accountIdCount.entries())
+      .filter(([accountId]) => accountId !== '0'.repeat(64))
+      .sort((left, right) => right[1] - left[1]);
+
+    if (ranked.length > 0) {
+      return ranked[0][0];
+    }
+  } catch {
+    // ignore read error
+  }
+
+  return '';
+}
+
+function resolveClaudeUserIdFromLogs() {
+  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
+  if (!fs.existsSync(logsPath)) return '';
+
+  try {
+    const content = fs.readFileSync(logsPath, 'utf8');
+    const lines = content.trim().split('\n');
+    const userIdCount = new Map();
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const userId = normalizeSessionKeyValue(parsed?.request?.body?.metadata?.user_id);
+        if (!CLAUDE_USER_ID_FULL_RE.test(userId)) continue;
+        const accountId = resolveClaudeAccountIdFromUserId(userId);
+        if (!accountId || accountId === '0'.repeat(64)) continue;
+        userIdCount.set(userId, (userIdCount.get(userId) || 0) + 1);
+      } catch {
+        // ignore malformed line
+      }
+    }
+
+    const ranked = Array.from(userIdCount.entries()).sort((left, right) => right[1] - left[1]);
+    return ranked.length > 0 ? ranked[0][0] : '';
+  } catch {
+    return '';
+  }
+}
+
+function resolveClaudePreferredUserId() {
+  if (cachedClaudeUserId) {
+    return cachedClaudeUserId;
+  }
+
+  const envUserId = normalizeSessionKeyValue(
+    process.env.OPENCODE_CLAUDE_USER_ID || process.env.CLAUDE_CODE_USER_ID
+  );
+  if (CLAUDE_USER_ID_FULL_RE.test(envUserId)) {
+    cachedClaudeUserId = envUserId;
+    return cachedClaudeUserId;
+  }
+
+  const requestTemplate = resolveClaudeRequestTemplate();
+  if (requestTemplate && CLAUDE_USER_ID_FULL_RE.test(requestTemplate.userId || '')) {
+    cachedClaudeUserId = requestTemplate.userId;
+    return cachedClaudeUserId;
+  }
+
+  const fromLogs = resolveClaudeUserIdFromLogs();
+  if (fromLogs) {
+    cachedClaudeUserId = fromLogs;
+    return cachedClaudeUserId;
+  }
+
+  return '';
+}
+
+function resolveClaudeAccountId() {
+  if (cachedClaudeAccountId) {
+    return cachedClaudeAccountId;
+  }
+
+  const envAccountId = normalizeSessionKeyValue(
+    process.env.OPENCODE_CLAUDE_ACCOUNT_ID || process.env.CLAUDE_CODE_ACCOUNT_ID
+  ).toLowerCase();
+
+  if (/^[0-9a-f]{64}$/.test(envAccountId)) {
+    cachedClaudeAccountId = envAccountId;
+    return cachedClaudeAccountId;
+  }
+
+  const fromLogs = resolveClaudeAccountIdFromLogs();
+  if (fromLogs) {
+    cachedClaudeAccountId = fromLogs;
+    return cachedClaudeAccountId;
+  }
+
+  cachedClaudeAccountId = '0'.repeat(64);
+  return cachedClaudeAccountId;
+}
+
+function buildClaudeSessionId() {
+  if (typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function extractSessionIdFromBody(body = {}) {
@@ -329,17 +500,6 @@ function normalizeGatewaySourceType(channel) {
   return 'codex';
 }
 
-function isConverterEntryChannel(channel) {
-  const presetId = String(channel?.presetId || '').trim().toLowerCase();
-  return presetId === 'entry_claude' || presetId === 'entry_codex' || presetId === 'entry_gemini';
-}
-
-function getDefaultModelsByGatewaySourceType(gatewaySourceType) {
-  if (gatewaySourceType === 'claude') return [getDefaultSpeedTestModelByToolType('claude')];
-  if (gatewaySourceType === 'gemini') return [getDefaultSpeedTestModelByToolType('gemini')];
-  return [getDefaultSpeedTestModelByToolType('codex')];
-}
-
 function mapStainlessOs() {
   switch (process.platform) {
     case 'darwin':
@@ -366,6 +526,161 @@ function mapStainlessArch() {
   }
 }
 
+function buildClaudeBetaHeader(options = {}) {
+  const requestType = options.requestType === 'count_tokens' ? 'count_tokens' : 'messages';
+  const hasTools = !!options.hasTools;
+  const betaFlags = requestType === 'count_tokens'
+    ? [...CLAUDE_COUNT_TOKENS_BETA_FLAGS]
+    : [...CLAUDE_MESSAGES_BETA_FLAGS];
+
+  if (requestType === 'messages' && hasTools) {
+    betaFlags.push(CLAUDE_ADVANCED_TOOL_USE_BETA);
+  }
+
+  return betaFlags.join(',');
+}
+
+function buildDefaultClaudeCodeTools() {
+  return DEFAULT_CLAUDE_CODE_TOOL_NAMES.map(name => ({
+    name,
+    description: `${name} tool`,
+    input_schema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: true
+    }
+  }));
+}
+
+function hasExpectedClaudeToolSet(tools = []) {
+  if (!Array.isArray(tools) || tools.length < DEFAULT_CLAUDE_CODE_TOOL_NAMES.length) {
+    return false;
+  }
+  const names = new Set();
+  tools.forEach((tool) => {
+    if (tool && typeof tool === 'object' && typeof tool.name === 'string') {
+      names.add(tool.name);
+    }
+  });
+  return DEFAULT_CLAUDE_CODE_TOOL_NAMES.every(name => names.has(name));
+}
+
+function extractClaudeSystemCharCount(system = []) {
+  if (!Array.isArray(system)) return 0;
+  return system.reduce((sum, block) => {
+    if (!block || typeof block !== 'object') return sum;
+    const text = typeof block.text === 'string' ? block.text : '';
+    return sum + text.length;
+  }, 0);
+}
+
+function cloneJson(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+function loadClaudeRequestTemplateFromLogs() {
+  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
+  if (!fs.existsSync(logsPath)) return null;
+
+  try {
+    const content = fs.readFileSync(logsPath, 'utf8');
+    const lines = content.trim().split('\n');
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const body = parsed?.request?.body;
+        if (!body || typeof body !== 'object') continue;
+
+        const userId = normalizeSessionKeyValue(body?.metadata?.user_id);
+        const accountId = resolveClaudeAccountIdFromUserId(userId);
+        if (!CLAUDE_USER_ID_FULL_RE.test(userId) || !accountId || accountId === '0'.repeat(64)) continue;
+
+        const tools = Array.isArray(body.tools) ? body.tools : [];
+        const system = Array.isArray(body.system) ? body.system : [];
+        if (!hasExpectedClaudeToolSet(tools)) continue;
+        if (extractClaudeSystemCharCount(system) < CLAUDE_TEMPLATE_SYSTEM_MIN_CHARS) continue;
+
+        return {
+          userId,
+          tools: cloneJson(tools),
+          system: cloneJson(system)
+        };
+      } catch {
+        // ignore malformed line
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function resolveClaudeRequestTemplate() {
+  const now = Date.now();
+  if (cachedClaudeRequestTemplate && now - cachedClaudeRequestTemplateAt < CLAUDE_TEMPLATE_CACHE_TTL_MS) {
+    return cachedClaudeRequestTemplate;
+  }
+  cachedClaudeRequestTemplate = loadClaudeRequestTemplateFromLogs();
+  cachedClaudeRequestTemplateAt = now;
+  return cachedClaudeRequestTemplate;
+}
+
+function buildClaudeSystemBlocks(systemText = '', templateSystem = []) {
+  const blocks = Array.isArray(templateSystem) && templateSystem.length > 0
+    ? cloneJson(templateSystem)
+    : [];
+
+  const normalizedSystem = String(systemText || '').trim();
+  if (normalizedSystem) {
+    blocks.push({
+      type: 'text',
+      text: normalizedSystem
+    });
+  }
+
+  if (blocks.length === 0) {
+    blocks.push({
+      type: 'text',
+      text: DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT
+    });
+  }
+
+  return blocks;
+}
+
+function buildClaudeRequestHeaders(apiKey, options = {}) {
+  return {
+    'x-api-key': apiKey,
+    authorization: `Bearer ${apiKey}`,
+    'anthropic-version': '2023-06-01',
+    'anthropic-beta': buildClaudeBetaHeader(options),
+    'anthropic-dangerous-direct-browser-access': 'true',
+    'x-app': 'cli',
+    'x-stainless-retry-count': '0',
+    'x-stainless-timeout': '600',
+    'x-stainless-runtime-version': process.version,
+    'x-stainless-package-version': '0.74.0',
+    'x-stainless-runtime': 'node',
+    'x-stainless-lang': 'js',
+    'x-stainless-arch': mapStainlessArch(),
+    'x-stainless-os': mapStainlessOs(),
+    'content-type': 'application/json',
+    accept: 'application/json',
+    'accept-encoding': 'gzip, deflate',
+    'accept-language': '*',
+    'sec-fetch-mode': 'cors',
+    connection: 'keep-alive',
+    'user-agent': CLAUDE_CODE_USER_AGENT
+  };
+}
+
 function getRequestPathname(urlPath = '') {
   try {
     const parsed = new URL(urlPath, 'http://localhost');
@@ -375,20 +690,53 @@ function getRequestPathname(urlPath = '') {
   }
 }
 
-function normalizeGatewayPath(pathname = '') {
-  const normalized = String(pathname || '').trim();
-  if (!normalized) return '/';
-  return normalized.replace(/\/+$/, '') || '/';
-}
-
 function isResponsesPath(pathname) {
-  const normalized = normalizeGatewayPath(pathname);
-  return normalized.endsWith('/v1/responses') || normalized.endsWith('/responses');
+  return pathname === '/v1/responses' || pathname === '/responses';
 }
 
 function isChatCompletionsPath(pathname) {
-  const normalized = normalizeGatewayPath(pathname);
-  return normalized.endsWith('/v1/chat/completions') || normalized.endsWith('/chat/completions');
+  return pathname === '/v1/chat/completions' || pathname === '/chat/completions';
+}
+
+function collectPreferredProbeModels(channel) {
+  const candidates = [];
+  if (!channel || typeof channel !== 'object') return candidates;
+
+  candidates.push(channel.model);
+  candidates.push(channel.speedTestModel);
+
+  const modelConfig = channel.modelConfig;
+  if (modelConfig && typeof modelConfig === 'object') {
+    candidates.push(modelConfig.model);
+    candidates.push(modelConfig.opusModel);
+    candidates.push(modelConfig.sonnetModel);
+    candidates.push(modelConfig.haikuModel);
+  }
+
+  if (Array.isArray(channel.modelRedirects)) {
+    channel.modelRedirects.forEach((rule) => {
+      candidates.push(rule?.from);
+      candidates.push(rule?.to);
+    });
+  }
+
+  const seen = new Set();
+  const models = [];
+  candidates.forEach((model) => {
+    if (typeof model !== 'string') return;
+    const trimmed = model.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    models.push(trimmed);
+  });
+  return models;
+}
+
+function isConverterPresetChannel(channel) {
+  const presetId = String(channel?.presetId || '').trim().toLowerCase();
+  return presetId === 'entry_claude' || presetId === 'entry_codex' || presetId === 'entry_gemini';
 }
 
 function extractTextFragments(value, fragments) {
@@ -434,192 +782,10 @@ function extractText(value) {
   return fragments.join('\n').trim();
 }
 
-function parseBase64DataUrl(dataUrl = '') {
-  const value = typeof dataUrl === 'string' ? dataUrl.trim() : '';
-  if (!value) return null;
-  const matched = value.match(/^data:([^;,]+)?;base64,(.+)$/i);
-  if (!matched) return null;
-  return {
-    mediaType: String(matched[1] || '').trim(),
-    data: String(matched[2] || '')
-  };
-}
-
-function inferMimeTypeFromFilename(filename = '', fallback = 'application/octet-stream') {
-  const ext = path.extname(String(filename || '').trim()).toLowerCase();
-  if (!ext) return fallback;
-  return FILE_EXTENSION_MIME_TYPES[ext] || fallback;
-}
-
-function normalizeOpenAiImageBlock(value) {
-  let imageUrl = '';
-  if (typeof value === 'string') {
-    imageUrl = value;
-  } else if (value && typeof value === 'object') {
-    if (typeof value.url === 'string') {
-      imageUrl = value.url;
-    } else if (typeof value.image_url === 'string') {
-      imageUrl = value.image_url;
-    } else if (value.image_url && typeof value.image_url === 'object' && typeof value.image_url.url === 'string') {
-      imageUrl = value.image_url.url;
-    }
-  }
-
-  const normalizedUrl = String(imageUrl || '').trim();
-  if (!normalizedUrl) return null;
-
-  const parsedDataUrl = parseBase64DataUrl(normalizedUrl);
-  if (parsedDataUrl && parsedDataUrl.data) {
-    const mediaType = parsedDataUrl.mediaType && parsedDataUrl.mediaType.startsWith('image/')
-      ? parsedDataUrl.mediaType
-      : 'image/png';
-    return {
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mediaType,
-        data: parsedDataUrl.data
-      }
-    };
-  }
-
-  return {
-    type: 'image',
-    source: {
-      type: 'url',
-      url: normalizedUrl
-    }
-  };
-}
-
-function normalizeOpenAiFileBlock(value) {
-  if (!value || typeof value !== 'object') return null;
-  const filePayload = (value.file && typeof value.file === 'object' && !Array.isArray(value.file))
-    ? value.file
-    : value;
-  const filename = typeof filePayload.filename === 'string' ? filePayload.filename.trim() : '';
-  const rawMediaType = typeof filePayload.mime_type === 'string'
-    ? filePayload.mime_type.trim()
-    : (typeof filePayload.media_type === 'string' ? filePayload.media_type.trim() : '');
-  const mediaType = rawMediaType || inferMimeTypeFromFilename(filename);
-  const fileData = typeof filePayload.file_data === 'string' ? filePayload.file_data.trim() : '';
-  const fileUrl = typeof filePayload.file_url === 'string'
-    ? filePayload.file_url.trim()
-    : (typeof filePayload.url === 'string' ? filePayload.url.trim() : '');
-  const fileId = typeof filePayload.file_id === 'string' ? filePayload.file_id.trim() : '';
-
-  if (fileData) {
-    const parsedDataUrl = parseBase64DataUrl(fileData);
-    if (parsedDataUrl && parsedDataUrl.data) {
-      return {
-        type: 'document',
-        source: {
-          type: 'base64',
-          media_type: parsedDataUrl.mediaType || mediaType,
-          data: parsedDataUrl.data
-        }
-      };
-    }
-
-    return {
-      type: 'document',
-      source: {
-        type: 'base64',
-        media_type: mediaType,
-        data: fileData
-      }
-    };
-  }
-
-  if (fileUrl) {
-    return {
-      type: 'document',
-      source: {
-        type: 'url',
-        url: fileUrl
-      }
-    };
-  }
-
-  if (fileId) {
-    return {
-      type: 'text',
-      text: `[input_file:${fileId}]`
-    };
-  }
-
-  return null;
-}
-
-function normalizeOpenAiContentItemToClaudeBlocks(item) {
-  if (item === null || item === undefined) return [];
-
-  if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
-    const text = String(item);
-    return text.trim() ? [{ type: 'text', text }] : [];
-  }
-
-  if (Array.isArray(item)) {
-    return item.flatMap(normalizeOpenAiContentItemToClaudeBlocks);
-  }
-
-  if (typeof item !== 'object') return [];
-
-  const itemType = String(item.type || '').trim().toLowerCase();
-  if (itemType === 'tool_use' || itemType === 'tool_result') {
-    return [item];
-  }
-
-  if (itemType === 'image' && item.source && typeof item.source === 'object') {
-    return [item];
-  }
-  if (itemType === 'document' && item.source && typeof item.source === 'object') {
-    return [item];
-  }
-
-  if (itemType === 'text' || itemType === 'input_text' || itemType === 'output_text') {
-    const text = typeof item.text === 'string' ? item.text : '';
-    if (!text.trim()) return [];
-    const block = { type: 'text', text };
-    if (item.cache_control && typeof item.cache_control === 'object') {
-      block.cache_control = item.cache_control;
-    }
-    return [block];
-  }
-
-  if (itemType === 'image_url' || itemType === 'input_image') {
-    const imageBlock = normalizeOpenAiImageBlock(item);
-    return imageBlock ? [imageBlock] : [];
-  }
-
-  if (itemType === 'file' || itemType === 'input_file') {
-    const fileBlock = normalizeOpenAiFileBlock(item);
-    return fileBlock ? [fileBlock] : [];
-  }
-
-  if (item.image_url !== undefined || item.url !== undefined) {
-    const imageBlock = normalizeOpenAiImageBlock(item);
-    if (imageBlock) return [imageBlock];
-  }
-
-  if (item.file !== undefined || item.file_data !== undefined || item.file_url !== undefined || item.file_id !== undefined) {
-    const fileBlock = normalizeOpenAiFileBlock(item);
-    if (fileBlock) return [fileBlock];
-  }
-
-  const fallbackText = extractText(item);
-  return fallbackText ? [{ type: 'text', text: fallbackText }] : [];
-}
-
-function normalizeOpenAiContentToClaudeBlocks(content) {
-  return normalizeOpenAiContentItemToClaudeBlocks(content);
-}
-
 function normalizeOpenAiRole(role) {
   const value = String(role || '').trim().toLowerCase();
   if (value === 'assistant' || value === 'model') return 'assistant';
-  if (value === 'system' || value === 'developer') return 'system';
-  if (value === 'tool') return 'tool';
+  if (value === 'system') return 'system';
   return 'user';
 }
 
@@ -673,17 +839,6 @@ function normalizeToolChoiceToClaude(toolChoice) {
     if (toolChoice.type === 'required') return { type: 'any' };
   }
 
-  return undefined;
-}
-
-function normalizeReasoningEffortToClaude(reasoningEffort) {
-  const effort = String(reasoningEffort || '').trim().toLowerCase();
-  if (!effort) return undefined;
-  if (effort === 'none') return { type: 'disabled' };
-  if (effort === 'auto') return { type: 'enabled' };
-  if (effort === 'low') return { type: 'enabled', budget_tokens: 2048 };
-  if (effort === 'medium') return { type: 'enabled', budget_tokens: 8192 };
-  if (effort === 'high') return { type: 'enabled', budget_tokens: 24576 };
   return undefined;
 }
 
@@ -763,41 +918,24 @@ function buildUserToolResultMessage(item) {
 }
 
 function normalizeOpenCodeMessages(pathname, payload = {}) {
-  const systemBlocks = [];
+  const systemParts = [];
   const messages = [];
 
   if (isResponsesPath(pathname) && typeof payload.instructions === 'string' && payload.instructions.trim()) {
-    systemBlocks.push({ type: 'text', text: payload.instructions.trim() });
+    systemParts.push(payload.instructions.trim());
   }
 
-  const appendMessage = (role, content, topLevelCacheControl) => {
+  const appendMessage = (role, content) => {
     const normalizedRole = normalizeOpenAiRole(role);
-    const contentBlocks = normalizeOpenAiContentToClaudeBlocks(content);
+    const text = extractText(content);
+    if (!text) return;
     if (normalizedRole === 'system') {
-      const blocks = contentBlocks
-        .filter(block => block && block.type === 'text' && typeof block.text === 'string' && block.text.trim());
-      blocks.forEach((block, idx) => {
-        const systemBlock = { type: 'text', text: block.text };
-        if (block.cache_control && typeof block.cache_control === 'object') {
-          systemBlock.cache_control = block.cache_control;
-        } else if (topLevelCacheControl && typeof topLevelCacheControl === 'object' && idx === blocks.length - 1) {
-          // 消息顶层的 cache_control（OpenCode/Vercel AI SDK 注入方式）打在最后一个 block 上
-          systemBlock.cache_control = topLevelCacheControl;
-        }
-        systemBlocks.push(systemBlock);
-      });
+      systemParts.push(text);
       return;
-    }
-
-    if (!Array.isArray(contentBlocks) || contentBlocks.length === 0) return;
-    // 将消息顶层的 cache_control 传递到最后一个 content block 上
-    if (topLevelCacheControl && typeof topLevelCacheControl === 'object' && contentBlocks.length > 0) {
-      const lastBlock = contentBlocks[contentBlocks.length - 1];
-      if (!lastBlock.cache_control) lastBlock.cache_control = topLevelCacheControl;
     }
     messages.push({
       role: normalizedRole === 'assistant' ? 'assistant' : 'user',
-      content: contentBlocks
+      content: [{ type: 'text', text }]
     });
   };
 
@@ -819,7 +957,7 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
           return;
         }
         if (item.type === 'message' || item.role) {
-          appendMessage(item.role, item.content, item.cache_control);
+          appendMessage(item.role, item.content);
         }
       });
     }
@@ -833,7 +971,11 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
         return;
       }
       if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-        const assistantContent = normalizeOpenAiContentToClaudeBlocks(message.content);
+        const assistantContent = [];
+        const text = extractText(message.content);
+        if (text) {
+          assistantContent.push({ type: 'text', text });
+        }
 
         message.tool_calls.forEach(toolCall => {
           if (!toolCall || typeof toolCall !== 'object') return;
@@ -858,7 +1000,7 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
         }
         return;
       }
-      appendMessage(message.role, message.content, message.cache_control);
+      appendMessage(message.role, message.content);
     });
   }
 
@@ -870,80 +1012,44 @@ function normalizeOpenCodeMessages(pathname, payload = {}) {
   }
 
   return {
-    systemBlocks,
+    system: systemParts.join('\n\n').trim(),
     messages
   };
 }
 
-function buildClaudeCodeUserId() {
-  const sessionId = Math.random().toString(36).substring(2, 15);
-  return `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}`;
+function buildClaudeCodeUserId(sessionIdSeed = '') {
+  const preferredUserId = resolveClaudePreferredUserId();
+  if (preferredUserId && !normalizeSessionKeyValue(sessionIdSeed)) {
+    return preferredUserId;
+  }
+  const sessionId = normalizeSessionKeyValue(sessionIdSeed) || buildClaudeSessionId();
+  const accountId = resolveClaudeAccountId();
+  return `user_${accountId}_account__session_${sessionId}`;
 }
 
 function normalizeClaudeMetadata(metadata, fallbackUserId = '') {
   const normalized = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
     ? { ...metadata }
     : {};
-  const userId = typeof normalized.user_id === 'string' ? normalized.user_id.trim() : '';
-  normalized.user_id = userId || normalizeSessionKeyValue(fallbackUserId) || buildClaudeCodeUserId();
+  const userId = normalizeSessionKeyValue(normalized.user_id);
+  const fallback = normalizeSessionKeyValue(fallbackUserId);
+
+  if (CLAUDE_USER_ID_FULL_RE.test(userId)) {
+    normalized.user_id = userId;
+    return normalized;
+  }
+  if (CLAUDE_USER_ID_FULL_RE.test(fallback)) {
+    normalized.user_id = fallback;
+    return normalized;
+  }
+
+  normalized.user_id = buildClaudeCodeUserId(fallback);
   return normalized;
-}
-
-function applyPromptCachingToClaudePayload(converted) {
-  const EPHEMERAL = { type: 'ephemeral' };
-
-  // 统计 messages 中上游（OpenCode）已注入的缓存断点数量
-  // OpenCode 策略：对最后2条非system消息打断点，我们不重复注入
-  let messageBreakpoints = 0;
-  if (Array.isArray(converted.messages)) {
-    converted.messages.forEach(msg => {
-      if (Array.isArray(msg.content)) {
-        msg.content.forEach(block => {
-          if (block.cache_control) messageBreakpoints++;
-          if (block.type === 'tool_result' && Array.isArray(block.content)) {
-            block.content.forEach(inner => {
-              if (inner.cache_control) messageBreakpoints++;
-            });
-          }
-        });
-      }
-    });
-  }
-
-  // 统计 system 中已有的断点
-  let systemBreakpoints = 0;
-  if (Array.isArray(converted.system)) {
-    converted.system.forEach(block => {
-      if (block.cache_control) systemBreakpoints++;
-    });
-  }
-
-  // 若 messages 已有断点，说明上游（OpenCode）已处理，不再注入 messages 断点
-  // 只在 system blocks 没有断点时补充（OpenCode 不操作 system，由我们负责）
-  if (systemBreakpoints === 0 && Array.isArray(converted.system) && converted.system.length > 0) {
-    const last = converted.system[converted.system.length - 1];
-    if (!last.cache_control) last.cache_control = EPHEMERAL;
-  }
-
-  // 若上游完全没有注入任何断点（非 OpenCode 客户端），按原策略补充 messages 断点
-  if (messageBreakpoints === 0 && systemBreakpoints === 0) {
-    // 对最后2条消息打断点，与 OpenCode 策略对齐
-    if (Array.isArray(converted.messages) && converted.messages.length > 0) {
-      for (const msg of converted.messages.slice(-2)) {
-        if (Array.isArray(msg.content) && msg.content.length > 0) {
-          const last = msg.content[msg.content.length - 1];
-          if (!last.cache_control) last.cache_control = EPHEMERAL;
-        }
-      }
-    }
-  }
 }
 
 function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = '', options = {}) {
   const normalized = normalizeOpenCodeMessages(pathname, payload);
   const maxTokens = Number(payload.max_output_tokens ?? payload.max_tokens);
-  const stopSequences = normalizeStopSequences(payload.stop);
-  const thinking = normalizeReasoningEffortToClaude(payload.reasoning_effort);
 
   const converted = {
     model: payload.model || fallbackModel || 'claude-sonnet-4-20250514',
@@ -952,31 +1058,23 @@ function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = 
     messages: normalized.messages
   };
 
-  if (normalized.systemBlocks && normalized.systemBlocks.length > 0) {
-    // 部分 relay 仅接受 Claude system 的 block 数组格式，不接受纯字符串
-    // 保留原始 cache_control 字段，确保 prompt cache 正常命中
-    converted.system = normalized.systemBlocks;
-  }
+  const template = resolveClaudeRequestTemplate();
+
+  converted.system = buildClaudeSystemBlocks(normalized.system, template?.system || []);
 
   const tools = normalizeOpenAiToolsToClaude(payload.tools || []);
   if (tools.length > 0) {
     converted.tools = tools;
+  } else {
+    converted.tools = template?.tools || buildDefaultClaudeCodeTools();
   }
 
   const toolChoice = normalizeToolChoiceToClaude(payload.tool_choice);
   if (toolChoice) {
     converted.tool_choice = toolChoice;
   }
-  if (stopSequences) {
-    converted.stop_sequences = stopSequences;
-  }
-  if (thinking) {
-    converted.thinking = thinking;
-  }
 
-  if (Number.isFinite(Number(payload.temperature))) {
-    converted.temperature = Number(payload.temperature);
-  }
+  converted.temperature = Number.isFinite(Number(payload.temperature)) ? Number(payload.temperature) : 1;
   if (Number.isFinite(Number(payload.top_p))) {
     converted.top_p = Number(payload.top_p);
   }
@@ -985,10 +1083,7 @@ function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = 
   }
 
   // 某些 Claude relay 会校验 metadata.user_id 以识别 Claude Code 请求
-  converted.metadata = normalizeClaudeMetadata(payload.metadata, options.sessionUserId);
-
-  // 注入 prompt cache 断点，对齐 Anthropic AI SDK 的自动缓存行为
-  applyPromptCachingToClaudePayload(converted);
+  converted.metadata = normalizeClaudeMetadata(payload.metadata, options.sessionUserId || template?.userId || '');
 
   return converted;
 }
@@ -997,12 +1092,6 @@ function normalizeOpenAiToolsToGemini(tools = []) {
   if (!Array.isArray(tools)) return [];
 
   const functionDeclarations = [];
-  const builtInTools = [];
-  const appendBuiltInTool = (toolNode) => {
-    if (!toolNode || typeof toolNode !== 'object') return;
-    builtInTools.push(toolNode);
-  };
-
   for (const tool of tools) {
     if (!tool || typeof tool !== 'object') continue;
 
@@ -1023,56 +1112,11 @@ function normalizeOpenAiToolsToGemini(tools = []) {
         description: tool.description || '',
         parameters: tool.parameters || { type: 'object', properties: {} }
       });
-      continue;
-    }
-
-    const normalizedType = String(tool.type || '').trim().toLowerCase();
-
-    if (tool.google_search && typeof tool.google_search === 'object') {
-      appendBuiltInTool({ googleSearch: tool.google_search });
-      continue;
-    }
-    if (tool.code_execution && typeof tool.code_execution === 'object') {
-      appendBuiltInTool({ codeExecution: tool.code_execution });
-      continue;
-    }
-    if (tool.url_context && typeof tool.url_context === 'object') {
-      appendBuiltInTool({ urlContext: tool.url_context });
-      continue;
-    }
-
-    if (normalizedType === 'google_search' || normalizedType === 'web_search' || normalizedType === 'web_search_preview') {
-      const searchConfig = (tool.web_search && typeof tool.web_search === 'object')
-        ? tool.web_search
-        : ((tool.googleSearch && typeof tool.googleSearch === 'object') ? tool.googleSearch : {});
-      appendBuiltInTool({ googleSearch: searchConfig });
-      continue;
-    }
-
-    if (normalizedType === 'code_execution' || normalizedType === 'code_interpreter') {
-      const executionConfig = (tool.codeExecution && typeof tool.codeExecution === 'object')
-        ? tool.codeExecution
-        : {};
-      appendBuiltInTool({ codeExecution: executionConfig });
-      continue;
-    }
-
-    if (normalizedType === 'url_context') {
-      const urlContextConfig = (tool.urlContext && typeof tool.urlContext === 'object')
-        ? tool.urlContext
-        : {};
-      appendBuiltInTool({ urlContext: urlContextConfig });
     }
   }
 
-  const normalizedTools = [];
-  if (functionDeclarations.length > 0) {
-    normalizedTools.push({ functionDeclarations });
-  }
-  if (builtInTools.length > 0) {
-    normalizedTools.push(...builtInTools);
-  }
-  return normalizedTools;
+  if (functionDeclarations.length === 0) return [];
+  return [{ functionDeclarations }];
 }
 
 function normalizeToolChoiceToGemini(toolChoice) {
@@ -1115,44 +1159,6 @@ function normalizeToolChoiceToGemini(toolChoice) {
   return undefined;
 }
 
-function normalizeReasoningEffortToGemini(reasoningEffort) {
-  const effort = String(reasoningEffort || '').trim().toLowerCase();
-  if (!effort) return undefined;
-  if (effort === 'none') {
-    return {
-      includeThoughts: false,
-      thinkingBudget: 0
-    };
-  }
-  if (effort === 'auto') {
-    return {
-      includeThoughts: true,
-      thinkingBudget: -1
-    };
-  }
-  if (effort === 'low' || effort === 'medium' || effort === 'high') {
-    return {
-      includeThoughts: true,
-      thinkingLevel: effort
-    };
-  }
-  return undefined;
-}
-
-function normalizeGeminiResponseModalities(modalities) {
-  if (!Array.isArray(modalities)) return undefined;
-  const mapped = modalities
-    .map(item => String(item || '').trim().toLowerCase())
-    .filter(Boolean)
-    .map(item => {
-      if (item === 'text') return 'TEXT';
-      if (item === 'image') return 'IMAGE';
-      return '';
-    })
-    .filter(Boolean);
-  return mapped.length > 0 ? mapped : undefined;
-}
-
 function normalizeStopSequences(stopValue) {
   if (!stopValue) return undefined;
   if (typeof stopValue === 'string' && stopValue.trim()) {
@@ -1186,42 +1192,6 @@ function normalizeGeminiFunctionResponsePayload(value) {
     return { content: value };
   }
   return { content: normalizeToolResultContent(value) };
-}
-
-function normalizeGeminiMediaType(value, fallback = 'application/octet-stream') {
-  const mediaType = typeof value === 'string' ? value.trim() : '';
-  return mediaType || fallback;
-}
-
-function buildGeminiPartFromClaudeMediaBlock(block) {
-  if (!block || typeof block !== 'object') return null;
-  const source = (block.source && typeof block.source === 'object') ? block.source : null;
-  if (!source) return null;
-
-  const blockType = String(block.type || '').trim().toLowerCase();
-  const defaultMimeType = blockType === 'image' ? 'image/png' : 'application/octet-stream';
-  const sourceType = String(source.type || '').trim().toLowerCase();
-  const mediaType = normalizeGeminiMediaType(source.media_type || source.mime_type, defaultMimeType);
-
-  if (sourceType === 'base64' && typeof source.data === 'string' && source.data.trim()) {
-    return {
-      inlineData: {
-        mimeType: mediaType,
-        data: source.data
-      }
-    };
-  }
-
-  if (sourceType === 'url' && typeof source.url === 'string' && source.url.trim()) {
-    return {
-      fileData: {
-        mimeType: mediaType,
-        fileUri: source.url.trim()
-      }
-    };
-  }
-
-  return null;
 }
 
 function buildGeminiContents(messages = []) {
@@ -1276,14 +1246,6 @@ function buildGeminiContents(messages = []) {
           }
         });
         continue;
-      }
-
-      if (block.type === 'image' || block.type === 'document') {
-        const mediaPart = buildGeminiPartFromClaudeMediaBlock(block);
-        if (mediaPart) {
-          parts.push(mediaPart);
-          continue;
-        }
       }
 
       const text = extractText(block);
@@ -1383,20 +1345,14 @@ function convertOpenCodePayloadToGemini(pathname, payload = {}, fallbackModel = 
   const stopSequences = normalizeStopSequences(payload.stop);
   const tools = normalizeOpenAiToolsToGemini(payload.tools || []);
   const toolConfig = normalizeToolChoiceToGemini(payload.tool_choice);
-  const thinkingConfig = normalizeReasoningEffortToGemini(payload.reasoning_effort);
-  const candidateCount = Number(payload.n);
-  const responseModalities = normalizeGeminiResponseModalities(payload.modalities);
-  const imageConfig = (payload.image_config && typeof payload.image_config === 'object' && !Array.isArray(payload.image_config))
-    ? payload.image_config
-    : null;
 
   const requestBody = {
     contents: buildGeminiContents(normalized.messages)
   };
 
-  if (normalized.systemBlocks && normalized.systemBlocks.length > 0) {
+  if (normalized.system) {
     requestBody.systemInstruction = {
-      parts: normalized.systemBlocks.map(block => ({ text: block.text || '' })).filter(p => p.text)
+      parts: [{ text: normalized.system }]
     };
   }
 
@@ -1415,27 +1371,6 @@ function convertOpenCodePayloadToGemini(pathname, payload = {}, fallbackModel = 
   }
   if (stopSequences) {
     generationConfig.stopSequences = stopSequences;
-  }
-  if (thinkingConfig) {
-    generationConfig.thinkingConfig = thinkingConfig;
-  }
-  if (Number.isFinite(candidateCount) && candidateCount > 1) {
-    generationConfig.candidateCount = Math.round(candidateCount);
-  }
-  if (responseModalities) {
-    generationConfig.responseModalities = responseModalities;
-  }
-  if (imageConfig) {
-    const mappedImageConfig = {};
-    if (typeof imageConfig.aspect_ratio === 'string' && imageConfig.aspect_ratio.trim()) {
-      mappedImageConfig.aspectRatio = imageConfig.aspect_ratio.trim();
-    }
-    if (typeof imageConfig.image_size === 'string' && imageConfig.image_size.trim()) {
-      mappedImageConfig.imageSize = imageConfig.image_size.trim();
-    }
-    if (Object.keys(mappedImageConfig).length > 0) {
-      generationConfig.imageConfig = mappedImageConfig;
-    }
   }
   if (Object.keys(generationConfig).length > 0) {
     requestBody.generationConfig = generationConfig;
@@ -1471,6 +1406,32 @@ function buildClaudeTargetUrl(baseUrl = '') {
     pathname = `${pathname}/messages`;
   } else {
     pathname = `${pathname}/v1/messages`;
+  }
+
+  targetUrl.pathname = pathname;
+  targetUrl.searchParams.set('beta', 'true');
+  return targetUrl.toString();
+}
+
+function buildClaudeCountTokensTargetUrl(baseUrl = '') {
+  let targetUrl;
+  try {
+    targetUrl = new URL(String(baseUrl || '').trim() || 'https://api.anthropic.com');
+  } catch {
+    targetUrl = new URL('https://api.anthropic.com');
+  }
+
+  let pathname = targetUrl.pathname.replace(/\/+$/, '');
+  if (!pathname || pathname === '/') {
+    pathname = '/v1/messages/count_tokens';
+  } else if (pathname.endsWith('/messages/count_tokens')) {
+    // noop
+  } else if (pathname.endsWith('/messages')) {
+    pathname = `${pathname}/count_tokens`;
+  } else if (pathname.endsWith('/v1')) {
+    pathname = `${pathname}/messages/count_tokens`;
+  } else {
+    pathname = `${pathname}/v1/messages/count_tokens`;
   }
 
   targetUrl.pathname = pathname;
@@ -1706,26 +1667,51 @@ function postJsonStream(url, headers, payload, timeoutMs = 120000) {
   });
 }
 
+function buildClaudeCountTokensPayload(claudePayload = {}) {
+  const payload = {
+    model: claudePayload.model,
+    messages: Array.isArray(claudePayload.messages) ? claudePayload.messages : []
+  };
+
+  if (Array.isArray(claudePayload.system) && claudePayload.system.length > 0) {
+    payload.system = claudePayload.system;
+  }
+  if (Array.isArray(claudePayload.tools) && claudePayload.tools.length > 0) {
+    payload.tools = claudePayload.tools;
+  }
+  if (claudePayload.tool_choice && typeof claudePayload.tool_choice === 'object') {
+    payload.tool_choice = claudePayload.tool_choice;
+  }
+  if (claudePayload.metadata && typeof claudePayload.metadata === 'object') {
+    payload.metadata = claudePayload.metadata;
+  }
+
+  return payload;
+}
+
+async function preflightClaudeCountTokens(baseUrl, apiKey, claudePayload, options = {}) {
+  const countTokensPayload = buildClaudeCountTokensPayload(claudePayload);
+  const countTokensHeaders = buildClaudeRequestHeaders(apiKey, {
+    requestType: 'count_tokens',
+    hasTools: options.hasTools
+  });
+  try {
+    await postJson(buildClaudeCountTokensTargetUrl(baseUrl), countTokensHeaders, countTokensPayload, 30000);
+  } catch {
+    // best-effort preflight, ignore failures
+  }
+}
+
 function extractClaudeResponseContent(claudeResponse = {}) {
   const textFragments = [];
   const functionCalls = [];
   const reasoningItems = [];
-  const nestedResponse = claudeResponse?.response && typeof claudeResponse.response === 'object'
-    ? claudeResponse.response
-    : null;
-  const contentBlocks = Array.isArray(claudeResponse.content)
-    ? claudeResponse.content
-    : (Array.isArray(nestedResponse?.content) ? nestedResponse.content : null);
 
-  if (!Array.isArray(contentBlocks)) {
-    const messageContent = claudeResponse?.choices?.[0]?.message?.content;
-    if (typeof messageContent === 'string' && messageContent.trim()) {
-      return { text: messageContent.trim(), functionCalls: [], reasoningItems: [] };
-    }
+  if (!Array.isArray(claudeResponse.content)) {
     return { text: '', functionCalls: [], reasoningItems: [] };
   }
 
-  contentBlocks.forEach(block => {
+  claudeResponse.content.forEach(block => {
     if (!block || typeof block !== 'object') return;
 
     if (typeof block.text === 'string' && block.text.trim()) {
@@ -1760,109 +1746,6 @@ function extractClaudeResponseContent(claudeResponse = {}) {
     text: textFragments.join('\n').trim(),
     functionCalls,
     reasoningItems
-  };
-}
-
-function toNumberOrZero(value) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function pickFirstFiniteNumber(values = []) {
-  for (const value of values) {
-    const num = Number(value);
-    if (Number.isFinite(num)) return num;
-  }
-  return null;
-}
-
-function extractClaudeLikeUsage(claudeResponse = {}) {
-  const nestedResponse = claudeResponse?.response && typeof claudeResponse.response === 'object'
-    ? claudeResponse.response
-    : {};
-  const messageObject = claudeResponse?.message && typeof claudeResponse.message === 'object'
-    ? claudeResponse.message
-    : {};
-
-  const usageCandidates = [
-    claudeResponse?.usage,
-    nestedResponse?.usage,
-    messageObject?.usage
-  ].filter(item => item && typeof item === 'object');
-
-  const metadataCandidates = [
-    claudeResponse?.providerMetadata,
-    nestedResponse?.providerMetadata,
-    claudeResponse?.metadata,
-    nestedResponse?.metadata
-  ].filter(item => item && typeof item === 'object');
-
-  const inputTokens = pickFirstFiniteNumber(
-    usageCandidates.flatMap(usage => [
-      usage.input_tokens,
-      usage.prompt_tokens,
-      usage.inputTokens,
-      usage.promptTokens
-    ])
-  );
-
-  const outputTokens = pickFirstFiniteNumber(
-    usageCandidates.flatMap(usage => [
-      usage.output_tokens,
-      usage.completion_tokens,
-      usage.outputTokens,
-      usage.completionTokens
-    ])
-  );
-
-  const totalTokens = pickFirstFiniteNumber(
-    usageCandidates.flatMap(usage => [
-      usage.total_tokens,
-      usage.totalTokens
-    ])
-  );
-
-  const cacheReadTokens = pickFirstFiniteNumber(
-    usageCandidates.flatMap(usage => [
-      usage.cache_read_input_tokens,
-      usage.cacheReadInputTokens,
-      usage.input_tokens_details?.cached_tokens,
-      usage.prompt_tokens_details?.cached_tokens
-    ])
-  );
-
-  const cacheCreationFromUsage = pickFirstFiniteNumber(
-    usageCandidates.flatMap(usage => [
-      usage.cache_creation_input_tokens,
-      usage.cacheCreationInputTokens
-    ])
-  );
-  const cacheCreationFromMetadata = pickFirstFiniteNumber(
-    metadataCandidates.flatMap(metadata => [
-      metadata?.anthropic?.cacheCreationInputTokens,
-      metadata?.venice?.usage?.cacheCreationInputTokens,
-      metadata?.bedrock?.usage?.cacheWriteInputTokens
-    ])
-  );
-
-  const reasoningTokens = pickFirstFiniteNumber(
-    usageCandidates.flatMap(usage => [
-      usage.output_tokens_details?.reasoning_tokens,
-      usage.completion_tokens_details?.reasoning_tokens,
-      usage.reasoning_tokens,
-      usage.reasoningTokens
-    ])
-  );
-
-  return {
-    inputTokens: toNumberOrZero(inputTokens),
-    outputTokens: toNumberOrZero(outputTokens),
-    totalTokens: toNumberOrZero(totalTokens),
-    cacheReadTokens: toNumberOrZero(cacheReadTokens),
-    cacheCreationTokens: toNumberOrZero(
-      cacheCreationFromMetadata !== null ? cacheCreationFromMetadata : cacheCreationFromUsage
-    ),
-    reasoningTokens: toNumberOrZero(reasoningTokens)
   };
 }
 
@@ -1969,17 +1852,16 @@ function mapGeminiFinishReasonToChatFinishReason(finishReason, hasToolCalls = fa
 }
 
 function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
-  const usage = extractClaudeLikeUsage(claudeResponse);
-  const inputTokens = usage.inputTokens;
-  const outputTokens = usage.outputTokens;
-  const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : (inputTokens + outputTokens);
-  const cacheCreationTokens = usage.cacheCreationTokens;
-  const cacheReadTokens = usage.cacheReadTokens;
+  const inputTokens = Number(claudeResponse?.usage?.input_tokens || 0);
+  const outputTokens = Number(claudeResponse?.usage?.output_tokens || 0);
+  const totalTokens = Number(claudeResponse?.usage?.total_tokens || (inputTokens + outputTokens));
+  const cacheCreationTokens = Number(claudeResponse?.usage?.cache_creation_input_tokens || 0);
+  const cacheReadTokens = Number(claudeResponse?.usage?.cache_read_input_tokens || 0);
+  const cachedTokens = cacheReadTokens;
   const parsedContent = extractClaudeResponseContent(claudeResponse);
   const text = parsedContent.text;
-  const estimatedReasoningTokens = parsedContent.reasoningItems.reduce((acc, item) => acc + Math.floor((item.text || '').length / 4), 0);
-  const reasoningTokens = usage.reasoningTokens > 0 ? usage.reasoningTokens : estimatedReasoningTokens;
-  const model = claudeResponse.model || claudeResponse?.response?.model || fallbackModel || '';
+  const reasoningTokens = parsedContent.reasoningItems.reduce((acc, item) => acc + Math.floor((item.text || '').length / 4), 0);
+  const model = claudeResponse.model || fallbackModel || '';
   const responseId = `resp_${String(claudeResponse.id || Date.now()).replace(/[^a-zA-Z0-9_]/g, '')}`;
   const messageId = claudeResponse.id || `msg_${Date.now()}`;
   const createdAt = Math.floor(Date.now() / 1000);
@@ -2025,7 +1907,7 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
     });
   });
 
-  const responseObject = {
+  return {
     id: responseId,
     object: 'response',
     created_at: createdAt,
@@ -2036,21 +1918,11 @@ function buildOpenAiResponsesObject(claudeResponse = {}, fallbackModel = '') {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
       total_tokens: totalTokens,
-      ...(cacheReadTokens > 0 ? { input_tokens_details: { cached_tokens: cacheReadTokens } } : {}),
+      ...(cachedTokens > 0 ? { input_tokens_details: { cached_tokens: cachedTokens } } : {}),
+      ...(cacheCreationTokens > 0 ? { cache_creation_input_tokens: cacheCreationTokens } : {}),
       ...(reasoningTokens > 0 ? { output_tokens_details: { reasoning_tokens: reasoningTokens } } : {})
     }
   };
-
-  if (cacheCreationTokens > 0 || cacheReadTokens > 0) {
-    responseObject.providerMetadata = {
-      anthropic: {
-        ...(cacheCreationTokens > 0 ? { cacheCreationInputTokens: cacheCreationTokens } : {}),
-        ...(cacheReadTokens > 0 ? { cacheReadInputTokens: cacheReadTokens } : {})
-      }
-    };
-  }
-
-  return responseObject;
 }
 
 function buildOpenAiResponsesObjectFromGemini(geminiResponse = {}, fallbackModel = '') {
@@ -2124,16 +1996,12 @@ function buildOpenAiResponsesObjectFromGemini(geminiResponse = {}, fallbackModel
 }
 
 function buildOpenAiChatCompletionsObject(claudeResponse = {}, fallbackModel = '') {
-  const usage = extractClaudeLikeUsage(claudeResponse);
-  const inputTokens = usage.inputTokens;
-  const outputTokens = usage.outputTokens;
-  const totalTokens = usage.totalTokens > 0 ? usage.totalTokens : (inputTokens + outputTokens);
-  const cachedTokens = usage.cacheReadTokens;
+  const inputTokens = Number(claudeResponse?.usage?.input_tokens || 0);
+  const outputTokens = Number(claudeResponse?.usage?.output_tokens || 0);
+  const totalTokens = Number(claudeResponse?.usage?.total_tokens || (inputTokens + outputTokens));
   const parsedContent = extractClaudeResponseContent(claudeResponse);
-  const estimatedReasoningTokens = parsedContent.reasoningItems.reduce((acc, item) => acc + Math.floor((item.text || '').length / 4), 0);
-  const reasoningTokens = usage.reasoningTokens > 0 ? usage.reasoningTokens : estimatedReasoningTokens;
   const text = parsedContent.text;
-  const model = claudeResponse.model || claudeResponse?.response?.model || fallbackModel || '';
+  const model = claudeResponse.model || fallbackModel || '';
   const chatId = `chatcmpl_${String(claudeResponse.id || Date.now()).replace(/[^a-zA-Z0-9_]/g, '')}`;
   const created = Math.floor(Date.now() / 1000);
   const hasToolCalls = parsedContent.functionCalls.length > 0;
@@ -2168,9 +2036,7 @@ function buildOpenAiChatCompletionsObject(claudeResponse = {}, fallbackModel = '
     usage: {
       prompt_tokens: inputTokens,
       completion_tokens: outputTokens,
-      total_tokens: totalTokens,
-      ...(cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
-      ...(reasoningTokens > 0 ? { completion_tokens_details: { reasoning_tokens: reasoningTokens } } : {})
+      total_tokens: totalTokens
     }
   };
 }
@@ -2179,9 +2045,6 @@ function buildOpenAiChatCompletionsObjectFromGemini(geminiResponse = {}, fallbac
   const usage = extractGeminiUsage(geminiResponse);
   const parsedContent = extractGeminiResponseContent(geminiResponse);
   const text = parsedContent.text;
-  const reasoningTokens = usage.reasoningTokens > 0
-    ? usage.reasoningTokens
-    : parsedContent.reasoningItems.reduce((acc, item) => acc + Math.floor((item.text || '').length / 4), 0);
   const model = geminiResponse.modelVersion || fallbackModel || '';
   const chatId = `chatcmpl_${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
@@ -2220,9 +2083,7 @@ function buildOpenAiChatCompletionsObjectFromGemini(geminiResponse = {}, fallbac
     usage: {
       prompt_tokens: usage.inputTokens,
       completion_tokens: usage.outputTokens,
-      total_tokens: usage.totalTokens,
-      ...(usage.cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: usage.cachedTokens } } : {}),
-      ...(reasoningTokens > 0 ? { completion_tokens_details: { reasoning_tokens: reasoningTokens } } : {})
+      total_tokens: usage.totalTokens
     }
   };
 }
@@ -2238,31 +2099,11 @@ function sendOpenAiStyleError(res, statusCode, message, type = 'invalid_request_
 }
 
 function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }) {
-  // 兼容多种 usage 格式：
-  // - 标准 OpenAI/Anthropic 格式: {input_tokens, output_tokens} 或 {prompt_tokens, completion_tokens}
-  // - 网关内部格式 (relayChatCompletionsStream 等返回): {input, output, cacheCreation, cacheRead}
-  const inputTokens = Number(usage?.input_tokens || usage?.prompt_tokens || usage?.input || 0);
-  const outputTokens = Number(usage?.output_tokens || usage?.completion_tokens || usage?.output || 0);
-  const totalTokens = Number(usage?.total_tokens || usage?.total || (inputTokens + outputTokens));
-  const cacheReadTokens = Number(
-    usage?.input_tokens_details?.cached_tokens
-      || usage?.prompt_tokens_details?.cached_tokens
-      || usage?.providerMetadata?.anthropic?.cacheReadInputTokens
-      || usage?.cacheRead
-      || 0
-  );
-  const cacheCreationTokens = Number(
-    usage?.providerMetadata?.anthropic?.cacheCreationInputTokens
-      || usage?.cacheCreation
-      || 0
-  );
-  const cachedTokens = cacheReadTokens + cacheCreationTokens;
-  const reasoningTokens = Number(
-    usage?.output_tokens_details?.reasoning_tokens
-      || usage?.completion_tokens_details?.reasoning_tokens
-      || usage?.reasoning
-      || 0
-  );
+  const inputTokens = Number(usage?.input_tokens || usage?.prompt_tokens || 0);
+  const outputTokens = Number(usage?.output_tokens || usage?.completion_tokens || 0);
+  const totalTokens = Number(usage?.total_tokens || (inputTokens + outputTokens));
+  const cachedTokens = Number(usage?.input_tokens_details?.cached_tokens || 0);
+  const reasoningTokens = Number(usage?.output_tokens_details?.reasoning_tokens || 0);
   const now = new Date();
   const time = now.toLocaleTimeString('zh-CN', {
     hour12: false,
@@ -2274,9 +2115,7 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
   const tokens = {
     input: inputTokens,
     output: outputTokens,
-    total: totalTokens,
-    cacheRead: cacheReadTokens,
-    cacheCreation: cacheCreationTokens
+    total: totalTokens
   };
   const cost = calculateCost(model || '', tokens);
 
@@ -2382,57 +2221,10 @@ function sendResponsesSse(res, responseObject) {
   res.end();
 }
 
-function normalizeChatCompletionsDeltaToolCalls(toolCalls = []) {
-  if (!Array.isArray(toolCalls)) return [];
-
-  const normalizeIndex = (value, fallbackIndex) => {
-    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (/^\d+$/.test(trimmed)) return Number(trimmed);
-    }
-    return fallbackIndex;
-  };
-
-  const normalizedToolCalls = [];
-  let fallbackIndex = 0;
-
-  toolCalls.forEach(toolCall => {
-    if (!toolCall || typeof toolCall !== 'object') return;
-
-    const rawFunction = (toolCall.function && typeof toolCall.function === 'object')
-      ? toolCall.function
-      : {};
-    const fallbackName = typeof toolCall.name === 'string' ? toolCall.name : '';
-    const name = typeof rawFunction.name === 'string' ? rawFunction.name : fallbackName;
-    const rawArguments = Object.prototype.hasOwnProperty.call(rawFunction, 'arguments')
-      ? rawFunction.arguments
-      : toolCall.arguments;
-    const argumentsString = normalizeFunctionArgumentsString(
-      typeof rawArguments === 'string'
-        ? rawArguments
-        : JSON.stringify(rawArguments && typeof rawArguments === 'object' ? rawArguments : {})
-    );
-
-    normalizedToolCalls.push({
-      index: normalizeIndex(toolCall.index, fallbackIndex),
-      id: typeof toolCall.id === 'string' && toolCall.id.trim() ? toolCall.id.trim() : generateToolCallId(),
-      type: 'function',
-      function: {
-        name,
-        arguments: argumentsString
-      }
-    });
-    fallbackIndex += 1;
-  });
-
-  return normalizedToolCalls;
-}
-
 function sendChatCompletionsSse(res, responseObject) {
   const message = responseObject?.choices?.[0]?.message || {};
   const text = message?.content || '';
-  const toolCalls = normalizeChatCompletionsDeltaToolCalls(message?.tool_calls);
+  const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
   const finishReason = responseObject?.choices?.[0]?.finish_reason || 'stop';
 
   setSseHeaders(res);
@@ -2470,21 +2262,6 @@ function sendChatCompletionsSse(res, responseObject) {
     ]
   };
   writeSseData(res, doneChunk);
-  // Match OpenAI stream_options.include_usage behavior: emit a final usage chunk.
-  writeSseData(res, {
-    id: responseObject.id,
-    object: 'chat.completion.chunk',
-    created: responseObject.created,
-    model: responseObject.model,
-    choices: [],
-    usage: responseObject?.usage && typeof responseObject.usage === 'object'
-      ? responseObject.usage
-      : {
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0
-      }
-  });
   writeSseDone(res);
   res.end();
 }
@@ -2502,9 +2279,6 @@ function createClaudeResponsesStreamState(fallbackModel = '') {
     model: fallbackModel || '',
     inputTokens: 0,
     outputTokens: 0,
-    cachedTokens: 0,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
     usageSeen: false,
     blockTypeByIndex: new Map(),
     messageIdByIndex: new Map(),
@@ -2624,30 +2398,15 @@ function buildCompletedResponsesObjectFromStreamState(state) {
     output
   };
 
-  // 始终输出 usage 字段，确保 OpenCode Context 面板能正确读取 token 数据
-  response.usage = {
-    input_tokens: Number(state.inputTokens || 0),
-    output_tokens: Number(state.outputTokens || 0),
-    total_tokens: totalTokens
-  };
-  if (reasoningTokens > 0) {
-    response.usage.output_tokens_details = { reasoning_tokens: reasoningTokens };
-  }
-  if ((state.cacheReadTokens || 0) > 0) {
-    response.usage.input_tokens_details = { cached_tokens: Number(state.cacheReadTokens || 0) };
-  }
-  // 注入 providerMetadata.anthropic，供 OpenCode Session.getUsage() 读取 cache write/read tokens
-  if ((state.cacheCreationTokens || 0) > 0 || (state.cacheReadTokens || 0) > 0) {
-    response.providerMetadata = {
-      anthropic: {
-        ...(Number(state.cacheCreationTokens || 0) > 0
-          ? { cacheCreationInputTokens: Number(state.cacheCreationTokens || 0) }
-          : {}),
-        ...(Number(state.cacheReadTokens || 0) > 0
-          ? { cacheReadInputTokens: Number(state.cacheReadTokens || 0) }
-          : {})
-      }
+  if (state.usageSeen || totalTokens > 0 || reasoningTokens > 0) {
+    response.usage = {
+      input_tokens: Number(state.inputTokens || 0),
+      output_tokens: Number(state.outputTokens || 0),
+      total_tokens: totalTokens
     };
+    if (reasoningTokens > 0) {
+      response.usage.output_tokens_details = { reasoning_tokens: reasoningTokens };
+    }
   }
 
   return response;
@@ -2672,14 +2431,6 @@ function processClaudeResponsesSseEvent(parsed, state, res) {
       }
       if (Number.isFinite(Number(message.usage.output_tokens))) {
         state.outputTokens = Number(message.usage.output_tokens);
-        state.usageSeen = true;
-      }
-      const cacheCreation = Number(message.usage.cache_creation_input_tokens || 0);
-      const cacheRead = Number(message.usage.cache_read_input_tokens || 0);
-      if (Number.isFinite(cacheCreation + cacheRead) && (cacheCreation + cacheRead) > 0) {
-        state.cacheCreationTokens = cacheCreation;
-        state.cacheReadTokens = cacheRead;
-        state.cachedTokens = cacheCreation + cacheRead;
         state.usageSeen = true;
       }
     }
@@ -2991,20 +2742,12 @@ function processClaudeResponsesSseEvent(parsed, state, res) {
 
   if (type === 'message_delta') {
     const usage = parsed.usage && typeof parsed.usage === 'object' ? parsed.usage : {};
-    if (Number.isFinite(Number(usage.input_tokens)) && Number(usage.input_tokens) > 0) {
+    if (Number.isFinite(Number(usage.input_tokens))) {
       state.inputTokens = Number(usage.input_tokens);
       state.usageSeen = true;
     }
     if (Number.isFinite(Number(usage.output_tokens))) {
       state.outputTokens = Number(usage.output_tokens);
-      state.usageSeen = true;
-    }
-    const cacheCreation = Number(usage.cache_creation_input_tokens || 0);
-    const cacheRead = Number(usage.cache_read_input_tokens || 0);
-    if (Number.isFinite(cacheCreation + cacheRead) && (cacheCreation + cacheRead) > 0) {
-      state.cacheCreationTokens = cacheCreation;
-      state.cacheReadTokens = cacheRead;
-      state.cachedTokens = cacheCreation + cacheRead;
       state.usageSeen = true;
     }
     return;
@@ -3341,253 +3084,6 @@ async function collectCodexResponsesNonStream(upstreamResponse, originalPayload 
   });
 }
 
-async function relayChatCompletionsStream(upstreamResponse, res, fallbackModel = '') {
-  setSseHeaders(res);
-  const stream = createDecodedStream(upstreamResponse);
-
-  const chatId = `chatcmpl_${Date.now()}`;
-  const created = Math.floor(Date.now() / 1000);
-
-  // state tracked across SSE events
-  const state = {
-    model: fallbackModel || '',
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheCreationTokens: 0,
-    cacheReadTokens: 0,
-    stopReason: 'stop',
-    // per-block tracking
-    blockTypeByIndex: new Map(),
-    functionCallIdByIndex: new Map(),
-    functionNameByIndex: new Map(),
-    functionArgsByIndex: new Map(),
-    // tool_call index emitted to client (sequential, starting at 0)
-    toolCallClientIndexByBlockIndex: new Map(),
-    nextToolCallClientIndex: 0
-  };
-
-  return new Promise((resolve, reject) => {
-    let buffer = '';
-    let settled = false;
-
-    const safeResolve = (value) => { if (!settled) { settled = true; resolve(value); } };
-    const safeReject = (error) => { if (!settled) { settled = true; reject(error); } };
-
-    // Send the initial role chunk once
-    writeSseData(res, {
-      id: chatId,
-      object: 'chat.completion.chunk',
-      created,
-      model: state.model || fallbackModel,
-      choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }]
-    });
-
-    const processSseBlock = (block) => {
-      if (!block || !block.trim()) return;
-      const dataLines = block
-        .split('\n')
-        .map(line => line.trimEnd())
-        .filter(line => line.trim().startsWith('data:'))
-        .map(line => line.replace(/^data:\s?/, ''));
-      if (dataLines.length === 0) return;
-      const payload = dataLines.join('\n').trim();
-      if (!payload || payload === '[DONE]') return;
-
-      let parsed;
-      try { parsed = JSON.parse(payload); } catch { return; }
-      if (!parsed || typeof parsed !== 'object') return;
-
-      const type = parsed.type;
-      if (!type) return;
-
-      if (type === 'message_start') {
-        const msg = parsed.message && typeof parsed.message === 'object' ? parsed.message : {};
-        if (msg.model) state.model = msg.model;
-        if (msg.usage) {
-          state.inputTokens = Number(msg.usage.input_tokens || 0);
-          state.cacheCreationTokens = Number(msg.usage.cache_creation_input_tokens || 0);
-          state.cacheReadTokens = Number(msg.usage.cache_read_input_tokens || 0);
-        }
-        return;
-      }
-
-      if (type === 'content_block_start') {
-        const blockIndex = Number.isFinite(Number(parsed.index)) ? Number(parsed.index) : 0;
-        const block = parsed.content_block && typeof parsed.content_block === 'object' ? parsed.content_block : {};
-        const blockType = block.type;
-        state.blockTypeByIndex.set(blockIndex, blockType);
-
-        if (blockType === 'tool_use') {
-          const callId = String(block.id || generateToolCallId());
-          const name = block.name || '';
-          state.functionCallIdByIndex.set(blockIndex, callId);
-          state.functionNameByIndex.set(blockIndex, name);
-          state.functionArgsByIndex.set(blockIndex, '');
-          const clientIndex = state.nextToolCallClientIndex++;
-          state.toolCallClientIndexByBlockIndex.set(blockIndex, clientIndex);
-
-          // Emit tool_call start chunk
-          writeSseData(res, {
-            id: chatId,
-            object: 'chat.completion.chunk',
-            created,
-            model: state.model || fallbackModel,
-            choices: [{
-              index: 0,
-              delta: {
-                tool_calls: [{
-                  index: clientIndex,
-                  id: callId,
-                  type: 'function',
-                  function: { name, arguments: '' }
-                }]
-              },
-              finish_reason: null
-            }]
-          });
-        }
-        return;
-      }
-
-      if (type === 'content_block_delta') {
-        const blockIndex = Number.isFinite(Number(parsed.index)) ? Number(parsed.index) : 0;
-        const delta = parsed.delta && typeof parsed.delta === 'object' ? parsed.delta : {};
-        const deltaType = delta.type;
-
-        if (deltaType === 'text_delta') {
-          const text = typeof delta.text === 'string' ? delta.text : '';
-          if (!text) return;
-          writeSseData(res, {
-            id: chatId,
-            object: 'chat.completion.chunk',
-            created,
-            model: state.model || fallbackModel,
-            choices: [{ index: 0, delta: { content: text }, finish_reason: null }]
-          });
-          return;
-        }
-
-        if (deltaType === 'input_json_delta') {
-          const partialJson = typeof delta.partial_json === 'string' ? delta.partial_json : '';
-          if (!partialJson) return;
-          const prev = state.functionArgsByIndex.get(blockIndex) || '';
-          state.functionArgsByIndex.set(blockIndex, prev + partialJson);
-          const clientIndex = state.toolCallClientIndexByBlockIndex.get(blockIndex) ?? 0;
-          writeSseData(res, {
-            id: chatId,
-            object: 'chat.completion.chunk',
-            created,
-            model: state.model || fallbackModel,
-            choices: [{
-              index: 0,
-              delta: {
-                tool_calls: [{
-                  index: clientIndex,
-                  function: { arguments: partialJson }
-                }]
-              },
-              finish_reason: null
-            }]
-          });
-          return;
-        }
-        // thinking_delta: silently skip (no equivalent in chat completions)
-        return;
-      }
-
-      if (type === 'message_delta') {
-        const usage = parsed.usage && typeof parsed.usage === 'object' ? parsed.usage : {};
-        if (Number.isFinite(Number(usage.output_tokens))) {
-          state.outputTokens = Number(usage.output_tokens);
-        }
-        const stopReason = parsed.delta && parsed.delta.stop_reason;
-        if (stopReason) state.stopReason = stopReason;
-        return;
-      }
-
-      if (type === 'message_stop') {
-        const finishReason = mapClaudeStopReasonToChatFinishReason(state.stopReason);
-        const hasToolCalls = state.nextToolCallClientIndex > 0;
-
-        // Final finish chunk
-        writeSseData(res, {
-          id: chatId,
-          object: 'chat.completion.chunk',
-          created,
-          model: state.model || fallbackModel,
-          choices: [{ index: 0, delta: {}, finish_reason: hasToolCalls ? 'tool_calls' : finishReason }]
-        });
-
-        // Usage chunk (stream_options.include_usage)
-        const inputTokens = state.inputTokens;
-        const outputTokens = state.outputTokens;
-        const cachedTokens = state.cacheCreationTokens + state.cacheReadTokens;
-        writeSseData(res, {
-          id: chatId,
-          object: 'chat.completion.chunk',
-          created,
-          model: state.model || fallbackModel,
-          choices: [],
-          usage: {
-            prompt_tokens: inputTokens,
-            completion_tokens: outputTokens,
-            total_tokens: inputTokens + outputTokens,
-            ...(cachedTokens > 0 ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {})
-          }
-        });
-
-        writeSseDone(res);
-        res.end();
-        safeResolve({
-          model: state.model || fallbackModel,
-          usage: {
-            input: inputTokens,
-            output: outputTokens,
-            cacheCreation: state.cacheCreationTokens,
-            cacheRead: state.cacheReadTokens
-          }
-        });
-      }
-    };
-
-    stream.on('data', (chunk) => {
-      buffer += chunk.toString('utf8').replace(/\r\n/g, '\n');
-      let separatorIndex = buffer.indexOf('\n\n');
-      while (separatorIndex >= 0) {
-        const block = buffer.slice(0, separatorIndex);
-        buffer = buffer.slice(separatorIndex + 2);
-        processSseBlock(block);
-        separatorIndex = buffer.indexOf('\n\n');
-      }
-    });
-
-    stream.on('end', () => {
-      if (buffer.trim()) processSseBlock(buffer);
-      if (!res.writableEnded) {
-        writeSseDone(res);
-        res.end();
-      }
-      safeResolve({ model: state.model || fallbackModel, usage: { input: state.inputTokens, output: state.outputTokens, cacheCreation: state.cacheCreationTokens, cacheRead: state.cacheReadTokens } });
-    });
-
-    stream.on('error', (error) => {
-      if (!res.writableEnded) {
-        writeSseDone(res);
-        res.end();
-      }
-      safeReject(error);
-    });
-
-    upstreamResponse.on('error', (error) => {
-      if (!res.writableEnded) {
-        writeSseDone(res);
-        res.end();
-      }
-      safeReject(error);
-    });
-  });
-}
-
 async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const pathname = getRequestPathname(req.url);
   if (!isResponsesPath(pathname) && !isChatCompletionsPath(pathname)) {
@@ -3604,7 +3100,6 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const streamResponses = wantsStream && isResponsesPath(pathname);
-  const streamChatCompletions = wantsStream && isChatCompletionsPath(pathname);
   const sessionKey = extractSessionIdFromRequest(req, originalPayload);
   const sessionScope = normalizeSessionKeyValue(channel?.id || channel?.name || '');
   const scopedSessionKey = sessionKey && sessionScope
@@ -3615,79 +3110,15 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload, channel.model, {
     sessionUserId
   });
-  claudePayload.stream = streamResponses || streamChatCompletions;
+  claudePayload.stream = streamResponses;
+  const hasTools = Array.isArray(claudePayload.tools) && claudePayload.tools.length > 0;
 
-  const headers = {
-    'x-api-key': effectiveKey,
-    'authorization': `Bearer ${effectiveKey}`,
-    'anthropic-version': '2023-06-01',
-    'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
-    'anthropic-dangerous-direct-browser-access': 'true',
-    'x-app': 'cli',
-    'x-stainless-helper-method': 'stream',
-    'x-stainless-retry-count': '0',
-    'x-stainless-runtime-version': 'v24.3.0',
-    'x-stainless-package-version': '0.74.0',
-    'x-stainless-runtime': 'node',
-    'x-stainless-lang': 'js',
-    'x-stainless-arch': mapStainlessArch(),
-    'x-stainless-os': mapStainlessOs(),
-    'x-stainless-timeout': '600',
-    'content-type': 'application/json',
-    'accept': (streamResponses || streamChatCompletions) ? 'text/event-stream' : 'application/json',
-    'accept-encoding': 'gzip, deflate, br, zstd',
-    'connection': 'keep-alive',
-    'user-agent': CLAUDE_CODE_USER_AGENT
-  };
+  const headers = buildClaudeRequestHeaders(effectiveKey, {
+    requestType: 'messages',
+    hasTools
+  });
 
-  if (streamChatCompletions) {
-    let streamUpstream;
-    try {
-      streamUpstream = await postJsonStream(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000);
-    } catch (error) {
-      recordFailure(channel.id, 'opencode', error);
-      sendOpenAiStyleError(res, 502, `Claude gateway network error: ${error.message}`, 'proxy_error');
-      return true;
-    }
-
-    const statusCode = Number(streamUpstream.statusCode) || 500;
-    if (statusCode < 200 || statusCode >= 300) {
-      let rawBody = '';
-      try {
-        rawBody = await collectHttpResponseBody(streamUpstream.response);
-      } catch {
-        rawBody = '';
-      }
-      let parsedError = null;
-      try {
-        parsedError = rawBody ? JSON.parse(rawBody) : null;
-      } catch {
-        parsedError = null;
-      }
-      const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
-      recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
-      sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
-      return true;
-    }
-
-    try {
-      const streamedResponseObject = await relayChatCompletionsStream(streamUpstream.response, res, originalPayload.model || '');
-      publishOpenCodeUsageLog({
-        requestId,
-        channel,
-        model: streamedResponseObject?.model || originalPayload.model || '',
-        usage: streamedResponseObject?.usage || {},
-        startTime
-      });
-      recordSuccess(channel.id, 'opencode');
-    } catch (error) {
-      recordFailure(channel.id, 'opencode', error);
-      if (!res.headersSent) {
-        sendOpenAiStyleError(res, 502, `Claude stream relay error: ${error.message}`, 'proxy_error');
-      }
-    }
-    return true;
-  }
+  await preflightClaudeCountTokens(channel.baseUrl, effectiveKey, claudePayload, { hasTools });
 
   if (streamResponses) {
     let streamUpstream;
@@ -3726,9 +3157,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
         requestId,
         channel,
         model: streamedResponseObject?.model || originalPayload.model || '',
-        usage: streamedResponseObject?.providerMetadata
-          ? { ...(streamedResponseObject.usage || {}), providerMetadata: streamedResponseObject.providerMetadata }
-          : streamedResponseObject?.usage || {},
+        usage: streamedResponseObject?.usage || {},
         startTime
       });
       recordSuccess(channel.id, 'opencode');
@@ -3835,11 +3264,10 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
     return true;
   }
 
-  const codexSessionId = extractSessionIdFromRequest(req, originalPayload);
-  const stableSessionKey = codexSessionId || `${channel.id || 'ch'}-${channel.baseUrl || ''}`;
+  const codexSessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 15)}`;
   const promptCacheKey = (typeof converted.requestBody.prompt_cache_key === 'string' && converted.requestBody.prompt_cache_key.trim())
     ? converted.requestBody.prompt_cache_key.trim()
-    : stableSessionKey;
+    : codexSessionId;
   converted.requestBody.prompt_cache_key = promptCacheKey;
 
   const headers = {
@@ -4768,31 +4196,33 @@ async function collectProxyModelList(channels = [], options = {}) {
   };
 
   const forceRefresh = options.forceRefresh === true;
-  const useCacheOnly = options.useCacheOnly === true;
   // 模型列表聚合改为串行探测，避免并发触发上游会话窗口限流
   for (const channel of channels) {
-    if (isConverterEntryChannel(channel)) {
-      const defaults = getDefaultModelsByGatewaySourceType(normalizeGatewaySourceType(channel));
-      defaults.forEach(add);
-      continue;
-    }
-
-    if (useCacheOnly) {
-      const cacheEntry = getCachedModelInfo(channel?.id);
-      const cachedFetched = Array.isArray(cacheEntry?.fetchedModels) ? cacheEntry.fetchedModels : [];
-      const cachedAvailable = Array.isArray(cacheEntry?.availableModels) ? cacheEntry.availableModels : [];
-      cachedFetched.forEach(add);
-      cachedAvailable.forEach(add);
-      continue;
-    }
-
     try {
       // eslint-disable-next-line no-await-in-loop
       const listResult = await fetchModelsFromProvider(channel, 'openai_compatible', { forceRefresh });
       const listedModels = Array.isArray(listResult?.models) ? listResult.models : [];
       if (listedModels.length > 0) {
         listedModels.forEach(add);
+        continue;
       }
+
+      const shouldProbeByDefault = !!listResult?.disabledByConfig;
+
+      // 默认仅入口转换器渠道执行模型探测；若已禁用 /v1/models 则对全部渠道启用默认探测
+      if (!shouldProbeByDefault && !isConverterPresetChannel(channel)) {
+        continue;
+      }
+
+      const channelType = normalizeGatewaySourceType(channel);
+      // eslint-disable-next-line no-await-in-loop
+      const probe = await probeModelAvailability(channel, channelType, {
+        forceRefresh,
+        stopOnFirstAvailable: false,
+        preferredModels: collectPreferredProbeModels(channel)
+      });
+      const available = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
+      available.forEach(add);
     } catch (err) {
       console.warn(`[OpenCode Proxy] Build model list failed for ${channel?.name || channel?.id || 'unknown'}:`, err.message);
     }
@@ -4858,23 +4288,11 @@ async function startOpenCodeProxyServer(options = {}) {
       if (!proxyReq.getHeader('content-type')) {
         proxyReq.setHeader('content-type', 'application/json');
       }
-      // 禁止上游返回压缩响应，避免在 proxyRes 监听器中出现双消费者竞争
-      proxyReq.removeHeader('accept-encoding');
 
       if (shouldParseJson(req) && (req.rawBody || req.body)) {
-        let body = req.body;
-        // 对 Chat Completions 流式请求注入 stream_options.include_usage = true
-        // OpenCode 使用 @ai-sdk/openai-compatible，该 SDK 不一定发送此字段
-        // 缺少此字段时，大多数 OpenAI 兼容端点不会在响应中附带 usage，
-        // 导致 OpenCode Context 面板所有 token 显示为 0
-        if (body && body.stream === true && !body.stream_options?.include_usage) {
-          body = { ...body, stream_options: { ...body.stream_options, include_usage: true } };
-        }
-        const bodyBuffer = body !== req.body
-          ? Buffer.from(JSON.stringify(body))
-          : req.rawBody
-            ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
-            : Buffer.from(JSON.stringify(req.body));
+        const bodyBuffer = req.rawBody
+          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
+          : Buffer.from(JSON.stringify(req.body));
         proxyReq.setHeader('Content-Length', bodyBuffer.length);
         proxyReq.write(bodyBuffer);
         proxyReq.end();
@@ -4923,6 +4341,20 @@ async function startOpenCodeProxyServer(options = {}) {
 
         // Store the effective key on the request for use in proxyReq handler
         req.effectiveApiKey = effectiveKey;
+
+        // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
+        persistProxyRequestSnapshot('opencode', {
+          timestamp: Date.now(),
+          source: 'opencode',
+          channel: channel.name,
+          request: {
+            method: req.method,
+            url: req.url,
+            path: req.path,
+            headers: req.headers,
+            body: req.body || null
+          }
+        });
 
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
@@ -5051,23 +4483,18 @@ async function startOpenCodeProxyServer(options = {}) {
         inputTokens: 0,
         outputTokens: 0,
         cachedTokens: 0,
-        cacheCreationTokens: 0,
-        cacheReadTokens: 0,
         reasoningTokens: 0,
         totalTokens: 0,
-        model: '',
-        _parseErrorLogged: false
+        model: ''
       };
 
-      const decodedStream = createDecodedStream(proxyRes);
-
-      decodedStream.on('data', (chunk) => {
+      proxyRes.on('data', (chunk) => {
         // 如果响应已关闭，停止处理
         if (isResponseClosed) {
           return;
         }
 
-        buffer += chunk.toString('utf8');
+        buffer += chunk.toString();
 
         // 检查是否是 SSE 流
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
@@ -5075,7 +4502,7 @@ async function startOpenCodeProxyServer(options = {}) {
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
 
-          events.forEach((eventText) => {
+          events.forEach((eventText, index) => {
             if (!eventText.trim()) return;
 
             try {
@@ -5096,6 +4523,7 @@ async function startOpenCodeProxyServer(options = {}) {
 
               // OpenAI Responses API: 在 response.completed 事件中获取 usage
               if (parsed.type === 'response.completed' && parsed.response) {
+                // 从 response 对象中提取模型和 usage
                 if (parsed.response.model) {
                   tokenData.model = parsed.response.model;
                 }
@@ -5105,6 +4533,7 @@ async function startOpenCodeProxyServer(options = {}) {
                   tokenData.outputTokens = parsed.response.usage.output_tokens || 0;
                   tokenData.totalTokens = parsed.response.usage.total_tokens || 0;
 
+                  // 提取详细信息
                   if (parsed.response.usage.input_tokens_details) {
                     tokenData.cachedTokens = parsed.response.usage.input_tokens_details.cached_tokens || 0;
                   }
@@ -5114,81 +4543,24 @@ async function startOpenCodeProxyServer(options = {}) {
                 }
               }
 
-              // Anthropic SSE: message_start 含初始 usage 和模型
-              if (parsed.type === 'message_start' && parsed.message) {
-                if (parsed.message.model) {
-                  tokenData.model = parsed.message.model;
-                }
-                if (parsed.message.usage) {
-                  const u = parsed.message.usage;
-                  if (Number.isFinite(Number(u.input_tokens))) {
-                    tokenData.inputTokens = Number(u.input_tokens);
-                  }
-                  if (Number.isFinite(Number(u.output_tokens))) {
-                    tokenData.outputTokens = Number(u.output_tokens);
-                  }
-                  const cacheCreation = Number(u.cache_creation_input_tokens || 0);
-                  const cacheRead = Number(u.cache_read_input_tokens || 0);
-                  if (cacheCreation + cacheRead > 0) {
-                    tokenData.cacheCreationTokens = cacheCreation;
-                    tokenData.cacheReadTokens = cacheRead;
-                    tokenData.cachedTokens = cacheCreation + cacheRead;
-                  }
-                }
-              }
-
-              // Anthropic SSE: message_delta 含最终 output_tokens
-              if (parsed.type === 'message_delta' && parsed.usage) {
-                const u = parsed.usage;
-                if (Number.isFinite(Number(u.output_tokens))) {
-                  tokenData.outputTokens = Number(u.output_tokens);
-                }
-                const cacheCreation = Number(u.cache_creation_input_tokens || 0);
-                const cacheRead = Number(u.cache_read_input_tokens || 0);
-                if (cacheCreation + cacheRead > 0) {
-                  tokenData.cacheCreationTokens = cacheCreation;
-                  tokenData.cacheReadTokens = cacheRead;
-                  tokenData.cachedTokens = cacheCreation + cacheRead;
-                }
-              }
-
               // 兼容其他格式：直接在顶层的 model 和 usage
               if (parsed.model && !tokenData.model) {
                 tokenData.model = parsed.model;
               }
 
               if (parsed.usage && tokenData.inputTokens === 0) {
+                // 兼容 Responses API 和 Chat Completions API
                 tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
                 tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
-                const cacheCreation = Number(parsed.usage.cache_creation_input_tokens || 0);
-                const cacheRead = Number(parsed.usage.cache_read_input_tokens || 0);
-                if (cacheCreation + cacheRead > 0) {
-                  tokenData.cacheCreationTokens = cacheCreation;
-                  tokenData.cacheReadTokens = cacheRead;
-                  tokenData.cachedTokens = cacheCreation + cacheRead;
-                }
-              }
-
-              // Gemini SSE: usageMetadata
-              if (parsed.usageMetadata) {
-                const u = parsed.usageMetadata;
-                tokenData.inputTokens = Number(u.promptTokenCount || 0);
-                tokenData.outputTokens = Number(u.candidatesTokenCount || 0);
-                tokenData.cachedTokens = Number(u.cachedContentTokenCount || 0);
-                tokenData.totalTokens = Number(u.totalTokenCount || 0);
               }
             } catch (err) {
-              if (!tokenData._parseErrorLogged) {
-                tokenData._parseErrorLogged = true;
-                const snippet = typeof data === 'string' ? data.slice(0, 100) : '';
-                console.warn(`[OpenCode Passthrough] SSE parse error (channel: ${metadata?.channel}): ${err.message}, data: ${snippet}`);
-              }
+              // 忽略解析错误
             }
           });
         }
       });
 
-      decodedStream.on('end', () => {
+      proxyRes.on('end', () => {
         // 如果不是流式响应，尝试从完整响应中解析
         if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
           try {
@@ -5197,21 +4569,12 @@ async function startOpenCodeProxyServer(options = {}) {
               tokenData.model = parsed.model;
             }
             if (parsed.usage) {
+              // 兼容两种格式
               tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
               tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
-              const cacheCreation = Number(parsed.usage.cache_creation_input_tokens || 0);
-              const cacheRead = Number(parsed.usage.cache_read_input_tokens || 0);
-              if (cacheCreation + cacheRead > 0) {
-                tokenData.cacheCreationTokens = cacheCreation;
-                tokenData.cacheReadTokens = cacheRead;
-                tokenData.cachedTokens = cacheCreation + cacheRead;
-              }
             }
           } catch (err) {
-            if (!tokenData._parseErrorLogged) {
-              tokenData._parseErrorLogged = true;
-              console.warn(`[OpenCode Passthrough] Non-SSE response parse error (channel: ${metadata?.channel}): ${err.message}`);
-            }
+            // 忽略解析错误
           }
         }
 
@@ -5229,9 +4592,7 @@ async function startOpenCodeProxyServer(options = {}) {
           const tokens = {
             input: tokenData.inputTokens,
             output: tokenData.outputTokens,
-            cacheCreation: tokenData.cacheCreationTokens,
-            cacheRead: tokenData.cacheReadTokens,
-            total: tokenData.totalTokens || (tokenData.inputTokens + tokenData.outputTokens)
+            total: tokenData.inputTokens + tokenData.outputTokens
           };
           const cost = calculateCost(tokenData.model, tokens);
 
@@ -5282,7 +4643,7 @@ async function startOpenCodeProxyServer(options = {}) {
         }
       });
 
-      decodedStream.on('error', (err) => {
+      proxyRes.on('error', (err) => {
         // 忽略代理响应错误（可能是网络问题）
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);

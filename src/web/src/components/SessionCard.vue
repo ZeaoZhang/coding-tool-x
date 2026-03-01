@@ -78,15 +78,12 @@
       </n-button>
 
       <!-- Launch Button with Dropdown -->
-      <n-dropdown :options="launchOptions" @select="handleLaunchSelect">
-        <n-button type="primary" size="small">
-          <template #icon>
-            <n-icon><TerminalOutline /></n-icon>
-          </template>
-          使用对话
-          <n-icon size="14" style="margin-left: 4px;"><ChevronDownOutline /></n-icon>
-        </n-button>
-      </n-dropdown>
+      <n-button type="primary" size="small" @click="$emit('launch', session)">
+        <template #icon>
+          <n-icon><TerminalOutline /></n-icon>
+        </template>
+        使用对话
+      </n-button>
 
       <!-- Fork Button (only show if not hideFork) -->
       <n-button
@@ -119,8 +116,8 @@
 </template>
 
 <script setup>
-import { ref, computed, h } from 'vue'
-import { NButton, NIcon, NTag, NTooltip, NDropdown } from 'naive-ui'
+import { ref, computed } from 'vue'
+import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import {
   ChatbubbleEllipsesOutline,
   CalendarOutline,
@@ -128,10 +125,7 @@ import {
   GitBranchOutline,
   PricetagOutline,
   TerminalOutline,
-  TrashOutline,
-  ChevronDownOutline,
-  DesktopOutline,
-  GlobeOutline
+  TrashOutline
 } from '@vicons/ionicons5'
 
 const props = defineProps({
@@ -157,53 +151,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['set-alias', 'launch', 'launch-web', 'fork', 'delete'])
-
-// 启动方式下拉选项（按渠道展示可用项）
-const launchOptions = computed(() => {
-  const toolLabel = props.channel === 'codex'
-    ? 'Codex'
-    : props.channel === 'gemini'
-      ? 'Gemini'
-      : props.channel === 'opencode'
-        ? 'OpenCode'
-        : 'Claude Code'
-  return [
-    {
-      type: 'group',
-      label: 'Web 终端',
-      key: 'web-group',
-      children: [
-        {
-          label: toolLabel,
-          key: 'web-current',
-          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-        }
-      ]
-    },
-    {
-      type: 'group',
-      label: '本地终端',
-      key: 'local-group',
-      children: [
-        {
-          label: toolLabel,
-          key: 'local-current',
-          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-        }
-      ]
-    }
-  ]
-})
-
-// 处理启动选择
-function handleLaunchSelect(key) {
-  if (key.startsWith('web-')) {
-    emit('launch-web', props.session)
-  } else {
-    emit('launch', props.session)
-  }
-}
+const emit = defineEmits(['set-alias', 'launch', 'fork', 'delete'])
 
 const hovered = ref(false)
 

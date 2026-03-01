@@ -16,6 +16,34 @@ const AdmZip = require('adm-zip');
 // 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
 
+function normalizeSafeRelativePath(input, errorLabel) {
+  const raw = String(input || '').replace(/\\/g, '/').trim();
+  if (!raw || raw.includes('\0')) {
+    throw new Error(`Invalid ${errorLabel}`);
+  }
+
+  const normalized = path.posix.normalize(raw).replace(/^(\.\/)+/, '');
+  if (!normalized ||
+      normalized === '.' ||
+      normalized === '..' ||
+      normalized.startsWith('../') ||
+      normalized.includes('/../') ||
+      path.posix.isAbsolute(normalized)) {
+    throw new Error(`Invalid ${errorLabel}`);
+  }
+
+  return normalized;
+}
+
+function resolveInsideRoot(rootDir, relativePath, errorLabel) {
+  const resolvedRoot = path.resolve(rootDir);
+  const resolvedPath = path.resolve(resolvedRoot, relativePath);
+  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error(`${errorLabel} escapes target directory`);
+  }
+  return resolvedPath;
+}
+
 /**
  * 仓库配置结构
  * @typedef {Object} RepoConfig
@@ -29,7 +57,7 @@ const CACHE_TTL = 5 * 60 * 1000;
 class RepoScannerBase {
   /**
    * @param {Object} options
-   * @param {string} options.type - 类型标识（commands/rules/agents）
+   * @param {string} options.type - 类型标识（commands/agents）
    * @param {string} options.installDir - 本地安装目录
    * @param {string} options.markerFile - 标识文件名（如 SKILL.md, COMMAND.md 等，可选）
    * @param {string} options.fileExtension - 文件扩展名（如 .md）
@@ -343,7 +371,9 @@ class RepoScannerBase {
    * @param {string} targetName - 安装后的目标名称
    */
   async installFromRepo(itemPath, repo, targetName) {
-    const dest = path.join(this.installDir, targetName);
+    const safeItemPath = normalizeSafeRelativePath(itemPath, 'item path');
+    const safeTargetName = normalizeSafeRelativePath(targetName, 'target name');
+    const dest = resolveInsideRoot(this.installDir, safeTargetName, 'Target path');
 
     // 已存在则跳过
     if (fs.existsSync(dest)) {
@@ -375,10 +405,10 @@ class RepoScannerBase {
       }
 
       const repoDir = path.join(tempDir, extractedDirs[0]);
-      const sourceFile = path.join(repoDir, itemPath);
+      const sourceFile = resolveInsideRoot(repoDir, safeItemPath, 'Source path');
 
       if (!fs.existsSync(sourceFile)) {
-        throw new Error(`File not found: ${itemPath}`);
+        throw new Error(`File not found: ${safeItemPath}`);
       }
 
       // 确保目标目录存在

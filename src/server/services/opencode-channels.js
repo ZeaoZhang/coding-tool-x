@@ -15,6 +15,30 @@ function normalizeGatewaySourceType(value) {
   return 'codex';
 }
 
+function normalizeApiKey(value) {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  return trimmed || '';
+}
+
+function normalizeHostFromBaseUrl(baseUrl) {
+  const value = typeof baseUrl === 'string' ? baseUrl.trim() : '';
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    return String(parsed.hostname || '').trim().toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function normalizeChannelName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
   const ccToolDir = path.join(os.homedir(), '.cc-tool');
@@ -22,6 +46,14 @@ function getChannelsFilePath() {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }
   return path.join(ccToolDir, 'opencode-channels.json');
+}
+
+function getCodexChannelsFilePath() {
+  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  if (!fs.existsSync(ccToolDir)) {
+    fs.mkdirSync(ccToolDir, { recursive: true });
+  }
+  return path.join(ccToolDir, 'codex-channels.json');
 }
 
 // 读取所有渠道
@@ -213,11 +245,113 @@ function saveChannelOrder(order) {
   saveChannels(data);
 }
 
+function loadCodexChannels() {
+  const filePath = getCodexChannelsFilePath();
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const data = JSON.parse(content);
+    return Array.isArray(data?.channels) ? data.channels : [];
+  } catch {
+    return [];
+  }
+}
+
+function collectCodexFallbackApiKeys(channel) {
+  if (String(process.env.OPENCODE_DISABLE_CODEX_KEY_FALLBACK || '').trim() === '1') {
+    return [];
+  }
+
+  const targetHost = normalizeHostFromBaseUrl(channel?.baseUrl);
+  const targetName = normalizeChannelName(channel?.name);
+  const targetId = String(channel?.id || '').trim();
+  const codexChannels = loadCodexChannels();
+  if (codexChannels.length === 0) {
+    return [];
+  }
+
+  const matches = [];
+  for (const codexChannel of codexChannels) {
+    const apiKey = normalizeApiKey(codexChannel?.apiKey || codexChannel?.key || '');
+    if (!apiKey) continue;
+
+    const codexName = normalizeChannelName(codexChannel?.name);
+    const codexHost = normalizeHostFromBaseUrl(codexChannel?.baseUrl);
+    const codexId = String(codexChannel?.id || '').trim();
+
+    let score = 0;
+    if (targetHost && codexHost && targetHost === codexHost) {
+      score += 100;
+    }
+    if (targetName && codexName && targetName === codexName) {
+      score += 90;
+    } else if (targetName && codexName && (targetName.includes(codexName) || codexName.includes(targetName))) {
+      score += 60;
+    }
+    if (targetId && codexId && targetId === codexId) {
+      score += 40;
+    }
+    if (codexChannel?.enabled !== false) {
+      score += 10;
+    }
+
+    if (score > 0) {
+      matches.push({ score, apiKey });
+    }
+  }
+
+  matches.sort((a, b) => b.score - a.score);
+
+  const unique = [];
+  const seen = new Set();
+  for (const item of matches) {
+    if (!item?.apiKey || seen.has(item.apiKey)) continue;
+    seen.add(item.apiKey);
+    unique.push(item.apiKey);
+  }
+  return unique;
+}
+
+function normalizeBooleanLike(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return null;
+  const lowered = value.trim().toLowerCase();
+  if (lowered === '1' || lowered === 'true' || lowered === 'yes' || lowered === 'on') return true;
+  if (lowered === '0' || lowered === 'false' || lowered === 'no' || lowered === 'off') return false;
+  return null;
+}
+
+function getEffectiveApiKeyCandidates(channel) {
+  const ownApiKey = normalizeApiKey(channel?.apiKey || channel?.key || '');
+  const codexFallbackKeys = collectCodexFallbackApiKeys(channel);
+  const explicitPreferCodex = normalizeBooleanLike(channel?.preferCodexApiKey);
+  const envPreferCodex = normalizeBooleanLike(process.env.OPENCODE_PREFER_CODEX_API_KEY);
+  const defaultPreferCodex = false;
+  const preferCodex = explicitPreferCodex ?? envPreferCodex ?? defaultPreferCodex;
+
+  const ordered = preferCodex
+    ? [...codexFallbackKeys, ownApiKey]
+    : [ownApiKey, ...codexFallbackKeys];
+
+  const seen = new Set();
+  const candidates = [];
+  for (const key of ordered) {
+    const normalized = normalizeApiKey(key);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    candidates.push(normalized);
+  }
+  return candidates;
+}
+
 /**
  * 获取渠道的有效 API Key
  */
 async function getEffectiveApiKey(channel) {
-  return channel.apiKey || null;
+  const candidates = getEffectiveApiKeyCandidates(channel);
+  return candidates[0] || null;
 }
 
 module.exports = {
@@ -227,5 +361,6 @@ module.exports = {
   deleteChannel,
   getEnabledChannels,
   saveChannelOrder,
-  getEffectiveApiKey
+  getEffectiveApiKey,
+  getEffectiveApiKeyCandidates
 };

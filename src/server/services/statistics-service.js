@@ -2,6 +2,25 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// 北京时间辅助（UTC+8），统一所有时间计算
+const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function toCSTDate(ts) {
+  // 返回以北京时间解释的 Date 对象各字段（通过偏移 UTC）
+  return new Date(new Date(ts).getTime() + CST_OFFSET_MS);
+}
+
+function getCSTDateStr(ts) {
+  // 返回北京时间日期字符串 YYYY-MM-DD
+  const d = toCSTDate(ts);
+  return d.toISOString().split('T')[0];
+}
+
+function getCSTHour(ts) {
+  // 返回北京时间小时 (0-23)
+  return toCSTDate(ts).getUTCHours();
+}
+
 /**
  * 统计服务 - 数据采集和存储
  *
@@ -60,6 +79,10 @@ function getDailyStatsFilePath(date) {
 function getRequestLogFilePath(year, month, day) {
   const dir = getRequestLogsDir(year, month);
   return path.join(dir, `${day.toString().padStart(2, '0')}.jsonl`);
+}
+
+function getProxyLogsFilePath() {
+  return path.join(getBaseDir(), 'proxy-logs.json');
 }
 
 // 加载总体统计
@@ -141,10 +164,10 @@ function saveDailyStats(date, stats) {
 
 // 追加请求日志（JSONL格式）
 function appendRequestLog(logEntry) {
-  const timestamp = new Date(logEntry.timestamp);
-  const year = timestamp.getFullYear();
-  const month = timestamp.getMonth() + 1;
-  const day = timestamp.getDate();
+  const cst = toCSTDate(logEntry.timestamp);
+  const year = cst.getUTCFullYear();
+  const month = cst.getUTCMonth() + 1;
+  const day = cst.getUTCDate();
 
   const filePath = getRequestLogFilePath(year, month, day);
 
@@ -283,9 +306,9 @@ function recordRequest(requestData) {
 
     saveStatistics(globalStats);
 
-    // 3. 更新每日统计
-    const date = new Date(timestamp).toISOString().split('T')[0]; // YYYY-MM-DD
-    const hour = new Date(timestamp).getHours().toString().padStart(2, '0'); // HH
+    // 3. 更新每日统计（使用北京时间）
+    const date = getCSTDateStr(timestamp); // YYYY-MM-DD (CST)
+    const hour = getCSTHour(timestamp).toString().padStart(2, '0'); // HH (CST)
 
     const dailyStats = loadDailyStats(date);
 
@@ -351,6 +374,9 @@ function recordRequest(requestData) {
     updateStats(dailyStats.byModel[model], tokens, cost);
 
     saveDailyStats(date, dailyStats);
+
+    // Invalidate cached trend results that cover this date
+    invalidateTrendCacheForDate(date);
   } catch (err) {
     console.error('[Statistics] Failed to record request:', err);
   }
@@ -367,15 +393,15 @@ function getStatistics() {
  * 获取每日统计
  */
 function getDailyStatistics(date) {
-  return loadDailyStats(date);
+  return aggregateDailyStatistics(date);
 }
 
 /**
  * 获取今日统计
  */
 function getTodayStatistics() {
-  const today = new Date().toISOString().split('T')[0];
-  return loadDailyStats(today);
+  const today = getCSTDateStr(Date.now());
+  return aggregateDailyStatistics(today);
 }
 
 /**
@@ -391,8 +417,14 @@ function extractMetric(stats, metric) {
 
 /**
  * 从 JSONL 日志文件读取指定日期+小时的数据（按 model 或 channel 聚合）
+ * @param {number} year
+ * @param {number} month
+ * @param {number} day
+ * @param {number} hour
+ * @param {string} groupBy
+ * @param {Object} [filters] - optional { toolType, channel, model }
  */
-function readJsonlForHour(year, month, day, hour, groupBy) {
+function readJsonlForHour(year, month, day, hour, groupBy, filters) {
   const filePath = getRequestLogFilePath(year, month, day);
   const result = {};
 
@@ -406,11 +438,19 @@ function readJsonlForHour(year, month, day, hour, groupBy) {
       try { entry = JSON.parse(line); } catch { continue; }
 
       const ts = new Date(entry.timestamp);
-      if (ts.getHours() !== hour) continue;
+      if (getCSTHour(ts) !== hour) continue;
+
+      // Apply filters
+      if (filters) {
+        if (filters.toolType && entry.toolType !== filters.toolType) continue;
+        if (filters.channel && entry.channel !== filters.channel) continue;
+        if (filters.model && entry.model !== filters.model) continue;
+      }
 
       let key;
       if (groupBy === 'model') key = entry.model || 'unknown';
       else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
+      else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
       else continue;
 
       if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
@@ -423,6 +463,114 @@ function readJsonlForHour(year, month, day, hour, groupBy) {
   }
 
   return result;
+}
+
+/**
+ * 从 JSONL 日志文件读取整天的数据（应用过滤器后按维度聚合）
+ * @param {number} year
+ * @param {number} month
+ * @param {number} day
+ * @param {string} groupBy
+ * @param {Object} [filters] - optional { toolType, channel, model }
+ */
+function readJsonlForDay(year, month, day, groupBy, filters) {
+  const filePath = getRequestLogFilePath(year, month, day);
+  const result = {};
+
+  try {
+    if (!fs.existsSync(filePath)) return result;
+    const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+
+      // Apply filters
+      if (filters) {
+        if (filters.toolType && entry.toolType !== filters.toolType) continue;
+        if (filters.channel && entry.channel !== filters.channel) continue;
+        if (filters.model && entry.model !== filters.model) continue;
+      }
+
+      let key;
+      if (groupBy === 'model') key = entry.model || 'unknown';
+      else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
+      else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
+      else continue;
+
+      if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
+      result[key].tokens.total += entry.tokens?.total || 0;
+      result[key].cost += entry.cost || 0;
+      result[key].requests += 1;
+    }
+  } catch (err) {
+    console.error('Failed to read JSONL for day:', err);
+  }
+
+  return result;
+}
+
+function mapSourceToToolType(source) {
+  if (source === 'codex') return 'codex';
+  if (source === 'gemini') return 'gemini';
+  if (source === 'opencode') return 'opencode';
+  return 'claude-code';
+}
+
+function loadProxyLogs() {
+  const filePath = getProxyLogsFilePath();
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    const logs = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return Array.isArray(logs) ? logs : [];
+  } catch (err) {
+    console.error('Failed to load proxy logs:', err);
+    return [];
+  }
+}
+
+function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
+  const result = {};
+
+  for (const entry of logs) {
+    if (!entry || entry.type === 'action') continue;
+
+    const ts = new Date(entry.timestamp || Date.now());
+    if (Number.isNaN(ts.getTime())) continue;
+
+    const entryDate = getCSTDateStr(ts);
+    if (entryDate !== dateStr || getCSTHour(ts) !== hour) continue;
+
+    let key;
+    if (groupBy === 'toolType') {
+      key = mapSourceToToolType(entry.source);
+    } else if (groupBy === 'model') {
+      key = entry.model || 'unknown';
+    } else if (groupBy === 'channel') {
+      key = entry.channel || 'unknown';
+    } else {
+      continue;
+    }
+
+    if (!result[key]) {
+      result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
+    }
+
+    const totalTokens = entry.totalTokens ||
+      entry.tokens?.total ||
+      (entry.inputTokens || 0) + (entry.outputTokens || 0) + (entry.reasoningTokens || 0);
+
+    result[key].tokens.total += totalTokens || 0;
+    result[key].cost += entry.cost || 0;
+    result[key].requests += 1;
+  }
+
+  return result;
+}
+
+function readProxyLogsForHour(dateStr, hour, groupBy) {
+  return filterProxyLogsForHour(loadProxyLogs(), dateStr, hour, groupBy);
 }
 
 /**
@@ -443,67 +591,325 @@ const TOOL_PREFIXES = {
   'opencode': 'opencode-'
 };
 
-// 加载指定工具的某天统计（toolPrefix 为 '' | 'codex-' | 'gemini-' | 'opencode-'）
-function loadDailyStatsByTool(dateStr, toolPrefix) {
-  const dir = path.join(os.homedir(), '.cc-tool', `${toolPrefix}daily-stats`);
-  const filePath = path.join(dir, `${dateStr}.json`);
-  try {
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    }
-  } catch (e) {}
-  return null;
+function getTokenTotal(tokens) {
+  if (typeof tokens === 'number') return tokens;
+  if (tokens && typeof tokens === 'object') {
+    if (typeof tokens.total === 'number') return tokens.total;
+    return Object.entries(tokens).reduce((sum, [key, value]) => {
+      if (key === 'total') return sum;
+      return typeof value === 'number' ? sum + value : sum;
+    }, 0);
+  }
+  return 0;
 }
 
-// 合并所有工具的某天 daily-stats，groupBy 决定合并维度
-// 对于 toolType 分组：key 就是工具名（claude-code/codex/gemini/opencode）
-// 对于 model/channel 分组：合并各工具的 byModel/byChannel，key 可能重名（不同工具用同名模型）则加前缀
-function mergeAllToolsDailyStats(dateStr, groupBy) {
-  const merged = {};
+function normalizeTokens(tokens) {
+  if (typeof tokens === 'number') {
+    return { total: tokens };
+  }
 
-  for (const [toolType, prefix] of Object.entries(TOOL_PREFIXES)) {
-    const stats = loadDailyStatsByTool(dateStr, prefix);
-    if (!stats) continue;
-
-    if (groupBy === 'toolType') {
-      // key = toolType，汇总整天 summary
-      if (!merged[toolType]) merged[toolType] = { requests: 0, tokens: { total: 0 }, cost: 0 };
-      const s = stats.summary || {};
-      merged[toolType].requests += s.requests || 0;
-      merged[toolType].tokens.total += (s.tokens && typeof s.tokens === 'object' ? s.tokens.total : s.tokens) || 0;
-      merged[toolType].cost += s.cost || 0;
-    } else if (groupBy === 'model') {
-      const byModel = stats.byModel || {};
-      for (const [model, mStats] of Object.entries(byModel)) {
-        if (!merged[model]) merged[model] = { requests: 0, tokens: { total: 0 }, cost: 0 };
-        merged[model].requests += mStats.requests || 0;
-        const t = mStats.tokens || {};
-        merged[model].tokens.total += (typeof t === 'object' ? t.total : t) || 0;
-        merged[model].cost += mStats.cost || 0;
-      }
-    } else if (groupBy === 'channel') {
-      const byChannel = stats.byChannel || {};
-      for (const [chId, chStats] of Object.entries(byChannel)) {
-        const key = chStats.name || chId;
-        if (!merged[key]) merged[key] = { requests: 0, tokens: { total: 0 }, cost: 0 };
-        merged[key].requests += chStats.requests || 0;
-        const t = chStats.tokens || {};
-        merged[key].tokens.total += (typeof t === 'object' ? t.total : t) || 0;
-        merged[key].cost += chStats.cost || 0;
+  const normalized = { total: 0 };
+  if (tokens && typeof tokens === 'object') {
+    for (const [key, value] of Object.entries(tokens)) {
+      if (typeof value === 'number') {
+        normalized[key] = value;
       }
     }
   }
+
+  normalized.total = getTokenTotal(tokens);
+  return normalized;
+}
+
+function mergeStatsEntry(target, source) {
+  if (!source) return;
+
+  target.requests += source.requests || 0;
+  target.cost += source.cost || 0;
+
+  const sourceTokens = normalizeTokens(source.tokens);
+  for (const [key, value] of Object.entries(sourceTokens)) {
+    target.tokens[key] = (target.tokens[key] || 0) + value;
+  }
+}
+
+function createEmptyEntry(toolType, name) {
+  const entry = {
+    requests: 0,
+    tokens: { total: 0 },
+    cost: 0
+  };
+
+  if (toolType) entry.toolType = toolType;
+  if (name) entry.name = name;
+  return entry;
+}
+
+function getScopedKey(container, baseKey, toolType) {
+  if (!container[baseKey] || container[baseKey].toolType === toolType) {
+    return baseKey;
+  }
+
+  let index = 1;
+  let scopedKey = `${toolType}:${baseKey}`;
+  while (container[scopedKey] && container[scopedKey].toolType !== toolType) {
+    scopedKey = `${toolType}:${baseKey}:${index}`;
+    index += 1;
+  }
+  return scopedKey;
+}
+
+function mergeHourlyStats(targetHourly, sourceHourly = {}) {
+  for (const [hour, hourStats] of Object.entries(sourceHourly)) {
+    if (!targetHourly[hour]) {
+      targetHourly[hour] = {
+        requests: 0,
+        tokens: { total: 0 },
+        cost: 0,
+        byToolType: {}
+      };
+    }
+
+    mergeStatsEntry(targetHourly[hour], hourStats);
+
+    if (hourStats.byToolType && typeof hourStats.byToolType === 'object') {
+      for (const [toolType, toolStats] of Object.entries(hourStats.byToolType)) {
+        if (!targetHourly[hour].byToolType[toolType]) {
+          targetHourly[hour].byToolType[toolType] = createEmptyEntry();
+        }
+        mergeStatsEntry(targetHourly[hour].byToolType[toolType], toolStats);
+      }
+    }
+  }
+}
+
+function hasStatsData(stats = {}) {
+  const requests = Number(stats.requests || 0);
+  const cost = Number(stats.cost || 0);
+  const totalTokens = getTokenTotal(stats.tokens);
+  return requests > 0 || cost > 0 || totalTokens > 0;
+}
+
+function aggregateDailyStatistics(dateStr) {
+  const aggregated = {
+    date: dateStr,
+    summary: {
+      requests: 0,
+      tokens: 0,
+      cost: 0
+    },
+    hourly: {},
+    byToolType: {},
+    byChannel: {},
+    byModel: {}
+  };
+
+  const sharedStats = loadDailyStats(dateStr);
+  const sharedSummaryEntry = createEmptyEntry();
+  mergeStatsEntry(sharedSummaryEntry, {
+    requests: sharedStats.summary?.requests || 0,
+    tokens: sharedStats.summary?.tokens || 0,
+    cost: sharedStats.summary?.cost || 0
+  });
+  aggregated.summary.requests += sharedSummaryEntry.requests;
+  aggregated.summary.tokens += sharedSummaryEntry.tokens.total || 0;
+  aggregated.summary.cost += sharedSummaryEntry.cost;
+  mergeHourlyStats(aggregated.hourly, sharedStats.hourly);
+
+  for (const toolType of Object.keys(TOOL_PREFIXES)) {
+    const toolStats = sharedStats.byToolType?.[toolType];
+    if (!aggregated.byToolType[toolType]) {
+      aggregated.byToolType[toolType] = createEmptyEntry();
+    }
+    if (!toolStats) continue;
+
+    mergeStatsEntry(aggregated.byToolType[toolType], toolStats);
+
+    for (const [channelId, channelStats] of Object.entries(toolStats.channels || {})) {
+      const key = getScopedKey(aggregated.byChannel, channelId, toolType);
+      if (!aggregated.byChannel[key]) {
+        aggregated.byChannel[key] = createEmptyEntry(toolType, channelStats.name || channelId);
+      }
+      mergeStatsEntry(aggregated.byChannel[key], channelStats);
+    }
+
+    for (const [modelName, modelStats] of Object.entries(toolStats.models || {})) {
+      const key = getScopedKey(aggregated.byModel, modelName, toolType);
+      if (!aggregated.byModel[key]) {
+        aggregated.byModel[key] = createEmptyEntry(toolType);
+      }
+      mergeStatsEntry(aggregated.byModel[key], modelStats);
+    }
+  }
+
+  // Fallback: if byModel is still empty (older daily-stats files store model data
+  // directly in byModel rather than byToolType[toolType].models), merge it directly.
+  if (Object.keys(aggregated.byModel).length === 0 && sharedStats.byModel) {
+    for (const [modelName, modelStats] of Object.entries(sharedStats.byModel)) {
+      const toolType = modelStats.toolType || 'claude-code';
+      if (!aggregated.byModel[modelName]) {
+        aggregated.byModel[modelName] = createEmptyEntry(toolType);
+      }
+      mergeStatsEntry(aggregated.byModel[modelName], modelStats);
+    }
+  }
+
+  // Fallback: if byChannel is still empty, merge from sharedStats.byChannel directly.
+  if (Object.keys(aggregated.byChannel).length === 0 && sharedStats.byChannel) {
+    for (const [channelId, channelStats] of Object.entries(sharedStats.byChannel)) {
+      const toolType = channelStats.toolType || 'claude-code';
+      if (!aggregated.byChannel[channelId]) {
+        aggregated.byChannel[channelId] = createEmptyEntry(toolType, channelStats.name || channelId);
+      }
+      mergeStatsEntry(aggregated.byChannel[channelId], channelStats);
+    }
+  }
+
+  // 保证前端可用的工具键始终存在
+  for (const toolType of Object.keys(TOOL_PREFIXES)) {
+    if (!aggregated.byToolType[toolType]) {
+      aggregated.byToolType[toolType] = createEmptyEntry();
+    }
+  }
+
+  return aggregated;
+}
+
+// 合并某天共享 daily-stats，groupBy 决定合并维度
+function mergeAllToolsDailyStats(dateStr, groupBy) {
+  const merged = {};
+
+  const aggregated = aggregateDailyStatistics(dateStr);
+  if (!aggregated) return merged;
+
+  if (groupBy === 'toolType') {
+    for (const toolType of Object.keys(TOOL_PREFIXES)) {
+      const toolStats = aggregated.byToolType?.[toolType];
+      if (!toolStats || !hasStatsData(toolStats)) continue;
+      merged[toolType] = {
+        requests: toolStats.requests || 0,
+        tokens: { total: getTokenTotal(toolStats.tokens) },
+        cost: toolStats.cost || 0
+      };
+    }
+    return merged;
+  }
+
+  if (groupBy === 'model') {
+    for (const [modelName, modelStats] of Object.entries(aggregated.byModel || {})) {
+      if (!merged[modelName]) merged[modelName] = { requests: 0, tokens: { total: 0 }, cost: 0 };
+      merged[modelName].requests += modelStats.requests || 0;
+      merged[modelName].tokens.total += getTokenTotal(modelStats.tokens);
+      merged[modelName].cost += modelStats.cost || 0;
+    }
+    return merged;
+  }
+
+  if (groupBy === 'channel') {
+    for (const [channelId, channelStats] of Object.entries(aggregated.byChannel || {})) {
+      const key = channelStats.name || channelId;
+      if (!merged[key]) merged[key] = { requests: 0, tokens: { total: 0 }, cost: 0 };
+      merged[key].requests += channelStats.requests || 0;
+      merged[key].tokens.total += getTokenTotal(channelStats.tokens);
+      merged[key].cost += channelStats.cost || 0;
+    }
+  }
+
   return merged;
 }
 
-async function getTrendStatistics({ startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens' }) {
+/**
+ * 扫描日期范围内的 JSONL 文件，返回可用的过滤器选项
+ * @param {string} startDate - YYYY-MM-DD
+ * @param {string} endDate - YYYY-MM-DD
+ * @returns {{ toolTypes: string[], channels: string[], models: string[] }}
+ */
+function getAvailableFilters(startDate, endDate) {
+  const toolTypes = new Set();
+  const channels = new Set();
+  const models = new Set();
+
+  const start = new Date(startDate + 'T00:00:00');
+  const end = new Date(endDate + 'T00:00:00');
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const year = d.getFullYear();
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const filePath = getRequestLogFilePath(year, month, day);
+
+    try {
+      if (!fs.existsSync(filePath)) continue;
+      const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (entry.toolType) toolTypes.add(entry.toolType);
+        if (entry.channel) channels.add(entry.channel);
+        if (entry.model) models.add(entry.model);
+      }
+    } catch (err) {
+      console.error('Failed to scan JSONL for filters:', err);
+    }
+  }
+
+  return {
+    toolTypes: Array.from(toolTypes).sort(),
+    channels: Array.from(channels).sort(),
+    models: Array.from(models).sort()
+  };
+}
+
+// ─── Trend statistics in-memory cache ───────────────────────────────────────
+// Key: JSON-serialized params, Value: { result, expiresAt }
+const trendCache = new Map();
+const TREND_CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
+function getTrendCacheKey(params) {
+  return JSON.stringify(params);
+}
+
+function invalidateTrendCache() {
+  trendCache.clear();
+}
+
+// Called by recordRequest so fresh data is visible immediately after a new request
+function invalidateTrendCacheForDate(dateStr) {
+  for (const key of trendCache.keys()) {
+    try {
+      const p = JSON.parse(key);
+      if (p.startDate <= dateStr && dateStr <= p.endDate) {
+        trendCache.delete(key);
+      }
+    } catch { trendCache.delete(key); }
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getTrendStatistics({ startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens', filters }) {
   step = parseInt(step) || 1;
+
+  // Normalize filters: treat empty string as no filter
+  const activeFilters = filters && (filters.toolType || filters.channel || filters.model) ? filters : null;
+
+  // Check cache first
+  const cacheKey = getTrendCacheKey({ startDate, endDate, granularity, step: String(step), groupBy, metric, filters: activeFilters || null });
+  const cached = trendCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.result;
+  }
+
   const labels = [];
   const seriesMap = {}; // { dimensionName: number[] }
   const totals = {};
 
   const start = new Date(startDate + 'T00:00:00');
   const end = new Date(endDate + 'T00:00:00');
+
+  // Load proxy-logs once upfront (only needed for hour granularity) to avoid
+  // re-reading the large file on every iteration of the inner loop.
+  const cachedProxyLogs = granularity === 'hour' ? loadProxyLogs() : [];
 
   // Iterate each day
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -514,7 +920,9 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
 
     if (granularity === 'day') {
       labels.push(dateStr);
-      const byDimension = mergeAllToolsDailyStats(dateStr, groupBy);
+      const byDimension = activeFilters
+        ? readJsonlForDay(year, month, day, groupBy, activeFilters)
+        : mergeAllToolsDailyStats(dateStr, groupBy);
 
       // Accumulate dimensions seen so far with 0 for this label position
       const labelIdx = labels.length - 1;
@@ -557,21 +965,27 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
           const hhStr = hh.toString().padStart(2, '0');
           let byDimension = {};
 
-          if (groupBy === 'toolType') {
-            // 合并所有工具的该小时数据
-            for (const [toolType, prefix] of Object.entries(TOOL_PREFIXES)) {
-              const ds = loadDailyStatsByTool(dateStr, prefix);
-              const hourData = ds?.hourly?.[hhStr];
-              const val = hourData ? extractMetric(hourData, metric) : 0;
-              if (val > 0) {
-                if (!byDimension[toolType]) byDimension[toolType] = { requests: 0, tokens: { total: 0 }, cost: 0 };
-                byDimension[toolType].requests += hourData.requests || 0;
-                byDimension[toolType].tokens.total += (hourData.tokens?.total || 0);
-                byDimension[toolType].cost += hourData.cost || 0;
+          // 小时粒度优先使用 proxy-logs（含 codex/gemini/opencode 实时数据），
+          // 若该小时没有 proxy-logs 再回退到历史统计文件/JSONL。
+          byDimension = filterProxyLogsForHour(cachedProxyLogs, dateStr, hh, groupBy);
+
+          if (Object.keys(byDimension).length === 0 || activeFilters) {
+            if (activeFilters) {
+              byDimension = readJsonlForHour(year, month, day, hh, groupBy, activeFilters);
+            } else if (groupBy === 'toolType') {
+              const dailyStats = aggregateDailyStatistics(dateStr);
+              const hourData = dailyStats?.hourly?.[hhStr];
+              for (const [toolType, toolStats] of Object.entries(hourData?.byToolType || {})) {
+                if (!hasStatsData(toolStats)) continue;
+                byDimension[toolType] = {
+                  requests: toolStats.requests || 0,
+                  tokens: { total: getTokenTotal(toolStats.tokens) },
+                  cost: toolStats.cost || 0
+                };
               }
+            } else {
+              byDimension = readJsonlForHour(year, month, day, hh, groupBy);
             }
-          } else {
-            byDimension = readJsonlForHour(year, month, day, hh, groupBy);
           }
 
           for (const [key, stats] of Object.entries(byDimension)) {
@@ -611,7 +1025,12 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
     for (const [name] of rest) delete totals[name];
   }
 
-  return { labels, series, totals };
+  const result = { labels, series, totals };
+
+  // Store in cache
+  trendCache.set(cacheKey, { result, expiresAt: Date.now() + TREND_CACHE_TTL_MS });
+
+  return result;
 }
 
 module.exports = {
@@ -619,5 +1038,6 @@ module.exports = {
   getStatistics,
   getDailyStatistics,
   getTodayStatistics,
-  getTrendStatistics
+  getTrendStatistics,
+  getAvailableFilters
 };

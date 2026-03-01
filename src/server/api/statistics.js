@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getStatistics, getDailyStatistics, getTodayStatistics, getTrendStatistics } = require('../services/statistics-service');
+const { getStatistics, getDailyStatistics, getTodayStatistics, getTrendStatistics, getAvailableFilters } = require('../services/statistics-service');
 
 /**
  * 获取总体统计数据
@@ -89,6 +89,28 @@ router.get('/recent', (req, res) => {
 });
 
 /**
+ * 获取可用的过滤器选项
+ * GET /api/statistics/filters?startDate=&endDate=
+ */
+router.get('/filters', (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
+    }
+    const result = getAvailableFilters(startDate, endDate);
+    res.json(result);
+  } catch (error) {
+    console.error('Failed to get available filters:', error);
+    res.status(500).json({ error: 'Failed to get available filters' });
+  }
+});
+
+/**
  * 获取趋势统计数据
  * GET /api/statistics/trend
  *
@@ -97,10 +119,16 @@ router.get('/recent', (req, res) => {
  * @query {string} granularity - 'day' | 'hour' (default: 'day')
  * @query {string} groupBy - 'model' | 'channel' | 'toolType' (default: 'model')
  * @query {string} metric - 'tokens' | 'cost' | 'requests' (default: 'tokens')
+ * @query {string} filterToolType - optional filter
+ * @query {string} filterChannel - optional filter
+ * @query {string} filterModel - optional filter
  */
 router.get('/trend', async (req, res) => {
   try {
-    const { startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens' } = req.query;
+    const {
+      startDate, endDate, granularity = 'day', step = 1, groupBy = 'model', metric = 'tokens',
+      filterToolType, filterChannel, filterModel
+    } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({ error: 'startDate and endDate are required' });
@@ -127,7 +155,12 @@ router.get('/trend', async (req, res) => {
       return res.status(400).json({ error: 'Date range cannot exceed 90 days' });
     }
 
-    const result = await getTrendStatistics({ startDate, endDate, granularity, step, groupBy, metric });
+    const filters = {
+      toolType: filterToolType || null,
+      channel: filterChannel || null,
+      model: filterModel || null
+    };
+    const result = await getTrendStatistics({ startDate, endDate, granularity, step, groupBy, metric, filters });
     res.json({ success: true, ...result });
   } catch (error) {
     console.error('Failed to get trend statistics:', error);

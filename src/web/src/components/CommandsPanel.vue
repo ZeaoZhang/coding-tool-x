@@ -17,12 +17,6 @@
           </template>
           创建
         </n-button>
-        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
-          <template #icon>
-            <n-icon><CloudDownloadOutline /></n-icon>
-          </template>
-          导入
-        </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -40,12 +34,6 @@
             <n-icon><AddOutline /></n-icon>
           </template>
           创建
-        </n-button>
-        <n-button v-if="currentPlatform === 'claude'" text @click="handleImport" :loading="importing" class="action-btn">
-          <template #icon>
-            <n-icon><CloudDownloadOutline /></n-icon>
-          </template>
-          导入
         </n-button>
         <n-button text @click="handleRefresh" :loading="loading" class="action-btn">
           <template #icon>
@@ -184,11 +172,10 @@ import {
   SearchOutline,
   InformationCircleOutline,
   AddOutline,
-  TerminalOutline,
-  CloudDownloadOutline
+  TerminalOutline
 } from '@vicons/ionicons5'
 import { getCommands, deleteCommand } from '../api/commands'
-import { listItems, importFromClaude, toggleEnabled, togglePlatform } from '../api/config-registry'
+import { listItems, toggleEnabled, togglePlatform, syncAll } from '../api/config-registry'
 import message from '../utils/message'
 import CommandCard from './CommandCard.vue'
 import CommandFormModal from './CommandFormModal.vue'
@@ -222,11 +209,12 @@ const editingCommand = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
-const importing = ref(false)
 
 const currentPlatform = computed(() => {
   const channel = route.meta.channel
-  return channel === 'opencode' ? 'opencode' : 'claude'
+  if (channel === 'codex') return 'codex'
+  if (channel === 'opencode') return 'opencode'
+  return 'claude'
 })
 
 const commandUsageHint = computed(() =>
@@ -278,26 +266,6 @@ const emptyText = computed(() => {
   if (filterScope.value === 'managed') return '暂无托管的命令'
   return '暂无自定义命令'
 })
-
-async function handleImport() {
-  if (currentPlatform.value !== 'claude') {
-    return
-  }
-  importing.value = true
-  try {
-    const res = await importFromClaude('commands')
-    if (res.success) {
-      message.success(`成功导入 ${res.imported} 个命令`)
-      await loadCommands()
-    } else {
-      message.error(res.message || '导入失败')
-    }
-  } catch (err) {
-    message.error('导入失败: ' + err.message)
-  } finally {
-    importing.value = false
-  }
-}
 
 async function loadCommands() {
   loading.value = true
@@ -352,8 +320,17 @@ async function handleTogglePlatform(cmd, platform, enabled) {
   }
 }
 
-function handleRefresh() {
-  loadCommands()
+async function handleRefresh() {
+  loading.value = true
+  try {
+    const syncResult = await syncAll('commands')
+    if (!syncResult?.success) {
+      message.warning(syncResult?.message || '同步失败，已继续刷新列表')
+    }
+  } catch (err) {
+    message.warning('同步失败，已继续刷新列表: ' + err.message)
+  }
+  await loadCommands()
 }
 
 function handleEdit(cmd) {

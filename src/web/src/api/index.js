@@ -2,7 +2,6 @@ import * as projectApi from './projects'
 import * as sessionApi from './sessions'
 import * as channelApi from './channels'
 import * as proxyApi from './proxy'
-import * as terminalApi from './terminal'
 import * as statisticsApi from './statistics'
 import * as versionApi from './version'
 import * as favoritesApi from './favorites'
@@ -16,7 +15,6 @@ const api = {
   ...sessionApi,
   ...channelApi,
   ...proxyApi,
-  ...terminalApi,
   ...statisticsApi,
   ...versionApi,
   ...favoritesApi,
