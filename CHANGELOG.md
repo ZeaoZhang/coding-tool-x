@@ -4,6 +4,30 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.2.0] - 2026-03-01
+
+### Added
+- ✨ **Codex 代理管理** - agents API 及 AgentsService 新增 Codex 平台支持，覆盖 user/project 作用域
+- ✨ **会话格式转换器** - 新增 `session-converter.js`，统一 Claude/Codex/Gemini 会话为中间格式，支持跨平台转换
+- ✨ **OpenCode 网关适配层** - 新增 `opencode-gateway-adapters.js`，多平台会话转换为 OpenCode payload
+- ✨ **转换 API** - 新增 `/api/convert` 端点及前端 `GatewayConvertDrawer` 组件，支持会话格式预览与导出
+- ✨ **请求日志服务** - 新增 `request-logger.js`，通过环境变量 `CC_TOOL_LOG_REQUESTS` 控制代理请求快照记录
+- ✨ **Gemini CLI 配置同步** - config-sync-manager 新增 `~/.gemini/skills/` 目录同步支持
+- ✨ **Codex 性能 benchmark** - 新增 `benchmark-codex-loading.js` 及 `test-codex-agents.js` 脚本
+- ✨ **剪贴板工具** - 新增 `src/web/src/utils/clipboard.js` 统一剪贴板操作
+
+### Changed
+- 🔄 **统计时区修正** - Claude/Codex/Gemini/OpenCode 统计服务全部切换为北京时间（UTC+8）计算，修复跨日边界统计误差
+- 🔄 **OpenCode 代理服务器重构** - 大幅精简 `opencode-proxy-server.js`，User-Agent 更新至 `claude-cli/2.1.59`，Beta header 更新为最新标志组
+- 🔄 **配置同步支持 TOML** - config-sync-manager 及 agents-service 新增 TOML 格式解析与写入
+- 🔄 **Package name 变更** - 从 `@adversity/coding-tool-x` 改为 `coding-tool-x`
+- 🔄 **Config Templates 精简** - config-templates-service.js 重构，移除冗余逻辑
+
+### Removed
+- 🗑️ **终端模块移除** - 删除 Terminal API、PTY 管理器、TerminalPane/Tabs 组件、Terminal 视图及终端设置面板
+- 🗑️ **Rules 模块移除** - 删除 rules API、rules-service、RuleCard/RuleFormModal/RulesDrawer/RulesPanel 全套组件
+- 🗑️ **移除 PTY 依赖** - 移除 `@lydell/node-pty` 和 `@xterm/headless` 依赖，减小安装体积
+
 ## [3.1.4] - 2026-02-28
 
 ### Fixed
