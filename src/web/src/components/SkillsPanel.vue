@@ -106,7 +106,7 @@
     </div>
 
     <!-- 弹窗组件 -->
-    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
+    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData(true)" />
     <SkillCreateModal v-model:visible="showCreateModal" :platform="currentPlatform" @created="loadData" />
     <SkillDetailModal v-model:visible="showDetailModal" :skill="selectedSkill" :platform="currentPlatform" @updated="loadData" />
   </div>
