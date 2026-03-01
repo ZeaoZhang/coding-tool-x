@@ -1185,7 +1185,7 @@ function setupStatsTimer() {
 }
 
 function openSkillsManager() {
-  window.dispatchEvent(new CustomEvent('open-skills-drawer'))
+  window.dispatchEvent(new CustomEvent('open-skills-drawer', { detail: { platform: props.channelType } }))
 }
 
 onMounted(async () => {
