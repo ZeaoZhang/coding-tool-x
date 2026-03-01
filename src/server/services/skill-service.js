@@ -34,7 +34,7 @@ const DEFAULT_REPOS_BY_PLATFORM = {
     { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
   ],
   codex: [
-    { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
+    { owner: 'openai', name: 'skills', branch: 'main', directory: 'skills/.curated', enabled: true }
   ],
   gemini: [
     { owner: 'google-gemini', name: 'gemini-cli', branch: 'main', directory: '.gemini/skills', enabled: true }
