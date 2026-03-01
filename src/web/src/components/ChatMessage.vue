@@ -58,6 +58,7 @@ import { NIcon } from 'naive-ui'
 import { Person as PersonIcon, Chatbubbles as RobotIcon, Image as ImageIcon, Copy as CopyIcon } from '@vicons/ionicons5'
 import { marked } from 'marked'
 import hljs from 'highlight.js/lib/core'
+import { copyTextToClipboard } from '../utils/clipboard'
 
 // Import commonly used languages
 import javascript from 'highlight.js/lib/languages/javascript'
@@ -167,11 +168,15 @@ function formatTime(timestamp) {
 }
 
 // Copy content
-function copyContent() {
+async function copyContent() {
   const text = typeof props.message.content === 'string'
     ? props.message.content
     : JSON.stringify(props.message.content)
-  navigator.clipboard.writeText(text)
+  try {
+    await copyTextToClipboard(text, { manualFallback: false })
+  } catch {
+    // Keep chat copy action silent on failure to avoid noisy toasts.
+  }
 }
 
 function getImageSrc(item) {

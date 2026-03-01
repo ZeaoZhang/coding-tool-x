@@ -3,7 +3,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 const Home = () => import('../views/Home.vue')
 const ProjectList = () => import('../views/ProjectList.vue')
 const SessionList = () => import('../views/SessionList.vue')
-const Terminal = () => import('../views/Terminal.vue')
 const WorkspaceManager = () => import('../views/WorkspaceManager.vue')
 const ConfigTemplates = () => import('../views/ConfigTemplates.vue')
 const SkillManager = () => import('../views/SkillManager.vue')
@@ -71,27 +70,6 @@ const routes = [
     component: SessionList,
     props: true,
     meta: { channel: 'opencode' }
-  },
-  // Web 终端路由
-  {
-    path: '/terminal',
-    name: 'terminal',
-    component: Terminal,
-    meta: { keepAlive: true }
-  },
-  {
-    path: '/terminal/:channel',
-    name: 'terminal-channel',
-    component: Terminal,
-    props: true,
-    meta: { keepAlive: true }
-  },
-  {
-    path: '/terminal/:channel/:projectName/:sessionId',
-    name: 'terminal-session',
-    component: Terminal,
-    props: true,
-    meta: { keepAlive: true }
   },
   // 工作区管理路由
   {

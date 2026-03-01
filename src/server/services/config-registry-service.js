@@ -2,9 +2,9 @@
  * Config Registry Service
  *
  * Manages a unified config registry at ~/.cc-tool/config-registry.json
- * that tracks skills, commands, agents, rules with enable/disable and per-platform support.
+ * that tracks skills, commands, agents, plugins with enable/disable and per-platform support.
  *
- * Storage directories: ~/.cc-tool/configs/{skills,commands,agents,rules}/
+ * Storage directories: ~/.cc-tool/configs/{skills,commands,agents,plugins}/
  */
 
 const fs = require('fs');
@@ -21,20 +21,18 @@ const CLAUDE_DIRS = {
   skills: path.join(os.homedir(), '.claude', 'skills'),
   commands: path.join(os.homedir(), '.claude', 'commands'),
   agents: path.join(os.homedir(), '.claude', 'agents'),
-  rules: path.join(os.homedir(), '.claude', 'rules'),
   plugins: path.join(os.homedir(), '.claude', 'plugins')
 };
 
 // Valid config types
-const CONFIG_TYPES = ['skills', 'commands', 'agents', 'rules', 'plugins'];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 
 const PLATFORM_SUPPORT = {
-  skills: { claude: true, codex: true, opencode: true },
-  commands: { claude: true, codex: true, opencode: true },
-  agents: { claude: true, codex: false, opencode: true },
-  rules: { claude: true, codex: false, opencode: false },
-  plugins: { claude: true, codex: false, opencode: true }
+  skills: { claude: true, codex: true, gemini: true, opencode: true },
+  commands: { claude: true, codex: true, gemini: false, opencode: true },
+  agents: { claude: true, codex: true, gemini: false, opencode: true },
+  plugins: { claude: true, codex: false, gemini: false, opencode: true }
 };
 
 function normalizePlatforms(type, platforms = {}) {
@@ -42,6 +40,7 @@ function normalizePlatforms(type, platforms = {}) {
   const normalized = {
     claude: !!platforms.claude,
     codex: !!platforms.codex,
+    gemini: !!platforms.gemini,
     opencode: !!platforms.opencode
   };
 
@@ -59,13 +58,30 @@ function normalizePlatforms(type, platforms = {}) {
   return normalized;
 }
 
+function normalizeRelativeConfigName(name) {
+  const raw = String(name || '').replace(/\\/g, '/').trim();
+  if (!raw || raw.includes('\0')) {
+    throw new Error('Invalid config name');
+  }
+
+  const normalized = path.posix.normalize(raw).replace(/^(\.\/)+/, '');
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
+    throw new Error('Invalid config name');
+  }
+
+  if (path.isAbsolute(raw) || raw.startsWith('/')) {
+    throw new Error('Absolute path is not allowed');
+  }
+
+  return normalized;
+}
+
 // Default registry structure
 const DEFAULT_REGISTRY = {
   version: 1,
   skills: {},
   commands: {},
   agents: {},
-  rules: {},
   plugins: {}
 };
 
@@ -155,7 +171,7 @@ class ConfigRegistryService {
 
   /**
    * Get a single item from registry
-   * @param {string} type - Config type (skills, commands, agents, rules)
+   * @param {string} type - Config type (skills, commands, agents, plugins)
    * @param {string} name - Item name/key
    * @returns {Object|null} Registry entry or null
    */
@@ -282,7 +298,7 @@ class ConfigRegistryService {
    * Toggle platform support for an item
    * @param {string} type - Config type
    * @param {string} name - Item name/key
-   * @param {string} platform - Platform name (claude, codex, opencode)
+   * @param {string} platform - Platform name (claude, codex, gemini, opencode)
    * @param {boolean} enabled - New platform status
    * @returns {Object} Updated entry
    */
@@ -349,7 +365,7 @@ class ConfigRegistryService {
       // Plugins are directory-based (similar to skills)
       this._importPlugins(sourceDir, destDir, registry, result);
     } else {
-      // Commands, agents, rules are file-based (.md files)
+      // Commands and agents are file-based (.md files)
       this._importFileBasedConfigs(type, sourceDir, destDir, '', registry, result);
     }
 
@@ -469,7 +485,7 @@ class ConfigRegistryService {
   }
 
   /**
-   * Import file-based configs (commands, agents, rules)
+   * Import file-based configs (commands, agents)
    * @private
    */
   _importFileBasedConfigs(type, sourceDir, destDir, relativePath, registry, result) {
@@ -566,6 +582,7 @@ class ConfigRegistryService {
       byPlatform: {
         claude: 0,
         codex: 0,
+        gemini: 0,
         opencode: 0
       }
     };
@@ -578,6 +595,7 @@ class ConfigRegistryService {
         disabled: items.filter(i => !i.enabled).length,
         claude: items.filter(i => i.platforms?.claude).length,
         codex: items.filter(i => i.platforms?.codex).length,
+        gemini: items.filter(i => i.platforms?.gemini).length,
         opencode: items.filter(i => i.platforms?.opencode).length
       };
 
@@ -585,6 +603,7 @@ class ConfigRegistryService {
       stats.total += typeStats.total;
       stats.byPlatform.claude += typeStats.claude;
       stats.byPlatform.codex += typeStats.codex;
+      stats.byPlatform.gemini += typeStats.gemini;
       stats.byPlatform.opencode += typeStats.opencode;
     }
 
@@ -602,7 +621,8 @@ class ConfigRegistryService {
       throw new Error(`Invalid config type: ${type}`);
     }
 
-    return path.join(this.configsDir, type, name);
+    const safeName = normalizeRelativeConfigName(name);
+    return path.join(this.configsDir, type, safeName);
   }
 
   /**

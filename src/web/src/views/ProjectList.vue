@@ -7,7 +7,7 @@
           <n-text depth="3">选择一个项目查看会话，拖拽可调整顺序</n-text>
         </div>
         <n-space>
-          <n-button type="primary" size="medium" @click="handleNewProjectTerminal">
+          <n-button type="primary" size="medium" @click="handleNewProjectCommand">
             <template #icon>
               <n-icon><AddOutline /></n-icon>
             </template>
@@ -170,7 +170,8 @@ import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import ProjectCard from '../components/ProjectCard.vue'
 import message, { dialog } from '../utils/message'
-import { searchSessionsGlobally, launchTerminal } from '../api/sessions'
+import { searchSessionsGlobally, copySessionLaunchCommand } from '../api/sessions'
+import { copyTextToClipboard } from '../utils/clipboard'
 
 const router = useRouter()
 const route = useRoute()
@@ -243,17 +244,26 @@ function handleDeleteProject(project) {
   })
 }
 
-// 新建项目 (直接启动终端)
-function handleNewProjectTerminal() {
-  const channel = currentChannel.value || 'claude'
-  router.push({
-    name: 'terminal-channel',
-    params: { channel },
-    query: {
-      cwd: '.',
-      openTs: Date.now().toString()
+function getChannelBaseCommand(channel) {
+  if (channel === 'codex') return 'codex'
+  if (channel === 'gemini') return 'gemini'
+  if (channel === 'opencode') return 'opencode'
+  return 'claude'
+}
+
+// 新建项目入口改为复制基础启动命令
+async function handleNewProjectCommand() {
+  try {
+    const command = getChannelBaseCommand(currentChannel.value || 'claude')
+    const copyResult = await copyTextToClipboard(command)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+      return
     }
-  })
+    message.success('基础启动命令已复制到剪贴板')
+  } catch (err) {
+    message.error('复制失败: ' + err.message)
+  }
 }
 
 // 保存和恢复滚动位置
@@ -302,11 +312,15 @@ async function handleGlobalSearch() {
 
 async function handleLaunchTerminalFromGlobal(projectName, sessionId) {
   try {
-    await launchTerminal(projectName, sessionId, currentChannel.value)
-    message.success('已启动终端')
+    const { copyResult } = await copySessionLaunchCommand(projectName, sessionId, currentChannel.value)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+    } else {
+      message.success('启动命令已复制到剪贴板')
+    }
     showGlobalSearch.value = false
   } catch (err) {
-    message.error('启动失败: ' + err.message)
+    message.error('复制失败: ' + err.message)
   }
 }
 

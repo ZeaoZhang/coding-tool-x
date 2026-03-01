@@ -61,6 +61,18 @@
             <template #trigger>
               <span
                 class="platform-icon"
+                :class="{ active: registryInfo.platforms?.codex }"
+                @click.stop="emit('toggle-platform', agent, 'codex', !registryInfo.platforms?.codex)"
+              >
+                <n-icon size="14"><TerminalOutline /></n-icon>
+              </span>
+            </template>
+            Codex CLI {{ registryInfo.platforms?.codex ? '已启用' : '未启用' }}
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
                 :class="{ active: registryInfo.platforms?.opencode }"
                 @click.stop="emit('toggle-platform', agent, 'opencode', !registryInfo.platforms?.opencode)"
               >
@@ -96,7 +108,7 @@
 
 <script setup>
 import { NButton, NTag, NIcon, NSwitch, NTooltip } from 'naive-ui'
-import { HammerOutline, ShieldOutline, LogoApple, CodeSlashOutline } from '@vicons/ionicons5'
+import { HammerOutline, ShieldOutline, LogoApple, TerminalOutline, CodeSlashOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
   agent: {

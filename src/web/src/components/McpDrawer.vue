@@ -333,6 +333,7 @@ import {
   saveServer, testServer, updateServerOrder, exportServers, getExportDownloadUrl
 } from '../api/mcp'
 import message, { dialog } from '../utils/message'
+import { copyTextToClipboard } from '../utils/clipboard'
 import McpFormDrawer from './McpFormDrawer.vue'
 import McpServerDetailDrawer from './McpServerDetailDrawer.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
@@ -570,10 +571,17 @@ async function handleExport(format) {
 }
 
 // 复制导出内容
-function copyExportContent() {
-  navigator.clipboard.writeText(exportData.value.content)
-    .then(() => message.success('已复制到剪贴板'))
-    .catch(() => message.error('复制失败'))
+async function copyExportContent() {
+  try {
+    const copyResult = await copyTextToClipboard(exportData.value.content)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+      return
+    }
+    message.success('已复制到剪贴板')
+  } catch {
+    message.error('复制失败')
+  }
 }
 
 // 下载导出文件

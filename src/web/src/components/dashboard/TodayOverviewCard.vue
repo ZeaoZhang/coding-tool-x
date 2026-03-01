@@ -104,6 +104,7 @@ const { getLogs, statsInterval: statsIntervalSetting } = useGlobalState()
 const claudeLogs = getLogs('claude')
 const codexLogs = getLogs('codex')
 const geminiLogs = getLogs('gemini')
+const opencodeLogs = getLogs('opencode')
 
 function formatNumber(num) {
   if (num >= 1000000) {
@@ -166,7 +167,7 @@ function refresh() {
 }
 
 function markExistingLogs() {
-  ;[claudeLogs.value, codexLogs.value, geminiLogs.value].forEach(list => {
+  ;[claudeLogs.value, codexLogs.value, geminiLogs.value, opencodeLogs.value].forEach(list => {
     list.forEach(log => processedLogIds.add(log.id))
   })
 }
@@ -192,6 +193,7 @@ function processNewLogs(logList) {
 watch(claudeLogs, (list) => processNewLogs(list), { deep: true })
 watch(codexLogs, (list) => processNewLogs(list), { deep: true })
 watch(geminiLogs, (list) => processNewLogs(list), { deep: true })
+watch(opencodeLogs, (list) => processNewLogs(list), { deep: true })
 
 function scheduleStatsSync() {
   if (syncInterval) {

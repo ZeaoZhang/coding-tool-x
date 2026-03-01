@@ -132,9 +132,6 @@ const PATHS = {
   // MCP 配置（注意：这个仍使用 Claude 原生路径）
   mcpConfig: path.join(CC_TOOL_BASE_DIR, 'mcp-config.json'),
 
-  // Terminal 配置
-  terminalConfig: path.join(CC_TOOL_BASE_DIR, 'terminal-config.json'),
-
   // Prompts
   prompts: path.join(CC_TOOL_BASE_DIR, 'prompts.json'),
 

@@ -3,6 +3,54 @@ const express = require('express');
 const router = express.Router();
 const templatesService = require('../services/config-templates-service');
 
+function normalizeAiConfigTypes(aiConfigTypes, aiConfigType) {
+  const normalized = [];
+  const seen = new Set();
+
+  function pushType(value) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        pushType(item);
+      }
+      return;
+    }
+
+    if (typeof value !== 'string') {
+      return;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        pushType(parsed);
+        return;
+      } catch (_) {
+        // 非 JSON 字符串，继续按普通字符串处理
+      }
+    }
+
+    const parts = trimmed.split(',').map(part => part.trim()).filter(Boolean);
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      normalized.push(lower);
+    }
+  }
+
+  pushType(aiConfigTypes);
+  if (normalized.length === 0) {
+    pushType(aiConfigType);
+  }
+
+  return normalized;
+}
+
 /**
  * GET /api/config-templates
  * 获取所有配置模板
@@ -116,7 +164,7 @@ router.put('/:id', (req, res) => {
 
 /**
  * DELETE /api/config-templates/:id
- * 删除自定义配置模板
+ * 删除配置模板
  */
 router.delete('/:id', (req, res) => {
   try {
@@ -147,16 +195,15 @@ router.post('/:id/apply', (req, res) => {
       });
     }
     const options = {};
-    // 优先使用新的数组参数，兼容旧的单值参数
-    if (aiConfigTypes) {
-      options.aiConfigTypes = aiConfigTypes;
-    } else if (aiConfigType) {
-      options.aiConfigTypes = [aiConfigType];
+    const normalizedAiConfigTypes = normalizeAiConfigTypes(aiConfigTypes, aiConfigType);
+    if (normalizedAiConfigTypes.length > 0) {
+      options.aiConfigTypes = normalizedAiConfigTypes;
     }
     const result = templatesService.applyTemplateToProject(targetPath, req.params.id, options);
+    const skippedCount = result?.results?.skipped?.length || 0;
     res.json({
       success: true,
-      message: '模板应用成功',
+      message: skippedCount > 0 ? `模板已部分应用（${skippedCount} 项已跳过）` : '模板应用成功',
       data: result
     });
   } catch (error) {
@@ -181,11 +228,9 @@ router.post('/:id/preview', (req, res) => {
       });
     }
     const options = {};
-    // 优先使用新的数组参数，兼容旧的单值参数
-    if (aiConfigTypes) {
-      options.aiConfigTypes = aiConfigTypes;
-    } else if (aiConfigType) {
-      options.aiConfigTypes = [aiConfigType];
+    const normalizedAiConfigTypes = normalizeAiConfigTypes(aiConfigTypes, aiConfigType);
+    if (normalizedAiConfigTypes.length > 0) {
+      options.aiConfigTypes = normalizedAiConfigTypes;
     }
     const preview = templatesService.previewTemplateApplication(targetPath, req.params.id, options);
     res.json({

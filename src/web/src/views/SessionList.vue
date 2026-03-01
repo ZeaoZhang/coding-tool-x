@@ -65,11 +65,13 @@
       </n-alert>
 
       <!-- Sessions List with Draggable -->
-      <draggable
+    <draggable
       v-else-if="filteredSessions.length > 0"
       v-model="orderedSessions"
       item-key="sessionId"
+      class="sessions-list"
       handle=".drag-handle"
+      v-bind="dragOptions"
       ghost-class="ghost"
       chosen-class="chosen"
       animation="200"
@@ -183,15 +185,12 @@
                   </template>
                   Fork
                 </n-button>
-                <n-dropdown :options="launchOptions" @select="(key) => handleLaunchSelect(key, session.sessionId)">
-                  <n-button size="small" type="primary" @click.stop>
-                    <template #icon>
-                      <n-icon><TerminalOutline /></n-icon>
-                    </template>
-                    使用对话
-                    <n-icon size="14" style="margin-left: 4px;"><ChevronDownOutline /></n-icon>
-                  </n-button>
-                </n-dropdown>
+                <n-button size="small" type="primary" @click.stop="handleLaunchTerminal(session.sessionId)">
+                  <template #icon>
+                    <n-icon><TerminalOutline /></n-icon>
+                  </template>
+                  使用对话
+                </n-button>
               </n-space>
             </div>
           </div>
@@ -241,15 +240,12 @@
               </n-text>
               <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
             </div>
-            <n-dropdown :options="launchOptions" @select="(key) => handleLaunchSelect(key, session.sessionId)">
-              <n-button size="small" type="primary">
-                <template #icon>
-                  <n-icon><TerminalOutline /></n-icon>
-                </template>
-                使用对话
-                <n-icon size="14" style="margin-left: 4px;"><ChevronDownOutline /></n-icon>
-              </n-button>
-            </n-dropdown>
+            <n-button size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
+              <template #icon>
+                <n-icon><TerminalOutline /></n-icon>
+              </template>
+              使用对话
+            </n-button>
           </div>
           <div v-for="(match, idx) in session.matches" :key="idx" class="search-match">
             <n-tag size="tiny" :type="match.role === 'user' ? 'info' : 'success'" :bordered="false">
@@ -280,23 +276,23 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, h } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NButton, NIcon, NH2, NText, NInput, NSpin, NAlert, NEmpty,
-  NTag, NSpace, NModal, NTooltip, NDropdown
+  NTag, NSpace, NModal, NTooltip
 } from 'naive-ui'
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
   ChatbubbleEllipsesOutline, GitBranchOutline, CreateOutline, TrashOutline,
   ReorderThreeOutline, TerminalOutline, StarOutline, Star,
-  GlobeOutline, DesktopOutline, ChevronDownOutline, AddOutline
+  AddOutline
 } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
-import { searchSessions as searchSessionsApi, launchTerminal, launchSession } from '../api/sessions'
+import { searchSessions as searchSessionsApi, createSession, copySessionLaunchCommand } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
@@ -315,52 +311,6 @@ const { addFavorite, removeFavorite, isFavorite } = useFavorites()
 const currentChannel = computed(() => route.meta.channel || 'claude')
 const resolvedProjectName = ref(props.projectName)
 const effectiveProjectName = computed(() => resolvedProjectName.value || props.projectName)
-
-// 启动方式下拉选项（按渠道展示可用项）
-const launchOptions = computed(() => {
-  const toolLabel = currentChannel.value === 'codex'
-    ? 'Codex'
-    : currentChannel.value === 'gemini'
-      ? 'Gemini'
-      : currentChannel.value === 'opencode'
-        ? 'OpenCode'
-        : 'Claude Code'
-  return [
-    {
-      type: 'group',
-      label: 'Web 终端',
-      key: 'web-group',
-      children: [
-        {
-          label: toolLabel,
-          key: 'web-current',
-          icon: () => h(NIcon, null, { default: () => h(GlobeOutline) })
-        }
-      ]
-    },
-    {
-      type: 'group',
-      label: '本地终端',
-      key: 'local-group',
-      children: [
-        {
-          label: toolLabel,
-          key: 'local-current',
-          icon: () => h(NIcon, null, { default: () => h(DesktopOutline) })
-        }
-      ]
-    }
-  ]
-})
-
-// 处理启动选择
-function handleLaunchSelect(key, sessionId) {
-  if (key.startsWith('web-')) {
-    handleLaunchWebTerminal(sessionId)
-  } else {
-    handleLaunchTerminal(sessionId)
-  }
-}
 
 const searchQuery = ref('')
 const showAliasDialog = ref(false)
@@ -381,6 +331,14 @@ const chatHistoryRef = ref(null)
 
 // Create session state
 const creatingSession = ref(false)
+const dragOptions = {
+  // Keep sessions reorder-only inside the session list.
+  group: { name: `${currentChannel.value}-sessions`, pull: false, put: false },
+  forceFallback: true,
+  fallbackOnBody: false,
+  fallbackTolerance: 4,
+  scroll: true
+}
 
 // Project display name (使用后端解析的名称)
 const projectDisplayName = computed(() => {
@@ -424,23 +382,6 @@ async function ensureProjectNameResolved() {
 async function loadSessions() {
   const projectName = await ensureProjectNameResolved()
   await store.fetchSessions(projectName)
-}
-
-function isLikelyPath(value) {
-  if (!value || typeof value !== 'string') return false
-  return value.includes('/') || value.includes('\\') || value.startsWith('~')
-}
-
-function resolveLaunchCwd() {
-  const infoPath = store.currentProjectInfo?.fullPath
-  if (isLikelyPath(infoPath)) return infoPath
-
-  const matchedProject = store.projects.find(p => p.name === effectiveProjectName.value)
-  const listPath = matchedProject?.fullPath || matchedProject?.path
-  if (isLikelyPath(listPath)) return listPath
-
-  if (isLikelyPath(displayProjectPath.value)) return displayProjectPath.value
-  return null
 }
 
 // Sync with store
@@ -545,28 +486,15 @@ function handleChatHistoryError(errorMsg) {
 
 async function handleLaunchTerminal(sessionId) {
   try {
-    await launchSession(effectiveProjectName.value, sessionId, false, currentChannel.value)
-    message.success(`已启动终端 (${currentChannel.value})`)
-  } catch (err) {
-    message.error('启动失败: ' + err.message)
-  }
-}
-
-// 启动 Web 终端
-function handleLaunchWebTerminal(sessionId) {
-  const channel = currentChannel.value
-  router.push({
-    name: 'terminal-session',
-    params: {
-      channel,
-      projectName: encodeURIComponent(effectiveProjectName.value),
-      sessionId
-    },
-    query: {
-      cwd: displayProjectPath.value || undefined,
-      openTs: Date.now().toString()
+    const { copyResult } = await copySessionLaunchCommand(effectiveProjectName.value, sessionId, currentChannel.value)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+      return
     }
-  })
+    message.success('启动命令已复制到剪贴板')
+  } catch (err) {
+    message.error('复制失败: ' + err.message)
+  }
 }
 
 function handleDelete(sessionId) {
@@ -586,26 +514,43 @@ function handleDelete(sessionId) {
   })
 }
 
-// 创建新会话并打开 Web 终端
+function getCreateToolType(channel) {
+  if (channel === 'codex') return 'codex'
+  if (channel === 'gemini') return 'gemini'
+  if (channel === 'opencode') return null
+  return 'claude'
+}
+
+// 创建新会话并复制启动命令
 async function handleCreateSession() {
   creatingSession.value = true
 
   try {
     const channel = currentChannel.value || 'claude'
-    const cwd = resolveLaunchCwd()
+    const toolType = getCreateToolType(channel)
 
-    await router.push({
-      name: 'terminal-channel',
-      params: { channel },
-      query: {
-        cwd: cwd || undefined,
-        projectName: effectiveProjectName.value || undefined,
-        openTs: Date.now().toString()
-      }
-    })
+    if (!toolType) {
+      message.warning('OpenCode 暂不支持在此新建会话，请在 CLI 中手动创建')
+      return
+    }
+
+    const created = await createSession(effectiveProjectName.value, toolType)
+    const sessionId = created?.sessionId
+
+    if (!sessionId) {
+      throw new Error('创建会话成功但未返回 sessionId')
+    }
+
+    const { copyResult } = await copySessionLaunchCommand(effectiveProjectName.value, sessionId, channel)
+    await loadSessions()
+    if (copyResult?.method === 'manual') {
+      message.warning('新会话已创建，自动复制失败，已弹出手动复制框')
+      return
+    }
+    message.success('新会话已创建，启动命令已复制到剪贴板')
   } catch (err) {
-    console.error('Failed to open terminal:', err)
-    message.error('打开终端失败: ' + err.message)
+    console.error('Failed to create session:', err)
+    message.error('创建会话失败: ' + err.message)
   } finally {
     creatingSession.value = false
   }
@@ -738,7 +683,13 @@ onUnmounted(() => {
 .content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px 24px 24px 24px;
+}
+
+.sessions-list {
+  position: relative;
+  overflow: hidden;
 }
 
 .back-button {

@@ -26,7 +26,6 @@
               @click="$emit('view-history', { session, channel: 'claude' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('claude', session)"
-              @launch-web="(session) => handleLaunchWeb('claude', session)"
             >
               <template #actions-extra>
                 <n-button
@@ -68,7 +67,6 @@
               @click="$emit('view-history', { session, channel: 'codex' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('codex', session)"
-              @launch-web="(session) => handleLaunchWeb('codex', session)"
             >
               <template #actions-extra>
                 <n-button
@@ -110,7 +108,6 @@
               @click="$emit('view-history', { session, channel: 'gemini' })"
               @set-alias="handleSetAlias"
               @launch="handleLaunch('gemini', session)"
-              @launch-web="(session) => handleLaunchWeb('gemini', session)"
             >
               <template #actions-extra>
                 <n-button
@@ -165,7 +162,6 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   NDrawer, NDrawerContent, NEmpty, NIcon, NTag, NText,
   NButton, NSpace, NModal, NInput
@@ -177,7 +173,7 @@ import {
 import SessionCard from './SessionCard.vue'
 import { useFavorites } from '../composables/useFavorites'
 import { useSessionsStore } from '../stores/sessions'
-import { launchTerminal } from '../api/sessions'
+import { copySessionLaunchCommand } from '../api/sessions'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
@@ -191,7 +187,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:visible', 'view-history'])
-const router = useRouter()
 
 const drawerVisible = computed({
   get: () => props.visible,
@@ -270,26 +265,15 @@ async function confirmAlias() {
 
 async function handleLaunch(channel, session) {
   try {
-    await launchTerminal(session.projectName, session.sessionId, channel)
-    message.success('已启动终端')
-  } catch (err) {
-    message.error('启动失败: ' + err.message)
-  }
-}
-
-function handleLaunchWeb(channel, session) {
-  router.push({
-    name: 'terminal-session',
-    params: {
-      channel,
-      projectName: encodeURIComponent(session.projectName),
-      sessionId: session.sessionId
-    },
-    query: {
-      cwd: session.projectFullPath || undefined,
-      openTs: Date.now().toString()
+    const { copyResult } = await copySessionLaunchCommand(session.projectName, session.sessionId, channel)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+      return
     }
-  })
+    message.success('启动命令已复制到剪贴板')
+  } catch (err) {
+    message.error('复制失败: ' + err.message)
+  }
 }
 
 async function handleRemoveFavorite(channel, session) {

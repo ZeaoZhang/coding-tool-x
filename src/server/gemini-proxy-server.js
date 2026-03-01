@@ -12,6 +12,7 @@ const { recordRequest: recordGeminiRequest } = require('./services/gemini-statis
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { createDecodedStream } = require('./services/response-decoder');
 const { getEffectiveApiKey } = require('./services/gemini-channels');
+const { persistProxyRequestSnapshot } = require('./services/request-logger');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -193,6 +194,20 @@ async function startGeminiProxyServer(options = {}) {
           });
         }
         req.effectiveApiKey = effectiveKey;
+
+        // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
+        persistProxyRequestSnapshot('gemini', {
+          timestamp: Date.now(),
+          source: 'gemini',
+          channel: channel.name,
+          request: {
+            method: req.method,
+            url: req.url,
+            path: req.path,
+            headers: req.headers,
+            body: req.body || null
+          }
+        });
 
         // 从 URL 中提取模型名称并应用重定向
         // URL 格式: /models/gemini-2.5-pro:generateContent 或 /v1/models/gemini-2.5-pro:generateContent

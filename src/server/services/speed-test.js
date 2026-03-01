@@ -6,13 +6,16 @@
 
 const https = require('https');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
 const { URL } = require('url');
 const { probeModelAvailability } = require('./model-detector');
 const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
 const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
 const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
 const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
-const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 
 // 测试结果缓存
 const testResultsCache = new Map();
@@ -21,8 +24,29 @@ const testResultsCache = new Map();
 const DEFAULT_TIMEOUT = 15000;
 const MIN_TIMEOUT = 5000;
 const MAX_TIMEOUT = 60000;
-const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31';
+const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.59 (external, cli)';
+const CLAUDE_MESSAGES_BETA_FLAGS = Object.freeze([
+  'claude-code-20250219',
+  'interleaved-thinking-2025-05-14',
+  'prompt-caching-scope-2026-01-05',
+  'effort-2025-11-24'
+]);
+const CLAUDE_ADVANCED_TOOL_USE_BETA = 'advanced-tool-use-2025-11-20';
 const ROUTE_OR_METHOD_MISMATCH_STATUS = new Set([404, 405, 501]);
+const CLAUDE_USER_ID_ACCOUNT_RE = /^user_([0-9a-f]{64})_account__session_[a-z0-9._-]+$/i;
+const CLAUDE_USER_ID_FULL_RE = /^user_[0-9a-f]{64}_account__session_[a-z0-9._-]+$/i;
+const DEFAULT_CLAUDE_CODE_TOOL_NAMES = Object.freeze([
+  'Task',
+  'Bash',
+  'Glob',
+  'Grep',
+  'Read',
+  'Edit',
+  'Write',
+  'ToolSearch'
+]);
+let cachedClaudeAccountId = '';
+let cachedClaudeUserId = '';
 
 /**
  * 规范化超时时间
@@ -88,21 +112,6 @@ function resolveExplicitModel(channel, model) {
   );
 }
 
-function resolveToolTypeForSpeedTest(channelType, channel) {
-  if (channelType === 'claude' || channelType === 'codex' || channelType === 'gemini') {
-    return channelType;
-  }
-  const gatewaySourceType = normalizeNonEmptyString(channel?.gatewaySourceType);
-  if (gatewaySourceType === 'claude' || gatewaySourceType === 'codex' || gatewaySourceType === 'gemini') {
-    return gatewaySourceType;
-  }
-  return 'codex';
-}
-
-function getConfiguredDefaultSpeedTestModel(toolType) {
-  return normalizeNonEmptyString(getDefaultSpeedTestModelByToolType(toolType));
-}
-
 function resolveEffectiveApiKey(channel, channelType) {
   switch (channelType) {
     case 'codex':
@@ -141,6 +150,213 @@ function mapStainlessArch() {
     default:
       return `other::${process.arch}`;
   }
+}
+
+function buildClaudeBetaHeader(options = {}) {
+  const hasTools = !!options.hasTools;
+  const betaFlags = [...CLAUDE_MESSAGES_BETA_FLAGS];
+  if (hasTools) {
+    betaFlags.push(CLAUDE_ADVANCED_TOOL_USE_BETA);
+  }
+  return betaFlags.join(',');
+}
+
+function buildClaudeRequestHeaders(apiKey, options = {}) {
+  return {
+    'x-api-key': apiKey || '',
+    authorization: `Bearer ${apiKey || ''}`,
+    'anthropic-version': '2023-06-01',
+    'anthropic-beta': buildClaudeBetaHeader(options),
+    'anthropic-dangerous-direct-browser-access': 'true',
+    'x-app': 'cli',
+    'x-stainless-retry-count': '0',
+    'x-stainless-timeout': '600',
+    'x-stainless-runtime-version': process.version,
+    'x-stainless-package-version': '0.74.0',
+    'x-stainless-lang': 'js',
+    'x-stainless-runtime': 'node',
+    'x-stainless-arch': mapStainlessArch(),
+    'x-stainless-os': mapStainlessOs(),
+    accept: 'application/json',
+    'accept-encoding': 'gzip, deflate',
+    'accept-language': '*',
+    'sec-fetch-mode': 'cors',
+    connection: 'keep-alive',
+    'content-type': 'application/json',
+    'user-agent': CLAUDE_CODE_USER_AGENT
+  };
+}
+
+function resolveClaudeAccountIdFromUserId(userId = '') {
+  const value = normalizeNonEmptyString(userId);
+  if (!value) return '';
+  const matched = value.match(CLAUDE_USER_ID_ACCOUNT_RE);
+  return matched ? matched[1].toLowerCase() : '';
+}
+
+function resolveClaudeAccountIdFromLogs() {
+  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
+  if (!fs.existsSync(logsPath)) return '';
+
+  try {
+    const content = fs.readFileSync(logsPath, 'utf8');
+    const lines = content.trim().split('\n');
+    const accountIdCount = new Map();
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const userId = parsed?.request?.body?.metadata?.user_id;
+        const accountId = resolveClaudeAccountIdFromUserId(userId);
+        if (accountId) {
+          accountIdCount.set(accountId, (accountIdCount.get(accountId) || 0) + 1);
+        }
+      } catch {
+        // ignore malformed line
+      }
+    }
+
+    const ranked = Array.from(accountIdCount.entries())
+      .filter(([accountId]) => accountId !== '0'.repeat(64))
+      .sort((left, right) => right[1] - left[1]);
+
+    if (ranked.length > 0) {
+      return ranked[0][0];
+    }
+  } catch {
+    // ignore read error
+  }
+
+  return '';
+}
+
+function resolveClaudeUserIdFromLogs() {
+  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
+  if (!fs.existsSync(logsPath)) return '';
+
+  try {
+    const content = fs.readFileSync(logsPath, 'utf8');
+    const lines = content.trim().split('\n');
+    const userIdCount = new Map();
+
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const userId = normalizeNonEmptyString(parsed?.request?.body?.metadata?.user_id);
+        if (!userId || !CLAUDE_USER_ID_FULL_RE.test(userId)) continue;
+        const accountId = resolveClaudeAccountIdFromUserId(userId);
+        if (!accountId || accountId === '0'.repeat(64)) continue;
+        userIdCount.set(userId, (userIdCount.get(userId) || 0) + 1);
+      } catch {
+        // ignore malformed line
+      }
+    }
+
+    const ranked = Array.from(userIdCount.entries()).sort((left, right) => right[1] - left[1]);
+    return ranked.length > 0 ? ranked[0][0] : '';
+  } catch {
+    return '';
+  }
+}
+
+function resolveClaudeRequestTemplate() {
+  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
+  if (!fs.existsSync(logsPath)) return null;
+  try {
+    const content = fs.readFileSync(logsPath, 'utf8');
+    const lines = content.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const body = parsed?.request?.body;
+        if (!body || typeof body !== 'object') continue;
+        const system = Array.isArray(body.system) ? body.system : [];
+        const tools = Array.isArray(body.tools) ? body.tools : [];
+        const hasBilling = system.some(b => typeof b?.text === 'string' && b.text.startsWith('x-anthropic-billing-header:'));
+        if (!hasBilling || tools.length === 0) continue;
+        return { system, tools };
+      } catch { }
+    }
+  } catch { }
+  return null;
+}
+
+function resolveClaudePreferredUserId() {
+  if (cachedClaudeUserId) {
+    return cachedClaudeUserId;
+  }
+
+  const envUserId = normalizeNonEmptyString(
+    process.env.OPENCODE_CLAUDE_USER_ID || process.env.CLAUDE_CODE_USER_ID
+  );
+
+  if (envUserId && CLAUDE_USER_ID_FULL_RE.test(envUserId)) {
+    cachedClaudeUserId = envUserId;
+    return cachedClaudeUserId;
+  }
+
+  const fromLogs = resolveClaudeUserIdFromLogs();
+  if (fromLogs) {
+    cachedClaudeUserId = fromLogs;
+    return cachedClaudeUserId;
+  }
+
+  return '';
+}
+
+function resolveClaudeAccountId() {
+  if (cachedClaudeAccountId) {
+    return cachedClaudeAccountId;
+  }
+
+  const envAccountId = String(
+    process.env.OPENCODE_CLAUDE_ACCOUNT_ID || process.env.CLAUDE_CODE_ACCOUNT_ID || ''
+  ).trim().toLowerCase();
+
+  if (/^[0-9a-f]{64}$/.test(envAccountId)) {
+    cachedClaudeAccountId = envAccountId;
+    return cachedClaudeAccountId;
+  }
+
+  const fromLogs = resolveClaudeAccountIdFromLogs();
+  if (fromLogs) {
+    cachedClaudeAccountId = fromLogs;
+    return cachedClaudeAccountId;
+  }
+
+  cachedClaudeAccountId = '0'.repeat(64);
+  return cachedClaudeAccountId;
+}
+
+function buildClaudeCodeUserId() {
+  const preferredUserId = resolveClaudePreferredUserId();
+  if (preferredUserId) {
+    return preferredUserId;
+  }
+
+  const accountId = resolveClaudeAccountId();
+  const sessionId = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  return `user_${accountId}_account__session_${sessionId}`;
+}
+
+function buildDefaultClaudeCodeTools() {
+  return DEFAULT_CLAUDE_CODE_TOOL_NAMES.map(name => ({
+    name,
+    description: `${name} tool`,
+    input_schema: {
+      type: 'object',
+      properties: {},
+      additionalProperties: true
+    }
+  }));
 }
 
 function buildGeminiNativeGeneratePath(parsedUrl, model) {
@@ -457,21 +673,6 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       };
       console.log(`[SpeedTest] Using explicit model: ${explicitModel}`);
     } else {
-      const defaultSpeedTestModel = getConfiguredDefaultSpeedTestModel(
-        resolveToolTypeForSpeedTest(channelType, channel)
-      );
-      if (defaultSpeedTestModel) {
-        modelProbe = {
-          preferredTestModel: defaultSpeedTestModel,
-          availableModels: [defaultSpeedTestModel],
-          cached: false,
-          method: 'default_config'
-        };
-        console.log(`[SpeedTest] Using default speedTestModel from config: ${defaultSpeedTestModel}`);
-      }
-    }
-
-    if (!modelProbe) {
       // Fall back to auto-detection
       try {
         modelProbe = await probeModelAvailability(channel, channelType, { stopOnFirstAvailable: true });
@@ -522,8 +723,13 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
   function containsUnexpectedError(responseBody) {
     const payloads = extractJsonPayloads(responseBody);
     for (const payload of payloads) {
-      if (payload?.error) {
-        return { hasError: true, message: payload.error.message || payload.error };
+      // Only treat error as real error when it has actual content (not null/empty)
+      const errorField = payload?.error;
+      if (errorField && typeof errorField === 'object' && (errorField.message || errorField.type)) {
+        return { hasError: true, message: errorField.message || String(errorField.type) };
+      }
+      if (errorField && typeof errorField === 'string' && errorField.trim()) {
+        return { hasError: true, message: errorField };
       }
       const message = payload?.message || payload?.detail || payload?.error_description || '';
       for (const pattern of UNEXPECTED_ERROR_PATTERNS) {
@@ -543,49 +749,44 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     }
     apiPath += '?beta=true';
 
-    testModel = modelProbe?.preferredTestModel
-      || normalizeNonEmptyString(model)
-      || getConfiguredDefaultSpeedTestModel('claude');
-    const sessionId = Math.random().toString(36).substring(2, 15);
+    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'claude-sonnet-4-20250514';
+    const sessionId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    const userId = buildClaudeCodeUserId() || `user_${'0'.repeat(64)}_account__session_${sessionId}`;
+    const template = resolveClaudeRequestTemplate();
+    const systemBlocks = template?.system?.length > 0
+      ? template.system
+      : [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }];
+    const toolsToUse = template?.tools?.length > 0
+      ? template.tools
+      : buildDefaultClaudeCodeTools();
+    const requestPayload = {
+      model: testModel,
+      max_tokens: 10,
+      temperature: 1,
+      stream: true,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
+      system: systemBlocks,
+      metadata: { user_id: userId },
+      tools: toolsToUse
+    };
     primaryRequestConfig = {
       apiPath,
-      requestBody: JSON.stringify({
-        model: testModel,
-        max_tokens: 1,
-        stream: false,
-        messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
-        system: [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }],
-        metadata: { user_id: `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}` }
-      }),
-      headers: {
-        'x-api-key': apiKey || '',
-        'Authorization': `Bearer ${apiKey || ''}`,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'x-app': 'cli',
-        'x-stainless-helper-method': 'stream',
-        'x-stainless-retry-count': '0',
-        'x-stainless-runtime-version': 'v24.3.0',
-        'x-stainless-package-version': '0.74.0',
-        'x-stainless-lang': 'js',
-        'x-stainless-runtime': 'node',
-        'x-stainless-arch': mapStainlessArch(),
-        'x-stainless-os': mapStainlessOs(),
-        'x-stainless-timeout': '600',
-        'Accept': 'application/json',
-        'Accept-Encoding': 'gzip, deflate, br, zstd',
-        'Connection': 'keep-alive',
-        'Content-Type': 'application/json',
-        'User-Agent': 'claude-cli/2.1.44 (external, sdk-cli)'
-      },
+      requestBody: JSON.stringify(requestPayload),
+      headers: buildClaudeRequestHeaders(apiKey, { hasTools: true }),
+      isStreamingResponse: true
+    };
+    // Fallback: non-streaming for gateways that don't support SSE
+    fallbackRequestConfig = {
+      apiPath,
+      requestBody: JSON.stringify({ ...requestPayload, stream: false }),
+      headers: buildClaudeRequestHeaders(apiKey, { hasTools: true }),
       isStreamingResponse: false
     };
   } else if (channelType === 'codex') {
     const apiPath = buildCodexResponsesPath(parsedUrl);
-    testModel = modelProbe?.preferredTestModel
-      || normalizeNonEmptyString(model)
-      || getConfiguredDefaultSpeedTestModel('codex');
+    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-5-codex';
     const codexSessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
     const baseBody = {
@@ -623,9 +824,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       isStreamingResponse: true
     };
   } else if (channelType === 'gemini') {
-    testModel = modelProbe?.preferredTestModel
-      || normalizeNonEmptyString(model)
-      || getConfiguredDefaultSpeedTestModel('gemini');
+    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gemini-2.5-pro';
     const useCliFormat = shouldUseGeminiCliFormat(parsedUrl);
 
     const cliRequestConfig = {
@@ -709,7 +908,11 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
         const chunkStr = chunk.toString();
 
         if (requestConfig.isStreamingResponse && !resolved && res.statusCode >= 200 && res.statusCode < 300) {
-          if (chunkStr.includes('response.created') || chunkStr.includes('response.in_progress')) {
+          // Claude SSE events: message_start, ping, content_block_start, content_block_delta, message_delta, message_stop
+          // Codex SSE events: response.created, response.in_progress
+          const isClaudeStreamSuccess = chunkStr.includes('message_start') || chunkStr.includes('"message_stop"') || chunkStr.includes('"ping"') || chunkStr.includes('content_block');
+          const isCodexStreamSuccess = chunkStr.includes('response.created') || chunkStr.includes('response.in_progress');
+          if (isClaudeStreamSuccess || isCodexStreamSuccess) {
             resolved = true;
             const latency = Date.now() - startTime;
             req.destroy();
@@ -719,7 +922,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
               error: null,
               statusCode: res.statusCode
             }));
-          } else if (chunkStr.includes('"detail"') || chunkStr.includes('"error"') || chunkStr.includes('data:')) {
+          } else if (chunkStr.includes('"detail"') || chunkStr.includes('"error"')) {
             const errorCheck = containsUnexpectedError(chunkStr);
             if (errorCheck.hasError) {
               resolved = true;
@@ -846,6 +1049,10 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
   const primaryResult = await executeRequest(primaryRequestConfig);
   if (primaryResult.success || !fallbackRequestConfig) {
     return primaryResult;
+  }
+
+  if (channelType === 'claude' && ROUTE_OR_METHOD_MISMATCH_STATUS.has(primaryResult.statusCode)) {
+    return executeRequest(fallbackRequestConfig);
   }
 
   if (channelType === 'gemini' && ROUTE_OR_METHOD_MISMATCH_STATUS.has(primaryResult.statusCode)) {

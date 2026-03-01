@@ -13,7 +13,6 @@ const {
   isOpenCodeInstalled
 } = require('../services/opencode-sessions');
 const { loadAliases } = require('../services/alias');
-const { getTerminalLaunchCommand } = require('../services/terminal-config');
 const { broadcastLog } = require('../websocket-server');
 const os = require('os');
 
@@ -279,7 +278,7 @@ module.exports = (config) => {
 
   /**
    * POST /api/opencode/sessions/:projectName/:sessionId/launch
-   * 启动会话（打开终端）
+   * 获取会话启动命令（用于复制）
    */
   router.post('/:projectName/:sessionId/launch', (req, res) => {
     try {
@@ -287,7 +286,6 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
-      const { exec } = require('child_process');
       const { projectName, sessionId } = req.params;
 
       const session = getSessionById(sessionId);
@@ -298,38 +296,29 @@ module.exports = (config) => {
       const projects = getProjects();
       const project = projects.find(p => p.name === projectName);
       const cwd = session.directory || project?.fullPath || os.homedir();
-      const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
-
-      const { command, terminalId, terminalName } = getTerminalLaunchCommand(
-        normalizedCwd,
-        sessionId,
-        'opencode'
-      );
+      const command = `opencode -r ${sessionId}`;
+      const quotedCwd = `"${String(cwd).replace(/"/g, '\\"')}"`;
+      const copyCommand = `cd ${quotedCwd} && ${command}`;
 
       broadcastLog({
         type: 'action',
         action: 'launch_opencode_session',
-        message: `启动 OpenCode 会话 ${sessionId.substring(0, 8)}`,
+        message: `复制 OpenCode 会话启动命令 ${sessionId.substring(0, 8)}`,
         sessionId,
         tool: 'opencode',
         timestamp: Date.now()
       });
 
-      const shellOption = process.platform === 'win32' ? { shell: 'cmd.exe' } : { shell: true };
-      exec(command, shellOption, (error) => {
-        if (error) {
-          console.error('[OpenCode] Failed to launch terminal:', error.message);
-        }
-      });
-
       res.json({
         success: true,
         cwd,
-        terminal: terminalName,
-        terminalId
+        sessionId,
+        tool: 'opencode',
+        command,
+        copyCommand
       });
     } catch (err) {
-      console.error('[OpenCode API] Failed to launch session:', err);
+      console.error('[OpenCode API] Failed to prepare launch command:', err);
       res.status(500).json({ error: err.message });
     }
   });

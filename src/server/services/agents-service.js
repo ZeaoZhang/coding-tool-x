@@ -8,13 +8,18 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('./repo-scanner-base');
 const { NATIVE_PATHS } = require('../../config/paths');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
+const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
+const CODEX_AGENTS_DIR = path.join(os.homedir(), '.codex', 'agents');
+const CODEX_CONFIG_MODES = new Set(['none', 'managed', 'custom']);
 
 const PLATFORM_CONFIG = {
   claude: {
@@ -34,11 +39,82 @@ const PLATFORM_CONFIG = {
       return modern;
     },
     repoType: 'opencode-agents'
+  },
+  codex: {
+    userAgentsDir: CODEX_AGENTS_DIR,
+    projectAgentsDir: () => null,
+    repoType: 'agents'
   }
 };
 
 function normalizePlatform(platform) {
-  return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
+  const normalized = typeof platform === 'string' && platform.trim() ? platform.trim() : 'claude';
+  if (!SUPPORTED_PLATFORMS.includes(normalized)) {
+    throw new Error(`不支持的平台: ${platform}`);
+  }
+  return normalized;
+}
+
+function assertSafeAgentFileName(fileName) {
+  if (typeof fileName !== 'string') {
+    throw new Error('代理文件名必须是字符串');
+  }
+
+  const normalized = fileName.trim();
+  if (!normalized) {
+    throw new Error('代理文件名不能为空');
+  }
+
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(normalized) || normalized.includes('..')) {
+    throw new Error('代理文件名只能包含字母、数字、点号、横杠和下划线，且不能包含连续点');
+  }
+}
+
+function assertSafeRepoPath(repoPath) {
+  if (typeof repoPath !== 'string' || !repoPath.trim()) {
+    throw new Error('代理仓库路径不能为空');
+  }
+
+  const raw = repoPath.replace(/\\/g, '/').trim();
+  const normalized = path.posix.normalize(raw).replace(/^(\.\/)+/, '');
+  if (!normalized ||
+      normalized === '.' ||
+      normalized === '..' ||
+      normalized.startsWith('../') ||
+      normalized.includes('/../') ||
+      path.posix.isAbsolute(normalized)) {
+    throw new Error('代理仓库路径不合法');
+  }
+
+  if (!normalized.endsWith('.md')) {
+    throw new Error('代理仓库路径必须是 .md 文件');
+  }
+}
+
+function assertSafeProjectPath(projectPath) {
+  if (typeof projectPath !== 'string' || !projectPath.trim()) {
+    throw new Error('projectPath 必须是非空字符串');
+  }
+
+  if (projectPath.includes('\0')) {
+    throw new Error('projectPath 不合法');
+  }
+
+  const normalized = path.resolve(projectPath.trim());
+  if (!path.isAbsolute(normalized)) {
+    throw new Error('projectPath 必须是绝对路径');
+  }
+
+  if (!fs.existsSync(normalized)) {
+    throw new Error('projectPath 不存在');
+  }
+
+  const stat = fs.statSync(normalized);
+  if (!stat.isDirectory()) {
+    throw new Error('projectPath 必须是目录');
+  }
+
+  return fs.realpathSync(normalized);
 }
 
 /**
@@ -47,6 +123,187 @@ function normalizePlatform(platform) {
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function writeFileAtomic(filePath, content) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tempPath, content, 'utf-8');
+  fs.renameSync(tempPath, filePath);
+}
+
+function readCodexTomlConfig() {
+  if (!fs.existsSync(CODEX_CONFIG_PATH)) {
+    return {};
+  }
+
+  try {
+    const content = fs.readFileSync(CODEX_CONFIG_PATH, 'utf-8');
+    return toml.parse(content);
+  } catch (err) {
+    throw new Error(`读取 Codex config.toml 失败: ${err.message}`);
+  }
+}
+
+function writeCodexTomlConfig(config) {
+  ensureDir(path.dirname(CODEX_CONFIG_PATH));
+  writeFileAtomic(CODEX_CONFIG_PATH, tomlStringify(config));
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getCodexManagedAgentConfigPath(fileName) {
+  return path.join(CODEX_AGENTS_DIR, `${fileName}.toml`);
+}
+
+function normalizeCodexConfigPath(configPath) {
+  return typeof configPath === 'string' ? configPath.trim() : '';
+}
+
+function assertSafeCodexConfigPath(configPath) {
+  const normalized = normalizeCodexConfigPath(configPath);
+  if (!normalized) {
+    throw new Error('Codex 自定义 config_file 不能为空');
+  }
+
+  if (normalized.includes('\0')) {
+    throw new Error('Codex 自定义 config_file 不合法');
+  }
+
+  if (normalized.startsWith('~/')) {
+    const relative = path.posix.normalize(normalized.slice(2).replace(/\\/g, '/'));
+    if (!relative ||
+        relative === '.' ||
+        relative === '..' ||
+        relative.startsWith('../') ||
+        relative.includes('/../')) {
+      throw new Error('Codex 自定义 config_file 不合法');
+    }
+    return `~/${relative}`;
+  }
+
+  if (path.isAbsolute(normalized)) {
+    return normalized;
+  }
+
+  const relative = path.posix.normalize(normalized.replace(/\\/g, '/')).replace(/^(\.\/)+/, '');
+  if (!relative ||
+      relative === '.' ||
+      relative === '..' ||
+      relative.startsWith('../') ||
+      relative.includes('/../') ||
+      path.posix.isAbsolute(relative)) {
+    throw new Error('Codex 自定义 config_file 不合法');
+  }
+
+  return relative;
+}
+
+function resolveCodexConfigPath(configPath) {
+  const normalized = normalizeCodexConfigPath(configPath);
+  if (!normalized) return '';
+
+  if (normalized.startsWith('~/')) {
+    return path.join(os.homedir(), normalized.slice(2));
+  }
+
+  if (path.isAbsolute(normalized)) {
+    return normalized;
+  }
+
+  return path.resolve(path.dirname(CODEX_CONFIG_PATH), normalized);
+}
+
+function isManagedCodexConfigPath(configPath) {
+  const resolved = resolveCodexConfigPath(configPath);
+  if (!resolved) return false;
+  const managedRoot = path.resolve(CODEX_AGENTS_DIR) + path.sep;
+  return resolved.startsWith(managedRoot) || resolved === path.resolve(CODEX_AGENTS_DIR);
+}
+
+function getManagedCodexConfigResolvedPath(configPath) {
+  const normalized = normalizeCodexConfigPath(configPath);
+  if (!normalized || !isManagedCodexConfigPath(normalized)) {
+    return '';
+  }
+  return resolveCodexConfigPath(normalized);
+}
+
+function normalizeCodexConfigMode(mode) {
+  const normalized = typeof mode === 'string' ? mode.trim().toLowerCase() : '';
+  if (!normalized) {
+    return '';
+  }
+  if (!CODEX_CONFIG_MODES.has(normalized)) {
+    throw new Error(`不支持的 Codex configMode: ${mode}`);
+  }
+  return normalized;
+}
+
+function inferCodexConfigMode(configFile) {
+  const normalized = normalizeCodexConfigPath(configFile);
+  if (!normalized) return 'none';
+  return isManagedCodexConfigPath(normalized) ? 'managed' : 'custom';
+}
+
+function resolveCodexConfigContent({ configContent, model, fallbackContent = '' }) {
+  if (typeof configContent === 'string') {
+    return configContent;
+  }
+  const trimmedModel = typeof model === 'string' ? model.trim() : '';
+  if (trimmedModel) {
+    return tomlStringify({ model: trimmedModel });
+  }
+  return typeof fallbackContent === 'string' ? fallbackContent : '';
+}
+
+function readCodexAgentConfigFile(configFilePath) {
+  if (!configFilePath) {
+    return {
+      content: '',
+      data: null,
+      updatedAt: null,
+      error: null
+    };
+  }
+
+  if (!fs.existsSync(configFilePath)) {
+    return {
+      content: '',
+      data: null,
+      updatedAt: null,
+      error: `配置文件不存在: ${configFilePath}`
+    };
+  }
+
+  try {
+    const content = fs.readFileSync(configFilePath, 'utf-8');
+    const updatedAt = fs.statSync(configFilePath).mtime.getTime();
+    try {
+      const data = toml.parse(content);
+      return {
+        content,
+        data,
+        updatedAt,
+        error: null
+      };
+    } catch (parseErr) {
+      return {
+        content,
+        data: null,
+        updatedAt,
+        error: `配置文件 TOML 解析失败: ${parseErr.message}`
+      };
+    }
+  } catch (err) {
+    return {
+      content: '',
+      data: null,
+      updatedAt: null,
+      error: `读取配置文件失败: ${err.message}`
+    };
   }
 }
 
@@ -125,7 +382,7 @@ function generateFrontmatter(data, platform = 'claude') {
 }
 
 /**
- * 递归扫描目录获取代理文件
+ * 扫描目录获取代理文件（agents 约定为扁平目录）
  */
 function scanAgentsDir(dir, basePath, scope) {
   const agents = [];
@@ -140,11 +397,7 @@ function scanAgentsDir(dir, basePath, scope) {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
 
-      if (entry.isDirectory() && !entry.name.startsWith('.')) {
-        // 递归扫描子目录
-        const subAgents = scanAgentsDir(fullPath, basePath, scope);
-        agents.push(...subAgents);
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      if (entry.isFile() && entry.name.endsWith('.md')) {
         // 解析代理文件
         try {
           const content = fs.readFileSync(fullPath, 'utf-8');
@@ -254,6 +507,9 @@ class AgentsRepoScanner extends RepoScannerBase {
    * 安装代理
    */
   async installAgent(item) {
+    assertSafeAgentFileName(item?.fileName);
+    assertSafeRepoPath(item?.repoPath);
+
     const repo = {
       owner: item.repoOwner,
       name: item.repoName,
@@ -288,7 +544,8 @@ class AgentsService {
 
   getProjectAgentsDir(projectPath) {
     if (!projectPath) return null;
-    return this.projectAgentsDir(projectPath);
+    const safeProjectPath = assertSafeProjectPath(projectPath);
+    return this.projectAgentsDir(safeProjectPath);
   }
 
   /**
@@ -296,6 +553,10 @@ class AgentsService {
    * @param {string} projectPath - 项目路径（可选，用于获取项目级代理）
    */
   listAgents(projectPath = null) {
+    if (this.platform === 'codex') {
+      return this.listCodexAgents();
+    }
+
     const agents = [];
 
     // 获取用户级代理
@@ -324,6 +585,17 @@ class AgentsService {
    * 获取所有代理（包括远程仓库）
    */
   async listAllAgents(projectPath = null, forceRefresh = false) {
+    if (this.platform === 'codex') {
+      const { agents, userCount, projectCount } = this.listCodexAgents();
+      return {
+        agents,
+        total: agents.length,
+        userCount,
+        projectCount,
+        remoteCount: 0
+      };
+    }
+
     // 获取本地代理
     const { agents: localAgents, userCount, projectCount } = this.listAgents(projectPath);
 
@@ -366,6 +638,12 @@ class AgentsService {
    * 获取单个代理详情
    */
   getAgent(fileName, scope, projectPath = null) {
+    assertSafeAgentFileName(fileName);
+
+    if (this.platform === 'codex') {
+      return this.getCodexAgent(fileName, scope);
+    }
+
     const baseDir = scope === 'user'
       ? this.userAgentsDir
       : this.getProjectAgentsDir(projectPath);
@@ -399,17 +677,14 @@ class AgentsService {
   /**
    * 创建代理
    */
-  createAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt }) {
-    if (!fileName || !fileName.trim()) {
-      throw new Error('代理文件名不能为空');
+  createAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
+    assertSafeAgentFileName(fileName);
+
+    if (this.platform === 'codex') {
+      return this.createCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent });
     }
 
-    // 验证文件名：只允许字母、数字、横杠、下划线
-    if (!/^[a-zA-Z0-9_-]+$/.test(fileName)) {
-      throw new Error('代理文件名只能包含字母、数字、横杠和下划线');
-    }
-
-    if (!name || !name.trim()) {
+    if (this.platform === 'claude' && (!name || !name.trim())) {
       throw new Error('代理名称不能为空');
     }
 
@@ -431,7 +706,7 @@ class AgentsService {
     }
 
     // 生成文件内容
-    const frontmatterData = { name, description };
+    const frontmatterData = { name: (name || fileName), description };
     if (tools) frontmatterData.tools = tools;
     if (model) frontmatterData.model = model;
     if (permissionMode) frontmatterData.permissionMode = permissionMode;
@@ -447,7 +722,13 @@ class AgentsService {
   /**
    * 更新代理
    */
-  updateAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt }) {
+  updateAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
+    assertSafeAgentFileName(fileName);
+
+    if (this.platform === 'codex') {
+      return this.updateCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent });
+    }
+
     const baseDir = scope === 'user'
       ? this.userAgentsDir
       : this.getProjectAgentsDir(projectPath);
@@ -479,6 +760,12 @@ class AgentsService {
    * 删除代理
    */
   deleteAgent(fileName, scope, projectPath = null) {
+    assertSafeAgentFileName(fileName);
+
+    if (this.platform === 'codex') {
+      return this.deleteCodexAgent(fileName, scope);
+    }
+
     const baseDir = scope === 'user'
       ? this.userAgentsDir
       : this.getProjectAgentsDir(projectPath);
@@ -498,6 +785,16 @@ class AgentsService {
    * 获取统计信息
    */
   getStats(projectPath = null) {
+    if (this.platform === 'codex') {
+      const { agents, userCount, projectCount } = this.listCodexAgents();
+      return {
+        total: agents.length,
+        userCount,
+        projectCount,
+        models: { default: agents.length }
+      };
+    }
+
     const { agents, userCount, projectCount } = this.listAgents(projectPath);
 
     // 按模型分组
@@ -552,6 +849,11 @@ class AgentsService {
    * 从远程仓库安装代理
    */
   async installFromRemote(agent) {
+    if (!agent || typeof agent !== 'object') {
+      throw new Error('无效的代理安装参数');
+    }
+    assertSafeAgentFileName(agent.fileName);
+    assertSafeRepoPath(agent.repoPath);
     return this.repoScanner.installAgent(agent);
   }
 
@@ -559,7 +861,273 @@ class AgentsService {
    * 卸载代理
    */
   uninstallAgent(fileName) {
+    assertSafeAgentFileName(fileName);
     return this.repoScanner.uninstall(`${fileName}.md`);
+  }
+
+  listCodexAgents() {
+    const config = readCodexTomlConfig();
+    const agentsTable = isPlainObject(config.agents) ? config.agents : {};
+    const agents = [];
+
+    for (const [key, value] of Object.entries(agentsTable)) {
+      if (!isPlainObject(value)) {
+        continue;
+      }
+
+      const configFile = normalizeCodexConfigPath(value.config_file);
+      const resolvedConfigFile = resolveCodexConfigPath(configFile);
+      const configMode = inferCodexConfigMode(configFile);
+      const fullPath = configFile || `${key}.toml`;
+      let model = '';
+      let fullContent = '';
+      let configReadError = '';
+      let updatedAt = fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : Date.now();
+
+      if (configFile) {
+        const parsedConfigFile = readCodexAgentConfigFile(resolvedConfigFile);
+        fullContent = parsedConfigFile.content;
+        if (isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string') {
+          model = parsedConfigFile.data.model;
+        }
+        if (parsedConfigFile.updatedAt) {
+          updatedAt = Math.max(updatedAt, parsedConfigFile.updatedAt);
+        }
+        if (parsedConfigFile.error) {
+          configReadError = parsedConfigFile.error;
+        }
+      }
+
+      agents.push({
+        name: key,
+        fileName: key,
+        scope: 'user',
+        path: fullPath,
+        fullPath,
+        description: value.description || '',
+        tools: '',
+        model,
+        permissionMode: '',
+        skills: '',
+        systemPrompt: '',
+        fullContent,
+        configFile,
+        configMode,
+        configReadError,
+        resolvedConfigFile,
+        updatedAt
+      });
+    }
+
+    agents.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+    return {
+      agents,
+      total: agents.length,
+      userCount: agents.length,
+      projectCount: 0
+    };
+  }
+
+  getCodexAgent(fileName, scope) {
+    assertSafeAgentFileName(fileName);
+
+    if (scope !== 'user') {
+      return null;
+    }
+
+    const { agents } = this.listCodexAgents();
+    return agents.find(agent => agent.fileName === fileName) || null;
+  }
+
+  createCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent }) {
+    assertSafeAgentFileName(fileName);
+
+    if (scope !== 'user') {
+      throw new Error('Codex 仅支持用户级代理');
+    }
+
+    if (!description || !description.trim()) {
+      throw new Error('代理描述不能为空');
+    }
+
+    const config = readCodexTomlConfig();
+    config.features = isPlainObject(config.features) ? config.features : {};
+    config.features.multi_agent = true;
+    config.agents = isPlainObject(config.agents) ? config.agents : {};
+
+    if (Object.prototype.hasOwnProperty.call(config.agents, fileName)) {
+      if (isPlainObject(config.agents[fileName])) {
+        throw new Error(`代理 "${fileName}" 已存在`);
+      }
+      throw new Error(`代理文件名 "${fileName}" 与 Codex 全局 agents 配置冲突`);
+    }
+
+    const agentConfig = { description: description.trim() };
+    const normalizedMode = normalizeCodexConfigMode(configMode);
+
+    if (!normalizedMode) {
+      const trimmedModel = (model || '').trim();
+      if (trimmedModel) {
+        ensureDir(CODEX_AGENTS_DIR);
+        const configFilePath = getCodexManagedAgentConfigPath(fileName);
+        writeFileAtomic(configFilePath, tomlStringify({ model: trimmedModel }));
+        agentConfig.config_file = configFilePath;
+      }
+    } else if (normalizedMode === 'managed') {
+      ensureDir(CODEX_AGENTS_DIR);
+      const configFilePath = getCodexManagedAgentConfigPath(fileName);
+      const content = resolveCodexConfigContent({ configContent, model });
+      writeFileAtomic(configFilePath, content);
+      agentConfig.config_file = configFilePath;
+    } else if (normalizedMode === 'custom') {
+      const safeConfigFile = assertSafeCodexConfigPath(configFile);
+      const resolvedPath = resolveCodexConfigPath(safeConfigFile);
+      ensureDir(path.dirname(resolvedPath));
+      const content = resolveCodexConfigContent({ configContent, model });
+      writeFileAtomic(resolvedPath, content);
+      agentConfig.config_file = safeConfigFile;
+    }
+
+    config.agents[fileName] = agentConfig;
+    writeCodexTomlConfig(config);
+
+    return this.getCodexAgent(fileName, scope);
+  }
+
+  updateCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent }) {
+    assertSafeAgentFileName(fileName);
+
+    if (scope !== 'user') {
+      throw new Error('Codex 仅支持用户级代理');
+    }
+
+    const config = readCodexTomlConfig();
+    config.features = isPlainObject(config.features) ? config.features : {};
+    config.features.multi_agent = true;
+    config.agents = isPlainObject(config.agents) ? config.agents : {};
+
+    const existingAgent = config.agents[fileName];
+    if (!isPlainObject(existingAgent)) {
+      throw new Error(`代理 "${fileName}" 不存在`);
+    }
+
+    const agentConfig = { ...existingAgent };
+    agentConfig.description = (description || '').trim();
+
+    const existingConfigFile = normalizeCodexConfigPath(agentConfig.config_file);
+    const isExistingManagedConfig = isManagedCodexConfigPath(existingConfigFile);
+    const resolvedExistingConfigFile = isExistingManagedConfig ? resolveCodexConfigPath(existingConfigFile) : '';
+    const normalizedMode = normalizeCodexConfigMode(configMode);
+
+    if (!normalizedMode) {
+      const trimmedModel = (model || '').trim();
+      if (trimmedModel) {
+        ensureDir(CODEX_AGENTS_DIR);
+        const configFilePath = isExistingManagedConfig ? existingConfigFile : getCodexManagedAgentConfigPath(fileName);
+        const resolvedConfigFilePath = resolveCodexConfigPath(configFilePath);
+        const parsedConfigFile = readCodexAgentConfigFile(resolvedConfigFilePath);
+        const configFileData = isPlainObject(parsedConfigFile?.data) ? parsedConfigFile.data : {};
+        configFileData.model = trimmedModel;
+        ensureDir(path.dirname(resolvedConfigFilePath));
+        writeFileAtomic(resolvedConfigFilePath, tomlStringify(configFileData));
+        agentConfig.config_file = configFilePath;
+      } else if (isExistingManagedConfig) {
+        delete agentConfig.config_file;
+        if (resolvedExistingConfigFile && fs.existsSync(resolvedExistingConfigFile)) {
+          fs.unlinkSync(resolvedExistingConfigFile);
+        }
+      }
+    } else if (normalizedMode === 'none') {
+      delete agentConfig.config_file;
+      if (resolvedExistingConfigFile && fs.existsSync(resolvedExistingConfigFile)) {
+        fs.unlinkSync(resolvedExistingConfigFile);
+      }
+    } else if (normalizedMode === 'managed') {
+      ensureDir(CODEX_AGENTS_DIR);
+      const configFilePath = getCodexManagedAgentConfigPath(fileName);
+      const resolvedConfigFilePath = resolveCodexConfigPath(configFilePath);
+      const existingManagedContent = fs.existsSync(resolvedConfigFilePath)
+        ? fs.readFileSync(resolvedConfigFilePath, 'utf-8')
+        : '';
+      const content = resolveCodexConfigContent({
+        configContent,
+        model,
+        fallbackContent: existingManagedContent
+      });
+      ensureDir(path.dirname(resolvedConfigFilePath));
+      writeFileAtomic(resolvedConfigFilePath, content);
+      agentConfig.config_file = configFilePath;
+      if (resolvedExistingConfigFile &&
+          resolvedExistingConfigFile !== resolvedConfigFilePath &&
+          fs.existsSync(resolvedExistingConfigFile)) {
+        fs.unlinkSync(resolvedExistingConfigFile);
+      }
+    } else if (normalizedMode === 'custom') {
+      let targetConfigPath = normalizeCodexConfigPath(configFile);
+      if (!targetConfigPath) {
+        if (existingConfigFile && !isExistingManagedConfig) {
+          targetConfigPath = existingConfigFile;
+        } else {
+          throw new Error('custom 模式需要提供 configFile');
+        }
+      } else {
+        targetConfigPath = assertSafeCodexConfigPath(targetConfigPath);
+      }
+
+      const resolvedTargetConfigPath = resolveCodexConfigPath(targetConfigPath);
+      const existingContent = fs.existsSync(resolvedTargetConfigPath)
+        ? fs.readFileSync(resolvedTargetConfigPath, 'utf-8')
+        : '';
+      const content = resolveCodexConfigContent({
+        configContent,
+        model,
+        fallbackContent: existingContent
+      });
+      ensureDir(path.dirname(resolvedTargetConfigPath));
+      writeFileAtomic(resolvedTargetConfigPath, content);
+      agentConfig.config_file = targetConfigPath;
+      if (resolvedExistingConfigFile &&
+          resolvedExistingConfigFile !== resolvedTargetConfigPath &&
+          fs.existsSync(resolvedExistingConfigFile)) {
+        fs.unlinkSync(resolvedExistingConfigFile);
+      }
+    }
+
+    config.agents[fileName] = agentConfig;
+    writeCodexTomlConfig(config);
+
+    return this.getCodexAgent(fileName, scope);
+  }
+
+  deleteCodexAgent(fileName, scope) {
+    assertSafeAgentFileName(fileName);
+
+    if (scope !== 'user') {
+      throw new Error('Codex 仅支持用户级代理');
+    }
+
+    const config = readCodexTomlConfig();
+    config.agents = isPlainObject(config.agents) ? config.agents : {};
+
+    const existingAgent = config.agents[fileName];
+    if (!isPlainObject(existingAgent)) {
+      return { success: false, message: '代理不存在' };
+    }
+
+    const existingConfigFile = normalizeCodexConfigPath(existingAgent.config_file);
+    const resolvedExistingConfigFile = resolveCodexConfigPath(existingConfigFile);
+    if (existingConfigFile &&
+        isManagedCodexConfigPath(existingConfigFile) &&
+        resolvedExistingConfigFile &&
+        fs.existsSync(resolvedExistingConfigFile)) {
+      fs.unlinkSync(resolvedExistingConfigFile);
+    }
+
+    delete config.agents[fileName];
+    writeCodexTomlConfig(config);
+
+    return { success: true, message: '代理已删除' };
   }
 }
 

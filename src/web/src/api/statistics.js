@@ -69,6 +69,11 @@ export async function getTrendStatistics(params) {
   return response.data
 }
 
+export async function getAvailableFilters(params) {
+  const response = await client.get('/statistics/filters', { params })
+  return response.data
+}
+
 export function getTrendExportUrl(params) {
   const query = new URLSearchParams(params).toString()
   return `/api/statistics/trend/export?${query}`

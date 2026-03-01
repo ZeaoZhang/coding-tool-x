@@ -3,15 +3,26 @@ const router = express.Router();
 const { getProjects, saveProjectOrder, deleteProject } = require('../services/codex-sessions');
 const { isCodexInstalled } = require('../services/codex-config');
 
+const DEBUG_CODEX_PERF = process.env.DEBUG_CODEX_PERF === '1';
+
+function logPerf(route, startMs, detail = '') {
+  if (!DEBUG_CODEX_PERF) return;
+  const duration = Date.now() - startMs;
+  const suffix = detail ? ` | ${detail}` : '';
+  console.log(`[Codex Perf] ${route}: ${duration}ms${suffix}`);
+}
+
 module.exports = (config) => {
   /**
    * GET /api/codex/projects
    * 获取所有 Codex 项目列表
    */
   router.get('/', (req, res) => {
+    const startMs = Date.now();
     try {
       // 检查 Codex 是否安装
       if (!isCodexInstalled()) {
+        logPerf('GET /api/codex/projects', startMs, 'codex not installed');
         return res.json({
           projects: [],
           currentProject: null,
@@ -20,6 +31,7 @@ module.exports = (config) => {
       }
 
       const projects = getProjects();
+      logPerf('GET /api/codex/projects', startMs, `projects=${projects.length}`);
 
       res.json({
         projects,
@@ -27,6 +39,7 @@ module.exports = (config) => {
       });
     } catch (err) {
       console.error('[Codex API] Failed to get projects:', err);
+      logPerf('GET /api/codex/projects', startMs, `error=${err.message}`);
 
       if (err.code === 'ENOENT') {
         return res.status(404).json({

@@ -26,12 +26,36 @@
           </div>
         </div>
 
-        <!-- GroupBy selector -->
+        <!-- Filter: toolType -->
         <n-select
-          v-model:value="groupBy"
-          :options="groupByOptions"
+          v-model:value="filterToolType"
+          :options="filterToolTypeOptions"
           size="small"
-          style="width: 130px"
+          clearable
+          placeholder="全部工具"
+          style="width: 120px"
+          @update:value="onFilterToolTypeChange"
+        />
+
+        <!-- Filter: channel -->
+        <n-select
+          v-model:value="filterChannel"
+          :options="filterChannelOptions"
+          size="small"
+          clearable
+          placeholder="全部渠道"
+          style="width: 120px"
+          @update:value="fetchData"
+        />
+
+        <!-- Filter: model -->
+        <n-select
+          v-model:value="filterModel"
+          :options="filterModelOptions"
+          size="small"
+          clearable
+          placeholder="全部模型"
+          style="width: 160px"
           @update:value="fetchData"
         />
 
@@ -134,13 +158,12 @@ import { NSelect, NButton, NDropdown, NIcon, NSpin, NDatePicker } from 'naive-ui
 import { DownloadOutline, ExpandOutline, ContractOutline } from '@vicons/ionicons5'
 import '../plugins/echarts'
 import VChart from 'vue-echarts'
-import { getTrendStatistics, getTrendExportUrl } from '../api/statistics'
+import { getTrendStatistics, getTrendExportUrl, getAvailableFilters } from '../api/statistics'
 
 const COLORS = ['#3b82f6','#10b981','#a855f7','#f59e0b','#ef4444','#06b6d4','#ec4899','#8b5cf6','#14b8a6','#94a3b8']
 
 // State
 const timeRange = ref('7d')
-const groupBy = ref('model')
 const metric = ref('tokens')
 const customRange = ref(null)
 const loading = ref(false)
@@ -149,6 +172,53 @@ const isFullscreen = ref(false)
 const trendData = ref({ labels: [], series: [], totals: {} })
 const allMetricsTotals = ref({ tokens: 0, cost: 0, requests: 0 })
 
+// Filter state
+const filterToolType = ref(null)
+const filterChannel = ref(null)
+const filterModel = ref(null)
+const availableFilters = ref({ toolTypes: [], channels: [], models: [] })
+
+// Auto-infer groupBy from active filters:
+// - filtering by channel → show model breakdown
+// - filtering by model  → show channel breakdown
+// - filtering by both   → show toolType breakdown
+// - filtering by tool only → show model breakdown
+// - no filter           → show model breakdown (default)
+const groupBy = computed(() => {
+  if (filterChannel.value && filterModel.value) return 'toolType'
+  if (filterChannel.value) return 'model'
+  if (filterModel.value) return 'channel'
+  return 'model'
+})
+
+const filterToolTypeOptions = computed(() =>
+  availableFilters.value.toolTypes.map(t => ({ label: t, value: t }))
+)
+
+const filterChannelOptions = computed(() =>
+  availableFilters.value.channels.map(c => ({ label: c, value: c }))
+)
+
+const filterModelOptions = computed(() =>
+  availableFilters.value.models.map(m => ({ label: m, value: m }))
+)
+
+async function loadFilters() {
+  const { startDate, endDate } = getDateRange()
+  try {
+    const result = await getAvailableFilters({ startDate, endDate })
+    availableFilters.value = result
+  } catch (err) {
+    console.error('Failed to load available filters:', err)
+  }
+}
+
+function onFilterToolTypeChange() {
+  filterChannel.value = null
+  filterModel.value = null
+  fetchData()
+}
+
 const rangePresets = [
   { value: '1d', label: '1d' },
   { value: '3d', label: '3d' },
@@ -156,12 +226,6 @@ const rangePresets = [
   { value: '30d', label: '30d' },
   { value: '90d', label: '90d' },
   { value: 'custom', label: '自定义' }
-]
-
-const groupByOptions = [
-  { label: '按模型', value: 'model' },
-  { label: '按渠道', value: 'channel' },
-  { label: '按工具', value: 'toolType' }
 ]
 
 const metricOptions = [
@@ -176,8 +240,8 @@ const exportOptions = [
 ]
 
 const groupByLabel = computed(() => {
-  const opt = groupByOptions.find(o => o.value === groupBy.value)
-  return opt ? opt.label.replace('按', '') : groupBy.value
+  const map = { model: '模型', channel: '渠道', toolType: '工具' }
+  return map[groupBy.value] || groupBy.value
 })
 
 const metricLabel = computed(() => {
@@ -213,19 +277,28 @@ async function fetchData() {
   const { granularity, step } = getGranularity(startDate, endDate)
   loading.value = true
   try {
-    const params = { startDate, endDate, granularity, step, groupBy: groupBy.value }
+    const filterParams = {}
+    if (filterToolType.value) filterParams.filterToolType = filterToolType.value
+    if (filterChannel.value) filterParams.filterChannel = filterChannel.value
+    if (filterModel.value) filterParams.filterModel = filterModel.value
+
+    const params = { startDate, endDate, granularity, step, groupBy: groupBy.value, ...filterParams }
+    // Always fetch all 3 metrics for summary cards; reuse mainResult when metric matches
+    const needTokens = metric.value !== 'tokens'
+    const needCost = metric.value !== 'cost'
+    const needRequests = metric.value !== 'requests'
     const [mainResult, tokensResult, costResult, requestsResult] = await Promise.all([
       getTrendStatistics({ ...params, metric: metric.value }),
-      getTrendStatistics({ ...params, metric: 'tokens' }),
-      getTrendStatistics({ ...params, metric: 'cost' }),
-      getTrendStatistics({ ...params, metric: 'requests' })
+      needTokens ? getTrendStatistics({ ...params, metric: 'tokens' }) : Promise.resolve(null),
+      needCost ? getTrendStatistics({ ...params, metric: 'cost' }) : Promise.resolve(null),
+      needRequests ? getTrendStatistics({ ...params, metric: 'requests' }) : Promise.resolve(null),
     ])
     trendData.value = mainResult
     const sumSeries = (r) => (r.series || []).reduce((sum, s) => sum + (s.data || []).reduce((a, b) => a + b, 0), 0)
     allMetricsTotals.value = {
-      tokens: sumSeries(tokensResult),
-      cost: sumSeries(costResult),
-      requests: sumSeries(requestsResult)
+      tokens: sumSeries(metric.value === 'tokens' ? mainResult : tokensResult),
+      cost: sumSeries(metric.value === 'cost' ? mainResult : costResult),
+      requests: sumSeries(metric.value === 'requests' ? mainResult : requestsResult),
     }
   } catch (err) {
     console.error('Failed to fetch trend statistics:', err)
@@ -237,15 +310,24 @@ async function fetchData() {
 
 function setTimeRange(val) {
   timeRange.value = val
-  if (val !== 'custom') fetchData()
+  if (val !== 'custom') {
+    loadFilters()
+    fetchData()
+  }
 }
 
 function onCustomRangeChange(val) {
   customRange.value = val
-  if (val) fetchData()
+  if (val) {
+    loadFilters()
+    fetchData()
+  }
 }
 
-onMounted(fetchData)
+onMounted(() => {
+  loadFilters()
+  fetchData()
+})
 
 // Summary stats
 const summaryStats = computed(() => {
@@ -304,10 +386,11 @@ const barOption = computed(() => ({
     axisPointer: { type: 'shadow' },
     formatter: (params) => {
       const title = params[0]?.axisValue || ''
-      const lines = params.map(p => {
+      const lines = params.filter(p => p.value !== 0 && p.value != null).map(p => {
         const val = formatMetric(p.value)
         return `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${p.color};margin-right:6px"></span>${p.seriesName}: <b>${val}</b>`
       })
+      if (lines.length === 0) return ''
       return `<div style="font-size:12px"><b>${title}</b><br>${lines.join('<br>')}</div>`
     }
   },

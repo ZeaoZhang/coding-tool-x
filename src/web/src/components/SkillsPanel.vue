@@ -151,7 +151,7 @@ const loadRequestId = ref(0)
 
 const currentPlatform = computed(() => {
   const channel = route.meta.channel
-  if (channel === 'codex' || channel === 'opencode') return channel
+  if (channel === 'codex' || channel === 'gemini' || channel === 'opencode') return channel
   return 'claude'
 })
 
@@ -159,6 +159,7 @@ const currentPlatformLabel = computed(() => {
   const map = {
     claude: 'Claude Code',
     codex: 'Codex CLI',
+    gemini: 'Gemini CLI',
     opencode: 'OpenCode'
   }
   return map[currentPlatform.value] || 'Claude Code'

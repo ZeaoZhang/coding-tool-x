@@ -10,13 +10,13 @@
           size="small"
           @update:value="handleProxyToggle"
         />
-        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
+        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
           {{ installedSkillsCount }} 技能
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <!-- Skills: Claude / Codex / OpenCode 支持 -->
-        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
+        <!-- Skills: Claude / Codex / Gemini / OpenCode 支持 -->
+        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode'">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
               <template #icon><n-icon :size="18"><ExtensionPuzzleOutline /></n-icon></template>
@@ -34,6 +34,8 @@
             </template>
             Plugins 插件
           </n-tooltip>
+        </template>
+        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
@@ -49,17 +51,6 @@
               </n-button>
             </template>
             Agents 代理
-          </n-tooltip>
-        </template>
-        <!-- Claude Code 特有功能 -->
-        <template v-if="currentChannel === 'claude'">
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <n-button text size="small" class="toolbar-btn" @click="handleShowRules">
-                <template #icon><n-icon :size="18"><BookOutline /></n-icon></template>
-              </n-button>
-            </template>
-            Rules 规则
           </n-tooltip>
         </template>
         <div class="toolbar-divider" />
@@ -114,7 +105,6 @@ import {
   ExtensionPuzzleOutline,
   TerminalOutline,
   PersonOutline,
-  BookOutline,
   CubeOutline,
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
@@ -159,7 +149,7 @@ const installedSkillsCount = ref(0)
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
-  if (!['claude', 'codex', 'opencode'].includes(currentChannel.value)) {
+  if (!['claude', 'codex', 'gemini', 'opencode'].includes(currentChannel.value)) {
     installedSkillsCount.value = 0
     return
   }
@@ -220,11 +210,6 @@ function handleShowCommands() {
 // 处理显示 Agents
 function handleShowAgents() {
   window.dispatchEvent(new CustomEvent('open-agents-drawer'))
-}
-
-// 处理显示 Rules
-function handleShowRules() {
-  window.dispatchEvent(new CustomEvent('open-rules-drawer'))
 }
 
 // 处理显示 Plugins

@@ -25,11 +25,11 @@
       <n-form-item label="作用域" path="scope">
         <n-radio-group v-model:value="formData.scope" :disabled="isEdit">
           <n-radio value="user">{{ userScopeLabel }}</n-radio>
-          <n-radio value="project">{{ projectScopeLabel }}</n-radio>
+          <n-radio v-if="!isCodexPlatform" value="project">{{ projectScopeLabel }}</n-radio>
         </n-radio-group>
       </n-form-item>
 
-      <n-form-item label="代理名称" path="name">
+      <n-form-item v-if="isClaudePlatform" label="代理名称" path="name">
         <n-input
           v-model:value="formData.name"
           placeholder="代理的显示名称"
@@ -45,15 +45,45 @@
         />
       </n-form-item>
 
-      <n-form-item label="可用工具" path="tools">
+      <n-form-item v-if="isCodexPlatform" label="配置模式" path="configMode">
+        <n-select
+          v-model:value="formData.configMode"
+          :options="configModeOptions"
+          placeholder="选择配置模式"
+        />
+      </n-form-item>
+
+      <n-form-item v-if="isCodexPlatform && formData.configMode === 'custom'" label="配置文件路径" path="configFile">
+        <n-input
+          v-model:value="formData.configFile"
+          placeholder="如: ~/.omx/agents/my-agent.toml"
+        />
+      </n-form-item>
+
+      <n-form-item v-if="isCodexPlatform && (formData.configMode === 'managed' || formData.configMode === 'custom')" label="Agent Config (TOML)" path="configContent">
+        <n-input
+          v-model:value="formData.configContent"
+          type="textarea"
+          :rows="10"
+          placeholder='如: model = "gpt-5.3-codex"'
+        />
+      </n-form-item>
+
+      <n-form-item v-if="!isCodexPlatform" label="可用工具" path="tools">
         <n-input
           v-model:value="formData.tools"
           placeholder="如: Read, Edit, Bash (逗号分隔)"
         />
       </n-form-item>
 
-      <n-form-item label="模型" path="model">
+      <n-form-item v-if="!isCodexPlatform" label="模型" path="model">
+        <n-input
+          v-if="isTextModelPlatform"
+          v-model:value="formData.model"
+          placeholder="如: gpt-5、claude-sonnet-4、openrouter/model"
+        />
         <n-select
+          v-else
           v-model:value="formData.model"
           :options="modelOptions"
           placeholder="选择模型"
@@ -61,7 +91,7 @@
         />
       </n-form-item>
 
-      <n-form-item v-if="props.platform !== 'opencode'" label="权限模式" path="permissionMode">
+      <n-form-item v-if="props.platform !== 'opencode' && !isCodexPlatform" label="权限模式" path="permissionMode">
         <n-select
           v-model:value="formData.permissionMode"
           :options="permissionOptions"
@@ -70,14 +100,14 @@
         />
       </n-form-item>
 
-      <n-form-item v-if="props.platform !== 'opencode'" label="技能" path="skills">
+      <n-form-item v-if="props.platform !== 'opencode' && !isCodexPlatform" label="技能" path="skills">
         <n-input
           v-model:value="formData.skills"
           placeholder="自动加载的技能 (逗号分隔)"
         />
       </n-form-item>
 
-      <n-form-item label="系统提示词" path="systemPrompt">
+      <n-form-item v-if="!isCodexPlatform" label="系统提示词" path="systemPrompt">
         <MarkdownEditor
           v-model="formData.systemPrompt"
           :rows="8"
@@ -132,8 +162,13 @@ const visible = computed({
 })
 
 const isEdit = computed(() => !!props.agent)
+const isCodexPlatform = computed(() => props.platform === 'codex')
+const isClaudePlatform = computed(() => props.platform === 'claude')
+const isTextModelPlatform = computed(() => props.platform === 'codex' || props.platform === 'opencode')
 const userScopeLabel = computed(() =>
-  props.platform === 'opencode'
+  props.platform === 'codex'
+    ? '用户级 (~/.codex/config.toml)'
+    : props.platform === 'opencode'
     ? '用户级 (~/.config/opencode/agents/)'
     : '用户级 (~/.claude/agents/)'
 )
@@ -159,11 +194,20 @@ const permissionOptions = [
   { label: '严格 (strict)', value: 'strict' }
 ]
 
+const configModeOptions = [
+  { label: '无配置 (none)', value: 'none' },
+  { label: '托管配置 (managed)', value: 'managed' },
+  { label: '自定义路径 (custom)', value: 'custom' }
+]
+
 const formData = ref({
   fileName: '',
   scope: 'user',
   name: '',
   description: '',
+  configMode: 'none',
+  configFile: '',
+  configContent: '',
   tools: '',
   model: '',
   permissionMode: '',
@@ -171,37 +215,62 @@ const formData = ref({
   systemPrompt: ''
 })
 
-const rules = {
-  fileName: {
-    required: true,
-    message: '请输入文件名',
-    trigger: 'blur'
-  },
-  scope: {
-    required: true,
-    message: '请选择作用域',
-    trigger: 'change'
-  },
-  name: {
-    required: true,
-    message: '请输入代理名称',
-    trigger: 'blur'
-  },
-  description: {
-    required: true,
-    message: '请输入代理描述',
-    trigger: 'blur'
+const rules = computed(() => {
+  const baseRules = {
+    fileName: {
+      required: true,
+      message: '请输入文件名',
+      trigger: 'blur'
+    },
+    scope: {
+      required: true,
+      message: '请选择作用域',
+      trigger: 'change'
+    },
+    description: {
+      required: true,
+      message: '请输入代理描述',
+      trigger: 'blur'
+    }
   }
-}
+
+  if (isClaudePlatform.value) {
+    baseRules.name = {
+      required: true,
+      message: '请输入代理名称',
+      trigger: 'blur'
+    }
+  }
+
+  if (isCodexPlatform.value) {
+    baseRules.configMode = {
+      required: true,
+      message: '请选择配置模式',
+      trigger: 'change'
+    }
+    baseRules.configFile = {
+      required: formData.value.configMode === 'custom',
+      message: '请输入自定义配置文件路径',
+      trigger: 'blur'
+    }
+  }
+
+  return baseRules
+})
 
 // 监听 agent 变化，填充表单
 watch(() => props.agent, (agent) => {
   if (agent) {
+    const inferredConfigMode = agent.configMode ||
+      (agent.configFile ? (String(agent.configFile).includes('/.codex/agents/') ? 'managed' : 'custom') : 'none')
     formData.value = {
       fileName: agent.fileName || '',
       scope: agent.scope || 'user',
       name: agent.name || '',
       description: agent.description || '',
+      configMode: inferredConfigMode,
+      configFile: agent.configFile || '',
+      configContent: agent.fullContent || '',
       tools: agent.tools || '',
       model: agent.model || '',
       permissionMode: agent.permissionMode || '',
@@ -213,12 +282,24 @@ watch(() => props.agent, (agent) => {
   }
 }, { immediate: true })
 
+watch(() => props.platform, (platform) => {
+  if (platform === 'codex') {
+    formData.value.scope = 'user'
+    if (!formData.value.configMode) {
+      formData.value.configMode = 'none'
+    }
+  }
+}, { immediate: true })
+
 function resetForm() {
   formData.value = {
     fileName: '',
     scope: 'user',
     name: '',
     description: '',
+    configMode: 'none',
+    configFile: '',
+    configContent: '',
     tools: '',
     model: '',
     permissionMode: '',
@@ -244,6 +325,24 @@ async function handleSubmit() {
     const data = {
       ...formData.value,
       projectPath: props.projectPath
+    }
+
+    if (isCodexPlatform.value) {
+      if (formData.value.configMode === 'custom') {
+        data.configFile = formData.value.configFile
+      } else {
+        delete data.configFile
+      }
+
+      if (formData.value.configMode === 'managed' || formData.value.configMode === 'custom') {
+        data.configContent = formData.value.configContent || ''
+      } else {
+        delete data.configContent
+      }
+    } else {
+      delete data.configMode
+      delete data.configFile
+      delete data.configContent
     }
 
     if (isEdit.value) {

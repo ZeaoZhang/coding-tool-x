@@ -387,11 +387,10 @@ module.exports = (config) => {
     }
   });
 
-  // POST /api/sessions/:projectName/:sessionId/launch - Launch terminal with session
+  // POST /api/sessions/:projectName/:sessionId/launch - Return session launch command for copy
   router.post('/:projectName/:sessionId/launch', async (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
-      const { exec } = require('child_process');
       const path = require('path');
       const fs = require('fs');
       const os = require('os');
@@ -485,54 +484,28 @@ module.exports = (config) => {
       broadcastLog({
         type: 'action',
         action: 'launch_session',
-        message: `启动会话 ${alias || sessionId.substring(0, 8)} (claude)`,
+        message: `复制会话启动命令 ${alias || sessionId.substring(0, 8)} (claude)`,
         sessionId,
         alias: alias || null,
         tool: 'claude',
         timestamp: Date.now()
       });
 
-      // 使用配置的终端工具启动
-      const { getTerminalLaunchCommand } = require('../services/terminal-config');
+      const command = `claude -r ${sessionId}`;
+      const quotedCwd = `"${String(cwd).replace(/"/g, '\\"')}"`;
+      const copyCommand = `cd ${quotedCwd} && ${command}`;
 
-      try {
-        // Windows 路径需要转换为反斜杠格式
-        const normalizedCwd = process.platform === 'win32' ? cwd.replace(/\//g, '\\') : cwd;
-
-        // 获取 Claude 会话启动命令
-        const { command, terminalId, terminalName } = getTerminalLaunchCommand(
-          normalizedCwd,
-          sessionId,
-          'claude'
-        );
-
-        console.log(`Launching terminal: ${terminalName} (${terminalId})`);
-        console.log(`Command: ${command}`);
-
-        // 异步执行命令，不等待结果
-        const shellOption = process.platform === 'win32' ? { shell: 'cmd.exe' } : { shell: true };
-        exec(command, shellOption, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`Failed to launch terminal ${terminalName}:`, error.message);
-          }
-        });
-
-        // 立即返回成功响应
-        res.json({
-          success: true,
-          cwd,
-          sessionFile,
-          terminal: terminalName,
-          terminalId
-        });
-      } catch (terminalError) {
-        console.error('Failed to get terminal command:', terminalError);
-        return res.status(500).json({
-          error: '无法启动终端：' + terminalError.message
-        });
-      }
+      res.json({
+        success: true,
+        cwd,
+        sessionFile,
+        sessionId,
+        tool: 'claude',
+        command,
+        copyCommand
+      });
     } catch (error) {
-      console.error('Error launching terminal:', error);
+      console.error('Error preparing launch command:', error);
       res.status(500).json({ error: error.message });
     }
   });

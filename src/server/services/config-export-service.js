@@ -11,7 +11,6 @@ const configTemplatesService = require('./config-templates-service');
 const channelsService = require('./channels');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
-const { RulesService } = require('./rules-service');
 const { SkillService } = require('./skill-service');
 
 const CONFIG_VERSION = '1.2.0';
@@ -37,8 +36,6 @@ const PLUGIN_SENSITIVE_PATTERNS = [
   /\.pfx$/i
 ];
 const CC_UI_CONFIG_PATH = path.join(CC_TOOL_DIR, 'ui-config.json');
-const CC_TERMINAL_CONFIG_PATH = path.join(CC_TOOL_DIR, 'terminal-config.json');
-const CC_TERMINAL_COMMANDS_PATH = path.join(CC_TOOL_DIR, 'terminal-commands.json');
 const CC_PROMPTS_PATH = path.join(CC_TOOL_DIR, 'prompts.json');
 const CC_SECURITY_PATH = path.join(CC_TOOL_DIR, 'security.json');
 const LEGACY_UI_CONFIG_PATH = path.join(LEGACY_CC_TOOL_DIR, 'ui-config.json');
@@ -121,11 +118,10 @@ function buildExportReadme(exportData) {
 
 ## 📦 包含内容
 - 配置模板、频道配置、工作区、收藏
-- Agents / Skills / Commands / Rules
+- Agents / Skills / Commands
 - 插件 (Plugins)
 - MCP 服务器配置
 - UI 配置（主题、面板显示、排序等）
-- 终端配置与 CLI 命令配置
 - Prompts 预设
 - 安全配置
 - 高级配置（端口、日志、性能等）
@@ -181,18 +177,6 @@ function buildCommandContent(command) {
   }
 
   const body = command.body || '';
-  return `${lines.join('\n')}${body}`;
-}
-
-function buildRuleContent(rule) {
-  const lines = [];
-  if (rule.paths) {
-    lines.push('---');
-    lines.push(`paths: ${rule.paths}`);
-    lines.push('---');
-    lines.push('');
-  }
-  const body = rule.body || '';
   return `${lines.join('\n')}${body}`;
 }
 
@@ -483,18 +467,6 @@ function exportAllConfigs() {
       fullContent: command.fullContent
     }));
 
-    // 获取 Rules 配置
-    const rulesService = new RulesService();
-    const { rules: rawRules } = rulesService.listRules();
-    const rules = rawRules.map(rule => ({
-      fileName: rule.fileName,
-      directory: rule.directory,
-      paths: rule.paths,
-      path: rule.path,
-      body: rule.body,
-      fullContent: rule.fullContent
-    }));
-
     // 获取 MCP 配置
     const mcpService = require('./mcp-service');
     const mcpServers = mcpService.getAllServers();
@@ -520,14 +492,10 @@ function exportAllConfigs() {
 
     // 获取 UI / 前端配置
     const { loadUIConfig } = require('./ui-config');
-    const { loadTerminalConfig } = require('./terminal-config');
-    const { loadTerminalCommands } = require('./terminal-commands');
     const { loadConfig } = require('../../config/loader');
 
     const uiConfigFile = readJsonFileSafe(CC_UI_CONFIG_PATH);
     const uiConfig = uiConfigFile || loadUIConfig();
-    const terminalConfig = loadTerminalConfig();
-    const terminalCommands = loadTerminalCommands();
     const prompts = readJsonFileSafe(CC_PROMPTS_PATH);
     const security = readJsonFileSafe(CC_SECURITY_PATH);
     const appConfig = loadConfig();
@@ -550,13 +518,10 @@ function exportAllConfigs() {
         agents: agents || [],
         skills: skills || [],
         commands: commands || [],
-        rules: rules || [],
         mcpServers: mcpServers || [],
         plugins: plugins || [],
         markdownFiles: markdownFiles,
         uiConfig: uiConfig,
-        terminalConfig: terminalConfig,
-        terminalCommands: terminalCommands,
         prompts: prompts,
         security: security,
         appConfig: appConfig,
@@ -617,13 +582,10 @@ function importConfigs(importData, options = {}) {
     agents: { success: 0, failed: 0, skipped: 0 },
     skills: { success: 0, failed: 0, skipped: 0 },
     commands: { success: 0, failed: 0, skipped: 0 },
-    rules: { success: 0, failed: 0, skipped: 0 },
     mcpServers: { success: 0, failed: 0, skipped: 0 },
     plugins: { success: 0, failed: 0, skipped: 0 },
     markdownFiles: { success: 0, failed: 0, skipped: 0 },
     uiConfig: { success: 0, failed: 0, skipped: 0 },
-    terminalConfig: { success: 0, failed: 0, skipped: 0 },
-    terminalCommands: { success: 0, failed: 0, skipped: 0 },
     prompts: { success: 0, failed: 0, skipped: 0 },
     security: { success: 0, failed: 0, skipped: 0 },
     appConfig: { success: 0, failed: 0, skipped: 0 },
@@ -644,12 +606,9 @@ function importConfigs(importData, options = {}) {
       agents = [],
       skills = [],
       commands = [],
-      rules = [],
       mcpServers = [],
       markdownFiles = {},
       uiConfig = null,
-      terminalConfig = null,
-      terminalCommands = null,
       prompts = null,
       security = null,
       appConfig = null,
@@ -667,14 +626,14 @@ function importConfigs(importData, options = {}) {
         }
 
         if (existing && overwrite) {
-          configTemplatesService.updateTemplate(template.id, template);
+          configTemplatesService.updateCustomTemplate(template.id, template);
         } else {
           const newTemplate = {
             ...template,
             isBuiltin: false,
             importedAt: new Date().toISOString()
           };
-          configTemplatesService.createTemplate(newTemplate);
+          configTemplatesService.createCustomTemplate(newTemplate);
         }
         results.configTemplates.success++;
       } catch (err) {
@@ -981,34 +940,6 @@ function importConfigs(importData, options = {}) {
       }
     }
 
-    // 导入 Rules
-    if (rules && rules.length > 0) {
-      try {
-        const rulesService = new RulesService();
-        const baseDir = rulesService.userRulesDir;
-
-        for (const rule of rules) {
-          const relativePath = rule.path || (
-            rule.directory
-              ? path.join(rule.directory, `${rule.fileName || rule.name}.md`)
-              : `${rule.fileName || rule.name}.md`
-          );
-          const content = rule.fullContent || rule.content || buildRuleContent(rule);
-
-          const status = relativePath ? writeTextFile(baseDir, relativePath, content, overwrite) : 'failed';
-          if (status === 'success') {
-            results.rules.success++;
-          } else if (status === 'skipped') {
-            results.rules.skipped++;
-          } else {
-            results.rules.failed++;
-          }
-        }
-      } catch (err) {
-        console.error('[ConfigImport] 导入 Rules 失败:', err);
-      }
-    }
-
     // 导入 MCP Servers
     if (mcpServers && mcpServers.length > 0 && overwrite) {
       try {
@@ -1062,42 +993,6 @@ function importConfigs(importData, options = {}) {
       } catch (err) {
         console.error('[ConfigImport] 导入 UI 配置失败:', err);
         results.uiConfig.failed++;
-      }
-    }
-
-    // 导入终端配置
-    if (terminalConfig && typeof terminalConfig === 'object') {
-      try {
-        if (fs.existsSync(CC_TERMINAL_CONFIG_PATH) && !overwrite) {
-          results.terminalConfig.skipped++;
-        } else {
-          const { saveTerminalConfig } = require('./terminal-config');
-          saveTerminalConfig(terminalConfig);
-          results.terminalConfig.success++;
-        }
-      } catch (err) {
-        console.error('[ConfigImport] 导入终端配置失败:', err);
-        results.terminalConfig.failed++;
-      }
-    }
-
-    // 导入终端命令配置
-    if (terminalCommands && typeof terminalCommands === 'object') {
-      try {
-        if (fs.existsSync(CC_TERMINAL_COMMANDS_PATH) && !overwrite) {
-          results.terminalCommands.skipped++;
-        } else {
-          const { saveTerminalCommands } = require('./terminal-commands');
-          const ok = saveTerminalCommands(terminalCommands);
-          if (ok) {
-            results.terminalCommands.success++;
-          } else {
-            results.terminalCommands.failed++;
-          }
-        }
-      } catch (err) {
-        console.error('[ConfigImport] 导入终端命令配置失败:', err);
-        results.terminalCommands.failed++;
       }
     }
 
@@ -1234,13 +1129,10 @@ function generateImportSummary(results) {
     { key: 'agents', label: 'Agents' },
     { key: 'skills', label: 'Skills' },
     { key: 'commands', label: 'Commands' },
-    { key: 'rules', label: 'Rules' },
     { key: 'mcpServers', label: 'MCP服务器' },
     { key: 'plugins', label: '插件' },
     { key: 'markdownFiles', label: 'Markdown文件' },
     { key: 'uiConfig', label: 'UI配置' },
-    { key: 'terminalConfig', label: '终端配置' },
-    { key: 'terminalCommands', label: '终端命令' },
     { key: 'prompts', label: 'Prompts' },
     { key: 'security', label: '安全配置' },
     { key: 'appConfig', label: '高级配置' },

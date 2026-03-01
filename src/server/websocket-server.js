@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { loadConfig } = require('../config/loader');
-const { ptyManager } = require('./services/pty-manager');
 const {
   normalizeAddress,
   isLoopbackAddress,
@@ -30,8 +29,7 @@ function getMaxLogsLimit() {
 let wss = null;
 let wsClients = new Set();
 let websocketOptions = {
-  host: '127.0.0.1',
-  allowRemoteTerminal: false
+  host: '127.0.0.1'
 };
 const HISTORY_CHUNK_SIZE = 50;
 
@@ -282,8 +280,7 @@ function startWebSocketServer(httpServer, options = {}) {
   }
 
   websocketOptions = {
-    host: options.host || '127.0.0.1',
-    allowRemoteTerminal: options.allowRemoteTerminal === true
+    host: options.host || '127.0.0.1'
   };
 
   // 加载持久化的日志到缓存
@@ -324,26 +321,10 @@ function startWebSocketServer(httpServer, options = {}) {
 
       // 标记客户端存活
       ws.isAlive = true;
-      // 终端绑定信息
-      ws.terminalId = null;
-      const isLoopback = isLoopbackRequest(req);
-      const lanMode = websocketOptions.host === '0.0.0.0';
-      ws.terminalAllowed = !(lanMode && !isLoopback && !websocketOptions.allowRemoteTerminal);
-
       // 发送历史日志给新连接的客户端
       if (logsCache.length > 0) {
         sendPersistedLogsInChunks(ws, logsCache);
       }
-
-      // 处理客户端消息
-      ws.on('message', (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          handleTerminalMessage(ws, message);
-        } catch (err) {
-          console.error('Failed to parse WebSocket message:', err.message);
-        }
-      });
 
       // 响应 pong 消息
       ws.on('pong', () => {
@@ -356,18 +337,11 @@ function startWebSocketServer(httpServer, options = {}) {
       });
 
       ws.on('close', () => {
-        // 解绑终端
-        if (ws.terminalId) {
-          ptyManager.detachWebSocket(ws.terminalId);
-        }
         wsClients.delete(ws);
       });
 
       ws.on('error', (error) => {
         console.error('WebSocket error:', error);
-        if (ws.terminalId) {
-          ptyManager.detachWebSocket(ws.terminalId);
-        }
         wsClients.delete(ws);
       });
     });
@@ -526,186 +500,6 @@ function broadcastSchedulerState(source, schedulerState) {
         client.send(message);
       }
     });
-  }
-}
-
-// ============ 终端 WebSocket 消息处理 ============
-
-const { getCommandForChannel } = require('./services/terminal-commands');
-const { getWebTerminalShellConfig } = require('./services/terminal-config');
-
-/**
- * 处理终端相关的 WebSocket 消息
- */
-function handleTerminalMessage(ws, message) {
-  const { type } = message;
-
-  if (String(type || '').startsWith('terminal:') && ws.terminalAllowed === false) {
-    ws.send(JSON.stringify({
-      type: 'terminal:error',
-      error: '出于安全考虑，LAN 模式下仅允许本机使用 Web 终端。可设置 CC_TOOL_ALLOW_REMOTE_TERMINAL=true 覆盖。'
-    }));
-    return;
-  }
-
-  switch (type) {
-    case 'terminal:create':
-      handleTerminalCreate(ws, message);
-      break;
-
-    case 'terminal:attach':
-      handleTerminalAttach(ws, message);
-      break;
-
-    case 'terminal:input':
-      handleTerminalInput(ws, message);
-      break;
-
-    case 'terminal:resize':
-      handleTerminalResize(ws, message);
-      break;
-
-    case 'terminal:destroy':
-      handleTerminalDestroy(ws, message);
-      break;
-
-    default:
-      // 非终端消息，忽略
-      break;
-  }
-}
-
-/**
- * 创建新终端
- */
-function handleTerminalCreate(ws, message) {
-  const {
-    channel = 'claude',
-    sessionId = null,
-    projectName = null,
-    cwd = null
-  } = message;
-
-  try {
-    // 确定工作目录
-    let workDir = cwd || os.homedir();
-
-    // 获取启动命令
-    const startCommand = getCommandForChannel(channel, sessionId, workDir);
-
-    const shellConfig = getWebTerminalShellConfig();
-
-    // 创建终端
-    const terminal = ptyManager.create({
-      cwd: workDir,
-      channel,
-      sessionId,
-      projectName,
-      startCommand,
-      ...shellConfig
-    });
-
-    // 绑定 WebSocket
-    ws.terminalId = terminal.id;
-    ptyManager.attachWebSocket(terminal.id, ws);
-
-    // 发送创建成功消息
-    ws.send(JSON.stringify({
-      type: 'terminal:created',
-      terminalId: terminal.id,
-      metadata: terminal.metadata
-    }));
-  } catch (err) {
-    console.error('Failed to create terminal:', err);
-    ws.send(JSON.stringify({
-      type: 'terminal:error',
-      error: err.message
-    }));
-  }
-}
-
-/**
- * 绑定到已有终端
- */
-function handleTerminalAttach(ws, message) {
-  const { terminalId, includeHistory, cols, rows } = message;
-
-  if (!terminalId) {
-    ws.send(JSON.stringify({
-      type: 'terminal:error',
-      error: 'Missing terminalId'
-    }));
-    return;
-  }
-
-  const terminal = ptyManager.get(terminalId);
-  if (!terminal) {
-    ws.send(JSON.stringify({
-      type: 'terminal:error',
-      error: 'Terminal not found',
-      terminalId
-    }));
-    return;
-  }
-
-  // 绑定 WebSocket
-  ws.terminalId = terminalId;
-  const shouldIncludeHistory = typeof includeHistory === 'boolean' ? includeHistory : true;
-  if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-    ptyManager.resize(terminalId, cols, rows);
-  }
-  ptyManager.attachWebSocket(terminalId, ws, {
-    includeHistory: shouldIncludeHistory,
-    trimLastLine: true
-  });
-
-  ws.send(JSON.stringify({
-    type: 'terminal:attached',
-    terminalId,
-    metadata: terminal.metadata
-  }));
-}
-
-/**
- * 终端输入
- */
-function handleTerminalInput(ws, message) {
-  const { terminalId, data } = message;
-
-  if (!terminalId || !data) {
-    return;
-  }
-
-  ptyManager.write(terminalId, data);
-}
-
-/**
- * 调整终端大小
- */
-function handleTerminalResize(ws, message) {
-  const { terminalId, cols, rows } = message;
-
-  if (!terminalId || !cols || !rows) {
-    return;
-  }
-
-  ptyManager.resize(terminalId, cols, rows);
-}
-
-/**
- * 销毁终端
- */
-function handleTerminalDestroy(ws, message) {
-  const { terminalId } = message;
-
-  if (!terminalId) {
-    return;
-  }
-
-  ptyManager.destroy(terminalId);
-
-  if (ws.terminalId === terminalId) {
-    ws.terminalId = null;
   }
 }
 

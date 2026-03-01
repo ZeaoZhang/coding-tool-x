@@ -38,10 +38,6 @@ export default defineConfig({
             return 'naive-ui'
           }
 
-          if (id.includes('/@xterm/')) {
-            return 'xterm'
-          }
-
           if (id.includes('/markdown-it/') || id.includes('/marked/') || id.includes('/highlight.js/')) {
             return 'markdown'
           }

@@ -2,21 +2,23 @@
  * Config Sync Manager
  *
  * Manages file synchronization between cc-tool central storage and CLI directories:
- * - Claude Code: ~/.claude/{skills,commands,agents,rules}/
+ * - Claude Code: ~/.claude/{skills,commands,agents,plugins}/
  * - Codex CLI: ~/.codex/skills/, ~/.codex/prompts/
+ * - Gemini CLI: ~/.gemini/skills/
  * - OpenCode CLI: ~/.config/opencode/{skills,commands,agents,plugins}/
  *
  * Config types:
  * - skills: directory-based (each skill is a dir with SKILL.md)
  * - commands: file-based (.md), may be nested in subdirectories
  * - agents: file-based (.md), flat directory
- * - rules: file-based (.md), may be nested in subdirectories
  * - plugins: directory-based
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 const { convertSkillToCodex, convertCommandToCodex } = require('./format-converter');
 const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 
@@ -25,7 +27,9 @@ const HOME = os.homedir();
 const CC_TOOL_CONFIGS = path.join(PATHS.base, 'configs');
 const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');
+const GEMINI_DIR = path.join(HOME, '.gemini');
 const OPENCODE_DIR = NATIVE_PATHS.opencode.config;
+const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 
 // Config type definitions
 const CONFIG_TYPES = {
@@ -36,6 +40,8 @@ const CONFIG_TYPES = {
     codexTarget: 'skills',
     codexSupported: true,
     convertForCodex: true,
+    geminiTarget: 'skills',
+    geminiSupported: true,
     opencodeTarget: 'skills',
     opencodeLegacyTarget: 'skill',
     opencodeSupported: true
@@ -47,6 +53,7 @@ const CONFIG_TYPES = {
     codexTarget: 'prompts',
     codexSupported: true,
     convertForCodex: true,
+    geminiSupported: false,
     opencodeTarget: 'commands',
     opencodeLegacyTarget: 'command',
     opencodeSupported: true
@@ -55,22 +62,17 @@ const CONFIG_TYPES = {
     isDirectory: false,
     extension: '.md',
     claudeTarget: 'agents',
-    codexSupported: false,
+    codexSupported: true,
+    geminiSupported: false,
     opencodeTarget: 'agents',
     opencodeLegacyTarget: 'agent',
     opencodeSupported: true
-  },
-  rules: {
-    isDirectory: false,
-    extension: '.md',
-    claudeTarget: 'rules',
-    codexSupported: false,
-    opencodeSupported: false
   },
   plugins: {
     isDirectory: true,
     claudeTarget: 'plugins',
     codexSupported: false,
+    geminiSupported: false,
     opencodeTarget: 'plugins',
     opencodeLegacyTarget: 'plugin',
     opencodeSupported: true
@@ -83,13 +85,14 @@ class ConfigSyncManager {
     this.ccToolConfigs = CC_TOOL_CONFIGS;
     this.claudeDir = CLAUDE_CODE_DIR;
     this.codexDir = CODEX_DIR;
+    this.geminiDir = GEMINI_DIR;
     this.opencodeDir = OPENCODE_DIR;
     this.configTypes = CONFIG_TYPES;
   }
 
   /**
    * Sync a config item to Claude Code
-   * @param {string} type - Config type (skills, commands, agents, rules)
+   * @param {string} type - Config type (skills, commands, agents, plugins)
    * @param {string} name - Item name (directory name for skills, file path for others)
    * @returns {Object} Result with success status
    */
@@ -100,8 +103,12 @@ class ConfigSyncManager {
       return { success: false, error: `Unknown config type: ${type}` };
     }
 
-    const sourcePath = path.join(this.ccToolConfigs, type, name);
-    const targetPath = path.join(this.claudeDir, config.claudeTarget, name);
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    const targetPath = path.join(this.claudeDir, config.claudeTarget, safeName);
 
     // Check if source exists
     if (!fs.existsSync(sourcePath)) {
@@ -141,7 +148,11 @@ class ConfigSyncManager {
       return { success: false, error: `Unknown config type: ${type}` };
     }
 
-    const targetPath = path.join(this.claudeDir, config.claudeTarget, name);
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+    const targetPath = path.join(this.claudeDir, config.claudeTarget, safeName);
 
     if (!fs.existsSync(targetPath)) {
       console.log(`[ConfigSyncManager] Target not found (already removed): ${targetPath}`);
@@ -158,7 +169,7 @@ class ConfigSyncManager {
         fs.unlinkSync(targetPath);
         console.log(`[ConfigSyncManager] Removed ${type}/${name} from Claude Code (file)`);
 
-        // Clean up empty parent directories for commands/rules
+        // Clean up empty parent directories for file-based configs
         this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.claudeDir, config.claudeTarget));
       }
 
@@ -171,7 +182,7 @@ class ConfigSyncManager {
 
   /**
    * Sync a config item to Codex CLI
-   * Only skills and commands are supported
+   * Supports skills, commands, agents
    * @param {string} type - Config type
    * @param {string} name - Item name
    * @returns {Object} Result with success status and any warnings
@@ -187,7 +198,11 @@ class ConfigSyncManager {
       return { success: true, skipped: true, reason: 'Not supported by Codex' };
     }
 
-    const sourcePath = path.join(this.ccToolConfigs, type, name);
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
 
     if (!fs.existsSync(sourcePath)) {
       console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
@@ -197,9 +212,55 @@ class ConfigSyncManager {
     try {
       const warnings = [];
 
+      if (type === 'agents') {
+        const sourceContent = fs.readFileSync(sourcePath, 'utf-8');
+        const { frontmatter } = this._parseFrontmatter(sourceContent);
+        const fileName = path.basename(safeName, path.extname(safeName));
+
+        const codexConfig = this._readCodexConfigToml();
+        codexConfig.features = this._isPlainObject(codexConfig.features) ? codexConfig.features : {};
+        codexConfig.features.multi_agent = true;
+        codexConfig.agents = this._isPlainObject(codexConfig.agents) ? codexConfig.agents : {};
+
+        const existing = codexConfig.agents[fileName];
+        if (Object.prototype.hasOwnProperty.call(codexConfig.agents, fileName) &&
+            !this._isPlainObject(existing)) {
+          return { success: false, error: `Agent name "${fileName}" conflicts with global [agents] key` };
+        }
+
+        const entry = this._isPlainObject(existing) ? { ...existing } : {};
+        entry.description = (frontmatter.description || fileName).trim();
+
+        const model = typeof frontmatter.model === 'string' ? frontmatter.model.trim() : '';
+        const existingConfigFile = this._normalizeCodexPath(entry.config_file);
+        const isExistingManagedConfig = this._isManagedCodexAgentConfigPath(existingConfigFile);
+        if (model) {
+          const managedConfigPath = isExistingManagedConfig
+            ? existingConfigFile
+            : this._getCodexManagedAgentConfigPath(fileName);
+          const parsedConfigFile = this._readCodexAgentConfigFile(managedConfigPath);
+          const configData = this._isPlainObject(parsedConfigFile?.data) ? parsedConfigFile.data : {};
+          configData.model = model;
+          this._writeCodexAgentConfigFile(managedConfigPath, configData);
+          entry.config_file = managedConfigPath;
+        } else if (isExistingManagedConfig) {
+          const resolvedConfigPath = this._resolveCodexPath(existingConfigFile);
+          if (resolvedConfigPath && fs.existsSync(resolvedConfigPath)) {
+            fs.unlinkSync(resolvedConfigPath);
+          }
+          delete entry.config_file;
+        }
+
+        codexConfig.agents[fileName] = entry;
+
+        this._writeCodexConfigToml(codexConfig);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Codex (config.toml agents table)`);
+        return { success: true, target: CODEX_CONFIG_PATH, warnings };
+      }
+
       if (type === 'skills') {
         // Skills: copy directory, convert SKILL.md content
-        const targetPath = path.join(this.codexDir, config.codexTarget, name);
+        const targetPath = path.join(this.codexDir, config.codexTarget, safeName);
         this._ensureDir(targetPath);
 
         // Copy all files, converting SKILL.md
@@ -227,7 +288,7 @@ class ConfigSyncManager {
         }
 
         // Target path in codex prompts (same relative path structure)
-        const targetPath = path.join(this.codexDir, config.codexTarget, name);
+        const targetPath = path.join(this.codexDir, config.codexTarget, safeName);
         this._ensureDir(path.dirname(targetPath));
         fs.writeFileSync(targetPath, result.content, 'utf-8');
 
@@ -254,11 +315,46 @@ class ConfigSyncManager {
       return { success: false, error: `Unknown config type: ${type}` };
     }
 
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
     if (!config.codexSupported) {
       return { success: true, skipped: true, reason: 'Not supported by Codex' };
     }
 
-    const targetPath = path.join(this.codexDir, config.codexTarget, name);
+    if (type === 'agents') {
+      try {
+        const configData = this._readCodexConfigToml();
+        const agentsTable = this._isPlainObject(configData.agents) ? configData.agents : {};
+        const fileName = path.basename(safeName, path.extname(safeName));
+
+        const existing = agentsTable[fileName];
+        if (!this._isPlainObject(existing)) {
+          return { success: true, message: 'Already removed' };
+        }
+
+        const existingConfigFile = this._normalizeCodexPath(existing.config_file);
+        if (existingConfigFile && this._isManagedCodexAgentConfigPath(existingConfigFile)) {
+          const resolvedPath = this._resolveCodexPath(existingConfigFile);
+          if (resolvedPath && fs.existsSync(resolvedPath)) {
+            fs.unlinkSync(resolvedPath);
+          }
+        }
+
+        delete agentsTable[fileName];
+        configData.agents = agentsTable;
+        this._writeCodexConfigToml(configData);
+        console.log(`[ConfigSyncManager] Removed ${type}/${name} from Codex (config.toml agents table)`);
+        return { success: true };
+      } catch (err) {
+        console.error(`[ConfigSyncManager] Remove from Codex failed:`, err.message);
+        return { success: false, error: err.message };
+      }
+    }
+
+    const targetPath = path.join(this.codexDir, config.codexTarget, safeName);
 
     if (!fs.existsSync(targetPath)) {
       console.log(`[ConfigSyncManager] Target not found (already removed): ${targetPath}`);
@@ -287,6 +383,83 @@ class ConfigSyncManager {
   }
 
   /**
+   * Sync a config item to Gemini CLI
+   * Currently only skills are supported
+   * @param {string} type - Config type
+   * @param {string} name - Item name
+   * @returns {Object} Result with success status
+   */
+  syncToGemini(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    if (!config.geminiSupported) {
+      console.log(`[ConfigSyncManager] ${type} not supported by Gemini, skipping`);
+      return { success: true, skipped: true, reason: 'Not supported by Gemini' };
+    }
+
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    if (!fs.existsSync(sourcePath)) {
+      console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
+      return { success: false, error: 'Source not found' };
+    }
+
+    try {
+      const targetPath = path.join(this.geminiDir, config.geminiTarget, safeName);
+      this._ensureDir(path.dirname(targetPath));
+      this._copyDirRecursive(sourcePath, targetPath);
+      console.log(`[ConfigSyncManager] Synced ${type}/${name} to Gemini (directory)`);
+      return { success: true, target: targetPath };
+    } catch (err) {
+      console.error(`[ConfigSyncManager] Sync to Gemini failed:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Remove a config item from Gemini CLI
+   * @param {string} type - Config type
+   * @param {string} name - Item name
+   * @returns {Object} Result with success status
+   */
+  removeFromGemini(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
+    if (!config.geminiSupported) {
+      return { success: true, skipped: true, reason: 'Not supported by Gemini' };
+    }
+
+    const targetPath = path.join(this.geminiDir, config.geminiTarget, safeName);
+    if (!fs.existsSync(targetPath)) {
+      console.log(`[ConfigSyncManager] Target not found (already removed): ${targetPath}`);
+      return { success: true, message: 'Already removed' };
+    }
+
+    try {
+      this._removeRecursive(targetPath);
+      console.log(`[ConfigSyncManager] Removed ${type}/${name} from Gemini (directory)`);
+      return { success: true };
+    } catch (err) {
+      console.error(`[ConfigSyncManager] Remove from Gemini failed:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Sync a config item to OpenCode CLI
    * Supports skills, commands, agents, plugins
    * @param {string} type - Config type
@@ -304,7 +477,11 @@ class ConfigSyncManager {
       return { success: true, skipped: true, reason: 'Not supported by OpenCode' };
     }
 
-    const sourcePath = path.join(this.ccToolConfigs, type, name);
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
     if (!fs.existsSync(sourcePath)) {
       console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
       return { success: false, error: 'Source not found' };
@@ -312,7 +489,7 @@ class ConfigSyncManager {
 
     try {
       const targetBaseDir = this._getOpenCodeTypeBaseDir(config);
-      const targetPath = path.join(targetBaseDir, name);
+      const targetPath = path.join(targetBaseDir, safeName);
 
       if (config.isDirectory) {
         this._ensureDir(path.dirname(targetPath));
@@ -343,12 +520,17 @@ class ConfigSyncManager {
       return { success: false, error: `Unknown config type: ${type}` };
     }
 
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
     if (!config.opencodeSupported) {
       return { success: true, skipped: true, reason: 'Not supported by OpenCode' };
     }
 
     const targetBaseDir = this._getOpenCodeTypeBaseDir(config);
-    const targetPath = path.join(targetBaseDir, name);
+    const targetPath = path.join(targetBaseDir, safeName);
 
     if (!fs.existsSync(targetPath)) {
       console.log(`[ConfigSyncManager] Target not found (already removed): ${targetPath}`);
@@ -375,7 +557,7 @@ class ConfigSyncManager {
   /**
    * Batch sync based on registry data
    * @param {string} type - Config type
-   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, opencode } } }
+   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode } } }
    * @returns {Object} Results summary
    */
   syncAll(type, registryItems) {
@@ -430,6 +612,20 @@ class ConfigSyncManager {
           }
         }
 
+        if (platforms.gemini) {
+          const result = this.syncToGemini(type, name);
+          if (result.success && !result.skipped) {
+            results.synced.push({ type, name, platform: 'gemini' });
+          } else if (!result.success) {
+            results.errors.push({ type, name, platform: 'gemini', error: result.error });
+          }
+        } else {
+          const result = this.removeFromGemini(type, name);
+          if (result.success && !result.message && !result.skipped) {
+            results.removed.push({ type, name, platform: 'gemini' });
+          }
+        }
+
         if (platforms.opencode) {
           const result = this.syncToOpenCode(type, name);
           if (result.success && !result.skipped) {
@@ -453,6 +649,11 @@ class ConfigSyncManager {
         const codexResult = this.removeFromCodex(type, name);
         if (codexResult.success && !codexResult.message && !codexResult.skipped) {
           results.removed.push({ type, name, platform: 'codex' });
+        }
+
+        const geminiResult = this.removeFromGemini(type, name);
+        if (geminiResult.success && !geminiResult.message && !geminiResult.skipped) {
+          results.removed.push({ type, name, platform: 'gemini' });
         }
 
         const opencodeResult = this.removeFromOpenCode(type, name);
@@ -597,6 +798,136 @@ class ConfigSyncManager {
       // Ignore errors (directory might not exist or permission issues)
     }
   }
+
+  _normalizeSafeRelativeName(name) {
+    const raw = String(name || '').replace(/\\/g, '/').trim();
+    if (!raw || raw.includes('\0')) {
+      return null;
+    }
+
+    const normalized = path.posix.normalize(raw).replace(/^(\.\/)+/, '');
+    if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
+      return null;
+    }
+
+    if (path.isAbsolute(raw) || raw.startsWith('/')) {
+      return null;
+    }
+
+    return normalized;
+  }
+
+  _parseFrontmatter(content) {
+    const result = {
+      frontmatter: {},
+      body: content
+    };
+
+    const normalized = content.trim().replace(/^\uFEFF/, '');
+    const match = normalized.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+    if (!match) {
+      return result;
+    }
+
+    const frontmatterText = match[1];
+    result.body = match[2].trim();
+
+    for (const line of frontmatterText.split('\n')) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex === -1) continue;
+      const key = line.slice(0, colonIndex).trim();
+      let value = line.slice(colonIndex + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      result.frontmatter[key] = value;
+    }
+
+    return result;
+  }
+
+  _isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  _normalizeCodexPath(configPath) {
+    return typeof configPath === 'string' ? configPath.trim() : '';
+  }
+
+  _resolveCodexPath(configPath) {
+    const normalized = this._normalizeCodexPath(configPath);
+    if (!normalized) return '';
+
+    if (normalized.startsWith('~/')) {
+      return path.join(HOME, normalized.slice(2));
+    }
+
+    if (path.isAbsolute(normalized)) {
+      return normalized;
+    }
+
+    return path.resolve(path.dirname(CODEX_CONFIG_PATH), normalized);
+  }
+
+  _isManagedCodexAgentConfigPath(configPath) {
+    const resolved = this._resolveCodexPath(configPath);
+    if (!resolved) return false;
+
+    const managedRoot = path.resolve(this._getCodexManagedAgentConfigDir()) + path.sep;
+    return resolved.startsWith(managedRoot) || resolved === path.resolve(this._getCodexManagedAgentConfigDir());
+  }
+
+  _getCodexManagedAgentConfigDir() {
+    return path.join(this.codexDir, 'agents');
+  }
+
+  _getCodexManagedAgentConfigPath(fileName) {
+    return path.join(this._getCodexManagedAgentConfigDir(), `${fileName}.toml`);
+  }
+
+  _writeCodexAgentConfigFile(configPath, data) {
+    const resolved = this._resolveCodexPath(configPath);
+    this._ensureDir(path.dirname(resolved));
+    const tempPath = `${resolved}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tempPath, tomlStringify(data), 'utf-8');
+    fs.renameSync(tempPath, resolved);
+  }
+
+  _readCodexAgentConfigFile(configPath) {
+    const resolved = this._resolveCodexPath(configPath);
+    if (!resolved || !fs.existsSync(resolved)) {
+      return null;
+    }
+
+    try {
+      const content = fs.readFileSync(resolved, 'utf-8');
+      return {
+        content,
+        data: toml.parse(content)
+      };
+    } catch (err) {
+      return {
+        content: fs.readFileSync(resolved, 'utf-8'),
+        data: null
+      };
+    }
+  }
+
+  _readCodexConfigToml() {
+    if (!fs.existsSync(CODEX_CONFIG_PATH)) {
+      return {};
+    }
+    const content = fs.readFileSync(CODEX_CONFIG_PATH, 'utf-8');
+    return toml.parse(content);
+  }
+
+  _writeCodexConfigToml(config) {
+    this._ensureDir(path.dirname(CODEX_CONFIG_PATH));
+    const tempPath = `${CODEX_CONFIG_PATH}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tempPath, tomlStringify(config), 'utf-8');
+    fs.renameSync(tempPath, CODEX_CONFIG_PATH);
+  }
 }
 
 module.exports = {
@@ -605,5 +936,6 @@ module.exports = {
   CC_TOOL_CONFIGS,
   CLAUDE_CODE_DIR,
   CODEX_DIR,
+  GEMINI_DIR,
   OPENCODE_DIR
 };

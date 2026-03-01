@@ -18,7 +18,6 @@
           :hide-delete="true"
           @set-alias="handleSetAlias"
           @launch="handleLaunchSession"
-          @launch-web="handleLaunchWebSession"
         />
       </div>
 
@@ -37,7 +36,6 @@
 
 <script setup>
 import { ref, computed, watch, h } from 'vue'
-import { useRouter } from 'vue-router'
 import { NDrawer, NDrawerContent, NSpin, NEmpty, NIcon, NInput } from 'naive-ui'
 import { ChatbubblesOutline } from '@vicons/ionicons5'
 import SessionCard from './SessionCard.vue'
@@ -45,7 +43,7 @@ import {
   getRecentSessions,
   setAlias as setAliasApi,
   deleteAlias as deleteAliasApi,
-  launchTerminal
+  copySessionLaunchCommand
 } from '../api/sessions'
 import message, { dialog } from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
@@ -65,7 +63,6 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible'])
 
-const router = useRouter()
 const show = ref(false)
 const sessions = ref([])
 const loading = ref(false)
@@ -163,27 +160,15 @@ async function handleSetAlias(session) {
 
 async function handleLaunchSession(session) {
   try {
-    await launchTerminal(session.projectName, session.sessionId, props.channel)
-    message.success('已启动终端')
-  } catch (err) {
-    message.error('启动失败: ' + err.message)
-  }
-}
-
-function handleLaunchWebSession(session) {
-  const channel = props.channel
-  router.push({
-    name: 'terminal-session',
-    params: {
-      channel,
-      projectName: encodeURIComponent(session.projectName),
-      sessionId: session.sessionId
-    },
-    query: {
-      cwd: session.projectFullPath || undefined,
-      openTs: Date.now().toString()
+    const { copyResult } = await copySessionLaunchCommand(session.projectName, session.sessionId, props.channel)
+    if (copyResult?.method === 'manual') {
+      message.warning('自动复制失败，已弹出手动复制框')
+      return
     }
-  })
+    message.success('启动命令已复制到剪贴板')
+  } catch (err) {
+    message.error('复制失败: ' + err.message)
+  }
 }
 </script>
 

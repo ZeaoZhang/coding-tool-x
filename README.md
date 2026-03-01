@@ -46,6 +46,8 @@
 npm install -g coding-tool-x
 ```
 
+> 包名为 `coding-tool-x`（无 npm 作用域）。
+
 ### 从源码构建
 
 ```bash

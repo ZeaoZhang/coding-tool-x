@@ -38,9 +38,6 @@
     <div class="stats-bar">
       <span class="stats-text">
         共 {{ templates.length }} 个模版
-        <template v-if="templates.length > 0">
-          · 内置: {{ builtinCount }} · 自定义: {{ templates.length - builtinCount }}
-        </template>
       </span>
     </div>
 
@@ -49,7 +46,6 @@
       <n-input v-model:value="searchQuery" placeholder="搜索模版..." clearable size="small" class="search-input">
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
-      <n-select v-model:value="filterType" :options="filterOptions" size="small" class="filter-select" />
       <n-select v-model:value="filterCliType" :options="cliTypeFilterOptions" size="small" class="filter-select" />
     </div>
 
@@ -118,7 +114,6 @@ const loading = ref(false)
 const templates = ref([])
 const availableConfigs = ref({})
 const searchQuery = ref('')
-const filterType = ref('all')
 const filterCliType = ref('')
 
 const cliTypeFilterOptions = [
@@ -138,18 +133,8 @@ const editingTemplate = ref(null)
 const applyingTemplate = ref(null)
 const previewTemplate = ref(null)
 
-const filterOptions = [
-  { label: '全部', value: 'all' },
-  { label: '内置', value: 'builtin' },
-  { label: '自定义', value: 'custom' }
-]
-
-const builtinCount = computed(() => templates.value.filter(t => t.isBuiltin).length)
-
 const filteredTemplates = computed(() => {
   let result = templates.value
-  if (filterType.value === 'builtin') result = result.filter(t => t.isBuiltin)
-  else if (filterType.value === 'custom') result = result.filter(t => !t.isBuiltin)
   if (filterCliType.value) result = result.filter(t => t.cliType === filterCliType.value)
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
@@ -217,7 +202,7 @@ function handleFormSuccess() {
 
 function handleApplySuccess() {
   showApplyModal.value = false
-  message.success('模版应用成功')
+  loadData()
 }
 
 onMounted(() => loadData())

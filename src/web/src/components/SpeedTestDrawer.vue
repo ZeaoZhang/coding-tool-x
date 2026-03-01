@@ -164,8 +164,7 @@ import { SpeedometerOutline, PlayOutline, TimeOutline, AlertCircleOutline } from
 import {
   testAllClaudeChannelsSpeed,
   testAllCodexChannelsSpeed,
-  testAllGeminiChannelsSpeed,
-  testAllOpenCodeChannelsSpeed
+  testAllGeminiChannelsSpeed
 } from '../api/channels'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
@@ -202,8 +201,7 @@ const channelOptions = [
   { label: '全部渠道', value: 'all' },
   { label: 'Claude', value: 'claude' },
   { label: 'Codex', value: 'codex' },
-  { label: 'Gemini', value: 'gemini' },
-  { label: 'OpenCode', value: 'opencode' }
+  { label: 'Gemini', value: 'gemini' }
 ]
 
 // 从缓存加载结果
@@ -256,9 +254,6 @@ async function runAllTests() {
   }
   if (selectedChannel.value === 'all' || selectedChannel.value === 'gemini') {
     testFunctions.push({ type: 'gemini', fn: testAllGeminiChannelsSpeed })
-  }
-  if (selectedChannel.value === 'all' || selectedChannel.value === 'opencode') {
-    testFunctions.push({ type: 'opencode', fn: testAllOpenCodeChannelsSpeed })
   }
 
   let allResults = []
@@ -370,7 +365,6 @@ function getChannelTypeLabel(type) {
     case 'claude': return 'Claude'
     case 'codex': return 'Codex'
     case 'gemini': return 'Gemini'
-    case 'opencode': return 'OpenCode'
     default: return type?.toUpperCase() || ''
   }
 }
@@ -381,7 +375,6 @@ function getChannelTypeClass(type) {
     case 'claude': return 'type-claude'
     case 'codex': return 'type-codex'
     case 'gemini': return 'type-gemini'
-    case 'opencode': return 'type-opencode'
     default: return ''
   }
 }
@@ -389,7 +382,7 @@ function getChannelTypeClass(type) {
 // 清理渠道名称（移除类型前缀）
 function getCleanChannelName(name) {
   if (!name) return ''
-  return name.replace(/^\[(CLAUDE|CODEX|GEMINI|OPENCODE)\]\s*/i, '')
+  return name.replace(/^\[(CLAUDE|CODEX|GEMINI)\]\s*/i, '')
 }
 
 // 抽屉打开时加载缓存
@@ -608,11 +601,6 @@ watch(() => props.visible, (val) => {
 
 .channel-type-badge.type-gemini {
   background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
-  color: white;
-}
-
-.channel-type-badge.type-opencode {
-  background: linear-gradient(135deg, #ea580c 0%, #f97316 100%);
   color: white;
 }
 

@@ -53,10 +53,6 @@
             <n-icon size="20"><TerminalOutline /></n-icon>
             <span>{{ template.commands.length }} Commands</span>
           </div>
-          <div class="stat-item" v-if="template.rules?.length">
-            <n-icon size="20"><ShieldCheckmarkOutline /></n-icon>
-            <span>{{ template.rules.length }} Rules</span>
-          </div>
           <div class="stat-item" v-if="template.mcpServers?.length">
             <n-icon size="20"><ServerOutline /></n-icon>
             <span>{{ template.mcpServers.length }} MCP Servers</span>
@@ -108,13 +104,6 @@
             </div>
           </div>
         </n-collapse-item>
-        <n-collapse-item title="Rules 列表" name="rules" v-if="template.rules?.length">
-          <div class="list-items">
-            <div v-for="(item, idx) in template.rules" :key="idx" class="list-item">
-              {{ item.name || item }}
-            </div>
-          </div>
-        </n-collapse-item>
         <n-collapse-item title="MCP Servers" name="mcpServers" v-if="template.mcpServers?.length">
           <div class="list-items">
             <div v-for="(item, idx) in template.mcpServers" :key="idx" class="list-item">
@@ -143,7 +132,6 @@ import {
   ExtensionPuzzleOutline,
   PeopleOutline,
   TerminalOutline,
-  ShieldCheckmarkOutline,
   ServerOutline
 } from '@vicons/ionicons5'
 
@@ -162,31 +150,41 @@ const AI_CONFIG_INFO = {
   opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
 }
 
-// 检查是否有新的 aiConfigs 结构
-const hasAiConfigs = computed(() => {
-  const aiConfigs = props.template?.aiConfigs
-  if (!aiConfigs) return false
-  return Object.values(aiConfigs).some(cfg => cfg?.enabled && cfg?.content)
-})
-
-// 获取启用的 AI 配置列表
+// 获取启用的 AI 配置列表（优先展示当前 CLI 对应配置）
 const enabledAiConfigs = computed(() => {
   const aiConfigs = props.template?.aiConfigs
   if (!aiConfigs) return []
 
-  return Object.entries(aiConfigs)
+  const allEnabled = Object.entries(aiConfigs)
     .filter(([, cfg]) => cfg?.enabled && cfg?.content)
     .map(([key, cfg]) => ({
       ...AI_CONFIG_INFO[key],
       content: cfg.content
     }))
+    .filter(item => item.key)
+
+  const cliType = props.template?.cliType
+  if (cliType && cliType !== 'all') {
+    const preferred = aiConfigs[cliType]
+    if (preferred?.enabled && preferred?.content && AI_CONFIG_INFO[cliType]) {
+      return [{
+        ...AI_CONFIG_INFO[cliType],
+        content: preferred.content
+      }]
+    }
+  }
+
+  return allEnabled
 })
+
+// 检查是否有新的 aiConfigs 结构
+const hasAiConfigs = computed(() => enabledAiConfigs.value.length > 0)
 
 const hasDetails = computed(() => {
   const t = props.template
   if (!t) return false
   return hasAiConfigs.value || t.claudeMd?.content || t.skills?.length || t.agents?.length ||
-         t.commands?.length || t.rules?.length || t.mcpServers?.length
+         t.commands?.length || t.mcpServers?.length
 })
 
 const CLI_TYPE_MAP = {

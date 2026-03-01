@@ -56,11 +56,6 @@
             <template #header-extra><n-tag size="small">已选 {{ formData.commands.length }}</n-tag></template>
             <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Commands" target-title="已选 Commands" />
           </n-card>
-          <!-- Rules -->
-          <n-card title="Rules" size="small" style="margin-bottom: 16px">
-            <template #header-extra><n-tag size="small">已选 {{ formData.rules.length }}</n-tag></template>
-            <n-transfer v-model:value="selectedRuleFileNames" :options="ruleOptions" source-title="可用 Rules" target-title="已选 Rules" />
-          </n-card>
           <!-- MCP Servers -->
           <n-card title="MCP Servers" size="small">
             <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
@@ -87,6 +82,16 @@
             <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
             <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
           </n-card>
+          <!-- Agents -->
+          <n-card title="Agents" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.agents.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedAgentFileNames" :options="agentOptions" source-title="可用 Agents" target-title="已选 Agents" />
+          </n-card>
+          <!-- Commands -->
+          <n-card title="Commands" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.commands.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Commands" target-title="已选 Commands" />
+          </n-card>
           <!-- MCP Servers -->
           <n-card title="MCP Servers" size="small">
             <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
@@ -107,6 +112,11 @@
             <n-collapse-transition :show="formData.aiConfigs.gemini.enabled">
               <MarkdownEditor v-model="formData.aiConfigs.gemini.content" :rows="10" :min-height="220" placeholder="输入 GEMINI.md 内容" />
             </n-collapse-transition>
+          </n-card>
+          <!-- Skills -->
+          <n-card title="Skills" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
           </n-card>
           <!-- MCP Servers -->
           <n-card title="MCP Servers" size="small">
@@ -169,7 +179,7 @@ import { ref, computed, watch } from 'vue'
 import {
   NModal, NScrollbar, NForm, NFormItem, NInput, NCard, NSwitch,
   NCollapseTransition, NTransfer, NTag, NSpace, NButton,
-  NIcon, NText, NSelect, NEmpty,
+  NText, NSelect, NEmpty,
   useMessage
 } from 'naive-ui'
 import { createTemplate, updateTemplate } from '@/api/config-templates'
@@ -198,7 +208,14 @@ const CLI_TYPE_OPTIONS = [
   { label: 'OpenCode', value: 'opencode' }
 ]
 
-const isEdit = computed(() => !!props.template?.id && !props.template?.isBuiltin)
+const CLI_CAPABILITIES = {
+  claude: { skills: true, agents: true, commands: true },
+  codex: { skills: true, agents: true, commands: true },
+  gemini: { skills: true, agents: false, commands: false },
+  opencode: { skills: true, agents: true, commands: true }
+}
+
+const isEdit = computed(() => !!props.template?.id)
 
 // 表单数据
 const formData = ref(getDefaultFormData())
@@ -218,7 +235,6 @@ function getDefaultFormData() {
     skills: [],
     agents: [],
     commands: [],
-    rules: [],
     mcpServers: []
   }
 }
@@ -253,15 +269,6 @@ const commandOptions = computed(() => {
   return commands.map(c => ({
     value: c.namespace ? `${c.namespace}/${c.name}` : c.name,
     label: c.namespace ? `${c.namespace}/${c.name}` : c.name,
-    disabled: false
-  }))
-})
-
-const ruleOptions = computed(() => {
-  const rules = props.availableConfigs?.rules || []
-  return rules.map(r => ({
-    value: r.directory ? `${r.directory}/${r.fileName}` : r.fileName,
-    label: r.directory ? `${r.directory}/${r.fileName}` : r.fileName,
     disabled: false
   }))
 })
@@ -314,17 +321,6 @@ const selectedCommandNames = computed({
   }
 })
 
-const selectedRuleFileNames = computed({
-  get: () => formData.value.rules.map(r => r.directory ? `${r.directory}/${r.fileName}` : r.fileName),
-  set: (names) => {
-    const rules = props.availableConfigs?.rules || []
-    formData.value.rules = names.map(n => {
-      const found = rules.find(r => (r.directory ? `${r.directory}/${r.fileName}` : r.fileName) === n)
-      return found ? { ...found } : { fileName: n }
-    })
-  }
-})
-
 // 监听 show 和 template 变化
 watch(() => props.show, (newVal) => {
   if (newVal) {
@@ -355,12 +351,26 @@ watch(() => props.show, (newVal) => {
         skills: props.template.skills ? [...props.template.skills] : [],
         agents: props.template.agents ? [...props.template.agents] : [],
         commands: props.template.commands ? [...props.template.commands] : [],
-        rules: props.template.rules ? [...props.template.rules] : [],
         mcpServers: props.template.mcpServers ? [...props.template.mcpServers] : []
       }
     } else {
       formData.value = getDefaultFormData()
     }
+  }
+})
+
+watch(() => formData.value.cliType, (cliType) => {
+  const capability = CLI_CAPABILITIES[cliType]
+  if (!capability) return
+
+  if (!capability.skills) {
+    formData.value.skills = []
+  }
+  if (!capability.agents) {
+    formData.value.agents = []
+  }
+  if (!capability.commands) {
+    formData.value.commands = []
   }
 })
 

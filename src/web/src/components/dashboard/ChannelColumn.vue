@@ -60,8 +60,8 @@
         </div>
       </n-popover>
 
-      <!-- Skills 区域 (仅 Claude) -->
-      <div v-if="channelType === 'claude'" class="claude-extra-area">
+      <!-- Skills 区域 (Claude / Codex / Gemini / OpenCode) -->
+      <div v-if="['claude', 'codex', 'gemini', 'opencode'].includes(channelType)" class="claude-extra-area">
         <!-- Skills 状态 -->
         <n-popover v-if="installedSkillsCount > 0" trigger="click" placement="bottom" :width="340" class="skills-popover">
           <template #trigger>
@@ -681,7 +681,7 @@ function animateValue(key, startValue, endValue, duration = 600) {
 // 最新对话抽屉
 const showRecentSessions = ref(false)
 
-// Skills 面板（仅 Claude）
+// Skills 面板
 const installedSkillsCount = ref(0)
 const installedSkills = ref([])
 
@@ -697,7 +697,7 @@ const platformLabel = computed(() => {
 
 // 加载已安装技能
 async function loadInstalledSkills() {
-  if (!['claude', 'codex', 'opencode'].includes(props.channelType)) return
+  if (!['claude', 'codex', 'gemini', 'opencode'].includes(props.channelType)) return
   try {
     const result = await getSkills(false, props.channelType)
     if (result.success && result.skills) {

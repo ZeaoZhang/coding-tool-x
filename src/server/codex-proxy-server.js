@@ -12,6 +12,7 @@ const { recordRequest: recordCodexRequest } = require('./services/codex-statisti
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { createDecodedStream } = require('./services/response-decoder');
 const { getEnabledChannels, writeCodexConfigForMultiChannel, getEffectiveApiKey } = require('./services/codex-channels');
+const { persistProxyRequestSnapshot } = require('./services/request-logger');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -277,6 +278,20 @@ async function startCodexProxyServer(options = {}) {
           });
         }
         req.effectiveApiKey = effectiveKey;
+
+        // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
+        persistProxyRequestSnapshot('codex', {
+          timestamp: Date.now(),
+          source: 'codex',
+          channel: channel.name,
+          request: {
+            method: req.method,
+            url: req.url,
+            path: req.path,
+            headers: req.headers,
+            body: req.body || null
+          }
+        });
 
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {
