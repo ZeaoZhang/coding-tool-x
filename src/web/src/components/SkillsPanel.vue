@@ -127,7 +127,8 @@ import SkillDetailModal from './SkillDetailModal.vue'
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
   hideBack: { type: Boolean, default: false },
-  drawerVisible: { type: Boolean, default: false }
+  drawerVisible: { type: Boolean, default: false },
+  platform: { type: String, default: '' }
 })
 
 defineEmits(['back', 'updated'])
@@ -150,6 +151,9 @@ const importing = ref(false)
 const loadRequestId = ref(0)
 
 const currentPlatform = computed(() => {
+  if (props.platform && ['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+    return props.platform
+  }
   const channel = route.meta.channel
   if (channel === 'codex' || channel === 'gemini' || channel === 'opencode') return channel
   return 'claude'

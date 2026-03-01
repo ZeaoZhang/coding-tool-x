@@ -9,7 +9,7 @@
       <template #header>
         <div class="drawer-header">技能管理</div>
       </template>
-      <SkillsPanel :in-drawer="true" :hide-back="true" :drawer-visible="visible" @back="visible = false" />
+      <SkillsPanel :in-drawer="true" :hide-back="true" :drawer-visible="visible" :platform="props.platform" @back="visible = false" />
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -21,7 +21,8 @@ import SkillsPanel from './SkillsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
-  visible: { type: Boolean, default: false }
+  visible: { type: Boolean, default: false },
+  platform: { type: String, default: '' }
 })
 
 const emit = defineEmits(['update:visible'])

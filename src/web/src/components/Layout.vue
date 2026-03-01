@@ -266,7 +266,7 @@
     <ConfigExportDrawer v-model:visible="showConfigExportDrawer" />
 
     <!-- Skills/Commands/Agents Drawers -->
-    <SkillsDrawer v-model:visible="showSkillsDrawer" />
+    <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" />
     <CommandsDrawer v-model:visible="showCommandsDrawer" />
     <AgentsDrawer v-model:visible="showAgentsDrawer" />
     <PluginsDrawer v-model:visible="showPluginsDrawer" />
@@ -523,6 +523,7 @@ const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
 const showConfigExportDrawer = ref(false)
 const showSkillsDrawer = ref(false)
+const skillsDrawerPlatform = ref('')
 const showCommandsDrawer = ref(false)
 const showAgentsDrawer = ref(false)
 const showPluginsDrawer = ref(false)
@@ -704,7 +705,8 @@ onUnmounted(() => {
   window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 })
 
-function openSkillsDrawer() {
+function openSkillsDrawer(event) {
+  skillsDrawerPlatform.value = event?.detail?.platform || ''
   showSkillsDrawer.value = true
 }
 
