@@ -149,7 +149,8 @@ const recommendedRepos = computed(() => {
   }
   if (props.platform === 'opencode') {
     return [
-      { owner: 'sst', name: 'opencode', description: 'OpenCode 官方示例', branch: 'dev', directory: '.opencode/skill' }
+      { owner: 'darrenhinde', name: 'OpenAgentsControl', description: 'OpenCode 技能库 (skill)', branch: 'main', directory: '.opencode/skill' },
+      { owner: 'darrenhinde', name: 'OpenAgentsControl', description: 'OpenCode 技能库 (skills)', branch: 'main', directory: '.opencode/skills' }
     ]
   }
   if (props.platform === 'gemini') {
