@@ -109,6 +109,7 @@
                 filterable
                 clearable
                 tag
+                @focus="handleModelDropdownFocus"
               />
               <!-- 测速模型选择器 (支持手动输入) -->
               <n-auto-complete
@@ -119,6 +120,7 @@
                 :loading="state.formData.modelsFetching"
                 :get-show="() => true"
                 clearable
+                @focus="handleModelDropdownFocus"
                 @update:value="(val) => state.formData.speedTestModel = val"
               >
                 <template v-if="state.formData.modelsFetchError" #empty>
@@ -141,6 +143,7 @@
                 :loading="state.formData.modelsFetching"
                 :get-show="() => true"
                 clearable
+                @focus="handleModelDropdownFocus"
                 @update:value="(val) => state.formData.model = val"
               >
                 <template v-if="state.formData.modelsFetchError" #empty>
@@ -255,6 +258,13 @@ watch(() => state.showDialog, async (newVal) => {
   }
 })
 
+// 点击模型下拉时触发获取，强制刷新不使用缓存
+async function handleModelDropdownFocus() {
+  if (config.fetchModelsForChannel) {
+    await handleFetchModels({ forceRefresh: true })
+  }
+}
+
 // 预设选项
 const presetOptions = computed(() => {
   if (!config.presets) return []
@@ -292,9 +302,9 @@ async function handlePresetChange(presetId) {
 }
 
 // 获取模型列表
-async function handleFetchModels() {
+async function handleFetchModels({ forceRefresh = false } = {}) {
   if (config.fetchModelsForChannel) {
-    await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData)
+    await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData, { forceRefresh })
   }
 }
 

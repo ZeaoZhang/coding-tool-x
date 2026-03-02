@@ -38,7 +38,18 @@
               </n-space>
             </div>
             <n-collapse-transition :show="formData.aiConfigs.claude.enabled">
-              <MarkdownEditor v-model="formData.aiConfigs.claude.content" :rows="10" :min-height="220" placeholder="输入 CLAUDE.md 内容" />
+              <n-select
+                v-model:value="selectedPromptId"
+                :options="promptOptions"
+                placeholder="选择 Prompt 预设作为 CLAUDE.md 内容"
+                clearable
+                style="margin-bottom: 10px"
+                @update:value="handlePromptSelect"
+              />
+              <div v-if="formData.aiConfigs.claude.content" class="prompt-preview">
+                <MarkdownViewer :content="formData.aiConfigs.claude.content" />
+              </div>
+              <n-empty v-else description="可选择 Prompt 预设，或留空" style="padding: 24px 0" />
             </n-collapse-transition>
           </n-card>
           <!-- Skills -->
@@ -184,6 +195,7 @@ import {
 } from 'naive-ui'
 import { createTemplate, updateTemplate } from '@/api/config-templates'
 import MarkdownEditor from './MarkdownEditor.vue'
+import MarkdownViewer from './MarkdownViewer.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -247,7 +259,9 @@ const formRules = {
 
 // Transfer 选项
 const skillOptions = computed(() => {
-  const skills = props.availableConfigs?.skills || []
+  const platform = formData.value.cliType
+  const skillsByPlatform = props.availableConfigs?.skillsByPlatform || {}
+  const skills = (platform && skillsByPlatform[platform]) ? skillsByPlatform[platform] : []
   return skills.map(s => ({
     value: s.directory,
     label: s.name ? `${s.name} (${s.directory})` : s.directory,
@@ -288,10 +302,23 @@ const mcpOptions = computed(() => {
   })
 })
 
+const selectedPromptId = ref(null)
+
+const promptOptions = computed(() => {
+  const prompts = props.availableConfigs?.prompts || []
+  return prompts.map(p => ({
+    value: p.id,
+    label: p.isBuiltin ? `[内置] ${p.name}` : p.name,
+    description: p.description
+  }))
+})
+
 const selectedSkillDirectories = computed({
   get: () => formData.value.skills.map(s => s.directory),
   set: (directories) => {
-    const skills = props.availableConfigs?.skills || []
+    const platform = formData.value.cliType
+    const skillsByPlatform = props.availableConfigs?.skillsByPlatform || {}
+    const skills = (platform && skillsByPlatform[platform]) ? skillsByPlatform[platform] : []
     formData.value.skills = directories.map(dir => {
       const found = skills.find(s => s.directory === dir)
       return found ? { ...found } : { directory: dir, name: dir }
@@ -321,9 +348,23 @@ const selectedCommandNames = computed({
   }
 })
 
+function handlePromptSelect(promptId) {
+  if (!promptId) {
+    formData.value.aiConfigs.claude.content = ''
+    return
+  }
+  const prompts = props.availableConfigs?.prompts || []
+  const prompt = prompts.find(p => p.id === promptId)
+  if (prompt) {
+    formData.value.aiConfigs.claude.enabled = true
+    formData.value.aiConfigs.claude.content = prompt.content
+  }
+}
+
 // 监听 show 和 template 变化
 watch(() => props.show, (newVal) => {
   if (newVal) {
+    selectedPromptId.value = null
     if (props.template) {
       let aiConfigs = {
         claude: { enabled: false, content: '' },
@@ -408,5 +449,13 @@ async function handleSave() {
 <style scoped>
 .ai-config-header {
   margin-bottom: 12px;
+}
+.prompt-preview {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border: 1px solid #e0e0e6;
+  border-radius: 6px;
+  background: #fafafa;
 }
 </style>

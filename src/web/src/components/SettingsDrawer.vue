@@ -725,33 +725,30 @@
                   </div>
                 </div>
 
-                <!-- 搜索和筛选 -->
-                <div class="setting-item" style="margin-bottom: 12px;">
+                <!-- 搜索 + 筛选 + 新增工具栏 -->
+                <div class="model-toolbar">
                   <n-input
                     v-model:value="modelMetaSearch"
                     placeholder="搜索模型 ID..."
                     clearable
                     size="small"
+                    style="flex: 1; min-width: 0;"
                   />
+                  <n-button size="small" type="primary" @click="openAddModelMetaModal">
+                    <template #icon>
+                      <n-icon><AddOutline /></n-icon>
+                    </template>
+                    新增
+                  </n-button>
                 </div>
-
-                <!-- 分类筛选 -->
-                <div class="setting-item" style="margin-bottom: 16px;">
-                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                    <n-radio-group v-model:value="modelMetaFilter" size="small">
-                      <n-radio value="all">全部</n-radio>
-                      <n-radio value="claude">Claude</n-radio>
-                      <n-radio value="openai">OpenAI</n-radio>
-                      <n-radio value="gemini">Gemini</n-radio>
-                      <n-radio value="overrides">自定义</n-radio>
-                    </n-radio-group>
-                    <n-button size="small" type="primary" @click="openAddModelMetaModal">
-                      <template #icon>
-                        <n-icon><AddOutline /></n-icon>
-                      </template>
-                      新增
-                    </n-button>
-                  </div>
+                <div class="model-filter-row">
+                  <n-radio-group v-model:value="modelMetaFilter" size="small">
+                    <n-radio value="all">全部</n-radio>
+                    <n-radio value="claude">Claude</n-radio>
+                    <n-radio value="openai">OpenAI</n-radio>
+                    <n-radio value="gemini">Gemini</n-radio>
+                    <n-radio value="overrides">自定义</n-radio>
+                  </n-radio-group>
                 </div>
 
                 <div v-if="filteredModelMeta.length === 0" class="setting-item">
@@ -759,26 +756,26 @@
                 </div>
 
                 <!-- 模型列表 -->
-                <n-collapse v-else>
-                  <n-collapse-item
+                <div v-else class="model-list">
+                  <div
                     v-for="modelId in filteredModelMeta"
                     :key="modelId"
-                    :name="modelId"
+                    class="model-card"
+                    :class="{ expanded: expandedModels.has(modelId) }"
                   >
-                    <template #header>
-                      <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
-                        <n-text style="font-size: 13px; font-family: monospace;">{{ modelId }}</n-text>
-                        <n-tag v-if="modelMetaOverrides[modelId]" type="warning" size="tiny" :bordered="false">自定义</n-tag>
-                      </div>
-                    </template>
-                    <template #header-extra>
-                      <n-space :size="8">
+                    <div class="model-card-header" @click="toggleModelExpand(modelId)">
+                      <n-icon size="14" class="expand-icon">
+                        <ChevronForwardOutline />
+                      </n-icon>
+                      <span class="model-card-id">{{ modelId }}</span>
+                      <n-tag v-if="modelMetaOverrides[modelId]" type="warning" size="tiny" :bordered="false">自定义</n-tag>
+                      <div class="model-card-actions" @click.stop>
                         <n-button
                           v-if="modelMetaOverrides[modelId] && isBuiltInModel(modelId)"
                           size="tiny"
                           quaternary
                           type="warning"
-                          @click.stop="handleResetModelMeta(modelId)"
+                          @click="handleResetModelMeta(modelId)"
                         >
                           重置
                         </n-button>
@@ -787,106 +784,106 @@
                           size="tiny"
                           quaternary
                           type="error"
-                          @click.stop="handleDeleteModelMeta(modelId)"
+                          @click="handleDeleteModelMeta(modelId)"
                         >
                           删除
                         </n-button>
-                      </n-space>
-                    </template>
-
-                    <div class="model-meta-editor">
-                      <!-- Context Window -->
-                      <div class="model-meta-section">
-                        <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">上下文限制</n-text>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                          <div>
-                            <n-text depth="3" style="font-size: 11px;">Context 窗口 (tokens)</n-text>
-                            <n-input-number
-                              :value="getModelMetaField(modelId, 'limit', 'context')"
-                              @update:value="v => setModelMetaField(modelId, 'limit', 'context', v)"
-                              :min="1000"
-                              :step="1000"
-                              size="small"
-                              :show-button="false"
-                              style="width: 100%;"
-                            />
-                          </div>
-                          <div>
-                            <n-text depth="3" style="font-size: 11px;">Max Output (tokens)</n-text>
-                            <n-input-number
-                              :value="getModelMetaField(modelId, 'limit', 'output')"
-                              @update:value="v => setModelMetaField(modelId, 'limit', 'output', v)"
-                              :min="100"
-                              :step="1000"
-                              size="small"
-                              :show-button="false"
-                              style="width: 100%;"
-                            />
+                      </div>
+                    </div>
+                    <div v-if="expandedModels.has(modelId)" class="model-card-body">
+                      <div class="model-meta-editor">
+                        <!-- Context Window -->
+                        <div class="model-meta-section">
+                          <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">上下文限制</n-text>
+                          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                              <n-text depth="3" style="font-size: 11px;">Context 窗口 (tokens)</n-text>
+                              <n-input-number
+                                :value="getModelMetaField(modelId, 'limit', 'context')"
+                                @update:value="v => setModelMetaField(modelId, 'limit', 'context', v)"
+                                :min="1000"
+                                :step="1000"
+                                size="small"
+                                :show-button="false"
+                                style="width: 100%;"
+                              />
+                            </div>
+                            <div>
+                              <n-text depth="3" style="font-size: 11px;">Max Output (tokens)</n-text>
+                              <n-input-number
+                                :value="getModelMetaField(modelId, 'limit', 'output')"
+                                @update:value="v => setModelMetaField(modelId, 'limit', 'output', v)"
+                                :min="100"
+                                :step="1000"
+                                size="small"
+                                :show-button="false"
+                                style="width: 100%;"
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
-
-                      <!-- Pricing -->
-                      <div class="model-meta-section" style="margin-top: 12px;">
-                        <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">定价（USD / 百万 tokens）</n-text>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                          <div>
-                            <n-text depth="3" style="font-size: 11px;">输入价格</n-text>
-                            <n-input-number
-                              :value="getModelMetaField(modelId, 'pricing', 'input')"
-                              @update:value="v => setModelMetaField(modelId, 'pricing', 'input', v)"
-                              :min="0"
-                              :step="0.1"
-                              :precision="4"
-                              size="small"
-                              :show-button="false"
-                              style="width: 100%;"
-                            />
-                          </div>
-                          <div>
-                            <n-text depth="3" style="font-size: 11px;">输出价格</n-text>
-                            <n-input-number
-                              :value="getModelMetaField(modelId, 'pricing', 'output')"
-                              @update:value="v => setModelMetaField(modelId, 'pricing', 'output', v)"
-                              :min="0"
-                              :step="0.1"
-                              :precision="4"
-                              size="small"
-                              :show-button="false"
-                              style="width: 100%;"
-                            />
-                          </div>
-                          <div>
-                            <n-text depth="3" style="font-size: 11px;">缓存写入价格</n-text>
-                            <n-input-number
-                              :value="getModelMetaField(modelId, 'pricing', 'cacheCreation')"
-                              @update:value="v => setModelMetaField(modelId, 'pricing', 'cacheCreation', v)"
-                              :min="0"
-                              :step="0.1"
-                              :precision="4"
-                              size="small"
-                              :show-button="false"
-                              style="width: 100%;"
-                            />
-                          </div>
-                          <div>
-                            <n-text depth="3" style="font-size: 11px;">缓存读取价格</n-text>
-                            <n-input-number
-                              :value="getModelMetaField(modelId, 'pricing', 'cacheRead')"
-                              @update:value="v => setModelMetaField(modelId, 'pricing', 'cacheRead', v)"
-                              :min="0"
-                              :step="0.01"
-                              :precision="4"
-                              size="small"
-                              :show-button="false"
-                              style="width: 100%;"
-                            />
+                        <!-- Pricing -->
+                        <div class="model-meta-section" style="margin-top: 8px;">
+                          <n-text strong style="font-size: 12px; display: block; margin-bottom: 8px;">定价（USD / 百万 tokens）</n-text>
+                          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <div>
+                              <n-text depth="3" style="font-size: 11px;">输入价格</n-text>
+                              <n-input-number
+                                :value="getModelMetaField(modelId, 'pricing', 'input')"
+                                @update:value="v => setModelMetaField(modelId, 'pricing', 'input', v)"
+                                :min="0"
+                                :step="0.1"
+                                :precision="4"
+                                size="small"
+                                :show-button="false"
+                                style="width: 100%;"
+                              />
+                            </div>
+                            <div>
+                              <n-text depth="3" style="font-size: 11px;">输出价格</n-text>
+                              <n-input-number
+                                :value="getModelMetaField(modelId, 'pricing', 'output')"
+                                @update:value="v => setModelMetaField(modelId, 'pricing', 'output', v)"
+                                :min="0"
+                                :step="0.1"
+                                :precision="4"
+                                size="small"
+                                :show-button="false"
+                                style="width: 100%;"
+                              />
+                            </div>
+                            <div>
+                              <n-text depth="3" style="font-size: 11px;">缓存写入价格</n-text>
+                              <n-input-number
+                                :value="getModelMetaField(modelId, 'pricing', 'cacheCreation')"
+                                @update:value="v => setModelMetaField(modelId, 'pricing', 'cacheCreation', v)"
+                                :min="0"
+                                :step="0.1"
+                                :precision="4"
+                                size="small"
+                                :show-button="false"
+                                style="width: 100%;"
+                              />
+                            </div>
+                            <div>
+                              <n-text depth="3" style="font-size: 11px;">缓存读取价格</n-text>
+                              <n-input-number
+                                :value="getModelMetaField(modelId, 'pricing', 'cacheRead')"
+                                @update:value="v => setModelMetaField(modelId, 'pricing', 'cacheRead', v)"
+                                :min="0"
+                                :step="0.01"
+                                :precision="4"
+                                size="small"
+                                :show-button="false"
+                                style="width: 100%;"
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </n-collapse-item>
-                </n-collapse>
+                  </div>
+                </div>
               </n-spin>
             </div>
 
@@ -1053,7 +1050,7 @@ import {
   SettingsOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
   SunnyOutline, MoonOutline, NotificationsOutline,
-  SparklesOutline, ShieldCheckmarkOutline, AddOutline
+  SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline
 } from '@vicons/ionicons5'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { getSecurityStatus, verifySecurityPassword, setSecurityPassword } from '../api/security'
@@ -1212,6 +1209,17 @@ const speedTestToolRows = [
   { key: 'codex', label: 'Codex' },
   { key: 'gemini', label: 'Gemini CLI' }
 ]
+
+const expandedModels = ref(new Set())
+const toggleModelExpand = (modelId) => {
+  if (expandedModels.value.has(modelId)) {
+    expandedModels.value.delete(modelId)
+  } else {
+    expandedModels.value.add(modelId)
+  }
+  // trigger reactivity
+  expandedModels.value = new Set(expandedModels.value)
+}
 
 const modelMetaDirty = computed(() => Object.keys(modelMetaEdits.value).length > 0)
 const modelSettingsDirty = computed(() => {
@@ -2537,6 +2545,107 @@ watch(activeMenu, (newVal, oldVal) => {
 
 .speed-test-default-label {
   min-width: 0;
+}
+
+/* Model toolbar */
+.model-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.model-filter-row {
+  margin-bottom: 12px;
+}
+
+/* Model card list */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-card {
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.model-card:hover {
+  border-color: var(--border-hover, rgba(99, 179, 237, 0.4));
+}
+
+.model-card.expanded {
+  border-color: var(--primary-color, #63b3ed);
+}
+
+.model-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--bg-secondary, rgba(0,0,0,0.02));
+  transition: background 0.15s;
+}
+
+.model-card-header:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.04));
+}
+
+.expand-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform 0.2s;
+}
+
+.model-card.expanded .expand-icon {
+  transform: rotate(90deg);
+}
+
+.model-card-id {
+  flex: 1;
+  font-size: 12px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  color: var(--text-primary);
+}
+
+.model-card-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.model-card-body {
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+}
+
+[data-theme="dark"] .model-card {
+  border-color: rgba(148, 163, 184, 0.15);
+}
+
+[data-theme="dark"] .model-card:hover {
+  border-color: rgba(99, 179, 237, 0.3);
+}
+
+[data-theme="dark"] .model-card.expanded {
+  border-color: rgba(99, 179, 237, 0.5);
+}
+
+[data-theme="dark"] .model-card-header {
+  background: rgba(30, 41, 59, 0.4);
+}
+
+[data-theme="dark"] .model-card-header:hover {
+  background: rgba(30, 41, 59, 0.6);
+}
+
+[data-theme="dark"] .model-card-body {
+  border-color: rgba(148, 163, 184, 0.15);
 }
 
 @media (max-width: 768px) {

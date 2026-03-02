@@ -112,6 +112,7 @@ const logs = computed(() => {
     ...geminiLogs.value.map(normalizeLog)
   ]
   return merged
+    .filter(log => log.type !== 'action')
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
     .slice(0, logLimit.value)
 })

@@ -18,7 +18,7 @@ const { resolvePricing } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
-const { persistProxyRequestSnapshot } = require('./services/request-logger');
+const { persistProxyRequestSnapshot, loadClaudeRequestTemplate } = require('./services/request-logger');
 const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
 const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
 
@@ -279,69 +279,24 @@ function resolveClaudeAccountIdFromUserId(userId = '') {
 }
 
 function resolveClaudeAccountIdFromLogs() {
-  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
-  if (!fs.existsSync(logsPath)) return '';
-
   try {
-    const content = fs.readFileSync(logsPath, 'utf8');
-    const lines = content.trim().split('\n');
-    const accountIdCount = new Map();
-
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const line = lines[index].trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const userId = parsed?.request?.body?.metadata?.user_id;
-        const accountId = resolveClaudeAccountIdFromUserId(userId);
-        if (accountId) {
-          accountIdCount.set(accountId, (accountIdCount.get(accountId) || 0) + 1);
-        }
-      } catch {
-        // ignore malformed line
-      }
-    }
-
-    const ranked = Array.from(accountIdCount.entries())
-      .filter(([accountId]) => accountId !== '0'.repeat(64))
-      .sort((left, right) => right[1] - left[1]);
-
-    if (ranked.length > 0) {
-      return ranked[0][0];
-    }
+    const template = loadClaudeRequestTemplate();
+    const userId = normalizeSessionKeyValue(template?.userId || '');
+    const accountId = resolveClaudeAccountIdFromUserId(userId);
+    return (accountId && accountId !== '0'.repeat(64)) ? accountId : '';
   } catch {
-    // ignore read error
+    return '';
   }
-
-  return '';
 }
 
 function resolveClaudeUserIdFromLogs() {
-  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
-  if (!fs.existsSync(logsPath)) return '';
-
   try {
-    const content = fs.readFileSync(logsPath, 'utf8');
-    const lines = content.trim().split('\n');
-    const userIdCount = new Map();
-
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const line = lines[index].trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const userId = normalizeSessionKeyValue(parsed?.request?.body?.metadata?.user_id);
-        if (!CLAUDE_USER_ID_FULL_RE.test(userId)) continue;
-        const accountId = resolveClaudeAccountIdFromUserId(userId);
-        if (!accountId || accountId === '0'.repeat(64)) continue;
-        userIdCount.set(userId, (userIdCount.get(userId) || 0) + 1);
-      } catch {
-        // ignore malformed line
-      }
-    }
-
-    const ranked = Array.from(userIdCount.entries()).sort((left, right) => right[1] - left[1]);
-    return ranked.length > 0 ? ranked[0][0] : '';
+    const template = loadClaudeRequestTemplate();
+    const userId = normalizeSessionKeyValue(template?.userId || '');
+    if (!CLAUDE_USER_ID_FULL_RE.test(userId)) return '';
+    const accountId = resolveClaudeAccountIdFromUserId(userId);
+    if (!accountId || accountId === '0'.repeat(64)) return '';
+    return userId;
   } catch {
     return '';
   }
@@ -540,17 +495,6 @@ function buildClaudeBetaHeader(options = {}) {
   return betaFlags.join(',');
 }
 
-function buildDefaultClaudeCodeTools() {
-  return DEFAULT_CLAUDE_CODE_TOOL_NAMES.map(name => ({
-    name,
-    description: `${name} tool`,
-    input_schema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: true
-    }
-  }));
-}
 
 function hasExpectedClaudeToolSet(tools = []) {
   if (!Array.isArray(tools) || tools.length < DEFAULT_CLAUDE_CODE_TOOL_NAMES.length) {
@@ -582,52 +526,12 @@ function cloneJson(value) {
   }
 }
 
-function loadClaudeRequestTemplateFromLogs() {
-  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
-  if (!fs.existsSync(logsPath)) return null;
-
-  try {
-    const content = fs.readFileSync(logsPath, 'utf8');
-    const lines = content.trim().split('\n');
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const line = lines[index].trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const body = parsed?.request?.body;
-        if (!body || typeof body !== 'object') continue;
-
-        const userId = normalizeSessionKeyValue(body?.metadata?.user_id);
-        const accountId = resolveClaudeAccountIdFromUserId(userId);
-        if (!CLAUDE_USER_ID_FULL_RE.test(userId) || !accountId || accountId === '0'.repeat(64)) continue;
-
-        const tools = Array.isArray(body.tools) ? body.tools : [];
-        const system = Array.isArray(body.system) ? body.system : [];
-        if (!hasExpectedClaudeToolSet(tools)) continue;
-        if (extractClaudeSystemCharCount(system) < CLAUDE_TEMPLATE_SYSTEM_MIN_CHARS) continue;
-
-        return {
-          userId,
-          tools: cloneJson(tools),
-          system: cloneJson(system)
-        };
-      } catch {
-        // ignore malformed line
-      }
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
 function resolveClaudeRequestTemplate() {
   const now = Date.now();
   if (cachedClaudeRequestTemplate && now - cachedClaudeRequestTemplateAt < CLAUDE_TEMPLATE_CACHE_TTL_MS) {
     return cachedClaudeRequestTemplate;
   }
-  cachedClaudeRequestTemplate = loadClaudeRequestTemplateFromLogs();
+  cachedClaudeRequestTemplate = loadClaudeRequestTemplate();
   cachedClaudeRequestTemplateAt = now;
   return cachedClaudeRequestTemplate;
 }
@@ -1060,14 +964,10 @@ function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = 
 
   const template = resolveClaudeRequestTemplate();
 
-  converted.system = buildClaudeSystemBlocks(normalized.system, template?.system || []);
+  converted.system = buildClaudeSystemBlocks(normalized.system, template.system);
 
   const tools = normalizeOpenAiToolsToClaude(payload.tools || []);
-  if (tools.length > 0) {
-    converted.tools = tools;
-  } else {
-    converted.tools = template?.tools || buildDefaultClaudeCodeTools();
-  }
+  converted.tools = tools.length > 0 ? tools : template.tools;
 
   const toolChoice = normalizeToolChoiceToClaude(payload.tool_choice);
   if (toolChoice) {
@@ -1083,7 +983,7 @@ function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = 
   }
 
   // 某些 Claude relay 会校验 metadata.user_id 以识别 Claude Code 请求
-  converted.metadata = normalizeClaudeMetadata(payload.metadata, options.sessionUserId || template?.userId || '');
+  converted.metadata = normalizeClaudeMetadata(payload.metadata, options.sessionUserId || template.userId || '');
 
   return converted;
 }

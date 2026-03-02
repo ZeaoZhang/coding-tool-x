@@ -1,9 +1,0 @@
-{
-  "pid": 64418,
-  "started_at": "2026-02-26T09:17:10.227Z",
-  "cwd": "/Users/zhangzeao/workspace/coding-tool",
-  "notify_script": "/Users/zhangzeao/.nvm/versions/node/v24.11.1/lib/node_modules/oh-my-codex/scripts/notify-hook.js",
-  "poll_ms": 700,
-  "tracked_files": 1,
-  "seen_turns": 0
-}

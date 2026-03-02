@@ -40,17 +40,33 @@ function isPortInUse(port, host = '127.0.0.1') {
 }
 
 /**
- * 查找占用端口的进程PID
+ * 查找占用端口的进程PID（跨平台）
  */
 function findProcessByPort(port) {
+  const isWindows = process.platform === 'win32';
+  if (isWindows) {
+    try {
+      // Windows: netstat -ano 列出所有连接，findstr 过滤端口
+      const result = execSync(`netstat -ano | findstr ":${port} "`, { encoding: 'utf-8' });
+      const pids = new Set();
+      result.split('\n').forEach(line => {
+        // 格式: "  TCP  0.0.0.0:9999  0.0.0.0:0  LISTENING  1234"
+        const match = line.trim().match(/\s+(\d+)\s*$/);
+        if (match) pids.add(match[1]);
+      });
+      return Array.from(pids).filter(pid => pid && pid !== '0');
+    } catch (e) {
+      return [];
+    }
+  }
+
   try {
     // macOS/Linux 使用 lsof
     const result = execSync(`lsof -ti :${port}`, { encoding: 'utf-8' }).trim();
     return result.split('\n').filter(pid => pid);
   } catch (err) {
-    // 如果 lsof 失败，尝试使用其他命令
+    // 如果 lsof 失败，尝试使用 fuser（某些 Linux 系统）
     try {
-      // 适用于某些 Linux 系统
       const result = execSync(`fuser ${port}/tcp 2>/dev/null`, { encoding: 'utf-8' }).trim();
       return result.split(/\s+/).filter(pid => pid);
     } catch (e) {
@@ -60,7 +76,7 @@ function findProcessByPort(port) {
 }
 
 /**
- * 杀掉占用端口的进程
+ * 杀掉占用端口的进程（跨平台）
  */
 function killProcessByPort(port) {
   try {
@@ -69,9 +85,14 @@ function killProcessByPort(port) {
       return false;
     }
 
+    const isWindows = process.platform === 'win32';
     pids.forEach(pid => {
       try {
-        execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
+        if (isWindows) {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+        } else {
+          execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
+        }
       } catch (err) {
         // 忽略单个进程杀掉失败的错误
       }

@@ -237,8 +237,9 @@ function updateChannel(channelId, updates) {
   const proxyStatus = getGeminiProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
-  if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
+  // Single-channel enforcement: enabling a channel disables all others
+  // (applies regardless of proxy state — user intent is to switch to this channel)
+  if (nextChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
@@ -257,9 +258,10 @@ function updateChannel(channelId, updates) {
 
   saveChannels(data);
 
-  // Sync .env when proxy is OFF and the channel is (or just became) enabled
-  if (!isProxyRunning && nextChannel.enabled) {
-    console.log(`[Gemini Settings-sync] Proxy is OFF and channel "${nextChannel.name}" is enabled, syncing .env...`);
+  // Sync .env whenever a channel becomes enabled (proxy OFF: immediate switch;
+  // proxy ON: pre-configures for when proxy stops)
+  if (nextChannel.enabled) {
+    console.log(`[Gemini Settings-sync] Channel "${nextChannel.name}" enabled, syncing .env...`);
     applyChannelToSettings(channelId, data.channels);
   } else {
     // 更新 Gemini 配置文件 (full rewrite for non-active-channel changes)
