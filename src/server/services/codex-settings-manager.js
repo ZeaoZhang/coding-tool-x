@@ -336,6 +336,9 @@ function restoreSettings() {
     // 清理 shell 配置文件中的环境变量（可选，不影响恢复结果）
     removeEnvFromShell('CC_PROXY_KEY');
 
+    // 同步删除当前进程的环境变量，使恢复立即生效（无需新开终端）
+    delete process.env.CC_PROXY_KEY;
+
     console.log('Codex settings restored from backup');
     return { success: true };
   } catch (err) {
@@ -419,6 +422,9 @@ function injectEnvToShell(envName, envValue) {
       writeFileAtomic(configPath, nextContent);
     }
 
+    // 同步更新当前进程的环境变量，使变更立即生效（无需新开终端）
+    process.env[normalizedEnvName] = String(envValue ?? '');
+
     return { success: true, path: configPath, isFirstTime: !existed };
   } catch (err) {
     // 不抛出错误，只是警告，因为这不是致命问题
@@ -484,6 +490,10 @@ function removeEnvFromShell(envName) {
     const normalized = compactBlankLines(cleanedLines);
     const nextContent = normalized.length > 0 ? `${normalized.join('\n')}\n` : '';
     writeFileAtomic(configPath, nextContent);
+
+    // 同步删除当前进程的环境变量，使变更立即生效（无需新开终端）
+    delete process.env[normalizedEnvName];
+
     return { success: true };
   } catch (err) {
     console.warn(`[Codex] Failed to remove env from shell config: ${err.message}`);
@@ -526,6 +536,9 @@ function setProxyConfig(proxyPort) {
 
     // 注入环境变量到 shell 配置文件（解决某些系统环境变量优先级问题）
     const shellInjectResult = injectEnvToShell('CC_PROXY_KEY', 'PROXY_KEY');
+
+    // 同步更新当前进程的环境变量，使代理立即生效（无需新开终端）
+    process.env.CC_PROXY_KEY = 'PROXY_KEY';
 
     // 获取 shell 配置文件路径用于提示信息
     const shellConfigPath = shellInjectResult.path || getShellConfigPath();

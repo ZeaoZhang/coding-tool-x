@@ -252,8 +252,9 @@ function updateChannel(channelId, updates) {
   const proxyStatus = getCodexProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
-  if (!isProxyRunning && newChannel.enabled && !oldChannel.enabled) {
+  // Single-channel enforcement: enabling a channel disables all others
+  // (applies regardless of proxy state — user intent is to switch to this channel)
+  if (newChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
@@ -272,9 +273,10 @@ function updateChannel(channelId, updates) {
 
   saveChannels(data);
 
-  // Sync config.toml when proxy is OFF and the channel is (or just became) enabled
-  if (!isProxyRunning && newChannel.enabled) {
-    console.log(`[Codex Settings-sync] Proxy is OFF and channel "${newChannel.name}" is enabled, syncing config.toml...`);
+  // Sync config.toml whenever a channel becomes enabled (proxy OFF: immediate switch;
+  // proxy ON: pre-configures for when proxy stops)
+  if (newChannel.enabled) {
+    console.log(`[Codex Settings-sync] Channel "${newChannel.name}" enabled, syncing config.toml...`);
     applyChannelToSettings(channelId);
   }
 

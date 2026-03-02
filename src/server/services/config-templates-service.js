@@ -14,6 +14,7 @@ const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { convertCommandToCodex } = require('./format-converter');
 const mcpService = require('./mcp-service');
+const promptsService = require('./prompts-service');
 const pluginsService = new PluginsService();
 
 // 配置模板文件路径
@@ -368,13 +369,10 @@ function readCurrentConfig(targetDir) {
  * 返回用户级的 agents, commands, plugins + MCP 服务器列表
  */
 function getAvailableConfigs() {
-  const agentServices = ['claude', 'codex', 'opencode'].map(platform => new AgentsService(platform));
-  const commandServices = ['claude', 'opencode'].map(platform => new CommandsService(platform));
-  const skillServices = ['claude', 'codex', 'gemini', 'opencode'].map(platform => new SkillService(platform));
-
+  const agentServices = [new AgentsService('claude')];
+  const commandServices = [new CommandsService('claude')];
   const agentMap = new Map();
   const commandMap = new Map();
-  const skillMap = new Map();
 
   for (const service of agentServices) {
     const { agents } = service.listAgents();
@@ -398,14 +396,18 @@ function getAvailableConfigs() {
     }
   }
 
-  for (const service of skillServices) {
-    const installedSkills = service.getInstalledSkills();
-    for (const skill of installedSkills || []) {
-      const key = skill.directory || skill.name;
-      if (!skillMap.has(key)) {
-        skillMap.set(key, skill);
-      }
-    }
+  // 按平台分别获取 skills（每个平台有独立的安装目录）
+  const skillsByPlatform = {};
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
+    const service = new SkillService(platform);
+    skillsByPlatform[platform] = service.getInstalledSkills().map(skill => ({
+      directory: skill.directory,
+      name: skill.name || skill.directory,
+      description: skill.description || '',
+      repoOwner: skill.repoOwner || null,
+      repoName: skill.repoName || null,
+      repoBranch: skill.repoBranch || null
+    }));
   }
 
   // 获取已安装的插件和市场插件
@@ -426,15 +428,18 @@ function getAvailableConfigs() {
     description: p.description
   }));
 
+  // 获取 Prompts 预设（用于 CLAUDE.md 内容选择）
+  const { presets: promptPresets } = promptsService.getAllPresets();
+  const promptsList = Object.values(promptPresets).map(p => ({
+    id: p.id,
+    name: p.name,
+    description: p.description || '',
+    content: p.content || '',
+    isBuiltin: p.isBuiltin || false
+  }));
+
   return {
-    skills: Array.from(skillMap.values()).map(skill => ({
-      directory: skill.directory,
-      name: skill.name || skill.directory,
-      description: skill.description || '',
-      repoOwner: skill.repoOwner || null,
-      repoName: skill.repoName || null,
-      repoBranch: skill.repoBranch || null
-    })),
+    skillsByPlatform,
     agents: Array.from(agentMap.values()).map(a => ({
       fileName: a.fileName,
       name: a.name,
@@ -462,7 +467,8 @@ function getAvailableConfigs() {
       repoUrl: p.repoUrl || null
     })),
     mcpServers: mcpServerList,
-    mcpPresets
+    mcpPresets,
+    prompts: promptsList
   };
 }
 

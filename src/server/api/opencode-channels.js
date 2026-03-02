@@ -67,7 +67,8 @@ module.exports = (config) => {
     const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
     if (value === 'claude') return 'claude';
     if (value === 'gemini') return 'gemini';
-    return 'codex';
+    if (value === 'codex') return 'codex';
+    return 'openai_compatible';
   }
 
   function mapGatewaySourceTypeToSpeedTestType(channel) {
@@ -146,7 +147,7 @@ module.exports = (config) => {
 
       const gatewaySourceType = resolveGatewaySourceType(channel);
       const preferredModels = collectChannelPreferredModels(channel);
-      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const listResult = await fetchModelsFromProvider(channel, gatewaySourceType);
       const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
       const shouldProbeByDefault = !!listResult.disabledByConfig;
       let result;

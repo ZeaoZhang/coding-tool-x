@@ -45,7 +45,7 @@ import { useDefaultModels } from '../../composables/useDefaultModels.js'
 const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
-const PROVIDER_KEY_PATTERN = /^[a-z0-9-]+$/i
+const PROVIDER_KEY_PATTERN = /^[a-z0-9_]+$/i
 
 function normalizeConcurrency(value) {
   const num = Number(value)
@@ -85,7 +85,7 @@ function validateProviderKey(value) {
     return 'Provider Key 不能为空'
   }
   if (!PROVIDER_KEY_PATTERN.test(value)) {
-    return '字母、数字、短横线组合，例如 openai'
+    return '只能包含字母、数字和下划线，例如 openai'
   }
   return ''
 }

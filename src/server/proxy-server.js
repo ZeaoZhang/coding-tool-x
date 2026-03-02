@@ -17,7 +17,7 @@ const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRunt
 const { createDecodedStream } = require('./services/response-decoder');
 const eventBus = require('../plugins/event-bus');
 const { getEffectiveApiKey } = require('./services/channels');
-const { persistProxyRequestSnapshot } = require('./services/request-logger');
+const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -331,7 +331,6 @@ async function startProxyServer(options = {}) {
         broadcastLog({
           type: 'action',
           action: 'claude_request_received',
-          message: '收到 Claude Code 请求',
           time,
           channel: channel.name,
           source: 'claude',
@@ -344,6 +343,7 @@ async function startProxyServer(options = {}) {
           sessionId: sessionId || null,
           request: requestSnapshot
         });
+        persistClaudeRequestTemplate(req.body);
 
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {

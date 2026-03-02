@@ -1620,7 +1620,7 @@ function updateServerOrder(serverIds) {
 
 /**
  * 导出所有 MCP 配置
- * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode'
+ * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode' | 'gemini'
  */
 function exportServers(format = 'json') {
   const servers = getAllServers();
@@ -1632,6 +1632,8 @@ function exportServers(format = 'json') {
       return exportForCodex(servers);
     case 'opencode':
       return exportForOpenCode(servers);
+    case 'gemini':
+      return exportForGemini(servers);
     case 'json':
     default:
       return exportAsJson(servers);
@@ -1709,6 +1711,25 @@ function exportForOpenCode(servers) {
     format: 'opencode',
     content: JSON.stringify({ mcp }, null, 2),
     filename: 'opencode-mcp-config.json'
+  };
+}
+
+/**
+ * 导出为 Gemini 格式
+ */
+function exportForGemini(servers) {
+  const mcpServers = {};
+
+  for (const [id, server] of Object.entries(servers)) {
+    if (server.apps?.gemini) {
+      mcpServers[id] = extractServerSpec(server.server);
+    }
+  }
+
+  return {
+    format: 'gemini',
+    content: JSON.stringify({ mcpServers }, null, 2),
+    filename: 'gemini-mcp-config.json'
   };
 }
 
