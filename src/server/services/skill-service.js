@@ -40,7 +40,7 @@ const DEFAULT_REPOS_BY_PLATFORM = {
     { owner: 'google-gemini', name: 'gemini-cli', branch: 'main', directory: '.gemini/skills', enabled: true }
   ],
   opencode: [
-    { owner: 'darrenhinde', name: 'OpenAgentsControl', branch: 'main', directory: '.opencode/skills', enabled: true }
+    { owner: 'Shakudo-io', name: 'opencode-skills', branch: 'main', directory: '', enabled: true }
   ]
 };
 

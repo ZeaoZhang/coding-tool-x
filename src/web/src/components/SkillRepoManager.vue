@@ -149,8 +149,9 @@ const recommendedRepos = computed(() => {
   }
   if (props.platform === 'opencode') {
     return [
-      { owner: 'darrenhinde', name: 'OpenAgentsControl', description: 'OpenCode 技能库 (.opencode/skills，4个技能)', branch: 'main', directory: '.opencode/skills' },
-      { owner: 'darrenhinde', name: 'OpenAgentsControl', description: 'OpenCode 技能库 (.opencode/skill，1个技能)', branch: 'main', directory: '.opencode/skill' }
+      { owner: 'Shakudo-io', name: 'opencode-skills', description: 'OpenCode 官方技能库（46个技能）', branch: 'main', directory: '' },
+      { owner: 'darrenhinde', name: 'OpenAgentsControl', description: '社区技能库 (.opencode/skills)', branch: 'main', directory: '.opencode/skills' },
+      { owner: 'darrenhinde', name: 'OpenAgentsControl', description: '社区技能库 (.opencode/skill)', branch: 'main', directory: '.opencode/skill' }
     ]
   }
   if (props.platform === 'gemini') {
