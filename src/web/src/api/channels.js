@@ -295,8 +295,15 @@ export async function testAllOpenCodeChannelsSpeed(timeout = 20000) {
   return response.data
 }
 
-export async function fetchOpenCodeChannelModels(channelId) {
-  const response = await client.get(`/opencode/channels/${channelId}/models`)
+export async function fetchOpenCodeChannelModels(channelId, { forceRefresh = false } = {}) {
+  const response = await client.get(`/opencode/channels/${channelId}/models`, {
+    params: forceRefresh ? { forceRefresh: 'true' } : {}
+  })
+  return response.data
+}
+
+export async function probeOpenCodeChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
+  const response = await client.post('/opencode/channels/probe-models', { baseUrl, apiKey, gatewaySourceType })
   return response.data
 }
 

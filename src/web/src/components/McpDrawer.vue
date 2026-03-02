@@ -18,7 +18,7 @@
                 导出
               </n-button>
             </n-dropdown>
-            <n-button size="small" quaternary @click="showPasteModal = true">
+            <n-button size="small" type="primary" ghost @click="showPasteModal = true">
               <template #icon>
                 <n-icon><CodeSlashOutline /></n-icon>
               </template>
@@ -433,7 +433,8 @@ const exportOptions = [
   { label: '导出为 JSON (通用)', key: 'json' },
   { label: '导出为 Claude 格式', key: 'claude' },
   { label: '导出为 Codex 格式 (TOML)', key: 'codex' },
-  { label: '导出为 OpenCode 格式', key: 'opencode' }
+  { label: '导出为 OpenCode 格式', key: 'opencode' },
+  { label: '导出为 Gemini 格式', key: 'gemini' }
 ]
 
 // 获取状态文本

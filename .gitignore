@@ -34,6 +34,9 @@ temp/
 # AI files
 CLAUDE.md
 AGENTS.md
-.serena
-.claude
+.serenai/
+.claude/
 .omc/
+.omx/
+.serena/
+

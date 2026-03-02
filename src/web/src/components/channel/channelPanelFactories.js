@@ -38,6 +38,7 @@ import {
   deleteOpenCodeChannel,
   resetOpenCodeChannelHealth,
   fetchOpenCodeChannelModels,
+  probeOpenCodeChannelModels,
   testOpenCodeChannelSpeed
 } from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
@@ -45,7 +46,7 @@ import { useDefaultModels } from '../../composables/useDefaultModels.js'
 const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
-const PROVIDER_KEY_PATTERN = /^[a-z0-9-]+$/i
+const PROVIDER_KEY_PATTERN = /^[a-z0-9_]+$/i
 
 function normalizeConcurrency(value) {
   const num = Number(value)
@@ -85,7 +86,7 @@ function validateProviderKey(value) {
     return 'Provider Key 不能为空'
   }
   if (!PROVIDER_KEY_PATTERN.test(value)) {
-    return '字母、数字、短横线组合，例如 openai'
+    return '只能包含字母、数字和下划线，例如 openai'
   }
   return ''
 }
@@ -1147,7 +1148,7 @@ const channelPanelFactories = {
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'codex'
       return applyPresetAuth(newForm)
     },
-    fetchModelsForChannel: async (channelId, form) => {
+    fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
       await loadDefaultModels()
       form.modelsFetching = true
       form.modelsFetchError = null
@@ -1165,35 +1166,49 @@ const channelPanelFactories = {
       }
 
       if (!channelId) {
-        const sourceType = form.gatewaySourceType || 'codex'
-        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
-        form.availableModels = getToolModelOptions(modelType)
-        form.modelsFetching = false
+        if (!form.baseUrl) {
+          form.availableModels = []
+          form.modelsFetching = false
+          return
+        }
+        try {
+          const result = await probeOpenCodeChannelModels({
+            baseUrl: form.baseUrl,
+            apiKey: form.apiKey || '',
+            gatewaySourceType: form.gatewaySourceType || 'codex'
+          })
+          form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+          if (result.error) {
+            form.modelsFetchError = result.error
+            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+          }
+        } catch (error) {
+          form.availableModels = []
+          form.modelsFetchError = error.message || '获取模型列表失败'
+          form.modelsFetchErrorHint = '请手动填写模型名称'
+        } finally {
+          form.modelsFetching = false
+        }
         return
       }
 
       try {
-        const result = await fetchOpenCodeChannelModels(channelId)
-        const sourceType = form.gatewaySourceType || 'codex'
-        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
+        const result = await fetchOpenCodeChannelModels(channelId, { forceRefresh })
         if (result.models && result.models.length > 0) {
-          form.availableModels = mergeModelOptions(
-            buildModelOptions(result.models),
-            getToolModelOptions(modelType)
-          )
+          form.availableModels = buildModelOptions(result.models)
           if (result.fallbackUsed) {
             form.modelsFetchError = result.error || '无法自动获取模型列表'
             form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
           }
-        } else if (result.fallbackUsed || !result.supported) {
-          form.availableModels = getToolModelOptions(modelType)
-          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
-          form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+        } else {
+          form.availableModels = []
+          if (result.error) {
+            form.modelsFetchError = result.error
+            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+          }
         }
       } catch (error) {
-        const sourceType = form.gatewaySourceType || 'codex'
-        const modelType = sourceType === 'claude' ? 'claude' : sourceType === 'gemini' ? 'gemini' : 'codex'
-        form.availableModels = getToolModelOptions(modelType)
+        form.availableModels = []
         form.modelsFetchError = error.message || '获取模型列表失败'
         form.modelsFetchErrorHint = '请手动填写模型名称'
       } finally {

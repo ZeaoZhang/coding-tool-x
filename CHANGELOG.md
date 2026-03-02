@@ -4,6 +4,26 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.3.0] - 2026-03-02
+
+### Added
+- MCP 导出支持 Gemini 格式 - 新增 `exportForGemini()` 函数，生成 `gemini-mcp-config.json`；前端导出菜单新增对应选项
+- 配置模板集成 Prompt 预设 - 创建/编辑配置模板时可选择已有 Prompt 预设作为 CLAUDE.md 内容，自动预览
+- Windows 跨平台端口管理 - `findProcessByPort` 和 `killProcessByPort` 新增 Windows 支持
+- 模型元数据 UI 重构 - 设置页面模型列表改为可折叠卡片式布局，搜索框与新增按钮合并到同一工具栏
+
+### Fixed
+- 渠道同步逻辑修正 - 修复代理运行时启用渠道无法触发互斥禁用和配置同步的问题（Claude / Codex / Gemini 统一）
+- OpenCode 网关类型 fallback 修复 - 修复未知 `gatewaySourceType` 被错误映射为 `codex` 的问题
+- OpenCode 模型列表请求类型修复 - `fetchModelsFromProvider` 现在使用正确的 `gatewaySourceType`
+- Codex 环境变量即时生效 - 环境变量操作函数同步更新当前进程环境，无需重启终端
+- Provider Key 验证规则修正 - 允许下划线（`_`），不再允许短横线（`-`）
+
+### Changed
+- Claude 请求模板持久化重构 - 模板从扫描 JSONL 日志改为写入单一文件 `~/.cc-tool/claude-request-template.json`，内置完整 fallback
+- 配置模板 Skills 按平台区分 - 前端根据当前 CLI 类型动态过滤对应平台的 Skills 列表
+- 精简 opencode-proxy-server.js - 移除约 90 行冗余日志扫描代码
+
 ## [3.2.0] - 2026-03-01
 
 ### Added

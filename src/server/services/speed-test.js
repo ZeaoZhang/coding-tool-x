@@ -6,9 +6,6 @@
 
 const https = require('https');
 const http = require('http');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 const { probeModelAvailability } = require('./model-detector');
@@ -16,6 +13,7 @@ const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
 const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
 const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
 const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
+const { loadClaudeRequestTemplate } = require('./request-logger');
 
 // 测试结果缓存
 const testResultsCache = new Map();
@@ -35,16 +33,6 @@ const CLAUDE_ADVANCED_TOOL_USE_BETA = 'advanced-tool-use-2025-11-20';
 const ROUTE_OR_METHOD_MISMATCH_STATUS = new Set([404, 405, 501]);
 const CLAUDE_USER_ID_ACCOUNT_RE = /^user_([0-9a-f]{64})_account__session_[a-z0-9._-]+$/i;
 const CLAUDE_USER_ID_FULL_RE = /^user_[0-9a-f]{64}_account__session_[a-z0-9._-]+$/i;
-const DEFAULT_CLAUDE_CODE_TOOL_NAMES = Object.freeze([
-  'Task',
-  'Bash',
-  'Glob',
-  'Grep',
-  'Read',
-  'Edit',
-  'Write',
-  'ToolSearch'
-]);
 let cachedClaudeAccountId = '';
 let cachedClaudeUserId = '';
 
@@ -195,96 +183,31 @@ function resolveClaudeAccountIdFromUserId(userId = '') {
 }
 
 function resolveClaudeAccountIdFromLogs() {
-  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
-  if (!fs.existsSync(logsPath)) return '';
-
   try {
-    const content = fs.readFileSync(logsPath, 'utf8');
-    const lines = content.trim().split('\n');
-    const accountIdCount = new Map();
-
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const line = lines[index].trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const userId = parsed?.request?.body?.metadata?.user_id;
-        const accountId = resolveClaudeAccountIdFromUserId(userId);
-        if (accountId) {
-          accountIdCount.set(accountId, (accountIdCount.get(accountId) || 0) + 1);
-        }
-      } catch {
-        // ignore malformed line
-      }
-    }
-
-    const ranked = Array.from(accountIdCount.entries())
-      .filter(([accountId]) => accountId !== '0'.repeat(64))
-      .sort((left, right) => right[1] - left[1]);
-
-    if (ranked.length > 0) {
-      return ranked[0][0];
-    }
+    const template = loadClaudeRequestTemplate();
+    const userId = template?.userId || '';
+    const accountId = resolveClaudeAccountIdFromUserId(userId);
+    return (accountId && accountId !== '0'.repeat(64)) ? accountId : '';
   } catch {
-    // ignore read error
+    return '';
   }
-
-  return '';
 }
 
 function resolveClaudeUserIdFromLogs() {
-  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
-  if (!fs.existsSync(logsPath)) return '';
-
   try {
-    const content = fs.readFileSync(logsPath, 'utf8');
-    const lines = content.trim().split('\n');
-    const userIdCount = new Map();
-
-    for (let index = lines.length - 1; index >= 0; index -= 1) {
-      const line = lines[index].trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const userId = normalizeNonEmptyString(parsed?.request?.body?.metadata?.user_id);
-        if (!userId || !CLAUDE_USER_ID_FULL_RE.test(userId)) continue;
-        const accountId = resolveClaudeAccountIdFromUserId(userId);
-        if (!accountId || accountId === '0'.repeat(64)) continue;
-        userIdCount.set(userId, (userIdCount.get(userId) || 0) + 1);
-      } catch {
-        // ignore malformed line
-      }
-    }
-
-    const ranked = Array.from(userIdCount.entries()).sort((left, right) => right[1] - left[1]);
-    return ranked.length > 0 ? ranked[0][0] : '';
+    const template = loadClaudeRequestTemplate();
+    const userId = normalizeNonEmptyString(template?.userId || '');
+    if (!userId || !CLAUDE_USER_ID_FULL_RE.test(userId)) return '';
+    const accountId = resolveClaudeAccountIdFromUserId(userId);
+    if (!accountId || accountId === '0'.repeat(64)) return '';
+    return userId;
   } catch {
     return '';
   }
 }
 
 function resolveClaudeRequestTemplate() {
-  const logsPath = path.join(os.homedir(), '.cc-tool', 'claude-requests.jsonl');
-  if (!fs.existsSync(logsPath)) return null;
-  try {
-    const content = fs.readFileSync(logsPath, 'utf8');
-    const lines = content.trim().split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      try {
-        const parsed = JSON.parse(line);
-        const body = parsed?.request?.body;
-        if (!body || typeof body !== 'object') continue;
-        const system = Array.isArray(body.system) ? body.system : [];
-        const tools = Array.isArray(body.tools) ? body.tools : [];
-        const hasBilling = system.some(b => typeof b?.text === 'string' && b.text.startsWith('x-anthropic-billing-header:'));
-        if (!hasBilling || tools.length === 0) continue;
-        return { system, tools };
-      } catch { }
-    }
-  } catch { }
-  return null;
+  return loadClaudeRequestTemplate();
 }
 
 function resolveClaudePreferredUserId() {
@@ -347,17 +270,6 @@ function buildClaudeCodeUserId() {
   return `user_${accountId}_account__session_${sessionId}`;
 }
 
-function buildDefaultClaudeCodeTools() {
-  return DEFAULT_CLAUDE_CODE_TOOL_NAMES.map(name => ({
-    name,
-    description: `${name} tool`,
-    input_schema: {
-      type: 'object',
-      properties: {},
-      additionalProperties: true
-    }
-  }));
-}
 
 function buildGeminiNativeGeneratePath(parsedUrl, model) {
   let pathname = parsedUrl.pathname.replace(/\/+$/, '');
@@ -755,12 +667,8 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
     const userId = buildClaudeCodeUserId() || `user_${'0'.repeat(64)}_account__session_${sessionId}`;
     const template = resolveClaudeRequestTemplate();
-    const systemBlocks = template?.system?.length > 0
-      ? template.system
-      : [{ type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." }];
-    const toolsToUse = template?.tools?.length > 0
-      ? template.tools
-      : buildDefaultClaudeCodeTools();
+    const systemBlocks = template.system;
+    const toolsToUse = template.tools;
     const requestPayload = {
       model: testModel,
       max_tokens: 10,
@@ -868,6 +776,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     primaryRequestConfig = useCliFormat ? cliRequestConfig : nativeRequestConfig;
     fallbackRequestConfig = useCliFormat ? nativeRequestConfig : cliRequestConfig;
   } else {
+    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-4o-mini';
     let apiPath = parsedUrl.pathname.replace(/\/$/, '');
     if (!apiPath.endsWith('/chat/completions')) {
       apiPath = apiPath + (apiPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
@@ -875,7 +784,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     primaryRequestConfig = {
       apiPath,
       requestBody: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: testModel,
         max_tokens: 1,
         messages: [{ role: 'user', content: 'Hi' }]
       }),

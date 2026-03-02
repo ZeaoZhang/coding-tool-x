@@ -67,7 +67,8 @@ module.exports = (config) => {
     const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
     if (value === 'claude') return 'claude';
     if (value === 'gemini') return 'gemini';
-    return 'codex';
+    if (value === 'codex') return 'codex';
+    return 'openai_compatible';
   }
 
   function mapGatewaySourceTypeToSpeedTestType(channel) {
@@ -131,6 +132,32 @@ module.exports = (config) => {
   });
 
   /**
+   * POST /api/opencode/channels/probe-models
+   * 用临时配置（新建渠道时）获取模型列表，无需 channelId
+   */
+  router.post('/probe-models', async (req, res) => {
+    try {
+      const { baseUrl, apiKey, gatewaySourceType } = req.body;
+      if (!baseUrl) {
+        return res.status(400).json({ error: 'baseUrl is required' });
+      }
+      const tempChannel = { baseUrl, apiKey: apiKey || '', gatewaySourceType: gatewaySourceType || 'codex' };
+      const gst = resolveGatewaySourceType(tempChannel);
+      const listResult = await fetchModelsFromProvider(tempChannel, gst, { useV1ModelsEndpoint: true, forceRefresh: true });
+      const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
+      res.json({
+        models: listedModels,
+        supported: listedModels.length > 0,
+        error: listedModels.length > 0 ? null : (listResult.error || '未返回可用模型列表'),
+        errorHint: listedModels.length > 0 ? null : (listResult.errorHint || '请手动填写模型名称')
+      });
+    } catch (error) {
+      console.error('[OpenCode Channels API] Error probing models:', error);
+      res.status(500).json({ error: 'Failed to probe models' });
+    }
+  });
+
+  /**
    * GET /api/opencode/channels/:channelId/models
    * 获取渠道可用模型列表
    */
@@ -144,9 +171,10 @@ module.exports = (config) => {
         return res.status(404).json({ error: 'Channel not found' });
       }
 
+      const forceRefresh = req.query.forceRefresh === 'true';
       const gatewaySourceType = resolveGatewaySourceType(channel);
       const preferredModels = collectChannelPreferredModels(channel);
-      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
+      const listResult = await fetchModelsFromProvider(channel, gatewaySourceType, { useV1ModelsEndpoint: true, forceRefresh });
       const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
       const shouldProbeByDefault = !!listResult.disabledByConfig;
       let result;
