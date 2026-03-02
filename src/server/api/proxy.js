@@ -27,6 +27,17 @@ function sanitizeChannelForResponse(channel) {
   };
 }
 
+function selectLatestEnabledChannel(channels) {
+  if (!Array.isArray(channels) || channels.length === 0) return null;
+  const enabledChannels = channels.filter(ch => ch.enabled !== false);
+  if (enabledChannels.length === 0) return null;
+  return enabledChannels.reduce((latest, current) => {
+    const latestTs = Number(latest?.updatedAt || latest?.createdAt || 0);
+    const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
+    return currentTs > latestTs ? current : latest;
+  }, enabledChannels[0]);
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   ensureStorageDirMigrated();
@@ -210,8 +221,12 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
+    const channelsBeforeStop = getAllChannels();
+    const latestEnabledChannel = selectLatestEnabledChannel(channelsBeforeStop);
+
     // 1. 停止代理服务器
     const proxyResult = await stopProxyServer();
+    const activeChannelId = loadActiveChannelId();
 
     // 2. 恢复配置（优先从备份，否则选择权重最高的启用渠道）
     let restoredChannel = null;
@@ -229,6 +244,14 @@ router.post('/stop', async (req, res) => {
           ch.baseUrl === currentSettings.baseUrl && ch.apiKey === currentSettings.apiKey
         );
       }
+      // Fallback: keep latest enabled channel when leaving dynamic switching mode
+      if (!restoredChannel && latestEnabledChannel) {
+        restoredChannel = channels.find(ch => ch.id === latestEnabledChannel.id) || latestEnabledChannel;
+      }
+      // Fallback: use previously active channel id
+      if (!restoredChannel && activeChannelId) {
+        restoredChannel = channels.find(ch => ch.id === activeChannelId);
+      }
       // Fallback: use first enabled channel
       if (!restoredChannel) {
         restoredChannel = channels.find(ch => ch.enabled !== false) || channels[0];
@@ -236,7 +259,16 @@ router.post('/stop', async (req, res) => {
     } else {
       // 没有备份，选择权重最高的启用渠道
       const { getBestChannelForRestore, updateClaudeSettings } = require('../services/channels');
-      restoredChannel = getBestChannelForRestore();
+      const channels = getAllChannels();
+      restoredChannel = latestEnabledChannel
+        ? channels.find(ch => ch.id === latestEnabledChannel.id)
+        : null;
+      if (!restoredChannel && activeChannelId) {
+        restoredChannel = channels.find(ch => ch.id === activeChannelId);
+      }
+      if (!restoredChannel) {
+        restoredChannel = getBestChannelForRestore();
+      }
 
       if (restoredChannel) {
         updateClaudeSettings(restoredChannel.baseUrl, restoredChannel.apiKey);
@@ -244,11 +276,11 @@ router.post('/stop', async (req, res) => {
       }
     }
 
-    // Enforce single-channel mode: disable all channels except the restored one
+    // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
     if (restoredChannel) {
       const { applyChannelToSettings } = require('../services/channels');
       applyChannelToSettings(restoredChannel.id);
-      console.log(`✅ Single-channel mode enforced: ${restoredChannel.name}`);
+      console.log(`✅ Single-channel mode restored: ${restoredChannel.name}`);
     }
 
     // 3. 删除备份文件和active-channel.json
@@ -270,7 +302,8 @@ router.post('/stop', async (req, res) => {
     const { broadcastProxyState } = require('../websocket-server');
     const updatedStatus = getProxyStatus();
     const channels = getAllChannels();
-    broadcastProxyState('claude', updatedStatus, null, channels);
+    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
+    broadcastProxyState('claude', updatedStatus, activeChannel, channels);
 
     if (restoredChannel) {
       res.json({

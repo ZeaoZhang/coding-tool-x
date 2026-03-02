@@ -195,8 +195,12 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
   data.channels.push(newChannel);
   saveChannels(data);
 
-  // 写入 Gemini 配置文件
-  writeGeminiConfigForMultiChannel(data.channels);
+  // 仅在非动态切换模式下写入 Gemini 配置文件
+  const { getGeminiProxyStatus } = require('../gemini-proxy-server');
+  const proxyStatus = getGeminiProxyStatus();
+  if (!proxyStatus.running) {
+    writeGeminiConfigForMultiChannel(data.channels);
+  }
 
   return newChannel;
 }
@@ -237,9 +241,9 @@ function updateChannel(channelId, updates) {
   const proxyStatus = getGeminiProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Single-channel enforcement: enabling a channel disables all others
-  // (applies regardless of proxy state — user intent is to switch to this channel)
-  if (nextChannel.enabled && !oldChannel.enabled) {
+  // Single-channel enforcement: enabling a channel disables all others ONLY when proxy is OFF
+  // When proxy is ON (dynamic switching), multiple channels can be enabled simultaneously
+  if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
@@ -258,12 +262,12 @@ function updateChannel(channelId, updates) {
 
   saveChannels(data);
 
-  // Sync .env whenever a channel becomes enabled (proxy OFF: immediate switch;
-  // proxy ON: pre-configures for when proxy stops)
-  if (nextChannel.enabled) {
+  // Only sync .env when proxy is OFF.
+  // In dynamic switching mode, defer local config writes until proxy stop.
+  if (!isProxyRunning && nextChannel.enabled) {
     console.log(`[Gemini Settings-sync] Channel "${nextChannel.name}" enabled, syncing .env...`);
     applyChannelToSettings(channelId, data.channels);
-  } else {
+  } else if (!isProxyRunning) {
     // 更新 Gemini 配置文件 (full rewrite for non-active-channel changes)
     writeGeminiConfigForMultiChannel(data.channels);
   }
@@ -352,8 +356,12 @@ async function deleteChannel(channelId) {
   data.channels.splice(index, 1);
   saveChannels(data);
 
-  // 更新 Gemini 配置文件
-  writeGeminiConfigForMultiChannel(data.channels);
+  // 仅在非动态切换模式下更新 Gemini 配置文件
+  const { getGeminiProxyStatus } = require('../gemini-proxy-server');
+  const proxyStatus = getGeminiProxyStatus();
+  if (!proxyStatus.running) {
+    writeGeminiConfigForMultiChannel(data.channels);
+  }
 
   return { success: true };
 }

@@ -652,7 +652,7 @@ async function handleProxyToggle(newValue) {
     if (newValue) {
       result = await startProxy(channelType)
     } else {
-      result = await stopProxy(channelType)
+      result = await stopProxy(channelType, { refreshChannelsDrawer: true })
     }
 
     // 处理结果

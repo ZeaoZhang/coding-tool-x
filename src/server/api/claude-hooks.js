@@ -91,7 +91,7 @@ function generateSystemNotificationCommand(type) {
     if (type === 'dialog') {
       return `powershell -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Claude Code 任务已完成 | 等待交互', 'Coding Tool', 'OK', 'Information')"`;
     } else {
-      return `powershell -Command "$wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('任务已完成 | 等待交互', 5, 'Coding Tool', 0x40)"`;
+      return `powershell -NoProfile -Command "try { [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('<toast><visual><binding template=\\"ToastGeneric\\"><text>Coding Tool</text><text>任务已完成 | 等待交互</text></binding></visual><audio src=\\"ms-winsoundevent:Notification.Default\\"/></toast>'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) } catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('任务已完成 | 等待交互', 5, 'Coding Tool', 0x40) }"`;
     }
   } else {
     // Linux
@@ -192,6 +192,16 @@ try {
   return script;
 }
 
+function parseNotifyTypeMarker(command) {
+  const marker = command.match(/--cc-notify-type=(['"])?(dialog|notification)\1/i);
+  return marker ? marker[2].toLowerCase() : null;
+}
+
+function buildStopHookCommand(type) {
+  const notifyType = type === 'dialog' ? 'dialog' : 'notification';
+  return `node "${NOTIFY_SCRIPT_PATH}" --cc-notify-type=${notifyType}`;
+}
+
 // 写入通知脚本
 function writeNotifyScript(config) {
   try {
@@ -222,6 +232,11 @@ function parseStopHookStatus(settings) {
   }
 
   const command = stopHook.hooks[0].command || '';
+  const markerType = parseNotifyTypeMarker(command);
+
+  if (markerType) {
+    return { enabled: true, type: markerType };
+  }
 
   // 判断通知类型（跨平台检测）
   const isDialog = command.includes('display dialog') ||
@@ -229,7 +244,9 @@ function parseStopHookStatus(settings) {
                    command.includes('zenity --info');
   const isNotification = command.includes('display notification') ||
                          command.includes('Popup') ||
-                         command.includes('notify-send');
+                         command.includes('notify-send') ||
+                         command.includes('ToastNotificationManager') ||
+                         command.includes('CreateToastNotifier');
 
   // 检查是否是我们的通知脚本
   const isOurScript = command.includes('notify-hook.js');
@@ -294,7 +311,7 @@ function updateStopHook(systemNotification, feishu) {
         hooks: [
           {
             type: 'command',
-            command: `node "${NOTIFY_SCRIPT_PATH}"`
+            command: buildStopHookCommand(systemNotification?.type)
           }
         ]
       }
@@ -478,3 +495,9 @@ router.post('/test', (req, res) => {
 // 导出初始化函数供服务启动时调用
 module.exports = router;
 module.exports.initDefaultHooks = initDefaultHooks;
+module.exports._test = {
+  generateSystemNotificationCommand,
+  parseStopHookStatus,
+  parseNotifyTypeMarker,
+  buildStopHookCommand
+};

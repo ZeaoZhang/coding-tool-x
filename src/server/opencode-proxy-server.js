@@ -2125,6 +2125,16 @@ function sendChatCompletionsSse(res, responseObject) {
   const message = responseObject?.choices?.[0]?.message || {};
   const text = message?.content || '';
   const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+  const streamedToolCalls = toolCalls.map((toolCall, index) => {
+    const numericIndex = Number(toolCall?.index);
+    const normalizedIndex = Number.isFinite(numericIndex) ? numericIndex : index;
+
+    if (toolCall && typeof toolCall === 'object' && !Array.isArray(toolCall)) {
+      return { ...toolCall, index: normalizedIndex };
+    }
+
+    return { index: normalizedIndex };
+  });
   const finishReason = responseObject?.choices?.[0]?.finish_reason || 'stop';
 
   setSseHeaders(res);
@@ -2140,7 +2150,7 @@ function sendChatCompletionsSse(res, responseObject) {
         delta: {
           role: 'assistant',
           ...(text ? { content: text } : {}),
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {})
+          ...(streamedToolCalls.length > 0 ? { tool_calls: streamedToolCalls } : {})
         },
         finish_reason: null
       }

@@ -442,6 +442,21 @@ function restoreSettings() {
   return { success: restored };
 }
 
+// 只删除备份文件，不恢复（保留当前配置中用户对 MCP 等的修改）
+function deleteBackup() {
+  try {
+    [CONFIG_PATHS.opencodec, CONFIG_PATHS.opencode, CONFIG_PATHS.config].forEach(p => {
+      const bp = getBackupPath(p);
+      if (fs.existsSync(bp)) fs.unlinkSync(bp);
+    });
+    console.log('[OpenCode] Backup files deleted');
+    return { success: true };
+  } catch (err) {
+    console.warn('[OpenCode] Failed to delete backup files:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 function isProxyConfig() {
   try {
     const filePath = selectConfigPath();
@@ -472,6 +487,7 @@ module.exports = {
   hasBackup,
   setProxyConfig,
   restoreSettings,
+  deleteBackup,
   isProxyConfig,
   getCurrentProxyPort,
   CONFIG_PATHS

@@ -1074,7 +1074,7 @@ async function handleProxyToggle(value) {
     if (value) {
       result = await startProxy(props.channelType)
     } else {
-      result = await stopProxy(props.channelType)
+      result = await stopProxy(props.channelType, { refreshChannelsDrawer: true })
     }
 
     if (result.success !== false) {

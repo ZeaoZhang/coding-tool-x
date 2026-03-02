@@ -11,10 +11,12 @@ const {
   hasBackup,
   setProxyConfig,
   restoreSettings,
+  deleteBackup,
   isProxyConfig,
   getCurrentProxyPort
 } = require('../services/opencode-settings-manager');
-const { getChannels, getEnabledChannels } = require('../services/opencode-channels');
+const { getChannels, getEnabledChannels, applyChannelToSettings } = require('../services/opencode-channels');
+const { getSchedulerState } = require('../services/channel-scheduler');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
@@ -29,6 +31,17 @@ function sanitizeChannel(channel) {
   };
 }
 
+function selectLatestEnabledChannel(channels) {
+  if (!Array.isArray(channels) || channels.length === 0) return null;
+  const enabledChannels = channels.filter(ch => ch.enabled !== false);
+  if (enabledChannels.length === 0) return null;
+  return enabledChannels.reduce((latest, current) => {
+    const latestTs = Number(latest?.updatedAt || latest?.createdAt || 0);
+    const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
+    return currentTs > latestTs ? current : latest;
+  }, enabledChannels[0]);
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   ensureStorageDirMigrated();
@@ -38,6 +51,21 @@ function saveActiveChannelId(channelId) {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
+}
+
+function loadActiveChannelId() {
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.opencode;
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content);
+      return data.activeChannelId || null;
+    }
+  } catch (error) {
+    console.error('[OpenCode Proxy] Error loading active channel ID:', error);
+  }
+  return null;
 }
 
 // 删除激活渠道文件
@@ -171,32 +199,51 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前渠道信息
+    // 1. 获取当前激活渠道（优先使用启动动态切换时记录的渠道ID）
     const { channels } = getChannels();
-    const enabledChannels = channels.filter(ch => ch.enabled !== false);
-    const activeChannel = enabledChannels[0];
+    const activeChannelId = loadActiveChannelId();
+    let activeChannel = selectLatestEnabledChannel(channels);
+    if (!activeChannel && activeChannelId) {
+      activeChannel = channels.find(ch => ch.id === activeChannelId);
+    }
+    if (!activeChannel) {
+      const enabledChannels = channels.filter(ch => ch.enabled !== false);
+      activeChannel = enabledChannels[0] || channels[0] || null;
+    }
 
     // 2. 停止代理服务器
     const proxyResult = await stopOpenCodeProxyServer();
+    const hadBackup = hasBackup();
 
     // 3. 删除激活渠道文件
     removeActiveChannelFile();
 
-    // 4. 恢复原始配置
-    if (hasBackup()) {
-      restoreSettings();
-      console.log('[OpenCode Proxy] Restored settings from backup');
+    // 4. 恢复单渠道模式
+    // 不恢复整个备份，避免覆盖用户在动态切换期间对 MCP 等配置的修改
+    if (hadBackup) {
+      deleteBackup();
+      console.log('[OpenCode Proxy] Discarded backup (MCP changes preserved)');
     }
 
-    // 5. 广播状态更新
-    const { broadcastProxyState } = require('../websocket-server');
+    // 5. 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
+    if (activeChannel) {
+      applyChannelToSettings(activeChannel.id);
+      console.log(`[OpenCode Proxy] Single-channel mode restored: ${activeChannel.name}`);
+    }
+
+    // 6. 广播状态更新（使用最新渠道列表，刷新前端缓存）
+    const { broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
     const updatedStatus = getOpenCodeProxyStatus();
-    broadcastProxyState('opencode', updatedStatus, activeChannel, channels);
+    const { channels: latestChannels } = getChannels();
+    const latestActiveChannel = latestChannels.find(ch => ch.enabled !== false) || null;
+    broadcastProxyState('opencode', updatedStatus, latestActiveChannel, latestChannels);
+    broadcastSchedulerState('opencode', getSchedulerState('opencode'));
 
     res.json({
       success: true,
-      message: `OpenCode proxy stopped${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
-      port: proxyResult.port
+      message: `OpenCode proxy stopped${latestActiveChannel ? ' (channel: ' + latestActiveChannel.name + ')' : ''}`,
+      port: proxyResult.port,
+      restoredChannel: latestActiveChannel?.name || null
     });
   } catch (error) {
     console.error('[OpenCode Proxy] Error stopping proxy:', error);

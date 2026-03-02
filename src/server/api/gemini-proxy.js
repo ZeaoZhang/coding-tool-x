@@ -8,10 +8,12 @@ const {
 const {
   setProxyConfig,
   restoreSettings,
+  deleteBackup,
   isProxyConfig,
   getCurrentProxyPort,
   configExists,
-  hasBackup
+  hasBackup,
+  readEnv
 } = require('../services/gemini-settings-manager');
 const { getChannels, getEnabledChannels } = require('../services/gemini-channels');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
@@ -24,6 +26,17 @@ function sanitizeChannel(channel) {
   return rest;
 }
 
+function selectLatestEnabledChannel(channels) {
+  if (!Array.isArray(channels) || channels.length === 0) return null;
+  const enabledChannels = channels.filter(ch => ch.enabled !== false);
+  if (enabledChannels.length === 0) return null;
+  return enabledChannels.reduce((latest, current) => {
+    const latestTs = Number(latest?.updatedAt || latest?.createdAt || 0);
+    const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
+    return currentTs > latestTs ? current : latest;
+  }, enabledChannels[0]);
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   ensureStorageDirMigrated();
@@ -33,6 +46,21 @@ function saveActiveChannelId(channelId) {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
+}
+
+function loadActiveChannelId() {
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.gemini;
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content);
+      return data.activeChannelId || null;
+    }
+  } catch (error) {
+    console.error('[Gemini Proxy] Error loading active channel ID:', error);
+  }
+  return null;
 }
 
 function removeActiveChannelFile() {
@@ -78,9 +106,23 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    // 2. 获取当前启用的渠道（多渠道模式）
+    // 2. 获取当前启用的渠道（优先使用当前 .env 对应的渠道）
     const enabledChannels = getEnabledChannels();
-    const currentChannel = enabledChannels[0];
+    let currentChannel = null;
+    try {
+      const env = readEnv();
+      const baseUrl = env?.GOOGLE_GEMINI_BASE_URL;
+      const apiKey = env?.GEMINI_API_KEY;
+      const model = env?.GEMINI_MODEL;
+      currentChannel = enabledChannels.find(ch =>
+        ch.baseUrl === baseUrl && ch.apiKey === apiKey && (!model || ch.model === model)
+      ) || enabledChannels.find(ch => ch.baseUrl === baseUrl && ch.apiKey === apiKey) || null;
+    } catch (err) {
+      // ignore and fallback
+    }
+    if (!currentChannel) {
+      currentChannel = enabledChannels[0] || null;
+    }
     if (!currentChannel) {
       return res.status(400).json({
         error: 'No enabled Gemini channel found. Please create and enable a channel first.'
@@ -122,48 +164,51 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前启用的渠道（多渠道模式）
+    // 1. 获取当前激活渠道（优先使用启动动态切换时记录的渠道ID）
     const { channels } = getChannels();
-    const enabledChannels = channels.filter(ch => ch.enabled !== false);
-    const activeChannel = enabledChannels[0];
+    const activeChannelId = loadActiveChannelId();
+    let activeChannel = selectLatestEnabledChannel(channels);
+    if (!activeChannel && activeChannelId) {
+      activeChannel = channels.find(ch => ch.id === activeChannelId);
+    }
+    if (!activeChannel) {
+      const enabledChannels = channels.filter(ch => ch.enabled !== false);
+      activeChannel = enabledChannels[0] || channels[0] || null;
+    }
 
     // 2. 停止代理服务器
     const proxyResult = await stopGeminiProxyServer();
+    const hadBackup = hasBackup();
 
-    // 3. 恢复原始配置
-    const { broadcastProxyState } = require('../websocket-server');
-    if (hasBackup()) {
-      restoreSettings();
-      console.log('[Gemini Proxy] Restored settings from backup');
-
-      // Enforce single-channel mode: apply the active channel and disable all others
-      if (activeChannel) {
-        const { applyChannelToSettings } = require('../services/gemini-channels');
-        applyChannelToSettings(activeChannel.id);
-        console.log(`[Gemini Proxy] Single-channel mode enforced: ${activeChannel.name}`);
-      }
-
-      // 删除 gemini-active-channel.json
-      removeActiveChannelFile();
-
-      const response = {
-        success: true,
-        message: `Gemini proxy stopped, settings restored${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
-        port: proxyResult.port,
-        restoredChannel: activeChannel?.name
-      };
-      res.json(response);
-    } else {
-      res.json({
-        success: true,
-        message: 'Gemini proxy stopped (no backup to restore)',
-        port: proxyResult.port
-      });
+    // 3. 恢复单渠道模式
+    // 不恢复整个备份，避免覆盖用户在动态切换期间对 MCP 等配置的修改
+    if (hadBackup) {
+      deleteBackup();
+      console.log('[Gemini Proxy] Discarded backup (MCP changes preserved)');
     }
 
+    // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
+    if (activeChannel) {
+      const { applyChannelToSettings } = require('../services/gemini-channels');
+      applyChannelToSettings(activeChannel.id);
+      console.log(`[Gemini Proxy] Single-channel mode restored: ${activeChannel.name}`);
+    }
+
+    // 删除 gemini-active-channel.json
+    removeActiveChannelFile();
+
+    res.json({
+      success: true,
+      message: `Gemini proxy stopped, settings restored${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
+      port: proxyResult.port,
+      restoredChannel: activeChannel?.name
+    });
+
+    const { broadcastProxyState } = require('../websocket-server');
     const proxyStatus = getGeminiProxyStatus();
     const { channels: latestChannels } = getChannels();
-    broadcastProxyState('gemini', proxyStatus, activeChannel, latestChannels);
+    const latestActiveChannel = latestChannels.find(ch => ch.enabled !== false) || null;
+    broadcastProxyState('gemini', proxyStatus, latestActiveChannel, latestChannels);
   } catch (error) {
     console.error('[Gemini Proxy] Error stopping proxy:', error);
     res.status(500).json({ error: error.message });

@@ -245,6 +245,23 @@ function saveChannelOrder(order) {
   saveChannels(data);
 }
 
+function applyChannelToSettings(channelId) {
+  const data = loadChannels();
+  const channel = data.channels.find(c => c.id === channelId);
+
+  if (!channel) {
+    throw new Error('Channel not found');
+  }
+
+  // In single-channel mode, only this channel should be enabled
+  data.channels.forEach(ch => {
+    ch.enabled = ch.id === channelId;
+  });
+  saveChannels(data);
+
+  return channel;
+}
+
 function loadCodexChannels() {
   const filePath = getCodexChannelsFilePath();
   if (!fs.existsSync(filePath)) {
@@ -361,6 +378,7 @@ module.exports = {
   deleteChannel,
   getEnabledChannels,
   saveChannelOrder,
+  applyChannelToSettings,
   getEffectiveApiKey,
   getEffectiveApiKeyCandidates
 };

@@ -252,9 +252,9 @@ function updateChannel(channelId, updates) {
   const proxyStatus = getCodexProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Single-channel enforcement: enabling a channel disables all others
-  // (applies regardless of proxy state — user intent is to switch to this channel)
-  if (newChannel.enabled && !oldChannel.enabled) {
+  // Single-channel enforcement: enabling a channel disables all others ONLY when proxy is OFF
+  // When proxy is ON (dynamic switching), multiple channels can be enabled simultaneously
+  if (!isProxyRunning && newChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
@@ -273,9 +273,9 @@ function updateChannel(channelId, updates) {
 
   saveChannels(data);
 
-  // Sync config.toml whenever a channel becomes enabled (proxy OFF: immediate switch;
-  // proxy ON: pre-configures for when proxy stops)
-  if (newChannel.enabled) {
+  // Sync config.toml only when proxy is OFF.
+  // In dynamic switching mode, defer local config writes until proxy stop.
+  if (!isProxyRunning && newChannel.enabled) {
     console.log(`[Codex Settings-sync] Channel "${newChannel.name}" enabled, syncing config.toml...`);
     applyChannelToSettings(channelId);
   }
@@ -564,9 +564,11 @@ function syncAllChannelEnvVars() {
  * 类似 Claude 的"写入配置"功能，将渠道设置为当前激活的 provider
  *
  * @param {string} channelId - 渠道 ID
+ * @param {Object} options - 可选参数
+ * @param {boolean} options.pruneProviders - 是否清理 model_providers 仅保留当前渠道
  * @returns {Object} 应用结果
  */
-function applyChannelToSettings(channelId) {
+function applyChannelToSettings(channelId, options = {}) {
   const data = loadChannels();
   const channel = data.channels.find(c => c.id === channelId);
 
@@ -613,8 +615,11 @@ function applyChannelToSettings(channelId) {
   // 设置当前渠道为 model_provider
   config.model_provider = channel.providerKey;
 
-  // 确保 model_providers 对象存在
-  if (!config.model_providers) {
+  // 可选：清理 provider，关闭动态切换后只保留当前渠道配置
+  if (options.pruneProviders === true) {
+    config.model_providers = {};
+  } else if (!config.model_providers) {
+    // 默认兼容历史行为：保留已有 provider
     config.model_providers = {};
   }
 
@@ -663,6 +668,10 @@ ${tomlContent}`;
   } else if (channel.envKey) {
     delete auth[channel.envKey];
   }
+
+  // 清除 chatgpt token 认证字段，避免 Codex 优先用过期 token 而报 usage limit
+  delete auth.tokens;
+  delete auth.auth_mode;
 
   fs.writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8');
 

@@ -196,7 +196,7 @@
                             <div class="radio-content">
                               <n-text strong>右上角卡片通知</n-text>
                               <n-text depth="3" style="font-size: 12px; display: block;">
-                                轻量提醒，几秒后自动消失，带提示音
+                                轻量提醒，几秒后自动消失，带提示音（Windows 使用系统 Toast 风格提醒）
                               </n-text>
                             </div>
                           </n-radio>

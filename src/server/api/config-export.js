@@ -92,7 +92,7 @@ router.get('/', (req, res) => {
  * POST /api/config-export/import
  * Body: { data: {...}, overwrite: boolean }
  */
-router.post('/import', (req, res) => {
+router.post('/import', async (req, res) => {
   try {
     const { data, overwrite = false } = req.body;
 
@@ -103,7 +103,7 @@ router.post('/import', (req, res) => {
       });
     }
 
-    const result = configExportService.importConfigs(data, { overwrite });
+    const result = await configExportService.importConfigs(data, { overwrite });
 
     res.json(result);
   } catch (err) {
@@ -119,7 +119,7 @@ router.post('/import', (req, res) => {
  * 导入 ZIP 配置
  * POST /api/config-export/import-zip
  */
-router.post('/import-zip', express.raw({ type: ['application/zip', 'application/octet-stream'], limit: '100mb' }), (req, res) => {
+router.post('/import-zip', express.raw({ type: ['application/zip', 'application/octet-stream'], limit: '100mb' }), async (req, res) => {
   try {
     const overwrite = req.query.overwrite === 'true';
     const buffer = req.body;
@@ -132,7 +132,7 @@ router.post('/import-zip', express.raw({ type: ['application/zip', 'application/
     }
 
     const data = parseConfigZip(buffer);
-    const result = configExportService.importConfigs(data, { overwrite });
+    const result = await configExportService.importConfigs(data, { overwrite });
     res.json(result);
   } catch (err) {
     console.error('[ConfigExport API] 导入 ZIP 失败:', err);
