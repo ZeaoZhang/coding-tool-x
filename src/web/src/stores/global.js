@@ -402,7 +402,7 @@ export const useGlobalStore = defineStore('global', () => {
     return response.data
   }
 
-  async function stopProxy(type) {
+  async function stopProxy(type, options = {}) {
     let endpoint
     if (type === 'codex') {
       endpoint = '/api/codex/proxy/stop'
@@ -420,6 +420,17 @@ export const useGlobalStore = defineStore('global', () => {
     proxyState.value.activeChannel = null
     proxyState.value.startTime = null
     proxyState.value.runtime = null
+
+    if (response.data?.success !== false) {
+      await loadChannels()
+    }
+
+    if (options.refreshChannelsDrawer && response.data?.success !== false && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('channel-management-refresh', {
+        detail: { channel: type, reason: 'proxy-stop' }
+      }))
+    }
+
     return response.data
   }
 

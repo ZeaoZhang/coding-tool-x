@@ -94,7 +94,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NButton, NIcon, NText, NSwitch, NTooltip, NTag
@@ -187,6 +187,17 @@ function handleAddClick() {
   channelRefs[currentChannel.value]?.value?.openAddDialog?.()
 }
 
+function refreshChannelPanel(channel = currentChannel.value) {
+  channelRefs[channel]?.value?.refresh?.()
+}
+
+function handleChannelManagementRefresh(event) {
+  const targetChannel = event?.detail?.channel
+  if (!targetChannel || targetChannel === currentChannel.value) {
+    refreshChannelPanel()
+  }
+}
+
 // 处理代理切换
 function handleProxyToggle(value) {
   emit('proxy-toggle', value)
@@ -219,9 +230,18 @@ function handleShowPlugins() {
 
 onMounted(() => {
   loadInstalledSkillsCount()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('channel-management-refresh', handleChannelManagementRefresh)
+  }
 })
 
 watch(() => currentChannel.value, loadInstalledSkillsCount)
+
+onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('channel-management-refresh', handleChannelManagementRefresh)
+  }
+})
 </script>
 
 <style scoped>

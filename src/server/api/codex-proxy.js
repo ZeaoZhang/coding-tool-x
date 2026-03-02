@@ -11,7 +11,8 @@ const {
   isProxyConfig,
   getCurrentProxyPort,
   configExists,
-  hasBackup
+  hasBackup,
+  readConfig
 } = require('../services/codex-settings-manager');
 const { getChannels, getEnabledChannels } = require('../services/codex-channels');
 const { clearAllLogs } = require('../websocket-server');
@@ -30,6 +31,17 @@ function sanitizeChannel(channel) {
   };
 }
 
+function selectLatestEnabledChannel(channels) {
+  if (!Array.isArray(channels) || channels.length === 0) return null;
+  const enabledChannels = channels.filter(ch => ch.enabled !== false);
+  if (enabledChannels.length === 0) return null;
+  return enabledChannels.reduce((latest, current) => {
+    const latestTs = Number(latest?.updatedAt || latest?.createdAt || 0);
+    const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
+    return currentTs > latestTs ? current : latest;
+  }, enabledChannels[0]);
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   ensureStorageDirMigrated();
@@ -39,6 +51,21 @@ function saveActiveChannelId(channelId) {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
+}
+
+function loadActiveChannelId() {
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.codex;
+  try {
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(content);
+      return data.activeChannelId || null;
+    }
+  } catch (error) {
+    console.error('[Codex Proxy] Error loading active channel ID:', error);
+  }
+  return null;
 }
 
 function removeActiveChannelFile() {
@@ -84,9 +111,20 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    // 2. 获取当前启用的渠道（多渠道模式）
+    // 2. 获取当前启用的渠道（优先使用当前配置中正在使用的 provider）
     const enabledChannels = getEnabledChannels();
-    const currentChannel = enabledChannels[0];
+    let currentChannel = null;
+    try {
+      const currentProvider = readConfig()?.model_provider;
+      if (currentProvider && currentProvider !== 'cc-proxy') {
+        currentChannel = enabledChannels.find(ch => ch.providerKey === currentProvider) || null;
+      }
+    } catch (err) {
+      // ignore and fallback
+    }
+    if (!currentChannel) {
+      currentChannel = enabledChannels[0] || null;
+    }
     if (!currentChannel) {
       return res.status(400).json({
         error: 'No enabled Codex channel found. Please create and enable a channel first.'
@@ -141,51 +179,56 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前启用的渠道（多渠道模式）
+    // 1. 获取当前激活渠道（优先使用启动动态切换时记录的渠道ID）
     const { channels } = getChannels();
-    const enabledChannels = channels.filter(ch => ch.enabled !== false);
-    const activeChannel = enabledChannels[0];
+    const activeChannelId = loadActiveChannelId();
+    let activeChannel = selectLatestEnabledChannel(channels);
+    if (!activeChannel && activeChannelId) {
+      activeChannel = channels.find(ch => ch.id === activeChannelId);
+    }
+    if (!activeChannel) {
+      const enabledChannels = channels.filter(ch => ch.enabled !== false);
+      activeChannel = enabledChannels[0] || channels[0] || null;
+    }
 
     // 2. 停止代理服务器
     const proxyResult = await stopCodexProxyServer();
+    const hadBackup = hasBackup();
 
-    // 3. 恢复原始配置
+    // 3. 恢复单渠道模式
+    // 不恢复整个 config.toml 备份，避免两个问题：
+    // - 备份中的旧 auth_mode/tokens 会导致 Codex 用 chatgpt token 认证 → usage limit
+    // - 备份中的 mcp_servers 是旧状态，会覆盖用户在动态切换期间对 MCP 的修改
+    // 直接丢弃备份，由 applyChannelToSettings 从当前 config.toml 写入正确渠道配置
+    if (hadBackup) {
+      const { deleteBackup } = require('../services/codex-settings-manager');
+      deleteBackup();
+      console.log('[Codex Proxy] Discarded backup (MCP changes preserved)');
+    }
+
     const { broadcastProxyState } = require('../websocket-server');
 
-    if (hasBackup()) {
-      restoreSettings();
-      console.log('[Codex Proxy] Restored settings from backup');
-
-      // Enforce single-channel mode: apply the active channel and disable all others
-      if (activeChannel) {
-        const { applyChannelToSettings } = require('../services/codex-channels');
-        applyChannelToSettings(activeChannel.id);
-        console.log(`[Codex Proxy] Single-channel mode enforced: ${activeChannel.name}`);
-      }
-
-      // 删除 active-channel.json
-      removeActiveChannelFile();
-
-      const response = {
-        success: true,
-        message: `Codex proxy stopped, settings restored${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
-        port: proxyResult.port,
-        restoredChannel: activeChannel?.name
-      };
-      res.json(response);
-
-      const updatedStatus = getCodexProxyStatus();
-      broadcastProxyState('codex', updatedStatus, activeChannel, channels);
-    } else {
-      res.json({
-        success: true,
-        message: 'Codex proxy stopped (no backup to restore)',
-        port: proxyResult.port
-      });
-
-      const updatedStatus = getCodexProxyStatus();
-      broadcastProxyState('codex', updatedStatus, activeChannel, channels);
+    // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
+    if (activeChannel) {
+      const { applyChannelToSettings } = require('../services/codex-channels');
+      applyChannelToSettings(activeChannel.id, { pruneProviders: true });
+      console.log(`[Codex Proxy] Single-channel mode restored: ${activeChannel.name}`);
     }
+
+    // 删除 active-channel.json
+    removeActiveChannelFile();
+
+    res.json({
+      success: true,
+      message: `Codex proxy stopped, settings restored${activeChannel ? ' (channel: ' + activeChannel.name + ')' : ''}`,
+      port: proxyResult.port,
+      restoredChannel: activeChannel?.name
+    });
+
+    const updatedStatus = getCodexProxyStatus();
+    const { channels: latestChannels } = getChannels();
+    const latestActiveChannel = latestChannels.find(ch => ch.enabled !== false) || null;
+    broadcastProxyState('codex', updatedStatus, latestActiveChannel, latestChannels);
   } catch (error) {
     console.error('[Codex Proxy] Error stopping proxy:', error);
     res.status(500).json({ error: error.message });

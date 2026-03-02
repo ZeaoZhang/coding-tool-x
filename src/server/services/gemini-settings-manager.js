@@ -138,6 +138,19 @@ function backupSettings() {
   }
 }
 
+// 只删除备份文件，不恢复（保留当前配置中用户对 MCP 等的修改）
+function deleteBackup() {
+  try {
+    if (fs.existsSync(getEnvBackupPath())) fs.unlinkSync(getEnvBackupPath());
+    if (fs.existsSync(getSettingsBackupPath())) fs.unlinkSync(getSettingsBackupPath());
+    console.log('Gemini backup files deleted');
+    return { success: true };
+  } catch (err) {
+    console.warn('Failed to delete Gemini backup files:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // 恢复配置
 function restoreSettings() {
   try {
@@ -257,6 +270,7 @@ module.exports = {
   writeSettings,
   backupSettings,
   restoreSettings,
+  deleteBackup,
   setProxyConfig,
   isProxyConfig,
   getCurrentProxyPort

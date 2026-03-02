@@ -359,7 +359,19 @@ function getSessionRowsByProjectId(projectId) {
       s.time_created,
       s.time_updated,
       s.time_compacting,
-      s.time_archived
+      s.time_archived,
+      (
+        COALESCE((
+          SELECT SUM(length(CAST(COALESCE(m.data, '') AS BLOB)))
+          FROM message m
+          WHERE m.session_id = s.id
+        ), 0) +
+        COALESCE((
+          SELECT SUM(length(CAST(COALESCE(p.data, '') AS BLOB)))
+          FROM part p
+          WHERE p.session_id = s.id
+        ), 0)
+      ) AS size
     FROM session s
     WHERE s.project_id = ${sqlQuote(projectId)}
       AND s.time_archived IS NULL
@@ -387,7 +399,19 @@ function getSessionRowById(sessionId) {
       s.time_created,
       s.time_updated,
       s.time_compacting,
-      s.time_archived
+      s.time_archived,
+      (
+        COALESCE((
+          SELECT SUM(length(CAST(COALESCE(m.data, '') AS BLOB)))
+          FROM message m
+          WHERE m.session_id = s.id
+        ), 0) +
+        COALESCE((
+          SELECT SUM(length(CAST(COALESCE(p.data, '') AS BLOB)))
+          FROM part p
+          WHERE p.session_id = s.id
+        ), 0)
+      ) AS size
     FROM session s
     WHERE s.id = ${sqlQuote(sessionId)}
     LIMIT 1
@@ -426,11 +450,12 @@ function getPartRowsBySessionId(sessionId) {
 }
 
 function normalizeSession(session, projectId = null) {
+  const size = Number(session?.size);
   return {
     sessionId: session.id,
     projectName: projectId || session.project_id,
     mtime: toIsoTime(session.time_updated) || new Date().toISOString(),
-    size: 0,
+    size: Number.isFinite(size) && size > 0 ? size : 0,
     filePath: '',
     gitBranch: null,
     firstMessage: session.title || session.slug || null,
@@ -441,11 +466,35 @@ function normalizeSession(session, projectId = null) {
   };
 }
 
+function isSessionLikeName(name) {
+  return /^ses_[a-z0-9_-]+$/i.test(name);
+}
+
+function getProjectDisplayName(project) {
+  const rawName = typeof project?.name === 'string' ? project.name.trim() : '';
+  const rawId = typeof project?.id === 'string' ? project.id.trim() : '';
+  const worktree = typeof project?.worktree === 'string' ? project.worktree.trim() : '';
+
+  // OpenCode 的 project.name 可能为空或异常写成会话ID，优先回退为目录名。
+  if (rawName && rawName !== rawId && !isSessionLikeName(rawName)) {
+    return rawName;
+  }
+
+  if (worktree) {
+    const dirName = path.basename(worktree);
+    if (dirName && dirName !== path.sep && dirName !== '.' && dirName !== '..') {
+      return dirName;
+    }
+  }
+
+  return rawName || rawId;
+}
+
 // 获取所有项目
 function getProjects() {
   const projects = getProjectRows().map((project) => ({
     name: project.id,
-    displayName: project.name || project.id,
+    displayName: getProjectDisplayName(project),
     fullPath: project.worktree || '/',
     path: project.worktree || '/',
     sessionCount: Number(project.session_count) || 0,

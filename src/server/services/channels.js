@@ -278,9 +278,9 @@ function updateChannel(id, updates) {
   const proxyStatus = getProxyStatus();
   const isProxyRunning = proxyStatus.running;
 
-  // Single-channel enforcement: enabling a channel disables all others
-  // (applies regardless of proxy state — user intent is to switch to this channel)
-  if (nextChannel.enabled && !oldChannel.enabled) {
+  // Single-channel enforcement: enabling a channel disables all others ONLY when proxy is OFF
+  // When proxy is ON (dynamic switching), multiple channels can be enabled simultaneously
+  if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
     data.channels.forEach((ch, i) => {
       if (i !== index && ch.enabled) {
         ch.enabled = false;
@@ -299,9 +299,9 @@ function updateChannel(id, updates) {
 
   saveChannels(data);
 
-  // Sync settings.json whenever a channel becomes enabled (proxy OFF: immediate switch;
-  // proxy ON: pre-configures for when proxy stops)
-  if (nextChannel.enabled) {
+  // Sync settings.json only when proxy is OFF.
+  // In dynamic switching mode, defer local config writes until proxy stop.
+  if (!isProxyRunning && nextChannel.enabled) {
     console.log(`[Settings-sync] Channel "${nextChannel.name}" enabled, syncing settings.json...`);
     updateClaudeSettingsWithModelConfig(nextChannel);
   }

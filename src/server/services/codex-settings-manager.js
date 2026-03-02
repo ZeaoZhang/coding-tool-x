@@ -312,6 +312,23 @@ function backupSettings() {
   }
 }
 
+// 只删除备份文件，不恢复（保留当前配置）
+function deleteBackup() {
+  try {
+    if (fs.existsSync(getConfigBackupPath())) {
+      fs.unlinkSync(getConfigBackupPath());
+    }
+    if (fs.existsSync(getAuthBackupPath())) {
+      fs.unlinkSync(getAuthBackupPath());
+    }
+    console.log('Codex backup files deleted');
+    return { success: true };
+  } catch (err) {
+    console.warn('Failed to delete backup files:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // 恢复配置
 function restoreSettings() {
   try {
@@ -622,6 +639,7 @@ module.exports = {
   writeAuth,
   backupSettings,
   restoreSettings,
+  deleteBackup,
   setProxyConfig,
   isProxyConfig,
   getCurrentProxyPort,

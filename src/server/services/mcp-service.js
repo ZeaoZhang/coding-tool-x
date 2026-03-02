@@ -419,12 +419,19 @@ function writeOpenCodeConfig(filePath, data) {
 // MCP 数据管理
 // ============================================================================
 
-function normalizeServerApps(apps = {}) {
+const DEFAULT_SERVER_APPS = {
+  claude: true,
+  codex: false,
+  gemini: false,
+  opencode: false
+};
+
+function normalizeServerApps(apps = {}, fallbackApps = DEFAULT_SERVER_APPS) {
   return {
-    claude: apps.claude !== undefined ? !!apps.claude : true,
-    codex: !!apps.codex,
-    gemini: !!apps.gemini,
-    opencode: !!apps.opencode
+    claude: apps.claude !== undefined ? !!apps.claude : !!fallbackApps.claude,
+    codex: apps.codex !== undefined ? !!apps.codex : !!fallbackApps.codex,
+    gemini: apps.gemini !== undefined ? !!apps.gemini : !!fallbackApps.gemini,
+    opencode: apps.opencode !== undefined ? !!apps.opencode : !!fallbackApps.opencode
   };
 }
 
@@ -455,7 +462,9 @@ function getServer(id) {
 /**
  * 保存 MCP 服务器（添加或更新）
  */
-async function saveServer(server) {
+async function saveServer(server, options = {}) {
+  const { syncPlatforms = true } = options;
+
   if (!server.id || !server.id.trim()) {
     throw new Error('MCP 服务器 ID 不能为空');
   }
@@ -464,25 +473,34 @@ async function saveServer(server) {
   validateServerSpec(server.server);
 
   const servers = getAllServers();
+  const existingServer = servers[server.id];
+  const previousApps = existingServer ? normalizeServerApps(existingServer.apps) : null;
 
   // 如果是新服务器，设置默认值
-  if (!servers[server.id]) {
+  if (!existingServer) {
     server.createdAt = Date.now();
+  } else {
+    server.createdAt = existingServer.createdAt || server.createdAt || Date.now();
   }
   server.updatedAt = Date.now();
 
   // 确保 apps 字段存在
   if (!server.apps) {
-    server.apps = { claude: true, codex: false, gemini: false, opencode: false };
+    // Updating a server without explicit app flags should preserve existing platform toggles.
+    server.apps = previousApps
+      ? normalizeServerApps(previousApps)
+      : normalizeServerApps(DEFAULT_SERVER_APPS);
   } else {
-    server.apps = normalizeServerApps(server.apps);
+    server.apps = normalizeServerApps(server.apps, previousApps || DEFAULT_SERVER_APPS);
   }
 
   servers[server.id] = server;
   writeJsonFile(MCP_SERVERS_FILE, servers);
 
   // 同步到各平台配置
-  await syncServerToAllPlatforms(server);
+  if (syncPlatforms) {
+    await syncServerToAllPlatforms(server, previousApps);
+  }
 
   return server;
 }
@@ -580,30 +598,37 @@ function validateServerSpec(spec) {
 /**
  * 同步服务器到所有已启用的平台
  */
-async function syncServerToAllPlatforms(server) {
+async function syncServerToAllPlatforms(server, previousApps = null) {
   const { apps } = server;
+  const previous = previousApps ? normalizeServerApps(previousApps) : null;
+
+  const shouldRemoveFromPlatform = (platform) => {
+    // For new servers we should not delete existing platform config implicitly.
+    if (!previous) return false;
+    return previous[platform] && !apps[platform];
+  };
 
   if (apps.claude) {
     await syncServerToPlatform(server, 'claude');
-  } else {
+  } else if (shouldRemoveFromPlatform('claude')) {
     await removeServerFromPlatform(server.id, 'claude');
   }
 
   if (apps.codex) {
     await syncServerToPlatform(server, 'codex');
-  } else {
+  } else if (shouldRemoveFromPlatform('codex')) {
     await removeServerFromPlatform(server.id, 'codex');
   }
 
   if (apps.gemini) {
     await syncServerToPlatform(server, 'gemini');
-  } else {
+  } else if (shouldRemoveFromPlatform('gemini')) {
     await removeServerFromPlatform(server.id, 'gemini');
   }
 
   if (apps.opencode) {
     await syncServerToPlatform(server, 'opencode');
-  } else {
+  } else if (shouldRemoveFromPlatform('opencode')) {
     await removeServerFromPlatform(server.id, 'opencode');
   }
 }

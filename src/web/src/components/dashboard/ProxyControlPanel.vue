@@ -171,7 +171,7 @@ async function toggleProxy(type, value, loadingRef, startMsg, stopMsg) {
         })
       }
     } else {
-      await stopProxy(type)
+      await stopProxy(type, { refreshChannelsDrawer: true })
       message.success(stopMsg)
     }
   } catch (error) {

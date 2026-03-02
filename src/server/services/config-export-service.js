@@ -572,7 +572,7 @@ function exportAllConfigsZip() {
  * @param {Object} options - 导入选项 { overwrite: boolean }
  * @returns {Object} 导入结果
  */
-function importConfigs(importData, options = {}) {
+async function importConfigs(importData, options = {}) {
   const { overwrite = true } = options; // 默认覆盖模式
   const results = {
     configTemplates: { success: 0, failed: 0, skipped: 0 },
@@ -941,12 +941,16 @@ function importConfigs(importData, options = {}) {
     }
 
     // 导入 MCP Servers
-    if (mcpServers && mcpServers.length > 0 && overwrite) {
+    const mcpServerList = Array.isArray(mcpServers)
+      ? mcpServers
+      : Object.values(mcpServers || {});
+
+    if (mcpServerList.length > 0 && overwrite) {
       try {
         const mcpService = require('./mcp-service');
-        for (const server of mcpServers) {
+        for (const server of mcpServerList) {
           try {
-            mcpService.saveServer(server);
+            await mcpService.saveServer(server, { syncPlatforms: false });
             results.mcpServers.success++;
           } catch (err) {
             console.error(`[ConfigImport] 导入 MCP Server 失败: ${server.name}`, err);
