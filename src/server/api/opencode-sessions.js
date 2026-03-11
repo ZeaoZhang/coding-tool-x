@@ -14,7 +14,7 @@ const {
 } = require('../services/opencode-sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
-const os = require('os');
+const { HOME_DIR } = require('../../config/paths');
 
 function isNotFoundError(error) {
   if (!error || !error.message) {
@@ -295,7 +295,7 @@ module.exports = (config) => {
 
       const projects = getProjects();
       const project = projects.find(p => p.name === projectName);
-      const cwd = session.directory || project?.fullPath || os.homedir();
+      const cwd = session.directory || project?.fullPath || HOME_DIR;
       const command = `opencode -r ${sessionId}`;
       const quotedCwd = `"${String(cwd).replace(/"/g, '\\"')}"`;
       const copyCommand = `cd ${quotedCwd} && ${command}`;

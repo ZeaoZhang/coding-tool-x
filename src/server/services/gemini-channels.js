@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
+const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
 /**
  * Gemini 渠道管理服务（多渠道架构）
@@ -26,16 +26,16 @@ function normalizeGatewaySourceType(value, fallback = 'gemini') {
 
 // 获取 Gemini 配置目录
 function getGeminiDir() {
-  return path.join(os.homedir(), '.gemini');
+  return path.dirname(NATIVE_PATHS.gemini.env);
 }
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  const ccToolDir = PATHS.base;
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }
-  return path.join(ccToolDir, 'gemini-channels.json');
+  return PATHS.channels.gemini;
 }
 
 // 检查是否在代理模式

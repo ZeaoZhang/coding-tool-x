@@ -108,6 +108,7 @@ import {
 } from '@vicons/ionicons5'
 import { getServerTools } from '../api/mcp'
 import message from '../utils/message'
+import { resolveMcpErrorMessage, showMcpError } from '../utils/mcp-error'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import McpToolCard from './McpToolCard.vue'
 import McpToolTestModal from './McpToolTestModal.vue'
@@ -157,12 +158,13 @@ async function loadTools() {
       tools.value = result.tools || []
       fetchDuration.value = result.duration || 0
     } else {
-      error.value = result.message || '获取工具列表失败'
+      error.value = resolveMcpErrorMessage(result, '获取工具列表失败')
+      showMcpError(message, result, '获取工具列表失败', `${props.server?.name || props.server?.id}: `)
     }
   } catch (err) {
     console.error('Failed to load tools:', err)
-    error.value = err.response?.data?.message || err.message || '连接服务器失败'
-    message.error('获取工具列表失败: ' + error.value)
+    error.value = resolveMcpErrorMessage(err, '连接服务器失败')
+    showMcpError(message, err, '获取工具列表失败', `${props.server?.name || props.server?.id}: `)
   } finally {
     loading.value = false
   }

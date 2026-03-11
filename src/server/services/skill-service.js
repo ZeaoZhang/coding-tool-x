@@ -16,10 +16,12 @@ const AdmZip = require('adm-zip');
 const {
   parseSkillContent,
 } = require('./format-converter');
-const { NATIVE_PATHS } = require('../../config/paths');
+const { NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
 
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
-const OPENCODE_SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
+const DEFAULT_GITHUB_HOST = 'https://github.com';
+const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 
 function normalizePlatform(platform) {
   return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
@@ -27,6 +29,116 @@ function normalizePlatform(platform) {
 
 function cloneRepos(repos = []) {
   return repos.map(repo => ({ ...repo }));
+}
+
+function normalizeRepoPath(input = '') {
+  return String(input || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+}
+
+function normalizeRepoDirectory(directory = '') {
+  return normalizeRepoPath(directory);
+}
+
+function stripGitSuffix(value = '') {
+  return String(value || '').replace(/\.git$/i, '');
+}
+
+function isWindowsAbsolutePath(input = '') {
+  return /^[a-zA-Z]:[\\/]/.test(String(input || ''));
+}
+
+function isLikelyLocalPath(input = '') {
+  const normalized = String(input || '').trim();
+  if (!normalized) return false;
+  return (
+    normalized.startsWith('/') ||
+    normalized.startsWith('~/') ||
+    normalized.startsWith('./') ||
+    normalized.startsWith('../') ||
+    normalized.startsWith('file://') ||
+    isWindowsAbsolutePath(normalized)
+  );
+}
+
+function expandHomePath(input = '') {
+  const normalized = String(input || '').trim();
+  if (!normalized) return '';
+  if (normalized.startsWith('~/')) {
+    return path.join(HOME_DIR, normalized.slice(2));
+  }
+  if (normalized === '~') {
+    return HOME_DIR;
+  }
+  if (normalized.startsWith('file://')) {
+    try {
+      return decodeURIComponent(new URL(normalized).pathname);
+    } catch {
+      return normalized;
+    }
+  }
+  return normalized;
+}
+
+function resolveLocalRepoPath(input = '') {
+  const expanded = expandHomePath(input);
+  if (!expanded) return '';
+  return path.resolve(expanded);
+}
+
+function normalizeRepoHost(host, provider = 'github') {
+  const fallback = provider === 'gitlab' ? DEFAULT_GITLAB_HOST : DEFAULT_GITHUB_HOST;
+  let normalized = String(host || '').trim();
+  if (!normalized) {
+    normalized = fallback;
+  }
+  if (!/^https?:\/\//i.test(normalized)) {
+    normalized = `https://${normalized}`;
+  }
+  try {
+    const parsed = new URL(normalized);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildRepoUrl(repo) {
+  if (repo.provider === 'local') {
+    return repo.localPath || '';
+  }
+  if (repo.provider === 'gitlab') {
+    return `${repo.host}/${repo.projectPath}`;
+  }
+  return `${repo.host}/${repo.owner}/${repo.name}`;
+}
+
+function buildRepoLabel(repo) {
+  if (repo.provider === 'local') {
+    return repo.localPath || '';
+  }
+  if (repo.provider === 'gitlab') {
+    return repo.projectPath || '';
+  }
+  return [repo.owner, repo.name].filter(Boolean).join('/');
+}
+
+function buildRepoId(repo) {
+  const directory = normalizeRepoDirectory(repo.directory);
+  const branch = String(repo.branch || 'main').trim() || 'main';
+  if (repo.provider === 'local') {
+    return `local:${repo.localPath}::${directory}`;
+  }
+  if (repo.provider === 'gitlab') {
+    return `gitlab:${repo.host}::${repo.projectPath}::${branch}::${directory}`;
+  }
+  return `github:${repo.host}::${repo.owner}/${repo.name}::${branch}::${directory}`;
+}
+
+function isRootSkillFile(filePath = '') {
+  return filePath === 'SKILL.md' || filePath.endsWith('/SKILL.md');
 }
 
 const DEFAULT_REPOS_BY_PLATFORM = {
@@ -46,17 +158,17 @@ const DEFAULT_REPOS_BY_PLATFORM = {
 
 const PLATFORM_CONFIG = {
   claude: {
-    installDir: path.join(os.homedir(), '.claude', 'skills'),
+    installDir: path.join(HOME_DIR, '.claude', 'skills'),
     reposFile: 'skill-repos.json',
     cacheFile: 'skills-cache.json'
   },
   codex: {
-    installDir: path.join(os.homedir(), '.codex', 'skills'),
+    installDir: path.join(HOME_DIR, '.codex', 'skills'),
     reposFile: 'codex-skill-repos.json',
     cacheFile: 'codex-skills-cache.json'
   },
   gemini: {
-    installDir: path.join(os.homedir(), '.gemini', 'skills'),
+    installDir: path.join(HOME_DIR, '.gemini', 'skills'),
     reposFile: 'gemini-skill-repos.json',
     cacheFile: 'gemini-skills-cache.json'
   },
@@ -73,7 +185,7 @@ const CACHE_TTL = 5 * 60 * 1000;
 class SkillService {
   constructor(platform = 'claude') {
     this.platform = normalizePlatform(platform);
-    this.configDir = path.join(os.homedir(), '.cc-tool');
+    this.configDir = path.join(HOME_DIR, '.cc-tool');
 
     const platformConfig = PLATFORM_CONFIG[this.platform];
     this.installDir = platformConfig.installDir;
@@ -97,6 +209,98 @@ class SkillService {
     }
   }
 
+  clearCache({ removeFile = false } = {}) {
+    this.skillsCache = null;
+    this.cacheTime = 0;
+
+    if (removeFile) {
+      try {
+        if (fs.existsSync(this.cachePath)) {
+          fs.unlinkSync(this.cachePath);
+        }
+      } catch (err) {
+        console.warn('[SkillService] Failed to delete cache file:', err.message);
+      }
+    }
+  }
+
+  getDefaultSkillDirectory(repo) {
+    if (repo.provider === 'local') {
+      return path.basename(repo.localPath || '') || 'skill';
+    }
+    if (repo.provider === 'gitlab') {
+      const projectPath = normalizeRepoPath(repo.projectPath);
+      return projectPath.split('/').pop() || 'skill';
+    }
+    return repo.name || 'skill';
+  }
+
+  resolveSkillDirectory(fullDirectory, baseDir, repo) {
+    const normalizedFullDirectory = normalizeRepoPath(fullDirectory);
+    const normalizedBaseDir = normalizeRepoDirectory(baseDir);
+
+    if (normalizedBaseDir) {
+      if (normalizedFullDirectory === normalizedBaseDir) {
+        return normalizeRepoPath(path.basename(normalizedBaseDir)) || this.getDefaultSkillDirectory(repo);
+      }
+      if (normalizedFullDirectory.startsWith(`${normalizedBaseDir}/`)) {
+        return normalizedFullDirectory.slice(normalizedBaseDir.length + 1);
+      }
+    }
+
+    if (!normalizedFullDirectory) {
+      return this.getDefaultSkillDirectory(repo);
+    }
+
+    return normalizedFullDirectory;
+  }
+
+  normalizeRepoConfig(repo = {}) {
+    const provider = SUPPORTED_REPO_PROVIDERS.includes(repo.provider)
+      ? repo.provider
+      : (repo.localPath ? 'local' : (repo.projectPath ? 'gitlab' : 'github'));
+
+    const normalized = {
+      provider,
+      branch: String(repo.branch || 'main').trim() || 'main',
+      directory: normalizeRepoDirectory(repo.directory),
+      enabled: repo.enabled !== false
+    };
+
+    if (provider === 'local') {
+      normalized.localPath = resolveLocalRepoPath(repo.localPath || repo.path || repo.url || '');
+      if (!normalized.localPath) {
+        throw new Error('Missing local repository path');
+      }
+      normalized.name = path.basename(normalized.localPath) || 'local-repo';
+    } else if (provider === 'gitlab') {
+      normalized.host = normalizeRepoHost(repo.host, 'gitlab');
+      normalized.projectPath = normalizeRepoPath(repo.projectPath || [repo.owner, repo.name].filter(Boolean).join('/'));
+      if (!normalized.projectPath) {
+        throw new Error('Missing GitLab project path');
+      }
+      normalized.name = stripGitSuffix(normalized.projectPath.split('/').pop() || '');
+      normalized.owner = normalized.projectPath.split('/')[0] || '';
+    } else {
+      normalized.host = normalizeRepoHost(repo.host, 'github');
+      normalized.owner = String(repo.owner || '').trim();
+      normalized.name = stripGitSuffix(repo.name || '');
+      if (!normalized.owner || !normalized.name) {
+        throw new Error('Missing GitHub repo info');
+      }
+    }
+
+    normalized.repoUrl = repo.repoUrl || buildRepoUrl(normalized);
+    normalized.label = buildRepoLabel(normalized);
+    normalized.id = buildRepoId(normalized);
+
+    return normalized;
+  }
+
+  normalizeRepos(repos = []) {
+    return repos.map(repo => this.normalizeRepoConfig(repo));
+  }
+
   /**
    * 加载仓库配置
    */
@@ -105,20 +309,21 @@ class SkillService {
       if (fs.existsSync(this.reposConfigPath)) {
         const data = JSON.parse(fs.readFileSync(this.reposConfigPath, 'utf-8'));
         if (Array.isArray(data.repos)) {
-          return data.repos;
+          return this.normalizeRepos(data.repos);
         }
       }
     } catch (err) {
       console.error('[SkillService] Load repos config error:', err.message);
     }
-    return cloneRepos(DEFAULT_REPOS_BY_PLATFORM[this.platform] || DEFAULT_REPOS_BY_PLATFORM.claude);
+    return this.normalizeRepos(cloneRepos(DEFAULT_REPOS_BY_PLATFORM[this.platform] || DEFAULT_REPOS_BY_PLATFORM.claude));
   }
 
   /**
    * 保存仓库配置
    */
   saveRepos(repos) {
-    fs.writeFileSync(this.reposConfigPath, JSON.stringify({ repos }, null, 2));
+    const normalizedRepos = this.normalizeRepos(repos);
+    fs.writeFileSync(this.reposConfigPath, JSON.stringify({ repos: normalizedRepos }, null, 2));
   }
 
   /**
@@ -132,24 +337,18 @@ class SkillService {
    */
   addRepo(repo) {
     const repos = this.loadRepos();
-    // 使用 owner/name/directory 作为唯一标识
-    const existingIndex = repos.findIndex(r =>
-      r.owner === repo.owner &&
-      r.name === repo.name &&
-      (r.directory || '') === (repo.directory || '')
-    );
+    const normalizedRepo = this.normalizeRepoConfig(repo);
+    const existingIndex = repos.findIndex(r => r.id === normalizedRepo.id);
 
     if (existingIndex >= 0) {
-      repos[existingIndex] = repo;
+      repos[existingIndex] = normalizedRepo;
     } else {
-      repos.push(repo);
+      repos.push(normalizedRepo);
     }
 
     this.saveRepos(repos);
-    // 清除缓存
-    this.skillsCache = null;
-    this.cacheTime = 0;
-    return repos;
+    this.clearCache({ removeFile: true });
+    return this.loadRepos();
   }
 
   /**
@@ -158,18 +357,22 @@ class SkillService {
    * @param {string} name - 仓库名称
    * @param {string} [directory=''] - 子目录路径
    */
-  removeRepo(owner, name, directory = '') {
+  removeRepo(owner, name, directory = '', repoId = '') {
     const repos = this.loadRepos();
-    const filtered = repos.filter(r => !(
-      r.owner === owner &&
-      r.name === name &&
-      (r.directory || '') === directory
-    ));
+    const normalizedDirectory = normalizeRepoDirectory(directory);
+    const filtered = repos.filter(r => {
+      if (repoId) {
+        return r.id !== repoId;
+      }
+      return !(
+        (r.owner || '') === owner &&
+        (r.name || '') === name &&
+        normalizeRepoDirectory(r.directory) === normalizedDirectory
+      );
+    });
     this.saveRepos(filtered);
-    // 清除缓存
-    this.skillsCache = null;
-    this.cacheTime = 0;
-    return filtered;
+    this.clearCache({ removeFile: true });
+    return this.loadRepos();
   }
 
   /**
@@ -179,21 +382,25 @@ class SkillService {
    * @param {string} [directory=''] - 子目录路径
    * @param {boolean} enabled - 是否启用
    */
-  toggleRepo(owner, name, directory = '', enabled) {
+  toggleRepo(owner, name, directory = '', enabled, repoId = '') {
     const repos = this.loadRepos();
-    const repo = repos.find(r =>
-      r.owner === owner &&
-      r.name === name &&
-      (r.directory || '') === directory
-    );
+    const normalizedDirectory = normalizeRepoDirectory(directory);
+    const repo = repos.find(r => {
+      if (repoId) {
+        return r.id === repoId;
+      }
+      return (
+        (r.owner || '') === owner &&
+        (r.name || '') === name &&
+        normalizeRepoDirectory(r.directory) === normalizedDirectory
+      );
+    });
     if (repo) {
       repo.enabled = enabled;
       this.saveRepos(repos);
-      // 清除缓存
-      this.skillsCache = null;
-      this.cacheTime = 0;
+      this.clearCache({ removeFile: true });
     }
-    return repos;
+    return this.loadRepos();
   }
 
   /**
@@ -202,16 +409,7 @@ class SkillService {
   async listSkills(forceRefresh = false) {
     // 强制刷新时清除缓存
     if (forceRefresh) {
-      this.skillsCache = null;
-      this.cacheTime = 0;
-      // 删除文件缓存
-      try {
-        if (fs.existsSync(this.cachePath)) {
-          fs.unlinkSync(this.cachePath);
-        }
-      } catch (err) {
-        console.warn('[SkillService] Failed to delete cache file:', err.message);
-      }
+      this.clearCache({ removeFile: true });
     }
 
     // 检查内存缓存
@@ -320,14 +518,24 @@ class SkillService {
    * 支持指定子目录扫描
    */
   async fetchRepoSkills(repo) {
+    if (repo.provider === 'local') {
+      return this.fetchLocalRepoSkills(repo);
+    }
+
+    if (repo.provider === 'gitlab') {
+      return this.fetchGitLabRepoSkills(repo);
+    }
+
+    return this.fetchGitHubRepoSkills(repo);
+  }
+
+  async fetchGitHubRepoSkills(repo) {
     const skills = [];
 
     try {
-      // 使用 GitHub Tree API 一次性获取所有文件
-      const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${repo.branch}?recursive=1`;
-      const tree = await this.fetchGitHubApi(treeUrl);
+      const treeItems = await this.fetchGitHubRepoTree(repo);
 
-      if (!tree || !tree.tree) {
+      if (!treeItems.length) {
         console.warn(`[SkillService] Empty tree for ${repo.owner}/${repo.name}`);
         return skills;
       }
@@ -336,12 +544,10 @@ class SkillService {
       const baseDir = repo.directory || '';
       const baseDirPrefix = baseDir ? `${baseDir}/` : '';
 
-      // 找到所有 SKILL.md 文件（如果配置了子目录，只扫描该目录下的）
-      const skillFiles = tree.tree.filter(item => {
-        if (item.type !== 'blob' || !item.path.endsWith('/SKILL.md')) {
+      const skillFiles = treeItems.filter(item => {
+        if (item.type !== 'blob' || !isRootSkillFile(item.path)) {
           return false;
         }
-        // 如果配置了子目录，只返回该子目录下的文件
         if (baseDir && !item.path.startsWith(baseDirPrefix)) {
           return false;
         }
@@ -371,6 +577,59 @@ class SkillService {
     return skills;
   }
 
+  async fetchGitLabRepoSkills(repo) {
+    const skills = [];
+
+    try {
+      const tree = await this.fetchGitLabTree(repo);
+      const baseDir = repo.directory || '';
+      const baseDirPrefix = baseDir ? `${baseDir}/` : '';
+      const skillFiles = tree.filter(item => {
+        if (item.type !== 'blob' || !isRootSkillFile(item.path)) {
+          return false;
+        }
+        if (baseDir && !item.path.startsWith(baseDirPrefix)) {
+          return false;
+        }
+        return true;
+      });
+
+      const batchSize = 5;
+      for (let i = 0; i < skillFiles.length; i += batchSize) {
+        const batch = skillFiles.slice(i, i + batchSize);
+        const results = await Promise.allSettled(
+          batch.map(file => this.fetchAndParseSkill(file, repo, baseDir))
+        );
+
+        for (const result of results) {
+          if (result.status === 'fulfilled' && result.value) {
+            skills.push(result.value);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[SkillService] Fetch GitLab repo ${repo.projectPath} error:`, err.message);
+      throw err;
+    }
+
+    return skills;
+  }
+
+  async fetchLocalRepoSkills(repo) {
+    const skills = [];
+    const repoRoot = repo.localPath;
+    const scanRoot = repo.directory
+      ? path.join(repoRoot, repo.directory)
+      : repoRoot;
+
+    if (!fs.existsSync(scanRoot)) {
+      throw new Error(`Local repo path not found: ${scanRoot}`);
+    }
+
+    this.scanRepoLocalDir(scanRoot, repoRoot, skills, repo);
+    return skills;
+  }
+
   /**
    * 获取并解析单个 SKILL.md
    * @param {Object} file - GitHub tree 文件对象
@@ -379,30 +638,17 @@ class SkillService {
    */
   async fetchAndParseSkill(file, repo, baseDir = '') {
     try {
-      // 从路径提取目录名 (e.g., "algorithmic-art/SKILL.md" -> "algorithmic-art")
-      const fullDirectory = file.path.replace(/\/SKILL\.md$/, '');
-
-      // 计算相对于 baseDir 的目录名（用于显示和安装）
-      const directory = baseDir ? fullDirectory.slice(baseDir.length + 1) : fullDirectory;
-
-      // 使用 raw.githubusercontent.com 获取文件内容（不消耗 API 限额）
-      const content = await this.fetchBlobContent(file.sha, repo, file.path);
+      const fullDirectory = normalizeRepoPath(file.path.replace(/(^|\/)SKILL\.md$/, ''));
+      const directory = this.resolveSkillDirectory(fullDirectory, baseDir, repo);
+      const content = await this.fetchSkillFileContent(repo, file);
       const metadata = this.parseSkillMd(content);
 
-      return {
-        key: `${repo.owner}/${repo.name}:${fullDirectory}`,
-        name: metadata.name || directory.split('/').pop(),
-        description: metadata.description || '',
-        directory,  // 相对目录（用于安装）
-        fullDirectory,  // 完整目录（用于从仓库下载）
-        installed: this.isInstalled(directory),
-        readmeUrl: `https://github.com/${repo.owner}/${repo.name}/tree/${repo.branch}/${fullDirectory}`,
-        repoOwner: repo.owner,
-        repoName: repo.name,
-        repoBranch: repo.branch,
-        repoDirectory: repo.directory || '',  // 仓库配置的子目录
-        license: metadata.license
-      };
+      return this.createSkillListItem({
+        metadata,
+        repo,
+        directory,
+        fullDirectory
+      });
     } catch (err) {
       console.warn(`[SkillService] Parse skill ${file.path} error:`, err.message);
       return null;
@@ -410,58 +656,103 @@ class SkillService {
   }
 
   /**
-   * 使用 raw.githubusercontent.com 获取文件内容（不消耗 API 限额）
+   * 递归扫描外部本地仓库目录
    */
-  async fetchBlobContent(sha, repo, filePath) {
-    // raw.githubusercontent.com 不走 API 限流
-    const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.name}/${repo.branch}/${filePath}`;
+  scanRepoLocalDir(currentDir, repoRoot, skills, repo) {
+    const skillMdPath = path.join(currentDir, 'SKILL.md');
 
-    return new Promise((resolve, reject) => {
-      const req = https.get(url, {
-        headers: {
-          'User-Agent': 'cc-cli-skill-service'
-        },
-        timeout: 15000
-      }, (res) => {
-        // 处理重定向
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          const redirectUrl = res.headers.location;
-          if (redirectUrl) {
-            https.get(redirectUrl, {
-              headers: { 'User-Agent': 'cc-cli-skill-service' },
-              timeout: 15000
-            }, (res2) => {
-              let data = '';
-              res2.on('data', chunk => data += chunk);
-              res2.on('end', () => {
-                if (res2.statusCode === 200) {
-                  resolve(data);
-                } else {
-                  reject(new Error(`Raw fetch error: ${res2.statusCode}`));
-                }
-              });
-            }).on('error', reject);
-            return;
-          }
-        }
+    if (fs.existsSync(skillMdPath)) {
+      try {
+        const content = fs.readFileSync(skillMdPath, 'utf-8');
+        const metadata = this.parseSkillMd(content);
+        const fullDirectory = normalizeRepoPath(path.relative(repoRoot, currentDir));
+        const directory = this.resolveSkillDirectory(fullDirectory, repo.directory || '', repo);
 
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode === 200) {
-            resolve(data);
-          } else {
-            reject(new Error(`Raw fetch error: ${res.statusCode}`));
-          }
-        });
-      });
+        skills.push(this.createSkillListItem({
+          metadata,
+          repo,
+          directory,
+          fullDirectory
+        }));
+      } catch (err) {
+        console.warn(`[SkillService] Parse local repo skill ${currentDir} error:`, err.message);
+      }
+      return;
+    }
 
-      req.on('error', reject);
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new Error('Raw fetch timeout'));
-      });
-    });
+    try {
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        this.scanRepoLocalDir(path.join(currentDir, entry.name), repoRoot, skills, repo);
+      }
+    } catch (err) {
+      console.warn(`[SkillService] Scan local repo ${currentDir} error:`, err.message);
+    }
+  }
+
+  createSkillListItem({ metadata, repo, directory, fullDirectory }) {
+    const repoDirectory = normalizeRepoDirectory(repo.directory);
+    const labelFallback = directory.split('/').pop() || this.getDefaultSkillDirectory(repo);
+
+    return {
+      key: `${repo.id}:${fullDirectory || directory}`,
+      name: metadata.name || labelFallback,
+      description: metadata.description || '',
+      directory,
+      fullDirectory,
+      installed: this.isInstalled(directory),
+      readmeUrl: this.buildSkillReadmeUrl(repo, fullDirectory),
+      repoProvider: repo.provider,
+      repoOwner: repo.owner || null,
+      repoName: repo.name || null,
+      repoBranch: repo.branch,
+      repoDirectory,
+      repoHost: repo.host || null,
+      repoProjectPath: repo.projectPath || null,
+      repoLocalPath: repo.localPath || null,
+      repoId: repo.id,
+      repoUrl: repo.repoUrl || buildRepoUrl(repo),
+      source: repo.provider === 'local' ? 'local-repo' : repo.provider,
+      license: metadata.license
+    };
+  }
+
+  buildSkillReadmeUrl(repo, fullDirectory = '') {
+    const normalizedDirectory = normalizeRepoPath(fullDirectory);
+    if (repo.provider === 'local') {
+      return repo.localPath || null;
+    }
+    if (repo.provider === 'gitlab') {
+      const suffix = normalizedDirectory ? `/-/tree/${repo.branch}/${normalizedDirectory}` : `/-/tree/${repo.branch}`;
+      return `${repo.host}/${repo.projectPath}${suffix}`;
+    }
+    const suffix = normalizedDirectory ? `tree/${repo.branch}/${normalizedDirectory}` : `tree/${repo.branch}`;
+    return `${repo.host}/${repo.owner}/${repo.name}/${suffix}`;
+  }
+
+  async fetchSkillFileContent(repo, file) {
+    if (repo.provider === 'gitlab') {
+      return this.fetchGitLabFileContent(repo, file.path);
+    }
+    if (repo.provider === 'local') {
+      const localFilePath = path.join(repo.localPath, file.path);
+      return fs.readFileSync(localFilePath, 'utf-8');
+    }
+    return this.fetchGitHubBlobContent(file.sha, repo);
+  }
+
+  /**
+   * 使用 GitHub Blob API 获取文件内容
+   */
+  async fetchGitHubBlobContent(sha, repo) {
+    const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/blobs/${sha}`;
+    const data = await this.fetchGitHubApi(url);
+    if (!data || typeof data.content !== 'string') {
+      throw new Error('Invalid GitHub blob response');
+    }
+    return Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf-8');
   }
 
   /**
@@ -475,6 +766,24 @@ class SkillService {
     // 从配置文件获取
     try {
       const configPath = path.join(this.configDir, 'github-token.txt');
+      if (fs.existsSync(configPath)) {
+        return fs.readFileSync(configPath, 'utf-8').trim();
+      }
+    } catch (err) {
+      // ignore
+    }
+    return null;
+  }
+
+  getGitLabToken() {
+    if (process.env.GITLAB_TOKEN) {
+      return process.env.GITLAB_TOKEN;
+    }
+    if (process.env.GITLAB_PRIVATE_TOKEN) {
+      return process.env.GITLAB_PRIVATE_TOKEN;
+    }
+    try {
+      const configPath = path.join(this.configDir, 'gitlab-token.txt');
       if (fs.existsSync(configPath)) {
         return fs.readFileSync(configPath, 'utf-8').trim();
       }
@@ -523,6 +832,90 @@ class SkillService {
         reject(new Error('Request timeout'));
       });
     });
+  }
+
+  async fetchGitHubRepoTree(repo) {
+    const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${repo.branch}?recursive=1`;
+    const tree = await this.fetchGitHubApi(treeUrl);
+    if (tree?.truncated) {
+      console.warn(`[SkillService] GitHub tree truncated for ${repo.owner}/${repo.name}`);
+    }
+    return tree?.tree || [];
+  }
+
+  async fetchGitLabApi(url, { raw = false } = {}) {
+    const token = this.getGitLabToken();
+    const headers = {
+      'User-Agent': 'cc-cli-skill-service'
+    };
+    if (!raw) {
+      headers.Accept = 'application/json';
+    }
+    if (token) {
+      headers['PRIVATE-TOKEN'] = token;
+    }
+
+    return new Promise((resolve, reject) => {
+      const transport = url.startsWith('http:') ? http : https;
+      const req = transport.get(url, {
+        headers,
+        timeout: 15000
+      }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            if (raw) {
+              resolve(data);
+              return;
+            }
+            try {
+              resolve({
+                data: JSON.parse(data),
+                headers: res.headers
+              });
+            } catch (e) {
+              reject(new Error('Invalid JSON response'));
+            }
+          } else {
+            reject(new Error(`GitLab API error: ${res.statusCode}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timeout'));
+      });
+    });
+  }
+
+  async fetchGitLabTree(repo) {
+    const tree = [];
+    const projectId = encodeURIComponent(repo.projectPath);
+    let page = 1;
+
+    while (page) {
+      const url = `${repo.host}/api/v4/projects/${projectId}/repository/tree?ref=${encodeURIComponent(repo.branch)}&recursive=true&per_page=100&page=${page}`;
+      const response = await this.fetchGitLabApi(url);
+      tree.push(...(response.data || []).map(item => ({
+        ...item,
+        type: item.type === 'tree' ? 'tree' : 'blob'
+      })));
+
+      const nextPage = Number(response.headers['x-next-page'] || 0);
+      page = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 0;
+    }
+
+    return tree;
+  }
+
+  async fetchGitLabFileContent(repo, filePath) {
+    const projectId = encodeURIComponent(repo.projectPath);
+    const normalizedFilePath = encodeURIComponent(normalizeRepoPath(filePath));
+    const url = `${repo.host}/api/v4/projects/${projectId}/repository/files/${normalizedFilePath}/raw?ref=${encodeURIComponent(repo.branch)}`;
+    return this.fetchGitLabApi(url, { raw: true });
   }
 
   /**
@@ -675,41 +1068,6 @@ class SkillService {
     return String(directory).replace(/\\/g, '/').split('/').pop();
   }
 
-  validateOpenCodeSkillMetadata({ name, description }, directory) {
-    const expectedName = this.normalizeSkillDirectoryName(directory);
-    const normalizedName = typeof name === 'string' ? name.trim() : '';
-    const normalizedDescription = typeof description === 'string' ? description.trim() : '';
-
-    if (!expectedName) {
-      return '技能目录不能为空';
-    }
-    if (!normalizedName) {
-      return 'SKILL.md frontmatter 缺少 name';
-    }
-    if (!normalizedDescription) {
-      return 'SKILL.md frontmatter 缺少 description';
-    }
-    if (normalizedName.length < 1 || normalizedName.length > 64) {
-      return 'name 必须为 1-64 个字符';
-    }
-    if (!OPENCODE_SKILL_NAME_REGEX.test(normalizedName)) {
-      return 'name 必须为小写字母/数字，并使用单个连字符连接';
-    }
-    if (normalizedName !== expectedName) {
-      return `name 必须与目录名一致（期望: ${expectedName}）`;
-    }
-    if (normalizedDescription.length < 1 || normalizedDescription.length > 1024) {
-      return 'description 必须为 1-1024 个字符';
-    }
-
-    return null;
-  }
-
-  validateOpenCodeSkillContent(content, directory) {
-    const metadata = this.parseSkillMd(content);
-    return this.validateOpenCodeSkillMetadata(metadata, directory);
-  }
-
   /**
    * 检查技能是否已安装
    */
@@ -741,10 +1099,9 @@ class SkillService {
         : path.relative(baseDir, currentDir);
 
       // 检查是否已在列表中（比较目录名，去掉前缀路径）
-      const dirName = directory.split('/').pop().toLowerCase();
+      const normalizedDirectory = normalizeRepoPath(directory).toLowerCase();
       const existing = skills.find(s => {
-        const remoteDirName = s.directory.split('/').pop().toLowerCase();
-        return remoteDirName === dirName;
+        return normalizeRepoPath(s.directory).toLowerCase() === normalizedDirectory;
       });
 
       if (existing) {
@@ -796,11 +1153,13 @@ class SkillService {
 
     for (let i = skills.length - 1; i >= 0; i--) {
       const skill = skills[i];
-      // 使用目录名（不含路径前缀）作为去重 key
-      const key = skill.directory.split('/').pop().toLowerCase();
+      const key = [
+        normalizeRepoPath(skill.directory).toLowerCase(),
+        skill.repoId || '',
+        skill.installed ? 'installed' : 'remote'
+      ].join('::');
 
       if (seen.has(key)) {
-        // 保留已安装的版本
         const existingIndex = seen.get(key);
         if (skill.installed && !skills[existingIndex].installed) {
           skills.splice(existingIndex, 1);
@@ -822,6 +1181,7 @@ class SkillService {
    */
   async installSkill(directory, repo, fullDirectory = null) {
     const dest = path.join(this.installDir, directory);
+    const normalizedRepo = this.normalizeRepoConfig(repo);
 
     // 已安装则跳过
     if (fs.existsSync(dest)) {
@@ -831,16 +1191,48 @@ class SkillService {
     // 使用 fullDirectory（仓库中的完整路径）或 directory（向后兼容）
     const sourcePath = fullDirectory || directory;
 
-    // 下载仓库 ZIP
-    const zipUrl = `https://github.com/${repo.owner}/${repo.name}/archive/refs/heads/${repo.branch}.zip`;
+    if (normalizedRepo.provider === 'local') {
+      const sourceDir = sourcePath
+        ? path.join(normalizedRepo.localPath, sourcePath)
+        : normalizedRepo.localPath;
+
+      if (!fs.existsSync(sourceDir)) {
+        throw new Error(`Skill directory not found: ${sourcePath || normalizedRepo.localPath}`);
+      }
+
+      fs.mkdirSync(dest, { recursive: true });
+      this.copyDirRecursive(sourceDir, dest);
+
+      this.clearCache({ removeFile: true });
+      return { success: true, message: 'Installed successfully' };
+    }
+
     const tempDir = path.join(os.tmpdir(), `skill-${Date.now()}`);
     const zipPath = path.join(tempDir, 'repo.zip');
 
     try {
       fs.mkdirSync(tempDir, { recursive: true });
 
-      // 下载 ZIP
-      await this.downloadFile(zipUrl, zipPath);
+      let zipUrl = '';
+      let zipHeaders = {};
+
+      if (normalizedRepo.provider === 'gitlab') {
+        const projectId = encodeURIComponent(normalizedRepo.projectPath);
+        zipUrl = `${normalizedRepo.host}/api/v4/projects/${projectId}/repository/archive.zip?sha=${encodeURIComponent(normalizedRepo.branch)}`;
+        const token = this.getGitLabToken();
+        if (token) {
+          zipHeaders['PRIVATE-TOKEN'] = token;
+        }
+      } else {
+        zipUrl = `https://api.github.com/repos/${normalizedRepo.owner}/${normalizedRepo.name}/zipball/${encodeURIComponent(normalizedRepo.branch)}`;
+        const token = this.getGitHubToken();
+        zipHeaders.Accept = 'application/vnd.github+json';
+        if (token) {
+          zipHeaders.Authorization = `token ${token}`;
+        }
+      }
+
+      await this.downloadFile(zipUrl, zipPath, zipHeaders);
 
       // 解压
       const zip = new AdmZip(zipPath);
@@ -866,23 +1258,7 @@ class SkillService {
       fs.mkdirSync(dest, { recursive: true });
       this.copyDirRecursive(sourceDir, dest);
 
-      if (this.platform === 'opencode') {
-        const skillMdPath = path.join(dest, 'SKILL.md');
-        if (fs.existsSync(skillMdPath)) {
-          const validationError = this.validateOpenCodeSkillContent(
-            fs.readFileSync(skillMdPath, 'utf-8'),
-            directory
-          );
-          if (validationError) {
-            fs.rmSync(dest, { recursive: true, force: true });
-            throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
-          }
-        }
-      }
-
-      // 清除缓存，让列表刷新
-      this.skillsCache = null;
-      this.cacheTime = 0;
+      this.clearCache({ removeFile: true });
 
       return { success: true, message: 'Installed successfully' };
     } finally {
@@ -898,18 +1274,22 @@ class SkillService {
   /**
    * 下载文件
    */
-  async downloadFile(url, dest) {
+  async downloadFile(url, dest, headers = {}) {
     return new Promise((resolve, reject) => {
       const file = createWriteStream(dest);
+      const transport = url.startsWith('http:') ? http : https;
 
-      const request = https.get(url, {
-        headers: { 'User-Agent': 'cc-cli-skill-service' },
+      const request = transport.get(url, {
+        headers: {
+          'User-Agent': 'cc-cli-skill-service',
+          ...headers
+        },
         timeout: 60000
       }, (response) => {
         // 处理重定向
         if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
           file.close();
-          this.downloadFile(response.headers.location, dest).then(resolve).catch(reject);
+          this.downloadFile(response.headers.location, dest, headers).then(resolve).catch(reject);
           return;
         }
 
@@ -965,50 +1345,20 @@ class SkillService {
    */
   createCustomSkill({ name, directory, description, content }) {
     const dest = path.join(this.installDir, directory);
-    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
       throw new Error(`技能目录 "${directory}" 已存在`);
     }
 
-    if (this.platform === 'opencode') {
-      if (!OPENCODE_SKILL_NAME_REGEX.test(normalizedDirectory)) {
-        throw new Error('OpenCode skill 目录名必须是小写字母/数字，并使用单个连字符连接');
-      }
-    }
-
     const normalizedDescription = (description || '').trim();
-    const skillName = this.platform === 'opencode'
-      ? normalizedDirectory
-      : (name || directory);
-
-    if (this.platform === 'opencode') {
-      const validationError = this.validateOpenCodeSkillMetadata(
-        {
-          name: skillName,
-          description: normalizedDescription
-        },
-        normalizedDirectory
-      );
-      if (validationError) {
-        throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
-      }
-    }
+    const skillName = name || directory;
 
     // 创建目录
     fs.mkdirSync(dest, { recursive: true });
 
     // 生成 SKILL.md 内容
-    const skillMdContent = this.platform === 'opencode'
-      ? `---
-name: ${skillName}
-description: "${normalizedDescription}"
----
-
-${content}
-`
-      : `---
+    const skillMdContent = `---
 name: "${skillName}"
 description: "${normalizedDescription}"
 ---
@@ -1019,9 +1369,7 @@ ${content}
     // 写入文件
     fs.writeFileSync(path.join(dest, 'SKILL.md'), skillMdContent, 'utf-8');
 
-    // 清除缓存，让列表刷新
-    this.skillsCache = null;
-    this.cacheTime = 0;
+    this.clearCache({ removeFile: true });
 
     return { success: true, message: '技能创建成功', directory };
   }
@@ -1034,7 +1382,6 @@ ${content}
    */
   createSkillWithFiles({ directory, files }) {
     const dest = path.join(this.installDir, directory);
-    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
@@ -1047,21 +1394,6 @@ ${content}
     );
     if (!hasSkillMd) {
       throw new Error('技能必须包含 SKILL.md 文件');
-    }
-
-    if (this.platform === 'opencode') {
-      if (!OPENCODE_SKILL_NAME_REGEX.test(normalizedDirectory)) {
-        throw new Error('OpenCode skill 目录名必须是小写字母/数字，并使用单个连字符连接');
-      }
-
-      const skillMdFile = files.find(f => f.path === 'SKILL.md' || f.path.endsWith('/SKILL.md'));
-      const skillMdContent = skillMdFile
-        ? (skillMdFile.isBase64 ? Buffer.from(skillMdFile.content, 'base64').toString('utf-8') : skillMdFile.content)
-        : '';
-      const validationError = this.validateOpenCodeSkillContent(skillMdContent, normalizedDirectory);
-      if (validationError) {
-        throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
-      }
     }
 
     // 创建目录
@@ -1086,9 +1418,7 @@ ${content}
       }
     }
 
-    // 清除缓存
-    this.skillsCache = null;
-    this.cacheTime = 0;
+    this.clearCache({ removeFile: true });
 
     return {
       success: true,
@@ -1190,23 +1520,9 @@ ${content}
    */
   addSkillFiles(directory, files) {
     const skillPath = path.join(this.installDir, directory);
-    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     if (!fs.existsSync(skillPath)) {
       throw new Error(`技能 "${directory}" 不存在`);
-    }
-
-    if (this.platform === 'opencode') {
-      const incomingSkillMd = files.find(f => f.path === 'SKILL.md' || f.path.endsWith('/SKILL.md'));
-      if (incomingSkillMd) {
-        const content = incomingSkillMd.isBase64
-          ? Buffer.from(incomingSkillMd.content, 'base64').toString('utf-8')
-          : incomingSkillMd.content;
-        const validationError = this.validateOpenCodeSkillContent(content, normalizedDirectory);
-        if (validationError) {
-          throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
-        }
-      }
     }
 
     const added = [];
@@ -1228,9 +1544,7 @@ ${content}
       added.push(file.path);
     }
 
-    // 清除缓存
-    this.skillsCache = null;
-    this.cacheTime = 0;
+    this.clearCache({ removeFile: true });
 
     return { success: true, added };
   }
@@ -1265,9 +1579,7 @@ ${content}
       fs.unlinkSync(fullPath);
     }
 
-    // 清除缓存
-    this.skillsCache = null;
-    this.cacheTime = 0;
+    this.clearCache({ removeFile: true });
 
     return { success: true, deleted: filePath };
   }
@@ -1281,7 +1593,6 @@ ${content}
    */
   updateSkillFile(directory, filePath, content, isBase64 = false) {
     const skillPath = path.join(this.installDir, directory);
-    const normalizedDirectory = this.normalizeSkillDirectoryName(directory);
 
     if (!fs.existsSync(skillPath)) {
       throw new Error(`技能 "${directory}" 不存在`);
@@ -1293,23 +1604,13 @@ ${content}
       throw new Error(`文件 "${filePath}" 不存在`);
     }
 
-    if (this.platform === 'opencode' && /(^|\/)SKILL\.md$/i.test(filePath)) {
-      const textContent = isBase64 ? Buffer.from(content, 'base64').toString('utf-8') : content;
-      const validationError = this.validateOpenCodeSkillContent(textContent, normalizedDirectory);
-      if (validationError) {
-        throw new Error(`OpenCode skill 格式不符合要求: ${validationError}`);
-      }
-    }
-
     if (isBase64) {
       fs.writeFileSync(fullPath, Buffer.from(content, 'base64'));
     } else {
       fs.writeFileSync(fullPath, content, 'utf-8');
     }
 
-    // 清除缓存
-    this.skillsCache = null;
-    this.cacheTime = 0;
+    this.clearCache({ removeFile: true });
 
     return { success: true, updated: filePath };
   }
@@ -1323,9 +1624,7 @@ ${content}
 
     if (fs.existsSync(dest)) {
       fs.rmSync(dest, { recursive: true, force: true });
-      // 清除缓存
-      this.skillsCache = null;
-      this.cacheTime = 0;
+      this.clearCache({ removeFile: true });
       return { success: true, message: 'Uninstalled successfully' };
     }
 
@@ -1335,7 +1634,7 @@ ${content}
   /**
    * 获取技能详情（完整内容）
    */
-  async getSkillDetail(directory) {
+  async getSkillDetail(directory, repoHint = null, fullDirectoryHint = '') {
     // 先检查本地是否安装
     const localPath = path.join(this.installDir, directory, 'SKILL.md');
 
@@ -1358,13 +1657,7 @@ ${content}
       };
     }
 
-    const normalizeRepoPath = (input = '') =>
-      String(input)
-        .replace(/\\/g, '/')
-        .replace(/^\/+/, '')
-        .replace(/\/+$/, '');
-
-    const parseRemoteSkillContent = (content, repo) => {
+    const parseRemoteSkillContent = (content, repo, fullDirectory = '') => {
       const metadata = this.parseSkillMd(content);
       const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
       const body = bodyMatch ? bodyMatch[1].trim() : content;
@@ -1376,17 +1669,46 @@ ${content}
         content: body,
         fullContent: content,
         installed: false,
-        source: 'github',
-        repoOwner: repo.owner,
-        repoName: repo.name
+        source: repo.provider === 'local' ? 'local-repo' : repo.provider,
+        fullDirectory,
+        repoProvider: repo.provider,
+        repoOwner: repo.owner || null,
+        repoName: repo.name || null,
+        repoBranch: repo.branch || 'main',
+        repoDirectory: repo.directory || '',
+        repoHost: repo.host || null,
+        repoProjectPath: repo.projectPath || null,
+        repoLocalPath: repo.localPath || null,
+        repoId: repo.id,
+        repoUrl: repo.repoUrl || buildRepoUrl(repo)
       };
     };
 
     const tryLoadRemoteDetailFromRepo = async (repo, extraCandidateDirs = []) => {
       try {
-        const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${repo.branch}?recursive=1`;
-        const tree = await this.fetchGitHubApi(treeUrl);
-        if (!tree?.tree) return null;
+        if (repo.provider === 'local') {
+          const normalizedDirectory = normalizeRepoPath(directory);
+          const candidateDirs = new Set([
+            normalizedDirectory,
+            normalizeRepoPath(fullDirectoryHint || ''),
+            ...extraCandidateDirs.map(candidate => normalizeRepoPath(candidate))
+          ]);
+
+          for (const candidateDir of candidateDirs) {
+            const skillMdPath = candidateDir
+              ? path.join(repo.localPath, candidateDir, 'SKILL.md')
+              : path.join(repo.localPath, 'SKILL.md');
+            if (!fs.existsSync(skillMdPath)) continue;
+            const content = fs.readFileSync(skillMdPath, 'utf-8');
+            return parseRemoteSkillContent(content, repo, candidateDir);
+          }
+          return null;
+        }
+
+        const treeItems = repo.provider === 'gitlab'
+          ? await this.fetchGitLabTree(repo)
+          : await this.fetchGitHubRepoTree(repo);
+        if (!treeItems?.length) return null;
 
         const normalizedDirectory = normalizeRepoPath(directory);
         const candidateDirs = new Set();
@@ -1403,44 +1725,59 @@ ${content}
 
         let skillFile = null;
         for (const candidateDir of candidateDirs) {
-          if (!candidateDir) continue;
-          skillFile = tree.tree.find(item =>
-            item.type === 'blob' && item.path === `${candidateDir}/SKILL.md`
+          skillFile = treeItems.find(item =>
+            item.type === 'blob' && (
+              candidateDir
+                ? item.path === `${candidateDir}/SKILL.md`
+                : item.path === 'SKILL.md'
+            )
           );
           if (skillFile) break;
         }
 
-        if (!skillFile) {
-          const targetBaseName = normalizedDirectory.split('/').pop();
-          skillFile = tree.tree.find(item => {
-            if (item.type !== 'blob' || !item.path.endsWith('/SKILL.md')) return false;
-            const parts = item.path.split('/');
-            const parentDir = parts.length >= 2 ? parts[parts.length - 2] : '';
-            return parentDir === targetBaseName;
-          });
-        }
-
         if (!skillFile) return null;
 
-        const content = await this.fetchBlobContent(skillFile.sha, repo, skillFile.path);
-        return parseRemoteSkillContent(content, repo);
+        const content = await this.fetchSkillFileContent(repo, skillFile);
+        const fullDirectory = normalizeRepoPath(skillFile.path.replace(/(^|\/)SKILL\.md$/, ''));
+        return parseRemoteSkillContent(content, repo, fullDirectory);
       } catch (err) {
         console.warn('[SkillService] Fetch remote skill detail error:', err.message);
         return null;
       }
     };
 
+    if (repoHint) {
+      try {
+        const normalizedRepoHint = this.normalizeRepoConfig(repoHint);
+        const detail = await tryLoadRemoteDetailFromRepo(normalizedRepoHint, [
+          fullDirectoryHint || '',
+          repoHint.directory ? `${repoHint.directory}/${directory}` : '',
+          repoHint.fullDirectory || ''
+        ]);
+        if (detail) return detail;
+      } catch (err) {
+        console.warn('[SkillService] Invalid repo hint for detail:', err.message);
+      }
+    }
+
     // 先尝试使用缓存中的 repo 信息（最快）
-    const cachedSkill = this.skillsCache?.find(s => s.directory === directory);
-    if (cachedSkill && cachedSkill.repoOwner && cachedSkill.repoName) {
-      const cachedRepo = {
+    const cachedSkill = this.skillsCache?.find(s =>
+      normalizeRepoPath(s.directory) === normalizeRepoPath(directory)
+    );
+    if (cachedSkill && (cachedSkill.repoOwner || cachedSkill.repoProjectPath || cachedSkill.repoLocalPath)) {
+      const cachedRepo = this.normalizeRepoConfig({
+        provider: cachedSkill.repoProvider || (cachedSkill.repoLocalPath ? 'local' : (cachedSkill.repoProjectPath ? 'gitlab' : 'github')),
         owner: cachedSkill.repoOwner,
         name: cachedSkill.repoName,
         branch: cachedSkill.repoBranch || 'main',
-        directory: cachedSkill.repoDirectory || ''
-      };
-
+        directory: cachedSkill.repoDirectory || '',
+        host: cachedSkill.repoHost,
+        projectPath: cachedSkill.repoProjectPath,
+        localPath: cachedSkill.repoLocalPath,
+        repoUrl: cachedSkill.repoUrl
+      });
       const detail = await tryLoadRemoteDetailFromRepo(cachedRepo, [
+        fullDirectoryHint || '',
         cachedSkill.fullDirectory || '',
         cachedSkill.repoDirectory ? `${cachedSkill.repoDirectory}/${directory}` : ''
       ]);
@@ -1451,12 +1788,7 @@ ${content}
     const repos = this.loadRepos().filter(repo => repo.enabled !== false);
     for (const repo of repos) {
       const detail = await tryLoadRemoteDetailFromRepo(
-        {
-          owner: repo.owner,
-          name: repo.name,
-          branch: repo.branch || 'main',
-          directory: repo.directory || ''
-        },
+        repo,
         [repo.directory ? `${repo.directory}/${directory}` : '']
       );
       if (detail) return detail;

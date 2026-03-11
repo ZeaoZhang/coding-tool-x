@@ -1,6 +1,6 @@
 {
   "name": "coding-tool-x",
-  "version": "3.3.3",
+  "version": "3.3.8",
   "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
@@ -8,10 +8,12 @@
   },
   "scripts": {
     "start": "node bin/ctx.js",
-    "test": "npm run test:basic && npm run test:api && npm run test:codex-agents",
+    "test": "npm run test:basic && npm run test:api && npm run test:codex-agents && npm run test:skills",
     "test:basic": "node scripts/test-basic.js",
     "test:api": "node scripts/test-api-consistency.js",
     "test:codex-agents": "node scripts/test-codex-agents.js",
+    "test:skills": "node scripts/test-skill-providers.js",
+    "test:windows": "node scripts/test-windows-regression.js",
     "benchmark:codex": "node scripts/benchmark-codex-loading.js",
     "build:web": "cd src/web && npm run build",
     "dev:web": "cd src/web && npm run dev",

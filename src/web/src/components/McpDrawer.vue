@@ -333,6 +333,7 @@ import {
   saveServer, testServer, updateServerOrder, exportServers, getExportDownloadUrl
 } from '../api/mcp'
 import message, { dialog } from '../utils/message'
+import { showMcpError } from '../utils/mcp-error'
 import { copyTextToClipboard } from '../utils/clipboard'
 import McpFormDrawer from './McpFormDrawer.vue'
 import McpServerDetailDrawer from './McpServerDetailDrawer.vue'
@@ -491,13 +492,13 @@ async function handleTestServer(server) {
       if (testResult.success) {
         message.success(`${server.name || server.id}: ${testResult.message} (${testResult.duration}ms)`)
       } else {
-        message.error(`${server.name || server.id}: ${testResult.message}`)
+        showMcpError(message, testResult, '测试失败', `${server.name || server.id}: `)
       }
     }
   } catch (err) {
     console.error('Test server failed:', err)
     servers.value[server.id].status = 'error'
-    message.error('测试失败: ' + err.message)
+    showMcpError(message, err, '测试失败', `${server.name || server.id}: `)
   } finally {
     testingServers[server.id] = false
   }

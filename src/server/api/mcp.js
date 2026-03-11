@@ -241,7 +241,9 @@ router.post('/servers/:id/test', async (req, res) => {
     console.error('[MCP API] Test server failed:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
+      message: error.message,
+      hint: error?.data?.hint || null
     });
   }
 });
@@ -341,9 +343,24 @@ router.get('/servers/:id/tools', async (req, res) => {
   try {
     const { id } = req.params;
     const result = await mcpService.getServerTools(id);
+    if (result.status === 'error') {
+      return res.status(502).json({
+        success: false,
+        error: result.error || '获取工具列表失败',
+        message: result.error || '获取工具列表失败',
+        hint: result.hint || null,
+        duration: result.duration,
+        tools: []
+      });
+    }
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(404).json({ success: false, error: err.message });
+    res.status(404).json({
+      success: false,
+      error: err.message,
+      message: err.message,
+      hint: err?.data?.hint || null
+    });
   }
 });
 
@@ -357,13 +374,18 @@ router.post('/servers/:id/tools/test', async (req, res) => {
     const { toolName, arguments: args } = req.body;
 
     if (!toolName) {
-      return res.status(400).json({ success: false, error: '缺少 toolName 参数' });
+      return res.status(400).json({ success: false, error: '缺少 toolName 参数', message: '缺少 toolName 参数' });
     }
 
     const result = await mcpService.callServerTool(id, toolName, args || {});
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      message: err.message,
+      hint: err?.data?.hint || null
+    });
   }
 });
 

@@ -243,7 +243,7 @@ module.exports = (config) => {
             type: 'assistant',
             content: msg.content || '[空消息]',
             timestamp: msg.timestamp,
-            model: session.provider || 'codex'
+            model: msg.model || session.provider || 'codex'
           });
         }
         // 推理内容
@@ -252,7 +252,7 @@ module.exports = (config) => {
             type: 'assistant',
             content: `**[推理]**\n${msg.content || '[空推理]'}`,
             timestamp: msg.timestamp,
-            model: session.provider || 'codex'
+            model: msg.model || session.provider || 'codex'
           });
         }
         // 工具调用
@@ -264,7 +264,7 @@ module.exports = (config) => {
             type: 'assistant',
             content: `**[调用工具: ${msg.name}]**\n\`\`\`json\n${argsStr}\n\`\`\``,
             timestamp: msg.timestamp,
-            model: session.provider || 'codex'
+            model: msg.model || session.provider || 'codex'
           });
         }
         // 工具输出
@@ -284,10 +284,11 @@ module.exports = (config) => {
           }
 
           convertedMessages.push({
-            type: 'user',
+            type: 'assistant',
+            subtype: 'tool_result',
             content: `**[工具结果]**\n\`\`\`\n${outputStr}\n\`\`\``,
             timestamp: msg.timestamp,
-            model: null
+            model: msg.model || session.provider || 'codex'
           });
         }
       }

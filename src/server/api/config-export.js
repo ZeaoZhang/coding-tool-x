@@ -18,13 +18,32 @@ function parseConfigZip(buffer) {
   return JSON.parse(content);
 }
 
+function resolveChannelsByType(exportData) {
+  const raw = exportData?.data || {};
+  const typed = raw.channelsByType && typeof raw.channelsByType === 'object' ? raw.channelsByType : {};
+  return {
+    claude: Array.isArray(typed.claude) ? typed.claude : (Array.isArray(raw.channels) ? raw.channels : []),
+    codex: Array.isArray(typed.codex) ? typed.codex : [],
+    gemini: Array.isArray(typed.gemini) ? typed.gemini : [],
+    opencode: Array.isArray(typed.opencode) ? typed.opencode : []
+  };
+}
+
 function buildPreviewSummary(data) {
+  const channelsByType = resolveChannelsByType(data);
+  const allChannels = [
+    ...channelsByType.claude.map(c => ({ ...c, type: c.type || 'claude' })),
+    ...channelsByType.codex.map(c => ({ ...c, type: c.type || 'codex' })),
+    ...channelsByType.gemini.map(c => ({ ...c, type: c.type || 'gemini' })),
+    ...channelsByType.opencode.map(c => ({ ...c, type: c.type || 'opencode' }))
+  ];
+
   return {
     version: data.version,
     exportedAt: data.exportedAt,
     counts: {
       configTemplates: (data.data.configTemplates || []).length,
-      channels: (data.data.channels || []).length,
+      channels: allChannels.length,
       plugins: (data.data.plugins || []).length
     },
     items: {
@@ -33,7 +52,7 @@ function buildPreviewSummary(data) {
         name: t.name,
         description: t.description
       })),
-      channels: (data.data.channels || []).map(c => ({
+      channels: allChannels.map(c => ({
         id: c.id,
         name: c.name,
         type: c.type

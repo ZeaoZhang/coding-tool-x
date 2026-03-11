@@ -14,7 +14,7 @@
         <n-spin :show="loadingRepos">
           <div
             v-for="repo in repos"
-            :key="`${repo.owner}/${repo.name}/${repo.directory || ''}`"
+            :key="repo.id || `${repo.owner}/${repo.name}/${repo.directory || ''}`"
             class="repo-item"
           >
             <div class="repo-main">
@@ -24,8 +24,8 @@
                 @update:value="(val) => handleToggle(repo, val)"
               />
               <div class="repo-info">
-                <div class="repo-name">{{ repo.owner }}/{{ repo.name }}</div>
-                <div class="repo-branch">{{ repo.branch }}</div>
+                <div class="repo-name">{{ getRepoLabel(repo) }}</div>
+                <div class="repo-branch">{{ getRepoSubtitle(repo) }}</div>
               </div>
             </div>
             <n-button
@@ -51,14 +51,14 @@
         <div class="add-form">
           <n-input
             v-model:value="newRepo.input"
-            placeholder="owner/repo 或 GitHub URL"
+            placeholder="GitHub/GitLab 仓库地址，或本地路径"
             size="small"
             class="repo-input"
             @keyup.enter="handleAdd"
           />
           <n-input
             v-model:value="newRepo.branch"
-            placeholder="分支"
+            placeholder="分支（本地可忽略）"
             size="small"
             class="branch-input"
           />
@@ -74,14 +74,14 @@
           </n-button>
         </div>
         <div class="add-hint">
-          格式: owner/repo 或完整 GitHub URL
+          支持 `owner/repo`、GitHub/GitLab URL 或 SSH、以及本地路径
         </div>
       </div>
 
       <!-- 提示信息 -->
       <div class="tips">
         <n-alert type="info" :bordered="false" size="small">
-          添加仓库后，系统会从 GitHub 获取技能列表。如果网络较慢，请耐心等待或使用代理。
+          支持 GitHub、GitLab 和本地仓库路径；私有 GitLab 仓库请先配置 Token。
         </n-alert>
       </div>
 
@@ -91,13 +91,13 @@
         <div class="recommended-list">
           <div
             v-for="rec in recommendedRepos"
-            :key="`${rec.owner}/${rec.name}/${rec.directory || ''}`"
+            :key="rec.id || `${rec.owner}/${rec.name}/${rec.directory || ''}`"
             class="recommended-item"
             :class="{ added: isRepoAdded(rec) }"
             @click="!isRepoAdded(rec) && quickAdd(rec)"
           >
             <div class="rec-info">
-              <span class="rec-name">{{ rec.owner }}/{{ rec.name }}</span>
+              <span class="rec-name">{{ getRepoLabel(rec) }}</span>
               <span class="rec-desc">{{ rec.description }}</span>
             </div>
             <n-tag v-if="isRepoAdded(rec)" size="tiny" type="success" :bordered="false">
@@ -144,56 +144,120 @@ const newRepo = ref({
 const recommendedRepos = computed(() => {
   if (props.platform === 'codex') {
     return [
-      { owner: 'openai', name: 'skills', description: 'Codex 官方技能库', branch: 'main', directory: 'skills/.curated' }
+      { provider: 'github', owner: 'openai', name: 'skills', description: 'Codex 官方技能库', branch: 'main', directory: 'skills/.curated' }
     ]
   }
   if (props.platform === 'opencode') {
     return [
-      { owner: 'Shakudo-io', name: 'opencode-skills', description: 'OpenCode 官方技能库（46个技能）', branch: 'main', directory: '' }
+      { provider: 'github', owner: 'Shakudo-io', name: 'opencode-skills', description: 'OpenCode 官方技能库（46个技能）', branch: 'main', directory: '' }
     ]
   }
   if (props.platform === 'gemini') {
     return [
-      { owner: 'google-gemini', name: 'gemini-cli', description: 'Gemini 官方技能库', branch: 'main', directory: '.gemini/skills' }
+      { provider: 'github', owner: 'google-gemini', name: 'gemini-cli', description: 'Gemini 官方技能库', branch: 'main', directory: '.gemini/skills' }
     ]
   }
   return [
-    { owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main' },
-    { owner: 'ComposioHQ', name: 'awesome-claude-skills', description: '社区精选', branch: 'master' },
-    { owner: 'cexll', name: 'myclaude', description: '多智能体工作流', branch: 'master' }
+    { provider: 'github', owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main' },
+    { provider: 'github', owner: 'ComposioHQ', name: 'awesome-claude-skills', description: '社区精选', branch: 'master' },
+    { provider: 'github', owner: 'cexll', name: 'myclaude', description: '多智能体工作流', branch: 'master' }
   ]
 })
 
-const canAdd = computed(() => {
-  const input = newRepo.value.input.trim()
-  if (!input) return false
+function isLikelyLocalPath(input) {
+  return /^(\/|~\/|\.\/|\.\.\/|[a-zA-Z]:[\\/]|file:\/\/)/.test(input)
+}
 
-  if (input.includes('github.com')) {
-    return input.match(/github\.com\/([^\/]+)\/([^\/\.]+)/)
+function normalizeDirectory(directory = '') {
+  return String(directory || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+}
+
+function buildRepoIdentity(repo) {
+  const provider = repo.provider || (repo.localPath ? 'local' : (repo.projectPath ? 'gitlab' : 'github'))
+  const directory = normalizeDirectory(repo.directory)
+  const branch = repo.branch || 'main'
+  if (provider === 'local') {
+    return `local:${repo.localPath || ''}::${directory}`
   }
+  if (provider === 'gitlab') {
+    return `gitlab:${repo.host || 'https://gitlab.com'}::${repo.projectPath || ''}::${branch}::${directory}`
+  }
+  return `github:${repo.host || 'https://github.com'}::${repo.owner || ''}/${repo.name || ''}::${branch}::${directory}`
+}
 
-  const parts = input.split('/')
-  return parts.length === 2 && parts[0] && parts[1]
-})
+function getRepoLabel(repo) {
+  if (repo.provider === 'local') return repo.localPath || repo.name || '本地仓库'
+  if (repo.provider === 'gitlab') return repo.projectPath || [repo.owner, repo.name].filter(Boolean).join('/')
+  return [repo.owner, repo.name].filter(Boolean).join('/')
+}
 
-function parseRepoInput(input) {
-  let owner = ''
-  let name = ''
-
-  if (input.includes('github.com')) {
-    const match = input.match(/github\.com\/([^\/]+)\/([^\/\.]+)/)
-    if (match) {
-      owner = match[1]
-      name = match[2]
+function getRepoSubtitle(repo) {
+  const parts = []
+  if (repo.provider === 'local') {
+    parts.push('本地仓库')
+  } else if (repo.provider === 'gitlab') {
+    parts.push('GitLab')
+    if (repo.host) {
+      parts.push(repo.host.replace(/^https?:\/\//, ''))
     }
   } else {
-    const parts = input.split('/')
-    owner = parts[0]
-    name = parts[1]
+    parts.push('GitHub')
+  }
+  if (repo.branch) parts.push(repo.branch)
+  if (repo.directory) parts.push(`目录: ${repo.directory}`)
+  return parts.join(' · ')
+}
+
+function parseRepoInput(input) {
+  const value = input.trim()
+  if (!value) return null
+
+  if (isLikelyLocalPath(value)) {
+    return {
+      provider: 'local',
+      localPath: value
+    }
   }
 
-  return { owner, name }
+  const sshMatch = value.match(/^git@([^:]+):(.+?)(?:\.git)?$/i)
+  if (sshMatch) {
+    const host = `https://${sshMatch[1]}`
+    const projectPath = sshMatch[2].replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '')
+    const provider = sshMatch[1].includes('github') ? 'github' : 'gitlab'
+    if (provider === 'gitlab') {
+      return { provider, host, projectPath }
+    }
+    const parts = projectPath.split('/')
+    if (parts.length >= 2) {
+      return { provider, host, owner: parts[0], name: parts[1] }
+    }
+  }
+
+  try {
+    const parsed = new URL(value)
+    const host = `${parsed.protocol}//${parsed.host}`
+    const projectPath = parsed.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '')
+    if (parsed.hostname.includes('github')) {
+      const parts = projectPath.split('/')
+      if (parts.length >= 2) {
+        return { provider: 'github', host, owner: parts[0], name: parts[1] }
+      }
+    }
+    return { provider: 'gitlab', host, projectPath }
+  } catch {
+    // noop
+  }
+
+  const parts = value.split('/').filter(Boolean)
+  if (parts.length === 2) {
+    return { provider: 'github', owner: parts[0], name: parts[1] }
+  }
+
+  return null
 }
+
+const parsedRepoInput = computed(() => parseRepoInput(newRepo.value.input))
+const canAdd = computed(() => !!parsedRepoInput.value)
 
 async function loadRepos() {
   loadingRepos.value = true
@@ -212,14 +276,12 @@ async function loadRepos() {
 async function handleAdd() {
   if (!canAdd.value) return
 
-  const input = newRepo.value.input.trim()
-  const { owner, name } = parseRepoInput(input)
+  const parsedRepo = parsedRepoInput.value
 
   adding.value = true
   try {
     const result = await addSkillRepo({
-      owner,
-      name,
+      ...parsedRepo,
       branch: newRepo.value.branch || 'main',
       enabled: true
     }, props.platform)
@@ -240,7 +302,7 @@ async function handleAdd() {
 
 async function handleRemove(repo) {
   try {
-    const result = await removeSkillRepo(repo.owner, repo.name, repo.directory || '', props.platform)
+    const result = await removeSkillRepo(repo, props.platform)
     if (result.success) {
       repos.value = result.repos
       message.success('仓库已删除')
@@ -253,7 +315,7 @@ async function handleRemove(repo) {
 
 async function handleToggle(repo, enabled) {
   try {
-    const result = await toggleSkillRepo(repo.owner, repo.name, enabled, repo.directory || '', props.platform)
+    const result = await toggleSkillRepo(repo, enabled, props.platform)
     if (result.success) {
       repos.value = result.repos
       emit('updated')
@@ -264,18 +326,16 @@ async function handleToggle(repo, enabled) {
 }
 
 function isRepoAdded(rec) {
-  return repos.value.some(
-    r => r.owner === rec.owner && r.name === rec.name && (r.directory || '') === (rec.directory || '')
-  )
+  const identity = buildRepoIdentity(rec)
+  return repos.value.some(r => buildRepoIdentity(r) === identity)
 }
 
 async function quickAdd(rec) {
   adding.value = true
   try {
     const result = await addSkillRepo({
-      owner: rec.owner,
-      name: rec.name,
-      branch: rec.branch,
+      ...rec,
+      branch: rec.branch || 'main',
       directory: rec.directory || '',
       enabled: true
     }, props.platform)

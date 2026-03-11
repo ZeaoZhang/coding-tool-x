@@ -1,9 +1,8 @@
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { PATHS } = require('../../config/paths');
 
-const FAVORITES_DIR = path.join(os.homedir(), '.cc-tool');
-const FAVORITES_FILE = path.join(FAVORITES_DIR, 'favorites.json');
+const FAVORITES_DIR = PATHS.base;
+const FAVORITES_FILE = PATHS.favorites;
 
 // 内存缓存
 let favoritesCache = null;

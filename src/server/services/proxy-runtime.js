@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS } = require('../../config/paths');
 
 function getRuntimeFilePath(proxyType) {
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  const ccToolDir = PATHS.base;
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

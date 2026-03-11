@@ -2,8 +2,8 @@ const WebSocket = require('ws');
 const chalk = require('chalk');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { loadConfig } = require('../config/loader');
+const { PATHS } = require('../config/paths');
 const {
   normalizeAddress,
   isLoopbackAddress,
@@ -159,7 +159,7 @@ function installOriginGuard(server) {
 
 // 日志持久化文件路径
 function getLogsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  const ccToolDir = PATHS.base;
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

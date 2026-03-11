@@ -12,10 +12,9 @@ const {
 } = require('../services/settings-manager');
 const { getAllChannels } = require('../services/channels');
 const { clearAllLogs } = require('../websocket-server');
-const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
+const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 function sanitizeChannelForResponse(channel) {
   if (!channel) return null;
@@ -285,7 +284,7 @@ router.post('/stop', async (req, res) => {
 
     // 3. 删除备份文件和active-channel.json
     if (hasBackup()) {
-      const backupPath = path.join(os.homedir(), '.claude', 'settings.json.cc-tool-backup');
+      const backupPath = NATIVE_PATHS.claude.settingsBackup;
       if (fs.existsSync(backupPath)) {
         fs.unlinkSync(backupPath);
         console.log('✅ Removed backup file');

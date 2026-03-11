@@ -131,6 +131,40 @@ async function invokeRoute(router, method, routePath, reqOptions = {}) {
   return { statusCode, payload };
 }
 
+function loadSkillsRouterWithStub(createService) {
+  const routerModulePath = require.resolve('../src/server/api/skills');
+  const serviceModulePath = require.resolve('../src/server/services/skill-service');
+  const originalRouterModule = require.cache[routerModulePath];
+  const originalServiceModule = require.cache[serviceModulePath];
+
+  delete require.cache[routerModulePath];
+  require.cache[serviceModulePath] = {
+    id: serviceModulePath,
+    filename: serviceModulePath,
+    loaded: true,
+    exports: {
+      SkillService: function SkillService(platform) {
+        return createService(platform);
+      }
+    }
+  };
+
+  try {
+    return require('../src/server/api/skills');
+  } finally {
+    delete require.cache[routerModulePath];
+    if (originalRouterModule) {
+      require.cache[routerModulePath] = originalRouterModule;
+    }
+
+    if (originalServiceModule) {
+      require.cache[serviceModulePath] = originalServiceModule;
+    } else {
+      delete require.cache[serviceModulePath];
+    }
+  }
+}
+
 function assertRouteCoverage(name, routeType, routeMap, requiredRouteKeys) {
   const missing = [];
   for (const key of requiredRouteKeys) {
@@ -227,6 +261,160 @@ async function run() {
       assertStatusIn(result.statusCode, [400, 404], '会话排序参数校验');
     });
   }
+
+  await runCase('[skills] GET /detail/* 透传 repo hint 与 fullDirectory', async () => {
+    const calls = [];
+    const skillsRouter = loadSkillsRouterWithStub((platform) => ({
+      getSkillDetail: async (...args) => {
+        calls.push({ platform, args });
+        return { skill: { directory: args[0] } };
+      }
+    }));
+
+    const result = await invokeRoute(skillsRouter, 'GET', '/detail/*', {
+      params: { 0: 'skills/repo-hint' },
+      query: {
+        platform: 'codex',
+        repoId: 'repo-123',
+        provider: 'gitlab',
+        host: 'https://gitlab.example.com',
+        owner: 'openai',
+        name: 'skills-pack',
+        branch: 'feature/repo-hints',
+        directory: 'skills',
+        projectPath: '/workspace/project',
+        localPath: '/tmp/skills-pack',
+        repoUrl: 'https://gitlab.example.com/openai/skills-pack',
+        fullDirectory: 'skills/subdir'
+      }
+    });
+
+    assert.strictEqual(result.statusCode, 200, '技能详情接口应返回 200');
+    assert.strictEqual(calls.length, 1, '应调用一次 getSkillDetail');
+    assert.strictEqual(calls[0].platform, 'codex', '应按请求平台选择技能服务');
+    assert.deepStrictEqual(calls[0].args, [
+      'skills/repo-hint',
+      {
+        id: 'repo-123',
+        provider: 'gitlab',
+        host: 'https://gitlab.example.com',
+        owner: 'openai',
+        name: 'skills-pack',
+        branch: 'feature/repo-hints',
+        directory: 'skills',
+        projectPath: '/workspace/project',
+        localPath: '/tmp/skills-pack',
+        repoUrl: 'https://gitlab.example.com/openai/skills-pack'
+      },
+      'skills/subdir'
+    ]);
+  });
+
+  await runCase('[skills] POST /install 透传 repo payload 与 fullDirectory', async () => {
+    const calls = [];
+    const skillsRouter = loadSkillsRouterWithStub((platform) => ({
+      installSkill: async (...args) => {
+        calls.push({ platform, args });
+        return { installed: true };
+      }
+    }));
+
+    const result = await invokeRoute(skillsRouter, 'POST', '/install', {
+      body: {
+        platform: 'gemini',
+        directory: 'skills/repo-hint',
+        fullDirectory: 'skills/repo-hint/examples',
+        repo: {
+          id: 'local-456',
+          provider: 'local',
+          host: 'https://gitlab.example.com',
+          localPath: '/Users/demo/skills',
+          projectPath: '/Users/demo/project',
+          owner: 'openai',
+          name: 'local-skills',
+          branch: 'main',
+          directory: 'repo-hint',
+          repoUrl: '/Users/demo/skills'
+        }
+      }
+    });
+
+    assert.strictEqual(result.statusCode, 200, '技能安装接口应返回 200');
+    assert.strictEqual(calls.length, 1, '应调用一次 installSkill');
+    assert.strictEqual(calls[0].platform, 'gemini', '应按请求平台选择技能服务');
+    assert.deepStrictEqual(calls[0].args, [
+      'skills/repo-hint',
+      {
+        id: 'local-456',
+        provider: 'local',
+        host: 'https://gitlab.example.com',
+        owner: 'openai',
+        name: 'local-skills',
+        branch: 'main',
+        directory: 'repo-hint',
+        projectPath: '/Users/demo/project',
+        localPath: '/Users/demo/skills',
+        repoUrl: '/Users/demo/skills'
+      },
+      'skills/repo-hint/examples'
+    ]);
+  });
+
+  await runCase('[skills] DELETE /repos 在存在 id 时优先透传 id', async () => {
+    const calls = [];
+    const skillsRouter = loadSkillsRouterWithStub(() => ({
+      removeRepo: (...args) => {
+        calls.push(args);
+        return [];
+      }
+    }));
+
+    const result = await invokeRoute(skillsRouter, 'DELETE', '/repos', {
+      query: {
+        id: 'repo-789',
+        owner: 'fallback-owner',
+        name: 'fallback-name',
+        directory: 'fallback-dir'
+      }
+    });
+
+    assert.strictEqual(result.statusCode, 200, '删除仓库接口应返回 200');
+    assert.deepStrictEqual(calls, [[
+      'fallback-owner',
+      'fallback-name',
+      'fallback-dir',
+      'repo-789'
+    ]]);
+  });
+
+  await runCase('[skills] PUT /repos/toggle 在存在 id 时优先透传 id', async () => {
+    const calls = [];
+    const skillsRouter = loadSkillsRouterWithStub(() => ({
+      toggleRepo: (...args) => {
+        calls.push(args);
+        return [];
+      }
+    }));
+
+    const result = await invokeRoute(skillsRouter, 'PUT', '/repos/toggle', {
+      body: {
+        id: 'repo-321',
+        owner: 'fallback-owner',
+        name: 'fallback-name',
+        directory: 'fallback-dir',
+        enabled: true
+      }
+    });
+
+    assert.strictEqual(result.statusCode, 200, '切换仓库接口应返回 200');
+    assert.deepStrictEqual(calls, [[
+      'fallback-owner',
+      'fallback-name',
+      'fallback-dir',
+      true,
+      'repo-321'
+    ]]);
+  });
 
   console.log('\nAPI 一致性回归结果:');
   for (const record of records) {

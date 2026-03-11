@@ -3,9 +3,15 @@ const path = require('path');
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
-const { ensureStorageDirMigrated } = require('../config/paths');
+const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
 const { startWebSocketServer: attachWebSocketServer } = require('./websocket-server');
-const { isPortInUse, killProcessByPort, waitForPortRelease } = require('../utils/port-helper');
+const {
+  isPortInUse,
+  killProcessByPort,
+  waitForPortRelease,
+  getPortToolIssue,
+  formatPortToolIssue
+} = require('../utils/port-helper');
 const { isProxyConfig } = require('./services/settings-manager');
 const {
   isProxyConfig: isCodexProxyConfig,
@@ -33,6 +39,18 @@ function printPortConflictHelp(port) {
   console.log(chalk.yellow('\n💡 解决方案:'));
   console.log(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
   console.log(chalk.gray(`   2. 或手动关闭占用端口 ${port} 的程序\n`));
+}
+
+function printPortToolIssue(issue = getPortToolIssue()) {
+  const lines = formatPortToolIssue(issue);
+  if (lines.length === 0) {
+    return;
+  }
+
+  console.error(chalk.yellow(`\n💡 ${lines[0]}`));
+  lines.slice(1).forEach((line) => {
+    console.error(chalk.gray(`   ${line}`));
+  });
 }
 
 async function startServer(port, host = '127.0.0.1', options = {}) {
@@ -85,7 +103,12 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     const killed = killProcessByPort(port);
 
     if (!killed) {
-      console.error(chalk.red('\n❌ 无法关闭占用端口的进程'));
+      const toolIssue = getPortToolIssue();
+      if (toolIssue) {
+        printPortToolIssue(toolIssue);
+      } else {
+        console.error(chalk.red('\n❌ 无法关闭占用端口的进程'));
+      }
       console.error(chalk.yellow('\n💡 请手动关闭占用端口的程序，或使用其他端口\n'));
       process.exit(1);
     }
@@ -266,14 +289,10 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 // 自动恢复代理状态
 function autoRestoreProxies() {
   const config = loadConfig();
-  const os = require('os');
   const fs = require('fs');
-  const path = require('path');
-
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
 
   // 检查 Claude 代理状态文件
-  const claudeActiveFile = path.join(ccToolDir, 'active-channel.json');
+  const claudeActiveFile = PATHS.activeChannel.claude;
   if (fs.existsSync(claudeActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 Claude 代理状态文件，正在自动启动...'));
     const proxyPort = config.ports?.proxy || 20088;
@@ -287,7 +306,7 @@ function autoRestoreProxies() {
   }
 
   // 检查 Codex 代理状态文件
-  const codexActiveFile = path.join(ccToolDir, 'codex-active-channel.json');
+  const codexActiveFile = PATHS.activeChannel.codex;
   if (fs.existsSync(codexActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 Codex 代理状态文件，正在自动启动...'));
     const codexProxyPort = config.ports?.codexProxy || 20089;
@@ -312,7 +331,7 @@ function autoRestoreProxies() {
   }
 
   // 检查 Gemini 代理状态文件
-  const geminiActiveFile = path.join(ccToolDir, 'gemini-active-channel.json');
+  const geminiActiveFile = PATHS.activeChannel.gemini;
   if (fs.existsSync(geminiActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 Gemini 代理状态文件，正在自动启动...'));
     const geminiProxyPort = config.ports?.geminiProxy || 20090;
@@ -332,7 +351,7 @@ function autoRestoreProxies() {
   }
 
   // 检查 OpenCode 代理状态文件
-  const opencodeActiveFile = path.join(ccToolDir, 'opencode-active-channel.json');
+  const opencodeActiveFile = PATHS.activeChannel.opencode;
   if (fs.existsSync(opencodeActiveFile)) {
     console.log(chalk.cyan('\n🔄 检测到 OpenCode 代理状态文件，正在自动启动...'));
     const opencodeProxyPort = config.ports?.opencodeProxy || 20091;

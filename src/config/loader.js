@@ -4,11 +4,14 @@ const path = require('path');
 const os = require('os');
 const DEFAULT_CONFIG = require('./default');
 const { PATHS, ensureStorageDirMigrated } = require('./paths');
+const { resolvePreferredHomeDir } = require('../utils/home-dir');
 const eventBus = require('../plugins/event-bus');
+
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 const LEGACY_CONFIG_FILES = [
   path.join(__dirname, '../../config.json'),
-  path.join(os.homedir(), '.claude', 'config.json')
+  path.join(HOME_DIR, '.claude', 'config.json')
 ];
 
 function getConfigFilePath() {
@@ -21,7 +24,7 @@ function getConfigFilePath() {
  */
 function expandHome(filepath) {
   if (filepath.startsWith('~')) {
-    return path.join(os.homedir(), filepath.slice(1));
+    return path.join(HOME_DIR, filepath.slice(1));
   }
   return filepath;
 }

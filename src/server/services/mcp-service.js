@@ -11,17 +11,20 @@ const toml = require('@iarna/toml');
 const { spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
-const { McpClient } = require('./mcp-client');
+const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
 const { NATIVE_PATHS } = require('../../config/paths');
+const { resolvePreferredHomeDir } = require('../../utils/home-dir');
+
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 // MCP 配置文件路径
-const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
+const CC_TOOL_DIR = path.join(HOME_DIR, '.cc-tool');
 const MCP_SERVERS_FILE = path.join(CC_TOOL_DIR, 'mcp-servers.json');
 
 // 各平台配置文件路径
-const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
-const CODEX_CONFIG_PATH = path.join(os.homedir(), '.codex', 'config.toml');
-const GEMINI_CONFIG_PATH = path.join(os.homedir(), '.gemini', 'settings.json');
+const CLAUDE_CONFIG_PATH = path.join(HOME_DIR, '.claude.json');
+const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
+const GEMINI_CONFIG_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const OPENCODE_CONFIG_PATHS = {
   jsonc: path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc'),
@@ -413,6 +416,102 @@ function writeOpenCodeConfig(filePath, data) {
   const tempPath = filePath + '.tmp';
   fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
   fs.renameSync(tempPath, filePath);
+}
+
+function getPathEnvKey(envObj = {}) {
+  return Object.keys(envObj).find(key => key.toLowerCase() === 'path') || 'PATH';
+}
+
+function stripWrappingQuotes(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  ) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+function mergeSpawnEnv(extraEnv = {}) {
+  const mergedEnv = { ...process.env, ...extraEnv };
+  const processPathKey = getPathEnvKey(process.env);
+  const extraPathKey = getPathEnvKey(extraEnv);
+  const mergedPathKey = getPathEnvKey(mergedEnv);
+
+  const extraPath = extraEnv && typeof extraEnv[extraPathKey] === 'string'
+    ? extraEnv[extraPathKey]
+    : '';
+  const processPath = process.env && typeof process.env[processPathKey] === 'string'
+    ? process.env[processPathKey]
+    : '';
+
+  if (extraPath && processPath) {
+    mergedEnv[mergedPathKey] = `${extraPath}${path.delimiter}${processPath}`;
+  }
+
+  return mergedEnv;
+}
+
+function resolveWindowsSpawnCommand(command, env, cwd) {
+  if (process.platform !== 'win32') {
+    return stripWrappingQuotes(command);
+  }
+
+  const normalizedCommand = stripWrappingQuotes(command);
+  if (!normalizedCommand) {
+    return normalizedCommand;
+  }
+
+  const hasPathSegment = /[\\/]/.test(normalizedCommand) || /^[a-zA-Z]:/.test(normalizedCommand);
+  const hasExtension = path.extname(normalizedCommand).length > 0;
+  const extensions = hasExtension ? [''] : ['.cmd', '.exe', '.bat', '.com'];
+  const resolveCandidate = (basePath) => {
+    for (const ext of extensions) {
+      const candidate = ext ? `${basePath}${ext}` : basePath;
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  };
+
+  if (hasPathSegment) {
+    const absoluteBasePath = path.isAbsolute(normalizedCommand)
+      ? normalizedCommand
+      : path.resolve(cwd || process.cwd(), normalizedCommand);
+    return resolveCandidate(absoluteBasePath) || normalizedCommand;
+  }
+
+  const pathKey = getPathEnvKey(env || process.env);
+  const pathValue = env && typeof env[pathKey] === 'string' ? env[pathKey] : '';
+  if (!pathValue) {
+    return normalizedCommand;
+  }
+
+  const searchPaths = pathValue.split(path.delimiter).filter(Boolean);
+  for (const searchPath of searchPaths) {
+    const found = resolveCandidate(path.join(searchPath.trim(), normalizedCommand));
+    if (found) {
+      return found;
+    }
+  }
+
+  return normalizedCommand;
+}
+
+function extractMcpHint(error) {
+  return error?.data?.hint || error?.hint || null;
+}
+
+function buildMcpFailureResult(error, fallbackMessage, duration) {
+  const hint = extractMcpHint(error);
+  return {
+    message: hint?.title || fallbackMessage || error?.message || '操作失败',
+    hint,
+    duration
+  };
 }
 
 // ============================================================================
@@ -1215,10 +1314,12 @@ async function testServer(serverId) {
       return { success: false, message: `不支持的服务器类型: ${type}` };
     }
   } catch (err) {
+    const failure = buildMcpFailureResult(err, err.message, Date.now() - startTime);
     return {
       success: false,
-      message: err.message,
-      duration: Date.now() - startTime
+      message: failure.message,
+      hint: failure.hint,
+      duration: failure.duration
     };
   }
 }
@@ -1234,6 +1335,9 @@ async function testStdioServer(spec) {
     // 检查命令是否存在
     const command = spec.command;
     const args = spec.args || [];
+    const cwd = spec.cwd || process.cwd();
+    const mergedEnv = mergeSpawnEnv(spec.env || {});
+    const resolvedCommand = resolveWindowsSpawnCommand(command, mergedEnv, cwd);
 
     let child;
     let resolved = false;
@@ -1257,10 +1361,10 @@ async function testStdioServer(spec) {
     };
 
     try {
-      child = spawn(command, args, {
-        env: { ...process.env, ...spec.env },
+      child = spawn(resolvedCommand, args, {
+        env: mergedEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: spec.cwd || process.cwd()
+        cwd
       });
 
       child.stdout.on('data', (data) => {
@@ -1281,9 +1385,11 @@ async function testStdioServer(spec) {
 
       child.on('error', (err) => {
         if (err.code === 'ENOENT') {
+          const hint = createMissingCommandHint(command, resolvedCommand, mergedEnv);
           done({
             success: false,
-            message: `命令 "${command}" 未找到，请确保已安装`,
+            message: buildMissingCommandMessage(command, resolvedCommand, mergedEnv),
+            hint,
             duration: Date.now() - startTime
           });
         } else {
@@ -1333,10 +1439,12 @@ async function testStdioServer(spec) {
       }, timeout);
 
     } catch (err) {
+      const failure = buildMcpFailureResult(err, `测试失败: ${err.message}`, Date.now() - startTime);
       done({
         success: false,
-        message: `测试失败: ${err.message}`,
-        duration: Date.now() - startTime
+        message: failure.message,
+        hint: failure.hint,
+        duration: failure.duration
       });
     }
   });
@@ -1481,11 +1589,14 @@ async function getServerTools(serverId) {
       mcpClientPool.delete(serverId);
     }
 
+    const failure = buildMcpFailureResult(err, err.message, Date.now() - startTime);
     return {
       tools: [],
-      duration: Date.now() - startTime,
+      duration: failure.duration,
       status: 'error',
-      error: err.message
+      error: failure.message,
+      message: failure.message,
+      hint: failure.hint
     };
   }
 }
@@ -1587,14 +1698,17 @@ async function callServerTool(serverId, toolName, arguments = {}) {
       mcpClientPool.delete(serverId);
     }
 
+    const failure = buildMcpFailureResult(err, err.message, Date.now() - startTime);
     return {
       result: {
-        error: err.message,
+        error: failure.message,
         code: err.code,
         data: err.data
       },
-      duration: Date.now() - startTime,
-      isError: true
+      duration: failure.duration,
+      isError: true,
+      message: failure.message,
+      hint: failure.hint
     };
   }
 }
@@ -1774,5 +1888,9 @@ module.exports = {
   callServerTool,
   updateServerStatus,
   updateServerOrder,
-  exportServers
+  exportServers,
+  _test: {
+    extractMcpHint,
+    buildMcpFailureResult
+  }
 };

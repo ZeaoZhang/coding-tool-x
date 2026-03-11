@@ -3,16 +3,19 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { resolvePreferredHomeDir } = require('../utils/home-dir');
+
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 // 基础目录
-const CC_TOOL_BASE_DIR = path.join(os.homedir(), '.cc-tool');
+const CC_TOOL_BASE_DIR = path.join(HOME_DIR, '.cc-tool');
 // 兼容旧变量名，避免外部调用方断裂
 const CTX_BASE_DIR = CC_TOOL_BASE_DIR;
 
 // 旧目录（升级时自动合并到 ~/.cc-tool）
 const LEGACY_BASE_DIRS = [
-  path.join(os.homedir(), '.claude', 'ctx'),
-  path.join(os.homedir(), '.claude', 'cc-tool')
+  path.join(HOME_DIR, '.claude', 'ctx'),
+  path.join(HOME_DIR, '.claude', 'cc-tool')
 ];
 
 let migrationChecked = false;
@@ -127,7 +130,7 @@ const PATHS = {
   notifyHook: path.join(CC_TOOL_BASE_DIR, 'notify-hook.js'),
 
   // Skills 安装目录（注意：这个仍使用 Claude 原生路径）
-  skills: path.join(os.homedir(), '.claude', 'skills'),
+  skills: path.join(HOME_DIR, '.claude', 'skills'),
 
   // MCP 配置（注意：这个仍使用 Claude 原生路径）
   mcpConfig: path.join(CC_TOOL_BASE_DIR, 'mcp-config.json'),
@@ -148,41 +151,42 @@ const PATHS = {
 const NATIVE_PATHS = {
   // Claude Code 原生配置
   claude: {
-    settings: path.join(os.homedir(), '.claude', 'settings.json'),
-    settingsBackup: path.join(os.homedir(), '.claude', 'settings.json.cc-tool-backup'),
-    projects: path.join(os.homedir(), '.claude', 'projects')
+    settings: path.join(HOME_DIR, '.claude', 'settings.json'),
+    settingsBackup: path.join(HOME_DIR, '.claude', 'settings.json.cc-tool-backup'),
+    projects: path.join(HOME_DIR, '.claude', 'projects')
   },
 
   // Codex 原生配置
   codex: {
-    config: path.join(os.homedir(), '.codex', 'config.toml'),
-    configBackup: path.join(os.homedir(), '.codex', 'config.toml.cc-tool-backup'),
-    auth: path.join(os.homedir(), '.codex', 'auth.json'),
-    authBackup: path.join(os.homedir(), '.codex', 'auth.json.cc-tool-backup'),
-    sessions: path.join(os.homedir(), '.codex', 'sessions')
+    config: path.join(HOME_DIR, '.codex', 'config.toml'),
+    configBackup: path.join(HOME_DIR, '.codex', 'config.toml.cc-tool-backup'),
+    auth: path.join(HOME_DIR, '.codex', 'auth.json'),
+    authBackup: path.join(HOME_DIR, '.codex', 'auth.json.cc-tool-backup'),
+    sessions: path.join(HOME_DIR, '.codex', 'sessions')
   },
 
   // Gemini 原生配置
   gemini: {
-    env: path.join(os.homedir(), '.gemini', '.env'),
-    envBackup: path.join(os.homedir(), '.gemini', '.env.cc-tool-backup'),
-    tmp: path.join(os.homedir(), '.gemini', 'tmp')
+    env: path.join(HOME_DIR, '.gemini', '.env'),
+    envBackup: path.join(HOME_DIR, '.gemini', '.env.cc-tool-backup'),
+    tmp: path.join(HOME_DIR, '.gemini', 'tmp')
   },
 
   // OpenCode 原生配置
   opencode: {
-    data: path.join(os.homedir(), '.local', 'share', 'opencode'),
-    config: path.join(os.homedir(), '.config', 'opencode'),
-    sessions: path.join(os.homedir(), '.local', 'share', 'opencode', 'storage', 'session'),
-    projects: path.join(os.homedir(), '.local', 'share', 'opencode', 'storage', 'project'),
-    messages: path.join(os.homedir(), '.local', 'share', 'opencode', 'storage', 'message'),
-    log: path.join(os.homedir(), '.local', 'share', 'opencode', 'log')
+    data: path.join(HOME_DIR, '.local', 'share', 'opencode'),
+    config: path.join(HOME_DIR, '.config', 'opencode'),
+    sessions: path.join(HOME_DIR, '.local', 'share', 'opencode', 'storage', 'session'),
+    projects: path.join(HOME_DIR, '.local', 'share', 'opencode', 'storage', 'project'),
+    messages: path.join(HOME_DIR, '.local', 'share', 'opencode', 'storage', 'message'),
+    log: path.join(HOME_DIR, '.local', 'share', 'opencode', 'log')
   }
 };
 
 module.exports = {
   PATHS,
   NATIVE_PATHS,
+  HOME_DIR,
   CTX_BASE_DIR,
   CC_TOOL_BASE_DIR,
   LEGACY_BASE_DIRS,

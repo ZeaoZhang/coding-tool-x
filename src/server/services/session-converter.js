@@ -6,6 +6,11 @@ const { getSessionById: getClaudeSessionById } = require('./sessions');
 const { getSessionById: getCodexSessionById } = require('./codex-sessions');
 const { getSessionById: getGeminiSessionById, getProjectPath } = require('./gemini-sessions');
 const { readJSONL, parseSession: parseCodexFull } = require('./codex-parser');
+const { NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
+
+const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
+const CODEX_SESSIONS_DIR = NATIVE_PATHS.codex.sessions;
+const GEMINI_TMP_DIR = NATIVE_PATHS.gemini.tmp;
 
 /**
  * 统一中间格式
@@ -192,7 +197,7 @@ function parseGeminiToUnified(filePath) {
 
   return {
     sessionId: session.sessionId || crypto.randomUUID(),
-    cwd: projectPath || os.homedir(),
+    cwd: projectPath || HOME_DIR,
     gitBranch: null, // Gemini 不记录 git branch
     startTime: session.startTime || new Date().toISOString(),
     messages,
@@ -380,7 +385,7 @@ function generateTargetPath(targetType, unified, options = {}) {
 
   if (targetType === 'claude') {
     // Claude: ~/.claude/projects/{encoded-path}/{uuid}.jsonl
-    const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+    const projectsDir = CLAUDE_PROJECTS_DIR;
     const encodedPath = options.targetProject
       ? encodePath(options.targetProject)
       : encodePath(unified.cwd);
@@ -388,7 +393,7 @@ function generateTargetPath(targetType, unified, options = {}) {
     return path.join(projectsDir, encodedPath, `${newSessionId}.jsonl`);
   } else if (targetType === 'codex') {
     // Codex: ~/.codex/sessions/{YYYY}/{MM}/{DD}/rollout-{timestamp}-{uuid}.jsonl
-    const sessionsDir = path.join(os.homedir(), '.codex', 'sessions');
+    const sessionsDir = CODEX_SESSIONS_DIR;
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -401,7 +406,7 @@ function generateTargetPath(targetType, unified, options = {}) {
       `rollout-${timestamp}-${newSessionId}.jsonl`);
   } else if (targetType === 'gemini') {
     // Gemini: ~/.gemini/tmp/{project_hash}/chats/session-{timestamp}-{shortId}.json
-    const geminiDir = path.join(os.homedir(), '.gemini', 'tmp');
+    const geminiDir = GEMINI_TMP_DIR;
     const projectHash = unified.metadata.projectHash ||
       crypto.createHash('sha256').update(unified.cwd).digest('hex');
     const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');

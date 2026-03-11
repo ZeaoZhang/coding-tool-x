@@ -1,8 +1,8 @@
 // 端口配置命令
 const chalk = require('chalk');
 const inquirer = require('inquirer');
-const os = require('os');
 const { loadConfig, saveConfig } = require('../config/loader');
+const { HOME_DIR } = require('../config/paths');
 
 /**
  * 配置端口
@@ -112,7 +112,7 @@ async function handlePortConfig() {
   // 保存配置（保留其余字段）
   saveConfig({
     ...config,
-    projectsDir: config.projectsDir.replace(os.homedir(), '~'),
+    projectsDir: config.projectsDir.replace(HOME_DIR, '~'),
     ports: config.ports,
   });
 

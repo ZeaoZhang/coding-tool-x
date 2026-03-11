@@ -65,7 +65,7 @@
           v-model:value="formData.configContent"
           type="textarea"
           :rows="10"
-          placeholder='如: model = "gpt-5.3-codex"'
+          placeholder='如: model = "gpt-5.4"'
         />
       </n-form-item>
 

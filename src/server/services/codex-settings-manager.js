@@ -3,23 +3,26 @@ const path = require('path');
 const os = require('os');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
+const { resolvePreferredHomeDir, isWindowsLikePlatform } = require('../../utils/home-dir');
+
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 // Codex 配置文件路径
 function getConfigPath() {
-  return path.join(os.homedir(), '.codex', 'config.toml');
+  return path.join(HOME_DIR, '.codex', 'config.toml');
 }
 
 function getAuthPath() {
-  return path.join(os.homedir(), '.codex', 'auth.json');
+  return path.join(HOME_DIR, '.codex', 'auth.json');
 }
 
 // 备份文件路径
 function getConfigBackupPath() {
-  return path.join(os.homedir(), '.codex', 'config.toml.cc-tool-backup');
+  return path.join(HOME_DIR, '.codex', 'config.toml.cc-tool-backup');
 }
 
 function getAuthBackupPath() {
-  return path.join(os.homedir(), '.codex', 'auth.json.cc-tool-backup');
+  return path.join(HOME_DIR, '.codex', 'auth.json.cc-tool-backup');
 }
 
 // 检查配置文件是否存在
@@ -74,7 +77,7 @@ function writeFileAtomic(filePath, content) {
 
 function normalizeHomePath(filePath) {
   const normalizedPath = String(filePath || '').replace(/\\/g, '/');
-  const normalizedHome = os.homedir().replace(/\\/g, '/');
+  const normalizedHome = HOME_DIR.replace(/\\/g, '/');
   if (normalizedPath.startsWith(normalizedHome)) {
     return `~${normalizedPath.slice(normalizedHome.length)}`;
   }
@@ -111,11 +114,13 @@ function isPowerShellProfile(filePath) {
 }
 
 function getShellConfigCandidates() {
-  const homeDir = os.homedir();
+  const homeDir = HOME_DIR;
   const shell = String(process.env.SHELL || '').toLowerCase();
   const candidates = [];
 
-  if (process.platform === 'win32') {
+  if (isWindowsLikePlatform(process.platform, process.env)) {
+    const oneDriveDir = process.env.OneDrive || process.env.ONEDRIVE || '';
+
     if (shell.includes('zsh')) {
       candidates.push(path.join(homeDir, '.zshrc'));
     }
@@ -127,6 +132,10 @@ function getShellConfigCandidates() {
 
     candidates.push(path.join(homeDir, 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1'));
     candidates.push(path.join(homeDir, 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1'));
+    if (oneDriveDir) {
+      candidates.push(path.join(oneDriveDir, 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1'));
+      candidates.push(path.join(oneDriveDir, 'Documents', 'WindowsPowerShell', 'Microsoft.PowerShell_profile.ps1'));
+    }
     candidates.push(path.join(homeDir, '.bashrc'));
     candidates.push(path.join(homeDir, '.profile'));
   } else if (shell.includes('zsh')) {
@@ -154,7 +163,7 @@ function getShellConfigCandidates() {
 
 function getShellReloadCommand(configPath) {
   if (!configPath) {
-    return process.platform === 'win32' ? '重启终端' : 'source ~/.zshrc';
+    return isWindowsLikePlatform(process.platform, process.env) ? '重启终端' : 'source ~/.zshrc';
   }
 
   const displayPath = normalizeHomePath(configPath);
@@ -176,7 +185,7 @@ function getShellReloadCommand(configPath) {
     return 'source ~/.profile';
   }
 
-  if (process.platform === 'win32') {
+  if (isWindowsLikePlatform(process.platform, process.env)) {
     return '. $PROFILE';
   }
 

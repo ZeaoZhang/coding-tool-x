@@ -15,6 +15,7 @@ const FALLBACK_MODELS = {
     'claude-haiku-4-5-20251001'
   ],
   codex: [
+    'gpt-5.4',
     'gpt-5.3-codex',
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',

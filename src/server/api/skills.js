@@ -25,6 +25,22 @@ function getSkillService(req) {
   return { platform, service: skillServices.get(platform) };
 }
 
+function extractRepoPayload(source = {}) {
+  const repo = source.repo && typeof source.repo === 'object' ? source.repo : source;
+  return {
+    id: repo.id || source.repoId || '',
+    provider: repo.provider || source.provider || '',
+    host: repo.host || source.host || '',
+    owner: repo.owner || source.owner || '',
+    name: repo.name || source.name || '',
+    branch: repo.branch || source.branch || 'main',
+    directory: repo.directory || source.directory || '',
+    projectPath: repo.projectPath || source.projectPath || '',
+    localPath: repo.localPath || source.localPath || '',
+    repoUrl: repo.repoUrl || source.repoUrl || ''
+  };
+}
+
 /**
  * 获取技能列表
  * GET /api/skills
@@ -66,7 +82,9 @@ router.get('/detail/*', async (req, res) => {
       });
     }
 
-    const result = await service.getSkillDetail(directory);
+    const repoHint = extractRepoPayload(req.query || {});
+    const hasRepoHint = Object.values(repoHint).some(Boolean);
+    const result = await service.getSkillDetail(directory, hasRepoHint ? repoHint : null, req.query.fullDirectory || '');
     res.json({
       success: true,
       platform,
@@ -106,7 +124,7 @@ router.get('/installed', (req, res) => {
 /**
  * 安装技能
  * POST /api/skills/install
- * Body: { directory, fullDirectory, repo: { owner, name, branch } }
+ * Body: { directory, fullDirectory, repo }
  * - directory: 本地安装目录（相对路径）
  * - fullDirectory: 仓库中的完整路径（当指定了仓库子目录时使用）
  */
@@ -122,7 +140,7 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    if (!repo || !repo.owner || !repo.name) {
+    if (!repo) {
       return res.status(400).json({
         success: false,
         message: 'Missing repo info'
@@ -131,11 +149,7 @@ router.post('/install', async (req, res) => {
 
     const result = await service.installSkill(
       directory,
-      {
-        owner: repo.owner,
-        name: repo.name,
-        branch: repo.branch || 'main'
-      },
+      extractRepoPayload({ repo }),
       fullDirectory || null  // 传递 fullDirectory 用于从仓库子目录下载
     );
 
@@ -264,22 +278,23 @@ router.get('/repos', (req, res) => {
 /**
  * 添加仓库
  * POST /api/skills/repos
- * Body: { owner, name, branch, directory, enabled }
+ * Body: { provider, owner, name, host, projectPath, localPath, branch, directory, enabled }
  * - directory: 可选，指定扫描的子目录路径
  */
 router.post('/repos', (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
-    const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
+    const repo = extractRepoPayload(req.body);
+    repo.enabled = req.body.enabled !== false;
 
-    if (!owner || !name) {
+    if (!repo.localPath && !repo.projectPath && (!repo.owner || !repo.name)) {
       return res.status(400).json({
         success: false,
-        message: 'Missing owner or name'
+        message: 'Missing repo info'
       });
     }
 
-    const repos = service.addRepo({ owner, name, branch, directory, enabled });
+    const repos = service.addRepo(repo);
 
     res.json({
       success: true,
@@ -288,6 +303,47 @@ router.post('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Add repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.delete('/repos', (req, res) => {
+  try {
+    const { platform, service } = getSkillService(req);
+    const { id = '', owner = '', name = '', directory = '' } = req.query;
+    const repos = service.removeRepo(owner, name, directory, id);
+
+    res.json({
+      success: true,
+      platform,
+      repos
+    });
+  } catch (err) {
+    console.error('[Skills API] Remove repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.put('/repos/toggle', (req, res) => {
+  try {
+    const { platform, service } = getSkillService(req);
+    const { id = '', owner = '', name = '', enabled, directory = '' } = req.body;
+
+    const repos = service.toggleRepo(owner, name, directory, enabled, id);
+
+    res.json({
+      success: true,
+      platform,
+      repos
+    });
+  } catch (err) {
+    console.error('[Skills API] Toggle repo error:', err);
     res.status(500).json({
       success: false,
       message: err.message

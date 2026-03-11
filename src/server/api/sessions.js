@@ -2,11 +2,12 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const readline = require('readline');
 const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('../services/sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
+const { NATIVE_PATHS } = require('../../config/paths');
+const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
 
 module.exports = (config) => {
   // GET /api/sessions/search/global - Search sessions across all projects
@@ -120,12 +121,12 @@ module.exports = (config) => {
         const year = now.getFullYear();
         const month = String(now.getMonth() + 1).padStart(2, '0');
         const day = String(now.getDate()).padStart(2, '0');
-        sessionDir = path.join(os.homedir(), '.codex', 'sessions', String(year), month, day);
+        sessionDir = path.join(NATIVE_PATHS.codex.sessions, String(year), month, day);
         sessionFile = path.join(sessionDir, `${newSessionId}.jsonl`);
       } else if (toolType === 'gemini') {
         // Gemini: ~/.gemini/tmp/{hash}/chats/{sessionId}.json
         const pathHash = crypto.createHash('sha256').update(fullPath).digest('hex');
-        sessionDir = path.join(os.homedir(), '.gemini', 'tmp', pathHash, 'chats');
+        sessionDir = path.join(NATIVE_PATHS.gemini.tmp, pathHash, 'chats');
         sessionFile = path.join(sessionDir, `${newSessionId}.json`);
       } else {
         return res.status(400).json({ error: 'Invalid toolType. Must be claude, codex, or gemini' });
@@ -243,7 +244,7 @@ module.exports = (config) => {
       let sessionFile = null;
       const possiblePaths = [
         path.join(fullPath, '.claude', 'sessions', sessionId + '.jsonl'),
-        path.join(os.homedir(), '.claude', 'projects', projectName, sessionId + '.jsonl')
+        path.join(CLAUDE_PROJECTS_DIR, projectName, sessionId + '.jsonl')
       ];
 
       console.log(`[Messages API] Trying paths:`, possiblePaths);
@@ -279,6 +280,7 @@ module.exports = (config) => {
 
       const stream = fs.createReadStream(sessionFile, { encoding: 'utf8' });
       const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+      let lastAssistantModel = null;
 
       try {
         for await (const line of rl) {
@@ -297,31 +299,45 @@ module.exports = (config) => {
             }
 
             if (json.type === 'user' || json.type === 'assistant') {
+              const resolvedModel = json.message?.model || json.model || lastAssistantModel || null;
+              const messageId = json.message?.id || json.uuid || null;
               const message = {
                 type: json.type,
                 content: null,
                 timestamp: json.timestamp || null,
-                model: json.model || null
+                model: resolvedModel,
+                messageId,
+                subtype: null
               };
+              let deferredToolResultContent = '';
 
               if (json.type === 'user') {
                 if (typeof json.message?.content === 'string') {
                   message.content = json.message.content;
                 } else if (Array.isArray(json.message?.content)) {
-                  const parts = [];
+                  const userParts = [];
+                  const toolResultParts = [];
                   for (const item of json.message.content) {
                     if (item.type === 'text' && item.text) {
-                      parts.push(item.text);
+                      userParts.push(item.text);
                     } else if (item.type === 'tool_result') {
                       const resultContent = typeof item.content === 'string'
                         ? item.content
                         : JSON.stringify(item.content, null, 2);
-                      parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
+                      toolResultParts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
                     } else if (item.type === 'image') {
-                      parts.push('[图片]');
+                      userParts.push('[图片]');
                     }
                   }
-                  message.content = parts.join('\n\n') || '[工具交互]';
+
+                  if (userParts.length > 0) {
+                    message.content = userParts.join('\n\n');
+                  }
+
+                  // Claude tool_result is carried in a "user" envelope, but should be rendered as AI tool output.
+                  if (toolResultParts.length > 0) {
+                    deferredToolResultContent = toolResultParts.join('\n\n');
+                  }
                 }
               } else if (json.type === 'assistant') {
                 if (Array.isArray(json.message?.content)) {
@@ -340,10 +356,25 @@ module.exports = (config) => {
                 } else if (typeof json.message?.content === 'string') {
                   message.content = json.message.content;
                 }
+
+                if (message.model) {
+                  lastAssistantModel = message.model;
+                }
               }
 
               if (message.content && message.content !== 'Warmup') {
                 allMessages.push(message);
+              }
+
+              if (deferredToolResultContent) {
+                allMessages.push({
+                  type: 'assistant',
+                  subtype: 'tool_result',
+                  content: deferredToolResultContent,
+                  timestamp: json.timestamp || null,
+                  model: resolvedModel,
+                  messageId: messageId ? `${messageId}-tool-result` : null
+                });
               }
             }
           } catch (err) {
@@ -393,7 +424,6 @@ module.exports = (config) => {
       const { projectName, sessionId } = req.params;
       const path = require('path');
       const fs = require('fs');
-      const os = require('os');
 
       // Parse real project path (important for cross-project sessions)
       const { fullPath } = parseRealProjectPath(projectName);
@@ -406,7 +436,7 @@ module.exports = (config) => {
       const possiblePaths = [
         projectSessionFile,
         // Location 2: User's .claude/projects directory (ClaudeCode default)
-        path.join(os.homedir(), '.claude', 'projects', projectName, sessionId + '.jsonl')
+        path.join(CLAUDE_PROJECTS_DIR, projectName, sessionId + '.jsonl')
       ];
 
       for (const testPath of possiblePaths) {

@@ -1,26 +1,25 @@
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
 const { isProxyConfig } = require('./settings-manager');
+const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
 function getChannelsFilePath() {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  const dir = PATHS.base;
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(dir, 'channels.json');
+  return PATHS.channels.claude;
 }
 
 function getActiveChannelIdPath() {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  const dir = PATHS.base;
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(dir, 'active-channel.json');
+  return PATHS.activeChannel.claude;
 }
 
 function getClaudeSettingsPath() {
-  return path.join(os.homedir(), '.claude', 'settings.json');
+  return NATIVE_PATHS.claude.settings;
 }
 
 function saveActiveChannelId(channelId) {

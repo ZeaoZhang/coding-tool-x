@@ -1,7 +1,5 @@
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { PATHS, ensureStorageDirMigrated } = require('./config/paths');
+const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('./config/paths');
 
 // 恢复配置到默认状态
 async function resetConfig() {
@@ -25,8 +23,8 @@ async function resetConfig() {
     }
 
     // 2. 检查并恢复 settings.json
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-    const backupPath = path.join(os.homedir(), '.claude', 'settings.json.cc-tool-backup');
+    const settingsPath = NATIVE_PATHS.claude.settings;
+    const backupPath = NATIVE_PATHS.claude.settingsBackup;
 
     if (fs.existsSync(backupPath)) {
       console.log('发现备份文件，正在恢复...');

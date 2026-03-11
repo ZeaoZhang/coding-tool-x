@@ -1,9 +1,8 @@
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { PATHS } = require('../../config/paths');
 
-const UI_CONFIG_DIR = path.join(os.homedir(), '.cc-tool');
-const UI_CONFIG_FILE = path.join(UI_CONFIG_DIR, 'ui-config.json');
+const UI_CONFIG_DIR = PATHS.base;
+const UI_CONFIG_FILE = PATHS.uiConfig;
 
 // Default UI config
 const DEFAULT_UI_CONFIG = {

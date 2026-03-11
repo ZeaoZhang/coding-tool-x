@@ -7,7 +7,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { RepoScannerBase } = require('./repo-scanner-base');
 const { NATIVE_PATHS } = require('../../config/paths');
 const {
@@ -19,10 +18,11 @@ const {
 const DEFAULT_REPOS = [];
 const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
+const CLAUDE_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'commands');
 
 const PLATFORM_CONFIG = {
   claude: {
-    userCommandsDir: path.join(os.homedir(), '.claude', 'commands'),
+    userCommandsDir: CLAUDE_COMMANDS_DIR,
     projectCommandsDir: (projectPath) => path.join(projectPath, '.claude', 'commands'),
     repoType: 'commands'
   },
