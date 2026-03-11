@@ -5,18 +5,21 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const http = require('http');
-
-// Claude settings.json 路径
-const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
-
-// UI 配置路径（记录用户是否主动关闭过、飞书配置等）
-const UI_CONFIG_PATH = path.join(os.homedir(), '.cc-tool', 'ui-config.json');
-
-// 通知脚本路径（用于飞书通知）
-const NOTIFY_SCRIPT_PATH = path.join(os.homedir(), '.cc-tool', 'notify-hook.js');
+const { resolvePreferredHomeDir, normalizeWindowsHomePath } = require('../../utils/home-dir');
 
 // 检测操作系统
 const platform = os.platform(); // 'darwin' | 'win32' | 'linux'
+
+const HOME_DIR = resolvePreferredHomeDir(platform, process.env, os.homedir());
+
+// Claude settings.json 路径
+const CLAUDE_SETTINGS_PATH = path.join(HOME_DIR, '.claude', 'settings.json');
+
+// UI 配置路径（记录用户是否主动关闭过、飞书配置等）
+const UI_CONFIG_PATH = path.join(HOME_DIR, '.cc-tool', 'ui-config.json');
+
+// 通知脚本路径（用于飞书通知）
+const NOTIFY_SCRIPT_PATH = path.join(HOME_DIR, '.cc-tool', 'notify-hook.js');
 
 // 读取 Claude settings.json
 function readClaudeSettings() {
@@ -197,6 +200,42 @@ function parseNotifyTypeMarker(command) {
   return marker ? marker[2].toLowerCase() : null;
 }
 
+function getStopHookCommand(settings) {
+  const hooks = settings?.hooks?.Stop;
+  if (!Array.isArray(hooks) || hooks.length === 0) {
+    return '';
+  }
+  const firstHook = hooks[0]?.hooks;
+  if (!Array.isArray(firstHook) || firstHook.length === 0) {
+    return '';
+  }
+  return firstHook[0]?.command || '';
+}
+
+function normalizePathForCompare(rawPath) {
+  return String(rawPath || '').replace(/\\/g, '/');
+}
+
+function shouldRepairStopHook(settings, expectedScriptPath = NOTIFY_SCRIPT_PATH, fileExists = fs.existsSync) {
+  const command = getStopHookCommand(settings);
+  if (!command || !command.includes('notify-hook.js')) {
+    return false;
+  }
+
+  const markerType = parseNotifyTypeMarker(command);
+  if (!markerType) {
+    return false;
+  }
+
+  const normalizedCommand = normalizePathForCompare(command);
+  const normalizedExpected = normalizePathForCompare(expectedScriptPath);
+  if (!normalizedCommand.includes(normalizedExpected)) {
+    return true;
+  }
+
+  return !fileExists(expectedScriptPath);
+}
+
 function buildStopHookCommand(type) {
   const notifyType = type === 'dialog' ? 'dialog' : 'notification';
   return `node "${NOTIFY_SCRIPT_PATH}" --cc-notify-type=${notifyType}`;
@@ -302,7 +341,9 @@ function updateStopHook(systemNotification, feishu) {
     }
   } else {
     // 生成并写入通知脚本
-    writeNotifyScript({ systemNotification, feishu });
+    if (!writeNotifyScript({ systemNotification, feishu })) {
+      return false;
+    }
 
     // 更新 Stop hook 指向通知脚本
     settings.hooks = settings.hooks || {};
@@ -335,9 +376,22 @@ function initDefaultHooks() {
     const settings = readClaudeSettings();
     const currentStatus = parseStopHookStatus(settings);
 
-    // 如果已经有 Stop hook 配置，不覆盖
+    // 如果已经有 Stop hook 配置，优先尝试自愈旧路径，再决定是否跳过
     if (currentStatus.enabled) {
-      console.log('[Claude Hooks] 已存在 Stop hook 配置，跳过初始化');
+      if (shouldRepairStopHook(settings)) {
+        const systemNotification = {
+          enabled: true,
+          type: currentStatus.type || 'notification'
+        };
+        const feishu = getFeishuConfig();
+        if (updateStopHook(systemNotification, feishu)) {
+          console.log('[Claude Hooks] 检测到旧版 Stop hook 路径，已自动修复');
+        } else {
+          console.warn('[Claude Hooks] Stop hook 路径修复失败，保留原配置');
+        }
+      } else {
+        console.log('[Claude Hooks] 已存在 Stop hook 配置，跳过初始化');
+      }
       return;
     }
 
@@ -499,5 +553,8 @@ module.exports._test = {
   generateSystemNotificationCommand,
   parseStopHookStatus,
   parseNotifyTypeMarker,
-  buildStopHookCommand
+  buildStopHookCommand,
+  normalizeWindowsHomePath,
+  resolvePreferredHomeDir,
+  shouldRepairStopHook
 };

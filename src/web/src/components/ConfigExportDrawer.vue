@@ -21,7 +21,7 @@
           <div class="section-header">
             <n-text strong>导出配置</n-text>
             <n-text depth="3" style="font-size: 12px;">
-              导出所有前端配置为 ZIP（含 UI/终端/Prompts/安全等）
+              导出多平台配置为 ZIP（含渠道、Agents/Skills/Commands、原生配置等）
             </n-text>
           </div>
           <n-button
@@ -69,7 +69,7 @@
                 <n-text>{{ importPreview.counts.configTemplates }}</n-text>
               </div>
               <div class="stat-item">
-                <n-text depth="3">频道:</n-text>
+                <n-text depth="3">渠道总数:</n-text>
                 <n-text>{{ importPreview.counts.channels }}</n-text>
               </div>
               <div class="stat-item">

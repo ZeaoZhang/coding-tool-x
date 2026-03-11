@@ -27,16 +27,32 @@ export async function getInstalledSkills(platform = 'claude') {
 /**
  * 获取技能详情
  * @param {string} directory - 技能目录
+ * @param {object|null} repo - 仓库上下文
+ * @param {string|null} fullDirectory - 仓库中的完整路径
  */
-export async function getSkillDetail(directory, platform = 'claude') {
-  const response = await client.get(`/skills/detail/${directory}`, { params: { platform } })
+export async function getSkillDetail(directory, platform = 'claude', repo = null, fullDirectory = null) {
+  const params = { platform }
+  if (fullDirectory) params.fullDirectory = fullDirectory
+  if (repo) {
+    if (repo.id) params.repoId = repo.id
+    if (repo.provider) params.provider = repo.provider
+    if (repo.host) params.host = repo.host
+    if (repo.owner) params.owner = repo.owner
+    if (repo.name) params.name = repo.name
+    if (repo.branch) params.branch = repo.branch
+    if (repo.directory) params.directory = repo.directory
+    if (repo.projectPath) params.projectPath = repo.projectPath
+    if (repo.localPath) params.localPath = repo.localPath
+    if (repo.repoUrl) params.repoUrl = repo.repoUrl
+  }
+  const response = await client.get(`/skills/detail/${directory}`, { params })
   return response.data
 }
 
 /**
  * 安装技能
  * @param {string} directory - 本地安装目录
- * @param {object} repo - 仓库信息 { owner, name, branch }
+ * @param {object} repo - 仓库信息
  * @param {string} [fullDirectory] - 仓库中的完整路径（当指定了仓库子目录时使用）
  */
 export async function installSkill(directory, repo, fullDirectory = null, platform = 'claude') {
@@ -72,7 +88,7 @@ export async function getSkillRepos(platform = 'claude') {
 
 /**
  * 添加仓库
- * @param {object} repo - { owner, name, branch, directory, enabled }
+ * @param {object} repo - { provider, owner, name, host, projectPath, localPath, branch, directory, enabled }
  */
 export async function addSkillRepo(repo, platform = 'claude') {
   const response = await client.post('/skills/repos', { ...repo, platform })
@@ -85,9 +101,15 @@ export async function addSkillRepo(repo, platform = 'claude') {
  * @param {string} name
  * @param {string} [directory] - 子目录路径
  */
-export async function removeSkillRepo(owner, name, directory = '', platform = 'claude') {
-  const response = await client.delete(`/skills/repos/${owner}/${name}`, {
-    params: { directory, platform }
+export async function removeSkillRepo(repo, platform = 'claude') {
+  const response = await client.delete('/skills/repos', {
+    params: {
+      platform,
+      id: repo.id || '',
+      owner: repo.owner || '',
+      name: repo.name || '',
+      directory: repo.directory || ''
+    }
   })
   return response.data
 }
@@ -99,8 +121,15 @@ export async function removeSkillRepo(owner, name, directory = '', platform = 'c
  * @param {boolean} enabled
  * @param {string} [directory] - 子目录路径
  */
-export async function toggleSkillRepo(owner, name, enabled, directory = '', platform = 'claude') {
-  const response = await client.put(`/skills/repos/${owner}/${name}/toggle`, { enabled, directory, platform })
+export async function toggleSkillRepo(repo, enabled, platform = 'claude') {
+  const response = await client.put('/skills/repos/toggle', {
+    id: repo.id || '',
+    owner: repo.owner || '',
+    name: repo.name || '',
+    enabled,
+    directory: repo.directory || '',
+    platform
+  })
   return response.data
 }
 

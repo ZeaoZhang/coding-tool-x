@@ -25,11 +25,11 @@
               :maxlength="50"
             />
             <template #feedback>
-              {{ isOpenCode ? 'OpenCode 要求小写字母/数字，可用单个 - 连接（如 my-skill）' : '只能包含英文、数字、横杠和下划线' }}
+              只能包含英文、数字、横杠和下划线
             </template>
           </n-form-item>
 
-          <n-form-item v-if="!isOpenCode" label="技能名称" path="name">
+          <n-form-item label="技能名称" path="name">
             <n-input
               v-model:value="simpleFormData.name"
               placeholder="显示名称，可以是中文"
@@ -73,7 +73,7 @@
               :maxlength="50"
             />
             <template #feedback>
-              {{ isOpenCode ? 'OpenCode 要求小写字母/数字，可用单个 - 连接（如 my-skill）' : '只能包含英文、数字、横杠和下划线' }}
+              只能包含英文、数字、横杠和下划线
             </template>
           </n-form-item>
 
@@ -321,8 +321,6 @@ const newFileContent = ref('')
 const hasSkillMd = computed(() => {
   return advancedFormData.value.files.some(f => f.path === 'SKILL.md')
 })
-const isOpenCode = computed(() => props.platform === 'opencode')
-const OPENCODE_SKILL_NAME_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 // 判断是否是文本文件
 function isTextFile(path) {
@@ -428,17 +426,7 @@ function addNewFile() {
 
 // 添加 SKILL.md 模板
 function addSkillMdTemplate() {
-  const template = isOpenCode.value
-    ? `---
-name: ${advancedFormData.value.directory || 'my-skill'}
-description: "Skill description"
----
-
-# Skill Instructions
-
-Describe when this skill should be used and what it should do.
-`
-    : `---
+  const template = `---
 name: "${advancedFormData.value.directory || '我的技能'}"
 description: "技能描述"
 ---
@@ -472,24 +460,10 @@ async function submitSimpleMode() {
     return
   }
 
-  if (isOpenCode.value) {
-    const directory = simpleFormData.value.directory?.trim()
-    if (!OPENCODE_SKILL_NAME_REGEX.test(directory || '')) {
-      message.error('OpenCode skill 目录必须是小写字母/数字，可用单个 - 连接')
-      return
-    }
-    if (!simpleFormData.value.description?.trim()) {
-      message.error('OpenCode skill 需要填写 description')
-      return
-    }
-  }
-
   submitting.value = true
   try {
     const result = await createCustomSkill({
-      name: isOpenCode.value
-        ? simpleFormData.value.directory
-        : (simpleFormData.value.name || simpleFormData.value.directory),
+      name: simpleFormData.value.name || simpleFormData.value.directory,
       directory: simpleFormData.value.directory,
       description: simpleFormData.value.description,
       content: simpleFormData.value.content
@@ -519,14 +493,6 @@ async function submitAdvancedMode() {
   if (!hasSkillMd.value) {
     message.error('必须包含 SKILL.md 文件')
     return
-  }
-
-  if (isOpenCode.value) {
-    const directory = advancedFormData.value.directory?.trim()
-    if (!OPENCODE_SKILL_NAME_REGEX.test(directory || '')) {
-      message.error('OpenCode skill 目录必须是小写字母/数字，可用单个 - 连接')
-      return
-    }
   }
 
   submitting.value = true

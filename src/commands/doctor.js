@@ -1,10 +1,10 @@
 const chalk = require('chalk');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const { loadConfig, getConfigFilePath } = require('../config/loader');
+const { PATHS, NATIVE_PATHS } = require('../config/paths');
 const { isPortInUse } = require('../utils/port-helper');
 
 const execAsync = promisify(exec);
@@ -185,7 +185,7 @@ async function checkPorts() {
  * 检查 Claude Code 配置
  */
 async function checkClaudeConfig() {
-  const settingsPath = path.join(os.homedir(), '.claude/settings.json');
+  const settingsPath = NATIVE_PATHS.claude.settings;
   const exists = fs.existsSync(settingsPath);
 
   if (exists) {
@@ -208,7 +208,7 @@ async function checkClaudeConfig() {
  * 检查日志目录
  */
 async function checkLogsDirectory() {
-  const logsDir = path.join(os.homedir(), '.cc-tool', 'logs');
+  const logsDir = PATHS.logs;
   const exists = fs.existsSync(logsDir);
 
   if (exists) {

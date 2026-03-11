@@ -135,7 +135,23 @@ async function loadDetail() {
   error.value = ''
 
   try {
-    const result = await getSkillDetail(props.skill.directory, props.platform)
+    const result = await getSkillDetail(
+      props.skill.directory,
+      props.platform,
+      {
+        id: props.skill.repoId,
+        provider: props.skill.repoProvider,
+        host: props.skill.repoHost,
+        owner: props.skill.repoOwner,
+        name: props.skill.repoName,
+        branch: props.skill.repoBranch || 'main',
+        directory: props.skill.repoDirectory || '',
+        projectPath: props.skill.repoProjectPath,
+        localPath: props.skill.repoLocalPath,
+        repoUrl: props.skill.repoUrl
+      },
+      props.skill.fullDirectory || null
+    )
     if (result.success) {
       detail.value = result
     } else {
@@ -154,9 +170,16 @@ async function handleInstall() {
   installing.value = true
   try {
     const result = await installSkill(props.skill.directory, {
+      id: props.skill.repoId,
+      provider: props.skill.repoProvider,
+      host: props.skill.repoHost,
       owner: props.skill.repoOwner,
       name: props.skill.repoName,
-      branch: props.skill.repoBranch || 'main'
+      branch: props.skill.repoBranch || 'main',
+      directory: props.skill.repoDirectory || '',
+      projectPath: props.skill.repoProjectPath,
+      localPath: props.skill.repoLocalPath,
+      repoUrl: props.skill.repoUrl
     }, props.skill.fullDirectory || null, props.platform)
 
     if (result.success) {

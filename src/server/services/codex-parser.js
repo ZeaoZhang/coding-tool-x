@@ -63,11 +63,22 @@ function extractSessionMeta(lines) {
  */
 function extractMessages(lines) {
   const messages = [];
+  let currentTurnModel = null;
+  let lastAssistantModel = null;
 
   lines.forEach(line => {
+    if (line.type === 'turn_context') {
+      const model = line.payload?.model;
+      if (typeof model === 'string' && model.trim()) {
+        currentTurnModel = model.trim();
+      }
+      return;
+    }
+
     if (line.type !== 'response_item') return;
 
     const payload = line.payload;
+    const resolvedModel = payload?.model || currentTurnModel || lastAssistantModel || null;
 
     // 用户/助手消息
     if (payload.type === 'message') {
@@ -81,8 +92,12 @@ function extractMessages(lines) {
         messages.push({
           role: payload.role,
           content: text,
-          timestamp: line.timestamp
+          timestamp: line.timestamp,
+          model: payload.role === 'assistant' ? resolvedModel : null
         });
+        if (payload.role === 'assistant' && resolvedModel) {
+          lastAssistantModel = resolvedModel;
+        }
       }
     }
 
@@ -101,8 +116,12 @@ function extractMessages(lines) {
         name: payload.name,
         arguments: parsedArguments,
         callId: payload.call_id,
-        timestamp: line.timestamp
+        timestamp: line.timestamp,
+        model: resolvedModel
       });
+      if (resolvedModel) {
+        lastAssistantModel = resolvedModel;
+      }
     }
 
     // 工具输出
@@ -119,8 +138,12 @@ function extractMessages(lines) {
         role: 'tool_output',
         callId: payload.call_id,
         output: parsedOutput,
-        timestamp: line.timestamp
+        timestamp: line.timestamp,
+        model: resolvedModel
       });
+      if (resolvedModel) {
+        lastAssistantModel = resolvedModel;
+      }
     }
 
     // 推理内容
@@ -135,8 +158,12 @@ function extractMessages(lines) {
         messages.push({
           role: 'reasoning',
           content: text,
-          timestamp: line.timestamp
+          timestamp: line.timestamp,
+          model: resolvedModel
         });
+        if (resolvedModel) {
+          lastAssistantModel = resolvedModel;
+        }
       }
     }
   });

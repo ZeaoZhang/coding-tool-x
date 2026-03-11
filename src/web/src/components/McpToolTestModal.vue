@@ -97,6 +97,7 @@ import {
 } from '@vicons/ionicons5'
 import { testServerTool } from '../api/mcp'
 import message from '../utils/message'
+import { resolveMcpErrorMessage, showMcpError } from '../utils/mcp-error'
 import McpDynamicForm from './McpDynamicForm.vue'
 
 const props = defineProps({
@@ -152,6 +153,7 @@ async function handleExecute() {
     )
 
     if (response.success) {
+      const responseErrorMessage = resolveMcpErrorMessage(response.result, '工具执行失败')
       result.value = {
         result: response.result,
         duration: response.duration,
@@ -161,23 +163,24 @@ async function handleExecute() {
       if (!response.isError) {
         message.success(`工具执行成功 (${response.duration}ms)`)
       } else {
-        message.error('工具执行失败')
+        result.value.result = responseErrorMessage
+        showMcpError(message, response.result, '工具执行失败', `${props.tool.name}: `)
       }
     } else {
       result.value = {
-        result: response.message || '执行失败',
+        result: resolveMcpErrorMessage(response, '执行失败'),
         isError: true
       }
-      message.error(response.message || '执行失败')
+      showMcpError(message, response, '执行失败', `${props.tool.name}: `)
     }
   } catch (err) {
     console.error('Tool execution error:', err)
-    const errorMsg = err.response?.data?.message || err.message || '执行失败'
+    const errorMsg = resolveMcpErrorMessage(err, '执行失败')
     result.value = {
       result: errorMsg,
       isError: true
     }
-    message.error('执行失败: ' + errorMsg)
+    showMcpError(message, err, '执行失败', `${props.tool.name}: `)
   } finally {
     executing.value = false
   }

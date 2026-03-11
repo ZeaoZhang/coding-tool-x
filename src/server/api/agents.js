@@ -6,15 +6,14 @@
 
 const express = require('express');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { AgentsService } = require('../services/agents-service');
-const { PATHS } = require('../../config/paths');
+const { PATHS, HOME_DIR } = require('../../config/paths');
 
 const router = express.Router();
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
 const agentServices = new Map();
-const DEFAULT_PROJECT_ALLOWED_ROOTS = [os.homedir(), process.cwd()];
+const DEFAULT_PROJECT_ALLOWED_ROOTS = [HOME_DIR, process.cwd()];
 
 function isSupportedPlatform(platform) {
   return SUPPORTED_PLATFORMS.includes(platform);

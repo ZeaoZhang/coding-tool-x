@@ -4,8 +4,11 @@ const os = require('os');
 const crypto = require('crypto');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
+const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 const { getCodexDir } = require('./codex-config');
 const { injectEnvToShell, removeEnvFromShell, isProxyConfig } = require('./codex-settings-manager');
+
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 /**
  * Codex 渠道管理服务（多渠道架构）
@@ -30,7 +33,7 @@ function normalizeGatewaySourceType(value, fallback = 'codex') {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  const ccToolDir = path.join(HOME_DIR, '.cc-tool');
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }

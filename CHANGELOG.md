@@ -4,6 +4,20 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.3.8] - 2026-03-09
+
+### Fixed
+- OpenCode 渠道测速面板修复 - 渠道测速抽屉现已支持在下拉框中选择并批量测试 OpenCode，结果标签与样式同步补齐
+
+## [3.3.7] - 2026-03-06
+
+### Fixed
+- 配置导入导出多平台修复 - 修复导入后只恢复 Claude 相关配置的问题，导出/导入现已覆盖 Claude / Codex / Gemini / OpenCode 的 Agents、Skills、Commands 与原生配置
+
+### Changed
+- Codex 默认模型更新 - 默认测速模型切换为 `gpt-5.4`，默认模型列表新增并前置 `gpt-5.4`
+- 配置导出文案修正 - 导出抽屉说明更新为“多平台配置”，避免误解为仅导出前端配置
+
 ## [3.3.0] - 2026-03-02
 
 ### Added

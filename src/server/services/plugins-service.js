@@ -6,14 +6,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('../../plugins/registry');
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
-const { NATIVE_PATHS } = require('../../config/paths');
+const { NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
 
-const CLAUDE_PLUGINS_DIR = path.join(os.homedir(), '.claude', 'plugins');
+const CLAUDE_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
 const CLAUDE_INSTALLED_FILE = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
 const CLAUDE_MARKETPLACES_FILE = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
@@ -107,7 +106,7 @@ function stripJsonComments(input = '') {
 class PluginsService {
   constructor(platform = 'claude') {
     this.platform = ['claude', 'opencode'].includes(platform) ? platform : 'claude';
-    this.ccToolConfigDir = path.join(os.homedir(), '.cc-tool');
+    this.ccToolConfigDir = path.join(HOME_DIR, '.cc-tool');
     this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
     this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
   }

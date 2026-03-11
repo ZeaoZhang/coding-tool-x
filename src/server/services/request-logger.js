@@ -16,9 +16,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS } = require('../../config/paths');
 
-const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
+const CC_TOOL_DIR = PATHS.base;
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {

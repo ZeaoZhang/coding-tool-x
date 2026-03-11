@@ -7,8 +7,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
+const { HOME_DIR } = require('../../config/paths');
 
 // 各平台需要检测的环境变量关键词
 const PLATFORM_KEYWORDS = {
@@ -141,7 +141,7 @@ function checkProcessEnv(keywords) {
  */
 function checkShellConfigs(keywords) {
   const conflicts = [];
-  const homeDir = os.homedir();
+  const homeDir = HOME_DIR;
 
   for (const fileName of SHELL_CONFIG_FILES) {
     const filePath = path.isAbsolute(fileName) ? fileName : path.join(homeDir, fileName);

@@ -13,7 +13,7 @@ const MODEL_ALIASES = metadataConfig.aliases || {};
 const DEFAULT_MODELS = metadataConfig.defaultModels || { claude: [], codex: [], gemini: [] };
 const DEFAULT_SPEED_TEST_MODELS = metadataConfig.defaultSpeedTestModels || {
   claude: 'claude-haiku-4-5',
-  codex: 'gpt-5.2',
+  codex: 'gpt-5.4',
   gemini: 'gemini-2.5-pro'
 };
 
@@ -163,5 +163,5 @@ module.exports = {
   getDefaultSpeedTestModels,
   getDefaultSpeedTestModelByToolType,
   saveDefaultSpeedTestModels,
-  METADATA_LAST_UPDATED: metadataConfig.lastUpdated || '2026-02-27'
+  METADATA_LAST_UPDATED: metadataConfig.lastUpdated || '2026-03-06'
 };

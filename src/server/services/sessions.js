@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const { getAllSessions, parseSessionInfoFast } = require('../../utils/session');
 const { loadAliases } = require('./alias');
@@ -12,7 +11,11 @@ const {
   rememberHasMessages
 } = require('./session-cache');
 const { globalCache, CacheKeys } = require('./enhanced-cache');
-const { PATHS } = require('../../config/paths');
+const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+
+const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
+const CODEX_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'projects');
+const GEMINI_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'projects');
 
 // Base directory for cc-tool data
 function getCcToolDir() {
@@ -238,7 +241,7 @@ function validateProjectPath(candidatePath) {
 
 function tryResolvePathFromSessions(encodedName) {
   try {
-    const projectDir = path.join(os.homedir(), '.claude', 'projects', encodedName);
+    const projectDir = path.join(CLAUDE_PROJECTS_DIR, encodedName);
     if (!fs.existsSync(projectDir)) {
       return null;
     }
@@ -824,7 +827,7 @@ async function searchSessionsAcrossProjects(config, keyword, contextLength = 35)
 
   try {
     // Search in Codex projects
-    const codexProjectsDir = path.join(os.homedir(), '.codex', 'projects');
+    const codexProjectsDir = CODEX_PROJECTS_DIR;
     if (fs.existsSync(codexProjectsDir)) {
       const codexConfig = { ...config, projectsDir: codexProjectsDir };
       const codexProjects = await getProjects(codexConfig);
@@ -849,7 +852,7 @@ async function searchSessionsAcrossProjects(config, keyword, contextLength = 35)
 
   try {
     // Search in Gemini projects
-    const geminiProjectsDir = path.join(os.homedir(), '.gemini', 'projects');
+    const geminiProjectsDir = GEMINI_PROJECTS_DIR;
     if (fs.existsSync(geminiProjectsDir)) {
       const geminiConfig = { ...config, projectsDir: geminiProjectsDir };
       const geminiProjects = await getProjects(geminiConfig);

@@ -20,10 +20,10 @@ const os = require('os');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { convertSkillToCodex, convertCommandToCodex } = require('./format-converter');
-const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
+const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../../config/paths');
 
 // Paths
-const HOME = os.homedir();
+const HOME = HOME_DIR || os.homedir();
 const CC_TOOL_CONFIGS = path.join(PATHS.base, 'configs');
 const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');

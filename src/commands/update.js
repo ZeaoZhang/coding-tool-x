@@ -1,14 +1,22 @@
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
-const { exec } = require('child_process');
 const semver = require('semver');
 const chalk = require('chalk');
 const packageInfo = require('../../package.json');
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+function resolveNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
 
 async function getLatestVersion(packageName) {
-  const { stdout } = await execAsync(`npm view ${packageName} version --json`, { timeout: 15000 });
+  const npmCommand = resolveNpmCommand();
+  const { stdout } = await execFileAsync(
+    npmCommand,
+    ['view', packageName, 'version', '--json'],
+    { timeout: 15000 }
+  );
   const parsed = JSON.parse(stdout.trim());
   if (typeof parsed === 'string') return parsed;
   throw new Error('无法解析 npm 返回的版本号');
@@ -16,11 +24,18 @@ async function getLatestVersion(packageName) {
 
 function runNpmInstall(packageName, version) {
   return new Promise((resolve, reject) => {
-    const child = spawn('npm', ['install', '-g', `${packageName}@${version}`], {
+    const npmCommand = resolveNpmCommand();
+    const child = spawn(npmCommand, ['install', '-g', `${packageName}@${version}`], {
       stdio: 'inherit'
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      if (err && err.code === 'ENOENT') {
+        reject(new Error(`命令 "${npmCommand}" 未找到，请确认 Node.js/npm 已安装并在 PATH 中`));
+        return;
+      }
+      reject(err);
+    });
     child.on('exit', (code) => {
       if (code === 0) {
         resolve();

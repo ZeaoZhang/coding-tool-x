@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const archiver = require('archiver');
 const chalk = require('chalk');
+const { HOME_DIR } = require('../config/paths');
 
 /**
  * 导出 Claude Code 配置为 ZIP 压缩包
@@ -14,7 +14,7 @@ async function exportConfig(options = {}) {
   try {
     console.log(chalk.blue('🚀 开始导出 Claude Code 配置...'));
 
-    const homeDir = os.homedir();
+    const homeDir = HOME_DIR;
     const claudeDir = path.join(homeDir, '.claude');
     const currentDir = process.cwd();
 

@@ -5,13 +5,13 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { loadConfig } = require('../../config/loader');
+const { HOME_DIR } = require('../../config/paths');
 
 // 内置模型优先级（当配置缺失时兜底）
 const MODEL_PRIORITY = {
@@ -23,6 +23,7 @@ const MODEL_PRIORITY = {
     'claude-haiku-4-5-20251001'
   ],
   codex: [
+    'gpt-5.4',
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
     'gpt-5.1-codex',
@@ -668,7 +669,7 @@ function collectResponseBody(res) {
  * Get cache file path
  */
 function getCacheFilePath() {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  const dir = path.join(HOME_DIR, '.cc-tool');
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

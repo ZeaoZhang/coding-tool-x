@@ -5,24 +5,28 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const AdmZip = require('adm-zip');
 const configTemplatesService = require('./config-templates-service');
 const channelsService = require('./channels');
+const codexChannelsService = require('./codex-channels');
+const geminiChannelsService = require('./gemini-channels');
+const opencodeChannelsService = require('./opencode-channels');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
+const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
-const CONFIG_VERSION = '1.2.0';
+const CONFIG_VERSION = '1.3.0';
 const SKILL_FILE_ENCODING = 'base64';
 const SKILL_IGNORE_DIRS = new Set(['.git']);
 const SKILL_IGNORE_FILES = new Set(['.DS_Store']);
-const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
-const LEGACY_CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
-const CLAUDE_SETTINGS_PATH = path.join(os.homedir(), '.claude', 'settings.json');
+const CC_TOOL_DIR = PATHS.base;
+const LEGACY_CC_TOOL_DIR = PATHS.base;
+const CLAUDE_SETTINGS_PATH = NATIVE_PATHS.claude.settings;
 const LEGACY_PLUGINS_DIR = path.join(LEGACY_CC_TOOL_DIR, 'plugins', 'installed');
 const LEGACY_PLUGINS_REGISTRY = path.join(LEGACY_CC_TOOL_DIR, 'plugins', 'registry.json');
-const NATIVE_PLUGINS_REGISTRY = path.join(os.homedir(), '.claude', 'plugins', 'installed_plugins.json');
+const CLAUDE_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
+const NATIVE_PLUGINS_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
 const PLUGIN_IGNORE_DIRS = new Set(['.git', 'node_modules', '.DS_Store']);
 const PLUGIN_IGNORE_FILES = new Set(['.DS_Store']);
 const PLUGIN_SENSITIVE_PATTERNS = [
@@ -40,6 +44,41 @@ const CC_PROMPTS_PATH = path.join(CC_TOOL_DIR, 'prompts.json');
 const CC_SECURITY_PATH = path.join(CC_TOOL_DIR, 'security.json');
 const LEGACY_UI_CONFIG_PATH = path.join(LEGACY_CC_TOOL_DIR, 'ui-config.json');
 const LEGACY_NOTIFY_HOOK_PATH = path.join(LEGACY_CC_TOOL_DIR, 'notify-hook.js');
+const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
+const AGENT_PLATFORMS = ['claude', 'codex', 'opencode'];
+const COMMAND_PLATFORMS = ['claude', 'opencode'];
+const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+
+function getOpenCodeConfigPaths() {
+  try {
+    const { CONFIG_PATHS } = require('./opencode-settings-manager');
+    return CONFIG_PATHS || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function getNativeConfigSpecs() {
+  const openCodeConfigPaths = getOpenCodeConfigPaths();
+  return {
+    claude: {
+      settings: { path: NATIVE_PATHS.claude.settings, format: 'json' }
+    },
+    codex: {
+      config: { path: NATIVE_PATHS.codex.config, format: 'text' },
+      auth: { path: NATIVE_PATHS.codex.auth, format: 'json', mode: 0o600 }
+    },
+    gemini: {
+      env: { path: NATIVE_PATHS.gemini.env, format: 'text', mode: 0o600 },
+      settings: { path: GEMINI_SETTINGS_PATH, format: 'json' }
+    },
+    opencode: {
+      opencodeJsonc: { path: openCodeConfigPaths.opencodec, format: 'text' },
+      opencodeJson: { path: openCodeConfigPaths.opencode, format: 'text' },
+      configJson: { path: openCodeConfigPaths.config, format: 'text' }
+    }
+  };
+}
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -61,6 +100,39 @@ function readTextFileSafe(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return null;
   try {
     return fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    return null;
+  }
+}
+
+function readNativeConfigSnapshot(spec) {
+  if (!spec?.path || !fs.existsSync(spec.path)) {
+    return null;
+  }
+
+  try {
+    const rawContent = fs.readFileSync(spec.path, 'utf8');
+    if (spec.format === 'json') {
+      try {
+        return {
+          format: 'json',
+          fileName: path.basename(spec.path),
+          content: JSON.parse(rawContent)
+        };
+      } catch (err) {
+        return {
+          format: 'text',
+          fileName: path.basename(spec.path),
+          content: rawContent
+        };
+      }
+    }
+
+    return {
+      format: spec.format || 'text',
+      fileName: path.basename(spec.path),
+      content: rawContent
+    };
   } catch (err) {
     return null;
   }
@@ -100,6 +172,19 @@ function writeTextFileAbsolute(filePath, content, overwrite, options = {}) {
   return 'success';
 }
 
+function writeNativeConfigAbsolute(spec, entry, overwrite) {
+  if (!spec?.path || !entry || entry.content === undefined) {
+    return 'failed';
+  }
+
+  const format = entry.format || spec.format || 'text';
+  if (format === 'json' && entry.content && typeof entry.content === 'object') {
+    return writeJsonFileAbsolute(spec.path, entry.content, overwrite, { mode: spec.mode });
+  }
+
+  return writeTextFileAbsolute(spec.path, String(entry.content), overwrite, { mode: spec.mode });
+}
+
 function getConfigFilePath() {
   try {
     const { getConfigFilePath: resolveConfigPath } = require('../../config/loader');
@@ -121,6 +206,7 @@ function buildExportReadme(exportData) {
 - Agents / Skills / Commands
 - 插件 (Plugins)
 - MCP 服务器配置
+- 各平台原生配置（Claude / Codex / Gemini / OpenCode）
 - UI 配置（主题、面板显示、排序等）
 - Prompts 预设
 - 安全配置
@@ -178,6 +264,288 @@ function buildCommandContent(command) {
 
   const body = command.body || '';
   return `${lines.join('\n')}${body}`;
+}
+
+function buildAgentExportItem(agent, platform) {
+  return {
+    platform,
+    fileName: agent.fileName,
+    name: agent.name,
+    description: agent.description,
+    tools: agent.tools,
+    model: agent.model,
+    permissionMode: agent.permissionMode,
+    skills: agent.skills,
+    path: agent.path,
+    systemPrompt: agent.systemPrompt,
+    fullContent: agent.fullContent
+  };
+}
+
+function buildCommandExportItem(command, platform) {
+  return {
+    platform,
+    name: command.name,
+    namespace: command.namespace,
+    description: command.description,
+    allowedTools: command.allowedTools,
+    argumentHint: command.argumentHint,
+    path: command.path,
+    body: command.body,
+    fullContent: command.fullContent
+  };
+}
+
+function exportAgentsSnapshotByPlatform() {
+  return AGENT_PLATFORMS.reduce((result, platform) => {
+    try {
+      const agentsService = new AgentsService(platform);
+      const { agents: rawAgents = [] } = agentsService.listAgents();
+      result[platform] = rawAgents.map(agent => buildAgentExportItem(agent, platform));
+    } catch (err) {
+      console.warn(`[ConfigExport] Failed to export agents for ${platform}:`, err.message);
+      result[platform] = [];
+    }
+    return result;
+  }, {});
+}
+
+function exportCommandsSnapshotByPlatform() {
+  return COMMAND_PLATFORMS.reduce((result, platform) => {
+    try {
+      const commandsService = new CommandsService(platform);
+      const { commands: rawCommands = [] } = commandsService.listCommands();
+      result[platform] = rawCommands.map(command => buildCommandExportItem(command, platform));
+    } catch (err) {
+      console.warn(`[ConfigExport] Failed to export commands for ${platform}:`, err.message);
+      result[platform] = [];
+    }
+    return result;
+  }, {});
+}
+
+function normalizePlatformItems(legacyItems = [], byPlatform = {}, supportedPlatforms = [], defaultPlatform = 'claude') {
+  const result = Object.fromEntries(supportedPlatforms.map(platform => [platform, []]));
+  const structuredPlatforms = new Set();
+
+  for (const platform of supportedPlatforms) {
+    if (Array.isArray(byPlatform?.[platform])) {
+      result[platform] = byPlatform[platform].map(item => ({
+        ...item,
+        platform: supportedPlatforms.includes(item?.platform) ? item.platform : platform
+      }));
+      structuredPlatforms.add(platform);
+    }
+  }
+
+  if (!Array.isArray(legacyItems)) {
+    return result;
+  }
+
+  for (const item of legacyItems) {
+    const platform = supportedPlatforms.includes(item?.platform) ? item.platform : defaultPlatform;
+    if (structuredPlatforms.has(platform)) {
+      continue;
+    }
+    result[platform].push({ ...item, platform });
+  }
+
+  return result;
+}
+
+function resolveAgentRelativePath(agent, platform) {
+  const pathCandidates = [agent?.path, agent?.fileName]
+    .filter(value => typeof value === 'string' && value.trim())
+    .map(value => value.trim());
+
+  for (const candidate of pathCandidates) {
+    if (path.extname(candidate)) {
+      return candidate;
+    }
+  }
+
+  const baseName = agent?.fileName || agent?.name;
+  if (!baseName) {
+    return null;
+  }
+
+  return platform === 'codex' ? `${baseName}.toml` : `${baseName}.md`;
+}
+
+function resolveCommandRelativePath(command) {
+  if (typeof command?.path === 'string' && command.path.trim()) {
+    return command.path.trim();
+  }
+  if (command?.namespace) {
+    return path.join(command.namespace, `${command.name}.md`);
+  }
+  return command?.name ? `${command.name}.md` : null;
+}
+
+function pickPrimaryChannel(channels = []) {
+  if (!Array.isArray(channels) || channels.length === 0) {
+    return null;
+  }
+  return channels.find(channel => channel.enabled !== false) || channels[0] || null;
+}
+
+function findMatchingPersistedChannel(existingChannels = [], importedChannel = {}, extraMatchers = []) {
+  if (!Array.isArray(existingChannels) || existingChannels.length === 0 || !importedChannel) {
+    return null;
+  }
+
+  if (importedChannel.id) {
+    const exactMatch = existingChannels.find(channel => channel.id === importedChannel.id);
+    if (exactMatch) {
+      return exactMatch;
+    }
+  }
+
+  for (const matcher of extraMatchers) {
+    const matchedChannel = existingChannels.find(channel => matcher(channel, importedChannel));
+    if (matchedChannel) {
+      return matchedChannel;
+    }
+  }
+
+  return null;
+}
+
+function sanitizeOpenCodeProviderId(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'channel';
+}
+
+function buildOpenCodeNativeConfig(channels = []) {
+  const config = { provider: {} };
+  const usedProviderIds = new Set();
+  let defaultModelRef = '';
+
+  channels.forEach((channel) => {
+    const baseProviderId = sanitizeOpenCodeProviderId(channel.providerKey || channel.name);
+    let providerId = baseProviderId;
+    let suffix = 2;
+    while (usedProviderIds.has(providerId)) {
+      providerId = `${baseProviderId}-${suffix}`;
+      suffix += 1;
+    }
+    usedProviderIds.add(providerId);
+
+    const provider = {
+      npm: '@ai-sdk/openai-compatible',
+      name: channel.name || providerId,
+      options: {
+        baseURL: channel.baseUrl || '',
+        apiKey: channel.apiKey || ''
+      }
+    };
+
+    const models = {};
+    const allowedModels = Array.isArray(channel.allowedModels) ? channel.allowedModels : [];
+    const allModels = allowedModels.length > 0
+      ? allowedModels
+      : [channel.model].filter(Boolean);
+
+    allModels.forEach((modelId) => {
+      const normalizedModel = String(modelId || '').trim();
+      if (!normalizedModel) return;
+      models[normalizedModel] = { name: normalizedModel };
+      if (!defaultModelRef && (channel.enabled !== false || !pickPrimaryChannel(channels))) {
+        defaultModelRef = `${providerId}/${normalizedModel}`;
+      }
+    });
+
+    if (Object.keys(models).length > 0) {
+      provider.models = models;
+    }
+
+    config.provider[providerId] = provider;
+  });
+
+  const preferredChannel = pickPrimaryChannel(channels);
+  if (!defaultModelRef && preferredChannel?.model) {
+    const providerId = sanitizeOpenCodeProviderId(preferredChannel.providerKey || preferredChannel.name);
+    defaultModelRef = `${providerId}/${preferredChannel.model}`;
+  }
+
+  if (defaultModelRef) {
+    config.model = defaultModelRef;
+  }
+
+  return config;
+}
+
+function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs, overwrite) {
+  const hasNativeConfigFor = (platform) => !!nativeConfigs?.[platform] && Object.keys(nativeConfigs[platform]).length > 0;
+
+  try {
+    if (!hasNativeConfigFor('claude')) {
+      const primaryClaudeChannel = pickPrimaryChannel(importChannelsByType.claude);
+      const persistedClaudeChannel = findMatchingPersistedChannel(
+        channelsService.getAllChannels?.() || [],
+        primaryClaudeChannel,
+        [
+          (channel, imported) => channel.name === imported.name && channel.baseUrl === imported.baseUrl
+        ]
+      );
+      if (persistedClaudeChannel?.id) {
+        ensureDir(path.dirname(NATIVE_PATHS.claude.settings));
+        channelsService.applyChannelToSettings(persistedClaudeChannel.id);
+      }
+    }
+  } catch (err) {
+    console.warn('[ConfigImport] Claude native sync fallback failed:', err.message);
+  }
+
+  try {
+    if (!hasNativeConfigFor('codex')) {
+      codexChannelsService.writeCodexConfigForMultiChannel(importChannelsByType.codex || []);
+    }
+  } catch (err) {
+    console.warn('[ConfigImport] Codex native sync fallback failed:', err.message);
+  }
+
+  try {
+    if (!hasNativeConfigFor('gemini')) {
+      const primaryGeminiChannel = pickPrimaryChannel(importChannelsByType.gemini);
+      const persistedGeminiChannel = findMatchingPersistedChannel(
+        geminiChannelsService.getChannels?.().channels || [],
+        primaryGeminiChannel,
+        [
+          (channel, imported) => channel.name === imported.name && channel.baseUrl === imported.baseUrl
+        ]
+      );
+      if (persistedGeminiChannel?.id) {
+        geminiChannelsService.applyChannelToSettings(persistedGeminiChannel.id);
+      }
+    }
+  } catch (err) {
+    console.warn('[ConfigImport] Gemini native sync fallback failed:', err.message);
+  }
+
+  try {
+    if (!hasNativeConfigFor('opencode')) {
+      const openCodeSpecs = getNativeConfigSpecs().opencode || {};
+      const preferredSpec = [
+        openCodeSpecs.opencodeJsonc,
+        openCodeSpecs.opencodeJson,
+        openCodeSpecs.configJson
+      ].find(spec => spec?.path && fs.existsSync(spec.path))
+        || openCodeSpecs.opencodeJson
+        || openCodeSpecs.configJson;
+
+      if (preferredSpec?.path) {
+        const payload = buildOpenCodeNativeConfig(importChannelsByType.opencode || []);
+        writeTextFileAbsolute(preferredSpec.path, JSON.stringify(payload, null, 2), overwrite);
+      }
+    }
+  } catch (err) {
+    console.warn('[ConfigImport] OpenCode native sync fallback failed:', err.message);
+  }
 }
 
 function collectSkillFiles(baseDir) {
@@ -273,8 +641,8 @@ function collectPluginFiles(pluginDir, basePath = '') {
   return files;
 }
 
-function exportSkillsSnapshot() {
-  const skillService = new SkillService();
+function exportSkillsSnapshot(platform = 'claude') {
+  const skillService = new SkillService(platform);
   const installedSkills = skillService.getInstalledSkills();
   const baseDir = skillService.installDir;
 
@@ -285,12 +653,43 @@ function exportSkillsSnapshot() {
       return null;
     }
     return {
+      platform,
       directory,
       name: skill.name || directory,
       description: skill.description || '',
       files: collectSkillFiles(skillDir)
     };
   }).filter(Boolean);
+}
+
+function exportSkillsSnapshotByPlatform() {
+  return SKILL_PLATFORMS.reduce((result, platform) => {
+    try {
+      result[platform] = exportSkillsSnapshot(platform);
+    } catch (err) {
+      console.warn(`[ConfigExport] Failed to export skills for ${platform}:`, err.message);
+      result[platform] = [];
+    }
+    return result;
+  }, {});
+}
+
+function exportNativeConfigs() {
+  const specs = getNativeConfigSpecs();
+  return Object.entries(specs).reduce((result, [platform, platformSpecs]) => {
+    const exportedEntries = Object.entries(platformSpecs).reduce((entries, [key, spec]) => {
+      const snapshot = readNativeConfigSnapshot(spec);
+      if (snapshot) {
+        entries[key] = snapshot;
+      }
+      return entries;
+    }, {});
+
+    if (Object.keys(exportedEntries).length > 0) {
+      result[platform] = exportedEntries;
+    }
+    return result;
+  }, {});
 }
 
 function exportLegacyPlugins() {
@@ -413,6 +812,14 @@ function writeTextFile(baseDir, relativePath, content, overwrite) {
   return 'success';
 }
 
+function getAllChannelsByType() {
+  const claude = channelsService.getAllChannels() || [];
+  const codex = codexChannelsService.getChannels()?.channels || [];
+  const gemini = geminiChannelsService.getChannels()?.channels || [];
+  const opencode = opencodeChannelsService.getChannels()?.channels || [];
+  return { claude, codex, gemini, opencode };
+}
+
 /**
  * 导出所有配置为JSON
  * @returns {Object} 配置导出对象
@@ -423,8 +830,9 @@ function exportAllConfigs() {
     const allConfigTemplates = configTemplatesService.getAllTemplates();
     const customConfigTemplates = allConfigTemplates.filter(t => !t.isBuiltin);
 
-    // 获取所有频道配置
-    const channels = channelsService.getAllChannels() || [];
+    // 获取所有频道配置（向后兼容：channels 仍保留 Claude 渠道）
+    const channelsByType = getAllChannelsByType();
+    const channels = channelsByType.claude || [];
 
     // 获取工作区配置
     const workspaceService = require('./workspace-service');
@@ -434,38 +842,13 @@ function exportAllConfigs() {
     const favoritesService = require('./favorites');
     const favorites = favoritesService.loadFavorites();
 
-    // 获取 Agents 配置
-    const agentsService = new AgentsService();
-    const { agents: rawAgents } = agentsService.listAgents();
-    const agents = rawAgents.map(agent => ({
-      fileName: agent.fileName,
-      name: agent.name,
-      description: agent.description,
-      tools: agent.tools,
-      model: agent.model,
-      permissionMode: agent.permissionMode,
-      skills: agent.skills,
-      path: agent.path,
-      systemPrompt: agent.systemPrompt,
-      fullContent: agent.fullContent
-    }));
-
-    // 获取 Skills 配置
-    const skills = exportSkillsSnapshot();
-
-    // 获取 Commands 配置
-    const commandsService = new CommandsService();
-    const { commands: rawCommands } = commandsService.listCommands();
-    const commands = rawCommands.map(command => ({
-      name: command.name,
-      namespace: command.namespace,
-      description: command.description,
-      allowedTools: command.allowedTools,
-      argumentHint: command.argumentHint,
-      path: command.path,
-      body: command.body,
-      fullContent: command.fullContent
-    }));
+    // 获取 Agents / Skills / Commands 配置（多平台）
+    const agentsByPlatform = exportAgentsSnapshotByPlatform();
+    const skillsByPlatform = exportSkillsSnapshotByPlatform();
+    const commandsByPlatform = exportCommandsSnapshotByPlatform();
+    const agents = agentsByPlatform.claude || [];
+    const skills = skillsByPlatform.claude || [];
+    const commands = commandsByPlatform.claude || [];
 
     // 获取 MCP 配置
     const mcpService = require('./mcp-service');
@@ -473,6 +856,7 @@ function exportAllConfigs() {
 
     // 获取 Plugins 配置
     const plugins = exportPluginsSnapshot();
+    const nativeConfigs = exportNativeConfigs();
 
     // 读取 Markdown 配置文件
     const { PATHS } = require('../../config/paths');
@@ -513,11 +897,15 @@ function exportAllConfigs() {
       data: {
         configTemplates: customConfigTemplates,
         channels: channels || [],
+        channelsByType,
         workspaces: workspaces || { workspaces: [] },
         favorites: favorites || { favorites: [] },
         agents: agents || [],
+        agentsByPlatform,
         skills: skills || [],
+        skillsByPlatform,
         commands: commands || [],
+        commandsByPlatform,
         mcpServers: mcpServers || [],
         plugins: plugins || [],
         markdownFiles: markdownFiles,
@@ -525,6 +913,7 @@ function exportAllConfigs() {
         prompts: prompts,
         security: security,
         appConfig: appConfig,
+        nativeConfigs,
         claudeHooks: claudeHooks
       }
     };
@@ -589,6 +978,7 @@ async function importConfigs(importData, options = {}) {
     prompts: { success: 0, failed: 0, skipped: 0 },
     security: { success: 0, failed: 0, skipped: 0 },
     appConfig: { success: 0, failed: 0, skipped: 0 },
+    nativeConfigs: { success: 0, failed: 0, skipped: 0 },
     claudeHooks: { success: 0, failed: 0, skipped: 0 }
   };
 
@@ -601,19 +991,38 @@ async function importConfigs(importData, options = {}) {
     const {
       configTemplates = [],
       channels = [],
+      channelsByType = null,
       workspaces = null,
       favorites = null,
       agents = [],
+      agentsByPlatform = {},
       skills = [],
+      skillsByPlatform = {},
       commands = [],
+      commandsByPlatform = {},
       mcpServers = [],
       markdownFiles = {},
       uiConfig = null,
       prompts = null,
       security = null,
       appConfig = null,
+      nativeConfigs = {},
       claudeHooks = null
     } = importData.data;
+
+    const importAgentsByPlatform = normalizePlatformItems(agents, agentsByPlatform, AGENT_PLATFORMS);
+    const importSkillsByPlatform = normalizePlatformItems(skills, skillsByPlatform, SKILL_PLATFORMS);
+    const importCommandsByPlatform = normalizePlatformItems(commands, commandsByPlatform, COMMAND_PLATFORMS);
+
+    const hasTypedChannels = channelsByType && typeof channelsByType === 'object';
+    const importChannelsByType = {
+      claude: hasTypedChannels && Array.isArray(channelsByType.claude)
+        ? channelsByType.claude
+        : (Array.isArray(channels) ? channels : []),
+      codex: hasTypedChannels && Array.isArray(channelsByType.codex) ? channelsByType.codex : [],
+      gemini: hasTypedChannels && Array.isArray(channelsByType.gemini) ? channelsByType.gemini : [],
+      opencode: hasTypedChannels && Array.isArray(channelsByType.opencode) ? channelsByType.opencode : []
+    };
 
     // 导入配置模板
     for (const template of configTemplates) {
@@ -642,29 +1051,72 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
-    // 导入频道配置
-    for (const channel of channels) {
-      try {
-        const existingChannels = channelsService.getAllChannels() || [];
-        const existing = existingChannels.find(c => c.id === channel.id);
+    // 导入频道配置（兼容旧结构 channels 和新结构 channelsByType）
+    const importTypedChannels = (type, service, createChannel, findExisting = null) => {
+      const sourceChannels = importChannelsByType[type];
+      for (const channel of sourceChannels) {
+        try {
+          const existingChannels = service.getChannels
+            ? (service.getChannels()?.channels || [])
+            : (service.getAllChannels?.() || []);
+          const existing = typeof findExisting === 'function'
+            ? findExisting(existingChannels, channel)
+            : existingChannels.find(c => c.id === channel.id);
 
-        if (existing && !overwrite) {
-          results.channels.skipped++;
-          continue;
-        }
+          if (existing && !overwrite) {
+            results.channels.skipped++;
+            continue;
+          }
 
-        if (existing && overwrite) {
-          channelsService.updateChannel(channel.id, channel);
-        } else {
-          const { name, baseUrl, apiKey, websiteUrl, ...extraConfig } = channel;
-          channelsService.createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig);
+          if (existing && overwrite) {
+            service.updateChannel(existing.id, { ...channel, id: existing.id });
+          } else {
+            createChannel(channel);
+          }
+          results.channels.success++;
+        } catch (err) {
+          console.error(`[ConfigImport] 导入${type}频道失败: ${channel.name}`, err);
+          results.channels.failed++;
         }
-        results.channels.success++;
-      } catch (err) {
-        console.error(`[ConfigImport] 导入频道失败: ${channel.name}`, err);
-        results.channels.failed++;
       }
-    }
+    };
+
+    importTypedChannels('claude', channelsService, channel => {
+      const { name, baseUrl, apiKey, websiteUrl, ...extraConfig } = channel;
+      channelsService.createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig);
+    }, (existingChannels, channel) => existingChannels.find(c => c.id === channel.id));
+
+    importTypedChannels('codex', codexChannelsService, channel => {
+      const {
+        name,
+        providerKey,
+        baseUrl,
+        apiKey,
+        wireApi,
+        ...extraConfig
+      } = channel;
+      codexChannelsService.createChannel(name, providerKey, baseUrl, apiKey, wireApi, extraConfig);
+    }, (existingChannels, channel) => existingChannels.find(c =>
+      (channel.id && c.id === channel.id) ||
+      (channel.providerKey && c.providerKey === channel.providerKey)
+    ));
+
+    importTypedChannels('gemini', geminiChannelsService, channel => {
+      const { name, baseUrl, apiKey, model, ...extraConfig } = channel;
+      geminiChannelsService.createChannel(name, baseUrl, apiKey, model, extraConfig);
+    }, (existingChannels, channel) => existingChannels.find(c =>
+      (channel.id && c.id === channel.id) ||
+      (channel.name && c.name === channel.name)
+    ));
+
+    importTypedChannels('opencode', opencodeChannelsService, channel => {
+      const { name, baseUrl, apiKey, ...extraConfig } = channel;
+      opencodeChannelsService.createChannel(name, baseUrl, apiKey, extraConfig);
+    }, (existingChannels, channel) => existingChannels.find(c =>
+      (channel.id && c.id === channel.id) ||
+      (channel.providerKey && c.providerKey === channel.providerKey) ||
+      (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
+    ));
 
     // 导入工作区配置
     if (workspaces && overwrite) {
@@ -691,26 +1143,28 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
-    // 导入 Agents
-    if (agents && agents.length > 0) {
+    // 导入 Agents（多平台）
+    if (AGENT_PLATFORMS.some(platform => importAgentsByPlatform[platform]?.length > 0)) {
       try {
-        const agentsService = new AgentsService();
-        const baseDir = agentsService.userAgentsDir;
+        for (const platform of AGENT_PLATFORMS) {
+          const platformAgents = importAgentsByPlatform[platform] || [];
+          if (platformAgents.length === 0) continue;
 
-        for (const agent of agents) {
-          const relativePath = agent.path || agent.fileName || agent.name;
-          const filePath = relativePath && relativePath.endsWith('.md')
-            ? relativePath
-            : (relativePath ? `${relativePath}.md` : null);
-          const content = agent.fullContent || agent.content || buildAgentContent(agent);
+          const agentsService = new AgentsService(platform);
+          const baseDir = agentsService.userAgentsDir;
 
-          const status = filePath ? writeTextFile(baseDir, filePath, content, overwrite) : 'failed';
-          if (status === 'success') {
-            results.agents.success++;
-          } else if (status === 'skipped') {
-            results.agents.skipped++;
-          } else {
-            results.agents.failed++;
+          for (const agent of platformAgents) {
+            const filePath = resolveAgentRelativePath(agent, platform);
+            const content = agent.fullContent || agent.content || buildAgentContent(agent);
+            const status = filePath ? writeTextFile(baseDir, filePath, content, overwrite) : 'failed';
+
+            if (status === 'success') {
+              results.agents.success++;
+            } else if (status === 'skipped') {
+              results.agents.skipped++;
+            } else {
+              results.agents.failed++;
+            }
           }
         }
       } catch (err) {
@@ -718,56 +1172,61 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
-    // 导入 Skills
-    if (skills && skills.length > 0) {
+    // 导入 Skills（多平台）
+    if (SKILL_PLATFORMS.some(platform => importSkillsByPlatform[platform]?.length > 0)) {
       try {
-        const skillService = new SkillService();
-        const baseDir = skillService.installDir;
-        ensureDir(baseDir);
+        for (const platform of SKILL_PLATFORMS) {
+          const platformSkills = importSkillsByPlatform[platform] || [];
+          if (platformSkills.length === 0) continue;
 
-        for (const skill of skills) {
-          const directory = skill.directory;
-          const skillDir = resolveSafePath(baseDir, directory);
-          if (!skillDir) {
-            results.skills.failed++;
-            continue;
-          }
+          const skillService = new SkillService(platform);
+          const baseDir = skillService.installDir;
+          ensureDir(baseDir);
 
-          if (fs.existsSync(skillDir)) {
-            if (!overwrite) {
-              results.skills.skipped++;
+          for (const skill of platformSkills) {
+            const directory = skill.directory;
+            const skillDir = resolveSafePath(baseDir, directory);
+            if (!skillDir) {
+              results.skills.failed++;
               continue;
             }
-            fs.rmSync(skillDir, { recursive: true, force: true });
-          }
 
-          ensureDir(skillDir);
-          const files = Array.isArray(skill.files) ? skill.files : [];
-          let failed = false;
-
-          for (const file of files) {
-            const filePath = resolveSafePath(skillDir, file.path);
-            if (!filePath) {
-              failed = true;
-              break;
-            }
-            ensureDir(path.dirname(filePath));
-            try {
-              if (file.encoding === SKILL_FILE_ENCODING) {
-                fs.writeFileSync(filePath, Buffer.from(file.content || '', SKILL_FILE_ENCODING));
-              } else {
-                fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
+            if (fs.existsSync(skillDir)) {
+              if (!overwrite) {
+                results.skills.skipped++;
+                continue;
               }
-            } catch (err) {
-              failed = true;
-              break;
+              fs.rmSync(skillDir, { recursive: true, force: true });
             }
-          }
 
-          if (failed || files.length === 0) {
-            results.skills.failed++;
-          } else {
-            results.skills.success++;
+            ensureDir(skillDir);
+            const files = Array.isArray(skill.files) ? skill.files : [];
+            let failed = false;
+
+            for (const file of files) {
+              const filePath = resolveSafePath(skillDir, file.path);
+              if (!filePath) {
+                failed = true;
+                break;
+              }
+              ensureDir(path.dirname(filePath));
+              try {
+                if (file.encoding === SKILL_FILE_ENCODING) {
+                  fs.writeFileSync(filePath, Buffer.from(file.content || '', SKILL_FILE_ENCODING));
+                } else {
+                  fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
+                }
+              } catch (err) {
+                failed = true;
+                break;
+              }
+            }
+
+            if (failed || files.length === 0) {
+              results.skills.failed++;
+            } else {
+              results.skills.success++;
+            }
           }
         }
       } catch (err) {
@@ -799,7 +1258,7 @@ async function importConfigs(importData, options = {}) {
                 results.plugins.failed++;
                 continue;
               }
-              targetDir = path.join(os.homedir(), '.claude', 'plugins', pluginId);
+              targetDir = path.join(CLAUDE_PLUGINS_DIR, pluginId);
               registryPath = NATIVE_PLUGINS_REGISTRY;
             } else {
               console.warn(`[ConfigImport] Unknown plugin type: ${pluginType}`);
@@ -912,27 +1371,28 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
-    // 导入 Commands
-    if (commands && commands.length > 0) {
+    // 导入 Commands（多平台）
+    if (COMMAND_PLATFORMS.some(platform => importCommandsByPlatform[platform]?.length > 0)) {
       try {
-        const commandsService = new CommandsService();
-        const baseDir = commandsService.userCommandsDir;
+        for (const platform of COMMAND_PLATFORMS) {
+          const platformCommands = importCommandsByPlatform[platform] || [];
+          if (platformCommands.length === 0) continue;
 
-        for (const command of commands) {
-          const relativePath = command.path || (
-            command.namespace
-              ? path.join(command.namespace, `${command.name}.md`)
-              : `${command.name}.md`
-          );
-          const content = command.fullContent || command.content || buildCommandContent(command);
+          const commandsService = new CommandsService(platform);
+          const baseDir = commandsService.userCommandsDir;
 
-          const status = relativePath ? writeTextFile(baseDir, relativePath, content, overwrite) : 'failed';
-          if (status === 'success') {
-            results.commands.success++;
-          } else if (status === 'skipped') {
-            results.commands.skipped++;
-          } else {
-            results.commands.failed++;
+          for (const command of platformCommands) {
+            const relativePath = resolveCommandRelativePath(command);
+            const content = command.fullContent || command.content || buildCommandContent(command);
+
+            const status = relativePath ? writeTextFile(baseDir, relativePath, content, overwrite) : 'failed';
+            if (status === 'success') {
+              results.commands.success++;
+            } else if (status === 'skipped') {
+              results.commands.skipped++;
+            } else {
+              results.commands.failed++;
+            }
           }
         }
       } catch (err) {
@@ -1005,6 +1465,12 @@ async function importConfigs(importData, options = {}) {
       try {
         const status = writeJsonFileAbsolute(CC_PROMPTS_PATH, prompts, overwrite);
         if (status === 'success') {
+          const promptsService = require('./prompts-service');
+          if (prompts.activePresetId && prompts.presets?.[prompts.activePresetId]) {
+            await promptsService.activatePreset(prompts.activePresetId);
+          } else if (overwrite) {
+            await promptsService.deactivatePrompt();
+          }
           results.prompts.success++;
         } else if (status === 'skipped') {
           results.prompts.skipped++;
@@ -1048,6 +1514,39 @@ async function importConfigs(importData, options = {}) {
       } catch (err) {
         console.error('[ConfigImport] 导入高级配置失败:', err);
         results.appConfig.failed++;
+      }
+    }
+
+    // 导入各平台原生配置
+    if (nativeConfigs && typeof nativeConfigs === 'object' && Object.keys(nativeConfigs).length > 0) {
+      const nativeConfigSpecs = getNativeConfigSpecs();
+
+      for (const [platform, platformEntries] of Object.entries(nativeConfigs)) {
+        const platformSpecs = nativeConfigSpecs[platform];
+        if (!platformSpecs || !platformEntries || typeof platformEntries !== 'object') {
+          continue;
+        }
+
+        for (const [key, entry] of Object.entries(platformEntries)) {
+          const spec = platformSpecs[key];
+          if (!spec) {
+            continue;
+          }
+
+          try {
+            const status = writeNativeConfigAbsolute(spec, entry, overwrite);
+            if (status === 'success') {
+              results.nativeConfigs.success++;
+            } else if (status === 'skipped') {
+              results.nativeConfigs.skipped++;
+            } else {
+              results.nativeConfigs.failed++;
+            }
+          } catch (err) {
+            console.error(`[ConfigImport] 导入 ${platform}.${key} 原生配置失败:`, err);
+            results.nativeConfigs.failed++;
+          }
+        }
       }
     }
 
@@ -1104,6 +1603,8 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
+    syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs, overwrite);
+
     return {
       success: true,
       results,
@@ -1140,6 +1641,7 @@ function generateImportSummary(results) {
     { key: 'prompts', label: 'Prompts' },
     { key: 'security', label: '安全配置' },
     { key: 'appConfig', label: '高级配置' },
+    { key: 'nativeConfigs', label: '原生配置' },
     { key: 'claudeHooks', label: 'Claude Hooks' }
   ];
 

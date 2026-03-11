@@ -3,7 +3,7 @@ const path = require('path');
 const chalk = require('chalk');
 const { loadConfig } = require('../config/loader');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
-const { findProcessByPort } = require('../utils/port-helper');
+const { findProcessByPort, getPortToolIssue, formatPortToolIssue } = require('../utils/port-helper');
 
 const PM2_APP_NAME = 'cc-tool';
 
@@ -61,27 +61,55 @@ function isPortOwnedByPid(port, pid) {
     return false;
   }
   const pids = findProcessByPort(port);
+  if (getPortToolIssue()) {
+    return null;
+  }
   return pids.includes(String(pid));
+}
+
+function printPortToolIssue(issue = getPortToolIssue()) {
+  const lines = formatPortToolIssue(issue);
+  if (lines.length === 0) {
+    return;
+  }
+
+  console.log(chalk.yellow(`\n⚠️  ${lines[0]}`));
+  lines.slice(1).forEach((line) => {
+    console.log(chalk.gray(`   ${line}`));
+  });
+}
+
+function shouldTreatPortOwnershipAsReady(ownsPort) {
+  return ownsPort === true || ownsPort === null;
 }
 
 async function waitForServiceReady(port, timeoutMs = 6000, intervalMs = 300) {
   const startAt = Date.now();
   let lastProcess = null;
   let stablePassCount = 0;
+  let degradedPortCheckIssue = null;
 
   while (Date.now() - startAt < timeoutMs) {
     lastProcess = await getCCToolProcess();
     if (lastProcess && lastProcess.pm2_env.status === 'online') {
       const ownsPort = isPortOwnedByPid(port, lastProcess.pid);
-      if (ownsPort) {
+      if (shouldTreatPortOwnershipAsReady(ownsPort)) {
         // 连续多次检查通过，避免“瞬时 online 但马上崩溃”的误报
         stablePassCount += 1;
+        if (ownsPort === null) {
+          degradedPortCheckIssue = getPortToolIssue();
+        }
       } else {
+        degradedPortCheckIssue = getPortToolIssue();
         stablePassCount = 0;
       }
 
       if (stablePassCount >= 3) {
-        return { ready: true, process: lastProcess };
+        return {
+          ready: true,
+          process: lastProcess,
+          degradedPortCheckIssue
+        };
       }
     } else {
       stablePassCount = 0;
@@ -90,7 +118,11 @@ async function waitForServiceReady(port, timeoutMs = 6000, intervalMs = 300) {
   }
 
   lastProcess = await getCCToolProcess();
-  return { ready: false, process: lastProcess };
+  return {
+    ready: false,
+    process: lastProcess,
+    degradedPortCheckIssue: degradedPortCheckIssue || getPortToolIssue()
+  };
 }
 
 /**
@@ -145,12 +177,14 @@ async function handleStart() {
         process.exit(1);
       }
 
+      let readyState = null;
       try {
-        const readyState = await waitForServiceReady(port);
+        readyState = await waitForServiceReady(port);
         if (!readyState.ready) {
           const statusText = readyState.process?.pm2_env?.status || 'unknown';
           console.error(chalk.red('\n❌ Coding-Tool 服务启动失败，进程未就绪\n'));
           console.error(chalk.gray(`PM2 状态: ${statusText}`));
+          printPortToolIssue(readyState.degradedPortCheckIssue);
           console.error(chalk.yellow('💡 请使用 ctx logs ui 查看详细日志\n'));
 
           pm2.delete(PM2_APP_NAME, () => {
@@ -169,6 +203,7 @@ async function handleStart() {
 
       console.log(chalk.green('\n✅ Coding-Tool 服务已启动（后台运行）\n'));
       console.log(chalk.gray(`Web UI: http://localhost:${port}`));
+      printPortToolIssue(readyState.degradedPortCheckIssue);
       if (enableHost) {
         console.log(chalk.yellow(`⚠️  LAN 访问已启用 (http://<your-ip>:${port})`));
       }
@@ -361,5 +396,8 @@ module.exports = {
   handleStart,
   handleStop,
   handleRestart,
-  handleStatus
+  handleStatus,
+  _test: {
+    shouldTreatPortOwnershipAsReady
+  }
 };

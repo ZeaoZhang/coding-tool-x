@@ -246,12 +246,23 @@ async function handleImport() {
 }
 
 async function handleInstall(skill) {
-  if (!skill.repoOwner) return message.error('缺少仓库信息')
+  if (!skill.repoOwner && !skill.repoProjectPath && !skill.repoLocalPath) return message.error('缺少仓库信息')
   installingKeys.value[skill.key] = true
   try {
     const res = await installSkill(
       skill.directory,
-      { owner: skill.repoOwner, name: skill.repoName, branch: skill.repoBranch || 'main' },
+      {
+        id: skill.repoId,
+        provider: skill.repoProvider,
+        host: skill.repoHost,
+        owner: skill.repoOwner,
+        name: skill.repoName,
+        branch: skill.repoBranch || 'main',
+        directory: skill.repoDirectory || '',
+        projectPath: skill.repoProjectPath,
+        localPath: skill.repoLocalPath,
+        repoUrl: skill.repoUrl
+      },
       skill.fullDirectory || null,
       currentPlatform.value
     )

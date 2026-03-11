@@ -12,18 +12,21 @@ const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('./repo-scanner-base');
 const { NATIVE_PATHS } = require('../../config/paths');
+const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
-const CODEX_AGENTS_DIR = path.join(os.homedir(), '.codex', 'agents');
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+const CODEX_AGENTS_DIR = path.join(path.dirname(CODEX_CONFIG_PATH), 'agents');
+const CLAUDE_AGENTS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'agents');
 const CODEX_CONFIG_MODES = new Set(['none', 'managed', 'custom']);
 
 const PLATFORM_CONFIG = {
   claude: {
-    userAgentsDir: path.join(os.homedir(), '.claude', 'agents'),
+    userAgentsDir: CLAUDE_AGENTS_DIR,
     projectAgentsDir: (projectPath) => path.join(projectPath, '.claude', 'agents'),
     repoType: 'agents'
   },
@@ -206,7 +209,7 @@ function resolveCodexConfigPath(configPath) {
   if (!normalized) return '';
 
   if (normalized.startsWith('~/')) {
-    return path.join(os.homedir(), normalized.slice(2));
+    return path.join(HOME_DIR, normalized.slice(2));
   }
 
   if (path.isAbsolute(normalized)) {

@@ -8,8 +8,7 @@
     :block-scroll="false"
   >
     <div class="drawer-wrapper">
-      <!-- Header -->
-      <div class="drawer-header">
+      <div ref="headerRef" class="drawer-header">
         <div class="header-row">
           <n-icon :size="18" :component="ChatbubblesIcon" />
           <span class="session-name">{{ sessionAlias || sessionId.substring(0, 8) }} ({{ totalMessages }})</span>
@@ -30,50 +29,72 @@
         <div v-if="metadata.summary" class="session-summary">{{ metadata.summary }}</div>
       </div>
 
-      <!-- Body -->
       <div class="drawer-body">
-        <!-- Loading state -->
         <div v-if="loading && messages.length === 0" class="loading-container">
           <n-spin size="medium">
             <template #description>加载聊天记录...</template>
           </n-spin>
         </div>
 
-        <!-- Empty state -->
         <div v-else-if="!loading && messages.length === 0" class="empty-container">
           <n-empty description="暂无聊天记录" />
         </div>
 
-        <!-- Messages list -->
-        <div v-else class="messages-container" ref="messagesContainer" @scroll="handleScroll">
-          <!-- Load more button at top -->
-          <div v-if="hasMore" class="load-more-top">
-            <n-button
-              :loading="loading"
-              @click="loadMore"
-              size="small"
-              secondary
-            >
-              <template #icon>
-                <n-icon :component="ChevronUpIcon" />
-              </template>
-              加载更早的消息
+        <div v-else class="history-layout">
+          <div class="mobile-toc-toggle">
+            <n-button tertiary size="small" @click="mobileTocCollapsed = !mobileTocCollapsed">
+              {{ mobileTocCollapsed ? '展开用户目录' : '收起用户目录' }}
             </n-button>
           </div>
 
-          <!-- Messages -->
-          <div class="messages-list">
-            <ChatMessage
-              v-for="(message, index) in messages"
-              :key="index"
-              :message="message"
-            />
-          </div>
-        </div>
+          <aside class="toc-rail" :class="{ 'mobile-collapsed': mobileTocCollapsed }">
+            <div class="toc-header">用户目录</div>
+            <div v-if="tocItems.length === 0" class="toc-empty">暂无用户消息</div>
+            <div v-else class="toc-list">
+              <button
+                v-for="item in tocItems"
+                :key="item.anchorId"
+                type="button"
+                class="toc-item"
+                :class="{ active: activeTocAnchor === item.anchorId }"
+                @click="jumpToTocItem(item)"
+              >
+                <span class="toc-preview">{{ item.preview }}</span>
+                <span class="toc-time">{{ formatTocTime(item.timestamp) }}</span>
+              </button>
+            </div>
+          </aside>
 
-        <!-- Scroll to bottom button -->
-        <div v-if="showScrollButton" class="scroll-btn" @click="scrollToBottom">
-          <n-icon :size="18" :component="ArrowDownIcon" />
+          <div class="messages-pane">
+            <div class="messages-container" ref="messagesContainer" @scroll="handleScroll">
+              <div v-if="hasMore" class="load-more-top">
+                <n-button
+                  :loading="loading"
+                  @click="loadMore"
+                  size="small"
+                  secondary
+                >
+                  <template #icon>
+                    <n-icon :component="ChevronUpIcon" />
+                  </template>
+                  加载更早的消息
+                </n-button>
+              </div>
+
+              <div class="messages-list">
+                <ChatMessage
+                  v-for="(message, index) in messages"
+                  :key="messageAnchorIds[index] || index"
+                  :message="message"
+                  :message-anchor-id="messageAnchorIds[index]"
+                />
+              </div>
+            </div>
+
+            <div v-if="showScrollButton" class="scroll-btn" @click="scrollToBottom">
+              <n-icon :size="18" :component="ArrowDownIcon" />
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -81,7 +102,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch, onBeforeUnmount } from 'vue'
 import { NDrawer, NIcon, NTag, NSpin, NEmpty, NButton } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { Chatbubbles as ChatbubblesIcon, GitBranch as GitBranchIcon, ChevronUp as ChevronUpIcon, ArrowDown as ArrowDownIcon, Close as CloseIcon } from '@vicons/ionicons5'
@@ -114,13 +135,13 @@ const props = defineProps({
 const emit = defineEmits(['update:show', 'error'])
 
 const { drawerWidth } = useResponsiveDrawer(900, 800)
+const TOC_SAFETY_GAP = 12
 
 const visible = computed({
   get: () => props.show,
   set: (val) => emit('update:show', val)
 })
 
-// State
 const loading = ref(false)
 const messages = ref([])
 const metadata = ref({})
@@ -128,24 +149,89 @@ const currentPage = ref(1)
 const totalMessages = ref(0)
 const hasMore = ref(false)
 const messagesContainer = ref(null)
+const headerRef = ref(null)
 const showScrollButton = ref(false)
+const activeTocAnchor = ref('')
+const mobileTocCollapsed = ref(false)
+const pendingJumpTarget = ref(null)
+const isPreloadingAllForToc = ref(false)
 
-// Load messages
-async function loadMessages(page = 1) {
+let scrollSyncRaf = 0
+let preloadRunToken = 0
+
+const sessionAnchorPrefix = computed(() => sanitizeAnchorPart(props.sessionId).slice(0, 16) || 'session')
+
+const messageAnchorIds = computed(() => {
+  const duplicatedCount = new Map()
+  return messages.value.map((message, index) => {
+    const baseAnchor = buildBaseAnchor(message, index)
+    const count = duplicatedCount.get(baseAnchor) || 0
+    duplicatedCount.set(baseAnchor, count + 1)
+    return count === 0 ? baseAnchor : `${baseAnchor}-${count + 1}`
+  })
+})
+
+const tocItems = computed(() => {
+  return messages.value
+    .map((message, index) => ({
+      message,
+      index,
+      anchorId: messageAnchorIds.value[index]
+    }))
+    .filter(item => item.message.type === 'user' && item.message.subtype !== 'tool_result')
+    .map(item => ({
+      messageIndex: item.index,
+      anchorId: item.anchorId,
+      preview: getUserMessagePreview(item.message),
+      timestamp: item.message.timestamp
+    }))
+})
+
+watch(tocItems, () => {
+  if (!tocItems.value.length) {
+    activeTocAnchor.value = ''
+    return
+  }
+  if (!tocItems.value.some(item => item.anchorId === activeTocAnchor.value)) {
+    activeTocAnchor.value = tocItems.value[0].anchorId
+  }
+  scheduleTocSync()
+}, { deep: true })
+
+watch(visible, (isVisible) => {
+  if (isVisible) {
+    nextTick(() => {
+      scheduleTocSync()
+    })
+  } else {
+    preloadRunToken += 1
+    isPreloadingAllForToc.value = false
+  }
+})
+
+onBeforeUnmount(() => {
+  if (scrollSyncRaf) {
+    cancelAnimationFrame(scrollSyncRaf)
+    scrollSyncRaf = 0
+  }
+  preloadRunToken += 1
+  isPreloadingAllForToc.value = false
+})
+
+async function loadMessages(page = 1, options = {}) {
   if (loading.value) return
+
+  const { skipFirstPageScroll = false } = options
 
   try {
     loading.value = true
     const response = await getSessionMessages(props.projectName, props.sessionId, page, 20, 'desc', props.channel)
-
     const { messages: newMessages, metadata: meta, pagination } = response
 
     if (page === 1) {
-      // First load - reverse to show oldest first (newest at bottom)
       messages.value = newMessages.reverse()
       metadata.value = meta
     } else {
-      // Load more (prepend older messages) - reverse new messages too
       messages.value = [...newMessages.reverse(), ...messages.value]
     }
 
@@ -153,10 +239,14 @@ async function loadMessages(page = 1) {
     totalMessages.value = pagination.total
     hasMore.value = pagination.hasMore
 
-    // Scroll to bottom on first load
     if (page === 1) {
-      nextTick(() => {
-        scrollToBottom(false)
+      nextTick(async () => {
+        if (pendingJumpTarget.value) {
+          await jumpToTarget(pendingJumpTarget.value, { allowLoadMore: true })
+        } else if (!skipFirstPageScroll) {
+          scrollToBottom(false)
+        }
+        scheduleTocSync()
       })
     }
   } catch (err) {
@@ -168,7 +258,6 @@ async function loadMessages(page = 1) {
   }
 }
 
-// Load more messages
 function loadMore() {
   if (!hasMore.value || loading.value) return
 
@@ -180,12 +269,12 @@ function loadMore() {
       if (container) {
         const newScrollHeight = container.scrollHeight
         container.scrollTop = newScrollHeight - oldScrollHeight
+        scheduleTocSync()
       }
     })
   })
 }
 
-// Scroll to bottom
 function scrollToBottom(smooth = true) {
   nextTick(() => {
     const container = messagesContainer.value
@@ -194,35 +283,343 @@ function scrollToBottom(smooth = true) {
         top: container.scrollHeight,
         behavior: smooth ? 'smooth' : 'auto'
       })
+      scheduleTocSync()
     }
   })
 }
 
-// Handle scroll
-function handleScroll(e) {
-  const target = e.target
+function handleScroll(event) {
+  const target = event.target
   if (!target) return
 
   const { scrollTop, scrollHeight, clientHeight } = target
-
-  // Show scroll button when not at bottom
   showScrollButton.value = scrollHeight - scrollTop - clientHeight > 200
 
-  // Auto load more when scrolling near top
   if (scrollTop < 100 && hasMore.value && !loading.value) {
     loadMore()
   }
+
+  scheduleTocSync()
 }
 
-// Expose open method for parent to call
-function open() {
+function scheduleTocSync() {
+  if (scrollSyncRaf) return
+  scrollSyncRaf = requestAnimationFrame(() => {
+    scrollSyncRaf = 0
+    syncActiveTocItem()
+  })
+}
+
+function syncActiveTocItem() {
+  const container = messagesContainer.value
+  if (!container || tocItems.value.length === 0) {
+    activeTocAnchor.value = ''
+    return
+  }
+
+  // When the list is at the bottom, the last user entry may not be able to reach
+  // the visual "top" anchor line. In that case force the TOC highlight to the last item.
+  const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+  if (maxScrollTop > 0 && maxScrollTop - container.scrollTop <= 6) {
+    activeTocAnchor.value = tocItems.value[tocItems.value.length - 1].anchorId
+    return
+  }
+
+  const viewportTop = container.scrollTop
+  const viewportBottom = viewportTop + container.clientHeight
+  const anchorLine = viewportTop + getScrollOffset()
+
+  let firstVisible = null
+  let nearestAnchorAligned = null
+
+  for (const item of tocItems.value) {
+    const element = getAnchorElement(item.anchorId)
+    if (!element) continue
+
+    const top = getElementTopInContainer(element, container)
+    const bottom = top + element.offsetHeight
+
+    // Use the last TOC item whose top is not below the anchor line.
+    // This keeps consecutive user messages individually selectable/highlightable.
+    if (top <= anchorLine + 1) {
+      nearestAnchorAligned = item
+    }
+
+    if (!firstVisible && bottom > viewportTop && top < viewportBottom) {
+      firstVisible = item
+    }
+  }
+
+  const nextActive = nearestAnchorAligned?.anchorId || firstVisible?.anchorId || tocItems.value[0].anchorId
+  if (nextActive) {
+    activeTocAnchor.value = nextActive
+  }
+}
+
+function jumpToTocItem(item) {
+  if (!item?.anchorId) return
+  activeTocAnchor.value = item.anchorId
+  scrollToAnchor(item.anchorId, true)
+}
+
+function scrollToAnchor(anchorId, smooth = true) {
+  const container = messagesContainer.value
+  if (!container || !anchorId) return false
+
+  const element = getAnchorElement(anchorId)
+  if (!element) return false
+
+  const targetTop = getElementTopInContainer(element, container)
+  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
+  const desiredTop = clamp(targetTop - getScrollOffset(), 0, maxTop)
+
+  container.scrollTo({
+    top: desiredTop,
+    behavior: smooth ? 'smooth' : 'auto'
+  })
+
+  scheduleTocSync()
+  return true
+}
+
+async function jumpToTarget(target, options = {}) {
+  if (!target) return false
+  const { allowLoadMore = false } = options
+
+  let safetyCounter = 0
+  while (safetyCounter < 50) {
+    safetyCounter += 1
+    const anchorId = resolveJumpAnchor(target)
+    if (anchorId && scrollToAnchor(anchorId, true)) {
+      activeTocAnchor.value = anchorId
+      pendingJumpTarget.value = null
+      return true
+    }
+
+    if (!allowLoadMore || !hasMore.value || loading.value) {
+      break
+    }
+
+    const beforePage = currentPage.value
+    await loadMessages(currentPage.value + 1)
+    if (currentPage.value === beforePage) {
+      break
+    }
+  }
+
+  pendingJumpTarget.value = null
+  scheduleTocSync()
+  return false
+}
+
+function resolveJumpAnchor(target) {
+  if (target.anchorId && typeof target.anchorId === 'string') {
+    return target.anchorId
+  }
+
+  if (typeof target.messageIndex === 'number' && target.messageIndex >= 0) {
+    return messageAnchorIds.value[target.messageIndex] || ''
+  }
+
+  if (target.messageId) {
+    const targetId = String(target.messageId)
+    const index = messages.value.findIndex(message => extractBackendMessageId(message) === targetId)
+    if (index >= 0) {
+      return messageAnchorIds.value[index]
+    }
+  }
+
+  return ''
+}
+
+function normalizeOpenOptions(options) {
+  if (!options || typeof options !== 'object') return null
+  const jump = options.jumpTo && typeof options.jumpTo === 'object' ? options.jumpTo : options
+
+  const normalized = {
+    anchorId: typeof jump.anchorId === 'string' ? jump.anchorId : '',
+    messageId: jump.messageId || jump.id || '',
+    messageIndex: Number.isInteger(jump.messageIndex) ? jump.messageIndex : null
+  }
+
+  if (!normalized.anchorId && !normalized.messageId && normalized.messageIndex === null) {
+    return null
+  }
+
+  return normalized
+}
+
+function open(options) {
+  preloadRunToken += 1
+  const runToken = preloadRunToken
+  pendingJumpTarget.value = normalizeOpenOptions(options)
+  mobileTocCollapsed.value = false
   messages.value = []
   metadata.value = {}
   currentPage.value = 1
   totalMessages.value = 0
   hasMore.value = false
   showScrollButton.value = false
-  loadMessages(1)
+  activeTocAnchor.value = ''
+  isPreloadingAllForToc.value = false
+
+  loadMessages(1, { skipFirstPageScroll: Boolean(pendingJumpTarget.value) })
+    .then(() => preloadAllMessagesForToc(runToken))
+    .catch(() => {})
+}
+
+async function preloadAllMessagesForToc(runToken) {
+  if (runToken !== preloadRunToken || isPreloadingAllForToc.value) return
+  if (!hasMore.value) return
+
+  isPreloadingAllForToc.value = true
+  let safetyCounter = 0
+
+  try {
+    while (runToken === preloadRunToken && hasMore.value) {
+      safetyCounter += 1
+      if (safetyCounter > 120) break
+
+      const beforePage = currentPage.value
+      const container = messagesContainer.value
+      const oldScrollHeight = container?.scrollHeight || 0
+      const oldScrollTop = container?.scrollTop || 0
+
+      await loadMessages(beforePage + 1)
+      await nextTick()
+
+      if (container) {
+        const newScrollHeight = container.scrollHeight
+        const delta = newScrollHeight - oldScrollHeight
+        if (delta > 0) {
+          container.scrollTop = oldScrollTop + delta
+        }
+      }
+
+      scheduleTocSync()
+
+      if (currentPage.value === beforePage) {
+        if (!hasMore.value) break
+        await new Promise(resolve => setTimeout(resolve, 80))
+      }
+    }
+  } finally {
+    if (runToken === preloadRunToken) {
+      isPreloadingAllForToc.value = false
+    }
+  }
+}
+
+function extractBackendMessageId(message) {
+  if (!message || typeof message !== 'object') return ''
+  return String(message.messageId || message.id || message.uuid || message.turnId || '')
+}
+
+function buildBaseAnchor(message, index) {
+  const backendId = extractBackendMessageId(message)
+  if (backendId) {
+    return `msg-${sessionAnchorPrefix.value}-${sanitizeAnchorPart(backendId)}`
+  }
+
+  const timestamp = message?.timestamp ? String(message.timestamp) : ''
+  const type = message?.type ? String(message.type) : 'unknown'
+  const content = getContentForHash(message)
+  const hash = stringHash(`${type}|${timestamp}|${content}`)
+  const fallbackPart = timestamp ? sanitizeAnchorPart(timestamp) : `idx${index}`
+
+  return `msg-${sessionAnchorPrefix.value}-${type}-${fallbackPart}-${hash}`
+}
+
+function getContentForHash(message) {
+  const content = message?.content
+  if (typeof content === 'string') {
+    return content.slice(0, 240)
+  }
+
+  if (Array.isArray(content)) {
+    try {
+      return JSON.stringify(content).slice(0, 240)
+    } catch {
+      return String(content)
+    }
+  }
+
+  if (content == null) {
+    return ''
+  }
+
+  return String(content).slice(0, 240)
+}
+
+function sanitizeAnchorPart(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+}
+
+function stringHash(input) {
+  let hash = 0
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(i)
+    hash |= 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
+function getAnchorElement(anchorId) {
+  const container = messagesContainer.value
+  if (!container || !anchorId) return null
+  const element = document.getElementById(anchorId)
+  if (!element || !container.contains(element)) return null
+  return element
+}
+
+function getElementTopInContainer(element, container) {
+  const containerRect = container.getBoundingClientRect()
+  const elementRect = element.getBoundingClientRect()
+  return container.scrollTop + (elementRect.top - containerRect.top)
+}
+
+function getScrollOffset() {
+  const headerHeight = headerRef.value?.offsetHeight || 0
+  return headerHeight + TOC_SAFETY_GAP
+}
+
+function getUserMessagePreview(message) {
+  let text = ''
+  const content = message?.content
+
+  if (typeof content === 'string') {
+    text = content
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter(item => item?.type === 'text' && item?.text)
+      .map(item => item.text)
+      .join(' ')
+  } else if (content != null) {
+    text = String(content)
+  }
+
+  const firstLine = text.split('\n').map(line => line.trim()).find(Boolean) || '（空消息）'
+  return firstLine.length > 42 ? `${firstLine.slice(0, 42)}...` : firstLine
+}
+
+function formatTocTime(timestamp) {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max)
 }
 
 defineExpose({ open })
@@ -280,7 +677,6 @@ defineExpose({ open })
 .drawer-body {
   flex: 1;
   min-height: 0;
-  position: relative;
 }
 
 .loading-container,
@@ -289,6 +685,90 @@ defineExpose({ open })
   align-items: center;
   justify-content: center;
   height: 100%;
+}
+
+.history-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
+.mobile-toc-toggle {
+  display: none;
+  padding: 12px 14px 0;
+}
+
+.toc-rail {
+  width: 250px;
+  border-right: 1px solid var(--n-border-color);
+  background: var(--n-color-embedded);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.toc-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--n-text-color-2);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--n-border-color);
+}
+
+.toc-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
+.toc-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.toc-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: inherit;
+}
+
+.toc-item:hover {
+  background: rgba(24, 160, 88, 0.08);
+}
+
+.toc-item.active {
+  border-color: rgba(24, 160, 88, 0.35);
+  background: rgba(24, 160, 88, 0.12);
+}
+
+.toc-preview {
+  font-size: 12px;
+  color: var(--n-text-color);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.toc-time {
+  font-size: 11px;
+  color: var(--n-text-color-3);
+}
+
+.messages-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
 }
 
 .messages-container {
@@ -301,11 +781,13 @@ defineExpose({ open })
 .load-more-top {
   display: flex;
   justify-content: center;
-  padding: 0 0 16px 0;
+  padding: 0 0 16px;
 }
 
 .messages-list {
-  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .scroll-btn {
@@ -329,5 +811,35 @@ defineExpose({ open })
 .scroll-btn:hover {
   background: var(--n-color-hover);
   transform: scale(1.05);
+}
+
+@media (max-width: 820px) {
+  .history-layout {
+    flex-direction: column;
+  }
+
+  .mobile-toc-toggle {
+    display: block;
+  }
+
+  .toc-rail {
+    width: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--n-border-color);
+    max-height: 220px;
+  }
+
+  .toc-rail.mobile-collapsed {
+    display: none;
+  }
+
+  .messages-container {
+    padding: 14px 16px;
+  }
+
+  .scroll-btn {
+    right: 16px;
+    bottom: 16px;
+  }
 }
 </style>

@@ -1,15 +1,14 @@
 const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 // Claude Code 配置文件路径
 function getSettingsPath() {
-  return path.join(os.homedir(), '.claude', 'settings.json');
+  return NATIVE_PATHS.claude.settings;
 }
 
 // 备份文件路径
 function getBackupPath() {
-  return path.join(os.homedir(), '.claude', 'settings.json.cc-tool-backup');
+  return NATIVE_PATHS.claude.settingsBackup;
 }
 
 // 检查配置文件是否存在

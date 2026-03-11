@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const os = require('os');
+const { HOME_DIR } = require('../../config/paths');
 const { getGeminiDir } = require('./gemini-config');
 
 // 路径映射缓存
@@ -102,7 +102,7 @@ function buildPathMapping() {
 
   const targetHashes = new Set(projectHashes);
   const results = new Map();
-  const homeDir = os.homedir();
+  const homeDir = HOME_DIR;
 
   // 定义要扫描的目录及其最大深度
   // 深度说明：depth=3 表示可以扫描到 Desktop/a/b/c 这样的 4 层目录
@@ -362,7 +362,7 @@ function getProjects() {
       if (projectPath) {
         displayName = path.basename(projectPath);
         // 如果是 home 目录，显示 ~
-        if (projectPath === os.homedir()) {
+        if (projectPath === HOME_DIR) {
           displayName = '~';
         }
       } else {

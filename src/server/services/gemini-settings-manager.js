@@ -1,23 +1,23 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 // Gemini 配置文件路径
 function getEnvPath() {
-  return path.join(os.homedir(), '.gemini', '.env');
+  return NATIVE_PATHS.gemini.env;
 }
 
 function getSettingsPath() {
-  return path.join(os.homedir(), '.gemini', 'settings.json');
+  return path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 }
 
 // 备份文件路径
 function getEnvBackupPath() {
-  return path.join(os.homedir(), '.gemini', '.env.cc-tool-backup');
+  return NATIVE_PATHS.gemini.envBackup;
 }
 
 function getSettingsBackupPath() {
-  return path.join(os.homedir(), '.gemini', 'settings.json.cc-tool-backup');
+  return path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json.cc-tool-backup');
 }
 
 // 检查配置文件是否存在

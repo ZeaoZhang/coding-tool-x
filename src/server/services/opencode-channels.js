@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
+const { PATHS } = require('../../config/paths');
 
 /**
  * OpenCode 渠道管理服务
@@ -41,19 +41,19 @@ function normalizeChannelName(value) {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  const ccToolDir = PATHS.base;
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }
-  return path.join(ccToolDir, 'opencode-channels.json');
+  return PATHS.channels.opencode;
 }
 
 function getCodexChannelsFilePath() {
-  const ccToolDir = path.join(os.homedir(), '.cc-tool');
+  const ccToolDir = PATHS.base;
   if (!fs.existsSync(ccToolDir)) {
     fs.mkdirSync(ccToolDir, { recursive: true });
   }
-  return path.join(ccToolDir, 'codex-channels.json');
+  return PATHS.channels.codex;
 }
 
 // 读取所有渠道

@@ -1,0 +1,118 @@
+const assert = require('assert');
+const path = require('path');
+
+const { PATHS, NATIVE_PATHS, HOME_DIR } = require('../src/config/paths');
+const { resolvePreferredHomeDir, normalizeWindowsHomePath, isWindowsLikePlatform } = require('../src/utils/home-dir');
+const mcpClient = require('../src/server/services/mcp-client');
+const portHelper = require('../src/utils/port-helper');
+const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
+const claudeHooks = require('../src/server/api/claude-hooks');
+const logsCommand = require('../src/commands/logs');
+const pm2Autostart = require('../src/server/api/pm2-autostart');
+const daemonCommand = require('../src/commands/daemon');
+
+function run() {
+  const hookTest = claudeHooks._test || {};
+  const logsTest = logsCommand._test || {};
+  const pm2Test = pm2Autostart._test || {};
+  const mcpClientTest = mcpClient._test || {};
+  const portHelperTest = portHelper._test || {};
+  const daemonTest = daemonCommand._test || {};
+
+  assert.strictEqual(typeof hookTest.shouldRepairStopHook, 'function', '缺少 shouldRepairStopHook 测试导出');
+  assert.strictEqual(typeof hookTest.resolvePreferredHomeDir, 'function', '缺少 resolvePreferredHomeDir 测试导出');
+  assert.strictEqual(typeof logsTest.buildFollowProcessSpec, 'function', '缺少 buildFollowProcessSpec 测试导出');
+  assert.strictEqual(typeof pm2Test.getExecOptions, 'function', '缺少 getExecOptions 测试导出');
+  assert.strictEqual(typeof mcpClientTest.createMissingCommandHint, 'function', '缺少 createMissingCommandHint 测试导出');
+  assert.strictEqual(typeof portHelperTest.isMissingCommandError, 'function', '缺少 isMissingCommandError 测试导出');
+  assert.strictEqual(typeof portHelperTest.createPortToolIssue, 'function', '缺少 createPortToolIssue 测试导出');
+  assert.strictEqual(typeof daemonTest.shouldTreatPortOwnershipAsReady, 'function', '缺少 shouldTreatPortOwnershipAsReady 测试导出');
+
+  const preferredHome = resolvePreferredHomeDir(
+    'win32',
+    {
+      USERPROFILE: 'C:\\Users\\wjx',
+      HOMEDRIVE: 'C:',
+      HOMEPATH: '\\Users\\wjx',
+      HOME: '/Users/wjx',
+      SYSTEMROOT: 'C:\\Windows',
+      SYSTEMDRIVE: 'C:'
+    },
+    'C:\\Program Files\\Git\\Users\\wjx'
+  );
+  assert.strictEqual(preferredHome, path.win32.normalize('C:\\Users\\wjx'), 'Windows 主目录解析应优先 USERPROFILE');
+  assert.strictEqual(isWindowsLikePlatform('linux', { SYSTEMROOT: 'C:\\Windows', USERPROFILE: 'C:\\Users\\wjx' }), true, 'Windows 平台识别失败');
+  assert.strictEqual(isWindowsLikeRuntime('linux', { SYSTEMROOT: 'C:\\Windows', HOMEDRIVE: 'C:', HOMEPATH: '\\Users\\wjx' }), true, 'Windows 运行时识别失败');
+
+  const normalizedHome = normalizeWindowsHomePath('/c/Users/wjx', { SYSTEMDRIVE: 'C:' });
+  assert.strictEqual(normalizedHome, path.win32.normalize('C:\\Users\\wjx'), 'MSYS Home 路径转换失败');
+
+  assert.strictEqual(PATHS.base, path.join(HOME_DIR, '.cc-tool'), 'PATHS.base 应基于 HOME_DIR');
+  assert.strictEqual(NATIVE_PATHS.codex.config, path.join(HOME_DIR, '.codex', 'config.toml'), 'Codex config 路径应基于 HOME_DIR');
+  assert.strictEqual(NATIVE_PATHS.claude.settings, path.join(HOME_DIR, '.claude', 'settings.json'), 'Claude settings 路径应基于 HOME_DIR');
+
+  const legacyHookSettings = {
+    hooks: {
+      Stop: [
+        {
+          hooks: [
+            { type: 'command', command: 'node "C:\\Program Files\\Git\\Users\\wjx\\.cc-tool\\notify-hook.js" --cc-notify-type=notification' }
+          ]
+        }
+      ]
+    }
+  };
+  assert.strictEqual(
+    hookTest.shouldRepairStopHook(legacyHookSettings, 'C:\\Users\\wjx\\.cc-tool\\notify-hook.js', () => true),
+    true,
+    '旧版 Git 路径应触发 Stop hook 修复'
+  );
+
+  const netstatOutput = [
+    '  TCP    0.0.0.0:19999      0.0.0.0:0      LISTENING       1234',
+    '  TCP    127.0.0.1:19999    127.0.0.1:52001 ESTABLISHED     1234',
+    '  TCP    0.0.0.0:20088      0.0.0.0:0      LISTENING       5678'
+  ].join('\n');
+  assert.deepStrictEqual(parsePidsFromNetstatOutput(netstatOutput, 19999), ['1234'], 'netstat PID 解析失败');
+  assert.strictEqual(
+    portHelperTest.isMissingCommandError({ code: 'ENOENT', message: 'spawn netstat ENOENT' }),
+    true,
+    'ENOENT 应识别为缺少系统命令'
+  );
+  assert.strictEqual(
+    portHelperTest.isMissingCommandError({ message: '\'taskkill\' is not recognized as an internal or external command' }),
+    true,
+    'Windows not recognized 文案应识别为缺少系统命令'
+  );
+  const windowsPortToolIssue = portHelperTest.createPortToolIssue('netstat', 'lookup', true);
+  assert.strictEqual(windowsPortToolIssue.summary.includes('netstat'), true, 'Windows 缺少工具提示应包含命令名');
+  assert.strictEqual(
+    windowsPortToolIssue.hints.some(line => line.includes('C:\\Windows\\System32')),
+    true,
+    'Windows 缺少工具提示应提示检查 System32 PATH'
+  );
+  const uvxMissingHint = mcpClientTest.createMissingCommandHint('uvx', 'uvx.cmd', { PATH: 'C:\\Windows\\System32;C:\\Program Files\\nodejs' });
+  assert.strictEqual(uvxMissingHint.title.includes('uvx'), true, 'Windows MCP 命令缺失提示应包含命令名');
+  assert.strictEqual(uvxMissingHint.details.some(line => line.includes('uv')), true, 'uvx 缺失提示应提醒安装 uv');
+  assert.strictEqual(daemonTest.shouldTreatPortOwnershipAsReady(null), true, '缺少端口检测工具时应走降级就绪检查');
+  assert.strictEqual(daemonTest.shouldTreatPortOwnershipAsReady(true), true, '端口归属命中时应视为就绪');
+  assert.strictEqual(daemonTest.shouldTreatPortOwnershipAsReady(false), false, '端口归属不匹配时不应视为就绪');
+
+  const winFollowSpec = logsTest.buildFollowProcessSpec('C:\\Users\\wjx\\.cc-tool\\logs\\cc-tool-out.log', 'win32');
+  assert.strictEqual(winFollowSpec.command, 'powershell', 'Windows 日志跟踪应使用 powershell');
+  assert.strictEqual(winFollowSpec.args.includes('-NoProfile'), true, 'Windows 日志跟踪应带 -NoProfile');
+  assert.strictEqual(winFollowSpec.args.some(arg => String(arg).includes('Get-Content')), true, 'Windows 日志跟踪应使用 Get-Content');
+
+  const unixFollowSpec = logsTest.buildFollowProcessSpec('/tmp/cc-tool-out.log', 'linux');
+  assert.strictEqual(unixFollowSpec.command, 'tail', 'Unix 日志跟踪应使用 tail');
+  assert.deepStrictEqual(unixFollowSpec.args, ['-n', '50', '-f', '/tmp/cc-tool-out.log'], 'Unix 日志跟踪参数不正确');
+
+  const winExecOptions = pm2Test.getExecOptions(30000, 'win32');
+  assert.deepStrictEqual(winExecOptions, { timeout: 30000 }, 'Windows PM2 exec 选项不应强制 /bin/bash');
+  const linuxExecOptions = pm2Test.getExecOptions(30000, 'linux');
+  assert.deepStrictEqual(linuxExecOptions, { shell: '/bin/bash', timeout: 30000 }, 'Linux PM2 exec 选项应包含 /bin/bash');
+
+  console.log('Windows 专项回归测试通过');
+}
+
+run();

@@ -1,10 +1,10 @@
 const chalk = require('chalk');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { spawn } = require('child_process');
+const { PATHS } = require('../config/paths');
 
-const LOGS_DIR = path.join(os.homedir(), '.cc-tool', 'logs');
+const LOGS_DIR = PATHS.logs;
 
 const LOG_FILES = {
   ui: 'cc-tool-out.log',
@@ -145,29 +145,59 @@ function showLastLines(filePath, lines) {
 /**
  * 实时跟踪日志文件
  */
+function buildFollowProcessSpec(filePath, runtimePlatform = process.platform) {
+  if (runtimePlatform === 'win32') {
+    return {
+      command: 'powershell',
+      args: [
+        '-NoProfile',
+        '-Command',
+        `Get-Content -Path '${String(filePath).replace(/'/g, "''")}' -Tail 50 -Wait`
+      ],
+      options: { windowsHide: true }
+    };
+  }
+
+  return {
+    command: 'tail',
+    args: ['-n', '50', '-f', filePath],
+    options: {}
+  };
+}
+
 function tailFile(filePath) {
   console.log(chalk.gray('按 Ctrl+C 停止跟踪\n'));
 
-  const tail = spawn('tail', ['-f', filePath]);
+  const followSpec = buildFollowProcessSpec(filePath);
+  const isWindows = followSpec.command.toLowerCase() === 'powershell';
+  const followProcess = spawn(followSpec.command, followSpec.args, followSpec.options);
 
-  tail.stdout.on('data', (data) => {
+  followProcess.stdout.on('data', (data) => {
     process.stdout.write(data.toString());
   });
 
-  tail.stderr.on('data', (data) => {
+  followProcess.stderr.on('data', (data) => {
     process.stderr.write(chalk.red(data.toString()));
   });
 
-  tail.on('error', (err) => {
+  followProcess.on('error', (err) => {
     console.error(chalk.red(`\n❌ 跟踪日志失败: ${err.message}\n`));
+    if (isWindows) {
+      console.log(chalk.gray('提示: 请确认系统可用 powershell 命令。\n'));
+    }
     process.exit(1);
   });
 
   // 处理退出信号
-  process.on('SIGINT', () => {
-    tail.kill();
+  const handleSigint = () => {
+    followProcess.kill();
     console.log(chalk.gray('\n\n已停止跟踪日志\n'));
     process.exit(0);
+  };
+
+  process.once('SIGINT', handleSigint);
+  followProcess.once('close', () => {
+    process.removeListener('SIGINT', handleSigint);
   });
 }
 
@@ -257,5 +287,8 @@ function getTypeColor(type) {
 }
 
 module.exports = {
-  handleLogs
+  handleLogs,
+  _test: {
+    buildFollowProcessSpec
+  }
 };

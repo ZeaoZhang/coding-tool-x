@@ -1,10 +1,13 @@
 // 默认配置
 const path = require('path');
 const os = require('os');
+const { resolvePreferredHomeDir } = require('../utils/home-dir');
 const modelMetadataConfig = require('./model-metadata.json');
 
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+
 const DEFAULT_CONFIG = {
-  projectsDir: path.join(os.homedir(), '.claude', 'projects'),
+  projectsDir: path.join(HOME_DIR, '.claude', 'projects'),
   defaultProject: null,
   maxDisplaySessions: 100,
   pageSize: 15,
@@ -24,7 +27,7 @@ const DEFAULT_CONFIG = {
   defaultModels: modelMetadataConfig.defaultModels || { claude: [], codex: [], gemini: [] },
   defaultSpeedTestModels: modelMetadataConfig.defaultSpeedTestModels || {
     claude: 'claude-haiku-4-5',
-    codex: 'gpt-5.2',
+    codex: 'gpt-5.4',
     gemini: 'gemini-2.5-pro'
   },
   pricing: {

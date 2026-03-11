@@ -1,12 +1,12 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { NATIVE_PATHS } = require('../../config/paths');
 
 /**
  * 获取 Gemini 配置目录
  */
 function getGeminiDir() {
-  return path.join(os.homedir(), '.gemini');
+  return path.dirname(NATIVE_PATHS.gemini.env);
 }
 
 /**

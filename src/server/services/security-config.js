@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
+const { PATHS } = require('../../config/paths');
 
-const SECURITY_DIR = path.join(os.homedir(), '.cc-tool');
+const SECURITY_DIR = PATHS.base;
 const SECURITY_FILE = path.join(SECURITY_DIR, 'security.json');
 
 const DEFAULT_SECURITY_CONFIG = {

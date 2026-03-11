@@ -3,10 +3,17 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const pm2 = require('pm2');
+const { HOME_DIR } = require('../../config/paths');
 
 const execAsync = promisify(exec);
+
+function getExecOptions(timeout = 30000, runtimePlatform = process.platform) {
+  if (runtimePlatform === 'win32') {
+    return { timeout };
+  }
+  return { shell: '/bin/bash', timeout };
+}
 
 /**
  * Check if PM2 autostart is enabled
@@ -18,7 +25,7 @@ async function checkAutoStartStatus() {
 
     if (platform === 'darwin') {
       // macOS - check for LaunchDaemon
-      const launchDaemonsPath = path.join(os.homedir(), 'Library/LaunchDaemons');
+      const launchDaemonsPath = path.join(HOME_DIR, 'Library/LaunchDaemons');
       const pm2Files = fs.existsSync(launchDaemonsPath)
         ? fs.readdirSync(launchDaemonsPath).filter(f => f.includes('pm2'))
         : [];
@@ -27,11 +34,11 @@ async function checkAutoStartStatus() {
     } else if (platform === 'linux') {
       // Linux - check for systemd service
       const systemdPath = '/etc/systemd/system/pm2-root.service';
-      const userSystemdPath = path.join(os.homedir(), '.config/systemd/user/pm2-*.service');
+      const userSystemdPath = path.join(HOME_DIR, '.config/systemd/user/pm2-*.service');
 
       const rootExists = fs.existsSync(systemdPath);
-      const userExists = fs.existsSync(path.join(os.homedir(), '.config/systemd/user')) &&
-        fs.readdirSync(path.join(os.homedir(), '.config/systemd/user')).some(f => f.includes('pm2'));
+      const userExists = fs.existsSync(path.join(HOME_DIR, '.config/systemd/user')) &&
+        fs.readdirSync(path.join(HOME_DIR, '.config/systemd/user')).some(f => f.includes('pm2'));
 
       return { enabled: rootExists || userExists, platform: 'linux' };
     } else if (platform === 'win32') {
@@ -104,7 +111,7 @@ async function enableAutoStart() {
 
           console.log(`Running startup command: ${command}`);
 
-          exec(command, { shell: '/bin/bash', timeout: 30000 }, (execErr, stdout, stderr) => {
+          exec(command, getExecOptions(30000), (execErr, stdout, stderr) => {
             pm2.disconnect();
 
             if (execErr) {
@@ -163,7 +170,7 @@ async function disableAutoStart() {
 
       console.log(`Running unstartup command: ${command}`);
 
-      exec(command, { shell: '/bin/bash', timeout: 30000 }, (execErr, stdout, stderr) => {
+      exec(command, getExecOptions(30000), (execErr, stdout, stderr) => {
         pm2.disconnect();
 
         if (execErr) {
@@ -195,7 +202,7 @@ async function disableAutoStart() {
   });
 }
 
-module.exports = () => {
+function createPm2AutostartRouter() {
   const router = express.Router();
 
   /**
@@ -266,4 +273,9 @@ module.exports = () => {
   });
 
   return router;
+}
+
+module.exports = createPm2AutostartRouter;
+module.exports._test = {
+  getExecOptions
 };

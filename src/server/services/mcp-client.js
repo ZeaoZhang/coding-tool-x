@@ -14,6 +14,8 @@
  */
 
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const https = require('https');
 const { EventEmitter } = require('events');
@@ -21,6 +23,148 @@ const { EventEmitter } = require('events');
 const DEFAULT_TIMEOUT = 10000; // 10 seconds
 const JSONRPC_VERSION = '2.0';
 const MCP_PROTOCOL_VERSION = '2024-11-05';
+
+function getPathEnvKey(envObj = {}) {
+  return Object.keys(envObj).find(key => key.toLowerCase() === 'path') || 'PATH';
+}
+
+function stripWrappingQuotes(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  ) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+function mergeSpawnEnv(extraEnv = {}) {
+  const mergedEnv = { ...process.env, ...extraEnv };
+  const processPathKey = getPathEnvKey(process.env);
+  const extraPathKey = getPathEnvKey(extraEnv);
+  const mergedPathKey = getPathEnvKey(mergedEnv);
+
+  const extraPath = extraEnv && typeof extraEnv[extraPathKey] === 'string'
+    ? extraEnv[extraPathKey]
+    : '';
+  const processPath = process.env && typeof process.env[processPathKey] === 'string'
+    ? process.env[processPathKey]
+    : '';
+
+  if (extraPath && processPath) {
+    mergedEnv[mergedPathKey] = `${extraPath}${path.delimiter}${processPath}`;
+  }
+
+  return mergedEnv;
+}
+
+function resolveWindowsSpawnCommand(command, env, cwd) {
+  if (process.platform !== 'win32') {
+    return stripWrappingQuotes(command);
+  }
+
+  const normalizedCommand = stripWrappingQuotes(command);
+  if (!normalizedCommand) {
+    return normalizedCommand;
+  }
+
+  const hasPathSegment = /[\\/]/.test(normalizedCommand) || /^[a-zA-Z]:/.test(normalizedCommand);
+  const hasExtension = path.extname(normalizedCommand).length > 0;
+  const extensions = hasExtension ? [''] : ['.cmd', '.exe', '.bat', '.com'];
+  const resolveCandidate = (basePath) => {
+    for (const ext of extensions) {
+      const candidate = ext ? `${basePath}${ext}` : basePath;
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  };
+
+  if (hasPathSegment) {
+    const absoluteBasePath = path.isAbsolute(normalizedCommand)
+      ? normalizedCommand
+      : path.resolve(cwd || process.cwd(), normalizedCommand);
+    return resolveCandidate(absoluteBasePath) || normalizedCommand;
+  }
+
+  const pathKey = getPathEnvKey(env || process.env);
+  const pathValue = env && typeof env[pathKey] === 'string' ? env[pathKey] : '';
+  if (!pathValue) {
+    return normalizedCommand;
+  }
+
+  const searchPaths = pathValue.split(path.delimiter).filter(Boolean);
+  for (const searchPath of searchPaths) {
+    const found = resolveCandidate(path.join(searchPath.trim(), normalizedCommand));
+    if (found) {
+      return found;
+    }
+  }
+
+  return normalizedCommand;
+}
+
+function getCommandInstallHint(command) {
+  const normalized = path.basename(stripWrappingQuotes(command)).toLowerCase()
+
+  if (['node', 'node.exe', 'npm', 'npm.cmd', 'npx', 'npx.cmd'].includes(normalized)) {
+    return '请先安装 Node.js，并确认 `node` / `npm` / `npx` 已加入 PATH。'
+  }
+
+  if (['uv', 'uv.exe', 'uvx', 'uvx.exe'].includes(normalized)) {
+    return '请先安装 `uv`，并确认 `uv` / `uvx` 可以在终端直接执行。'
+  }
+
+  if (['python', 'python.exe', 'python3', 'py'].includes(normalized)) {
+    return '请先安装 Python，并确认对应命令已加入 PATH。'
+  }
+
+  if (process.platform === 'win32' && ['netstat', 'taskkill'].includes(normalized)) {
+    return '请确认 Windows 自带命令可用，并检查 `C:\\Windows\\System32` 是否在 PATH 中。'
+  }
+
+  return `请确认已安装 "${command}"，或改用可执行文件的绝对路径。`
+}
+
+function createMissingCommandHint(command, resolvedCommand, env = {}) {
+  const pathKey = getPathEnvKey(env)
+  const pathValue = typeof env[pathKey] === 'string' ? env[pathKey] : ''
+  const pathPreview = pathValue
+    ? pathValue.split(path.delimiter).slice(0, 5).join(path.delimiter)
+    : ''
+  const commandHint = resolvedCommand === command
+    ? command
+    : `${command} (resolved: ${resolvedCommand})`
+
+  const details = [
+    getCommandInstallHint(command),
+    process.platform === 'win32'
+      ? 'Windows 可优先尝试 `.cmd` / `.exe` 文件，必要时直接填写绝对路径。'
+      : `可尝试填写绝对路径（例如 \`/usr/bin/node\` 或 \`$(which ${command})\`）。`
+  ]
+
+  if (pathPreview) {
+    details.push(`当前 PATH 前 5 项: ${pathPreview}`)
+  } else {
+    details.push('当前 PATH 为空，请检查环境变量配置。')
+  }
+
+  return {
+    type: 'missing-command',
+    command,
+    resolvedCommand,
+    title: `命令 "${commandHint}" 未找到`,
+    details
+  }
+}
+
+function buildMissingCommandMessage(command, resolvedCommand, env = {}) {
+  const hint = createMissingCommandHint(command, resolvedCommand, env)
+  return [hint.title, ...hint.details].join('\n')
+}
 
 // ============================================================================
 // McpClient
@@ -237,22 +381,19 @@ class McpClient extends EventEmitter {
         reject(new McpClientError(`Connection timeout after ${this._timeout}ms`));
       }, this._timeout);
 
-      try {
-        // 确保 PATH 不被覆盖，优先使用用户提供的 env，但保留 PATH
-        const mergedEnv = { ...process.env, ...env };
-        // 如果用户提供的 env 中有 PATH，将其追加到系统 PATH 前面
-        if (env && env.PATH && process.env.PATH) {
-          mergedEnv.PATH = `${env.PATH}:${process.env.PATH}`;
-        }
+      const finalCwd = cwd || process.cwd();
+      const mergedEnv = mergeSpawnEnv(env || {});
+      const resolvedCommand = resolveWindowsSpawnCommand(command, mergedEnv, finalCwd);
 
-        this._child = spawn(command, args, {
+      try {
+        this._child = spawn(resolvedCommand, args, {
           env: mergedEnv,
           stdio: ['pipe', 'pipe', 'pipe'],
-          cwd: cwd || process.cwd()
+          cwd: finalCwd
         });
       } catch (err) {
         clearTimeout(timer);
-        throw new McpClientError(`Failed to spawn "${command}": ${err.message}`);
+        throw new McpClientError(`Failed to spawn "${resolvedCommand}": ${err.message}`);
       }
 
       // Once we get the spawn event (or first stdout), consider connected
@@ -274,14 +415,11 @@ class McpClient extends EventEmitter {
 
       this._child.on('error', (err) => {
         if (err.code === 'ENOENT') {
-          const pathHint = mergedEnv.PATH
-            ? `\n  Current PATH: ${mergedEnv.PATH.split(':').slice(0, 5).join(':')}\n  (showing first 5 entries)`
-            : '\n  PATH is not set!';
+          const hint = createMissingCommandHint(command, resolvedCommand, mergedEnv)
           settle(new McpClientError(
-            `Command "${command}" not found. Please check:\n` +
-            `  1. Is "${command}" installed?\n` +
-            `  2. Try using absolute path (e.g., /usr/bin/node or $(which ${command}))\n` +
-            `  3. Check your PATH environment variable${pathHint}`
+            buildMissingCommandMessage(command, resolvedCommand, mergedEnv),
+            undefined,
+            { hint }
           ));
         } else {
           settle(new McpClientError(`Failed to start process: ${err.message}`));
@@ -786,5 +924,11 @@ async function createClient(serverSpec, options = {}) {
 module.exports = {
   McpClient,
   McpClientError,
-  createClient
+  createClient,
+  buildMissingCommandMessage,
+  createMissingCommandHint,
+  _test: {
+    createMissingCommandHint,
+    buildMissingCommandMessage
+  }
 };

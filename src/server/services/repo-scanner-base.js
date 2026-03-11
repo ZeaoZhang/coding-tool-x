@@ -7,11 +7,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const https = require('https');
 const http = require('http');
 const { createWriteStream } = require('fs');
 const AdmZip = require('adm-zip');
+const { HOME_DIR } = require('../../config/paths');
 
 // 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
@@ -70,7 +70,7 @@ class RepoScannerBase {
     this.fileExtension = options.fileExtension || '.md';
     this.defaultRepos = options.defaultRepos || [];
 
-    this.configDir = path.join(os.homedir(), '.cc-tool');
+    this.configDir = path.join(HOME_DIR, '.cc-tool');
     this.reposConfigPath = path.join(this.configDir, `${this.type}-repos.json`);
     this.cachePath = path.join(this.configDir, `${this.type}-cache.json`);
 

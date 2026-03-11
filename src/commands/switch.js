@@ -1,9 +1,9 @@
 // 切换项目命令
 const chalk = require('chalk');
-const os = require('os');
 const { getAvailableProjects } = require('../utils/session');
 const { promptSelectProject } = require('../ui/prompts');
 const { saveConfig } = require('../config/loader');
+const { HOME_DIR } = require('../config/paths');
 
 /**
  * 切换项目
@@ -31,7 +31,7 @@ async function switchProject(config) {
   // 保存到配置文件（保留其余字段）
   saveConfig({
     ...config,
-    projectsDir: config.projectsDir.replace(os.homedir(), '~')
+    projectsDir: config.projectsDir.replace(HOME_DIR, '~')
   });
 
   // 使用解析后的名称显示

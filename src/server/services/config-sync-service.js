@@ -15,10 +15,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { HOME_DIR } = require('../../config/paths');
 
 // 全局配置目录
-const GLOBAL_CONFIG_DIR = path.join(os.homedir(), '.claude');
+const GLOBAL_CONFIG_DIR = path.join(HOME_DIR, '.claude');
 
 // 配置类型定义
 const CONFIG_TYPES = {

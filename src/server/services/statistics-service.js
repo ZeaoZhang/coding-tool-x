@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS } = require('../../config/paths');
 
 // 北京时间辅助（UTC+8），统一所有时间计算
 const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -39,7 +39,7 @@ function getCSTHour(ts) {
 
 // 获取基础目录
 function getBaseDir() {
-  const dir = path.join(os.homedir(), '.cc-tool');
+  const dir = PATHS.base;
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

@@ -9,19 +9,20 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
+const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
 // Configuration paths
-const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
+const CC_TOOL_DIR = PATHS.base;
 const REGISTRY_FILE = path.join(CC_TOOL_DIR, 'config-registry.json');
 const CONFIGS_DIR = path.join(CC_TOOL_DIR, 'configs');
 
 // Claude Code native directories
+const CLAUDE_HOME_DIR = path.dirname(NATIVE_PATHS.claude.settings);
 const CLAUDE_DIRS = {
-  skills: path.join(os.homedir(), '.claude', 'skills'),
-  commands: path.join(os.homedir(), '.claude', 'commands'),
-  agents: path.join(os.homedir(), '.claude', 'agents'),
-  plugins: path.join(os.homedir(), '.claude', 'plugins')
+  skills: path.join(CLAUDE_HOME_DIR, 'skills'),
+  commands: path.join(CLAUDE_HOME_DIR, 'commands'),
+  agents: path.join(CLAUDE_HOME_DIR, 'agents'),
+  plugins: path.join(CLAUDE_HOME_DIR, 'plugins')
 };
 
 // Valid config types

@@ -8,15 +8,18 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { NATIVE_PATHS } = require('../../config/paths');
+const { resolvePreferredHomeDir } = require('../../utils/home-dir');
+
+const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 // Prompts 配置文件路径
-const CC_TOOL_DIR = path.join(os.homedir(), '.cc-tool');
+const CC_TOOL_DIR = path.join(HOME_DIR, '.cc-tool');
 const PROMPTS_FILE = path.join(CC_TOOL_DIR, 'prompts.json');
 
 // 各平台提示词文件路径
-const CLAUDE_PROMPT_PATH = path.join(os.homedir(), '.claude', 'CLAUDE.md');
-const CODEX_PROMPT_PATH = path.join(os.homedir(), '.codex', 'AGENTS.md');
-const GEMINI_PROMPT_PATH = path.join(os.homedir(), '.gemini', 'GEMINI.md');
+const CLAUDE_PROMPT_PATH = path.join(HOME_DIR, '.claude', 'CLAUDE.md');
+const CODEX_PROMPT_PATH = path.join(HOME_DIR, '.codex', 'AGENTS.md');
+const GEMINI_PROMPT_PATH = path.join(HOME_DIR, '.gemini', 'GEMINI.md');
 const OPENCODE_PROMPT_PATH = path.join(NATIVE_PATHS.opencode.config, 'AGENTS.md');
 
 function normalizeApps(apps = {}, defaults = { claude: true, codex: true, gemini: true, opencode: false }) {

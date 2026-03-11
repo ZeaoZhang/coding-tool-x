@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-message" :class="[`message-${message.type}`]">
+  <div :id="messageAnchorId || undefined" class="chat-message" :class="[`message-${message.type}`]">
     <div class="message-header">
       <template v-if="message.type === 'assistant'">
         <n-icon :size="16" :component="RobotIcon" class="role-icon" />
@@ -83,6 +83,10 @@ const props = defineProps({
   message: {
     type: Object,
     required: true
+  },
+  messageAnchorId: {
+    type: String,
+    default: ''
   }
 })
 
@@ -197,21 +201,27 @@ function getImageSrc(item) {
 
 <style scoped>
 .chat-message {
-  width: 100%;
+  width: min(86%, 920px);
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: 10px;
   margin-bottom: 8px;
   box-sizing: border-box;
+  border: 1px solid var(--n-border-color);
+  background: var(--n-color-embedded);
+  transition: border-color 0.2s, background-color 0.2s;
+  align-self: flex-start;
 }
 
 .message-user {
-  background: linear-gradient(135deg, #667eea08 0%, #764ba208 100%);
-  border: 1px solid #667eea20;
+  align-self: flex-end;
+  background: rgba(24, 160, 88, 0.1);
+  border-color: rgba(24, 160, 88, 0.35);
 }
 
 .message-assistant {
-  background: linear-gradient(135deg, #18a05808 0%, #0ea5e908 100%);
-  border: 1px solid #18a05820;
+  align-self: flex-start;
+  background: rgba(56, 107, 173, 0.08);
+  border-color: rgba(56, 107, 173, 0.3);
 }
 
 .message-header {
@@ -521,6 +531,7 @@ function getImageSrc(item) {
 /* 小屏幕 (640px - 768px) */
 @media (max-width: 768px) {
   .chat-message {
+    width: min(92%, 920px);
     padding: 8px 12px;
     margin-bottom: 6px;
     border-radius: 6px;
@@ -578,6 +589,7 @@ function getImageSrc(item) {
 /* 移动端 (< 640px) */
 @media (max-width: 640px) {
   .chat-message {
+    width: 100%;
     padding: 6px 10px;
     margin-bottom: 4px;
   }
