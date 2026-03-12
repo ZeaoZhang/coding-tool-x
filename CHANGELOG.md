@@ -4,7 +4,7 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
-## [3.3.9] - 2026-03-12
+## [3.3.8] - 2026-03-12
 
 ### Added
 - **OAuth 凭证管理** - 新增 `OAuthCredentialsDrawer` 组件及 `/api/oauth-credentials` 接口，支持查看和管理各平台 OAuth 凭证；Header 新增 Key 图标入口，右侧面板在 OAuth 控制模式下显示提示横幅并禁用代理开关
@@ -18,15 +18,11 @@
 - **渠道代理关闭时切换修复** - 代理关闭后应用渠道时补充调用 `deleteBackup` 并清理 active channel 标记文件，防止残留状态影响恢复逻辑
 - **移除"禁用最后渠道"保护限制** - Claude / Codex 渠道更新均移除代理关闭时禁止禁用最后一个渠道的限制，允许全部禁用
 - **Skills 缓存策略优化** - 内存缓存和文件缓存均移除 TTL 过期判断，改为以缓存存在即命中，避免频繁远程拉取
+- **OpenCode 渠道测速面板修复** - 渠道测速抽屉现已支持在下拉框中选择并批量测试 OpenCode，结果标签与样式同步补齐
 
 ### Changed
 - **SkillsPanel 精简** - 移除"已托管"筛选项、registry 相关状态和 `toggleEnabled`/`togglePlatform` 事件处理；安装/卸载后直接更新本地状态，无需重新拉取列表
 - **SkillCard 简化** - 移除 registry 信息展示和平台开关相关 props/事件
-
-## [3.3.8] - 2026-03-09
-
-### Fixed
-- OpenCode 渠道测速面板修复 - 渠道测速抽屉现已支持在下拉框中选择并批量测试 OpenCode，结果标签与样式同步补齐
 
 ## [3.3.7] - 2026-03-06
 
