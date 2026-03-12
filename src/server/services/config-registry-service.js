@@ -13,8 +13,8 @@ const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
 // Configuration paths
 const CC_TOOL_DIR = PATHS.base;
-const REGISTRY_FILE = path.join(CC_TOOL_DIR, 'config-registry.json');
-const CONFIGS_DIR = path.join(CC_TOOL_DIR, 'configs');
+const REGISTRY_FILE = PATHS.configRegistry;
+const CONFIGS_DIR = PATHS.configs;
 
 // Claude Code native directories
 const CLAUDE_HOME_DIR = path.dirname(NATIVE_PATHS.claude.settings);
@@ -113,6 +113,7 @@ class ConfigRegistryService {
    */
   _ensureDirs() {
     ensureDir(CC_TOOL_DIR);
+    ensureDir(path.dirname(this.registryPath));
     ensureDir(this.configsDir);
 
     for (const type of CONFIG_TYPES) {

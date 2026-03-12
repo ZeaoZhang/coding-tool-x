@@ -39,11 +39,11 @@ const PLUGIN_SENSITIVE_PATTERNS = [
   /\.p12$/i,
   /\.pfx$/i
 ];
-const CC_UI_CONFIG_PATH = path.join(CC_TOOL_DIR, 'ui-config.json');
-const CC_PROMPTS_PATH = path.join(CC_TOOL_DIR, 'prompts.json');
-const CC_SECURITY_PATH = path.join(CC_TOOL_DIR, 'security.json');
-const LEGACY_UI_CONFIG_PATH = path.join(LEGACY_CC_TOOL_DIR, 'ui-config.json');
-const LEGACY_NOTIFY_HOOK_PATH = path.join(LEGACY_CC_TOOL_DIR, 'notify-hook.js');
+const CC_UI_CONFIG_PATH = PATHS.uiConfig;
+const CC_PROMPTS_PATH = PATHS.prompts;
+const CC_SECURITY_PATH = PATHS.security;
+const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
+const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const AGENT_PLATFORMS = ['claude', 'codex', 'opencode'];
 const COMMAND_PLATFORMS = ['claude', 'opencode'];
@@ -58,8 +58,18 @@ function getOpenCodeConfigPaths() {
   }
 }
 
+function getOpenCodeNotificationPluginPath() {
+  try {
+    const { getOpenCodeManagedPluginPath } = require('./notification-hooks');
+    return typeof getOpenCodeManagedPluginPath === 'function' ? getOpenCodeManagedPluginPath() : '';
+  } catch (err) {
+    return '';
+  }
+}
+
 function getNativeConfigSpecs() {
   const openCodeConfigPaths = getOpenCodeConfigPaths();
+  const openCodeNotificationPluginPath = getOpenCodeNotificationPluginPath();
   return {
     claude: {
       settings: { path: NATIVE_PATHS.claude.settings, format: 'json' }
@@ -75,7 +85,10 @@ function getNativeConfigSpecs() {
     opencode: {
       opencodeJsonc: { path: openCodeConfigPaths.opencodec, format: 'text' },
       opencodeJson: { path: openCodeConfigPaths.opencode, format: 'text' },
-      configJson: { path: openCodeConfigPaths.config, format: 'text' }
+      configJson: { path: openCodeConfigPaths.config, format: 'text' },
+      ...(openCodeNotificationPluginPath
+        ? { codingToolNotifyPlugin: { path: openCodeNotificationPluginPath, format: 'text' } }
+        : {})
     }
   };
 }
@@ -212,7 +225,7 @@ function buildExportReadme(exportData) {
 - Prompts 预设
 - 安全配置
 - 高级配置（端口、日志、性能等）
-- Claude Hooks 配置（如通知脚本）
+- 通知 Hook / 插件脚本（如 notify-hook.js）
 
 > 注意：配置包可能包含 API Key、Webhook 等敏感信息，请妥善保管。
 `;

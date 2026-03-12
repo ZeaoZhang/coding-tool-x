@@ -29,12 +29,12 @@ function getOrderFilePath() {
 
 // Get path for storing fork relations
 function getForkRelationsFilePath() {
-  return path.join(PATHS.base, 'fork-relations.json');
+  return PATHS.forkRelations;
 }
 
 // Get path for storing session order
 function getSessionOrderFilePath() {
-  return path.join(getCcToolDir(), 'session-order.json');
+  return PATHS.sessionOrder;
 }
 
 // Get saved project order

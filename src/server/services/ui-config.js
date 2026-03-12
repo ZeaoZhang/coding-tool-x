@@ -1,7 +1,7 @@
 const fs = require('fs');
+const path = require('path');
 const { PATHS } = require('../../config/paths');
 
-const UI_CONFIG_DIR = PATHS.base;
 const UI_CONFIG_FILE = PATHS.uiConfig;
 
 // Default UI config
@@ -34,8 +34,9 @@ let cacheInitialized = false;
 
 // Ensure UI config directory exists
 function ensureConfigDir() {
-  if (!fs.existsSync(UI_CONFIG_DIR)) {
-    fs.mkdirSync(UI_CONFIG_DIR, { recursive: true });
+  const dir = path.dirname(UI_CONFIG_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 

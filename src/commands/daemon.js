@@ -153,6 +153,7 @@ async function handleStart() {
     if (enableHost) {
       pmArgs.push('--host');
     }
+    require('fs').mkdirSync(PATHS.logs, { recursive: true });
 
     // 启动 PM2 进程
     pm2.start({
@@ -166,8 +167,8 @@ async function handleStart() {
         NODE_ENV: 'production',
         CC_TOOL_PORT: port
       },
-      output: path.join(require('os').homedir(), '.cc-tool/logs/cc-tool-out.log'),
-      error: path.join(require('os').homedir(), '.cc-tool/logs/cc-tool-error.log'),
+      output: path.join(PATHS.logs, 'cc-tool-out.log'),
+      error: path.join(PATHS.logs, 'cc-tool-error.log'),
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss'
     }, async (err) => {

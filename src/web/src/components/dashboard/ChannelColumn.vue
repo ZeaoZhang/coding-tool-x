@@ -265,12 +265,14 @@
             <template v-else-if="channelType === 'codex'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">推理</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
+              <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
             <template v-else-if="channelType === 'gemini'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
             <template v-else-if="channelType === 'opencode'">
+              <div class="log-col col-token" :class="`col-token-${channelType}`">推理</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
@@ -286,13 +288,20 @@
               <n-text depth="3" style="font-size: 11px; margin-top: 4px;">开启代理后将显示请求记录</n-text>
             </div>
 
-            <div v-for="log in logsToDisplay" :key="log.id" class="log-row" :class="{ 'action-row': log.type === 'action', 'new-log': log.isNew }">
+            <div v-for="log in logsToDisplay" :key="log.id" class="log-row" :class="{ 'action-row': log.type === 'action', 'error-row': log.status === 'error', 'new-log': log.isNew }">
               <!-- Action 类型日志 -->
               <template v-if="log.type === 'action'">
                 <div class="action-content">
                   <n-icon :size="12" color="#18a058"><CheckmarkCircleOutline /></n-icon>
                   <span class="action-msg">{{ log.message }}</span>
                   <span class="action-time">{{ log.time }}</span>
+                </div>
+              </template>
+              <template v-else-if="log.status === 'error'">
+                <div class="action-content">
+                  <n-icon :size="12" color="#d03050"><CloseCircleOutline /></n-icon>
+                  <span class="action-msg error-msg">{{ log.channel }}: {{ log.error || log.message || '请求失败' }}</span>
+                  <span class="action-time error-time">{{ log.time }}</span>
                 </div>
               </template>
               <!-- 普通日志 -->
@@ -309,12 +318,14 @@
                 <template v-else-if="channelType === 'codex'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.reasoning || 0 }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
                 </template>
                 <template v-else-if="channelType === 'gemini'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
                 </template>
                 <template v-else-if="channelType === 'opencode'">
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.reasoning || 0 }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
                 </template>
@@ -366,6 +377,7 @@ import {
   ChevronDownOutline,
   SwapHorizontalOutline,
   CheckmarkCircleOutline,
+  CloseCircleOutline,
   FolderOutline,
   ChatbubblesOutline,
   ArrowForwardOutline,
@@ -1914,8 +1926,18 @@ onUnmounted(() => {
   padding-left: 8px;
 }
 
+.log-row.error-row {
+  background: linear-gradient(90deg, rgba(208, 48, 80, 0.14) 0%, rgba(208, 48, 80, 0.04) 100%);
+  border-left: 3px solid #d03050;
+  padding-left: 8px;
+}
+
 .log-row.action-row:hover {
   background: linear-gradient(90deg, rgba(24, 160, 88, 0.18) 0%, rgba(24, 160, 88, 0.08) 100%);
+}
+
+.log-row.error-row:hover {
+  background: linear-gradient(90deg, rgba(208, 48, 80, 0.2) 0%, rgba(208, 48, 80, 0.08) 100%);
 }
 
 .action-content {
@@ -1933,6 +1955,10 @@ onUnmounted(() => {
   letter-spacing: 0.2px;
 }
 
+.action-msg.error-msg {
+  color: #d03050;
+}
+
 .action-time {
   font-size: 10px;
   font-family: 'SF Mono', Monaco, monospace;
@@ -1940,6 +1966,10 @@ onUnmounted(() => {
   background: rgba(24, 160, 88, 0.1);
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.action-time.error-time {
+  background: rgba(208, 48, 80, 0.12);
 }
 
 .log-col {

@@ -1,7 +1,7 @@
 const fs = require('fs');
+const path = require('path');
 const { PATHS } = require('../../config/paths');
 
-const FAVORITES_DIR = PATHS.base;
 const FAVORITES_FILE = PATHS.favorites;
 
 // 内存缓存
@@ -17,8 +17,9 @@ const DEFAULT_FAVORITES = {
 
 // Ensure favorites directory exists
 function ensureFavoritesDir() {
-  if (!fs.existsSync(FAVORITES_DIR)) {
-    fs.mkdirSync(FAVORITES_DIR, { recursive: true });
+  const dir = path.dirname(FAVORITES_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 

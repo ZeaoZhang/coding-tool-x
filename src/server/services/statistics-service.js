@@ -39,7 +39,7 @@ function getCSTHour(ts) {
 
 // 获取基础目录
 function getBaseDir() {
-  const dir = PATHS.base;
+  const dir = path.dirname(PATHS.statistics.summary);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -48,7 +48,7 @@ function getBaseDir() {
 
 // 获取每日统计目录
 function getDailyStatsDir() {
-  const dir = path.join(getBaseDir(), 'daily-stats');
+  const dir = PATHS.statistics.dailyStats;
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -57,7 +57,7 @@ function getDailyStatsDir() {
 
 // 获取请求日志目录
 function getRequestLogsDir(year, month) {
-  const baseDir = path.join(getBaseDir(), 'request-logs', `${year}-${month.toString().padStart(2, '0')}`);
+  const baseDir = path.join(PATHS.statistics.requestLogs, `${year}-${month.toString().padStart(2, '0')}`);
   if (!fs.existsSync(baseDir)) {
     fs.mkdirSync(baseDir, { recursive: true });
   }
@@ -66,7 +66,7 @@ function getRequestLogsDir(year, month) {
 
 // 获取统计文件路径
 function getStatisticsFilePath() {
-  return path.join(getBaseDir(), 'statistics.json');
+  return PATHS.statistics.summary;
 }
 
 // 获取每日统计文件路径
@@ -82,7 +82,7 @@ function getRequestLogFilePath(year, month, day) {
 }
 
 function getProxyLogsFilePath() {
-  return path.join(getBaseDir(), 'proxy-logs.json');
+  return PATHS.statistics.proxyLogs;
 }
 
 // 加载总体统计
@@ -920,9 +920,13 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
 
     if (granularity === 'day') {
       labels.push(dateStr);
-      const byDimension = activeFilters
+      let byDimension = activeFilters
         ? readJsonlForDay(year, month, day, groupBy, activeFilters)
         : mergeAllToolsDailyStats(dateStr, groupBy);
+      if (!activeFilters && Object.keys(byDimension).length === 0) {
+        // Fallback: if daily stats are missing, derive from JSONL logs
+        byDimension = readJsonlForDay(year, month, day, groupBy);
+      }
 
       // Accumulate dimensions seen so far with 0 for this label position
       const labelIdx = labels.length - 1;

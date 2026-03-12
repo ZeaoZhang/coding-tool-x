@@ -162,76 +162,88 @@
             </div>
             <div class="panel-body">
               <div class="setting-group">
-                <!-- Claude Code 通知 -->
-                <div class="setting-item">
-                  <div class="setting-label">
-                    <n-text strong>Claude Code</n-text>
-                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      当 Claude Code 任务完成或等待交互时发送系统通知
-                    </n-text>
-                  </div>
-
-                  <div class="notification-options">
-                    <!-- 开启通知 -->
-                    <div class="visibility-item">
-                      <div class="visibility-info">
-                        <n-text strong>启用任务完成通知</n-text>
-                        <n-text depth="3" style="font-size: 13px;">
-                          通过 Claude Code 的 Stop Hook 在任务完成时发送通知
-                        </n-text>
-                      </div>
-                      <n-switch
-                        v-model:value="notificationSettings.claude.enabled"
-                      />
+                <template
+                  v-for="(platform, index) in notificationHookPlatforms"
+                  :key="platform.key"
+                >
+                  <div class="setting-item">
+                    <div class="setting-label">
+                      <n-text strong>{{ platform.label }}</n-text>
+                      <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                        {{ platform.description }}
+                      </n-text>
                     </div>
 
-                    <!-- 通知方式 -->
-                    <div v-if="notificationSettings.claude.enabled" class="notification-type-section">
-                      <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
-                        选择通知方式
-                      </n-text>
-                      <n-radio-group v-model:value="notificationSettings.claude.type">
-                        <n-space vertical>
-                          <n-radio value="notification">
-                            <div class="radio-content">
-                              <n-text strong>右上角卡片通知</n-text>
-                              <n-text depth="3" style="font-size: 12px; display: block;">
-                                轻量提醒，几秒后自动消失，带提示音（Windows 使用系统 Toast 风格提醒）
-                              </n-text>
-                            </div>
-                          </n-radio>
-                          <n-radio value="dialog">
-                            <div class="radio-content">
-                              <n-text strong>弹窗对话框</n-text>
-                              <n-text depth="3" style="font-size: 12px; display: block;">
-                                强制提醒，需要手动点击确认才能关闭
-                              </n-text>
-                            </div>
-                          </n-radio>
-                        </n-space>
-                      </n-radio-group>
-
-                      <!-- macOS 安装提示 -->
-                      <n-alert
-                        v-if="notificationPlatform === 'darwin'"
-                        type="info"
-                        :bordered="false"
-                        style="margin-top: 16px;"
-                        :show-icon="false"
-                      >
-                        <div style="font-size: 13px;">
-                          <n-text strong>💡 更好的通知体验</n-text>
-                          <n-text depth="3" style="display: block; margin-top: 4px; font-size: 12px;">
-                            安装 terminal-notifier 后，点击通知可自动打开终端
-                          </n-text>
-                          <n-text code style="display: block; margin-top: 8px; font-size: 12px;">
-                            brew install terminal-notifier
+                    <div class="notification-options">
+                      <div class="visibility-item">
+                        <div class="visibility-info">
+                          <n-text strong>启用任务完成通知</n-text>
+                          <n-text depth="3" style="font-size: 13px;">
+                            {{ platform.implementation }}
                           </n-text>
                         </div>
+                        <n-switch
+                          v-model:value="notificationSettings[platform.key].enabled"
+                        />
+                      </div>
+
+                      <n-alert
+                        v-if="notificationSettings[platform.key].external"
+                        type="warning"
+                        :bordered="false"
+                        style="margin-top: 16px;"
+                      >
+                        {{ platform.externalMessage }}
                       </n-alert>
+
+                      <div v-if="notificationSettings[platform.key].enabled" class="notification-type-section">
+                        <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
+                          选择通知方式
+                        </n-text>
+                        <n-radio-group v-model:value="notificationSettings[platform.key].type">
+                          <n-space vertical>
+                            <n-radio value="notification">
+                              <div class="radio-content">
+                                <n-text strong>右上角卡片通知</n-text>
+                                <n-text depth="3" style="font-size: 12px; display: block;">
+                                  轻量提醒，几秒后自动消失，带提示音（Windows 使用系统 Toast 风格提醒）
+                                </n-text>
+                              </div>
+                            </n-radio>
+                            <n-radio value="dialog">
+                              <div class="radio-content">
+                                <n-text strong>弹窗对话框</n-text>
+                                <n-text depth="3" style="font-size: 12px; display: block;">
+                                  强制提醒，需要手动点击确认才能关闭
+                                </n-text>
+                              </div>
+                            </n-radio>
+                          </n-space>
+                        </n-radio-group>
+
+                        <n-alert
+                          v-if="notificationPlatform === 'darwin'"
+                          type="info"
+                          :bordered="false"
+                          style="margin-top: 16px;"
+                          :show-icon="false"
+                        >
+                          <div style="font-size: 13px;">
+                            <n-text strong>💡 更好的通知体验</n-text>
+                            <n-text depth="3" style="display: block; margin-top: 4px; font-size: 12px;">
+                              安装 terminal-notifier 后，点击通知可自动打开终端
+                            </n-text>
+                            <n-text code style="display: block; margin-top: 8px; font-size: 12px;">
+                              brew install terminal-notifier
+                            </n-text>
+                          </div>
+                        </n-alert>
+                      </div>
                     </div>
                   </div>
-                </div>
+
+                  <n-divider v-if="index < notificationHookPlatforms.length - 1" />
+                </template>
 
                 <n-divider />
 
@@ -274,21 +286,6 @@
                       </n-text>
                     </div>
                   </div>
-                </div>
-
-                <n-divider />
-
-                <!-- Codex / Gemini 提示 -->
-                <div class="setting-item">
-                  <div class="setting-label">
-                    <n-text strong>Codex CLI / Gemini CLI</n-text>
-                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      暂不支持 - Codex 和 Gemini 目前没有 hooks 功能
-                    </n-text>
-                  </div>
-                  <n-alert type="info" :bordered="false" style="margin-top: 12px;">
-                    Codex CLI 和 Gemini CLI 暂未提供 hooks 机制，未来如有支持将自动适配
-                  </n-alert>
                 </div>
               </div>
             </div>
@@ -1138,26 +1135,65 @@ const originalAdvancedSettings = ref({
 })
 
 // 通知设置
-const notificationSettings = ref({
-  claude: {
-    enabled: false,
-    type: 'notification' // 'notification' | 'dialog'
+const notificationHookPlatforms = [
+  {
+    key: 'claude',
+    label: 'Claude Code',
+    description: '当 Claude Code 任务完成或等待交互时发送系统通知',
+    implementation: '通过 Claude Code 的 Stop Hook 在任务完成时发送通知',
+    externalMessage: '检测到已有非 Coding Tool 的 Stop Hook。本界面只管理 Coding Tool 写入的通知配置。'
   },
-  feishu: {
-    enabled: false,
-    webhookUrl: ''
-  }
-})
-const originalNotificationSettings = ref({
-  claude: {
-    enabled: false,
-    type: 'notification'
+  {
+    key: 'codex',
+    label: 'Codex CLI',
+    description: '当 Codex CLI 当前回合完成并等待下一步交互时发送系统通知',
+    implementation: '通过 Codex CLI 的 notify 命令在回合完成后发送通知',
+    externalMessage: '检测到现有 notify 配置。启用 Coding Tool 托管通知会替换当前 notify 命令；关闭时只会移除 Coding Tool 写入的 notify。'
   },
-  feishu: {
-    enabled: false,
-    webhookUrl: ''
+  {
+    key: 'gemini',
+    label: 'Gemini CLI',
+    description: '当 Gemini CLI 回合完成或等待下一步交互时发送系统通知',
+    implementation: '通过 Gemini CLI 的 AfterAgent Hook 在任务完成时发送通知',
+    externalMessage: '检测到已有非 Coding Tool 的 Gemini Hook。本界面只管理 Coding Tool 写入的通知配置。'
+  },
+  {
+    key: 'opencode',
+    label: 'OpenCode',
+    description: '当 OpenCode 会话空闲或发生错误时发送系统通知',
+    implementation: '通过 OpenCode 插件事件（session.idle / session.error）发送通知',
+    externalMessage: '检测到其他 OpenCode 通知配置时，本界面只管理 Coding Tool 生成的插件文件。'
   }
-})
+]
+
+function createNotificationPlatformState(platform = {}) {
+  return {
+    enabled: platform.enabled === true,
+    type: platform.type === 'dialog' ? 'dialog' : 'notification',
+    external: platform.external === true
+  }
+}
+
+function createNotificationSettingsState(data = {}) {
+  const legacyClaudeState = {
+    enabled: data?.stopHook?.enabled,
+    type: data?.stopHook?.type
+  }
+
+  return {
+    claude: createNotificationPlatformState(data?.platforms?.claude || legacyClaudeState),
+    codex: createNotificationPlatformState(data?.platforms?.codex),
+    gemini: createNotificationPlatformState(data?.platforms?.gemini),
+    opencode: createNotificationPlatformState(data?.platforms?.opencode),
+    feishu: {
+      enabled: data?.feishu?.enabled === true,
+      webhookUrl: data?.feishu?.webhookUrl || ''
+    }
+  }
+}
+
+const notificationSettings = ref(createNotificationSettingsState())
+const originalNotificationSettings = ref(createNotificationSettingsState())
 const savingNotification = ref(false)
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
 
@@ -1659,20 +1695,12 @@ async function loadPortsConfig() {
 // 加载通知设置
 async function loadNotificationSettings() {
   try {
-    const response = await fetch('/api/claude/hooks')
+    const response = await fetch('/api/hooks')
     if (response.ok) {
       const data = await response.json()
-      notificationSettings.value = {
-        claude: {
-          enabled: data.stopHook?.enabled || false,
-          type: data.stopHook?.type || 'notification'
-        },
-        feishu: {
-          enabled: data.feishu?.enabled || false,
-          webhookUrl: data.feishu?.webhookUrl || ''
-        }
-      }
-      originalNotificationSettings.value = JSON.parse(JSON.stringify(notificationSettings.value))
+      const nextSettings = createNotificationSettingsState(data)
+      notificationSettings.value = nextSettings
+      originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
       // 获取平台信息用于显示安装提示
       notificationPlatform.value = data.platform || ''
     }
@@ -1685,14 +1713,19 @@ async function loadNotificationSettings() {
 async function handleSaveNotification() {
   savingNotification.value = true
   try {
-    const response = await fetch('/api/claude/hooks', {
+    const response = await fetch('/api/hooks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        stopHook: {
-          enabled: notificationSettings.value.claude.enabled,
-          type: notificationSettings.value.claude.type
-        },
+        platforms: Object.fromEntries(
+          notificationHookPlatforms.map(platform => [
+            platform.key,
+            {
+              enabled: notificationSettings.value[platform.key].enabled,
+              type: notificationSettings.value[platform.key].type
+            }
+          ])
+        ),
         feishu: {
           enabled: notificationSettings.value.feishu.enabled,
           webhookUrl: notificationSettings.value.feishu.webhookUrl
@@ -1701,7 +1734,11 @@ async function handleSaveNotification() {
     })
 
     if (response.ok) {
-      originalNotificationSettings.value = JSON.parse(JSON.stringify(notificationSettings.value))
+      const data = await response.json()
+      const nextSettings = createNotificationSettingsState(data)
+      notificationSettings.value = nextSettings
+      originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
+      notificationPlatform.value = data.platform || notificationPlatform.value
       message.success('通知设置已保存')
     } else {
       const error = await response.json()

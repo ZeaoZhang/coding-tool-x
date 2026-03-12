@@ -4,7 +4,7 @@
       <div class="card-title">
         <span class="name">{{ skill.name }}</span>
         <n-tag v-if="skill.installed" type="info" size="small">已安装</n-tag>
-        <n-tag v-if="skill.repoOwner" type="info" size="small">{{ skill.repoOwner }}</n-tag>
+        <n-tag v-if="getSkillSourceTag(skill)" type="info" size="small">{{ getSkillSourceTag(skill) }}</n-tag>
       </div>
       <div class="card-actions" @click.stop>
         <n-button
@@ -20,7 +20,7 @@
           size="small"
           type="primary"
           :loading="installing"
-          :disabled="!canInstall(skill)"
+          :disabled="!canInstallSkill(skill)"
           :focusable="false"
           @click="$emit('install', skill)"
         >安装</n-button>
@@ -30,7 +30,17 @@
       <div class="description" v-if="skill.description">{{ truncate(skill.description, 80) }}</div>
       <div class="meta">
         <span class="meta-item">{{ skill.directory }}</span>
-        <a v-if="skill.readmeUrl" class="meta-link" :href="skill.readmeUrl" target="_blank" @click.stop>GitHub</a>
+        <span v-if="getSkillSourceLocation(skill)" class="meta-item source-item" :title="getSkillSourceLocation(skill)">
+          {{ getSkillSourceLocation(skill) }}
+        </span>
+        <a
+          v-if="getSkillSourceLink(skill)"
+          class="meta-link"
+          :href="getSkillSourceLink(skill)"
+          target="_blank"
+          rel="noopener noreferrer"
+          @click.stop
+        >{{ getSkillSourceLinkLabel(skill) }}</a>
       </div>
     </div>
   </div>
@@ -38,6 +48,13 @@
 
 <script setup>
 import { NTag, NButton } from 'naive-ui'
+import {
+  canInstallSkill,
+  getSkillSourceLink,
+  getSkillSourceLinkLabel,
+  getSkillSourceLocation,
+  getSkillSourceTag
+} from '../utils/skill-source'
 
 defineProps({
   skill: { type: Object, required: true },
@@ -49,10 +66,6 @@ defineEmits(['click', 'install', 'uninstall'])
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
-}
-
-function canInstall(skill) {
-  return !!(skill?.isLocal || skill?.repoOwner || skill?.installSource)
 }
 </script>
 
@@ -102,12 +115,19 @@ function canInstall(skill) {
 .meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
 }
 .meta-item {
   color: var(--text-tertiary);
   font-family: monospace;
+}
+.source-item {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .meta-link {
   color: var(--primary-color);

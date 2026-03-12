@@ -105,7 +105,7 @@ function getAllowedProjectRoots() {
 
   // 从工作区配置中扩展允许目录，避免误拦截外部磁盘/自定义根目录项目
   try {
-    const workspaceConfigPath = path.join(PATHS.base, 'workspaces.json');
+    const workspaceConfigPath = PATHS.workspaces;
     if (fs.existsSync(workspaceConfigPath)) {
       const raw = fs.readFileSync(workspaceConfigPath, 'utf-8');
       const parsed = JSON.parse(raw || '{}');

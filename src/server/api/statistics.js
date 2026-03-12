@@ -151,8 +151,8 @@ router.get('/trend', async (req, res) => {
       return res.status(400).json({ error: 'Hour granularity is limited to 7 days' });
     }
 
-    if (diffDays > 90) {
-      return res.status(400).json({ error: 'Date range cannot exceed 90 days' });
+    if (diffDays > 365) {
+      return res.status(400).json({ error: 'Date range cannot exceed 365 days' });
     }
 
     const filters = {
@@ -204,8 +204,8 @@ router.get('/trend/export', async (req, res) => {
       return res.status(400).json({ error: 'Hour granularity is limited to 7 days' });
     }
 
-    if (diffDays > 90) {
-      return res.status(400).json({ error: 'Date range cannot exceed 90 days' });
+    if (diffDays > 365) {
+      return res.status(400).json({ error: 'Date range cannot exceed 365 days' });
     }
 
     const result = await getTrendStatistics({ startDate, endDate, granularity, step, groupBy, metric });

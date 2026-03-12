@@ -1,12 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 const { NATIVE_PATHS } = require('../../config/paths');
-
-const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+const { syncCodexUserEnvironment } = require('./codex-env-manager');
 
 // Codex 配置文件路径
 function getConfigPath() {
@@ -143,7 +140,7 @@ function backupSettings() {
     const configContent = fs.readFileSync(getConfigPath(), 'utf8');
     fs.writeFileSync(getConfigBackupPath(), configContent, 'utf8');
 
-    // 备份 auth.json (如果存在)
+    // 备份 auth.json (如果存在，主要用于 OAuth 状态回滚)
     if (authExists()) {
       const authContent = fs.readFileSync(getAuthPath(), 'utf8');
       fs.writeFileSync(getAuthBackupPath(), authContent, 'utf8');
@@ -194,8 +191,10 @@ function restoreSettings() {
       fs.unlinkSync(getAuthBackupPath());
     }
 
-    // auth.json 已恢复，同步删除当前进程的环境变量
-    delete process.env.CC_PROXY_KEY;
+    syncCodexUserEnvironment({}, {
+      replace: false,
+      removeKeys: ['CC_PROXY_KEY']
+    });
 
     console.log('Codex settings restored from backup');
     return { success: true };
@@ -232,20 +231,21 @@ function setProxyConfig(proxyPort) {
     // 写入配置
     writeConfig(config);
 
-    // 写入 auth.json
-    const auth = readAuth();
-    auth.CC_PROXY_KEY = 'PROXY_KEY';
-    writeAuth(auth);
+    const envResult = syncCodexUserEnvironment({
+      CC_PROXY_KEY: 'PROXY_KEY'
+    }, {
+      replace: false
+    });
 
-    // auth.json 已写入 CC_PROXY_KEY，Codex 优先读取 auth.json，无需注入 shell 配置文件
     console.log(`Codex settings updated to use proxy on port ${proxyPort}`);
     return {
       success: true,
       port: proxyPort,
       envInjected: true,
-      isFirstTime: false,
-      shellConfigPath: null,
-      sourceCommand: null
+      isFirstTime: envResult.isFirstTime,
+      shellConfigPath: envResult.shellConfigPath,
+      sourceCommand: envResult.sourceCommand,
+      reloadRequired: envResult.reloadRequired
     };
   } catch (err) {
     throw new Error('Failed to set proxy config: ' + err.message);

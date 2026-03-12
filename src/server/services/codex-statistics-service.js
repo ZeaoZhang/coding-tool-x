@@ -4,36 +4,12 @@ const {
   getDailyStatistics: getSharedDailyStatistics,
   getTodayStatistics: getSharedTodayStatistics
 } = require('./statistics-service');
+const { normalizeUsageTokens, toNumber } = require('./proxy-log-helper');
 
 const TOOL_TYPE = 'codex';
 
-function toNumber(value) {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function normalizeToolTokens(tokens = {}) {
-  const input = toNumber(tokens.input);
-  const output = toNumber(tokens.output);
-  const reasoning = toNumber(tokens.reasoning);
-  const cached = toNumber(tokens.cached);
-  const cacheCreation = toNumber(tokens.cacheCreation);
-  const cacheRead = toNumber(tokens.cacheRead || cached);
-  const total = toNumber(tokens.total) || (input + output + reasoning);
-
-  return {
-    input,
-    output,
-    reasoning,
-    cached,
-    cacheCreation,
-    cacheRead,
-    total
-  };
-}
-
 function toLegacyEntryShape(entry = {}, includeName = false) {
-  const normalized = normalizeToolTokens(entry.tokens || {});
+  const normalized = normalizeUsageTokens(TOOL_TYPE, entry.tokens || {});
   const result = {
     requests: toNumber(entry.requests),
     tokens: {
@@ -126,7 +102,7 @@ function buildDailyStatistics(sharedDaily = {}, fallbackDate) {
 }
 
 function recordRequest(requestData = {}) {
-  const normalizedTokens = normalizeToolTokens(requestData.tokens || {});
+  const normalizedTokens = normalizeUsageTokens(TOOL_TYPE, requestData.tokens || {});
   return recordSharedRequest({
     ...requestData,
     toolType: TOOL_TYPE,

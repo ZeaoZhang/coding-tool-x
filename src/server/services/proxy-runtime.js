@@ -3,11 +3,13 @@ const path = require('path');
 const { PATHS } = require('../../config/paths');
 
 function getRuntimeFilePath(proxyType) {
-  const ccToolDir = PATHS.base;
-  if (!fs.existsSync(ccToolDir)) {
-    fs.mkdirSync(ccToolDir, { recursive: true });
+  const filePath = PATHS.proxyRuntime?.[proxyType]
+    || path.join(path.dirname(PATHS.proxyRuntime.claude), `${proxyType}-proxy.json`);
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(ccToolDir, `${proxyType}-proxy-runtime.json`);
+  return filePath;
 }
 
 function saveProxyStartTime(proxyType, preserveExisting = false) {

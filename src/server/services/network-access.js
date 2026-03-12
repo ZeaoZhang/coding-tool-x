@@ -30,6 +30,26 @@ function isLoopbackRequest(req) {
   return true;
 }
 
+function isSameOriginRequest(req) {
+  if (!req) return false;
+  const origin = req.headers && req.headers.origin;
+  if (!origin) {
+    return true;
+  }
+
+  const host = req.headers && req.headers.host;
+  if (!host) {
+    return false;
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    return originUrl.host === host;
+  } catch (error) {
+    return false;
+  }
+}
+
 function createRemoteMutationGuard(options = {}) {
   const enabled = options.enabled === true;
   const allowRemoteMutation = options.allowRemoteMutation === true;
@@ -71,10 +91,28 @@ function createRemoteRouteGuard(options = {}) {
   };
 }
 
+function createSameOriginGuard(options = {}) {
+  const enabled = options.enabled !== false;
+  const message = options.message || '禁止跨站访问该接口';
+
+  return (req, res, next) => {
+    if (!enabled || isSameOriginRequest(req)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      error: message,
+      code: 'CROSS_ORIGIN_REQUEST_BLOCKED'
+    });
+  };
+}
+
 module.exports = {
   normalizeAddress,
   isLoopbackAddress,
   isLoopbackRequest,
+  isSameOriginRequest,
   createRemoteMutationGuard,
-  createRemoteRouteGuard
+  createRemoteRouteGuard,
+  createSameOriginGuard
 };

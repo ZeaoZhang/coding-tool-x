@@ -3,9 +3,11 @@ const path = require('path');
 const os = require('os');
 
 const { expandHome, getConfigFilePath } = require('../src/config/loader');
+const { PATHS } = require('../src/config/paths');
 const DEFAULT_CONFIG = require('../src/config/default');
-const { isLoopbackRequest } = require('../src/server/services/network-access');
+const { isLoopbackRequest, isSameOriginRequest } = require('../src/server/services/network-access');
 const claudeHooks = require('../src/server/api/claude-hooks');
+const notificationHooks = require('../src/server/services/notification-hooks');
 const portHelper = require('../src/utils/port-helper');
 const mcpClient = require('../src/server/services/mcp-client');
 const mcpService = require('../src/server/services/mcp-service');
@@ -28,6 +30,7 @@ function buildStopSettings(command) {
 
 function run() {
   const hookTest = claudeHooks._test || {};
+  const notificationHookTest = notificationHooks._test || {};
   const mcpClientTest = mcpClient._test || {};
   const mcpServiceTest = mcpService._test || {};
   const portHelperTest = portHelper._test || {};
@@ -36,6 +39,13 @@ function run() {
   assert(typeof hookTest.resolvePreferredHomeDir === 'function', '缺少 resolvePreferredHomeDir 测试导出');
   assert(typeof hookTest.normalizeWindowsHomePath === 'function', '缺少 normalizeWindowsHomePath 测试导出');
   assert(typeof hookTest.shouldRepairStopHook === 'function', '缺少 shouldRepairStopHook 测试导出');
+  assert(typeof notificationHookTest.getManagedCommandType === 'function', '缺少 getManagedCommandType 测试导出');
+  assert(typeof notificationHookTest.applyClaudeDisablePreference === 'function', '缺少 applyClaudeDisablePreference 测试导出');
+  assert(typeof notificationHookTest.parseCodexNotificationStatus === 'function', '缺少 parseCodexNotificationStatus 测试导出');
+  assert(typeof notificationHookTest.parseGeminiNotificationStatus === 'function', '缺少 parseGeminiNotificationStatus 测试导出');
+  assert(typeof notificationHookTest.parseOpenCodeNotificationStatus === 'function', '缺少 parseOpenCodeNotificationStatus 测试导出');
+  assert(typeof notificationHookTest.validateFeishuWebhookUrl === 'function', '缺少 validateFeishuWebhookUrl 测试导出');
+  assert(typeof notificationHookTest.buildOpenCodePluginContent === 'function', '缺少 buildOpenCodePluginContent 测试导出');
   assert(typeof mcpClientTest.createMissingCommandHint === 'function', '缺少 createMissingCommandHint 测试导出');
   assert(typeof mcpClientTest.buildMissingCommandMessage === 'function', '缺少 buildMissingCommandMessage 测试导出');
   assert(typeof mcpServiceTest.buildMcpFailureResult === 'function', '缺少 buildMcpFailureResult 测试导出');
@@ -101,6 +111,11 @@ function run() {
 
   const configPath = getConfigFilePath();
   assert(configPath.startsWith(path.join(os.homedir(), '.cc-tool')), '配置文件路径应位于 ~/.cc-tool 下');
+  assert.strictEqual(configPath, PATHS.configFile, '配置文件路径应与 PATHS.configFile 一致');
+  assert.strictEqual(PATHS.configFile, path.join(os.homedir(), '.cc-tool', 'config', 'config.json'), '主配置应迁移到 config/ 子目录');
+  assert.strictEqual(PATHS.channels.claude, path.join(os.homedir(), '.cc-tool', 'storage', 'channels', 'claude.json'), 'Claude 渠道配置应迁移到 storage/channels');
+  assert.strictEqual(PATHS.activeChannel.claude, path.join(os.homedir(), '.cc-tool', 'storage', 'channels', 'active', 'claude.json'), 'Claude active channel 应迁移到 storage/channels/active');
+  assert.strictEqual(PATHS.notifyHook, path.join(os.homedir(), '.cc-tool', 'storage', 'scripts', 'notify-hook.js'), '通知脚本应迁移到 storage/scripts');
   assert(expandHome('~/.claude/projects').startsWith(os.homedir()), 'expandHome 未正确展开 ~');
 
   const spoofedRemoteReq = {
@@ -114,6 +129,16 @@ function run() {
     socket: { remoteAddress: '127.0.0.1' }
   };
   assert(isLoopbackRequest(localReq), '本机来源应通过校验');
+  assert.strictEqual(
+    isSameOriginRequest({ headers: { origin: 'http://127.0.0.1:19999', host: '127.0.0.1:19999' } }),
+    true,
+    '同源请求应通过校验'
+  );
+  assert.strictEqual(
+    isSameOriginRequest({ headers: { origin: 'https://evil.example', host: '127.0.0.1:19999' } }),
+    false,
+    '跨源请求不应通过校验'
+  );
 
   const dialogMarkerStatus = hookTest.parseStopHookStatus(
     buildStopSettings('node "/tmp/notify-hook.js" --cc-notify-type=dialog')
@@ -137,9 +162,110 @@ function run() {
 
   const stopHookDialogCommand = hookTest.buildStopHookCommand('dialog');
   assert(stopHookDialogCommand.includes('--cc-notify-type=dialog'), 'Stop hook command 应包含 dialog marker');
+  assert(stopHookDialogCommand.includes(PATHS.notifyHook), 'Stop hook command 应引用新的 notify-hook 路径');
 
   const stopHookNotificationCommand = hookTest.buildStopHookCommand('notification');
   assert(stopHookNotificationCommand.includes('--cc-notify-type=notification'), 'Stop hook command 应包含 notification marker');
+
+  assert.strictEqual(
+    notificationHookTest.getManagedCommandType('node "/tmp/notify-hook.js" --mode=dialog'),
+    'dialog',
+    '统一通知命令应能识别 dialog 模式'
+  );
+
+  const codexManagedStatus = notificationHookTest.parseCodexNotificationStatus({
+    notify: notificationHookTest.buildCodexNotifyCommand('dialog')
+  });
+  assert.deepStrictEqual(
+    codexManagedStatus,
+    { enabled: true, external: false, type: 'dialog', method: 'notify' },
+    'Codex 托管 notify 状态解析失败'
+  );
+
+  const codexExternalStatus = notificationHookTest.parseCodexNotificationStatus({
+    notify: ['bash', '-lc', 'echo done']
+  });
+  assert.deepStrictEqual(
+    codexExternalStatus,
+    { enabled: false, external: true, type: 'notification', method: 'notify' },
+    'Codex 外部 notify 状态解析失败'
+  );
+
+  const geminiManagedStatus = notificationHookTest.parseGeminiNotificationStatus({
+    hooks: {
+      AfterAgent: [
+        {
+          matcher: '*',
+          hooks: [
+            {
+              name: 'coding-tool-notify',
+              type: 'command',
+              command: 'node "/tmp/notify-hook.js" --cc-notify-type=notification'
+            }
+          ]
+        }
+      ]
+    }
+  });
+  assert.deepStrictEqual(
+    geminiManagedStatus,
+    { enabled: true, external: false, type: 'notification', method: 'AfterAgent Hook' },
+    'Gemini 托管 Hook 状态解析失败'
+  );
+
+  const geminiExternalStatus = notificationHookTest.parseGeminiNotificationStatus({
+    hooks: {
+      AfterAgent: [
+        {
+          matcher: '*',
+          hooks: [
+            {
+              name: 'custom-hook',
+              type: 'command',
+              command: 'python /tmp/custom.py'
+            }
+          ]
+        }
+      ]
+    }
+  });
+  assert.deepStrictEqual(
+    geminiExternalStatus,
+    { enabled: false, external: true, type: 'notification', method: 'AfterAgent Hook' },
+    'Gemini 外部 Hook 状态解析失败'
+  );
+
+  assert.deepStrictEqual(
+    notificationHookTest.applyClaudeDisablePreference({ foo: 'bar' }, false),
+    { foo: 'bar', claudeNotificationDisabledByUser: true },
+    '关闭 Claude 通知时应写入用户禁用标记'
+  );
+  assert.deepStrictEqual(
+    notificationHookTest.applyClaudeDisablePreference({ claudeNotificationDisabledByUser: true, foo: 'bar' }, true),
+    { foo: 'bar' },
+    '重新开启 Claude 通知时应清除用户禁用标记'
+  );
+
+  const openCodePluginContent = notificationHookTest.buildOpenCodePluginContent('dialog');
+  const openCodeStatus = notificationHookTest.parseOpenCodeNotificationStatus(openCodePluginContent);
+  assert.deepStrictEqual(
+    openCodeStatus,
+    { enabled: true, external: false, type: 'dialog', method: 'Plugin Events' },
+    'OpenCode 插件通知状态解析失败'
+  );
+  assert(openCodePluginContent.includes(PATHS.notifyHook), 'OpenCode 插件应引用共享 notify-hook 脚本');
+  assert(openCodePluginContent.includes('session.idle'), 'OpenCode 插件应监听 session.idle');
+  assert(openCodePluginContent.includes('session.error'), 'OpenCode 插件应监听 session.error');
+  assert.strictEqual(
+    notificationHookTest.validateFeishuWebhookUrl('https://open.feishu.cn/open-apis/bot/v2/hook/test').hostname,
+    'open.feishu.cn',
+    '飞书 Webhook 域名校验失败'
+  );
+  assert.throws(
+    () => notificationHookTest.validateFeishuWebhookUrl('http://example.com/webhook'),
+    /飞书 Webhook|open\.feishu\.cn|HTTPS/,
+    '非飞书或非 HTTPS 的 Webhook 应被拒绝'
+  );
 
   const normalizedMsysHome = hookTest.normalizeWindowsHomePath('/c/Users/wjx', { SYSTEMDRIVE: 'C:' });
   assert.strictEqual(normalizedMsysHome, path.win32.normalize('C:\\Users\\wjx'), 'MSYS home 路径转换失败');
@@ -183,6 +309,16 @@ function run() {
     () => false
   );
   assert.strictEqual(repairedByMissingScript, true, '脚本缺失时应触发 Stop hook 修复');
+
+  const legacyBareHookSettings = buildStopSettings(
+    'node "/Users/zhangzeao/.cc-tool/notify-hook.js"'
+  );
+  const repairedByMissingMarker = hookTest.shouldRepairStopHook(
+    legacyBareHookSettings,
+    '/Users/zhangzeao/.cc-tool/storage/scripts/notify-hook.js',
+    () => true
+  );
+  assert.strictEqual(repairedByMissingMarker, true, '旧版无 marker 的 notify-hook 路径也应触发 Stop hook 修复');
 
   console.log('基础测试通过');
 }

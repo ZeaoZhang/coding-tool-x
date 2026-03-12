@@ -174,11 +174,12 @@ router.post('/start', async (req, res) => {
     let message = `Codex proxy started on port ${proxyResult.port}, active channel: ${currentChannel.name}`;
     let envHint = null;
 
-    // 只有首次注入环境变量时才提示用户执行 source 命令
-    if (configResult.envInjected && configResult.isFirstTime) {
+    if (configResult.envInjected && configResult.reloadRequired) {
       envHint = {
-        command: configResult.sourceCommand,
-        message: `首次启用需在 Codex 终端执行: ${configResult.sourceCommand}`
+        command: configResult.sourceCommand || null,
+        message: configResult.sourceCommand
+          ? `请在 Codex 终端执行: ${configResult.sourceCommand}`
+          : '请重新打开 Codex 终端以加载新的用户环境变量'
       };
     }
 

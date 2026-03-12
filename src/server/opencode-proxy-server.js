@@ -14,13 +14,13 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
-const { resolvePricing } = require('./utils/pricing');
+const { resolveModelPricing } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
 const { persistProxyRequestSnapshot, loadClaudeRequestTemplate } = require('./services/request-logger');
 const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
-const { CLAUDE_MODEL_PRICING } = require('../config/model-pricing');
+const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -190,61 +190,33 @@ function resolveOpenCodeTarget(baseUrl = '', requestPath = '') {
  * 计算请求成本
  */
 function calculateCost(model, tokens) {
-  let pricing;
-
-  // 首先检查是否是 Claude 模型，使用集中定价
-  if (model.startsWith('claude-') || model.toLowerCase().includes('claude')) {
-    pricing = CLAUDE_MODEL_PRICING[model];
-
-    // 如果没有精确匹配，尝试模糊匹配 Claude 模型
-    if (!pricing) {
-      const modelLower = model.toLowerCase();
-      // 查找最接近的 Claude 模型
-      for (const [key, value] of Object.entries(CLAUDE_MODEL_PRICING)) {
-        if (key.toLowerCase().includes(modelLower) || modelLower.includes(key.toLowerCase())) {
-          pricing = value;
-          break;
-        }
-      }
-    }
-
-    // 如果仍然没有找到，使用默认 Sonnet 定价
-    if (!pricing) {
-      pricing = CLAUDE_MODEL_PRICING['claude-sonnet-4-5-20250929'];
-    }
-  } else {
-    // 非 Claude 模型，使用 PRICING 对象（OpenAI 等）
-    pricing = PRICING[model];
-
-    // 如果没有精确匹配，尝试模糊匹配
-    if (!pricing) {
-      const modelLower = model.toLowerCase();
-      if (modelLower.includes('gpt-4o-mini')) {
-        pricing = PRICING['gpt-4o-mini'];
-      } else if (modelLower.includes('gpt-4o')) {
-        pricing = PRICING['gpt-4o'];
-      } else if (modelLower.includes('gpt-4')) {
-        pricing = PRICING['gpt-4'];
-      } else if (modelLower.includes('gpt-3.5')) {
-        pricing = PRICING['gpt-3.5-turbo'];
-      } else if (modelLower.includes('o1-mini')) {
-        pricing = PRICING['o1-mini'];
-      } else if (modelLower.includes('o1-pro')) {
-        pricing = PRICING['o1-pro'];
-      } else if (modelLower.includes('o1')) {
-        pricing = PRICING['o1'];
-      } else if (modelLower.includes('o3-mini')) {
-        pricing = PRICING['o3-mini'];
-      } else if (modelLower.includes('o3')) {
-        pricing = PRICING['o3'];
-      } else if (modelLower.includes('o4-mini')) {
-        pricing = PRICING['o4-mini'];
-      }
+  let fallbackPricing = PRICING[model];
+  if (!fallbackPricing) {
+    const modelLower = String(model || '').toLowerCase();
+    if (modelLower.includes('gpt-4o-mini')) {
+      fallbackPricing = PRICING['gpt-4o-mini'];
+    } else if (modelLower.includes('gpt-4o')) {
+      fallbackPricing = PRICING['gpt-4o'];
+    } else if (modelLower.includes('gpt-4')) {
+      fallbackPricing = PRICING['gpt-4'];
+    } else if (modelLower.includes('gpt-3.5')) {
+      fallbackPricing = PRICING['gpt-3.5-turbo'];
+    } else if (modelLower.includes('o1-mini')) {
+      fallbackPricing = PRICING['o1-mini'];
+    } else if (modelLower.includes('o1-pro')) {
+      fallbackPricing = PRICING['o1-pro'];
+    } else if (modelLower.includes('o1')) {
+      fallbackPricing = PRICING['o1'];
+    } else if (modelLower.includes('o3-mini')) {
+      fallbackPricing = PRICING['o3-mini'];
+    } else if (modelLower.includes('o3')) {
+      fallbackPricing = PRICING['o3'];
+    } else if (modelLower.includes('o4-mini')) {
+      fallbackPricing = PRICING['o4-mini'];
     }
   }
 
-  // 默认使用基础定价
-  pricing = resolvePricing('opencode', pricing, OPENCODE_BASE_PRICING);
+  const pricing = resolveModelPricing('opencode', model, fallbackPricing, OPENCODE_BASE_PRICING);
   const inputRate = typeof pricing.input === 'number' ? pricing.input : OPENCODE_BASE_PRICING.input;
   const outputRate = typeof pricing.output === 'number' ? pricing.output : OPENCODE_BASE_PRICING.output;
 
@@ -1998,59 +1970,63 @@ function sendOpenAiStyleError(res, statusCode, message, type = 'invalid_request_
   });
 }
 
+function reportOpenCodeGatewayFailure({
+  req,
+  res,
+  channel,
+  statusCode,
+  message,
+  type = 'invalid_request_error',
+  error = null,
+  stage = 'gateway',
+  model = ''
+}) {
+  if (channel?.id && error) {
+    recordFailure(channel.id, 'opencode', error);
+  }
+
+  publishFailureLog({
+    source: 'opencode',
+    metadata: (req && requestMetadata.get(req)) || {
+      channel: channel?.name,
+      channelId: channel?.id,
+      model: model || req?.body?.model
+    },
+    channel: channel?.name,
+    model: model || req?.body?.model || '',
+    message,
+    error,
+    statusCode,
+    stage,
+    broadcastLog
+  });
+
+  if (!res.headersSent) {
+    sendOpenAiStyleError(res, statusCode, message, type);
+  }
+  return true;
+}
+
 function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }) {
-  const inputTokens = Number(usage?.input_tokens || usage?.prompt_tokens || 0);
-  const outputTokens = Number(usage?.output_tokens || usage?.completion_tokens || 0);
-  const totalTokens = Number(usage?.total_tokens || (inputTokens + outputTokens));
-  const cachedTokens = Number(usage?.input_tokens_details?.cached_tokens || 0);
-  const reasoningTokens = Number(usage?.output_tokens_details?.reasoning_tokens || 0);
-  const now = new Date();
-  const time = now.toLocaleTimeString('zh-CN', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-
-  const tokens = {
-    input: inputTokens,
-    output: outputTokens,
-    total: totalTokens
-  };
-  const cost = calculateCost(model || '', tokens);
-
-  broadcastLog({
-    type: 'log',
-    id: requestId,
-    time,
-    channel: channel.name,
-    model: model || '',
-    inputTokens,
-    outputTokens,
-    cachedTokens,
-    reasoningTokens,
-    totalTokens,
-    cost,
-    source: 'opencode'
-  });
-
-  recordOpenCodeRequest({
-    id: requestId,
-    timestamp: new Date(startTime).toISOString(),
-    toolType: 'opencode',
-    channel: channel.name,
-    channelId: channel.id,
+  return publishUsageLog({
+    source: 'opencode',
+    metadata: {
+      id: requestId,
+      channel: channel?.name,
+      channelId: channel?.id,
+      startTime
+    },
     model: model || '',
     tokens: {
-      input: inputTokens,
-      output: outputTokens,
-      reasoning: reasoningTokens,
-      cached: cachedTokens,
-      total: totalTokens
+      input: Number(usage?.input_tokens || usage?.prompt_tokens || 0),
+      output: Number(usage?.output_tokens || usage?.completion_tokens || 0),
+      cached: Number(usage?.input_tokens_details?.cached_tokens || 0),
+      reasoning: Number(usage?.output_tokens_details?.reasoning_tokens || 0),
+      total: Number(usage?.total_tokens || 0)
     },
-    duration: Date.now() - startTime,
-    success: true,
-    cost
+    calculateCost,
+    broadcastLog,
+    recordRequest: recordOpenCodeRequest
   });
 }
 
@@ -3001,8 +2977,14 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   }
 
   if (!shouldParseJson(req)) {
-    sendOpenAiStyleError(res, 400, 'Claude gateway only supports JSON POST payload');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Claude gateway only supports JSON POST payload',
+      stage: 'validate_request'
+    });
   }
 
   const requestId = `opencode-${Date.now()}-${Math.random()}`;
@@ -3035,9 +3017,16 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
     try {
       streamUpstream = await postJsonStream(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000);
     } catch (error) {
-      recordFailure(channel.id, 'opencode', error);
-      sendOpenAiStyleError(res, 502, `Claude gateway network error: ${error.message}`, 'proxy_error');
-      return true;
+      return reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode: 502,
+        message: `Claude gateway network error: ${error.message}`,
+        type: 'proxy_error',
+        error,
+        stage: 'claude_gateway_network'
+      });
     }
 
     const statusCode = Number(streamUpstream.statusCode) || 500;
@@ -3056,9 +3045,16 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
         parsedError = null;
       }
       const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
-      recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
-      sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
-      return true;
+      return reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode,
+        message: String(upstreamMessage).slice(0, 1000),
+        type: 'upstream_error',
+        error: new Error(String(upstreamMessage).slice(0, 200)),
+        stage: 'claude_gateway_upstream'
+      });
     }
 
     try {
@@ -3072,10 +3068,16 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
       });
       recordSuccess(channel.id, 'opencode');
     } catch (error) {
-      recordFailure(channel.id, 'opencode', error);
-      if (!res.headersSent) {
-        sendOpenAiStyleError(res, 502, `Claude stream relay error: ${error.message}`, 'proxy_error');
-      }
+      reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode: 502,
+        message: `Claude stream relay error: ${error.message}`,
+        type: 'proxy_error',
+        error,
+        stage: 'claude_stream_relay'
+      });
     }
     return true;
   }
@@ -3084,9 +3086,16 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   try {
     upstream = await postJson(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000);
   } catch (error) {
-    recordFailure(channel.id, 'opencode', error);
-    sendOpenAiStyleError(res, 502, `Claude gateway network error: ${error.message}`, 'proxy_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 502,
+      message: `Claude gateway network error: ${error.message}`,
+      type: 'proxy_error',
+      error,
+      stage: 'claude_gateway_network'
+    });
   }
 
   const statusCode = Number(upstream.statusCode) || 500;
@@ -3099,15 +3108,29 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
 
   if (statusCode < 200 || statusCode >= 300) {
     const upstreamMessage = parsedBody?.error?.message || parsedBody?.message || upstream.rawBody || `HTTP ${statusCode}`;
-    recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
-    sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode,
+      message: String(upstreamMessage).slice(0, 1000),
+      type: 'upstream_error',
+      error: new Error(String(upstreamMessage).slice(0, 200)),
+      stage: 'claude_gateway_upstream'
+    });
   }
 
   if (!parsedBody || typeof parsedBody !== 'object') {
-    recordFailure(channel.id, 'opencode', new Error('Invalid Claude gateway response'));
-    sendOpenAiStyleError(res, 502, 'Invalid Claude gateway response', 'proxy_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 502,
+      message: 'Invalid Claude gateway response',
+      type: 'proxy_error',
+      error: new Error('Invalid Claude gateway response'),
+      stage: 'claude_gateway_parse'
+    });
   }
 
   if (isResponsesPath(pathname)) {
@@ -3152,8 +3175,14 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
   }
 
   if (!shouldParseJson(req)) {
-    sendOpenAiStyleError(res, 400, 'Codex gateway only supports JSON POST payload');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Codex gateway only supports JSON POST payload',
+      stage: 'validate_request'
+    });
   }
 
   const requestId = `opencode-${Date.now()}-${Math.random()}`;
@@ -3164,14 +3193,26 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
   const targetModel = converted.model;
 
   if (!targetModel) {
-    sendOpenAiStyleError(res, 400, 'Missing model in request and channel configuration');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Missing model in request and channel configuration',
+      stage: 'resolve_model'
+    });
   }
 
   const targetUrl = buildCodexTargetUrl(channel.baseUrl);
   if (!targetUrl) {
-    sendOpenAiStyleError(res, 400, 'Failed to build Codex target URL');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Failed to build Codex target URL',
+      stage: 'build_target_url'
+    });
   }
 
   const codexSessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 15)}`;
@@ -3198,9 +3239,16 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
   try {
     streamUpstream = await postJsonStream(targetUrl, headers, converted.requestBody, 120000);
   } catch (error) {
-    recordFailure(channel.id, 'opencode', error);
-    sendOpenAiStyleError(res, 502, `Codex gateway network error: ${error.message}`, 'proxy_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 502,
+      message: `Codex gateway network error: ${error.message}`,
+      type: 'proxy_error',
+      error,
+      stage: 'codex_gateway_network'
+    });
   }
 
   const statusCode = Number(streamUpstream.statusCode) || 500;
@@ -3220,9 +3268,16 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
     }
 
     const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
-    recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
-    sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode,
+      message: String(upstreamMessage).slice(0, 1000),
+      type: 'upstream_error',
+      error: new Error(String(upstreamMessage).slice(0, 200)),
+      stage: 'codex_gateway_upstream'
+    });
   }
 
   try {
@@ -3241,9 +3296,16 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
 
     const responseObject = await collectCodexResponsesNonStream(streamUpstream.response, originalPayload);
     if (!responseObject || typeof responseObject !== 'object') {
-      recordFailure(channel.id, 'opencode', new Error('Invalid Codex gateway response'));
-      sendOpenAiStyleError(res, 502, 'Invalid Codex gateway response', 'proxy_error');
-      return true;
+      return reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode: 502,
+        message: 'Invalid Codex gateway response',
+        type: 'proxy_error',
+        error: new Error('Invalid Codex gateway response'),
+        stage: 'codex_gateway_parse'
+      });
     }
     res.json(responseObject);
     publishOpenCodeUsageLog({
@@ -3256,10 +3318,16 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
     recordSuccess(channel.id, 'opencode');
     return true;
   } catch (error) {
-    recordFailure(channel.id, 'opencode', error);
-    if (!res.headersSent) {
-      sendOpenAiStyleError(res, 502, `Codex stream relay error: ${error.message}`, 'proxy_error');
-    }
+    reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 502,
+      message: `Codex stream relay error: ${error.message}`,
+      type: 'proxy_error',
+      error,
+      stage: 'codex_stream_relay'
+    });
     return true;
   }
 }
@@ -3925,8 +3993,14 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   }
 
   if (!shouldParseJson(req)) {
-    sendOpenAiStyleError(res, 400, 'Gemini gateway only supports JSON POST payload');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Gemini gateway only supports JSON POST payload',
+      stage: 'validate_request'
+    });
   }
 
   const requestId = `opencode-${Date.now()}-${Math.random()}`;
@@ -3939,8 +4013,14 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   const useGeminiCli = shouldUseGeminiCliFormat(channel.baseUrl);
 
   if (!targetModel) {
-    sendOpenAiStyleError(res, 400, 'Missing model in request and channel configuration');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Missing model in request and channel configuration',
+      stage: 'resolve_model'
+    });
   }
 
   const targetUrl = buildGeminiTargetUrl(channel.baseUrl, targetModel, effectiveKey, {
@@ -3948,8 +4028,14 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
     useCli: useGeminiCli
   });
   if (!targetUrl) {
-    sendOpenAiStyleError(res, 400, 'Failed to build Gemini target URL');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 400,
+      message: 'Failed to build Gemini target URL',
+      stage: 'build_target_url'
+    });
   }
 
   const geminiPayload = useGeminiCli
@@ -3985,9 +4071,16 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
     try {
       streamUpstream = await postJsonStream(targetUrl, headers, geminiPayload, 120000);
     } catch (error) {
-      recordFailure(channel.id, 'opencode', error);
-      sendOpenAiStyleError(res, 502, `Gemini gateway network error: ${error.message}`, 'proxy_error');
-      return true;
+      return reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode: 502,
+        message: `Gemini gateway network error: ${error.message}`,
+        type: 'proxy_error',
+        error,
+        stage: 'gemini_gateway_network'
+      });
     }
 
     const statusCode = Number(streamUpstream.statusCode) || 500;
@@ -4006,9 +4099,16 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
         parsedError = null;
       }
       const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${statusCode}`;
-      recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
-      sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
-      return true;
+      return reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode,
+        message: String(upstreamMessage).slice(0, 1000),
+        type: 'upstream_error',
+        error: new Error(String(upstreamMessage).slice(0, 200)),
+        stage: 'gemini_gateway_upstream'
+      });
     }
 
     try {
@@ -4022,10 +4122,16 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
       });
       recordSuccess(channel.id, 'opencode');
     } catch (error) {
-      recordFailure(channel.id, 'opencode', error);
-      if (!res.headersSent) {
-        sendOpenAiStyleError(res, 502, `Gemini stream relay error: ${error.message}`, 'proxy_error');
-      }
+      reportOpenCodeGatewayFailure({
+        req,
+        res,
+        channel,
+        statusCode: 502,
+        message: `Gemini stream relay error: ${error.message}`,
+        type: 'proxy_error',
+        error,
+        stage: 'gemini_stream_relay'
+      });
     }
     return true;
   }
@@ -4034,9 +4140,16 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   try {
     upstream = await postJson(targetUrl, headers, geminiPayload, 120000);
   } catch (error) {
-    recordFailure(channel.id, 'opencode', error);
-    sendOpenAiStyleError(res, 502, `Gemini gateway network error: ${error.message}`, 'proxy_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 502,
+      message: `Gemini gateway network error: ${error.message}`,
+      type: 'proxy_error',
+      error,
+      stage: 'gemini_gateway_network'
+    });
   }
 
   const statusCode = Number(upstream.statusCode) || 500;
@@ -4049,15 +4162,29 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 
   if (statusCode < 200 || statusCode >= 300) {
     const upstreamMessage = parsedBody?.error?.message || parsedBody?.message || upstream.rawBody || `HTTP ${statusCode}`;
-    recordFailure(channel.id, 'opencode', new Error(String(upstreamMessage).slice(0, 200)));
-    sendOpenAiStyleError(res, statusCode, String(upstreamMessage).slice(0, 1000), 'upstream_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode,
+      message: String(upstreamMessage).slice(0, 1000),
+      type: 'upstream_error',
+      error: new Error(String(upstreamMessage).slice(0, 200)),
+      stage: 'gemini_gateway_upstream'
+    });
   }
 
   if (!parsedBody || typeof parsedBody !== 'object') {
-    recordFailure(channel.id, 'opencode', new Error('Invalid Gemini gateway response'));
-    sendOpenAiStyleError(res, 502, 'Invalid Gemini gateway response', 'proxy_error');
-    return true;
+    return reportOpenCodeGatewayFailure({
+      req,
+      res,
+      channel,
+      statusCode: 502,
+      message: 'Invalid Gemini gateway response',
+      type: 'proxy_error',
+      error: new Error('Invalid Gemini gateway response'),
+      stage: 'gemini_gateway_parse'
+    });
   }
 
   if (isResponsesPath(pathname)) {
@@ -4241,6 +4368,14 @@ async function startOpenCodeProxyServer(options = {}) {
         if (!effectiveKey) {
           releaseChannel(channel.id, 'opencode');
           broadcastSchedulerState('opencode', getSchedulerState('opencode'));
+          publishFailureLog({
+            source: 'opencode',
+            channel: channel.name,
+            message: 'API key not configured or expired. Please update your channel key.',
+            statusCode: 401,
+            stage: 'preflight',
+            broadcastLog
+          });
           return res.status(401).json({
             error: {
               message: 'API key not configured or expired. Please update your channel key.',
@@ -4332,6 +4467,20 @@ async function startOpenCodeProxyServer(options = {}) {
           release();
           if (err) {
             recordFailure(channel.id, 'opencode', err);
+            const metadata = requestMetadata.get(req) || {
+              channel: channel.name,
+              channelId: channel.id,
+              startTime: Date.now()
+            };
+            publishFailureLog({
+              source: 'opencode',
+              metadata,
+              message: err.message,
+              error: err,
+              statusCode: 502,
+              stage: 'proxy_web',
+              broadcastLog
+            });
             console.error('OpenCode proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -4345,6 +4494,13 @@ async function startOpenCodeProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('OpenCode channel allocation error:', error);
+        publishFailureLog({
+          source: 'opencode',
+          message: error.message || 'No OpenCode channel available',
+          statusCode: 503,
+          stage: 'allocate_channel',
+          broadcastLog
+        });
         if (!res.headersSent) {
           res.status(503).json({
             error: {
@@ -4397,6 +4553,38 @@ async function startOpenCodeProxyServer(options = {}) {
         totalTokens: 0,
         model: ''
       };
+      let usageRecorded = false;
+
+      function recordUsageIfReady() {
+        if (usageRecorded) {
+          return false;
+        }
+
+        const result = publishUsageLog({
+          source: 'opencode',
+          metadata,
+          model: tokenData.model,
+          tokens: {
+            input: tokenData.inputTokens,
+            output: tokenData.outputTokens,
+            cached: tokenData.cachedTokens,
+            reasoning: tokenData.reasoningTokens,
+            total: tokenData.totalTokens
+          },
+          calculateCost,
+          broadcastLog,
+          recordRequest: recordOpenCodeRequest,
+          recordSuccess,
+          allowBroadcast: !isResponseClosed
+        });
+
+        if (!result) {
+          return false;
+        }
+
+        usageRecorded = true;
+        return true;
+      }
 
       proxyRes.on('data', (chunk) => {
         // 如果响应已关闭，停止处理
@@ -4462,7 +4650,10 @@ async function startOpenCodeProxyServer(options = {}) {
                 // 兼容 Responses API 和 Chat Completions API
                 tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
                 tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
+                tokenData.totalTokens = parsed.usage.total_tokens || (tokenData.inputTokens + tokenData.outputTokens);
               }
+
+              recordUsageIfReady();
             } catch (err) {
               // 忽略解析错误
             }
@@ -4482,71 +4673,14 @@ async function startOpenCodeProxyServer(options = {}) {
               // 兼容两种格式
               tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
               tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
+              tokenData.totalTokens = parsed.usage.total_tokens || (tokenData.inputTokens + tokenData.outputTokens);
             }
           } catch (err) {
             // 忽略解析错误
           }
         }
 
-        // 只有当有 token 数据时才记录
-        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0) {
-          const now = new Date();
-          const time = now.toLocaleTimeString('zh-CN', {
-            hour12: false,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          });
-
-          // 记录统计数据（先计算）
-          const tokens = {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            total: tokenData.inputTokens + tokenData.outputTokens
-          };
-          const cost = calculateCost(tokenData.model, tokens);
-
-          // 广播日志（仅当响应仍然开放时）
-          if (!isResponseClosed) {
-            broadcastLog({
-              type: 'log',
-              id: metadata.id,
-              time: time,
-              channel: metadata.channel,
-              model: tokenData.model,
-              inputTokens: tokenData.inputTokens,
-              outputTokens: tokenData.outputTokens,
-              cachedTokens: tokenData.cachedTokens,
-              reasoningTokens: tokenData.reasoningTokens,
-              totalTokens: tokenData.totalTokens,
-              cost: cost,
-              source: 'opencode'
-            });
-          }
-
-          const duration = Date.now() - metadata.startTime;
-
-          recordOpenCodeRequest({
-            id: metadata.id,
-            timestamp: new Date(metadata.startTime).toISOString(),
-            toolType: 'opencode',
-            channel: metadata.channel,
-            channelId: metadata.channelId,
-            model: tokenData.model,
-            tokens: {
-              input: tokenData.inputTokens,
-              output: tokenData.outputTokens,
-              reasoning: tokenData.reasoningTokens,
-              cached: tokenData.cachedTokens,
-              total: tokens.total
-            },
-            duration: duration,
-            success: true,
-            cost: cost
-          });
-
-          recordSuccess(metadata.channelId, 'opencode');
-        }
+        recordUsageIfReady();
 
         if (!isResponseClosed) {
           requestMetadata.delete(req);
@@ -4560,6 +4694,15 @@ async function startOpenCodeProxyServer(options = {}) {
         }
         isResponseClosed = true;
         recordFailure(metadata.channelId, 'opencode', err);
+        publishFailureLog({
+          source: 'opencode',
+          metadata,
+          message: err.message,
+          error: err,
+          statusCode: proxyRes.statusCode,
+          stage: 'response_stream',
+          broadcastLog
+        });
         requestMetadata.delete(req);
       });
     });
@@ -4572,6 +4715,19 @@ async function startOpenCodeProxyServer(options = {}) {
         releaseChannel(req.selectedChannel.id, 'opencode');
         broadcastSchedulerState('opencode', getSchedulerState('opencode'));
       }
+      publishFailureLog({
+        source: 'opencode',
+        metadata: (req && requestMetadata.get(req)) || {
+          channel: req?.selectedChannel?.name,
+          channelId: req?.selectedChannel?.id,
+          model: req?.body?.model
+        },
+        message: err.message,
+        error: err,
+        statusCode: 502,
+        stage: 'proxy',
+        broadcastLog
+      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: {

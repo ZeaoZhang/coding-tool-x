@@ -1,10 +1,11 @@
 const fs = require('fs');
+const path = require('path');
 const { isProxyConfig } = require('./settings-manager');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 
 function getChannelsFilePath() {
-  const dir = PATHS.base;
+  const dir = path.dirname(PATHS.channels.claude);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -12,7 +13,7 @@ function getChannelsFilePath() {
 }
 
 function getActiveChannelIdPath() {
-  const dir = PATHS.base;
+  const dir = path.dirname(PATHS.activeChannel.claude);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }

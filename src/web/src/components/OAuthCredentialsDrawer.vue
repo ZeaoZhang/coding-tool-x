@@ -67,6 +67,7 @@
                     :key="credential.id"
                     size="small"
                     class="credential-card"
+                    :class="credential.isDefault ? 'credential-card--active' : 'credential-card--inactive'"
                   >
                     <div class="credential-top">
                       <div class="credential-main">
@@ -82,6 +83,7 @@
                           size="small"
                           type="primary"
                           :loading="busyKey === `apply-${tool}-${credential.id}`"
+                          :disabled="credential.isDefault"
                           @click="handleApply(tool, credential.id)"
                         >
                           应用到本地
@@ -515,6 +517,15 @@ async function handleDelete(tool, credentialId) {
 
 .credential-card {
   border-radius: 12px;
+  transition: opacity 0.2s;
+}
+
+.credential-card--active {
+  opacity: 1;
+}
+
+.credential-card--inactive {
+  opacity: 0.5;
 }
 
 .credential-top {

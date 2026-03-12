@@ -11,6 +11,31 @@ const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homed
 const CC_TOOL_BASE_DIR = path.join(HOME_DIR, '.cc-tool');
 // 兼容旧变量名，避免外部调用方断裂
 const CTX_BASE_DIR = CC_TOOL_BASE_DIR;
+const CONFIG_DIR = path.join(CC_TOOL_BASE_DIR, 'config');
+const CONFIGS_DIR = path.join(CC_TOOL_BASE_DIR, 'configs');
+const STORAGE_DIR = path.join(CC_TOOL_BASE_DIR, 'storage');
+const CHANNELS_DIR = path.join(STORAGE_DIR, 'channels');
+const ACTIVE_CHANNELS_DIR = path.join(CHANNELS_DIR, 'active');
+const STATS_DIR = path.join(STORAGE_DIR, 'stats');
+const DAILY_STATS_DIR = path.join(STATS_DIR, 'daily');
+const REQUEST_LOGS_DIR = path.join(STATS_DIR, 'request-logs');
+const RUNTIME_DIR = path.join(STORAGE_DIR, 'runtime');
+const CACHE_DIR = path.join(STORAGE_DIR, 'cache');
+const CACHE_SKILLS_DIR = path.join(CACHE_DIR, 'skills');
+const CACHE_PLUGINS_DIR = path.join(CACHE_DIR, 'plugins');
+const REPOS_DIR = path.join(STORAGE_DIR, 'repos');
+const REPOS_SKILLS_DIR = path.join(REPOS_DIR, 'skills');
+const REPOS_PLUGINS_DIR = path.join(REPOS_DIR, 'plugins');
+const LOCAL_DIR = path.join(STORAGE_DIR, 'local');
+const LOCAL_SKILLS_DIR = path.join(LOCAL_DIR, 'skills');
+const REQUESTS_DIR = path.join(STORAGE_DIR, 'requests');
+const BACKUPS_DIR = path.join(STORAGE_DIR, 'backups');
+const SCRIPTS_DIR = path.join(STORAGE_DIR, 'scripts');
+const LEGACY_DIR = path.join(STORAGE_DIR, 'legacy');
+const LEGACY_CONFLICTS_DIR = path.join(LEGACY_DIR, 'root-conflicts');
+const LEGACY_ROOT_BACKUPS_DIR = path.join(LEGACY_DIR, 'root-backups');
+const LEGACY_IMPORT_STATE_FILE = path.join(LEGACY_DIR, 'import-state.json');
+const LEGACY_STATS_DIR = path.join(LEGACY_DIR, 'stats');
 
 // 旧目录（升级时自动合并到 ~/.cc-tool）
 const LEGACY_BASE_DIRS = [
@@ -41,24 +66,627 @@ function mergeDirectory(sourceDir, targetDir) {
   }
 }
 
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneJsonValue(value) {
+  if (value === undefined) {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function filesAreEqual(sourcePath, targetPath) {
+  try {
+    const sourceStat = fs.statSync(sourcePath);
+    const targetStat = fs.statSync(targetPath);
+    if (!sourceStat.isFile() || !targetStat.isFile()) {
+      return false;
+    }
+    if (sourceStat.size !== targetStat.size) {
+      return false;
+    }
+    return fs.readFileSync(sourcePath).equals(fs.readFileSync(targetPath));
+  } catch {
+    return false;
+  }
+}
+
+function getUniquePath(targetPath) {
+  if (!fs.existsSync(targetPath)) {
+    return targetPath;
+  }
+
+  const timestamp = Date.now();
+  let counter = 1;
+  let candidate = `${targetPath}.bak-${timestamp}`;
+  while (fs.existsSync(candidate)) {
+    candidate = `${targetPath}.bak-${timestamp}-${counter}`;
+    counter += 1;
+  }
+  return candidate;
+}
+
+function tryRemoveEmptyDir(dirPath) {
+  try {
+    if (!fs.existsSync(dirPath)) return;
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) return;
+    if (fs.readdirSync(dirPath).length === 0) {
+      fs.rmdirSync(dirPath);
+    }
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+function getRelativeLegacyPath(entryPath) {
+  const relativePath = path.relative(CC_TOOL_BASE_DIR, entryPath);
+  if (!relativePath || relativePath.startsWith('..')) {
+    return path.basename(entryPath);
+  }
+  return relativePath;
+}
+
+function archiveLegacyEntry(entryPath, archiveRootDir) {
+  if (!fs.existsSync(entryPath)) {
+    return '';
+  }
+  const archivePath = getUniquePath(path.join(archiveRootDir, getRelativeLegacyPath(entryPath)));
+  try {
+    moveFile(entryPath, archivePath);
+  } catch (error) {
+    if (!fs.existsSync(entryPath)) {
+      return '';
+    }
+    throw error;
+  }
+  return archivePath;
+}
+
+function moveFile(sourcePath, targetPath) {
+  ensureDir(path.dirname(targetPath));
+  try {
+    fs.renameSync(sourcePath, targetPath);
+    return;
+  } catch (error) {
+    fs.copyFileSync(sourcePath, targetPath);
+    try {
+      fs.unlinkSync(sourcePath);
+    } catch {
+      console.warn(`[paths] 清理旧文件失败: ${sourcePath}`);
+    }
+  }
+}
+
+function readJsonFileSafe(filePath) {
+  try {
+    return {
+      ok: true,
+      value: JSON.parse(fs.readFileSync(filePath, 'utf8'))
+    };
+  } catch {
+    return {
+      ok: false,
+      value: null
+    };
+  }
+}
+
+function buildArrayItemIdentity(item) {
+  if (item === null) {
+    return 'null';
+  }
+  if (typeof item !== 'object') {
+    return `${typeof item}:${String(item)}`;
+  }
+  if (item.id) {
+    return `id:${item.id}`;
+  }
+  if (item.key) {
+    return `key:${item.key}`;
+  }
+  if (item.repoUrl) {
+    return `repo:${item.repoUrl}`;
+  }
+  if (item.path) {
+    return `path:${item.path}`;
+  }
+  if (item.url) {
+    return `url:${item.url}`;
+  }
+  if (item.owner && item.name) {
+    return `repo:${item.owner}/${item.name}`;
+  }
+  if (item.name) {
+    return `name:${item.name}`;
+  }
+  return `json:${JSON.stringify(item)}`;
+}
+
+function mergeJsonValues(primaryValue, secondaryValue) {
+  if (primaryValue === undefined) {
+    return cloneJsonValue(secondaryValue);
+  }
+  if (secondaryValue === undefined) {
+    return cloneJsonValue(primaryValue);
+  }
+
+  if (Array.isArray(primaryValue) && Array.isArray(secondaryValue)) {
+    const merged = [];
+    const seen = new Map();
+
+    const appendItem = (item) => {
+      const identity = buildArrayItemIdentity(item);
+      if (!seen.has(identity)) {
+        seen.set(identity, merged.length);
+        merged.push(cloneJsonValue(item));
+        return;
+      }
+
+      const index = seen.get(identity);
+      merged[index] = mergeJsonValues(merged[index], item);
+    };
+
+    primaryValue.forEach(appendItem);
+    secondaryValue.forEach(appendItem);
+    return merged;
+  }
+
+  if (isPlainObject(primaryValue) && isPlainObject(secondaryValue)) {
+    const merged = cloneJsonValue(primaryValue);
+    Object.keys(secondaryValue).forEach((key) => {
+      if (!(key in merged)) {
+        merged[key] = cloneJsonValue(secondaryValue[key]);
+        return;
+      }
+      merged[key] = mergeJsonValues(merged[key], secondaryValue[key]);
+    });
+    return merged;
+  }
+
+  return cloneJsonValue(primaryValue);
+}
+
+function writeJsonFile(targetPath, value) {
+  ensureDir(path.dirname(targetPath));
+  fs.writeFileSync(targetPath, JSON.stringify(value, null, 2), 'utf8');
+}
+
+function copyFilePreserveMode(sourcePath, targetPath) {
+  ensureDir(path.dirname(targetPath));
+  fs.copyFileSync(sourcePath, targetPath);
+  try {
+    fs.chmodSync(targetPath, fs.statSync(sourcePath).mode);
+  } catch {
+    // ignore permission sync failures
+  }
+}
+
+function resolveFileConflict(sourcePath, targetPath) {
+  if (!fs.existsSync(sourcePath) || !fs.existsSync(targetPath)) {
+    return;
+  }
+
+  const sourceStat = fs.statSync(sourcePath);
+  const targetStat = fs.statSync(targetPath);
+  const preferSource = sourceStat.mtimeMs >= targetStat.mtimeMs;
+  const primaryPath = preferSource ? sourcePath : targetPath;
+  const secondaryPath = preferSource ? targetPath : sourcePath;
+  const primaryJson = readJsonFileSafe(primaryPath);
+  const secondaryJson = readJsonFileSafe(secondaryPath);
+
+  if (primaryJson.ok && secondaryJson.ok) {
+    const merged = mergeJsonValues(primaryJson.value, secondaryJson.value);
+    writeJsonFile(targetPath, merged);
+    const archivedPath = archiveLegacyEntry(sourcePath, LEGACY_CONFLICTS_DIR);
+    if (archivedPath) {
+      console.warn(`[paths] 已归档并合并冲突旧文件: ${sourcePath} -> ${archivedPath}`);
+    }
+    return;
+  }
+
+  if (preferSource) {
+    copyFilePreserveMode(sourcePath, targetPath);
+  }
+
+  const archivedPath = archiveLegacyEntry(sourcePath, LEGACY_CONFLICTS_DIR);
+  if (archivedPath) {
+    console.warn(`[paths] 已归档冲突旧文件，保留较新版本: ${sourcePath} -> ${archivedPath}`);
+  }
+}
+
+function relocateEntry(sourcePath, targetPath) {
+  if (!sourcePath || !targetPath || sourcePath === targetPath || !fs.existsSync(sourcePath)) {
+    return;
+  }
+
+  let sourceStat;
+  try {
+    sourceStat = fs.statSync(sourcePath);
+  } catch {
+    return;
+  }
+
+  if (sourceStat.isDirectory()) {
+    if (!fs.existsSync(targetPath)) {
+      ensureDir(path.dirname(targetPath));
+      try {
+        fs.renameSync(sourcePath, targetPath);
+        return;
+      } catch {
+        ensureDir(targetPath);
+      }
+    } else {
+      ensureDir(targetPath);
+    }
+
+    const entries = fs.readdirSync(sourcePath);
+    entries.forEach((entry) => {
+      relocateEntry(path.join(sourcePath, entry), path.join(targetPath, entry));
+    });
+    tryRemoveEmptyDir(sourcePath);
+    return;
+  }
+
+  if (!fs.existsSync(targetPath)) {
+    moveFile(sourcePath, targetPath);
+    return;
+  }
+
+  if (filesAreEqual(sourcePath, targetPath)) {
+    try {
+      fs.unlinkSync(sourcePath);
+    } catch {
+      // ignore duplicate cleanup failures
+    }
+    return;
+  }
+
+  resolveFileConflict(sourcePath, targetPath);
+}
+
+function rootEntry(name) {
+  return path.join(CC_TOOL_BASE_DIR, name);
+}
+
+function getRepoScannerReposPath(type) {
+  return path.join(REPOS_DIR, `${type}.json`);
+}
+
+function getRepoScannerCachePath(type) {
+  return path.join(CACHE_DIR, `${type}-cache.json`);
+}
+
+const PATHS = {
+  // 基础目录
+  base: CC_TOOL_BASE_DIR,
+  config: CONFIG_DIR,
+  configs: CONFIGS_DIR,
+  storage: STORAGE_DIR,
+  logs: path.join(CC_TOOL_BASE_DIR, 'logs'),
+  projects: path.join(CC_TOOL_BASE_DIR, 'projects'),
+  plugins: path.join(CC_TOOL_BASE_DIR, 'plugins'),
+
+  // 全局配置
+  configFile: path.join(CONFIG_DIR, 'config.json'),
+  uiConfig: path.join(CONFIG_DIR, 'ui-config.json'),
+  prompts: path.join(CONFIG_DIR, 'prompts.json'),
+  mcpConfig: path.join(CONFIG_DIR, 'mcp-servers.json'),
+  mcpServers: path.join(CONFIG_DIR, 'mcp-servers.json'),
+  configRegistry: path.join(CONFIG_DIR, 'config-registry.json'),
+  oauthCredentials: path.join(CONFIG_DIR, 'oauth-credentials.json'),
+  security: path.join(CONFIG_DIR, 'security.json'),
+  workspaces: path.join(CONFIG_DIR, 'workspaces.json'),
+  aliases: path.join(CONFIG_DIR, 'aliases.json'),
+  favorites: path.join(CONFIG_DIR, 'favorites.json'),
+  projectOrder: path.join(CONFIG_DIR, 'project-order.json'),
+  sessionOrder: path.join(CONFIG_DIR, 'session-order.json'),
+  forkRelations: path.join(CONFIG_DIR, 'fork-relations.json'),
+  opencodeProjectOrder: path.join(CONFIG_DIR, 'opencode-project-order.json'),
+  opencodeSessionOrder: path.join(CONFIG_DIR, 'opencode-session-order.json'),
+
+  // 渠道配置
+  channelsDir: CHANNELS_DIR,
+  channels: {
+    claude: path.join(CHANNELS_DIR, 'claude.json'),
+    codex: path.join(CHANNELS_DIR, 'codex.json'),
+    gemini: path.join(CHANNELS_DIR, 'gemini.json'),
+    opencode: path.join(CHANNELS_DIR, 'opencode.json')
+  },
+  activeChannelDir: ACTIVE_CHANNELS_DIR,
+  activeChannel: {
+    claude: path.join(ACTIVE_CHANNELS_DIR, 'claude.json'),
+    codex: path.join(ACTIVE_CHANNELS_DIR, 'codex.json'),
+    gemini: path.join(ACTIVE_CHANNELS_DIR, 'gemini.json'),
+    opencode: path.join(ACTIVE_CHANNELS_DIR, 'opencode.json')
+  },
+
+  // 统计与日志快照
+  statistics: {
+    dir: STATS_DIR,
+    summary: path.join(STATS_DIR, 'statistics.json'),
+    dailyStats: DAILY_STATS_DIR,
+    requestLogs: REQUEST_LOGS_DIR,
+    proxyLogs: path.join(STATS_DIR, 'proxy-logs.json'),
+    legacy: {
+      claudeSummary: path.join(LEGACY_STATS_DIR, 'statistics.json'),
+      codexSummary: path.join(LEGACY_STATS_DIR, 'codex-statistics.json'),
+      geminiSummary: path.join(LEGACY_STATS_DIR, 'gemini-statistics.json'),
+      opencodeSummary: path.join(LEGACY_STATS_DIR, 'opencode-statistics.json'),
+      codexDaily: path.join(LEGACY_STATS_DIR, 'codex-daily-stats'),
+      geminiDaily: path.join(LEGACY_STATS_DIR, 'gemini-daily-stats'),
+      opencodeDaily: path.join(LEGACY_STATS_DIR, 'opencode-daily-stats')
+    }
+  },
+
+  // 运行时、缓存、备份
+  sessionCache: path.join(CACHE_DIR, 'session-cache.json'),
+  sessionHasCache: path.join(CACHE_DIR, 'session-has-cache.json'),
+  channelModels: path.join(CACHE_DIR, 'channel-models.json'),
+  envBackups: path.join(BACKUPS_DIR, 'env'),
+  proxyRuntime: {
+    claude: path.join(RUNTIME_DIR, 'claude-proxy.json'),
+    codex: path.join(RUNTIME_DIR, 'codex-proxy.json'),
+    gemini: path.join(RUNTIME_DIR, 'gemini-proxy.json'),
+    opencode: path.join(RUNTIME_DIR, 'opencode-proxy.json')
+  },
+
+  // 请求记录
+  requestSnapshots: {
+    claude: path.join(REQUESTS_DIR, 'claude.jsonl'),
+    codex: path.join(REQUESTS_DIR, 'codex.jsonl'),
+    gemini: path.join(REQUESTS_DIR, 'gemini.jsonl'),
+    opencode: path.join(REQUESTS_DIR, 'opencode.jsonl')
+  },
+  claudeRequestTemplate: path.join(REQUESTS_DIR, 'claude-request-template.json'),
+
+  // 脚本
+  notifyHook: path.join(SCRIPTS_DIR, 'notify-hook.js'),
+
+  // 技能与插件（cc-tool 托管部分）
+  localSkills: {
+    claude: path.join(LOCAL_SKILLS_DIR, 'claude'),
+    codex: path.join(LOCAL_SKILLS_DIR, 'codex'),
+    gemini: path.join(LOCAL_SKILLS_DIR, 'gemini'),
+    opencode: path.join(LOCAL_SKILLS_DIR, 'opencode')
+  },
+  skillRepos: {
+    claude: path.join(REPOS_SKILLS_DIR, 'claude.json'),
+    codex: path.join(REPOS_SKILLS_DIR, 'codex.json'),
+    gemini: path.join(REPOS_SKILLS_DIR, 'gemini.json'),
+    opencode: path.join(REPOS_SKILLS_DIR, 'opencode.json')
+  },
+  skillCaches: {
+    claude: path.join(CACHE_SKILLS_DIR, 'claude.json'),
+    codex: path.join(CACHE_SKILLS_DIR, 'codex.json'),
+    gemini: path.join(CACHE_SKILLS_DIR, 'gemini.json'),
+    opencode: path.join(CACHE_SKILLS_DIR, 'opencode.json')
+  },
+  pluginRepos: {
+    claude: path.join(REPOS_PLUGINS_DIR, 'claude.json'),
+    opencode: path.join(REPOS_PLUGINS_DIR, 'opencode.json')
+  },
+  pluginMarketCache: {
+    claude: path.join(CACHE_PLUGINS_DIR, 'claude-market.json'),
+    opencode: path.join(CACHE_PLUGINS_DIR, 'opencode-market.json')
+  },
+
+  // 原生路径兼容
+  skills: path.join(HOME_DIR, '.claude', 'skills'),
+
+  // 旧版本遗留文件搬迁目标
+  legacy: {
+    dir: LEGACY_DIR,
+    rootConflicts: LEGACY_CONFLICTS_DIR,
+    rootBackups: LEGACY_ROOT_BACKUPS_DIR,
+    importState: LEGACY_IMPORT_STATE_FILE,
+    oauthTokens: path.join(LEGACY_DIR, 'oauth-tokens.json')
+  },
+
+  // RepoScannerBase 的通用路径
+  repoScanner: {
+    reposDir: REPOS_DIR,
+    cacheDir: CACHE_DIR
+  }
+};
+
+const LEGACY_STORAGE_RELOCATIONS = [
+  // 全局配置文件
+  { source: rootEntry('config.json'), target: PATHS.configFile },
+  { source: rootEntry('ui-config.json'), target: PATHS.uiConfig },
+  { source: rootEntry('prompts.json'), target: PATHS.prompts },
+  { source: rootEntry('mcp-servers.json'), target: PATHS.mcpServers },
+  { source: rootEntry('mcp-config.json'), target: PATHS.mcpServers },
+  { source: rootEntry('config-registry.json'), target: PATHS.configRegistry },
+  { source: rootEntry('oauth-credentials.json'), target: PATHS.oauthCredentials },
+  { source: rootEntry('security.json'), target: PATHS.security },
+  { source: rootEntry('workspaces.json'), target: PATHS.workspaces },
+  { source: rootEntry('aliases.json'), target: PATHS.aliases },
+  { source: rootEntry('favorites.json'), target: PATHS.favorites },
+  { source: rootEntry('project-order.json'), target: PATHS.projectOrder },
+  { source: rootEntry('session-order.json'), target: PATHS.sessionOrder },
+  { source: rootEntry('fork-relations.json'), target: PATHS.forkRelations },
+  { source: rootEntry('opencode-project-order.json'), target: PATHS.opencodeProjectOrder },
+  { source: rootEntry('opencode-session-order.json'), target: PATHS.opencodeSessionOrder },
+
+  // 渠道相关
+  { source: rootEntry('channels.json'), target: PATHS.channels.claude },
+  { source: rootEntry('codex-channels.json'), target: PATHS.channels.codex },
+  { source: rootEntry('gemini-channels.json'), target: PATHS.channels.gemini },
+  { source: rootEntry('opencode-channels.json'), target: PATHS.channels.opencode },
+  { source: rootEntry('active-channel.json'), target: PATHS.activeChannel.claude },
+  { source: rootEntry('codex-active-channel.json'), target: PATHS.activeChannel.codex },
+  { source: rootEntry('gemini-active-channel.json'), target: PATHS.activeChannel.gemini },
+  { source: rootEntry('opencode-active-channel.json'), target: PATHS.activeChannel.opencode },
+
+  // 统计与日志
+  { source: rootEntry('statistics.json'), target: PATHS.statistics.summary },
+  { source: rootEntry('daily-stats'), target: PATHS.statistics.dailyStats },
+  { source: rootEntry('request-logs'), target: PATHS.statistics.requestLogs },
+  { source: rootEntry('proxy-logs.json'), target: PATHS.statistics.proxyLogs },
+  { source: rootEntry('codex-statistics.json'), target: PATHS.statistics.legacy.codexSummary },
+  { source: rootEntry('gemini-statistics.json'), target: PATHS.statistics.legacy.geminiSummary },
+  { source: rootEntry('opencode-statistics.json'), target: PATHS.statistics.legacy.opencodeSummary },
+  { source: rootEntry('codex-daily-stats'), target: PATHS.statistics.legacy.codexDaily },
+  { source: rootEntry('gemini-daily-stats'), target: PATHS.statistics.legacy.geminiDaily },
+  { source: rootEntry('opencode-daily-stats'), target: PATHS.statistics.legacy.opencodeDaily },
+
+  // 缓存、运行时、脚本
+  { source: rootEntry('session-cache.json'), target: PATHS.sessionCache },
+  { source: rootEntry('session-has-cache.json'), target: PATHS.sessionHasCache },
+  { source: rootEntry('channel-models.json'), target: PATHS.channelModels },
+  { source: rootEntry('proxy-runtime.json'), target: PATHS.proxyRuntime.claude },
+  { source: rootEntry('claude-proxy-runtime.json'), target: PATHS.proxyRuntime.claude },
+  { source: rootEntry('codex-proxy-runtime.json'), target: PATHS.proxyRuntime.codex },
+  { source: rootEntry('gemini-proxy-runtime.json'), target: PATHS.proxyRuntime.gemini },
+  { source: rootEntry('opencode-proxy-runtime.json'), target: PATHS.proxyRuntime.opencode },
+  { source: rootEntry('notify-hook.js'), target: PATHS.notifyHook },
+  { source: rootEntry('claude-request-template.json'), target: PATHS.claudeRequestTemplate },
+  { source: rootEntry('claude-requests.jsonl'), target: PATHS.requestSnapshots.claude },
+  { source: rootEntry('codex-requests.jsonl'), target: PATHS.requestSnapshots.codex },
+  { source: rootEntry('gemini-requests.jsonl'), target: PATHS.requestSnapshots.gemini },
+  { source: rootEntry('opencode-requests.jsonl'), target: PATHS.requestSnapshots.opencode },
+
+  // 备份
+  { source: rootEntry('env-backups'), target: PATHS.envBackups },
+
+  // 技能托管
+  { source: rootEntry('skills'), target: PATHS.localSkills.claude },
+  { source: rootEntry('codex-skills'), target: PATHS.localSkills.codex },
+  { source: rootEntry('gemini-skills'), target: PATHS.localSkills.gemini },
+  { source: rootEntry('opencode-skills'), target: PATHS.localSkills.opencode },
+  { source: rootEntry('skill-repos.json'), target: PATHS.skillRepos.claude },
+  { source: rootEntry('codex-skill-repos.json'), target: PATHS.skillRepos.codex },
+  { source: rootEntry('gemini-skill-repos.json'), target: PATHS.skillRepos.gemini },
+  { source: rootEntry('opencode-skill-repos.json'), target: PATHS.skillRepos.opencode },
+  { source: rootEntry('skills-cache.json'), target: PATHS.skillCaches.claude },
+  { source: rootEntry('codex-skills-cache.json'), target: PATHS.skillCaches.codex },
+  { source: rootEntry('gemini-skills-cache.json'), target: PATHS.skillCaches.gemini },
+  { source: rootEntry('opencode-skills-cache.json'), target: PATHS.skillCaches.opencode },
+
+  // 插件仓库缓存
+  { source: rootEntry('plugin-repos.json'), target: PATHS.pluginRepos.claude },
+  { source: rootEntry('opencode-plugin-repos.json'), target: PATHS.pluginRepos.opencode },
+  { source: rootEntry('plugins-market-cache.json'), target: PATHS.pluginMarketCache.claude },
+  { source: rootEntry('opencode-plugins-market-cache.json'), target: PATHS.pluginMarketCache.opencode },
+
+  // 已废弃但需要保留的数据
+  { source: rootEntry('oauth-tokens.json'), target: PATHS.legacy.oauthTokens }
+];
+
+function cleanupLegacyRootBackups() {
+  if (!fs.existsSync(CC_TOOL_BASE_DIR)) {
+    return;
+  }
+
+  const rootEntries = fs.readdirSync(CC_TOOL_BASE_DIR);
+  rootEntries.forEach((entry) => {
+    if (!/\.bak-\d/.test(entry)) {
+      return;
+    }
+
+    const entryPath = path.join(CC_TOOL_BASE_DIR, entry);
+    try {
+      const stat = fs.statSync(entryPath);
+      if (!stat.isFile()) {
+        return;
+      }
+      const archivedPath = archiveLegacyEntry(entryPath, LEGACY_ROOT_BACKUPS_DIR);
+      if (archivedPath) {
+        console.warn(`[paths] 已迁移旧备份文件: ${entryPath} -> ${archivedPath}`);
+      }
+    } catch (error) {
+      console.warn(`[paths] 迁移旧备份文件失败: ${entryPath}`, error.message);
+    }
+  });
+}
+
+function cleanupEmptyLegacyRoots() {
+  const legacyRoots = new Set(
+    LEGACY_STORAGE_RELOCATIONS
+      .map(({ source }) => source)
+      .filter((sourcePath) => path.dirname(sourcePath) === CC_TOOL_BASE_DIR)
+  );
+
+  legacyRoots.forEach((entryPath) => {
+    tryRemoveEmptyDir(entryPath);
+  });
+}
+
+function loadLegacyImportState() {
+  const state = readJsonFileSafe(LEGACY_IMPORT_STATE_FILE);
+  if (!state.ok || !isPlainObject(state.value)) {
+    return { importedSources: {} };
+  }
+
+  return {
+    importedSources: isPlainObject(state.value.importedSources) ? state.value.importedSources : {}
+  };
+}
+
+function saveLegacyImportState(state) {
+  writeJsonFile(LEGACY_IMPORT_STATE_FILE, {
+    importedSources: isPlainObject(state?.importedSources) ? state.importedSources : {}
+  });
+}
+
+function importLegacyBaseDirsOnce() {
+  const importState = loadLegacyImportState();
+  let stateChanged = false;
+
+  LEGACY_BASE_DIRS.forEach((legacyDir) => {
+    if (!fs.existsSync(legacyDir)) {
+      return;
+    }
+
+    if (importState.importedSources[legacyDir]?.importedAt) {
+      return;
+    }
+
+    try {
+      mergeDirectory(legacyDir, CC_TOOL_BASE_DIR);
+      importState.importedSources[legacyDir] = {
+        importedAt: new Date().toISOString()
+      };
+      stateChanged = true;
+    } catch (error) {
+      console.warn(`[paths] 迁移目录失败: ${legacyDir} -> ${CC_TOOL_BASE_DIR}`, error.message);
+    }
+  });
+
+  if (stateChanged) {
+    saveLegacyImportState(importState);
+  }
+}
+
 function ensureStorageDirMigrated() {
   if (migrationChecked) {
     return CC_TOOL_BASE_DIR;
   }
   migrationChecked = true;
 
-  if (!fs.existsSync(CC_TOOL_BASE_DIR)) {
-    fs.mkdirSync(CC_TOOL_BASE_DIR, { recursive: true });
-  }
+  ensureDir(CC_TOOL_BASE_DIR);
 
-  LEGACY_BASE_DIRS.forEach((legacyDir) => {
-    if (!fs.existsSync(legacyDir)) return;
+  importLegacyBaseDirsOnce();
+
+  LEGACY_STORAGE_RELOCATIONS.forEach(({ source, target }) => {
     try {
-      mergeDirectory(legacyDir, CC_TOOL_BASE_DIR);
+      relocateEntry(source, target);
     } catch (error) {
-      console.warn(`[paths] 迁移目录失败: ${legacyDir} -> ${CC_TOOL_BASE_DIR}`, error.message);
+      console.warn(`[paths] 迁移存储项失败: ${source} -> ${target}`, error.message);
     }
   });
+
+  cleanupLegacyRootBackups();
+  cleanupEmptyLegacyRoots();
 
   return CC_TOOL_BASE_DIR;
 }
@@ -128,93 +756,6 @@ function getOpenCodeConfigDir() {
   return preferredDir;
 }
 
-// 路径配置
-const PATHS = {
-  // 基础目录
-  base: CC_TOOL_BASE_DIR,
-
-  // 项目目录（存储项目配置和会话）
-  projects: path.join(CC_TOOL_BASE_DIR, 'projects'),
-
-  // 配置文件目录
-  config: path.join(CC_TOOL_BASE_DIR, 'config'),
-  configFile: path.join(CC_TOOL_BASE_DIR, 'config.json'),
-
-  // 日志目录
-  logs: path.join(CC_TOOL_BASE_DIR, 'logs'),
-
-  // 别名存储
-  aliases: path.join(CC_TOOL_BASE_DIR, 'aliases.json'),
-
-  // 收藏夹存储
-  favorites: path.join(CC_TOOL_BASE_DIR, 'favorites.json'),
-
-  // 渠道配置
-  channels: {
-    claude: path.join(CC_TOOL_BASE_DIR, 'channels.json'),
-    codex: path.join(CC_TOOL_BASE_DIR, 'codex-channels.json'),
-    gemini: path.join(CC_TOOL_BASE_DIR, 'gemini-channels.json'),
-    opencode: path.join(CC_TOOL_BASE_DIR, 'opencode-channels.json')
-  },
-
-  // 激活渠道标记
-  activeChannel: {
-    claude: path.join(CC_TOOL_BASE_DIR, 'active-channel.json'),
-    codex: path.join(CC_TOOL_BASE_DIR, 'codex-active-channel.json'),
-    gemini: path.join(CC_TOOL_BASE_DIR, 'gemini-active-channel.json'),
-    opencode: path.join(CC_TOOL_BASE_DIR, 'opencode-active-channel.json')
-  },
-
-  // 统计数据
-  statistics: {
-    claude: path.join(CC_TOOL_BASE_DIR, 'statistics.json'),
-    codex: path.join(CC_TOOL_BASE_DIR, 'codex-statistics.json'),
-    gemini: path.join(CC_TOOL_BASE_DIR, 'gemini-statistics.json'),
-    opencode: path.join(CC_TOOL_BASE_DIR, 'opencode-statistics.json'),
-    dailyStats: {
-      claude: path.join(CC_TOOL_BASE_DIR, 'daily-stats'),
-      codex: path.join(CC_TOOL_BASE_DIR, 'codex-daily-stats'),
-      gemini: path.join(CC_TOOL_BASE_DIR, 'gemini-daily-stats'),
-      opencode: path.join(CC_TOOL_BASE_DIR, 'opencode-daily-stats')
-    }
-  },
-
-  // 会话缓存
-  sessionCache: path.join(CC_TOOL_BASE_DIR, 'session-cache.json'),
-
-  // 项目顺序
-  projectOrder: path.join(CC_TOOL_BASE_DIR, 'project-order.json'),
-
-  // 环境备份
-  envBackups: path.join(CC_TOOL_BASE_DIR, 'env-backups'),
-
-  // UI 配置
-  uiConfig: path.join(CC_TOOL_BASE_DIR, 'ui-config.json'),
-
-  // OAuth 凭证注册表
-  oauthCredentials: path.join(CC_TOOL_BASE_DIR, 'oauth-credentials.json'),
-
-  // 飞书通知脚本
-  notifyHook: path.join(CC_TOOL_BASE_DIR, 'notify-hook.js'),
-
-  // Skills 安装目录（注意：这个仍使用 Claude 原生路径）
-  skills: path.join(HOME_DIR, '.claude', 'skills'),
-
-  // MCP 配置（注意：这个仍使用 Claude 原生路径）
-  mcpConfig: path.join(CC_TOOL_BASE_DIR, 'mcp-config.json'),
-
-  // Prompts
-  prompts: path.join(CC_TOOL_BASE_DIR, 'prompts.json'),
-
-  // 代理运行时状态
-  proxyRuntime: {
-    claude: path.join(CC_TOOL_BASE_DIR, 'proxy-runtime.json'),
-    codex: path.join(CC_TOOL_BASE_DIR, 'codex-proxy-runtime.json'),
-    gemini: path.join(CC_TOOL_BASE_DIR, 'gemini-proxy-runtime.json'),
-    opencode: path.join(CC_TOOL_BASE_DIR, 'opencode-proxy-runtime.json')
-  }
-};
-
 // 工具特定的原生配置路径（不改变）
 const NATIVE_PATHS = {
   // Claude Code 原生配置
@@ -261,6 +802,8 @@ const NATIVE_PATHS = {
   }
 };
 
+ensureStorageDirMigrated();
+
 module.exports = {
   PATHS,
   NATIVE_PATHS,
@@ -269,6 +812,8 @@ module.exports = {
   CC_TOOL_BASE_DIR,
   LEGACY_BASE_DIRS,
   ensureStorageDirMigrated,
+  getRepoScannerReposPath,
+  getRepoScannerCachePath,
   getClaudeConfigDir,
   getCodexDir,
   getGeminiDir,

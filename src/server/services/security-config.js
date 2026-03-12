@@ -3,8 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { PATHS } = require('../../config/paths');
 
-const SECURITY_DIR = PATHS.base;
-const SECURITY_FILE = path.join(SECURITY_DIR, 'security.json');
+const SECURITY_FILE = PATHS.security;
 
 const DEFAULT_SECURITY_CONFIG = {
   passwordHash: '',
@@ -17,8 +16,9 @@ const PBKDF2_KEYLEN = 64;
 const PBKDF2_DIGEST = 'sha512';
 
 function ensureSecurityDir() {
-  if (!fs.existsSync(SECURITY_DIR)) {
-    fs.mkdirSync(SECURITY_DIR, { recursive: true });
+  const dir = path.dirname(SECURITY_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 

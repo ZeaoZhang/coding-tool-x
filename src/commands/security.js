@@ -1,9 +1,8 @@
 const chalk = require('chalk');
 const fs = require('fs');
-const path = require('path');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
 
-const SECURITY_FILE = path.join(PATHS.base, 'security.json');
+const SECURITY_FILE = PATHS.security;
 
 function showSecurityHelp() {
   console.log(chalk.yellow('\n🔐 安全设置命令:'));

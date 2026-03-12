@@ -11,7 +11,7 @@ const https = require('https');
 const http = require('http');
 const { createWriteStream } = require('fs');
 const AdmZip = require('adm-zip');
-const { HOME_DIR } = require('../../config/paths');
+const { PATHS, getRepoScannerReposPath, getRepoScannerCachePath } = require('../../config/paths');
 
 // 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
@@ -70,9 +70,9 @@ class RepoScannerBase {
     this.fileExtension = options.fileExtension || '.md';
     this.defaultRepos = options.defaultRepos || [];
 
-    this.configDir = path.join(HOME_DIR, '.cc-tool');
-    this.reposConfigPath = path.join(this.configDir, `${this.type}-repos.json`);
-    this.cachePath = path.join(this.configDir, `${this.type}-cache.json`);
+    this.configDir = PATHS.config;
+    this.reposConfigPath = getRepoScannerReposPath(this.type);
+    this.cachePath = getRepoScannerCachePath(this.type);
 
     // 内存缓存
     this.itemsCache = null;
@@ -88,6 +88,14 @@ class RepoScannerBase {
     }
     if (!fs.existsSync(this.configDir)) {
       fs.mkdirSync(this.configDir, { recursive: true });
+    }
+    const reposDir = path.dirname(this.reposConfigPath);
+    if (!fs.existsSync(reposDir)) {
+      fs.mkdirSync(reposDir, { recursive: true });
+    }
+    const cacheDir = path.dirname(this.cachePath);
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
     }
   }
 

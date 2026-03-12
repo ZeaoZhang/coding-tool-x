@@ -31,9 +31,7 @@
           <n-tag v-else type="default" size="small" :bordered="false">
             未安装
           </n-tag>
-          <span class="meta-source">
-            来源: {{ detail.source === 'local' ? '本地' : `${detail.repoOwner}/${detail.repoName}` }}
-          </span>
+          <span class="meta-source">来源: {{ formatSkillSourceText(detail) }}</span>
         </div>
         <div v-if="detail.description" class="meta-desc">
           {{ detail.description }}
@@ -63,7 +61,7 @@
       <div class="modal-footer">
         <n-button @click="handleClose">关闭</n-button>
         <n-button
-          v-if="detail && !detail.installed && skill?.repoOwner"
+          v-if="detail && !detail.installed && canInstallSkill(detail)"
           type="primary"
           :loading="installing"
           @click="handleInstall"
@@ -92,6 +90,7 @@ import { getSkillDetail, installSkill, uninstallSkill } from '../api/skills'
 import message from '../utils/message'
 import { marked } from 'marked'
 import { copyTextToClipboard } from '../utils/clipboard'
+import { canInstallSkill, formatSkillSourceText } from '../utils/skill-source'
 
 const props = defineProps({
   visible: Boolean,
@@ -153,7 +152,17 @@ async function loadDetail() {
       props.skill.fullDirectory || null
     )
     if (result.success) {
-      detail.value = result
+      detail.value = {
+        ...props.skill,
+        ...result,
+        source: result.source || props.skill?.source,
+        repoProvider: result.repoProvider || props.skill?.repoProvider,
+        repoOwner: result.repoOwner || props.skill?.repoOwner,
+        repoName: result.repoName || props.skill?.repoName,
+        repoProjectPath: result.repoProjectPath || props.skill?.repoProjectPath,
+        repoLocalPath: result.repoLocalPath || props.skill?.repoLocalPath,
+        repoUrl: result.repoUrl || props.skill?.repoUrl
+      }
     } else {
       error.value = result.message || '加载失败'
     }

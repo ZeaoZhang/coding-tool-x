@@ -9,6 +9,7 @@ const claudeSettingsManager = require('./settings-manager');
 const codexSettingsManager = require('./codex-settings-manager');
 const geminiSettingsManager = require('./gemini-settings-manager');
 const opencodeSettingsManager = require('./opencode-settings-manager');
+const { syncCodexUserEnvironment } = require('./codex-env-manager');
 const nativeKeychain = require('./native-keychain');
 const { maskToken, decodeJwtPayload, removeFileIfExists, sha256 } = require('./oauth-utils');
 
@@ -312,7 +313,7 @@ function clearCodexOAuth() {
 }
 
 function removeCodexChannelEnvVars() {
-  // auth.json 由 clearCodexChannelConfig 负责清理，Codex 优先读取 auth.json，无需操作 shell 配置文件
+  syncCodexUserEnvironment({}, { replace: true });
 }
 
 function clearCodexChannelConfig() {

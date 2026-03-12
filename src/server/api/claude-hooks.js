@@ -5,21 +5,26 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const http = require('http');
+const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir, normalizeWindowsHomePath } = require('../../utils/home-dir');
+const { createSameOriginGuard } = require('../services/network-access');
 
 // 检测操作系统
 const platform = os.platform(); // 'darwin' | 'win32' | 'linux'
+router.use(createSameOriginGuard({
+  message: '禁止跨站访问 Claude Hooks 配置接口'
+}));
 
 const HOME_DIR = resolvePreferredHomeDir(platform, process.env, os.homedir());
 
 // Claude settings.json 路径
-const CLAUDE_SETTINGS_PATH = path.join(HOME_DIR, '.claude', 'settings.json');
+const CLAUDE_SETTINGS_PATH = NATIVE_PATHS.claude.settings;
 
 // UI 配置路径（记录用户是否主动关闭过、飞书配置等）
-const UI_CONFIG_PATH = path.join(HOME_DIR, '.cc-tool', 'ui-config.json');
+const UI_CONFIG_PATH = PATHS.uiConfig;
 
 // 通知脚本路径（用于飞书通知）
-const NOTIFY_SCRIPT_PATH = path.join(HOME_DIR, '.cc-tool', 'notify-hook.js');
+const NOTIFY_SCRIPT_PATH = PATHS.notifyHook;
 
 // 读取 Claude settings.json
 function readClaudeSettings() {
@@ -222,14 +227,14 @@ function shouldRepairStopHook(settings, expectedScriptPath = NOTIFY_SCRIPT_PATH,
     return false;
   }
 
-  const markerType = parseNotifyTypeMarker(command);
-  if (!markerType) {
-    return false;
-  }
-
   const normalizedCommand = normalizePathForCompare(command);
   const normalizedExpected = normalizePathForCompare(expectedScriptPath);
   if (!normalizedCommand.includes(normalizedExpected)) {
+    return true;
+  }
+
+  const markerType = parseNotifyTypeMarker(command);
+  if (!markerType) {
     return true;
   }
 

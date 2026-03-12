@@ -43,17 +43,17 @@ function normalizeChannelName(value) {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = PATHS.base;
-  if (!fs.existsSync(ccToolDir)) {
-    fs.mkdirSync(ccToolDir, { recursive: true });
+  const channelsDir = path.dirname(PATHS.channels.opencode);
+  if (!fs.existsSync(channelsDir)) {
+    fs.mkdirSync(channelsDir, { recursive: true });
   }
   return PATHS.channels.opencode;
 }
 
 function getCodexChannelsFilePath() {
-  const ccToolDir = PATHS.base;
-  if (!fs.existsSync(ccToolDir)) {
-    fs.mkdirSync(ccToolDir, { recursive: true });
+  const channelsDir = path.dirname(PATHS.channels.codex);
+  if (!fs.existsSync(channelsDir)) {
+    fs.mkdirSync(channelsDir, { recursive: true });
   }
   return PATHS.channels.codex;
 }
