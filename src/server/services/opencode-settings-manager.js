@@ -169,6 +169,11 @@ function isManagedProxyProvider(provider) {
   return apiKey === PROXY_API_KEY && isLocalProxyBaseUrl(baseUrl);
 }
 
+function isManagedChannelProvider(provider) {
+  if (!provider || typeof provider !== 'object') return false;
+  return provider?.[MANAGED_PROVIDER_MARKER] === true;
+}
+
 function isManagedProxyConfig(config) {
   if (!config || typeof config !== 'object') return false;
   // Check legacy single-provider format
@@ -242,6 +247,92 @@ function resolveProxyBaseUrl(config) {
     }
   }
   return '';
+}
+
+function collectChannelModelCandidates(channel = {}) {
+  const seen = new Set();
+  const models = [];
+  const add = (value) => {
+    if (typeof value !== 'string') return;
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    models.push(trimmed);
+  };
+
+  add(channel.model);
+  add(channel.speedTestModel);
+
+  if (Array.isArray(channel.allowedModels)) {
+    channel.allowedModels.forEach(add);
+  }
+
+  if (channel.modelConfig && typeof channel.modelConfig === 'object') {
+    add(channel.modelConfig.model);
+    add(channel.modelConfig.opusModel);
+    add(channel.modelConfig.sonnetModel);
+    add(channel.modelConfig.haikuModel);
+  }
+
+  if (Array.isArray(channel.modelRedirects)) {
+    channel.modelRedirects.forEach((rule) => {
+      add(rule?.from);
+      add(rule?.to);
+    });
+  }
+
+  return models;
+}
+
+function clearManagedProviders(config) {
+  const removedProviderKeys = [];
+
+  if (!config?.provider || typeof config.provider !== 'object') {
+    return removedProviderKeys;
+  }
+
+  if (isLegacyProxyProvider(config.provider[LEGACY_PROVIDER_ID])) {
+    delete config.provider[LEGACY_PROVIDER_ID];
+    removedProviderKeys.push(LEGACY_PROVIDER_ID);
+  }
+
+  if (isManagedProxyProvider(config.provider[PROXY_PROVIDER_ID])) {
+    delete config.provider[PROXY_PROVIDER_ID];
+    removedProviderKeys.push(PROXY_PROVIDER_ID);
+  }
+
+  Object.keys(config.provider).forEach((key) => {
+    const provider = config.provider[key];
+    if (isManagedProxyProvider(provider) || isManagedChannelProvider(provider)) {
+      delete config.provider[key];
+      removedProviderKeys.push(key);
+    }
+  });
+
+  if (Object.keys(config.provider).length === 0) {
+    delete config.provider;
+  }
+
+  return removedProviderKeys;
+}
+
+function clearManagedModelRef(config, removedProviderKeys = []) {
+  const modelRef = String(config?.model || '').trim();
+  if (!modelRef) {
+    return;
+  }
+
+  if (isOldManagedModelRef(modelRef)) {
+    delete config.model;
+    return;
+  }
+
+  const providerId = modelRef.includes('/') ? modelRef.split('/')[0] : '';
+  if (providerId && removedProviderKeys.includes(providerId)) {
+    delete config.model;
+  }
 }
 
 function backupConfig(filePath) {
@@ -324,23 +415,13 @@ function setProxyConfig(proxyPort, options = {}) {
   if (!next.provider || typeof next.provider !== 'object') {
     next.provider = {};
   }
-  // 清理历史 openai 代理注入，避免 /models 出现与代理无关的 openai 模型列表。
-  if (isLegacyProxyProvider(next.provider[LEGACY_PROVIDER_ID])) {
-    delete next.provider[LEGACY_PROVIDER_ID];
-  }
-  if (Object.prototype.hasOwnProperty.call(next.provider[LEGACY_PROVIDER_ID] || {}, 'model')) {
-    delete next.provider[LEGACY_PROVIDER_ID].model;
-  }
+  const removedProviderKeys = clearManagedProviders(next);
+  clearManagedModelRef(next, removedProviderKeys);
 
-  // Remove old single ctx-proxy provider (superseded by per-channel providers)
-  delete next.provider[PROXY_PROVIDER_ID];
-
-  // Remove any previously managed per-channel providers that are no longer in the current list
-  Object.keys(next.provider).forEach((key) => {
-    if (isManagedProxyProvider(next.provider[key])) {
-      delete next.provider[key];
-    }
-  });
+  // clearManagedProviders 可能在清空所有 provider 后 delete next.provider，重新确保存在
+  if (!next.provider || typeof next.provider !== 'object') {
+    next.provider = {};
+  }
 
   const channels = Array.isArray(options.channels) ? options.channels : null;
 
@@ -427,6 +508,73 @@ function setProxyConfig(proxyPort, options = {}) {
   return { success: true, port: proxyPort, path: filePath };
 }
 
+function setChannelConfig(channel = {}) {
+  const filePath = selectConfigPath();
+  backupConfig(filePath);
+
+  const current = readConfig(filePath);
+  const next = (current && typeof current === 'object') ? current : {};
+
+  if (!next.provider || typeof next.provider !== 'object') {
+    next.provider = {};
+  }
+
+  const removedProviderKeys = clearManagedProviders(next);
+  clearManagedModelRef(next, removedProviderKeys);
+
+  const baseProviderKey = sanitizeProviderKey(channel.providerKey || channel.name || 'ctx-channel');
+  let providerKey = baseProviderKey;
+  let suffix = 2;
+  while (next.provider[providerKey] && !isManagedChannelProvider(next.provider[providerKey])) {
+    providerKey = `${baseProviderKey}-${suffix}`;
+    suffix += 1;
+  }
+
+  const modelCandidates = collectChannelModelCandidates(channel);
+  const fallbackModel = String(channel.model || channel.speedTestModel || modelCandidates[0] || '').trim();
+  const modelsMap = buildModelsMap(modelCandidates, fallbackModel);
+  const modelIds = Object.keys(modelsMap);
+
+  if (modelIds.length === 0) {
+    throw new Error('OpenCode 渠道缺少可写入的模型，请至少配置默认模型或可用模型。');
+  }
+
+  next.provider[providerKey] = {
+    [MANAGED_PROVIDER_MARKER]: true,
+    npm: '@ai-sdk/openai-compatible',
+    name: channel.name || providerKey,
+    options: {
+      baseURL: String(channel.baseUrl || '').trim(),
+      apiKey: String(channel.apiKey || '').trim()
+    },
+    models: modelsMap
+  };
+
+  const topModel = normalizeOpenCodeModel(fallbackModel || modelIds[0], providerKey);
+  if (topModel) {
+    next.model = topModel;
+  } else {
+    clearManagedModelRef(next, [providerKey]);
+  }
+
+  writeConfig(filePath, next);
+  return { success: true, path: filePath, providerKey, model: next.model || null };
+}
+
+function clearManagedChannelConfig() {
+  const filePath = selectConfigPath();
+  if (!fs.existsSync(filePath)) {
+    return { success: true, path: filePath };
+  }
+
+  const current = readConfig(filePath);
+  const next = (current && typeof current === 'object') ? current : {};
+  const removedProviderKeys = clearManagedProviders(next);
+  clearManagedModelRef(next, removedProviderKeys);
+  writeConfig(filePath, next);
+  return { success: true, path: filePath };
+}
+
 function isOldManagedModelRef(modelRef) {
   const s = String(modelRef || '');
   return s.startsWith(`${PROXY_PROVIDER_ID}/`) || s.startsWith(`${LEGACY_PROVIDER_ID}/`);
@@ -485,7 +633,12 @@ function getCurrentProxyPort() {
 module.exports = {
   configExists,
   hasBackup,
+  readConfig,
+  writeConfig,
+  selectConfigPath,
   setProxyConfig,
+  setChannelConfig,
+  clearManagedChannelConfig,
   restoreSettings,
   deleteBackup,
   isProxyConfig,

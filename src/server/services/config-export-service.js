@@ -16,7 +16,7 @@ const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
-const CONFIG_VERSION = '1.3.0';
+const CONFIG_VERSION = '1.4.0';
 const SKILL_FILE_ENCODING = 'base64';
 const SKILL_IGNORE_DIRS = new Set(['.git']);
 const SKILL_IGNORE_FILES = new Set(['.DS_Store']);
@@ -206,6 +206,7 @@ function buildExportReadme(exportData) {
 - Agents / Skills / Commands
 - 插件 (Plugins)
 - MCP 服务器配置
+- OAuth 凭证管理池
 - 各平台原生配置（Claude / Codex / Gemini / OpenCode）
 - UI 配置（主题、面板显示、排序等）
 - Prompts 预设
@@ -857,9 +858,9 @@ function exportAllConfigs() {
     // 获取 Plugins 配置
     const plugins = exportPluginsSnapshot();
     const nativeConfigs = exportNativeConfigs();
+    const oauthCredentials = readJsonFileSafe(PATHS.oauthCredentials);
 
     // 读取 Markdown 配置文件
-    const { PATHS } = require('../../config/paths');
     const markdownFiles = {};
     const mdFileNames = ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md'];
 
@@ -914,6 +915,7 @@ function exportAllConfigs() {
         security: security,
         appConfig: appConfig,
         nativeConfigs,
+        oauthCredentials,
         claudeHooks: claudeHooks
       }
     };
@@ -979,6 +981,7 @@ async function importConfigs(importData, options = {}) {
     security: { success: 0, failed: 0, skipped: 0 },
     appConfig: { success: 0, failed: 0, skipped: 0 },
     nativeConfigs: { success: 0, failed: 0, skipped: 0 },
+    oauthCredentials: { success: 0, failed: 0, skipped: 0 },
     claudeHooks: { success: 0, failed: 0, skipped: 0 }
   };
 
@@ -1007,6 +1010,7 @@ async function importConfigs(importData, options = {}) {
       security = null,
       appConfig = null,
       nativeConfigs = {},
+      oauthCredentials = null,
       claudeHooks = null
     } = importData.data;
 
@@ -1550,6 +1554,22 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
+    if (oauthCredentials && typeof oauthCredentials === 'object') {
+      try {
+        const status = writeJsonFileAbsolute(PATHS.oauthCredentials, oauthCredentials, overwrite, { mode: 0o600 });
+        if (status === 'success') {
+          results.oauthCredentials.success++;
+        } else if (status === 'skipped') {
+          results.oauthCredentials.skipped++;
+        } else {
+          results.oauthCredentials.failed++;
+        }
+      } catch (err) {
+        console.error('[ConfigImport] 导入 OAuth 凭证失败:', err);
+        results.oauthCredentials.failed++;
+      }
+    }
+
     // 导入 Claude Hooks 配置
     if (claudeHooks && typeof claudeHooks === 'object') {
       let didWrite = false;
@@ -1642,6 +1662,7 @@ function generateImportSummary(results) {
     { key: 'security', label: '安全配置' },
     { key: 'appConfig', label: '高级配置' },
     { key: 'nativeConfigs', label: '原生配置' },
+    { key: 'oauthCredentials', label: 'OAuth凭证' },
     { key: 'claudeHooks', label: 'Claude Hooks' }
   ];
 

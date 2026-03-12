@@ -109,6 +109,9 @@ class PluginsService {
     this.ccToolConfigDir = path.join(HOME_DIR, '.cc-tool');
     this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
     this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
+    const prefix = this.platform === 'opencode' ? 'opencode-' : '';
+    this.marketCachePath = path.join(this.ccToolConfigDir, `${prefix}plugins-market-cache.json`);
+    this._marketCache = null;
   }
 
   _ensureDir(dirPath) {
@@ -1153,7 +1156,20 @@ class PluginsService {
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
    */
-  async getMarketPlugins() {
+  async getMarketPlugins(forceRefresh = false) {
+    if (!forceRefresh) {
+      if (this._marketCache) return this._marketCache;
+      try {
+        if (fs.existsSync(this.marketCachePath)) {
+          const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
+          if (Array.isArray(data.plugins)) {
+            this._marketCache = data.plugins;
+            return this._marketCache;
+          }
+        }
+      } catch (err) { /* ignore */ }
+    }
+
     const repos = this.getRepos().filter(r => r.enabled);
     const marketPlugins = [];
 
@@ -1259,6 +1275,11 @@ class PluginsService {
     marketPlugins.forEach(plugin => {
       plugin.isInstalled = installedNames.has(plugin.name);
     });
+
+    this._marketCache = marketPlugins;
+    try {
+      fs.writeFileSync(this.marketCachePath, JSON.stringify({ plugins: marketPlugins }), 'utf-8');
+    } catch (err) { /* ignore */ }
 
     return marketPlugins;
   }

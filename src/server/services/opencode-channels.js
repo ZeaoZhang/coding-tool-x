@@ -2,6 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { PATHS } = require('../../config/paths');
+const { clearNativeOAuth } = require('./native-oauth-adapters');
+const { setChannelConfig } = require('./opencode-settings-manager');
 
 /**
  * OpenCode 渠道管理服务
@@ -189,14 +191,6 @@ function updateChannel(channelId, updates) {
     console.log(`[OpenCode Single-channel mode] Enabled "${merged.name}", disabled all others`);
   }
 
-  // Prevent disabling last enabled channel when proxy is OFF
-  if (!isProxyRunning && !merged.enabled && oldChannel.enabled) {
-    const enabledCount = data.channels.filter(ch => ch.enabled).length;
-    if (enabledCount === 0) {
-      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
-    }
-  }
-
   saveChannels(data);
   return data.channels[index];
 }
@@ -258,6 +252,9 @@ function applyChannelToSettings(channelId) {
     ch.enabled = ch.id === channelId;
   });
   saveChannels(data);
+
+  clearNativeOAuth('opencode');
+  setChannelConfig(channel);
 
   return channel;
 }
@@ -371,6 +368,12 @@ async function getEffectiveApiKey(channel) {
   return candidates[0] || null;
 }
 
+function disableAllChannels() {
+  const data = loadChannels();
+  data.channels.forEach(ch => { ch.enabled = false; });
+  saveChannels(data);
+}
+
 module.exports = {
   getChannels,
   createChannel,
@@ -380,5 +383,6 @@ module.exports = {
   saveChannelOrder,
   applyChannelToSettings,
   getEffectiveApiKey,
-  getEffectiveApiKeyCandidates
+  getEffectiveApiKeyCandidates,
+  disableAllChannels
 };

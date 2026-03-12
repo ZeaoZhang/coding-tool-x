@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { isProxyConfig } = require('./settings-manager');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const { clearNativeOAuth } = require('./native-oauth-adapters');
 
 function getChannelsFilePath() {
   const dir = PATHS.base;
@@ -165,11 +166,13 @@ function getCurrentSettings() {
       return null;
     }
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const nativeOAuth = require('./native-oauth-adapters').readNativeOAuth('claude');
 
     let baseUrl = settings.env?.ANTHROPIC_BASE_URL || '';
-    let apiKey = settings.env?.ANTHROPIC_API_KEY ||
-                 settings.env?.ANTHROPIC_AUTH_TOKEN ||
-                 '';
+    let apiKey = settings.env?.ANTHROPIC_API_KEY || '';
+    if (!apiKey && !nativeOAuth) {
+      apiKey = settings.env?.ANTHROPIC_AUTH_TOKEN || '';
+    }
 
     if (!apiKey && settings.apiKeyHelper) {
       apiKey = extractApiKeyFromHelper(settings.apiKeyHelper);
@@ -288,14 +291,6 @@ function updateChannel(id, updates) {
     console.log(`[Single-channel mode] Enabled "${nextChannel.name}", disabled all others`);
   }
 
-  // Prevent disabling last enabled channel when proxy is OFF
-  if (!isProxyRunning && !nextChannel.enabled && oldChannel.enabled) {
-    const enabledCount = data.channels.filter(ch => ch.enabled).length;
-    if (enabledCount === 0) {
-      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
-    }
-  }
-
   saveChannels(data);
 
   // Sync settings.json only when proxy is OFF.
@@ -341,6 +336,7 @@ function applyChannelToSettings(id) {
 }
 
 function updateClaudeSettingsWithModelConfig(channel) {
+  clearNativeOAuth('claude');
   const settingsPath = getClaudeSettingsPath();
 
   let settings = {};
@@ -354,17 +350,10 @@ function updateClaudeSettingsWithModelConfig(channel) {
 
   const { baseUrl, apiKey, modelConfig, presetId, proxyUrl } = channel;
 
-  const useAuthToken = settings.env.ANTHROPIC_AUTH_TOKEN !== undefined;
-  const useApiKey = settings.env.ANTHROPIC_API_KEY !== undefined;
-
   settings.env.ANTHROPIC_BASE_URL = baseUrl;
-
-  if (useAuthToken || (!useAuthToken && !useApiKey)) {
-    settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
-    delete settings.env.ANTHROPIC_API_KEY;
-  } else {
-    settings.env.ANTHROPIC_API_KEY = apiKey;
-  }
+  settings.env.ANTHROPIC_API_KEY = apiKey;
+  delete settings.env.ANTHROPIC_AUTH_TOKEN;
+  delete settings.env.CLAUDE_CODE_OAUTH_TOKEN;
 
   if (presetId && presetId !== 'official' && modelConfig) {
     if (modelConfig.model) {
@@ -433,6 +422,12 @@ function getEffectiveApiKey(channel) {
   return channel.apiKey || null;
 }
 
+function disableAllChannels() {
+  const data = loadChannels();
+  data.channels.forEach(ch => { ch.enabled = false; });
+  saveChannels(data);
+}
+
 module.exports = {
   getAllChannels,
   getCurrentChannel,
@@ -444,5 +439,6 @@ module.exports = {
   getBestChannelForRestore,
   updateClaudeSettings,
   updateClaudeSettingsWithModelConfig,
-  getEffectiveApiKey
+  getEffectiveApiKey,
+  disableAllChannels
 };

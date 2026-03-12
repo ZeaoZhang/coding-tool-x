@@ -1,5 +1,5 @@
 <template>
-  <div class="skill-card" :class="{ installed: skill.installed, managed: !!registryInfo }" @click="$emit('click', skill)">
+  <div class="skill-card" :class="{ installed: skill.installed }" @click="$emit('click', skill)">
     <div class="card-header">
       <div class="card-title">
         <span class="name">{{ skill.name }}</span>
@@ -32,94 +32,27 @@
         <span class="meta-item">{{ skill.directory }}</span>
         <a v-if="skill.readmeUrl" class="meta-link" :href="skill.readmeUrl" target="_blank" @click.stop>GitHub</a>
       </div>
-      <div class="managed-actions" v-if="registryInfo">
-        <n-tooltip trigger="hover">
-          <template #trigger>
-            <n-switch
-              :value="registryInfo.enabled"
-              size="small"
-              :loading="toggling"
-              @update:value="$emit('toggle-enabled', skill, $event)"
-              @click.stop
-            />
-          </template>
-          {{ registryInfo.enabled ? '已启用' : '已禁用' }}
-        </n-tooltip>
-        <div class="platform-icons">
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="platform-icon"
-                :class="{ active: registryInfo.platforms?.claude }"
-                @click.stop="$emit('toggle-platform', skill, 'claude', !registryInfo.platforms?.claude)"
-              >
-                <n-icon size="14"><LogoApple /></n-icon>
-              </span>
-            </template>
-            Claude Code {{ registryInfo.platforms?.claude ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="platform-icon"
-                :class="{ active: registryInfo.platforms?.codex }"
-                @click.stop="$emit('toggle-platform', skill, 'codex', !registryInfo.platforms?.codex)"
-              >
-                <n-icon size="14"><TerminalOutline /></n-icon>
-              </span>
-            </template>
-            Codex CLI {{ registryInfo.platforms?.codex ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="platform-icon"
-                :class="{ active: registryInfo.platforms?.gemini }"
-                @click.stop="$emit('toggle-platform', skill, 'gemini', !registryInfo.platforms?.gemini)"
-              >
-                <n-icon size="14"><LogoGoogle /></n-icon>
-              </span>
-            </template>
-            Gemini CLI {{ registryInfo.platforms?.gemini ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="platform-icon"
-                :class="{ active: registryInfo.platforms?.opencode }"
-                @click.stop="$emit('toggle-platform', skill, 'opencode', !registryInfo.platforms?.opencode)"
-              >
-                <n-icon size="14"><CodeSlashOutline /></n-icon>
-              </span>
-            </template>
-            OpenCode {{ registryInfo.platforms?.opencode ? '已启用' : '未启用' }}
-          </n-tooltip>
-        </div>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { NTag, NButton, NTooltip, NSwitch, NIcon } from 'naive-ui'
-import { LogoApple, TerminalOutline, CodeSlashOutline, LogoGoogle } from '@vicons/ionicons5'
+import { NTag, NButton } from 'naive-ui'
 
 defineProps({
   skill: { type: Object, required: true },
   installing: { type: Boolean, default: false },
-  uninstalling: { type: Boolean, default: false },
-  registryInfo: { type: Object, default: null },
-  toggling: { type: Boolean, default: false }
+  uninstalling: { type: Boolean, default: false }
 })
 
-defineEmits(['click', 'install', 'uninstall', 'toggle-enabled', 'toggle-platform'])
+defineEmits(['click', 'install', 'uninstall'])
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
 }
 
 function canInstall(skill) {
-  return !!(skill?.repoOwner || skill?.installSource)
+  return !!(skill?.isLocal || skill?.repoOwner || skill?.installSource)
 }
 </script>
 
@@ -138,9 +71,6 @@ function canInstall(skill) {
 }
 .skill-card.installed {
   border-left: 3px solid var(--success-color);
-}
-.skill-card.managed {
-  border-left: 3px solid var(--primary-color);
 }
 .card-header {
   display: flex;
@@ -187,38 +117,4 @@ function canInstall(skill) {
   text-decoration: underline;
 }
 
-.managed-actions {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.platform-icons {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.platform-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  color: var(--text-tertiary);
-  background: var(--bg-tertiary);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.platform-icon:hover {
-  background: var(--bg-quaternary);
-}
-
-.platform-icon.active {
-  color: var(--primary-color);
-  background: rgba(24, 160, 88, 0.1);
-}
 </style>

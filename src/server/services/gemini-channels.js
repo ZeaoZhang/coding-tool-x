@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const { clearNativeOAuth } = require('./native-oauth-adapters');
 
 /**
  * Gemini 渠道管理服务（多渠道架构）
@@ -252,14 +253,6 @@ function updateChannel(channelId, updates) {
     console.log(`[Gemini Single-channel mode] Enabled "${nextChannel.name}", disabled all others`);
   }
 
-  // Prevent disabling last enabled channel when proxy is OFF
-  if (!isProxyRunning && !nextChannel.enabled && oldChannel.enabled) {
-    const enabledCount = data.channels.filter(ch => ch.enabled).length;
-    if (enabledCount === 0) {
-      throw new Error('无法禁用最后一个启用的渠道。请先启用其他渠道或启动动态切换。');
-    }
-  }
-
   saveChannels(data);
 
   // Only sync .env when proxy is OFF.
@@ -298,6 +291,8 @@ function applyChannelToSettings(channelId, channels = null) {
   if (!channels) {
     saveChannels(data);
   }
+
+  clearNativeOAuth('gemini');
 
   const geminiDir = getGeminiDir();
 
@@ -455,6 +450,12 @@ function saveChannelOrder(order) {
   saveChannels(data);
 }
 
+function disableAllChannels() {
+  const data = loadChannels();
+  data.channels.forEach(ch => { ch.enabled = false; });
+  saveChannels(data);
+}
+
 module.exports = {
   getChannels,
   createChannel,
@@ -465,5 +466,6 @@ module.exports = {
   saveChannelOrder,
   isProxyConfig,
   getGeminiDir,
-  applyChannelToSettings
+  applyChannelToSettings,
+  disableAllChannels
 };

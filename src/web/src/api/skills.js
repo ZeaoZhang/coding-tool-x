@@ -70,6 +70,15 @@ export async function uninstallSkill(directory, platform = 'claude') {
 }
 
 /**
+ * 安装本地 cc-tool 托管的技能
+ * @param {string} directory - 技能目录
+ */
+export async function installLocalSkill(directory, platform = 'claude') {
+  const response = await client.post('/skills/install-local', { directory, platform })
+  return response.data
+}
+
+/**
  * 创建自定义技能
  * @param {object} skill - { name, directory, description, content }
  */

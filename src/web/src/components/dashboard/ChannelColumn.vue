@@ -16,101 +16,8 @@
       </div>
       <h2 class="channel-title">{{ channelTitle }}</h2>
 
-      <!-- MCP 服务状态 (所有平台) -->
-      <n-popover v-if="mcpEnabledCount > 0" trigger="click" placement="bottom" :width="340" class="mcp-popover">
-        <template #trigger>
-          <n-tag
-            type="info"
-            size="small"
-            :bordered="false"
-            class="mcp-count-tag clickable"
-          >
-            已启用 {{ mcpEnabledCount }} 个 MCP
-          </n-tag>
-        </template>
-        <div class="mcp-quick-panel">
-          <div class="panel-title">
-            <span>已启用的 MCP 服务</span>
-            <n-text depth="3" style="font-size: 11px;">{{ platformLabel }} 平台</n-text>
-          </div>
-          <div v-if="mcpEnabledServers.length === 0" class="no-items">
-            <n-text depth="3">暂无启用的 MCP 服务</n-text>
-          </div>
-          <div v-else class="mcp-quick-list">
-            <div
-              v-for="server in mcpEnabledServers"
-              :key="server.id"
-              class="mcp-quick-item"
-            >
-              <div class="mcp-item-icon">
-                <n-icon :size="14"><ServerOutline /></n-icon>
-              </div>
-              <div class="mcp-item-info">
-                <span class="mcp-item-name">{{ server.name }}</span>
-                <span class="mcp-item-type">{{ server.transportType || 'stdio' }}</span>
-              </div>
-              <n-switch
-                size="small"
-                :value="true"
-                @update:value="(val) => handleMcpToggle(server, val)"
-                :loading="server._toggling"
-              />
-            </div>
-          </div>
-        </div>
-      </n-popover>
-
       <!-- Skills 区域 (Claude / Codex / Gemini / OpenCode) -->
       <div v-if="['claude', 'codex', 'gemini', 'opencode'].includes(channelType)" class="claude-extra-area">
-        <!-- Skills 状态 -->
-        <n-popover v-if="installedSkillsCount > 0" trigger="click" placement="bottom" :width="340" class="skills-popover">
-          <template #trigger>
-            <n-tag
-              type="success"
-              size="small"
-              :bordered="false"
-              class="skills-count-tag clickable"
-            >
-              {{ installedSkillsCount }} 个技能
-            </n-tag>
-          </template>
-          <div class="skills-quick-panel">
-            <div class="panel-title">
-              <span>已安装的技能</span>
-              <n-button text size="tiny" @click="openSkillsManager">
-                管理全部
-              </n-button>
-            </div>
-            <div v-if="installedSkills.length === 0" class="no-items">
-              <n-text depth="3">暂无已安装的技能</n-text>
-            </div>
-            <div v-else class="skills-quick-list">
-              <div
-                v-for="skill in installedSkills"
-                :key="skill.id"
-                class="skill-quick-item"
-              >
-                <div class="skill-item-icon">
-                  <n-icon :size="14"><ExtensionPuzzleOutline /></n-icon>
-                </div>
-                <div class="skill-item-info">
-                  <span class="skill-item-name">{{ skill.name }}</span>
-                  <span class="skill-item-desc">{{ skill.description || '无描述' }}</span>
-                </div>
-                <n-button
-                  size="tiny"
-                  tertiary
-                  type="error"
-                  @click="handleUninstallSkill(skill)"
-                  :loading="skill._uninstalling"
-                >
-                  卸载
-                </n-button>
-              </div>
-            </div>
-          </div>
-        </n-popover>
-
         <!-- Skills 管理按钮 -->
         <n-tooltip trigger="hover">
           <template #trigger>
@@ -466,7 +373,6 @@ import {
   LockOpen,
   ReorderTwoOutline,
   ExtensionPuzzleOutline,
-  ServerOutline,
   StatsChartOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
@@ -488,36 +394,6 @@ import {
   getGeminiTodayStatistics,
   getOpenCodeTodayStatistics
 } from '../../api/statistics'
-import { getSkills, uninstallSkill } from '../../api/skills'
-import { getAllServers as getMcpServers, toggleServerApp } from '../../api/mcp'
-
-let mcpServersCache = null
-let mcpServersInFlight = null
-
-async function fetchMcpServers(force = false) {
-  if (!force && mcpServersCache) {
-    return mcpServersCache
-  }
-  if (!force && mcpServersInFlight) {
-    return mcpServersInFlight
-  }
-
-  const request = getMcpServers()
-    .then((result) => {
-      if (result?.success && result.servers) {
-        mcpServersCache = Object.values(result.servers)
-      } else {
-        mcpServersCache = []
-      }
-      return mcpServersCache
-    })
-    .finally(() => {
-      mcpServersInFlight = null
-    })
-
-  mcpServersInFlight = request
-  return request
-}
 
 const props = defineProps({
   channelType: {
@@ -680,87 +556,6 @@ function animateValue(key, startValue, endValue, duration = 600) {
 
 // 最新对话抽屉
 const showRecentSessions = ref(false)
-
-// Skills 面板
-const installedSkillsCount = ref(0)
-const installedSkills = ref([])
-
-// MCP 服务（所有平台）
-const mcpEnabledCount = ref(0)
-const mcpEnabledServers = ref([])
-
-// 平台标签
-const platformLabel = computed(() => {
-  const labels = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', opencode: 'OpenCode' }
-  return labels[props.channelType] || ''
-})
-
-// 加载已安装技能
-async function loadInstalledSkills() {
-  if (!['claude', 'codex', 'gemini', 'opencode'].includes(props.channelType)) return
-  try {
-    const result = await getSkills(false, props.channelType)
-    if (result.success && result.skills) {
-      const installed = result.skills.filter(s => s.installed)
-      installedSkillsCount.value = installed.length
-      installedSkills.value = installed.slice(0, 10).map(s => ({ ...s, _uninstalling: false }))
-    }
-  } catch (err) {
-    console.error('Failed to load skills:', err)
-  }
-}
-
-// 加载 MCP 服务
-async function loadMcpServers(force = false) {
-  try {
-    const serverList = await fetchMcpServers(force)
-    // 根据当前平台筛选已启用的服务
-    const enabled = serverList.filter(s => s.apps?.[props.channelType] === true)
-    mcpEnabledCount.value = enabled.length
-    mcpEnabledServers.value = enabled.slice(0, 10).map(s => ({ ...s, _toggling: false }))
-  } catch (err) {
-    console.error('Failed to load MCP servers:', err)
-  }
-}
-
-// 切换 MCP 服务状态
-async function handleMcpToggle(server, enabled) {
-  server._toggling = true
-  try {
-    await toggleServerApp(server.id, props.channelType, enabled)
-    message.success(enabled ? `已启用 ${server.name}` : `已禁用 ${server.name}`)
-    // 刷新列表
-    await loadMcpServers(true)
-  } catch (err) {
-    message.error('操作失败: ' + (err.message || '未知错误'))
-  } finally {
-    server._toggling = false
-  }
-}
-
-// 卸载技能
-async function handleUninstallSkill(skill) {
-  skill._uninstalling = true
-  try {
-    const result = await uninstallSkill(skill.directory, props.channelType)
-    if (result.success) {
-      message.success(`已卸载 ${skill.name}`)
-      // 刷新列表
-      await loadInstalledSkills()
-    } else {
-      message.error(result.error || '卸载失败')
-    }
-  } catch (err) {
-    message.error('卸载失败: ' + (err.message || '未知错误'))
-  } finally {
-    skill._uninstalling = false
-  }
-}
-
-// 兼容旧方法名
-function loadInstalledSkillsCount() {
-  loadInstalledSkills()
-}
 
 // localStorage key
 const LOCK_STORAGE_KEY = 'channelLocks'
@@ -1194,9 +989,6 @@ onMounted(async () => {
     loadDashboard().then(() => loadStats()),
     loadChannelStats()
   ])
-  // 加载已安装技能和 MCP 服务（仅 Claude）
-  loadInstalledSkills()
-  loadMcpServers()
   // 渠道数据现在从 Pinia store 获取，由 store 自动管理
   loadShowLogs()
   loadLockState()

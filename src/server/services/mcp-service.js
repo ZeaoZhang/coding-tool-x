@@ -290,15 +290,16 @@ function writeJsonFile(filePath, data) {
  * 安全读取 TOML 文件
  */
 function readTomlFile(filePath, defaultValue = {}) {
-  try {
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return toml.parse(content);
-    }
-  } catch (err) {
-    console.error(`[MCP] Failed to read ${filePath}:`, err.message);
+  if (!fs.existsSync(filePath)) {
+    return defaultValue;
   }
-  return defaultValue;
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return toml.parse(content);
+  } catch (err) {
+    throw new Error(`Failed to parse ${filePath}: ${err.message}`);
+  }
 }
 
 /**
@@ -593,13 +594,13 @@ async function saveServer(server, options = {}) {
     server.apps = normalizeServerApps(server.apps, previousApps || DEFAULT_SERVER_APPS);
   }
 
-  servers[server.id] = server;
-  writeJsonFile(MCP_SERVERS_FILE, servers);
-
   // 同步到各平台配置
   if (syncPlatforms) {
     await syncServerToAllPlatforms(server, previousApps);
   }
+
+  servers[server.id] = server;
+  writeJsonFile(MCP_SERVERS_FILE, servers);
 
   return server;
 }
@@ -615,11 +616,11 @@ async function deleteServer(id) {
     return false;
   }
 
-  delete servers[id];
-  writeJsonFile(MCP_SERVERS_FILE, servers);
-
   // 从所有平台配置中移除
   await removeServerFromAllPlatforms(id);
+
+  delete servers[id];
+  writeJsonFile(MCP_SERVERS_FILE, servers);
 
   return true;
 }
@@ -642,14 +643,14 @@ async function toggleServerApp(serverId, app, enabled) {
   server.apps[app] = enabled;
   server.updatedAt = Date.now();
 
-  writeJsonFile(MCP_SERVERS_FILE, servers);
-
   // 同步到对应平台
   if (enabled) {
     await syncServerToPlatform(server, app);
   } else {
     await removeServerFromPlatform(serverId, app);
   }
+
+  writeJsonFile(MCP_SERVERS_FILE, servers);
 
   return server;
 }
@@ -790,6 +791,7 @@ async function removeServerFromPlatform(serverId, platform) {
     console.log(`[MCP] Removed "${serverId}" from ${platform}`);
   } catch (err) {
     console.error(`[MCP] Failed to remove "${serverId}" from ${platform}:`, err.message);
+    throw err;
   }
 }
 
@@ -833,14 +835,22 @@ function removeFromClaudeConfig(serverId) {
  * 同步到 Codex 配置
  */
 function syncToCodexConfig(server) {
+  if (!fs.existsSync(CODEX_CONFIG_PATH)) {
+    throw new Error('Codex config.toml not found. Please run Codex CLI at least once before syncing MCP servers.');
+  }
+
   const config = readTomlFile(CODEX_CONFIG_PATH, {});
+  const nextSpec = convertToCodexFormat(server.server);
 
   if (!config.mcp_servers) {
     config.mcp_servers = {};
   }
 
-  // 转换为 Codex TOML 格式
-  config.mcp_servers[server.id] = convertToCodexFormat(server.server);
+  if (JSON.stringify(config.mcp_servers[server.id] || null) === JSON.stringify(nextSpec)) {
+    return;
+  }
+
+  config.mcp_servers[server.id] = nextSpec;
 
   writeTomlFile(CODEX_CONFIG_PATH, config);
 }
@@ -849,10 +859,17 @@ function syncToCodexConfig(server) {
  * 从 Codex 配置移除
  */
 function removeFromCodexConfig(serverId) {
+  if (!fs.existsSync(CODEX_CONFIG_PATH)) {
+    return;
+  }
+
   const config = readTomlFile(CODEX_CONFIG_PATH, {});
 
   if (config.mcp_servers && config.mcp_servers[serverId]) {
     delete config.mcp_servers[serverId];
+    if (Object.keys(config.mcp_servers).length === 0) {
+      delete config.mcp_servers;
+    }
     writeTomlFile(CODEX_CONFIG_PATH, config);
   }
 }

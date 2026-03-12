@@ -17,8 +17,8 @@ export async function getPlugins(platform = 'claude') {
 /**
  * 获取市场插件列表
  */
-export async function getMarketPlugins(platform = 'claude') {
-  const response = await client.get('/plugins/market', { params: { platform } })
+export async function getMarketPlugins(platform = 'claude', forceRefresh = false) {
+  const response = await client.get('/plugins/market', { params: { platform, refresh: forceRefresh ? '1' : '' } })
   return response.data
 }
 

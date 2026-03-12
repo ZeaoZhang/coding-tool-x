@@ -16,6 +16,7 @@ const {
   readEnv
 } = require('../services/gemini-settings-manager');
 const { getChannels, getEnabledChannels } = require('../services/gemini-channels');
+const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
@@ -35,6 +36,24 @@ function selectLatestEnabledChannel(channels) {
     const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
     return currentTs > latestTs ? current : latest;
   }, enabledChannels[0]);
+}
+
+function resolveActiveChannel(channels, activeChannelId = null) {
+  if (!Array.isArray(channels) || channels.length === 0) {
+    return null;
+  }
+
+  if (activeChannelId) {
+    const matched = channels.find(channel => channel.id === activeChannelId);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return selectLatestEnabledChannel(channels)
+    || channels.find(channel => channel.enabled !== false)
+    || channels[0]
+    || null;
 }
 
 // 保存激活渠道ID
@@ -83,8 +102,7 @@ router.get('/status', (req, res) => {
       currentProxyPort: getCurrentProxyPort()
     };
     const { channels } = getChannels();
-    const enabledChannels = channels.filter(ch => ch.enabled !== false);
-    const activeChannel = enabledChannels[0]; // 多渠道模式：第一个启用的渠道
+    const activeChannel = resolveActiveChannel(channels, loadActiveChannelId());
 
     res.json({
       proxy: proxyStatus,
@@ -141,6 +159,7 @@ router.post('/start', async (req, res) => {
     }
 
     // 5. 设置代理配置（备份并修改 .env 和 settings.json）
+    clearNativeOAuth('gemini');
     setProxyConfig(proxyResult.port);
 
     const { broadcastProxyState } = require('../websocket-server');
@@ -164,17 +183,9 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前激活渠道（优先使用启动动态切换时记录的渠道ID）
     const { channels } = getChannels();
     const activeChannelId = loadActiveChannelId();
-    let activeChannel = selectLatestEnabledChannel(channels);
-    if (!activeChannel && activeChannelId) {
-      activeChannel = channels.find(ch => ch.id === activeChannelId);
-    }
-    if (!activeChannel) {
-      const enabledChannels = channels.filter(ch => ch.enabled !== false);
-      activeChannel = enabledChannels[0] || channels[0] || null;
-    }
+    const activeChannel = resolveActiveChannel(channels, activeChannelId);
 
     // 2. 停止代理服务器
     const proxyResult = await stopGeminiProxyServer();
