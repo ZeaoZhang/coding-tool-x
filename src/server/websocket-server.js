@@ -159,11 +159,12 @@ function installOriginGuard(server) {
 
 // 日志持久化文件路径
 function getLogsFilePath() {
-  const ccToolDir = PATHS.base;
-  if (!fs.existsSync(ccToolDir)) {
-    fs.mkdirSync(ccToolDir, { recursive: true });
+  const filePath = PATHS.statistics.proxyLogs;
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(ccToolDir, 'proxy-logs.json');
+  return filePath;
 }
 
 function getTodayRange() {

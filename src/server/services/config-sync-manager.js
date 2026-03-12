@@ -24,7 +24,7 @@ const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../
 
 // Paths
 const HOME = HOME_DIR || os.homedir();
-const CC_TOOL_CONFIGS = path.join(PATHS.base, 'configs');
+const CC_TOOL_CONFIGS = PATHS.configs;
 const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');
 const GEMINI_DIR = path.join(HOME, '.gemini');

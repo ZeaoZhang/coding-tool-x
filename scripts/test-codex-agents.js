@@ -44,7 +44,14 @@ async function run() {
 
     // Require after HOME is replaced to isolate from real ~/.codex state.
     const { AgentsService } = require('../src/server/services/agents-service');
+    const codexEnvManager = require('../src/server/services/codex-env-manager');
+    const codexSettingsManager = require('../src/server/services/codex-settings-manager');
+    const codexChannels = require('../src/server/services/codex-channels');
     const service = new AgentsService('codex');
+    const envTest = codexEnvManager._test || {};
+
+    assert.strictEqual(typeof envTest.syncCodexUserEnvironment, 'function', '缺少 syncCodexUserEnvironment 测试导出');
+    assert.strictEqual(typeof envTest.buildSourceSnippet, 'function', '缺少 buildSourceSnippet 测试导出');
 
     const listed = service.listCodexAgents();
     const externalAgent = listed.agents.find((item) => item.fileName === 'external-reader');
@@ -145,7 +152,126 @@ async function run() {
     assert(afterMissing.configReadError.includes('配置文件不存在'), '缺失文件应暴露 configReadError');
     assert.strictEqual(afterMissing.fullContent, '', '缺失文件不应返回 TOML 内容');
 
-    console.log('Codex agents 测试通过（none/managed/custom + external config_file）');
+    const linuxHome = path.join(tempRoot, 'linux-home');
+    const linuxConfigDir = path.join(linuxHome, '.cc-tool', 'config');
+    fs.mkdirSync(linuxHome, { recursive: true });
+    const linuxSync = envTest.syncCodexUserEnvironment(
+      { OPENAI_TEST_KEY: 'linux-secret' },
+      {
+        runtime: 'linux',
+        homeDir: linuxHome,
+        configDir: linuxConfigDir,
+        shellEnv: { HOME: linuxHome, SHELL: '/bin/bash' }
+      }
+    );
+    const linuxEnvFile = path.join(linuxConfigDir, 'codex-env.sh');
+    const linuxProfile = path.join(linuxHome, '.bashrc');
+    assert.strictEqual(fs.existsSync(linuxEnvFile), true, 'Linux 应生成托管 env 文件');
+    assert.strictEqual(fs.readFileSync(linuxEnvFile, 'utf-8').includes('export OPENAI_TEST_KEY'), true, 'Linux env 文件应写入 export');
+    assert.strictEqual(fs.readFileSync(linuxProfile, 'utf-8').includes('coding-tool codex env'), true, 'Linux shell 配置应注入 source 片段');
+    assert.strictEqual(Boolean(linuxSync.sourceCommand), true, 'Linux 首次同步应返回 source 命令');
+    envTest.syncCodexUserEnvironment({}, {
+      runtime: 'linux',
+      homeDir: linuxHome,
+      configDir: linuxConfigDir,
+      shellEnv: { HOME: linuxHome, SHELL: '/bin/bash' }
+    });
+    assert.strictEqual(fs.existsSync(linuxEnvFile), false, 'Linux 清理后应删除托管 env 文件');
+    assert.strictEqual(fs.readFileSync(linuxProfile, 'utf-8').includes('coding-tool codex env'), false, 'Linux 清理后应移除 source 片段');
+
+    const darwinHome = path.join(tempRoot, 'darwin-home');
+    const darwinConfigDir = path.join(darwinHome, '.cc-tool', 'config');
+    const darwinExecCalls = [];
+    fs.mkdirSync(darwinHome, { recursive: true });
+    envTest.syncCodexUserEnvironment(
+      { OPENAI_MAC_KEY: 'mac-secret' },
+      {
+        runtime: 'darwin',
+        homeDir: darwinHome,
+        configDir: darwinConfigDir,
+        shellEnv: { HOME: darwinHome, SHELL: '/bin/zsh' },
+        execFileSync: (command, args) => {
+          darwinExecCalls.push({ command, args });
+          return '';
+        }
+      }
+    );
+    assert.strictEqual(
+      darwinExecCalls.some(call => call.command === 'launchctl' && call.args[0] === 'setenv' && call.args[1] === 'OPENAI_MAC_KEY'),
+      true,
+      'macOS 应调用 launchctl setenv 同步用户环境变量'
+    );
+
+    const windowsHome = path.join(tempRoot, 'windows-home');
+    const windowsConfigDir = path.join(windowsHome, '.cc-tool', 'config');
+    const windowsExecCalls = [];
+    fs.mkdirSync(windowsHome, { recursive: true });
+    envTest.syncCodexUserEnvironment(
+      { OPENAI_WIN_KEY: 'win-secret' },
+      {
+        runtime: 'win32',
+        homeDir: windowsHome,
+        configDir: windowsConfigDir,
+        execFileSync: (command, args) => {
+          windowsExecCalls.push({ command, args });
+          return '';
+        }
+      }
+    );
+    envTest.syncCodexUserEnvironment({}, {
+      runtime: 'win32',
+      homeDir: windowsHome,
+      configDir: windowsConfigDir,
+      execFileSync: (command, args) => {
+        windowsExecCalls.push({ command, args });
+        return '';
+      }
+    });
+    assert.strictEqual(
+      windowsExecCalls.some(call => ['powershell', 'pwsh'].includes(call.command) && call.args[3].includes('OPENAI_WIN_KEY')),
+      true,
+      'Windows 应通过 PowerShell 写入用户级环境变量'
+    );
+    assert.strictEqual(
+      windowsExecCalls.some(call => ['powershell', 'pwsh'].includes(call.command) && call.args[3].includes('$null')),
+      true,
+      'Windows 清理时应通过 PowerShell 删除用户级环境变量'
+    );
+
+    writeUtf8(path.join(codexDir, 'auth.json'), JSON.stringify({ OPENAI_API_KEY: 'legacy-auth' }, null, 2));
+    const proxyResult = codexSettingsManager.setProxyConfig(20089);
+    const managedEnvFile = path.join(fakeHome, '.cc-tool', 'config', 'codex-env.sh');
+    assert.strictEqual(fs.existsSync(managedEnvFile), true, 'Codex proxy 模式应写入托管 env 文件');
+    assert.strictEqual(fs.readFileSync(managedEnvFile, 'utf-8').includes('CC_PROXY_KEY'), true, 'Codex proxy 模式应写入 CC_PROXY_KEY');
+    const authAfterProxy = JSON.parse(fs.readFileSync(path.join(codexDir, 'auth.json'), 'utf-8'));
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(authAfterProxy, 'CC_PROXY_KEY'), false, 'Codex proxy 不应再把 CC_PROXY_KEY 写入 auth.json');
+    assert.strictEqual(Boolean(proxyResult.sourceCommand), true, 'Codex proxy 启动后应返回 source 命令');
+    codexSettingsManager.restoreSettings();
+    assert.strictEqual(fs.existsSync(managedEnvFile), false, '退出 Codex proxy 后应清理托管 env 文件');
+
+    const channel = codexChannels.createChannel(
+      'Managed OpenAI',
+      'openai2',
+      'https://example.com/v1',
+      'channel-secret',
+      'responses',
+      { enabled: true }
+    );
+    assert.strictEqual(fs.readFileSync(managedEnvFile, 'utf-8').includes('OPENAI2_API_KEY'), true, '创建 Codex 渠道时应写入对应 env_key');
+    let authAfterChannel = JSON.parse(fs.readFileSync(path.join(codexDir, 'auth.json'), 'utf-8'));
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(authAfterChannel, 'OPENAI2_API_KEY'), false, '普通 Codex 渠道不应再把 env_key 写入 auth.json');
+
+    codexChannels.applyChannelToSettings(channel.id);
+    const configAfterApply = readCodexConfig();
+    assert.strictEqual(configAfterApply.model_provider, 'openai2', '应用 Codex 渠道后应切换 model_provider');
+
+    codexChannels.updateChannel(channel.id, { apiKey: 'channel-secret-2' });
+    assert.strictEqual(fs.readFileSync(managedEnvFile, 'utf-8').includes('channel-secret-2'), true, '更新 Codex 渠道后应同步最新 API Key');
+
+    await codexChannels.deleteChannel(channel.id);
+    assert.strictEqual(fs.existsSync(managedEnvFile), false, '删除最后一个 Codex 渠道后应清理托管 env 文件');
+
+    console.log('Codex agents 测试通过（agents + env_key sync）');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

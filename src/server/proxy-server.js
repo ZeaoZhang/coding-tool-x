@@ -18,6 +18,7 @@ const { createDecodedStream } = require('./services/response-decoder');
 const eventBus = require('../plugins/event-bus');
 const { getEffectiveApiKey } = require('./services/channels');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
+const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -313,20 +314,20 @@ async function startProxyServer(options = {}) {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
           release();
+          publishFailureLog({
+            source: 'claude',
+            channel: channel.name,
+            message: 'API key not configured or expired. Please update your channel key.',
+            statusCode: 401,
+            stage: 'preflight',
+            broadcastLog
+          });
           return res.status(401).json({
             error: 'API key not configured or expired. Please update your channel key.',
             type: 'authentication_error'
           });
         }
         req.effectiveApiKey = effectiveKey;
-
-        const now = new Date();
-        const time = now.toLocaleTimeString('zh-CN', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        });
         const requestSnapshot = serializeFullClaudeRequest(req);
         persistClaudeRequestSnapshot({
           timestamp: Date.now(),
@@ -373,6 +374,21 @@ async function startProxyServer(options = {}) {
           if (err) {
             // 记录请求失败
             recordFailure(channel.id, 'claude', err);
+            const metadata = requestMetadata.get(req) || {
+              id: null,
+              channel: channel.name,
+              channelId: channel.id,
+              startTime: Date.now()
+            };
+            publishFailureLog({
+              source: 'claude',
+              metadata,
+              message: err.message,
+              error: err,
+              statusCode: 502,
+              stage: 'proxy_web',
+              broadcastLog
+            });
             console.error('Proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -384,6 +400,13 @@ async function startProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('Channel allocation error:', error);
+        publishFailureLog({
+          source: 'claude',
+          message: error.message || '所有渠道暂时不可用',
+          statusCode: 503,
+          stage: 'allocate_channel',
+          broadcastLog
+        });
         if (!res.headersSent) {
           res.status(503).json({
             error: error.message || '所有渠道暂时不可用',
@@ -425,7 +448,33 @@ async function startProxyServer(options = {}) {
         cacheRead: 0,
         model: ''
       };
+      let usageRecorded = false;
       const parsedStream = createDecodedStream(proxyRes);
+
+      function recordUsageIfReady() {
+        if (usageRecorded) return false;
+
+        const result = publishUsageLog({
+          source: 'claude',
+          metadata,
+          model: tokenData.model,
+          tokens: {
+            input: tokenData.inputTokens,
+            output: tokenData.outputTokens,
+            cacheCreation: tokenData.cacheCreation,
+            cacheRead: tokenData.cacheRead
+          },
+          calculateCost,
+          broadcastLog,
+          recordRequest,
+          recordSuccess,
+          allowBroadcast: !isResponseClosed
+        });
+
+        if (!result) return false;
+        usageRecorded = true;
+        return true;
+      }
 
       parsedStream.on('data', (chunk) => {
         if (isResponseClosed) return;
@@ -474,57 +523,8 @@ async function startProxyServer(options = {}) {
               }
             }
 
-            if (eventType === 'message_delta' && parsed.usage) {
-              const now = new Date();
-              const time = now.toLocaleTimeString('zh-CN', {
-                hour12: false,
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-              });
-
-              const tokens = {
-                input: tokenData.inputTokens,
-                output: tokenData.outputTokens,
-                cacheCreation: tokenData.cacheCreation,
-                cacheRead: tokenData.cacheRead,
-                total: tokenData.inputTokens + tokenData.outputTokens + tokenData.cacheCreation + tokenData.cacheRead
-              };
-              const cost = calculateCost(tokenData.model, tokens);
-
-              if (!isResponseClosed) {
-                broadcastLog({
-                  type: 'log',
-                  id: metadata.id,
-                  time: time,
-                  channel: metadata.channel,
-                  model: tokenData.model,
-                  inputTokens: tokenData.inputTokens,
-                  outputTokens: tokenData.outputTokens,
-                  cacheCreation: tokenData.cacheCreation,
-                  cacheRead: tokenData.cacheRead,
-                  cost: cost,
-                  source: 'claude'
-                });
-              }
-
-              const duration = Date.now() - metadata.startTime;
-
-              recordRequest({
-                id: metadata.id,
-                timestamp: new Date(metadata.startTime).toISOString(),
-                toolType: 'claude-code',
-                channel: metadata.channel,
-                channelId: metadata.channelId,
-                model: tokenData.model,
-                tokens: tokens,
-                duration: duration,
-                success: true,
-                cost: cost
-              });
-
-              // 记录请求成功（用于健康检查）
-              recordSuccess(metadata.channelId, 'claude');
+            if (eventType === 'message_stop') {
+              recordUsageIfReady();
             }
           } catch (err) {
           }
@@ -540,7 +540,10 @@ async function startProxyServer(options = {}) {
         }
       };
 
-      parsedStream.on('end', finalize);
+      parsedStream.on('end', () => {
+        recordUsageIfReady();
+        finalize();
+      });
 
       parsedStream.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
@@ -550,6 +553,15 @@ async function startProxyServer(options = {}) {
         if (metadata && metadata.channelId) {
           recordFailure(metadata.channelId, 'claude', err);
         }
+        publishFailureLog({
+          source: 'claude',
+          metadata,
+          message: err.message,
+          error: err,
+          statusCode: proxyRes.statusCode,
+          stage: 'response_stream',
+          broadcastLog
+        });
         isResponseClosed = true;
         finalize();
       });
@@ -561,6 +573,20 @@ async function startProxyServer(options = {}) {
       if (req && req.selectedChannel && req.selectedChannel.id) {
         recordFailure(req.selectedChannel.id, 'claude', err);
       }
+      const metadata = req ? requestMetadata.get(req) : null;
+      publishFailureLog({
+        source: 'claude',
+        metadata: metadata || {
+          channel: req?.selectedChannel?.name,
+          channelId: req?.selectedChannel?.id,
+          model: req?.body?.model
+        },
+        message: err.message,
+        error: err,
+        statusCode: 502,
+        stage: 'proxy',
+        broadcastLog
+      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: 'Proxy error: ' + err.message,

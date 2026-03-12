@@ -18,6 +18,23 @@ function computeTodayRange() {
   }
 }
 
+function resolveLogTotal(source, data) {
+  if (data.totalTokens !== undefined && data.totalTokens !== null) {
+    return Number(data.totalTokens) || 0
+  }
+
+  const input = Number(data.inputTokens) || 0
+  const output = Number(data.outputTokens) || 0
+  const cacheCreation = Number(data.cacheCreation) || 0
+  const cacheRead = Number(data.cacheRead) || 0
+
+  if (source === 'claude') {
+    return input + output + cacheCreation + cacheRead
+  }
+
+  return input + output
+}
+
 export const useGlobalStore = defineStore('global', () => {
   const claudeProxy = ref({
     running: false,
@@ -197,10 +214,14 @@ export const useGlobalStore = defineStore('global', () => {
       id: data.id || `${Date.now()}-${Math.random()}`,
       source,
       type: data.type || (data.action ? 'action' : 'log'),
+      status: data.status || (data.error ? 'error' : 'success'),
       action: data.action || null,
       channel: data.channel || data.channelName || 'Unknown',
       model: data.model,
       message: data.message,
+      error: data.error || null,
+      statusCode: data.statusCode || null,
+      stage: data.stage || null,
       timestamp,
       time,
       tokens: {
@@ -210,7 +231,7 @@ export const useGlobalStore = defineStore('global', () => {
         cacheRead: data.cacheRead || 0,
         cached: data.cachedTokens || 0,
         reasoning: data.reasoningTokens || 0,
-        total: data.totalTokens || ((data.inputTokens || 0) + (data.outputTokens || 0))
+        total: resolveLogTotal(source, data)
       },
       cost: data.cost || 0,
       isHistory: isReceivingHistory,

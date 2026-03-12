@@ -20,6 +20,7 @@
               type="daterange"
               size="small"
               clearable
+              :is-date-disabled="isDateDisabled"
               :on-update:value="onCustomRangeChange"
               style="width: 220px"
             />
@@ -154,13 +155,15 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { NSelect, NButton, NDropdown, NIcon, NSpin, NDatePicker } from 'naive-ui'
+import { NSelect, NButton, NDropdown, NIcon, NSpin, NDatePicker, useMessage } from 'naive-ui'
 import { DownloadOutline, ExpandOutline, ContractOutline } from '@vicons/ionicons5'
 import '../plugins/echarts'
 import VChart from 'vue-echarts'
 import { getTrendStatistics, getTrendExportUrl, getAvailableFilters } from '../api/statistics'
 
 const COLORS = ['#3b82f6','#10b981','#a855f7','#f59e0b','#ef4444','#06b6d4','#ec4899','#8b5cf6','#14b8a6','#94a3b8']
+
+const message = useMessage()
 
 // State
 const timeRange = ref('7d')
@@ -208,6 +211,18 @@ async function loadFilters() {
   try {
     const result = await getAvailableFilters({ startDate, endDate })
     availableFilters.value = result
+    const toolTypes = new Set(result?.toolTypes || [])
+    const channels = new Set(result?.channels || [])
+    const models = new Set(result?.models || [])
+    if (filterToolType.value && !toolTypes.has(filterToolType.value)) {
+      filterToolType.value = null
+    }
+    if (filterChannel.value && !channels.has(filterChannel.value)) {
+      filterChannel.value = null
+    }
+    if (filterModel.value && !models.has(filterModel.value)) {
+      filterModel.value = null
+    }
   } catch (err) {
     console.error('Failed to load available filters:', err)
   }
@@ -249,20 +264,44 @@ const metricLabel = computed(() => {
   return opt ? opt.label : metric.value
 })
 
+const CST_OFFSET_MS = 8 * 60 * 60 * 1000
+
+function toCSTDateString(value) {
+  const ts = value instanceof Date ? value.getTime() : Number(value)
+  const base = Number.isFinite(ts) ? ts : Date.now()
+  return new Date(base + CST_OFFSET_MS).toISOString().split('T')[0]
+}
+
+function shiftDateString(dateStr, deltaDays) {
+  const base = new Date(`${dateStr}T00:00:00Z`)
+  base.setUTCDate(base.getUTCDate() + deltaDays)
+  return base.toISOString().split('T')[0]
+}
+
+function clampRangeToToday({ startDate, endDate }) {
+  const todayStr = toCSTDateString(Date.now())
+  const clampedEnd = endDate > todayStr ? todayStr : endDate
+  const clampedStart = startDate > clampedEnd ? clampedEnd : startDate
+  return { startDate: clampedStart, endDate: clampedEnd }
+}
+
 function getDateRange() {
-  const today = new Date()
-  const pad = d => d.toISOString().split('T')[0]
+  const todayStr = toCSTDateString(Date.now())
   if (timeRange.value === 'custom' && customRange.value) {
-    return {
-      startDate: new Date(customRange.value[0]).toISOString().split('T')[0],
-      endDate: new Date(customRange.value[1]).toISOString().split('T')[0]
-    }
+    const startDate = toCSTDateString(customRange.value[0])
+    const endDate = toCSTDateString(customRange.value[1])
+    return clampRangeToToday({ startDate, endDate })
   }
   const dayMap = { '1d': 1, '3d': 3, '7d': 7, '30d': 30, '90d': 90 }
   const days = dayMap[timeRange.value] || 7
-  const start = new Date(today)
-  start.setDate(start.getDate() - (days - 1))
-  return { startDate: pad(start), endDate: pad(today) }
+  const startDate = shiftDateString(todayStr, -(days - 1))
+  return { startDate, endDate: todayStr }
+}
+
+function isDateDisabled(ts) {
+  const candidate = toCSTDateString(ts)
+  const todayStr = toCSTDateString(Date.now())
+  return candidate > todayStr
 }
 
 function getGranularity(startDate, endDate) {
@@ -293,39 +332,68 @@ async function fetchData() {
       needCost ? getTrendStatistics({ ...params, metric: 'cost' }) : Promise.resolve(null),
       needRequests ? getTrendStatistics({ ...params, metric: 'requests' }) : Promise.resolve(null),
     ])
-    trendData.value = mainResult
-    const sumSeries = (r) => (r.series || []).reduce((sum, s) => sum + (s.data || []).reduce((a, b) => a + b, 0), 0)
+    const normalizeTrendResult = (result) => {
+      const labels = Array.isArray(result?.labels) ? result.labels : []
+      const labelCount = labels.length
+      const series = Array.isArray(result?.series) ? result.series : []
+      const normalizedSeries = series.map((s) => {
+        const data = Array.isArray(s?.data) ? s.data.slice(0, labelCount) : []
+        if (data.length < labelCount) {
+          data.push(...new Array(labelCount - data.length).fill(0))
+        }
+        const normalizedData = data.map((v) => (Number.isFinite(Number(v)) ? Number(v) : 0))
+        return { ...s, data: normalizedData }
+      })
+      return { ...result, labels, series: normalizedSeries }
+    }
+
+    const normalizedMain = normalizeTrendResult(mainResult)
+    const normalizedTokens = normalizeTrendResult(needTokens ? tokensResult : normalizedMain)
+    const normalizedCost = normalizeTrendResult(needCost ? costResult : normalizedMain)
+    const normalizedRequests = normalizeTrendResult(needRequests ? requestsResult : normalizedMain)
+
+    trendData.value = normalizedMain
+    const sumSeries = (r) => (r.series || []).reduce((sum, s) => sum + (s.data || []).reduce((a, b) => a + (Number.isFinite(Number(b)) ? Number(b) : 0), 0), 0)
     allMetricsTotals.value = {
-      tokens: sumSeries(metric.value === 'tokens' ? mainResult : tokensResult),
-      cost: sumSeries(metric.value === 'cost' ? mainResult : costResult),
-      requests: sumSeries(metric.value === 'requests' ? mainResult : requestsResult),
+      tokens: sumSeries(metric.value === 'tokens' ? normalizedMain : normalizedTokens),
+      cost: sumSeries(metric.value === 'cost' ? normalizedMain : normalizedCost),
+      requests: sumSeries(metric.value === 'requests' ? normalizedMain : normalizedRequests),
     }
   } catch (err) {
     console.error('Failed to fetch trend statistics:', err)
+    message.error('加载统计数据失败，请稍后重试')
     trendData.value = { labels: [], series: [], totals: {} }
   } finally {
     loading.value = false
   }
 }
 
-function setTimeRange(val) {
+async function setTimeRange(val) {
   timeRange.value = val
   if (val !== 'custom') {
-    loadFilters()
+    await loadFilters()
     fetchData()
   }
 }
 
-function onCustomRangeChange(val) {
+async function onCustomRangeChange(val) {
   customRange.value = val
   if (val) {
-    loadFilters()
+    const startDate = toCSTDateString(val[0])
+    const endDate = toCSTDateString(val[1])
+    const diffDays = Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1
+    if (diffDays > 365) {
+      message.error('自定义时间范围不能超过 365 天')
+      customRange.value = null
+      return
+    }
+    await loadFilters()
     fetchData()
   }
 }
 
-onMounted(() => {
-  loadFilters()
+onMounted(async () => {
+  await loadFilters()
   fetchData()
 })
 

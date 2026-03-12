@@ -13,6 +13,7 @@ const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRunt
 const { createDecodedStream } = require('./services/response-decoder');
 const { getEffectiveApiKey } = require('./services/codex-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
+const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -270,6 +271,14 @@ async function startCodexProxyServer(options = {}) {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
           release();
+          publishFailureLog({
+            source: 'codex',
+            channel: channel.name,
+            message: 'API key not configured or expired. Please update your channel key.',
+            statusCode: 401,
+            stage: 'preflight',
+            broadcastLog
+          });
           return res.status(401).json({
             error: {
               message: 'API key not configured or expired. Please update your channel key.',
@@ -324,6 +333,20 @@ async function startCodexProxyServer(options = {}) {
           release();
           if (err) {
             recordFailure(channel.id, 'codex', err);
+            const metadata = requestMetadata.get(req) || {
+              channel: channel.name,
+              channelId: channel.id,
+              startTime: Date.now()
+            };
+            publishFailureLog({
+              source: 'codex',
+              metadata,
+              message: err.message,
+              error: err,
+              statusCode: 502,
+              stage: 'proxy_web',
+              broadcastLog
+            });
             console.error('Codex proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -337,6 +360,13 @@ async function startCodexProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('Codex channel allocation error:', error);
+        publishFailureLog({
+          source: 'codex',
+          message: error.message || 'No Codex channel available',
+          statusCode: 503,
+          stage: 'allocate_channel',
+          broadcastLog
+        });
         if (!res.headersSent) {
           res.status(503).json({
             error: {
@@ -389,7 +419,39 @@ async function startCodexProxyServer(options = {}) {
         totalTokens: 0,
         model: ''
       };
+      let usageRecorded = false;
       const parsedStream = createDecodedStream(proxyRes);
+
+      function recordUsageIfReady() {
+        if (usageRecorded) {
+          return false;
+        }
+
+        const result = publishUsageLog({
+          source: 'codex',
+          metadata,
+          model: tokenData.model,
+          tokens: {
+            input: tokenData.inputTokens,
+            output: tokenData.outputTokens,
+            cached: tokenData.cachedTokens,
+            reasoning: tokenData.reasoningTokens,
+            total: tokenData.totalTokens
+          },
+          calculateCost,
+          broadcastLog,
+          recordRequest: recordCodexRequest,
+          recordSuccess,
+          allowBroadcast: !isResponseClosed
+        });
+
+        if (!result) {
+          return false;
+        }
+
+        usageRecorded = true;
+        return true;
+      }
 
       parsedStream.on('data', (chunk) => {
         // 如果响应已关闭，停止处理
@@ -455,7 +517,10 @@ async function startCodexProxyServer(options = {}) {
                 // 兼容 Responses API 和 Chat Completions API
                 tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
                 tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
+                tokenData.totalTokens = parsed.usage.total_tokens || (tokenData.inputTokens + tokenData.outputTokens);
               }
+
+              recordUsageIfReady();
             } catch (err) {
               // 忽略解析错误
             }
@@ -475,71 +540,14 @@ async function startCodexProxyServer(options = {}) {
               // 兼容两种格式
               tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
               tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
+              tokenData.totalTokens = parsed.usage.total_tokens || (tokenData.inputTokens + tokenData.outputTokens);
             }
           } catch (err) {
             // 忽略解析错误
           }
         }
 
-        // 只有当有 token 数据时才记录
-        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0) {
-          const now = new Date();
-          const time = now.toLocaleTimeString('zh-CN', {
-            hour12: false,
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          });
-
-          // 记录统计数据（先计算）
-          const tokens = {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            total: tokenData.inputTokens + tokenData.outputTokens
-          };
-          const cost = calculateCost(tokenData.model, tokens);
-
-          // 广播日志（仅当响应仍然开放时）
-          if (!isResponseClosed) {
-            broadcastLog({
-              type: 'log',
-              id: metadata.id,
-              time: time,
-              channel: metadata.channel,
-              model: tokenData.model,
-              inputTokens: tokenData.inputTokens,
-              outputTokens: tokenData.outputTokens,
-              cachedTokens: tokenData.cachedTokens,
-              reasoningTokens: tokenData.reasoningTokens,
-              totalTokens: tokenData.totalTokens,
-              cost: cost,
-              source: 'codex'
-            });
-          }
-
-          const duration = Date.now() - metadata.startTime;
-
-          recordCodexRequest({
-            id: metadata.id,
-            timestamp: new Date(metadata.startTime).toISOString(),
-            toolType: 'codex',
-            channel: metadata.channel,
-            channelId: metadata.channelId,
-            model: tokenData.model,
-            tokens: {
-              input: tokenData.inputTokens,
-              output: tokenData.outputTokens,
-              reasoning: tokenData.reasoningTokens,
-              cached: tokenData.cachedTokens,
-              total: tokens.total
-            },
-            duration: duration,
-            success: true,
-            cost: cost
-          });
-
-          recordSuccess(metadata.channelId, 'codex');
-        }
+        recordUsageIfReady();
 
         if (!isResponseClosed) {
           requestMetadata.delete(req);
@@ -553,6 +561,15 @@ async function startCodexProxyServer(options = {}) {
         }
         isResponseClosed = true;
         recordFailure(metadata.channelId, 'codex', err);
+        publishFailureLog({
+          source: 'codex',
+          metadata,
+          message: err.message,
+          error: err,
+          statusCode: proxyRes.statusCode,
+          stage: 'response_stream',
+          broadcastLog
+        });
         requestMetadata.delete(req);
       });
     });
@@ -565,6 +582,19 @@ async function startCodexProxyServer(options = {}) {
         releaseChannel(req.selectedChannel.id, 'codex');
         broadcastSchedulerState('codex', getSchedulerState('codex'));
       }
+      publishFailureLog({
+        source: 'codex',
+        metadata: (req && requestMetadata.get(req)) || {
+          channel: req?.selectedChannel?.name,
+          channelId: req?.selectedChannel?.id,
+          model: req?.body?.model
+        },
+        message: err.message,
+        error: err,
+        statusCode: 502,
+        stage: 'proxy',
+        broadcastLog
+      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: {

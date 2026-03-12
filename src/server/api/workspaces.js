@@ -402,12 +402,10 @@ router.post('/:id/projects', (req, res) => {
 router.delete('/:id/projects/:projectName', (req, res) => {
   try {
     const { id, projectName } = req.params;
-    const removeWorktrees = req.query.removeWorktrees === 'true';
 
     const workspace = workspaceService.removeProjectFromWorkspace(
       id,
-      projectName,
-      removeWorktrees
+      projectName
     );
 
     res.json({

@@ -2,13 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('../../config/paths');
 
-const ALIAS_DIR = PATHS.base;
 const ALIAS_FILE = PATHS.aliases;
 
 // Ensure alias directory exists
 function ensureAliasDir() {
-  if (!fs.existsSync(ALIAS_DIR)) {
-    fs.mkdirSync(ALIAS_DIR, { recursive: true });
+  const dir = path.dirname(ALIAS_FILE);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 

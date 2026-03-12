@@ -11,7 +11,7 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { loadConfig } = require('../../config/loader');
-const { HOME_DIR } = require('../../config/paths');
+const { PATHS } = require('../../config/paths');
 
 // 内置模型优先级（当配置缺失时兜底）
 const MODEL_PRIORITY = {
@@ -669,11 +669,12 @@ function collectResponseBody(res) {
  * Get cache file path
  */
 function getCacheFilePath() {
-  const dir = path.join(HOME_DIR, '.cc-tool');
+  const filePath = PATHS.channelModels;
+  const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(dir, 'channel-models.json');
+  return filePath;
 }
 
 /**

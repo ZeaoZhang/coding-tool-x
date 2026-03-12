@@ -18,7 +18,7 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('../../config/paths');
 
-const CC_TOOL_DIR = PATHS.base;
+const REQUEST_SNAPSHOTS_DIR = path.dirname(PATHS.requestSnapshots.claude);
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -55,8 +55,8 @@ function persistProxyRequestSnapshot(source, payload) {
   if (!isProxyRequestLoggingEnabled()) return;
 
   try {
-    ensureDir(CC_TOOL_DIR);
-    const logPath = path.join(CC_TOOL_DIR, `${source}-requests.jsonl`);
+    const logPath = PATHS.requestSnapshots[source] || path.join(REQUEST_SNAPSHOTS_DIR, `${source}.jsonl`);
+    ensureDir(path.dirname(logPath));
     fs.appendFile(logPath, `${JSON.stringify(payload)}\n`, (error) => {
       if (error) {
         console.error(`[request-logger] Failed to persist ${source} request snapshot:`, error);
@@ -97,8 +97,8 @@ function createApiRequestLogger() {
       };
 
       try {
-        ensureDir(path.join(CC_TOOL_DIR, 'logs'));
-        const logPath = path.join(CC_TOOL_DIR, 'logs', 'api-requests.jsonl');
+        ensureDir(PATHS.logs);
+        const logPath = path.join(PATHS.logs, 'api-requests.jsonl');
         fs.appendFile(logPath, `${JSON.stringify(entry)}\n`, (err) => {
           if (err) {
             console.error('[request-logger] Failed to write API request log:', err);
@@ -122,7 +122,7 @@ function createApiRequestLogger() {
   };
 }
 
-const CLAUDE_TEMPLATE_PATH = path.join(CC_TOOL_DIR, 'claude-request-template.json');
+const CLAUDE_TEMPLATE_PATH = PATHS.claudeRequestTemplate;
 const CLAUDE_TEMPLATE_MIN_SYSTEM_CHARS = 100;
 
 const FALLBACK_CLAUDE_SYSTEM = Object.freeze([
@@ -280,7 +280,7 @@ function persistClaudeRequestTemplate(body) {
   if (systemCharCount < CLAUDE_TEMPLATE_MIN_SYSTEM_CHARS) return;
 
   try {
-    ensureDir(CC_TOOL_DIR);
+    ensureDir(path.dirname(CLAUDE_TEMPLATE_PATH));
     const template = { updatedAt: Date.now(), userId, system, tools };
     fs.writeFile(CLAUDE_TEMPLATE_PATH, JSON.stringify(template), (err) => {
       if (err) console.error('[request-logger] Failed to write claude-request-template.json:', err);

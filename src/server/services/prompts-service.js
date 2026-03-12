@@ -7,14 +7,13 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { NATIVE_PATHS } = require('../../config/paths');
+const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 // Prompts 配置文件路径
-const CC_TOOL_DIR = path.join(HOME_DIR, '.cc-tool');
-const PROMPTS_FILE = path.join(CC_TOOL_DIR, 'prompts.json');
+const PROMPTS_FILE = PATHS.prompts;
 
 // 各平台提示词文件路径
 const CLAUDE_PROMPT_PATH = path.join(HOME_DIR, '.claude', 'CLAUDE.md');

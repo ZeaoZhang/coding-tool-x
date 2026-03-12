@@ -2,17 +2,20 @@ const assert = require('assert');
 const path = require('path');
 
 const { PATHS, NATIVE_PATHS, HOME_DIR } = require('../src/config/paths');
+const { isSameOriginRequest } = require('../src/server/services/network-access');
 const { resolvePreferredHomeDir, normalizeWindowsHomePath, isWindowsLikePlatform } = require('../src/utils/home-dir');
 const mcpClient = require('../src/server/services/mcp-client');
 const portHelper = require('../src/utils/port-helper');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
 const claudeHooks = require('../src/server/api/claude-hooks');
+const notificationHooks = require('../src/server/services/notification-hooks');
 const logsCommand = require('../src/commands/logs');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
 const daemonCommand = require('../src/commands/daemon');
 
 function run() {
   const hookTest = claudeHooks._test || {};
+  const notificationHookTest = notificationHooks._test || {};
   const logsTest = logsCommand._test || {};
   const pm2Test = pm2Autostart._test || {};
   const mcpClientTest = mcpClient._test || {};
@@ -21,6 +24,9 @@ function run() {
 
   assert.strictEqual(typeof hookTest.shouldRepairStopHook, 'function', '缺少 shouldRepairStopHook 测试导出');
   assert.strictEqual(typeof hookTest.resolvePreferredHomeDir, 'function', '缺少 resolvePreferredHomeDir 测试导出');
+  assert.strictEqual(typeof notificationHookTest.getManagedCommandType, 'function', '缺少 getManagedCommandType 测试导出');
+  assert.strictEqual(typeof notificationHookTest.parseCodexNotificationStatus, 'function', '缺少 parseCodexNotificationStatus 测试导出');
+  assert.strictEqual(typeof isSameOriginRequest, 'function', '缺少 isSameOriginRequest 导出');
   assert.strictEqual(typeof logsTest.buildFollowProcessSpec, 'function', '缺少 buildFollowProcessSpec 测试导出');
   assert.strictEqual(typeof pm2Test.getExecOptions, 'function', '缺少 getExecOptions 测试导出');
   assert.strictEqual(typeof mcpClientTest.createMissingCommandHint, 'function', '缺少 createMissingCommandHint 测试导出');
@@ -48,6 +54,9 @@ function run() {
   assert.strictEqual(normalizedHome, path.win32.normalize('C:\\Users\\wjx'), 'MSYS Home 路径转换失败');
 
   assert.strictEqual(PATHS.base, path.join(HOME_DIR, '.cc-tool'), 'PATHS.base 应基于 HOME_DIR');
+  assert.strictEqual(PATHS.configFile, path.join(HOME_DIR, '.cc-tool', 'config', 'config.json'), 'PATHS.configFile 应迁移到 config 子目录');
+  assert.strictEqual(PATHS.channels.codex, path.join(HOME_DIR, '.cc-tool', 'storage', 'channels', 'codex.json'), 'Codex 渠道配置应迁移到 storage/channels');
+  assert.strictEqual(PATHS.notifyHook, path.join(HOME_DIR, '.cc-tool', 'storage', 'scripts', 'notify-hook.js'), 'notify-hook 应迁移到 storage/scripts');
   assert.strictEqual(NATIVE_PATHS.codex.config, path.join(HOME_DIR, '.codex', 'config.toml'), 'Codex config 路径应基于 HOME_DIR');
   assert.strictEqual(NATIVE_PATHS.claude.settings, path.join(HOME_DIR, '.claude', 'settings.json'), 'Claude settings 路径应基于 HOME_DIR');
 
@@ -66,6 +75,24 @@ function run() {
     hookTest.shouldRepairStopHook(legacyHookSettings, 'C:\\Users\\wjx\\.cc-tool\\notify-hook.js', () => true),
     true,
     '旧版 Git 路径应触发 Stop hook 修复'
+  );
+
+  assert.strictEqual(
+    notificationHookTest.getManagedCommandType('node "C:\\Users\\wjx\\.cc-tool\\storage\\scripts\\notify-hook.js" --mode=dialog'),
+    'dialog',
+    'Windows 统一通知命令应识别 dialog 模式'
+  );
+  assert.deepStrictEqual(
+    notificationHookTest.parseCodexNotificationStatus({
+      notify: ['node', 'C:\\Users\\wjx\\.cc-tool\\storage\\scripts\\notify-hook.js', '--mode=notification']
+    }),
+    { enabled: true, external: false, type: 'notification', method: 'notify' },
+    'Windows Codex notify 状态解析失败'
+  );
+  assert.strictEqual(
+    isSameOriginRequest({ headers: { origin: 'http://localhost:19999', host: 'localhost:19999' } }),
+    true,
+    'Windows 本地同源请求应通过校验'
   );
 
   const netstatOutput = [

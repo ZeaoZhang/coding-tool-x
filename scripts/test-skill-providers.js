@@ -10,6 +10,7 @@ function createTempSkillService(platform = 'claude') {
   const service = new SkillService(platform);
   service.configDir = path.join(tempRoot, 'config');
   service.installDir = path.join(tempRoot, 'install');
+  service.storageDir = path.join(service.configDir, 'storage');
   service.reposConfigPath = path.join(service.configDir, 'repos.json');
   service.cachePath = path.join(service.configDir, 'skills-cache.json');
   service.ensureDirs();
@@ -79,6 +80,41 @@ async function run() {
         branch: 'main'
       });
       assert.strictEqual(fileUrlLocalRepo.localPath, tempRoot, 'file:// 本地路径应被正确解析');
+
+      service.getTokenFromConfigFile = () => null;
+      service.getTokenFromCommand = (command, args) => (
+        command === 'gh' && args.includes('--hostname') ? 'gh-host-token' : null
+      );
+      service.getTokenFromGitCredential = () => 'git-credential-token';
+      assert.strictEqual(
+        service.getGitHubToken('https://github.example.com'),
+        'gh-host-token',
+        'GitHub token 应优先回退到 gh CLI 认证'
+      );
+
+      service.getTokenFromCommand = () => null;
+      assert.strictEqual(
+        service.getGitHubToken('https://github.example.com'),
+        'git-credential-token',
+        'GitHub token 在 CLI 不可用时应回退到 git credential'
+      );
+
+      service.getTokenFromCommand = (command, args) => (
+        command === 'glab' && args.includes('--hostname') ? 'glab-host-token' : null
+      );
+      service.getTokenFromGitCredential = () => 'gitlab-credential-token';
+      assert.strictEqual(
+        service.getGitLabToken('https://gitlab.example.com'),
+        'glab-host-token',
+        'GitLab token 应优先回退到 glab CLI 认证'
+      );
+
+      service.getTokenFromCommand = () => null;
+      assert.strictEqual(
+        service.getGitLabToken('https://gitlab.example.com'),
+        'gitlab-credential-token',
+        'GitLab token 在 CLI 不可用时应回退到 git credential'
+      );
     } finally {
       cleanupTemp(tempRoot);
     }
@@ -134,6 +170,7 @@ local content
       assert.strictEqual(skills.length, 1, '本地仓库应扫描到一个 skill');
       assert.strictEqual(skills[0].directory, 'example-skill', '本地仓库 skill 目录应相对 directory 计算');
       assert.strictEqual(skills[0].repoProvider, 'local', '本地仓库来源应标记为 local');
+      assert.strictEqual(skills[0].readmeUrl, null, '本地仓库 skill 不应暴露文件系统路径作为链接');
 
       const detail = await service.getSkillDetail('example-skill', repo, 'skills/example-skill');
       assert.strictEqual(detail.source, 'local-repo', '本地仓库详情来源应为 local-repo');
@@ -225,6 +262,166 @@ local content
       fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: [] }), 'utf-8');
       service.removeRepo('', '', '', addedRepo.id);
       assert.strictEqual(fs.existsSync(service.cachePath), false, '删除仓库后应清除磁盘缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService();
+    try {
+      const cachedSkills = [
+        { name: 'cached-skill', directory: 'cached-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'openai',
+          name: 'skills',
+          branch: 'main',
+          directory: 'skills/.curated',
+          enabled: true
+        })
+      ]);
+
+      service.skillsCache = [];
+      service.fetchRepoSkills = async () => {
+        throw new Error('GitHub API error: 403');
+      };
+
+      const listedSkills = await service.listSkills();
+      assert.strictEqual(listedSkills.length, 1, '远端失败且内存缓存为空时应回退到磁盘缓存');
+      assert.strictEqual(listedSkills[0].directory, 'cached-skill', '回退到磁盘缓存后的 skill 不正确');
+
+      const diskCache = JSON.parse(fs.readFileSync(service.cachePath, 'utf-8'));
+      assert.strictEqual(diskCache.skills.length, 1, '远端失败时不应把磁盘缓存覆盖为空');
+      assert.strictEqual(diskCache.skills[0].directory, 'cached-skill', '磁盘缓存内容应保持不变');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService();
+    try {
+      const diskSkills = [
+        { name: 'disk-skill-a', directory: 'disk-skill-a', installed: false },
+        { name: 'disk-skill-b', directory: 'disk-skill-b', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: diskSkills }), 'utf-8');
+      service.skillsCache = [
+        { name: 'memory-skill', directory: 'memory-skill', installed: false }
+      ];
+
+      const listedSkills = await service.listSkills();
+      assert.strictEqual(listedSkills.length, 2, '内存缓存不全时应优先使用更完整的磁盘缓存');
+      assert.strictEqual(listedSkills[0].directory, 'disk-skill-a', '磁盘缓存回退结果不正确');
+      assert.strictEqual(listedSkills[1].directory, 'disk-skill-b', '磁盘缓存回退结果不完整');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService();
+    try {
+      const localSkillDir = path.join(service.storageDir, 'uploaded-skill');
+      fs.mkdirSync(localSkillDir, { recursive: true });
+      fs.writeFileSync(path.join(localSkillDir, 'SKILL.md'), `---
+name: "uploaded-skill"
+description: "Uploaded local skill"
+---
+
+local uploaded content
+`, 'utf-8');
+
+      const cachedSkills = [
+        { name: 'cached-skill', directory: 'cached-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.skillsCache = [];
+
+      const listedSkills = await service.listSkills();
+      assert.strictEqual(listedSkills.length, 2, '回退到磁盘缓存时也应合并本地上传的 skills');
+      assert.strictEqual(listedSkills.some(skill => skill.directory === 'cached-skill'), true, '磁盘缓存中的 skill 不应丢失');
+      assert.strictEqual(listedSkills.some(skill => skill.directory === 'uploaded-skill'), true, '本地上传的 skill 应始终被加载');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService();
+    try {
+      const cachedSkills = [
+        { name: 'stale-skill', directory: 'stale-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'openai',
+          name: 'skills',
+          branch: 'main',
+          directory: 'skills/.curated',
+          enabled: true
+        })
+      ]);
+
+      service.fetchRepoSkills = async () => {
+        throw new Error('GitHub API error: 403');
+      };
+
+      const listedSkills = await service.listSkills(true);
+      assert.strictEqual(listedSkills.length, 1, '强制刷新且远端失败时应回退到磁盘缓存');
+      assert.strictEqual(listedSkills[0].directory, 'stale-skill', '强制刷新回退后的磁盘缓存 skill 不正确');
+
+      const diskCache = JSON.parse(fs.readFileSync(service.cachePath, 'utf-8'));
+      assert.strictEqual(diskCache.skills.length, 1, '强制刷新失败时不应删除已有磁盘缓存');
+      assert.strictEqual(diskCache.skills[0].directory, 'stale-skill', '强制刷新失败后应保留原磁盘缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService();
+    try {
+      const cachedSkills = [
+        { name: 'cached-skill-a', directory: 'cached-skill-a', installed: false },
+        { name: 'cached-skill-b', directory: 'cached-skill-b', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'openai',
+          name: 'skills',
+          branch: 'main',
+          directory: 'skills/.curated',
+          enabled: true
+        }),
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'tanweai',
+          name: 'pua',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+
+      service.fetchRepoSkills = async (repo) => {
+        if (repo.owner === 'openai') {
+          return [{ name: 'partial-skill', directory: 'partial-skill', installed: false }];
+        }
+        throw new Error('GitHub API error: 403');
+      };
+
+      const listedSkills = await service.listSkills(true);
+      assert.strictEqual(listedSkills.length, 2, '部分仓库拉取失败且结果不完整时应回退到更完整的磁盘缓存');
+      assert.strictEqual(listedSkills[0].directory, 'cached-skill-a', '部分失败场景下的磁盘缓存回退结果不正确');
+      assert.strictEqual(listedSkills[1].directory, 'cached-skill-b', '部分失败场景下应保留完整磁盘缓存');
     } finally {
       cleanupTemp(tempRoot);
     }

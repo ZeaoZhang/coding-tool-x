@@ -10,13 +10,14 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const http = require('http');
+const { execFileSync } = require('child_process');
 const { createWriteStream } = require('fs');
 const { pipeline } = require('stream/promises');
 const AdmZip = require('adm-zip');
 const {
   parseSkillContent,
 } = require('./format-converter');
-const { NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
+const { NATIVE_PATHS, HOME_DIR, PATHS } = require('../../config/paths');
 
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
@@ -105,6 +106,16 @@ function normalizeRepoHost(host, provider = 'github') {
   }
 }
 
+function extractHostname(host = '') {
+  const normalized = String(host || '').trim();
+  if (!normalized) return '';
+  try {
+    return new URL(normalized).hostname || '';
+  } catch {
+    return normalized.replace(/^https?:\/\//i, '').replace(/\/.*$/, '');
+  }
+}
+
 function buildRepoUrl(repo) {
   if (repo.provider === 'local') {
     return repo.localPath || '';
@@ -159,27 +170,27 @@ const DEFAULT_REPOS_BY_PLATFORM = {
 const PLATFORM_CONFIG = {
   claude: {
     installDir: path.join(HOME_DIR, '.claude', 'skills'),
-    storageDir: 'skills',
-    reposFile: 'skill-repos.json',
-    cacheFile: 'skills-cache.json'
+    storageDir: PATHS.localSkills.claude,
+    reposFile: PATHS.skillRepos.claude,
+    cacheFile: PATHS.skillCaches.claude
   },
   codex: {
     installDir: path.join(HOME_DIR, '.codex', 'skills'),
-    storageDir: 'codex-skills',
-    reposFile: 'codex-skill-repos.json',
-    cacheFile: 'codex-skills-cache.json'
+    storageDir: PATHS.localSkills.codex,
+    reposFile: PATHS.skillRepos.codex,
+    cacheFile: PATHS.skillCaches.codex
   },
   gemini: {
     installDir: path.join(HOME_DIR, '.gemini', 'skills'),
-    storageDir: 'gemini-skills',
-    reposFile: 'gemini-skill-repos.json',
-    cacheFile: 'gemini-skills-cache.json'
+    storageDir: PATHS.localSkills.gemini,
+    reposFile: PATHS.skillRepos.gemini,
+    cacheFile: PATHS.skillCaches.gemini
   },
   opencode: {
     installDir: path.join(NATIVE_PATHS.opencode.config, 'skills'),
-    storageDir: 'opencode-skills',
-    reposFile: 'opencode-skill-repos.json',
-    cacheFile: 'opencode-skills-cache.json'
+    storageDir: PATHS.localSkills.opencode,
+    reposFile: PATHS.skillRepos.opencode,
+    cacheFile: PATHS.skillCaches.opencode
   }
 };
 
@@ -189,13 +200,13 @@ const CACHE_TTL = 5 * 60 * 1000;
 class SkillService {
   constructor(platform = 'claude') {
     this.platform = normalizePlatform(platform);
-    this.configDir = path.join(HOME_DIR, '.cc-tool');
+    this.configDir = PATHS.config;
 
     const platformConfig = PLATFORM_CONFIG[this.platform];
     this.installDir = platformConfig.installDir;
-    this.storageDir = path.join(this.configDir, platformConfig.storageDir);
-    this.reposConfigPath = path.join(this.configDir, platformConfig.reposFile);
-    this.cachePath = path.join(this.configDir, platformConfig.cacheFile);
+    this.storageDir = platformConfig.storageDir;
+    this.reposConfigPath = platformConfig.reposFile;
+    this.cachePath = platformConfig.cacheFile;
 
     // 内存缓存
     this.skillsCache = null;
@@ -215,6 +226,14 @@ class SkillService {
     if (!fs.existsSync(this.storageDir)) {
       fs.mkdirSync(this.storageDir, { recursive: true });
     }
+    const reposDir = path.dirname(this.reposConfigPath);
+    if (!fs.existsSync(reposDir)) {
+      fs.mkdirSync(reposDir, { recursive: true });
+    }
+    const cacheDir = path.dirname(this.cachePath);
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
   }
 
   clearCache({ removeFile = false } = {}) {
@@ -230,6 +249,19 @@ class SkillService {
         console.warn('[SkillService] Failed to delete cache file:', err.message);
       }
     }
+  }
+
+  prepareSkills(skills = []) {
+    const preparedSkills = Array.isArray(skills)
+      ? skills.map(skill => ({ ...skill }))
+      : [];
+
+    this.mergeLocalSkills(preparedSkills);
+    this.deduplicateSkills(preparedSkills);
+    preparedSkills.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    this.updateInstallStatus(preparedSkills);
+
+    return preparedSkills;
   }
 
   getDefaultSkillDirectory(repo) {
@@ -415,24 +447,30 @@ class SkillService {
    * 获取所有技能列表（带缓存）
    */
   async listSkills(forceRefresh = false) {
-    // 强制刷新时清除缓存
+    // 强制刷新时仅清空内存缓存，保留磁盘缓存作为回退来源
     if (forceRefresh) {
-      this.clearCache({ removeFile: true });
+      this.clearCache();
     }
 
+    const fileCache = this.loadCacheFromFile();
+
     // 检查内存缓存
-    if (!forceRefresh && this.skillsCache) {
-      this.updateInstallStatus(this.skillsCache);
+    if (!forceRefresh && Array.isArray(this.skillsCache) && this.skillsCache.length > 0) {
+      if (Array.isArray(fileCache) && fileCache.length > this.skillsCache.length) {
+        this.skillsCache = this.prepareSkills(fileCache);
+        this.cacheTime = Date.now();
+        return this.skillsCache;
+      }
+      this.skillsCache = this.prepareSkills(this.skillsCache);
+      this.cacheTime = Date.now();
       return this.skillsCache;
     }
 
     // 检查文件缓存
     if (!forceRefresh) {
-      const fileCache = this.loadCacheFromFile();
-      if (fileCache) {
-        this.skillsCache = fileCache;
+      if (fileCache && fileCache.length > 0) {
+        this.skillsCache = this.prepareSkills(fileCache);
         this.cacheTime = Date.now();
-        this.updateInstallStatus(this.skillsCache);
         return this.skillsCache;
       }
     }
@@ -442,6 +480,8 @@ class SkillService {
 
     // 并行获取所有启用仓库的技能（带超时保护）
     const enabledRepos = repos.filter(r => r.enabled);
+    const enabledRemoteRepos = enabledRepos.filter(repo => repo.provider !== 'local');
+    let remoteFailureCount = 0;
 
     if (enabledRepos.length > 0) {
       const results = await Promise.allSettled(
@@ -457,28 +497,40 @@ class SkillService {
 
       for (let i = 0; i < results.length; i++) {
         const result = results[i];
-        const repoInfo = `${enabledRepos[i].owner}/${enabledRepos[i].name}`;
+        const repo = enabledRepos[i];
+        const repoInfo = `${repo.owner}/${repo.name}`;
         if (result.status === 'fulfilled') {
           skills.push(...result.value);
         } else {
           console.warn(`[SkillService] Fetch repo ${repoInfo} failed:`, result.reason?.message);
+          if (repo.provider !== 'local') {
+            remoteFailureCount++;
+          }
         }
       }
     }
 
-    // 合并本地已安装的技能
-    this.mergeLocalSkills(skills);
+    const preparedSkills = this.prepareSkills(skills);
 
-    // 去重并排序
-    this.deduplicateSkills(skills);
-    skills.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    const hasUsableFileCache = Array.isArray(fileCache) && fileCache.length > 0;
+    const preparedFileCache = hasUsableFileCache ? this.prepareSkills(fileCache) : null;
+    const shouldUseStaleFileCache = hasUsableFileCache && (
+      (enabledRemoteRepos.length > 0 && remoteFailureCount === enabledRemoteRepos.length) ||
+      (remoteFailureCount > 0 && preparedFileCache.length > preparedSkills.length)
+    );
+
+    if (shouldUseStaleFileCache) {
+      this.skillsCache = preparedFileCache;
+      this.cacheTime = Date.now();
+      return this.skillsCache;
+    }
 
     // 更新缓存
-    this.skillsCache = skills;
+    this.skillsCache = preparedSkills;
     this.cacheTime = Date.now();
-    this.saveCacheToFile(skills);
+    this.saveCacheToFile(preparedSkills);
 
-    return skills;
+    return preparedSkills;
   }
 
   /**
@@ -744,7 +796,7 @@ class SkillService {
   buildSkillReadmeUrl(repo, fullDirectory = '') {
     const normalizedDirectory = normalizeRepoPath(fullDirectory);
     if (repo.provider === 'local') {
-      return repo.localPath || null;
+      return null;
     }
     if (repo.provider === 'gitlab') {
       const suffix = normalizedDirectory ? `/-/tree/${repo.branch}/${normalizedDirectory}` : `/-/tree/${repo.branch}`;
@@ -780,16 +832,11 @@ class SkillService {
   /**
    * 获取 GitHub Token（从环境变量或配置文件）
    */
-  getGitHubToken() {
-    // 优先从环境变量获取
-    if (process.env.GITHUB_TOKEN) {
-      return process.env.GITHUB_TOKEN;
-    }
-    // 从配置文件获取
+  getTokenFromConfigFile(fileName) {
     try {
-      const configPath = path.join(this.configDir, 'github-token.txt');
+      const configPath = path.join(this.configDir, fileName);
       if (fs.existsSync(configPath)) {
-        return fs.readFileSync(configPath, 'utf-8').trim();
+        return fs.readFileSync(configPath, 'utf-8').trim() || null;
       }
     } catch (err) {
       // ignore
@@ -797,29 +844,101 @@ class SkillService {
     return null;
   }
 
-  getGitLabToken() {
+  getTokenFromCommand(command, args = []) {
+    try {
+      const output = execFileSync(command, args, {
+        encoding: 'utf-8',
+        timeout: 3000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim();
+      return output || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getTokenFromGitCredential(host) {
+    const hostname = extractHostname(host);
+    if (!hostname) return null;
+
+    try {
+      const output = execFileSync('git', ['credential', 'fill'], {
+        input: `protocol=https\nhost=${hostname}\n\n`,
+        encoding: 'utf-8',
+        timeout: 3000,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+      const passwordLine = output
+        .split(/\r?\n/)
+        .find(line => line.startsWith('password='));
+      if (!passwordLine) return null;
+      return passwordLine.slice('password='.length).trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getGitHubToken(host = DEFAULT_GITHUB_HOST) {
+    // 优先从环境变量获取
+    if (process.env.GITHUB_TOKEN) {
+      return process.env.GITHUB_TOKEN;
+    }
+
+    const configToken = this.getTokenFromConfigFile('github-token.txt');
+    if (configToken) {
+      return configToken;
+    }
+
+    const hostname = extractHostname(host);
+    if (hostname) {
+      const ghHostToken = this.getTokenFromCommand('gh', ['auth', 'token', '--hostname', hostname]);
+      if (ghHostToken) {
+        return ghHostToken;
+      }
+    }
+
+    const ghToken = this.getTokenFromCommand('gh', ['auth', 'token']);
+    if (ghToken) {
+      return ghToken;
+    }
+
+    return this.getTokenFromGitCredential(host);
+  }
+
+  getGitLabToken(host = DEFAULT_GITLAB_HOST) {
     if (process.env.GITLAB_TOKEN) {
       return process.env.GITLAB_TOKEN;
     }
     if (process.env.GITLAB_PRIVATE_TOKEN) {
       return process.env.GITLAB_PRIVATE_TOKEN;
     }
-    try {
-      const configPath = path.join(this.configDir, 'gitlab-token.txt');
-      if (fs.existsSync(configPath)) {
-        return fs.readFileSync(configPath, 'utf-8').trim();
-      }
-    } catch (err) {
-      // ignore
+
+    const configToken = this.getTokenFromConfigFile('gitlab-token.txt');
+    if (configToken) {
+      return configToken;
     }
-    return null;
+
+    const hostname = extractHostname(host);
+    if (hostname) {
+      const glabHostToken = this.getTokenFromCommand('glab', ['auth', 'token', '--hostname', hostname]);
+      if (glabHostToken) {
+        return glabHostToken;
+      }
+    }
+
+    const glabToken = this.getTokenFromCommand('glab', ['auth', 'token']);
+    if (glabToken) {
+      return glabToken;
+    }
+
+    return this.getTokenFromGitCredential(host);
   }
 
   /**
    * 通用 GitHub API 请求
    */
   async fetchGitHubApi(url) {
-    const token = this.getGitHubToken();
+    const token = this.getGitHubToken(url);
     const headers = {
       'User-Agent': 'cc-cli-skill-service',
       'Accept': 'application/vnd.github.v3+json'
@@ -866,7 +985,7 @@ class SkillService {
   }
 
   async fetchGitLabApi(url, { raw = false } = {}) {
-    const token = this.getGitLabToken();
+    const token = this.getGitLabToken(url);
     const headers = {
       'User-Agent': 'cc-cli-skill-service'
     };
@@ -1246,13 +1365,13 @@ class SkillService {
       if (normalizedRepo.provider === 'gitlab') {
         const projectId = encodeURIComponent(normalizedRepo.projectPath);
         zipUrl = `${normalizedRepo.host}/api/v4/projects/${projectId}/repository/archive.zip?sha=${encodeURIComponent(normalizedRepo.branch)}`;
-        const token = this.getGitLabToken();
+        const token = this.getGitLabToken(normalizedRepo.host);
         if (token) {
           zipHeaders['PRIVATE-TOKEN'] = token;
         }
       } else {
         zipUrl = `https://api.github.com/repos/${normalizedRepo.owner}/${normalizedRepo.name}/zipball/${encodeURIComponent(normalizedRepo.branch)}`;
-        const token = this.getGitHubToken();
+        const token = this.getGitHubToken(normalizedRepo.host);
         zipHeaders.Accept = 'application/vnd.github+json';
         if (token) {
           zipHeaders.Authorization = `token ${token}`;

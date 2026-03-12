@@ -9,8 +9,8 @@ const { NATIVE_PATHS, PATHS } = require('../../config/paths');
  * 读取 OpenCode SQLite 会话数据
  */
 
-const PROJECT_ORDER_FILE = path.join(PATHS.base, 'opencode-project-order.json');
-const SESSION_ORDER_FILE = path.join(PATHS.base, 'opencode-session-order.json');
+const PROJECT_ORDER_FILE = PATHS.opencodeProjectOrder;
+const SESSION_ORDER_FILE = PATHS.opencodeSessionOrder;
 const OPENCODE_DB_PATH = path.join(NATIVE_PATHS.opencode.data, 'opencode.db');
 const COUNTS_CACHE_TTL_MS = 30 * 1000;
 const EMPTY_COUNTS = Object.freeze({ projectCount: 0, sessionCount: 0 });

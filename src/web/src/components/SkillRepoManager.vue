@@ -117,6 +117,7 @@ import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert, NSpin } from 'na
 import { AddOutline } from '@vicons/ionicons5'
 import { getSkillRepos, addSkillRepo, removeSkillRepo, toggleSkillRepo } from '../api/skills'
 import message from '../utils/message'
+import { parseRepoInput, isLikelyLocalPath, normalizeDirectory } from '../utils/skill-repo-input'
 
 const props = defineProps({
   visible: Boolean,
@@ -164,14 +165,6 @@ const recommendedRepos = computed(() => {
   ]
 })
 
-function isLikelyLocalPath(input) {
-  return /^(\/|~\/|\.\/|\.\.\/|[a-zA-Z]:[\\/]|file:\/\/)/.test(input)
-}
-
-function normalizeDirectory(directory = '') {
-  return String(directory || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
-}
-
 function buildRepoIdentity(repo) {
   const provider = repo.provider || (repo.localPath ? 'local' : (repo.projectPath ? 'gitlab' : 'github'))
   const directory = normalizeDirectory(repo.directory)
@@ -206,54 +199,6 @@ function getRepoSubtitle(repo) {
   if (repo.branch) parts.push(repo.branch)
   if (repo.directory) parts.push(`目录: ${repo.directory}`)
   return parts.join(' · ')
-}
-
-function parseRepoInput(input) {
-  const value = input.trim()
-  if (!value) return null
-
-  if (isLikelyLocalPath(value)) {
-    return {
-      provider: 'local',
-      localPath: value
-    }
-  }
-
-  const sshMatch = value.match(/^git@([^:]+):(.+?)(?:\.git)?$/i)
-  if (sshMatch) {
-    const host = `https://${sshMatch[1]}`
-    const projectPath = sshMatch[2].replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '')
-    const provider = sshMatch[1].includes('github') ? 'github' : 'gitlab'
-    if (provider === 'gitlab') {
-      return { provider, host, projectPath }
-    }
-    const parts = projectPath.split('/')
-    if (parts.length >= 2) {
-      return { provider, host, owner: parts[0], name: parts[1] }
-    }
-  }
-
-  try {
-    const parsed = new URL(value)
-    const host = `${parsed.protocol}//${parsed.host}`
-    const projectPath = parsed.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '')
-    if (parsed.hostname.includes('github')) {
-      const parts = projectPath.split('/')
-      if (parts.length >= 2) {
-        return { provider: 'github', host, owner: parts[0], name: parts[1] }
-      }
-    }
-    return { provider: 'gitlab', host, projectPath }
-  } catch {
-    // noop
-  }
-
-  const parts = value.split('/').filter(Boolean)
-  if (parts.length === 2) {
-    return { provider: 'github', owner: parts[0], name: parts[1] }
-  }
-
-  return null
 }
 
 const parsedRepoInput = computed(() => parseRepoInput(newRepo.value.input))

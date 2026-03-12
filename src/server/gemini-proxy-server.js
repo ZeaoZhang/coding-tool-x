@@ -13,6 +13,7 @@ const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRunt
 const { createDecodedStream } = require('./services/response-decoder');
 const { getEffectiveApiKey } = require('./services/gemini-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
+const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -186,6 +187,14 @@ async function startGeminiProxyServer(options = {}) {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
           release();
+          publishFailureLog({
+            source: 'gemini',
+            channel: channel.name,
+            message: 'API key not configured or expired. Please update your channel key.',
+            statusCode: 401,
+            stage: 'preflight',
+            broadcastLog
+          });
           return res.status(401).json({
             error: {
               message: 'API key not configured or expired. Please update your channel key.',
@@ -241,6 +250,20 @@ async function startGeminiProxyServer(options = {}) {
           release();
           if (err) {
             recordFailure(channel.id, 'gemini', err);
+            const metadata = requestMetadata.get(req) || {
+              channel: channel.name,
+              channelId: channel.id,
+              startTime: Date.now()
+            };
+            publishFailureLog({
+              source: 'gemini',
+              metadata,
+              message: err.message,
+              error: err,
+              statusCode: 502,
+              stage: 'proxy_web',
+              broadcastLog
+            });
             console.error('Gemini proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -254,6 +277,13 @@ async function startGeminiProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('Gemini channel allocation error:', error);
+        publishFailureLog({
+          source: 'gemini',
+          message: error.message || 'No Gemini channel available',
+          statusCode: 503,
+          stage: 'allocate_channel',
+          broadcastLog
+        });
         if (!res.headersSent) {
           res.status(503).json({
             error: {
@@ -306,7 +336,43 @@ async function startGeminiProxyServer(options = {}) {
         totalTokens: 0,
         model: ''
       };
+      let usageRecorded = false;
       const parsedStream = createDecodedStream(proxyRes);
+
+      function recordUsageIfReady() {
+        if (usageRecorded) {
+          return false;
+        }
+
+        if (!tokenData.model && metadata.modelFromUrl) {
+          tokenData.model = metadata.modelFromUrl;
+        }
+
+        const result = publishUsageLog({
+          source: 'gemini',
+          metadata,
+          model: tokenData.model,
+          tokens: {
+            input: tokenData.inputTokens,
+            output: tokenData.outputTokens,
+            cached: tokenData.cachedTokens,
+            reasoning: tokenData.reasoningTokens,
+            total: tokenData.totalTokens
+          },
+          calculateCost,
+          broadcastLog,
+          recordRequest: recordGeminiRequest,
+          recordSuccess,
+          allowBroadcast: !isResponseClosed
+        });
+
+        if (!result) {
+          return false;
+        }
+
+        usageRecorded = true;
+        return true;
+      }
 
       parsedStream.on('data', (chunk) => {
         // 如果响应已关闭，停止处理
@@ -347,30 +413,27 @@ async function startGeminiProxyServer(options = {}) {
               }
 
               // 提取 usage 信息 (支持 OpenAI 和 Gemini 原生格式)
-              if (tokenData.inputTokens === 0) {
-                // OpenAI 格式
-                if (parsed.usage) {
-                  tokenData.inputTokens = parsed.usage.prompt_tokens || parsed.usage.input_tokens || 0;
-                  tokenData.outputTokens = parsed.usage.completion_tokens || parsed.usage.output_tokens || 0;
-                  tokenData.totalTokens = parsed.usage.total_tokens || 0;
+              if (parsed.usage) {
+                tokenData.inputTokens = parsed.usage.prompt_tokens || parsed.usage.input_tokens || 0;
+                tokenData.outputTokens = parsed.usage.completion_tokens || parsed.usage.output_tokens || 0;
+                tokenData.totalTokens = parsed.usage.total_tokens || 0;
 
-                  // Gemini 可能包含缓存信息
-                  if (parsed.usage.prompt_tokens_details) {
-                    tokenData.cachedTokens = parsed.usage.prompt_tokens_details.cached_tokens || 0;
-                  }
+                // Gemini 可能包含缓存信息
+                if (parsed.usage.prompt_tokens_details) {
+                  tokenData.cachedTokens = parsed.usage.prompt_tokens_details.cached_tokens || 0;
                 }
-                // Gemini 原生格式
-                else if (parsed.usageMetadata) {
-                  tokenData.inputTokens = parsed.usageMetadata.promptTokenCount || 0;
-                  tokenData.outputTokens = parsed.usageMetadata.candidatesTokenCount || 0;
-                  tokenData.totalTokens = parsed.usageMetadata.totalTokenCount || 0;
+              } else if (parsed.usageMetadata) {
+                tokenData.inputTokens = parsed.usageMetadata.promptTokenCount || 0;
+                tokenData.outputTokens = parsed.usageMetadata.candidatesTokenCount || 0;
+                tokenData.totalTokens = parsed.usageMetadata.totalTokenCount || 0;
 
-                  // Gemini 缓存信息
-                  if (parsed.usageMetadata.cachedContentTokenCount) {
-                    tokenData.cachedTokens = parsed.usageMetadata.cachedContentTokenCount;
-                  }
+                // Gemini 缓存信息
+                if (parsed.usageMetadata.cachedContentTokenCount) {
+                  tokenData.cachedTokens = parsed.usageMetadata.cachedContentTokenCount;
                 }
               }
+
+              recordUsageIfReady();
             } catch (err) {
               // 忽略解析错误
             }
@@ -412,73 +475,7 @@ async function startGeminiProxyServer(options = {}) {
           }
         }
 
-        // 如果没有从响应中提取到模型，使用 URL 中的模型
-        if (!tokenData.model && metadata.modelFromUrl) {
-          tokenData.model = metadata.modelFromUrl;
-        }
-
-        // 记录日志和统计
-        const now = new Date();
-        const time = now.toLocaleTimeString('zh-CN', {
-          hour12: false,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        });
-
-        // 记录统计数据（先计算）
-        const tokens = {
-          input: tokenData.inputTokens,
-          output: tokenData.outputTokens,
-          total: tokenData.totalTokens || (tokenData.inputTokens + tokenData.outputTokens)
-        };
-        const cost = calculateCost(tokenData.model, tokens);
-
-        // 只有在有 token 数据时才广播日志和记录统计
-        if (tokenData.inputTokens > 0 || tokenData.outputTokens > 0 || tokenData.totalTokens > 0) {
-          // 广播日志（仅当响应仍然开放时）
-          if (!isResponseClosed) {
-            const logData = {
-              type: 'log',
-              id: metadata.id,
-              time: time,
-              channel: metadata.channel,
-              model: tokenData.model,
-              inputTokens: tokenData.inputTokens,
-              outputTokens: tokenData.outputTokens,
-              cachedTokens: tokenData.cachedTokens,
-              reasoningTokens: tokenData.reasoningTokens,
-              totalTokens: tokenData.totalTokens || (tokenData.inputTokens + tokenData.outputTokens),
-              cost: cost,
-              source: 'gemini'
-            };
-
-            broadcastLog(logData);
-          }
-
-          // 记录统计
-          const duration = Date.now() - metadata.startTime;
-
-          recordGeminiRequest({
-            id: metadata.id,
-            timestamp: new Date(metadata.startTime).toISOString(),
-            toolType: 'gemini',
-            channel: metadata.channel,
-            channelId: metadata.channelId,
-            model: tokenData.model,
-            tokens: {
-              input: tokenData.inputTokens,
-              output: tokenData.outputTokens,
-              cached: tokenData.cachedTokens,
-              total: tokens.total
-            },
-            duration: duration,
-            success: true,
-            cost: cost
-          });
-
-          recordSuccess(metadata.channelId, 'gemini');
-        }
+        recordUsageIfReady();
 
         if (!isResponseClosed) {
           requestMetadata.delete(req);
@@ -492,6 +489,15 @@ async function startGeminiProxyServer(options = {}) {
         }
         isResponseClosed = true;
         recordFailure(metadata.channelId, 'gemini', err);
+        publishFailureLog({
+          source: 'gemini',
+          metadata,
+          message: err.message,
+          error: err,
+          statusCode: proxyRes.statusCode,
+          stage: 'response_stream',
+          broadcastLog
+        });
         requestMetadata.delete(req);
       });
     });
@@ -504,6 +510,19 @@ async function startGeminiProxyServer(options = {}) {
         releaseChannel(req.selectedChannel.id, 'gemini');
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
       }
+      publishFailureLog({
+        source: 'gemini',
+        metadata: (req && requestMetadata.get(req)) || {
+          channel: req?.selectedChannel?.name,
+          channelId: req?.selectedChannel?.id,
+          model: req?.body?.model
+        },
+        message: err.message,
+        error: err,
+        statusCode: 502,
+        stage: 'proxy',
+        broadcastLog
+      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: {

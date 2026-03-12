@@ -6,7 +6,25 @@ const { PATHS } = require('../../config/paths');
 const configTemplatesService = require('./config-templates-service');
 
 // 工作区配置文件路径
-const WORKSPACES_CONFIG = path.join(PATHS.base, 'workspaces.json');
+const WORKSPACES_CONFIG = PATHS.workspaces;
+
+function createSymlink(target, linkPath) {
+  try {
+    fs.symlinkSync(target, linkPath, 'dir');
+  } catch (err) {
+    if (err.code === 'EPERM' && process.platform === 'win32') {
+      throw new Error(
+        `创建软链接失败：Windows 需要管理员权限或开启开发者模式。\n` +
+        `解决方案：\n` +
+        `1. 以管理员身份运行终端后重试\n` +
+        `2. 或开启开发者模式：设置 → 系统 → 开发者选项 → 开发者模式\n` +
+        `3. 对于 Git 项目，建议保持默认的 worktree 模式（无需软链接）\n` +
+        `原始错误: ${err.message}`
+      );
+    }
+    throw err;
+  }
+}
 
 function runGitCommand(args, options = {}) {
   const execOptions = {
@@ -287,7 +305,7 @@ function createWorkspace(options) {
       let targetPath = sourcePath;
       let worktrees = [];
 
-      // Git 仓库且需要创建 worktree
+      // Git 仓库且需要创建 worktree：直接在工作区目录内创建，无需额外 symlink
       if (isGit && useWorktree) {
         // 获取当前分支作为默认分支
         let targetBranch = branch;
@@ -299,72 +317,46 @@ function createWorkspace(options) {
           }
         }
 
-        // worktree 路径：源目录同级，名称为 "项目名-workspace-分支名"
-        const worktreePath = path.join(
-          path.dirname(sourcePath),
-          `${path.basename(sourcePath)}-ws-${targetBranch.replace(/\//g, '-')}`
-        );
+        // worktree 直接创建到工作区目录内的项目路径
+        const worktreePath = symlinkPath;
 
-        // 检查 worktree 是否已存在
-        if (fs.existsSync(worktreePath)) {
-          // 已存在则直接使用
-          targetPath = worktreePath;
-          worktrees.push({
-            branch: targetBranch,
-            path: worktreePath
+        try {
+          // 尝试检出已有分支
+          runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+            cwd: sourcePath
           });
-        } else {
+        } catch (error) {
+          // 如果分支不存在，尝试创建新分支
           try {
-            // 尝试检出已有分支
-            runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+            const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
+            if (baseBranch && baseBranch.trim()) {
+              worktreeArgs.push(baseBranch.trim());
+            }
+            runGitCommand(worktreeArgs, {
               cwd: sourcePath
             });
-
-            targetPath = worktreePath;
-            worktrees.push({
-              branch: targetBranch,
-              path: worktreePath
-            });
-          } catch (error) {
-            // 如果分支不存在，尝试创建新分支
-            try {
-              const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
-              if (baseBranch && baseBranch.trim()) {
-                worktreeArgs.push(baseBranch.trim());
-              }
-              runGitCommand(worktreeArgs, {
-                cwd: sourcePath
-              });
-              targetPath = worktreePath;
-              worktrees.push({
-                branch: targetBranch,
-                path: worktreePath
-              });
-            } catch (err) {
-              // Check if it's a "branch already checked out" error
-              if (err.message.includes('already checked out')) {
-                throw new Error(
-                  `无法创建 worktree：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
-                  `错误详情: ${err.message}\n\n` +
-                  `提示：请为此项目指定不同的分支名，或禁用 worktree 模式。`
-                );
-              }
-
-              // For other errors, provide clear message but allow fallback
-              console.warn(`创建 worktree 失败，使用软链接: ${err.message}`);
-              targetPath = sourcePath;
-              worktrees = getGitWorktrees(sourcePath);
+          } catch (err) {
+            if (err.message.includes('already checked out')) {
+              throw new Error(
+                `无法创建 worktree：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
+                `错误详情: ${err.message}\n\n` +
+                `提示：请为此项目指定不同的分支名，或禁用 worktree 模式。`
+              );
             }
+            throw new Error(`创建 worktree 失败: ${err.message}`);
           }
         }
-      } else if (isGit) {
-        // Git 仓库但不创建 worktree，获取已有的 worktrees 信息
-        worktrees = getGitWorktrees(sourcePath);
-      }
-      // 非 Git 仓库：targetPath 保持为 sourcePath，直接软链接
 
-      // 创建软链接
-      fs.symlinkSync(targetPath, symlinkPath, 'dir');
+        targetPath = worktreePath;
+        worktrees.push({ branch: targetBranch, path: worktreePath });
+      } else if (isGit) {
+        // Git 仓库但不创建 worktree：symlink 指向源路径，记录已有 worktrees
+        worktrees = getGitWorktrees(sourcePath);
+        createSymlink(targetPath, symlinkPath);
+      } else {
+        // 非 Git 仓库：symlink 指向源路径
+        createSymlink(targetPath, symlinkPath);
+      }
 
       workspaceProjects.push({
         name: symlinkName,
@@ -438,36 +430,17 @@ function deleteWorkspace(id, removeFiles = false) {
 
   const workspace = data.workspaces[index];
 
-  // 清理 worktrees (无论是否删除工作区目录,都应该清理 worktree)
+  // 注销 worktrees（worktree 目录在工作区内，git 引用需先注销）
   for (const proj of workspace.projects) {
-    if (proj.isGitRepo && proj.sourcePath && fs.existsSync(proj.sourcePath)) {
-      try {
-        // 重新扫描实际的 worktrees,确保获取最新状态
-        const actualWorktrees = getGitWorktrees(proj.sourcePath);
-        for (const wt of actualWorktrees) {
-          // 只删除属于这个工作区的 worktree (通过 -ws- 标识符识别)
-          if (wt.path && wt.path.includes('-ws-')) {
-            try {
-              console.log(`清理 worktree: ${wt.path}`);
-              runGitCommand(['worktree', 'remove', wt.path, '--force'], {
-                cwd: proj.sourcePath
-              });
-            } catch (error) {
-              console.error(`删除 worktree 失败: ${wt.path}`, error.message);
-              // 如果 git worktree remove 失败,尝试手动删除目录
-              if (fs.existsSync(wt.path)) {
-                try {
-                  fs.rmSync(wt.path, { recursive: true, force: true });
-                  console.log(`手动删除 worktree 目录: ${wt.path}`);
-                } catch (rmError) {
-                  console.error(`手动删除 worktree 目录失败: ${wt.path}`, rmError.message);
-                }
-              }
-            }
-          }
+    if (proj.useWorktree && proj.sourcePath && proj.targetPath) {
+      if (fs.existsSync(proj.sourcePath)) {
+        try {
+          runGitCommand(['worktree', 'remove', proj.targetPath, '--force'], {
+            cwd: proj.sourcePath
+          });
+        } catch (error) {
+          console.error(`注销 worktree 失败: ${proj.targetPath}`, error.message);
         }
-      } catch (error) {
-        console.error(`扫描 worktree 失败: ${proj.sourcePath}`, error.message);
       }
     }
   }
@@ -533,9 +506,8 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
   let targetPath = sourcePath;
   let worktrees = [];
 
-  // Git 仓库且需要创建 worktree
+  // Git 仓库且需要创建 worktree：直接在工作区目录内创建，无需额外 symlink
   if (isGit && useWorktree) {
-    // 获取当前分支作为默认分支
     let targetBranch = branch;
     if (!targetBranch) {
       try {
@@ -545,72 +517,43 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
       }
     }
 
-    const worktreePath = path.join(
-      path.dirname(sourcePath),
-      `${path.basename(sourcePath)}-ws-${targetBranch.replace(/\//g, '-')}`
-    );
+    const worktreePath = symlinkPath;
 
-    // 检查 worktree 是否已存在
-    if (fs.existsSync(worktreePath)) {
-      targetPath = worktreePath;
-      worktrees.push({ branch: targetBranch, path: worktreePath });
-    } else {
+    try {
+      runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+        cwd: sourcePath
+      });
+    } catch (error) {
       try {
-        runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
-          cwd: sourcePath
-        });
-        targetPath = worktreePath;
-        worktrees.push({ branch: targetBranch, path: worktreePath });
-      } catch (error) {
-        // Check if branch is already checked out elsewhere
-        if (error.message && error.message.includes('already checked out')) {
+        const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
+        if (baseBranch && baseBranch.trim()) {
+          worktreeArgs.push(baseBranch.trim());
+        }
+        runGitCommand(worktreeArgs, { cwd: sourcePath });
+      } catch (err) {
+        if (err.message && err.message.includes('already checked out')) {
           throw new Error(
             `无法添加项目：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
             `仓库路径: ${sourcePath}\n\n` +
-            `Git worktree 不允许在同一仓库的多个工作树中检出相同的分支。\n\n` +
             `解决方案：\n` +
             `1. 指定不同的分支名\n` +
             `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
           );
         }
-
-        // Branch doesn't exist, try creating it
-        try {
-          const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
-          if (baseBranch && baseBranch.trim()) {
-            worktreeArgs.push(baseBranch.trim());
-          }
-          runGitCommand(worktreeArgs, {
-            cwd: sourcePath
-          });
-          targetPath = worktreePath;
-          worktrees.push({ branch: targetBranch, path: worktreePath });
-        } catch (err) {
-          // Check for "already checked out" error in create branch attempt
-          if (err.message && err.message.includes('already checked out')) {
-            throw new Error(
-              `无法添加项目：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
-              `仓库路径: ${sourcePath}\n\n` +
-              `Git worktree 不允许在同一仓库的多个工作树中检出相同的分支。\n\n` +
-              `解决方案：\n` +
-              `1. 指定不同的分支名\n` +
-              `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
-            );
-          }
-
-          // Other errors: fall back to symlink mode
-          console.warn(`创建 worktree 失败，使用软链接: ${err.message}`);
-          targetPath = sourcePath;
-          worktrees = getGitWorktrees(sourcePath);
-        }
+        throw new Error(`创建 worktree 失败: ${err.message}`);
       }
     }
-  } else if (isGit) {
-    worktrees = getGitWorktrees(sourcePath);
-  }
 
-  // 创建软链接
-  fs.symlinkSync(targetPath, symlinkPath, 'dir');
+    targetPath = worktreePath;
+    worktrees.push({ branch: targetBranch, path: worktreePath });
+  } else if (isGit) {
+    // Git 仓库但不创建 worktree：symlink 指向源路径
+    worktrees = getGitWorktrees(sourcePath);
+    createSymlink(targetPath, symlinkPath);
+  } else {
+    // 非 Git 仓库：symlink 指向源路径
+    createSymlink(targetPath, symlinkPath);
+  }
 
   // 更新配置
   workspace.projects.push({
@@ -629,7 +572,7 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
 /**
  * 从工作区移除项目
  */
-function removeProjectFromWorkspace(workspaceId, projectName, removeWorktrees = false) {
+function removeProjectFromWorkspace(workspaceId, projectName) {
   const data = loadWorkspaces();
   const workspace = data.workspaces.find(ws => ws.id === workspaceId);
 
@@ -644,25 +587,27 @@ function removeProjectFromWorkspace(workspaceId, projectName, removeWorktrees = 
   }
 
   const project = workspace.projects[projectIndex];
-  const symlinkPath = path.join(workspace.path, projectName);
+  const projectPath = path.join(workspace.path, projectName);
 
-  // 删除软链接
-  if (fs.existsSync(symlinkPath)) {
-    fs.unlinkSync(symlinkPath);
-  }
-
-  // 清理 worktrees
-  if (removeWorktrees && project.worktrees && project.worktrees.length > 0) {
-    for (const wt of project.worktrees) {
-      if (fs.existsSync(wt.path)) {
-        try {
-          runGitCommand(['worktree', 'remove', wt.path, '--force'], {
-            cwd: project.sourcePath
-          });
-        } catch (error) {
-          console.error(`删除 worktree 失败: ${wt.path}`, error.message);
+  if (project.useWorktree) {
+    // worktree 项目：用 git worktree remove 注销引用（目录在工作区内）
+    if (fs.existsSync(projectPath) && fs.existsSync(project.sourcePath)) {
+      try {
+        runGitCommand(['worktree', 'remove', projectPath, '--force'], {
+          cwd: project.sourcePath
+        });
+      } catch (error) {
+        console.error(`注销 worktree 失败: ${projectPath}`, error.message);
+        // git 注销失败时手动删除目录
+        if (fs.existsSync(projectPath)) {
+          fs.rmSync(projectPath, { recursive: true, force: true });
         }
       }
+    }
+  } else {
+    // symlink 项目：直接删除软链接
+    if (fs.existsSync(projectPath)) {
+      fs.unlinkSync(projectPath);
     }
   }
 

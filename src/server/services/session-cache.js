@@ -11,7 +11,7 @@ let hasMessagesPersisted = {};
 let hasMessagesPersistTimer = null;
 
 function getCcToolDir() {
-  return PATHS.base;
+  return path.dirname(PATHS.sessionHasCache);
 }
 
 function ensureDirExists(dir) {
@@ -52,7 +52,7 @@ function invalidateProjectsCache(configOrPath) {
   projectsCache.delete(key);
 }
 
-const hasMessagesCacheFile = path.join(getCcToolDir(), 'session-has-cache.json');
+const hasMessagesCacheFile = PATHS.sessionHasCache;
 loadHasMessagesCacheFromDisk();
 
 function loadHasMessagesCacheFromDisk() {

@@ -10,7 +10,7 @@ const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
-const { NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
+const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 
 const CLAUDE_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
 const CLAUDE_INSTALLED_FILE = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
@@ -106,12 +106,77 @@ function stripJsonComments(input = '') {
 class PluginsService {
   constructor(platform = 'claude') {
     this.platform = ['claude', 'opencode'].includes(platform) ? platform : 'claude';
-    this.ccToolConfigDir = path.join(HOME_DIR, '.cc-tool');
+    this.ccToolConfigDir = path.dirname(PATHS.pluginRepos.claude);
     this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
     this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
-    const prefix = this.platform === 'opencode' ? 'opencode-' : '';
-    this.marketCachePath = path.join(this.ccToolConfigDir, `${prefix}plugins-market-cache.json`);
+    this.marketCachePath = this.platform === 'opencode'
+      ? PATHS.pluginMarketCache.opencode
+      : PATHS.pluginMarketCache.claude;
     this._marketCache = null;
+  }
+
+  clearMarketCache({ removeFile = true } = {}) {
+    this._marketCache = null;
+    if (removeFile) {
+      try {
+        if (fs.existsSync(this.marketCachePath)) {
+          fs.unlinkSync(this.marketCachePath);
+        }
+      } catch (err) {
+        // ignore cache deletion errors
+      }
+    }
+  }
+
+  loadMarketCacheFromFile() {
+    try {
+      if (fs.existsSync(this.marketCachePath)) {
+        const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
+        if (Array.isArray(data.plugins)) {
+          return data.plugins;
+        }
+      }
+    } catch (err) {
+      // ignore cache read errors
+    }
+    return null;
+  }
+
+  saveMarketCacheToFile(plugins) {
+    try {
+      this._ensureDir(path.dirname(this.marketCachePath));
+      fs.writeFileSync(this.marketCachePath, JSON.stringify({ plugins }), 'utf-8');
+    } catch (err) {
+      // ignore cache write errors
+    }
+  }
+
+  prepareMarketPlugins(plugins = []) {
+    const preparedPlugins = Array.isArray(plugins)
+      ? plugins.map(plugin => ({ ...plugin }))
+      : [];
+    const seen = new Set();
+    const installedPlugins = this.listPlugins().plugins;
+    const installedNames = new Set(installedPlugins.map(p => p.name));
+
+    const deduped = [];
+    for (const plugin of preparedPlugins) {
+      const key = [
+        plugin.name || '',
+        plugin.repoOwner || '',
+        plugin.repoName || '',
+        plugin.directory || plugin.installSource || ''
+      ].join('::');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push({
+        ...plugin,
+        isInstalled: installedNames.has(plugin.name)
+      });
+    }
+
+    deduped.sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()));
+    return deduped;
   }
 
   _ensureDir(dirPath) {
@@ -780,11 +845,9 @@ class PluginsService {
    * @returns {string} Config file path
    */
   getReposConfigPath() {
-    this._ensureDir(this.ccToolConfigDir);
-    if (this._isOpenCode()) {
-      return path.join(this.ccToolConfigDir, 'opencode-plugin-repos.json');
-    }
-    return path.join(this.ccToolConfigDir, 'plugin-repos.json');
+    const filePath = this._isOpenCode() ? PATHS.pluginRepos.opencode : PATHS.pluginRepos.claude;
+    this._ensureDir(path.dirname(filePath));
+    return filePath;
   }
 
   _getDefaultRepos() {
@@ -936,6 +999,7 @@ class PluginsService {
 
     config.repos.push(newRepo);
     this.saveReposConfig(config);
+    this.clearMarketCache();
 
     return config.repos;
   }
@@ -950,6 +1014,7 @@ class PluginsService {
     const config = this.loadReposConfig();
     config.repos = config.repos.filter(r => !(r.owner === owner && r.name === name));
     this.saveReposConfig(config);
+    this.clearMarketCache();
     return config.repos;
   }
 
@@ -968,6 +1033,7 @@ class PluginsService {
     }
     repo.enabled = enabled;
     this.saveReposConfig(config);
+    this.clearMarketCache();
     return config.repos;
   }
 
@@ -1157,21 +1223,29 @@ class PluginsService {
    * @returns {Promise<Array>} List of available market plugins
    */
   async getMarketPlugins(forceRefresh = false) {
-    if (!forceRefresh) {
-      if (this._marketCache) return this._marketCache;
-      try {
-        if (fs.existsSync(this.marketCachePath)) {
-          const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
-          if (Array.isArray(data.plugins)) {
-            this._marketCache = data.plugins;
-            return this._marketCache;
-          }
-        }
-      } catch (err) { /* ignore */ }
+    if (forceRefresh) {
+      this.clearMarketCache({ removeFile: false });
+    }
+
+    const fileCache = this.loadMarketCacheFromFile();
+
+    if (!forceRefresh && Array.isArray(this._marketCache) && this._marketCache.length > 0) {
+      if (Array.isArray(fileCache) && fileCache.length > this._marketCache.length) {
+        this._marketCache = this.prepareMarketPlugins(fileCache);
+        return this._marketCache;
+      }
+      this._marketCache = this.prepareMarketPlugins(this._marketCache);
+      return this._marketCache;
+    }
+
+    if (!forceRefresh && Array.isArray(fileCache) && fileCache.length > 0) {
+      this._marketCache = this.prepareMarketPlugins(fileCache);
+      return this._marketCache;
     }
 
     const repos = this.getRepos().filter(r => r.enabled);
     const marketPlugins = [];
+    let repoFailureCount = 0;
 
     for (const repo of repos) {
       try {
@@ -1264,24 +1338,29 @@ class PluginsService {
           }
         }
       } catch (err) {
+        repoFailureCount++;
         console.error(`[PluginsService] Failed to fetch plugins from ${repo.owner}/${repo.name}:`, err.message);
       }
     }
 
-    // Mark installed plugins
-    const installedPlugins = this.listPlugins().plugins;
-    const installedNames = new Set(installedPlugins.map(p => p.name));
+    const preparedPlugins = this.prepareMarketPlugins(marketPlugins);
+    const preparedFileCache = Array.isArray(fileCache) && fileCache.length > 0
+      ? this.prepareMarketPlugins(fileCache)
+      : null;
+    const shouldUseStaleFileCache = preparedFileCache && (
+      (repos.length > 0 && repoFailureCount === repos.length) ||
+      (repoFailureCount > 0 && preparedFileCache.length > preparedPlugins.length)
+    );
 
-    marketPlugins.forEach(plugin => {
-      plugin.isInstalled = installedNames.has(plugin.name);
-    });
+    if (shouldUseStaleFileCache) {
+      this._marketCache = preparedFileCache;
+      return this._marketCache;
+    }
 
-    this._marketCache = marketPlugins;
-    try {
-      fs.writeFileSync(this.marketCachePath, JSON.stringify({ plugins: marketPlugins }), 'utf-8');
-    } catch (err) { /* ignore */ }
+    this._marketCache = preparedPlugins;
+    this.saveMarketCacheToFile(preparedPlugins);
 
-    return marketPlugins;
+    return preparedPlugins;
   }
 }
 

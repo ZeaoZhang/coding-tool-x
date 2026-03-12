@@ -1,11 +1,16 @@
 const express = require('express');
 const router = express.Router();
+const { createSameOriginGuard } = require('../services/network-access');
 const {
   loadUIConfig,
   saveUIConfig,
   updateUIConfig,
   updateNestedUIConfig
 } = require('../services/ui-config');
+
+router.use(createSameOriginGuard({
+  message: '禁止跨站访问 UI 配置接口'
+}));
 
 // Get all UI config
 router.get('/', (req, res) => {

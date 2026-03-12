@@ -12,14 +12,13 @@ const { spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
 const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
-const { NATIVE_PATHS } = require('../../config/paths');
+const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
 // MCP 配置文件路径
-const CC_TOOL_DIR = path.join(HOME_DIR, '.cc-tool');
-const MCP_SERVERS_FILE = path.join(CC_TOOL_DIR, 'mcp-servers.json');
+const MCP_SERVERS_FILE = PATHS.mcpServers;
 
 // 各平台配置文件路径
 const CLAUDE_CONFIG_PATH = path.join(HOME_DIR, '.claude.json');

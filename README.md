@@ -281,13 +281,11 @@ ctx opencode start
 
 其中常见文件/目录包括：
 
-- `config.json`：主配置
+- `config/`：主配置、UI 配置、Prompts、MCP、OAuth、工作区等集中配置
+- `storage/`：渠道、运行时状态、统计、缓存、请求快照、托管 skills 仓库等内部数据
 - `logs/`：日志
-- `channels*.json`：各平台渠道配置
-- `statistics*.json`：统计数据
-- `ui-config.json`：前端界面配置
-- `oauth-credentials.json`：统一 OAuth 凭证仓库
 - `configs/`：同步管理的 skills / commands / agents / plugins
+- `plugins/`：插件安装与插件配置
 
 ### 平台原生配置目录
 

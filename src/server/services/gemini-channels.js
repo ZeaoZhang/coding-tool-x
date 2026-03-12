@@ -32,9 +32,9 @@ function getGeminiDir() {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = PATHS.base;
-  if (!fs.existsSync(ccToolDir)) {
-    fs.mkdirSync(ccToolDir, { recursive: true });
+  const channelsDir = path.dirname(PATHS.channels.gemini);
+  if (!fs.existsSync(channelsDir)) {
+    fs.mkdirSync(channelsDir, { recursive: true });
   }
   return PATHS.channels.gemini;
 }

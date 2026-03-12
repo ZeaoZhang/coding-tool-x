@@ -1,22 +1,23 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const { resolvePreferredHomeDir } = require('../../utils/home-dir');
+const { PATHS } = require('../../config/paths');
 const { getCodexDir } = require('./codex-config');
 const { isProxyConfig } = require('./codex-settings-manager');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
+const { syncCodexUserEnvironment } = require('./codex-env-manager');
 
-const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+const CODEX_PROXY_ENV_KEY = 'CC_PROXY_KEY';
+const CODEX_PROXY_ENV_VALUE = 'PROXY_KEY';
 
 /**
  * Codex 渠道管理服务（多渠道架构）
  *
  * Codex 配置结构:
  * - config.toml: 主配置,包含 model_provider 和各提供商配置
- * - auth.json: API Key 存储
+ * - 用户级环境变量: env_key 对应的 API Key 存储
  * - 我们的 codex-channels.json: 完整渠道信息(用于管理)
  *
  * 多渠道模式：
@@ -32,13 +33,25 @@ function normalizeGatewaySourceType(value, fallback = 'codex') {
   return fallback;
 }
 
+function buildManagedCodexEnvMap(channels = [], { includeProxyKey = false } = {}) {
+  // 代理模式：只写代理 Key，不暴露真实 API Key
+  if (includeProxyKey) {
+    return { [CODEX_PROXY_ENV_KEY]: CODEX_PROXY_ENV_VALUE };
+  }
+
+  // 直连模式：只写当前激活渠道的 Key，环境中有且只有一条记录
+  const activeChannel = channels.find(ch => ch.enabled && ch.envKey && ch.apiKey);
+  if (!activeChannel) return {};
+  return { [activeChannel.envKey]: activeChannel.apiKey };
+}
+
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const ccToolDir = path.join(HOME_DIR, '.cc-tool');
-  if (!fs.existsSync(ccToolDir)) {
-    fs.mkdirSync(ccToolDir, { recursive: true });
+  const channelsDir = path.dirname(PATHS.channels.codex);
+  if (!fs.existsSync(channelsDir)) {
+    fs.mkdirSync(channelsDir, { recursive: true });
   }
-  return path.join(ccToolDir, 'codex-channels.json');
+  return PATHS.channels.codex;
 }
 
 // 读取所有渠道(从我们的存储文件)
@@ -103,11 +116,11 @@ function initializeFromConfig() {
       for (const [providerKey, providerConfig] of Object.entries(config.model_providers)) {
         // env_key 优先级：配置的 env_key > PROVIDER_API_KEY > OPENAI_API_KEY
         let envKey = providerConfig.env_key || `${providerKey.toUpperCase()}_API_KEY`;
-        let apiKey = auth[envKey] || '';
+        let apiKey = process.env[envKey] || auth[envKey] || '';
 
         // 如果没找到，尝试 OPENAI_API_KEY 作为通用 fallback
-        if (!apiKey && auth['OPENAI_API_KEY']) {
-          apiKey = auth['OPENAI_API_KEY'];
+        if (!apiKey && (process.env.OPENAI_API_KEY || auth['OPENAI_API_KEY'])) {
+          apiKey = process.env.OPENAI_API_KEY || auth['OPENAI_API_KEY'];
           envKey = 'OPENAI_API_KEY';
         }
 
@@ -129,8 +142,6 @@ function initializeFromConfig() {
           createdAt: Date.now(),
           updatedAt: Date.now()
         });
-
-        // auth.json 已写入 API Key，Codex 启动时优先读取 auth.json，无需注入 shell
       }
     }
 
@@ -276,8 +287,7 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi = 'responses'
 
   data.channels.push(newChannel);
   saveChannels(data);
-
-  // auth.json 已写入 API Key（通过 writeCodexConfigForMultiChannel），Codex 优先读取 auth.json
+  syncAllChannelEnvVars(data.channels);
 
   // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
   // writeCodexConfigForMultiChannel(data.channels);
@@ -342,19 +352,7 @@ function updateChannel(channelId, updates) {
     applyChannelToSettings(channelId);
   }
 
-  // 处理环境变量更新
-  // 如果 envKey 或 apiKey 变化，需要更新环境变量
-  const oldEnvKey = oldChannel.envKey;
-  const newEnvKey = newChannel.envKey;
-  const newApiKey = newChannel.apiKey;
-  const shouldRemoveOldEnv =
-    !!oldEnvKey && (
-      oldEnvKey !== newEnvKey ||
-      !newApiKey ||
-      newChannel.enabled === false
-    );
-
-  // auth.json 由 applyChannelToSettings/writeCodexConfigForMultiChannel 维护，Codex 优先读取 auth.json
+  syncAllChannelEnvVars(data.channels);
 
   // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
   // writeCodexConfigForMultiChannel(data.channels);
@@ -374,8 +372,7 @@ async function deleteChannel(channelId) {
   const deletedChannel = data.channels[index];
   data.channels.splice(index, 1);
   saveChannels(data);
-
-  // auth.json 中的 key 由 writeCodexConfigForMultiChannel 管理，删除渠道后下次写入时自动清理
+  syncAllChannelEnvVars(data.channels);
 
   // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
   // writeCodexConfigForMultiChannel(data.channels);
@@ -399,7 +396,6 @@ function writeCodexConfigForMultiChannel(allChannels) {
   }
 
   const configPath = path.join(codexDir, 'config.toml');
-  const authPath = path.join(codexDir, 'auth.json');
 
   // 读取现有配置，保留所有现有字段（特别是 mcp_servers, projects 等）
   const defaultConfig = getDefaultCodexConfig();
@@ -464,34 +460,10 @@ function writeCodexConfigForMultiChannel(allChannels) {
     '# Managed by Coding-Tool',
     '# WARNING: MCP servers and projects are preserved automatically'
   ]);
-
-  // 更新 auth.json
-  let auth = {};
-  if (fs.existsSync(authPath)) {
-    try {
-      auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
-    } catch (err) {
-      console.warn('[Codex Channels] Failed to read auth.json, creating new');
-    }
-  }
-
-  // 更新所有渠道的 API Key
-  for (const channel of allChannels) {
-    if (channel.envKey && !channel.apiKey) {
-      delete auth[channel.envKey];
-    }
-  }
-
-  for (const channel of allChannels) {
-    if (channel.apiKey) {
-      auth[channel.envKey] = channel.apiKey;
-    }
-  }
-
-  fs.writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8');
-
-  // 注意：环境变量注入在 createChannel 和 updateChannel 时已经处理
-  // 这里不再重复注入，避免多次写入 shell 配置文件
+  syncCodexUserEnvironment(
+    buildManagedCodexEnvMap(allChannels, { includeProxyKey: isProxyMode }),
+    { replace: true }
+  );
 }
 
 // 获取所有启用的渠道（供调度器使用）
@@ -529,9 +501,12 @@ function saveChannelOrder(order) {
  * 确保用户可以直接使用 codex 命令而无需手动设置环境变量
  * 这个函数会在服务启动时自动调用
  */
-function syncAllChannelEnvVars() {
-  // Codex 优先从 auth.json 读取 API Key，无需注入 shell 配置文件
-  return { success: true, synced: 0 };
+function syncAllChannelEnvVars(channels = null) {
+  const data = channels ? { channels } : loadChannels();
+  return syncCodexUserEnvironment(
+    buildManagedCodexEnvMap(data.channels || [], { includeProxyKey: isProxyConfig() }),
+    { replace: true }
+  );
 }
 
 /**
@@ -565,7 +540,6 @@ function applyChannelToSettings(channelId, options = {}) {
   }
 
   const configPath = path.join(codexDir, 'config.toml');
-  const authPath = path.join(codexDir, 'auth.json');
 
   // 读取现有配置，保留 mcp_servers, projects 等
   let config = readCodexConfigOrThrow(configPath, getDefaultCodexConfig());
@@ -604,30 +578,7 @@ function applyChannelToSettings(channelId, options = {}) {
     `# Current provider: ${channel.name}`
   ]);
   console.log(`[Codex Channels] Applied channel ${channel.name} to config.toml`);
-
-  // 更新 auth.json
-  let auth = {};
-  if (fs.existsSync(authPath)) {
-    try {
-      auth = JSON.parse(fs.readFileSync(authPath, 'utf8'));
-    } catch (err) {
-      console.warn('[Codex Channels] Failed to read auth.json, creating new');
-    }
-  }
-
-  if (channel.apiKey && channel.envKey) {
-    auth[channel.envKey] = channel.apiKey;
-  } else if (channel.envKey) {
-    delete auth[channel.envKey];
-  }
-
-  // 清除 chatgpt token 认证字段，避免 Codex 优先用过期 token 而报 usage limit
-  delete auth.tokens;
-  delete auth.auth_mode;
-
-  fs.writeFileSync(authPath, JSON.stringify(auth, null, 2), 'utf8');
-
-  // auth.json 已在上方写入 API Key，Codex 优先读取 auth.json，无需注入 shell
+  syncAllChannelEnvVars();
 
   return channel;
 }

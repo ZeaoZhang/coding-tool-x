@@ -56,7 +56,7 @@
           v-for="log in filteredLogs"
           :key="log.id"
           :class="[
-            log.type === 'action' ? 'action-row' : 'table-row',
+            log.type === 'action' ? 'action-row' : (log.status === 'error' ? 'error-row' : 'table-row'),
             { 'new-log': log.isNew }
           ]"
         >
@@ -66,6 +66,14 @@
               <CheckmarkCircle />
             </n-icon>
             <span class="action-message">{{ log.message }}</span>
+            <span class="action-time">{{ log.time }}</span>
+          </template>
+
+          <template v-else-if="log.status === 'error'">
+            <n-icon size="16" style="color: #d03050; margin-right: 8px;">
+              <CloseCircle />
+            </n-icon>
+            <span class="action-message">{{ log.channel }}: {{ log.error || log.message || '请求失败' }}</span>
             <span class="action-time">{{ log.time }}</span>
           </template>
 
@@ -494,6 +502,23 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   background: rgba(24, 160, 88, 0.12);
   color: #4ade80;
+}
+
+.error-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fef2f2;
+  font-size: 13px;
+  color: #b42318;
+  border-left: 3px solid #d03050;
+}
+
+[data-theme="dark"] .error-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(208, 48, 80, 0.12);
+  color: #fda4af;
 }
 
 .action-message {
