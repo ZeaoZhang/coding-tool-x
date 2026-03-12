@@ -57,7 +57,9 @@ router.get('/', (req, res) => {
 router.get('/market', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const plugins = await service.getMarketPlugins();
+    const forceRefresh = req.query.refresh === '1';
+    if (forceRefresh) service._marketCache = null;
+    const plugins = await service.getMarketPlugins(forceRefresh);
 
     res.json({
       success: true,

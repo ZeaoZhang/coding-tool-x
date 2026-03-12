@@ -4,6 +4,25 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.3.9] - 2026-03-12
+
+### Added
+- **OAuth 凭证管理** - 新增 `OAuthCredentialsDrawer` 组件及 `/api/oauth-credentials` 接口，支持查看和管理各平台 OAuth 凭证；Header 新增 Key 图标入口，右侧面板在 OAuth 控制模式下显示提示横幅并禁用代理开关
+- **Skills 本地安装路径分离** - Skills 存储目录（`storageDir`）与平台安装目录（`installDir`）解耦，自定义/创建的技能写入 `~/.cc-tool/{platform}-skills/`，通过"安装"操作复制到平台目录；新增 `installLocalSkill` API 和前端调用
+- **Skills 新增 `isLocal` 标记** - 本地托管的技能标记 `isLocal: true`，安装状态根据平台安装目录实际文件是否存在动态判断
+
+### Fixed
+- **渠道切换清理 OAuth Token** - 切换渠道（`applyChannelToSettings`）时自动调用 `clearNativeOAuth`，并统一写入 `ANTHROPIC_API_KEY`，移除 `ANTHROPIC_AUTH_TOKEN` 和 `CLAUDE_CODE_OAUTH_TOKEN` 残留
+- **Codex 渠道移除 Shell 环境变量注入** - 渠道创建/更新/删除不再注入或删除 shell 配置文件中的环境变量，改由 `auth.json` 统一管理
+- **Codex config.toml 写入保留已有配置** - `writeCodexConfigForMultiChannel` 读取现有 `config.toml` 后合并写入，避免覆盖用户自定义字段（如 `mcp_servers`、`projects`）
+- **渠道代理关闭时切换修复** - 代理关闭后应用渠道时补充调用 `deleteBackup` 并清理 active channel 标记文件，防止残留状态影响恢复逻辑
+- **移除"禁用最后渠道"保护限制** - Claude / Codex 渠道更新均移除代理关闭时禁止禁用最后一个渠道的限制，允许全部禁用
+- **Skills 缓存策略优化** - 内存缓存和文件缓存均移除 TTL 过期判断，改为以缓存存在即命中，避免频繁远程拉取
+
+### Changed
+- **SkillsPanel 精简** - 移除"已托管"筛选项、registry 相关状态和 `toggleEnabled`/`togglePlatform` 事件处理；安装/卸载后直接更新本地状态，无需重新拉取列表
+- **SkillCard 简化** - 移除 registry 信息展示和平台开关相关 props/事件
+
 ## [3.3.8] - 2026-03-09
 
 ### Fixed

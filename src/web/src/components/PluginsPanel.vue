@@ -224,7 +224,7 @@ async function loadData(force = false) {
 
     plugins.value = mergePluginLists(installedList, marketList)
 
-    getMarketPlugins(platform)
+    getMarketPlugins(platform, force)
       .catch(() => ({ success: true, plugins: [] }))
       .then((marketRes) => {
         if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
@@ -269,8 +269,13 @@ async function handleInstall(plugin) {
         { owner: plugin.repoOwner, name: plugin.repoName, branch: plugin.repoBranch || 'main' },
         currentPlatform.value
       )
-    if (res.success) { message.success(`插件 "${plugin.name}" 安装成功`); await loadData(true) }
-    else { message.error(res.message || '安装失败') }
+    if (res.success) {
+      message.success(`插件 "${plugin.name}" 安装成功`)
+      const idx = plugins.value.findIndex(p => p.key === plugin.key)
+      if (idx !== -1) {
+        plugins.value[idx] = { ...plugins.value[idx], installed: true, key: `installed-${plugin.name}` }
+      }
+    } else { message.error(res.message || '安装失败') }
   } catch (err) { message.error('安装失败: ' + err.message) }
   finally { delete installingKeys.value[plugin.key] }
 }
@@ -279,8 +284,13 @@ async function handleUninstall(plugin) {
   uninstallingKeys.value[plugin.key] = true
   try {
     const res = await uninstallPlugin(plugin.name, currentPlatform.value)
-    if (res.success) { message.success(`插件 "${plugin.name}" 已卸载`); await loadData(true) }
-    else { message.error(res.message || res.error || '卸载失败') }
+    if (res.success) {
+      message.success(`插件 "${plugin.name}" 已卸载`)
+      const idx = plugins.value.findIndex(p => p.key === plugin.key)
+      if (idx !== -1) {
+        plugins.value[idx] = { ...plugins.value[idx], installed: false, key: `market-${plugin.repoOwner || 'repo'}-${plugin.repoName || 'name'}-${plugin.directory || plugin.name}` }
+      }
+    } else { message.error(res.message || res.error || '卸载失败') }
   } catch (err) { message.error('卸载失败: ' + err.message) }
   finally { delete uninstallingKeys.value[plugin.key] }
 }

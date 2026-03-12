@@ -7,6 +7,7 @@
         <n-switch
           :value="proxyRunning"
           :loading="proxyLoading"
+          :disabled="isOAuthControlled"
           size="small"
           @update:value="handleProxyToggle"
         />
@@ -66,6 +67,15 @@
       </div>
     </div>
 
+    <!-- OAuth 控制提示 -->
+    <div v-if="isOAuthControlled" class="oauth-banner">
+      <n-icon :size="14" color="#2080f0"><KeyOutline /></n-icon>
+      <span>OAuth 控制中，渠道和动态切换已禁用</span>
+      <n-button text size="small" type="primary" @click="openOAuthCredentialsDrawer">
+        凭证管理 →
+      </n-button>
+    </div>
+
     <!-- 渠道管理区域 -->
     <div v-if="showChannels" class="channels-section" :class="{ 'full-height': !showLogs || !proxyRunning }">
       <div class="panel-header">
@@ -97,7 +107,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NButton, NIcon, NText, NSwitch, NTooltip, NTag
+  NButton, NIcon, NText, NSwitch, NTooltip, NTag, NAlert
 } from 'naive-ui'
 import {
   AddOutline,
@@ -106,6 +116,7 @@ import {
   TerminalOutline,
   PersonOutline,
   CubeOutline,
+  KeyOutline,
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
@@ -113,6 +124,7 @@ import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
+import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
 
 const route = useRoute()
 // Props for panel visibility
@@ -146,6 +158,27 @@ const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
 const opencodePanelRef = ref(null)
 const installedSkillsCount = ref(0)
+const oauthSummaries = ref({})
+
+// 当前渠道是否处于 OAuth 控制模式
+const isOAuthControlled = computed(() => {
+  const tool = currentChannel.value
+  const state = oauthSummaries.value?.[tool]?.nativeState
+  return !!(state?.oauthPresent && state?.mode === 'oauth')
+})
+
+async function loadOAuthSummaries() {
+  try {
+    const result = await getOAuthCredentialSummaries()
+    oauthSummaries.value = result.tools || {}
+  } catch {
+    // 静默失败，不影响渠道功能
+  }
+}
+
+function openOAuthCredentialsDrawer() {
+  window.dispatchEvent(new CustomEvent('open-oauth-credentials-drawer'))
+}
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
@@ -196,6 +229,7 @@ function handleChannelManagementRefresh(event) {
   if (!targetChannel || targetChannel === currentChannel.value) {
     refreshChannelPanel()
   }
+  loadOAuthSummaries()
 }
 
 // 处理代理切换
@@ -230,12 +264,16 @@ function handleShowPlugins() {
 
 onMounted(() => {
   loadInstalledSkillsCount()
+  loadOAuthSummaries()
   if (typeof window !== 'undefined') {
     window.addEventListener('channel-management-refresh', handleChannelManagementRefresh)
   }
 })
 
-watch(() => currentChannel.value, loadInstalledSkillsCount)
+watch(() => currentChannel.value, () => {
+  loadInstalledSkillsCount()
+  loadOAuthSummaries()
+})
 
 onUnmounted(() => {
   if (typeof window !== 'undefined') {
@@ -300,6 +338,23 @@ onUnmounted(() => {
   height: 16px;
   background: var(--border-primary);
   margin: 0 4px;
+}
+
+/* ========== OAuth 控制 banner ========== */
+.oauth-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(32, 128, 240, 0.08);
+  border-bottom: 1px solid rgba(32, 128, 240, 0.2);
+  font-size: 12px;
+  color: #2080f0;
+}
+
+.oauth-banner span {
+  flex: 1;
 }
 
 /* ========== 渠道管理区域 ========== */

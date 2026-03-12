@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
 const {
   getChannels,
   createChannel,
@@ -20,6 +21,8 @@ const {
   runWithConcurrencyLimit
 } = require('../services/speed-test');
 const { clearCodexRedirectCache } = require('../codex-proxy-server');
+const { deleteBackup } = require('../services/codex-settings-manager');
+const { PATHS } = require('../../config/paths');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const CODEX_GATEWAY_SOURCE_TYPE = 'codex';
 
@@ -349,6 +352,12 @@ module.exports = (config) => {
       if (proxyStatus && proxyStatus.running) {
         console.log(`Codex proxy is running, stopping to apply channel settings: ${channel.name}`);
         await stopCodexProxyServer({ clearStartTime: false });
+        deleteBackup();
+        try {
+          fs.unlinkSync(PATHS.activeChannel.codex);
+        } catch {
+          // ignore missing active channel marker
+        }
 
         broadcastLog({
           type: 'action',

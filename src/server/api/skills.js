@@ -168,6 +168,28 @@ router.post('/install', async (req, res) => {
 });
 
 /**
+ * 安装本地 cc-tool 托管的技能
+ * POST /api/skills/install-local
+ * Body: { directory }
+ */
+router.post('/install-local', (req, res) => {
+  try {
+    const { platform, service } = getSkillService(req);
+    const { directory } = req.body;
+
+    if (!directory) {
+      return res.status(400).json({ success: false, message: 'Missing directory' });
+    }
+
+    const result = service.installLocalSkill(directory);
+    res.json({ success: true, platform, ...result });
+  } catch (err) {
+    console.error('[Skills API] Install local skill error:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
  * 创建自定义技能
  * POST /api/skills/create
  * Body: { name, directory, description, content }

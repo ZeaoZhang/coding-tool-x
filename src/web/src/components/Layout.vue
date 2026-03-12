@@ -158,6 +158,12 @@
           @click="showConfigExportDrawer = true"
         />
 
+        <HeaderButton
+          :icon="KeyOutline"
+          tooltip="OAuth 凭证管理"
+          @click="showOAuthCredentialsDrawer = true"
+        />
+
         <!-- 功能区分隔线 -->
         <div class="header-divider" />
 
@@ -264,6 +270,9 @@
 
     <!-- Config Export/Import Drawer -->
     <ConfigExportDrawer v-model:visible="showConfigExportDrawer" />
+
+    <!-- OAuth Credentials Drawer -->
+    <OAuthCredentialsDrawer v-model:visible="showOAuthCredentialsDrawer" />
 
     <!-- Skills/Commands/Agents Drawers -->
     <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" />
@@ -452,7 +461,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline, KeyOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -469,6 +478,7 @@ import PluginsDrawer from './PluginsDrawer.vue'
 import WorkspaceDrawer from './WorkspaceDrawer.vue'
 import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
 import ConfigExportDrawer from './ConfigExportDrawer.vue'
+import OAuthCredentialsDrawer from './OAuthCredentialsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
@@ -506,6 +516,13 @@ const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => route.meta.channel || null)
 const routeViewKey = computed(() => route.path)
 
+// 切换到渠道页时关闭 OAuth 凭证抽屉
+watch(currentChannel, (val) => {
+  if (val) {
+    showOAuthCredentialsDrawer.value = false
+  }
+})
+
 // 是否显示右侧面板（首页不显示）
 const shouldShowRightPanel = computed(() => {
   return currentChannel.value && (showChannels.value || (showLogs.value && effectiveProxyRunning.value))
@@ -522,6 +539,7 @@ const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
 const showConfigExportDrawer = ref(false)
+const showOAuthCredentialsDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const skillsDrawerPlatform = ref('')
 const showCommandsDrawer = ref(false)
@@ -690,6 +708,7 @@ onMounted(() => {
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
   window.addEventListener('open-plugins-drawer', openPluginsDrawer)
   window.addEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
+  window.addEventListener('open-oauth-credentials-drawer', openOAuthCredentialsDrawer)
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
@@ -703,11 +722,16 @@ onUnmounted(() => {
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
   window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
   window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
+  window.removeEventListener('open-oauth-credentials-drawer', openOAuthCredentialsDrawer)
 })
 
 function openSkillsDrawer(event) {
   skillsDrawerPlatform.value = event?.detail?.platform || ''
   showSkillsDrawer.value = true
+}
+
+function openOAuthCredentialsDrawer(event) {
+  showOAuthCredentialsDrawer.value = true
 }
 
 function openCommandsDrawer() {

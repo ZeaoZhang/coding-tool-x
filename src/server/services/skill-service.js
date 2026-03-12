@@ -159,21 +159,25 @@ const DEFAULT_REPOS_BY_PLATFORM = {
 const PLATFORM_CONFIG = {
   claude: {
     installDir: path.join(HOME_DIR, '.claude', 'skills'),
+    storageDir: 'skills',
     reposFile: 'skill-repos.json',
     cacheFile: 'skills-cache.json'
   },
   codex: {
     installDir: path.join(HOME_DIR, '.codex', 'skills'),
+    storageDir: 'codex-skills',
     reposFile: 'codex-skill-repos.json',
     cacheFile: 'codex-skills-cache.json'
   },
   gemini: {
     installDir: path.join(HOME_DIR, '.gemini', 'skills'),
+    storageDir: 'gemini-skills',
     reposFile: 'gemini-skill-repos.json',
     cacheFile: 'gemini-skills-cache.json'
   },
   opencode: {
     installDir: path.join(NATIVE_PATHS.opencode.config, 'skills'),
+    storageDir: 'opencode-skills',
     reposFile: 'opencode-skill-repos.json',
     cacheFile: 'opencode-skills-cache.json'
   }
@@ -189,6 +193,7 @@ class SkillService {
 
     const platformConfig = PLATFORM_CONFIG[this.platform];
     this.installDir = platformConfig.installDir;
+    this.storageDir = path.join(this.configDir, platformConfig.storageDir);
     this.reposConfigPath = path.join(this.configDir, platformConfig.reposFile);
     this.cachePath = path.join(this.configDir, platformConfig.cacheFile);
 
@@ -206,6 +211,9 @@ class SkillService {
     }
     if (!fs.existsSync(this.configDir)) {
       fs.mkdirSync(this.configDir, { recursive: true });
+    }
+    if (!fs.existsSync(this.storageDir)) {
+      fs.mkdirSync(this.storageDir, { recursive: true });
     }
   }
 
@@ -413,7 +421,7 @@ class SkillService {
     }
 
     // 检查内存缓存
-    if (!forceRefresh && this.skillsCache && (Date.now() - this.cacheTime < CACHE_TTL)) {
+    if (!forceRefresh && this.skillsCache) {
       this.updateInstallStatus(this.skillsCache);
       return this.skillsCache;
     }
@@ -480,7 +488,7 @@ class SkillService {
     try {
       if (fs.existsSync(this.cachePath)) {
         const data = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'));
-        if (data.time && (Date.now() - data.time < CACHE_TTL)) {
+        if (Array.isArray(data.skills)) {
           return data.skills;
         }
       }
@@ -556,6 +564,8 @@ class SkillService {
 
       // 并行获取所有 SKILL.md 的内容（限制并发数）
       const batchSize = 5;
+      let successCount = 0;
+      let failCount = 0;
 
       for (let i = 0; i < skillFiles.length; i += batchSize) {
         const batch = skillFiles.slice(i, i + batchSize);
@@ -566,9 +576,14 @@ class SkillService {
         for (const result of results) {
           if (result.status === 'fulfilled' && result.value) {
             skills.push(result.value);
+            successCount++;
+          } else {
+            failCount++;
           }
         }
       }
+
+      console.log(`[SkillService] ${repo.owner}/${repo.name}: ${successCount} skills loaded, ${failCount} failed`);
     } catch (err) {
       console.error(`[SkillService] Fetch repo ${repo.owner}/${repo.name} error:`, err.message);
       throw err;
@@ -595,6 +610,9 @@ class SkillService {
       });
 
       const batchSize = 5;
+      let successCount = 0;
+      let failCount = 0;
+
       for (let i = 0; i < skillFiles.length; i += batchSize) {
         const batch = skillFiles.slice(i, i + batchSize);
         const results = await Promise.allSettled(
@@ -604,9 +622,14 @@ class SkillService {
         for (const result of results) {
           if (result.status === 'fulfilled' && result.value) {
             skills.push(result.value);
+            successCount++;
+          } else {
+            failCount++;
           }
         }
       }
+
+      console.log(`[SkillService] ${repo.projectPath}: ${successCount} skills loaded, ${failCount} failed`);
     } catch (err) {
       console.error(`[SkillService] Fetch GitLab repo ${repo.projectPath} error:`, err.message);
       throw err;
@@ -650,7 +673,6 @@ class SkillService {
         fullDirectory
       });
     } catch (err) {
-      console.warn(`[SkillService] Parse skill ${file.path} error:`, err.message);
       return null;
     }
   }
@@ -1078,13 +1100,13 @@ class SkillService {
   }
 
   /**
-   * 合并本地已安装的技能
+   * 合并本地 cc-tool 托管的技能（扫描 storageDir，根据 installDir 判断安装状态）
    */
   mergeLocalSkills(skills) {
-    if (!fs.existsSync(this.installDir)) return;
+    if (!fs.existsSync(this.storageDir)) return;
 
-    // 递归扫描本地技能目录
-    this.scanLocalDir(this.installDir, this.installDir, skills);
+    // 递归扫描 cc-tool 存储目录
+    this.scanLocalDir(this.storageDir, this.storageDir, skills);
   }
 
   /**
@@ -1104,10 +1126,14 @@ class SkillService {
         return normalizeRepoPath(s.directory).toLowerCase() === normalizedDirectory;
       });
 
+      // 判断是否已安装到平台目录
+      const isInstalled = fs.existsSync(path.join(this.installDir, directory, 'SKILL.md'));
+
       if (existing) {
-        existing.installed = true;
+        existing.installed = isInstalled;
+        existing.isLocal = true;
       } else {
-        // 添加本地独有的技能
+        // 添加 cc-tool 托管的技能
         try {
           const content = fs.readFileSync(skillMdPath, 'utf-8');
           const metadata = this.parseSkillMd(content);
@@ -1117,7 +1143,8 @@ class SkillService {
             name: metadata.name || directory,
             description: metadata.description || '',
             directory,
-            installed: true,
+            installed: isInstalled,
+            isLocal: true,
             readmeUrl: null,
             repoOwner: null,
             repoName: null,
@@ -1344,7 +1371,7 @@ class SkillService {
    * 创建自定义技能
    */
   createCustomSkill({ name, directory, description, content }) {
-    const dest = path.join(this.installDir, directory);
+    const dest = path.join(this.storageDir, directory);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
@@ -1381,7 +1408,7 @@ ${content}
    * @returns {Object} 创建结果
    */
   createSkillWithFiles({ directory, files }) {
-    const dest = path.join(this.installDir, directory);
+    const dest = path.join(this.storageDir, directory);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
@@ -1615,6 +1642,27 @@ ${content}
     return { success: true, updated: filePath };
   }
 
+
+  /**
+   * 安装 cc-tool 本地托管的技能（从 storageDir cp 到 installDir）
+   */
+  installLocalSkill(directory) {
+    const src = path.join(this.storageDir, directory);
+    const dest = path.join(this.installDir, directory);
+
+    if (!fs.existsSync(src)) {
+      throw new Error(`本地技能 "${directory}" 不存在`);
+    }
+
+    if (fs.existsSync(dest)) {
+      return { success: true, message: 'Already installed' };
+    }
+
+    fs.mkdirSync(dest, { recursive: true });
+    this.copyDirRecursive(src, dest);
+    this.clearCache({ removeFile: true });
+    return { success: true, message: 'Installed successfully' };
+  }
 
   /**
    * 卸载技能

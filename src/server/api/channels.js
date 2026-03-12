@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
 const {
   getAllChannels,
   applyChannelToSettings,
@@ -18,6 +19,8 @@ const {
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
+const { PATHS } = require('../../config/paths');
+const { deleteBackup } = require('../services/settings-manager');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
 const { clearRedirectCache } = require('../proxy-server');
@@ -185,6 +188,12 @@ router.post('/:id/apply-to-settings', async (req, res) => {
       // Stop proxy and restore backup
       const { stopProxyServer } = require('../proxy-server');
       await stopProxyServer({ clearStartTime: false });
+      deleteBackup();
+      try {
+        fs.unlinkSync(PATHS.activeChannel.claude);
+      } catch {
+        // ignore missing active channel marker
+      }
 
       // Re-apply channel settings after proxy stop to prevent race condition
       // (stopProxyServer restores backup, then we overwrite it with current channel)

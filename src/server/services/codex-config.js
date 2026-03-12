@@ -1,16 +1,13 @@
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const toml = require('toml');
-const { resolvePreferredHomeDir } = require('../../utils/home-dir');
-
-const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+const { NATIVE_PATHS } = require('../../config/paths');
 
 /**
  * 获取 Codex 配置目录
  */
 function getCodexDir() {
-  return path.join(HOME_DIR, '.codex');
+  return NATIVE_PATHS.codex.dir;
 }
 
 /**

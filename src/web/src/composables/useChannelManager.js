@@ -265,6 +265,7 @@ export default function useChannelManager(config) {
         saveCollapseSettings()
       }
       await loadChannels()
+      window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: config.type } }))
     } catch (error) {
       message.error(resolveError(error))
     } finally {

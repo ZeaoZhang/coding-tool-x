@@ -16,6 +16,7 @@ const {
   getCurrentProxyPort
 } = require('../services/opencode-settings-manager');
 const { getChannels, getEnabledChannels, applyChannelToSettings } = require('../services/opencode-channels');
+const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
@@ -40,6 +41,24 @@ function selectLatestEnabledChannel(channels) {
     const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
     return currentTs > latestTs ? current : latest;
   }, enabledChannels[0]);
+}
+
+function resolveActiveChannel(channels, activeChannelId = null) {
+  if (!Array.isArray(channels) || channels.length === 0) {
+    return null;
+  }
+
+  if (activeChannelId) {
+    const matched = channels.find(channel => channel.id === activeChannelId);
+    if (matched) {
+      return matched;
+    }
+  }
+
+  return selectLatestEnabledChannel(channels)
+    || channels.find(channel => channel.enabled !== false)
+    || channels[0]
+    || null;
 }
 
 // 保存激活渠道ID
@@ -84,7 +103,7 @@ router.get('/status', (req, res) => {
     const proxyStatus = getOpenCodeProxyStatus();
     const { channels } = getChannels();
     const enabledChannels = channels.filter(ch => ch.enabled !== false);
-    const activeChannel = enabledChannels[0];
+    const activeChannel = resolveActiveChannel(channels, loadActiveChannelId());
     const configStatus = {
       isProxyConfig: isProxyConfig(),
       configExists: configExists(),
@@ -176,6 +195,7 @@ router.post('/start', async (req, res) => {
     });
 
     const activeModel = currentChannel.model || currentChannel.speedTestModel || null;
+    clearNativeOAuth('opencode');
     setProxyConfig(proxyResult.port, { channels: channelPayloads, model: activeModel });
 
     // 5. 广播状态更新
@@ -199,17 +219,9 @@ router.post('/start', async (req, res) => {
 // 停止代理
 router.post('/stop', async (req, res) => {
   try {
-    // 1. 获取当前激活渠道（优先使用启动动态切换时记录的渠道ID）
     const { channels } = getChannels();
     const activeChannelId = loadActiveChannelId();
-    let activeChannel = selectLatestEnabledChannel(channels);
-    if (!activeChannel && activeChannelId) {
-      activeChannel = channels.find(ch => ch.id === activeChannelId);
-    }
-    if (!activeChannel) {
-      const enabledChannels = channels.filter(ch => ch.enabled !== false);
-      activeChannel = enabledChannels[0] || channels[0] || null;
-    }
+    const activeChannel = resolveActiveChannel(channels, activeChannelId);
 
     // 2. 停止代理服务器
     const proxyResult = await stopOpenCodeProxyServer();

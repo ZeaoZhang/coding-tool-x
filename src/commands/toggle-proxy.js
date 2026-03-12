@@ -1,7 +1,10 @@
 // 动态切换开关命令
+const fs = require('fs');
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
+const { PATHS } = require('../config/paths');
+const { clearNativeOAuth } = require('../server/services/native-oauth-adapters');
 const SETTINGS_MANAGERS = {
   claude: () => require('../server/services/settings-manager'),
   codex: () => require('../server/services/codex-settings-manager'),
@@ -49,8 +52,95 @@ function getSettingsManager(cliType) {
   return {
     setProxyConfig: manager.setProxyConfig,
     restoreSettings: manager.restoreSettings,
-    hasBackup: manager.hasBackup
+    hasBackup: manager.hasBackup,
+    deleteBackup: manager.deleteBackup
   };
+}
+
+function removeActiveChannelMarker(cliType) {
+  const markerPath = PATHS.activeChannel?.[cliType];
+  if (!markerPath) {
+    return;
+  }
+
+  try {
+    if (fs.existsSync(markerPath)) {
+      fs.unlinkSync(markerPath);
+    }
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+function loadActiveChannelId(cliType) {
+  const markerPath = PATHS.activeChannel?.[cliType];
+  if (!markerPath) {
+    return null;
+  }
+
+  try {
+    if (!fs.existsSync(markerPath)) {
+      return null;
+    }
+    const payload = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+    return payload?.activeChannelId || null;
+  } catch {
+    return null;
+  }
+}
+
+function pickLatestEnabledChannel(channels = []) {
+  const enabledChannels = Array.isArray(channels)
+    ? channels.filter(channel => channel?.enabled !== false)
+    : [];
+
+  if (enabledChannels.length > 0) {
+    return enabledChannels[0];
+  }
+
+  return Array.isArray(channels) ? channels[0] || null : null;
+}
+
+function pickRestoredChannel(cliType, channels = []) {
+  const activeChannelId = loadActiveChannelId(cliType);
+  if (activeChannelId) {
+    const matchedChannel = Array.isArray(channels)
+      ? channels.find(channel => channel?.id === activeChannelId)
+      : null;
+    if (matchedChannel) {
+      return matchedChannel;
+    }
+  }
+
+  return pickLatestEnabledChannel(channels);
+}
+
+function restoreSingleChannelMode(cliType) {
+  if (cliType === 'claude') {
+    const { getAllChannels, applyChannelToSettings } = require('../server/services/channels');
+    const target = pickRestoredChannel(cliType, getAllChannels());
+    return target ? applyChannelToSettings(target.id) : null;
+  }
+
+  if (cliType === 'codex') {
+    const { getChannels, applyChannelToSettings } = require('../server/services/codex-channels');
+    const target = pickRestoredChannel(cliType, getChannels().channels || []);
+    return target ? applyChannelToSettings(target.id, { pruneProviders: true }) : null;
+  }
+
+  if (cliType === 'gemini') {
+    const { getChannels, applyChannelToSettings } = require('../server/services/gemini-channels');
+    const target = pickRestoredChannel(cliType, getChannels().channels || []);
+    return target ? applyChannelToSettings(target.id) : null;
+  }
+
+  if (cliType === 'opencode') {
+    const { getChannels, applyChannelToSettings } = require('../server/services/opencode-channels');
+    const target = pickRestoredChannel(cliType, getChannels().channels || []);
+    return target ? applyChannelToSettings(target.id) : null;
+  }
+
+  return null;
 }
 
 /**
@@ -133,6 +223,7 @@ async function handleStartProxy(cliType, services) {
 
     // 修改配置文件
     const settingsManager = getSettingsManager(cliType);
+    clearNativeOAuth(cliType);
     settingsManager.setProxyConfig(proxyResult.port);
     console.log(chalk.green('✅ 配置文件已更新'));
 
@@ -188,7 +279,7 @@ async function handleStopProxy(cliType, services) {
 
   console.log(chalk.yellow('关闭后:'));
   console.log(chalk.gray('• 代理服务将被停止'));
-  console.log(chalk.gray('• 配置将恢复到关闭前的状态'));
+  console.log(chalk.gray('• 配置将恢复为当前激活渠道的单渠道模式'));
   console.log(chalk.gray(`• 之后管理渠道将需要重启 ${toolName}\n`));
 
   const { confirm } = await inquirer.prompt([
@@ -214,9 +305,13 @@ async function handleStopProxy(cliType, services) {
 
     // 恢复配置文件
     const settingsManager = getSettingsManager(cliType);
-    if (settingsManager.hasBackup()) {
-      settingsManager.restoreSettings();
-      console.log(chalk.green('✅ 配置文件已恢复'));
+    settingsManager.deleteBackup?.();
+    const restoredChannel = restoreSingleChannelMode(cliType);
+    removeActiveChannelMarker(cliType);
+    if (restoredChannel?.name) {
+      console.log(chalk.green(`✅ 已恢复到渠道: ${restoredChannel.name}`));
+    } else {
+      console.log(chalk.green('✅ 已清理代理接管状态'));
     }
 
     console.log(chalk.cyan('\n💡 动态切换已关闭'));

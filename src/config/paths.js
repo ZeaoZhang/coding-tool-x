@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { resolvePreferredHomeDir } = require('../utils/home-dir');
+const { resolvePreferredHomeDir, isWindowsLikePlatform } = require('../utils/home-dir');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
@@ -61,6 +61,71 @@ function ensureStorageDirMigrated() {
   });
 
   return CC_TOOL_BASE_DIR;
+}
+
+function resolveExistingEnvPath(envValue) {
+  if (typeof envValue !== 'string') {
+    return '';
+  }
+  const trimmed = envValue.trim();
+  return trimmed || '';
+}
+
+function pickExistingDir(candidates, fallback) {
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return fallback;
+}
+
+function getClaudeConfigDir() {
+  return resolveExistingEnvPath(process.env.CLAUDE_CONFIG_DIR) || path.join(HOME_DIR, '.claude');
+}
+
+function getCodexDir() {
+  return resolveExistingEnvPath(process.env.CODEX_HOME) || path.join(HOME_DIR, '.codex');
+}
+
+function getGeminiDir() {
+  return path.join(HOME_DIR, '.gemini');
+}
+
+function getOpenCodeDataDir() {
+  if (isWindowsLikePlatform(process.platform, process.env)) {
+    const localAppData = resolveExistingEnvPath(process.env.LOCALAPPDATA);
+    return path.join(localAppData || path.join(HOME_DIR, 'AppData', 'Local'), 'opencode');
+  }
+
+  const xdgDataHome = resolveExistingEnvPath(process.env.XDG_DATA_HOME);
+  const preferredDir = path.join(xdgDataHome || path.join(HOME_DIR, '.local', 'share'), 'opencode');
+
+  if (process.platform === 'darwin') {
+    const legacyDarwinDir = path.join(HOME_DIR, 'Library', 'Application Support', 'opencode');
+    return pickExistingDir([preferredDir, legacyDarwinDir], preferredDir);
+  }
+
+  return preferredDir;
+}
+
+function getOpenCodeConfigDir() {
+  if (isWindowsLikePlatform(process.platform, process.env)) {
+    const appData = resolveExistingEnvPath(process.env.APPDATA);
+    return path.join(appData || path.join(HOME_DIR, 'AppData', 'Roaming'), 'opencode');
+  }
+
+  const xdgConfigHome = resolveExistingEnvPath(process.env.XDG_CONFIG_HOME);
+  const preferredDir = path.join(xdgConfigHome || path.join(HOME_DIR, '.config'), 'opencode');
+
+  if (process.platform === 'darwin') {
+    const xdgDataHome = resolveExistingEnvPath(process.env.XDG_DATA_HOME);
+    const legacyDataDir = path.join(xdgDataHome || path.join(HOME_DIR, '.local', 'share'), 'opencode');
+    const legacyDarwinDir = path.join(HOME_DIR, 'Library', 'Application Support', 'opencode');
+    return pickExistingDir([preferredDir, legacyDarwinDir, legacyDataDir], preferredDir);
+  }
+
+  return preferredDir;
 }
 
 // 路径配置
@@ -126,6 +191,9 @@ const PATHS = {
   // UI 配置
   uiConfig: path.join(CC_TOOL_BASE_DIR, 'ui-config.json'),
 
+  // OAuth 凭证注册表
+  oauthCredentials: path.join(CC_TOOL_BASE_DIR, 'oauth-credentials.json'),
+
   // 飞书通知脚本
   notifyHook: path.join(CC_TOOL_BASE_DIR, 'notify-hook.js'),
 
@@ -151,35 +219,45 @@ const PATHS = {
 const NATIVE_PATHS = {
   // Claude Code 原生配置
   claude: {
-    settings: path.join(HOME_DIR, '.claude', 'settings.json'),
-    settingsBackup: path.join(HOME_DIR, '.claude', 'settings.json.cc-tool-backup'),
-    projects: path.join(HOME_DIR, '.claude', 'projects')
+    dir: getClaudeConfigDir(),
+    settings: path.join(getClaudeConfigDir(), 'settings.json'),
+    settingsBackup: path.join(getClaudeConfigDir(), 'settings.json.cc-tool-backup'),
+    projects: path.join(getClaudeConfigDir(), 'projects'),
+    credentials: path.join(getClaudeConfigDir(), '.credentials.json')
   },
 
   // Codex 原生配置
   codex: {
-    config: path.join(HOME_DIR, '.codex', 'config.toml'),
-    configBackup: path.join(HOME_DIR, '.codex', 'config.toml.cc-tool-backup'),
-    auth: path.join(HOME_DIR, '.codex', 'auth.json'),
-    authBackup: path.join(HOME_DIR, '.codex', 'auth.json.cc-tool-backup'),
-    sessions: path.join(HOME_DIR, '.codex', 'sessions')
+    dir: getCodexDir(),
+    config: path.join(getCodexDir(), 'config.toml'),
+    configBackup: path.join(getCodexDir(), 'config.toml.cc-tool-backup'),
+    auth: path.join(getCodexDir(), 'auth.json'),
+    authBackup: path.join(getCodexDir(), 'auth.json.cc-tool-backup'),
+    sessions: path.join(getCodexDir(), 'sessions')
   },
 
   // Gemini 原生配置
   gemini: {
-    env: path.join(HOME_DIR, '.gemini', '.env'),
-    envBackup: path.join(HOME_DIR, '.gemini', '.env.cc-tool-backup'),
-    tmp: path.join(HOME_DIR, '.gemini', 'tmp')
+    dir: getGeminiDir(),
+    env: path.join(getGeminiDir(), '.env'),
+    envBackup: path.join(getGeminiDir(), '.env.cc-tool-backup'),
+    tmp: path.join(getGeminiDir(), 'tmp'),
+    settings: path.join(getGeminiDir(), 'settings.json'),
+    settingsBackup: path.join(getGeminiDir(), 'settings.json.cc-tool-backup'),
+    googleAccounts: path.join(getGeminiDir(), 'google_accounts.json'),
+    oauthCredentialsLegacy: path.join(getGeminiDir(), 'oauth_creds.json'),
+    oauthCredentialsEncrypted: path.join(getGeminiDir(), 'mcp-oauth-tokens-v2.json')
   },
 
   // OpenCode 原生配置
   opencode: {
-    data: path.join(HOME_DIR, '.local', 'share', 'opencode'),
-    config: path.join(HOME_DIR, '.config', 'opencode'),
-    sessions: path.join(HOME_DIR, '.local', 'share', 'opencode', 'storage', 'session'),
-    projects: path.join(HOME_DIR, '.local', 'share', 'opencode', 'storage', 'project'),
-    messages: path.join(HOME_DIR, '.local', 'share', 'opencode', 'storage', 'message'),
-    log: path.join(HOME_DIR, '.local', 'share', 'opencode', 'log')
+    data: getOpenCodeDataDir(),
+    config: getOpenCodeConfigDir(),
+    sessions: path.join(getOpenCodeDataDir(), 'storage', 'session'),
+    projects: path.join(getOpenCodeDataDir(), 'storage', 'project'),
+    messages: path.join(getOpenCodeDataDir(), 'storage', 'message'),
+    log: path.join(getOpenCodeDataDir(), 'log'),
+    auth: path.join(getOpenCodeDataDir(), 'auth.json')
   }
 };
 
@@ -190,5 +268,10 @@ module.exports = {
   CTX_BASE_DIR,
   CC_TOOL_BASE_DIR,
   LEGACY_BASE_DIRS,
-  ensureStorageDirMigrated
+  ensureStorageDirMigrated,
+  getClaudeConfigDir,
+  getCodexDir,
+  getGeminiDir,
+  getOpenCodeDataDir,
+  getOpenCodeConfigDir
 };

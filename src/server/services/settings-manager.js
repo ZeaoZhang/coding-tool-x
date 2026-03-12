@@ -84,6 +84,18 @@ function restoreSettings() {
   }
 }
 
+function deleteBackup() {
+  try {
+    if (fs.existsSync(getBackupPath())) {
+      fs.unlinkSync(getBackupPath());
+    }
+    return { success: true };
+  } catch (err) {
+    console.warn('Failed to delete Claude backup file:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 // 设置代理配置
 function setProxyConfig(proxyPort) {
   try {
@@ -156,6 +168,7 @@ module.exports = {
   writeSettings,
   backupSettings,
   restoreSettings,
+  deleteBackup,
   setProxyConfig,
   isProxyConfig,
   getCurrentProxyPort

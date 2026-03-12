@@ -11,7 +11,7 @@ const { resolveModelPricing } = require('./utils/pricing');
 const { recordRequest: recordCodexRequest } = require('./services/codex-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { createDecodedStream } = require('./services/response-decoder');
-const { getEnabledChannels, writeCodexConfigForMultiChannel, getEffectiveApiKey } = require('./services/codex-channels');
+const { getEffectiveApiKey } = require('./services/codex-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 
 let proxyServer = null;
@@ -584,16 +584,6 @@ async function startCodexProxyServer(options = {}) {
 
         // 保存代理启动时间（如果是切换渠道，保留原有启动时间）
         saveProxyStartTime('codex', preserveStartTime);
-
-        // 启动代理时同步配置到 Codex 的 config.toml
-        try {
-          const enabledChannels = getEnabledChannels();
-          if (enabledChannels.length > 0) {
-            writeCodexConfigForMultiChannel(enabledChannels);
-          }
-        } catch (err) {
-          // ignore sync error
-        }
 
         resolve({ success: true, port });
       });
