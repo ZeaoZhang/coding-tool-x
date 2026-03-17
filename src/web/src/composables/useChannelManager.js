@@ -26,6 +26,7 @@ function resolveError(error, fallback) {
 
 export default function useChannelManager(config) {
   const globalStore = useGlobalStore()
+  let healthRefreshTimer = null
 
   const state = reactive({
     channels: [],
@@ -50,6 +51,8 @@ export default function useChannelManager(config) {
         channel.health = schedulerChannel.health
       }
     })
+
+    scheduleFrozenChannelRefresh()
   }
 
   // 监听 schedulerState 变化
@@ -66,11 +69,37 @@ export default function useChannelManager(config) {
       await applyChannelOrder()
       // 应用实时健康状态
       updateChannelHealth()
+      scheduleFrozenChannelRefresh()
     } catch (error) {
       message.error(resolveError(error, `${config.displayName} 渠道加载失败`))
     } finally {
       state.loading = false
     }
+  }
+
+  function clearFrozenChannelRefreshTimer() {
+    if (healthRefreshTimer) {
+      clearTimeout(healthRefreshTimer)
+      healthRefreshTimer = null
+    }
+  }
+
+  function scheduleFrozenChannelRefresh() {
+    clearFrozenChannelRefreshTimer()
+
+    const nextFrozenChannel = state.channels
+      .filter(channel => channel.health?.status === 'frozen' && Number(channel.health?.freezeRemaining) > 0)
+      .sort((left, right) => Number(left.health?.freezeRemaining || 0) - Number(right.health?.freezeRemaining || 0))[0]
+
+    if (!nextFrozenChannel) {
+      return
+    }
+
+    const remainingMs = Math.max(1000, Number(nextFrozenChannel.health.freezeRemaining || 0) * 1000)
+    healthRefreshTimer = setTimeout(() => {
+      healthRefreshTimer = null
+      loadChannels()
+    }, remainingMs + 250)
   }
 
   let lastUIConfig = null
@@ -345,6 +374,7 @@ export default function useChannelManager(config) {
 
   // 清理 watch
   onUnmounted(() => {
+    clearFrozenChannelRefreshTimer()
     stopWatch()
   })
 

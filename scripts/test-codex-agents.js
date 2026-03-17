@@ -183,7 +183,7 @@ async function run() {
     const darwinConfigDir = path.join(darwinHome, '.cc-tool', 'config');
     const darwinExecCalls = [];
     fs.mkdirSync(darwinHome, { recursive: true });
-    envTest.syncCodexUserEnvironment(
+    const darwinSync = envTest.syncCodexUserEnvironment(
       { OPENAI_MAC_KEY: 'mac-secret' },
       {
         runtime: 'darwin',
@@ -196,11 +196,17 @@ async function run() {
         }
       }
     );
+    const darwinEnvFile = path.join(darwinConfigDir, 'codex-env.sh');
+    const darwinProfile = path.join(darwinHome, '.zshrc');
+    assert.strictEqual(fs.existsSync(darwinEnvFile), true, 'macOS 应生成托管 env 文件');
+    assert.strictEqual(fs.readFileSync(darwinEnvFile, 'utf-8').includes('export OPENAI_MAC_KEY'), true, 'macOS env 文件应写入 export');
+    assert.strictEqual(fs.readFileSync(darwinProfile, 'utf-8').includes('coding-tool codex env'), true, 'macOS shell 配置应注入 source 片段');
     assert.strictEqual(
       darwinExecCalls.some(call => call.command === 'launchctl' && call.args[0] === 'setenv' && call.args[1] === 'OPENAI_MAC_KEY'),
       true,
       'macOS 应调用 launchctl setenv 同步用户环境变量'
     );
+    assert.strictEqual(Boolean(darwinSync.sourceCommand), true, 'macOS 首次同步应返回 source 命令');
 
     const windowsHome = path.join(tempRoot, 'windows-home');
     const windowsConfigDir = path.join(windowsHome, '.cc-tool', 'config');

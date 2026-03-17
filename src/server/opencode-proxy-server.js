@@ -21,6 +21,7 @@ const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-
 const { persistProxyRequestSnapshot, loadClaudeRequestTemplate } = require('./services/request-logger');
 const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
+const { redirectModel, resolveTargetUrl } = require('./services/base/proxy-utils');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -92,99 +93,8 @@ let cachedClaudeUserId = '';
 let cachedClaudeRequestTemplate = null;
 let cachedClaudeRequestTemplateAt = 0;
 
-/**
- * 检测模型层级
- * @param {string} modelName - 模型名称
- * @returns {string|null} 模型层级 (opus/sonnet/haiku) 或 null
- */
-function detectModelTier(modelName) {
-  if (!modelName) return null;
-  const lower = modelName.toLowerCase();
-  if (lower.includes('opus')) return 'opus';
-  if (lower.includes('sonnet')) return 'sonnet';
-  if (lower.includes('haiku')) return 'haiku';
-  return null;
-}
-
-/**
- * 应用模型重定向
- * @param {string} originalModel - 原始模型名称
- * @param {object} channel - 渠道对象，包含 modelConfig 和 modelRedirects
- * @returns {string} 重定向后的模型名称
- */
-function redirectModel(originalModel, channel) {
-  if (!originalModel) return originalModel;
-
-  // 优先使用新的 modelRedirects 数组格式
-  const modelRedirects = channel?.modelRedirects;
-  if (Array.isArray(modelRedirects) && modelRedirects.length > 0) {
-    for (const rule of modelRedirects) {
-      if (rule.from && rule.to && rule.from === originalModel) {
-        return rule.to;
-      }
-    }
-  }
-
-  // 向后兼容：使用旧的 modelConfig 格式
-  const modelConfig = channel?.modelConfig;
-  if (!modelConfig) return originalModel;
-
-  const tier = detectModelTier(originalModel);
-
-  // 优先级：层级特定配置 > 通用模型覆盖
-  if (tier === 'opus' && modelConfig.opusModel) {
-    return modelConfig.opusModel;
-  }
-  if (tier === 'sonnet' && modelConfig.sonnetModel) {
-    return modelConfig.sonnetModel;
-  }
-  if (tier === 'haiku' && modelConfig.haikuModel) {
-    return modelConfig.haikuModel;
-  }
-
-  // 回退到通用模型覆盖
-  if (modelConfig.model) {
-    return modelConfig.model;
-  }
-
-  return originalModel;
-}
-
-/**
- * 解析 OpenCode 代理目标 URL
- *
- * OpenCode CLI 发送请求到我们的代理时，请求路径格式：
- * - /v1/responses (OpenAI Responses API)
- * - /v1/chat/completions (OpenAI Chat Completions API)
- *
- * 渠道配置的 base_url 可能是:
- * - https://api.openai.com/v1
- * - https://example.com/openai/v1
- * - https://example.com
- *
- * 最终转发目标示例：
- * - base_url: https://example.com/openai/v1, path: /v1/responses
- *   -> target: https://example.com/openai, 最终: https://example.com/openai/v1/responses
- *
- * 这个函数返回要传给 http-proxy 的 target，http-proxy 会自动拼接 req.url
- */
-function resolveOpenCodeTarget(baseUrl = '', requestPath = '') {
-  let target = baseUrl || '';
-
-  // 移除末尾斜杠
-  if (target.endsWith('/')) {
-    target = target.slice(0, -1);
-  }
-
-  // 核心逻辑：避免 /v1/v1 重复
-  // 如果 base_url 以 /v1 结尾，且请求路径以 /v1 开头，去掉 base_url 的 /v1
-  // 因为 http-proxy 会将 requestPath 追加到 target 后面
-  if (target.endsWith('/v1') && requestPath.startsWith('/v1')) {
-    target = target.slice(0, -3);
-  }
-
-  return target;
-}
+// detectModelTier, redirectModel, resolveTargetUrl imported from services/base/proxy-utils
+const resolveOpenCodeTarget = resolveTargetUrl;
 
 /**
  * 计算请求成本

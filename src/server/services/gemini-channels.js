@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
+const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
 /**
  * Gemini 渠道管理服务（多渠道架构）
@@ -17,13 +18,7 @@ const { clearNativeOAuth } = require('./native-oauth-adapters');
  * - 使用 weight 和 maxConcurrency 控制负载均衡
  */
 
-function normalizeGatewaySourceType(value, fallback = 'gemini') {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'claude') return 'claude';
-  if (normalized === 'codex') return 'codex';
-  if (normalized === 'gemini') return 'gemini';
-  return fallback;
-}
+// normalizeGatewaySourceType imported from base/proxy-utils
 
 // 获取 Gemini 配置目录
 function getGeminiDir() {

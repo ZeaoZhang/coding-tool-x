@@ -77,6 +77,22 @@ function upsertManagedBlock(content, snippet) {
   return `${stripped.trimEnd()}\n\n${snippet}\n`;
 }
 
+function buildExportCommand(envFilePath, homeDir) {
+  return `. "${buildHomeRelativeShellPath(envFilePath, homeDir)}"`;
+}
+
+function buildPosixEnvFileContent(nextValues) {
+  const keys = Object.keys(nextValues).sort();
+  if (!keys.length) {
+    return '';
+  }
+  return [
+    '# Managed by Coding-Tool',
+    ...keys.map((key) => `export ${key}=${shellQuote(nextValues[key])}`),
+    ''
+  ].join('\n');
+}
+
 function readJsonFile(filePath, fallbackValue) {
   try {
     if (!fs.existsSync(filePath)) {
@@ -181,29 +197,43 @@ function syncPosixEnvironment(nextValues, previousState, options) {
   const {
     runtime,
     homeDir,
+    envFilePath,
     stateFilePath,
     shellEnv,
     execSync
   } = options;
   const nextKeys = Object.keys(nextValues).sort();
   let changed = false;
+  const { preferred, candidates } = getPosixProfileCandidates(homeDir, shellEnv);
+  const sourceSnippet = buildSourceSnippet(envFilePath, homeDir);
+  const sourceCommand = buildExportCommand(envFilePath, homeDir);
 
   // 清理旧版本遗留的 shell profile 注入（迁移兼容）
   const previousProfiles = Array.isArray(previousState.profiles) ? previousState.profiles : [];
-  if (previousProfiles.length > 0) {
-    const { candidates } = getPosixProfileCandidates(homeDir, shellEnv);
-    const cleanupTargets = new Set([
-      ...previousProfiles,
-      ...candidates.filter(filePath => fs.existsSync(filePath))
-    ]);
-    for (const profilePath of cleanupTargets) {
-      if (!fs.existsSync(profilePath)) continue;
-      const currentContent = fs.readFileSync(profilePath, 'utf8');
-      if (!currentContent.includes(PROFILE_MARKER_START)) continue;
-      const nextContent = stripManagedBlock(currentContent);
-      const finalContent = nextContent ? `${nextContent}\n` : '';
-      changed = writeTextFileIfChanged(profilePath, finalContent) || changed;
-    }
+  const cleanupTargets = new Set([
+    ...previousProfiles,
+    ...candidates.filter((filePath) => fs.existsSync(filePath))
+  ]);
+  if (!nextKeys.length) {
+    cleanupTargets.add(preferred);
+  }
+  for (const profilePath of cleanupTargets) {
+    if (!fs.existsSync(profilePath)) continue;
+    const currentContent = fs.readFileSync(profilePath, 'utf8');
+    if (!currentContent.includes(PROFILE_MARKER_START)) continue;
+    const nextContent = stripManagedBlock(currentContent);
+    const finalContent = nextContent ? `${nextContent}\n` : '';
+    changed = writeTextFileIfChanged(profilePath, finalContent) || changed;
+  }
+
+  if (nextKeys.length > 0) {
+    changed = writeTextFileIfChanged(envFilePath, buildPosixEnvFileContent(nextValues)) || changed;
+    const currentProfileContent = fs.existsSync(preferred) ? fs.readFileSync(preferred, 'utf8') : '';
+    const nextProfileContent = upsertManagedBlock(currentProfileContent, sourceSnippet);
+    changed = writeTextFileIfChanged(preferred, nextProfileContent) || changed;
+  } else if (fs.existsSync(envFilePath)) {
+    fs.unlinkSync(envFilePath);
+    changed = true;
   }
 
   // macOS：用 launchctl 写入全局环境变量，新开终端/进程即生效
@@ -225,7 +255,7 @@ function syncPosixEnvironment(nextValues, previousState, options) {
     writeJsonFile(stateFilePath, {
       version: 1,
       values: nextValues,
-      profiles: []
+      profiles: [preferred]
     });
   } else if (fs.existsSync(stateFilePath)) {
     fs.unlinkSync(stateFilePath);
@@ -235,10 +265,10 @@ function syncPosixEnvironment(nextValues, previousState, options) {
     changed,
     reloadRequired: changed,
     isFirstTime: Object.keys(previousState.values || {}).length === 0 && nextKeys.length > 0,
-    sourceCommand: null,
-    shellConfigPath: null,
-    shellConfigPaths: [],
-    envFilePath: null,
+    sourceCommand: nextKeys.length > 0 ? sourceCommand : null,
+    shellConfigPath: nextKeys.length > 0 ? preferred : null,
+    shellConfigPaths: nextKeys.length > 0 ? [preferred] : [],
+    envFilePath: nextKeys.length > 0 ? envFilePath : null,
     managedKeys: nextKeys
   };
 }
