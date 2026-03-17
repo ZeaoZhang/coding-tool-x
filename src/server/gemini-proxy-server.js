@@ -14,6 +14,7 @@ const { createDecodedStream } = require('./services/response-decoder');
 const { getEffectiveApiKey } = require('./services/gemini-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
+const { redirectModel: redirectModelBase, resolveTargetUrl } = require('./services/base/proxy-utils');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -45,36 +46,12 @@ const PRICING = {
 const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
 const ONE_MILLION = 1000000;
 
-function resolveGeminiTarget(baseUrl = '', requestPath = '') {
-  let target = baseUrl || '';
-  if (target.endsWith('/')) {
-    target = target.slice(0, -1);
-  }
-  if (target.endsWith('/v1') && requestPath.startsWith('/v1')) {
-    target = target.slice(0, -3);
-  }
-  return target;
-}
+// resolveGeminiTarget replaced by resolveTargetUrl from proxy-utils
+const resolveGeminiTarget = resolveTargetUrl;
 
-/**
- * 应用模型重定向（精确匹配）
- * @param {string} originalModel - 原始模型名称
- * @param {object} channel - 渠道对象，包含 modelRedirects 数组
- * @returns {string} 重定向后的模型名称
- */
+// Gemini uses exact-match only redirect (no tier fallback)
 function redirectModel(originalModel, channel) {
-  if (!originalModel) return originalModel;
-
-  const modelRedirects = channel?.modelRedirects;
-  if (Array.isArray(modelRedirects) && modelRedirects.length > 0) {
-    for (const rule of modelRedirects) {
-      if (rule.from && rule.to && rule.from === originalModel) {
-        return rule.to;
-      }
-    }
-  }
-
-  return originalModel;
+  return redirectModelBase(originalModel, channel, { useTierFallback: false });
 }
 
 /**

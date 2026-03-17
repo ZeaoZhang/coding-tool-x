@@ -83,7 +83,7 @@
                           size="small"
                           type="primary"
                           :loading="busyKey === `apply-${tool}-${credential.id}`"
-                          :disabled="credential.isDefault"
+                          :disabled="isCredentialApplied(tool, credential)"
                           @click="handleApply(tool, credential.id)"
                         >
                           应用到本地
@@ -249,6 +249,32 @@ function getSummary(tool) {
 function getSortedCredentials(tool) {
   const credentials = getSummary(tool)?.credentials || []
   return [...credentials].sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0))
+}
+
+function isCredentialApplied(tool, credential) {
+  const nativeState = getSummary(tool)?.nativeState
+  const nativeCredential = nativeState?.nativeCredential
+  if (!nativeState?.oauthPresent || nativeState?.mode !== 'oauth' || !nativeCredential) {
+    return false
+  }
+
+  const sameToken = nativeCredential.tokenPreview && credential.tokenPreview
+    ? nativeCredential.tokenPreview === credential.tokenPreview
+    : false
+
+  const sameProvider = !nativeCredential.providerId || !credential.providerId
+    ? true
+    : nativeCredential.providerId === credential.providerId
+
+  const sameAccountId = !nativeCredential.accountId || !credential.accountId
+    ? true
+    : nativeCredential.accountId === credential.accountId
+
+  const sameAccountEmail = !nativeCredential.accountEmail || !credential.accountEmail
+    ? true
+    : nativeCredential.accountEmail === credential.accountEmail
+
+  return sameToken && sameProvider && sameAccountId && sameAccountEmail
 }
 
 function modeLabel(mode) {

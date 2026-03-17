@@ -1,16 +1,11 @@
 const fs = require('fs');
 const path = require('path');
+const BaseChannelService = require('./base/base-channel-service');
 const { isProxyConfig } = require('./settings-manager');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 
-function getChannelsFilePath() {
-  const dir = path.dirname(PATHS.channels.claude);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return PATHS.channels.claude;
-}
+// ── Claude 特有工具函数 ──
 
 function getActiveChannelIdPath() {
   const dir = path.dirname(PATHS.activeChannel.claude);
@@ -43,298 +38,23 @@ function loadActiveChannelId() {
   return null;
 }
 
-let channelsCache = null;
-let channelsCacheInitialized = false;
-const DEFAULT_CHANNELS = { channels: [] };
-
-function normalizeNumber(value, defaultValue, max = null) {
-  const num = Number(value);
-  if (!Number.isFinite(num) || num <= 0) {
-    return defaultValue;
-  }
-  if (max !== null && num > max) {
-    return max;
-  }
-  return num;
-}
-
-function normalizeGatewaySourceType(value, fallback = 'claude') {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'claude') return 'claude';
-  if (normalized === 'codex') return 'codex';
-  if (normalized === 'gemini') return 'gemini';
-  return fallback;
-}
-
 function extractApiKeyFromHelper(apiKeyHelper) {
   if (typeof apiKeyHelper !== 'string' || !apiKeyHelper.trim()) {
     return '';
   }
-
   const helper = apiKeyHelper.trim();
   let match = helper.match(/^echo\s+["']([^"']+)["']$/);
-  if (match && match[1]) {
-    return match[1];
-  }
-
+  if (match && match[1]) return match[1];
   match = helper.match(/^printf\s+["'][^"']*["']\s+["']([^"']+)["']$/);
-  if (match && match[1]) {
-    return match[1];
-  }
-
+  if (match && match[1]) return match[1];
   return '';
 }
 
 function buildApiKeyHelperCommand() {
-  // 避免把明文 API Key 写入可执行命令，降低注入风险
-  return 'printf "%s" "${ANTHROPIC_AUTH_TOKEN:-${ANTHROPIC_API_KEY:-}}"';
+  return 'echo \'ctx-managed\'';
 }
 
-function applyChannelDefaults(channel) {
-  const normalized = { ...channel };
-  if (normalized.enabled === undefined) {
-    normalized.enabled = true;
-  } else {
-    normalized.enabled = !!normalized.enabled;
-  }
-
-  normalized.weight = normalizeNumber(normalized.weight, 1, 100);
-
-  if (normalized.maxConcurrency === undefined ||
-      normalized.maxConcurrency === null ||
-      normalized.maxConcurrency === 0) {
-    normalized.maxConcurrency = null;
-  } else {
-    normalized.maxConcurrency = normalizeNumber(normalized.maxConcurrency, 1, 100);
-  }
-
-  normalized.gatewaySourceType = normalizeGatewaySourceType(normalized.gatewaySourceType, 'claude');
-
-  return normalized;
-}
-
-function readChannelsFromFile() {
-  const filePath = getChannelsFilePath();
-  try {
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const data = JSON.parse(content);
-      data.channels = (data.channels || []).map(applyChannelDefaults);
-      return data;
-    }
-  } catch (error) {
-    console.error('Error loading channels:', error);
-  }
-  return { ...DEFAULT_CHANNELS };
-}
-
-function initializeChannelsCache() {
-  if (channelsCacheInitialized) return;
-  channelsCache = readChannelsFromFile();
-  channelsCacheInitialized = true;
-
-  try {
-    const filePath = getChannelsFilePath();
-    fs.watchFile(filePath, { persistent: false }, () => {
-      channelsCache = readChannelsFromFile();
-    });
-  } catch (err) {
-    console.error('Failed to watch channels file:', err);
-  }
-}
-
-function loadChannels() {
-  if (!channelsCacheInitialized) {
-    initializeChannelsCache();
-  }
-  return JSON.parse(JSON.stringify(channelsCache));
-}
-
-function saveChannels(data) {
-  const filePath = getChannelsFilePath();
-  const payload = {
-    ...data,
-    channels: (data.channels || []).map(applyChannelDefaults)
-  };
-  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
-  channelsCache = JSON.parse(JSON.stringify(payload));
-}
-
-function getCurrentSettings() {
-  try {
-    const settingsPath = getClaudeSettingsPath();
-    if (!fs.existsSync(settingsPath)) {
-      return null;
-    }
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    const nativeOAuth = require('./native-oauth-adapters').readNativeOAuth('claude');
-
-    let baseUrl = settings.env?.ANTHROPIC_BASE_URL || '';
-    let apiKey = settings.env?.ANTHROPIC_API_KEY || '';
-    if (!apiKey && !nativeOAuth) {
-      apiKey = settings.env?.ANTHROPIC_AUTH_TOKEN || '';
-    }
-
-    if (!apiKey && settings.apiKeyHelper) {
-      apiKey = extractApiKeyFromHelper(settings.apiKeyHelper);
-    }
-
-    if (!baseUrl && !apiKey) {
-      return null;
-    }
-
-    return { baseUrl, apiKey };
-  } catch (error) {
-    console.error('Error reading current settings:', error);
-    return null;
-  }
-}
-
-function getBestChannelForRestore() {
-  const data = loadChannels();
-  const enabledChannels = data.channels.filter(ch => ch.enabled !== false);
-
-  if (enabledChannels.length === 0) {
-    return data.channels[0];
-  }
-
-  enabledChannels.sort((a, b) => (b.weight || 1) - (a.weight || 1));
-  return enabledChannels[0];
-}
-
-function getAllChannels() {
-  const data = loadChannels();
-  return data.channels;
-}
-
-function getCurrentChannel() {
-  const channels = getAllChannels();
-  if (!Array.isArray(channels) || channels.length === 0) {
-    return null;
-  }
-
-  const activeChannelId = loadActiveChannelId();
-  if (activeChannelId) {
-    const matched = channels.find(ch => ch.id === activeChannelId);
-    if (matched) {
-      return matched;
-    }
-  }
-
-  return channels.find(ch => ch.enabled !== false) || channels[0];
-}
-
-function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig = {}) {
-  const data = loadChannels();
-  const newChannel = applyChannelDefaults({
-    id: `channel-${Date.now()}`,
-    name,
-    baseUrl,
-    apiKey,
-    createdAt: Date.now(),
-    websiteUrl: websiteUrl || undefined,
-    enabled: extraConfig.enabled !== undefined ? !!extraConfig.enabled : true,
-    weight: extraConfig.weight,
-    maxConcurrency: extraConfig.maxConcurrency,
-    presetId: extraConfig.presetId || 'official',
-    modelConfig: extraConfig.modelConfig || null,
-    modelRedirects: extraConfig.modelRedirects || [],
-    proxyUrl: extraConfig.proxyUrl || '',
-    speedTestModel: extraConfig.speedTestModel || null,
-    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'claude')
-  });
-
-  data.channels.push(newChannel);
-  saveChannels(data);
-  return newChannel;
-}
-
-function updateChannel(id, updates) {
-  const data = loadChannels();
-  const index = data.channels.findIndex(ch => ch.id === id);
-
-  if (index === -1) {
-    throw new Error('Channel not found');
-  }
-
-  // Store old channel data before updates
-  const oldChannel = { ...data.channels[index] };
-
-  const merged = { ...data.channels[index], ...updates };
-  const nextChannel = applyChannelDefaults({
-    ...merged,
-    weight: merged.weight,
-    maxConcurrency: merged.maxConcurrency,
-    enabled: merged.enabled,
-    presetId: merged.presetId,
-    modelConfig: merged.modelConfig,
-    modelRedirects: merged.modelRedirects || [],
-    proxyUrl: merged.proxyUrl,
-    speedTestModel: merged.speedTestModel,
-    gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'claude'),
-    updatedAt: Date.now()
-  });
-  data.channels[index] = nextChannel;
-
-  // Get proxy status
-  const { getProxyStatus } = require('../proxy-server');
-  const proxyStatus = getProxyStatus();
-  const isProxyRunning = proxyStatus.running;
-
-  // Single-channel enforcement: enabling a channel disables all others ONLY when proxy is OFF
-  // When proxy is ON (dynamic switching), multiple channels can be enabled simultaneously
-  if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
-    data.channels.forEach((ch, i) => {
-      if (i !== index && ch.enabled) {
-        ch.enabled = false;
-      }
-    });
-    console.log(`[Single-channel mode] Enabled "${nextChannel.name}", disabled all others`);
-  }
-
-  saveChannels(data);
-
-  // Sync settings.json only when proxy is OFF.
-  // In dynamic switching mode, defer local config writes until proxy stop.
-  if (!isProxyRunning && nextChannel.enabled) {
-    console.log(`[Settings-sync] Channel "${nextChannel.name}" enabled, syncing settings.json...`);
-    updateClaudeSettingsWithModelConfig(nextChannel);
-  }
-
-  return data.channels[index];
-}
-
-async function deleteChannel(id) {
-  const data = loadChannels();
-  const index = data.channels.findIndex(ch => ch.id === id);
-
-  if (index === -1) {
-    throw new Error('Channel not found');
-  }
-
-  data.channels.splice(index, 1);
-  saveChannels(data);
-
-  return { success: true };
-}
-
-function applyChannelToSettings(id) {
-  const data = loadChannels();
-  const channel = data.channels.find(ch => ch.id === id);
-
-  if (!channel) {
-    throw new Error('Channel not found');
-  }
-
-  // In single-channel mode, only this channel should be enabled
-  data.channels.forEach(ch => {
-    ch.enabled = ch.id === id;
-  });
-  saveChannels(data);
-  updateClaudeSettingsWithModelConfig(channel);
-
-  return channel;
-}
+// ── Claude 原生设置写入 ──
 
 function updateClaudeSettingsWithModelConfig(channel) {
   clearNativeOAuth('claude');
@@ -386,7 +106,6 @@ function updateClaudeSettingsWithModelConfig(channel) {
   }
 
   settings.apiKeyHelper = buildApiKeyHelperCommand();
-
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
@@ -415,18 +134,131 @@ function updateClaudeSettings(baseUrl, apiKey) {
   }
 
   settings.apiKeyHelper = buildApiKeyHelperCommand();
-
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
+// ── ClaudeChannelService ──
+
+class ClaudeChannelService extends BaseChannelService {
+  constructor() {
+    super({
+      platform: 'claude',
+      channelsFilePath: PATHS.channels.claude,
+      defaultGatewaySource: 'claude',
+      isProxyRunning: () => isProxyConfig(),
+    });
+    // Claude 特有：文件监听缓存
+    this._cache = null;
+    this._cacheInitialized = false;
+  }
+
+  _generateId() {
+    return `channel-${Date.now()}`;
+  }
+
+  // Claude 使用缓存 + fs.watchFile
+  loadChannels() {
+    if (this._cacheInitialized && this._cache) {
+      return { channels: this._cache.channels.map(ch => this._applyDefaults(ch)) };
+    }
+
+    const data = super.loadChannels();
+    this._cache = data;
+    this._cacheInitialized = true;
+
+    // 设置文件监听
+    try {
+      fs.watchFile(this.channelsFilePath, { interval: 2000 }, () => {
+        try {
+          this._cache = null;
+          this._cacheInitialized = false;
+        } catch (_) {}
+      });
+    } catch (_) {}
+
+    return data;
+  }
+
+  saveChannels(data) {
+    super.saveChannels(data);
+    this._cache = data;
+    this._cacheInitialized = true;
+  }
+
+  _applyToNativeSettings(channel) {
+    updateClaudeSettingsWithModelConfig(channel);
+  }
+
+  getEffectiveApiKey(channel) {
+    return channel?.apiKey || null;
+  }
+}
+
+// ── 单例 + 兼容导出 ──
+
+const service = new ClaudeChannelService();
+
+function getAllChannels() {
+  const data = service.loadChannels();
+  return data.channels;
+}
+
+function getCurrentChannel() {
+  const channels = getAllChannels();
+  const activeId = loadActiveChannelId();
+  if (activeId) {
+    const active = channels.find(ch => ch.id === activeId);
+    if (active) return active;
+  }
+  return channels.find(ch => ch.enabled !== false) || channels[0] || null;
+}
+
+function getCurrentSettings() {
+  const channel = getCurrentChannel();
+  if (!channel) return null;
+  return {
+    baseUrl: channel.baseUrl,
+    apiKey: channel.apiKey,
+    channelName: channel.name,
+    channelId: channel.id,
+  };
+}
+
+function getBestChannelForRestore() {
+  const channels = getAllChannels();
+  const enabled = channels.filter(ch => ch.enabled !== false);
+  if (enabled.length > 0) return enabled[0];
+  return channels[0] || null;
+}
+
+function createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig) {
+  return service.createChannel({
+    name,
+    baseUrl,
+    apiKey,
+    websiteUrl,
+    ...extraConfig,
+  });
+}
+
+function updateChannel(id, updates) {
+  return service.updateChannel(id, updates);
+}
+
+function deleteChannel(id) {
+  return service.deleteChannel(id);
+}
+
+function applyChannelToSettings(id) {
+  return service.applyChannelToSettings(id);
+}
+
 function getEffectiveApiKey(channel) {
-  return channel.apiKey || null;
+  return service.getEffectiveApiKey(channel);
 }
 
 function disableAllChannels() {
-  const data = loadChannels();
-  data.channels.forEach(ch => { ch.enabled = false; });
-  saveChannels(data);
+  return service.disableAllChannels();
 }
 
 module.exports = {
@@ -441,5 +273,5 @@ module.exports = {
   updateClaudeSettings,
   updateClaudeSettingsWithModelConfig,
   getEffectiveApiKey,
-  disableAllChannels
+  disableAllChannels,
 };

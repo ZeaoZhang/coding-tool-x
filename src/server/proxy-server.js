@@ -19,6 +19,7 @@ const eventBus = require('../plugins/event-bus');
 const { getEffectiveApiKey } = require('./services/channels');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
+const { redirectModel } = require('./services/base/proxy-utils');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -34,63 +35,7 @@ const printedRedirectCache = new Map();
 const CLAUDE_BASE_PRICING = DEFAULT_CONFIG.pricing.claude;
 const ONE_MILLION = 1000000;
 
-/**
- * 检测模型层级
- * @param {string} modelName - 模型名称
- * @returns {string|null} 模型层级 (opus/sonnet/haiku) 或 null
- */
-function detectModelTier(modelName) {
-  if (!modelName) return null;
-  const lower = modelName.toLowerCase();
-  if (lower.includes('opus')) return 'opus';
-  if (lower.includes('sonnet')) return 'sonnet';
-  if (lower.includes('haiku')) return 'haiku';
-  return null;
-}
-
-/**
- * 应用模型重定向
- * @param {string} originalModel - 原始模型名称
- * @param {object} channel - 渠道对象，包含 modelConfig 和 modelRedirects
- * @returns {string} 重定向后的模型名称
- */
-function redirectModel(originalModel, channel) {
-  if (!originalModel) return originalModel;
-
-  // 优先使用新的 modelRedirects 数组格式
-  const modelRedirects = channel?.modelRedirects;
-  if (Array.isArray(modelRedirects) && modelRedirects.length > 0) {
-    for (const rule of modelRedirects) {
-      if (rule.from && rule.to && rule.from === originalModel) {
-        return rule.to;
-      }
-    }
-  }
-
-  // 向后兼容：使用旧的 modelConfig 格式
-  const modelConfig = channel?.modelConfig;
-  if (!modelConfig) return originalModel;
-
-  const tier = detectModelTier(originalModel);
-
-  // 优先级：层级特定配置 > 通用模型覆盖
-  if (tier === 'opus' && modelConfig.opusModel) {
-    return modelConfig.opusModel;
-  }
-  if (tier === 'sonnet' && modelConfig.sonnetModel) {
-    return modelConfig.sonnetModel;
-  }
-  if (tier === 'haiku' && modelConfig.haikuModel) {
-    return modelConfig.haikuModel;
-  }
-
-  // 回退到通用模型覆盖
-  if (modelConfig.model) {
-    return modelConfig.model;
-  }
-
-  return originalModel;
-}
+// detectModelTier and redirectModel imported from services/base/proxy-utils
 
 /**
  * 计算请求成本

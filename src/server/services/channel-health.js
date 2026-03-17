@@ -51,6 +51,24 @@ function initChannelHealth(channelId, source = 'claude') {
   return channelHealth.get(key);
 }
 
+function transitionFrozenChannelIfExpired(channelId, source = 'claude') {
+  const health = initChannelHealth(channelId, source);
+  if (health.status !== 'frozen') {
+    return health;
+  }
+
+  const now = Date.now();
+  if (now < health.freezeUntil) {
+    return health;
+  }
+
+  health.status = 'checking';
+  health.consecutiveSuccesses = 0;
+  health.freezeUntil = 0;
+  console.log(`[ChannelHealth] Channel ${channelId} freeze expired, entering checking mode`);
+  return health;
+}
+
 /**
  * 记录成功请求
  */
@@ -119,21 +137,13 @@ function isChannelAvailable(channelId, source = 'claude') {
   const health = channelHealth.get(key);
   if (!health) return true;
 
-  const now = Date.now();
+  const currentHealth = transitionFrozenChannelIfExpired(channelId, source);
 
-  switch (health.status) {
+  switch (currentHealth.status) {
     case 'healthy':
       return true;
 
     case 'frozen':
-      // 检查冻结时间是否到期
-      if (now >= health.freezeUntil) {
-        // 进入检测状态
-        health.status = 'checking';
-        health.consecutiveSuccesses = 0;
-        console.log(`[ChannelHealth] Channel ${channelId} freeze expired, entering checking mode`);
-        return true; // 允许一个请求用于健康检测
-      }
       return false;
 
     case 'checking':
@@ -172,8 +182,9 @@ function getChannelHealthStatus(channelId, source = 'claude') {
     };
   }
 
+  const currentHealth = transitionFrozenChannelIfExpired(channelId, source);
   const now = Date.now();
-  const freezeRemaining = Math.max(0, health.freezeUntil - now);
+  const freezeRemaining = Math.max(0, currentHealth.freezeUntil - now);
 
   const statusMap = {
     'healthy': { text: '健康', color: '#18a058' },
@@ -182,14 +193,14 @@ function getChannelHealthStatus(channelId, source = 'claude') {
   };
 
   return {
-    status: health.status,
-    statusText: statusMap[health.status]?.text || '未知',
-    statusColor: statusMap[health.status]?.color || '#909399',
-    consecutiveFailures: health.consecutiveFailures,
-    consecutiveSuccesses: health.consecutiveSuccesses,
-    totalFailures: health.totalFailures,
-    totalSuccesses: health.totalSuccesses,
-    freezeUntil: health.freezeUntil,
+    status: currentHealth.status,
+    statusText: statusMap[currentHealth.status]?.text || '未知',
+    statusColor: statusMap[currentHealth.status]?.color || '#909399',
+    consecutiveFailures: currentHealth.consecutiveFailures,
+    consecutiveSuccesses: currentHealth.consecutiveSuccesses,
+    totalFailures: currentHealth.totalFailures,
+    totalSuccesses: currentHealth.totalSuccesses,
+    freezeUntil: currentHealth.freezeUntil,
     freezeRemaining: Math.ceil(freezeRemaining / 1000), // 剩余秒数
   };
 }

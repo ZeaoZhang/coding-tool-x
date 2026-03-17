@@ -4,18 +4,15 @@ const crypto = require('crypto');
 const { PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { setChannelConfig } = require('./opencode-settings-manager');
+const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
 /**
  * OpenCode 渠道管理服务
  * 存储位置: ~/.cc-tool/opencode-channels.json
  */
 
-function normalizeGatewaySourceType(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'claude') return 'claude';
-  if (normalized === 'gemini') return 'gemini';
-  return 'codex';
-}
+// normalizeGatewaySourceType imported from base/proxy-utils
+// OpenCode default fallback is 'codex'
 
 function normalizeApiKey(value) {
   if (typeof value !== 'string') return '';
@@ -80,7 +77,7 @@ function loadChannels() {
           modelRedirects: ch.modelRedirects || [],
           speedTestModel: ch.speedTestModel || null,
           wireApi: ch.wireApi || 'openai',  // OpenCode 默认使用 OpenAI 兼容格式
-          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType),
+          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'codex'),
           allowedModels: ch.allowedModels || []
         };
         normalized.providerKey = deriveProviderKey(normalized);
@@ -132,7 +129,7 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
     model: extraConfig.model || null,
-    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType),
+    gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'codex'),
     providerKey: extraConfig.providerKey || null,
     presetId: extraConfig.presetId || null,
     websiteUrl: extraConfig.websiteUrl || '',
@@ -169,7 +166,8 @@ function updateChannel(channelId, updates) {
     gatewaySourceType: normalizeGatewaySourceType(
       updates.gatewaySourceType !== undefined
         ? updates.gatewaySourceType
-        : oldChannel.gatewaySourceType
+        : oldChannel.gatewaySourceType,
+      'codex'
     ),
     updatedAt: Date.now()
   };

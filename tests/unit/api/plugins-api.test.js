@@ -1,0 +1,273 @@
+const express = require('express');
+const http = require('http');
+
+let services;
+
+beforeEach(() => {
+  services = {
+    claude: createMockService(),
+    opencode: createMockService()
+  };
+
+  const PluginsServiceStub = function(platform = 'claude') {
+    return services[platform] || services.claude;
+  };
+
+  const servicePath = require.resolve('../../../src/server/services/plugins-service');
+  require.cache[servicePath] = {
+    id: servicePath,
+    filename: servicePath,
+    loaded: true,
+    exports: {
+      PluginsService: PluginsServiceStub
+    }
+  };
+
+  delete require.cache[require.resolve('../../../src/server/api/plugins')];
+});
+
+afterEach(() => {
+  delete require.cache[require.resolve('../../../src/server/api/plugins')];
+  delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
+});
+
+function createMockService() {
+  return {
+    listPlugins: vi.fn(() => ({ plugins: [{ name: 'demo-plugin', enabled: true }] })),
+    getMarketPlugins: vi.fn(async () => [{ name: 'market-plugin' }]),
+    installPlugin: vi.fn(async () => ({
+      success: true,
+      plugin: { name: 'demo-plugin', version: '1.0.0' }
+    })),
+    getRepos: vi.fn(() => [{ owner: 'demo', name: 'plugins', url: 'https://github.com/demo/plugins' }]),
+    addRepo: vi.fn(() => [{ owner: 'demo', name: 'plugins', url: 'https://github.com/demo/plugins' }]),
+    removeRepo: vi.fn(() => []),
+    toggleRepo: vi.fn(() => [{ owner: 'demo', name: 'plugins', enabled: false }]),
+    syncRepos: vi.fn(async () => ({ results: [{ repo: 'https://github.com/demo/plugins', success: true }] })),
+    syncPlugins: vi.fn(async () => ({ plugins: [{ name: 'demo-plugin' }] })),
+    getPluginReadme: vi.fn(async () => '# Demo'),
+    getPlugin: vi.fn((name) => (name === 'demo-plugin' ? { name, enabled: true } : null)),
+    uninstallPlugin: vi.fn(() => ({ success: true, message: 'Plugin removed successfully' })),
+    togglePlugin: vi.fn((name, enabled) => ({ name, enabled })),
+    updatePluginConfig: vi.fn((name) => ({ success: true, message: `Configuration updated for ${name}` }))
+  };
+}
+
+function buildApp() {
+  const router = require('../../../src/server/api/plugins');
+  const app = express();
+  app.use(express.json());
+  app.use('/', router);
+  return app;
+}
+
+function request(app) {
+  return {
+    get(url) { return call(app, 'GET', url); },
+    post(url, body) { return call(app, 'POST', url, body); },
+    put(url, body) { return call(app, 'PUT', url, body); },
+    delete(url) { return call(app, 'DELETE', url); }
+  };
+}
+
+function call(app, method, url, body) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(app);
+    server.listen(0, () => {
+      const port = server.address().port;
+      const rawBody = body ? JSON.stringify(body) : null;
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port,
+        path: url,
+        method,
+        headers: {
+          ...(rawBody ? {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(rawBody)
+          } : {})
+        }
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          server.close();
+          try {
+            resolve({
+              status: res.statusCode,
+              body: data ? JSON.parse(data) : null
+            });
+          } catch {
+            resolve({
+              status: res.statusCode,
+              body: data
+            });
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        server.close();
+        reject(error);
+      });
+
+      if (rawBody) req.write(rawBody);
+      req.end();
+    });
+  });
+}
+
+describe('GET / and GET /market', () => {
+  test('lists plugins for requested platform', async () => {
+    const res = await request(buildApp()).get('/?platform=opencode');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('opencode');
+    expect(services.opencode.listPlugins).toHaveBeenCalled();
+  });
+
+  test('passes refresh flag to market lookup', async () => {
+    const res = await request(buildApp()).get('/market?platform=claude&refresh=1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.getMarketPlugins).toHaveBeenCalledWith(true);
+  });
+});
+
+describe('POST /install', () => {
+  test('installs from source url', async () => {
+    const res = await request(buildApp()).post('/install', {
+      platform: 'opencode',
+      source: 'npm:demo-plugin'
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.opencode.installPlugin).toHaveBeenCalledWith('npm:demo-plugin');
+  });
+
+  test('returns 400 when install source is missing', async () => {
+    const res = await request(buildApp()).post('/install', {});
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('returns 400 when service reports failure', async () => {
+    services.claude.installPlugin.mockResolvedValue({ success: false, error: 'bad plugin' });
+    const res = await request(buildApp()).post('/install', { source: 'bad-plugin' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+});
+
+describe('repository routes', () => {
+  test('GET /repos returns repositories', async () => {
+    const res = await request(buildApp()).get('/repos');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.repos[0].owner).toBe('demo');
+  });
+
+  test('POST /repos validates repository url', async () => {
+    const res = await request(buildApp()).post('/repos', {});
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('PUT /repos/:owner/:name/toggle validates enabled', async () => {
+    const res = await request(buildApp()).put('/repos/demo/plugins/toggle', { enabled: 'yes' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('PUT /repos/:owner/:name/toggle toggles repo', async () => {
+    const res = await request(buildApp()).put('/repos/demo/plugins/toggle', { enabled: false, platform: 'opencode' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.opencode.toggleRepo).toHaveBeenCalledWith('demo', 'plugins', false);
+  });
+
+  test('POST /repos/sync proxies sync results', async () => {
+    const res = await request(buildApp()).post('/repos/sync', { platform: 'opencode' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.opencode.syncRepos).toHaveBeenCalled();
+  });
+});
+
+describe('plugin sync and readme routes', () => {
+  test('POST /sync returns sync result', async () => {
+    const res = await request(buildApp()).post('/sync', {});
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.syncPlugins).toHaveBeenCalled();
+  });
+
+  test('GET /:name/readme returns fallback payload on error', async () => {
+    services.claude.getPluginReadme.mockRejectedValue(new Error('network down'));
+    const res = await request(buildApp()).get('/demo-plugin/readme');
+
+    expect(res.status).toBe(500);
+    expect(res.body.success).toBe(false);
+    expect(res.body.readme).toBe('');
+  });
+});
+
+describe('single plugin routes', () => {
+  test('GET /:name returns 404 when plugin is missing', async () => {
+    const res = await request(buildApp()).get('/missing-plugin');
+
+    expect(res.status).toBe(404);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('DELETE /:name returns 400 when uninstall fails', async () => {
+    services.claude.uninstallPlugin.mockReturnValue({ success: false, error: 'not found' });
+    const res = await request(buildApp()).delete('/demo-plugin');
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('PUT /:name/toggle validates enabled', async () => {
+    const res = await request(buildApp()).put('/demo-plugin/toggle', { enabled: 'yes' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('PUT /:name/toggle updates plugin status', async () => {
+    const res = await request(buildApp()).put('/demo-plugin/toggle', { enabled: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.togglePlugin).toHaveBeenCalledWith('demo-plugin', false);
+  });
+
+  test('PUT /:name/config validates config object', async () => {
+    const res = await request(buildApp()).put('/demo-plugin/config', { config: null });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('PUT /:name/config forwards config update', async () => {
+    const res = await request(buildApp()).put('/demo-plugin/config', {
+      config: { enabled: true, mode: 'strict' }
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.updatePluginConfig).toHaveBeenCalledWith('demo-plugin', { enabled: true, mode: 'strict' });
+  });
+});

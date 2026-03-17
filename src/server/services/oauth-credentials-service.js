@@ -380,12 +380,21 @@ function stableFingerprintValue(tool, metadata) {
   return stableId;
 }
 
+function resolveFingerprintValue(tool, metadata, options = {}) {
+  if (options.fingerprintMode === 'primary-token') {
+    return metadata.primaryToken
+      || metadata.accessToken
+      || stableFingerprintValue(tool, metadata);
+  }
+  return stableFingerprintValue(tool, metadata);
+}
+
 function upsertCredential(tool, metadata, options = {}) {
   const store = readStore();
   const toolStore = getToolStore(store, tool);
   const now = Date.now();
   const primaryToken = metadata.primaryToken || metadata.accessToken || '';
-  const fingerprint = fingerprintFor(tool, stableFingerprintValue(tool, metadata));
+  const fingerprint = fingerprintFor(tool, resolveFingerprintValue(tool, metadata, options));
   const existingIndex = toolStore.credentials.findIndex((item) => item.fingerprint === fingerprint);
   const existing = existingIndex >= 0 ? toolStore.credentials[existingIndex] : null;
 
@@ -456,7 +465,8 @@ function syncLocalCredential(tool) {
   }
 
   const credentials = nativeCredentials.map((metadata) => upsertCredential(tool, metadata, {
-    source: 'synced-local'
+    source: 'synced-local',
+    fingerprintMode: 'primary-token'
   }));
 
   return {
