@@ -38,7 +38,7 @@ async function switchProject(config) {
   const { parseRealProjectPath } = require('../server/services/sessions');
   const { displayName, fullPath } = parseRealProjectPath(selectedProject);
 
-  console.log(chalk.green(`\n✅ 已切换到: ${displayName}\n`));
+  console.log(chalk.green(`\n[OK] 已切换到: ${displayName}\n`));
   console.log(chalk.gray(`   路径: ${fullPath}\n`));
   return true;
 }

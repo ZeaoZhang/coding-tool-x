@@ -14,9 +14,9 @@ async function handlePortConfig() {
   }
 
   console.clear();
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔=======================================╗'));
   console.log(chalk.bold.cyan('║          端口配置          ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
 
@@ -116,8 +116,8 @@ async function handlePortConfig() {
     ports: config.ports,
   });
 
-  console.log(chalk.green('\n✅ 端口配置已保存\n'));
-  console.log(chalk.yellow('⚠️  提示:'));
+  console.log(chalk.green('\n[OK] 端口配置已保存\n'));
+  console.log(chalk.yellow('[WARN]  提示:'));
   console.log(chalk.gray('• 如果 Web UI 正在运行，请重启以使用新端口'));
   console.log(chalk.gray('• 如果动态切换已开启，请关闭后重新开启\n'));
 

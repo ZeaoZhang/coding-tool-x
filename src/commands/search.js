@@ -11,7 +11,7 @@ const { loadAliases } = require('../server/services/alias');
  * 跨所有项目搜索会话内容
  */
 async function searchSessionsAcrossProjects(config, keyword) {
-  const spinner = ora(`🔍 正在搜索 "${keyword}"...`).start();
+  const spinner = ora(`[SEARCH] 正在搜索 "${keyword}"...`).start();
 
   const projects = await getProjects(config);
   const aliases = loadAliases();
@@ -21,7 +21,7 @@ async function searchSessionsAcrossProjects(config, keyword) {
   for (const projectName of projects) {
     try {
       const { projectName: displayName } = parseRealProjectPath(projectName);
-      spinner.text = `🔍 正在搜索项目: ${displayName}...`;
+      spinner.text = `[SEARCH] 正在搜索项目: ${displayName}...`;
       const results = searchSessionsInProject(config, projectName, keyword, 15);
 
       if (results.length > 0) {
@@ -44,7 +44,7 @@ async function searchSessionsAcrossProjects(config, keyword) {
 
   if (allResults.length === 0) {
     console.clear();
-    console.log(chalk.red(`\n❌ 未找到包含 "${keyword}" 的对话\n`));
+    console.log(chalk.red(`\n[ERROR] 未找到包含 "${keyword}" 的对话\n`));
     return [];
   }
 
@@ -55,7 +55,7 @@ async function searchSessionsAcrossProjects(config, keyword) {
   const totalMatches = allResults.reduce((sum, r) => sum + r.matchCount, 0);
 
   console.clear();
-  console.log(chalk.green(`\n✨ 找到 ${allResults.length} 个对话，共 ${totalMatches} 处匹配\n`));
+  console.log(chalk.green(`\n[NEW] 找到 ${allResults.length} 个对话，共 ${totalMatches} 处匹配\n`));
 
   const choices = [];
 
@@ -131,8 +131,8 @@ async function handleSearch(config, switchProjectCallback) {
           name: 'action',
           message: '未找到匹配的对话',
           choices: [
-            { name: chalk.blue('↩️  返回主菜单'), value: 'back' },
-            { name: chalk.cyan('🔎  重新搜索'), value: 'retry' },
+            { name: chalk.blue('[<-]  返回主菜单'), value: 'back' },
+            { name: chalk.cyan('[SEARCH]  重新搜索'), value: 'retry' },
           ],
         },
       ]);
@@ -142,9 +142,9 @@ async function handleSearch(config, switchProjectCallback) {
     }
 
     // 添加操作选项
-    choices.push(new inquirer.Separator(chalk.gray('═'.repeat(80))));
-    choices.push({ name: chalk.blue('↩️  返回主菜单'), value: 'back' });
-    choices.push({ name: chalk.cyan('🔎  重新搜索'), value: 'retry' });
+    choices.push(new inquirer.Separator(chalk.gray('='.repeat(80))));
+    choices.push({ name: chalk.blue('[<-]  返回主菜单'), value: 'back' });
+    choices.push({ name: chalk.cyan('[SEARCH]  重新搜索'), value: 'retry' });
 
     // 使用自定义 pageSize 以便显示更多结果
     const { selected } = await inquirer.prompt([

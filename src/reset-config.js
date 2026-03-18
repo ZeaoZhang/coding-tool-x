@@ -15,7 +15,7 @@ async function resetConfig() {
       if (status.running) {
         console.log('检测到代理服务正在运行，正在停止...');
         await stopProxyServer();
-        console.log('✅ 代理服务已停止');
+        console.log('[OK] 代理服务已停止');
       }
     } catch (err) {
       // 代理服务未运行或模块加载失败，继续处理本地文件
@@ -31,7 +31,7 @@ async function resetConfig() {
       const backupContent = fs.readFileSync(backupPath, 'utf8');
       fs.writeFileSync(settingsPath, backupContent, 'utf8');
       fs.unlinkSync(backupPath);
-      console.log('✅ 已从备份恢复 settings.json');
+      console.log('[OK] 已从备份恢复 settings.json');
     } else if (fs.existsSync(settingsPath)) {
       // 检查是否是代理配置
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
@@ -59,28 +59,28 @@ async function resetConfig() {
               settings.apiKeyHelper = `echo '${activeChannel.apiKey}'`;
 
               fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-              console.log(`✅ 已恢复到渠道: ${activeChannel.name}`);
+              console.log(`[OK] 已恢复到渠道: ${activeChannel.name}`);
 
               // 清理 active-channel.json
               fs.unlinkSync(activeChannelPath);
             } else {
-              console.log('⚠️  无法找到激活的渠道，请手动配置 Claude Code');
+              console.log('[WARN]  无法找到激活的渠道，请手动配置 Claude Code');
             }
           }
         } else {
-          console.log('⚠️  未找到激活渠道信息，但已清除代理配置');
+          console.log('[WARN]  未找到激活渠道信息，但已清除代理配置');
           console.log('请手动配置 Claude Code 或通过 Web UI 管理渠道');
         }
       } else {
-        console.log('✅ 配置文件正常，无需恢复');
+        console.log('[OK] 配置文件正常，无需恢复');
       }
     } else {
-      console.log('⚠️  未找到 settings.json 文件');
+      console.log('[WARN]  未找到 settings.json 文件');
     }
 
-    console.log('\n✅ 配置恢复完成！\n');
+    console.log('\n[OK] 配置恢复完成！\n');
   } catch (err) {
-    console.error('❌ 恢复配置时出错:', err.message);
+    console.error('[ERROR] 恢复配置时出错:', err.message);
     console.log('\n您可以尝试手动恢复：');
     console.log('1. 检查 ~/.claude/settings.json 文件');
     console.log('2. 如果有 settings.json.cc-tool-backup 备份文件，手动恢复');

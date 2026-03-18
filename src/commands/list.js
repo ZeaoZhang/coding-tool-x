@@ -77,7 +77,7 @@ async function listSessions(config, limit = null) {
 
   // 清屏并重新显示，避免之前的输出干扰
   console.clear();
-  console.log(chalk.green(`\n✨ 找到 ${sessions.length} 个会话\n`));
+  console.log(chalk.green(`\n[NEW] 找到 ${sessions.length} 个会话\n`));
 
   return choices;
 }
@@ -150,7 +150,7 @@ async function listRecentSessionsAcrossProjects(config, limit = null) {
 
   // 清屏并重新显示，避免之前的输出干扰
   console.clear();
-  console.log(chalk.green(`\n✨ 找到 ${sessions.length} 个最新对话（跨所有项目）\n`));
+  console.log(chalk.green(`\n[NEW] 找到 ${sessions.length} 个最新对话（跨所有项目）\n`));
 
   return choices;
 }
@@ -171,11 +171,11 @@ async function handleList(config, switchProjectCallback, crossProject = false) {
 
     // 添加操作选项
     choices.push(new inquirer.Separator(chalk.gray('─'.repeat(50))));
-    choices.push({ name: chalk.blue('↩️  返回主菜单'), value: 'back' });
+    choices.push({ name: chalk.blue('[<-]  返回主菜单'), value: 'back' });
 
     // 跨项目模式不显示切换项目选项（因为已经是跨所有项目了）
     if (!crossProject) {
-      choices.push({ name: chalk.magenta('🔀  切换项目'), value: 'switch' });
+      choices.push({ name: chalk.magenta('[SWITCH]  切换项目'), value: 'switch' });
     }
 
     const selected = await promptSelectSession(choices);

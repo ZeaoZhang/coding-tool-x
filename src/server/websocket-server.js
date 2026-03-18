@@ -291,7 +291,7 @@ function startWebSocketServer(httpServer, options = {}) {
     acc[source] = (acc[source] || 0) + 1;
     return acc;
   }, {});
-  console.log(`📝 Loaded ${logsCache.length} persisted logs today ->`, counts);
+  console.log(`[NOTE] Loaded ${logsCache.length} persisted logs today ->`, counts);
 
   try {
     // 如果传入的是 HTTP server，则附加到该服务器；否则创建独立的 WebSocket 服务器
@@ -301,7 +301,7 @@ function startWebSocketServer(httpServer, options = {}) {
         path: '/ws'  // 指定 WebSocket 路径
       });
       installOriginGuard(wss);
-      console.log(`✅ WebSocket server attached to HTTP server at /ws`);
+      console.log(`[OK] WebSocket server attached to HTTP server at /ws`);
     } else {
       // 创建独立的 WebSocket 服务器，使用配置的 webUI 端口
       const config = loadConfig();
@@ -311,7 +311,7 @@ function startWebSocketServer(httpServer, options = {}) {
         path: '/ws'
       });
       installOriginGuard(wss);
-      console.log(`✅ WebSocket server started on ws://127.0.0.1:${port}/ws`);
+      console.log(`[OK] WebSocket server started on ws://127.0.0.1:${port}/ws`);
     }
 
     wss.on('connection', (ws, req) => {
@@ -352,7 +352,7 @@ function startWebSocketServer(httpServer, options = {}) {
       wsClients.forEach(ws => {
         if (ws.isAlive === false) {
           // 客户端没有响应 pong，断开连接
-          console.log('❌ WebSocket client timeout, terminating');
+          console.log('[ERROR] WebSocket client timeout, terminating');
           wsClients.delete(ws);
           return ws.terminate();
         }
@@ -369,8 +369,8 @@ function startWebSocketServer(httpServer, options = {}) {
     wss.on('error', (error) => {
       console.error('WebSocket server error:', error);
       if (error.code === 'EADDRINUSE') {
-        console.error(chalk.red('\n❌ WebSocket 端口已被占用'));
-        console.error(chalk.yellow('\n💡 请检查端口配置\n'));
+        console.error(chalk.red('\n[ERROR] WebSocket 端口已被占用'));
+        console.error(chalk.yellow('\n[TIP] 请检查端口配置\n'));
         wss = null;
       }
     });
@@ -400,7 +400,7 @@ function stopWebSocketServer() {
 
   // 关闭服务器
   wss.close(() => {
-    console.log('✅ WebSocket server stopped');
+    console.log('[OK] WebSocket server stopped');
   });
 
   wss = null;
@@ -443,7 +443,7 @@ function broadcastLog(logData) {
 function clearAllLogs() {
   logsCache = [];
   saveLogsToFile([]);
-  console.log('✅ All logs cleared');
+  console.log('[OK] All logs cleared');
 }
 
 // 去掉敏感字段

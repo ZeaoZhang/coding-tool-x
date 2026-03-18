@@ -46,7 +46,7 @@ async function handleLogs(type = null, options = {}) {
   // 显示特定类型的日志
   const logFile = LOG_FILES[type];
   if (!logFile) {
-    console.error(chalk.red(`\n❌ 无效的日志类型: ${type}\n`));
+    console.error(chalk.red(`\n[ERROR] 无效的日志类型: ${type}\n`));
     console.log(chalk.gray('支持的类型: ui, claude, codex, gemini, opencode\n'));
     process.exit(1);
   }
@@ -55,13 +55,13 @@ async function handleLogs(type = null, options = {}) {
 
   // 检查日志文件是否存在
   if (!fs.existsSync(logPath)) {
-    console.log(chalk.yellow(`\n⚠️  ${type} 日志文件不存在\n`));
+    console.log(chalk.yellow(`\n[WARN]  ${type} 日志文件不存在\n`));
     console.log(chalk.gray(`日志路径: ${logPath}\n`));
     return;
   }
 
-  console.log(chalk.cyan(`\n📋 ${type.toUpperCase()} 日志 ${follow ? '(实时)' : `(最近 ${lines} 行)`}\n`));
-  console.log(chalk.gray(`═`.repeat(60)) + '\n');
+  console.log(chalk.cyan(`\n[LOG] ${type.toUpperCase()} 日志 ${follow ? '(实时)' : `(最近 ${lines} 行)`}\n`));
+  console.log(chalk.gray(`=`.repeat(60)) + '\n');
 
   if (follow) {
     // 实时跟踪日志
@@ -76,8 +76,8 @@ async function handleLogs(type = null, options = {}) {
  * 显示所有日志（合并）
  */
 function showAllLogs(lines, follow) {
-  console.log(chalk.cyan(`\n📋 所有日志 ${follow ? '(实时)' : `(最近 ${lines} 行)`}\n`));
-  console.log(chalk.gray(`═`.repeat(60)) + '\n');
+  console.log(chalk.cyan(`\n[LOG] 所有日志 ${follow ? '(实时)' : `(最近 ${lines} 行)`}\n`));
+  console.log(chalk.gray(`=`.repeat(60)) + '\n');
 
   const allLogs = [];
 
@@ -115,8 +115,8 @@ function showAllLogs(lines, follow) {
     console.log(typeColor(typeLabel) + chalk.gray(log.line));
   });
 
-  console.log(chalk.gray(`\n═`.repeat(60)));
-  console.log(chalk.gray(`\n💡 使用 `) + chalk.cyan(`ctx logs ${Object.keys(LOG_FILES).join('|')}`) + chalk.gray(` 查看特定类型日志\n`));
+  console.log(chalk.gray(`\n=`.repeat(60)));
+  console.log(chalk.gray(`\n[TIP] 使用 `) + chalk.cyan(`ctx logs ${Object.keys(LOG_FILES).join('|')}`) + chalk.gray(` 查看特定类型日志\n`));
 }
 
 /**
@@ -134,8 +134,8 @@ function showLastLines(filePath, lines) {
       }
     });
 
-    console.log(chalk.gray(`\n═`.repeat(60)));
-    console.log(chalk.gray(`\n💡 使用 `) + chalk.cyan(`ctx logs <type> --follow`) + chalk.gray(` 实时跟踪日志\n`));
+    console.log(chalk.gray(`\n=`.repeat(60)));
+    console.log(chalk.gray(`\n[TIP] 使用 `) + chalk.cyan(`ctx logs <type> --follow`) + chalk.gray(` 实时跟踪日志\n`));
   } catch (err) {
     console.error(chalk.red(`读取日志失败: ${err.message}\n`));
     process.exit(1);
@@ -181,7 +181,7 @@ function tailFile(filePath) {
   });
 
   followProcess.on('error', (err) => {
-    console.error(chalk.red(`\n❌ 跟踪日志失败: ${err.message}\n`));
+    console.error(chalk.red(`\n[ERROR] 跟踪日志失败: ${err.message}\n`));
     if (isWindows) {
       console.log(chalk.gray('提示: 请确认系统可用 powershell 命令。\n'));
     }
@@ -207,7 +207,7 @@ function tailFile(filePath) {
 function clearLogs(type) {
   if (!type) {
     // 清空所有日志
-    console.log(chalk.cyan('\n🗑️  清空所有日志...\n'));
+    console.log(chalk.cyan('\n[DEL]  清空所有日志...\n'));
 
     let cleared = 0;
     Object.entries(LOG_FILES).forEach(([logType, filename]) => {
@@ -215,20 +215,20 @@ function clearLogs(type) {
       if (fs.existsSync(logPath)) {
         try {
           fs.writeFileSync(logPath, '');
-          console.log(chalk.green(`✅ ${logType} 日志已清空`));
+          console.log(chalk.green(`[OK] ${logType} 日志已清空`));
           cleared++;
         } catch (err) {
-          console.log(chalk.red(`❌ ${logType} 日志清空失败: ${err.message}`));
+          console.log(chalk.red(`[ERROR] ${logType} 日志清空失败: ${err.message}`));
         }
       }
     });
 
-    console.log(chalk.green(`\n✅ 共清空 ${cleared} 个日志文件\n`));
+    console.log(chalk.green(`\n[OK] 共清空 ${cleared} 个日志文件\n`));
   } else {
     // 清空特定类型日志
     const logFile = LOG_FILES[type];
     if (!logFile) {
-      console.error(chalk.red(`\n❌ 无效的日志类型: ${type}\n`));
+      console.error(chalk.red(`\n[ERROR] 无效的日志类型: ${type}\n`));
       process.exit(1);
     }
 
@@ -236,13 +236,13 @@ function clearLogs(type) {
     if (fs.existsSync(logPath)) {
       try {
         fs.writeFileSync(logPath, '');
-        console.log(chalk.green(`\n✅ ${type} 日志已清空\n`));
+        console.log(chalk.green(`\n[OK] ${type} 日志已清空\n`));
       } catch (err) {
-        console.error(chalk.red(`\n❌ 清空失败: ${err.message}\n`));
+        console.error(chalk.red(`\n[ERROR] 清空失败: ${err.message}\n`));
         process.exit(1);
       }
     } else {
-      console.log(chalk.yellow(`\n⚠️  ${type} 日志文件不存在\n`));
+      console.log(chalk.yellow(`\n[WARN]  ${type} 日志文件不存在\n`));
     }
   }
 }

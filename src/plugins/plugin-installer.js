@@ -66,6 +66,7 @@ function execCommand(command, options = {}) {
     const output = execSync(command, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
       ...options
     });
     return { success: true, output: output.trim() };
@@ -213,7 +214,7 @@ async function installPlugin(gitUrl) {
     }
 
     // Step 2: Security warning and user confirmation
-    console.warn('\n⚠️  WARNING: Plugins have full system access!');
+    console.warn('\n[WARN]  WARNING: Plugins have full system access!');
     console.warn('Only install plugins from trusted sources.');
     console.warn(`Source: ${gitUrl}\n`);
 

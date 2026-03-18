@@ -200,7 +200,8 @@ function fire(eventType) {
       \`--event-type=\${eventType}\`
     ], {
       detached: true,
-      stdio: 'ignore'
+      stdio: 'ignore',
+      windowsHide: true
     })
     child.unref()
   } catch (error) {
@@ -320,7 +321,7 @@ function notify(mode, message) {
         const appleScript = 'display dialog "' + escapeForAppleScript(message) +
           '" with title "' + escapeForAppleScript(title) +
           '" buttons {"好的"} default button 1 with icon note'
-        execSync('osascript -e ' + JSON.stringify(appleScript), { stdio: 'ignore' })
+        execSync('osascript -e ' + JSON.stringify(appleScript), { stdio: 'ignore', windowsHide: true })
       } else {
         const fallbackScript = 'display notification "' + escapeForAppleScript(message) +
           '" with title "' + escapeForAppleScript(title) + '" sound name "Glass"'
@@ -329,7 +330,7 @@ function notify(mode, message) {
           ' -message ' + JSON.stringify(message) +
           ' -sound Glass -activate com.apple.Terminal; ' +
           'else osascript -e ' + JSON.stringify(fallbackScript) + '; fi'
-        execSync(command, { stdio: 'ignore' })
+        execSync(command, { stdio: 'ignore', windowsHide: true })
       }
       return
     }
@@ -339,7 +340,7 @@ function notify(mode, message) {
         const ps = "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('" +
           escapeForPowerShellSingleQuote(message) + "', '" +
           escapeForPowerShellSingleQuote(title) + "', 'OK', 'Information')"
-        execSync('powershell -NoProfile -Command ' + JSON.stringify(ps), { stdio: 'ignore' })
+        execSync('powershell -NoProfile -Command ' + JSON.stringify(ps), { stdio: 'ignore', windowsHide: true })
       } else {
         const toastXml = '<toast><visual><binding template="ToastGeneric"><text>' +
           escapeForXml(title) + '</text><text>' + escapeForXml(message) +
@@ -353,7 +354,7 @@ function notify(mode, message) {
           "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) " +
           "} catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('" +
           escapeForPowerShellSingleQuote(message) + "', 5, '" + escapeForPowerShellSingleQuote(title) + "', 0x40) }"
-        execSync('powershell -NoProfile -Command ' + JSON.stringify(ps), { stdio: 'ignore' })
+        execSync('powershell -NoProfile -Command ' + JSON.stringify(ps), { stdio: 'ignore', windowsHide: true })
       }
       return
     }
@@ -364,10 +365,10 @@ function notify(mode, message) {
       execSync(
         'zenity --info --title="' + escapedTitle + '" --text="' + escapedMessage +
         '" 2>/dev/null || notify-send "' + escapedTitle + '" "' + escapedMessage + '"',
-        { stdio: 'ignore' }
+        { stdio: 'ignore', windowsHide: true }
       )
     } else {
-      execSync('notify-send "' + escapedTitle + '" "' + escapedMessage + '"', { stdio: 'ignore' })
+      execSync('notify-send "' + escapedTitle + '" "' + escapedMessage + '"', { stdio: 'ignore', windowsHide: true })
     }
   } catch (error) {
     // ignore system notification failures
@@ -916,7 +917,7 @@ function testNotification({ type, testFeishu, webhookUrl } = {}) {
     return sendFeishuTest(webhookUrl);
   }
 
-  execSync(generateSystemNotificationCommand(type || 'notification', '这是一条测试通知'), { stdio: 'ignore' });
+  execSync(generateSystemNotificationCommand(type || 'notification', '这是一条测试通知'), { stdio: 'ignore', windowsHide: true });
 }
 
 module.exports = {

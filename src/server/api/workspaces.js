@@ -24,7 +24,8 @@ function validateBranchName(branchName) {
 
   try {
     execFileSync('git', ['check-ref-format', '--branch', normalized], {
-      stdio: 'ignore'
+      stdio: 'ignore',
+      windowsHide: true
     });
     return { valid: true, normalized };
   } catch (error) {

@@ -132,7 +132,7 @@ const timestamp = new Date().toLocaleString('zh-CN');
     const cmd = generateSystemNotificationCommand(systemNotification.type);
     script += `// 系统通知
 try {
-  execSync(${JSON.stringify(cmd)}, { stdio: 'ignore' });
+  execSync(${JSON.stringify(cmd)}, { stdio: 'ignore', windowsHide: true });
 } catch (e) {
   console.error('系统通知失败:', e.message);
 }
@@ -148,7 +148,7 @@ const feishuData = JSON.stringify({
   msg_type: 'interactive',
   card: {
     header: {
-      title: { tag: 'plain_text', content: '🎉 Coding Tool - 任务完成' },
+      title: { tag: 'plain_text', content: '[DONE] Coding Tool - 任务完成' },
       template: 'green'
     },
     elements: [
@@ -491,7 +491,7 @@ router.post('/test', (req, res) => {
         msg_type: 'interactive',
         card: {
           header: {
-            title: { tag: 'plain_text', content: '🧪 Coding Tool - 测试通知' },
+            title: { tag: 'plain_text', content: '[TEST] Coding Tool - 测试通知' },
             template: 'blue'
           },
           elements: [
@@ -542,8 +542,7 @@ router.post('/test', (req, res) => {
       // 测试系统通知
       const command = generateSystemNotificationCommand(type || 'notification');
       const { execSync } = require('child_process');
-      execSync(command, { stdio: 'ignore' });
-      res.json({ success: true, message: '系统测试通知已发送' });
+      execSync(command, { stdio: 'ignore', windowsHide: true });
     }
   } catch (error) {
     console.error('Error testing notification:', error);

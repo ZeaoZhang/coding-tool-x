@@ -229,7 +229,7 @@
                           :show-icon="false"
                         >
                           <div style="font-size: 13px;">
-                            <n-text strong>💡 更好的通知体验</n-text>
+                            <n-text strong>[TIP] 更好的通知体验</n-text>
                             <n-text depth="3" style="display: block; margin-top: 4px; font-size: 12px;">
                               安装 terminal-notifier 后，点击通知可自动打开终端
                             </n-text>
@@ -1113,7 +1113,7 @@ const savingPorts = ref(false)
 // 开机自启配置
 const autoStartEnabled = ref(false)
 const autoStartLoading = ref(false)
-const autoStartStatus = computed(() => autoStartEnabled.value ? '✓ 已启用' : '未启用')
+const autoStartStatus = computed(() => autoStartEnabled.value ? '[v] 已启用' : '未启用')
 const autoStartHelp = computed(() => {
   if (autoStartEnabled.value) {
     return '重启电脑时 Coding-Tool 会自动启动。如需禁用，点击下方按钮'

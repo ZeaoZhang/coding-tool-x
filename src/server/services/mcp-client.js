@@ -389,7 +389,8 @@ class McpClient extends EventEmitter {
         this._child = spawn(resolvedCommand, args, {
           env: mergedEnv,
           stdio: ['pipe', 'pipe', 'pipe'],
-          cwd: finalCwd
+          cwd: finalCwd,
+          windowsHide: true
         });
       } catch (err) {
         clearTimeout(timer);

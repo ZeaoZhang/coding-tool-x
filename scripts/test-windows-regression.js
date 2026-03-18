@@ -135,9 +135,9 @@ function run() {
   assert.deepStrictEqual(unixFollowSpec.args, ['-n', '50', '-f', '/tmp/cc-tool-out.log'], 'Unix 日志跟踪参数不正确');
 
   const winExecOptions = pm2Test.getExecOptions(30000, 'win32');
-  assert.deepStrictEqual(winExecOptions, { timeout: 30000 }, 'Windows PM2 exec 选项不应强制 /bin/bash');
+  assert.deepStrictEqual(winExecOptions, { timeout: 30000, windowsHide: true }, 'Windows PM2 exec 选项不应强制 /bin/bash');
   const linuxExecOptions = pm2Test.getExecOptions(30000, 'linux');
-  assert.deepStrictEqual(linuxExecOptions, { shell: '/bin/bash', timeout: 30000 }, 'Linux PM2 exec 选项应包含 /bin/bash');
+  assert.deepStrictEqual(linuxExecOptions, { shell: '/bin/bash', timeout: 30000, windowsHide: true }, 'Linux PM2 exec 选项应包含 /bin/bash');
 
   console.log('Windows 专项回归测试通过');
 }

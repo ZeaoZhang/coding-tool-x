@@ -31,15 +31,15 @@ async function promptForkConfirm() {
       default: 'continue',
       choices: [
         {
-          name: chalk.green('📝 继续原会话 (推荐) - 在原会话上继续对话，所有内容会追加到原文件'),
+          name: chalk.green('[NOTE] 继续原会话 (推荐) - 在原会话上继续对话，所有内容会追加到原文件'),
           value: 'continue',
         },
         {
-          name: chalk.yellow('🌿 创建新分支 (Fork) - 基于原会话创建新会话，保留原会话不变'),
+          name: chalk.yellow('[FORK] 创建新分支 (Fork) - 基于原会话创建新会话，保留原会话不变'),
           value: 'fork',
         },
         new inquirer.Separator(chalk.gray('─'.repeat(14))),
-        { name: chalk.blue('↩️  返回重新选择'), value: 'back' },
+        { name: chalk.blue('[<-]  返回重新选择'), value: 'back' },
       ],
     },
   ]);
@@ -55,7 +55,7 @@ async function promptSearchKeyword() {
     {
       type: 'input',
       name: 'keyword',
-      message: chalk.cyan('🔎 输入搜索关键词:'),
+      message: chalk.cyan('[SEARCH] 输入搜索关键词:'),
       validate: (input) => {
         if (!input.trim()) {
           return '请输入搜索关键词';
@@ -76,7 +76,7 @@ async function promptSelectProject(projects) {
   const choices = [
     ...projects,
     new inquirer.Separator(chalk.gray('─'.repeat(14))),
-    { name: chalk.gray('↩️  取消切换'), value: null }
+    { name: chalk.gray('[<-]  取消切换'), value: null }
   ];
 
   const { project } = await inquirer.prompt([

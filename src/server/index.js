@@ -36,7 +36,7 @@ function isInteractivePortConflictMode(options = {}) {
 }
 
 function printPortConflictHelp(port) {
-  console.log(chalk.yellow('\n💡 解决方案:'));
+  console.log(chalk.yellow('\n[TIP] 解决方案:'));
   console.log(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
   console.log(chalk.gray(`   2. 或手动关闭占用端口 ${port} 的程序\n`));
 }
@@ -47,7 +47,7 @@ function printPortToolIssue(issue = getPortToolIssue()) {
     return;
   }
 
-  console.error(chalk.yellow(`\n💡 ${lines[0]}`));
+  console.error(chalk.yellow(`\n[TIP] ${lines[0]}`));
   lines.slice(1).forEach((line) => {
     console.error(chalk.gray(`   ${line}`));
   });
@@ -64,7 +64,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // 检查端口是否被占用
   const portInUse = await isPortInUse(port, host);
   if (portInUse) {
-    console.log(chalk.yellow(`\n⚠️  端口 ${port} 已被占用\n`));
+    console.log(chalk.yellow(`\n[WARN]  端口 ${port} 已被占用\n`));
 
     const interactiveMode = isInteractivePortConflictMode(options);
     let shouldKill = false;
@@ -87,7 +87,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
       ]);
       shouldKill = answer.shouldKill;
     } else {
-      console.error(chalk.red('❌ 当前为非交互模式，无法确认端口清理操作，已取消启动。'));
+      console.error(chalk.red('[ERROR] 当前为非交互模式，无法确认端口清理操作，已取消启动。'));
       printPortConflictHelp(port);
       process.exit(1);
     }
@@ -107,9 +107,9 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
       if (toolIssue) {
         printPortToolIssue(toolIssue);
       } else {
-        console.error(chalk.red('\n❌ 无法关闭占用端口的进程'));
+        console.error(chalk.red('\n[ERROR] 无法关闭占用端口的进程'));
       }
-      console.error(chalk.yellow('\n💡 请手动关闭占用端口的程序，或使用其他端口\n'));
+      console.error(chalk.yellow('\n[TIP] 请手动关闭占用端口的程序，或使用其他端口\n'));
       process.exit(1);
     }
 
@@ -118,12 +118,12 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     const released = await waitForPortRelease(port, 3000, host);
 
     if (!released) {
-      console.error(chalk.red('\n❌ 端口释放超时'));
-      console.error(chalk.yellow('\n💡 请稍后重试，或手动检查端口占用情况\n'));
+      console.error(chalk.red('\n[ERROR] 端口释放超时'));
+      console.error(chalk.yellow('\n[TIP] 请稍后重试，或手动检查端口占用情况\n'));
       process.exit(1);
     }
 
-    console.log(chalk.green('✓ 端口已释放\n'));
+    console.log(chalk.green('[v] 端口已释放\n'));
   }
 
   const app = express();
@@ -249,12 +249,12 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     const onError = (err) => {
       server.off('listening', onListening);
       if (err.code === 'EADDRINUSE') {
-        console.error(chalk.red(`\n❌ 端口 ${port} 已被占用`));
-        console.error(chalk.yellow('\n💡 解决方案:'));
+        console.error(chalk.red(`\n[ERROR] 端口 ${port} 已被占用`));
+        console.error(chalk.yellow('\n[TIP] 解决方案:'));
         console.error(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
         console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
       } else {
-        console.error(chalk.red(`\n❌ 启动服务器失败: ${err.message}\n`));
+        console.error(chalk.red(`\n[ERROR] 启动服务器失败: ${err.message}\n`));
       }
       process.exit(1);
     };
@@ -263,9 +263,9 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     server.once('error', onError);
   });
 
-  console.log(`\n🚀 Coding-Tool Web UI running at:`);
+  console.log(`\n[START] Coding-Tool Web UI running at:`);
   if (host === '0.0.0.0') {
-    console.log(chalk.yellow(`   ⚠️  警告: 服务正在监听所有网络接口 (LAN 可访问)`));
+    console.log(chalk.yellow(`   [WARN]  警告: 服务正在监听所有网络接口 (LAN 可访问)`));
     console.log(`   http://localhost:${port}`);
     console.log(chalk.gray(`   http://<your-ip>:${port} (LAN 访问)`));
   } else {
@@ -277,7 +277,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   console.log(`   ws://localhost:${port}/ws\n`);
 
   if (host === '0.0.0.0' && !allowRemoteMutation) {
-    console.log(chalk.yellow('   🔒 已启用 LAN 安全保护：远程写操作默认禁用'));
+    console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作默认禁用'));
   }
   // 自动恢复代理状态
   autoRestoreProxies();
@@ -296,26 +296,26 @@ function autoRestoreProxies() {
   // 检查 Claude 代理状态文件
   const claudeActiveFile = PATHS.activeChannel.claude;
   if (fs.existsSync(claudeActiveFile)) {
-    console.log(chalk.cyan('\n🔄 检测到 Claude 代理状态文件，正在自动启动...'));
+    console.log(chalk.cyan('\n[SYNC] 检测到 Claude 代理状态文件，正在自动启动...'));
     const proxyPort = config.ports?.proxy || 20088;
     startProxyServer(proxyPort)
       .then(() => {
-        console.log(chalk.green(`✅ Claude 代理已自动启动，端口: ${proxyPort}`));
+        console.log(chalk.green(`[OK] Claude 代理已自动启动，端口: ${proxyPort}`));
       })
       .catch((err) => {
-        console.error(chalk.red(`❌ Claude 代理启动失败: ${err.message}`));
+        console.error(chalk.red(`[ERROR] Claude 代理启动失败: ${err.message}`));
       });
   }
 
   // 检查 Codex 代理状态文件
   const codexActiveFile = PATHS.activeChannel.codex;
   if (fs.existsSync(codexActiveFile)) {
-    console.log(chalk.cyan('\n🔄 检测到 Codex 代理状态文件，正在自动启动...'));
+    console.log(chalk.cyan('\n[SYNC] 检测到 Codex 代理状态文件，正在自动启动...'));
     const codexProxyPort = config.ports?.codexProxy || 20089;
     startCodexProxyServer(codexProxyPort)
       .then((result) => {
         const port = result?.port || codexProxyPort;
-        console.log(chalk.green(`✅ Codex 代理已自动启动，端口: ${port}`));
+        console.log(chalk.green(`[OK] Codex 代理已自动启动，端口: ${port}`));
 
         // 重启后重新写入 cc-proxy 配置与环境变量，避免缺少 provider/env 导致报错
         try {
@@ -324,43 +324,43 @@ function autoRestoreProxies() {
             console.log(chalk.gray('   已同步 codex config.toml 与 CC_PROXY_KEY'));
           }
         } catch (err) {
-          console.error(chalk.red(`❌ Codex 代理配置同步失败: ${err.message}`));
+          console.error(chalk.red(`[ERROR] Codex 代理配置同步失败: ${err.message}`));
         }
       })
       .catch((err) => {
-        console.error(chalk.red(`❌ Codex 代理启动失败: ${err.message}`));
+        console.error(chalk.red(`[ERROR] Codex 代理启动失败: ${err.message}`));
       });
   }
 
   // 检查 Gemini 代理状态文件
   const geminiActiveFile = PATHS.activeChannel.gemini;
   if (fs.existsSync(geminiActiveFile)) {
-    console.log(chalk.cyan('\n🔄 检测到 Gemini 代理状态文件，正在自动启动...'));
+    console.log(chalk.cyan('\n[SYNC] 检测到 Gemini 代理状态文件，正在自动启动...'));
     const geminiProxyPort = config.ports?.geminiProxy || 20090;
     startGeminiProxyServer(geminiProxyPort)
       .then((result) => {
         if (result.success) {
-          console.log(chalk.green(`✅ Gemini 代理已自动启动，端口: ${result.port}`));
+          console.log(chalk.green(`[OK] Gemini 代理已自动启动，端口: ${result.port}`));
         } else {
-          console.error(chalk.red(`❌ Gemini 代理启动失败: ${result.error || 'Unknown error'}`));
+          console.error(chalk.red(`[ERROR] Gemini 代理启动失败: ${result.error || 'Unknown error'}`));
         }
       })
       .catch((err) => {
-        console.error(chalk.red(`❌ Gemini 代理启动失败: ${err.message}`));
+        console.error(chalk.red(`[ERROR] Gemini 代理启动失败: ${err.message}`));
       });
   } else {
-    console.log(chalk.gray('\n💡 提示: 如需使用 Gemini 代理，请在前端界面激活 Gemini 渠道'));
+    console.log(chalk.gray('\n[TIP] 提示: 如需使用 Gemini 代理，请在前端界面激活 Gemini 渠道'));
   }
 
   // 检查 OpenCode 代理状态文件
   const opencodeActiveFile = PATHS.activeChannel.opencode;
   if (fs.existsSync(opencodeActiveFile)) {
-    console.log(chalk.cyan('\n🔄 检测到 OpenCode 代理状态文件，正在自动启动...'));
+    console.log(chalk.cyan('\n[SYNC] 检测到 OpenCode 代理状态文件，正在自动启动...'));
     const opencodeProxyPort = config.ports?.opencodeProxy || 20091;
     startOpenCodeProxyServer(opencodeProxyPort)
       .then(async (result) => {
         if (result.success) {
-          console.log(chalk.green(`✅ OpenCode 代理已自动启动，端口: ${result.port}`));
+          console.log(chalk.green(`[OK] OpenCode 代理已自动启动，端口: ${result.port}`));
           try {
             const { getEnabledChannels: getEnabledOpenCodeChannels } = require('./services/opencode-channels');
             const enabledChs = getEnabledOpenCodeChannels();
@@ -390,14 +390,14 @@ function autoRestoreProxies() {
               console.log(chalk.gray('   已同步 OpenCode 配置文件'));
             }
           } catch (err) {
-            console.error(chalk.red(`❌ OpenCode 代理配置同步失败: ${err.message}`));
+            console.error(chalk.red(`[ERROR] OpenCode 代理配置同步失败: ${err.message}`));
           }
         } else {
-          console.error(chalk.red(`❌ OpenCode 代理启动失败: ${result.error || 'Unknown error'}`));
+          console.error(chalk.red(`[ERROR] OpenCode 代理启动失败: ${result.error || 'Unknown error'}`));
         }
       })
       .catch((err) => {
-        console.error(chalk.red(`❌ OpenCode 代理启动失败: ${err.message}`));
+        console.error(chalk.red(`[ERROR] OpenCode 代理启动失败: ${err.message}`));
       });
   }
 }
@@ -408,7 +408,7 @@ async function performStartupHealthCheck() {
   const { getProjects } = require('./services/sessions');
 
   try {
-    console.log(chalk.cyan('\n🔍 正在进行启动健康检查...'));
+    console.log(chalk.cyan('\n[SEARCH] 正在进行启动健康检查...'));
 
     // 获取所有项目
     const config = loadConfig();
@@ -423,20 +423,20 @@ async function performStartupHealthCheck() {
     const healthResult = healthCheckAllProjects(projects);
 
     if (healthResult.summary.created > 0) {
-      console.log(chalk.green(`   ✓ 已为 ${healthResult.summary.created} 个项目创建 .claude/sessions 目录`));
+      console.log(chalk.green(`   [v] 已为 ${healthResult.summary.created} 个项目创建 .claude/sessions 目录`));
     }
 
     if (healthResult.summary.errors > 0) {
-      console.log(chalk.yellow(`   ⚠ ${healthResult.summary.errors} 个项目检查失败`));
+      console.log(chalk.yellow(`   [!] ${healthResult.summary.errors} 个项目检查失败`));
     }
 
     if (healthResult.summary.created === 0 && healthResult.summary.errors === 0) {
-      console.log(chalk.green(`   ✓ 所有 ${healthResult.summary.healthy} 个项目状态正常`));
+      console.log(chalk.green(`   [v] 所有 ${healthResult.summary.healthy} 个项目状态正常`));
     }
 
     console.log('');
   } catch (err) {
-    console.error(chalk.red('   ✗ 健康检查失败:'), err.message);
+    console.error(chalk.red('   [x] 健康检查失败:'), err.message);
   }
 }
 

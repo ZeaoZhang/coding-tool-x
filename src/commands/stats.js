@@ -238,8 +238,8 @@ async function handleStats(type = null, options = {}) {
   // 检查 UI 服务
   const uiRunning = await checkUIService();
   if (!uiRunning) {
-    console.error(chalk.red('\n❌ UI 服务未运行\n'));
-    console.log(chalk.yellow('💡 请先启动 UI 服务: ') + chalk.cyan('ctx start\n'));
+    console.error(chalk.red('\n[ERROR] UI 服务未运行\n'));
+    console.log(chalk.yellow('[TIP] 请先启动 UI 服务: ') + chalk.cyan('ctx start\n'));
     process.exit(1);
   }
 
@@ -247,7 +247,7 @@ async function handleStats(type = null, options = {}) {
 
   try {
     if (!validateToolType(type)) {
-      console.error(chalk.red(`\n❌ 无效的渠道类型: ${type}\n`));
+      console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
       console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode\n'));
       process.exit(1);
     }
@@ -263,7 +263,7 @@ async function handleStats(type = null, options = {}) {
 
     displayStats(payload);
   } catch (error) {
-    console.error(chalk.red(`\n❌ 获取统计失败: ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] 获取统计失败: ${error.message}\n`));
     process.exit(1);
   }
 }
@@ -282,9 +282,9 @@ function displayStats(stats) {
     all: '全部'
   }[timeRange];
 
-  console.log(chalk.bold.cyan(`\n╔══════════════════════════════════════╗`));
+  console.log(chalk.bold.cyan(`\n╔======================================╗`));
   console.log(chalk.bold.cyan(`║        ${title} (${rangeText})        ║`));
-  console.log(chalk.bold.cyan(`╚══════════════════════════════════════╝\n`));
+  console.log(chalk.bold.cyan(`╚======================================╝\n`));
 
   if (!stats || !stats.summary) {
     console.log(chalk.gray('  暂无统计数据\n'));
@@ -294,12 +294,12 @@ function displayStats(stats) {
   const summary = stats.summary;
 
   // 请求统计
-  console.log(chalk.bold('📊 请求统计:'));
+  console.log(chalk.bold('[STATS] 请求统计:'));
   console.log(chalk.gray('  总请求数: ') + chalk.cyan(formatNumber(summary.requests)));
 
   // Token 使用
   if (summary.tokens !== undefined) {
-    console.log(chalk.bold('\n🎯 Token 使用:'));
+    console.log(chalk.bold('\n[TARGET] Token 使用:'));
     console.log(chalk.gray('  输入 Tokens: ') + chalk.cyan(formatNumber(summary.inputTokens || 0)));
     console.log(chalk.gray('  输出 Tokens: ') + chalk.cyan(formatNumber(summary.outputTokens || 0)));
     console.log(chalk.gray('  缓存创建: ') + chalk.cyan(formatNumber(summary.cacheCreation || 0)));
@@ -311,13 +311,13 @@ function displayStats(stats) {
 
   // 成本统计
   if (summary.cost !== undefined) {
-    console.log(chalk.bold('\n💰 成本统计:'));
+    console.log(chalk.bold('\n[COST] 成本统计:'));
     console.log(chalk.gray('  总成本: ') + chalk.yellow(`$${normalizeNumber(summary.cost).toFixed(4)}`));
   }
 
   if (!type && stats.byToolType) {
-    const iconMap = { claude: '🟢', codex: '🔵', gemini: '🟣', opencode: '🟠' };
-    console.log(chalk.bold('\n📡 分渠道汇总:'));
+    const iconMap = { claude: '[*]', codex: '[*]', gemini: '[*]', opencode: '[*]' };
+    console.log(chalk.bold('\n[CH] 分渠道汇总:'));
     TOOL_TYPES.forEach((toolType) => {
       const item = stats.byToolType[toolType] || emptySummary();
       console.log(chalk.gray(`  ${iconMap[toolType]} ${toolType.toUpperCase()}:`));
@@ -329,7 +329,7 @@ function displayStats(stats) {
     });
   }
 
-  console.log(chalk.gray('\n💡 提示:'));
+  console.log(chalk.gray('\n[TIP] 提示:'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats --today') + chalk.gray(' 查看今日统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats claude') + chalk.gray(' 查看特定渠道'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats opencode') + chalk.gray(' 查看 OpenCode 统计'));
@@ -348,24 +348,24 @@ function formatNumber(num) {
  * 导出统计数据
  */
 async function handleStatsExport(type = null, format = 'json') {
-  console.log(chalk.cyan('\n📤 导出统计数据...\n'));
+  console.log(chalk.cyan('\n[EXPORT] 导出统计数据...\n'));
 
   const uiRunning = await checkUIService();
   if (!uiRunning) {
-    console.error(chalk.red('❌ UI 服务未运行\n'));
+    console.error(chalk.red('[ERROR] UI 服务未运行\n'));
     process.exit(1);
   }
 
   try {
     if (!validateToolType(type)) {
-      console.error(chalk.red(`\n❌ 无效的渠道类型: ${type}\n`));
+      console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
       console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode\n'));
       process.exit(1);
     }
 
     const exportFormat = format || 'json';
     if (exportFormat !== 'json') {
-      console.log(chalk.yellow(`⚠️ 暂不支持 ${exportFormat} 格式，已回退为 json`));
+      console.log(chalk.yellow(`[WARN] 暂不支持 ${exportFormat} 格式，已回退为 json`));
     }
 
     let payload;
@@ -384,10 +384,10 @@ async function handleStatsExport(type = null, format = 'json') {
 
     fs.writeFileSync(filepath, JSON.stringify(payload, null, 2));
 
-    console.log(chalk.green(`✅ 统计数据已导出\n`));
+    console.log(chalk.green(`[OK] 统计数据已导出\n`));
     console.log(chalk.gray(`文件路径: ${filepath}\n`));
   } catch (error) {
-    console.error(chalk.red(`\n❌ 导出失败: ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] 导出失败: ${error.message}\n`));
     process.exit(1);
   }
 }

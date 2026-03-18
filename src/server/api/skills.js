@@ -50,7 +50,11 @@ router.get('/', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const forceRefresh = req.query.refresh === '1';
+    if (forceRefresh) {
+      console.log(`[Skills API] Refreshing skills for ${platform}...`);
+    }
     const skills = await service.listSkills(forceRefresh);
+    console.log(`[Skills API] ${platform}: ${skills.length} skills loaded (refresh=${forceRefresh})`);
     res.json({
       success: true,
       platform,

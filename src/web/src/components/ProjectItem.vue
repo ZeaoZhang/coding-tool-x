@@ -46,14 +46,14 @@
 
         <n-text v-if="project.createWorktree && project.branch" depth="3" style="font-size: 11px; margin-top: 4px">
           <template v-if="project.baseBranch">
-            ℹ️ 如果分支 "{{ project.branch }}" 不存在，将基于 "{{ project.baseBranch }}" 创建
+            [INFO] 如果分支 "{{ project.branch }}" 不存在，将基于 "{{ project.baseBranch }}" 创建
           </template>
           <template v-else>
-            ℹ️ 如果分支 "{{ project.branch }}" 不存在，将基于源仓库当前分支创建
+            [INFO] 如果分支 "{{ project.branch }}" 不存在，将基于源仓库当前分支创建
           </template>
         </n-text>
       </div>
-      <n-text v-if="project.isGitRepo" depth="3" style="font-size: 11px">✓ Git 仓库</n-text>
+      <n-text v-if="project.isGitRepo" depth="3" style="font-size: 11px">[v] Git 仓库</n-text>
     </div>
   </div>
 </template>

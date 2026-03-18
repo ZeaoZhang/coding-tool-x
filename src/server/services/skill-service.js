@@ -153,18 +153,10 @@ function isRootSkillFile(filePath = '') {
 }
 
 const DEFAULT_REPOS_BY_PLATFORM = {
-  claude: [
-    { owner: 'anthropics', name: 'skills', branch: 'main', directory: '', enabled: true }
-  ],
-  codex: [
-    { owner: 'openai', name: 'skills', branch: 'main', directory: 'skills/.curated', enabled: true }
-  ],
-  gemini: [
-    { owner: 'google-gemini', name: 'gemini-cli', branch: 'main', directory: '.gemini/skills', enabled: true }
-  ],
-  opencode: [
-    { owner: 'Shakudo-io', name: 'opencode-skills', branch: 'main', directory: '', enabled: true }
-  ]
+  claude: [],
+  codex: [],
+  gemini: [],
+  opencode: []
 };
 
 const PLATFORM_CONFIG = {
@@ -849,7 +841,8 @@ class SkillService {
       const output = execFileSync(command, args, {
         encoding: 'utf-8',
         timeout: 3000,
-        stdio: ['ignore', 'pipe', 'ignore']
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true
       }).trim();
       return output || null;
     } catch {
@@ -866,7 +859,8 @@ class SkillService {
         input: `protocol=https\nhost=${hostname}\n\n`,
         encoding: 'utf-8',
         timeout: 3000,
-        stdio: ['pipe', 'pipe', 'ignore']
+        stdio: ['pipe', 'pipe', 'ignore'],
+        windowsHide: true
       });
       const passwordLine = output
         .split(/\r?\n/)

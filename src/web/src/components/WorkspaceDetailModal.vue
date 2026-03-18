@@ -38,7 +38,7 @@
       <div class="projects-list" v-if="detailData?.projects?.length">
         <div class="project-row" v-for="(proj, idx) in detailData.projects" :key="idx">
           <n-tag :type="proj.sourceExists ? 'success' : 'error'" size="small">
-            {{ proj.sourceExists ? '✓' : '✗' }}
+            {{ proj.sourceExists ? '[v]' : '[x]' }}
           </n-tag>
           <span class="proj-name">{{ proj.name }}</span>
           <span class="proj-path">{{ proj.sourcePath }}</span>

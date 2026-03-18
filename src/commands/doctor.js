@@ -13,9 +13,9 @@ const execAsync = promisify(exec);
  * 诊断系统
  */
 async function handleDoctor() {
-  console.log(chalk.bold.cyan('\n╔══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔======================================╗'));
   console.log(chalk.bold.cyan('║        Coding-Tool 系统诊断         ║'));
-  console.log(chalk.bold.cyan('╚══════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚======================================╝\n'));
 
   const checks = [];
 
@@ -41,23 +41,23 @@ async function handleDoctor() {
   checks.push(await checkDiskSpace());
 
   // 显示结果
-  console.log(chalk.bold('\n📋 诊断结果:\n'));
+  console.log(chalk.bold('\n[LOG] 诊断结果:\n'));
 
   let passedCount = 0;
   let warningCount = 0;
   let failedCount = 0;
 
   checks.forEach(check => {
-    const icon = check.status === 'pass' ? chalk.green('✅') :
-                 check.status === 'warning' ? chalk.yellow('⚠️') :
-                 chalk.red('❌');
+    const icon = check.status === 'pass' ? chalk.green('[OK]') :
+                 check.status === 'warning' ? chalk.yellow('[WARN]') :
+                 chalk.red('[ERROR]');
 
     console.log(`${icon} ${check.name}`);
     if (check.message) {
       console.log(chalk.gray(`   ${check.message}`));
     }
     if (check.suggestion) {
-      console.log(chalk.cyan(`   💡 ${check.suggestion}`));
+      console.log(chalk.cyan(`   [TIP] ${check.suggestion}`));
     }
     console.log('');
 
@@ -67,23 +67,23 @@ async function handleDoctor() {
   });
 
   // 总结
-  console.log(chalk.bold('📊 总结:'));
-  console.log(chalk.green(`  ✅ 通过: ${passedCount}`));
+  console.log(chalk.bold('[STATS] 总结:'));
+  console.log(chalk.green(`  [OK] 通过: ${passedCount}`));
   if (warningCount > 0) {
-    console.log(chalk.yellow(`  ⚠️  警告: ${warningCount}`));
+    console.log(chalk.yellow(`  [WARN]  警告: ${warningCount}`));
   }
   if (failedCount > 0) {
-    console.log(chalk.red(`  ❌ 失败: ${failedCount}`));
+    console.log(chalk.red(`  [ERROR] 失败: ${failedCount}`));
   }
 
   console.log('');
 
   if (failedCount > 0) {
-    console.log(chalk.red('⚠️  发现问题，请根据上述建议进行修复\n'));
+    console.log(chalk.red('[WARN]  发现问题，请根据上述建议进行修复\n'));
   } else if (warningCount > 0) {
-    console.log(chalk.yellow('⚠️  发现一些警告，建议查看并处理\n'));
+    console.log(chalk.yellow('[WARN]  发现一些警告，建议查看并处理\n'));
   } else {
-    console.log(chalk.green('✅ 系统运行正常！\n'));
+    console.log(chalk.green('[OK] 系统运行正常！\n'));
   }
 }
 
@@ -262,7 +262,7 @@ async function checkProcessStatus() {
 
     // 检查是否有 PM2 进程
     try {
-      const { stdout } = await execAsync('pm2 list');
+      const { stdout } = await execAsync('pm2 list', { windowsHide: true });
       if (stdout.includes('cc-tool')) {
         return {
           name: '进程状态',
@@ -295,7 +295,7 @@ async function checkProcessStatus() {
  */
 async function checkDiskSpace() {
   try {
-    const { stdout } = await execAsync('df -h ~');
+    const { stdout } = await execAsync('df -h ~', { windowsHide: true });
     const lines = stdout.trim().split('\n');
     if (lines.length > 1) {
       const parts = lines[1].split(/\s+/);

@@ -208,7 +208,7 @@ router.post('/start', async (req, res) => {
 
     // 3. 保存当前激活渠道ID（用于代理模式）
     saveActiveChannelId(currentChannel.id);
-    console.log(`✅ Saved active channel: ${currentChannel.name} (${currentChannel.id})`);
+    console.log(`[OK] Saved active channel: ${currentChannel.name} (${currentChannel.id})`);
 
     // 4. 启动代理服务器
     const proxyResult = await startProxyServer();
@@ -256,11 +256,11 @@ router.post('/stop', async (req, res) => {
     if (restoredChannel) {
       if (hadBackup) {
         deleteBackup();
-        console.log('✅ Discarded backup snapshot');
+        console.log('[OK] Discarded backup snapshot');
       }
     } else if (hadBackup) {
       restoreSettings();
-      console.log('✅ Restored settings from backup');
+      console.log('[OK] Restored settings from backup');
       const channels = getAllChannels();
       const currentSettings = require('../services/channels').getCurrentSettings();
       if (currentSettings) {
@@ -274,7 +274,7 @@ router.post('/stop', async (req, res) => {
     if (restoredChannel) {
       const { applyChannelToSettings } = require('../services/channels');
       applyChannelToSettings(restoredChannel.id);
-      console.log(`✅ Single-channel mode restored: ${restoredChannel.name}`);
+      console.log(`[OK] Single-channel mode restored: ${restoredChannel.name}`);
     }
 
     // 3. 删除备份文件和active-channel.json
@@ -282,14 +282,14 @@ router.post('/stop', async (req, res) => {
       const backupPath = NATIVE_PATHS.claude.settingsBackup;
       if (fs.existsSync(backupPath)) {
         fs.unlinkSync(backupPath);
-        console.log('✅ Removed backup file');
+        console.log('[OK] Removed backup file');
       }
     }
 
     const activeChannelPath = PATHS.activeChannel.claude;
     if (fs.existsSync(activeChannelPath)) {
       fs.unlinkSync(activeChannelPath);
-      console.log('✅ Removed active-channel.json');
+      console.log('[OK] Removed active-channel.json');
     }
 
     // 4. 通过 WebSocket 推送代理状态更新

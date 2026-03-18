@@ -71,9 +71,9 @@ function getChannelServices(cliType) {
  */
 async function handleChannelManagement() {
   console.clear();
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔=======================================╗'));
   console.log(chalk.bold.cyan('║          渠道管理          ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
   const cliType = config.currentCliType || 'claude';
@@ -124,9 +124,9 @@ async function handleChannelManagement() {
  */
 async function handleAddChannel() {
   console.clear();
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔=======================================╗'));
   console.log(chalk.bold.cyan('║          添加渠道          ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
   const cliType = config.currentCliType || 'claude';
@@ -248,7 +248,7 @@ async function handleAddChannel() {
       );
     }
 
-    console.log(chalk.green(`\n✅ 渠道添加成功: ${channel.name}\n`));
+    console.log(chalk.green(`\n[OK] 渠道添加成功: ${channel.name}\n`));
     console.log(chalk.gray('提示: 使用"渠道管理"功能来启用此渠道\n'));
     broadcastSchedulerSnapshot(cliType);
 
@@ -260,7 +260,7 @@ async function handleAddChannel() {
       },
     ]);
   } catch (error) {
-    console.log(chalk.red(`\n❌ 添加失败: ${error.message}\n`));
+    console.log(chalk.red(`\n[ERROR] 添加失败: ${error.message}\n`));
 
     await inquirer.prompt([
       {
@@ -274,9 +274,9 @@ async function handleAddChannel() {
 
 async function handleChannelStatus() {
   console.clear();
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔=======================================╗'));
   console.log(chalk.bold.cyan('║          调度状态查看          ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   try {
     const { getSchedulerState } = require('../server/services/channel-scheduler');
@@ -370,7 +370,7 @@ async function handleChannelToggle(channels, services, cliType) {
   ]);
 
   if (!selectedIds.length) {
-    console.log(chalk.red('\n❌ 至少需要启用一个渠道。\n'));
+    console.log(chalk.red('\n[ERROR] 至少需要启用一个渠道。\n'));
     await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
     return;
   }
@@ -382,7 +382,7 @@ async function handleChannelToggle(channels, services, cliType) {
     if (shouldEnable !== currentEnabled) {
       await services.updateChannel(channel.id, { enabled: shouldEnable });
       console.log(
-        `${shouldEnable ? chalk.green('✅ 启用') : chalk.yellow('⏸ 停用')} ${chalk.bold(channel.name)}`
+        `${shouldEnable ? chalk.green('[OK] 启用') : chalk.yellow('[PAUSE] 停用')} ${chalk.bold(channel.name)}`
       );
       hasChanged = true;
     }
@@ -524,7 +524,7 @@ async function handleLegacySwitch(channels, services) {
   });
 
   choices.push(new inquirer.Separator(chalk.gray('─'.repeat(14))));
-  choices.push({ name: chalk.blue('↩️  返回主菜单'), value: 'back' });
+  choices.push({ name: chalk.blue('[<-]  返回主菜单'), value: 'back' });
 
   const { channelId } = await inquirer.prompt([
     {
@@ -542,9 +542,9 @@ async function handleLegacySwitch(channels, services) {
 
   try {
     await services.activateChannel(channelId);
-    console.log(chalk.green('\n✅ 渠道已切换\n'));
+    console.log(chalk.green('\n[OK] 渠道已切换\n'));
   } catch (error) {
-    console.log(chalk.red(`\n❌ 操作失败: ${error.message}\n`));
+    console.log(chalk.red(`\n[ERROR] 操作失败: ${error.message}\n`));
   }
 
   await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);

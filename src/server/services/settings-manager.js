@@ -57,7 +57,7 @@ function backupSettings() {
     const content = fs.readFileSync(getSettingsPath(), 'utf8');
     fs.writeFileSync(getBackupPath(), content, 'utf8');
 
-    console.log('✅ Settings backed up to:', getBackupPath());
+    console.log('[OK] Settings backed up to:', getBackupPath());
     return { success: true, alreadyExists: false };
   } catch (err) {
     throw new Error('Failed to backup settings: ' + err.message);
@@ -77,7 +77,7 @@ function restoreSettings() {
     // 删除备份文件
     fs.unlinkSync(getBackupPath());
 
-    console.log('✅ Settings restored from backup');
+    console.log('[OK] Settings restored from backup');
     return { success: true };
   } catch (err) {
     throw new Error('Failed to restore settings: ' + err.message);
@@ -118,7 +118,7 @@ function setProxyConfig(proxyPort) {
     // 写入
     writeSettings(settings);
 
-    console.log(`✅ Settings updated to use proxy on port ${proxyPort}`);
+    console.log(`[OK] Settings updated to use proxy on port ${proxyPort}`);
     return { success: true, port: proxyPort };
   } catch (err) {
     throw new Error('Failed to set proxy config: ' + err.message);

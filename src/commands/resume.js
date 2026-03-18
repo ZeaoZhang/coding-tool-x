@@ -56,8 +56,8 @@ async function resumeSession(config, sessionId, fork = false) {
   spinner.succeed(chalk.green('准备完成！\n'));
 
   console.log(chalk.gray('━'.repeat(50)));
-  console.log(chalk.green.bold(`✨ 会话: ${sessionId.substring(0, 8)}`));
-  console.log(chalk.gray(`📁 目录: ${cwd}`));
+  console.log(chalk.green.bold(`[NEW] 会话: ${sessionId.substring(0, 8)}`));
+  console.log(chalk.gray(`[DIR] 目录: ${cwd}`));
   console.log(chalk.gray('━'.repeat(50)) + '\n');
 
   // 完全清理终端状态，避免输入冲突
@@ -98,7 +98,7 @@ async function resumeSession(config, sessionId, fork = false) {
     try {
       process.chdir(cwd);
     } catch (e) {
-      console.log(chalk.yellow(`\n⚠️  无法切换到目录: ${cwd}`));
+      console.log(chalk.yellow(`\n[WARN]  无法切换到目录: ${cwd}`));
       console.log(chalk.gray(`将在当前目录启动\n`));
     }
 
@@ -106,6 +106,7 @@ async function resumeSession(config, sessionId, fork = false) {
     // 此时 ct 进程只是等待，不处理任何输入
     execSync(command, {
       stdio: 'inherit', // 完全继承 stdio，让 claude 控制终端
+      windowsHide: true,
     });
 
     // 恢复目录
@@ -126,7 +127,7 @@ async function resumeSession(config, sessionId, fork = false) {
       // 用户按了 Ctrl+C，正常退出
       process.exit(0);
     } else {
-      console.log(chalk.red(`\n❌ 启动失败: ${error.message}`));
+      console.log(chalk.red(`\n[ERROR] 启动失败: ${error.message}`));
       process.exit(1);
     }
   }

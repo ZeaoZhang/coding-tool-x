@@ -89,7 +89,7 @@
     <!-- Global Search Shortcut Hint -->
     <div class="search-hint">
       <n-text depth="3" style="font-size: 12px;">
-        <kbd>⌘</kbd> / <kbd>Ctrl</kbd> + <kbd>K</kbd> 全局搜索
+        <kbd>Cmd</kbd> / <kbd>Ctrl</kbd> + <kbd>K</kbd> 全局搜索
       </n-text>
     </div>
 

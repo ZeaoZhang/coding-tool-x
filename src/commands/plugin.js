@@ -49,7 +49,7 @@ async function handlePluginCommand(args) {
       showHelp();
       break;
     default:
-      console.error(chalk.red(`\n❌ Unknown subcommand: ${subcommand}\n`));
+      console.error(chalk.red(`\n[ERROR] Unknown subcommand: ${subcommand}\n`));
       showHelp();
       process.exit(1);
   }
@@ -63,18 +63,18 @@ async function handleInstall(args) {
   const url = args[0];
 
   if (!url) {
-    console.error(chalk.red('\n❌ Git URL is required\n'));
+    console.error(chalk.red('\n[ERROR] Git URL is required\n'));
     console.log(chalk.gray('Usage: ctx plugin install <git-url>\n'));
     console.log(chalk.gray('Example: ctx plugin install https://github.com/user/ctx-plugin.git\n'));
     process.exit(1);
   }
 
-  console.log(chalk.cyan(`\n📦 Installing plugin from ${url}...\n`));
+  console.log(chalk.cyan(`\n[PKG] Installing plugin from ${url}...\n`));
 
   const result = await installPlugin(url);
 
   if (result.success) {
-    console.log(chalk.green('\n✅ Plugin installed successfully!\n'));
+    console.log(chalk.green('\n[OK] Plugin installed successfully!\n'));
     console.log(chalk.gray('─'.repeat(60)));
     console.log(chalk.cyan('Name:       ') + chalk.white(result.plugin.name));
     console.log(chalk.cyan('Version:    ') + chalk.white(result.plugin.version));
@@ -82,9 +82,9 @@ async function handleInstall(args) {
     console.log(chalk.cyan('Commands:   ') + chalk.white(result.plugin.commands || 0));
     console.log(chalk.cyan('Hooks:      ') + chalk.white(result.plugin.hooks || 0));
     console.log(chalk.gray('─'.repeat(60)));
-    console.log(chalk.gray(`\n💡 Run ${chalk.cyan(`ctx plugin info ${result.plugin.name}`)} for more details\n`));
+    console.log(chalk.gray(`\n[TIP] Run ${chalk.cyan(`ctx plugin info ${result.plugin.name}`)} for more details\n`));
   } else {
-    console.error(chalk.red('\n❌ Installation failed:\n'));
+    console.error(chalk.red('\n[ERROR] Installation failed:\n'));
     console.error(chalk.red(result.error));
     console.log();
     process.exit(1);
@@ -99,7 +99,7 @@ async function handleRemove(args) {
   const name = args[0];
 
   if (!name) {
-    console.error(chalk.red('\n❌ Plugin name is required\n'));
+    console.error(chalk.red('\n[ERROR] Plugin name is required\n'));
     console.log(chalk.gray('Usage: ctx plugin remove <name>\n'));
     process.exit(1);
   }
@@ -107,7 +107,7 @@ async function handleRemove(args) {
   // Check if plugin exists
   const plugin = getPlugin(name);
   if (!plugin) {
-    console.error(chalk.red(`\n❌ Plugin "${name}" is not installed\n`));
+    console.error(chalk.red(`\n[ERROR] Plugin "${name}" is not installed\n`));
     process.exit(1);
   }
 
@@ -122,18 +122,18 @@ async function handleRemove(args) {
   ]);
 
   if (!confirmed) {
-    console.log(chalk.yellow('\n⚠️  Uninstall cancelled\n'));
+    console.log(chalk.yellow('\n[WARN]  Uninstall cancelled\n'));
     return;
   }
 
-  console.log(chalk.cyan(`\n🗑️  Uninstalling plugin "${name}"...\n`));
+  console.log(chalk.cyan(`\n[DEL]  Uninstalling plugin "${name}"...\n`));
 
   const result = uninstallPlugin(name);
 
   if (result.success) {
-    console.log(chalk.green(`\n✅ ${result.message}\n`));
+    console.log(chalk.green(`\n[OK] ${result.message}\n`));
   } else {
-    console.error(chalk.red('\n❌ Uninstall failed:\n'));
+    console.error(chalk.red('\n[ERROR] Uninstall failed:\n'));
     console.error(chalk.red(result.error));
     console.log();
     process.exit(1);
@@ -148,21 +148,21 @@ function handleList(args) {
   const plugins = listPlugins();
 
   if (plugins.length === 0) {
-    console.log(chalk.yellow('\n⚠️  No plugins installed\n'));
-    console.log(chalk.gray('💡 Install a plugin with: ') + chalk.cyan('ctx plugin install <git-url>\n'));
+    console.log(chalk.yellow('\n[WARN]  No plugins installed\n'));
+    console.log(chalk.gray('[TIP] Install a plugin with: ') + chalk.cyan('ctx plugin install <git-url>\n'));
     return;
   }
 
-  console.log(chalk.cyan(`\n📦 Installed Plugins (${plugins.length})\n`));
-  console.log(chalk.gray('═'.repeat(80)));
+  console.log(chalk.cyan(`\n[PKG] Installed Plugins (${plugins.length})\n`));
+  console.log(chalk.gray('='.repeat(80)));
 
   // Sort by name
   plugins.sort((a, b) => a.name.localeCompare(b.name));
 
   for (const plugin of plugins) {
     const status = plugin.enabled
-      ? chalk.green('✓ enabled ')
-      : chalk.gray('✗ disabled');
+      ? chalk.green('[v] enabled ')
+      : chalk.gray('[x] disabled');
 
     console.log('\n' + chalk.white.bold(plugin.name) + ' ' + chalk.gray(`v${plugin.version}`) + ' ' + status);
 
@@ -189,8 +189,8 @@ function handleList(args) {
     console.log(chalk.gray(`  Installed: ${new Date(plugin.installedAt).toLocaleDateString()}`));
   }
 
-  console.log('\n' + chalk.gray('═'.repeat(80)));
-  console.log(chalk.gray(`\n💡 Use ${chalk.cyan('ctx plugin info <name>')} for detailed information\n`));
+  console.log('\n' + chalk.gray('='.repeat(80)));
+  console.log(chalk.gray(`\n[TIP] Use ${chalk.cyan('ctx plugin info <name>')} for detailed information\n`));
 }
 
 /**
@@ -201,28 +201,28 @@ function handleEnable(args) {
   const name = args[0];
 
   if (!name) {
-    console.error(chalk.red('\n❌ Plugin name is required\n'));
+    console.error(chalk.red('\n[ERROR] Plugin name is required\n'));
     console.log(chalk.gray('Usage: ctx plugin enable <name>\n'));
     process.exit(1);
   }
 
   const plugin = getPlugin(name);
   if (!plugin) {
-    console.error(chalk.red(`\n❌ Plugin "${name}" is not installed\n`));
+    console.error(chalk.red(`\n[ERROR] Plugin "${name}" is not installed\n`));
     process.exit(1);
   }
 
   if (plugin.enabled) {
-    console.log(chalk.yellow(`\n⚠️  Plugin "${name}" is already enabled\n`));
+    console.log(chalk.yellow(`\n[WARN]  Plugin "${name}" is already enabled\n`));
     return;
   }
 
   try {
     updatePluginRegistry(name, { enabled: true });
-    console.log(chalk.green(`\n✅ Plugin "${name}" has been enabled\n`));
-    console.log(chalk.gray('💡 Restart ctx for changes to take effect\n'));
+    console.log(chalk.green(`\n[OK] Plugin "${name}" has been enabled\n`));
+    console.log(chalk.gray('[TIP] Restart ctx for changes to take effect\n'));
   } catch (error) {
-    console.error(chalk.red(`\n❌ Failed to enable plugin: ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] Failed to enable plugin: ${error.message}\n`));
     process.exit(1);
   }
 }
@@ -235,28 +235,28 @@ function handleDisable(args) {
   const name = args[0];
 
   if (!name) {
-    console.error(chalk.red('\n❌ Plugin name is required\n'));
+    console.error(chalk.red('\n[ERROR] Plugin name is required\n'));
     console.log(chalk.gray('Usage: ctx plugin disable <name>\n'));
     process.exit(1);
   }
 
   const plugin = getPlugin(name);
   if (!plugin) {
-    console.error(chalk.red(`\n❌ Plugin "${name}" is not installed\n`));
+    console.error(chalk.red(`\n[ERROR] Plugin "${name}" is not installed\n`));
     process.exit(1);
   }
 
   if (!plugin.enabled) {
-    console.log(chalk.yellow(`\n⚠️  Plugin "${name}" is already disabled\n`));
+    console.log(chalk.yellow(`\n[WARN]  Plugin "${name}" is already disabled\n`));
     return;
   }
 
   try {
     updatePluginRegistry(name, { enabled: false });
-    console.log(chalk.green(`\n✅ Plugin "${name}" has been disabled\n`));
-    console.log(chalk.gray('💡 Restart ctx for changes to take effect\n'));
+    console.log(chalk.green(`\n[OK] Plugin "${name}" has been disabled\n`));
+    console.log(chalk.gray('[TIP] Restart ctx for changes to take effect\n'));
   } catch (error) {
-    console.error(chalk.red(`\n❌ Failed to disable plugin: ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] Failed to disable plugin: ${error.message}\n`));
     process.exit(1);
   }
 }
@@ -269,21 +269,21 @@ function handleInfo(args) {
   const name = args[0];
 
   if (!name) {
-    console.error(chalk.red('\n❌ Plugin name is required\n'));
+    console.error(chalk.red('\n[ERROR] Plugin name is required\n'));
     console.log(chalk.gray('Usage: ctx plugin info <name>\n'));
     process.exit(1);
   }
 
   const plugin = getPlugin(name);
   if (!plugin) {
-    console.error(chalk.red(`\n❌ Plugin "${name}" is not installed\n`));
+    console.error(chalk.red(`\n[ERROR] Plugin "${name}" is not installed\n`));
     process.exit(1);
   }
 
   // Read manifest
   const manifestPath = path.join(INSTALLED_DIR, name, 'plugin.json');
   if (!fs.existsSync(manifestPath)) {
-    console.error(chalk.red(`\n❌ Plugin manifest not found: ${manifestPath}\n`));
+    console.error(chalk.red(`\n[ERROR] Plugin manifest not found: ${manifestPath}\n`));
     process.exit(1);
   }
 
@@ -291,13 +291,13 @@ function handleInfo(args) {
   try {
     manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   } catch (error) {
-    console.error(chalk.red(`\n❌ Failed to read plugin manifest: ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] Failed to read plugin manifest: ${error.message}\n`));
     process.exit(1);
   }
 
   // Display plugin information
-  console.log(chalk.cyan(`\n📦 Plugin Information: ${name}\n`));
-  console.log(chalk.gray('═'.repeat(80)));
+  console.log(chalk.cyan(`\n[PKG] Plugin Information: ${name}\n`));
+  console.log(chalk.gray('='.repeat(80)));
 
   console.log(chalk.white('\nBasic Info:'));
   console.log(chalk.cyan('  Name:        ') + chalk.white(manifest.name));
@@ -360,7 +360,7 @@ function handleInfo(args) {
     }
   }
 
-  console.log('\n' + chalk.gray('═'.repeat(80)) + '\n');
+  console.log('\n' + chalk.gray('='.repeat(80)) + '\n');
 }
 
 /**
@@ -371,7 +371,7 @@ function handleConfig(args) {
   const [name, key, ...valueParts] = args;
 
   if (!name) {
-    console.error(chalk.red('\n❌ Plugin name is required\n'));
+    console.error(chalk.red('\n[ERROR] Plugin name is required\n'));
     console.log(chalk.gray('Usage: ctx plugin config <name> [key] [value]\n'));
     console.log(chalk.gray('Examples:\n'));
     console.log(chalk.gray('  ctx plugin config my-plugin              # View all config'));
@@ -382,7 +382,7 @@ function handleConfig(args) {
 
   const plugin = getPlugin(name);
   if (!plugin) {
-    console.error(chalk.red(`\n❌ Plugin "${name}" is not installed\n`));
+    console.error(chalk.red(`\n[ERROR] Plugin "${name}" is not installed\n`));
     process.exit(1);
   }
 
@@ -400,15 +400,15 @@ function handleConfig(args) {
     try {
       config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
     } catch (error) {
-      console.error(chalk.red(`\n❌ Failed to read config: ${error.message}\n`));
+      console.error(chalk.red(`\n[ERROR] Failed to read config: ${error.message}\n`));
       process.exit(1);
     }
   }
 
   // No key provided - view all config
   if (!key) {
-    console.log(chalk.cyan(`\n⚙️  Configuration for "${name}"\n`));
-    console.log(chalk.gray('═'.repeat(80)));
+    console.log(chalk.cyan(`\n[CFG]  Configuration for "${name}"\n`));
+    console.log(chalk.gray('='.repeat(80)));
 
     const keys = Object.keys(config);
     if (keys.length === 0) {
@@ -425,16 +425,16 @@ function handleConfig(args) {
       console.log();
     }
 
-    console.log(chalk.gray('═'.repeat(80)) + '\n');
+    console.log(chalk.gray('='.repeat(80)) + '\n');
     return;
   }
 
   // No value provided - view specific key
   if (valueParts.length === 0) {
     if (config[key] === undefined) {
-      console.log(chalk.yellow(`\n⚠️  Key "${key}" is not set\n`));
+      console.log(chalk.yellow(`\n[WARN]  Key "${key}" is not set\n`));
     } else {
-      console.log(chalk.cyan(`\n⚙️  ${key}: `) + chalk.white(JSON.stringify(config[key], null, 2)) + '\n');
+      console.log(chalk.cyan(`\n[CFG]  ${key}: `) + chalk.white(JSON.stringify(config[key], null, 2)) + '\n');
     }
     return;
   }
@@ -456,9 +456,9 @@ function handleConfig(args) {
 
   try {
     fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
-    console.log(chalk.green(`\n✅ Configuration updated: ${key} = ${JSON.stringify(parsedValue)}\n`));
+    console.log(chalk.green(`\n[OK] Configuration updated: ${key} = ${JSON.stringify(parsedValue)}\n`));
   } catch (error) {
-    console.error(chalk.red(`\n❌ Failed to save config: ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] Failed to save config: ${error.message}\n`));
     process.exit(1);
   }
 }
@@ -472,23 +472,23 @@ async function handleUpdate(args) {
   const isUpdateAll = name === '--all' || name === '-a';
 
   if (!name) {
-    console.error(chalk.red('\n❌ Plugin name is required\n'));
+    console.error(chalk.red('\n[ERROR] Plugin name is required\n'));
     console.log(chalk.gray('Usage: ctx plugin update <name>\n'));
     console.log(chalk.gray('       ctx plugin update --all\n'));
     process.exit(1);
   }
 
   if (isUpdateAll) {
-    console.log(chalk.cyan('\n🔄 Updating all plugins...\n'));
+    console.log(chalk.cyan('\n[SYNC] Updating all plugins...\n'));
 
     const result = await updateAllPlugins();
 
-    console.log(chalk.gray('═'.repeat(80)));
+    console.log(chalk.gray('='.repeat(80)));
 
     for (const pluginResult of result.results) {
       if (pluginResult.success) {
         if (pluginResult.plugin && pluginResult.plugin.updated) {
-          console.log(chalk.green(`✓ ${pluginResult.name}: `) +
+          console.log(chalk.green(`[v] ${pluginResult.name}: `) +
             chalk.gray(`v${pluginResult.plugin.oldVersion}`) +
             chalk.white(' → ') +
             chalk.green(`v${pluginResult.plugin.newVersion}`));
@@ -496,11 +496,11 @@ async function handleUpdate(args) {
           console.log(chalk.gray(`○ ${pluginResult.name}: up to date`));
         }
       } else {
-        console.log(chalk.red(`✗ ${pluginResult.name}: ${pluginResult.error}`));
+        console.log(chalk.red(`[x] ${pluginResult.name}: ${pluginResult.error}`));
       }
     }
 
-    console.log(chalk.gray('═'.repeat(80)));
+    console.log(chalk.gray('='.repeat(80)));
     console.log(chalk.white('\nSummary:'));
     console.log(chalk.green(`  Updated:   ${result.summary.updated}`));
     console.log(chalk.gray(`  Unchanged: ${result.summary.unchanged}`));
@@ -516,21 +516,21 @@ async function handleUpdate(args) {
     // Update single plugin
     const plugin = getPlugin(name);
     if (!plugin) {
-      console.error(chalk.red(`\n❌ Plugin "${name}" is not installed\n`));
+      console.error(chalk.red(`\n[ERROR] Plugin "${name}" is not installed\n`));
       process.exit(1);
     }
 
-    console.log(chalk.cyan(`\n🔄 Updating plugin "${name}"...\n`));
+    console.log(chalk.cyan(`\n[SYNC] Updating plugin "${name}"...\n`));
 
     const result = await updatePlugin(name);
 
     if (result.success) {
-      console.log(chalk.green(`\n✅ ${result.message}\n`));
+      console.log(chalk.green(`\n[OK] ${result.message}\n`));
       if (result.plugin && result.plugin.updated) {
         console.log(chalk.gray(`  ${result.plugin.oldVersion} → ${result.plugin.newVersion}\n`));
       }
     } else {
-      console.error(chalk.red('\n❌ Update failed:\n'));
+      console.error(chalk.red('\n[ERROR] Update failed:\n'));
       console.error(chalk.red(result.error));
       console.log();
       process.exit(1);
@@ -542,8 +542,8 @@ async function handleUpdate(args) {
  * Show plugin command help
  */
 function showHelp() {
-  console.log(chalk.cyan('\n📦 Plugin Management Commands\n'));
-  console.log(chalk.gray('═'.repeat(80)));
+  console.log(chalk.cyan('\n[PKG] Plugin Management Commands\n'));
+  console.log(chalk.gray('='.repeat(80)));
 
   console.log(chalk.white('\nUsage: ') + chalk.cyan('ctx plugin <subcommand> [options]\n'));
 
@@ -577,7 +577,7 @@ function showHelp() {
   console.log(chalk.gray('  ctx plugin disable my-plugin'));
   console.log(chalk.gray('  ctx plugin remove my-plugin\n'));
 
-  console.log(chalk.gray('═'.repeat(80)) + '\n');
+  console.log(chalk.gray('='.repeat(80)) + '\n');
 }
 
 module.exports = {
