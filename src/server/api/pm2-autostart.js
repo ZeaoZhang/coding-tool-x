@@ -10,9 +10,9 @@ const execAsync = promisify(exec);
 
 function getExecOptions(timeout = 30000, runtimePlatform = process.platform) {
   if (runtimePlatform === 'win32') {
-    return { timeout };
+    return { timeout, windowsHide: true };
   }
-  return { shell: '/bin/bash', timeout };
+  return { shell: '/bin/bash', timeout, windowsHide: true };
 }
 
 /**

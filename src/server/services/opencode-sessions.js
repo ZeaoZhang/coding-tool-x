@@ -168,7 +168,8 @@ function runSqliteQuery(sql) {
     const output = execFileSync('sqlite3', ['-json', OPENCODE_DB_PATH, sql], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      maxBuffer: 10 * 1024 * 1024
+      maxBuffer: 10 * 1024 * 1024,
+      windowsHide: true
     }).trim();
 
     if (!output) {
@@ -191,7 +192,8 @@ function runSqliteExec(sql) {
   execFileSync('sqlite3', [OPENCODE_DB_PATH, sql], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 10 * 1024 * 1024
+    maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true
   });
 }
 

@@ -4,6 +4,7 @@ function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     maxBuffer: 10 * 1024 * 1024,
+    windowsHide: true,
     ...options
   });
 

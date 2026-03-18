@@ -30,6 +30,7 @@ function runGitCommand(args, options = {}) {
   const execOptions = {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
     ...options
   };
   return execFileSync('git', args, execOptions);

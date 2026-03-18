@@ -196,6 +196,9 @@ function restoreSettings() {
       removeKeys: ['CC_PROXY_KEY']
     });
 
+    // 清理 process.env 中的代理 key（与 setProxyConfig 中的设置对应）
+    delete process.env.CC_PROXY_KEY;
+
     console.log('Codex settings restored from backup');
     return { success: true };
   } catch (err) {
@@ -206,11 +209,18 @@ function restoreSettings() {
 // 设置代理配置
 function setProxyConfig(proxyPort) {
   try {
-    // 先备份
-    backupSettings();
+    // 先备份（config.toml 不存在时跳过备份）
+    if (configExists()) {
+      backupSettings();
+    }
 
-    // 读取当前配置
-    const config = readConfig();
+    // 读取当前配置（不存在时使用空配置）
+    let config;
+    try {
+      config = readConfig();
+    } catch (err) {
+      config = {};
+    }
 
     // 设置 model_provider 为 proxy
     config.model_provider = 'cc-proxy';
@@ -225,11 +235,16 @@ function setProxyConfig(proxyPort) {
       name: 'cc-proxy',
       base_url: `http://127.0.0.1:${proxyPort}/v1`,
       wire_api: 'responses',
-      env_key: 'CC_PROXY_KEY'
+      env_key: 'CC_PROXY_KEY',
+      requires_openai_auth: false
     };
 
     // 写入配置
     writeConfig(config);
+
+    // Windows: 注册表写入后当前进程和已打开的终端不会自动刷新环境变量
+    // 直接设置 process.env 确保从本进程派生的 Codex CLI 能读到 CC_PROXY_KEY
+    process.env.CC_PROXY_KEY = 'PROXY_KEY';
 
     const envResult = syncCodexUserEnvironment({
       CC_PROXY_KEY: 'PROXY_KEY'

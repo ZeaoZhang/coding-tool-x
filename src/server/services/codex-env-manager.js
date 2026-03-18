@@ -332,11 +332,30 @@ function runLaunchctlCommand(args, execSync) {
   try {
     execSync('launchctl', args, {
       stdio: ['ignore', 'ignore', 'ignore'],
-      timeout: 3000
+      timeout: 3000,
+      windowsHide: true
     });
   } catch {
     // ignore launchctl failures; shell profile remains the durable source
   }
+}
+
+function broadcastWindowsSettingChange(execSync) {
+  const script = [
+    'Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"',
+    '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]',
+    'public static extern IntPtr SendMessageTimeout(',
+    '    IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,',
+    '    uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);',
+    '"@',
+    '$HWND_BROADCAST = [IntPtr]0xffff',
+    '$WM_SETTINGCHANGE = 0x1a',
+    '$SMTO_ABORTIFHUNG = 0x0002',
+    '$result = [UIntPtr]::Zero',
+    '[Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE,',
+    '    [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null'
+  ].join('\n');
+  runWindowsEnvCommand(script, execSync);
 }
 
 function syncWindowsEnvironment(nextValues, previousState, options) {
@@ -355,6 +374,15 @@ function syncWindowsEnvironment(nextValues, previousState, options) {
     if (Object.prototype.hasOwnProperty.call(nextValues, key)) continue;
     removeWindowsUserEnv(key, execSync);
     changed = true;
+  }
+
+  // 广播 WM_SETTINGCHANGE，通知已打开的应用（如 VSCode）刷新环境变量
+  if (changed) {
+    try {
+      broadcastWindowsSettingChange(execSync);
+    } catch {
+      // 广播失败不影响主流程，环境变量已写入注册表
+    }
   }
 
   if (nextKeys.length > 0) {
@@ -386,7 +414,8 @@ function runWindowsEnvCommand(script, execSync) {
     try {
       execSync(command, ['-NoProfile', '-NonInteractive', '-Command', script], {
         stdio: ['ignore', 'ignore', 'ignore'],
-        timeout: 5000
+        timeout: 5000,
+        windowsHide: true
       });
       return;
     } catch (error) {
@@ -443,6 +472,7 @@ function syncCodexUserEnvironment(envMap = {}, options = {}) {
 module.exports = {
   syncCodexUserEnvironment,
   _test: {
+    broadcastWindowsSettingChange,
     buildHomeRelativeShellPath,
     buildNextEnvValues,
     buildSourceSnippet,

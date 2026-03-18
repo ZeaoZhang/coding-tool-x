@@ -50,9 +50,9 @@ function getChannelAndProxyStatus(cliType) {
  * 显示主菜单
  */
 async function showMainMenu(config) {
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔===============================================╗'));
   console.log(chalk.bold.cyan(`║    Claude Code 会话管理工具 v${packageInfo.version}          ║`));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚===============================================╝\n'));
 
   // 显示当前CLI类型
   const cliTypes = {

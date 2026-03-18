@@ -199,7 +199,7 @@ router.post('/:id/apply-to-settings', async (req, res) => {
       // (stopProxyServer restores backup, then we overwrite it with current channel)
       updateClaudeSettingsWithModelConfig(channel);
 
-      console.log(`✅ 已停���动态切换，默认使用当前渠道`);
+      console.log(`[OK] 已停���动态切换，默认使用当前渠道`);
       broadcastLog({
         type: 'action',
         action: 'stop_proxy',

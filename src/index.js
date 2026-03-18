@@ -43,13 +43,13 @@ function showHelp() {
   console.log(chalk.cyan.bold(`\nCODING-TOOL v${version}`));
   console.log(chalk.gray('Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控\n'));
 
-  console.log(chalk.yellow('🚀 服务管理:'));
+  console.log(chalk.yellow('[START] 服务管理:'));
   console.log('  ctx start               启动所有服务（后台运行）');
   console.log('  ctx stop                停止所有服务');
   console.log('  ctx restart             重启所有服务');
   console.log('  ctx status              查看服务状态\n');
 
-  console.log(chalk.yellow('📱 UI 管理:'));
+  console.log(chalk.yellow('[UI] UI 管理:'));
   console.log('  ctx ui                  前台启动 Web UI（仅本地访问）');
   console.log('  ctx ui --host           前台启动 Web UI（允许 LAN 访问）');
   console.log('  ctx ui start            后台启动 Web UI');
@@ -57,7 +57,7 @@ function showHelp() {
   console.log('  ctx ui stop             停止 Web UI');
   console.log('  ctx ui restart          重启 Web UI\n');
 
-  console.log(chalk.yellow('🔌 代理管理:'));
+  console.log(chalk.yellow('[PROXY] 代理管理:'));
   console.log('  ctx claude start        启动 Claude 代理');
   console.log('  ctx claude stop         停止 Claude 代理');
   console.log('  ctx claude status       查看 Claude 代理状态');
@@ -66,7 +66,7 @@ function showHelp() {
   console.log('  ctx opencode start      启动 OpenCode 代理');
   console.log(chalk.gray('  (codex/gemini/opencode 命令与 claude 类似)\n'));
 
-  console.log(chalk.yellow('📋 日志管理:'));
+  console.log(chalk.yellow('[LOG] 日志管理:'));
   console.log('  ctx logs                查看所有日志');
   console.log('  ctx logs ui             查看 UI 日志');
   console.log('  ctx logs claude         查看 Claude 日志');
@@ -74,13 +74,13 @@ function showHelp() {
   console.log('  ctx logs --follow       实时跟踪日志');
   console.log('  ctx logs --clear        清空日志\n');
 
-  console.log(chalk.yellow('📊 统计信息:'));
+  console.log(chalk.yellow('[STATS] 统计信息:'));
   console.log('  ctx stats               查看总体统计');
   console.log('  ctx stats claude        查看 Claude 统计');
   console.log('  ctx stats --today       查看今日统计');
   console.log('  ctx stats export        导出统计数据\n');
 
-  console.log(chalk.yellow('🛠️  其他命令:'));
+  console.log(chalk.yellow('[TOOL]  其他命令:'));
   console.log('  ctx update              检查并更新到最新版本');
   console.log('  ctx doctor              系统诊断');
   console.log('  ctx port                配置端口');
@@ -89,7 +89,7 @@ function showHelp() {
   console.log('  ctx --version, -v       显示版本');
   console.log('  ctx --help, -h          显示帮助\n');
 
-  console.log(chalk.yellow('🔌 插件管理:'));
+  console.log(chalk.yellow('[PROXY] 插件管理:'));
   console.log('  ctx plugin list         列出已安装插件');
   console.log('  ctx plugin install <url>  从 Git 安装插件');
   console.log('  ctx plugin remove <name>  卸载插件');
@@ -100,13 +100,13 @@ function showHelp() {
   console.log('  ctx plugin update <name>  更新插件');
   console.log('  ctx plugin update --all   更新所有插件\n');
 
-  console.log(chalk.yellow('💡 快速开始:'));
+  console.log(chalk.yellow('[TIP] 快速开始:'));
   console.log(chalk.gray('  $ ctx start          # 后台启动服务（推荐）'));
   console.log(chalk.gray('  $ ctx status         # 查看服务状态'));
   console.log(chalk.gray('  $ ctx logs           # 查看实时日志'));
   console.log(chalk.gray('  $ ctx stop           # 停止服务\n'));
 
-  console.log(chalk.yellow('⭐ 开机自启（可选）:'));
+  console.log(chalk.yellow('[STAR] 开机自启（可选）:'));
   console.log(chalk.gray('  $ pm2 startup        # 启用开机自启'));
   console.log(chalk.gray('  $ pm2 save           # 保存配置'));
   console.log(chalk.gray('  $ pm2 unstartup      # 禁用开机自启\n'));
@@ -190,7 +190,7 @@ async function main() {
       return;
     }
 
-    console.log(chalk.red(`\n❌ 未知 daemon 子命令: ${subCommand}\n`));
+    console.log(chalk.red(`\n[ERROR] 未知 daemon 子命令: ${subCommand}\n`));
     console.log(chalk.gray('支持的命令: start, stop, restart, status, logs\n'));
     return;
   }
@@ -275,7 +275,7 @@ async function main() {
         await proxyStatus(channel);
         break;
       default:
-        console.log(chalk.red(`\n❌ 未知操作: ${action}\n`));
+        console.log(chalk.red(`\n[ERROR] 未知操作: ${action}\n`));
         console.log(chalk.gray('支持的操作: start, stop, restart, status\n'));
     }
     return;
@@ -491,14 +491,14 @@ async function main() {
           name: 'action',
           message: chalk.cyan('选择插件操作:'),
           choices: [
-            { name: '📋 列出已安装插件', value: 'list' },
-            { name: '📦 安装插件', value: 'install' },
-            { name: '🗑️  卸载插件', value: 'remove' },
-            { name: '🔄 启用/禁用插件', value: 'toggle' },
-            { name: 'ℹ️  查看插件信息', value: 'info' },
-            { name: '⬆️  更新插件', value: 'update' },
-            { name: '⚙️  配置插件', value: 'config' },
-            { name: '◀️  返回主菜单', value: 'back' }
+            { name: '[LOG] 列出已安装插件', value: 'list' },
+            { name: '[PKG] 安装插件', value: 'install' },
+            { name: '[DEL]  卸载插件', value: 'remove' },
+            { name: '[SYNC] 启用/禁用插件', value: 'toggle' },
+            { name: '[INFO]  查看插件信息', value: 'info' },
+            { name: '[UP]  更新插件', value: 'update' },
+            { name: '[CFG]  配置插件', value: 'config' },
+            { name: '[BACK]  返回主菜单', value: 'back' }
           ]
         }]);
 
@@ -558,8 +558,8 @@ async function main() {
               name: 'operation',
               message: '选择操作:',
               choices: [
-                { name: '✅ 启用插件', value: 'enable' },
-                { name: '❌ 禁用插件', value: 'disable' }
+                { name: '[OK] 启用插件', value: 'enable' },
+                { name: '[ERROR] 禁用插件', value: 'disable' }
               ]
             }]);
 
@@ -603,8 +603,8 @@ async function main() {
               name: 'option',
               message: '选择更新选项:',
               choices: [
-                { name: '🔄 更新指定插件', value: 'single' },
-                { name: '🔄 更新所有插件', value: 'all' }
+                { name: '[SYNC] 更新指定插件', value: 'single' },
+                { name: '[SYNC] 更新所有插件', value: 'all' }
               ]
             }]);
 
@@ -656,7 +656,7 @@ async function main() {
       }
 
       case 'exit':
-        console.log('\n👋 再见！\n');
+        console.log('\n[BYE] 再见！\n');
         eventBus.emitSync('cli:shutdown', {});
         PluginManager.shutdownPlugins();
         process.exit(0);

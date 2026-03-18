@@ -26,7 +26,8 @@ function runNpmInstall(packageName, version) {
   return new Promise((resolve, reject) => {
     const npmCommand = resolveNpmCommand();
     const child = spawn(npmCommand, ['install', '-g', `${packageName}@${version}`], {
-      stdio: 'inherit'
+      stdio: 'inherit',
+      windowsHide: true
     });
 
     child.on('error', (err) => {
@@ -54,7 +55,7 @@ async function handleUpdate(options = {}) {
   ].filter(Boolean)));
   const currentVersion = packageInfo.version;
 
-  console.log(chalk.cyan('\n🔍 检查更新中...\n'));
+  console.log(chalk.cyan('\n[SEARCH] 检查更新中...\n'));
 
   let latestVersion;
   let packageName = packageCandidates[0];
@@ -74,18 +75,18 @@ async function handleUpdate(options = {}) {
       throw lastError || new Error('无法获取最新版本');
     }
   } catch (error) {
-    console.error(chalk.red(`❌ 检查更新失败: ${error.message}`));
-    console.log(chalk.gray('💡 可手动执行: npm view coding-tool-x version'));
+    console.error(chalk.red(`[ERROR] 检查更新失败: ${error.message}`));
+    console.log(chalk.gray('[TIP] 可手动执行: npm view coding-tool-x version'));
     return;
   }
 
   if (!semver.valid(currentVersion) || !semver.valid(latestVersion)) {
-    console.log(chalk.yellow(`⚠️  版本格式异常，当前: ${currentVersion}, 最新: ${latestVersion}`));
+    console.log(chalk.yellow(`[WARN]  版本格式异常，当前: ${currentVersion}, 最新: ${latestVersion}`));
     return;
   }
 
   if (!semver.gt(latestVersion, currentVersion)) {
-    console.log(chalk.green(`✅ 已是最新版本: ${currentVersion}\n`));
+    console.log(chalk.green(`[OK] 已是最新版本: ${currentVersion}\n`));
     return;
   }
 
@@ -95,15 +96,15 @@ async function handleUpdate(options = {}) {
     return;
   }
 
-  console.log(chalk.cyan('\n⬇️  正在更新...\n'));
+  console.log(chalk.cyan('\n[DOWN]  正在更新...\n'));
 
   try {
     await runNpmInstall(packageName, latestVersion);
-    console.log(chalk.green(`\n✅ 更新完成: ${latestVersion}`));
+    console.log(chalk.green(`\n[OK] 更新完成: ${latestVersion}`));
     console.log(chalk.gray('请重新打开终端或重新执行 ctx --version 验证版本。\n'));
   } catch (error) {
-    console.error(chalk.red(`\n❌ 更新失败: ${error.message}`));
-    console.log(chalk.gray(`💡 可手动执行: npm install -g ${packageName}@${latestVersion}\n`));
+    console.error(chalk.red(`\n[ERROR] 更新失败: ${error.message}`));
+    console.log(chalk.gray(`[TIP] 可手动执行: npm install -g ${packageName}@${latestVersion}\n`));
   }
 }
 

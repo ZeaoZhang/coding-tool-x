@@ -151,6 +151,9 @@ const newRepo = ref({
 const recommendedRepos = computed(() => {
   if (props.platform === 'opencode') {
     return [
+      { owner: 'Tommertom', name: 'opencode-plugin-marketplace', url: 'https://github.com/Tommertom/opencode-plugin-marketplace', description: 'OpenCode 插件市场', branch: 'main' },
+      { owner: 'avifenesh', name: 'awesome-slash', url: 'https://github.com/avifenesh/awesome-slash', description: 'Awesome Slash 命令集', branch: 'main' },
+      { owner: 'NeoLabHQ', name: 'context-engineering-kit', url: 'https://github.com/NeoLabHQ/context-engineering-kit', description: '上下文工程工具包', branch: 'master' },
       { owner: 'awesome-opencode', name: 'awesome-opencode', url: 'https://github.com/awesome-opencode/awesome-opencode', description: 'OpenCode 生态聚合', branch: 'main' },
       { owner: 'sst', name: 'opencode', url: 'https://github.com/sst/opencode', description: 'OpenCode 官方仓库', branch: 'dev' }
     ]

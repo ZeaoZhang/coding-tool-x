@@ -18,32 +18,7 @@ const CLAUDE_MARKETPLACES_FILE = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplac
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const DEFAULT_REPOS_BY_PLATFORM = {
   claude: [],
-  opencode: [
-    {
-      owner: 'Tommertom',
-      name: 'opencode-plugin-marketplace',
-      url: 'https://github.com/Tommertom/opencode-plugin-marketplace',
-      branch: 'main',
-      enabled: true,
-      source: 'opencode-default'
-    },
-    {
-      owner: 'avifenesh',
-      name: 'awesome-slash',
-      url: 'https://github.com/avifenesh/awesome-slash',
-      branch: 'main',
-      enabled: true,
-      source: 'opencode-default'
-    },
-    {
-      owner: 'NeoLabHQ',
-      name: 'context-engineering-kit',
-      url: 'https://github.com/NeoLabHQ/context-engineering-kit',
-      branch: 'master',
-      enabled: true,
-      source: 'opencode-default'
-    }
-  ]
+  opencode: []
 };
 
 function cloneRepos(repos = []) {
@@ -1055,7 +1030,8 @@ class PluginsService {
         execSync(`claude plugin marketplace add ${repo.url}`, {
           encoding: 'utf8',
           timeout: 30000,
-          stdio: 'pipe'
+          stdio: 'pipe',
+          windowsHide: true
         });
         results.push({ repo: repo.url, success: true });
       } catch (err) {
@@ -1248,6 +1224,8 @@ class PluginsService {
     let repoFailureCount = 0;
 
     for (const repo of repos) {
+      const repoLabel = repo.owner ? `${repo.owner}/${repo.name}` : repo.url;
+      const pluginsBefore = marketPlugins.length;
       try {
         const branch = repo.branch || 'main';
 
@@ -1339,8 +1317,11 @@ class PluginsService {
         }
       } catch (err) {
         repoFailureCount++;
-        console.error(`[PluginsService] Failed to fetch plugins from ${repo.owner}/${repo.name}:`, err.message);
+        console.error(`[PluginsService] Failed to fetch plugins from ${repoLabel}:`, err.message);
+        continue;
       }
+      const added = marketPlugins.length - pluginsBefore;
+      console.log(`[PluginsService] ${repoLabel}: ${added} plugins loaded`);
     }
 
     const preparedPlugins = this.prepareMarketPlugins(marketPlugins);

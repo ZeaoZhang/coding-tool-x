@@ -214,7 +214,7 @@ function buildExportReadme(exportData) {
 导出时间: ${exportedAt}
 版本: ${exportData.version || CONFIG_VERSION}
 
-## 📦 包含内容
+## [PKG] 包含内容
 - 配置模板、频道配置、工作区、收藏
 - Agents / Skills / Commands
 - 插件 (Plugins)

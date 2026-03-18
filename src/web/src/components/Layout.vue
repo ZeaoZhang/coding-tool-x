@@ -284,16 +284,16 @@
     <n-modal v-model:show="showHelpModal" preset="card" title="CODING-TOOL 使用帮助" style="width: 800px; max-width: 90vw;">
       <div class="help-content">
         <div class="help-section">
-          <h4>🚀 快速开始</h4>
+          <h4>[START] 快速开始</h4>
           <p>CODING-TOOL 是 AI 编程工具的增强管理助手，支持 Claude Code、Codex 和 Gemini 三种 AI 工具，提供智能会话管理、动态渠道切换、全局搜索和实时监控功能。</p>
 
-          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">⭐ 最简单的启动方式：</h5>
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">[STAR] 最简单的启动方式：</h5>
           <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058;">
             <p style="margin: 0; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 600; color: var(--primary-color);">ctx start</p>
             <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-secondary);">• 后台启动所有服务<br/>• 可以关闭终端窗口<br/>• 代理服务保持运行</p>
           </div>
 
-          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">📋 日常工作流：</h5>
+          <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">[LOG] 日常工作流：</h5>
           <div style="font-size: 12px; line-height: 1.8; color: var(--text-secondary);">
             <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ctx start</code> 启动服务<br/>
             <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 3px; color: var(--primary-color);">ctx status</code> 查看状态<br/>
@@ -303,7 +303,7 @@
         </div>
 
         <div class="help-section">
-          <h4>🤖 支持的 AI 工具</h4>
+          <h4>[AI] 支持的 AI 工具</h4>
           <ul>
             <li><strong>Claude Code</strong>：Anthropic 官方命令行工具，支持 Claude 系列模型</li>
             <li><strong>Codex</strong>：支持 OpenAI GPT 系列和 Claude 模型（通过 OpenAI 兼容格式）</li>
@@ -312,9 +312,9 @@
         </div>
 
         <div class="help-section">
-          <h4>📋 命令行用法</h4>
+          <h4>[LOG] 命令行用法</h4>
 
-          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">🚀 服务管理</h5>
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[START] 服务管理</h5>
           <div class="command-list">
             <div class="command-item">
               <code>ctx start</code>
@@ -334,7 +334,7 @@
             </div>
           </div>
 
-          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">🔌 代理管理</h5>
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[PROXY] 代理管理</h5>
           <div class="command-list">
             <div class="command-item">
               <code>ctx claude start</code>
@@ -354,7 +354,7 @@
             </div>
           </div>
 
-          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">📋 日志管理</h5>
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[LOG] 日志管理</h5>
           <div class="command-list">
             <div class="command-item">
               <code>ctx logs</code>
@@ -374,7 +374,7 @@
             </div>
           </div>
 
-          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">📊 其他命令</h5>
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[STATS] 其他命令</h5>
           <div class="command-list">
             <div class="command-item">
               <code>ctx stats</code>
@@ -392,7 +392,7 @@
         </div>
 
         <div class="help-section">
-          <h4>🎯 Web UI 功能</h4>
+          <h4>[TARGET] Web UI 功能</h4>
           <ul>
             <li><strong>多类型支持</strong>：统一管理 Claude Code、Codex、Gemini 三种工具的项目和会话</li>
             <li><strong>项目管理</strong>：查看所有项目，支持拖拽排序、搜索过滤、删除项目</li>
@@ -400,12 +400,12 @@
             <li><strong>快速启动</strong>：点击会话可直接复制对应 AI 工具启动命令</li>
             <li><strong>动态切换</strong>：每种工具独立的渠道管理，可在右侧面板快速切换 API 渠道</li>
             <li><strong>实时日志</strong>：查看各类型代理的实时请求日志、token 消耗和成本统计</li>
-            <li><strong>全局搜索</strong>：使用 <kbd>⌘/Ctrl</kbd> + <kbd>K</kbd> 在所有项目中搜索对话内容</li>
+            <li><strong>全局搜索</strong>：使用 <kbd>Cmd/Ctrl</kbd> + <kbd>K</kbd> 在所有项目中搜索对话内容</li>
           </ul>
         </div>
 
         <div class="help-section">
-          <h4>⚡ 代理服务与渠道管理</h4>
+          <h4>[BOLT] 代理服务与渠道管理</h4>
           <p>每种 AI 工具都有独立的代理服务和渠道配置：</p>
           <ul>
             <li><strong>Claude 代理</strong>：端口 20088，支持 Anthropic API 格式</li>
@@ -416,7 +416,7 @@
         </div>
 
         <div class="help-section">
-          <h4>⭐ 后台启动与开机自启</h4>
+          <h4>[STAR] 后台启动与开机自启</h4>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">后台启动服务</h5>
           <p style="font-size: 12px; line-height: 1.8;">使用 <code style="background: var(--bg-primary); padding: 2px 6px;">ctx start</code> 命令后台启动所有服务，可以安全关闭终端窗口而不影响代理服务的运行。</p>
@@ -430,7 +430,7 @@
             # 第 2 步：保存配置<br/>
             <span style="color: var(--primary-color);">pm2 save</span><br/>
             <br/>
-            # 第 3 步：重启电脑，服务自动启动 ✓
+            # 第 3 步：重启电脑，服务自动启动 [v]
           </div>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">相关命令</h5>
@@ -442,11 +442,11 @@
             <code style="background: var(--bg-primary); padding: 2px 6px;">pm2 unstartup</code> 禁用开机自启
           </div>
 
-          <p style="color: #18a058; font-size: 12px; margin-top: 8px;">💡 提示：配置开机自启后，重启电脑时 Coding-Tool 会自动启动，无需手动运行命令。</p>
+          <p style="color: #18a058; font-size: 12px; margin-top: 8px;">[TIP] 提示：配置开机自启后，重启电脑时 Coding-Tool 会自动启动，无需手动运行命令。</p>
         </div>
 
         <div class="help-section">
-          <h4>🔗 相关链接</h4>
+          <h4>[LINK] 相关链接</h4>
           <div class="link-list">
             <a href="https://github.com/ZeaoZhang/coding-tool" target="_blank">GitHub 仓库</a>
             <a href="https://github.com/ZeaoZhang/coding-tool/issues" target="_blank">问题反馈</a>

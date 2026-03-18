@@ -22,7 +22,7 @@ async function listWorkspaces() {
     console.log(chalk.bold.cyan('\n工作区列表:\n'));
 
     workspaces.forEach((ws, index) => {
-      const status = ws.exists ? chalk.green('✓') : chalk.red('✗');
+      const status = ws.exists ? chalk.green('[v]') : chalk.red('[x]');
       console.log(`${index + 1}. ${status} ${chalk.bold(ws.name)}`);
 
       if (ws.description) {
@@ -35,7 +35,7 @@ async function listWorkspaces() {
       console.log('');
     });
   } catch (error) {
-    console.error(chalk.red(`\n❌ ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] ${error.message}\n`));
   }
 }
 
@@ -132,7 +132,7 @@ async function createWorkspace() {
 
       projectChoices.push(
         new inquirer.Separator(chalk.gray('─'.repeat(14))),
-        { name: chalk.gray('✓ 完成选择'), value: null }
+        { name: chalk.gray('[v] 完成选择'), value: null }
       );
 
       const { selectedProject } = await inquirer.prompt([
@@ -226,7 +226,7 @@ async function createWorkspace() {
         branch
       });
 
-      console.log(chalk.green(`\n✓ 已添加: ${linkName}\n`));
+      console.log(chalk.green(`\n[v] 已添加: ${linkName}\n`));
     }
 
     if (projects.length === 0) {
@@ -274,12 +274,12 @@ async function createWorkspace() {
       projects
     });
 
-    console.log(chalk.green(`\n✅ 工作区创建成功!\n`));
+    console.log(chalk.green(`\n[OK] 工作区创建成功!\n`));
     console.log(chalk.gray(`工作区路径: ${workspace.path}\n`));
     console.log(chalk.gray(`提示: 可以在此路径下启动 Claude Code 以访问所有项目\n`));
 
   } catch (error) {
-    console.error(chalk.red(`\n❌ ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] ${error.message}\n`));
   }
 }
 
@@ -324,8 +324,8 @@ async function viewWorkspace() {
     console.log(chalk.bold.cyan(`\n包含项目 (${detail.projects.length}):\n`));
 
     detail.projects.forEach((proj, index) => {
-      const linkStatus = proj.linkExists ? chalk.green('✓') : chalk.red('✗');
-      const sourceStatus = proj.sourceExists ? chalk.green('✓') : chalk.red('✗');
+      const linkStatus = proj.linkExists ? chalk.green('[v]') : chalk.red('[x]');
+      const sourceStatus = proj.sourceExists ? chalk.green('[v]') : chalk.red('[x]');
 
       console.log(`${index + 1}. ${linkStatus} ${chalk.bold(proj.name)}`);
       console.log(chalk.gray(`   源路径: ${sourceStatus} ${proj.sourcePath}`));
@@ -341,7 +341,7 @@ async function viewWorkspace() {
     });
 
   } catch (error) {
-    console.error(chalk.red(`\n❌ ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] ${error.message}\n`));
   }
 }
 
@@ -394,10 +394,10 @@ async function deleteWorkspace() {
     }
 
     workspaceService.deleteWorkspace(workspace.id, removeFiles);
-    console.log(chalk.green('\n✅ 工作区删除成功\n'));
+    console.log(chalk.green('\n[OK] 工作区删除成功\n'));
 
   } catch (error) {
-    console.error(chalk.red(`\n❌ ${error.message}\n`));
+    console.error(chalk.red(`\n[ERROR] ${error.message}\n`));
   }
 }
 

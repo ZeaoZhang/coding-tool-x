@@ -73,7 +73,7 @@ function printPortToolIssue(issue = getPortToolIssue()) {
     return;
   }
 
-  console.log(chalk.yellow(`\n⚠️  ${lines[0]}`));
+  console.log(chalk.yellow(`\n[WARN]  ${lines[0]}`));
   lines.slice(1).forEach((line) => {
     console.log(chalk.gray(`   ${line}`));
   });
@@ -83,7 +83,7 @@ function shouldTreatPortOwnershipAsReady(ownsPort) {
   return ownsPort === true || ownsPort === null;
 }
 
-async function waitForServiceReady(port, timeoutMs = 6000, intervalMs = 300) {
+async function waitForServiceReady(port, timeoutMs = 15000, intervalMs = 500) {
   const startAt = Date.now();
   let lastProcess = null;
   let stablePassCount = 0;
@@ -135,7 +135,7 @@ async function handleStart() {
     // 检查是否已经在运行
     const existing = await getCCToolProcess();
     if (existing && existing.pm2_env.status === 'online') {
-      console.log(chalk.yellow('\n⚠️  服务已在运行中\n'));
+      console.log(chalk.yellow('\n[WARN]  服务已在运行中\n'));
       console.log(chalk.gray(`进程 ID: ${existing.pid}`));
       console.log(chalk.gray(`运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
       console.log(chalk.gray('\n使用 ') + chalk.cyan('ctx status') + chalk.gray(' 查看详细状态'));
@@ -168,12 +168,12 @@ async function handleStart() {
         CC_TOOL_PORT: port
       },
       output: path.join(PATHS.logs, 'cc-tool-out.log'),
-      error: path.join(PATHS.logs, 'cc-tool-error.log'),
+      error: path.join(PATHS.logs, 'cc-tool-out.log'),
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss'
     }, async (err) => {
       if (err) {
-        console.error(chalk.red('\n❌ 启动服务失败:'), err.message);
+        console.error(chalk.red('\n[ERROR] 启动服务失败:'), err.message);
         disconnectPM2();
         process.exit(1);
       }
@@ -183,10 +183,10 @@ async function handleStart() {
         readyState = await waitForServiceReady(port);
         if (!readyState.ready) {
           const statusText = readyState.process?.pm2_env?.status || 'unknown';
-          console.error(chalk.red('\n❌ Coding-Tool 服务启动失败，进程未就绪\n'));
+          console.error(chalk.red('\n[ERROR] Coding-Tool 服务启动失败，进程未就绪\n'));
           console.error(chalk.gray(`PM2 状态: ${statusText}`));
           printPortToolIssue(readyState.degradedPortCheckIssue);
-          console.error(chalk.yellow('💡 请使用 ctx logs ui 查看详细日志\n'));
+          console.error(chalk.yellow('[TIP] 请使用 ctx logs ui 查看详细日志\n'));
 
           pm2.delete(PM2_APP_NAME, () => {
             pm2.dump(() => {
@@ -197,16 +197,16 @@ async function handleStart() {
           return;
         }
       } catch (checkError) {
-        console.error(chalk.red('\n❌ 启动后健康检查失败:'), checkError.message);
+        console.error(chalk.red('\n[ERROR] 启动后健康检查失败:'), checkError.message);
         disconnectPM2();
         process.exit(1);
       }
 
-      console.log(chalk.green('\n✅ Coding-Tool 服务已启动（后台运行）\n'));
+      console.log(chalk.green('\n[OK] Coding-Tool 服务已启动（后台运行）\n'));
       console.log(chalk.gray(`Web UI: http://localhost:${port}`));
       printPortToolIssue(readyState.degradedPortCheckIssue);
       if (enableHost) {
-        console.log(chalk.yellow(`⚠️  LAN 访问已启用 (http://<your-ip>:${port})`));
+        console.log(chalk.yellow(`[WARN]  LAN 访问已启用 (http://<your-ip>:${port})`));
       }
       console.log(chalk.gray('\n可以安全关闭此终端窗口'));
       console.log(chalk.gray('\n常用命令:'));
@@ -235,14 +235,14 @@ async function handleStop() {
 
     const existing = await getCCToolProcess();
     if (!existing) {
-      console.log(chalk.yellow('\n⚠️  服务未在运行\n'));
+      console.log(chalk.yellow('\n[WARN]  服务未在运行\n'));
       disconnectPM2();
       return;
     }
 
     pm2.stop(PM2_APP_NAME, (err) => {
       if (err) {
-        console.error(chalk.red('\n❌ 停止服务失败:'), err.message);
+        console.error(chalk.red('\n[ERROR] 停止服务失败:'), err.message);
         disconnectPM2();
         process.exit(1);
       }
@@ -252,7 +252,7 @@ async function handleStop() {
         if (err) {
           console.error(chalk.red('删除进程失败:'), err.message);
         } else {
-          console.log(chalk.green('\n✅ Coding-Tool 服务已停止\n'));
+          console.log(chalk.green('\n[OK] Coding-Tool 服务已停止\n'));
         }
 
         pm2.dump((err) => {
@@ -276,19 +276,19 @@ async function handleRestart() {
 
     const existing = await getCCToolProcess();
     if (!existing) {
-      console.log(chalk.yellow('\n⚠️  服务未在运行，请使用 ') + chalk.cyan('ctx start') + chalk.yellow(' 启动\n'));
+      console.log(chalk.yellow('\n[WARN]  服务未在运行，请使用 ') + chalk.cyan('ctx start') + chalk.yellow(' 启动\n'));
       disconnectPM2();
       return;
     }
 
     pm2.restart(PM2_APP_NAME, (err) => {
       if (err) {
-        console.error(chalk.red('\n❌ 重启服务失败:'), err.message);
+        console.error(chalk.red('\n[ERROR] 重启服务失败:'), err.message);
         disconnectPM2();
         process.exit(1);
       }
 
-      console.log(chalk.green('\n✅ Coding-Tool 服务已重启\n'));
+      console.log(chalk.green('\n[OK] Coding-Tool 服务已重启\n'));
 
       pm2.dump((err) => {
         disconnectPM2();
@@ -311,21 +311,21 @@ async function handleStatus() {
     const existing = await getCCToolProcess();
     const config = loadConfig();
 
-    console.log(chalk.bold.cyan('\n╔══════════════════════════════════════╗'));
+    console.log(chalk.bold.cyan('\n╔======================================╗'));
     console.log(chalk.bold.cyan('║        Coding-Tool 服务状态         ║'));
-    console.log(chalk.bold.cyan('╚══════════════════════════════════════╝\n'));
+    console.log(chalk.bold.cyan('╚======================================╝\n'));
 
     // UI 服务状态
-    console.log(chalk.bold('📱 Web UI 服务:'));
+    console.log(chalk.bold('[UI] Web UI 服务:'));
     if (existing && existing.pm2_env.status === 'online') {
-      console.log(chalk.green('  ✅ 状态: 运行中'));
-      console.log(chalk.gray(`  🌐 地址: http://localhost:${config.ports?.webUI || 19999}`));
-      console.log(chalk.gray(`  🔑 进程 ID: ${existing.pid}`));
-      console.log(chalk.gray(`  ⏱️  运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
-      console.log(chalk.gray(`  💾 内存使用: ${formatMemory(existing.monit?.memory)}`));
-      console.log(chalk.gray(`  🔄 重启次数: ${existing.pm2_env.restart_time}`));
+      console.log(chalk.green('  [OK] 状态: 运行中'));
+      console.log(chalk.gray(`  [NET] 地址: http://localhost:${config.ports?.webUI || 19999}`));
+      console.log(chalk.gray(`  [KEY] 进程 ID: ${existing.pid}`));
+      console.log(chalk.gray(`  [TIMER]  运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
+      console.log(chalk.gray(`  [SAVE] 内存使用: ${formatMemory(existing.monit?.memory)}`));
+      console.log(chalk.gray(`  [SYNC] 重启次数: ${existing.pm2_env.restart_time}`));
     } else {
-      console.log(chalk.gray('  ❌ 状态: 未运行'));
+      console.log(chalk.gray('  [ERROR] 状态: 未运行'));
     }
 
     // 代理服务状态（从运行时文件检测）
@@ -336,21 +336,21 @@ async function handleStatus() {
     const geminiActive = fs.existsSync(PATHS.activeChannel.gemini);
     const opencodeActive = fs.existsSync(PATHS.activeChannel.opencode);
 
-    console.log(chalk.bold('\n🔌 代理服务:'));
+    console.log(chalk.bold('\n[PROXY] 代理服务:'));
 
-    console.log(chalk.gray('  Claude:  ') + (claudeActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
+    console.log(chalk.gray('  Claude:  ') + (claudeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.proxy || 20088})`));
 
-    console.log(chalk.gray('  Codex:   ') + (codexActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
+    console.log(chalk.gray('  Codex:   ') + (codexActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.codexProxy || 20089})`));
 
-    console.log(chalk.gray('  Gemini:  ') + (geminiActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
+    console.log(chalk.gray('  Gemini:  ') + (geminiActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.geminiProxy || 20090})`));
 
-    console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('✅ 运行中') : chalk.gray('⏹️  未启动')) +
+    console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.opencodeProxy || 20091})`));
 
-    console.log(chalk.bold('\n💡 提示:'));
+    console.log(chalk.bold('\n[TIP] 提示:'));
     console.log(chalk.gray('  • 代理服务通过 Web UI 界面控制'));
     console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx logs [type]') + chalk.gray(' 查看日志'));
     console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats [type]') + chalk.gray(' 查看统计信息\n'));

@@ -15,9 +15,9 @@ const CLI_TYPES = {
  */
 async function handleSwitchCliType() {
   console.clear();
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('\n╔=======================================╗'));
   console.log(chalk.bold.cyan('║          切换 CLI 类型          ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+  console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
   const currentType = config.currentCliType || 'claude';
@@ -29,9 +29,9 @@ async function handleSwitchCliType() {
   const choices = Object.entries(CLI_TYPES).map(([type, info]) => {
     let name = '';
 
-    // 如果是当前类型，添加✓标记
+    // 如果是当前类型，添加[v]标记
     if (type === currentType) {
-      name += chalk.green('✓ ');
+      name += chalk.green('[v] ');
     } else {
       name += '  ';
     }
@@ -81,7 +81,7 @@ async function handleSwitchCliType() {
   config.currentCliType = selectedType;
   saveConfig(config);
 
-  console.log(chalk.green(`\n✅ 已切换到 ${CLI_TYPES[selectedType].name}\n`));
+  console.log(chalk.green(`\n[OK] 已切换到 ${CLI_TYPES[selectedType].name}\n`));
   console.log(chalk.gray('下次启动时将使用新的类型\n'));
 
   await inquirer.prompt([

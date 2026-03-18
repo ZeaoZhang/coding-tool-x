@@ -1380,7 +1380,8 @@ async function testStdioServer(spec) {
       child = spawn(resolvedCommand, args, {
         env: mergedEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
-        cwd
+        cwd,
+        windowsHide: true
       });
 
       child.stdout.on('data', (data) => {

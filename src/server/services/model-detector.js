@@ -890,12 +890,12 @@ async function probeModelAvailability(channel, channelType, options = {}) {
 
     if (isAvailable) {
       availableModels.push(model);
-      console.log(`[ModelDetector] ✓ ${model} available`);
+      console.log(`[ModelDetector] [v] ${model} available`);
       if (stopOnFirstAvailable) {
         break;
       }
     } else {
-      console.log(`[ModelDetector] ✗ ${model} not available${formatProbeFailureDetail(probeResult.failureDetail)}`);
+      console.log(`[ModelDetector] [x] ${model} not available${formatProbeFailureDetail(probeResult.failureDetail)}`);
     }
   }
 

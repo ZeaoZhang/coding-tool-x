@@ -216,7 +216,11 @@ class BaseChannelService {
       normalized.enabled = !!normalized.enabled;
     }
     normalized.weight = normalizeNumber(normalized.weight, 1, 100);
-    normalized.maxConcurrency = normalizeNumber(normalized.maxConcurrency, 0);
+    // maxConcurrency: null 表示不限制并发；只有用户显式设置正整数时才生效
+    const rawConcurrency = normalized.maxConcurrency;
+    normalized.maxConcurrency = (rawConcurrency !== null && rawConcurrency !== undefined && Number(rawConcurrency) > 0)
+      ? Number(rawConcurrency)
+      : null;
     normalized.gatewaySourceType = normalizeGatewaySourceType(
       normalized.gatewaySourceType,
       this.defaultGatewaySource

@@ -137,27 +137,37 @@ function findProcessByPort(port) {
   const isWindows = isWindowsLikeRuntime();
   if (isWindows) {
     try {
-      // Windows: 直接解析 netstat 输出，避免依赖 findstr/lsof
-      const result = execSync('netstat -ano', { encoding: 'utf-8' });
+      // Windows: 优先使用 findstr 过滤，避免解析全量 netstat 输出（全量输出在连接数多时极慢）
+      const result = execSync(`netstat -ano | findstr ":${port} "`, { encoding: 'utf-8', windowsHide: true });
       return parsePidsFromNetstatOutput(result, port);
     } catch (e) {
-      if (isMissingCommandError(e)) {
-        rememberPortToolIssue(createPortToolIssue('netstat', 'lookup', true));
+      // findstr 未匹配到任何行时 exit code = 1，属于正常情况
+      if (e.status === 1) {
+        return [];
       }
-      return [];
+      // findstr 不可用时回退到全量解析
+      try {
+        const result = execSync('netstat -ano', { encoding: 'utf-8', windowsHide: true });
+        return parsePidsFromNetstatOutput(result, port);
+      } catch (e2) {
+        if (isMissingCommandError(e2)) {
+          rememberPortToolIssue(createPortToolIssue('netstat', 'lookup', true));
+        }
+        return [];
+      }
     }
   }
 
   let lsofMissing = false;
   try {
     // macOS/Linux 使用 lsof
-    const result = execSync(`lsof -ti :${port}`, { encoding: 'utf-8' }).trim();
+    const result = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', windowsHide: true }).trim();
     return result.split('\n').filter(pid => pid);
   } catch (err) {
     lsofMissing = isMissingCommandError(err);
     // 如果 lsof 失败，尝试使用 fuser（某些 Linux 系统）
     try {
-      const result = execSync(`fuser ${port}/tcp 2>/dev/null`, { encoding: 'utf-8' }).trim();
+      const result = execSync(`fuser ${port}/tcp 2>/dev/null`, { encoding: 'utf-8', windowsHide: true }).trim();
       return result.split(/\s+/).filter(pid => pid);
     } catch (e) {
       if (lsofMissing && isMissingCommandError(e)) {
@@ -183,9 +193,9 @@ function killProcessByPort(port) {
     pids.forEach(pid => {
       try {
         if (isWindows) {
-          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore', windowsHide: true });
         } else {
-          execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
+          execSync(`kill -9 ${pid}`, { stdio: 'ignore', windowsHide: true });
         }
         killedAny = true;
       } catch (err) {

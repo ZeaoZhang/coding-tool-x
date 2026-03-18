@@ -544,7 +544,7 @@ async function startProxyServer(options = {}) {
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
-        console.log(`✅ Proxy server started on http://127.0.0.1:${port}`);
+        console.log(`[OK] Proxy server started on http://127.0.0.1:${port}`);
         saveProxyStartTime('claude', preserveStartTime);
         eventBus.emitSync('proxy:start', { channel: 'claude', port });
         resolve({ success: true, port });
@@ -552,8 +552,8 @@ async function startProxyServer(options = {}) {
 
       proxyServer.on('error', (err) => {
         if (err.code === 'EADDRINUSE') {
-          console.error(chalk.red(`\n❌ 代理服务端口 ${port} 已被占用`));
-          console.error(chalk.yellow('\n💡 解决方案:'));
+          console.error(chalk.red(`\n[ERROR] 代理服务端口 ${port} 已被占用`));
+          console.error(chalk.yellow('\n[TIP] 解决方案:'));
           console.error(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
           console.error(chalk.gray(`   2. 或关闭占用端口 ${port} 的程序\n`));
         } else {
@@ -582,7 +582,7 @@ async function stopProxyServer(options = {}) {
 
   return new Promise((resolve) => {
     proxyServer.close(() => {
-      console.log('✅ Proxy server stopped');
+      console.log('[OK] Proxy server stopped');
       if (clearStartTime) {
         clearProxyStartTime('claude');
       }
