@@ -304,7 +304,8 @@ async function run() {
         directory: 'skills',
         projectPath: '/workspace/project',
         localPath: '/tmp/skills-pack',
-        repoUrl: 'https://gitlab.example.com/openai/skills-pack'
+        repoUrl: 'https://gitlab.example.com/openai/skills-pack',
+        token: ''
       },
       'skills/subdir'
     ]);
@@ -354,7 +355,8 @@ async function run() {
         directory: 'repo-hint',
         projectPath: '/Users/demo/project',
         localPath: '/Users/demo/skills',
-        repoUrl: '/Users/demo/skills'
+        repoUrl: '/Users/demo/skills',
+        token: ''
       },
       'skills/repo-hint/examples'
     ]);

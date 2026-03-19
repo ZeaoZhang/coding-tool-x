@@ -4,7 +4,9 @@
       <div class="card-title">
         <span class="name">{{ plugin.name }}</span>
         <n-tag v-if="plugin.installed" type="info" size="small">已安装</n-tag>
-        <n-tag v-if="plugin.repoOwner" type="info" size="small">{{ plugin.repoOwner }}</n-tag>
+        <n-tag v-if="plugin.repoProvider === 'gitlab'" type="info" size="small">GitLab</n-tag>
+        <n-tag v-else-if="plugin.repoProvider === 'local'" type="info" size="small">本地</n-tag>
+        <n-tag v-else-if="plugin.repoOwner" type="info" size="small">{{ plugin.repoOwner }}</n-tag>
       </div>
       <div class="card-actions" @click.stop>
         <n-button
@@ -30,7 +32,7 @@
       <div class="description" v-if="plugin.description">{{ truncate(plugin.description, 80) }}</div>
       <div class="meta">
         <span class="meta-item">{{ plugin.directory }}</span>
-        <a v-if="plugin.readmeUrl" class="meta-link" :href="plugin.readmeUrl" target="_blank" @click.stop>GitHub</a>
+        <a v-if="plugin.readmeUrl" class="meta-link" :href="plugin.readmeUrl" target="_blank" @click.stop>{{ getRepoLinkLabel(plugin) }}</a>
       </div>
     </div>
   </div>
@@ -52,7 +54,13 @@ function truncate(text, len) {
 }
 
 function canInstall(plugin) {
-  return !!(plugin?.installSource || plugin?.repoOwner)
+  return !!(plugin?.installSource || plugin?.repoOwner || plugin?.repoProjectPath || plugin?.repoLocalPath)
+}
+
+function getRepoLinkLabel(plugin) {
+  if (plugin?.repoProvider === 'gitlab') return 'GitLab'
+  if (plugin?.repoProvider === 'local') return '本地'
+  return 'GitHub'
 }
 </script>
 

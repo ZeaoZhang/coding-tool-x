@@ -166,7 +166,8 @@ describe('codex-settings-manager proxy config', () => {
           name: 'cc-proxy',
           base_url: 'http://127.0.0.1:4317/v1',
           wire_api: 'responses',
-          env_key: 'CC_PROXY_KEY'
+          env_key: 'CC_PROXY_KEY',
+          requires_openai_auth: false
         }
       }
     });

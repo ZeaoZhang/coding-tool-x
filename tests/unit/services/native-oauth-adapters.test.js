@@ -291,6 +291,24 @@ describe('native-oauth-adapters high level flows', () => {
     expect(nativeAdapters.readNativeOAuth('claude')).toBeNull();
   });
 
+  test('reports mixed mode for Claude when API key config and native OAuth both exist', () => {
+    require.cache[require.resolve('../../../src/server/services/native-keychain')].exports.isSupported.mockReturnValue(false);
+    writeJson(pathsStub.NATIVE_PATHS.claude.credentials, {
+      claudeAiOauth: {
+        accessToken: 'claude-access-token'
+      }
+    });
+
+    const state = nativeAdapters.inspectTool('claude');
+
+    expect(state).toEqual(expect.objectContaining({
+      tool: 'claude',
+      mode: 'channel',
+      oauthPresent: true,
+      channelConfigured: true
+    }));
+  });
+
   test('applies Codex OAuth, clears managed channel config, and prefers keychain on read', () => {
     const result = nativeAdapters.applyOAuthCredential('codex', {
       authMode: 'chatgpt',
@@ -315,6 +333,26 @@ describe('native-oauth-adapters high level flows', () => {
       storage: 'keychain'
     }));
     expect(state.mode).toBe('oauth');
+  });
+
+  test('reports mixed mode for Codex when channel config and native OAuth both exist', () => {
+    writeJson(pathsStub.NATIVE_PATHS.codex.auth, {
+      auth_mode: 'chatgpt',
+      tokens: {
+        access_token: 'codex-access',
+        refresh_token: 'codex-refresh',
+        id_token: 'id-token'
+      }
+    });
+
+    const state = nativeAdapters.inspectTool('codex');
+
+    expect(state).toEqual(expect.objectContaining({
+      tool: 'codex',
+      mode: 'channel',
+      oauthPresent: true,
+      channelConfigured: true
+    }));
   });
 
   test('applies, reads, inspects, and clears Gemini OAuth credentials', () => {
@@ -349,6 +387,23 @@ describe('native-oauth-adapters high level flows', () => {
     expect(nativeAdapters.readNativeOAuth('gemini')).toBeNull();
   });
 
+  test('reports mixed mode for Gemini when API key config and native OAuth both exist', () => {
+    require.cache[require.resolve('../../../src/server/services/native-keychain')].exports.isSupported.mockReturnValue(false);
+    writeJson(pathsStub.NATIVE_PATHS.gemini.oauthCredentialsLegacy, {
+      access_token: 'gemini-access',
+      refresh_token: 'gemini-refresh'
+    });
+
+    const state = nativeAdapters.inspectTool('gemini');
+
+    expect(state).toEqual(expect.objectContaining({
+      tool: 'gemini',
+      mode: 'channel',
+      oauthPresent: true,
+      channelConfigured: true
+    }));
+  });
+
   test('applies OpenCode OAuth and sorts all credentials by active provider', () => {
     writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
       openai: {
@@ -372,17 +427,29 @@ describe('native-oauth-adapters high level flows', () => {
     });
     let allCredentials = nativeAdapters.readAllNativeOAuth('opencode');
     let primaryCredential = nativeAdapters.readNativeOAuth('opencode');
+    const state = nativeAdapters.inspectTool('opencode');
 
     expect(applyResult).toEqual({ storage: 'auth-file' });
-    expect(clearManagedChannelConfigMock).toHaveBeenCalled();
+    expect(clearManagedChannelConfigMock).not.toHaveBeenCalled();
     expect(readJson(pathsStub.NATIVE_PATHS.opencode.auth).openai.access).toBe('new-openai-token');
-    expect(allCredentials[0]).toEqual(expect.objectContaining({
-      providerId: 'openai',
-      accessToken: 'new-openai-token'
-    }));
+    expect(allCredentials).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        providerId: 'openai',
+        accessToken: 'new-openai-token'
+      }),
+      expect.objectContaining({
+        providerId: 'anthropic',
+        accessToken: 'anthropic-token'
+      })
+    ]));
     expect(primaryCredential).toEqual(expect.objectContaining({
-      providerId: 'openai',
-      accessToken: 'new-openai-token'
+      providerId: 'anthropic',
+      accessToken: 'anthropic-token'
+    }));
+    expect(state).toEqual(expect.objectContaining({
+      mode: 'mixed',
+      oauthPresent: true,
+      channelConfigured: true
     }));
 
     writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
@@ -408,5 +475,33 @@ describe('native-oauth-adapters high level flows', () => {
       providerId: 'anthropic',
       accessToken: 'anthropic-token'
     }));
+  });
+
+  test('disables a single OpenCode OAuth credential without clearing the rest', () => {
+    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
+      openai: {
+        type: 'oauth',
+        access: 'openai-token',
+        refresh: 'openai-refresh'
+      },
+      anthropic: {
+        type: 'oauth',
+        access: 'anthropic-token',
+        refresh: 'anthropic-refresh'
+      }
+    });
+
+    nativeAdapters.disableNativeOAuthCredential('opencode', {
+      providerId: 'openai',
+      accessToken: 'openai-token'
+    });
+
+    expect(readJson(pathsStub.NATIVE_PATHS.opencode.auth)).toEqual({
+      anthropic: {
+        type: 'oauth',
+        access: 'anthropic-token',
+        refresh: 'anthropic-refresh'
+      }
+    });
   });
 });

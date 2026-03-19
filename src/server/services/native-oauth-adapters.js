@@ -219,7 +219,7 @@ function inspectClaudeState() {
 
   return {
     tool: 'claude',
-    mode: proxyStatus.running ? 'proxy' : (nativeOAuth ? 'oauth' : (channelConfigured ? 'channel' : 'idle')),
+    mode: proxyStatus.running ? 'proxy' : (channelConfigured ? 'channel' : (nativeOAuth ? 'oauth' : 'idle')),
     proxyRunning: proxyStatus.running,
     oauthPresent: Boolean(nativeOAuth),
     channelConfigured,
@@ -395,7 +395,7 @@ function inspectCodexState() {
 
   return {
     tool: 'codex',
-    mode: proxyStatus.running ? 'proxy' : (nativeOAuth ? 'oauth' : (channelConfigured ? 'channel' : 'idle')),
+    mode: proxyStatus.running ? 'proxy' : (channelConfigured ? 'channel' : (nativeOAuth ? 'oauth' : 'idle')),
     proxyRunning: proxyStatus.running,
     oauthPresent: Boolean(nativeOAuth),
     channelConfigured,
@@ -619,7 +619,7 @@ function inspectGeminiState() {
 
   return {
     tool: 'gemini',
-    mode: proxyStatus.running ? 'proxy' : (nativeOAuth ? 'oauth' : (channelConfigured ? 'channel' : 'idle')),
+    mode: proxyStatus.running ? 'proxy' : (channelConfigured ? 'channel' : (nativeOAuth ? 'oauth' : 'idle')),
     proxyRunning: proxyStatus.running,
     oauthPresent: Boolean(nativeOAuth),
     channelConfigured,
@@ -737,10 +737,67 @@ function clearOpenCodeOAuth() {
   writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
 }
 
-function applyOpenCodeOAuth(credential) {
-  clearOpenCodeOAuth();
-  opencodeSettingsManager.clearManagedChannelConfig();
+function disableOpenCodeOAuthCredential(credential = {}) {
+  const providerId = String(credential.providerId || '').trim();
+  const accessToken = String(credential.accessToken || credential.primaryToken || '').trim();
+  const payload = readJsonFile(NATIVE_PATHS.opencode.auth, {});
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
 
+  Object.keys(payload).forEach((key) => {
+    const target = payload[key];
+    if (!target || target.type !== 'oauth') {
+      return;
+    }
+
+    const providerMatched = providerId && key === providerId;
+    const tokenMatched = accessToken && String(target.access || '').trim() === accessToken;
+    if (providerMatched || tokenMatched) {
+      delete payload[key];
+    }
+  });
+
+  if (Object.keys(payload).length === 0) {
+    removeFileIfExists(NATIVE_PATHS.opencode.auth);
+    return;
+  }
+
+  writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
+}
+
+function isManagedOpenCodeProvider(provider) {
+  if (!provider || typeof provider !== 'object') {
+    return false;
+  }
+
+  if (provider.__ctx_managed__ === true) {
+    return true;
+  }
+
+  const apiKey = String(provider?.options?.apiKey || '').trim();
+  const baseUrl = String(provider?.options?.baseURL || '').trim();
+  return apiKey === 'PROXY_KEY' && (baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost'));
+}
+
+function clearOpenCodeManagedModelSelection(config) {
+  const modelRef = String(config?.model || '').trim();
+  if (!modelRef || !modelRef.includes('/')) {
+    return;
+  }
+
+  const providerId = modelRef.split('/')[0].trim();
+  if (!providerId) {
+    return;
+  }
+
+  const provider = config?.provider?.[providerId];
+  if (isManagedOpenCodeProvider(provider)) {
+    delete config.model;
+  }
+}
+
+function applyOpenCodeOAuth(credential) {
   const providerId = String(credential.providerId || 'openai').trim() || 'openai';
   const payload = readJsonFile(NATIVE_PATHS.opencode.auth, {});
   payload[providerId] = {
@@ -758,9 +815,12 @@ function applyOpenCodeOAuth(credential) {
     ? opencodeSettingsManager.readConfig(configPath)
     : {};
   config.provider = config.provider && typeof config.provider === 'object' ? config.provider : {};
-  if (!config.provider[providerId]) {
-    config.provider[providerId] = {};
-  }
+  config.provider[providerId] = config.provider[providerId] && typeof config.provider[providerId] === 'object'
+    ? config.provider[providerId]
+    : {};
+  // Preserve existing ctx-managed API providers for OpenCode coexistence, but
+  // drop the active managed selection so OAuth-backed providers become available.
+  clearOpenCodeManagedModelSelection(config);
   opencodeSettingsManager.writeConfig(configPath, config);
 
   return { storage: 'auth-file' };
@@ -787,7 +847,11 @@ function inspectOpenCodeState() {
 
   return {
     tool: 'opencode',
-    mode: proxyStatus.running ? 'proxy' : (nativeOAuth ? 'oauth' : (channelConfigured ? 'channel' : 'idle')),
+    mode: proxyStatus.running
+      ? 'proxy'
+      : (nativeOAuth && channelConfigured
+          ? 'mixed'
+          : (nativeOAuth ? 'oauth' : (channelConfigured ? 'channel' : 'idle'))),
     proxyRunning: proxyStatus.running,
     oauthPresent: Boolean(nativeOAuth),
     channelConfigured,
@@ -865,6 +929,25 @@ function clearNativeOAuth(tool) {
   }
 }
 
+function disableNativeOAuthCredential(tool, credential = {}) {
+  switch (tool) {
+    case 'claude':
+      clearClaudeOAuth();
+      return;
+    case 'codex':
+      clearCodexOAuth();
+      return;
+    case 'gemini':
+      clearGeminiOAuth();
+      return;
+    case 'opencode':
+      disableOpenCodeOAuthCredential(credential);
+      return;
+    default:
+      throw new Error(`Unsupported OAuth tool: ${tool}`);
+  }
+}
+
 function applyOAuthCredential(tool, credential) {
   switch (tool) {
     case 'claude':
@@ -887,5 +970,6 @@ module.exports = {
   readNativeOAuth,
   readAllNativeOAuth,
   clearNativeOAuth,
+  disableNativeOAuthCredential,
   applyOAuthCredential
 };

@@ -181,4 +181,62 @@ describe('channels service Claude settings integration', () => {
       name: 'Primary'
     }));
   });
+
+  test('createChannel writes settings.json for the enabled channel when proxy is off', () => {
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+
+    const channel = channelsService.createChannel('Primary', 'https://primary.example', 'key-primary');
+
+    expect(readJson(settingsPath)).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://primary.example',
+        ANTHROPIC_API_KEY: 'key-primary'
+      },
+      apiKeyHelper: "echo 'ctx-managed'"
+    });
+    expect(channel.enabled).toBe(true);
+  });
+
+  test('updateChannel writes settings.json when enabling a different channel in single-channel mode', () => {
+    let now = 1700000001000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now++);
+
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+    const primary = channelsService.createChannel('Primary', 'https://primary.example', 'key-primary');
+    const secondary = channelsService.createChannel('Secondary', 'https://secondary.example', 'key-secondary', undefined, {
+      enabled: false
+    });
+
+    channelsService.updateChannel(secondary.id, { enabled: true });
+
+    expect(readJson(settingsPath)).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://secondary.example',
+        ANTHROPIC_API_KEY: 'key-secondary'
+      },
+      apiKeyHelper: "echo 'ctx-managed'"
+    });
+
+    const allChannels = channelsService.getAllChannels();
+    expect(allChannels.find(ch => ch.id === primary.id)?.enabled).toBe(false);
+    expect(allChannels.find(ch => ch.id === secondary.id)?.enabled).toBe(true);
+  });
+
+  test('updateChannel writes settings.json when editing the active enabled channel', () => {
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+    const primary = channelsService.createChannel('Primary', 'https://primary.example', 'key-primary');
+
+    channelsService.updateChannel(primary.id, {
+      baseUrl: 'https://primary-next.example',
+      apiKey: 'key-next'
+    });
+
+    expect(readJson(settingsPath)).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://primary-next.example',
+        ANTHROPIC_API_KEY: 'key-next'
+      },
+      apiKeyHelper: "echo 'ctx-managed'"
+    });
+  });
 });

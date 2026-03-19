@@ -1,5 +1,13 @@
 const fs = require('fs');
 const { NATIVE_PATHS } = require('../../config/paths');
+const { isWindowsLikePlatform } = require('../../utils/home-dir');
+
+function buildEchoCommand(value) {
+  if (isWindowsLikePlatform(process.platform, process.env)) {
+    return `cmd /c echo ${value}`;
+  }
+  return `echo '${value}'`;
+}
 
 // Claude Code 配置文件路径
 function getSettingsPath() {
@@ -113,7 +121,7 @@ function setProxyConfig(proxyPort) {
     // 修改为代理配置（使用 Claude Code 的标准格式）
     settings.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${proxyPort}`;
     settings.env.ANTHROPIC_API_KEY = 'PROXY_KEY';
-    settings.apiKeyHelper = `echo 'PROXY_KEY'`;
+    settings.apiKeyHelper = buildEchoCommand('PROXY_KEY');
 
     // 写入
     writeSettings(settings);

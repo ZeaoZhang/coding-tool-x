@@ -17,6 +17,7 @@ const AdmZip = require('adm-zip');
 const {
   parseSkillContent,
 } = require('./format-converter');
+const { maskToken } = require('./oauth-utils');
 const { NATIVE_PATHS, HOME_DIR, PATHS } = require('../../config/paths');
 
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
@@ -45,6 +46,10 @@ function normalizeRepoDirectory(directory = '') {
 
 function stripGitSuffix(value = '') {
   return String(value || '').replace(/\.git$/i, '');
+}
+
+function normalizeRepoToken(token = '') {
+  return String(token || '').trim();
 }
 
 function isWindowsAbsolutePath(input = '') {
@@ -326,6 +331,13 @@ class SkillService {
     normalized.label = buildRepoLabel(normalized);
     normalized.id = buildRepoId(normalized);
 
+    if (provider !== 'local') {
+      const token = normalizeRepoToken(repo.token);
+      if (token) {
+        normalized.token = token;
+      }
+    }
+
     return normalized;
   }
 
@@ -356,6 +368,55 @@ class SkillService {
   saveRepos(repos) {
     const normalizedRepos = this.normalizeRepos(repos);
     fs.writeFileSync(this.reposConfigPath, JSON.stringify({ repos: normalizedRepos }, null, 2));
+  }
+
+  toClientRepo(repo = {}) {
+    const normalizedRepo = this.normalizeRepoConfig(repo);
+    const token = normalizeRepoToken(normalizedRepo.token);
+    const clientRepo = {
+      ...normalizedRepo,
+      hasToken: Boolean(token),
+      tokenPreview: token ? maskToken(token) : ''
+    };
+    delete clientRepo.token;
+    return clientRepo;
+  }
+
+  getReposForClient(repos = null) {
+    const sourceRepos = Array.isArray(repos) ? repos : this.loadRepos();
+    return sourceRepos.map(repo => this.toClientRepo(repo));
+  }
+
+  findStoredRepo(repo = {}) {
+    const repoId = String(repo.id || repo.repoId || '').trim();
+    const repos = this.loadRepos();
+
+    if (repoId) {
+      return repos.find(candidate => candidate.id === repoId) || null;
+    }
+
+    try {
+      const normalizedRepo = this.normalizeRepoConfig(repo);
+      return repos.find(candidate => candidate.id === normalizedRepo.id) || null;
+    } catch {
+      return null;
+    }
+  }
+
+  resolveRepoToken(repo = null) {
+    if (!repo || typeof repo !== 'object') return null;
+
+    const directToken = normalizeRepoToken(repo.token);
+    if (directToken) {
+      return directToken;
+    }
+
+    const storedRepo = this.findStoredRepo(repo);
+    if (!storedRepo) {
+      return null;
+    }
+
+    return normalizeRepoToken(storedRepo.token) || null;
   }
 
   /**
@@ -432,6 +493,43 @@ class SkillService {
       this.saveRepos(repos);
       this.clearCache({ removeFile: true });
     }
+    return this.loadRepos();
+  }
+
+  updateRepoAuth(owner, name, directory = '', token = '', clearToken = false, repoId = '') {
+    const repos = this.loadRepos();
+    const normalizedDirectory = normalizeRepoDirectory(directory);
+    const repo = repos.find(r => {
+      if (repoId) {
+        return r.id === repoId;
+      }
+      return (
+        (r.owner || '') === owner &&
+        (r.name || '') === name &&
+        normalizeRepoDirectory(r.directory) === normalizedDirectory
+      );
+    });
+
+    if (!repo) {
+      throw new Error('Repository not found');
+    }
+
+    if (repo.provider === 'local') {
+      throw new Error('Local repository does not support token auth');
+    }
+
+    if (clearToken) {
+      delete repo.token;
+    } else {
+      const normalizedToken = normalizeRepoToken(token);
+      if (!normalizedToken) {
+        throw new Error('Missing token');
+      }
+      repo.token = normalizedToken;
+    }
+
+    this.saveRepos(repos);
+    this.clearCache({ removeFile: true });
     return this.loadRepos();
   }
 
@@ -872,7 +970,18 @@ class SkillService {
     }
   }
 
-  getGitHubToken(host = DEFAULT_GITHUB_HOST) {
+  getGitHubToken(repoOrHost = DEFAULT_GITHUB_HOST) {
+    if (repoOrHost && typeof repoOrHost === 'object') {
+      const repoToken = this.resolveRepoToken(repoOrHost);
+      if (repoToken) {
+        return repoToken;
+      }
+    }
+
+    const host = typeof repoOrHost === 'string'
+      ? repoOrHost
+      : (repoOrHost?.host || DEFAULT_GITHUB_HOST);
+
     // 优先从环境变量获取
     if (process.env.GITHUB_TOKEN) {
       return process.env.GITHUB_TOKEN;
@@ -899,7 +1008,18 @@ class SkillService {
     return this.getTokenFromGitCredential(host);
   }
 
-  getGitLabToken(host = DEFAULT_GITLAB_HOST) {
+  getGitLabToken(repoOrHost = DEFAULT_GITLAB_HOST) {
+    if (repoOrHost && typeof repoOrHost === 'object') {
+      const repoToken = this.resolveRepoToken(repoOrHost);
+      if (repoToken) {
+        return repoToken;
+      }
+    }
+
+    const host = typeof repoOrHost === 'string'
+      ? repoOrHost
+      : (repoOrHost?.host || DEFAULT_GITLAB_HOST);
+
     if (process.env.GITLAB_TOKEN) {
       return process.env.GITLAB_TOKEN;
     }
@@ -931,8 +1051,8 @@ class SkillService {
   /**
    * 通用 GitHub API 请求
    */
-  async fetchGitHubApi(url) {
-    const token = this.getGitHubToken(url);
+  async fetchGitHubApi(url, repo = null) {
+    const token = this.getGitHubToken(repo || url);
     const headers = {
       'User-Agent': 'cc-cli-skill-service',
       'Accept': 'application/vnd.github.v3+json'
@@ -971,15 +1091,15 @@ class SkillService {
 
   async fetchGitHubRepoTree(repo) {
     const treeUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/trees/${repo.branch}?recursive=1`;
-    const tree = await this.fetchGitHubApi(treeUrl);
+    const tree = await this.fetchGitHubApi(treeUrl, repo);
     if (tree?.truncated) {
       console.warn(`[SkillService] GitHub tree truncated for ${repo.owner}/${repo.name}`);
     }
     return tree?.tree || [];
   }
 
-  async fetchGitLabApi(url, { raw = false } = {}) {
-    const token = this.getGitLabToken(url);
+  async fetchGitLabApi(url, { raw = false, repo = null } = {}) {
+    const token = this.getGitLabToken(repo || url);
     const headers = {
       'User-Agent': 'cc-cli-skill-service'
     };
@@ -1033,7 +1153,7 @@ class SkillService {
 
     while (page) {
       const url = `${repo.host}/api/v4/projects/${projectId}/repository/tree?ref=${encodeURIComponent(repo.branch)}&recursive=true&per_page=100&page=${page}`;
-      const response = await this.fetchGitLabApi(url);
+      const response = await this.fetchGitLabApi(url, { repo });
       tree.push(...(response.data || []).map(item => ({
         ...item,
         type: item.type === 'tree' ? 'tree' : 'blob'
@@ -1050,21 +1170,26 @@ class SkillService {
     const projectId = encodeURIComponent(repo.projectPath);
     const normalizedFilePath = encodeURIComponent(normalizeRepoPath(filePath));
     const url = `${repo.host}/api/v4/projects/${projectId}/repository/files/${normalizedFilePath}/raw?ref=${encodeURIComponent(repo.branch)}`;
-    return this.fetchGitLabApi(url, { raw: true });
+    return this.fetchGitLabApi(url, { raw: true, repo });
   }
 
   /**
    * 使用 GitHub API 获取目录内容
    */
-  async fetchGitHubContents(owner, name, path, branch) {
+  async fetchGitHubContents(owner, name, path, branch, repo = null) {
     const url = `https://api.github.com/repos/${owner}/${name}/contents/${path}?ref=${branch}`;
+    const token = this.getGitHubToken(repo || url);
+    const headers = {
+      'User-Agent': 'cc-cli-skill-service',
+      'Accept': 'application/vnd.github.v3+json'
+    };
+    if (token) {
+      headers.Authorization = `token ${token}`;
+    }
 
     return new Promise((resolve, reject) => {
       const req = https.get(url, {
-        headers: {
-          'User-Agent': 'cc-cli-skill-service',
-          'Accept': 'application/vnd.github.v3+json'
-        },
+        headers,
         timeout: 15000
       }, (res) => {
         let data = '';
@@ -1136,7 +1261,7 @@ class SkillService {
       if (dir.name.startsWith('.') || dir.name === 'node_modules') continue;
 
       try {
-        const subContents = await this.fetchGitHubContents(repo.owner, repo.name, dir.path, repo.branch);
+        const subContents = await this.fetchGitHubContents(repo.owner, repo.name, dir.path, repo.branch, repo);
         await this.scanRepoContents(subContents, repo, dir.path, skills);
       } catch (err) {
         // 忽略子目录错误，继续扫描
@@ -1359,13 +1484,13 @@ class SkillService {
       if (normalizedRepo.provider === 'gitlab') {
         const projectId = encodeURIComponent(normalizedRepo.projectPath);
         zipUrl = `${normalizedRepo.host}/api/v4/projects/${projectId}/repository/archive.zip?sha=${encodeURIComponent(normalizedRepo.branch)}`;
-        const token = this.getGitLabToken(normalizedRepo.host);
+        const token = this.getGitLabToken(normalizedRepo);
         if (token) {
           zipHeaders['PRIVATE-TOKEN'] = token;
         }
       } else {
         zipUrl = `https://api.github.com/repos/${normalizedRepo.owner}/${normalizedRepo.name}/zipball/${encodeURIComponent(normalizedRepo.branch)}`;
-        const token = this.getGitHubToken(normalizedRepo.host);
+        const token = this.getGitHubToken(normalizedRepo);
         zipHeaders.Accept = 'application/vnd.github+json';
         if (token) {
           zipHeaders.Authorization = `token ${token}`;

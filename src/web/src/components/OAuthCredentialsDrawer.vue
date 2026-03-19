@@ -51,9 +51,51 @@
                 <div class="section-header">
                   <div>
                     <div class="section-title">已管理凭证</div>
-                    <div class="section-desc">每个工具只能设置一个默认 token</div>
+                    <div class="section-desc">Claude / Codex / Gemini 单开，OpenCode 支持多开；关闭开关即可停用本机 OAuth。</div>
                   </div>
                 </div>
+
+                <n-card size="small" class="state-card">
+                  <div class="state-top">
+                    <div>
+                      <div class="section-title">当前本机状态</div>
+                      <div class="state-storage">
+                        {{ nativeStorageLabel(getSummary(tool)?.nativeState?.nativeCredential?.storage) }}
+                      </div>
+                    </div>
+                    <div class="state-tags">
+                      <n-tag size="small" :type="modeTagType(getSummary(tool)?.nativeState?.mode)">
+                        {{ modeLabel(getSummary(tool)?.nativeState?.mode) }}
+                      </n-tag>
+                      <n-tag
+                        v-if="getActiveNativeCredentials(tool).length > 1"
+                        size="small"
+                        type="info"
+                      >
+                        {{ getActiveNativeCredentials(tool).length }} 个已启用
+                      </n-tag>
+                    </div>
+                  </div>
+
+                  <div class="state-grid">
+                    <div class="state-item">
+                      <span class="state-label">Token</span>
+                      <span class="state-value">{{ getSummary(tool)?.nativeState?.nativeCredential?.tokenPreview || '-' }}</span>
+                    </div>
+                    <div class="state-item">
+                      <span class="state-label">Email</span>
+                      <span class="state-value">{{ getSummary(tool)?.nativeState?.nativeCredential?.accountEmail || '-' }}</span>
+                    </div>
+                    <div class="state-item">
+                      <span class="state-label">Account ID</span>
+                      <span class="state-value">{{ getSummary(tool)?.nativeState?.nativeCredential?.accountId || '-' }}</span>
+                    </div>
+                  </div>
+
+                  <div class="state-hint">
+                    通过下方凭证开关控制本机 OAuth。若本机已有未托管 OAuth，可先点“同步本地现有配置”后再切换。
+                  </div>
+                </n-card>
 
                 <n-empty
                   v-if="!getSummary(tool)?.credentials?.length"
@@ -67,27 +109,20 @@
                     :key="credential.id"
                     size="small"
                     class="credential-card"
-                    :class="credential.isDefault ? 'credential-card--active' : 'credential-card--inactive'"
+                    :class="isCredentialEnabled(tool, credential) ? 'credential-card--active' : 'credential-card--inactive'"
                   >
                     <div class="credential-top">
                       <div class="credential-main">
                         <div class="credential-name">{{ credential.name }}</div>
                         <div class="credential-tags">
+                          <n-tag v-if="isCredentialEnabled(tool, credential)" size="small" type="info">已启用</n-tag>
                           <n-tag v-if="credential.isDefault" size="small" type="success">默认</n-tag>
                           <n-tag v-if="credential.providerId" size="small">{{ credential.providerId }}</n-tag>
+                          <n-tag v-if="credential.source" size="small" :bordered="false">{{ sourceLabel(credential.source) }}</n-tag>
                         </div>
                       </div>
 
                       <div class="credential-actions">
-                        <n-button
-                          size="small"
-                          type="primary"
-                          :loading="busyKey === `apply-${tool}-${credential.id}`"
-                          :disabled="isCredentialApplied(tool, credential)"
-                          @click="handleApply(tool, credential.id)"
-                        >
-                          应用到本地
-                        </n-button>
                         <n-button
                           size="small"
                           quaternary
@@ -96,6 +131,13 @@
                         >
                           删除
                         </n-button>
+                        <n-switch
+                          size="small"
+                          :value="isCredentialEnabled(tool, credential)"
+                          :loading="busyKey === `toggle-${tool}-${credential.id}`"
+                          :disabled="busyKey !== ''"
+                          @update:value="handleToggleCredential(tool, credential, $event)"
+                        />
                       </div>
                     </div>
 
@@ -113,8 +155,8 @@
                         <span class="meta-value">{{ credential.accountId || '-' }}</span>
                       </div>
                       <div class="meta-item">
-                        <span class="meta-label">Refresh_time</span>
-                        <span class="meta-value">{{ formatTime(credential.expiresAt) }}</span>
+                        <span class="meta-label">更新时间</span>
+                        <span class="meta-value">{{ formatTime(credential.updatedAt || credential.createdAt) }}</span>
                       </div>
                     </div>
 
@@ -187,6 +229,7 @@ import {
   NModal,
   NSpace,
   NSpin,
+  NSwitch,
   NTabPane,
   NTabs,
   NTag,
@@ -198,10 +241,11 @@ import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import message from '../utils/message'
 import {
   applyOAuthCredential,
+  clearNativeOAuthCredential,
+  disableNativeOAuthCredential,
   deleteOAuthCredential,
   getOAuthCredentialSummaries,
   importOAuthCredential,
-  setDefaultOAuthCredential,
   syncLocalOAuthCredential
 } from '../api/oauth-credentials'
 
@@ -248,37 +292,63 @@ function getSummary(tool) {
 
 function getSortedCredentials(tool) {
   const credentials = getSummary(tool)?.credentials || []
-  return [...credentials].sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0))
+  return [...credentials].sort((a, b) => {
+    const activeDiff = Number(isCredentialEnabled(tool, b)) - Number(isCredentialEnabled(tool, a))
+    if (activeDiff !== 0) return activeDiff
+    const defaultDiff = Number(b.isDefault) - Number(a.isDefault)
+    if (defaultDiff !== 0) return defaultDiff
+    return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)
+  })
+}
+
+function isOpenCodeTool(tool) {
+  return tool === 'opencode'
+}
+
+function isCredentialEnabled(tool, credential) {
+  return isCredentialApplied(tool, credential)
 }
 
 function isCredentialApplied(tool, credential) {
   const nativeState = getSummary(tool)?.nativeState
-  const nativeCredential = nativeState?.nativeCredential
-  if (!nativeState?.oauthPresent || nativeState?.mode !== 'oauth' || !nativeCredential) {
+  const nativeCredentials = getActiveNativeCredentials(tool)
+  if (!nativeState?.oauthPresent || nativeCredentials.length === 0) {
     return false
   }
 
-  const sameToken = nativeCredential.tokenPreview && credential.tokenPreview
-    ? nativeCredential.tokenPreview === credential.tokenPreview
-    : false
+  return nativeCredentials.some((nativeCredential) => {
+    const sameToken = nativeCredential.tokenPreview && credential.tokenPreview
+      ? nativeCredential.tokenPreview === credential.tokenPreview
+      : false
 
-  const sameProvider = !nativeCredential.providerId || !credential.providerId
-    ? true
-    : nativeCredential.providerId === credential.providerId
+    const sameProvider = !nativeCredential.providerId || !credential.providerId
+      ? true
+      : nativeCredential.providerId === credential.providerId
 
-  const sameAccountId = !nativeCredential.accountId || !credential.accountId
-    ? true
-    : nativeCredential.accountId === credential.accountId
+    const sameAccountId = !nativeCredential.accountId || !credential.accountId
+      ? true
+      : nativeCredential.accountId === credential.accountId
 
-  const sameAccountEmail = !nativeCredential.accountEmail || !credential.accountEmail
-    ? true
-    : nativeCredential.accountEmail === credential.accountEmail
+    const sameAccountEmail = !nativeCredential.accountEmail || !credential.accountEmail
+      ? true
+      : nativeCredential.accountEmail === credential.accountEmail
 
-  return sameToken && sameProvider && sameAccountId && sameAccountEmail
+    return sameToken && sameProvider && sameAccountId && sameAccountEmail
+  })
+}
+
+function getActiveNativeCredentials(tool) {
+  const nativeState = getSummary(tool)?.nativeState
+  const credentials = Array.isArray(nativeState?.nativeCredentials) ? nativeState.nativeCredentials : []
+  if (credentials.length > 0) {
+    return credentials
+  }
+  return nativeState?.nativeCredential ? [nativeState.nativeCredential] : []
 }
 
 function modeLabel(mode) {
   if (mode === 'oauth') return 'OAuth 控制'
+  if (mode === 'mixed') return '混合模式'
   if (mode === 'proxy') return '动态切换'
   if (mode === 'channel') return '渠道控制'
   return '未接管'
@@ -286,6 +356,7 @@ function modeLabel(mode) {
 
 function modeTagType(mode) {
   if (mode === 'oauth') return 'success'
+  if (mode === 'mixed') return 'info'
   if (mode === 'proxy') return 'warning'
   if (mode === 'channel') return 'info'
   return 'default'
@@ -310,16 +381,6 @@ function nativeStorageLabel(storage) {
   if (value === 'auth-file+keychain') return 'auth.json + keyring'
   if (value === 'encrypted-file+keychain') return '加密文件 + keyring'
   return value
-}
-
-function isExpired(expiresAt) {
-  if (!expiresAt) return false
-  const value = Number(expiresAt)
-  if (Number.isFinite(value) && value > 0) {
-    return value < Date.now()
-  }
-  const parsed = Date.parse(expiresAt)
-  return Number.isFinite(parsed) && parsed < Date.now()
 }
 
 function formatTime(value) {
@@ -411,25 +472,41 @@ async function handleSyncLocal(tool) {
   })
 }
 
-async function handleSetDefault(tool, credentialId) {
-  await withBusy(`default-${tool}-${credentialId}`, async () => {
-    const result = await setDefaultOAuthCredential(tool, credentialId)
-    summaries.value[tool] = result.summary
-    message.success(`${toolLabels[tool]} 默认凭证已更新`)
-  })
-}
+async function handleToggleCredential(tool, credential, enabled) {
+  const active = isCredentialEnabled(tool, credential)
+  if (enabled === active) {
+    return
+  }
 
-async function handleApply(tool, credentialId) {
-  await withBusy(`apply-${tool}-${credentialId}`, async () => {
-    const result = await applyOAuthCredential(tool, credentialId)
-    summaries.value[tool] = result.toolSummary
-    message.success(result.message || `${toolLabels[tool]} 已切换到 OAuth 控制`)
+  await withBusy(`toggle-${tool}-${credential.id}`, async () => {
+    if (enabled) {
+      const result = await applyOAuthCredential(tool, credential.id)
+      summaries.value[tool] = result.toolSummary
+      message.success(result.message || `${toolLabels[tool]} OAuth 已启用`)
+    } else {
+      const result = await disableNativeOAuthCredential(tool, credential.id)
+      summaries.value[tool] = {
+        ...(result.toolSummary || summaries.value[tool] || {}),
+        nativeState: result.nativeState
+      }
+      const messageText = isOpenCodeTool(tool)
+        ? `${toolLabels[tool]} OAuth provider 已关闭`
+        : `${toolLabels[tool]} 本机 OAuth 已关闭`
+      message.success(result.message || messageText)
+    }
+
     window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: tool } }))
   })
 }
 
 async function handleDelete(tool, credentialId) {
-  const confirmed = window.confirm('删除后不会自动清理本地原生配置，确认删除该凭证吗？')
+  const appliedCredential = (getSummary(tool)?.credentials || []).find((credential) => credential.id === credentialId)
+  const shouldClearNative = appliedCredential ? isCredentialApplied(tool, appliedCredential) : false
+  const confirmed = window.confirm(
+    shouldClearNative
+      ? '当前凭证正在本机生效，删除时会一并清理本机 OAuth，确认继续吗？'
+      : '确认删除该凭证吗？'
+  )
   if (!confirmed) {
     return
   }
@@ -437,7 +514,22 @@ async function handleDelete(tool, credentialId) {
   await withBusy(`delete-${tool}-${credentialId}`, async () => {
     const result = await deleteOAuthCredential(tool, credentialId)
     summaries.value[tool] = result.summary
-    message.success('OAuth 凭证已删除')
+    if (shouldClearNative) {
+      const clearResult = isOpenCodeTool(tool)
+        ? await disableNativeOAuthCredential(tool, credentialId)
+        : await clearNativeOAuthCredential(tool)
+      summaries.value[tool] = {
+        ...(summaries.value[tool] || {}),
+        ...(clearResult.toolSummary || {}),
+        nativeState: clearResult.nativeState
+      }
+      message.success(isOpenCodeTool(tool)
+        ? 'OAuth 凭证已删除，对应本机 OAuth provider 也已关闭'
+        : 'OAuth 凭证已删除，本机 OAuth 也已清理')
+    } else {
+      message.success('OAuth 凭证已删除')
+    }
+    window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: tool } }))
   })
 }
 
@@ -497,6 +589,13 @@ async function handleDelete(tool, credentialId) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.state-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-color-3);
 }
 
 .state-item {
@@ -583,6 +682,7 @@ async function handleDelete(tool, credentialId) {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .credential-meta {

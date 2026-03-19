@@ -11,6 +11,8 @@ const notificationHooks = require('../src/server/services/notification-hooks');
 const portHelper = require('../src/utils/port-helper');
 const mcpClient = require('../src/server/services/mcp-client');
 const mcpService = require('../src/server/services/mcp-service');
+const codexEnvManager = require('../src/server/services/codex-env-manager');
+const serverShutdown = require('../src/server/services/server-shutdown');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
 const { resolvePreferredHomeDir, isWindowsLikePlatform, normalizeWindowsHomePath } = require('../src/utils/home-dir');
 
@@ -33,6 +35,7 @@ function run() {
   const notificationHookTest = notificationHooks._test || {};
   const mcpClientTest = mcpClient._test || {};
   const mcpServiceTest = mcpService._test || {};
+  const codexEnvManagerTest = codexEnvManager._test || {};
   const portHelperTest = portHelper._test || {};
   assert(typeof hookTest.parseStopHookStatus === 'function', '缺少 parseStopHookStatus 测试导出');
   assert(typeof hookTest.buildStopHookCommand === 'function', '缺少 buildStopHookCommand 测试导出');
@@ -49,8 +52,11 @@ function run() {
   assert(typeof mcpClientTest.createMissingCommandHint === 'function', '缺少 createMissingCommandHint 测试导出');
   assert(typeof mcpClientTest.buildMissingCommandMessage === 'function', '缺少 buildMissingCommandMessage 测试导出');
   assert(typeof mcpServiceTest.buildMcpFailureResult === 'function', '缺少 buildMcpFailureResult 测试导出');
+  assert(typeof codexEnvManagerTest.buildWindowsEnvBatchScript === 'function', '缺少 buildWindowsEnvBatchScript 测试导出');
   assert(typeof portHelperTest.createPortToolIssue === 'function', '缺少 createPortToolIssue 测试导出');
   assert(typeof portHelperTest.formatPortToolIssue === 'function', '缺少 formatPortToolIssue 测试导出');
+  assert(typeof serverShutdown.attachServerShutdownHandling === 'function', '缺少 attachServerShutdownHandling 导出');
+  assert(typeof serverShutdown.expediteServerShutdown === 'function', '缺少 expediteServerShutdown 导出');
 
   assert(DEFAULT_CONFIG && typeof DEFAULT_CONFIG === 'object', '默认配置应存在');
   assert(DEFAULT_CONFIG.ports && typeof DEFAULT_CONFIG.ports === 'object', '默认配置中缺少 ports');
@@ -108,6 +114,13 @@ function run() {
   const mcpFailure = mcpServiceTest.buildMcpFailureResult({ data: { hint: missingMcpHint } }, 'spawn failed', 321);
   assert.strictEqual(mcpFailure.message, missingMcpHint.title, 'MCP 服务错误结果应优先采用 hint 标题');
   assert.strictEqual(mcpFailure.hint, missingMcpHint, 'MCP 服务错误结果应透传 hint');
+  const winEnvBatchScript = codexEnvManagerTest.buildWindowsEnvBatchScript([
+    { key: 'CC_PROXY_KEY', value: 'PROXY_KEY' },
+    { key: 'OLD_PROXY_KEY', remove: true }
+  ]);
+  assert.strictEqual(winEnvBatchScript.includes("SetEnvironmentVariable('CC_PROXY_KEY', 'PROXY_KEY', 'User')"), true, 'Windows 批量环境变量脚本应包含写入命令');
+  assert.strictEqual(winEnvBatchScript.includes("SetEnvironmentVariable('OLD_PROXY_KEY', $null, 'User')"), true, 'Windows 批量环境变量脚本应包含删除命令');
+  assert.strictEqual(winEnvBatchScript.includes('SendMessageTimeout'), true, 'Windows 批量环境变量脚本应包含环境刷新广播');
 
   const configPath = getConfigFilePath();
   assert(configPath.startsWith(path.join(os.homedir(), '.cc-tool')), '配置文件路径应位于 ~/.cc-tool 下');

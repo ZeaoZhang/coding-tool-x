@@ -46,7 +46,7 @@ import { useDefaultModels } from '../../composables/useDefaultModels.js'
 const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
-const PROVIDER_KEY_PATTERN = /^[a-z0-9_]+$/i
+const PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i
 
 function normalizeConcurrency(value) {
   const num = Number(value)
@@ -82,11 +82,15 @@ function validateHttpUrl(label, value, { required } = {}) {
 }
 
 function validateProviderKey(value) {
-  if (!value) {
+  const normalized = String(value || '').trim()
+  if (!normalized) {
     return 'Provider Key 不能为空'
   }
-  if (!PROVIDER_KEY_PATTERN.test(value)) {
-    return '只能包含字母、数字和下划线，例如 openai'
+  if (!PROVIDER_KEY_PATTERN.test(normalized)) {
+    return '只能包含字母、数字、下划线和中划线，例如 openai-official'
+  }
+  if (normalized.toLowerCase() === 'openai') {
+    return 'Provider Key 不能使用保留值 openai，请改成 openai-official 之类的自定义标识'
   }
   return ''
 }
@@ -539,7 +543,7 @@ const channelPanelFactories = {
             label: 'Provider Key',
             type: 'text',
             required: true,
-            placeholder: '英文标识，如 openai',
+            placeholder: '英文标识，如 openai-official',
             disabledOnEdit: true,
             validate: validateProviderKey
           },
@@ -596,7 +600,7 @@ const channelPanelFactories = {
     getInitialForm: () => ({
       presetId: 'openai',
       name: 'OpenAI',
-      providerKey: 'openai',
+      providerKey: 'openai-official',
       baseUrl: 'https://api.openai.com/v1',
       apiKey: '',
       websiteUrl: 'https://platform.openai.com',

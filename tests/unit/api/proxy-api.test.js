@@ -262,7 +262,7 @@ describe('proxy start route', () => {
     expect(res.body.error).toMatch(/没有启用的渠道/);
   });
 
-  test('returns 400 when active channel cannot be identified from settings', async () => {
+  test('falls back to first enabled channel when settings cannot identify active channel', async () => {
     readSettingsMock.mockReturnValue({
       env: {
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:20088',
@@ -272,8 +272,14 @@ describe('proxy start route', () => {
 
     const res = await request(buildApp()).post('/start', {});
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/无法从 settings\.json 识别当前渠道/);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.activeChannel).toEqual({
+      id: 'channel-1',
+      name: 'Primary',
+      baseUrl: 'https://api.anthropic.com',
+      websiteUrl: 'https://console.example.com'
+    });
   });
 
   test('starts proxy and persists active channel on success', async () => {

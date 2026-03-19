@@ -9,7 +9,7 @@ export const codexPresets = [
     category: 'official',
     websiteUrl: 'https://platform.openai.com',
     baseUrl: 'https://api.openai.com/v1',
-    providerKey: 'openai'
+    providerKey: 'openai-official'
   },
   {
     id: 'custom',

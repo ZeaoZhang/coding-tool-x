@@ -4,6 +4,7 @@ const BaseChannelService = require('./base/base-channel-service');
 const { isProxyConfig } = require('./settings-manager');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
+const { isWindowsLikePlatform } = require('../../utils/home-dir');
 
 // ── Claude 特有工具函数 ──
 
@@ -51,7 +52,10 @@ function extractApiKeyFromHelper(apiKeyHelper) {
 }
 
 function buildApiKeyHelperCommand() {
-  return 'echo \'ctx-managed\'';
+  if (isWindowsLikePlatform(process.platform, process.env)) {
+    return 'cmd /c echo ctx-managed';
+  }
+  return "echo 'ctx-managed'";
 }
 
 // ── Claude 原生设置写入 ──
@@ -59,6 +63,7 @@ function buildApiKeyHelperCommand() {
 function updateClaudeSettingsWithModelConfig(channel) {
   clearNativeOAuth('claude');
   const settingsPath = getClaudeSettingsPath();
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 
   let settings = {};
   if (fs.existsSync(settingsPath)) {
@@ -105,12 +110,17 @@ function updateClaudeSettingsWithModelConfig(channel) {
     delete settings.env.NO_PROXY;
   }
 
+  if (settings.env && Object.keys(settings.env).length === 0) {
+    delete settings.env;
+  }
+
   settings.apiKeyHelper = buildApiKeyHelperCommand();
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
 function updateClaudeSettings(baseUrl, apiKey) {
   const settingsPath = getClaudeSettingsPath();
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 
   let settings = {};
   if (fs.existsSync(settingsPath)) {
@@ -133,8 +143,17 @@ function updateClaudeSettings(baseUrl, apiKey) {
     settings.env.ANTHROPIC_API_KEY = apiKey;
   }
 
+  if (settings.env && Object.keys(settings.env).length === 0) {
+    delete settings.env;
+  }
+
   settings.apiKeyHelper = buildApiKeyHelperCommand();
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+}
+
+function resolveCurrentManagedChannel(channels = []) {
+  const allChannels = Array.isArray(channels) ? channels : [];
+  return allChannels.find(ch => ch.enabled !== false) || null;
 }
 
 // ── ClaudeChannelService ──
@@ -183,6 +202,39 @@ class ClaudeChannelService extends BaseChannelService {
     super.saveChannels(data);
     this._cache = data;
     this._cacheInitialized = true;
+  }
+
+  _onAfterCreate(channel, _allChannels) {
+    if (!isProxyConfig() && channel.enabled !== false) {
+      this._applyToNativeSettings(channel);
+    }
+  }
+
+  _onAfterUpdate(oldChannel, nextChannel, allChannels) {
+    if (isProxyConfig()) {
+      return;
+    }
+
+    if (oldChannel.enabled === false && nextChannel.enabled !== false) {
+      this._applyToNativeSettings(nextChannel);
+      return;
+    }
+
+    const activeChannel = resolveCurrentManagedChannel(allChannels);
+    if (nextChannel.enabled !== false && activeChannel?.id === nextChannel.id) {
+      this._applyToNativeSettings(nextChannel);
+    }
+  }
+
+  _onAfterDelete(_channel, allChannels) {
+    if (isProxyConfig()) {
+      return;
+    }
+
+    const activeChannel = resolveCurrentManagedChannel(allChannels);
+    if (activeChannel) {
+      this._applyToNativeSettings(activeChannel);
+    }
   }
 
   _applyToNativeSettings(channel) {

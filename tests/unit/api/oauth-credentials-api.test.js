@@ -22,6 +22,7 @@ beforeEach(() => {
     setDefaultCredential: vi.fn(() => ({ defaultCredentialId: 'cred-1', credentials: [] })),
     deleteCredential: vi.fn(() => ({ defaultCredentialId: null, credentials: [] })),
     applyStoredCredential: vi.fn(async () => ({ proxyStopped: true, credential: { id: 'cred-1' } })),
+    disableStoredCredential: vi.fn(() => ({ credential: { id: 'cred-1' }, toolSummary: { credentials: [] }, nativeState: { tool: 'claude', cleared: true } })),
     clearNativeOAuthState: vi.fn((tool) => ({ tool, cleared: true })),
     fetchCredentialUsage: vi.fn(async () => ({ provider: 'claude', raw: { total: 1 } }))
   };
@@ -216,13 +217,16 @@ describe('oauth-credentials api routes', () => {
   test('apply route broadcasts proxy state and usage route returns payload', async () => {
     const app = buildApp();
     const applyRes = await request(app).post('/claude/cred-1/apply', {});
+    const disableRes = await request(app).post('/claude/cred-1/disable-native', {});
     const clearRes = await request(app).post('/claude/clear-native', {});
     const usageRes = await request(app).get('/claude/cred-1/usage');
 
     expect(applyRes.status).toBe(200);
+    expect(disableRes.status).toBe(200);
     expect(applyRes.body.message).toMatch(/OAuth 凭证控制/);
     expect(clearRes.status).toBe(200);
     expect(usageRes.status).toBe(200);
+    expect(serviceExports.disableStoredCredential).toHaveBeenCalledWith('claude', 'cred-1');
     expect(broadcastProxyStateMock).toHaveBeenCalledWith('claude', { running: true }, { id: 'claude-1', enabled: true }, [{ id: 'claude-1', enabled: true }]);
     expect(serviceExports.fetchCredentialUsage).toHaveBeenCalledWith('claude', 'cred-1');
   });

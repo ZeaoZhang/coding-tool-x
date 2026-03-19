@@ -114,10 +114,12 @@ describe('pm2-autostart api', () => {
 
     expect(routerFactory._test.getExecOptions(1234, 'linux')).toEqual({
       shell: '/bin/bash',
-      timeout: 1234
+      timeout: 1234,
+      windowsHide: true
     });
     expect(routerFactory._test.getExecOptions(5678, 'win32')).toEqual({
-      timeout: 5678
+      timeout: 5678,
+      windowsHide: true
     });
   });
 

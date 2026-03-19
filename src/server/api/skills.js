@@ -4,6 +4,7 @@
 
 const express = require('express');
 const { SkillService } = require('../services/skill-service');
+const { maskToken } = require('../services/oauth-utils');
 
 const router = express.Router();
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
@@ -37,8 +38,27 @@ function extractRepoPayload(source = {}) {
     directory: repo.directory || source.directory || '',
     projectPath: repo.projectPath || source.projectPath || '',
     localPath: repo.localPath || source.localPath || '',
-    repoUrl: repo.repoUrl || source.repoUrl || ''
+    repoUrl: repo.repoUrl || source.repoUrl || '',
+    token: repo.token || source.token || ''
   };
+}
+
+function sanitizeRepo(repo = {}) {
+  const token = String(repo.token || '').trim();
+  const sanitized = {
+    ...repo,
+    hasToken: Boolean(token),
+    tokenPreview: token ? maskToken(token) : ''
+  };
+  delete sanitized.token;
+  return sanitized;
+}
+
+function sanitizeRepos(service, repos = []) {
+  if (typeof service.getReposForClient === 'function') {
+    return service.getReposForClient(repos);
+  }
+  return (Array.isArray(repos) ? repos : []).map(sanitizeRepo);
 }
 
 /**
@@ -290,7 +310,7 @@ router.get('/repos', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Skills API] Get repos error:', err);
@@ -325,7 +345,7 @@ router.post('/repos', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Skills API] Add repo error:', err);
@@ -345,7 +365,7 @@ router.delete('/repos', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Skills API] Remove repo error:', err);
@@ -366,10 +386,45 @@ router.put('/repos/toggle', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Skills API] Toggle repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.put('/repos/auth', (req, res) => {
+  try {
+    const { platform, service } = getSkillService(req);
+    const {
+      id = '',
+      owner = '',
+      name = '',
+      directory = '',
+      token = '',
+      clearToken = false
+    } = req.body;
+
+    if (!clearToken && !String(token || '').trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing token'
+      });
+    }
+
+    const repos = service.updateRepoAuth(owner, name, directory, token, clearToken, id);
+
+    res.json({
+      success: true,
+      platform,
+      repos: sanitizeRepos(service, repos)
+    });
+  } catch (err) {
+    console.error('[Skills API] Update repo auth error:', err);
     res.status(500).json({
       success: false,
       message: err.message
@@ -392,7 +447,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Skills API] Remove repo error:', err);
@@ -420,7 +475,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Skills API] Toggle repo error:', err);

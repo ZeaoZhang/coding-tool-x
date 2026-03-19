@@ -115,6 +115,48 @@ async function run() {
         'gitlab-credential-token',
         'GitLab token 在 CLI 不可用时应回退到 git credential'
       );
+
+      const githubRepos = service.addRepo({
+        provider: 'github',
+        host: 'github.example.com',
+        owner: 'secure-owner',
+        name: 'secure-repo',
+        branch: 'main',
+        token: 'repo-github-token'
+      });
+      const storedGitHubRepo = githubRepos[0];
+      assert.strictEqual(
+        service.getGitHubToken({
+          id: storedGitHubRepo.id,
+          provider: storedGitHubRepo.provider,
+          host: storedGitHubRepo.host,
+          owner: storedGitHubRepo.owner,
+          name: storedGitHubRepo.name,
+          branch: storedGitHubRepo.branch
+        }),
+        'repo-github-token',
+        'GitHub 仓库级 token 应优先于全局回退链路'
+      );
+
+      const gitlabRepos = service.addRepo({
+        provider: 'gitlab',
+        host: 'gitlab.example.com',
+        projectPath: 'team/subgroup/skills-repo',
+        branch: 'main',
+        token: 'repo-gitlab-token'
+      });
+      const storedGitLabRepo = gitlabRepos.find((item) => item.provider === 'gitlab');
+      assert.strictEqual(
+        service.getGitLabToken({
+          id: storedGitLabRepo.id,
+          provider: storedGitLabRepo.provider,
+          host: storedGitLabRepo.host,
+          projectPath: storedGitLabRepo.projectPath,
+          branch: storedGitLabRepo.branch
+        }),
+        'repo-gitlab-token',
+        'GitLab 仓库级 token 应优先于全局回退链路'
+      );
     } finally {
       cleanupTemp(tempRoot);
     }

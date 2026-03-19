@@ -43,6 +43,7 @@ const {
   buildClaudeCommand,
   buildGeminiCommand,
   generateNotifyScript,
+  generateSystemNotificationCommand,
   buildOpenCodePluginContent
 } = _test;
 
@@ -418,6 +419,26 @@ describe('generateNotifyScript', () => {
   test('sets FEISHU_ENABLED=false when called with no argument', () => {
     const script = generateNotifyScript();
     expect(script).toContain('FEISHU_ENABLED = false');
+  });
+
+  test('keeps Windows popup fallback in generated notification command', () => {
+    const command = generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
+    expect(command).toContain('ToastNotificationManager');
+    expect(command).toContain('Wscript.Shell');
+    expect(command).toContain('||');
+  });
+
+  test('keeps Windows popup fallback in generated dialog command', () => {
+    const command = generateSystemNotificationCommand('dialog', '这是一条测试通知', 'win32');
+    expect(command).toContain('MessageBox');
+    expect(command).toContain('Wscript.Shell');
+    expect(command).toContain('||');
+  });
+
+  test('embeds Windows popup helper in generated script', () => {
+    const script = generateNotifyScript();
+    expect(script).toContain('function buildWindowsPopupCommand');
+    expect(script).toContain('Wscript.Shell');
   });
 });
 

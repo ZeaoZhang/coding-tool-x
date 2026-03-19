@@ -190,10 +190,18 @@ describe('claude-hooks api', () => {
     const app = buildApp();
     const router = require('../../../src/server/api/claude-hooks');
     const res = await request(app).post('/test', { type: 'notification' });
+    const windowsCommand = router._test.generateSystemNotificationCommand('notification', 'win32');
+    const windowsDialogCommand = router._test.generateSystemNotificationCommand('dialog', 'win32');
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true, message: '系统测试通知已发送' });
     expect(execSyncSpy).toHaveBeenCalled();
+    expect(windowsCommand).toContain('ToastNotificationManager');
+    expect(windowsCommand).toContain('Wscript.Shell');
+    expect(windowsCommand).toContain('||');
+    expect(windowsDialogCommand).toContain('MessageBox');
+    expect(windowsDialogCommand).toContain('Wscript.Shell');
+    expect(windowsDialogCommand).toContain('||');
     expect(router._test.parseStopHookStatus({
       hooks: {
         Stop: [{ hooks: [{ command: `node "${notifyScriptPath}" --cc-notify-type=dialog` }] }]

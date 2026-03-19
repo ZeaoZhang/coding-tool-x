@@ -146,4 +146,56 @@ describe('native-keychain get/set/delete password', () => {
       })
     );
   });
+
+  test('disable-native path deletes keychain entries on macOS', () => {
+    setPlatform('darwin');
+    spawnSyncSpy.mockReturnValue({ status: 0, stdout: '', stderr: '' });
+
+    expect(keychain.deletePassword('Claude Code-credentials', 'demo')).toBe(true);
+    expect(spawnSyncSpy).toHaveBeenCalledWith('security', [
+      'delete-generic-password',
+      '-a',
+      'demo',
+      '-s',
+      'Claude Code-credentials'
+    ], expect.objectContaining({
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024
+    }));
+  });
+
+  test('disable-native path deletes keychain entries on linux', () => {
+    setPlatform('linux');
+    spawnSyncSpy.mockReturnValue({ status: 0, stdout: '', stderr: '' });
+
+    expect(keychain.deletePassword('Claude Code-credentials', 'demo')).toBe(true);
+    expect(spawnSyncSpy).toHaveBeenCalledWith('secret-tool', [
+      'clear',
+      'service',
+      'Claude Code-credentials',
+      'account',
+      'demo'
+    ], expect.objectContaining({
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024
+    }));
+  });
+
+  test('disable-native path deletes keychain entries on windows', () => {
+    setPlatform('win32');
+    process.env.ComSpec = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    spawnSyncSpy.mockReturnValue({ status: 0, stdout: '', stderr: '' });
+
+    expect(keychain.deletePassword('Claude Code-credentials', 'demo')).toBe(true);
+    expect(spawnSyncSpy).toHaveBeenCalledWith(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', expect.stringContaining('$vault.Remove')],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          CC_TOOL_SERVICE: 'Claude Code-credentials',
+          CC_TOOL_ACCOUNT: 'demo'
+        })
+      })
+    );
+  });
 });

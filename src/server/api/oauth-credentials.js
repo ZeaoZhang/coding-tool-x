@@ -9,6 +9,7 @@ const {
   setDefaultCredential,
   deleteCredential,
   applyStoredCredential,
+  disableStoredCredential,
   clearNativeOAuthState,
   fetchCredentialUsage
 } = require('../services/oauth-credentials-service');
@@ -117,10 +118,31 @@ router.post('/:tool/:credentialId/apply', async (req, res) => {
     assertTool(tool);
     const result = await applyStoredCredential(tool, credentialId);
     broadcastToolProxyState(tool);
+    const message = tool === 'opencode'
+      ? 'opencode 已应用 OAuth 凭证，并保留现有 API providers'
+      : `${tool} 已切换到 OAuth 凭证控制`;
     res.json({
       tool,
       ...result,
-      message: `${tool} 已切换到 OAuth 凭证控制`
+      message
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+router.post('/:tool/:credentialId/disable-native', (req, res) => {
+  try {
+    const { tool, credentialId } = req.params;
+    assertTool(tool);
+    const result = disableStoredCredential(tool, credentialId);
+    broadcastToolProxyState(tool);
+    res.json({
+      tool,
+      ...result,
+      message: tool === 'opencode'
+        ? 'opencode OAuth provider 已关闭'
+        : `${tool} 本机 OAuth 已关闭`
     });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });

@@ -15,6 +15,7 @@ const { getEffectiveApiKey } = require('./services/gemini-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('./services/base/proxy-utils');
+const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -512,6 +513,7 @@ async function startGeminiProxyServer(options = {}) {
 
     // 启动服务器
     proxyServer = http.createServer(proxyApp);
+    attachServerShutdownHandling(proxyServer);
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
@@ -552,8 +554,13 @@ async function stopGeminiProxyServer(options = {}) {
 
   requestMetadata.clear();
 
+  const shutdownTimer = expediteServerShutdown(proxyServer);
+
   return new Promise((resolve) => {
     proxyServer.close(() => {
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+      }
       console.log('Gemini proxy server stopped');
 
       // 清除代理启动时间（仅当明确要求时）
@@ -573,8 +580,9 @@ async function stopGeminiProxyServer(options = {}) {
 // 获取代理服务器状态
 function getGeminiProxyStatus() {
   const config = loadConfig();
-  const startTime = getProxyStartTime('gemini');
-  const runtime = getProxyRuntime('gemini');
+  const allowRecovery = !!proxyServer;
+  const startTime = getProxyStartTime('gemini', { allowRecovery });
+  const runtime = getProxyRuntime('gemini', { allowRecovery });
 
   return {
     running: !!proxyServer,

@@ -203,9 +203,16 @@ async function loadData(force = false) {
           installed: true,
           key: `installed-${p.name}`,
           description: p.description || marketInfo.description || '',
+          repoProvider: p.repoProvider || marketInfo.repoProvider || '',
+          repoHost: p.repoHost || marketInfo.repoHost || '',
           repoOwner: p.repoOwner || marketInfo.repoOwner || '',
           repoName: p.repoName || marketInfo.repoName || '',
           repoBranch: p.repoBranch || marketInfo.repoBranch || 'main',
+          repoProjectPath: p.repoProjectPath || marketInfo.repoProjectPath || '',
+          repoLocalPath: p.repoLocalPath || marketInfo.repoLocalPath || '',
+          repoId: p.repoId || marketInfo.repoId || '',
+          repoUrl: p.repoUrl || marketInfo.repoUrl || '',
+          readmeUrl: p.readmeUrl || marketInfo.readmeUrl || '',
           directory: p.directory || marketInfo.directory || p.installPath || ''
         }
       })
@@ -216,7 +223,7 @@ async function loadData(force = false) {
         .map(p => ({
           ...p,
           installed: false,
-          key: `market-${p.repoOwner || 'repo'}-${p.repoName || 'name'}-${p.directory || p.name}`
+          key: `market-${p.repoId || p.repoProjectPath || p.repoLocalPath || p.repoOwner || 'repo'}-${p.directory || p.name}`
         }))
 
       return [...installedPlugins, ...uninstalledPlugins]
@@ -259,14 +266,26 @@ async function handleImport() {
 }
 
 async function handleInstall(plugin) {
-  if (!plugin.installSource && !plugin.repoOwner) return message.error('缺少可安装来源')
+  if (!plugin.installSource && !plugin.repoOwner && !plugin.repoProjectPath && !plugin.repoLocalPath) {
+    return message.error('缺少可安装来源')
+  }
   installingKeys.value[plugin.key] = true
   try {
     const res = plugin.installSource
       ? await installPlugin('', null, currentPlatform.value, plugin.installSource)
       : await installPlugin(
         plugin.directory,
-        { owner: plugin.repoOwner, name: plugin.repoName, branch: plugin.repoBranch || 'main' },
+        {
+          id: plugin.repoId,
+          provider: plugin.repoProvider,
+          host: plugin.repoHost,
+          owner: plugin.repoOwner,
+          name: plugin.repoName,
+          branch: plugin.repoBranch || 'main',
+          projectPath: plugin.repoProjectPath,
+          localPath: plugin.repoLocalPath,
+          repoUrl: plugin.repoUrl
+        },
         currentPlatform.value
       )
     if (res.success) {
@@ -288,7 +307,7 @@ async function handleUninstall(plugin) {
       message.success(`插件 "${plugin.name}" 已卸载`)
       const idx = plugins.value.findIndex(p => p.key === plugin.key)
       if (idx !== -1) {
-        plugins.value[idx] = { ...plugins.value[idx], installed: false, key: `market-${plugin.repoOwner || 'repo'}-${plugin.repoName || 'name'}-${plugin.directory || plugin.name}` }
+        plugins.value[idx] = { ...plugins.value[idx], installed: false, key: `market-${plugin.repoId || plugin.repoProjectPath || plugin.repoLocalPath || plugin.repoOwner || 'repo'}-${plugin.directory || plugin.name}` }
       }
     } else { message.error(res.message || res.error || '卸载失败') }
   } catch (err) { message.error('卸载失败: ' + err.message) }

@@ -7,6 +7,7 @@ vi.mock('../../../src/config/paths', () => ({
 
 const { _test } = require('../../../src/server/services/codex-env-manager');
 const {
+  buildWindowsEnvBatchScript,
   shellQuote,
   buildHomeRelativeShellPath,
   buildSourceSnippet,
@@ -233,5 +234,18 @@ describe('getPosixProfileCandidates', () => {
     const { preferred, candidates } = getPosixProfileCandidates(home, { SHELL: '/bin/fish' });
     expect(preferred).toBe(`${home}/.profile`);
     expect(Array.isArray(candidates)).toBe(true);
+  });
+});
+
+describe('buildWindowsEnvBatchScript', () => {
+  it('combines set/remove operations and setting-change broadcast into one script', () => {
+    const script = buildWindowsEnvBatchScript([
+      { key: 'CC_PROXY_KEY', value: 'PROXY_KEY' },
+      { key: 'OLD_PROXY_KEY', remove: true }
+    ]);
+
+    expect(script).toContain("SetEnvironmentVariable('CC_PROXY_KEY', 'PROXY_KEY', 'User')");
+    expect(script).toContain("SetEnvironmentVariable('OLD_PROXY_KEY', $null, 'User')");
+    expect(script).toContain('SendMessageTimeout');
   });
 });

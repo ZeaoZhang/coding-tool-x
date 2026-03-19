@@ -30,19 +30,44 @@
                 @update:value="(val) => handleToggle(repo, val)"
               />
               <div class="repo-info">
-                <div class="repo-name">{{ repo.owner }}/{{ repo.name }}</div>
-                <div class="repo-branch">{{ repo.branch }}</div>
+                <div class="repo-name-row">
+                  <div class="repo-name">{{ getRepoLabel(repo) }}</div>
+                  <n-tag
+                    v-if="supportsRepoAuth(repo)"
+                    size="tiny"
+                    :type="repo.hasToken ? 'success' : 'default'"
+                    :bordered="false"
+                  >
+                    {{ repo.hasToken ? '已配 Token' : '未配 Token' }}
+                  </n-tag>
+                </div>
+                <div class="repo-branch">{{ getRepoSubtitle(repo) }}</div>
+                <div v-if="supportsRepoAuth(repo)" class="repo-auth-hint">
+                  {{ getRepoAuthSummary(repo) }}
+                </div>
               </div>
             </div>
-            <n-button
-              text
-              type="error"
-              size="tiny"
-              :focusable="false"
-              @click="handleRemove(repo)"
-            >
-              删除
-            </n-button>
+            <div class="repo-actions">
+              <n-button
+                v-if="supportsRepoAuth(repo)"
+                text
+                type="primary"
+                size="tiny"
+                :focusable="false"
+                @click="openAuthModal(repo)"
+              >
+                认证
+              </n-button>
+              <n-button
+                text
+                type="error"
+                size="tiny"
+                :focusable="false"
+                @click="handleRemove(repo)"
+              >
+                删除
+              </n-button>
+            </div>
           </div>
 
           <div v-if="repos.length === 0" class="empty-hint">
@@ -57,7 +82,7 @@
         <div class="add-form">
           <n-input
             v-model:value="newRepo.input"
-            placeholder="owner/repo 或 GitHub URL"
+            placeholder="GitHub/GitLab 仓库地址，或本地路径"
             size="small"
             class="repo-input"
             @keyup.enter="handleAdd"
@@ -80,14 +105,14 @@
           </n-button>
         </div>
         <div class="add-hint">
-          格式: owner/repo 或完整 GitHub URL
+          支持 `owner/repo`、GitHub/GitLab URL 或 SSH、以及本地路径
         </div>
       </div>
 
       <!-- 提示信息 -->
       <div class="tips">
         <n-alert type="info" :bordered="false" size="small">
-          添加仓库后，系统会从 GitHub 获取插件列表。如果网络较慢，请耐心等待或使用代理。
+          支持 GitHub、GitLab 和本地仓库路径；远程仓库可按仓库单独配置 Token。
         </n-alert>
       </div>
 
@@ -115,14 +140,85 @@
       </div>
     </div>
   </n-modal>
+
+  <n-modal
+    v-model:show="authModalVisible"
+    preset="card"
+    :title="authModalTitle"
+    :bordered="false"
+    style="width: 460px; max-width: 92vw;"
+    @close="handleAuthClose"
+  >
+    <div v-if="selectedAuthRepo" class="auth-manager">
+      <n-alert type="info" :bordered="false" size="small">
+        {{ getRepoAuthHelp(selectedAuthRepo) }}
+      </n-alert>
+
+      <div class="auth-meta">
+        <div class="auth-meta-row">
+          <span class="auth-label">仓库</span>
+          <span class="auth-value">{{ getRepoLabel(selectedAuthRepo) }}</span>
+        </div>
+        <div class="auth-meta-row">
+          <span class="auth-label">来源</span>
+          <span class="auth-value">{{ selectedAuthRepo.provider === 'gitlab' ? 'GitLab' : 'GitHub' }}</span>
+        </div>
+        <div class="auth-meta-row">
+          <span class="auth-label">当前状态</span>
+          <span class="auth-value">
+            {{ selectedAuthRepo.hasToken ? `已配置 ${selectedAuthRepo.tokenPreview || ''}` : '未配置仓库 Token' }}
+          </span>
+        </div>
+      </div>
+
+      <n-input
+        v-model:value="authForm.token"
+        type="password"
+        show-password-on="click"
+        clearable
+        placeholder="输入此仓库专属 Token"
+        @keyup.enter="handleSaveAuth"
+      />
+
+      <div class="auth-footnote">
+        仓库 Token 会优先于全局环境变量、CLI 登录和系统 Git 凭据。
+      </div>
+
+      <div class="auth-actions">
+        <n-button :focusable="false" @click="handleAuthClose">
+          取消
+        </n-button>
+        <n-button
+          v-if="selectedAuthRepo.hasToken"
+          type="warning"
+          secondary
+          :focusable="false"
+          :loading="clearingAuth"
+          @click="handleClearAuth"
+        >
+          清除 Token
+        </n-button>
+        <n-button
+          type="primary"
+          :focusable="false"
+          :disabled="!authForm.token.trim()"
+          :loading="savingAuth"
+          @click="handleSaveAuth"
+        >
+          保存 Token
+        </n-button>
+      </div>
+    </div>
+  </n-modal>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert, NSpin } from 'naive-ui'
 import { AddOutline, SyncOutline } from '@vicons/ionicons5'
-import { getPluginRepos, addPluginRepo, removePluginRepo, togglePluginRepo, syncPluginRepos } from '../api/plugins'
+import { getPluginRepos, addPluginRepo, removePluginRepo, togglePluginRepo, syncPluginRepos, updatePluginRepoAuth } from '../api/plugins'
 import message from '../utils/message'
+import { parseRepoInput, normalizeDirectory } from '../utils/skill-repo-input'
 
 const props = defineProps({
   visible: Boolean,
@@ -143,9 +239,21 @@ const repos = ref([])
 const loadingRepos = ref(false)
 const adding = ref(false)
 const syncing = ref(false)
+const authModalVisible = ref(false)
+const selectedAuthRepo = ref(null)
+const savingAuth = ref(false)
+const clearingAuth = ref(false)
+const authForm = ref({
+  token: ''
+})
 const newRepo = ref({
   input: '',
   branch: 'main'
+})
+
+const authModalTitle = computed(() => {
+  if (!selectedAuthRepo.value) return '仓库认证'
+  return `${selectedAuthRepo.value.provider === 'gitlab' ? 'GitLab' : 'GitHub'} 仓库认证`
 })
 
 const recommendedRepos = computed(() => {
@@ -164,17 +272,79 @@ const recommendedRepos = computed(() => {
 })
 
 const canAdd = computed(() => {
-  const input = newRepo.value.input.trim()
-  if (!input) return false
-
-  // Support both URL format and owner/repo format
-  if (input.includes('github.com')) {
-    return input.match(/github\.com\/([^\/]+)\/([^\/\.]+)/)
-  }
-
-  const parts = input.split('/')
-  return parts.length === 2 && parts[0] && parts[1]
+  return !!parseRepoInput(newRepo.value.input.trim())
 })
+
+function buildRepoIdentity(repo) {
+  const provider = repo.provider || (repo.localPath ? 'local' : (repo.projectPath ? 'gitlab' : 'github'))
+  const branch = repo.branch || 'main'
+  const directory = normalizeDirectory(repo.directory)
+  if (provider === 'local') {
+    return `local:${repo.localPath || ''}::${directory}`
+  }
+  if (provider === 'gitlab') {
+    return `gitlab:${repo.host || 'https://gitlab.com'}::${repo.projectPath || ''}::${branch}::${directory}`
+  }
+  return `github:${repo.host || 'https://github.com'}::${repo.owner || ''}/${repo.name || ''}::${branch}::${directory}`
+}
+
+function getRepoLabel(repo) {
+  if (repo.provider === 'local') return repo.localPath || repo.name || '本地仓库'
+  if (repo.provider === 'gitlab') return repo.projectPath || [repo.owner, repo.name].filter(Boolean).join('/')
+  return [repo.owner, repo.name].filter(Boolean).join('/')
+}
+
+function getRepoSubtitle(repo) {
+  const parts = []
+  if (repo.provider === 'local') {
+    parts.push('本地仓库')
+  } else if (repo.provider === 'gitlab') {
+    parts.push('GitLab')
+    if (repo.host) parts.push(repo.host.replace(/^https?:\/\//, ''))
+  } else {
+    parts.push('GitHub')
+  }
+  if (repo.branch) parts.push(repo.branch)
+  if (repo.directory) parts.push(`目录: ${repo.directory}`)
+  return parts.join(' · ')
+}
+
+function supportsRepoAuth(repo) {
+  return repo?.provider === 'github' || repo?.provider === 'gitlab'
+}
+
+function getRepoAuthSummary(repo) {
+  if (!supportsRepoAuth(repo)) return ''
+  if (repo.hasToken) {
+    return `仓库 Token: ${repo.tokenPreview || '已配置'}`
+  }
+  if (repo.provider === 'gitlab') {
+    return '未配置仓库 Token，将回退到全局 Token、glab 或 git credential'
+  }
+  return '未配置仓库 Token，可选配置后优先用于 GitHub API 访问'
+}
+
+function getRepoAuthHelp(repo) {
+  if (repo?.provider === 'gitlab') {
+    return '私有 GitLab 仓库建议配置仓库级 Private Token；保存后会优先使用当前仓库 Token，再回退到全局环境变量、glab 和 git credential。'
+  }
+  return 'GitHub 仓库可选配置 Personal Access Token；保存后会优先使用当前仓库 Token，再回退到全局环境变量、gh 和 git credential。'
+}
+
+function handleAuthClose() {
+  authModalVisible.value = false
+  selectedAuthRepo.value = null
+  authForm.value.token = ''
+  savingAuth.value = false
+  clearingAuth.value = false
+}
+
+function openAuthModal(repo) {
+  if (!supportsRepoAuth(repo)) return
+  selectedAuthRepo.value = repo
+  authForm.value.token = ''
+  authModalVisible.value = true
+}
 
 async function loadRepos() {
   loadingRepos.value = true
@@ -208,31 +378,12 @@ async function handleSync() {
 async function handleAdd() {
   if (!canAdd.value) return
 
-  const input = newRepo.value.input.trim()
-  let owner, name, url
-
-  // Parse URL format
-  if (input.includes('github.com')) {
-    const match = input.match(/github\.com\/([^\/]+)\/([^\/\.]+)/)
-    if (match) {
-      owner = match[1]
-      name = match[2]
-      url = input
-    }
-  } else {
-    // Parse owner/repo format
-    const parts = input.split('/')
-    owner = parts[0]
-    name = parts[1]
-    url = `https://github.com/${owner}/${name}`
-  }
+  const parsedRepo = parseRepoInput(newRepo.value.input.trim())
 
   adding.value = true
   try {
     const result = await addPluginRepo({
-      owner,
-      name,
-      url,
+      ...parsedRepo,
       branch: newRepo.value.branch || 'main',
       enabled: true
     }, props.platform)
@@ -253,7 +404,7 @@ async function handleAdd() {
 
 async function handleRemove(repo) {
   try {
-    const result = await removePluginRepo(repo.owner, repo.name, props.platform)
+    const result = await removePluginRepo(repo, props.platform)
     if (result.success) {
       repos.value = result.repos
       message.success('仓库已删除')
@@ -266,7 +417,7 @@ async function handleRemove(repo) {
 
 async function handleToggle(repo, enabled) {
   try {
-    const result = await togglePluginRepo(repo.owner, repo.name, enabled, props.platform)
+    const result = await togglePluginRepo(repo, enabled, props.platform)
     if (result.success) {
       repos.value = result.repos
       emit('updated')
@@ -276,8 +427,50 @@ async function handleToggle(repo, enabled) {
   }
 }
 
+async function handleSaveAuth() {
+  const repo = selectedAuthRepo.value
+  const token = authForm.value.token.trim()
+  if (!repo || !token) return
+
+  savingAuth.value = true
+  try {
+    const result = await updatePluginRepoAuth(repo, { token }, props.platform)
+    if (result.success) {
+      repos.value = result.repos || []
+      message.success('仓库 Token 已保存')
+      emit('updated')
+      handleAuthClose()
+    }
+  } catch (err) {
+    message.error('保存 Token 失败: ' + err.message)
+  } finally {
+    savingAuth.value = false
+  }
+}
+
+async function handleClearAuth() {
+  const repo = selectedAuthRepo.value
+  if (!repo) return
+
+  clearingAuth.value = true
+  try {
+    const result = await updatePluginRepoAuth(repo, { clearToken: true }, props.platform)
+    if (result.success) {
+      repos.value = result.repos || []
+      message.success('仓库 Token 已清除')
+      emit('updated')
+      handleAuthClose()
+    }
+  } catch (err) {
+    message.error('清除 Token 失败: ' + err.message)
+  } finally {
+    clearingAuth.value = false
+  }
+}
+
 function isRepoAdded(rec) {
-  return repos.value.some(r => r.owner === rec.owner && r.name === rec.name)
+  const identity = buildRepoIdentity(rec)
+  return repos.value.some(r => buildRepoIdentity(r) === identity)
 }
 
 async function quickAdd(rec) {
@@ -304,6 +497,7 @@ async function quickAdd(rec) {
 }
 
 function handleClose() {
+  handleAuthClose()
   emit('update:visible', false)
 }
 
@@ -335,7 +529,7 @@ onMounted(() => {
 
 .repo-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   padding: 10px 12px;
   background: var(--bg-tertiary);
@@ -344,14 +538,21 @@ onMounted(() => {
 
 .repo-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
 }
 
 .repo-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+}
+
+.repo-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .repo-name {
@@ -363,6 +564,19 @@ onMounted(() => {
 .repo-branch {
   font-size: 11px;
   color: var(--text-tertiary);
+}
+
+.repo-auth-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.repo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-left: 12px;
 }
 
 .empty-hint {
@@ -477,5 +691,50 @@ onMounted(() => {
 
 .add-icon {
   color: #18a058;
+}
+
+.auth-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+}
+
+.auth-meta-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.auth-value {
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: right;
+  word-break: break-all;
+}
+
+.auth-footnote {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

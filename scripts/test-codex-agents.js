@@ -263,13 +263,16 @@ async function run() {
       'responses',
       { enabled: true }
     );
-    assert.strictEqual(fs.readFileSync(managedEnvFile, 'utf-8').includes('OPENAI2_API_KEY'), true, '创建 Codex 渠道时应写入对应 env_key');
+    const managedEnvContent = fs.readFileSync(managedEnvFile, 'utf-8');
+    assert.strictEqual(managedEnvContent.includes('CC_PROXY_KEY'), true, '创建 Codex 渠道时应写入统一托管 env_key');
+    assert.strictEqual(managedEnvContent.includes('channel-secret'), true, '创建 Codex 渠道时应写入当前渠道 API Key');
     let authAfterChannel = JSON.parse(fs.readFileSync(path.join(codexDir, 'auth.json'), 'utf-8'));
-    assert.strictEqual(Object.prototype.hasOwnProperty.call(authAfterChannel, 'OPENAI2_API_KEY'), false, '普通 Codex 渠道不应再把 env_key 写入 auth.json');
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(authAfterChannel, 'CC_PROXY_KEY'), false, '普通 Codex 渠道不应再把统一 env_key 写入 auth.json');
 
     codexChannels.applyChannelToSettings(channel.id);
     const configAfterApply = readCodexConfig();
     assert.strictEqual(configAfterApply.model_provider, 'openai2', '应用 Codex 渠道后应切换 model_provider');
+    assert.strictEqual(configAfterApply.model_providers.openai2.env_key, 'CC_PROXY_KEY', '单渠道模式应与动态切换共用 CC_PROXY_KEY');
 
     codexChannels.updateChannel(channel.id, { apiKey: 'channel-secret-2' });
     assert.strictEqual(fs.readFileSync(managedEnvFile, 'utf-8').includes('channel-secret-2'), true, '更新 Codex 渠道后应同步最新 API Key');

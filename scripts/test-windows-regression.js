@@ -26,6 +26,7 @@ function run() {
   assert.strictEqual(typeof hookTest.resolvePreferredHomeDir, 'function', '缺少 resolvePreferredHomeDir 测试导出');
   assert.strictEqual(typeof notificationHookTest.getManagedCommandType, 'function', '缺少 getManagedCommandType 测试导出');
   assert.strictEqual(typeof notificationHookTest.parseCodexNotificationStatus, 'function', '缺少 parseCodexNotificationStatus 测试导出');
+  assert.strictEqual(typeof notificationHookTest.generateSystemNotificationCommand, 'function', '缺少 generateSystemNotificationCommand 测试导出');
   assert.strictEqual(typeof isSameOriginRequest, 'function', '缺少 isSameOriginRequest 导出');
   assert.strictEqual(typeof logsTest.buildFollowProcessSpec, 'function', '缺少 buildFollowProcessSpec 测试导出');
   assert.strictEqual(typeof pm2Test.getExecOptions, 'function', '缺少 getExecOptions 测试导出');
@@ -89,6 +90,10 @@ function run() {
     { enabled: true, external: false, type: 'notification', method: 'notify' },
     'Windows Codex notify 状态解析失败'
   );
+  const windowsNotificationCommand = notificationHookTest.generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
+  assert.strictEqual(windowsNotificationCommand.includes('ToastNotificationManager'), true, 'Windows 通知命令应包含 Toast 主路径');
+  assert.strictEqual(windowsNotificationCommand.includes('Wscript.Shell'), true, 'Windows 通知命令应包含 Popup 回退');
+  assert.strictEqual(windowsNotificationCommand.includes('||'), true, 'Windows 通知命令应包含外层 fallback');
   assert.strictEqual(
     isSameOriginRequest({ headers: { origin: 'http://localhost:19999', host: 'localhost:19999' } }),
     true,
