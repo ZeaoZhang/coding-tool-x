@@ -1,5 +1,13 @@
 const fs = require('fs');
 const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('./config/paths');
+const { isWindowsLikePlatform } = require('./utils/home-dir');
+
+function buildEchoCommand(value) {
+  if (isWindowsLikePlatform(process.platform, process.env)) {
+    return `cmd /c echo ${value}`;
+  }
+  return `echo '${value}'`;
+}
 
 // 恢复配置到默认状态
 async function resetConfig() {
@@ -56,7 +64,7 @@ async function resetConfig() {
               if (!settings.env) settings.env = {};
               settings.env.ANTHROPIC_BASE_URL = activeChannel.baseUrl;
               settings.env.ANTHROPIC_API_KEY = activeChannel.apiKey;
-              settings.apiKeyHelper = `echo '${activeChannel.apiKey}'`;
+              settings.apiKeyHelper = buildEchoCommand(activeChannel.apiKey);
 
               fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
               console.log(`[OK] 已恢复到渠道: ${activeChannel.name}`);

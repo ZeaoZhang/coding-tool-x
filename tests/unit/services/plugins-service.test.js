@@ -223,11 +223,11 @@ describe('DEFAULT_REPOS_BY_PLATFORM', () => {
     expect(Array.isArray(repos)).toBe(true);
   });
 
-  test('opencode has 3 default repos', () => {
+  test('opencode default repos is currently empty array', () => {
     const mod = loadModule();
     const svc = new mod.PluginsService('opencode');
     const repos = svc.getRepos();
-    expect(repos.length).toBe(3);
+    expect(repos).toEqual([]);
   });
 
   test('claude default repos is empty array', () => {
@@ -282,14 +282,14 @@ describe('PluginsService', () => {
 // ---------------------------------------------------------------------------
 describe('cloneRepos (via PluginsService internals)', () => {
   // cloneRepos is module-private; test its effect through config/default loaders
-  test('returns new array with cloned objects (opencode defaults)', () => {
+  test('returns a fresh array instance even when defaults are empty', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('opencode');
     const repos1 = svc.loadReposConfig().repos;
     const repos2 = svc.loadReposConfig().repos;
-    // Each call returns a fresh clone — mutating one should not affect the other
-    repos1[0].owner = 'MUTATED';
-    expect(repos2[0].owner).not.toBe('MUTATED');
+    expect(repos1).toEqual([]);
+    expect(repos2).toEqual([]);
+    expect(repos1).not.toBe(repos2);
   });
 
   test('empty repos returns empty array', () => {
@@ -370,12 +370,15 @@ describe('PluginsService market cache and repository management', () => {
     });
   });
 
-  test('addRepo rejects duplicate repositories', () => {
+  test('addRepo updates duplicate repositories instead of duplicating', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('claude');
     svc.addRepo({ owner: 'example', name: 'cool-plugins' });
+    const repos = svc.addRepo({ owner: 'example', name: 'cool-plugins', branch: 'main', token: 'repo-token' });
 
-    expect(() => svc.addRepo({ owner: 'example', name: 'cool-plugins' })).toThrow(/already exists/);
+    expect(repos).toHaveLength(1);
+    expect(repos[0].branch).toBe('main');
+    expect(repos[0].token).toBe('repo-token');
   });
 
   test('toggleRepo updates enabled state in config', () => {
@@ -386,6 +389,44 @@ describe('PluginsService market cache and repository management', () => {
     const repos = svc.toggleRepo('example', 'cool-plugins', false);
 
     expect(repos[0].enabled).toBe(false);
+  });
+
+  test('getReposForClient masks remote repo tokens', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    svc.addRepo({ owner: 'example', name: 'cool-plugins', token: 'super-secret-token' });
+
+    const repos = svc.getReposForClient();
+
+    expect(repos[0].token).toBeUndefined();
+    expect(repos[0].hasToken).toBe(true);
+    expect(repos[0].tokenPreview).toBe('supe...oken');
+  });
+
+  test('updateRepoAuth can set and clear repo token by id', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repos = svc.addRepo({ owner: 'example', name: 'cool-plugins' });
+    const repo = repos[0];
+
+    let updated = svc.updateRepoAuth('', '', 'repo-token', false, repo.id);
+    expect(updated[0].token).toBe('repo-token');
+
+    updated = svc.updateRepoAuth('', '', '', true, repo.id);
+    expect(updated[0].token).toBeUndefined();
+  });
+
+  test('addRepo supports local path and gitlab project path', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const localRepoPath = path.join(testDir, 'plugin-market');
+    fs.mkdirSync(localRepoPath, { recursive: true });
+
+    const localRepos = svc.addRepo({ provider: 'local', localPath: localRepoPath });
+    const gitlabRepos = svc.addRepo({ provider: 'gitlab', host: 'gitlab.example.com', projectPath: 'team/plugins' });
+
+    expect(localRepos.some(repo => repo.provider === 'local')).toBe(true);
+    expect(gitlabRepos.some(repo => repo.provider === 'gitlab')).toBe(true);
   });
 });
 

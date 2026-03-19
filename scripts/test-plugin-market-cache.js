@@ -57,7 +57,7 @@ async function run() {
       service.getRepos = () => [
         { owner: 'openai', name: 'plugins', branch: 'main', enabled: true }
       ];
-      service._fetchJson = async () => {
+      service.fetchRepoTree = async () => {
         throw new Error('HTTP 403');
       };
 
@@ -86,8 +86,14 @@ async function run() {
         { owner: 'repo-owner-a', name: 'repo-a', branch: 'main', enabled: true },
         { owner: 'repo-owner-b', name: 'repo-b', branch: 'main', enabled: true }
       ];
-      service._fetchJson = async (url) => {
-        if (url.includes('repo-owner-a/repo-a') && url.includes('.claude-plugin/marketplace.json')) {
+      service.fetchRepoTree = async (repo) => {
+        if (repo.owner === 'repo-owner-a') {
+          return [{ path: '.claude-plugin/marketplace.json', type: 'blob' }];
+        }
+        throw new Error('HTTP 403');
+      };
+      service.fetchRepoJson = async (repo, filePath) => {
+        if (repo.owner === 'repo-owner-a' && filePath === '.claude-plugin/marketplace.json') {
           return {
             plugins: [
               {

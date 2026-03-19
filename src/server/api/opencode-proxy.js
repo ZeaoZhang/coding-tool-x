@@ -16,7 +16,6 @@ const {
   getCurrentProxyPort
 } = require('../services/opencode-settings-manager');
 const { getChannels, getEnabledChannels, applyChannelToSettings } = require('../services/opencode-channels');
-const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
@@ -195,7 +194,6 @@ router.post('/start', async (req, res) => {
     });
 
     const activeModel = currentChannel.model || currentChannel.speedTestModel || null;
-    clearNativeOAuth('opencode');
     setProxyConfig(proxyResult.port, { channels: channelPayloads, model: activeModel });
 
     // 5. 广播状态更新

@@ -8,6 +8,7 @@ let fingerprintForMock;
 let inspectToolMock;
 let readAllNativeOAuthMock;
 let clearNativeOAuthMock;
+let disableNativeOAuthCredentialMock;
 let applyOAuthCredentialMock;
 let maskTokenMock;
 let decodeJwtPayloadMock;
@@ -52,6 +53,7 @@ function stubModules() {
   inspectToolMock = vi.fn((tool) => ({ tool, connected: false }));
   readAllNativeOAuthMock = vi.fn(() => []);
   clearNativeOAuthMock = vi.fn();
+  disableNativeOAuthCredentialMock = vi.fn();
   applyOAuthCredentialMock = vi.fn();
   const nativeAdapterPath = require.resolve('../../../src/server/services/native-oauth-adapters');
   require.cache[nativeAdapterPath] = {
@@ -64,6 +66,7 @@ function stubModules() {
       inspectTool: inspectToolMock,
       readAllNativeOAuth: readAllNativeOAuthMock,
       clearNativeOAuth: clearNativeOAuthMock,
+      disableNativeOAuthCredential: disableNativeOAuthCredentialMock,
       applyOAuthCredential: applyOAuthCredentialMock
     }
   };
@@ -357,6 +360,26 @@ describe('oauth credential application and cleanup', () => {
     expect(result.toolSummary.credentials[0].lastUsedAt).toBeTypeOf('number');
   });
 
+  test('applyStoredCredential preserves OpenCode channel enablement while applying OAuth', async () => {
+    const credential = service.importCredential('opencode', {
+      raw: JSON.stringify({
+        openai: {
+          type: 'oauth',
+          access: 'open-access',
+          refresh: 'open-refresh'
+        }
+      })
+    });
+
+    const result = await service.applyStoredCredential('opencode', credential.id);
+
+    expect(disableOpenCodeChannelsMock).not.toHaveBeenCalled();
+    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      accessToken: 'open-access'
+    }));
+    expect(result.toolSummary.credentials[0].lastUsedAt).toBeTypeOf('number');
+  });
+
   test('clearNativeOAuthState delegates to native adapter and returns latest state', () => {
     inspectToolMock.mockReturnValue({ tool: 'claude', connected: false, mode: 'oauth' });
 
@@ -364,6 +387,28 @@ describe('oauth credential application and cleanup', () => {
 
     expect(clearNativeOAuthMock).toHaveBeenCalledWith('claude');
     expect(state).toEqual({ tool: 'claude', connected: false, mode: 'oauth' });
+  });
+
+  test('disableStoredCredential delegates to native adapter and returns refreshed state', () => {
+    const credential = service.importCredential('opencode', {
+      raw: JSON.stringify({
+        openai: {
+          type: 'oauth',
+          access: 'open-access',
+          refresh: 'open-refresh',
+          accountId: 'acct-001'
+        }
+      })
+    });
+    inspectToolMock.mockReturnValue({ tool: 'opencode', mode: 'mixed', oauthPresent: true });
+
+    const result = service.disableStoredCredential('opencode', credential.id);
+
+    expect(disableNativeOAuthCredentialMock).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      providerId: 'openai',
+      accessToken: 'open-access'
+    }));
+    expect(result.nativeState).toEqual({ tool: 'opencode', mode: 'mixed', oauthPresent: true });
   });
 });
 

@@ -25,9 +25,24 @@ const { deleteBackup } = require('../services/codex-settings-manager');
 const { PATHS } = require('../../config/paths');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const CODEX_GATEWAY_SOURCE_TYPE = 'codex';
+const CODEX_PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i;
 
 function getDefaultCodexModel() {
   return getDefaultSpeedTestModelByToolType('codex');
+}
+
+function validateCodexProviderKey(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return 'Missing required fields: providerKey';
+  }
+  if (!CODEX_PROVIDER_KEY_PATTERN.test(normalized)) {
+    return 'Invalid providerKey: only letters, numbers, underscores, and hyphens are allowed';
+  }
+  if (normalized.toLowerCase() === 'openai') {
+    return 'Invalid providerKey: "openai" is reserved for the built-in OpenAI provider';
+  }
+  return '';
 }
 
 module.exports = (config) => {
@@ -137,6 +152,11 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Missing required fields: apiKey' });
       }
 
+      const providerKeyError = validateCodexProviderKey(providerKey);
+      if (providerKeyError) {
+        return res.status(400).json({ error: providerKeyError });
+      }
+
       // wireApi 固定为 'responses' (OpenAI Responses API 格式)
       const channel = createChannel(name, providerKey, baseUrl, apiKey, 'responses', {
         websiteUrl,
@@ -168,6 +188,12 @@ module.exports = (config) => {
 
       const { channelId } = req.params;
       const updates = req.body;
+      if (Object.prototype.hasOwnProperty.call(updates, 'providerKey')) {
+        const providerKeyError = validateCodexProviderKey(updates.providerKey);
+        if (providerKeyError) {
+          return res.status(400).json({ error: providerKeyError });
+        }
+      }
 
       const channel = updateChannel(channelId, updates);
       // 清除该渠道的模型重定向日志缓存，使下次请求时重新打印

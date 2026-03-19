@@ -15,6 +15,7 @@ const { getEffectiveApiKey } = require('./services/codex-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel, resolveTargetUrl } = require('./services/base/proxy-utils');
+const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -519,6 +520,7 @@ async function startCodexProxyServer(options = {}) {
 
     // 启动服务器
     proxyServer = http.createServer(proxyApp);
+    attachServerShutdownHandling(proxyServer);
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
@@ -559,8 +561,13 @@ async function stopCodexProxyServer(options = {}) {
 
   requestMetadata.clear();
 
+  const shutdownTimer = expediteServerShutdown(proxyServer);
+
   return new Promise((resolve) => {
     proxyServer.close(() => {
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+      }
       console.log('Codex proxy server stopped');
 
       // 清除代理启动时间（仅当明确要求时）
@@ -580,8 +587,9 @@ async function stopCodexProxyServer(options = {}) {
 // 获取代理服务器状态
 function getCodexProxyStatus() {
   const config = loadConfig();
-  const startTime = getProxyStartTime('codex');
-  const runtime = getProxyRuntime('codex');
+  const allowRecovery = !!proxyServer;
+  const startTime = getProxyStartTime('codex', { allowRecovery });
+  const runtime = getProxyRuntime('codex', { allowRecovery });
 
   return {
     running: !!proxyServer,

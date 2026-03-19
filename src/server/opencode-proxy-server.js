@@ -22,6 +22,7 @@ const { persistProxyRequestSnapshot, loadClaudeRequestTemplate } = require('./se
 const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel, resolveTargetUrl } = require('./services/base/proxy-utils');
+const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -4650,6 +4651,7 @@ async function startOpenCodeProxyServer(options = {}) {
 
     // 启动服务器
     proxyServer = http.createServer(proxyApp);
+    attachServerShutdownHandling(proxyServer);
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
@@ -4692,8 +4694,13 @@ async function stopOpenCodeProxyServer(options = {}) {
 
   requestMetadata.clear();
 
+  const shutdownTimer = expediteServerShutdown(proxyServer);
+
   return new Promise((resolve) => {
     proxyServer.close(() => {
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+      }
       console.log('OpenCode proxy server stopped');
 
       // 清除代理启动时间（仅当明确要求时）
@@ -4713,8 +4720,9 @@ async function stopOpenCodeProxyServer(options = {}) {
 // 获取代理服务器状态
 function getOpenCodeProxyStatus() {
   const config = loadConfig();
-  const startTime = getProxyStartTime('opencode');
-  const runtime = getProxyRuntime('opencode');
+  const allowRecovery = !!proxyServer;
+  const startTime = getProxyStartTime('opencode', { allowRecovery });
+  const runtime = getProxyRuntime('opencode', { allowRecovery });
 
   return {
     running: !!proxyServer,

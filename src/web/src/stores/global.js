@@ -38,6 +38,7 @@ function resolveLogTotal(source, data) {
 export const useGlobalStore = defineStore('global', () => {
   const claudeProxy = ref({
     running: false,
+    loading: false,
     activeChannel: null,
     port: 20088,
     runtime: null,
@@ -47,6 +48,7 @@ export const useGlobalStore = defineStore('global', () => {
 
   const codexProxy = ref({
     running: false,
+    loading: false,
     activeChannel: null,
     port: 20089,
     runtime: null,
@@ -56,6 +58,7 @@ export const useGlobalStore = defineStore('global', () => {
 
   const geminiProxy = ref({
     running: false,
+    loading: false,
     activeChannel: null,
     port: 20090,
     runtime: null,
@@ -65,6 +68,7 @@ export const useGlobalStore = defineStore('global', () => {
 
   const opencodeProxy = ref({
     running: false,
+    loading: false,
     activeChannel: null,
     port: 20091,
     runtime: null,

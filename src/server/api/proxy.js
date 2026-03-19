@@ -107,34 +107,32 @@ function findActiveChannelFromSettings() {
       }
     }
 
-    if (!baseUrl || !apiKey || baseUrl.includes('127.0.0.1')) {
-      console.log('[Proxy] Invalid settings: empty baseUrl/apiKey or localhost detected');
-      return null;
-    }
-
     const channels = getAllChannels();
 
     // Level 1: Exact match (baseUrl + apiKey)
-    let matchingChannel = channels.find(ch =>
-      ch.baseUrl === baseUrl && ch.apiKey === apiKey
-    );
+    if (baseUrl && apiKey && !baseUrl.includes('127.0.0.1')) {
+      let matchingChannel = channels.find(ch =>
+        ch.baseUrl === baseUrl && ch.apiKey === apiKey
+      );
+      if (matchingChannel) {
+        console.log(`[Proxy] Level 1 - Exact match: ${matchingChannel.name}`);
+        return matchingChannel;
+      }
 
-    if (matchingChannel) {
-      console.log(`[Proxy] Level 1 - Exact match: ${matchingChannel.name}`);
-      return matchingChannel;
-    }
-
-    // Level 2: Match by baseUrl only (when apiKey differs)
-    matchingChannel = channels.find(ch => ch.baseUrl === baseUrl);
-    if (matchingChannel) {
-      console.log(`[Proxy] Level 2 - Matched by baseUrl only: ${matchingChannel.name}`);
-      return matchingChannel;
+      // Level 2: Match by baseUrl only (when apiKey differs)
+      matchingChannel = channels.find(ch => ch.baseUrl === baseUrl);
+      if (matchingChannel) {
+        console.log(`[Proxy] Level 2 - Matched by baseUrl only: ${matchingChannel.name}`);
+        return matchingChannel;
+      }
+    } else {
+      console.log('[Proxy] settings.json has no valid baseUrl/apiKey, falling back to channel list');
     }
 
     // Level 3: Use active-channel.json for last known active channel
     const activeChannelId = loadActiveChannelId();
     if (activeChannelId) {
-      matchingChannel = channels.find(ch => ch.id === activeChannelId);
+      const matchingChannel = channels.find(ch => ch.id === activeChannelId);
       if (matchingChannel) {
         console.log(`[Proxy] Level 3 - Using last active channel: ${matchingChannel.name}`);
         return matchingChannel;
@@ -142,10 +140,10 @@ function findActiveChannelFromSettings() {
     }
 
     // Level 4: Return first enabled channel as last resort
-    matchingChannel = channels.find(ch => ch.enabled !== false);
-    if (matchingChannel) {
-      console.log(`[Proxy] Level 4 - Using first enabled channel: ${matchingChannel.name}`);
-      return matchingChannel;
+    const fallbackChannel = channels.find(ch => ch.enabled !== false);
+    if (fallbackChannel) {
+      console.log(`[Proxy] Level 4 - Using first enabled channel: ${fallbackChannel.name}`);
+      return fallbackChannel;
     }
 
     console.log('[Proxy] No matching channel found after all fallback levels');

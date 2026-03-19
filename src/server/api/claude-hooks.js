@@ -26,6 +26,10 @@ const UI_CONFIG_PATH = PATHS.uiConfig;
 // 通知脚本路径（用于飞书通知）
 const NOTIFY_SCRIPT_PATH = PATHS.notifyHook;
 
+function buildWindowsPopupCommand() {
+  return `powershell -NoProfile -Command "$wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('任务已完成 | 等待交互', 5, 'Coding Tool', 0x40)"`;
+}
+
 // 读取 Claude settings.json
 function readClaudeSettings() {
   try {
@@ -84,8 +88,8 @@ function writeUIConfig(config) {
 }
 
 // 生成系统通知命令（跨平台）
-function generateSystemNotificationCommand(type) {
-  if (platform === 'darwin') {
+function generateSystemNotificationCommand(type, platformOverride = platform) {
+  if (platformOverride === 'darwin') {
     // macOS
     if (type === 'dialog') {
       return `osascript -e 'display dialog "Claude Code 任务已完成 | 等待交互" with title "Coding Tool" buttons {"好的"} default button 1 with icon note'`;
@@ -94,12 +98,12 @@ function generateSystemNotificationCommand(type) {
       // terminal-notifier 需要 brew install terminal-notifier
       return `if command -v terminal-notifier &>/dev/null; then terminal-notifier -title "Coding Tool" -message "任务已完成 | 等待交互" -sound Glass -activate com.apple.Terminal; else osascript -e 'display notification "任务已完成 | 等待交互" with title "Coding Tool" sound name "Glass"'; fi`;
     }
-  } else if (platform === 'win32') {
+  } else if (platformOverride === 'win32') {
     // Windows
     if (type === 'dialog') {
-      return `powershell -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Claude Code 任务已完成 | 等待交互', 'Coding Tool', 'OK', 'Information')"`;
+      return `powershell -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Claude Code 任务已完成 | 等待交互', 'Coding Tool', 'OK', 'Information')" || ${buildWindowsPopupCommand()}`;
     } else {
-      return `powershell -NoProfile -Command "try { [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('<toast><visual><binding template=\\"ToastGeneric\\"><text>Coding Tool</text><text>任务已完成 | 等待交互</text></binding></visual><audio src=\\"ms-winsoundevent:Notification.Default\\"/></toast>'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) } catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('任务已完成 | 等待交互', 5, 'Coding Tool', 0x40) }"`;
+      return `powershell -NoProfile -Command "try { [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('<toast><visual><binding template=\\"ToastGeneric\\"><text>Coding Tool</text><text>任务已完成 | 等待交互</text></binding></visual><audio src=\\"ms-winsoundevent:Notification.Default\\"/></toast>'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) } catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('任务已完成 | 等待交互', 5, 'Coding Tool', 0x40) }" || ${buildWindowsPopupCommand()}`;
     }
   } else {
     // Linux
@@ -543,6 +547,7 @@ router.post('/test', (req, res) => {
       const command = generateSystemNotificationCommand(type || 'notification');
       const { execSync } = require('child_process');
       execSync(command, { stdio: 'ignore', windowsHide: true });
+      res.json({ success: true, message: '系统测试通知已发送' });
     }
   } catch (error) {
     console.error('Error testing notification:', error);

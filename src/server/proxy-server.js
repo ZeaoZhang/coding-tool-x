@@ -20,6 +20,7 @@ const { getEffectiveApiKey } = require('./services/channels');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel } = require('./services/base/proxy-utils');
+const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -541,6 +542,7 @@ async function startProxyServer(options = {}) {
     });
 
     proxyServer = http.createServer(proxyApp);
+    attachServerShutdownHandling(proxyServer);
 
     return new Promise((resolve, reject) => {
       proxyServer.listen(port, '127.0.0.1', () => {
@@ -580,8 +582,13 @@ async function stopProxyServer(options = {}) {
 
   requestMetadata.clear();
 
+  const shutdownTimer = expediteServerShutdown(proxyServer);
+
   return new Promise((resolve) => {
     proxyServer.close(() => {
+      if (shutdownTimer) {
+        clearTimeout(shutdownTimer);
+      }
       console.log('[OK] Proxy server stopped');
       if (clearStartTime) {
         clearProxyStartTime('claude');
@@ -599,8 +606,9 @@ async function stopProxyServer(options = {}) {
 // 获取代理服务器状态
 function getProxyStatus() {
   const config = loadConfig();
-  const startTime = getProxyStartTime('claude');
-  const runtime = getProxyRuntime('claude');
+  const allowRecovery = !!proxyServer;
+  const startTime = getProxyStartTime('claude', { allowRecovery });
+  const runtime = getProxyRuntime('claude', { allowRecovery });
 
   return {
     running: !!proxyServer,

@@ -142,6 +142,24 @@ export async function toggleSkillRepo(repo, enabled, platform = 'claude') {
   return response.data
 }
 
+/**
+ * 更新仓库级认证信息
+ * @param {object} repo - 仓库信息
+ * @param {object} auth - { token?: string, clearToken?: boolean }
+ */
+export async function updateSkillRepoAuth(repo, auth = {}, platform = 'claude') {
+  const response = await client.put('/skills/repos/auth', {
+    id: repo.id || '',
+    owner: repo.owner || '',
+    name: repo.name || '',
+    directory: repo.directory || '',
+    token: auth.token || '',
+    clearToken: !!auth.clearToken,
+    platform
+  })
+  return response.data
+}
+
 // ==================== 多文件技能管理 ====================
 
 /**

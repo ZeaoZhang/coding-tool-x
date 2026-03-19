@@ -15,10 +15,11 @@ beforeEach(() => {
     getInstalledSkills: vi.fn(() => []),
     installSkill: vi.fn(async () => ({ success: true })),
     uninstallSkill: vi.fn(() => ({ success: true })),
-    loadRepos: vi.fn(() => [{ owner: 'anthropics', name: 'skills' }]),
-    addRepo: vi.fn(() => [{ owner: 'anthropics', name: 'skills' }]),
+    loadRepos: vi.fn(() => [{ owner: 'anthropics', name: 'skills', token: 'secret-token' }]),
+    addRepo: vi.fn(() => [{ owner: 'anthropics', name: 'skills', token: 'secret-token' }]),
     removeRepo: vi.fn(() => []),
     toggleRepo: vi.fn(() => []),
+    updateRepoAuth: vi.fn(() => [{ owner: 'anthropics', name: 'skills', token: 'updated-secret' }]),
     createSkill: vi.fn(() => ({ success: true })),
     createSkillWithFiles: vi.fn(() => ({ success: true })),
     getSkillFiles: vi.fn(() => []),
@@ -234,6 +235,9 @@ describe('GET /repos', () => {
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.repos)).toBe(true);
     expect(res.body.repos[0].owner).toBe('anthropics');
+    expect(res.body.repos[0].token).toBeUndefined();
+    expect(res.body.repos[0].hasToken).toBe(true);
+    expect(res.body.repos[0].tokenPreview).toBe('secr...oken');
   });
 
   test('returns 500 on service error', async () => {
@@ -396,6 +400,48 @@ describe('PUT /repos/toggle', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(mockService.toggleRepo).toHaveBeenCalledWith('anthropics', 'skills', 'nested/skills', false, 'repo-1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUT /repos/auth
+// ---------------------------------------------------------------------------
+describe('PUT /repos/auth', () => {
+  test('updates repo auth and returns sanitized repos', async () => {
+    const app = buildApp();
+    const res = await request(app).put('/repos/auth', {
+      id: 'repo-1',
+      owner: 'anthropics',
+      name: 'skills',
+      directory: 'nested/skills',
+      token: 'new-secret-token'
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(mockService.updateRepoAuth).toHaveBeenCalledWith(
+      'anthropics',
+      'skills',
+      'nested/skills',
+      'new-secret-token',
+      false,
+      'repo-1'
+    );
+    expect(res.body.repos[0].token).toBeUndefined();
+    expect(res.body.repos[0].hasToken).toBe(true);
+  });
+
+  test('validates missing token when not clearing auth', async () => {
+    const app = buildApp();
+    const res = await request(app).put('/repos/auth', {
+      id: 'repo-1',
+      owner: 'anthropics',
+      name: 'skills',
+      token: '   '
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 });
 

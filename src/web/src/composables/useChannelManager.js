@@ -236,6 +236,11 @@ export default function useChannelManager(config) {
           return
         }
 
+        if (field.disabledOnEdit && state.editingChannel) {
+          clearFieldValidation(field)
+          return
+        }
+
         const value = getNestedValue(state.formData, field.key)
         let errorMessage = ''
         if (field.required) {
@@ -332,6 +337,7 @@ export default function useChannelManager(config) {
           await config.api.applyToSettings(channel)
           message.success('已将渠道写入配置文件')
           await loadChannels()
+          window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: config.type } }))
         } catch (error) {
           message.error(resolveError(error))
         }

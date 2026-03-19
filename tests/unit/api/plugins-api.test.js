@@ -39,10 +39,11 @@ function createMockService() {
       success: true,
       plugin: { name: 'demo-plugin', version: '1.0.0' }
     })),
-    getRepos: vi.fn(() => [{ owner: 'demo', name: 'plugins', url: 'https://github.com/demo/plugins' }]),
-    addRepo: vi.fn(() => [{ owner: 'demo', name: 'plugins', url: 'https://github.com/demo/plugins' }]),
+    getRepos: vi.fn(() => [{ owner: 'demo', name: 'plugins', url: 'https://github.com/demo/plugins', token: 'secret-token' }]),
+    addRepo: vi.fn(() => [{ owner: 'demo', name: 'plugins', url: 'https://github.com/demo/plugins', token: 'secret-token' }]),
     removeRepo: vi.fn(() => []),
     toggleRepo: vi.fn(() => [{ owner: 'demo', name: 'plugins', enabled: false }]),
+    updateRepoAuth: vi.fn(() => [{ owner: 'demo', name: 'plugins', token: 'updated-token' }]),
     syncRepos: vi.fn(async () => ({ results: [{ repo: 'https://github.com/demo/plugins', success: true }] })),
     syncPlugins: vi.fn(async () => ({ plugins: [{ name: 'demo-plugin' }] })),
     getPluginReadme: vi.fn(async () => '# Demo'),
@@ -145,7 +146,34 @@ describe('POST /install', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(services.opencode.installPlugin).toHaveBeenCalledWith('npm:demo-plugin');
+    expect(services.opencode.installPlugin).toHaveBeenCalledWith('npm:demo-plugin', null);
+  });
+
+  test('installs from directory + repo payload with provider context', async () => {
+    const res = await request(buildApp()).post('/install', {
+      platform: 'claude',
+      directory: 'plugins/demo-plugin',
+      repo: {
+        id: 'repo-1',
+        provider: 'gitlab',
+        host: 'https://gitlab.example.com',
+        projectPath: 'team/demo-plugins',
+        branch: 'main'
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.installPlugin).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({
+        id: 'repo-1',
+        provider: 'gitlab',
+        host: 'https://gitlab.example.com',
+        projectPath: 'team/demo-plugins',
+        directory: 'plugins/demo-plugin'
+      })
+    );
   });
 
   test('returns 400 when install source is missing', async () => {
@@ -171,6 +199,8 @@ describe('repository routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.repos[0].owner).toBe('demo');
+    expect(res.body.repos[0].token).toBeUndefined();
+    expect(res.body.repos[0].hasToken).toBe(true);
   });
 
   test('POST /repos validates repository url', async () => {
@@ -192,7 +222,30 @@ describe('repository routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(services.opencode.toggleRepo).toHaveBeenCalledWith('demo', 'plugins', false);
+    expect(services.opencode.toggleRepo).toHaveBeenCalledWith('demo', 'plugins', false, '');
+  });
+
+  test('PUT /repos/auth updates auth for a repository', async () => {
+    const res = await request(buildApp()).put('/repos/auth', {
+      id: 'repo-1',
+      owner: 'demo',
+      name: 'plugins',
+      token: 'new-secret-token'
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.updateRepoAuth).toHaveBeenCalledWith('demo', 'plugins', 'new-secret-token', false, 'repo-1');
+    expect(res.body.repos[0].token).toBeUndefined();
+    expect(res.body.repos[0].hasToken).toBe(true);
+  });
+
+  test('DELETE /repos removes using generic route with id', async () => {
+    const res = await request(buildApp()).delete('/repos?id=repo-1&owner=demo&name=plugins');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.removeRepo).toHaveBeenCalledWith('demo', 'plugins', 'repo-1');
   });
 
   test('POST /repos/sync proxies sync results', async () => {
@@ -220,6 +273,21 @@ describe('plugin sync and readme routes', () => {
     expect(res.status).toBe(500);
     expect(res.body.success).toBe(false);
     expect(res.body.readme).toBe('');
+  });
+
+  test('GET /:name/readme forwards provider-specific repo info', async () => {
+    const res = await request(buildApp()).get('/demo-plugin/readme?repoId=repo-1&repoProvider=gitlab&repoHost=https://gitlab.example.com&repoProjectPath=team/plugins&repoBranch=main&directory=plugins/demo-plugin');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.claude.getPluginReadme).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'demo-plugin',
+      repoId: 'repo-1',
+      repoProvider: 'gitlab',
+      repoHost: 'https://gitlab.example.com',
+      repoProjectPath: 'team/plugins',
+      directory: 'plugins/demo-plugin'
+    }));
   });
 });
 

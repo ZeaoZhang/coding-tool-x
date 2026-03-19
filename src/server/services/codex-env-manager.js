@@ -32,6 +32,40 @@ function powershellQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function buildWindowsSettingChangeScript() {
+  return [
+    'Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"',
+    '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]',
+    'public static extern IntPtr SendMessageTimeout(',
+    '    IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,',
+    '    uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);',
+    '"@',
+    '$HWND_BROADCAST = [IntPtr]0xffff',
+    '$WM_SETTINGCHANGE = 0x1a',
+    '$SMTO_ABORTIFHUNG = 0x0002',
+    '$result = [UIntPtr]::Zero',
+    '[Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE,',
+    '    [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null'
+  ].join('\n');
+}
+
+function buildWindowsEnvBatchScript(operations = [], { includeSettingChangeBroadcast = true } = {}) {
+  const normalizedOperations = Array.isArray(operations) ? operations.filter(Boolean) : [];
+  const lines = normalizedOperations.map((operation) => {
+    const key = powershellQuote(operation.key || '');
+    if (operation.remove) {
+      return `[Environment]::SetEnvironmentVariable(${key}, $null, 'User')`;
+    }
+    return `[Environment]::SetEnvironmentVariable(${key}, ${powershellQuote(operation.value || '')}, 'User')`;
+  });
+
+  if (includeSettingChangeBroadcast && lines.length > 0) {
+    lines.push(buildWindowsSettingChangeScript());
+  }
+
+  return lines.join('\n');
+}
+
 function buildHomeRelativeShellPath(filePath, homeDir) {
   const normalizedHome = path.resolve(homeDir);
   const normalizedFilePath = path.resolve(filePath);
@@ -341,48 +375,28 @@ function runLaunchctlCommand(args, execSync) {
 }
 
 function broadcastWindowsSettingChange(execSync) {
-  const script = [
-    'Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"',
-    '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]',
-    'public static extern IntPtr SendMessageTimeout(',
-    '    IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam,',
-    '    uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);',
-    '"@',
-    '$HWND_BROADCAST = [IntPtr]0xffff',
-    '$WM_SETTINGCHANGE = 0x1a',
-    '$SMTO_ABORTIFHUNG = 0x0002',
-    '$result = [UIntPtr]::Zero',
-    '[Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE,',
-    '    [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null'
-  ].join('\n');
-  runWindowsEnvCommand(script, execSync);
+  runWindowsEnvCommand(buildWindowsSettingChangeScript(), execSync);
 }
 
 function syncWindowsEnvironment(nextValues, previousState, options) {
   const { stateFilePath, execSync } = options;
   const nextKeys = Object.keys(nextValues).sort();
   const previousValues = previousState.values || {};
-  let changed = false;
+  const operations = [];
 
   for (const [key, value] of Object.entries(nextValues)) {
     if (previousValues[key] === value) continue;
-    setWindowsUserEnv(key, value, execSync);
-    changed = true;
+    operations.push({ key, value });
   }
 
   for (const key of Object.keys(previousValues)) {
     if (Object.prototype.hasOwnProperty.call(nextValues, key)) continue;
-    removeWindowsUserEnv(key, execSync);
-    changed = true;
+    operations.push({ key, remove: true });
   }
 
-  // 广播 WM_SETTINGCHANGE，通知已打开的应用（如 VSCode）刷新环境变量
+  const changed = operations.length > 0;
   if (changed) {
-    try {
-      broadcastWindowsSettingChange(execSync);
-    } catch {
-      // 广播失败不影响主流程，环境变量已写入注册表
-    }
+    runWindowsEnvCommand(buildWindowsEnvBatchScript(operations), execSync);
   }
 
   if (nextKeys.length > 0) {
@@ -427,14 +441,14 @@ function runWindowsEnvCommand(script, execSync) {
 
 function setWindowsUserEnv(key, value, execSync) {
   runWindowsEnvCommand(
-    `[Environment]::SetEnvironmentVariable(${powershellQuote(key)}, ${powershellQuote(value)}, 'User')`,
+    buildWindowsEnvBatchScript([{ key, value }], { includeSettingChangeBroadcast: false }),
     execSync
   );
 }
 
 function removeWindowsUserEnv(key, execSync) {
   runWindowsEnvCommand(
-    `[Environment]::SetEnvironmentVariable(${powershellQuote(key)}, $null, 'User')`,
+    buildWindowsEnvBatchScript([{ key, remove: true }], { includeSettingChangeBroadcast: false }),
     execSync
   );
 }
@@ -473,8 +487,10 @@ module.exports = {
   syncCodexUserEnvironment,
   _test: {
     broadcastWindowsSettingChange,
+    buildWindowsEnvBatchScript,
     buildHomeRelativeShellPath,
     buildNextEnvValues,
+    buildWindowsSettingChangeScript,
     buildSourceSnippet,
     getPosixProfileCandidates,
     readState,

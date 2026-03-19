@@ -5,27 +5,46 @@ const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { PATHS } = require('../../config/paths');
 const { getCodexDir } = require('./codex-config');
-const { isProxyConfig } = require('./codex-settings-manager');
+const { isProxyConfig, readConfig } = require('./codex-settings-manager');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { syncCodexUserEnvironment } = require('./codex-env-manager');
 const BaseChannelService = require('./base/base-channel-service');
 
-const CODEX_PROXY_ENV_KEY = 'CC_PROXY_KEY';
+const CODEX_MANAGED_ENV_KEY = 'CC_PROXY_KEY';
 const CODEX_PROXY_ENV_VALUE = 'PROXY_KEY';
 
 // ── Codex 特有工具函数 ──
 
-function buildManagedCodexEnvMap(channels = [], { includeProxyKey = false } = {}) {
-  if (includeProxyKey) {
-    return { [CODEX_PROXY_ENV_KEY]: CODEX_PROXY_ENV_VALUE };
+function resolveCurrentManagedChannel(channels = []) {
+  const allChannels = Array.isArray(channels) ? channels : [];
+  let currentProvider = '';
+
+  try {
+    currentProvider = String(readConfig()?.model_provider || '').trim();
+  } catch (err) {
+    currentProvider = '';
   }
-  const envMap = {};
-  for (const ch of channels) {
-    if (ch.enabled !== false && ch.envKey && ch.apiKey) {
-      envMap[ch.envKey] = ch.apiKey;
+
+  if (currentProvider && currentProvider !== 'cc-proxy') {
+    const matched = allChannels.find(ch => ch.providerKey === currentProvider);
+    if (matched) {
+      return matched;
     }
   }
-  return envMap;
+
+  return allChannels.find(ch => ch.enabled !== false) || null;
+}
+
+function buildManagedCodexEnvMap(channels = [], { includeProxyKey = false, activeChannel = null } = {}) {
+  if (includeProxyKey) {
+    return { [CODEX_MANAGED_ENV_KEY]: CODEX_PROXY_ENV_VALUE };
+  }
+
+  const targetChannel = activeChannel || resolveCurrentManagedChannel(channels);
+  if (targetChannel?.apiKey) {
+    return { [CODEX_MANAGED_ENV_KEY]: targetChannel.apiKey };
+  }
+  return {};
 }
 
 function syncAllChannelEnvVars() {
@@ -34,7 +53,8 @@ function syncAllChannelEnvVars() {
     const data = svc.loadChannels();
     const proxyRunning = isProxyConfig();
     const envMap = buildManagedCodexEnvMap(data.channels, {
-      includeProxyKey: proxyRunning
+      includeProxyKey: proxyRunning,
+      activeChannel: proxyRunning ? null : resolveCurrentManagedChannel(data.channels)
     });
     syncCodexUserEnvironment(envMap, { replace: true });
   } catch (err) {
@@ -87,7 +107,7 @@ function writeCodexConfigForMultiChannel(channels) {
         name: ch.name,
         base_url: ch.baseUrl,
         wire_api: ch.wireApi || 'responses',
-        env_key: ch.envKey,
+        env_key: CODEX_MANAGED_ENV_KEY,
         requires_openai_auth: ch.requiresOpenaiAuth !== false
       };
       if (ch.queryParams && Object.keys(ch.queryParams).length > 0) {
@@ -121,7 +141,7 @@ class CodexChannelService extends BaseChannelService {
   _applyDefaults(channel) {
     const ch = super._applyDefaults(channel);
     ch.providerKey = ch.providerKey || '';
-    ch.envKey = ch.envKey || '';
+    ch.envKey = CODEX_MANAGED_ENV_KEY;
     ch.wireApi = ch.wireApi || 'responses';
     ch.model = ch.model || '';
     ch.speedTestModel = ch.speedTestModel || null;
@@ -143,19 +163,38 @@ class CodexChannelService extends BaseChannelService {
   }
 
   _onAfterCreate(_channel, _allChannels) {
+    if (_channel.enabled !== false && !isProxyConfig()) {
+      this._applyToNativeSettings(_channel);
+      return;
+    }
     syncAllChannelEnvVars();
-    // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
   }
 
-  _onAfterUpdate(_old, _next, _allChannels) {
+  _onAfterUpdate(_old, _next, allChannels) {
+    if (!isProxyConfig()) {
+      if (_old.enabled === false && _next.enabled !== false) {
+        this._applyToNativeSettings(_next);
+        return;
+      }
+      const activeChannel = resolveCurrentManagedChannel(allChannels);
+      if (_next.enabled !== false && activeChannel?.id === _next.id) {
+        this._applyToNativeSettings(_next);
+        return;
+      }
+    }
     syncAllChannelEnvVars();
-    // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
   }
 
-  _onAfterDelete(_channel, _allChannels) {
+  _onAfterDelete(_channel, allChannels) {
+    if (!isProxyConfig()) {
+      const activeChannel = resolveCurrentManagedChannel(allChannels);
+      if (activeChannel && activeChannel.enabled !== false) {
+        this._applyToNativeSettings(activeChannel);
+        return;
+      }
+    }
     clearNativeOAuth('codex');
     syncAllChannelEnvVars();
-    // 注意：不再自动写入 config.toml，只在开启代理控制时才同步
   }
 
   _applyToNativeSettings(channel) {
@@ -184,7 +223,7 @@ class CodexChannelService extends BaseChannelService {
       name: channel.name,
       base_url: channel.baseUrl,
       wire_api: channel.wireApi || 'responses',
-      env_key: channel.envKey,
+      env_key: CODEX_MANAGED_ENV_KEY,
       requires_openai_auth: channel.requiresOpenaiAuth !== false
     };
 
@@ -215,10 +254,9 @@ const service = getServiceInstance();
 function getChannels() { return service.getChannels(); }
 function getEnabledChannels() { return service.getEnabledChannels(); }
 function createChannel(name, providerKey, baseUrl, apiKey, wireApi, extraConfig = {}) {
-  const envKey = extraConfig.envKey || `${providerKey.toUpperCase()}_API_KEY`;
   return service.createChannel({
     name, providerKey, baseUrl, apiKey, wireApi,
-    envKey,
+    envKey: CODEX_MANAGED_ENV_KEY,
     ...extraConfig,
   });
 }
@@ -251,4 +289,9 @@ module.exports = {
   applyChannelToSettings,
   getEffectiveApiKey,
   disableAllChannels,
+  _test: {
+    buildManagedCodexEnvMap,
+    CODEX_MANAGED_ENV_KEY,
+    resolveCurrentManagedChannel
+  }
 };

@@ -25,6 +25,16 @@ export async function applyOAuthCredential(tool, credentialId) {
   return response.data
 }
 
+export async function disableNativeOAuthCredential(tool, credentialId) {
+  const response = await client.post(`/oauth-credentials/${tool}/${credentialId}/disable-native`)
+  return response.data
+}
+
+export async function clearNativeOAuthCredential(tool) {
+  const response = await client.post(`/oauth-credentials/${tool}/clear-native`)
+  return response.data
+}
+
 export async function deleteOAuthCredential(tool, credentialId) {
   const response = await client.delete(`/oauth-credentials/${tool}/${credentialId}`)
   return response.data

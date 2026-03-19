@@ -34,13 +34,14 @@
               </div>
 
               <!-- Repository -->
-              <div class="info-section" v-if="plugin?.repoUrl || plugin?.gitUrl">
+              <div class="info-section" v-if="plugin?.repoUrl || plugin?.gitUrl || plugin?.repoLocalPath">
                 <h3 class="section-title">仓库地址</h3>
                 <div class="repo-link">
                   <n-icon :size="16"><LogoGithub /></n-icon>
-                  <a :href="plugin.repoUrl || plugin.gitUrl" target="_blank" rel="noopener noreferrer">
+                  <a v-if="isRemoteRepoLink" :href="plugin.repoUrl || plugin.gitUrl" target="_blank" rel="noopener noreferrer">
                     {{ plugin.repoUrl || plugin.gitUrl }}
                   </a>
+                  <span v-else>{{ plugin.repoLocalPath }}</span>
                 </div>
               </div>
 
@@ -119,18 +120,26 @@ const visible = computed({
 const readmeContent = ref('')
 const loadingReadme = ref(false)
 
+const isRemoteRepoLink = computed(() => /^(https?:)?\/\//.test(props.plugin?.repoUrl || props.plugin?.gitUrl || ''))
+
 // Fetch README when drawer opens
 watch(() => props.visible, async (newVisible) => {
   if (newVisible && props.plugin) {
     loadingReadme.value = true
     try {
       const repoInfo = {
+        repoId: props.plugin.repoId,
+        repoProvider: props.plugin.repoProvider,
+        repoHost: props.plugin.repoHost,
         repoOwner: props.plugin.repoOwner,
         repoName: props.plugin.repoName,
         repoBranch: props.plugin.repoBranch,
         directory: props.plugin.directory,
         source: props.plugin.source,
-        repoUrl: props.plugin.repoUrl
+        repoUrl: props.plugin.repoUrl,
+        repoProjectPath: props.plugin.repoProjectPath,
+        repoLocalPath: props.plugin.repoLocalPath,
+        installPath: props.plugin.installPath
       }
       const response = await getPluginReadme(props.plugin.name, repoInfo, props.platform)
       readmeContent.value = response.readme || ''

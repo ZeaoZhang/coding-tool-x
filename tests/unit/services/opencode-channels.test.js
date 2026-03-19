@@ -25,12 +25,14 @@ const OPENCODE_CH_MODULE    = require.resolve('../../../src/server/services/open
 let testDir, channelsFile, codexChannelsFile;
 let clearNativeOAuth;
 let setChannelConfig;
+let clearManagedChannelConfig;
 let getOpenCodeProxyStatus;
 let service;
 
 function injectStubs() {
   clearNativeOAuth       = vi.fn();
   setChannelConfig       = vi.fn();
+  clearManagedChannelConfig = vi.fn();
   getOpenCodeProxyStatus = vi.fn(() => ({ running: false }));
 
   require.cache[PATHS_MODULE] = {
@@ -61,6 +63,7 @@ function injectStubs() {
     id: OPENCODE_SM_MODULE, filename: OPENCODE_SM_MODULE, loaded: true,
     exports: {
       setChannelConfig,
+      clearManagedChannelConfig,
       selectConfigPath: vi.fn(() => '/tmp/test')
     }
   };
@@ -220,6 +223,17 @@ describe('createChannel', () => {
     const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
     expect(saved.channels).toHaveLength(2);
   });
+
+  it('syncs managed config for the enabled channel when proxy is off', () => {
+    const ch = service.createChannel('Alpha', 'https://alpha.api.com', 'key-alpha', {
+      model: 'gpt-4.1'
+    });
+
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      id: ch.id,
+      name: 'Alpha'
+    }));
+  });
 });
 
 // ─── CRUD: updateChannel ──────────────────────────────────────────────────────
@@ -249,6 +263,46 @@ describe('updateChannel', () => {
     const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
     expect(saved.channels[0].createdAt).toBe(original);
   });
+
+  it('syncs managed config when enabling a different channel while proxy is off', () => {
+    const ch1 = service.createChannel('First', 'https://first.example', 'key-1', {
+      enabled: true,
+      model: 'gpt-4.1'
+    });
+    const ch2 = service.createChannel('Second', 'https://second.example', 'key-2', {
+      enabled: false,
+      model: 'gpt-4.1-mini'
+    });
+    setChannelConfig.mockClear();
+
+    service.updateChannel(ch2.id, { enabled: true });
+
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+    expect(saved.channels.find((channel) => channel.id === ch1.id)?.enabled).toBe(false);
+    expect(saved.channels.find((channel) => channel.id === ch2.id)?.enabled).toBe(true);
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      id: ch2.id,
+      name: 'Second'
+    }));
+  });
+
+  it('syncs managed config when editing the active enabled channel', () => {
+    const ch = service.createChannel('Editable', 'https://editable.example', 'key-edit', {
+      model: 'gpt-4.1'
+    });
+    setChannelConfig.mockClear();
+
+    service.updateChannel(ch.id, {
+      baseUrl: 'https://editable-next.example',
+      apiKey: 'key-next'
+    });
+
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      id: ch.id,
+      baseUrl: 'https://editable-next.example',
+      apiKey: 'key-next'
+    }));
+  });
 });
 
 // ─── CRUD: deleteChannel ──────────────────────────────────────────────────────
@@ -264,6 +318,38 @@ describe('deleteChannel', () => {
 
   it('throws "Channel not found" for unknown id', async () => {
     await expect(service.deleteChannel('no-such-id')).rejects.toThrow('Channel not found');
+  });
+
+  it('re-syncs managed config to the remaining enabled channel when proxy is off', async () => {
+    const ch1 = service.createChannel('Remain', 'https://remain.example', 'key-remain', {
+      enabled: true,
+      model: 'gpt-4.1'
+    });
+    const ch2 = service.createChannel('Remove', 'https://remove.example', 'key-remove', {
+      enabled: false,
+      model: 'gpt-4.1-mini'
+    });
+    setChannelConfig.mockClear();
+
+    await service.deleteChannel(ch2.id);
+
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      id: ch1.id,
+      name: 'Remain'
+    }));
+  });
+
+  it('clears managed config when deleting the last channel while proxy is off', async () => {
+    const ch = service.createChannel('Solo', 'https://solo.example', 'key-solo', {
+      model: 'gpt-4.1'
+    });
+    clearManagedChannelConfig.mockClear();
+    setChannelConfig.mockClear();
+
+    await service.deleteChannel(ch.id);
+
+    expect(clearManagedChannelConfig).toHaveBeenCalledTimes(1);
+    expect(setChannelConfig).not.toHaveBeenCalled();
   });
 });
 
@@ -325,5 +411,26 @@ describe('getChannels', () => {
     expect(ch.wireApi).toBe('openai');
     expect(ch.modelRedirects).toEqual([]);
     expect(typeof ch.providerKey).toBe('string');
+  });
+});
+
+describe('applyChannelToSettings', () => {
+  it('keeps local OAuth intact and writes managed channel config', () => {
+    const ch1 = service.createChannel('First', 'https://first.example', 'key-1', { enabled: true });
+    const ch2 = service.createChannel('Second', 'https://second.example', 'key-2', { enabled: false });
+
+    const applied = service.applyChannelToSettings(ch2.id);
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+    const savedCh1 = saved.channels.find((channel) => channel.id === ch1.id);
+    const savedCh2 = saved.channels.find((channel) => channel.id === ch2.id);
+
+    expect(applied.id).toBe(ch2.id);
+    expect(savedCh1.enabled).toBe(false);
+    expect(savedCh2.enabled).toBe(true);
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      id: ch2.id,
+      name: 'Second'
+    }));
+    expect(clearNativeOAuth).not.toHaveBeenCalled();
   });
 });

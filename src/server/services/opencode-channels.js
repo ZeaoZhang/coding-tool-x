@@ -2,8 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { PATHS } = require('../../config/paths');
-const { clearNativeOAuth } = require('./native-oauth-adapters');
-const { setChannelConfig } = require('./opencode-settings-manager');
+const {
+  setChannelConfig,
+  clearManagedChannelConfig
+} = require('./opencode-settings-manager');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
 /**
@@ -99,6 +101,30 @@ function deriveProviderKey(channel) {
   return `opencode_${base}`;
 }
 
+function getOpenCodeProxyRunning() {
+  const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
+  return Boolean(getOpenCodeProxyStatus()?.running);
+}
+
+function resolveCurrentManagedChannel(channels = []) {
+  const allChannels = Array.isArray(channels) ? channels : [];
+  return allChannels.find(channel => channel.enabled !== false) || null;
+}
+
+function syncManagedChannelConfig(channels = [], preferredChannel = null) {
+  const targetChannel = preferredChannel && preferredChannel.enabled !== false
+    ? preferredChannel
+    : resolveCurrentManagedChannel(channels);
+
+  if (targetChannel) {
+    setChannelConfig(targetChannel);
+    return targetChannel;
+  }
+
+  clearManagedChannelConfig();
+  return null;
+}
+
 // 保存渠道数据
 function saveChannels(data) {
   const filePath = getChannelsFilePath();
@@ -116,6 +142,7 @@ function getChannels() {
 // 添加渠道
 function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
   const data = loadChannels();
+  const isProxyRunning = getOpenCodeProxyRunning();
 
   const newChannel = {
     id: crypto.randomUUID(),
@@ -140,7 +167,21 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
   newChannel.providerKey = extraConfig.providerKey || deriveProviderKey(newChannel);
 
   data.channels.push(newChannel);
+
+  if (!isProxyRunning && newChannel.enabled !== false) {
+    data.channels.forEach((channel, index) => {
+      if (index !== data.channels.length - 1 && channel.enabled) {
+        channel.enabled = false;
+      }
+    });
+    console.log(`[OpenCode Single-channel mode] Enabled "${newChannel.name}", disabled all others`);
+  }
+
   saveChannels(data);
+
+  if (!isProxyRunning && newChannel.enabled !== false) {
+    syncManagedChannelConfig(data.channels, newChannel);
+  }
 
   return newChannel;
 }
@@ -174,10 +215,7 @@ function updateChannel(channelId, updates) {
   merged.providerKey = updates.providerKey || deriveProviderKey(merged);
   data.channels[index] = merged;
 
-  // Get proxy status
-  const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
-  const proxyStatus = getOpenCodeProxyStatus();
-  const isProxyRunning = proxyStatus.running;
+  const isProxyRunning = getOpenCodeProxyRunning();
 
   // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
   if (!isProxyRunning && merged.enabled && !oldChannel.enabled) {
@@ -190,6 +228,18 @@ function updateChannel(channelId, updates) {
   }
 
   saveChannels(data);
+
+  if (!isProxyRunning) {
+    if (oldChannel.enabled === false && merged.enabled !== false) {
+      syncManagedChannelConfig(data.channels, merged);
+    } else {
+      const activeChannel = resolveCurrentManagedChannel(data.channels);
+      if (merged.enabled !== false && activeChannel?.id === merged.id) {
+        syncManagedChannelConfig(data.channels, merged);
+      }
+    }
+  }
+
   return data.channels[index];
 }
 
@@ -204,6 +254,10 @@ async function deleteChannel(channelId) {
 
   data.channels.splice(index, 1);
   saveChannels(data);
+
+  if (!getOpenCodeProxyRunning()) {
+    syncManagedChannelConfig(data.channels);
+  }
 
   return { success: true };
 }
@@ -251,7 +305,6 @@ function applyChannelToSettings(channelId) {
   });
   saveChannels(data);
 
-  clearNativeOAuth('opencode');
   setChannelConfig(channel);
 
   return channel;

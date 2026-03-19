@@ -262,7 +262,6 @@ describe('opencode proxy routes', () => {
     expect(missingChannels.status).toBe(400);
     expect(started.status).toBe(200);
     expect(collectProxyModelListMock).toHaveBeenCalledWith(channels, { useCacheOnly: true });
-    expect(clearNativeOAuthMock).toHaveBeenCalledWith('opencode');
     expect(setProxyConfigMock).toHaveBeenCalledWith(23003, {
       channels: [
         {

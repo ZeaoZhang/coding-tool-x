@@ -6,6 +6,7 @@
 
 const express = require('express');
 const { PluginsService } = require('../services/plugins-service');
+const { maskToken } = require('../services/oauth-utils');
 
 const router = express.Router();
 const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
@@ -25,6 +26,41 @@ function getPluginsService(req) {
     pluginServices.set(platform, new PluginsService(platform));
   }
   return { platform, service: pluginServices.get(platform) };
+}
+
+function extractRepoPayload(source = {}) {
+  const repo = source.repo && typeof source.repo === 'object' ? source.repo : source;
+  return {
+    id: repo.id || source.repoId || '',
+    provider: repo.provider || source.provider || '',
+    host: repo.host || source.host || '',
+    owner: repo.owner || source.owner || '',
+    name: repo.name || source.name || '',
+    branch: repo.branch || source.branch || 'main',
+    directory: repo.directory || source.directory || '',
+    projectPath: repo.projectPath || source.projectPath || '',
+    localPath: repo.localPath || source.localPath || '',
+    repoUrl: repo.repoUrl || repo.url || source.repoUrl || source.url || '',
+    token: repo.token || source.token || ''
+  };
+}
+
+function sanitizeRepo(repo = {}) {
+  const token = String(repo.token || '').trim();
+  const sanitized = {
+    ...repo,
+    hasToken: Boolean(token),
+    tokenPreview: token ? maskToken(token) : ''
+  };
+  delete sanitized.token;
+  return sanitized;
+}
+
+function sanitizeRepos(service, repos = []) {
+  if (typeof service.getReposForClient === 'function') {
+    return service.getReposForClient(repos);
+  }
+  return (Array.isArray(repos) ? repos : []).map(sanitizeRepo);
 }
 
 /**
@@ -93,7 +129,7 @@ router.post('/install', async (req, res) => {
     if (source) {
       installUrl = source;
     } else if (directory && repo) {
-      installUrl = `https://github.com/${repo.owner}/${repo.name}/tree/${repo.branch || 'main'}/${directory}`;
+      installUrl = '';
     } else if (gitUrl) {
       installUrl = gitUrl;
     } else {
@@ -103,7 +139,15 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const result = await service.installPlugin(installUrl);
+    const result = await service.installPlugin(
+      installUrl,
+      directory && repo
+        ? {
+            ...extractRepoPayload({ repo }),
+            directory
+          }
+        : null
+    );
 
     if (!result.success) {
       return res.status(400).json({
@@ -140,7 +184,7 @@ router.get('/repos', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos
+      repos: sanitizeRepos(service, repos)
     });
   } catch (err) {
     console.error('[Plugins API] Get repos error:', err);
@@ -159,12 +203,13 @@ router.get('/repos', (req, res) => {
 router.post('/repos', (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const repo = req.body;
+    const repo = extractRepoPayload(req.body);
+    repo.enabled = req.body.enabled !== false;
 
-    if (!repo || !repo.url) {
+    if (!repo.localPath && !repo.projectPath && (!repo.owner || !repo.name) && !repo.repoUrl) {
       return res.status(400).json({
         success: false,
-        message: 'Repository URL is required'
+        message: 'Missing repo info'
       });
     }
 
@@ -173,11 +218,59 @@ router.post('/repos', (req, res) => {
     res.json({
       success: true,
       platform,
-      repos,
+      repos: sanitizeRepos(service, repos),
       message: 'Repository added successfully'
     });
   } catch (err) {
     console.error('[Plugins API] Add repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.delete('/repos', (req, res) => {
+  try {
+    const { platform, service } = getPluginsService(req);
+    const { id = '', owner = '', name = '' } = req.query;
+    const repos = service.removeRepo(owner, name, id);
+
+    res.json({
+      success: true,
+      platform,
+      repos: sanitizeRepos(service, repos)
+    });
+  } catch (err) {
+    console.error('[Plugins API] Remove repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.put('/repos/toggle', (req, res) => {
+  try {
+    const { platform, service } = getPluginsService(req);
+    const { id = '', owner = '', name = '', enabled } = req.body;
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: 'enabled must be a boolean'
+      });
+    }
+
+    const repos = service.toggleRepo(owner, name, enabled, id);
+
+    res.json({
+      success: true,
+      platform,
+      repos: sanitizeRepos(service, repos)
+    });
+  } catch (err) {
+    console.error('[Plugins API] Toggle repo error:', err);
     res.status(500).json({
       success: false,
       message: err.message
@@ -193,13 +286,14 @@ router.delete('/repos/:owner/:name', (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { owner, name } = req.params;
+    const { id = '' } = req.query;
 
-    const repos = service.removeRepo(owner, name);
+    const repos = service.removeRepo(owner, name, id);
 
     res.json({
       success: true,
       platform,
-      repos,
+      repos: sanitizeRepos(service, repos),
       message: 'Repository removed successfully'
     });
   } catch (err) {
@@ -220,7 +314,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { owner, name } = req.params;
-    const { enabled } = req.body;
+    const { enabled, id = '' } = req.body;
 
     if (typeof enabled !== 'boolean') {
       return res.status(400).json({
@@ -229,16 +323,50 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
       });
     }
 
-    const repos = service.toggleRepo(owner, name, enabled);
+    const repos = service.toggleRepo(owner, name, enabled, id);
 
     res.json({
       success: true,
       platform,
-      repos,
+      repos: sanitizeRepos(service, repos),
       message: `Repository ${enabled ? 'enabled' : 'disabled'} successfully`
     });
   } catch (err) {
     console.error('[Plugins API] Toggle repo error:', err);
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+router.put('/repos/auth', (req, res) => {
+  try {
+    const { platform, service } = getPluginsService(req);
+    const {
+      id = '',
+      owner = '',
+      name = '',
+      token = '',
+      clearToken = false
+    } = req.body;
+
+    if (!clearToken && !String(token || '').trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing token'
+      });
+    }
+
+    const repos = service.updateRepoAuth(owner, name, token, clearToken, id);
+
+    res.json({
+      success: true,
+      platform,
+      repos: sanitizeRepos(service, repos)
+    });
+  } catch (err) {
+    console.error('[Plugins API] Update repo auth error:', err);
     res.status(500).json({
       success: false,
       message: err.message
@@ -303,16 +431,35 @@ router.get('/:name/readme', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
-    const { repoOwner, repoName, repoBranch, directory, source, repoUrl } = req.query;
-
-    const pluginInfo = {
-      name,
+    const {
+      repoId,
+      repoProvider,
+      repoHost,
       repoOwner,
       repoName,
       repoBranch,
       directory,
       source,
-      repoUrl
+      repoUrl,
+      repoProjectPath,
+      repoLocalPath,
+      installPath
+    } = req.query;
+
+    const pluginInfo = {
+      name,
+      repoId,
+      repoProvider,
+      repoHost,
+      repoOwner,
+      repoName,
+      repoBranch,
+      directory,
+      source,
+      repoUrl,
+      repoProjectPath,
+      repoLocalPath,
+      installPath
     };
 
     const readme = await service.getPluginReadme(pluginInfo);

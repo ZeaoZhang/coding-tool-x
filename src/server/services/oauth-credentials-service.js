@@ -12,6 +12,7 @@ const {
   inspectTool,
   readAllNativeOAuth,
   clearNativeOAuth,
+  disableNativeOAuthCredential,
   applyOAuthCredential
 } = require('./native-oauth-adapters');
 const { maskToken, decodeJwtPayload, removeFileIfExists } = require('./oauth-utils');
@@ -300,6 +301,23 @@ function sanitizeCredential(entry, defaultCredentialId) {
   };
 }
 
+function sanitizeNativeCredential(entry = {}) {
+  const primaryToken = entry.primaryToken
+    || entry.accessToken
+    || entry.token
+    || '';
+
+  return {
+    providerId: entry.providerId || '',
+    accountId: entry.accountId || '',
+    accountEmail: entry.accountEmail || '',
+    expiresAt: entry.expiresAt || null,
+    lastRefresh: entry.lastRefresh || null,
+    storage: entry.storage || '',
+    tokenPreview: maskToken(primaryToken)
+  };
+}
+
 function sanitizeToolSummary(tool, toolStore) {
   const credentials = (toolStore.credentials || [])
     .map((entry) => sanitizeCredential(entry, toolStore.defaultCredentialId))
@@ -309,11 +327,16 @@ function sanitizeToolSummary(tool, toolStore) {
       if (aTime !== bTime) return bTime - aTime;
       return (b.createdAt || 0) - (a.createdAt || 0);
     });
+  const nativeState = inspectTool(tool);
+  const nativeCredentials = readAllNativeOAuth(tool).map((entry) => sanitizeNativeCredential(entry));
   return {
     tool,
     defaultCredentialId: toolStore.defaultCredentialId || null,
     credentials,
-    nativeState: inspectTool(tool)
+    nativeState: {
+      ...nativeState,
+      nativeCredentials
+    }
   };
 }
 
@@ -612,7 +635,9 @@ async function applyStoredCredential(tool, credentialId) {
   const entry = findStoredCredential(tool, credentialId);
   const proxyStopped = await stopProxyIfRunning(tool);
   cleanupManagedArtifacts(tool);
-  disableAllChannelsForTool(tool);
+  if (tool !== 'opencode') {
+    disableAllChannelsForTool(tool);
+  }
   applyOAuthCredential(tool, entry.secrets);
 
   // 记录最近使用时间
@@ -628,6 +653,22 @@ async function applyStoredCredential(tool, credentialId) {
     proxyStopped,
     credential: sanitizeCredential(entry, readStore().tools[tool]?.defaultCredentialId || null),
     toolSummary: getToolSummary(tool)
+  };
+}
+
+function disableStoredCredential(tool, credentialId) {
+  assertSupportedTool(tool);
+  const entry = findStoredCredential(tool, credentialId);
+  disableNativeOAuthCredential(tool, {
+    ...(entry.secrets || {}),
+    providerId: entry.providerId || entry.secrets?.providerId || '',
+    accountId: entry.accountId || entry.secrets?.accountId || ''
+  });
+
+  return {
+    credential: sanitizeCredential(entry, readStore().tools[tool]?.defaultCredentialId || null),
+    toolSummary: getToolSummary(tool),
+    nativeState: inspectTool(tool)
   };
 }
 
@@ -791,6 +832,7 @@ module.exports = {
   setDefaultCredential,
   deleteCredential,
   applyStoredCredential,
+  disableStoredCredential,
   clearNativeOAuthState,
   fetchCredentialUsage
 };

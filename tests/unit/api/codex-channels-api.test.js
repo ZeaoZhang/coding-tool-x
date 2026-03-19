@@ -254,4 +254,23 @@ describe('codex-channels api', () => {
     expect(resetChannelHealth).toHaveBeenCalledWith('ch-1', 'codex');
     expect(res._body.success).toBe(true);
   });
+
+  test('rejects reserved openai providerKey on create', () => {
+    const router = routerFactory({});
+    const handler = findHandler(router, 'post', '/');
+    const res = makeRes();
+
+    handler({
+      body: {
+        name: 'OpenAI Reserved',
+        providerKey: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'secret'
+      }
+    }, res);
+
+    expect(res._status).toBe(400);
+    expect(res._body.error).toMatch(/reserved/i);
+    expect(createChannel).not.toHaveBeenCalled();
+  });
 });

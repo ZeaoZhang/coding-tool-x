@@ -615,6 +615,13 @@ const effectiveProxyLoading = computed(() => {
   return claudeProxy.value.loading
 })
 
+function getCurrentProxyState(channelType = currentChannel.value) {
+  if (channelType === 'codex') return codexProxy
+  if (channelType === 'gemini') return geminiProxy
+  if (channelType === 'opencode') return opencodeProxy
+  return claudeProxy
+}
+
 // Panel visibility settings (with file persistence)
 const showChannels = ref(true)
 const showLogs = ref(true)
@@ -664,6 +671,8 @@ function openGithub() {
 // 统一的代理切换处理器（根据当前 channel 路由到正确的代理）
 async function handleProxyToggle(newValue) {
   const channelType = currentChannel.value || 'claude'
+  const proxyState = getCurrentProxyState(channelType)
+  proxyState.value.loading = true
 
   try {
     let result
@@ -686,6 +695,8 @@ async function handleProxyToggle(newValue) {
     }
   } catch (error) {
     message.error(error.response?.data?.error || error.message || '操作失败')
+  } finally {
+    proxyState.value.loading = false
   }
 }
 

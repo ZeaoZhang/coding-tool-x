@@ -7,7 +7,7 @@
         <n-switch
           :value="proxyRunning"
           :loading="proxyLoading"
-          :disabled="isOAuthControlled"
+          :disabled="proxyLoading"
           size="small"
           @update:value="handleProxyToggle"
         />
@@ -70,7 +70,7 @@
     <!-- OAuth 控制提示 -->
     <div v-if="isOAuthControlled" class="oauth-banner">
       <n-icon :size="14" color="#2080f0"><KeyOutline /></n-icon>
-      <span>OAuth 控制中，渠道和动态切换已禁用</span>
+      <span>{{ oauthBannerText }}</span>
       <n-button text size="small" type="primary" @click="openOAuthCredentialsDrawer">
         凭证管理 →
       </n-button>
@@ -128,7 +128,7 @@ import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
 
 const route = useRoute()
 // Props for panel visibility
-defineProps({
+const props = defineProps({
   showChannels: {
     type: Boolean,
     default: true
@@ -165,6 +165,13 @@ const isOAuthControlled = computed(() => {
   const tool = currentChannel.value
   const state = oauthSummaries.value?.[tool]?.nativeState
   return !!(state?.oauthPresent && state?.mode === 'oauth')
+})
+
+const oauthBannerText = computed(() => {
+  if (currentChannel.value === 'opencode') {
+    return '检测到 OAuth 凭证。OpenCode 支持保留 OAuth 与 API providers 并存。'
+  }
+  return '当前由 OAuth 控制。写入渠道或开启动态切换时，会自动退出 OAuth 控制。'
 })
 
 async function loadOAuthSummaries() {
@@ -272,6 +279,10 @@ onMounted(() => {
 
 watch(() => currentChannel.value, () => {
   loadInstalledSkillsCount()
+  loadOAuthSummaries()
+})
+
+watch(() => props.proxyRunning, () => {
   loadOAuthSummaries()
 })
 

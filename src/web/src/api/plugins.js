@@ -98,22 +98,50 @@ export async function addPluginRepo(repo, platform = 'claude') {
 
 /**
  * 删除插件仓库
- * @param {string} owner - 仓库所有者
- * @param {string} name - 仓库名称
+ * @param {object} repo - 仓库对象
  */
-export async function removePluginRepo(owner, name, platform = 'claude') {
-  const response = await client.delete(`/plugins/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`, { params: { platform } })
+export async function removePluginRepo(repo, platform = 'claude') {
+  const response = await client.delete('/plugins/repos', {
+    params: {
+      platform,
+      id: repo.id || '',
+      owner: repo.owner || '',
+      name: repo.name || ''
+    }
+  })
   return response.data
 }
 
 /**
  * 切换插件仓库启用状态
- * @param {string} owner - 仓库所有者
- * @param {string} name - 仓库名称
+ * @param {object} repo - 仓库对象
  * @param {boolean} enabled - 是否启用
  */
-export async function togglePluginRepo(owner, name, enabled, platform = 'claude') {
-  const response = await client.put(`/plugins/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/toggle`, { enabled, platform })
+export async function togglePluginRepo(repo, enabled, platform = 'claude') {
+  const response = await client.put('/plugins/repos/toggle', {
+    id: repo.id || '',
+    owner: repo.owner || '',
+    name: repo.name || '',
+    enabled,
+    platform
+  })
+  return response.data
+}
+
+/**
+ * 更新插件仓库级认证信息
+ * @param {object} repo - 仓库对象
+ * @param {object} auth - { token?: string, clearToken?: boolean }
+ */
+export async function updatePluginRepoAuth(repo, auth = {}, platform = 'claude') {
+  const response = await client.put('/plugins/repos/auth', {
+    id: repo.id || '',
+    owner: repo.owner || '',
+    name: repo.name || '',
+    token: auth.token || '',
+    clearToken: !!auth.clearToken,
+    platform
+  })
   return response.data
 }
 
@@ -141,12 +169,18 @@ export async function syncPlugins(platform = 'claude') {
 export async function getPluginReadme(name, repoInfo = {}, platform = 'claude') {
   const params = new URLSearchParams()
   if (platform) params.append('platform', platform)
+  if (repoInfo.repoId) params.append('repoId', repoInfo.repoId)
+  if (repoInfo.repoProvider) params.append('repoProvider', repoInfo.repoProvider)
+  if (repoInfo.repoHost) params.append('repoHost', repoInfo.repoHost)
   if (repoInfo.repoOwner) params.append('repoOwner', repoInfo.repoOwner)
   if (repoInfo.repoName) params.append('repoName', repoInfo.repoName)
   if (repoInfo.repoBranch) params.append('repoBranch', repoInfo.repoBranch)
   if (repoInfo.directory) params.append('directory', repoInfo.directory)
   if (repoInfo.source) params.append('source', repoInfo.source)
   if (repoInfo.repoUrl) params.append('repoUrl', repoInfo.repoUrl)
+  if (repoInfo.repoProjectPath) params.append('repoProjectPath', repoInfo.repoProjectPath)
+  if (repoInfo.repoLocalPath) params.append('repoLocalPath', repoInfo.repoLocalPath)
+  if (repoInfo.installPath) params.append('installPath', repoInfo.installPath)
 
   const response = await client.get(`/plugins/${encodeURIComponent(name)}/readme?${params.toString()}`)
   return response.data

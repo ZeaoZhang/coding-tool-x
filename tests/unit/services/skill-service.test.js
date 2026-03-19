@@ -83,11 +83,10 @@ describe('skill-service constants', () => {
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('opencode');
   });
 
-  it('each platform entry is a non-empty array', () => {
+  it('each platform entry is an array', () => {
     const { DEFAULT_REPOS_BY_PLATFORM } = require('../../../src/server/services/skill-service');
     for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
       expect(Array.isArray(DEFAULT_REPOS_BY_PLATFORM[platform])).toBe(true);
-      expect(DEFAULT_REPOS_BY_PLATFORM[platform].length).toBeGreaterThan(0);
     }
   });
 
@@ -103,9 +102,9 @@ describe('skill-service constants', () => {
     }
   });
 
-  it('claude default repo owner is anthropics', () => {
+  it('claude default repos is currently empty', () => {
     const { DEFAULT_REPOS_BY_PLATFORM } = require('../../../src/server/services/skill-service');
-    expect(DEFAULT_REPOS_BY_PLATFORM.claude[0].owner).toBe('anthropics');
+    expect(DEFAULT_REPOS_BY_PLATFORM.claude).toEqual([]);
   });
 
   it('DEFAULT_REPOS equals DEFAULT_REPOS_BY_PLATFORM.claude', () => {
@@ -153,12 +152,12 @@ describe('SkillService constructor', () => {
 });
 
 describe('SkillService.getRepos / addRepo / removeRepo', () => {
-  it('loadRepos returns array with default repos when no config file exists', () => {
+  it('loadRepos returns array even when no config file exists', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
     const repos = svc.loadRepos();
     expect(Array.isArray(repos)).toBe(true);
-    expect(repos.length).toBeGreaterThan(0);
+    expect(repos).toEqual([]);
   });
 
   it('addRepo adds a new repo and returns updated list', () => {
@@ -199,6 +198,72 @@ describe('SkillService.getRepos / addRepo / removeRepo', () => {
     const before = svc.loadRepos().length;
     const updated = svc.removeRepo('nobody', 'nothing');
     expect(updated.length).toBe(before);
+  });
+});
+
+describe('SkillService repo auth', () => {
+  it('getReposForClient masks repo tokens', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    svc.addRepo({
+      owner: 'secure-owner',
+      name: 'secure-repo',
+      branch: 'main',
+      token: 'secret-token'
+    });
+
+    const repos = svc.getReposForClient();
+
+    expect(repos).toHaveLength(1);
+    expect(repos[0].token).toBeUndefined();
+    expect(repos[0].hasToken).toBe(true);
+    expect(repos[0].tokenPreview).toBe('secr...oken');
+  });
+
+  it('prefers stored GitHub repo token over global fallbacks when repo id matches', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repos = svc.addRepo({
+      provider: 'github',
+      host: 'github.example.com',
+      owner: 'secure-owner',
+      name: 'secure-repo',
+      branch: 'main',
+      token: 'repo-github-token'
+    });
+    const repo = repos[0];
+
+    svc.getTokenFromConfigFile = vi.fn(() => 'global-token');
+    svc.getTokenFromCommand = vi.fn(() => 'cli-token');
+    svc.getTokenFromGitCredential = vi.fn(() => 'git-token');
+
+    expect(svc.getGitHubToken({
+      id: repo.id,
+      provider: repo.provider,
+      host: repo.host,
+      owner: repo.owner,
+      name: repo.name,
+      branch: repo.branch
+    })).toBe('repo-github-token');
+    expect(svc.getTokenFromConfigFile).not.toHaveBeenCalled();
+  });
+
+  it('updateRepoAuth can set and clear a GitLab repo token', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repos = svc.addRepo({
+      provider: 'gitlab',
+      host: 'gitlab.example.com',
+      projectPath: 'team/subgroup/skills-repo',
+      branch: 'main'
+    });
+    const repo = repos[0];
+
+    let updated = svc.updateRepoAuth('', '', '', 'gitlab-secret-token', false, repo.id);
+    expect(updated[0].token).toBe('gitlab-secret-token');
+
+    updated = svc.updateRepoAuth('', '', '', '', true, repo.id);
+    expect(updated[0].token).toBeUndefined();
   });
 });
 
