@@ -196,9 +196,9 @@ describe('claude-hooks api', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true, message: '系统测试通知已发送' });
     expect(execSyncSpy).toHaveBeenCalled();
-    expect(windowsCommand).toContain('ToastNotificationManager');
     expect(windowsCommand).toContain('Wscript.Shell');
-    expect(windowsCommand).toContain('||');
+    expect(windowsCommand).toContain('Popup(');
+    expect(windowsCommand).not.toContain('ToastNotificationManager');
     expect(windowsDialogCommand).toContain('MessageBox');
     expect(windowsDialogCommand).toContain('Wscript.Shell');
     expect(windowsDialogCommand).toContain('||');

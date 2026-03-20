@@ -91,9 +91,10 @@ function run() {
     'Windows Codex notify 状态解析失败'
   );
   const windowsNotificationCommand = notificationHookTest.generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
-  assert.strictEqual(windowsNotificationCommand.includes('ToastNotificationManager'), true, 'Windows 通知命令应包含 Toast 主路径');
-  assert.strictEqual(windowsNotificationCommand.includes('Wscript.Shell'), true, 'Windows 通知命令应包含 Popup 回退');
-  assert.strictEqual(windowsNotificationCommand.includes('||'), true, 'Windows 通知命令应包含外层 fallback');
+  assert.strictEqual(windowsNotificationCommand.includes('ToastNotificationManager'), false, 'Windows 通知命令不应再包含 Toast 主路径');
+  assert.strictEqual(windowsNotificationCommand.includes('Wscript.Shell'), true, 'Windows 通知命令应直接使用 Popup');
+  assert.strictEqual(windowsNotificationCommand.includes('Popup('), true, 'Windows 通知命令应包含 Popup 调用');
+  assert.strictEqual(windowsNotificationCommand.includes('||'), false, 'Windows 通知命令不应再包含 Toast 外层 fallback');
   assert.strictEqual(
     isSameOriginRequest({ headers: { origin: 'http://localhost:19999', host: 'localhost:19999' } }),
     true,

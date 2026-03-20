@@ -348,20 +348,7 @@ function notify(mode, message) {
         const command = 'powershell -NoProfile -Command ' + JSON.stringify(ps) + ' || ' + popupCommand
         execSync(command, { stdio: 'ignore', windowsHide: true })
       } else {
-        const toastXml = '<toast><visual><binding template="ToastGeneric"><text>' +
-          escapeForXml(title) + '</text><text>' + escapeForXml(message) +
-          '</text></binding></visual><audio src="ms-winsoundevent:Notification.Default"/></toast>'
-        const ps = 'try { ' +
-          '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; ' +
-          '[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; ' +
-          '$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; ' +
-          '$xml.LoadXml(\\'' + toastXml.replace(/'/g, "''") + '\\'); ' +
-          '$toast = [Windows.UI.Notifications.ToastNotification]::new($xml); ' +
-          "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) " +
-          "} catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('" +
-          escapeForPowerShellSingleQuote(message) + "', 5, '" + escapeForPowerShellSingleQuote(title) + "', 0x40) }"
-        const command = 'powershell -NoProfile -Command ' + JSON.stringify(ps) + ' || ' + popupCommand
-        execSync(command, { stdio: 'ignore', windowsHide: true })
+        execSync(popupCommand, { stdio: 'ignore', windowsHide: true })
       }
       return
     }
@@ -912,9 +899,7 @@ function generateSystemNotificationCommand(type, message, platformOverride = os.
     if (normalizedType === 'dialog') {
       return `powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('${escapeForPowerShellSingleQuote(message)}', '${escapeForPowerShellSingleQuote(title)}', 'OK', 'Information')" || ${popupCommand}`;
     }
-
-    const toastXml = `<toast><visual><binding template="ToastGeneric"><text>${escapeForXml(title)}</text><text>${escapeForXml(message)}</text></binding></visual><audio src="ms-winsoundevent:Notification.Default"/></toast>`;
-    return `powershell -NoProfile -Command "try { [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('${toastXml.replace(/'/g, "''")}'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) } catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('${escapeForPowerShellSingleQuote(message)}', 5, '${escapeForPowerShellSingleQuote(title)}', 0x40) }" || ${popupCommand}`;
+    return popupCommand;
   }
 
   if (normalizedType === 'dialog') {
