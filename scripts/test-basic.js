@@ -168,6 +168,11 @@ function run() {
   );
   assert.deepStrictEqual(legacyToastStatus, { enabled: true, type: 'notification' }, 'Windows toast 签名解析失败');
 
+  const windowsPopupStatus = hookTest.parseStopHookStatus(
+    buildStopSettings('powershell -NoProfile -Command "$wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup(\'任务已完成 | 等待交互\', 5, \'Coding Tool\', 0x40)"')
+  );
+  assert.deepStrictEqual(windowsPopupStatus, { enabled: true, type: 'notification' }, 'Windows Popup 签名解析失败');
+
   const legacyDialogStatus = hookTest.parseStopHookStatus(
     buildStopSettings('powershell -Command "[System.Windows.MessageBox]::Show(\'Done\')"')
   );

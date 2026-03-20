@@ -5,6 +5,9 @@ const { PATHS, HOME_DIR } = require('../../config/paths');
 
 const PROFILE_MARKER_START = '# >>> coding-tool codex env >>>';
 const PROFILE_MARKER_END = '# <<< coding-tool codex env <<<';
+const WINDOWS_ENV_COMMAND_TIMEOUT_MS = 15000;
+const WINDOWS_SETTING_CHANGE_TIMEOUT_MS = 1000;
+const WINDOWS_SETTING_CHANGE_COMMAND_TIMEOUT_MS = 7000;
 
 function defaultEnvFilePath(configDir) {
   return path.join(configDir, 'codex-env.sh');
@@ -32,7 +35,7 @@ function powershellQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-function buildWindowsSettingChangeScript() {
+function buildWindowsSettingChangeScript(timeoutMs = WINDOWS_SETTING_CHANGE_TIMEOUT_MS) {
   return [
     'Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"',
     '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]',
@@ -45,7 +48,7 @@ function buildWindowsSettingChangeScript() {
     '$SMTO_ABORTIFHUNG = 0x0002',
     '$result = [UIntPtr]::Zero',
     '[Win32.NativeMethods]::SendMessageTimeout($HWND_BROADCAST, $WM_SETTINGCHANGE,',
-    '    [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, 5000, [ref]$result) | Out-Null'
+    `    [UIntPtr]::Zero, "Environment", $SMTO_ABORTIFHUNG, ${timeoutMs}, [ref]$result) | Out-Null`
   ].join('\n');
 }
 
@@ -375,7 +378,12 @@ function runLaunchctlCommand(args, execSync) {
 }
 
 function broadcastWindowsSettingChange(execSync) {
-  runWindowsEnvCommand(buildWindowsSettingChangeScript(), execSync);
+  // WM_SETTINGCHANGE 只是帮助已运行的 GUI/终端尽快感知环境变化。
+  // 用户级环境变量已经写入注册表，即使这里超时，新开进程仍然能读到。
+  runWindowsEnvCommand(buildWindowsSettingChangeScript(), execSync, {
+    timeout: WINDOWS_SETTING_CHANGE_COMMAND_TIMEOUT_MS,
+    ignoreErrors: true
+  });
 }
 
 function syncWindowsEnvironment(nextValues, previousState, options) {
@@ -396,7 +404,12 @@ function syncWindowsEnvironment(nextValues, previousState, options) {
 
   const changed = operations.length > 0;
   if (changed) {
-    runWindowsEnvCommand(buildWindowsEnvBatchScript(operations), execSync);
+    runWindowsEnvCommand(
+      buildWindowsEnvBatchScript(operations, { includeSettingChangeBroadcast: false }),
+      execSync,
+      { timeout: WINDOWS_ENV_COMMAND_TIMEOUT_MS }
+    );
+    broadcastWindowsSettingChange(execSync);
   }
 
   if (nextKeys.length > 0) {
@@ -421,20 +434,27 @@ function syncWindowsEnvironment(nextValues, previousState, options) {
   };
 }
 
-function runWindowsEnvCommand(script, execSync) {
+function runWindowsEnvCommand(script, execSync, options = {}) {
+  const timeout = Number(options.timeout) > 0
+    ? Number(options.timeout)
+    : WINDOWS_ENV_COMMAND_TIMEOUT_MS;
+  const ignoreErrors = options.ignoreErrors === true;
   const candidates = ['powershell', 'pwsh'];
   let lastError = null;
   for (const command of candidates) {
     try {
       execSync(command, ['-NoProfile', '-NonInteractive', '-Command', script], {
         stdio: ['ignore', 'ignore', 'ignore'],
-        timeout: 5000,
+        timeout,
         windowsHide: true
       });
-      return;
+      return true;
     } catch (error) {
       lastError = error;
     }
+  }
+  if (ignoreErrors) {
+    return false;
   }
   throw lastError || new Error('No PowerShell executable available');
 }

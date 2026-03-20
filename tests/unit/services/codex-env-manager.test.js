@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 vi.mock('../../../src/config/paths', () => ({
   PATHS: { config: '/tmp/test-config' },
@@ -14,7 +17,8 @@ const {
   stripManagedBlock,
   upsertManagedBlock,
   buildNextEnvValues,
-  getPosixProfileCandidates
+  getPosixProfileCandidates,
+  syncCodexUserEnvironment
 } = _test;
 
 // ---------------------------------------------------------------------------
@@ -247,5 +251,45 @@ describe('buildWindowsEnvBatchScript', () => {
     expect(script).toContain("SetEnvironmentVariable('CC_PROXY_KEY', 'PROXY_KEY', 'User')");
     expect(script).toContain("SetEnvironmentVariable('OLD_PROXY_KEY', $null, 'User')");
     expect(script).toContain('SendMessageTimeout');
+  });
+});
+
+describe('syncCodexUserEnvironment on Windows', () => {
+  it('keeps env sync successful when the setting-change broadcast times out', () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-env-win-'));
+    const execCalls = [];
+
+    try {
+      const result = syncCodexUserEnvironment(
+        { CC_PROXY_KEY: 'PROXY_KEY' },
+        {
+          runtime: 'win32',
+          homeDir: path.join(testRoot, 'home'),
+          configDir: path.join(testRoot, 'config'),
+          execFileSync: (command, args) => {
+            execCalls.push({ command, args });
+            if (String(args[3] || '').includes('SendMessageTimeout')) {
+              const error = new Error(`spawnSync ${command} ETIMEDOUT`);
+              error.code = 'ETIMEDOUT';
+              throw error;
+            }
+            return '';
+          }
+        }
+      );
+
+      expect(result.changed).toBe(true);
+      expect(result.reloadRequired).toBe(true);
+      expect(result.sourceCommand).toBeNull();
+      expect(result.shellConfigPath).toBeNull();
+      expect(result.managedKeys).toEqual(['CC_PROXY_KEY']);
+
+      const writeCalls = execCalls.filter(call => String(call.args[3] || '').includes('SetEnvironmentVariable'));
+      expect(writeCalls.length).toBeGreaterThan(0);
+      expect(writeCalls.every(call => !String(call.args[3]).includes('SendMessageTimeout'))).toBe(true);
+      expect(execCalls.some(call => String(call.args[3] || '').includes('SendMessageTimeout'))).toBe(true);
+    } finally {
+      fs.rmSync(testRoot, { recursive: true, force: true });
+    }
   });
 });

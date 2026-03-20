@@ -421,11 +421,11 @@ describe('generateNotifyScript', () => {
     expect(script).toContain('FEISHU_ENABLED = false');
   });
 
-  test('keeps Windows popup fallback in generated notification command', () => {
+  test('uses Windows popup command for generated notification command', () => {
     const command = generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
-    expect(command).toContain('ToastNotificationManager');
     expect(command).toContain('Wscript.Shell');
-    expect(command).toContain('||');
+    expect(command).toContain('Popup(');
+    expect(command).not.toContain('ToastNotificationManager');
   });
 
   test('keeps Windows popup fallback in generated dialog command', () => {

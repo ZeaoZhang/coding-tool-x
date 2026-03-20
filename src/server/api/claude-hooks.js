@@ -103,7 +103,7 @@ function generateSystemNotificationCommand(type, platformOverride = platform) {
     if (type === 'dialog') {
       return `powershell -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('Claude Code 任务已完成 | 等待交互', 'Coding Tool', 'OK', 'Information')" || ${buildWindowsPopupCommand()}`;
     } else {
-      return `powershell -NoProfile -Command "try { [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null; [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null; $xml = New-Object Windows.Data.Xml.Dom.XmlDocument; $xml.LoadXml('<toast><visual><binding template=\\"ToastGeneric\\"><text>Coding Tool</text><text>任务已完成 | 等待交互</text></binding></visual><audio src=\\"ms-winsoundevent:Notification.Default\\"/></toast>'); $toast = [Windows.UI.Notifications.ToastNotification]::new($xml); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Coding Tool').Show($toast) } catch { $wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('任务已完成 | 等待交互', 5, 'Coding Tool', 0x40) }" || ${buildWindowsPopupCommand()}`;
+      return buildWindowsPopupCommand();
     }
   } else {
     // Linux
