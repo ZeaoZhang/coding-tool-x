@@ -23,6 +23,14 @@ export async function deleteSession(projectName, sessionId, channel = 'claude') 
   return response.data
 }
 
+export async function deleteSessions(projectName, sessionIds, channel = 'claude') {
+  const prefix = getChannelPrefix(channel)
+  const response = await client.post(`${prefix}/sessions/${projectName}/batch-delete`, {
+    sessionIds
+  })
+  return response.data
+}
+
 export async function forkSession(projectName, sessionId, channel = 'claude') {
   const prefix = getChannelPrefix(channel)
   const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/fork`)

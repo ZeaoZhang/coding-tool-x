@@ -723,18 +723,21 @@ function clearOpenCodeOAuth() {
     return;
   }
 
+  const removedProviderIds = [];
   Object.keys(payload).forEach((providerId) => {
     if (payload[providerId]?.type === 'oauth') {
+      removedProviderIds.push(providerId);
       delete payload[providerId];
     }
   });
 
   if (Object.keys(payload).length === 0) {
     removeFileIfExists(NATIVE_PATHS.opencode.auth);
-    return;
+  } else {
+    writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
   }
 
-  writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
+  syncOpenCodeConfigAfterOAuthRemoval(removedProviderIds);
 }
 
 function disableOpenCodeOAuthCredential(credential = {}) {
@@ -745,6 +748,7 @@ function disableOpenCodeOAuthCredential(credential = {}) {
     return;
   }
 
+  const removedProviderIds = [];
   Object.keys(payload).forEach((key) => {
     const target = payload[key];
     if (!target || target.type !== 'oauth') {
@@ -754,16 +758,18 @@ function disableOpenCodeOAuthCredential(credential = {}) {
     const providerMatched = providerId && key === providerId;
     const tokenMatched = accessToken && String(target.access || '').trim() === accessToken;
     if (providerMatched || tokenMatched) {
+      removedProviderIds.push(key);
       delete payload[key];
     }
   });
 
   if (Object.keys(payload).length === 0) {
     removeFileIfExists(NATIVE_PATHS.opencode.auth);
-    return;
+  } else {
+    writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
   }
 
-  writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
+  syncOpenCodeConfigAfterOAuthRemoval(removedProviderIds);
 }
 
 function isManagedOpenCodeProvider(provider) {
@@ -780,6 +786,44 @@ function isManagedOpenCodeProvider(provider) {
   return apiKey === 'PROXY_KEY' && (baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost'));
 }
 
+function isProxyBackedOpenCodeProvider(provider) {
+  if (!provider || typeof provider !== 'object') {
+    return false;
+  }
+
+  const apiKey = String(provider?.options?.apiKey || '').trim();
+  const baseUrl = String(provider?.options?.baseURL || '').trim();
+  return apiKey === 'PROXY_KEY' && (baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost'));
+}
+
+function isMeaningfulOpenCodeProvider(provider) {
+  if (!provider || typeof provider !== 'object') {
+    return false;
+  }
+
+  if (provider.__ctx_managed__ === true) {
+    return true;
+  }
+
+  if (typeof provider.npm === 'string' && provider.npm.trim()) {
+    return true;
+  }
+
+  if (typeof provider.name === 'string' && provider.name.trim()) {
+    return true;
+  }
+
+  if (provider.options && typeof provider.options === 'object' && Object.keys(provider.options).length > 0) {
+    return true;
+  }
+
+  if (provider.models && typeof provider.models === 'object' && Object.keys(provider.models).length > 0) {
+    return true;
+  }
+
+  return false;
+}
+
 function clearOpenCodeManagedModelSelection(config) {
   const modelRef = String(config?.model || '').trim();
   if (!modelRef || !modelRef.includes('/')) {
@@ -794,6 +838,107 @@ function clearOpenCodeManagedModelSelection(config) {
   const provider = config?.provider?.[providerId];
   if (isManagedOpenCodeProvider(provider)) {
     delete config.model;
+  }
+}
+
+function getConfiguredOpenCodeProviderId(config) {
+  const modelRef = String(config?.model || '').trim();
+  if (modelRef.includes('/')) {
+    return modelRef.split('/')[0].trim();
+  }
+
+  const providerIds = config?.provider && typeof config.provider === 'object'
+    ? Object.keys(config.provider).filter(Boolean)
+    : [];
+  return providerIds.length === 1 ? providerIds[0] : '';
+}
+
+function buildOpenCodeModelRef(providerId, provider) {
+  if (!providerId || !provider || typeof provider !== 'object') {
+    return '';
+  }
+
+  const modelIds = provider.models && typeof provider.models === 'object'
+    ? Object.keys(provider.models).filter(Boolean)
+    : [];
+
+  if (modelIds.length === 0) {
+    return '';
+  }
+
+  return `${providerId}/${modelIds[0]}`;
+}
+
+function pickFallbackOpenCodeModel(config, excludedProviderIds = new Set()) {
+  const providers = config?.provider && typeof config.provider === 'object'
+    ? Object.entries(config.provider)
+    : [];
+
+  for (const [providerId, provider] of providers) {
+    if (excludedProviderIds.has(providerId)) {
+      continue;
+    }
+
+    const modelRef = buildOpenCodeModelRef(providerId, provider);
+    if (modelRef) {
+      return modelRef;
+    }
+  }
+
+  return '';
+}
+
+function syncOpenCodeConfigAfterOAuthRemoval(removedProviderIds = []) {
+  const removedIds = new Set((removedProviderIds || []).filter(Boolean));
+  if (removedIds.size === 0) {
+    return;
+  }
+
+  const configPath = opencodeSettingsManager.selectConfigPath();
+  if (!configPath || !fs.existsSync(configPath)) {
+    return;
+  }
+
+  let config = {};
+  try {
+    config = opencodeSettingsManager.readConfig(configPath);
+  } catch {
+    return;
+  }
+
+  config = config && typeof config === 'object' ? config : {};
+  config.provider = config.provider && typeof config.provider === 'object' ? config.provider : {};
+
+  let changed = false;
+  for (const providerId of removedIds) {
+    const provider = config.provider[providerId];
+    if (provider && !isMeaningfulOpenCodeProvider(provider)) {
+      delete config.provider[providerId];
+      changed = true;
+    }
+  }
+
+  const activeProviderId = getConfiguredOpenCodeProviderId(config);
+  if (activeProviderId && removedIds.has(activeProviderId)) {
+    const activeProvider = config.provider[activeProviderId];
+    if (!isMeaningfulOpenCodeProvider(activeProvider)) {
+      const fallbackModel = pickFallbackOpenCodeModel(config, removedIds);
+      if (fallbackModel) {
+        config.model = fallbackModel;
+      } else {
+        delete config.model;
+      }
+      changed = true;
+    }
+  }
+
+  if (Object.keys(config.provider).length === 0) {
+    delete config.provider;
+    changed = true;
+  }
+
+  if (changed) {
+    opencodeSettingsManager.writeConfig(configPath, config);
   }
 }
 
@@ -840,7 +985,9 @@ function inspectOpenCodeState() {
     const providers = config?.provider && typeof config.provider === 'object'
       ? Object.values(config.provider)
       : [];
-    channelConfigured = providers.some(provider => provider?.__ctx_managed__ === true);
+    channelConfigured = providers.some(provider => (
+      isMeaningfulOpenCodeProvider(provider) && !isProxyBackedOpenCodeProvider(provider)
+    ));
   } catch {
     channelConfigured = false;
   }

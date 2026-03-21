@@ -3,7 +3,7 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const https = require('https');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { loadUIConfig, saveUIConfig } = require('./ui-config');
 const codexSettingsManager = require('./codex-settings-manager');
@@ -238,7 +238,199 @@ function escapeForXml(value) {
 }
 
 function buildWindowsPopupCommand(title, message) {
-  return `powershell -NoProfile -Command "$wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('${escapeForPowerShellSingleQuote(message)}', 5, '${escapeForPowerShellSingleQuote(title)}', 0x40)"`;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$titleText = '${escapeForPowerShellSingleQuote(title)}'`,
+    `$messageText = '${escapeForPowerShellSingleQuote(message)}'`,
+    "$segments = $messageText -split '\\s*\\|\\s*', 2",
+    "$headlineText = if ($segments.Length -ge 1) { $segments[0] } else { $messageText }",
+    "$detailText = if ($segments.Length -ge 2) { $segments[1] } else { '' }",
+    'try {',
+    'Add-Type -AssemblyName PresentationFramework',
+    'Add-Type -AssemblyName PresentationCore',
+    'Add-Type -AssemblyName WindowsBase',
+    '$brushConverter = New-Object System.Windows.Media.BrushConverter',
+    '$window = New-Object System.Windows.Window',
+    '$window.Width = 372',
+    '$window.Height = 118',
+    '$window.WindowStyle = [System.Windows.WindowStyle]::None',
+    '$window.ResizeMode = [System.Windows.ResizeMode]::NoResize',
+    '$window.AllowsTransparency = $true',
+    '$window.Background = [System.Windows.Media.Brushes]::Transparent',
+    '$window.ShowInTaskbar = $false',
+    '$window.Topmost = $true',
+    '$window.ShowActivated = $false',
+    '$window.Opacity = 0',
+    '$window.WindowStartupLocation = [System.Windows.WindowStartupLocation]::Manual',
+    '$root = New-Object System.Windows.Controls.Border',
+    '$root.CornerRadius = New-Object System.Windows.CornerRadius -ArgumentList 20',
+    '$root.Padding = New-Object System.Windows.Thickness -ArgumentList 16',
+    "$root.Background = $brushConverter.ConvertFromString('#F3F4F7')",
+    "$root.BorderBrush = $brushConverter.ConvertFromString('#D9DBE3')",
+    '$root.BorderThickness = New-Object System.Windows.Thickness -ArgumentList 1',
+    '$shadow = New-Object System.Windows.Media.Effects.DropShadowEffect',
+    "$shadow.Color = [System.Windows.Media.ColorConverter]::ConvertFromString('#22000000')",
+    '$shadow.BlurRadius = 26',
+    '$shadow.ShadowDepth = 0',
+    '$shadow.Opacity = 0.85',
+    '$root.Effect = $shadow',
+    '$grid = New-Object System.Windows.Controls.Grid',
+    '$iconColumn = New-Object System.Windows.Controls.ColumnDefinition',
+    '$iconColumn.Width = New-Object System.Windows.GridLength -ArgumentList 44',
+    '$contentColumn = New-Object System.Windows.Controls.ColumnDefinition',
+    '$grid.ColumnDefinitions.Add($iconColumn) | Out-Null',
+    '$grid.ColumnDefinitions.Add($contentColumn) | Out-Null',
+    '$iconHolder = New-Object System.Windows.Controls.Border',
+    '$iconHolder.Width = 34',
+    '$iconHolder.Height = 34',
+    '$iconHolder.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left',
+    '$iconHolder.VerticalAlignment = [System.Windows.VerticalAlignment]::Top',
+    '$iconHolder.CornerRadius = New-Object System.Windows.CornerRadius -ArgumentList 17',
+    "$iconHolder.Background = $brushConverter.ConvertFromString('#DDEBFF')",
+    '$iconGlyph = New-Object System.Windows.Controls.TextBlock',
+    '$iconGlyph.Text = [char]0x2713',
+    '$iconGlyph.FontSize = 18',
+    '$iconGlyph.FontWeight = [System.Windows.FontWeights]::Bold',
+    "$iconGlyph.Foreground = $brushConverter.ConvertFromString('#0A84FF')",
+    '$iconGlyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center',
+    '$iconGlyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center',
+    '$iconHolder.Child = $iconGlyph',
+    '$contentStack = New-Object System.Windows.Controls.StackPanel',
+    '$contentStack.Orientation = [System.Windows.Controls.Orientation]::Vertical',
+    '$contentStack.Margin = New-Object System.Windows.Thickness -ArgumentList 4,0,0,0',
+    '$metaGrid = New-Object System.Windows.Controls.Grid',
+    '$metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition)) | Out-Null',
+    '$timeColumn = New-Object System.Windows.Controls.ColumnDefinition',
+    '$timeColumn.Width = [System.Windows.GridLength]::Auto',
+    '$metaGrid.ColumnDefinitions.Add($timeColumn) | Out-Null',
+    '$appLabel = New-Object System.Windows.Controls.TextBlock',
+    '$appLabel.Text = $titleText',
+    '$appLabel.FontSize = 11.5',
+    '$appLabel.FontWeight = [System.Windows.FontWeights]::SemiBold',
+    "$appLabel.Foreground = $brushConverter.ConvertFromString('#6B6C73')",
+    '$appLabel.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis',
+    '$stampLabel = New-Object System.Windows.Controls.TextBlock',
+    "$stampLabel.Text = '刚刚'",
+    '$stampLabel.FontSize = 11',
+    "$stampLabel.Foreground = $brushConverter.ConvertFromString('#8D8E95')",
+    '$stampLabel.Margin = New-Object System.Windows.Thickness -ArgumentList 12,0,0,0',
+    '[System.Windows.Controls.Grid]::SetColumn($stampLabel, 1)',
+    '$metaGrid.Children.Add($appLabel) | Out-Null',
+    '$metaGrid.Children.Add($stampLabel) | Out-Null',
+    '$headlineLabel = New-Object System.Windows.Controls.TextBlock',
+    '$headlineLabel.Text = $headlineText',
+    '$headlineLabel.FontSize = 14',
+    '$headlineLabel.FontWeight = [System.Windows.FontWeights]::SemiBold',
+    "$headlineLabel.Foreground = $brushConverter.ConvertFromString('#1F2024')",
+    '$headlineLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap',
+    '$headlineLabel.Margin = New-Object System.Windows.Thickness -ArgumentList 0,6,0,0',
+    '$detailLabel = New-Object System.Windows.Controls.TextBlock',
+    '$detailLabel.Text = $detailText',
+    '$detailLabel.FontSize = 12',
+    "$detailLabel.Foreground = $brushConverter.ConvertFromString('#5F6168')",
+    '$detailLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap',
+    '$detailLabel.Margin = New-Object System.Windows.Thickness -ArgumentList 0,4,0,0',
+    '$detailLabel.Visibility = if ([string]::IsNullOrWhiteSpace($detailText)) { [System.Windows.Visibility]::Collapsed } else { [System.Windows.Visibility]::Visible }',
+    '$contentStack.Children.Add($metaGrid) | Out-Null',
+    '$contentStack.Children.Add($headlineLabel) | Out-Null',
+    '$contentStack.Children.Add($detailLabel) | Out-Null',
+    '[System.Windows.Controls.Grid]::SetColumn($contentStack, 1)',
+    '$grid.Children.Add($iconHolder) | Out-Null',
+    '$grid.Children.Add($contentStack) | Out-Null',
+    '$root.Child = $grid',
+    '$window.Content = $root',
+    '$workArea = [System.Windows.SystemParameters]::WorkArea',
+    '$window.Left = $workArea.Right - $window.Width - 18',
+    '$window.Top = $workArea.Top + 18',
+    '$frame = New-Object System.Windows.Threading.DispatcherFrame',
+    '$window.Add_Closed({ $frame.Continue = $false })',
+    '$closeTimer = New-Object System.Windows.Threading.DispatcherTimer',
+    '$closeTimer.Interval = [TimeSpan]::FromMilliseconds(4600)',
+    '$closeTimer.Add_Tick({',
+    '  $closeTimer.Stop()',
+    '  $fadeOut = New-Object System.Windows.Media.Animation.DoubleAnimation',
+    '  $fadeOut.From = $window.Opacity',
+    '  $fadeOut.To = 0',
+    '  $fadeOut.Duration = [TimeSpan]::FromMilliseconds(220)',
+    '  $fadeOut.Add_Completed({ $window.Close() })',
+    '  $window.BeginAnimation([System.Windows.Window]::OpacityProperty, $fadeOut)',
+    '})',
+    '$window.Show()',
+    '$fadeIn = New-Object System.Windows.Media.Animation.DoubleAnimation',
+    '$fadeIn.From = 0',
+    '$fadeIn.To = 1',
+    '$fadeIn.Duration = [TimeSpan]::FromMilliseconds(180)',
+    '$window.BeginAnimation([System.Windows.Window]::OpacityProperty, $fadeIn)',
+    '$closeTimer.Start()',
+    '[System.Windows.Threading.Dispatcher]::PushFrame($frame)',
+    '} catch {',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None',
+    '$form.BackColor = [System.Drawing.Color]::FromArgb(247, 247, 250)',
+    '$form.Width = 360',
+    '$form.Height = 118',
+    '$form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual',
+    '$form.ShowInTaskbar = $false',
+    '$form.TopMost = $true',
+    '$form.MaximizeBox = $false',
+    '$form.MinimizeBox = $false',
+    '$workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
+    '$form.Location = New-Object System.Drawing.Point(($workingArea.Right - $form.Width - 18), ($workingArea.Top + 18))',
+    '$iconPanel = New-Object System.Windows.Forms.Panel',
+    '$iconPanel.Width = 34',
+    '$iconPanel.Height = 34',
+    '$iconPanel.BackColor = [System.Drawing.Color]::FromArgb(221, 235, 255)',
+    '$iconPanel.Location = New-Object System.Drawing.Point(16, 18)',
+    '$iconLabel = New-Object System.Windows.Forms.Label',
+    '$iconLabel.Text = [char]0x2713',
+    "$iconLabel.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)",
+    '$iconLabel.ForeColor = [System.Drawing.Color]::FromArgb(10, 132, 255)',
+    '$iconLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
+    '$iconLabel.Dock = [System.Windows.Forms.DockStyle]::Fill',
+    '$iconPanel.Controls.Add($iconLabel)',
+    '$titleLabel = New-Object System.Windows.Forms.Label',
+    '$titleLabel.Text = $titleText',
+    "$titleLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)",
+    '$titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(109, 110, 115)',
+    '$titleLabel.AutoSize = $true',
+    '$titleLabel.Location = New-Object System.Drawing.Point(60, 16)',
+    '$headlineLabel = New-Object System.Windows.Forms.Label',
+    '$headlineLabel.Text = $headlineText',
+    "$headlineLabel.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold)",
+    '$headlineLabel.ForeColor = [System.Drawing.Color]::FromArgb(31, 32, 36)',
+    '$headlineLabel.MaximumSize = New-Object System.Drawing.Size(272, 0)',
+    '$headlineLabel.AutoSize = $true',
+    '$headlineLabel.Location = New-Object System.Drawing.Point(60, 36)',
+    '$detailLabel = New-Object System.Windows.Forms.Label',
+    '$detailLabel.Text = $detailText',
+    "$detailLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9)",
+    '$detailLabel.ForeColor = [System.Drawing.Color]::FromArgb(95, 97, 104)',
+    '$detailLabel.MaximumSize = New-Object System.Drawing.Size(272, 0)',
+    '$detailLabel.AutoSize = $true',
+    '$detailLabel.Location = New-Object System.Drawing.Point(60, 60)',
+    '$detailLabel.Visible = -not [string]::IsNullOrWhiteSpace($detailText)',
+    '$form.Controls.Add($iconPanel)',
+    '$form.Controls.Add($titleLabel)',
+    '$form.Controls.Add($headlineLabel)',
+    '$form.Controls.Add($detailLabel)',
+    '$timer = New-Object System.Windows.Forms.Timer',
+    '$timer.Interval = 4800',
+    '$timer.Add_Tick({ $timer.Stop(); $form.Close() })',
+    '$timer.Start()',
+    '[void]$form.ShowDialog()',
+    '}'
+  ].join('; ');
+  return script;
+}
+
+function runWindowsPowerShellCommand(command) {
+  // Invoke PowerShell directly so the styled popup script doesn't hit cmd.exe's 8191-char limit.
+  execFileSync('powershell', ['-NoProfile', '-STA', '-Command', command], {
+    stdio: 'ignore',
+    windowsHide: true
+  });
 }
 
 function generateNotifyScript(feishu = {}) {
@@ -250,7 +442,7 @@ const fs = require('fs')
 const os = require('os')
 const http = require('http')
 const https = require('https')
-const { execSync } = require('child_process')
+const { execSync, execFileSync } = require('child_process')
 
 const FEISHU_ENABLED = ${feishuEnabled ? 'true' : 'false'}
 const FEISHU_WEBHOOK_URL = ${JSON.stringify(feishuEnabled ? feishu.webhookUrl : '')}
@@ -345,10 +537,13 @@ function notify(mode, message) {
         const ps = "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('" +
           escapeForPowerShellSingleQuote(message) + "', '" +
           escapeForPowerShellSingleQuote(title) + "', 'OK', 'Information')"
-        const command = 'powershell -NoProfile -Command ' + JSON.stringify(ps) + ' || ' + popupCommand
-        execSync(command, { stdio: 'ignore', windowsHide: true })
+        try {
+          runWindowsPowerShellCommand(ps)
+        } catch (dialogError) {
+          runWindowsPowerShellCommand(popupCommand)
+        }
       } else {
-        execSync(popupCommand, { stdio: 'ignore', windowsHide: true })
+        runWindowsPowerShellCommand(popupCommand)
       }
       return
     }
@@ -464,7 +659,199 @@ function escapeForXml(value) {
 }
 
 function buildWindowsPopupCommand(title, message) {
-  return \`powershell -NoProfile -Command "$wshell = New-Object -ComObject Wscript.Shell; $wshell.Popup('\${escapeForPowerShellSingleQuote(message)}', 5, '\${escapeForPowerShellSingleQuote(title)}', 0x40)"\`
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    \`$titleText = '\${escapeForPowerShellSingleQuote(title)}'\`,
+    \`$messageText = '\${escapeForPowerShellSingleQuote(message)}'\`,
+    "$segments = $messageText -split '\\\\s*\\\\|\\\\s*', 2",
+    "$headlineText = if ($segments.Length -ge 1) { $segments[0] } else { $messageText }",
+    "$detailText = if ($segments.Length -ge 2) { $segments[1] } else { '' }",
+    'try {',
+    'Add-Type -AssemblyName PresentationFramework',
+    'Add-Type -AssemblyName PresentationCore',
+    'Add-Type -AssemblyName WindowsBase',
+    '$brushConverter = New-Object System.Windows.Media.BrushConverter',
+    '$window = New-Object System.Windows.Window',
+    '$window.Width = 372',
+    '$window.Height = 118',
+    '$window.WindowStyle = [System.Windows.WindowStyle]::None',
+    '$window.ResizeMode = [System.Windows.ResizeMode]::NoResize',
+    '$window.AllowsTransparency = $true',
+    '$window.Background = [System.Windows.Media.Brushes]::Transparent',
+    '$window.ShowInTaskbar = $false',
+    '$window.Topmost = $true',
+    '$window.ShowActivated = $false',
+    '$window.Opacity = 0',
+    '$window.WindowStartupLocation = [System.Windows.WindowStartupLocation]::Manual',
+    '$root = New-Object System.Windows.Controls.Border',
+    '$root.CornerRadius = New-Object System.Windows.CornerRadius -ArgumentList 20',
+    '$root.Padding = New-Object System.Windows.Thickness -ArgumentList 16',
+    "$root.Background = $brushConverter.ConvertFromString('#F3F4F7')",
+    "$root.BorderBrush = $brushConverter.ConvertFromString('#D9DBE3')",
+    '$root.BorderThickness = New-Object System.Windows.Thickness -ArgumentList 1',
+    '$shadow = New-Object System.Windows.Media.Effects.DropShadowEffect',
+    "$shadow.Color = [System.Windows.Media.ColorConverter]::ConvertFromString('#22000000')",
+    '$shadow.BlurRadius = 26',
+    '$shadow.ShadowDepth = 0',
+    '$shadow.Opacity = 0.85',
+    '$root.Effect = $shadow',
+    '$grid = New-Object System.Windows.Controls.Grid',
+    '$iconColumn = New-Object System.Windows.Controls.ColumnDefinition',
+    '$iconColumn.Width = New-Object System.Windows.GridLength -ArgumentList 44',
+    '$contentColumn = New-Object System.Windows.Controls.ColumnDefinition',
+    '$grid.ColumnDefinitions.Add($iconColumn) | Out-Null',
+    '$grid.ColumnDefinitions.Add($contentColumn) | Out-Null',
+    '$iconHolder = New-Object System.Windows.Controls.Border',
+    '$iconHolder.Width = 34',
+    '$iconHolder.Height = 34',
+    '$iconHolder.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left',
+    '$iconHolder.VerticalAlignment = [System.Windows.VerticalAlignment]::Top',
+    '$iconHolder.CornerRadius = New-Object System.Windows.CornerRadius -ArgumentList 17',
+    "$iconHolder.Background = $brushConverter.ConvertFromString('#DDEBFF')",
+    '$iconGlyph = New-Object System.Windows.Controls.TextBlock',
+    '$iconGlyph.Text = [char]0x2713',
+    '$iconGlyph.FontSize = 18',
+    '$iconGlyph.FontWeight = [System.Windows.FontWeights]::Bold',
+    "$iconGlyph.Foreground = $brushConverter.ConvertFromString('#0A84FF')",
+    '$iconGlyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center',
+    '$iconGlyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center',
+    '$iconHolder.Child = $iconGlyph',
+    '$contentStack = New-Object System.Windows.Controls.StackPanel',
+    '$contentStack.Orientation = [System.Windows.Controls.Orientation]::Vertical',
+    '$contentStack.Margin = New-Object System.Windows.Thickness -ArgumentList 4,0,0,0',
+    '$metaGrid = New-Object System.Windows.Controls.Grid',
+    '$metaGrid.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition)) | Out-Null',
+    '$timeColumn = New-Object System.Windows.Controls.ColumnDefinition',
+    '$timeColumn.Width = [System.Windows.GridLength]::Auto',
+    '$metaGrid.ColumnDefinitions.Add($timeColumn) | Out-Null',
+    '$appLabel = New-Object System.Windows.Controls.TextBlock',
+    '$appLabel.Text = $titleText',
+    '$appLabel.FontSize = 11.5',
+    '$appLabel.FontWeight = [System.Windows.FontWeights]::SemiBold',
+    "$appLabel.Foreground = $brushConverter.ConvertFromString('#6B6C73')",
+    '$appLabel.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis',
+    '$stampLabel = New-Object System.Windows.Controls.TextBlock',
+    "$stampLabel.Text = '刚刚'",
+    '$stampLabel.FontSize = 11',
+    "$stampLabel.Foreground = $brushConverter.ConvertFromString('#8D8E95')",
+    '$stampLabel.Margin = New-Object System.Windows.Thickness -ArgumentList 12,0,0,0',
+    '[System.Windows.Controls.Grid]::SetColumn($stampLabel, 1)',
+    '$metaGrid.Children.Add($appLabel) | Out-Null',
+    '$metaGrid.Children.Add($stampLabel) | Out-Null',
+    '$headlineLabel = New-Object System.Windows.Controls.TextBlock',
+    '$headlineLabel.Text = $headlineText',
+    '$headlineLabel.FontSize = 14',
+    '$headlineLabel.FontWeight = [System.Windows.FontWeights]::SemiBold',
+    "$headlineLabel.Foreground = $brushConverter.ConvertFromString('#1F2024')",
+    '$headlineLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap',
+    '$headlineLabel.Margin = New-Object System.Windows.Thickness -ArgumentList 0,6,0,0',
+    '$detailLabel = New-Object System.Windows.Controls.TextBlock',
+    '$detailLabel.Text = $detailText',
+    '$detailLabel.FontSize = 12',
+    "$detailLabel.Foreground = $brushConverter.ConvertFromString('#5F6168')",
+    '$detailLabel.TextWrapping = [System.Windows.TextWrapping]::Wrap',
+    '$detailLabel.Margin = New-Object System.Windows.Thickness -ArgumentList 0,4,0,0',
+    '$detailLabel.Visibility = if ([string]::IsNullOrWhiteSpace($detailText)) { [System.Windows.Visibility]::Collapsed } else { [System.Windows.Visibility]::Visible }',
+    '$contentStack.Children.Add($metaGrid) | Out-Null',
+    '$contentStack.Children.Add($headlineLabel) | Out-Null',
+    '$contentStack.Children.Add($detailLabel) | Out-Null',
+    '[System.Windows.Controls.Grid]::SetColumn($contentStack, 1)',
+    '$grid.Children.Add($iconHolder) | Out-Null',
+    '$grid.Children.Add($contentStack) | Out-Null',
+    '$root.Child = $grid',
+    '$window.Content = $root',
+    '$workArea = [System.Windows.SystemParameters]::WorkArea',
+    '$window.Left = $workArea.Right - $window.Width - 18',
+    '$window.Top = $workArea.Top + 18',
+    '$frame = New-Object System.Windows.Threading.DispatcherFrame',
+    '$window.Add_Closed({ $frame.Continue = $false })',
+    '$closeTimer = New-Object System.Windows.Threading.DispatcherTimer',
+    '$closeTimer.Interval = [TimeSpan]::FromMilliseconds(4600)',
+    '$closeTimer.Add_Tick({',
+    '  $closeTimer.Stop()',
+    '  $fadeOut = New-Object System.Windows.Media.Animation.DoubleAnimation',
+    '  $fadeOut.From = $window.Opacity',
+    '  $fadeOut.To = 0',
+    '  $fadeOut.Duration = [TimeSpan]::FromMilliseconds(220)',
+    '  $fadeOut.Add_Completed({ $window.Close() })',
+    '  $window.BeginAnimation([System.Windows.Window]::OpacityProperty, $fadeOut)',
+    '})',
+    '$window.Show()',
+    '$fadeIn = New-Object System.Windows.Media.Animation.DoubleAnimation',
+    '$fadeIn.From = 0',
+    '$fadeIn.To = 1',
+    '$fadeIn.Duration = [TimeSpan]::FromMilliseconds(180)',
+    '$window.BeginAnimation([System.Windows.Window]::OpacityProperty, $fadeIn)',
+    '$closeTimer.Start()',
+    '[System.Windows.Threading.Dispatcher]::PushFrame($frame)',
+    '} catch {',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -AssemblyName System.Drawing',
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None',
+    '$form.BackColor = [System.Drawing.Color]::FromArgb(247, 247, 250)',
+    '$form.Width = 360',
+    '$form.Height = 118',
+    '$form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual',
+    '$form.ShowInTaskbar = $false',
+    '$form.TopMost = $true',
+    '$form.MaximizeBox = $false',
+    '$form.MinimizeBox = $false',
+    '$workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
+    '$form.Location = New-Object System.Drawing.Point(($workingArea.Right - $form.Width - 18), ($workingArea.Top + 18))',
+    '$iconPanel = New-Object System.Windows.Forms.Panel',
+    '$iconPanel.Width = 34',
+    '$iconPanel.Height = 34',
+    '$iconPanel.BackColor = [System.Drawing.Color]::FromArgb(221, 235, 255)',
+    '$iconPanel.Location = New-Object System.Drawing.Point(16, 18)',
+    '$iconLabel = New-Object System.Windows.Forms.Label',
+    '$iconLabel.Text = [char]0x2713',
+    "$iconLabel.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)",
+    '$iconLabel.ForeColor = [System.Drawing.Color]::FromArgb(10, 132, 255)',
+    '$iconLabel.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter',
+    '$iconLabel.Dock = [System.Windows.Forms.DockStyle]::Fill',
+    '$iconPanel.Controls.Add($iconLabel)',
+    '$titleLabel = New-Object System.Windows.Forms.Label',
+    '$titleLabel.Text = $titleText',
+    "$titleLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)",
+    '$titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(109, 110, 115)',
+    '$titleLabel.AutoSize = $true',
+    '$titleLabel.Location = New-Object System.Drawing.Point(60, 16)',
+    '$headlineLabel = New-Object System.Windows.Forms.Label',
+    '$headlineLabel.Text = $headlineText',
+    "$headlineLabel.Font = New-Object System.Drawing.Font('Segoe UI', 10.5, [System.Drawing.FontStyle]::Bold)",
+    '$headlineLabel.ForeColor = [System.Drawing.Color]::FromArgb(31, 32, 36)',
+    '$headlineLabel.MaximumSize = New-Object System.Drawing.Size(272, 0)',
+    '$headlineLabel.AutoSize = $true',
+    '$headlineLabel.Location = New-Object System.Drawing.Point(60, 36)',
+    '$detailLabel = New-Object System.Windows.Forms.Label',
+    '$detailLabel.Text = $detailText',
+    "$detailLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9)",
+    '$detailLabel.ForeColor = [System.Drawing.Color]::FromArgb(95, 97, 104)',
+    '$detailLabel.MaximumSize = New-Object System.Drawing.Size(272, 0)',
+    '$detailLabel.AutoSize = $true',
+    '$detailLabel.Location = New-Object System.Drawing.Point(60, 60)',
+    '$detailLabel.Visible = -not [string]::IsNullOrWhiteSpace($detailText)',
+    '$form.Controls.Add($iconPanel)',
+    '$form.Controls.Add($titleLabel)',
+    '$form.Controls.Add($headlineLabel)',
+    '$form.Controls.Add($detailLabel)',
+    '$timer = New-Object System.Windows.Forms.Timer',
+    '$timer.Interval = 4800',
+    '$timer.Add_Tick({ $timer.Stop(); $form.Close() })',
+    '$timer.Start()',
+    '[void]$form.ShowDialog()',
+    '}'
+  ].join('; ')
+  return script
+}
+
+function runWindowsPowerShellCommand(command) {
+  // Invoke PowerShell directly so the styled popup script doesn't hit cmd.exe's 8191-char limit.
+  execFileSync('powershell', ['-NoProfile', '-STA', '-Command', command], {
+    stdio: 'ignore',
+    windowsHide: true
+  })
 }
 `;
 }
@@ -832,6 +1219,205 @@ function saveNotificationSettings(input = {}) {
   return getNotificationSettings();
 }
 
+function parseNotifyTypeMarker(command) {
+  const marker = String(command || '').match(/--cc-notify-type=(['"])?(dialog|notification)\1/i);
+  return marker?.[2] ? normalizeType(marker[2].toLowerCase()) : null;
+}
+
+function getStopHookCommand(settings = {}) {
+  const hooks = settings?.hooks?.Stop;
+  if (!Array.isArray(hooks) || hooks.length === 0) {
+    return '';
+  }
+
+  let fallbackCommand = '';
+  for (const group of hooks) {
+    const groupHooks = Array.isArray(group?.hooks) ? group.hooks : [];
+    for (const hook of groupHooks) {
+      const command = String(hook?.command || '');
+      if (!command) continue;
+      if (!fallbackCommand) {
+        fallbackCommand = command;
+      }
+      if (command.includes('notify-hook.js')) {
+        return command;
+      }
+    }
+  }
+
+  return fallbackCommand;
+}
+
+function normalizePathForCompare(rawPath) {
+  return String(rawPath || '').replace(/\\/g, '/');
+}
+
+function shouldRepairStopHook(settings, expectedScriptPath = PATHS.notifyHook, fileExists = fs.existsSync) {
+  const command = getStopHookCommand(settings);
+  if (!command || !command.includes('notify-hook.js')) {
+    return false;
+  }
+
+  const normalizedCommand = normalizePathForCompare(command);
+  const normalizedExpected = normalizePathForCompare(expectedScriptPath);
+  if (!normalizedCommand.includes(normalizedExpected)) {
+    return true;
+  }
+
+  const markerType = parseNotifyTypeMarker(command);
+  if (!markerType) {
+    return true;
+  }
+
+  return !fileExists(expectedScriptPath);
+}
+
+function buildStopHookCommand(type) {
+  return buildClaudeCommand(type);
+}
+
+function parseStopHookStatus(settings = {}) {
+  const stopGroups = Array.isArray(settings?.hooks?.Stop) ? settings.hooks.Stop : [];
+  if (stopGroups.length === 0) {
+    return { enabled: false, type: 'notification' };
+  }
+
+  let sawNotificationLikeCommand = false;
+  for (const group of stopGroups) {
+    const groupHooks = Array.isArray(group?.hooks) ? group.hooks : [];
+    for (const hook of groupHooks) {
+      const command = String(hook?.command || '');
+      if (!command) continue;
+
+      const markerType = parseNotifyTypeMarker(command) || parseManagedType(command);
+      if (markerType) {
+        return { enabled: true, type: markerType };
+      }
+
+      const isDialog = command.includes('display dialog') ||
+        command.includes('MessageBox') ||
+        command.includes('zenity --info');
+      if (isDialog) {
+        return { enabled: true, type: 'dialog' };
+      }
+
+      const isNotification = command.includes('display notification') ||
+        command.includes('Popup') ||
+        command.includes('GraphicsPath') ||
+        command.includes('TransparencyKey') ||
+        command.includes('FormBorderStyle]::None') ||
+        command.includes('AllowsTransparency') ||
+        command.includes('notify-send') ||
+        command.includes('ToastNotificationManager') ||
+        command.includes('CreateToastNotifier') ||
+        command.includes('notify-hook.js');
+      if (isNotification) {
+        sawNotificationLikeCommand = true;
+      }
+    }
+  }
+
+  return sawNotificationLikeCommand
+    ? { enabled: true, type: 'notification' }
+    : { enabled: false, type: 'notification' };
+}
+
+function normalizeSavedPlatformStatus(platform = {}) {
+  return {
+    enabled: platform?.enabled === true,
+    type: normalizeType(platform?.type)
+  };
+}
+
+function buildLegacyClaudeSaveInput(input = {}, currentSettings = getNotificationSettings()) {
+  return {
+    platforms: {
+      claude: input.stopHook !== undefined
+        ? normalizePlatformInput(input.stopHook)
+        : { enabled: false, type: 'notification' },
+      codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
+      gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
+      opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
+    },
+    feishu: input.feishu !== undefined
+      ? {
+          enabled: input.feishu?.enabled === true,
+          webhookUrl: input.feishu?.webhookUrl || ''
+        }
+      : {
+          enabled: currentSettings?.feishu?.enabled === true,
+          webhookUrl: currentSettings?.feishu?.webhookUrl || ''
+        }
+  };
+}
+
+function getLegacyClaudeHookSettings() {
+  return {
+    success: true,
+    stopHook: parseStopHookStatus(readClaudeSettings()),
+    feishu: getFeishuConfig(),
+    platform: os.platform()
+  };
+}
+
+function saveLegacyClaudeHookSettings(input = {}) {
+  const currentSettings = getNotificationSettings();
+  saveNotificationSettings(buildLegacyClaudeSaveInput(input, currentSettings));
+  return getLegacyClaudeHookSettings();
+}
+
+function initDefaultHooks() {
+  try {
+    const uiConfig = loadUIConfig();
+    if (uiConfig.claudeNotificationDisabledByUser === true) {
+      console.log('[Claude Hooks] 用户已主动关闭通知，跳过自动初始化');
+      return;
+    }
+
+    const currentClaudeSettings = readClaudeSettings();
+    const currentStatus = parseStopHookStatus(currentClaudeSettings);
+
+    if (currentStatus.enabled) {
+      if (shouldRepairStopHook(currentClaudeSettings)) {
+        const currentSettings = getNotificationSettings();
+        saveNotificationSettings({
+          platforms: {
+            claude: { enabled: true, type: currentStatus.type || 'notification' },
+            codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
+            gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
+            opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
+          },
+          feishu: {
+            enabled: currentSettings?.feishu?.enabled === true,
+            webhookUrl: currentSettings?.feishu?.webhookUrl || ''
+          }
+        });
+        console.log('[Claude Hooks] 检测到旧版 Stop hook 路径，已自动修复');
+      } else {
+        console.log('[Claude Hooks] 已存在 Stop hook 配置，跳过初始化');
+      }
+      return;
+    }
+
+    const currentSettings = getNotificationSettings();
+    saveNotificationSettings({
+      platforms: {
+        claude: { enabled: true, type: 'notification' },
+        codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
+        gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
+        opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
+      },
+      feishu: {
+        enabled: currentSettings?.feishu?.enabled === true,
+        webhookUrl: currentSettings?.feishu?.webhookUrl || ''
+      }
+    });
+    console.log('[Claude Hooks] 已自动开启任务完成通知（右上角卡片）');
+  } catch (error) {
+    console.error('[Claude Hooks] 初始化默认配置失败:', error);
+  }
+}
+
 function sendFeishuTest(webhookUrl) {
   return new Promise((resolve, reject) => {
     try {
@@ -897,7 +1483,7 @@ function generateSystemNotificationCommand(type, message, platformOverride = os.
   if (platform === 'win32') {
     const popupCommand = buildWindowsPopupCommand(title, message);
     if (normalizedType === 'dialog') {
-      return `powershell -NoProfile -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('${escapeForPowerShellSingleQuote(message)}', '${escapeForPowerShellSingleQuote(title)}', 'OK', 'Information')" || ${popupCommand}`;
+      return `powershell -NoProfile -STA -Command "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('${escapeForPowerShellSingleQuote(message)}', '${escapeForPowerShellSingleQuote(title)}', 'OK', 'Information')" || ${popupCommand}`;
     }
     return popupCommand;
   }
@@ -909,19 +1495,89 @@ function generateSystemNotificationCommand(type, message, platformOverride = os.
   return `notify-send "Coding Tool" "${String(message || '').replace(/"/g, '\\"')}"`;
 }
 
+function runSystemNotification(type, message, platformOverride = os.platform()) {
+  const normalizedType = normalizeType(type);
+  const title = 'Coding Tool';
+  const platform = platformOverride;
+
+  if (platform === 'darwin') {
+    if (normalizedType === 'dialog') {
+      const appleScript = 'display dialog "' + escapeForAppleScript(message) +
+        '" with title "' + escapeForAppleScript(title) +
+        '" buttons {"好的"} default button 1 with icon note';
+      execSync('osascript -e ' + JSON.stringify(appleScript), { stdio: 'ignore', windowsHide: true });
+    } else {
+      const fallbackScript = 'display notification "' + escapeForAppleScript(message) +
+        '" with title "' + escapeForAppleScript(title) + '" sound name "Glass"';
+      const command = 'if command -v terminal-notifier >/dev/null 2>&1; then ' +
+        'terminal-notifier -title ' + JSON.stringify(title) +
+        ' -message ' + JSON.stringify(message) +
+        ' -sound Glass -activate com.apple.Terminal; ' +
+        'else osascript -e ' + JSON.stringify(fallbackScript) + '; fi';
+      execSync(command, { stdio: 'ignore', windowsHide: true });
+    }
+    return;
+  }
+
+  if (platform === 'win32') {
+    const popupCommand = buildWindowsPopupCommand(title, message);
+    if (normalizedType === 'dialog') {
+      const dialogScript = "Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show('" +
+        escapeForPowerShellSingleQuote(message) + "', '" +
+        escapeForPowerShellSingleQuote(title) + "', 'OK', 'Information')";
+      try {
+        runWindowsPowerShellCommand(dialogScript);
+      } catch (dialogError) {
+        runWindowsPowerShellCommand(popupCommand);
+      }
+    } else {
+      runWindowsPowerShellCommand(popupCommand);
+    }
+    return;
+  }
+
+  const escapedMessage = String(message || '').replace(/"/g, '\\"');
+  if (normalizedType === 'dialog') {
+    execSync(
+      `zenity --info --title="Coding Tool" --text="${escapedMessage}" 2>/dev/null || notify-send "Coding Tool" "${escapedMessage}"`,
+      { stdio: 'ignore', windowsHide: true }
+    );
+    return;
+  }
+
+  execSync(`notify-send "Coding Tool" "${escapedMessage}"`, { stdio: 'ignore', windowsHide: true });
+}
+
+function syncManagedNotificationAssets() {
+  const settings = getNotificationSettings();
+  const hasManagedPlatform = Object.values(settings?.platforms || {}).some((platform) => platform?.enabled === true);
+
+  if (hasManagedPlatform) {
+    writeNotifyScript(settings.feishu || {});
+  } else {
+    removeNotifyScript();
+  }
+
+  return settings;
+}
+
 function testNotification({ type, testFeishu, webhookUrl } = {}) {
   if (testFeishu && webhookUrl) {
     return sendFeishuTest(webhookUrl);
   }
 
-  execSync(generateSystemNotificationCommand(type || 'notification', '这是一条测试通知'), { stdio: 'ignore', windowsHide: true });
+  runSystemNotification(type || 'notification', '这是一条测试通知');
 }
 
 module.exports = {
   MANAGED_HOOK_NAME,
   getNotificationSettings,
+  getLegacyClaudeHookSettings,
   saveNotificationSettings,
+  saveLegacyClaudeHookSettings,
   testNotification,
+  initDefaultHooks,
+  syncManagedNotificationAssets,
   getOpenCodeManagedPluginPath,
   buildOpenCodePluginContent,
   buildCodexNotifyCommand,
@@ -931,6 +1587,7 @@ module.exports = {
     applyClaudeDisablePreference,
     getManagedCommandType,
     parseManagedType,
+    parseNotifyTypeMarker,
     getClaudeHookStatus,
     getCodexHookStatus,
     getGeminiHookStatus,
@@ -941,10 +1598,13 @@ module.exports = {
     validateFeishuWebhookUrl,
     buildCodexNotifyCommand,
     buildGeminiCommand,
+    buildStopHookCommand,
     buildClaudeCommand,
     buildOpenCodePluginContent,
     getOpenCodeManagedPluginPath,
     generateNotifyScript,
-    generateSystemNotificationCommand
+    generateSystemNotificationCommand,
+    parseStopHookStatus,
+    shouldRepairStopHook
   }
 };

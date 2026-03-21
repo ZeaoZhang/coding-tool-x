@@ -5,6 +5,7 @@ const path = require('path');
 let testDir;
 let clearNativeOAuthMock;
 let channelsService;
+let isWindowsLikePlatformMock;
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -13,6 +14,7 @@ function readJson(filePath) {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channels-service-'));
   clearNativeOAuthMock = vi.fn();
+  isWindowsLikePlatformMock = vi.fn(() => false);
 
   require.cache[require.resolve('../../../src/config/paths')] = {
     id: require.resolve('../../../src/config/paths'),
@@ -53,6 +55,15 @@ beforeEach(() => {
     }
   };
 
+  require.cache[require.resolve('../../../src/utils/home-dir')] = {
+    id: require.resolve('../../../src/utils/home-dir'),
+    filename: require.resolve('../../../src/utils/home-dir'),
+    loaded: true,
+    exports: {
+      isWindowsLikePlatform: isWindowsLikePlatformMock
+    }
+  };
+
   delete require.cache[require.resolve('../../../src/server/services/channels')];
   channelsService = require('../../../src/server/services/channels');
 });
@@ -64,7 +75,8 @@ afterEach(() => {
     '../../../src/server/services/channels',
     '../../../src/config/paths',
     '../../../src/server/services/settings-manager',
-    '../../../src/server/services/native-oauth-adapters'
+    '../../../src/server/services/native-oauth-adapters',
+    '../../../src/utils/home-dir'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -110,7 +122,7 @@ describe('channels service Claude settings integration', () => {
         HTTPS_PROXY: 'http://proxy.internal:8080',
         HTTP_PROXY: 'http://proxy.internal:8080'
       },
-      apiKeyHelper: 'echo \'ctx-managed\''
+      apiKeyHelper: 'echo \'managed-key\''
     });
   });
 
@@ -129,7 +141,7 @@ describe('channels service Claude settings integration', () => {
         ANTHROPIC_BASE_URL: 'https://auth-mode.example',
         ANTHROPIC_AUTH_TOKEN: 'new-auth'
       },
-      apiKeyHelper: 'echo \'ctx-managed\''
+      apiKeyHelper: 'echo \'new-auth\''
     });
 
     fs.writeFileSync(settingsPath, JSON.stringify({
@@ -143,7 +155,7 @@ describe('channels service Claude settings integration', () => {
         ANTHROPIC_API_KEY: 'new-api-key',
         ANTHROPIC_BASE_URL: 'https://api-key-mode.example'
       },
-      apiKeyHelper: 'echo \'ctx-managed\''
+      apiKeyHelper: 'echo \'new-api-key\''
     });
   });
 
@@ -192,7 +204,7 @@ describe('channels service Claude settings integration', () => {
         ANTHROPIC_BASE_URL: 'https://primary.example',
         ANTHROPIC_API_KEY: 'key-primary'
       },
-      apiKeyHelper: "echo 'ctx-managed'"
+      apiKeyHelper: "echo 'key-primary'"
     });
     expect(channel.enabled).toBe(true);
   });
@@ -214,7 +226,7 @@ describe('channels service Claude settings integration', () => {
         ANTHROPIC_BASE_URL: 'https://secondary.example',
         ANTHROPIC_API_KEY: 'key-secondary'
       },
-      apiKeyHelper: "echo 'ctx-managed'"
+      apiKeyHelper: "echo 'key-secondary'"
     });
 
     const allChannels = channelsService.getAllChannels();
@@ -236,7 +248,22 @@ describe('channels service Claude settings integration', () => {
         ANTHROPIC_BASE_URL: 'https://primary-next.example',
         ANTHROPIC_API_KEY: 'key-next'
       },
-      apiKeyHelper: "echo 'ctx-managed'"
+      apiKeyHelper: "echo 'key-next'"
+    });
+  });
+
+  test('writes Windows-compatible helper with the active credential value', () => {
+    isWindowsLikePlatformMock.mockReturnValue(true);
+
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+    channelsService.createChannel('Primary', 'https://primary.example', 'key-primary');
+
+    expect(readJson(settingsPath)).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://primary.example',
+        ANTHROPIC_API_KEY: 'key-primary'
+      },
+      apiKeyHelper: 'cmd /c echo key-primary'
     });
   });
 });

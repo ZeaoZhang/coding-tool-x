@@ -73,7 +73,7 @@ function writeAnnotatedCodexConfig(configPath, config, comments = []) {
 function pruneManagedProviders(existingProviders, currentProviderKey, allChannels) {
   const knownKeys = new Set(allChannels.map(ch => ch.providerKey).filter(Boolean));
   for (const key of Object.keys(existingProviders)) {
-    if (key !== currentProviderKey && !knownKeys.has(key)) {
+    if (key === 'cc-proxy' || (key !== currentProviderKey && knownKeys.has(key))) {
       delete existingProviders[key];
     }
   }

@@ -199,11 +199,13 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/env', require('./api/env'));
   app.use('/api/skills', require('./api/skills'));
   const claudeHooks = require('./api/claude-hooks');
+  const notificationHooks = require('./services/notification-hooks');
   app.use('/api/claude/hooks', claudeHooks);
   app.use('/api/hooks', require('./api/hooks'));
 
   // 初始化 Claude hooks 默认配置（自动开启任务完成通知）
-  claudeHooks.initDefaultHooks();
+  notificationHooks.initDefaultHooks();
+  notificationHooks.syncManagedNotificationAssets();
 
   // Claude Code 专有功能 API
   app.use('/api/commands', require('./api/commands'));

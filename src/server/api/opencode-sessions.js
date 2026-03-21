@@ -229,6 +229,60 @@ module.exports = (config) => {
   });
 
   /**
+   * POST /api/opencode/sessions/:projectName/batch-delete
+   * 批量删除会话
+   */
+  router.post('/:projectName/batch-delete', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { sessionIds } = req.body || {};
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        return res.status(400).json({ error: 'sessionIds must be a non-empty array' });
+      }
+
+      const uniqueSessionIds = Array.from(new Set(
+        sessionIds
+          .filter(sessionId => typeof sessionId === 'string')
+          .map(sessionId => sessionId.trim())
+          .filter(Boolean)
+      ));
+
+      if (uniqueSessionIds.length === 0) {
+        return res.status(400).json({ error: 'sessionIds must be a non-empty array' });
+      }
+
+      const deletedSessionIds = [];
+      const failed = [];
+
+      uniqueSessionIds.forEach((sessionId) => {
+        try {
+          deleteSession(sessionId);
+          deletedSessionIds.push(sessionId);
+        } catch (err) {
+          failed.push({
+            sessionId,
+            error: err.message
+          });
+        }
+      });
+
+      res.json({
+        success: failed.length === 0,
+        requestedCount: uniqueSessionIds.length,
+        deletedCount: deletedSessionIds.length,
+        deletedSessionIds,
+        failed
+      });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to batch delete sessions:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * POST /api/opencode/sessions/:projectName/:sessionId/fork
    * Fork 一个会话
    */

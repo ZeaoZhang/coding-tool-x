@@ -196,48 +196,48 @@
                         {{ platform.externalMessage }}
                       </n-alert>
 
-                      <div v-if="notificationSettings[platform.key].enabled" class="notification-type-section">
-                        <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
-                          选择通知方式
-                        </n-text>
-                        <n-radio-group v-model:value="notificationSettings[platform.key].type">
-                          <n-space vertical>
-                            <n-radio value="notification">
-                              <div class="radio-content">
-                                <n-text strong>右上角卡片通知</n-text>
-                                <n-text depth="3" style="font-size: 12px; display: block;">
-                                  轻量提醒，几秒后自动消失，带提示音（Windows 使用系统 Toast 风格提醒）
-                                </n-text>
-                              </div>
-                            </n-radio>
-                            <n-radio value="dialog">
-                              <div class="radio-content">
-                                <n-text strong>弹窗对话框</n-text>
-                                <n-text depth="3" style="font-size: 12px; display: block;">
-                                  强制提醒，需要手动点击确认才能关闭
-                                </n-text>
-                              </div>
-                            </n-radio>
-                          </n-space>
-                        </n-radio-group>
+                        <div v-if="notificationSettings[platform.key].enabled" class="notification-type-section">
+                          <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
+                            选择通知方式
+                          </n-text>
+                          <n-radio-group v-model:value="notificationSettings[platform.key].type">
+                            <n-space vertical>
+                              <n-radio value="notification">
+                                <div class="radio-content">
+                                  <n-text strong>{{ getNotificationModeTitle('notification') }}</n-text>
+                                  <n-text depth="3" style="font-size: 12px; display: block;">
+                                    {{ getNotificationModeDescription('notification') }}
+                                  </n-text>
+                                </div>
+                              </n-radio>
+                              <n-radio value="dialog">
+                                <div class="radio-content">
+                                  <n-text strong>{{ getNotificationModeTitle('dialog') }}</n-text>
+                                  <n-text depth="3" style="font-size: 12px; display: block;">
+                                    {{ getNotificationModeDescription('dialog') }}
+                                  </n-text>
+                                </div>
+                              </n-radio>
+                            </n-space>
+                          </n-radio-group>
 
-                        <n-alert
-                          v-if="notificationPlatform === 'darwin'"
-                          type="info"
-                          :bordered="false"
-                          style="margin-top: 16px;"
-                          :show-icon="false"
-                        >
-                          <div style="font-size: 13px;">
-                            <n-text strong>[TIP] 更好的通知体验</n-text>
-                            <n-text depth="3" style="display: block; margin-top: 4px; font-size: 12px;">
-                              安装 terminal-notifier 后，点击通知可自动打开终端
-                            </n-text>
-                            <n-text code style="display: block; margin-top: 8px; font-size: 12px;">
-                              brew install terminal-notifier
-                            </n-text>
-                          </div>
-                        </n-alert>
+                          <n-alert
+                            v-if="platform.key === 'claude' && notificationPlatform === 'darwin'"
+                            type="info"
+                            :bordered="false"
+                            style="margin-top: 16px;"
+                            :show-icon="false"
+                          >
+                            <div style="font-size: 13px;">
+                              <n-text strong>[TIP] 更好的通知体验</n-text>
+                              <n-text depth="3" style="display: block; margin-top: 4px; font-size: 12px;">
+                                安装 terminal-notifier 后，点击通知可自动打开终端
+                              </n-text>
+                              <n-text code style="display: block; margin-top: 8px; font-size: 12px;">
+                                brew install terminal-notifier
+                              </n-text>
+                            </div>
+                          </n-alert>
                       </div>
                     </div>
                   </div>
@@ -580,28 +580,18 @@
                 </n-icon>
                 <div>
                   <h3 class="panel-title">安全设置</h3>
-                  <n-text depth="3" class="panel-subtitle">设置访问密码，保护关键配置</n-text>
+                  <n-text depth="3" class="panel-subtitle">设置访问密码，保护面板访问</n-text>
                 </div>
               </div>
             </div>
 
             <div class="panel-body">
-              <div v-if="securityLocked" class="security-locked">
-                <n-empty description="请输入密码后访问安全设置">
-                  <template #extra>
-                    <n-button type="primary" @click="openSecurityAuth">
-                      输入密码
-                    </n-button>
-                  </template>
-                </n-empty>
-              </div>
-
-              <div v-else class="setting-group">
+              <div class="setting-group">
                 <div class="setting-item">
                   <div class="setting-label">
                     <n-text strong>访问保护</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      每次进入安全设置都需要输入密码验证
+                      启用后，重新打开面板时需要先输入访问密码
                     </n-text>
                   </div>
                   <div class="security-status">
@@ -664,7 +654,6 @@
                   取消
                 </n-button>
                 <n-button
-                  v-if="!securityLocked"
                   type="primary"
                   size="large"
                   :loading="savingSecurity"
@@ -907,32 +896,6 @@
         </div>
       </div>
       <n-modal
-        v-model:show="showSecurityAuthModal"
-        preset="card"
-        title="验证访问密码"
-        :mask-closable="false"
-      >
-        <div class="security-auth">
-          <n-text depth="3" style="font-size: 13px;">请输入访问密码</n-text>
-          <n-input
-            v-model:value="securityAuthPassword"
-            type="password"
-            placeholder="访问密码"
-            show-password-on="click"
-            @keydown.enter="handleSecurityVerify"
-          />
-          <n-text v-if="securityAuthError" depth="3" class="security-error">
-            {{ securityAuthError }}
-          </n-text>
-          <n-space justify="end" style="margin-top: 16px;">
-            <n-button @click="closeSecurityAuth">取消</n-button>
-            <n-button type="primary" :loading="verifyingSecurity" @click="handleSecurityVerify">
-              验证
-            </n-button>
-          </n-space>
-        </div>
-      </n-modal>
-      <n-modal
         v-model:show="showAddModelMetaModal"
         preset="card"
         title="新增模型设置"
@@ -1050,7 +1013,7 @@ import {
   SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline
 } from '@vicons/ionicons5'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
-import { getSecurityStatus, verifySecurityPassword, setSecurityPassword } from '../api/security'
+import { getSecurityStatus, setSecurityPassword } from '../api/security'
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
@@ -1197,17 +1160,42 @@ const originalNotificationSettings = ref(createNotificationSettingsState())
 const savingNotification = ref(false)
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
 
+function getNotificationModeTitle(type = 'notification') {
+  if (type === 'dialog') {
+    return '确认式弹窗'
+  }
+
+  switch (notificationPlatform.value) {
+    case 'win32':
+      return '右上角悬浮卡片'
+    case 'darwin':
+      return '角落横幅通知'
+    case 'linux':
+      return '桌面环境通知'
+    default:
+      return '轻提醒卡片'
+  }
+}
+
+function getNotificationModeDescription(type = 'notification') {
+  if (type === 'dialog') {
+    return '强制提醒，需要手动点击确认才能关闭'
+  }
+
+  switch (notificationPlatform.value) {
+    case 'win32':
+      return '轻量提醒，几秒后自动消失，带提示音（Windows 使用系统 Toast 风格提醒）'
+    default:
+      return '轻量提醒，几秒后自动消失，带提示音'
+  }
+}
+
 // 安全设置
 const securityStatus = ref({
   hasPassword: false
 })
 const securityStatusLoaded = ref(false)
 const securityStatusLoading = ref(false)
-const securityAccessGranted = ref(false)
-const showSecurityAuthModal = ref(false)
-const securityAuthPassword = ref('')
-const securityAuthError = ref('')
-const verifyingSecurity = ref(false)
 const securityForm = ref({
   currentPassword: '',
   newPassword: '',
@@ -1532,10 +1520,6 @@ const portsChanged = computed(() => {
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
 })
 
-const securityLocked = computed(() => {
-  return securityStatus.value.hasPassword && !securityAccessGranted.value
-})
-
 const securityFormError = computed(() => {
   if (!securityForm.value.newPassword || !securityForm.value.confirmPassword) {
     return ''
@@ -1550,9 +1534,6 @@ const securityFormError = computed(() => {
 })
 
 const securityFormReady = computed(() => {
-  if (securityLocked.value) {
-    return false
-  }
   if (!securityForm.value.newPassword || !securityForm.value.confirmPassword) {
     return false
   }
@@ -1760,13 +1741,6 @@ function resetSecurityForm() {
   }
 }
 
-function resetSecurityAuth() {
-  showSecurityAuthModal.value = false
-  securityAuthPassword.value = ''
-  securityAuthError.value = ''
-  verifyingSecurity.value = false
-}
-
 async function loadSecurityStatus(force = false) {
   if (securityStatusLoading.value && securityStatusPromise) {
     return securityStatusPromise
@@ -1793,53 +1767,6 @@ async function loadSecurityStatus(force = false) {
     }
   })()
   return securityStatusPromise
-}
-
-function openSecurityAuth() {
-  if (!securityStatus.value.hasPassword) {
-    securityAccessGranted.value = true
-    return
-  }
-  securityAuthPassword.value = ''
-  securityAuthError.value = ''
-  showSecurityAuthModal.value = true
-}
-
-function closeSecurityAuth() {
-  resetSecurityAuth()
-}
-
-async function handleSecurityVerify() {
-  if (!securityAuthPassword.value) {
-    securityAuthError.value = '请输入密码'
-    return
-  }
-
-  verifyingSecurity.value = true
-  securityAuthError.value = ''
-  try {
-    const response = await verifySecurityPassword(securityAuthPassword.value)
-    if (response.success) {
-      securityAccessGranted.value = true
-      resetSecurityAuth()
-    } else {
-      securityAuthError.value = response.error || '密码错误'
-    }
-  } catch (error) {
-    securityAuthError.value = error.response?.data?.error || '密码错误'
-  } finally {
-    verifyingSecurity.value = false
-  }
-}
-
-async function handleSecurityMenuEntry(force = false) {
-  await loadSecurityStatus(force)
-  if (securityStatus.value.hasPassword) {
-    securityAccessGranted.value = false
-    openSecurityAuth()
-  } else {
-    securityAccessGranted.value = true
-  }
 }
 
 async function handleSaveSecurity() {
@@ -1997,25 +1924,17 @@ watch(show, (newVal) => {
     loadAutoStartStatus()
     loadNotificationSettings()
     loadModelMetadata()
-    if (activeMenu.value === 'security') {
-      handleSecurityMenuEntry(true)
-    } else {
-      loadSecurityStatus(true)
-    }
+    loadSecurityStatus(true)
   } else {
-    securityAccessGranted.value = false
-    resetSecurityAuth()
     resetSecurityForm()
   }
 })
 
 watch(activeMenu, (newVal, oldVal) => {
   if (newVal === 'security') {
-    handleSecurityMenuEntry()
+    loadSecurityStatus()
   }
   if (oldVal === 'security' && newVal !== 'security') {
-    securityAccessGranted.value = false
-    resetSecurityAuth()
     resetSecurityForm()
   }
 })
@@ -2463,13 +2382,6 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 /* 安全设置样式 */
-.security-locked {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 320px;
-}
-
 .security-status {
   display: flex;
   align-items: center;
@@ -2486,12 +2398,6 @@ watch(activeMenu, (newVal, oldVal) => {
 .security-error {
   font-size: 12px;
   color: #d03050;
-}
-
-.security-auth {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 /* 命令配置卡片样式 */

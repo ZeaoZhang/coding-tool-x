@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const CODEX_CONFIG_PATH = require.resolve('../../../src/server/services/codex-config');
@@ -185,5 +186,47 @@ describe('codex-channels managed env sync', () => {
     }, {
       replace: true
     });
+  });
+
+  test('applyChannelToSettings prunes only managed providers and preserves external providers', () => {
+    const channelA = service.createChannel(
+      'Primary',
+      'provider-a',
+      'https://api-a.example.com/v1',
+      'secret-a',
+      'responses',
+      { enabled: true }
+    );
+    service.createChannel(
+      'Backup',
+      'provider-b',
+      'https://api-b.example.com/v1',
+      'secret-b',
+      'responses',
+      { enabled: false }
+    );
+
+    fs.writeFileSync(configPath, tomlStringify({
+      model_provider: 'external-provider',
+      model_providers: {
+        'provider-a': { base_url: 'https://old-a.example.com/v1' },
+        'provider-b': { base_url: 'https://old-b.example.com/v1' },
+        'external-provider': { base_url: 'https://external.example.com/v1' },
+        'cc-proxy': { base_url: 'http://127.0.0.1:9999/v1' }
+      }
+    }), 'utf8');
+
+    service.applyChannelToSettings(channelA.id);
+
+    const config = loadConfigFromDisk();
+    expect(config.model_provider).toBe('provider-a');
+    expect(config.model_providers['provider-a']).toEqual(expect.objectContaining({
+      base_url: 'https://api-a.example.com/v1'
+    }));
+    expect(config.model_providers['provider-b']).toBeUndefined();
+    expect(config.model_providers['cc-proxy']).toBeUndefined();
+    expect(config.model_providers['external-provider']).toEqual(expect.objectContaining({
+      base_url: 'https://external.example.com/v1'
+    }));
   });
 });

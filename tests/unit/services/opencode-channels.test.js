@@ -433,4 +433,30 @@ describe('applyChannelToSettings', () => {
     }));
     expect(clearNativeOAuth).not.toHaveBeenCalled();
   });
+
+  it('uses the effective fallback API key when writing native config', () => {
+    fs.writeFileSync(codexChannelsFile, JSON.stringify({
+      channels: [{
+        id: 'codex-1',
+        name: 'Second',
+        baseUrl: 'https://second.example',
+        apiKey: 'fallback-key',
+        enabled: true
+      }]
+    }, null, 2), 'utf8');
+
+    service.createChannel('First', 'https://first.example', 'key-1', { enabled: true });
+    const ch2 = service.createChannel('Second', 'https://second.example', '', {
+      enabled: false,
+      model: 'gpt-4.1'
+    });
+    setChannelConfig.mockClear();
+
+    service.applyChannelToSettings(ch2.id);
+
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({
+      id: ch2.id,
+      apiKey: 'fallback-key'
+    }));
+  });
 });

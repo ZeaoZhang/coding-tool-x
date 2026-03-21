@@ -1,216 +1,246 @@
-const express = require('express');
-const http = require('http');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const childProcess = require('child_process');
-
-let testDir;
-let settingsPath;
-let uiConfigPath;
-let notifyScriptPath;
-let execSyncSpy;
-
-function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/claude-hooks')];
-  const router = require('../../../src/server/api/claude-hooks');
-  const app = express();
-  app.use(express.json());
-  app.use('/', router);
-  return app;
-}
-
-function request(app) {
-  return {
-    get(url) { return call(app, 'GET', url); },
-    post(url, body) { return call(app, 'POST', url, body); }
-  };
-}
-
-function call(app, method, url, body) {
-  return new Promise((resolve, reject) => {
-    const server = http.createServer(app);
-    server.listen(0, () => {
-      const rawBody = body ? JSON.stringify(body) : null;
-      const req = http.request({
-        hostname: '127.0.0.1',
-        port: server.address().port,
-        path: url,
-        method,
-        headers: rawBody ? {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(rawBody)
-        } : {}
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          server.close();
-          try {
-            resolve({ status: res.statusCode, body: JSON.parse(data) });
-          } catch {
-            resolve({ status: res.statusCode, body: data });
-          }
-        });
-      });
-
-      req.on('error', (error) => {
-        server.close();
-        reject(error);
-      });
-
-      if (rawBody) req.write(rawBody);
-      req.end();
-    });
-  });
-}
-
-beforeEach(() => {
-  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-hooks-api-'));
-  settingsPath = path.join(testDir, '.claude', 'settings.json');
-  uiConfigPath = path.join(testDir, '.cc-tool', 'ui-config.json');
-  notifyScriptPath = path.join(testDir, '.cc-tool', 'scripts', 'notify-hook.js');
-
-  require.cache[require.resolve('../../../src/config/paths')] = {
-    id: require.resolve('../../../src/config/paths'),
-    filename: require.resolve('../../../src/config/paths'),
-    loaded: true,
-    exports: {
-      PATHS: {
-        uiConfig: uiConfigPath,
-        notifyHook: notifyScriptPath
-      },
-      NATIVE_PATHS: {
-        claude: {
-          settings: settingsPath
-        }
+function findHandler(router, method, routePath) {
+  for (const layer of router.stack) {
+    if (layer.route && layer.route.path === routePath) {
+      for (const s of layer.route.stack) {
+        if (s.method === method) return s.handle;
       }
     }
-  };
+  }
+  return null;
+}
 
-  require.cache[require.resolve('../../../src/utils/home-dir')] = {
-    id: require.resolve('../../../src/utils/home-dir'),
-    filename: require.resolve('../../../src/utils/home-dir'),
-    loaded: true,
-    exports: {
-      resolvePreferredHomeDir: vi.fn(() => testDir),
-      normalizeWindowsHomePath: vi.fn((value) => value)
+const mockReq = (overrides = {}) => ({ body: {}, params: {}, query: {}, headers: {}, ...overrides });
+const mockRes = () => {
+  const res = { statusCode: 200, _data: null };
+  res.status = vi.fn((code) => { res.statusCode = code; return res; });
+  res.json = vi.fn((data) => { res._data = data; return res; });
+  return res;
+};
+
+const networkModPath = require.resolve('../../../src/server/services/network-access');
+require.cache[networkModPath] = {
+  id: networkModPath,
+  filename: networkModPath,
+  loaded: true,
+  exports: {
+    createSameOriginGuard: () => (_req, _res, next) => next()
+  }
+};
+
+const hooksModPath = require.resolve('../../../src/server/services/notification-hooks');
+const mockGetLegacyClaudeHookSettings = vi.fn();
+const mockSaveLegacyClaudeHookSettings = vi.fn();
+const mockTestNotification = vi.fn();
+const mockInitDefaultHooks = vi.fn();
+const parseStopHookStatus = vi.fn();
+const parseNotifyTypeMarker = vi.fn();
+const buildStopHookCommand = vi.fn();
+const shouldRepairStopHook = vi.fn();
+const generateSystemNotificationCommand = vi.fn();
+
+require.cache[hooksModPath] = {
+  id: hooksModPath,
+  filename: hooksModPath,
+  loaded: true,
+  exports: {
+    getLegacyClaudeHookSettings: mockGetLegacyClaudeHookSettings,
+    saveLegacyClaudeHookSettings: mockSaveLegacyClaudeHookSettings,
+    testNotification: mockTestNotification,
+    initDefaultHooks: mockInitDefaultHooks,
+    _test: {
+      parseStopHookStatus,
+      parseNotifyTypeMarker,
+      buildStopHookCommand,
+      shouldRepairStopHook,
+      generateSystemNotificationCommand
     }
-  };
+  }
+};
 
-  require.cache[require.resolve('../../../src/server/services/network-access')] = {
-    id: require.resolve('../../../src/server/services/network-access'),
-    filename: require.resolve('../../../src/server/services/network-access'),
-    loaded: true,
-    exports: {
-      createSameOriginGuard: vi.fn(() => (_req, _res, next) => next())
-    }
-  };
+const homeDirModPath = require.resolve('../../../src/utils/home-dir');
+const mockResolvePreferredHomeDir = vi.fn();
+const mockNormalizeWindowsHomePath = vi.fn();
+require.cache[homeDirModPath] = {
+  id: homeDirModPath,
+  filename: homeDirModPath,
+  loaded: true,
+  exports: {
+    resolvePreferredHomeDir: mockResolvePreferredHomeDir,
+    normalizeWindowsHomePath: mockNormalizeWindowsHomePath
+  }
+};
 
-  execSyncSpy = vi.spyOn(childProcess, 'execSync').mockImplementation(() => Buffer.from(''));
-});
-
-afterEach(() => {
-  execSyncSpy.mockRestore();
-  fs.rmSync(testDir, { recursive: true, force: true });
-  [
-    '../../../src/server/api/claude-hooks',
-    '../../../src/config/paths',
-    '../../../src/utils/home-dir',
-    '../../../src/server/services/network-access'
-  ].forEach((mod) => {
-    try {
-      delete require.cache[require.resolve(mod)];
-    } catch (_) {}
-  });
-});
+const router = require('../../../src/server/api/claude-hooks');
 
 describe('claude-hooks api', () => {
-  test('GET / returns default disabled state when no config exists', async () => {
-    const res = await request(buildApp()).get('/');
-
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.stopHook).toEqual({ enabled: false, type: 'notification' });
-    expect(res.body.feishu).toEqual({ enabled: false, webhookUrl: '' });
-    expect(typeof res.body.platform).toBe('string');
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  test('POST / saves stop hook and feishu settings and writes notify script', async () => {
-    const res = await request(buildApp()).post('/', {
-      stopHook: { enabled: true, type: 'dialog' },
-      feishu: { enabled: true, webhookUrl: 'https://open.feishu.cn/webhook/123' }
+  describe('GET /', () => {
+    it('returns legacy Claude hook settings from unified notification service', () => {
+      const settings = {
+        success: true,
+        stopHook: { enabled: true, type: 'dialog' },
+        feishu: { enabled: false, webhookUrl: '' },
+        platform: 'win32'
+      };
+      mockGetLegacyClaudeHookSettings.mockReturnValue(settings);
+      const handler = findHandler(router, 'get', '/');
+      const req = mockReq();
+      const res = mockRes();
+
+      handler(req, res);
+
+      expect(mockGetLegacyClaudeHookSettings).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(settings);
     });
 
-    const savedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    const savedUiConfig = JSON.parse(fs.readFileSync(uiConfigPath, 'utf8'));
-    const notifyScript = fs.readFileSync(notifyScriptPath, 'utf8');
+    it('returns 500 when unified service throws', () => {
+      mockGetLegacyClaudeHookSettings.mockImplementation(() => { throw new Error('read failed'); });
+      const handler = findHandler(router, 'get', '/');
+      const req = mockReq();
+      const res = mockRes();
 
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      success: true,
-      message: '配置已保存',
-      stopHook: { enabled: true, type: 'dialog' },
-      feishu: { enabled: true, webhookUrl: 'https://open.feishu.cn/webhook/123' }
+      handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'read failed' });
     });
-    expect(savedSettings.hooks.Stop[0].hooks[0].command).toContain('--cc-notify-type=dialog');
-    expect(savedUiConfig.feishuNotification).toEqual({
-      enabled: true,
-      webhookUrl: 'https://open.feishu.cn/webhook/123'
+
+    it('uses error.statusCode when provided', () => {
+      const err = new Error('unauthorized');
+      err.statusCode = 403;
+      mockGetLegacyClaudeHookSettings.mockImplementation(() => { throw err; });
+      const handler = findHandler(router, 'get', '/');
+      const req = mockReq();
+      const res = mockRes();
+
+      handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ error: 'unauthorized' });
     });
-    expect(notifyScript).toContain('open.feishu.cn/webhook/123');
-    expect(notifyScript).toContain('execSync');
   });
 
-  test('POST / disables all notifications, removes hook/script, and records user dismissal', async () => {
-    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify({
-      hooks: {
-        Stop: [{ hooks: [{ type: 'command', command: `node "${notifyScriptPath}" --cc-notify-type=notification` }] }]
-      }
-    }, null, 2), 'utf8');
-    fs.mkdirSync(path.dirname(notifyScriptPath), { recursive: true });
-    fs.writeFileSync(notifyScriptPath, '#!/usr/bin/env node', 'utf8');
+  describe('POST /', () => {
+    it('maps legacy payload through unified service and appends success message', () => {
+      const saved = {
+        success: true,
+        stopHook: { enabled: true, type: 'notification' },
+        feishu: { enabled: true, webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/test' }
+      };
+      mockSaveLegacyClaudeHookSettings.mockReturnValue(saved);
+      const handler = findHandler(router, 'post', '/');
+      const req = mockReq({
+        body: {
+          stopHook: { enabled: true, type: 'notification' },
+          feishu: { enabled: true, webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/test' }
+        }
+      });
+      const res = mockRes();
 
-    const res = await request(buildApp()).post('/', {
-      stopHook: { enabled: false, type: 'notification' },
-      feishu: { enabled: false, webhookUrl: '' }
+      handler(req, res);
+
+      expect(mockSaveLegacyClaudeHookSettings).toHaveBeenCalledWith(req.body);
+      expect(res.json).toHaveBeenCalledWith({ ...saved, message: '配置已保存' });
     });
 
-    const savedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    const savedUiConfig = JSON.parse(fs.readFileSync(uiConfigPath, 'utf8'));
+    it('returns 500 when unified save throws without statusCode', () => {
+      mockSaveLegacyClaudeHookSettings.mockImplementation(() => { throw new Error('write failed'); });
+      const handler = findHandler(router, 'post', '/');
+      const req = mockReq({ body: {} });
+      const res = mockRes();
 
-    expect(res.status).toBe(200);
-    expect(savedSettings.hooks).toBeUndefined();
-    expect(savedUiConfig.claudeNotificationDisabledByUser).toBe(true);
-    expect(fs.existsSync(notifyScriptPath)).toBe(false);
+      handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'write failed' });
+    });
+
+    it('uses error.statusCode when provided', () => {
+      const err = new Error('bad request');
+      err.statusCode = 422;
+      mockSaveLegacyClaudeHookSettings.mockImplementation(() => { throw err; });
+      const handler = findHandler(router, 'post', '/');
+      const req = mockReq({ body: {} });
+      const res = mockRes();
+
+      handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(422);
+      expect(res.json).toHaveBeenCalledWith({ error: 'bad request' });
+    });
   });
 
-  test('POST /test runs system notification command and helper methods detect repair needs', async () => {
-    const app = buildApp();
-    const router = require('../../../src/server/api/claude-hooks');
-    const res = await request(app).post('/test', { type: 'notification' });
-    const windowsCommand = router._test.generateSystemNotificationCommand('notification', 'win32');
-    const windowsDialogCommand = router._test.generateSystemNotificationCommand('dialog', 'win32');
+  describe('POST /test', () => {
+    it('returns success with system message when testFeishu is absent', async () => {
+      mockTestNotification.mockResolvedValue(undefined);
+      const handler = findHandler(router, 'post', '/test');
+      const req = mockReq({ body: {} });
+      const res = mockRes();
 
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true, message: '系统测试通知已发送' });
-    expect(execSyncSpy).toHaveBeenCalled();
-    expect(windowsCommand).toContain('Wscript.Shell');
-    expect(windowsCommand).toContain('Popup(');
-    expect(windowsCommand).not.toContain('ToastNotificationManager');
-    expect(windowsDialogCommand).toContain('MessageBox');
-    expect(windowsDialogCommand).toContain('Wscript.Shell');
-    expect(windowsDialogCommand).toContain('||');
-    expect(router._test.parseStopHookStatus({
-      hooks: {
-        Stop: [{ hooks: [{ command: `node "${notifyScriptPath}" --cc-notify-type=dialog` }] }]
-      }
-    })).toEqual({ enabled: true, type: 'dialog' });
-    expect(router._test.shouldRepairStopHook({
-      hooks: {
-        Stop: [{ hooks: [{ command: 'node "/old/path/notify-hook.js"' }] }]
-      }
-    }, notifyScriptPath, () => false)).toBe(true);
+      await handler(req, res);
+
+      expect(mockTestNotification).toHaveBeenCalledWith({});
+      expect(res.json).toHaveBeenCalledWith({ success: true, message: '系统测试通知已发送' });
+    });
+
+    it('returns feishu message when testFeishu is true', async () => {
+      mockTestNotification.mockResolvedValue(undefined);
+      const handler = findHandler(router, 'post', '/test');
+      const req = mockReq({ body: { testFeishu: true, webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/test' } });
+      const res = mockRes();
+
+      await handler(req, res);
+
+      expect(mockTestNotification).toHaveBeenCalledWith(req.body);
+      expect(res.json).toHaveBeenCalledWith({ success: true, message: '飞书测试通知已发送' });
+    });
+
+    it('returns 500 when testNotification rejects', async () => {
+      mockTestNotification.mockRejectedValue(new Error('send failed'));
+      const handler = findHandler(router, 'post', '/test');
+      const req = mockReq({ body: {} });
+      const res = mockRes();
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'send failed' });
+    });
+
+    it('uses error.statusCode when testNotification rejects with one', async () => {
+      const err = new Error('gateway error');
+      err.statusCode = 502;
+      mockTestNotification.mockRejectedValue(err);
+      const handler = findHandler(router, 'post', '/test');
+      const req = mockReq({ body: {} });
+      const res = mockRes();
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(502);
+      expect(res.json).toHaveBeenCalledWith({ error: 'gateway error' });
+    });
+  });
+
+  describe('compat exports', () => {
+    it('re-exports initDefaultHooks from unified service', () => {
+      expect(router.initDefaultHooks).toBe(mockInitDefaultHooks);
+    });
+
+    it('re-exports compatibility helpers from unified service test surface', () => {
+      expect(router._test.parseStopHookStatus).toBe(parseStopHookStatus);
+      expect(router._test.parseNotifyTypeMarker).toBe(parseNotifyTypeMarker);
+      expect(router._test.buildStopHookCommand).toBe(buildStopHookCommand);
+      expect(router._test.shouldRepairStopHook).toBe(shouldRepairStopHook);
+      expect(router._test.generateSystemNotificationCommand).toBe(generateSystemNotificationCommand);
+    });
+
+    it('still exposes home-dir helpers for regression coverage', () => {
+      expect(router._test.resolvePreferredHomeDir).toBe(mockResolvePreferredHomeDir);
+      expect(router._test.normalizeWindowsHomePath).toBe(mockNormalizeWindowsHomePath);
+    });
   });
 });

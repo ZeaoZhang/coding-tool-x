@@ -10,6 +10,41 @@
       @never-remind="handleEnvNeverRemind"
     />
 
+    <n-modal
+      :show="showPanelAccessAuth"
+      preset="card"
+      title="验证访问密码"
+      :mask-closable="false"
+      :close-on-esc="false"
+      :closable="false"
+      style="width: 460px; max-width: 92vw;"
+    >
+      <div class="panel-security-auth">
+        <n-text depth="3" style="font-size: 13px;">
+          请输入访问密码后进入面板
+        </n-text>
+        <n-input
+          v-model:value="panelAccessPassword"
+          type="password"
+          placeholder="访问密码"
+          show-password-on="click"
+          autofocus
+          @keydown.enter="handlePanelAccessVerify"
+        />
+        <n-text v-if="panelAccessError" depth="3" class="panel-security-error">
+          {{ panelAccessError }}
+        </n-text>
+        <n-text depth="3" class="panel-security-hint">
+          忘记密码可在终端执行 <n-text code>ctx security reset</n-text> 关闭密码
+        </n-text>
+        <n-space justify="end" style="margin-top: 16px;">
+          <n-button type="primary" :loading="panelAccessVerifying" @click="handlePanelAccessVerify">
+            验证
+          </n-button>
+        </n-space>
+      </div>
+    </n-modal>
+
     <!-- Global Header -->
     <header class="header">
       <div class="logo-section" @click="goHome">
@@ -460,7 +495,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NTooltip, NSwitch, NSpin, NModal, NIcon } from 'naive-ui'
+import { NTooltip, NSwitch, NSpin, NModal, NIcon, NText, NInput, NButton, NSpace } from 'naive-ui'
 import { ChatbubblesOutline, ServerOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline, KeyOutline } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
@@ -483,6 +518,7 @@ import HeaderButton from './HeaderButton.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
 import { checkEnvConflicts } from '../api/env'
+import { getSecurityStatus, verifySecurityPassword } from '../api/security'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -555,6 +591,60 @@ const chatHistoryRef = ref(null)
 // 环境变量冲突检测
 const envConflicts = ref([])
 const showEnvModal = ref(false)
+const panelAccessRequired = ref(false)
+const panelAccessVerified = ref(false)
+const panelAccessPassword = ref('')
+const panelAccessError = ref('')
+const panelAccessVerifying = ref(false)
+const showPanelAccessAuth = computed(() => panelAccessRequired.value && !panelAccessVerified.value)
+
+function resetPanelAccessForm() {
+  panelAccessPassword.value = ''
+  panelAccessError.value = ''
+  panelAccessVerifying.value = false
+}
+
+async function loadPanelAccessStatus() {
+  globalLoading.value = true
+  try {
+    const response = await getSecurityStatus()
+    panelAccessRequired.value = Boolean(response?.success && response.hasPassword)
+    panelAccessVerified.value = !panelAccessRequired.value
+    if (!panelAccessRequired.value) {
+      resetPanelAccessForm()
+    }
+  } catch (err) {
+    console.error('Failed to load security status:', err)
+    panelAccessRequired.value = false
+    panelAccessVerified.value = true
+    resetPanelAccessForm()
+  } finally {
+    globalLoading.value = false
+  }
+}
+
+async function handlePanelAccessVerify() {
+  if (!panelAccessPassword.value) {
+    panelAccessError.value = '请输入密码'
+    return
+  }
+
+  panelAccessVerifying.value = true
+  panelAccessError.value = ''
+  try {
+    const response = await verifySecurityPassword(panelAccessPassword.value)
+    if (response.success) {
+      panelAccessVerified.value = true
+      resetPanelAccessForm()
+    } else {
+      panelAccessError.value = response.error || '密码错误'
+    }
+  } catch (error) {
+    panelAccessError.value = error.response?.data?.error || '密码错误'
+  } finally {
+    panelAccessVerifying.value = false
+  }
+}
 
 // 检测环境变量冲突
 async function checkEnvConflictsOnLoad() {
@@ -708,6 +798,8 @@ function handlePanelVisibilityChange(event) {
 }
 
 onMounted(() => {
+  loadPanelAccessStatus()
+
   // 加载面板可见性设置
   loadPanelSettings()
 
@@ -1118,6 +1210,22 @@ function handleViewHistoryFromFavorites({ session, channel }) {
 
 .link-list a:hover {
   background: rgba(24, 160, 88, 0.15);
+}
+
+.panel-security-auth {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel-security-error {
+  font-size: 12px;
+  color: #d03050;
+}
+
+.panel-security-hint {
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 /* ========== 响应式样式 ========== */

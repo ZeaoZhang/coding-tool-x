@@ -223,7 +223,7 @@ router.post('/stop', async (req, res) => {
     // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
     if (activeChannel) {
       const { applyChannelToSettings } = require('../services/codex-channels');
-      applyChannelToSettings(activeChannel.id, { pruneProviders: true });
+      applyChannelToSettings(activeChannel.id);
       console.log(`[Codex Proxy] Single-channel mode restored: ${activeChannel.name}`);
     }
 

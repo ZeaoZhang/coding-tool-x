@@ -504,4 +504,69 @@ describe('native-oauth-adapters high level flows', () => {
       }
     });
   });
+
+  test('clears OpenCode OAuth and retargets model to a remaining managed provider', () => {
+    const configPath = path.join(testDir, '.opencode', 'config.json');
+    opencodeConfig = {
+      model: 'openai/gpt-4.1',
+      provider: {
+        openai: {},
+        managed: {
+          __ctx_managed__: true,
+          name: 'Managed',
+          options: {
+            baseURL: 'https://managed.example',
+            apiKey: 'managed-key'
+          },
+          models: {
+            'gpt-4.1-mini': { name: 'gpt-4.1-mini' }
+          }
+        }
+      }
+    };
+    writeJson(configPath, opencodeConfig);
+    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
+      openai: {
+        type: 'oauth',
+        access: 'openai-token',
+        refresh: 'openai-refresh'
+      }
+    });
+
+    nativeAdapters.clearNativeOAuth('opencode');
+
+    expect(fs.existsSync(pathsStub.NATIVE_PATHS.opencode.auth)).toBe(false);
+    expect(opencodeConfig.provider.openai).toBeUndefined();
+    expect(opencodeConfig.model).toBe('managed/gpt-4.1-mini');
+  });
+
+  test('treats external OpenCode provider config as channel-configured state', () => {
+    const configPath = path.join(testDir, '.opencode', 'config.json');
+    opencodeConfig = {
+      model: 'external/gpt-4.1',
+      provider: {
+        external: {
+          name: 'External Provider',
+          npm: '@ai-sdk/openai-compatible',
+          options: {
+            baseURL: 'https://external.example',
+            apiKey: 'external-key'
+          },
+          models: {
+            'gpt-4.1': { name: 'gpt-4.1' }
+          }
+        }
+      }
+    };
+    writeJson(configPath, opencodeConfig);
+
+    const state = nativeAdapters.inspectTool('opencode');
+
+    expect(state).toEqual(expect.objectContaining({
+      tool: 'opencode',
+      mode: 'channel',
+      oauthPresent: false,
+      channelConfigured: true
+    }));
+  });
 });

@@ -125,7 +125,7 @@ function restoreSingleChannelMode(cliType) {
   if (cliType === 'codex') {
     const { getChannels, applyChannelToSettings } = require('../server/services/codex-channels');
     const target = pickRestoredChannel(cliType, getChannels().channels || []);
-    return target ? applyChannelToSettings(target.id, { pruneProviders: true }) : null;
+    return target ? applyChannelToSettings(target.id) : null;
   }
 
   if (cliType === 'gemini') {

@@ -6,6 +6,7 @@ import {
   setAlias as setAliasApi,
   deleteAlias as deleteAliasApi,
   deleteSession as deleteSessionApi,
+  deleteSessions as deleteSessionsApi,
   forkSession as forkSessionApi,
   saveSessionOrder as saveSessionOrderApi
 } from '../api/sessions'
@@ -95,6 +96,17 @@ export const useSessionsStore = defineStore('sessions', () => {
       alias: aliases.value[session.sessionId] || null
     }))
   })
+
+  function syncSessionsCache() {
+    if (!currentProject.value) return
+    totalSize.value = sessions.value.reduce((sum, session) => sum + (Number(session.size) || 0), 0)
+    setCachedSessions(currentChannel.value, currentProject.value, {
+      sessions: sessions.value,
+      aliases: aliases.value,
+      totalSize: totalSize.value,
+      projectInfo: currentProjectInfo.value
+    })
+  }
 
   // Actions
   function setChannel(channel) {
@@ -193,15 +205,58 @@ export const useSessionsStore = defineStore('sessions', () => {
       if (aliases.value[sessionId]) {
         delete aliases.value[sessionId]
       }
-      setCachedSessions(currentChannel.value, currentProject.value, {
-        sessions: sessions.value,
-        aliases: aliases.value,
-        totalSize: totalSize.value,
-        projectInfo: currentProjectInfo.value
-      })
+      syncSessionsCache()
     } catch (err) {
       error.value = err.message
       throw err
+    }
+  }
+
+  async function deleteSessions(sessionIds = []) {
+    const uniqueSessionIds = Array.from(new Set((sessionIds || []).filter(Boolean)))
+
+    if (uniqueSessionIds.length === 0) {
+      return {
+        deletedSessionIds: [],
+        failed: []
+      }
+    }
+
+    let deletedSessionIds = []
+    let failed = []
+
+    try {
+      const result = await deleteSessionsApi(currentProject.value, uniqueSessionIds, currentChannel.value)
+      deletedSessionIds = Array.isArray(result?.deletedSessionIds) ? result.deletedSessionIds : []
+      failed = Array.isArray(result?.failed)
+        ? result.failed.map(item => ({
+            sessionId: item.sessionId,
+            error: new Error(item.error || '删除失败')
+          }))
+        : []
+    } catch (err) {
+      error.value = err.message
+      throw err
+    }
+
+    if (deletedSessionIds.length > 0) {
+      const deletedSet = new Set(deletedSessionIds)
+      sessions.value = sessions.value.filter(session => !deletedSet.has(session.sessionId))
+      Object.keys(aliases.value).forEach((sessionId) => {
+        if (deletedSet.has(sessionId)) {
+          delete aliases.value[sessionId]
+        }
+      })
+      syncSessionsCache()
+    }
+
+    if (failed.length > 0 && deletedSessionIds.length === 0) {
+      error.value = failed[0].error.message
+    }
+
+    return {
+      deletedSessionIds,
+      failed
     }
   }
 
@@ -290,6 +345,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     setAlias,
     deleteAlias,
     deleteSession,
+    deleteSessions,
     forkSession,
     saveProjectOrder,
     saveSessionOrder,

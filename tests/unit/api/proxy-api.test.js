@@ -9,6 +9,7 @@ let channels;
 let getAllChannelsMock;
 let applyChannelToSettingsMock;
 let getCurrentSettingsMock;
+let extractApiKeyFromHelperMock;
 let startProxyServerMock;
 let stopProxyServerMock;
 let getProxyStatusMock;
@@ -69,6 +70,11 @@ beforeEach(() => {
     baseUrl: 'https://api.anthropic.com',
     apiKey: 'secret-1'
   }));
+  extractApiKeyFromHelperMock = vi.fn((helper) => {
+    const match = String(helper || '').match(/^cmd(?:\.exe)?\s*\/c\s+echo\s+(.+)$/i)
+      || String(helper || '').match(/^echo\s+['"]?([^'"]+)['"]?$/i);
+    return match?.[1] || '';
+  });
   clearNativeOAuthMock = vi.fn();
   readNativeOAuthMock = vi.fn(() => null);
   clearAllLogsMock = vi.fn();
@@ -111,7 +117,8 @@ beforeEach(() => {
     exports: {
       getAllChannels: getAllChannelsMock,
       applyChannelToSettings: applyChannelToSettingsMock,
-      getCurrentSettings: getCurrentSettingsMock
+      getCurrentSettings: getCurrentSettingsMock,
+      extractApiKeyFromHelper: extractApiKeyFromHelperMock
     }
   };
 
@@ -274,6 +281,28 @@ describe('proxy start route', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(res.body.activeChannel).toEqual({
+      id: 'channel-1',
+      name: 'Primary',
+      baseUrl: 'https://api.anthropic.com',
+      websiteUrl: 'https://console.example.com'
+    });
+  });
+
+  test('recognizes the active channel from a Windows apiKeyHelper command', async () => {
+    readSettingsMock.mockReturnValue({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+        ANTHROPIC_API_KEY: ''
+      },
+      apiKeyHelper: 'cmd /c echo secret-1'
+    });
+
+    const res = await request(buildApp()).post('/start', {});
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(extractApiKeyFromHelperMock).toHaveBeenCalledWith('cmd /c echo secret-1');
     expect(res.body.activeChannel).toEqual({
       id: 'channel-1',
       name: 'Primary',

@@ -247,6 +247,19 @@ describe('applyChannelToSettings', () => {
     expect(settings.security.auth.selectedType).toBe('gemini-api-key');
   });
 
+  it('preserves unrelated env vars when rewriting managed fields', () => {
+    fs.writeFileSync(path.join(geminiDir, '.env'), 'CUSTOM_TOKEN=keep-me\nGEMINI_MODEL=old-model\n', 'utf8');
+    const ch = service.createChannel('Env Keep', 'https://keep.example', 'keep-key', 'gemini-2.5-flash');
+
+    service.applyChannelToSettings(ch.id);
+
+    const envContent = fs.readFileSync(path.join(geminiDir, '.env'), 'utf8');
+    expect(envContent).toContain('CUSTOM_TOKEN=keep-me');
+    expect(envContent).toContain('GOOGLE_GEMINI_BASE_URL=https://keep.example');
+    expect(envContent).toContain('GEMINI_API_KEY=keep-key');
+    expect(envContent).toContain('GEMINI_MODEL=gemini-2.5-flash');
+  });
+
   it('disables all other channels in single-channel mode', () => {
     const ch1 = service.createChannel('F1', 'https://f1.com', 'k1');
     const ch2 = service.createChannel('F2', 'https://f2.com', 'k2');
