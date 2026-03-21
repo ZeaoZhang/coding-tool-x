@@ -11,7 +11,7 @@ const {
   hasBackup,
   readSettings
 } = require('../services/settings-manager');
-const { getAllChannels } = require('../services/channels');
+const { getAllChannels, extractApiKeyFromHelper } = require('../services/channels');
 const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { clearAllLogs } = require('../websocket-server');
 const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
@@ -101,10 +101,7 @@ function findActiveChannelFromSettings() {
 
     // 如果 apiKey 仍为空，尝试从 apiKeyHelper 提取
     if (!apiKey && settings?.apiKeyHelper) {
-      const match = settings.apiKeyHelper.match(/['\"]([^'\"]+)['\"]/)
-      if (match && match[1]) {
-        apiKey = match[1];
-      }
+      apiKey = extractApiKeyFromHelper(settings.apiKeyHelper);
     }
 
     const channels = getAllChannels();

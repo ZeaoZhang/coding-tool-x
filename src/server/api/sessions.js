@@ -83,6 +83,55 @@ module.exports = (config) => {
     }
   });
 
+  // POST /api/sessions/:projectName/batch-delete - Delete multiple sessions
+  router.post('/:projectName/batch-delete', (req, res) => {
+    try {
+      const { projectName } = req.params;
+      const { sessionIds } = req.body || {};
+
+      if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+        return res.status(400).json({ error: 'sessionIds must be a non-empty array' });
+      }
+
+      const uniqueSessionIds = Array.from(new Set(
+        sessionIds
+          .filter(sessionId => typeof sessionId === 'string')
+          .map(sessionId => sessionId.trim())
+          .filter(Boolean)
+      ));
+
+      if (uniqueSessionIds.length === 0) {
+        return res.status(400).json({ error: 'sessionIds must be a non-empty array' });
+      }
+
+      const deletedSessionIds = [];
+      const failed = [];
+
+      uniqueSessionIds.forEach((sessionId) => {
+        try {
+          deleteSession(config, projectName, sessionId);
+          deletedSessionIds.push(sessionId);
+        } catch (error) {
+          failed.push({
+            sessionId,
+            error: error.message
+          });
+        }
+      });
+
+      res.json({
+        success: failed.length === 0,
+        requestedCount: uniqueSessionIds.length,
+        deletedCount: deletedSessionIds.length,
+        deletedSessionIds,
+        failed
+      });
+    } catch (error) {
+      console.error('Error batch deleting sessions:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // POST /api/sessions/:projectName/:sessionId/fork - Fork a session
   router.post('/:projectName/:sessionId/fork', (req, res) => {
     try {

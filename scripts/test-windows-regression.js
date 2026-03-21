@@ -92,9 +92,20 @@ function run() {
   );
   const windowsNotificationCommand = notificationHookTest.generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
   assert.strictEqual(windowsNotificationCommand.includes('ToastNotificationManager'), false, 'Windows 通知命令不应再包含 Toast 主路径');
-  assert.strictEqual(windowsNotificationCommand.includes('Wscript.Shell'), true, 'Windows 通知命令应直接使用 Popup');
-  assert.strictEqual(windowsNotificationCommand.includes('Popup('), true, 'Windows 通知命令应包含 Popup 调用');
+  assert.strictEqual(windowsNotificationCommand.includes('PresentationFramework'), true, 'Windows 通知命令应包含 WPF 主样式实现');
+  assert.strictEqual(windowsNotificationCommand.includes('AllowsTransparency'), true, 'Windows 通知命令应包含透明卡片配置');
+  assert.strictEqual(windowsNotificationCommand.includes('DropShadowEffect'), true, 'Windows 通知命令应包含阴影效果');
+  assert.strictEqual(windowsNotificationCommand.includes('ShowActivated'), true, 'Windows 通知命令应避免抢占焦点');
+  assert.strictEqual(windowsNotificationCommand.includes('System.Windows.Forms'), true, 'Windows 通知命令应保留 WinForms 回退');
+  assert.strictEqual(windowsNotificationCommand.includes('WorkingArea'), true, 'Windows 通知命令应包含屏幕工作区定位');
+  assert.strictEqual(windowsNotificationCommand.includes('FormBorderStyle]::None'), true, 'Windows 回退窗体应使用无边框样式');
+  assert.strictEqual(windowsNotificationCommand.includes('FixedToolWindow'), false, 'Windows 通知命令不应再使用旧工具窗样式');
   assert.strictEqual(windowsNotificationCommand.includes('||'), false, 'Windows 通知命令不应再包含 Toast 外层 fallback');
+  assert.strictEqual(
+    notificationHookTest.generateNotifyScript().includes("execFileSync('powershell'"),
+    true,
+    'Windows 通知脚本应直接调用 PowerShell，避免 cmd 长度限制'
+  );
   assert.strictEqual(
     isSameOriginRequest({ headers: { origin: 'http://localhost:19999', host: 'localhost:19999' } }),
     true,

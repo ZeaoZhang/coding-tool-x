@@ -290,7 +290,7 @@ describe('codex proxy stop route', () => {
     expect(res.status).toBe(200);
     expect(stopCodexProxyServerMock).toHaveBeenCalled();
     expect(deleteBackupMock).toHaveBeenCalled();
-    expect(applyChannelToSettingsMock).toHaveBeenCalledWith('channel-b', { pruneProviders: true });
+    expect(applyChannelToSettingsMock).toHaveBeenCalledWith('channel-b');
     expect(fs.existsSync(path.join(testDir, 'state', 'codex-active.json'))).toBe(false);
     expect(res.body).toEqual(expect.objectContaining({
       success: true,

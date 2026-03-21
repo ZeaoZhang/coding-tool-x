@@ -14,6 +14,7 @@ const CORE_SESSION_ROUTE_KEYS = new Set([
   'GET /:param/search',
   'GET /:param/:param/messages',
   'DELETE /:param/:param',
+  'POST /:param/batch-delete',
   'POST /:param/:param/fork',
   'POST /:param/order',
   'POST /:param/:param/launch'
@@ -259,6 +260,15 @@ async function run() {
         body: { order: 'invalid-order' }
       });
       assertStatusIn(result.statusCode, [400, 404], '会话排序参数校验');
+    });
+
+    await runCase(`[${channel.name}] POST /sessions/:project/batch-delete 参数校验`, async () => {
+      const routePath = sessionRouteMap.get('POST /:param/batch-delete');
+      const result = await invokeRoute(sessionsRouter, 'POST', routePath, {
+        params: buildParams(routePath),
+        body: { sessionIds: 'invalid-session-ids' }
+      });
+      assertStatusIn(result.statusCode, [400, 404], '会话批量删除参数校验');
     });
   }
 

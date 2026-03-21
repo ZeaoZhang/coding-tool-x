@@ -13,9 +13,16 @@ const {
   restoreSettings,
   deleteBackup,
   isProxyConfig,
-  getCurrentProxyPort
+  getCurrentProxyPort,
+  readConfig,
+  selectConfigPath
 } = require('../services/opencode-settings-manager');
-const { getChannels, getEnabledChannels, applyChannelToSettings } = require('../services/opencode-channels');
+const {
+  getChannels,
+  getEnabledChannels,
+  applyChannelToSettings,
+  getEffectiveApiKeyCandidates
+} = require('../services/opencode-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
@@ -58,6 +65,83 @@ function resolveActiveChannel(channels, activeChannelId = null) {
     || channels.find(channel => channel.enabled !== false)
     || channels[0]
     || null;
+}
+
+function sanitizeManagedProviderId(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    || 'channel';
+}
+
+function getCurrentProviderIdFromConfig(config) {
+  const modelRef = String(config?.model || '').trim();
+  if (modelRef.includes('/')) {
+    return modelRef.split('/')[0].trim();
+  }
+
+  const providerIds = config?.provider && typeof config.provider === 'object'
+    ? Object.keys(config.provider).filter(Boolean)
+    : [];
+
+  return providerIds.length === 1 ? providerIds[0] : '';
+}
+
+function getManagedProviderIdsForChannel(channel) {
+  const providerKey = String(channel?.providerKey || '').trim();
+  const fallbackName = String(channel?.name || '').trim();
+  const base = providerKey || fallbackName || 'ctx-channel';
+  return new Set([
+    providerKey,
+    sanitizeManagedProviderId(base)
+  ].filter(Boolean));
+}
+
+function findActiveChannelFromNativeConfig(channels = []) {
+  if (!Array.isArray(channels) || channels.length === 0) {
+    return null;
+  }
+
+  try {
+    const configPath = selectConfigPath();
+    if (!configPath || !fs.existsSync(configPath)) {
+      return null;
+    }
+
+    const config = readConfig(configPath);
+    const providerId = getCurrentProviderIdFromConfig(config);
+    const provider = providerId && config?.provider && typeof config.provider === 'object'
+      ? config.provider[providerId]
+      : null;
+    const baseUrl = String(provider?.options?.baseURL || '').trim();
+    const apiKey = String(provider?.options?.apiKey || '').trim();
+
+    if (providerId) {
+      const providerMatched = channels.find((channel) => getManagedProviderIdsForChannel(channel).has(providerId));
+      if (providerMatched) {
+        return providerMatched;
+      }
+    }
+
+    if (baseUrl && apiKey) {
+      const exactMatched = channels.find((channel) => (
+        channel.baseUrl === baseUrl && getEffectiveApiKeyCandidates(channel).includes(apiKey)
+      ));
+      if (exactMatched) {
+        return exactMatched;
+      }
+    }
+
+    if (baseUrl) {
+      return channels.find((channel) => channel.baseUrl === baseUrl) || null;
+    }
+  } catch (error) {
+    console.warn('[OpenCode Proxy] Failed to infer native active channel:', error.message);
+  }
+
+  return null;
 }
 
 // 保存激活渠道ID
@@ -127,13 +211,14 @@ router.post('/start', async (req, res) => {
   try {
     // 1. 获取当前启用的渠道
     const enabledChannels = getEnabledChannels();
-    const currentChannel = enabledChannels[0];
-
-    if (!currentChannel) {
+    if (enabledChannels.length === 0) {
       return res.status(400).json({
         error: 'No enabled OpenCode channel found. Please create and enable a channel first.'
       });
     }
+
+    const { channels: allChannels } = getChannels();
+    const currentChannel = findActiveChannelFromNativeConfig(allChannels) || enabledChannels[0];
 
     // 2. 保存当前激活渠道ID
     saveActiveChannelId(currentChannel.id);
@@ -193,13 +278,13 @@ router.post('/start', async (req, res) => {
       };
     });
 
-    const activeModel = currentChannel.model || currentChannel.speedTestModel || null;
+    const primaryProxyChannel = enabledChannels[0] || currentChannel;
+    const activeModel = primaryProxyChannel?.model || primaryProxyChannel?.speedTestModel || null;
     setProxyConfig(proxyResult.port, { channels: channelPayloads, model: activeModel });
 
     // 5. 广播状态更新
     const { broadcastProxyState } = require('../websocket-server');
     const updatedStatus = getOpenCodeProxyStatus();
-    const { channels: allChannels } = getChannels();
     broadcastProxyState('opencode', updatedStatus, currentChannel, allChannels);
 
     res.json({

@@ -16,13 +16,40 @@
             <n-tag size="small" :bordered="false" type="info" class="total-size-tag">
               {{ formatSize(store.totalSize) }}
             </n-tag>
-            <!-- 新建会话按钮 -->
-            <n-button type="primary" size="small" :loading="creatingSession" @click="handleCreateSession" style="margin-left: 12px;">
-              <template #icon>
-                <n-icon><AddOutline /></n-icon>
+            <div class="header-actions">
+              <template v-if="selectionMode">
+                <n-checkbox
+                  :checked="allSessionsSelected"
+                  :indeterminate="partiallySelected"
+                  :disabled="orderedSessions.length === 0 || batchDeleting"
+                  @update:checked="handleToggleSelectAll"
+                >
+                  全选
+                </n-checkbox>
+                <n-text depth="3">已选 {{ selectedCount }} 个</n-text>
+                <n-button
+                  size="small"
+                  type="error"
+                  :disabled="selectedCount === 0"
+                  :loading="batchDeleting"
+                  @click="handleBatchDelete"
+                >
+                  <template #icon>
+                    <n-icon><TrashOutline /></n-icon>
+                  </template>
+                  删除
+                </n-button>
+                <n-button size="small" :disabled="batchDeleting" @click="exitSelectionMode">
+                  完成
+                </n-button>
               </template>
-              新建会话
-            </n-button>
+              <n-button v-else size="small" type="error" secondary @click="enterSelectionMode">
+                <template #icon>
+                  <n-icon><TrashOutline /></n-icon>
+                </template>
+                管理
+              </n-button>
+            </div>
           </div>
           <n-text depth="3" class="project-path">{{ displayProjectPath }}</n-text>
         </div>
@@ -71,6 +98,7 @@
       item-key="sessionId"
       class="sessions-list"
       handle=".drag-handle"
+      :disabled="selectionMode || batchDeleting"
       v-bind="dragOptions"
       ghost-class="ghost"
       chosen-class="chosen"
@@ -80,15 +108,26 @@
       <template #item="{ element: session }">
         <div
           class="session-item"
+          :class="{
+            'session-item-selected': isSessionSelected(session.sessionId),
+            'session-item-selection-mode': selectionMode
+          }"
           @mouseenter="hoveredSession = session.sessionId"
           @mouseleave="hoveredSession = null"
-          @click="handleViewChatHistory(session)"
+          @click="handleSessionClick(session)"
         >
           <!-- Drag Handle -->
-          <div class="drag-handle">
+          <div v-if="!selectionMode" class="drag-handle">
             <n-icon size="16" color="#999">
               <ReorderThreeOutline />
             </n-icon>
+          </div>
+
+          <div v-else class="selection-checkbox" @click.stop>
+            <n-checkbox
+              :checked="isSessionSelected(session.sessionId)"
+              @update:checked="toggleSessionSelection(session.sessionId, $event)"
+            />
           </div>
 
           <!-- Left Content -->
@@ -147,7 +186,7 @@
             </div>
 
             <!-- 下部：操作按钮 -->
-            <div class="session-actions">
+            <div v-if="!selectionMode" class="session-actions">
               <n-space>
                 <n-button
                   v-show="hoveredSession === session.sessionId"
@@ -280,19 +319,18 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NButton, NIcon, NH2, NText, NInput, NSpin, NAlert, NEmpty,
-  NTag, NSpace, NModal, NTooltip
+  NTag, NSpace, NModal, NTooltip, NCheckbox
 } from 'naive-ui'
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
   ChatbubbleEllipsesOutline, GitBranchOutline, CreateOutline, TrashOutline,
   ReorderThreeOutline, TerminalOutline, StarOutline, Star,
-  AddOutline
 } from '@vicons/ionicons5'
 import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
-import { searchSessions as searchSessionsApi, createSession, copySessionLaunchCommand } from '../api/sessions'
+import { searchSessions as searchSessionsApi, copySessionLaunchCommand } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
@@ -322,6 +360,9 @@ const searchResults = ref(null)
 const showSearchResults = ref(false)
 const contentEl = ref(null)
 const searching = ref(false)
+const selectionMode = ref(false)
+const selectedSessionIds = ref([])
+const batchDeleting = ref(false)
 
 // Chat history drawer state
 const showChatHistory = ref(false)
@@ -329,8 +370,6 @@ const selectedSessionId = ref('')
 const selectedSessionAlias = ref('')
 const chatHistoryRef = ref(null)
 
-// Create session state
-const creatingSession = ref(false)
 const dragOptions = {
   // Keep sessions reorder-only inside the session list.
   group: { name: `${currentChannel.value}-sessions`, pull: false, put: false },
@@ -349,6 +388,16 @@ const projectDisplayName = computed(() => {
 const displayProjectPath = computed(() => {
   return store.currentProjectInfo?.fullPath || effectiveProjectName.value
 })
+
+const selectedSessionSet = computed(() => new Set(selectedSessionIds.value))
+const selectedCount = computed(() => selectedSessionIds.value.length)
+const allSessionsSelected = computed(() => (
+  orderedSessions.value.length > 0
+  && orderedSessions.value.every(session => selectedSessionSet.value.has(session.sessionId))
+))
+const partiallySelected = computed(() => (
+  selectedCount.value > 0 && !allSessionsSelected.value
+))
 
 async function ensureProjectNameResolved() {
   if (!store.projects.length) {
@@ -387,6 +436,11 @@ async function loadSessions() {
 // Sync with store
 watch(() => store.sessionsWithAlias, (newSessions) => {
   orderedSessions.value = [...newSessions]
+  const validIds = new Set(newSessions.map(session => session.sessionId))
+  selectedSessionIds.value = selectedSessionIds.value.filter(sessionId => validIds.has(sessionId))
+  if (selectionMode.value && newSessions.length === 0) {
+    exitSelectionMode()
+  }
 }, { immediate: true })
 
 const filteredSessions = computed(() => {
@@ -427,6 +481,47 @@ async function handleSearch() {
 async function handleDragEnd() {
   const order = orderedSessions.value.map(s => s.sessionId)
   await store.saveSessionOrder(order)
+}
+
+function enterSelectionMode() {
+  selectionMode.value = true
+  hoveredSession.value = null
+}
+
+function exitSelectionMode() {
+  selectionMode.value = false
+  selectedSessionIds.value = []
+  hoveredSession.value = null
+}
+
+function isSessionSelected(sessionId) {
+  return selectedSessionSet.value.has(sessionId)
+}
+
+function toggleSessionSelection(sessionId, checked = !isSessionSelected(sessionId)) {
+  const nextSelected = new Set(selectedSessionIds.value)
+  if (checked) {
+    nextSelected.add(sessionId)
+  } else {
+    nextSelected.delete(sessionId)
+  }
+  selectedSessionIds.value = Array.from(nextSelected)
+}
+
+function handleToggleSelectAll(checked) {
+  if (checked) {
+    selectedSessionIds.value = orderedSessions.value.map(session => session.sessionId)
+    return
+  }
+  selectedSessionIds.value = []
+}
+
+function handleSessionClick(session) {
+  if (selectionMode.value) {
+    toggleSessionSelection(session.sessionId)
+    return
+  }
+  handleViewChatHistory(session)
 }
 
 function handleSetAlias(session) {
@@ -484,6 +579,19 @@ function handleChatHistoryError(errorMsg) {
   message.error(errorMsg)
 }
 
+function syncDeletedSessionState(sessionIds) {
+  const deletedIds = new Set((sessionIds || []).filter(Boolean))
+  if (deletedIds.size === 0) return
+
+  selectedSessionIds.value = selectedSessionIds.value.filter(sessionId => !deletedIds.has(sessionId))
+
+  if (selectedSessionId.value && deletedIds.has(selectedSessionId.value)) {
+    showChatHistory.value = false
+    selectedSessionId.value = ''
+    selectedSessionAlias.value = ''
+  }
+}
+
 async function handleLaunchTerminal(sessionId) {
   try {
     const { copyResult } = await copySessionLaunchCommand(effectiveProjectName.value, sessionId, currentChannel.value)
@@ -506,6 +614,7 @@ function handleDelete(sessionId) {
     onPositiveClick: async () => {
       try {
         await store.deleteSession(sessionId)
+        syncDeletedSessionState([sessionId])
         message.success('会话已删除')
       } catch (err) {
         message.error('删除失败: ' + err.message)
@@ -514,46 +623,41 @@ function handleDelete(sessionId) {
   })
 }
 
-function getCreateToolType(channel) {
-  if (channel === 'codex') return 'codex'
-  if (channel === 'gemini') return 'gemini'
-  if (channel === 'opencode') return null
-  return 'claude'
-}
-
-// 创建新会话并复制启动命令
-async function handleCreateSession() {
-  creatingSession.value = true
-
-  try {
-    const channel = currentChannel.value || 'claude'
-    const toolType = getCreateToolType(channel)
-
-    if (!toolType) {
-      message.warning('OpenCode 暂不支持在此新建会话，请在 CLI 中手动创建')
-      return
-    }
-
-    const created = await createSession(effectiveProjectName.value, toolType)
-    const sessionId = created?.sessionId
-
-    if (!sessionId) {
-      throw new Error('创建会话成功但未返回 sessionId')
-    }
-
-    const { copyResult } = await copySessionLaunchCommand(effectiveProjectName.value, sessionId, channel)
-    await loadSessions()
-    if (copyResult?.method === 'manual') {
-      message.warning('新会话已创建，自动复制失败，已弹出手动复制框')
-      return
-    }
-    message.success('新会话已创建，启动命令已复制到剪贴板')
-  } catch (err) {
-    console.error('Failed to create session:', err)
-    message.error('创建会话失败: ' + err.message)
-  } finally {
-    creatingSession.value = false
+function handleBatchDelete() {
+  if (selectedCount.value === 0) {
+    message.warning('请先选择要删除的会话')
+    return
   }
+
+  const deletingIds = [...selectedSessionIds.value]
+  dialog.warning({
+    title: '批量删除会话',
+    content: `确定要删除选中的 ${deletingIds.length} 个会话吗？此操作不可恢复！`,
+    positiveText: '确定删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      batchDeleting.value = true
+      try {
+        const result = await store.deleteSessions(deletingIds)
+        syncDeletedSessionState(result.deletedSessionIds)
+
+        if (result.failed.length === 0) {
+          message.success(`已删除 ${result.deletedSessionIds.length} 个会话`)
+          exitSelectionMode()
+          return
+        }
+
+        selectedSessionIds.value = result.failed.map(item => item.sessionId)
+        if (result.deletedSessionIds.length > 0) {
+          message.warning(`已删除 ${result.deletedSessionIds.length} 个会话，${result.failed.length} 个删除失败`)
+        } else {
+          message.error(`删除失败: ${result.failed[0].error.message}`)
+        }
+      } finally {
+        batchDeleting.value = false
+      }
+    }
+  })
 }
 
 // 切换收藏状态
@@ -647,6 +751,7 @@ async function refreshDataWithScrollPreservation() {
 
 // 监听 channel 变化
 watch([currentChannel, () => props.projectName], ([newChannel]) => {
+  exitSelectionMode()
   store.setChannel(newChannel)
   loadSessions()
 }, { immediate: true })
@@ -710,9 +815,10 @@ onUnmounted(() => {
 
 .title-with-count {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 2px;
+  flex-wrap: wrap;
 }
 
 .title-section h2 {
@@ -734,6 +840,13 @@ onUnmounted(() => {
   display: block;
   color: #666;
   margin-bottom: 2px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 4px;
 }
 
 .search-input {
@@ -767,6 +880,16 @@ onUnmounted(() => {
   box-shadow: 0 2px 8px rgba(24, 160, 88, 0.1);
 }
 
+.session-item-selection-mode {
+  cursor: default;
+}
+
+.session-item-selected {
+  border-color: #18a058;
+  box-shadow: 0 0 0 2px rgba(24, 160, 88, 0.12);
+  background: rgba(24, 160, 88, 0.04);
+}
+
 .drag-handle {
   cursor: move;
   width: 24px;
@@ -784,6 +907,14 @@ onUnmounted(() => {
   opacity: 1;
   background-color: rgba(24, 160, 88, 0.1);
   border-radius: 4px;
+}
+
+.selection-checkbox {
+  width: 24px;
+  min-width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Left Content - 左侧内容区 */

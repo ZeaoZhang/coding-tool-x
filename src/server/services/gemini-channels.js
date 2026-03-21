@@ -34,6 +34,43 @@ function getChannelsFilePath() {
   return PATHS.channels.gemini;
 }
 
+function readExistingGeminiEnv() {
+  const envPath = path.join(getGeminiDir(), '.env');
+  if (!fs.existsSync(envPath)) {
+    return {};
+  }
+
+  const env = {};
+  try {
+    const content = fs.readFileSync(envPath, 'utf8');
+    content.split('\n').forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+
+      const match = trimmed.match(/^([^=]+)=(.*)$/);
+      if (match) {
+        env[match[1].trim()] = match[2].trim();
+      }
+    });
+  } catch (err) {
+    return {};
+  }
+
+  return env;
+}
+
+function writeGeminiEnv(env = {}) {
+  const envPath = path.join(getGeminiDir(), '.env');
+  const content = Object.entries(env)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+
+  fs.writeFileSync(envPath, content ? `${content}\n` : '', 'utf8');
+  if (process.platform !== 'win32') {
+    fs.chmodSync(envPath, 0o600);
+  }
+}
+
 // 检查是否在代理模式
 function isProxyConfig() {
   const envPath = path.join(getGeminiDir(), '.env');
@@ -295,21 +332,12 @@ function applyChannelToSettings(channelId, channels = null) {
     fs.mkdirSync(geminiDir, { recursive: true });
   }
 
-  const envPath = path.join(geminiDir, '.env');
-
-  // 构建 .env 内容
+  const env = readExistingGeminiEnv();
   const effectiveApiKey = getEffectiveApiKey(channel) || '';
-  const envContent = `GOOGLE_GEMINI_BASE_URL=${channel.baseUrl}
-GEMINI_API_KEY=${effectiveApiKey}
-GEMINI_MODEL=${channel.model}
-`;
-
-  fs.writeFileSync(envPath, envContent, 'utf8');
-
-  // 设置 .env 文件权限为 600 (仅所有者可读写)
-  if (process.platform !== 'win32') {
-    fs.chmodSync(envPath, 0o600);
-  }
+  env.GOOGLE_GEMINI_BASE_URL = channel.baseUrl;
+  env.GEMINI_API_KEY = effectiveApiKey;
+  env.GEMINI_MODEL = channel.model;
+  writeGeminiEnv(env);
 
   // 确保 settings.json 存在并配置正确的认证模式
   const settingsPath = path.join(geminiDir, 'settings.json');
@@ -364,32 +392,25 @@ function writeGeminiConfigForMultiChannel(allChannels) {
     fs.mkdirSync(geminiDir, { recursive: true });
   }
 
-  const envPath = path.join(geminiDir, '.env');
-
   // 获取第一个启用的渠道作为默认配置
   const enabledChannels = allChannels.filter(c => c.enabled !== false);
   const defaultChannel = enabledChannels[0] || allChannels[0];
 
+  const env = readExistingGeminiEnv();
+
   if (!defaultChannel) {
-    // 没有渠道，写入空配置
-    const envContent = `# Gemini Configuration\n# No channels configured\n`;
-    fs.writeFileSync(envPath, envContent, 'utf8');
+    delete env.GOOGLE_GEMINI_BASE_URL;
+    delete env.GEMINI_API_KEY;
+    delete env.GEMINI_MODEL;
+    writeGeminiEnv(env);
     return;
   }
 
-  // 构建 .env 内容
   const effectiveApiKey = getEffectiveApiKey(defaultChannel) || '';
-  const envContent = `GOOGLE_GEMINI_BASE_URL=${defaultChannel.baseUrl}
-GEMINI_API_KEY=${effectiveApiKey}
-GEMINI_MODEL=${defaultChannel.model}
-`;
-
-  fs.writeFileSync(envPath, envContent, 'utf8');
-
-  // 设置 .env 文件权限为 600 (仅所有者可读写)
-  if (process.platform !== 'win32') {
-    fs.chmodSync(envPath, 0o600);
-  }
+  env.GOOGLE_GEMINI_BASE_URL = defaultChannel.baseUrl;
+  env.GEMINI_API_KEY = effectiveApiKey;
+  env.GEMINI_MODEL = defaultChannel.model;
+  writeGeminiEnv(env);
 
   // 确保 settings.json 存在并配置正确的认证模式
   const settingsPath = path.join(geminiDir, 'settings.json');

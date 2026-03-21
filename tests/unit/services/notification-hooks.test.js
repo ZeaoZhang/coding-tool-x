@@ -44,7 +44,10 @@ const {
   buildGeminiCommand,
   generateNotifyScript,
   generateSystemNotificationCommand,
-  buildOpenCodePluginContent
+  buildOpenCodePluginContent,
+  parseStopHookStatus,
+  buildStopHookCommand,
+  shouldRepairStopHook
 } = _test;
 
 // ---------------------------------------------------------------------------
@@ -120,6 +123,55 @@ describe('applyClaudeDisablePreference', () => {
     const config = { claudeNotificationDisabledByUser: true };
     applyClaudeDisablePreference(config, true);
     expect(config.claudeNotificationDisabledByUser).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Claude Stop Hook compatibility helpers
+// ---------------------------------------------------------------------------
+describe('Claude stop hook compatibility helpers', () => {
+  test('parseStopHookStatus detects managed stop hook even when external hook appears first', () => {
+    const settings = {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              { type: 'command', command: 'echo external-hook' }
+            ]
+          },
+          {
+            hooks: [
+              { type: 'command', command: 'node /tmp/test-notify-hook.js --source=claude --mode=dialog --cc-notify-type=dialog' }
+            ]
+          }
+        ]
+      }
+    };
+
+    expect(parseStopHookStatus(settings)).toEqual({ enabled: true, type: 'dialog' });
+  });
+
+  test('buildStopHookCommand reuses the managed Claude hook command format', () => {
+    const command = buildStopHookCommand('notification');
+    expect(command).toContain('notify-hook.js');
+    expect(command).toContain('--source=claude');
+    expect(command).toContain('--cc-notify-type=notification');
+  });
+
+  test('shouldRepairStopHook returns true for old managed path without marker', () => {
+    const settings = {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              { type: 'command', command: 'node "/old/path/notify-hook.js"' }
+            ]
+          }
+        ]
+      }
+    };
+
+    expect(shouldRepairStopHook(settings, '/tmp/test-notify-hook.js', () => false)).toBe(true);
   });
 });
 
@@ -423,22 +475,37 @@ describe('generateNotifyScript', () => {
 
   test('uses Windows popup command for generated notification command', () => {
     const command = generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
-    expect(command).toContain('Wscript.Shell');
-    expect(command).toContain('Popup(');
+    expect(command).toContain('PresentationFramework');
+    expect(command).toContain('AllowsTransparency');
+    expect(command).toContain('DropShadowEffect');
+    expect(command).toContain('ShowActivated');
+    expect(command).toContain('System.Windows.Forms');
+    expect(command).toContain('WorkingArea');
+    expect(command).toContain('FormBorderStyle]::None');
+    expect(command).not.toContain('FixedToolWindow');
     expect(command).not.toContain('ToastNotificationManager');
   });
 
   test('keeps Windows popup fallback in generated dialog command', () => {
     const command = generateSystemNotificationCommand('dialog', '这是一条测试通知', 'win32');
     expect(command).toContain('MessageBox');
-    expect(command).toContain('Wscript.Shell');
+    expect(command).toContain('-STA');
+    expect(command).toContain('PresentationFramework');
+    expect(command).toContain('AllowsTransparency');
+    expect(command).toContain('System.Windows.Forms');
+    expect(command).toContain('WorkingArea');
     expect(command).toContain('||');
   });
 
   test('embeds Windows popup helper in generated script', () => {
     const script = generateNotifyScript();
     expect(script).toContain('function buildWindowsPopupCommand');
-    expect(script).toContain('Wscript.Shell');
+    expect(script).toContain("execFileSync('powershell'");
+    expect(script).toContain('PresentationFramework');
+    expect(script).toContain('AllowsTransparency');
+    expect(script).toContain('DropShadowEffect');
+    expect(script).toContain('System.Windows.Forms');
+    expect(script).toContain('WorkingArea');
   });
 });
 

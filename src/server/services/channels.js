@@ -44,18 +44,22 @@ function extractApiKeyFromHelper(apiKeyHelper) {
     return '';
   }
   const helper = apiKeyHelper.trim();
-  let match = helper.match(/^echo\s+["']([^"']+)["']$/);
+  let match = helper.match(/^echo\s+["']([^"']+)["']$/i);
   if (match && match[1]) return match[1];
-  match = helper.match(/^printf\s+["'][^"']*["']\s+["']([^"']+)["']$/);
+  match = helper.match(/^echo\s+([^\s].*)$/i);
+  if (match && match[1]) return match[1].trim();
+  match = helper.match(/^cmd(?:\.exe)?\s*\/c\s+echo\s+([^\s].*)$/i);
+  if (match && match[1]) return match[1].trim();
+  match = helper.match(/^printf\s+["'][^"']*["']\s+["']([^"']+)["']$/i);
   if (match && match[1]) return match[1];
   return '';
 }
 
-function buildApiKeyHelperCommand() {
+function buildApiKeyHelperCommand(value) {
   if (isWindowsLikePlatform(process.platform, process.env)) {
-    return 'cmd /c echo ctx-managed';
+    return `cmd /c echo ${value}`;
   }
-  return "echo 'ctx-managed'";
+  return `echo '${value}'`;
 }
 
 // ── Claude 原生设置写入 ──
@@ -114,7 +118,7 @@ function updateClaudeSettingsWithModelConfig(channel) {
     delete settings.env;
   }
 
-  settings.apiKeyHelper = buildApiKeyHelperCommand();
+  settings.apiKeyHelper = buildApiKeyHelperCommand(apiKey);
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
@@ -147,7 +151,7 @@ function updateClaudeSettings(baseUrl, apiKey) {
     delete settings.env;
   }
 
-  settings.apiKeyHelper = buildApiKeyHelperCommand();
+  settings.apiKeyHelper = buildApiKeyHelperCommand(apiKey);
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
@@ -326,4 +330,5 @@ module.exports = {
   updateClaudeSettingsWithModelConfig,
   getEffectiveApiKey,
   disableAllChannels,
+  extractApiKeyFromHelper,
 };

@@ -117,7 +117,7 @@ function syncManagedChannelConfig(channels = [], preferredChannel = null) {
     : resolveCurrentManagedChannel(channels);
 
   if (targetChannel) {
-    setChannelConfig(targetChannel);
+    setChannelConfig(buildNativeConfigChannel(targetChannel));
     return targetChannel;
   }
 
@@ -305,9 +305,18 @@ function applyChannelToSettings(channelId) {
   });
   saveChannels(data);
 
-  setChannelConfig(channel);
+  setChannelConfig(buildNativeConfigChannel(channel));
 
   return channel;
+}
+
+function buildNativeConfigChannel(channel = {}) {
+  const candidates = getEffectiveApiKeyCandidates(channel);
+  const effectiveApiKey = candidates[0] || normalizeApiKey(channel.apiKey || channel.key || '');
+  return {
+    ...channel,
+    apiKey: effectiveApiKey
+  };
 }
 
 function loadCodexChannels() {

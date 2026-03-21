@@ -16,6 +16,8 @@ let setProxyConfigMock;
 let deleteBackupMock;
 let isProxyConfigMock;
 let getCurrentProxyPortMock;
+let readConfigMock;
+let selectConfigPathMock;
 let getChannelsMock;
 let getEnabledChannelsMock;
 let applyChannelToSettingsMock;
@@ -23,6 +25,8 @@ let clearNativeOAuthMock;
 let getSchedulerStateMock;
 let broadcastProxyStateMock;
 let broadcastSchedulerStateMock;
+let nativeConfig;
+let nativeConfigPath;
 
 function buildApp() {
   delete require.cache[require.resolve('../../../src/server/api/opencode-proxy')];
@@ -115,6 +119,20 @@ beforeEach(() => {
   deleteBackupMock = vi.fn();
   isProxyConfigMock = vi.fn(() => false);
   getCurrentProxyPortMock = vi.fn(() => null);
+  nativeConfigPath = path.join(testDir, 'native', 'config.json');
+  nativeConfig = {
+    model: 'provider-two/gpt-5',
+    provider: {
+      'provider-two': {
+        options: {
+          baseURL: 'https://open-two.example',
+          apiKey: 'secondary-key'
+        }
+      }
+    }
+  };
+  readConfigMock = vi.fn(() => nativeConfig);
+  selectConfigPathMock = vi.fn(() => nativeConfigPath);
   getChannelsMock = vi.fn(() => ({ channels }));
   getEnabledChannelsMock = vi.fn(() => channels.filter((channel) => channel.enabled !== false));
   applyChannelToSettingsMock = vi.fn();
@@ -146,7 +164,9 @@ beforeEach(() => {
       restoreSettings: vi.fn(),
       deleteBackup: deleteBackupMock,
       isProxyConfig: isProxyConfigMock,
-      getCurrentProxyPort: getCurrentProxyPortMock
+      getCurrentProxyPort: getCurrentProxyPortMock,
+      readConfig: readConfigMock,
+      selectConfigPath: selectConfigPathMock
     }
   };
 
@@ -157,7 +177,11 @@ beforeEach(() => {
     exports: {
       getChannels: getChannelsMock,
       getEnabledChannels: getEnabledChannelsMock,
-      applyChannelToSettings: applyChannelToSettingsMock
+      applyChannelToSettings: applyChannelToSettingsMock,
+      getEffectiveApiKeyCandidates: vi.fn((channel) => {
+        if (channel.id === 'open-2') return ['secondary-key'];
+        return [channel.apiKey].filter(Boolean);
+      })
     }
   };
 
@@ -252,6 +276,8 @@ describe('opencode proxy routes', () => {
 
   test('start validates enabled channels and writes proxy config with collected models', async () => {
     const app = buildApp();
+    fs.mkdirSync(path.dirname(nativeConfigPath), { recursive: true });
+    fs.writeFileSync(nativeConfigPath, JSON.stringify(nativeConfig), 'utf8');
 
     getEnabledChannelsMock.mockReturnValue([]);
     const missingChannels = await request(app).post('/start', {});
@@ -280,7 +306,13 @@ describe('opencode proxy routes', () => {
       model: 'gpt-4.1'
     });
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'state', 'opencode-active.json'), 'utf8'))).toEqual({
-      activeChannelId: 'open-1'
+      activeChannelId: 'open-2'
+    });
+    expect(started.body.activeChannel).toEqual({
+      id: 'open-2',
+      name: 'Secondary',
+      baseUrl: 'https://open-two.example',
+      websiteUrl: undefined
     });
   });
 
