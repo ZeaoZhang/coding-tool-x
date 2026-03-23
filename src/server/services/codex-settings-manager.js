@@ -37,6 +37,33 @@ function hasBackup() {
   return fs.existsSync(getConfigBackupPath()) || fs.existsSync(getAuthBackupPath());
 }
 
+function isRecoverableEnvSyncError(err) {
+  const message = String(err?.message || '');
+  return err?.code === 'ETIMEDOUT' ||
+    /timed out|spawnSync (?:powershell|pwsh)|No PowerShell executable available/i.test(message);
+}
+
+function trySyncCodexUserEnvironment(envMap, options) {
+  try {
+    return {
+      success: true,
+      result: syncCodexUserEnvironment(envMap, options),
+      warning: null
+    };
+  } catch (err) {
+    if (!isRecoverableEnvSyncError(err)) {
+      throw err;
+    }
+
+    console.warn(`[Codex Settings] 跳过持久化环境变量同步: ${err.message}`);
+    return {
+      success: false,
+      result: null,
+      warning: err.message
+    };
+  }
+}
+
 
 // 读取 config.toml
 function readConfig() {
@@ -191,7 +218,7 @@ function restoreSettings() {
       fs.unlinkSync(getAuthBackupPath());
     }
 
-    syncCodexUserEnvironment({}, {
+    const envSync = trySyncCodexUserEnvironment({}, {
       replace: false,
       removeKeys: ['CC_PROXY_KEY']
     });
@@ -200,7 +227,11 @@ function restoreSettings() {
     delete process.env.CC_PROXY_KEY;
 
     console.log('Codex settings restored from backup');
-    return { success: true };
+    const result = { success: true };
+    if (envSync.warning) {
+      result.envSyncWarning = envSync.warning;
+    }
+    return result;
   } catch (err) {
     throw new Error('Failed to restore settings: ' + err.message);
   }
@@ -246,22 +277,27 @@ function setProxyConfig(proxyPort) {
     // 直接设置 process.env 确保从本进程派生的 Codex CLI 能读到 CC_PROXY_KEY
     process.env.CC_PROXY_KEY = 'PROXY_KEY';
 
-    const envResult = syncCodexUserEnvironment({
+    const envSync = trySyncCodexUserEnvironment({
       CC_PROXY_KEY: 'PROXY_KEY'
     }, {
       replace: false
     });
+    const envResult = envSync.result;
 
     console.log(`Codex settings updated to use proxy on port ${proxyPort}`);
-    return {
+    const result = {
       success: true,
       port: proxyPort,
-      envInjected: true,
-      isFirstTime: envResult.isFirstTime,
-      shellConfigPath: envResult.shellConfigPath,
-      sourceCommand: envResult.sourceCommand,
-      reloadRequired: envResult.reloadRequired
+      envInjected: envSync.success,
+      isFirstTime: envResult?.isFirstTime || false,
+      shellConfigPath: envResult?.shellConfigPath || null,
+      sourceCommand: envResult?.sourceCommand || null,
+      reloadRequired: envResult?.reloadRequired || false
     };
+    if (envSync.warning) {
+      result.envSyncWarning = envSync.warning;
+    }
+    return result;
   } catch (err) {
     throw new Error('Failed to set proxy config: ' + err.message);
   }
@@ -335,4 +371,7 @@ module.exports = {
   setProxyConfig,
   isProxyConfig,
   getCurrentProxyPort,
+  _test: {
+    isRecoverableEnvSyncError
+  }
 };

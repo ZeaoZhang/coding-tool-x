@@ -4,6 +4,21 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.5.4] - 2026-03-23
+
+### Fixed
+- **`ctx stop` 全实例停机修复** - 停止服务时现在会同时清理 PM2 记录和所有受管端口上的残留实例，即使服务是手动启动的、或 PM2 中只剩 `stopped` 记录，也会尽量一并停掉
+- **MCP HTTP 通知空响应兼容性修复** - 修复测试 MCP 时 `notifications/initialized` 在服务端返回 `202 + 空 body` 后被错误当作非法 JSON 解析的问题，避免出现 `Notification send failed: Invalid JSON response: Unexpected end of JSON input`
+- **MCP HTTP 会话头续传** - 初始化后保存并续传 `Mcp-Session-Id` 与协商协议版本，提升对 Streamable HTTP MCP 服务端的兼容性
+
+## [3.5.3] - 2026-03-23
+
+### Fixed
+- **Windows 全局安装后 UI 启动失败** - 发布依赖中显式加入 `rxjs`，并移除无效的 `file:` 本地运行时依赖，修复 `ctx start` / `ctx ui --daemon` 在 Windows 上因 `inquirer` 缺少运行时依赖而启动失败的问题
+- **非交互启动链路解耦交互依赖** - CLI 与服务入口改为按需加载 `inquirer`，即使交互菜单依赖异常，后台启动命令仍可进入服务启动流程
+- **Codex PowerShell 环境同步降级处理** - Windows 上 `pwsh` 超时或缺失时，Codex 环境变量同步改为告警降级，不再直接中断代理恢复与服务启动
+- **残留端口清理体验修复** - `ctx stop` 现在会额外清理受管端口上的残留进程，并给出更明确的端口占用提示，减少二次启动时的误报
+
 ## [3.3.8] - 2026-03-12
 
 ### Added

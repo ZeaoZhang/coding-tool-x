@@ -12,6 +12,7 @@ const notificationHooks = require('../src/server/services/notification-hooks');
 const logsCommand = require('../src/commands/logs');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
 const daemonCommand = require('../src/commands/daemon');
+const codexSettingsManager = require('../src/server/services/codex-settings-manager');
 
 function run() {
   const hookTest = claudeHooks._test || {};
@@ -21,6 +22,7 @@ function run() {
   const mcpClientTest = mcpClient._test || {};
   const portHelperTest = portHelper._test || {};
   const daemonTest = daemonCommand._test || {};
+  const codexSettingsTest = codexSettingsManager._test || {};
 
   assert.strictEqual(typeof hookTest.shouldRepairStopHook, 'function', '缺少 shouldRepairStopHook 测试导出');
   assert.strictEqual(typeof hookTest.resolvePreferredHomeDir, 'function', '缺少 resolvePreferredHomeDir 测试导出');
@@ -34,6 +36,7 @@ function run() {
   assert.strictEqual(typeof portHelperTest.isMissingCommandError, 'function', '缺少 isMissingCommandError 测试导出');
   assert.strictEqual(typeof portHelperTest.createPortToolIssue, 'function', '缺少 createPortToolIssue 测试导出');
   assert.strictEqual(typeof daemonTest.shouldTreatPortOwnershipAsReady, 'function', '缺少 shouldTreatPortOwnershipAsReady 测试导出');
+  assert.strictEqual(typeof codexSettingsTest.isRecoverableEnvSyncError, 'function', '缺少 isRecoverableEnvSyncError 测试导出');
 
   const preferredHome = resolvePreferredHomeDir(
     'win32',
@@ -141,6 +144,21 @@ function run() {
   assert.strictEqual(daemonTest.shouldTreatPortOwnershipAsReady(null), true, '缺少端口检测工具时应走降级就绪检查');
   assert.strictEqual(daemonTest.shouldTreatPortOwnershipAsReady(true), true, '端口归属命中时应视为就绪');
   assert.strictEqual(daemonTest.shouldTreatPortOwnershipAsReady(false), false, '端口归属不匹配时不应视为就绪');
+  assert.strictEqual(
+    codexSettingsTest.isRecoverableEnvSyncError({ code: 'ETIMEDOUT', message: 'spawnSync pwsh ETIMEDOUT' }),
+    true,
+    'pwsh 超时应视为可降级错误'
+  );
+  assert.strictEqual(
+    codexSettingsTest.isRecoverableEnvSyncError({ message: 'No PowerShell executable available' }),
+    true,
+    '缺少 PowerShell 可执行文件应视为可降级错误'
+  );
+  assert.strictEqual(
+    codexSettingsTest.isRecoverableEnvSyncError(new Error('permission denied')),
+    false,
+    '无关错误不应被视为可降级错误'
+  );
 
   const winFollowSpec = logsTest.buildFollowProcessSpec('C:\\Users\\wjx\\.cc-tool\\logs\\cc-tool-out.log', 'win32');
   assert.strictEqual(winFollowSpec.command, 'powershell', 'Windows 日志跟踪应使用 powershell');

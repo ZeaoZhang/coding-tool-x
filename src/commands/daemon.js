@@ -3,7 +3,13 @@ const path = require('path');
 const chalk = require('chalk');
 const { loadConfig } = require('../config/loader');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
-const { findProcessByPort, getPortToolIssue, formatPortToolIssue } = require('../utils/port-helper');
+const {
+  findProcessByPort,
+  killProcessByPort,
+  waitForPortRelease,
+  getPortToolIssue,
+  formatPortToolIssue
+} = require('../utils/port-helper');
 
 const PM2_APP_NAME = 'cc-tool';
 
@@ -39,6 +45,30 @@ function getProcessList() {
         reject(err);
       } else {
         resolve(list);
+      }
+    });
+  });
+}
+
+function stopPM2Process(name) {
+  return new Promise((resolve, reject) => {
+    pm2.stop(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+function deletePM2Process(name) {
+  return new Promise((resolve, reject) => {
+    pm2.delete(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
       }
     });
   });
@@ -81,6 +111,108 @@ function printPortToolIssue(issue = getPortToolIssue()) {
 
 function shouldTreatPortOwnershipAsReady(ownsPort) {
   return ownsPort === true || ownsPort === null;
+}
+
+function shouldStopPM2Process(status) {
+  return !['stopped', 'errored', 'stopping', 'launching'].includes(String(status || '').toLowerCase());
+}
+
+function getManagedPorts(config = loadConfig()) {
+  return [
+    config.ports?.webUI || 19999,
+    config.ports?.proxy || 20088,
+    config.ports?.codexProxy || 20089,
+    config.ports?.geminiProxy || 20090,
+    config.ports?.opencodeProxy || 20091
+  ].filter((port, index, list) => Number.isInteger(port) && port > 0 && list.indexOf(port) === index);
+}
+
+async function cleanupManagedPorts(config = loadConfig(), options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 3000;
+  const ports = getManagedPorts(config);
+  const released = [];
+  const forced = [];
+  const stillInUse = [];
+
+  for (const port of ports) {
+    if (await waitForPortRelease(port, timeoutMs)) {
+      released.push(port);
+      continue;
+    }
+
+    const killed = killProcessByPort(port);
+    if (killed) {
+      forced.push(port);
+      if (await waitForPortRelease(port, timeoutMs)) {
+        released.push(port);
+        continue;
+      }
+    }
+
+    stillInUse.push(port);
+  }
+
+  return {
+    ports,
+    released,
+    forced,
+    stillInUse,
+    toolIssue: getPortToolIssue()
+  };
+}
+
+async function stopAllManagedInstances(existingProcess, config = loadConfig()) {
+  const warnings = [];
+  const hadPM2Process = Boolean(existingProcess);
+  const status = existingProcess?.pm2_env?.status || 'unknown';
+
+  if (existingProcess) {
+    if (shouldStopPM2Process(status)) {
+      try {
+        await stopPM2Process(PM2_APP_NAME);
+      } catch (err) {
+        warnings.push(`停止 PM2 进程失败: ${err.message}`);
+      }
+    }
+
+    try {
+      await deletePM2Process(PM2_APP_NAME);
+    } catch (err) {
+      warnings.push(`删除 PM2 进程记录失败: ${err.message}`);
+    }
+  }
+
+  const cleanup = await cleanupManagedPorts(config, { timeoutMs: 3000 });
+
+  return {
+    hadPM2Process,
+    pm2Status: status,
+    cleanup,
+    warnings
+  };
+}
+
+function printStopResult(result) {
+  const { hadPM2Process, cleanup, warnings } = result;
+  const stoppedAny = hadPM2Process || cleanup.forced.length > 0;
+
+  if (stoppedAny) {
+    console.log(chalk.green('\n[OK] Coding-Tool 服务已停止\n'));
+  } else {
+    console.log(chalk.yellow('\n[WARN]  服务未在运行\n'));
+  }
+
+  if (cleanup.forced.length > 0) {
+    console.log(chalk.yellow(`[WARN]  已额外清理残留端口: ${cleanup.forced.join(', ')}`));
+  }
+  if (cleanup.stillInUse.length > 0) {
+    console.log(chalk.red(`[ERROR] 以下端口仍被占用: ${cleanup.stillInUse.join(', ')}`));
+    printPortToolIssue(cleanup.toolIssue);
+    console.log(chalk.yellow('[TIP] 请检查是否有外部进程仍占用这些端口\n'));
+  }
+  warnings.forEach((warning) => {
+    console.log(chalk.yellow(`[WARN]  ${warning}`));
+  });
 }
 
 async function waitForServiceReady(port, timeoutMs = 15000, intervalMs = 500) {
@@ -232,33 +364,14 @@ async function handleStart() {
 async function handleStop() {
   try {
     await connectPM2();
+    const config = loadConfig();
 
     const existing = await getCCToolProcess();
-    if (!existing) {
-      console.log(chalk.yellow('\n[WARN]  服务未在运行\n'));
+    const stopResult = await stopAllManagedInstances(existing, config);
+    printStopResult(stopResult);
+
+    pm2.dump(() => {
       disconnectPM2();
-      return;
-    }
-
-    pm2.stop(PM2_APP_NAME, (err) => {
-      if (err) {
-        console.error(chalk.red('\n[ERROR] 停止服务失败:'), err.message);
-        disconnectPM2();
-        process.exit(1);
-      }
-
-      // 删除进程
-      pm2.delete(PM2_APP_NAME, (err) => {
-        if (err) {
-          console.error(chalk.red('删除进程失败:'), err.message);
-        } else {
-          console.log(chalk.green('\n[OK] Coding-Tool 服务已停止\n'));
-        }
-
-        pm2.dump((err) => {
-          disconnectPM2();
-        });
-      });
     });
   } catch (error) {
     console.error(chalk.red('停止失败:'), error.message);
@@ -399,6 +512,8 @@ module.exports = {
   handleRestart,
   handleStatus,
   _test: {
-    shouldTreatPortOwnershipAsReady
+    shouldTreatPortOwnershipAsReady,
+    getManagedPorts,
+    shouldStopPM2Process
   }
 };

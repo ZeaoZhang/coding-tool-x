@@ -1,6 +1,6 @@
 {
   "name": "coding-tool-x",
-  "version": "3.5.1",
+  "version": "3.5.4",
   "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
@@ -58,7 +58,6 @@
     "@iarna/toml": "^2.2.5",
     "adm-zip": "^0.5.16",
     "ajv": "^8.17.1",
-    "cc-tool-web": "file:src/web",
     "chalk": "^4.1.2",
     "express": "^4.21.2",
     "http-proxy": "^1.18.1",
@@ -67,6 +66,7 @@
     "open": "^8.4.2",
     "ora": "^5.4.1",
     "pm2": "^6.0.14",
+    "rxjs": "^7.8.2",
     "semver": "^7.6.0",
     "toml": "^3.0.0",
     "ws": "^8.18.3"

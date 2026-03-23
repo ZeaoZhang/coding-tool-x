@@ -204,6 +204,8 @@ class McpClient extends EventEmitter {
     // HTTP/SSE transport state
     this._sseAbortController = null;
     this._httpSessionUrl = null;
+    this._httpSessionId = null;
+    this._negotiatedProtocolVersion = MCP_PROTOCOL_VERSION;
   }
 
   // --------------------------------------------------------------------------
@@ -249,11 +251,12 @@ class McpClient extends EventEmitter {
       }
     });
 
+    this._negotiatedProtocolVersion = result.protocolVersion || MCP_PROTOCOL_VERSION;
     this._serverCapabilities = result.capabilities || {};
     this._serverInfo = result.serverInfo || {};
 
     // Send initialized notification (no response expected)
-    this._notify('notifications/initialized', {});
+    await this._notify('notifications/initialized', {});
 
     this._initialized = true;
     this.emit('initialized', result);
@@ -654,11 +657,18 @@ class McpClient extends EventEmitter {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(body),
             'Accept': 'application/json, text/event-stream',
+            ...(msg.method !== 'initialize'
+              ? {
+                'MCP-Protocol-Version': this._negotiatedProtocolVersion || MCP_PROTOCOL_VERSION,
+                ...(this._httpSessionId ? { 'Mcp-Session-Id': this._httpSessionId } : {})
+              }
+              : {}),
             ...this._spec.headers
           }
         };
 
         const req = client.request(options, (res) => {
+          this._captureHttpResponseMetadata(res);
           let data = '';
           res.on('data', (chunk) => { data += chunk.toString(); });
           res.on('end', () => {
@@ -669,7 +679,19 @@ class McpClient extends EventEmitter {
               return;
             }
 
+            const isNotification = msg.id === undefined || msg.id === null;
             const contentType = res.headers['content-type'] || '';
+            const trimmedData = data.trim();
+
+            if (!trimmedData) {
+              if (isNotification || res.statusCode === 202 || res.statusCode === 204) {
+                resolve();
+                return;
+              }
+
+              reject(new McpClientError('Empty HTTP response for request'));
+              return;
+            }
 
             // JSON response (direct response to JSON-RPC)
             if (contentType.includes('application/json')) {
@@ -686,12 +708,6 @@ class McpClient extends EventEmitter {
             // SSE response (streamed events)
             if (contentType.includes('text/event-stream')) {
               this._parseSsePayload(data);
-              resolve();
-              return;
-            }
-
-            // Accepted with no body (202, notifications)
-            if (res.statusCode === 202 || !data.trim()) {
               resolve();
               return;
             }
@@ -761,6 +777,8 @@ class McpClient extends EventEmitter {
   /** @private */
   _disconnectHttp() {
     this._httpSessionUrl = null;
+    this._httpSessionId = null;
+    this._negotiatedProtocolVersion = MCP_PROTOCOL_VERSION;
   }
 
   // --------------------------------------------------------------------------
@@ -807,7 +825,7 @@ class McpClient extends EventEmitter {
   }
 
   /** @private */
-  _notify(method, params) {
+  async _notify(method, params) {
     const msg = {
       jsonrpc: JSONRPC_VERSION,
       method,
@@ -817,14 +835,20 @@ class McpClient extends EventEmitter {
     try {
       if (this._type === 'stdio') {
         this._sendStdio(msg);
+        return;
       } else {
-        // Fire-and-forget for HTTP notifications
-        this._sendHttp(msg).catch((err) => {
-          this.emit('error', new McpClientError(`Notification send failed: ${err.message}`));
-        });
+        await this._sendHttp(msg);
       }
     } catch (err) {
-      this.emit('error', new McpClientError(`Notification send failed: ${err.message}`));
+      throw new McpClientError(`Notification send failed: ${err.message}`);
+    }
+  }
+
+  /** @private */
+  _captureHttpResponseMetadata(res) {
+    const sessionId = res && res.headers ? res.headers['mcp-session-id'] : null;
+    if (typeof sessionId === 'string' && sessionId.trim()) {
+      this._httpSessionId = sessionId.trim();
     }
   }
 
