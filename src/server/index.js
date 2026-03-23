@@ -1,7 +1,6 @@
 const express = require('express');
 const path = require('path');
 const chalk = require('chalk');
-const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
 const { startWebSocketServer: attachWebSocketServer } = require('./websocket-server');
@@ -24,6 +23,10 @@ const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
 const { createRemoteMutationGuard } = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
+
+function getInquirer() {
+  return require('inquirer');
+}
 
 function isInteractivePortConflictMode(options = {}) {
   if (options.interactive === false) {
@@ -73,6 +76,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
       shouldKill = true;
     } else if (interactiveMode) {
       // 询问用户是否关闭占用端口的进程
+      const inquirer = getInquirer();
       const answer = await inquirer.prompt([
         {
           type: 'list',

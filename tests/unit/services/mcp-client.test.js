@@ -1,5 +1,7 @@
 'use strict';
 
+const http = require('http');
+
 const { describe, it, expect, beforeEach, afterEach } = globalThis;
 
 describe('mcp-client', () => {
@@ -155,6 +157,114 @@ describe('mcp-client', () => {
       // Verify McpClient can be constructed with minimal config (createClient wraps this)
       const client = new mcpClient.McpClient({ type: 'stdio', command: 'echo' });
       expect(client).toBeInstanceOf(mcpClient.McpClient);
+    });
+  });
+
+  // ============================================================================
+  // HTTP transport
+  // ============================================================================
+
+  describe('HTTP transport', () => {
+    it('accepts empty 202 responses for notifications and reuses MCP session headers', async () => {
+      const requests = [];
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', (chunk) => {
+          body += chunk.toString();
+        });
+        req.on('end', () => {
+          requests.push({
+            method: req.method,
+            url: req.url,
+            headers: req.headers,
+            body
+          });
+
+          if (req.method === 'GET') {
+            res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            res.end();
+            return;
+          }
+
+          const message = JSON.parse(body);
+
+          if (message.method === 'initialize') {
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Mcp-Session-Id': 'session-123'
+            });
+            res.end(JSON.stringify({
+              jsonrpc: '2.0',
+              id: message.id,
+              result: {
+                protocolVersion: '2025-03-26',
+                capabilities: {},
+                serverInfo: {
+                  name: 'test-server',
+                  version: '1.0.0'
+                }
+              }
+            }));
+            return;
+          }
+
+          if (message.method === 'notifications/initialized') {
+            res.writeHead(202, { 'Content-Type': 'application/json' });
+            res.end();
+            return;
+          }
+
+          if (message.method === 'tools/list') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              jsonrpc: '2.0',
+              id: message.id,
+              result: {
+                tools: []
+              }
+            }));
+            return;
+          }
+
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('not found');
+        });
+      });
+
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address();
+
+      const client = new mcpClient.McpClient({
+        type: 'http',
+        url: `http://127.0.0.1:${port}/mcp/`
+      }, { timeout: 3000 });
+
+      try {
+        await client.connect();
+        const initResult = await client.initialize();
+        const tools = await client.listTools();
+
+        expect(initResult.protocolVersion).toBe('2025-03-26');
+        expect(tools).toEqual([]);
+        expect(requests).toHaveLength(4);
+        expect(requests[0].method).toBe('GET');
+        expect(JSON.parse(requests[1].body).method).toBe('initialize');
+        expect(requests[1].headers['mcp-session-id']).toBeUndefined();
+        expect(JSON.parse(requests[2].body).method).toBe('notifications/initialized');
+        expect(requests[2].headers['mcp-session-id']).toBe('session-123');
+        expect(requests[2].headers['mcp-protocol-version']).toBe('2025-03-26');
+        expect(JSON.parse(requests[3].body).method).toBe('tools/list');
+        expect(requests[3].headers['mcp-session-id']).toBe('session-123');
+        expect(requests[3].headers['mcp-protocol-version']).toBe('2025-03-26');
+      } finally {
+        await client.disconnect();
+        await new Promise((resolve, reject) => {
+          server.close((err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      }
     });
   });
 });

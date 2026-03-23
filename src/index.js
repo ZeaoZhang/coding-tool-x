@@ -6,29 +6,23 @@
  */
 
 const { loadConfig } = require('./config/loader');
-const { showMainMenu } = require('./ui/menu');
-const { handleList } = require('./commands/list');
-const { handleSearch } = require('./commands/search');
-const { switchProject } = require('./commands/switch');
 const { resetConfig } = require('./reset-config');
-const { handleChannelManagement, handleAddChannel, handleChannelStatus } = require('./commands/channels');
-const { handleToggleProxy } = require('./commands/toggle-proxy');
-const { handlePortConfig } = require('./commands/port-config');
-const { handleSwitchCliType } = require('./commands/cli-type');
 const { handleStart, handleStop, handleRestart, handleStatus } = require('./commands/daemon');
 const { handleProxyStart: proxyStart, handleProxyStop: proxyStop, handleProxyRestart, handleProxyStatus: proxyStatus } = require('./commands/proxy-control');
 const { handleLogs } = require('./commands/logs');
 const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
 const { handleUpdate } = require('./commands/update');
-const { workspaceMenu } = require('./commands/workspace');
 const { ensureStorageDirMigrated } = require('./config/paths');
 const PluginManager = require('./plugins/plugin-manager');
 const eventBus = require('./plugins/event-bus');
 const chalk = require('chalk');
-const inquirer = require('inquirer');
 const path = require('path');
 const fs = require('fs');
+
+function getInquirer() {
+  return require('inquirer');
+}
 
 // 读取版本号
 function getVersion() {
@@ -338,6 +332,7 @@ async function main() {
 
   // port 命令 - 配置端口
   if (args[0] === 'port') {
+    const { handlePortConfig } = require('./commands/port-config');
     await handlePortConfig();
     return;
   }
@@ -400,6 +395,7 @@ async function main() {
 
   while (true) {
     // 显示主菜单
+    const { showMainMenu } = require('./ui/menu');
     const action = await showMainMenu(config);
 
     // 发送命令开始事件
@@ -409,7 +405,9 @@ async function main() {
 
     switch (action) {
       case 'list':
+        const { handleList } = require('./commands/list');
         await handleList(config, async () => {
+          const { switchProject } = require('./commands/switch');
           const switched = await switchProject(config);
           if (switched) {
             // 重新加载配置以获取最新的项目设置
@@ -420,7 +418,9 @@ async function main() {
         break;
 
       case 'search':
+        const { handleSearch } = require('./commands/search');
         await handleSearch(config, async () => {
+          const { switchProject } = require('./commands/switch');
           const switched = await switchProject(config);
           if (switched) {
             config = loadConfig();
@@ -430,11 +430,14 @@ async function main() {
         break;
 
       case 'switch':
+        const { switchProject } = require('./commands/switch');
         const switched = await switchProject(config);
         if (switched) {
           config = loadConfig();
           // 切换成功后自动进入会话列表
+          const { handleList } = require('./commands/list');
           await handleList(config, async () => {
+            const { switchProject } = require('./commands/switch');
             const switched = await switchProject(config);
             if (switched) {
               config = loadConfig();
@@ -445,26 +448,32 @@ async function main() {
         break;
 
       case 'workspace':
+        const { workspaceMenu } = require('./commands/workspace');
         await workspaceMenu();
         break;
 
       case 'switch-cli-type':
+        const { handleSwitchCliType } = require('./commands/cli-type');
         await handleSwitchCliType();
         config = loadConfig(); // 重新加载配置以获取新的类型
         break;
 
       case 'switch-channel':
+        const { handleChannelManagement } = require('./commands/channels');
         await handleChannelManagement();
         break;
       case 'channel-status':
+        const { handleChannelStatus } = require('./commands/channels');
         await handleChannelStatus();
         break;
 
       case 'toggle-proxy':
+        const { handleToggleProxy } = require('./commands/toggle-proxy');
         await handleToggleProxy();
         break;
 
       case 'add-channel':
+        const { handleAddChannel } = require('./commands/channels');
         await handleAddChannel();
         break;
 
@@ -475,6 +484,7 @@ async function main() {
       }
 
       case 'port-config':
+        const { handlePortConfig } = require('./commands/port-config');
         await handlePortConfig();
         break;
 
@@ -484,6 +494,7 @@ async function main() {
 
       case 'plugin-menu': {
         const { handlePluginCommand } = require('./commands/plugin');
+        const inquirer = getInquirer();
 
         // Show plugin management submenu
         const pluginAction = await inquirer.prompt([{

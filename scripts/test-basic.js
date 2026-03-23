@@ -1,6 +1,8 @@
 const assert = require('assert');
+const Module = require('module');
 const path = require('path');
 const os = require('os');
+const rootPackage = require('../package.json');
 
 const { expandHome, getConfigFilePath } = require('../src/config/loader');
 const { PATHS } = require('../src/config/paths');
@@ -12,6 +14,7 @@ const portHelper = require('../src/utils/port-helper');
 const mcpClient = require('../src/server/services/mcp-client');
 const mcpService = require('../src/server/services/mcp-service');
 const codexEnvManager = require('../src/server/services/codex-env-manager');
+const daemon = require('../src/commands/daemon');
 const serverShutdown = require('../src/server/services/server-shutdown');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
 const { resolvePreferredHomeDir, isWindowsLikePlatform, normalizeWindowsHomePath } = require('../src/utils/home-dir');
@@ -30,12 +33,95 @@ function buildStopSettings(command) {
   };
 }
 
+function withPatchedModuleLoad(blockedModules, callback) {
+  const blocked = new Set(blockedModules);
+  const originalLoad = Module._load;
+
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (blocked.has(request)) {
+      const error = new Error(`Cannot find module '${request}'`);
+      error.code = 'MODULE_NOT_FOUND';
+      throw error;
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+
+  try {
+    return callback();
+  } finally {
+    Module._load = originalLoad;
+  }
+}
+
+function withMutedConsole(callback) {
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+
+  try {
+    return callback();
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+}
+
+function withStubbedModule(modulePath, exports, callback) {
+  const previous = require.cache[modulePath];
+  require.cache[modulePath] = {
+    id: modulePath,
+    filename: modulePath,
+    loaded: true,
+    exports
+  };
+
+  try {
+    return callback();
+  } finally {
+    if (previous) {
+      require.cache[modulePath] = previous;
+    } else {
+      delete require.cache[modulePath];
+    }
+  }
+}
+
+function assertCliEntryCanRunWithoutInteractiveDeps(args, stubModulePath, stubExports, verify) {
+  const entryPath = require.resolve('../src/index');
+  const originalArgv = process.argv.slice();
+  const originalExit = process.exit;
+
+  delete require.cache[entryPath];
+  process.argv = ['node', entryPath, ...args];
+  process.exit = (code) => {
+    throw new Error(`CLI entry unexpectedly called process.exit(${code})`);
+  };
+
+  try {
+    withStubbedModule(stubModulePath, stubExports, () => {
+      withMutedConsole(() => {
+        withPatchedModuleLoad(['inquirer', 'rxjs'], () => {
+          require(entryPath);
+        });
+      });
+    });
+
+    verify();
+  } finally {
+    process.argv = originalArgv;
+    process.exit = originalExit;
+    delete require.cache[entryPath];
+  }
+}
+
 function run() {
   const hookTest = claudeHooks._test || {};
   const notificationHookTest = notificationHooks._test || {};
   const mcpClientTest = mcpClient._test || {};
   const mcpServiceTest = mcpService._test || {};
   const codexEnvManagerTest = codexEnvManager._test || {};
+  const daemonTest = daemon._test || {};
   const portHelperTest = portHelper._test || {};
   assert(typeof hookTest.parseStopHookStatus === 'function', '缺少 parseStopHookStatus 测试导出');
   assert(typeof hookTest.buildStopHookCommand === 'function', '缺少 buildStopHookCommand 测试导出');
@@ -53,6 +139,7 @@ function run() {
   assert(typeof mcpClientTest.buildMissingCommandMessage === 'function', '缺少 buildMissingCommandMessage 测试导出');
   assert(typeof mcpServiceTest.buildMcpFailureResult === 'function', '缺少 buildMcpFailureResult 测试导出');
   assert(typeof codexEnvManagerTest.buildWindowsEnvBatchScript === 'function', '缺少 buildWindowsEnvBatchScript 测试导出');
+  assert(typeof daemonTest.getManagedPorts === 'function', '缺少 daemon.getManagedPorts 测试导出');
   assert(typeof portHelperTest.createPortToolIssue === 'function', '缺少 createPortToolIssue 测试导出');
   assert(typeof portHelperTest.formatPortToolIssue === 'function', '缺少 formatPortToolIssue 测试导出');
   assert(typeof serverShutdown.attachServerShutdownHandling === 'function', '缺少 attachServerShutdownHandling 导出');
@@ -61,6 +148,12 @@ function run() {
   assert(DEFAULT_CONFIG && typeof DEFAULT_CONFIG === 'object', '默认配置应存在');
   assert(DEFAULT_CONFIG.ports && typeof DEFAULT_CONFIG.ports === 'object', '默认配置中缺少 ports');
   assert(DEFAULT_CONFIG.defaultModels && typeof DEFAULT_CONFIG.defaultModels === 'object', '默认配置中缺少 defaultModels');
+  assert.strictEqual(typeof rootPackage.dependencies?.rxjs, 'string', '发布运行时依赖中必须显式声明 rxjs');
+  assert.strictEqual(
+    Object.values(rootPackage.dependencies || {}).some((version) => String(version).startsWith('file:')),
+    false,
+    '发布运行时依赖中不应包含 file: 本地路径依赖'
+  );
   assert.strictEqual(isWindowsLikePlatform('win32', {}), true, 'win32 应识别为 Windows 平台');
   assert.strictEqual(normalizeWindowsHomePath('/c/Users/wjx', { SYSTEMDRIVE: 'C:' }), path.win32.normalize('C:\\Users\\wjx'), 'home-dir MSYS 路径转换失败');
   assert.strictEqual(
@@ -121,6 +214,60 @@ function run() {
   assert.strictEqual(winEnvBatchScript.includes("SetEnvironmentVariable('CC_PROXY_KEY', 'PROXY_KEY', 'User')"), true, 'Windows 批量环境变量脚本应包含写入命令');
   assert.strictEqual(winEnvBatchScript.includes("SetEnvironmentVariable('OLD_PROXY_KEY', $null, 'User')"), true, 'Windows 批量环境变量脚本应包含删除命令');
   assert.strictEqual(winEnvBatchScript.includes('SendMessageTimeout'), true, 'Windows 批量环境变量脚本应包含环境刷新广播');
+  assert.deepStrictEqual(
+    daemonTest.getManagedPorts({
+      ports: {
+        webUI: 19999,
+        proxy: 20088,
+        codexProxy: 20089,
+        geminiProxy: 20090,
+        opencodeProxy: 19999
+      }
+    }),
+    [19999, 20088, 20089, 20090],
+    'daemon 管理端口列表应去重并按配置返回'
+  );
+
+  let startCalled = false;
+  assertCliEntryCanRunWithoutInteractiveDeps(
+    ['start'],
+    require.resolve('../src/commands/daemon'),
+    {
+      handleStart: () => {
+        startCalled = true;
+        return Promise.resolve();
+      },
+      handleStop: () => Promise.resolve(),
+      handleRestart: () => Promise.resolve(),
+      handleStatus: () => Promise.resolve()
+    },
+    () => {
+      assert.strictEqual(startCalled, true, 'CLI start 分支应在缺少交互依赖时仍可进入 daemon 启动逻辑');
+    }
+  );
+
+  let uiCalled = false;
+  assertCliEntryCanRunWithoutInteractiveDeps(
+    ['ui', '--daemon'],
+    require.resolve('../src/commands/ui'),
+    {
+      handleUI: () => {
+        uiCalled = true;
+        return Promise.resolve();
+      }
+    },
+    () => {
+      assert.strictEqual(uiCalled, true, 'CLI ui --daemon 分支应在缺少交互依赖时仍可进入服务启动逻辑');
+    }
+  );
+
+  const serverEntryPath = require.resolve('../src/server');
+  delete require.cache[serverEntryPath];
+  withPatchedModuleLoad(['inquirer', 'rxjs'], () => {
+    const serverEntry = require(serverEntryPath);
+    assert.strictEqual(typeof serverEntry.startServer, 'function', '服务入口应在缺少交互依赖时仍可被加载');
+  });
+  delete require.cache[serverEntryPath];
 
   const configPath = getConfigFilePath();
   assert(configPath.startsWith(path.join(os.homedir(), '.cc-tool')), '配置文件路径应位于 ~/.cc-tool 下');
