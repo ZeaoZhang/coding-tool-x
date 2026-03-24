@@ -64,12 +64,14 @@ function buildSuccessLogPayload({
   requestId,
   channel,
   model,
+  originalModel,
+  redirectedModel,
   tokens,
   cost = 0,
   timestamp = Date.now()
 }) {
   const normalized = normalizeUsageTokens(source, tokens);
-  return {
+  const payload = {
     type: 'log',
     status: 'success',
     id: requestId,
@@ -87,6 +89,13 @@ function buildSuccessLogPayload({
     source: normalizeToolSource(source),
     timestamp
   };
+  if (originalModel) {
+    payload.originalModel = originalModel;
+  }
+  if (redirectedModel) {
+    payload.redirectedModel = redirectedModel;
+  }
+  return payload;
 }
 
 function buildFailureLogPayload({
@@ -160,6 +169,8 @@ function publishUsageLog({
       requestId,
       channel: metadata.channel,
       model,
+      originalModel: metadata.originalModel,
+      redirectedModel: metadata.redirectedModel,
       tokens: normalizedTokens,
       cost,
       timestamp
@@ -167,7 +178,7 @@ function publishUsageLog({
   }
 
   if (typeof recordRequest === 'function') {
-    recordRequest({
+    const entry = {
       id: requestId,
       timestamp: new Date(metadata.startTime || timestamp).toISOString(),
       toolType: normalizedSource === 'claude' ? 'claude-code' : normalizedSource,
@@ -186,7 +197,14 @@ function publishUsageLog({
       duration: Math.max(0, timestamp - toNumber(metadata.startTime || timestamp)),
       success: true,
       cost
-    });
+    };
+    if (metadata.originalModel) {
+      entry.originalModel = metadata.originalModel;
+    }
+    if (metadata.redirectedModel) {
+      entry.redirectedModel = metadata.redirectedModel;
+    }
+    recordRequest(entry);
   }
 
   if (typeof recordSuccess === 'function' && metadata.channelId) {

@@ -222,6 +222,8 @@ export const useGlobalStore = defineStore('global', () => {
       action: data.action || null,
       channel: data.channel || data.channelName || 'Unknown',
       model: data.model,
+      originalModel: data.originalModel || null,
+      redirectedModel: data.redirectedModel || null,
       message: data.message,
       error: data.error || null,
       statusCode: data.statusCode || null,

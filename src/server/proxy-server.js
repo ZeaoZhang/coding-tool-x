@@ -20,6 +20,7 @@ const { getEffectiveApiKey } = require('./services/channels');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel } = require('./services/base/proxy-utils');
+const { parseSSEUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
@@ -294,6 +295,13 @@ async function startProxyServer(options = {}) {
             // 更新 rawBody 以匹配修改后的 body
             req.rawBody = Buffer.from(JSON.stringify(req.body));
 
+            // 将原始模型和重定向模型存入 metadata，用于日志记录
+            const meta = requestMetadata.get(req);
+            if (meta) {
+              meta.originalModel = originalModel;
+              meta.redirectedModel = redirectedModel;
+            }
+
             // 只在重定向规则变化时打印日志（避免每次请求都打印）
             const cachedRedirects = printedRedirectCache.get(channel.id) || {};
             if (cachedRedirects[originalModel] !== redirectedModel) {
@@ -387,13 +395,7 @@ async function startProxyServer(options = {}) {
       });
 
       let buffer = '';
-      let tokenData = {
-        inputTokens: 0,
-        outputTokens: 0,
-        cacheCreation: 0,
-        cacheRead: 0,
-        model: ''
-      };
+      let tokenData = createTokenData();
       let usageRecorded = false;
       const parsedStream = createDecodedStream(proxyRes);
 
@@ -408,13 +410,16 @@ async function startProxyServer(options = {}) {
             input: tokenData.inputTokens,
             output: tokenData.outputTokens,
             cacheCreation: tokenData.cacheCreation,
-            cacheRead: tokenData.cacheRead
+            cacheRead: tokenData.cacheRead,
+            cached: tokenData.cachedTokens,
+            reasoning: tokenData.reasoningTokens,
+            total: tokenData.totalTokens
           },
           calculateCost,
           broadcastLog,
           recordRequest,
           recordSuccess,
-          allowBroadcast: !isResponseClosed
+          allowBroadcast: true
         });
 
         if (!result) return false;
@@ -446,30 +451,13 @@ async function startProxyServer(options = {}) {
               }
             });
 
-            if (!data) return;
+            if (!data || data === '[DONE]') return;
 
             const parsed = JSON.parse(data);
+            const usage = parseSSEUsage(parsed, eventType);
+            mergeUsageIntoTokenData(tokenData, usage);
 
-            if (eventType === 'message_start' && parsed.message && parsed.message.model) {
-              tokenData.model = parsed.message.model;
-            }
-
-            if (parsed.usage) {
-              if (parsed.usage.input_tokens !== undefined) {
-                tokenData.inputTokens = parsed.usage.input_tokens;
-              }
-              if (parsed.usage.output_tokens !== undefined) {
-                tokenData.outputTokens = parsed.usage.output_tokens;
-              }
-              if (parsed.usage.cache_creation_input_tokens !== undefined) {
-                tokenData.cacheCreation = parsed.usage.cache_creation_input_tokens;
-              }
-              if (parsed.usage.cache_read_input_tokens !== undefined) {
-                tokenData.cacheRead = parsed.usage.cache_read_input_tokens;
-              }
-            }
-
-            if (eventType === 'message_stop') {
+            if (usage.isDone) {
               recordUsageIfReady();
             }
           } catch (err) {
