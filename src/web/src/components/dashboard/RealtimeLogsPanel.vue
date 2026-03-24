@@ -43,7 +43,7 @@
             <n-tag :type="log.status === 'success' ? 'success' : 'error'" size="small">
               {{ log.method }}
             </n-tag>
-            <span class="log-path">{{ log.path }}</span>
+            <span class="log-path">{{ log.originalModel ? `${log.originalModel} → ${log.path}` : log.path }}</span>
             <n-tag :type="log.status === 'success' ? 'success' : 'error'" size="small">
               {{ log.statusCode }}
             </n-tag>
@@ -95,6 +95,7 @@ function normalizeLog(log) {
     channelName: log.channel || 'Unknown',
     method: 'REQUEST',
     path: log.model || 'N/A',
+    originalModel: log.originalModel || null,
     status: 'success',
     statusCode: '200',
     tokens: log.tokens || {},

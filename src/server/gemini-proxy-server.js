@@ -15,6 +15,7 @@ const { getEffectiveApiKey } = require('./services/gemini-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('./services/base/proxy-utils');
+const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
@@ -207,6 +208,14 @@ async function startGeminiProxyServer(options = {}) {
             // 替换 URL 中的模型名称
             req.url = req.url.replace(`/models/${originalModel}`, `/models/${redirectedModel}`);
 
+            // 将原始模型和重定向模型存入 metadata，用于日志记录
+            const meta = requestMetadata.get(req);
+            if (meta) {
+              meta.originalModel = originalModel;
+              meta.redirectedModel = redirectedModel;
+              meta.modelFromUrl = redirectedModel;
+            }
+
             // 只在重定向规则变化时打印日志（避免每次请求都打印）
             const cachedRedirects = printedGeminiRedirectCache.get(channel.id) || {};
             if (cachedRedirects[originalModel] !== redirectedModel) {
@@ -306,14 +315,7 @@ async function startGeminiProxyServer(options = {}) {
       });
 
       let buffer = '';
-      let tokenData = {
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedTokens: 0,
-        reasoningTokens: 0,
-        totalTokens: 0,
-        model: ''
-      };
+      let tokenData = createTokenData();
       let usageRecorded = false;
       const parsedStream = createDecodedStream(proxyRes);
 
@@ -333,6 +335,8 @@ async function startGeminiProxyServer(options = {}) {
           tokens: {
             input: tokenData.inputTokens,
             output: tokenData.outputTokens,
+            cacheCreation: tokenData.cacheCreation,
+            cacheRead: tokenData.cacheRead,
             cached: tokenData.cachedTokens,
             reasoning: tokenData.reasoningTokens,
             total: tokenData.totalTokens
@@ -341,7 +345,7 @@ async function startGeminiProxyServer(options = {}) {
           broadcastLog,
           recordRequest: recordGeminiRequest,
           recordSuccess,
-          allowBroadcast: !isResponseClosed
+          allowBroadcast: true
         });
 
         if (!result) {
@@ -353,7 +357,6 @@ async function startGeminiProxyServer(options = {}) {
       }
 
       parsedStream.on('data', (chunk) => {
-        // 如果响应已关闭，停止处理
         if (isResponseClosed) {
           return;
         }
@@ -362,56 +365,34 @@ async function startGeminiProxyServer(options = {}) {
 
         // 检查是否是 SSE 流
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          // 处理 SSE 事件
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
 
-          events.forEach((eventText, index) => {
+          events.forEach((eventText) => {
             if (!eventText.trim()) return;
 
             try {
               const lines = eventText.split('\n');
+              let eventType = '';
               let data = '';
 
               lines.forEach(line => {
-                if (line.startsWith('data:')) {
+                if (line.startsWith('event:')) {
+                  eventType = line.substring(6).trim();
+                } else if (line.startsWith('data:')) {
                   data = line.substring(5).trim();
                 }
               });
 
-              if (!data) return;
-
-              if (data === '[DONE]') return;
+              if (!data || data === '[DONE]') return;
 
               const parsed = JSON.parse(data);
+              const usage = parseSSEUsage(parsed, eventType);
+              mergeUsageIntoTokenData(tokenData, usage);
 
-              // 提取模型信息
-              if (parsed.model && !tokenData.model) {
-                tokenData.model = parsed.model;
+              if (usage.isDone) {
+                recordUsageIfReady();
               }
-
-              // 提取 usage 信息 (支持 OpenAI 和 Gemini 原生格式)
-              if (parsed.usage) {
-                tokenData.inputTokens = parsed.usage.prompt_tokens || parsed.usage.input_tokens || 0;
-                tokenData.outputTokens = parsed.usage.completion_tokens || parsed.usage.output_tokens || 0;
-                tokenData.totalTokens = parsed.usage.total_tokens || 0;
-
-                // Gemini 可能包含缓存信息
-                if (parsed.usage.prompt_tokens_details) {
-                  tokenData.cachedTokens = parsed.usage.prompt_tokens_details.cached_tokens || 0;
-                }
-              } else if (parsed.usageMetadata) {
-                tokenData.inputTokens = parsed.usageMetadata.promptTokenCount || 0;
-                tokenData.outputTokens = parsed.usageMetadata.candidatesTokenCount || 0;
-                tokenData.totalTokens = parsed.usageMetadata.totalTokenCount || 0;
-
-                // Gemini 缓存信息
-                if (parsed.usageMetadata.cachedContentTokenCount) {
-                  tokenData.cachedTokens = parsed.usageMetadata.cachedContentTokenCount;
-                }
-              }
-
-              recordUsageIfReady();
             } catch (err) {
               // 忽略解析错误
             }
@@ -424,30 +405,8 @@ async function startGeminiProxyServer(options = {}) {
         if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
           try {
             const parsed = JSON.parse(buffer);
-            if (parsed.model) {
-              tokenData.model = parsed.model;
-            }
-
-            // OpenAI 格式
-            if (parsed.usage) {
-              tokenData.inputTokens = parsed.usage.prompt_tokens || parsed.usage.input_tokens || 0;
-              tokenData.outputTokens = parsed.usage.completion_tokens || parsed.usage.output_tokens || 0;
-              tokenData.totalTokens = parsed.usage.total_tokens || 0;
-
-              if (parsed.usage.prompt_tokens_details) {
-                tokenData.cachedTokens = parsed.usage.prompt_tokens_details.cached_tokens || 0;
-              }
-            }
-            // Gemini 原生格式
-            else if (parsed.usageMetadata) {
-              tokenData.inputTokens = parsed.usageMetadata.promptTokenCount || 0;
-              tokenData.outputTokens = parsed.usageMetadata.candidatesTokenCount || 0;
-              tokenData.totalTokens = parsed.usageMetadata.totalTokenCount || 0;
-
-              if (parsed.usageMetadata.cachedContentTokenCount) {
-                tokenData.cachedTokens = parsed.usageMetadata.cachedContentTokenCount;
-              }
-            }
+            const usage = parseNonStreamingUsage(parsed);
+            mergeUsageIntoTokenData(tokenData, usage);
           } catch (err) {
             // 忽略解析错误
           }

@@ -111,6 +111,10 @@
               <div v-if="log.model">
                 <div style="font-weight: 600; margin-bottom: 4px;">模型信息</div>
                 <div style="font-family: monospace; font-size: 12px;">{{ log.model }}</div>
+                <div v-if="log.originalModel && log.originalModel !== log.model" style="margin-top: 4px;">
+                  <div style="font-weight: 600; margin-bottom: 4px;">模型重定向</div>
+                  <div style="font-family: monospace; font-size: 12px;">{{ log.originalModel }} → {{ log.model }}</div>
+                </div>
               </div>
               <div v-else>暂无模型信息</div>
             </n-tooltip>

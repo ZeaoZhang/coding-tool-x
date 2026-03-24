@@ -4,6 +4,13 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.5.5] - 2026-03-24
+
+### Fixed
+- **模型重定向日志追踪** - 修复模型重定向（如 `claude-opus-4-6` → `gpt-5.4-xhigh`）后日志和统计无法正确追踪重定向关系的问题；现在 `requestMetadata` 会记录 `originalModel` 和 `redirectedModel`，WebSocket 实时日志和 JSONL 持久化日志均包含重定向信息，适用于 Claude、Codex、Gemini、OpenCode 四个代理服务器
+- **实时日志重定向可视化** - ProxyLogs 面板和 Dashboard 实时日志面板现在会显示模型重定向箭头（`原始模型 → 重定向模型`），方便用户直观查看重定向关系
+- **跨格式模型重定向日志丢失** - 修复模型重定向到不同提供商（如 Claude → OpenAI）时，因响应格式不兼容导致 token 数据无法解析、日志被丢弃的问题；新增统一响应解析器 `response-usage-parser.js`，所有代理服务器共用，支持 Claude SSE、OpenAI Chat Completions、OpenAI Responses API、Gemini Native 和非流式 JSON 五种格式
+
 ## [3.5.4] - 2026-03-23
 
 ### Fixed

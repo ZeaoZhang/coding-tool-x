@@ -242,6 +242,13 @@ function recordRequest(requestData) {
       session,
       project
     };
+    // 如果有模型重定向信息，记录到日志中
+    if (requestData.originalModel) {
+      logEntry.originalModel = requestData.originalModel;
+    }
+    if (requestData.redirectedModel) {
+      logEntry.redirectedModel = requestData.redirectedModel;
+    }
     appendRequestLog(logEntry);
 
     // 2. 更新总体统计

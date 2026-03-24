@@ -15,6 +15,7 @@ const { getEffectiveApiKey } = require('./services/codex-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel, resolveTargetUrl } = require('./services/base/proxy-utils');
+const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
@@ -225,6 +226,13 @@ async function startCodexProxyServer(options = {}) {
             // 更新 rawBody 以匹配修改后的 body
             req.rawBody = Buffer.from(JSON.stringify(req.body));
 
+            // 将原始模型和重定向模型存入 metadata，用于日志记录
+            const meta = requestMetadata.get(req);
+            if (meta) {
+              meta.originalModel = originalModel;
+              meta.redirectedModel = redirectedModel;
+            }
+
             // 只在重定向规则变化时打印日志（避免每次请求都打印）
             const cachedRedirects = printedRedirectCache.get(channel.id) || {};
             if (cachedRedirects[originalModel] !== redirectedModel) {
@@ -324,14 +332,7 @@ async function startCodexProxyServer(options = {}) {
       });
 
       let buffer = '';
-      let tokenData = {
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedTokens: 0,
-        reasoningTokens: 0,
-        totalTokens: 0,
-        model: ''
-      };
+      let tokenData = createTokenData();
       let usageRecorded = false;
       const parsedStream = createDecodedStream(proxyRes);
 
@@ -347,6 +348,8 @@ async function startCodexProxyServer(options = {}) {
           tokens: {
             input: tokenData.inputTokens,
             output: tokenData.outputTokens,
+            cacheCreation: tokenData.cacheCreation,
+            cacheRead: tokenData.cacheRead,
             cached: tokenData.cachedTokens,
             reasoning: tokenData.reasoningTokens,
             total: tokenData.totalTokens
@@ -355,7 +358,7 @@ async function startCodexProxyServer(options = {}) {
           broadcastLog,
           recordRequest: recordCodexRequest,
           recordSuccess,
-          allowBroadcast: !isResponseClosed
+          allowBroadcast: true
         });
 
         if (!result) {
@@ -367,7 +370,6 @@ async function startCodexProxyServer(options = {}) {
       }
 
       parsedStream.on('data', (chunk) => {
-        // 如果响应已关闭，停止处理
         if (isResponseClosed) {
           return;
         }
@@ -376,64 +378,34 @@ async function startCodexProxyServer(options = {}) {
 
         // 检查是否是 SSE 流
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          // 处理 SSE 事件
           const events = buffer.split('\n\n');
           buffer = events.pop() || '';
 
-          events.forEach((eventText, index) => {
+          events.forEach((eventText) => {
             if (!eventText.trim()) return;
 
             try {
               const lines = eventText.split('\n');
+              let eventType = '';
               let data = '';
 
               lines.forEach(line => {
-                if (line.startsWith('data:')) {
+                if (line.startsWith('event:')) {
+                  eventType = line.substring(6).trim();
+                } else if (line.startsWith('data:')) {
                   data = line.substring(5).trim();
                 }
               });
 
-              if (!data) return;
-
-              if (data === '[DONE]') return;
+              if (!data || data === '[DONE]') return;
 
               const parsed = JSON.parse(data);
+              const usage = parseSSEUsage(parsed, eventType);
+              mergeUsageIntoTokenData(tokenData, usage);
 
-              // OpenAI Responses API: 在 response.completed 事件中获取 usage
-              if (parsed.type === 'response.completed' && parsed.response) {
-                // 从 response 对象中提取模型和 usage
-                if (parsed.response.model) {
-                  tokenData.model = parsed.response.model;
-                }
-
-                if (parsed.response.usage) {
-                  tokenData.inputTokens = parsed.response.usage.input_tokens || 0;
-                  tokenData.outputTokens = parsed.response.usage.output_tokens || 0;
-                  tokenData.totalTokens = parsed.response.usage.total_tokens || 0;
-
-                  // 提取详细信息
-                  if (parsed.response.usage.input_tokens_details) {
-                    tokenData.cachedTokens = parsed.response.usage.input_tokens_details.cached_tokens || 0;
-                  }
-                  if (parsed.response.usage.output_tokens_details) {
-                    tokenData.reasoningTokens = parsed.response.usage.output_tokens_details.reasoning_tokens || 0;
-                  }
-                }
+              if (usage.isDone) {
+                recordUsageIfReady();
               }
-
-              // 兼容其他格式：直接在顶层的 model 和 usage
-              if (parsed.model && !tokenData.model) {
-                tokenData.model = parsed.model;
-              }
-
-              if (parsed.usage && tokenData.inputTokens === 0) {
-                // 兼容 Responses API 和 Chat Completions API
-                tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
-                tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
-                tokenData.totalTokens = parsed.usage.total_tokens || (tokenData.inputTokens + tokenData.outputTokens);
-              }
-
-              recordUsageIfReady();
             } catch (err) {
               // 忽略解析错误
             }
@@ -446,15 +418,8 @@ async function startCodexProxyServer(options = {}) {
         if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
           try {
             const parsed = JSON.parse(buffer);
-            if (parsed.model) {
-              tokenData.model = parsed.model;
-            }
-            if (parsed.usage) {
-              // 兼容两种格式
-              tokenData.inputTokens = parsed.usage.input_tokens || parsed.usage.prompt_tokens || 0;
-              tokenData.outputTokens = parsed.usage.output_tokens || parsed.usage.completion_tokens || 0;
-              tokenData.totalTokens = parsed.usage.total_tokens || (tokenData.inputTokens + tokenData.outputTokens);
-            }
+            const usage = parseNonStreamingUsage(parsed);
+            mergeUsageIntoTokenData(tokenData, usage);
           } catch (err) {
             // 忽略解析错误
           }
