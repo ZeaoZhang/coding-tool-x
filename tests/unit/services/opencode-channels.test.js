@@ -398,7 +398,7 @@ describe('getChannels', () => {
   it('returns channels with defaults applied', () => {
     const raw = {
       channels: [
-        { id: 'oc1', name: 'Lambda', baseUrl: 'https://lam.com', apiKey: 'kl' }
+        { id: 'oc1', name: 'Lambda', presetId: 'openai_api', baseUrl: 'https://api.openai.com/v1', apiKey: 'kl' }
       ]
     };
     fs.writeFileSync(channelsFile, JSON.stringify(raw), 'utf8');
@@ -411,6 +411,7 @@ describe('getChannels', () => {
     expect(ch.wireApi).toBe('openai');
     expect(ch.modelRedirects).toEqual([]);
     expect(typeof ch.providerKey).toBe('string');
+    expect(ch.websiteUrl).toBe('https://platform.openai.com');
   });
 });
 

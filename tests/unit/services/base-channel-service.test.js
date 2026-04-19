@@ -49,6 +49,20 @@ describe('BaseChannelService', () => {
       expect(data.channels[0].enabled).toBe(true);
       expect(data.channels[0].weight).toBe(1);
     });
+
+    it('should backfill websiteUrl from known preset metadata', () => {
+      const svc = createService({ platform: 'claude' });
+      svc.saveChannels({
+        channels: [{
+          id: 'ch1',
+          name: 'Claude Official',
+          presetId: 'official',
+          baseUrl: 'https://api.anthropic.com'
+        }]
+      });
+      const data = svc.loadChannels();
+      expect(data.channels[0].websiteUrl).toBe('https://www.anthropic.com');
+    });
   });
 
   describe('createChannel', () => {

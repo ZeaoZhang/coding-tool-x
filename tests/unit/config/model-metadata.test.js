@@ -67,6 +67,13 @@ describe('model-metadata', () => {
       expect(viaAlias).toEqual(canonical);
     });
 
+    test('gemini legacy alias resolves to current preview metadata', () => {
+      const viaAlias = resolveModelMetadata('gemini-3.1-pro');
+      const canonical = resolveModelMetadata('gemini-3-pro-preview');
+      expect(viaAlias).not.toBeNull();
+      expect(viaAlias).toEqual(canonical);
+    });
+
     test('prefix match (versioned id starting with known key)', () => {
       // 'claude-sonnet-4-6-20250514' should prefix-match 'claude-sonnet-4-6'
       const result = resolveModelMetadata('claude-sonnet-4-6-20250514');
@@ -121,6 +128,20 @@ describe('model-metadata', () => {
       expect(pricing).not.toBeNull();
       expect(typeof pricing.input).toBe('number');
       expect(typeof pricing.output).toBe('number');
+    });
+
+    test('returns refreshed OpenAI official pricing for gpt-5.3-codex', () => {
+      expect(resolveModelPricing('gpt-5.3-codex')).toEqual({
+        input: 1.75,
+        output: 14
+      });
+    });
+
+    test('returns refreshed Gemini official pricing for gemini-2.5-flash', () => {
+      expect(resolveModelPricing('gemini-2.5-flash')).toEqual({
+        input: 0.3,
+        output: 2.5
+      });
     });
 
     test('unknown model → null', () => {

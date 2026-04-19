@@ -57,7 +57,8 @@ export async function addProjectToWorkspace(workspaceId, projectData) {
  * 从工作区移除项目
  */
 export async function removeProjectFromWorkspace(workspaceId, projectName, removeWorktrees = false) {
-  const response = await client.delete(`${API_BASE}/${workspaceId}/projects/${projectName}`, {
+  const encodedProjectName = encodeURIComponent(projectName);
+  const response = await client.delete(`${API_BASE}/${workspaceId}/projects/${encodedProjectName}`, {
     params: { removeWorktrees }
   });
   return response.data;

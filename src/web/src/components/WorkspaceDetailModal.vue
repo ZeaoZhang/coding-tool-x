@@ -34,7 +34,12 @@
 
       <!-- 项目列表 -->
       <n-divider />
-      <div class="section-title">包含项目 ({{ detailData?.projects?.length || 0 }})</div>
+      <div class="section-header">
+        <div class="section-title">包含项目 ({{ detailData?.projects?.length || 0 }})</div>
+        <n-button size="small" type="primary" ghost :disabled="!detailData?.exists" @click="showAddProjectModal = true">
+          添加仓库
+        </n-button>
+      </div>
       <div class="projects-list" v-if="detailData?.projects?.length">
         <div class="project-row" v-for="(proj, idx) in detailData.projects" :key="idx">
           <n-tag :type="proj.sourceExists ? 'success' : 'error'" size="small">
@@ -42,26 +47,38 @@
           </n-tag>
           <span class="proj-name">{{ proj.name }}</span>
           <span class="proj-path">{{ proj.sourcePath }}</span>
+          <n-tag v-if="proj.useWorktree" type="info" size="small">worktree</n-tag>
+          <n-button text size="small" type="error" @click="handleRemoveProject(proj)">
+            移除
+          </n-button>
         </div>
       </div>
       <n-empty v-else description="暂无项目" size="small" />
     </template>
+
+    <WorkspaceProjectFormModal
+      v-model:show="showAddProjectModal"
+      :workspace-id="props.workspace?.id || ''"
+      @success="handleProjectChanged"
+    />
   </n-modal>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { NModal, NDescriptions, NDescriptionsItem, NTag, NDivider, NSpace, NButton, NText, NEmpty, useMessage } from 'naive-ui'
-import { getWorkspace, getLaunchCommand } from '../api/workspaces'
+import { NModal, NDescriptions, NDescriptionsItem, NTag, NDivider, NSpace, NButton, NText, NEmpty, useMessage, useDialog } from 'naive-ui'
+import { getWorkspace, getLaunchCommand, removeProjectFromWorkspace } from '../api/workspaces'
 import { copyTextToClipboard } from '../utils/clipboard'
+import WorkspaceProjectFormModal from './WorkspaceProjectFormModal.vue'
 
 const props = defineProps({
   show: { type: Boolean, default: false },
   workspace: { type: Object, default: null }
 })
 
-const emit = defineEmits(['update:show', 'deleted'])
+const emit = defineEmits(['update:show', 'updated'])
 const message = useMessage()
+const dialog = useDialog()
 
 const visible = computed({
   get: () => props.show,
@@ -69,6 +86,7 @@ const visible = computed({
 })
 
 const detailData = ref(null)
+const showAddProjectModal = ref(false)
 
 function formatDate(dateStr) {
   if (!dateStr) return '-'
@@ -83,6 +101,35 @@ async function loadDetail() {
   } catch (err) {
     console.error('加载详情失败:', err)
   }
+}
+
+function handleProjectChanged() {
+  loadDetail()
+  emit('updated')
+}
+
+function handleRemoveProject(project) {
+  if (!props.workspace?.id) return
+
+  dialog.warning({
+    title: '确认移除仓库',
+    content: `确定要从工作区移除 "${project.name}" 吗？`,
+    positiveText: '移除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await removeProjectFromWorkspace(props.workspace.id, project.name)
+        if (res.success) {
+          message.success('仓库已移除')
+          handleProjectChanged()
+          return
+        }
+        message.error(res.message || '移除失败')
+      } catch (err) {
+        message.error(`移除失败: ${err.message}`)
+      }
+    }
+  })
 }
 
 async function launchCLI(tool) {
@@ -117,6 +164,19 @@ watch(visible, (val) => {
   color: var(--text-primary);
   margin-bottom: 10px;
 }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.section-header .section-title {
+  margin-bottom: 0;
+}
+
 .projects-list {
   display: flex;
   flex-direction: column;
@@ -136,5 +196,6 @@ watch(visible, (val) => {
   color: var(--text-tertiary);
   font-family: monospace;
   font-size: 12px;
+  flex: 1;
 }
 </style>

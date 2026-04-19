@@ -226,13 +226,6 @@ router.post('/', (req, res) => {
         });
       }
 
-      if (proj.createWorktree && (!proj.branch || !proj.branch.trim())) {
-        return res.status(400).json({
-          success: false,
-          message: '创建 worktree 时必须指定分支名'
-        });
-      }
-
       const normalizedBranch = normalizeBranchName(proj.branch);
       if (normalizedBranch) {
         const branchValidation = validateBranchName(normalizedBranch);
@@ -344,13 +337,6 @@ router.post('/:id/projects', (req, res) => {
       return res.status(400).json({
         success: false,
         message: '项目源路径不能为空'
-      });
-    }
-
-    if (createWorktree && !normalizedBranch) {
-      return res.status(400).json({
-        success: false,
-        message: '创建 worktree 时必须指定分支名'
       });
     }
 

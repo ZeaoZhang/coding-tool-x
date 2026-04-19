@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const { resolveChannelWebsiteUrl } = require('../../config/channel-preset-websites');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
@@ -108,7 +109,7 @@ function loadChannels() {
     // 确保渠道有 enabled 字段（兼容旧数据）
     if (data.channels) {
       data.channels = data.channels.map(ch => {
-        return {
+        const normalized = {
           ...ch,
           enabled: ch.enabled !== false, // 默认启用
           weight: ch.weight || 1,
@@ -117,6 +118,8 @@ function loadChannels() {
           speedTestModel: ch.speedTestModel || null,
           gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'gemini')
         };
+        normalized.websiteUrl = resolveChannelWebsiteUrl('gemini', normalized);
+        return normalized;
       });
     }
     return data;
@@ -166,6 +169,7 @@ function initializeFromEnv() {
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
+      channel.websiteUrl = resolveChannelWebsiteUrl('gemini', channel);
 
       const data = {
         channels: [channel]
@@ -224,6 +228,7 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
+  newChannel.websiteUrl = resolveChannelWebsiteUrl('gemini', newChannel);
 
   data.channels.push(newChannel);
   saveChannels(data);
@@ -267,6 +272,7 @@ function updateChannel(channelId, updates) {
     gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
     updatedAt: Date.now()
   };
+  nextChannel.websiteUrl = resolveChannelWebsiteUrl('gemini', nextChannel);
   data.channels[index] = nextChannel;
 
   // Get proxy status

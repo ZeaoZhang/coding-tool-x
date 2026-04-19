@@ -54,6 +54,8 @@ import { NModal, NForm, NFormItem, NInput, NSelect, NButton, NSpace, NText, useM
 import { createWorkspace, getAvailableProjects } from '../api/workspaces'
 import { getAllTemplates } from '../api/config-templates'
 import ProjectItem from './ProjectItem.vue'
+import { getPathBaseName } from '../utils/path'
+import { createEmptyWorkspaceProject, normalizeWorkspaceProjectForSubmit } from '../utils/workspace-projects'
 
 const props = defineProps({
   show: { type: Boolean, default: false }
@@ -101,16 +103,7 @@ const existingProjectOptions = computed(() => existingProjects.value.map(p => ({
 })))
 
 function addProject(fromExisting) {
-  formData.value.projects.push({
-    sourcePath: '',
-    name: '',
-    createWorktree: false,
-    branch: '',
-    baseBranch: '',
-    isGitRepo: false,
-    fromExisting,
-    selectedKey: ''
-  })
+  formData.value.projects.push(createEmptyWorkspaceProject({ fromExisting }))
 }
 
 function removeProject(idx) {
@@ -122,9 +115,12 @@ function handleSelectExisting(idx, value) {
   if (!opt) return
   const proj = formData.value.projects[idx]
   proj.sourcePath = opt.path
-  proj.name = opt.path.split('/').pop()
+  proj.name = getPathBaseName(opt.path)
   proj.isGitRepo = opt.isGitRepo
   proj.createWorktree = opt.isGitRepo
+  proj.branchMode = 'existing'
+  proj.branch = ''
+  proj.baseBranch = ''
 }
 
 async function handleSubmit() {
@@ -137,7 +133,11 @@ async function handleSubmit() {
       }
     }
     submitting.value = true
-    const res = await createWorkspace(formData.value)
+    const payload = {
+      ...formData.value,
+      projects: formData.value.projects.map(normalizeWorkspaceProjectForSubmit)
+    }
+    const res = await createWorkspace(payload)
     if (res.success) {
       message.success('工作区创建成功')
       resetForm()

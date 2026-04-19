@@ -512,7 +512,7 @@ class ConfigRegistryService {
           this._importFileBasedConfigs(type, sourceDir, destDir, entryRelativePath, registry, result);
         } else if (entry.isFile() && entry.name.endsWith('.md')) {
           // This is a config file
-          const name = entryRelativePath; // Key is the relative path
+          const name = normalizeRelativeConfigName(entryRelativePath);
 
           // Skip if already in registry
           if (registry[type][name]) {
@@ -521,8 +521,8 @@ class ConfigRegistryService {
           }
 
           // Copy file to cc-tool configs
-          const sourcePath = path.join(sourceDir, entryRelativePath);
-          const destPath = path.join(destDir, entryRelativePath);
+          const sourcePath = path.join(sourceDir, name);
+          const destPath = path.join(destDir, name);
 
           try {
             // Ensure destination directory exists
@@ -801,7 +801,7 @@ class ConfigRegistryService {
         if (entry.isDirectory()) {
           this._syncFileBasedRegistry(type, baseDir, entryRelativePath, registry, result);
         } else if (entry.isFile() && entry.name.endsWith('.md')) {
-          const name = entryRelativePath;
+          const name = normalizeRelativeConfigName(entryRelativePath);
 
           if (!registry[type][name]) {
             registry[type][name] = {
