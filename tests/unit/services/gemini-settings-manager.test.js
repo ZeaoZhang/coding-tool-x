@@ -14,6 +14,17 @@ let settingsPath;
 let settingsBackupPath;
 let manager;
 
+function expectChmodPaths(chmodSpy, paths) {
+  if (process.platform === 'win32') {
+    expect(chmodSpy).not.toHaveBeenCalled();
+    return;
+  }
+
+  paths.forEach(filePath => {
+    expect(chmodSpy).toHaveBeenCalledWith(filePath, 0o600);
+  });
+}
+
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-settings-manager-'));
   envPath = path.join(testDir, '.gemini', '.env');
@@ -79,7 +90,7 @@ describe('gemini-settings-manager env/settings IO', () => {
         auth: { selectedType: 'gemini-api-key' }
       }
     });
-    expect(chmodSpy).toHaveBeenCalledWith(envPath, 0o600);
+    expectChmodPaths(chmodSpy, [envPath]);
   });
 });
 
@@ -106,8 +117,7 @@ describe('gemini-settings-manager backup and restore', () => {
     expect(manager.readSettings()).toEqual({
       security: { auth: { selectedType: 'oauth-personal' } }
     });
-    expect(chmodSpy).toHaveBeenCalledWith(envBackupPath, 0o600);
-    expect(chmodSpy).toHaveBeenCalledWith(envPath, 0o600);
+    expectChmodPaths(chmodSpy, [envBackupPath, envPath]);
     expect(fs.existsSync(envBackupPath)).toBe(false);
     expect(fs.existsSync(settingsBackupPath)).toBe(false);
   });
@@ -133,7 +143,7 @@ describe('gemini-settings-manager proxy config', () => {
         auth: { selectedType: 'gemini-api-key' }
       }
     });
-    expect(chmodSpy).toHaveBeenCalled();
+    expectChmodPaths(chmodSpy, [envBackupPath, envPath]);
   });
 
   test('detects proxy config, extracts the current proxy port, and deletes backups', () => {

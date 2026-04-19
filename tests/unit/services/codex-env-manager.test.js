@@ -46,18 +46,19 @@ describe('shellQuote', () => {
 // buildHomeRelativeShellPath
 // ---------------------------------------------------------------------------
 describe('buildHomeRelativeShellPath', () => {
-  const home = '/home/user';
+  const home = path.join(path.sep, 'home', 'user');
 
   it('replaces the home prefix with $HOME', () => {
-    expect(buildHomeRelativeShellPath('/home/user/.bashrc', home)).toBe('$HOME/.bashrc');
+    expect(buildHomeRelativeShellPath(path.join(home, '.bashrc'), home)).toBe('$HOME/.bashrc');
   });
 
   it('returns $HOME when filePath equals homeDir', () => {
-    expect(buildHomeRelativeShellPath('/home/user', home)).toBe('$HOME');
+    expect(buildHomeRelativeShellPath(home, home)).toBe('$HOME');
   });
 
   it('returns the absolute path unchanged when outside home dir', () => {
-    expect(buildHomeRelativeShellPath('/etc/profile', home)).toBe('/etc/profile');
+    const outsideHome = path.join(path.sep, 'etc', 'profile');
+    expect(buildHomeRelativeShellPath(outsideHome, home)).toBe(path.resolve(outsideHome).replace(/\\/g, '/'));
   });
 
   it('converts backslashes to forward slashes', () => {
@@ -72,16 +73,20 @@ describe('buildHomeRelativeShellPath', () => {
 // ---------------------------------------------------------------------------
 describe('buildSourceSnippet', () => {
   it('produces the expected block for an absolute path outside home', () => {
-    const snippet = buildSourceSnippet('/etc/codex-env.sh', '/home/user');
+    const envFilePath = path.join(path.sep, 'etc', 'codex-env.sh');
+    const homeDir = path.join(path.sep, 'home', 'user');
+    const expectedShellPath = path.resolve(envFilePath).replace(/\\/g, '/');
+    const snippet = buildSourceSnippet(envFilePath, homeDir);
     expect(snippet).toBe(
       '# >>> coding-tool codex env >>>\n' +
-      '[ -f "/etc/codex-env.sh" ] && . "/etc/codex-env.sh"\n' +
+      `[ -f "${expectedShellPath}" ] && . "${expectedShellPath}"\n` +
       '# <<< coding-tool codex env <<<'
     );
   });
 
   it('uses $HOME placeholder for a path under home dir', () => {
-    const snippet = buildSourceSnippet('/home/user/.cc-tool/codex-env.sh', '/home/user');
+    const homeDir = path.join(path.sep, 'home', 'user');
+    const snippet = buildSourceSnippet(path.join(homeDir, '.cc-tool', 'codex-env.sh'), homeDir);
     expect(snippet).toContain('$HOME/.cc-tool/codex-env.sh');
     expect(snippet).toContain('# >>> coding-tool codex env >>>');
     expect(snippet).toContain('# <<< coding-tool codex env <<<');
@@ -219,24 +224,24 @@ describe('buildNextEnvValues', () => {
 // getPosixProfileCandidates
 // ---------------------------------------------------------------------------
 describe('getPosixProfileCandidates', () => {
-  const home = '/home/user';
+  const home = path.join(path.sep, 'home', 'user');
 
   it('prefers .zshrc when SHELL contains zsh', () => {
     const { preferred, candidates } = getPosixProfileCandidates(home, { SHELL: '/bin/zsh' });
-    expect(preferred).toBe(`${home}/.zshrc`);
+    expect(preferred).toBe(path.join(home, '.zshrc'));
     expect(Array.isArray(candidates)).toBe(true);
     expect(candidates.length).toBeGreaterThan(0);
   });
 
   it('prefers .bashrc when SHELL contains bash', () => {
     const { preferred, candidates } = getPosixProfileCandidates(home, { SHELL: '/bin/bash' });
-    expect(preferred).toBe(`${home}/.bashrc`);
+    expect(preferred).toBe(path.join(home, '.bashrc'));
     expect(Array.isArray(candidates)).toBe(true);
   });
 
   it('prefers .profile for an unknown shell', () => {
     const { preferred, candidates } = getPosixProfileCandidates(home, { SHELL: '/bin/fish' });
-    expect(preferred).toBe(`${home}/.profile`);
+    expect(preferred).toBe(path.join(home, '.profile'));
     expect(Array.isArray(candidates)).toBe(true);
   });
 });

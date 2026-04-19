@@ -91,7 +91,7 @@ describe('getChannels - valid file', () => {
   it('parses existing channels and applies defaults', () => {
     const raw = {
       channels: [
-        { id: 'ch1', name: 'Test', baseUrl: 'https://api.example.com', apiKey: 'key1', model: 'gemini-2.5-pro' }
+        { id: 'ch1', name: 'Test', presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', apiKey: 'key1', model: 'gemini-2.5-pro' }
       ]
     };
     fs.writeFileSync(channelsFile, JSON.stringify(raw), 'utf8');
@@ -104,6 +104,7 @@ describe('getChannels - valid file', () => {
     expect(ch.weight).toBe(1);           // default applied
     expect(ch.modelRedirects).toEqual([]); // default applied
     expect(ch.gatewaySourceType).toBe('gemini'); // normalizeGatewaySourceType stub
+    expect(ch.websiteUrl).toBe('https://ai.google.dev');
   });
 
   it('preserves explicit enabled=false from file', () => {

@@ -82,7 +82,7 @@
     <WorkspaceFormModal v-model:show="showCreateModal" @success="handleCreateSuccess" />
 
     <!-- 工作区详情弹窗 -->
-    <WorkspaceDetailModal v-model:show="showDetailModal" :workspace="currentWorkspace" @deleted="loadData" />
+    <WorkspaceDetailModal v-model:show="showDetailModal" :workspace="currentWorkspace" @updated="loadData" />
   </div>
 </template>
 

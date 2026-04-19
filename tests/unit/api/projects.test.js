@@ -4,6 +4,9 @@ const os   = require('os');
 const path = require('path');
 const fs   = require('fs');
 
+const API_PATH = require.resolve('../../../src/server/api/projects');
+const SESSIONS_PATH = require.resolve('../../../src/server/services/sessions');
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function findHandler(router, method, routePath) {
@@ -38,20 +41,17 @@ const mockRes = () => {
 let sessionsStub;
 
 function loadRouter(config = {}) {
-  const keys = Object.keys(require.cache).filter(k =>
-    k.includes('api/projects') ||
-    k.includes('services/sessions')
-  );
-  keys.forEach(k => delete require.cache[k]);
+  delete require.cache[API_PATH];
+  delete require.cache[SESSIONS_PATH];
 
-  require.cache[require.resolve('../../../src/server/services/sessions')] = {
-    id: require.resolve('../../../src/server/services/sessions'),
-    filename: require.resolve('../../../src/server/services/sessions'),
+  require.cache[SESSIONS_PATH] = {
+    id: SESSIONS_PATH,
+    filename: SESSIONS_PATH,
     loaded: true,
     exports: sessionsStub,
   };
 
-  const factory = require('../../../src/server/api/projects');
+  const factory = require(API_PATH);
   return factory(config);
 }
 
@@ -71,6 +71,8 @@ describe('projects API router', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete require.cache[API_PATH];
+    delete require.cache[SESSIONS_PATH];
   });
 
   // ── GET / ─────────────────────────────────────────────────────────────────

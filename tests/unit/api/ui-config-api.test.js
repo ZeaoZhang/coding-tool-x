@@ -1,6 +1,8 @@
 'use strict';
 
-const { createRequire } = require('module');
+const API_PATH = require.resolve('../../../src/server/api/ui-config');
+const UI_CONFIG_PATH = require.resolve('../../../src/server/services/ui-config');
+const NETWORK_ACCESS_PATH = require.resolve('../../../src/server/services/network-access');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,29 +39,25 @@ let uiConfigStub;
 let networkAccessStub;
 
 function loadRouter() {
-  // Evict the router and its deps from cache so stubs take effect.
-  const keys = Object.keys(require.cache).filter(k =>
-    k.includes('api/ui-config') ||
-    k.includes('services/ui-config') ||
-    k.includes('services/network-access')
-  );
-  keys.forEach(k => delete require.cache[k]);
+  delete require.cache[API_PATH];
+  delete require.cache[UI_CONFIG_PATH];
+  delete require.cache[NETWORK_ACCESS_PATH];
 
-  require.cache[require.resolve('../../../src/server/services/ui-config')] = {
-    id: require.resolve('../../../src/server/services/ui-config'),
-    filename: require.resolve('../../../src/server/services/ui-config'),
+  require.cache[UI_CONFIG_PATH] = {
+    id: UI_CONFIG_PATH,
+    filename: UI_CONFIG_PATH,
     loaded: true,
     exports: uiConfigStub,
   };
 
-  require.cache[require.resolve('../../../src/server/services/network-access')] = {
-    id: require.resolve('../../../src/server/services/network-access'),
-    filename: require.resolve('../../../src/server/services/network-access'),
+  require.cache[NETWORK_ACCESS_PATH] = {
+    id: NETWORK_ACCESS_PATH,
+    filename: NETWORK_ACCESS_PATH,
     loaded: true,
     exports: networkAccessStub,
   };
 
-  return require('../../../src/server/api/ui-config');
+  return require(API_PATH);
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -81,6 +79,9 @@ describe('ui-config API router', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete require.cache[API_PATH];
+    delete require.cache[UI_CONFIG_PATH];
+    delete require.cache[NETWORK_ACCESS_PATH];
   });
 
   // ── GET / ────────────────────────────────────────────────────────────────

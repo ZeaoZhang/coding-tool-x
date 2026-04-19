@@ -3,6 +3,7 @@
 const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
+const { isWindowsLikePlatform } = require('../../../src/utils/home-dir');
 
 const SETTINGS_MGR_PATH = require.resolve('../../../src/server/services/settings-manager');
 const PATHS_PATH        = require.resolve('../../../src/config/paths');
@@ -201,7 +202,11 @@ describe('setProxyConfig', () => {
     const settings = JSON.parse(fs.readFileSync(testSettingsFile, 'utf8'));
     expect(settings.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:9999');
     expect(settings.env.ANTHROPIC_API_KEY).toBe('PROXY_KEY');
-    expect(settings.apiKeyHelper).toBe("echo 'PROXY_KEY'");
+    expect(settings.apiKeyHelper).toBe(
+      isWindowsLikePlatform(process.platform, process.env)
+        ? 'cmd /c echo PROXY_KEY'
+        : "echo 'PROXY_KEY'"
+    );
   });
 
   test('returns { success: true, port: proxyPort }', () => {

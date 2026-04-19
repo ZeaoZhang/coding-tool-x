@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { PATHS } = require('../../config/paths');
+const { resolveChannelWebsiteUrl } = require('../../config/channel-preset-websites');
 const {
   setChannelConfig,
   clearManagedChannelConfig
@@ -83,6 +84,7 @@ function loadChannels() {
           allowedModels: ch.allowedModels || []
         };
         normalized.providerKey = deriveProviderKey(normalized);
+        normalized.websiteUrl = resolveChannelWebsiteUrl('opencode', normalized);
         return normalized;
       });
     }
@@ -165,6 +167,7 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
     updatedAt: Date.now()
   };
   newChannel.providerKey = extraConfig.providerKey || deriveProviderKey(newChannel);
+  newChannel.websiteUrl = resolveChannelWebsiteUrl('opencode', newChannel);
 
   data.channels.push(newChannel);
 
@@ -213,6 +216,7 @@ function updateChannel(channelId, updates) {
     updatedAt: Date.now()
   };
   merged.providerKey = updates.providerKey || deriveProviderKey(merged);
+  merged.websiteUrl = resolveChannelWebsiteUrl('opencode', merged);
   data.channels[index] = merged;
 
   const isProxyRunning = getOpenCodeProxyRunning();

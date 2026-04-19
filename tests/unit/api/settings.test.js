@@ -1,5 +1,9 @@
 'use strict';
 
+const SETTINGS_API_PATH = require.resolve('../../../src/server/api/settings');
+const MODEL_METADATA_PATH = require.resolve('../../../src/config/model-metadata');
+const LOADER_PATH = require.resolve('../../../src/config/loader');
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function findHandler(router, method, routePath) {
@@ -35,28 +39,25 @@ let modelMetaStub;
 let loaderStub;
 
 function loadRouter() {
-  const keys = Object.keys(require.cache).filter(k =>
-    k.includes('api/settings') ||
-    k.includes('config/model-metadata') ||
-    k.includes('config/loader')
-  );
-  keys.forEach(k => delete require.cache[k]);
+  delete require.cache[SETTINGS_API_PATH];
+  delete require.cache[MODEL_METADATA_PATH];
+  delete require.cache[LOADER_PATH];
 
-  require.cache[require.resolve('../../../src/config/model-metadata')] = {
-    id: require.resolve('../../../src/config/model-metadata'),
-    filename: require.resolve('../../../src/config/model-metadata'),
+  require.cache[MODEL_METADATA_PATH] = {
+    id: MODEL_METADATA_PATH,
+    filename: MODEL_METADATA_PATH,
     loaded: true,
     exports: modelMetaStub,
   };
 
-  require.cache[require.resolve('../../../src/config/loader')] = {
-    id: require.resolve('../../../src/config/loader'),
-    filename: require.resolve('../../../src/config/loader'),
+  require.cache[LOADER_PATH] = {
+    id: LOADER_PATH,
+    filename: LOADER_PATH,
     loaded: true,
     exports: loaderStub,
   };
 
-  return require('../../../src/server/api/settings');
+  return require(SETTINGS_API_PATH);
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -90,6 +91,9 @@ describe('settings API router', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete require.cache[SETTINGS_API_PATH];
+    delete require.cache[MODEL_METADATA_PATH];
+    delete require.cache[LOADER_PATH];
   });
 
   // ── GET /model-settings ───────────────────────────────────────────────────

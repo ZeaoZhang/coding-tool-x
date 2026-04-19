@@ -11,6 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { normalizeGatewaySourceType, normalizeNumber } = require('./proxy-utils');
+const { resolveChannelWebsiteUrl } = require('../../../config/channel-preset-websites');
 
 class BaseChannelService {
   /**
@@ -225,6 +226,7 @@ class BaseChannelService {
       normalized.gatewaySourceType,
       this.defaultGatewaySource
     );
+    normalized.websiteUrl = resolveChannelWebsiteUrl(this.platform, normalized);
     return normalized;
   }
 

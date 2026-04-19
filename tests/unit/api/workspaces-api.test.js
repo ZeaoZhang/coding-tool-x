@@ -188,6 +188,26 @@ describe('workspace creation and mutation', () => {
     }));
   });
 
+  test('allows worktree creation without branch and defers to workspace service fallback', async () => {
+    const res = await request(buildApp()).post('/', {
+      name: 'Workspace',
+      projects: [{
+        sourcePath: '/tmp/project',
+        createWorktree: true,
+        branch: '   '
+      }]
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(workspaceService.createWorkspace).toHaveBeenCalledWith(expect.objectContaining({
+      projects: [expect.objectContaining({
+        createWorktree: true,
+        branch: '   '
+      })]
+    }));
+  });
+
   test('passes removeFiles flag when deleting workspace', async () => {
     const res = await request(buildApp()).delete('/ws-1?removeFiles=true');
 
@@ -240,6 +260,22 @@ describe('workspace project and launch routes', () => {
       sourcePath: '/tmp/project',
       branch: 'feature/a',
       baseBranch: 'main'
+    }));
+  });
+
+  test('allows adding worktree project without branch and keeps blank branch value', async () => {
+    const res = await request(buildApp()).post('/ws-1/projects', {
+      sourcePath: '/tmp/project',
+      createWorktree: true,
+      branch: '   '
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(workspaceService.addProjectToWorkspace).toHaveBeenCalledWith('ws-1', expect.objectContaining({
+      sourcePath: '/tmp/project',
+      createWorktree: true,
+      branch: '   '
     }));
   });
 
