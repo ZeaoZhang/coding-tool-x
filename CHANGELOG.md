@@ -4,7 +4,7 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
-## [3.5.6] - 2026-04-20
+## [3.5.10] - 2026-04-20
 
 ### Added
 - **Fork 起点选择与自定义别名** - Fork 对话现在支持选择“在第几条用户消息后”创建新会话，并允许在 Fork 时直接设置新会话别名，Claude / Codex / Gemini 三条会话链路统一支持

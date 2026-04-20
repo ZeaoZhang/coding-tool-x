@@ -288,6 +288,38 @@ describe('codex proxy status and start routes', () => {
     });
     expect(broadcastProxyStateMock).toHaveBeenCalledWith('codex', { running: false, port: null }, channels[1], channels);
   });
+
+  test('start falls back to the latest enabled channel when recently-used update hits a stale id', async () => {
+    getEnabledChannelsMock.mockReturnValueOnce([
+      {
+        id: 'stale-channel',
+        name: 'Stale',
+        baseUrl: 'https://stale.example',
+        providerKey: 'provider-b',
+        enabled: true,
+        updatedAt: 300
+      },
+      channels[0]
+    ]);
+    markChannelAsRecentlyUsedMock.mockImplementationOnce(() => {
+      throw new Error('Channel not found');
+    });
+
+    const res = await request(buildApp()).post('/start', {});
+
+    expect(res.status).toBe(200);
+    expect(markChannelAsRecentlyUsedMock).toHaveBeenCalledWith('stale-channel');
+    expect(res.body).toEqual(expect.objectContaining({
+      success: true,
+      activeChannel: expect.objectContaining({
+        id: 'channel-b',
+        providerKey: 'provider-b'
+      })
+    }));
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, 'state', 'codex-active.json'), 'utf8'))).toEqual({
+      activeChannelId: 'channel-b'
+    });
+  });
 });
 
 describe('codex proxy stop route', () => {

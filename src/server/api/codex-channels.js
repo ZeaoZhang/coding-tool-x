@@ -201,6 +201,10 @@ module.exports = (config) => {
       res.json(channel);
       broadcastSchedulerState('codex', getSchedulerState('codex'));
     } catch (err) {
+      if (err?.message === 'Channel not found') {
+        console.warn(`[Codex Channels API] Ignored update for missing channel: ${req.params.channelId}`);
+        return res.status(404).json({ error: 'Channel not found' });
+      }
       console.error('[Codex Channels API] Failed to update channel:', err);
       res.status(500).json({ error: err.message });
     }

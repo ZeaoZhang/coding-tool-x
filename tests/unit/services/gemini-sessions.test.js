@@ -284,7 +284,7 @@ describe('gemini-sessions project discovery and querying', () => {
     expect(finalCounts).toEqual({ projectCount: 0, sessionCount: 0 });
   });
 
-  test('fork can truncate after a selected user message and assign an alias', () => {
+  test('fork can keep the selected user turn with assistant output and assign an alias', () => {
     const projectPath = path.join(homeDir, 'workspace', 'fork-range-app');
     fs.mkdirSync(projectPath, { recursive: true });
     const projectHash = hashPath(projectPath);
@@ -327,7 +327,8 @@ describe('gemini-sessions project discovery and querying', () => {
       afterUserMessageNumber: 1
     });
     expect(forkedSession.messages).toEqual([
-      expect.objectContaining({ type: 'user', content: 'Question 1' })
+      expect.objectContaining({ type: 'user', content: 'Question 1' }),
+      expect.objectContaining({ type: 'assistant', content: 'Answer 1' })
     ]);
     expect(setAliasMock).toHaveBeenCalledWith('range-fork-id', 'fork-range');
   });
