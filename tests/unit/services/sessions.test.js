@@ -247,7 +247,7 @@ describe('deleteProject', () => {
 });
 
 describe('forkSession', () => {
-  test('copies a session, truncates after the selected user message, stores alias, and invalidates session cache', () => {
+  test('copies a session, keeps the selected user turn with following assistant output, stores alias, and invalidates session cache', () => {
     const projectName = 'demo-project';
     const projectDir = path.join(projectsDir, projectName);
     fs.mkdirSync(projectDir, { recursive: true });
@@ -284,11 +284,17 @@ describe('forkSession', () => {
       alias: 'fork-alias',
       afterUserMessageNumber: 1
     });
-    expect(forkedLines).toHaveLength(2);
+    expect(forkedLines).toHaveLength(3);
     expect(forkedLines[1]).toEqual(expect.objectContaining({
       type: 'user',
       message: expect.objectContaining({
         content: 'Question 1'
+      })
+    }));
+    expect(forkedLines[2]).toEqual(expect.objectContaining({
+      type: 'assistant',
+      message: expect.objectContaining({
+        content: 'Answer 1'
       })
     }));
     expect(getForkRelations()).toEqual({ 'forked-session-id': 'source-session' });
@@ -344,6 +350,7 @@ describe('forkSession', () => {
     const forkedContent = fs.readFileSync(path.join(projectDir, 'windows-fork-id.jsonl'), 'utf8');
     expect(forkedContent).toContain('\r\n');
     expect(forkedContent.endsWith('\r\n')).toBe(true);
+    expect(forkedContent).toContain('Answer 1');
     randomUuidSpy.mockRestore();
   });
 });

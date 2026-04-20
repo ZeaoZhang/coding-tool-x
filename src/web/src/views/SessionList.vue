@@ -267,14 +267,14 @@
     <n-modal v-model:show="showForkDialog" preset="dialog" title="Fork 对话">
       <n-space vertical :size="14">
         <n-text depth="3">
-          可选择从第几条用户消息后开始 Fork；不选则默认保留完整上下文。
+          可选择保留到第几条用户消息所在轮次；会包含这条消息后 AI 的完整输出。
         </n-text>
         <n-select
           v-model:value="selectedForkPoint"
           :options="forkPointOptions"
           :loading="forkOptionsLoading"
           clearable
-          placeholder="选择 Fork 起点（默认完整会话）"
+          placeholder="选择保留到哪一轮（默认完整会话）"
         />
         <n-input
           v-model:value="forkAlias"
@@ -624,7 +624,7 @@ async function handleFork(sessionId) {
         value: FULL_FORK_POINT
       },
       ...items.map(item => ({
-        label: `第 ${item.userMessageNumber} 条用户消息后 · ${item.preview}`,
+        label: `保留到第 ${item.userMessageNumber} 条用户消息这一轮 · ${item.preview}`,
         value: item.userMessageNumber
       }))
     ]

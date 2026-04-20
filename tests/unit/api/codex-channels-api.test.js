@@ -20,6 +20,7 @@ function makeRes() {
 
 let getChannels;
 let createChannel;
+let updateChannel;
 let saveChannelOrder;
 let getEnabledChannels;
 let applyChannelToSettings;
@@ -56,6 +57,10 @@ beforeEach(() => {
     wireApi,
     ...options
   }));
+  updateChannel = vi.fn((id, updates) => ({
+    id,
+    ...updates
+  }));
   saveChannelOrder = vi.fn();
   getEnabledChannels = vi.fn(() => [{ id: 'ch-1', enabled: true }]);
   applyChannelToSettings = vi.fn((id) => ({ id, name: 'Primary' }));
@@ -82,7 +87,7 @@ beforeEach(() => {
     exports: {
       getChannels,
       createChannel,
-      updateChannel: vi.fn(),
+      updateChannel,
       deleteChannel: vi.fn(async () => ({ success: true })),
       getEnabledChannels,
       saveChannelOrder,
@@ -272,5 +277,25 @@ describe('codex-channels api', () => {
     expect(res._status).toBe(400);
     expect(res._body.error).toMatch(/reserved/i);
     expect(createChannel).not.toHaveBeenCalled();
+  });
+
+  test('returns 404 when updating a missing channel', () => {
+    updateChannel.mockImplementation(() => {
+      throw new Error('Channel not found');
+    });
+
+    const router = routerFactory({});
+    const handler = findHandler(router, 'put', '/:channelId');
+    const res = makeRes();
+
+    handler({
+      params: { channelId: 'missing-channel' },
+      body: { enabled: false }
+    }, res);
+
+    expect(res._status).toBe(404);
+    expect(res._body).toEqual({ error: 'Channel not found' });
+    expect(clearCodexRedirectCache).not.toHaveBeenCalled();
+    expect(broadcastSchedulerState).not.toHaveBeenCalled();
   });
 });

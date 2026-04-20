@@ -61,6 +61,31 @@ function resolveActiveChannel(channels, activeChannelId = null) {
     || null;
 }
 
+function recoverChannelAfterMissingUpdate(previousChannel) {
+  const { channels } = getChannels();
+  const allChannels = Array.isArray(channels) ? channels : [];
+  const enabledChannels = allChannels.filter(channel => channel.enabled !== false);
+
+  const previousProviderKey = String(previousChannel?.providerKey || '').trim();
+  if (previousProviderKey) {
+    const sameProvider = enabledChannels.find(channel => channel.providerKey === previousProviderKey);
+    if (sameProvider) {
+      return sameProvider;
+    }
+  }
+
+  if (allChannels.length > 0) {
+    return resolveActiveChannel(allChannels, null);
+  }
+
+  const refreshedEnabledChannels = getEnabledChannels();
+  if (Array.isArray(refreshedEnabledChannels) && refreshedEnabledChannels.length > 0) {
+    return refreshedEnabledChannels[0];
+  }
+
+  return null;
+}
+
 // 保存激活渠道ID
 function saveActiveChannelId(channelId) {
   ensureStorageDirMigrated();
@@ -149,7 +174,23 @@ router.post('/start', async (req, res) => {
       });
     }
 
-    currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
+    try {
+      currentChannel = markChannelAsRecentlyUsed(currentChannel.id) || currentChannel;
+    } catch (error) {
+      if (error?.message !== 'Channel not found') {
+        throw error;
+      }
+
+      const recoveredChannel = recoverChannelAfterMissingUpdate(currentChannel);
+      if (!recoveredChannel) {
+        return res.status(400).json({
+          error: 'No enabled Codex channel found. Please create and enable a channel first.'
+        });
+      }
+
+      currentChannel = recoveredChannel;
+      console.warn(`[Codex Proxy] Active channel disappeared before startup, falling back to ${currentChannel.name} (${currentChannel.id})`);
+    }
 
     // 3. 保存当前激活渠道ID（用于代理模式）
     saveActiveChannelId(currentChannel.id);

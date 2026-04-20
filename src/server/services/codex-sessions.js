@@ -836,6 +836,7 @@ function sliceCodexContentByUserMessage(content, afterUserMessageNumber) {
   const { lines, eol, hasTrailingEol } = splitTextPreserveEol(content);
   const keptLines = [];
   let matchedUserMessages = 0;
+  let targetUserReached = false;
 
   for (const line of lines) {
     if (!line.trim()) {
@@ -851,21 +852,30 @@ function sliceCodexContentByUserMessage(content, afterUserMessageNumber) {
       continue;
     }
 
-    keptLines.push(line);
-
     if (parsed?.type !== 'response_item' || !parsed?.payload) {
+      keptLines.push(line);
       continue;
     }
 
     const preview = extractCodexPreviewFromResponseItem(parsed.payload);
     if (!preview) {
+      keptLines.push(line);
       continue;
     }
 
-    matchedUserMessages += 1;
-    if (matchedUserMessages >= afterUserMessageNumber) {
+    if (targetUserReached) {
       return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
     }
+
+    matchedUserMessages += 1;
+    keptLines.push(line);
+    if (matchedUserMessages >= afterUserMessageNumber) {
+      targetUserReached = true;
+    }
+  }
+
+  if (targetUserReached) {
+    return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
   }
 
   throw new Error(`afterUserMessageNumber ${afterUserMessageNumber} exceeds available user messages (${matchedUserMessages})`);

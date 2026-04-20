@@ -622,21 +622,29 @@ function forkSession(sessionId, options = {}) {
   let truncatedMessages = sourceMessages;
   if (Number.isInteger(options.afterUserMessageNumber) && options.afterUserMessageNumber > 0) {
     let matchedUserMessages = 0;
-    let stopIndex = -1;
+    let targetUserIndex = -1;
     for (let index = 0; index < sourceMessages.length; index += 1) {
       if (sourceMessages[index]?.type !== 'user') continue;
       matchedUserMessages += 1;
       if (matchedUserMessages >= options.afterUserMessageNumber) {
-        stopIndex = index;
+        targetUserIndex = index;
         break;
       }
     }
 
-    if (stopIndex < 0) {
+    if (targetUserIndex < 0) {
       throw new Error(`afterUserMessageNumber ${options.afterUserMessageNumber} exceeds available user messages (${matchedUserMessages})`);
     }
 
-    truncatedMessages = sourceMessages.slice(0, stopIndex + 1);
+    let nextUserIndex = sourceMessages.length;
+    for (let index = targetUserIndex + 1; index < sourceMessages.length; index += 1) {
+      if (sourceMessages[index]?.type === 'user') {
+        nextUserIndex = index;
+        break;
+      }
+    }
+
+    truncatedMessages = sourceMessages.slice(0, nextUserIndex);
   }
 
   // 生成新的会话 ID
