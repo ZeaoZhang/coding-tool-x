@@ -18,6 +18,7 @@ let readConfigMock;
 let deleteBackupMock;
 let getChannelsMock;
 let getEnabledChannelsMock;
+let markChannelAsRecentlyUsedMock;
 let applyChannelToSettingsMock;
 let clearNativeOAuthMock;
 let broadcastProxyStateMock;
@@ -115,6 +116,15 @@ beforeEach(() => {
   deleteBackupMock = vi.fn();
   getChannelsMock = vi.fn(() => ({ channels }));
   getEnabledChannelsMock = vi.fn(() => channels.filter((channel) => channel.enabled !== false));
+  markChannelAsRecentlyUsedMock = vi.fn((channelId) => {
+    const index = channels.findIndex((channel) => channel.id === channelId);
+    if (index === -1) return null;
+    channels[index] = {
+      ...channels[index],
+      updatedAt: channels[index].updatedAt + 1000
+    };
+    return channels[index];
+  });
   applyChannelToSettingsMock = vi.fn();
   clearNativeOAuthMock = vi.fn();
   broadcastProxyStateMock = vi.fn();
@@ -153,6 +163,7 @@ beforeEach(() => {
     exports: {
       getChannels: getChannelsMock,
       getEnabledChannels: getEnabledChannelsMock,
+      markChannelAsRecentlyUsed: markChannelAsRecentlyUsedMock,
       applyChannelToSettings: applyChannelToSettingsMock
     }
   };
@@ -257,6 +268,7 @@ describe('codex proxy status and start routes', () => {
 
     expect(res.status).toBe(200);
     expect(startCodexProxyServerMock).toHaveBeenCalled();
+    expect(markChannelAsRecentlyUsedMock).toHaveBeenCalledWith('channel-b');
     expect(clearNativeOAuthMock).toHaveBeenCalledWith('codex');
     expect(setProxyConfigMock).toHaveBeenCalledWith(21001);
     expect(res.body).toEqual(expect.objectContaining({
@@ -274,7 +286,7 @@ describe('codex proxy status and start routes', () => {
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'state', 'codex-active.json'), 'utf8'))).toEqual({
       activeChannelId: 'channel-b'
     });
-    expect(broadcastProxyStateMock).toHaveBeenCalledWith('codex', { running: false, port: null }, channels[0], channels);
+    expect(broadcastProxyStateMock).toHaveBeenCalledWith('codex', { running: false, port: null }, channels[1], channels);
   });
 });
 

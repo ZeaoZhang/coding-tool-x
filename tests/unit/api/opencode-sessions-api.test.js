@@ -125,7 +125,7 @@ describe('opencode-sessions api', () => {
   test('project sessions and message pagination include aliases and project metadata', async () => {
     const app = buildApp();
     const sessionsRes = await request(app).get('/repo-open');
-    const messagesRes = await request(app).get('/repo-open/open-1/messages?page=1&limit=1&order=desc');
+    const messagesRes = await request(app).get('/repo-open/open-1/messages?page=1&limit=2&order=desc');
 
     expect(sessionsRes.body).toEqual(expect.objectContaining({
       totalSize: 42,
@@ -137,11 +137,14 @@ describe('opencode-sessions api', () => {
     }));
     expect(messagesRes.body.pagination).toEqual({
       page: 1,
-      limit: 1,
+      limit: 2,
       total: 2,
-      hasMore: true
+      hasMore: false
     });
     expect(messagesRes.body.messages[0]).toEqual({ type: 'assistant', content: 'Answer' });
+    expect(messagesRes.body.messages.find(item => item.type === 'user')).toEqual(expect.objectContaining({
+      userMessageNumber: 1
+    }));
   });
 
   test('recent, order, delete, fork, and launch routes delegate correctly', async () => {
@@ -177,5 +180,22 @@ describe('opencode-sessions api', () => {
     expect((await request(app).delete('/repo-open/open-1')).status).toBe(404);
     expect((await request(app).post('/repo-open/open-1/fork', {})).status).toBe(404);
     expect((await request(app).post('/repo-open/missing/launch', {})).status).toBe(404);
+  });
+
+  test('status and outline routes expose lightweight sync data', async () => {
+    const app = buildApp();
+
+    const statusRes = await request(app).get('/repo-open/open-1/status');
+    const outlineRes = await request(app).get('/repo-open/open-1/outline');
+
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body).toEqual(expect.objectContaining({
+      sessionId: 'open-1'
+    }));
+    expect(outlineRes.status).toBe(200);
+    expect(outlineRes.body.items[0]).toEqual(expect.objectContaining({
+      userMessageNumber: 1,
+      preview: 'Question'
+    }));
   });
 });

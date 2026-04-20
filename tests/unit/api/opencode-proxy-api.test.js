@@ -20,6 +20,7 @@ let readConfigMock;
 let selectConfigPathMock;
 let getChannelsMock;
 let getEnabledChannelsMock;
+let markChannelAsRecentlyUsedMock;
 let applyChannelToSettingsMock;
 let clearNativeOAuthMock;
 let getSchedulerStateMock;
@@ -135,6 +136,15 @@ beforeEach(() => {
   selectConfigPathMock = vi.fn(() => nativeConfigPath);
   getChannelsMock = vi.fn(() => ({ channels }));
   getEnabledChannelsMock = vi.fn(() => channels.filter((channel) => channel.enabled !== false));
+  markChannelAsRecentlyUsedMock = vi.fn((channelId) => {
+    const index = channels.findIndex((channel) => channel.id === channelId);
+    if (index === -1) return null;
+    channels[index] = {
+      ...channels[index],
+      updatedAt: channels[index].updatedAt + 1000
+    };
+    return channels[index];
+  });
   applyChannelToSettingsMock = vi.fn();
   clearNativeOAuthMock = vi.fn();
   getSchedulerStateMock = vi.fn(() => ({ active: false }));
@@ -177,6 +187,7 @@ beforeEach(() => {
     exports: {
       getChannels: getChannelsMock,
       getEnabledChannels: getEnabledChannelsMock,
+      markChannelAsRecentlyUsed: markChannelAsRecentlyUsedMock,
       applyChannelToSettings: applyChannelToSettingsMock,
       getEffectiveApiKeyCandidates: vi.fn((channel) => {
         if (channel.id === 'open-2') return ['secondary-key'];
@@ -287,6 +298,7 @@ describe('opencode proxy routes', () => {
 
     expect(missingChannels.status).toBe(400);
     expect(started.status).toBe(200);
+    expect(markChannelAsRecentlyUsedMock).toHaveBeenCalledWith('open-2');
     expect(collectProxyModelListMock).toHaveBeenCalledWith(channels, { useCacheOnly: true });
     expect(setProxyConfigMock).toHaveBeenCalledWith(23003, {
       channels: [
@@ -314,6 +326,12 @@ describe('opencode proxy routes', () => {
       baseUrl: 'https://open-two.example',
       websiteUrl: undefined
     });
+    expect(broadcastProxyStateMock).toHaveBeenCalledWith(
+      'opencode',
+      { running: false, port: null },
+      expect.objectContaining({ id: 'open-2' }),
+      channels
+    );
   });
 
   test('stop removes active state, discards backup, restores single channel, and broadcasts scheduler state', async () => {

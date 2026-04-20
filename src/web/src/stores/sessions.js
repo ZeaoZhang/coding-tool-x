@@ -260,9 +260,9 @@ export const useSessionsStore = defineStore('sessions', () => {
     }
   }
 
-  async function forkSession(sessionId) {
+  async function forkSession(sessionId, options = {}) {
     try {
-      const data = await forkSessionApi(currentProject.value, sessionId, currentChannel.value)
+      const data = await forkSessionApi(currentProject.value, sessionId, currentChannel.value, options)
       await fetchSessions(currentProject.value, { force: true })
       return data.newSessionId
     } catch (err) {

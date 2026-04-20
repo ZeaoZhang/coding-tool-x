@@ -152,6 +152,73 @@ module.exports = (config) => {
   });
 
   /**
+   * GET /api/opencode/sessions/:projectName/:sessionId/status
+   * 获取会话轻量状态（用于实时刷新）
+   */
+  router.get('/:projectName/:sessionId/status', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const session = getSessionById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      res.json({
+        sessionId,
+        lastModified: session.mtime || null,
+        size: session.size || 0
+      });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to get session status:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/opencode/sessions/:projectName/:sessionId/outline
+   * 获取用户消息目录
+   */
+  router.get('/:projectName/:sessionId/outline', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const session = getSessionById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      let userMessageNumber = 0;
+      const items = [];
+      for (const msg of getSessionMessages(sessionId)) {
+        if (msg.type !== 'user') continue;
+        const preview = typeof msg.content === 'string' ? msg.content.trim() : '';
+        if (!preview) continue;
+        userMessageNumber += 1;
+        items.push({
+          userMessageNumber,
+          preview: preview.length > 42 ? `${preview.slice(0, 42)}...` : preview,
+          timestamp: msg.timestamp || null
+        });
+      }
+
+      res.json({
+        sessionId,
+        items
+      });
+    } catch (err) {
+      console.error('[OpenCode API] Failed to get session outline:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/opencode/sessions/:projectName/:sessionId/messages
    * 获取会话的消息列表
    */
@@ -167,7 +234,18 @@ module.exports = (config) => {
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
-      const convertedMessages = getSessionMessages(sessionId);
+      const baseMessages = getSessionMessages(sessionId);
+      let userMessageNumber = 0;
+      const convertedMessages = baseMessages.map((message) => {
+        if (message.type !== 'user') {
+          return message;
+        }
+        userMessageNumber += 1;
+        return {
+          ...message,
+          userMessageNumber
+        };
+      });
 
       // 分页处理
       const pageNum = parseInt(page);

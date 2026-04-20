@@ -14,7 +14,7 @@ const {
   hasBackup,
   readConfig
 } = require('../services/codex-settings-manager');
-const { getChannels, getEnabledChannels } = require('../services/codex-channels');
+const { getChannels, getEnabledChannels, markChannelAsRecentlyUsed } = require('../services/codex-channels');
 const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { clearAllLogs } = require('../websocket-server');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
@@ -149,6 +149,8 @@ router.post('/start', async (req, res) => {
       });
     }
 
+    currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
+
     // 3. 保存当前激活渠道ID（用于代理模式）
     saveActiveChannelId(currentChannel.id);
     console.log(`[Codex Proxy] Saved active channel: ${currentChannel.name} (${currentChannel.id})`);
@@ -166,7 +168,7 @@ router.post('/start', async (req, res) => {
 
     const updatedStatus = getCodexProxyStatus();
     const { channels: allChannels } = getChannels();
-    const activeChannel = allChannels.filter(ch => ch.enabled !== false)[0];
+    const activeChannel = allChannels.find(ch => ch.id === currentChannel.id) || currentChannel;
     const { broadcastProxyState } = require('../websocket-server');
     broadcastProxyState('codex', updatedStatus, activeChannel, allChannels);
 

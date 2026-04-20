@@ -444,6 +444,10 @@ function getEnabledChannels() {
   return data.channels.filter(c => c.enabled !== false);
 }
 
+function markChannelAsRecentlyUsed(channelId) {
+  return updateChannel(channelId, {});
+}
+
 function getEffectiveApiKey(channel) {
   return channel.apiKey || null;
 }
@@ -482,6 +486,7 @@ module.exports = {
   getChannels,
   createChannel,
   updateChannel,
+  markChannelAsRecentlyUsed,
   deleteChannel,
   getEnabledChannels,
   getEffectiveApiKey,

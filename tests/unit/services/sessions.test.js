@@ -18,6 +18,8 @@ const ALIAS_PATH         = require.resolve('../../../src/server/services/alias')
 const SESSION_CACHE_PATH = require.resolve('../../../src/server/services/session-cache');
 const ENHANCED_CACHE_PATH = require.resolve('../../../src/server/services/enhanced-cache');
 const SESSIONS_PATH      = require.resolve('../../../src/server/services/sessions');
+const GLOBAL_CACHE_DELETE = vi.fn();
+const SET_ALIAS_MOCK = vi.fn();
 
 // Per-test workspace
 let testDir;
@@ -63,7 +65,7 @@ beforeEach(() => {
 
   require.cache[ALIAS_PATH] = {
     id: ALIAS_PATH, filename: ALIAS_PATH, loaded: true,
-    exports: { loadAliases: vi.fn(() => ({})) },
+    exports: { loadAliases: vi.fn(() => ({})), setAlias: SET_ALIAS_MOCK },
   };
 
   require.cache[SESSION_CACHE_PATH] = {
@@ -80,12 +82,14 @@ beforeEach(() => {
   require.cache[ENHANCED_CACHE_PATH] = {
     id: ENHANCED_CACHE_PATH, filename: ENHANCED_CACHE_PATH, loaded: true,
     exports: {
-      globalCache: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
+      globalCache: { get: vi.fn(), set: vi.fn(), delete: GLOBAL_CACHE_DELETE },
       CacheKeys:   { PROJECTS: 'p:', SESSIONS: 's:', COUNTS: 'c:', HAS_MESSAGES: 'hm:' },
     },
   };
 
   // Force fresh require of sessions module with new stubs
+  GLOBAL_CACHE_DELETE.mockReset();
+  SET_ALIAS_MOCK.mockReset();
   delete require.cache[SESSIONS_PATH];
 });
 
@@ -239,5 +243,107 @@ describe('deleteProject', () => {
     const remaining = getProjectOrder({});
     expect(remaining).not.toContain('ordered-proj');
     expect(remaining).toContain('other-proj');
+  });
+});
+
+describe('forkSession', () => {
+  test('copies a session, truncates after the selected user message, stores alias, and invalidates session cache', () => {
+    const projectName = 'demo-project';
+    const projectDir = path.join(projectsDir, projectName);
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    const sourcePath = path.join(projectDir, 'source-session.jsonl');
+    fs.writeFileSync(sourcePath, [
+      JSON.stringify({ type: 'summary', summary: 'summary' }),
+      JSON.stringify({ type: 'user', message: { content: 'Question 1' }, timestamp: '2025-01-01T00:00:00.000Z' }),
+      JSON.stringify({ type: 'assistant', message: { content: 'Answer 1' }, timestamp: '2025-01-01T00:00:01.000Z' }),
+      JSON.stringify({ type: 'user', message: { content: 'Question 2' }, timestamp: '2025-01-01T00:00:02.000Z' }),
+      JSON.stringify({ type: 'assistant', message: { content: 'Answer 2' }, timestamp: '2025-01-01T00:00:03.000Z' }),
+      ''
+    ].join('\n'), 'utf8');
+
+    const randomUuidSpy = vi.spyOn(require('crypto'), 'randomUUID').mockReturnValue('forked-session-id');
+
+    const { forkSession, getForkRelations } = require('../../../src/server/services/sessions');
+    const result = forkSession(
+      { projectsDir },
+      projectName,
+      'source-session',
+      {
+        afterUserMessageNumber: 1,
+        alias: 'fork-alias'
+      }
+    );
+
+    const forkedPath = path.join(projectDir, 'forked-session-id.jsonl');
+    const forkedLines = fs.readFileSync(forkedPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+
+    expect(result).toEqual({
+      newSessionId: 'forked-session-id',
+      forkedFrom: 'source-session',
+      alias: 'fork-alias',
+      afterUserMessageNumber: 1
+    });
+    expect(forkedLines).toHaveLength(2);
+    expect(forkedLines[1]).toEqual(expect.objectContaining({
+      type: 'user',
+      message: expect.objectContaining({
+        content: 'Question 1'
+      })
+    }));
+    expect(getForkRelations()).toEqual({ 'forked-session-id': 'source-session' });
+    expect(SET_ALIAS_MOCK).toHaveBeenCalledWith('forked-session-id', 'fork-alias');
+    expect(GLOBAL_CACHE_DELETE).toHaveBeenCalledWith('s:demo-project');
+    randomUuidSpy.mockRestore();
+  });
+
+  test('throws when the requested user message index does not exist', () => {
+    const projectName = 'demo-project';
+    const projectDir = path.join(projectsDir, projectName);
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, 'source-session.jsonl'),
+      `${JSON.stringify({ type: 'user', message: { content: 'Only question' } })}\n`,
+      'utf8'
+    );
+
+    const { forkSession } = require('../../../src/server/services/sessions');
+
+    expect(() => forkSession(
+      { projectsDir },
+      projectName,
+      'source-session',
+      { afterUserMessageNumber: 2 }
+    )).toThrow('afterUserMessageNumber 2 exceeds available user messages (1)');
+  });
+
+  test('preserves CRLF line endings when truncating fork content', () => {
+    const projectName = 'windows-project';
+    const projectDir = path.join(projectsDir, projectName);
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectDir, 'windows-session.jsonl'),
+      [
+        JSON.stringify({ type: 'summary', summary: 'summary' }),
+        JSON.stringify({ type: 'user', message: { content: 'Question 1' } }),
+        JSON.stringify({ type: 'assistant', message: { content: 'Answer 1' } })
+      ].join('\r\n') + '\r\n',
+      'utf8'
+    );
+
+    const randomUuidSpy = vi.spyOn(require('crypto'), 'randomUUID').mockReturnValue('windows-fork-id');
+    const { forkSession } = require('../../../src/server/services/sessions');
+
+    forkSession(
+      { projectsDir },
+      projectName,
+      'windows-session',
+      { afterUserMessageNumber: 1 }
+    );
+
+    const forkedContent = fs.readFileSync(path.join(projectDir, 'windows-fork-id.jsonl'), 'utf8');
+    expect(forkedContent).toContain('\r\n');
+    expect(forkedContent.endsWith('\r\n')).toBe(true);
+    randomUuidSpy.mockRestore();
   });
 });

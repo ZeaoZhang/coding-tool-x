@@ -31,9 +31,9 @@ export async function deleteSessions(projectName, sessionIds, channel = 'claude'
   return response.data
 }
 
-export async function forkSession(projectName, sessionId, channel = 'claude') {
+export async function forkSession(projectName, sessionId, channel = 'claude', options = {}) {
   const prefix = getChannelPrefix(channel)
-  const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/fork`)
+  const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/fork`, options)
   return response.data
 }
 
@@ -116,6 +116,18 @@ export async function getSessionMessages(projectName, sessionId, page = 1, limit
   const response = await client.get(`${prefix}/sessions/${projectName}/${sessionId}/messages`, {
     params: { page, limit, order }
   })
+  return response.data
+}
+
+export async function getSessionOutline(projectName, sessionId, channel = 'claude') {
+  const prefix = getChannelPrefix(channel)
+  const response = await client.get(`${prefix}/sessions/${projectName}/${sessionId}/outline`)
+  return response.data
+}
+
+export async function getSessionStatus(projectName, sessionId, channel = 'claude') {
+  const prefix = getChannelPrefix(channel)
+  const response = await client.get(`${prefix}/sessions/${projectName}/${sessionId}/status`)
   return response.data
 }
 

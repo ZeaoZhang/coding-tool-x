@@ -7,6 +7,7 @@ const path = require('path');
 let testDir;
 let channels;
 let getAllChannelsMock;
+let markChannelAsRecentlyUsedMock;
 let applyChannelToSettingsMock;
 let getCurrentSettingsMock;
 let extractApiKeyFromHelperMock;
@@ -65,6 +66,15 @@ beforeEach(() => {
     }
   }));
   getAllChannelsMock = vi.fn(() => channels);
+  markChannelAsRecentlyUsedMock = vi.fn((channelId) => {
+    const index = channels.findIndex((channel) => channel.id === channelId);
+    if (index === -1) return null;
+    channels[index] = {
+      ...channels[index],
+      updatedAt: channels[index].updatedAt + 1000
+    };
+    return channels[index];
+  });
   applyChannelToSettingsMock = vi.fn();
   getCurrentSettingsMock = vi.fn(() => ({
     baseUrl: 'https://api.anthropic.com',
@@ -116,6 +126,7 @@ beforeEach(() => {
     loaded: true,
     exports: {
       getAllChannels: getAllChannelsMock,
+      markChannelAsRecentlyUsed: markChannelAsRecentlyUsedMock,
       applyChannelToSettings: applyChannelToSettingsMock,
       getCurrentSettings: getCurrentSettingsMock,
       extractApiKeyFromHelper: extractApiKeyFromHelperMock
@@ -325,9 +336,15 @@ describe('proxy start route', () => {
       websiteUrl: 'https://console.example.com'
     });
     expect(startProxyServerMock).toHaveBeenCalled();
+    expect(markChannelAsRecentlyUsedMock).toHaveBeenCalledWith('channel-1');
     expect(clearNativeOAuthMock).toHaveBeenCalledWith('claude');
     expect(setProxyConfigMock).toHaveBeenCalledWith(20088);
-    expect(broadcastProxyStateMock).toHaveBeenCalled();
+    expect(broadcastProxyStateMock).toHaveBeenCalledWith(
+      'claude',
+      { running: true, port: 20088 },
+      expect.objectContaining({ id: 'channel-1' }),
+      channels
+    );
     expect(
       JSON.parse(fs.readFileSync(path.join(testDir, 'state', 'active-channel.json'), 'utf8')).activeChannelId
     ).toBe('channel-1');

@@ -21,6 +21,24 @@ function logPerf(route, startMs, detail = '') {
   console.log(`[Codex Perf] ${route}: ${duration}ms${suffix}`);
 }
 
+function normalizeForkOptions(body = {}) {
+  const alias = typeof body.alias === 'string' ? body.alias.trim() : '';
+  const rawNumber = body.afterUserMessageNumber;
+  const hasExplicitNumber = rawNumber !== undefined && rawNumber !== null && rawNumber !== '';
+  const parsedNumber = hasExplicitNumber ? parseInt(rawNumber, 10) : null;
+
+  if (hasExplicitNumber && (!Number.isInteger(parsedNumber) || parsedNumber <= 0)) {
+    const error = new Error('afterUserMessageNumber must be a positive integer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    afterUserMessageNumber: parsedNumber,
+    alias: alias || null
+  };
+}
+
 module.exports = (config) => {
   // ============================================
   // 静态路由必须放在参数路由之前
@@ -202,6 +220,67 @@ module.exports = (config) => {
     }
   });
 
+  router.get('/:projectName/:sessionId/status', (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const session = getSessionById(sessionId);
+      if (!session || !session.filePath) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      const fs = require('fs');
+      const stats = fs.statSync(session.filePath);
+      res.json({
+        sessionId,
+        lastModified: stats.mtime.toISOString(),
+        size: stats.size
+      });
+    } catch (err) {
+      console.error('[Codex API] Failed to get session status:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/:projectName/:sessionId/outline', (req, res) => {
+    try {
+      if (!isCodexInstalled()) {
+        return res.status(404).json({ error: 'Codex CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const session = getSessionById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      let userMessageNumber = 0;
+      const items = [];
+      for (const msg of session.messages || []) {
+        if (msg.role !== 'user') continue;
+        const preview = typeof msg.content === 'string' ? msg.content.trim() : '';
+        if (!preview) continue;
+        userMessageNumber += 1;
+        items.push({
+          userMessageNumber,
+          preview: preview.length > 42 ? `${preview.slice(0, 42)}...` : preview,
+          timestamp: msg.timestamp || null
+        });
+      }
+
+      res.json({
+        sessionId,
+        items
+      });
+    } catch (err) {
+      console.error('[Codex API] Failed to get session outline:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /**
    * GET /api/codex/sessions/:projectName/:sessionId/messages
    * 获取会话的消息列表
@@ -227,14 +306,17 @@ module.exports = (config) => {
       // 转换消息格式为前端期望的格式
       const convertedMessages = [];
 
+      let userMessageNumber = 0;
       for (const msg of session.messages) {
         // 用户消息
         if (msg.role === 'user') {
+          userMessageNumber += 1;
           convertedMessages.push({
             type: 'user',
             content: msg.content || '[空消息]',
             timestamp: msg.timestamp,
-            model: null
+            model: null,
+            userMessageNumber
           });
         }
         // 助手消息（普通回复）
@@ -421,12 +503,12 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const result = forkSession(sessionId);
+      const result = forkSession(sessionId, normalizeForkOptions(req.body));
 
       res.json(result);
     } catch (err) {
       console.error('[Codex API] Failed to fork session:', err);
-      res.status(500).json({ error: err.message });
+      res.status(err.statusCode || 500).json({ error: err.message });
     }
   });
 

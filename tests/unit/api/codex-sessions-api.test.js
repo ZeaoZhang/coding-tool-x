@@ -161,7 +161,7 @@ describe('codex-sessions api', () => {
     }));
   });
 
-  test('project listing and message conversion include aliases, metadata, and pagination', async () => {
+  test('project listing and message conversion include aliases, metadata, pagination, and user anchors', async () => {
     const app = buildApp();
 
     const sessionsRes = await request(app).get('/repo-a');
@@ -184,6 +184,9 @@ describe('codex-sessions api', () => {
       content: expect.stringContaining('done')
     }));
     expect(messagesRes.body.messages[1].content).toContain('调用工具');
+    expect(messagesRes.body.messages.find(item => item.type === 'user')).toEqual(expect.objectContaining({
+      userMessageNumber: 1
+    }));
     expect(messagesRes.body.metadata).toEqual({
       gitBranch: 'main',
       gitRepository: 'repo',
@@ -198,7 +201,10 @@ describe('codex-sessions api', () => {
     const recent = await request(app).get('/recent/list?limit=2');
     const ordered = await request(app).post('/repo-a/order', { order: ['sess-2', 'sess-1'] });
     const deleted = await request(app).delete('/repo-a/sess-1');
-    const forked = await request(app).post('/repo-a/sess-1/fork', {});
+    const forked = await request(app).post('/repo-a/sess-1/fork', {
+      afterUserMessageNumber: 1,
+      alias: 'fork-alias'
+    });
     const launched = await request(app).post('/repo-a/sess-1/launch', {});
 
     expect(recent.status).toBe(200);
@@ -208,7 +214,10 @@ describe('codex-sessions api', () => {
     expect(deleted.status).toBe(200);
     expect(codexSessionsService.deleteSession).toHaveBeenCalledWith('sess-1');
     expect(forked.status).toBe(200);
-    expect(codexSessionsService.forkSession).toHaveBeenCalledWith('sess-1');
+    expect(codexSessionsService.forkSession).toHaveBeenCalledWith('sess-1', {
+      afterUserMessageNumber: 1,
+      alias: 'fork-alias'
+    });
     expect(launched.status).toBe(200);
     expect(launched.body).toEqual(expect.objectContaining({
       success: true,
@@ -237,5 +246,23 @@ describe('codex-sessions api', () => {
 
     expect(missing.status).toBe(404);
     expect(invalid.status).toBe(400);
+  });
+
+  test('status and outline routes expose lightweight sync data', async () => {
+    const app = buildApp();
+
+    const statusRes = await request(app).get('/repo-a/sess-1/status');
+    const outlineRes = await request(app).get('/repo-a/sess-1/outline');
+
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body).toEqual(expect.objectContaining({
+      sessionId: 'sess-1',
+      size: expect.any(Number)
+    }));
+    expect(outlineRes.status).toBe(200);
+    expect(outlineRes.body.items[0]).toEqual(expect.objectContaining({
+      userMessageNumber: 1,
+      preview: 'Hello'
+    }));
   });
 });

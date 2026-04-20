@@ -261,6 +261,7 @@ function createChannel(name, providerKey, baseUrl, apiKey, wireApi, extraConfig 
   });
 }
 function updateChannel(id, updates) { return service.updateChannel(id, updates); }
+function markChannelAsRecentlyUsed(id) { return service.updateChannel(id, {}); }
 function deleteChannel(id) { return service.deleteChannel(id); }
 function saveChannelOrder(order) { return service.saveChannelOrder(order); }
 function applyChannelToSettings(id) { return service.applyChannelToSettings(id); }
@@ -281,6 +282,7 @@ module.exports = {
   getChannels,
   createChannel,
   updateChannel,
+  markChannelAsRecentlyUsed,
   deleteChannel,
   getEnabledChannels,
   saveChannelOrder,

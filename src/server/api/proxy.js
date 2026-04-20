@@ -11,7 +11,7 @@ const {
   hasBackup,
   readSettings
 } = require('../services/settings-manager');
-const { getAllChannels, extractApiKeyFromHelper } = require('../services/channels');
+const { getAllChannels, markChannelAsRecentlyUsed, extractApiKeyFromHelper } = require('../services/channels');
 const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { clearAllLogs } = require('../websocket-server');
 const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
@@ -194,12 +194,14 @@ router.post('/start', async (req, res) => {
     }
 
     // 2. 从 settings.json 找到当前使用的渠道
-    const currentChannel = findActiveChannelFromSettings();
+    let currentChannel = findActiveChannelFromSettings();
     if (!currentChannel) {
       return res.status(400).json({
         error: '无法从 settings.json 识别当前渠道。请先激活一个渠道。'
       });
     }
+
+    currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
 
     // 3. 保存当前激活渠道ID（用于代理模式）
     saveActiveChannelId(currentChannel.id);
@@ -218,7 +220,7 @@ router.post('/start', async (req, res) => {
 
     const updatedStatus = getProxyStatus();
     const channels = getAllChannels();
-    const activeChannel = channels.find(ch => ch.enabled !== false);
+    const activeChannel = channels.find(ch => ch.id === currentChannel.id) || currentChannel;
 
     // 6. 通过 WebSocket 推送代理状态更新
     const { broadcastProxyState } = require('../websocket-server');

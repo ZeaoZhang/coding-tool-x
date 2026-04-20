@@ -21,6 +21,7 @@ const {
   getChannels,
   getEnabledChannels,
   applyChannelToSettings,
+  markChannelAsRecentlyUsed,
   getEffectiveApiKeyCandidates
 } = require('../services/opencode-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
@@ -218,7 +219,9 @@ router.post('/start', async (req, res) => {
     }
 
     const { channels: allChannels } = getChannels();
-    const currentChannel = findActiveChannelFromNativeConfig(allChannels) || enabledChannels[0];
+    let currentChannel = findActiveChannelFromNativeConfig(allChannels) || enabledChannels[0];
+
+    currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
 
     // 2. 保存当前激活渠道ID
     saveActiveChannelId(currentChannel.id);
@@ -285,7 +288,9 @@ router.post('/start', async (req, res) => {
     // 5. 广播状态更新
     const { broadcastProxyState } = require('../websocket-server');
     const updatedStatus = getOpenCodeProxyStatus();
-    broadcastProxyState('opencode', updatedStatus, currentChannel, allChannels);
+    const { channels: latestChannels } = getChannels();
+    const activeChannel = latestChannels.find(channel => channel.id === currentChannel.id) || currentChannel;
+    broadcastProxyState('opencode', updatedStatus, activeChannel, latestChannels);
 
     res.json({
       success: true,

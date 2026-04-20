@@ -621,7 +621,7 @@ function deleteSession(sessionId) {
  * @param {string} sessionId - 原会话 ID
  * @returns {Object} Fork 结果 { newSessionId, forkedFrom }
  */
-function forkSession(sessionId) {
+function forkSession(sessionId, options = {}) {
   const sourceFile = findSessionFileById(sessionId);
 
   if (!sourceFile) {
@@ -629,7 +629,11 @@ function forkSession(sessionId) {
   }
 
   // 读取原会话文件内容
-  const content = fs.readFileSync(sourceFile.filePath, 'utf8');
+  const originalContent = fs.readFileSync(sourceFile.filePath, 'utf8');
+  const content = sliceCodexContentByUserMessage(
+    originalContent,
+    options.afterUserMessageNumber
+  );
 
   // 生成新的 session ID (使用 crypto.randomUUID 生成 v4 UUID)
   const crypto = require('crypto');
@@ -664,13 +668,19 @@ function forkSession(sessionId) {
   const forkRelations = getForkRelations();
   forkRelations[newSessionId] = sessionId;
   saveForkRelations(forkRelations);
+  if (options.alias) {
+    const { setAlias } = require('./alias');
+    setAlias(newSessionId, options.alias);
+  }
 
   invalidateProjectAndSessionCountsCache();
   invalidateCodexSessionCaches();
   return {
     newSessionId,
     forkedFrom: sessionId,
-    newFilePath
+    newFilePath,
+    alias: options.alias || null,
+    afterUserMessageNumber: options.afterUserMessageNumber || null
   };
 }
 
@@ -801,6 +811,64 @@ function extractCodexPreviewFromResponseItem(payload = {}) {
   }
 
   return text.substring(0, 100);
+}
+
+function splitTextPreserveEol(content) {
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const hasTrailingEol = content.endsWith('\r\n') || content.endsWith('\n');
+  return {
+    lines: content.split(/\r?\n/),
+    eol,
+    hasTrailingEol
+  };
+}
+
+function joinTextPreserveEol(lines, eol, hasTrailingEol) {
+  const text = lines.join(eol);
+  return hasTrailingEol ? `${text}${eol}` : text;
+}
+
+function sliceCodexContentByUserMessage(content, afterUserMessageNumber) {
+  if (!Number.isInteger(afterUserMessageNumber) || afterUserMessageNumber <= 0) {
+    return content;
+  }
+
+  const { lines, eol, hasTrailingEol } = splitTextPreserveEol(content);
+  const keptLines = [];
+  let matchedUserMessages = 0;
+
+  for (const line of lines) {
+    if (!line.trim()) {
+      keptLines.push(line);
+      continue;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch (err) {
+      keptLines.push(line);
+      continue;
+    }
+
+    keptLines.push(line);
+
+    if (parsed?.type !== 'response_item' || !parsed?.payload) {
+      continue;
+    }
+
+    const preview = extractCodexPreviewFromResponseItem(parsed.payload);
+    if (!preview) {
+      continue;
+    }
+
+    matchedUserMessages += 1;
+    if (matchedUserMessages >= afterUserMessageNumber) {
+      return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
+    }
+  }
+
+  throw new Error(`afterUserMessageNumber ${afterUserMessageNumber} exceeds available user messages (${matchedUserMessages})`);
 }
 
 function readSessionMetaSummaryFast(filePath) {

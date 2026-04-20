@@ -143,6 +143,9 @@ describe('gemini-sessions api', () => {
       content: expect.stringContaining('思考过程'),
       model: 'gemini-2.0'
     }));
+    expect(messagesRes.body.messages.find(item => item.type === 'user')).toEqual(expect.objectContaining({
+      userMessageNumber: 1
+    }));
     expect(messagesRes.body.pagination.total).toBe(2);
   });
 
@@ -152,8 +155,14 @@ describe('gemini-sessions api', () => {
     expect(geminiSessionsService.saveSessionOrder).toHaveBeenCalledWith('hash-a', ['gem-1']);
     expect((await request(app).delete('/hash-a/gem-1')).status).toBe(200);
     expect(geminiSessionsService.deleteSession).toHaveBeenCalledWith('gem-1');
-    expect((await request(app).post('/hash-a/gem-1/fork', {})).status).toBe(200);
-    expect(geminiSessionsService.forkSession).toHaveBeenCalledWith('gem-1');
+    expect((await request(app).post('/hash-a/gem-1/fork', {
+      afterUserMessageNumber: 1,
+      alias: 'fork-alias'
+    })).status).toBe(200);
+    expect(geminiSessionsService.forkSession).toHaveBeenCalledWith('gem-1', {
+      afterUserMessageNumber: 1,
+      alias: 'fork-alias'
+    });
 
     const launched = await request(app).post('/hash-a/gem-1/launch', {});
     expect(launched.status).toBe(200);
@@ -169,5 +178,22 @@ describe('gemini-sessions api', () => {
     const app = buildApp();
     expect((await request(app).post('/hash-a/missing/launch', {})).status).toBe(404);
     expect((await request(app).post('/missing-hash/gem-1/launch', {})).status).toBe(400);
+  });
+
+  test('status and outline routes expose lightweight sync data', async () => {
+    const app = buildApp();
+
+    const statusRes = await request(app).get('/hash-a/gem-1/status');
+    const outlineRes = await request(app).get('/hash-a/gem-1/outline');
+
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body).toEqual(expect.objectContaining({
+      sessionId: 'gem-1'
+    }));
+    expect(outlineRes.status).toBe(200);
+    expect(outlineRes.body.items[0]).toEqual(expect.objectContaining({
+      userMessageNumber: 1,
+      preview: 'Question'
+    }));
   });
 });
