@@ -48,17 +48,22 @@
           </div>
 
           <aside class="toc-rail" :class="{ 'mobile-collapsed': mobileTocCollapsed }">
-            <div class="toc-header">用户目录</div>
-            <div v-if="tocItems.length === 0" class="toc-empty">暂无用户消息</div>
+            <div class="toc-header">
+              用户目录
+              <span v-if="outlineLoading" class="toc-header-hint">加载中...</span>
+            </div>
+            <div v-if="outlineLoading && tocItems.length === 0" class="toc-empty">目录加载中...</div>
+            <div v-else-if="tocItems.length === 0" class="toc-empty">暂无用户消息</div>
             <div v-else class="toc-list">
               <button
                 v-for="item in tocItems"
-                :key="item.anchorId"
+                :key="item.userMessageNumber"
                 type="button"
                 class="toc-item"
-                :class="{ active: activeTocAnchor === item.anchorId }"
+                :class="{ active: activeTocUserNumber === item.userMessageNumber }"
                 @click="jumpToTocItem(item)"
               >
+                <span class="toc-order">#{{ item.userMessageNumber }}</span>
                 <span class="toc-preview">{{ item.preview }}</span>
                 <span class="toc-time">{{ formatTocTime(item.timestamp) }}</span>
               </button>
@@ -107,7 +112,7 @@ import { NDrawer, NIcon, NTag, NSpin, NEmpty, NButton } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { Chatbubbles as ChatbubblesIcon, GitBranch as GitBranchIcon, ChevronUp as ChevronUpIcon, ArrowDown as ArrowDownIcon, Close as CloseIcon } from '@vicons/ionicons5'
 import ChatMessage from './ChatMessage.vue'
-import { getSessionMessages } from '../api/sessions'
+import { getSessionMessages, getSessionOutline, getSessionStatus } from '../api/sessions'
 
 const props = defineProps({
   show: {
@@ -136,6 +141,7 @@ const emit = defineEmits(['update:show', 'error'])
 
 const { drawerWidth } = useResponsiveDrawer(900, 800)
 const TOC_SAFETY_GAP = 12
+const PAGE_SIZE = 20
 
 const visible = computed({
   get: () => props.show,
@@ -143,7 +149,9 @@ const visible = computed({
 })
 
 const loading = ref(false)
+const outlineLoading = ref(false)
 const messages = ref([])
+const outlineItems = ref([])
 const metadata = ref({})
 const currentPage = ref(1)
 const totalMessages = ref(0)
@@ -151,13 +159,13 @@ const hasMore = ref(false)
 const messagesContainer = ref(null)
 const headerRef = ref(null)
 const showScrollButton = ref(false)
-const activeTocAnchor = ref('')
+const activeTocUserNumber = ref(null)
 const mobileTocCollapsed = ref(false)
 const pendingJumpTarget = ref(null)
-const isPreloadingAllForToc = ref(false)
 
 let scrollSyncRaf = 0
-let preloadRunToken = 0
+let statusPollTimer = null
+let lastStatusSignature = ''
 
 const sessionAnchorPrefix = computed(() => sanitizeAnchorPart(props.sessionId).slice(0, 16) || 'session')
 
@@ -171,29 +179,26 @@ const messageAnchorIds = computed(() => {
   })
 })
 
-const tocItems = computed(() => {
-  return messages.value
-    .map((message, index) => ({
-      message,
-      index,
-      anchorId: messageAnchorIds.value[index]
-    }))
-    .filter(item => item.message.type === 'user' && item.message.subtype !== 'tool_result')
-    .map(item => ({
-      messageIndex: item.index,
-      anchorId: item.anchorId,
-      preview: getUserMessagePreview(item.message),
-      timestamp: item.message.timestamp
-    }))
+const loadedUserAnchors = computed(() => {
+  const map = new Map()
+  messages.value.forEach((message, index) => {
+    if (message.type !== 'user' || !message.userMessageNumber) {
+      return
+    }
+    map.set(message.userMessageNumber, messageAnchorIds.value[index])
+  })
+  return map
 })
+
+const tocItems = computed(() => outlineItems.value)
 
 watch(tocItems, () => {
   if (!tocItems.value.length) {
-    activeTocAnchor.value = ''
+    activeTocUserNumber.value = null
     return
   }
-  if (!tocItems.value.some(item => item.anchorId === activeTocAnchor.value)) {
-    activeTocAnchor.value = tocItems.value[0].anchorId
+  if (!tocItems.value.some(item => item.userMessageNumber === activeTocUserNumber.value)) {
+    activeTocUserNumber.value = tocItems.value[0].userMessageNumber
   }
   scheduleTocSync()
 }, { deep: true })
@@ -204,8 +209,7 @@ watch(visible, (isVisible) => {
       scheduleTocSync()
     })
   } else {
-    preloadRunToken += 1
-    isPreloadingAllForToc.value = false
+    stopStatusPolling()
   }
 })
 
@@ -214,18 +218,49 @@ onBeforeUnmount(() => {
     cancelAnimationFrame(scrollSyncRaf)
     scrollSyncRaf = 0
   }
-  preloadRunToken += 1
-  isPreloadingAllForToc.value = false
+  stopStatusPolling()
 })
+
+function buildStatusSignature(status = {}) {
+  return [status.lastModified || '', status.size || 0].join(':')
+}
+
+async function loadOutline() {
+  try {
+    outlineLoading.value = true
+    const response = await getSessionOutline(props.projectName, props.sessionId, props.channel)
+    outlineItems.value = Array.isArray(response?.items) ? response.items : []
+  } catch (err) {
+    console.error('Failed to load session outline:', err)
+  } finally {
+    outlineLoading.value = false
+  }
+}
+
+async function syncSessionStatus() {
+  const status = await getSessionStatus(props.projectName, props.sessionId, props.channel)
+  lastStatusSignature = buildStatusSignature(status)
+  return status
+}
 
 async function loadMessages(page = 1, options = {}) {
   if (loading.value) return
 
-  const { skipFirstPageScroll = false } = options
+  const {
+    skipFirstPageScroll = false,
+    limitOverride = PAGE_SIZE
+  } = options
 
   try {
     loading.value = true
-    const response = await getSessionMessages(props.projectName, props.sessionId, page, 20, 'desc', props.channel)
+    const response = await getSessionMessages(
+      props.projectName,
+      props.sessionId,
+      page,
+      limitOverride,
+      'desc',
+      props.channel
+    )
     const { messages: newMessages, metadata: meta, pagination } = response
 
     if (page === 1) {
@@ -313,7 +348,13 @@ function scheduleTocSync() {
 function syncActiveTocItem() {
   const container = messagesContainer.value
   if (!container || tocItems.value.length === 0) {
-    activeTocAnchor.value = ''
+    activeTocUserNumber.value = null
+    return
+  }
+
+  const loadedNumbers = Array.from(loadedUserAnchors.value.keys()).sort((left, right) => left - right)
+  if (!loadedNumbers.length) {
+    activeTocUserNumber.value = tocItems.value[tocItems.value.length - 1]?.userMessageNumber || null
     return
   }
 
@@ -321,7 +362,7 @@ function syncActiveTocItem() {
   // the visual "top" anchor line. In that case force the TOC highlight to the last item.
   const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
   if (maxScrollTop > 0 && maxScrollTop - container.scrollTop <= 6) {
-    activeTocAnchor.value = tocItems.value[tocItems.value.length - 1].anchorId
+    activeTocUserNumber.value = loadedNumbers[loadedNumbers.length - 1]
     return
   }
 
@@ -333,7 +374,8 @@ function syncActiveTocItem() {
   let nearestAnchorAligned = null
 
   for (const item of tocItems.value) {
-    const element = getAnchorElement(item.anchorId)
+    const anchorId = loadedUserAnchors.value.get(item.userMessageNumber)
+    const element = getAnchorElement(anchorId)
     if (!element) continue
 
     const top = getElementTopInContainer(element, container)
@@ -350,16 +392,19 @@ function syncActiveTocItem() {
     }
   }
 
-  const nextActive = nearestAnchorAligned?.anchorId || firstVisible?.anchorId || tocItems.value[0].anchorId
+  const nextActive = nearestAnchorAligned?.userMessageNumber
+    || firstVisible?.userMessageNumber
+    || loadedNumbers[0]
+    || tocItems.value[0].userMessageNumber
   if (nextActive) {
-    activeTocAnchor.value = nextActive
+    activeTocUserNumber.value = nextActive
   }
 }
 
 function jumpToTocItem(item) {
-  if (!item?.anchorId) return
-  activeTocAnchor.value = item.anchorId
-  scrollToAnchor(item.anchorId, true)
+  if (!item?.userMessageNumber) return
+  activeTocUserNumber.value = item.userMessageNumber
+  jumpToTarget({ userMessageNumber: item.userMessageNumber }, { allowLoadMore: true })
 }
 
 function scrollToAnchor(anchorId, smooth = true) {
@@ -391,7 +436,9 @@ async function jumpToTarget(target, options = {}) {
     safetyCounter += 1
     const anchorId = resolveJumpAnchor(target)
     if (anchorId && scrollToAnchor(anchorId, true)) {
-      activeTocAnchor.value = anchorId
+      if (Number.isInteger(target.userMessageNumber)) {
+        activeTocUserNumber.value = target.userMessageNumber
+      }
       pendingJumpTarget.value = null
       return true
     }
@@ -417,6 +464,10 @@ function resolveJumpAnchor(target) {
     return target.anchorId
   }
 
+  if (Number.isInteger(target.userMessageNumber)) {
+    return loadedUserAnchors.value.get(target.userMessageNumber) || ''
+  }
+
   if (typeof target.messageIndex === 'number' && target.messageIndex >= 0) {
     return messageAnchorIds.value[target.messageIndex] || ''
   }
@@ -439,75 +490,131 @@ function normalizeOpenOptions(options) {
   const normalized = {
     anchorId: typeof jump.anchorId === 'string' ? jump.anchorId : '',
     messageId: jump.messageId || jump.id || '',
-    messageIndex: Number.isInteger(jump.messageIndex) ? jump.messageIndex : null
+    messageIndex: Number.isInteger(jump.messageIndex) ? jump.messageIndex : null,
+    userMessageNumber: Number.isInteger(jump.userMessageNumber) ? jump.userMessageNumber : null
   }
 
-  if (!normalized.anchorId && !normalized.messageId && normalized.messageIndex === null) {
+  if (!normalized.anchorId && !normalized.messageId && normalized.messageIndex === null && normalized.userMessageNumber === null) {
     return null
   }
 
   return normalized
 }
 
+async function reloadMessagesForLiveSync() {
+  if (loading.value) return
+
+  const container = messagesContainer.value
+  const wasNearBottom = container
+    ? (container.scrollHeight - container.scrollTop - container.clientHeight <= 40)
+    : true
+  const previousScrollTop = container?.scrollTop || 0
+  const targetPageCount = Math.max(currentPage.value, 1)
+
+  try {
+    loading.value = true
+    const pageResponses = []
+    for (let page = 1; page <= targetPageCount; page += 1) {
+      pageResponses.push(await getSessionMessages(
+        props.projectName,
+        props.sessionId,
+        page,
+        PAGE_SIZE,
+        'desc',
+        props.channel
+      ))
+    }
+
+    const nextMessages = []
+    for (let index = pageResponses.length - 1; index >= 0; index -= 1) {
+      const response = pageResponses[index]
+      const pageMessages = Array.isArray(response?.messages) ? response.messages : []
+      nextMessages.push(...pageMessages.slice().reverse())
+    }
+
+    messages.value = nextMessages
+    metadata.value = pageResponses[0]?.metadata || metadata.value
+    totalMessages.value = pageResponses[0]?.pagination?.total || nextMessages.length
+    currentPage.value = targetPageCount
+    hasMore.value = (targetPageCount * PAGE_SIZE) < totalMessages.value
+  } finally {
+    loading.value = false
+  }
+
+  await nextTick()
+  if (!container) return
+
+  if (wasNearBottom) {
+    scrollToBottom(false)
+  } else {
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
+    container.scrollTop = clamp(previousScrollTop, 0, maxTop)
+    scheduleTocSync()
+  }
+}
+
+async function checkForLiveUpdates() {
+  try {
+    const status = await getSessionStatus(props.projectName, props.sessionId, props.channel)
+    const nextSignature = buildStatusSignature(status)
+
+    if (!nextSignature) return
+
+    if (lastStatusSignature && nextSignature !== lastStatusSignature) {
+      lastStatusSignature = nextSignature
+      await Promise.all([
+        loadOutline(),
+        reloadMessagesForLiveSync()
+      ])
+      return
+    }
+
+    lastStatusSignature = nextSignature
+  } catch (err) {
+    console.error('Failed to live sync chat history:', err)
+  }
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
+}
+
+function startStatusPolling() {
+  stopStatusPolling()
+  statusPollTimer = setInterval(() => {
+    if (!visible.value) return
+    checkForLiveUpdates()
+  }, 3000)
+}
+
 function open(options) {
-  preloadRunToken += 1
-  const runToken = preloadRunToken
+  stopStatusPolling()
   pendingJumpTarget.value = normalizeOpenOptions(options)
   mobileTocCollapsed.value = false
   messages.value = []
+  outlineItems.value = []
   metadata.value = {}
   currentPage.value = 1
   totalMessages.value = 0
   hasMore.value = false
   showScrollButton.value = false
-  activeTocAnchor.value = ''
-  isPreloadingAllForToc.value = false
+  activeTocUserNumber.value = null
+  lastStatusSignature = ''
 
-  loadMessages(1, { skipFirstPageScroll: Boolean(pendingJumpTarget.value) })
-    .then(() => preloadAllMessagesForToc(runToken))
+  Promise.all([
+    loadOutline(),
+    loadMessages(1, { skipFirstPageScroll: Boolean(pendingJumpTarget.value) }),
+    syncSessionStatus()
+  ])
+    .then(() => {
+      if (visible.value) {
+        startStatusPolling()
+      }
+    })
     .catch(() => {})
-}
-
-async function preloadAllMessagesForToc(runToken) {
-  if (runToken !== preloadRunToken || isPreloadingAllForToc.value) return
-  if (!hasMore.value) return
-
-  isPreloadingAllForToc.value = true
-  let safetyCounter = 0
-
-  try {
-    while (runToken === preloadRunToken && hasMore.value) {
-      safetyCounter += 1
-      if (safetyCounter > 120) break
-
-      const beforePage = currentPage.value
-      const container = messagesContainer.value
-      const oldScrollHeight = container?.scrollHeight || 0
-      const oldScrollTop = container?.scrollTop || 0
-
-      await loadMessages(beforePage + 1)
-      await nextTick()
-
-      if (container) {
-        const newScrollHeight = container.scrollHeight
-        const delta = newScrollHeight - oldScrollHeight
-        if (delta > 0) {
-          container.scrollTop = oldScrollTop + delta
-        }
-      }
-
-      scheduleTocSync()
-
-      if (currentPage.value === beforePage) {
-        if (!hasMore.value) break
-        await new Promise(resolve => setTimeout(resolve, 80))
-      }
-    }
-  } finally {
-    if (runToken === preloadRunToken) {
-      isPreloadingAllForToc.value = false
-    }
-  }
 }
 
 function extractBackendMessageId(message) {
@@ -585,25 +692,6 @@ function getElementTopInContainer(element, container) {
 function getScrollOffset() {
   const headerHeight = headerRef.value?.offsetHeight || 0
   return headerHeight + TOC_SAFETY_GAP
-}
-
-function getUserMessagePreview(message) {
-  let text = ''
-  const content = message?.content
-
-  if (typeof content === 'string') {
-    text = content
-  } else if (Array.isArray(content)) {
-    text = content
-      .filter(item => item?.type === 'text' && item?.text)
-      .map(item => item.text)
-      .join(' ')
-  } else if (content != null) {
-    text = String(content)
-  }
-
-  const firstLine = text.split('\n').map(line => line.trim()).find(Boolean) || '（空消息）'
-  return firstLine.length > 42 ? `${firstLine.slice(0, 42)}...` : firstLine
 }
 
 function formatTocTime(timestamp) {
@@ -714,6 +802,15 @@ defineExpose({ open })
   color: var(--n-text-color-2);
   padding: 12px 14px;
   border-bottom: 1px solid var(--n-border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.toc-header-hint {
+  font-weight: 400;
+  color: var(--n-text-color-3);
 }
 
 .toc-empty {
@@ -741,6 +838,11 @@ defineExpose({ open })
   flex-direction: column;
   gap: 4px;
   color: inherit;
+}
+
+.toc-order {
+  font-size: 11px;
+  color: var(--n-text-color-3);
 }
 
 .toc-item:hover {

@@ -15,7 +15,7 @@ const {
   hasBackup,
   readEnv
 } = require('../services/gemini-settings-manager');
-const { getChannels, getEnabledChannels } = require('../services/gemini-channels');
+const { getChannels, getEnabledChannels, markChannelAsRecentlyUsed } = require('../services/gemini-channels');
 const { clearNativeOAuth } = require('../services/native-oauth-adapters');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
@@ -147,6 +147,8 @@ router.post('/start', async (req, res) => {
       });
     }
 
+    currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
+
     // 3. 保存当前激活渠道ID（用于代理模式）
     saveActiveChannelId(currentChannel.id);
     console.log(`[Gemini Proxy] Saved active channel: ${currentChannel.name} (${currentChannel.id})`);
@@ -165,7 +167,7 @@ router.post('/start', async (req, res) => {
     const { broadcastProxyState } = require('../websocket-server');
     const proxyStatus = getGeminiProxyStatus();
     const { channels: allChannels } = getChannels();
-    const activeChannel = allChannels.filter(ch => ch.enabled !== false)[0];
+    const activeChannel = allChannels.find(ch => ch.id === currentChannel.id) || currentChannel;
     broadcastProxyState('gemini', proxyStatus, activeChannel, allChannels);
 
     res.json({

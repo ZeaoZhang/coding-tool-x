@@ -268,7 +268,9 @@ describe('gemini-sessions project discovery and querying', () => {
       success: true,
       sessionId: 'forked-session-id',
       filePath: forked.filePath,
-      forkedFrom: 'source-session'
+      forkedFrom: 'source-session',
+      alias: null,
+      afterUserMessageNumber: null
     });
     expect(forkedSession).toEqual(expect.objectContaining({
       sessionId: 'forked-session-id',
@@ -280,5 +282,53 @@ describe('gemini-sessions project discovery and querying', () => {
     expect(afterDeleteCounts).toEqual({ projectCount: 1, sessionCount: 1 });
     expect(removedProject).toEqual({ success: true, projectHash });
     expect(finalCounts).toEqual({ projectCount: 0, sessionCount: 0 });
+  });
+
+  test('fork can truncate after a selected user message and assign an alias', () => {
+    const projectPath = path.join(homeDir, 'workspace', 'fork-range-app');
+    fs.mkdirSync(projectPath, { recursive: true });
+    const projectHash = hashPath(projectPath);
+
+    createGeminiSession(projectHash, 'session-2026-03-20T09-00-bbbb2222.json', {
+      sessionId: 'range-source',
+      projectHash,
+      startTime: '2026-03-20T09:00:00.000Z',
+      lastUpdated: '2026-03-20T09:05:00.000Z',
+      messages: [
+        { type: 'user', content: 'Question 1', timestamp: '2026-03-20T09:00:00.000Z' },
+        { type: 'assistant', content: 'Answer 1', timestamp: '2026-03-20T09:00:10.000Z' },
+        { type: 'user', content: 'Question 2', timestamp: '2026-03-20T09:01:00.000Z' }
+      ]
+    });
+
+    const setAliasMock = vi.fn();
+    require.cache[require.resolve('../../../src/server/services/alias')] = {
+      id: require.resolve('../../../src/server/services/alias'),
+      filename: require.resolve('../../../src/server/services/alias'),
+      loaded: true,
+      exports: { setAlias: setAliasMock, loadAliases: vi.fn(() => ({})) }
+    };
+
+    vi.spyOn(require('crypto'), 'randomUUID').mockReturnValue('range-fork-id');
+    vi.spyOn(require('crypto'), 'randomBytes').mockReturnValue(Buffer.from('abcd5678', 'hex'));
+
+    const forked = geminiSessions.forkSession('range-source', {
+      afterUserMessageNumber: 1,
+      alias: 'fork-range'
+    });
+    const forkedSession = JSON.parse(fs.readFileSync(forked.filePath, 'utf8'));
+
+    expect(forked).toEqual({
+      success: true,
+      sessionId: 'range-fork-id',
+      filePath: forked.filePath,
+      forkedFrom: 'range-source',
+      alias: 'fork-range',
+      afterUserMessageNumber: 1
+    });
+    expect(forkedSession.messages).toEqual([
+      expect.objectContaining({ type: 'user', content: 'Question 1' })
+    ]);
+    expect(setAliasMock).toHaveBeenCalledWith('range-fork-id', 'fork-range');
   });
 });

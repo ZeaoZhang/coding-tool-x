@@ -14,6 +14,24 @@ const {
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { loadAliases } = require('../services/alias');
 
+function normalizeForkOptions(body = {}) {
+  const alias = typeof body.alias === 'string' ? body.alias.trim() : '';
+  const rawNumber = body.afterUserMessageNumber;
+  const hasExplicitNumber = rawNumber !== undefined && rawNumber !== null && rawNumber !== '';
+  const parsedNumber = hasExplicitNumber ? parseInt(rawNumber, 10) : null;
+
+  if (hasExplicitNumber && (!Number.isInteger(parsedNumber) || parsedNumber <= 0)) {
+    const error = new Error('afterUserMessageNumber must be a positive integer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    afterUserMessageNumber: parsedNumber,
+    alias: alias || null
+  };
+}
+
 module.exports = (config) => {
   /**
    * GET /api/gemini/sessions/search/global?keyword=xxx
@@ -145,6 +163,65 @@ module.exports = (config) => {
     }
   });
 
+  router.get('/:projectHash/:sessionId/status', (req, res) => {
+    try {
+      if (!isGeminiInstalled()) {
+        return res.status(404).json({ error: 'Gemini CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const session = getSessionById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      res.json({
+        sessionId,
+        lastModified: session.lastUpdated || session.mtime || null,
+        size: session.size || 0
+      });
+    } catch (err) {
+      console.error('[Gemini API] Failed to get session status:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get('/:projectHash/:sessionId/outline', (req, res) => {
+    try {
+      if (!isGeminiInstalled()) {
+        return res.status(404).json({ error: 'Gemini CLI not installed' });
+      }
+
+      const { sessionId } = req.params;
+      const session = getSessionById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      let userMessageNumber = 0;
+      const items = [];
+      for (const msg of session.messages || []) {
+        if (msg.type !== 'user') continue;
+        const preview = typeof msg.content === 'string' ? msg.content.trim() : '';
+        if (!preview) continue;
+        userMessageNumber += 1;
+        items.push({
+          userMessageNumber,
+          preview: preview.length > 42 ? `${preview.slice(0, 42)}...` : preview,
+          timestamp: msg.timestamp || null
+        });
+      }
+
+      res.json({
+        sessionId,
+        items
+      });
+    } catch (err) {
+      console.error('[Gemini API] Failed to get session outline:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /**
    * GET /api/gemini/sessions/:projectHash/:sessionId/messages
    * 获取会话的消息列表
@@ -167,14 +244,17 @@ module.exports = (config) => {
       // 转换消息格式为前端期望的格式
       const convertedMessages = [];
 
+      let userMessageNumber = 0;
       for (const msg of session.messages || []) {
         // 用户消息
         if (msg.type === 'user') {
+          userMessageNumber += 1;
           convertedMessages.push({
             type: 'user',
             content: msg.content || '[空消息]',
             timestamp: msg.timestamp,
-            model: null
+            model: null,
+            userMessageNumber
           });
         }
         // Gemini 助手消息（type 是 'gemini' 而不是 'assistant'）
@@ -321,12 +401,12 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const result = forkSession(sessionId);
+      const result = forkSession(sessionId, normalizeForkOptions(req.body));
 
       res.json(result);
     } catch (err) {
       console.error('[Gemini API] Failed to fork session:', err);
-      res.status(500).json({ error: err.message });
+      res.status(err.statusCode || 500).json({ error: err.message });
     }
   });
 

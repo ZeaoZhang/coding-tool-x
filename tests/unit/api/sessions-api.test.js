@@ -244,14 +244,20 @@ describe('sessions api create and mutate routes', () => {
       order: ['b', 'a']
     });
     const deleteRes = await request(app).delete('/demo-project/session-1');
-    const forkRes = await request(app).post('/demo-project/session-1/fork', {});
+    const forkRes = await request(app).post('/demo-project/session-1/fork', {
+      afterUserMessageNumber: 2,
+      alias: 'fork-alias'
+    });
 
     expect(orderRes.status).toBe(200);
     expect(sessionsService.saveSessionOrder).toHaveBeenCalledWith('demo-project', ['b', 'a']);
     expect(deleteRes.status).toBe(200);
     expect(sessionsService.deleteSession).toHaveBeenCalledWith({ feature: 'test' }, 'demo-project', 'session-1');
     expect(forkRes.status).toBe(200);
-    expect(sessionsService.forkSession).toHaveBeenCalledWith({ feature: 'test' }, 'demo-project', 'session-1');
+    expect(sessionsService.forkSession).toHaveBeenCalledWith({ feature: 'test' }, 'demo-project', 'session-1', {
+      afterUserMessageNumber: 2,
+      alias: 'fork-alias'
+    });
   });
 });
 
@@ -332,8 +338,40 @@ describe('sessions api messages and launch routes', () => {
     }));
     expect(res.body.messages[1]).toEqual(expect.objectContaining({
       type: 'user',
-      content: 'Question text'
+      content: 'Question text',
+      userMessageNumber: 1
     }));
+  });
+
+  test('returns lightweight session status and outline data', async () => {
+    const projectPath = path.join(testDir, 'projects', 'demo-project');
+    const sessionsDir = path.join(projectPath, '.claude', 'sessions');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionsDir, 'session-1.jsonl'),
+      [
+        JSON.stringify({ type: 'summary', summary: 'Session summary' }),
+        JSON.stringify({ type: 'user', message: { content: 'First question' }, timestamp: '2025-01-01T00:00:00.000Z' }),
+        JSON.stringify({ type: 'assistant', message: { content: 'First answer' }, timestamp: '2025-01-01T00:00:01.000Z' }),
+        JSON.stringify({ type: 'user', message: { content: 'Second question' }, timestamp: '2025-01-01T00:00:02.000Z' })
+      ].join('\n') + '\n',
+      'utf8'
+    );
+
+    const app = buildApp();
+    const statusRes = await request(app).get('/demo-project/session-1/status');
+    const outlineRes = await request(app).get('/demo-project/session-1/outline');
+
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body).toEqual(expect.objectContaining({
+      sessionId: 'session-1',
+      size: expect.any(Number)
+    }));
+    expect(outlineRes.status).toBe(200);
+    expect(outlineRes.body.items).toEqual([
+      expect.objectContaining({ userMessageNumber: 1, preview: 'First question' }),
+      expect.objectContaining({ userMessageNumber: 2, preview: 'Second question' })
+    ]);
   });
 
   test('launch route copies global sessions into project directory and returns copy command', async () => {

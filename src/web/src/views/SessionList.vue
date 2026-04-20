@@ -264,6 +264,34 @@
       </template>
     </n-modal>
 
+    <n-modal v-model:show="showForkDialog" preset="dialog" title="Fork 对话">
+      <n-space vertical :size="14">
+        <n-text depth="3">
+          可选择从第几条用户消息后开始 Fork；不选则默认保留完整上下文。
+        </n-text>
+        <n-select
+          v-model:value="selectedForkPoint"
+          :options="forkPointOptions"
+          :loading="forkOptionsLoading"
+          clearable
+          placeholder="选择 Fork 起点（默认完整会话）"
+        />
+        <n-input
+          v-model:value="forkAlias"
+          placeholder="输入新会话别名（可选）"
+          maxlength="120"
+        />
+      </n-space>
+      <template #action>
+        <n-space>
+          <n-button :disabled="forking" @click="closeForkDialog">取消</n-button>
+          <n-button type="primary" :loading="forking" @click="confirmFork">
+            确认 Fork
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!-- Search Results Dialog -->
     <n-modal v-model:show="showSearchResults" preset="card" title="搜索结果" style="width: 1200px;">
       <div v-if="searchResults" style="max-height: 70vh; overflow-y: auto;">
@@ -319,7 +347,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NButton, NIcon, NH2, NText, NInput, NSpin, NAlert, NEmpty,
-  NTag, NSpace, NModal, NTooltip, NCheckbox
+  NTag, NSpace, NModal, NTooltip, NCheckbox, NSelect
 } from 'naive-ui'
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
@@ -330,7 +358,7 @@ import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
-import { searchSessions as searchSessionsApi, copySessionLaunchCommand } from '../api/sessions'
+import { searchSessions as searchSessionsApi, copySessionLaunchCommand, getSessionOutline } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 
 const props = defineProps({
@@ -351,6 +379,7 @@ const resolvedProjectName = ref(props.projectName)
 const effectiveProjectName = computed(() => resolvedProjectName.value || props.projectName)
 
 const searchQuery = ref('')
+const FULL_FORK_POINT = '__full__'
 const showAliasDialog = ref(false)
 const editingSession = ref(null)
 const editingAlias = ref('')
@@ -363,6 +392,13 @@ const searching = ref(false)
 const selectionMode = ref(false)
 const selectedSessionIds = ref([])
 const batchDeleting = ref(false)
+const showForkDialog = ref(false)
+const editingForkSession = ref(null)
+const forkAlias = ref('')
+const selectedForkPoint = ref(FULL_FORK_POINT)
+const forkOptionsLoading = ref(false)
+const forking = ref(false)
+const forkPointOptions = ref([])
 
 // Chat history drawer state
 const showChatHistory = ref(false)
@@ -550,6 +586,16 @@ async function confirmAlias() {
   }
 }
 
+function closeForkDialog() {
+  showForkDialog.value = false
+  editingForkSession.value = null
+  forkAlias.value = ''
+  selectedForkPoint.value = FULL_FORK_POINT
+  forkPointOptions.value = []
+  forkOptionsLoading.value = false
+  forking.value = false
+}
+
 async function handleFork(sessionId) {
   if (currentChannel.value === 'opencode') {
     message.warning('OpenCode 当前不支持该 Fork 操作')
@@ -557,10 +603,54 @@ async function handleFork(sessionId) {
   }
 
   try {
-    await store.forkSession(sessionId)
+    const session = orderedSessions.value.find(item => item.sessionId === sessionId)
+    editingForkSession.value = session || { sessionId }
+    forkAlias.value = ''
+    selectedForkPoint.value = FULL_FORK_POINT
+    forkPointOptions.value = [
+      {
+        label: '完整会话末尾（保留全部消息）',
+        value: FULL_FORK_POINT
+      }
+    ]
+    showForkDialog.value = true
+    forkOptionsLoading.value = true
+
+    const outline = await getSessionOutline(effectiveProjectName.value, sessionId, currentChannel.value)
+    const items = Array.isArray(outline?.items) ? outline.items : []
+    forkPointOptions.value = [
+      {
+        label: '完整会话末尾（保留全部消息）',
+        value: FULL_FORK_POINT
+      },
+      ...items.map(item => ({
+        label: `第 ${item.userMessageNumber} 条用户消息后 · ${item.preview}`,
+        value: item.userMessageNumber
+      }))
+    ]
+  } catch (err) {
+    message.error('加载 Fork 位置失败: ' + err.message)
+    closeForkDialog()
+  } finally {
+    forkOptionsLoading.value = false
+  }
+}
+
+async function confirmFork() {
+  if (!editingForkSession.value) return
+
+  try {
+    forking.value = true
+    await store.forkSession(editingForkSession.value.sessionId, {
+      afterUserMessageNumber: selectedForkPoint.value === FULL_FORK_POINT ? null : selectedForkPoint.value,
+      alias: forkAlias.value?.trim() || undefined
+    })
     message.success('Fork 成功!')
+    closeForkDialog()
   } catch (err) {
     message.error('Fork 失败: ' + err.message)
+  } finally {
+    forking.value = false
   }
 }
 

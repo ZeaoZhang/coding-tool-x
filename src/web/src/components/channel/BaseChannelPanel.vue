@@ -16,39 +16,27 @@
           </template>
         </n-empty>
       </div>
-      <draggable
-        v-else
-        v-model="state.channels"
-        item-key="id"
-        class="channels-list"
-        v-bind="dragOptions"
-        ghost-class="ghost"
-        chosen-class="chosen"
-        drag-class="drag"
-        animation="200"
-        @end="actions.handleDragEnd"
-      >
-        <template #item="{ element }">
-          <ChannelCard
-            :key="element.id"
-            :channel="element"
-            :collapsed="state.collapsed[element.id]"
-            :header-tags="config.getHeaderTags(element, helpers)"
-            :info-rows="config.buildInfoRows(element, helpers)"
-            :meta="buildMeta(element)"
-            :show-apply-button="config.showApplyButton"
-            :channel-type="config.type"
-            :test-fn="config.testFn"
-            :toggling="!!state.toggling[element.id]"
-            @toggle-collapse="actions.toggleCollapse(element.id)"
-            @apply="actions.handleApplyToSettings(element)"
-            @edit="actions.handleEdit(element)"
-            @delete="actions.handleDelete(element.id)"
-            @toggle-enabled="value => actions.handleToggleEnabled(element, value)"
-            @open-website="url => emit('open-website', url)"
-          />
-        </template>
-      </draggable>
+      <div v-else class="channels-list">
+        <ChannelCard
+          v-for="element in state.channels"
+          :key="element.id"
+          :channel="element"
+          :collapsed="state.collapsed[element.id]"
+          :header-tags="config.getHeaderTags(element, helpers)"
+          :info-rows="config.buildInfoRows(element, helpers)"
+          :meta="buildMeta(element)"
+          :show-apply-button="config.showApplyButton"
+          :channel-type="config.type"
+          :test-fn="config.testFn"
+          :toggling="!!state.toggling[element.id]"
+          @toggle-collapse="actions.toggleCollapse(element.id)"
+          @apply="actions.handleApplyToSettings(element)"
+          @edit="actions.handleEdit(element)"
+          @delete="actions.handleDelete(element.id)"
+          @toggle-enabled="value => actions.handleToggleEnabled(element, value)"
+          @open-website="url => emit('open-website', url)"
+        />
+      </div>
     </div>
 
     <n-modal
@@ -222,7 +210,6 @@ import {
   NSpace
 } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
-import draggable from 'vuedraggable'
 import ChannelCard from './ChannelCard.vue'
 import ModelRedirectEditor from './ModelRedirectEditor.vue'
 import channelPanelFactories from './channelPanelFactories'
@@ -242,14 +229,6 @@ const configFactory = channelPanelFactories[props.type] || channelPanelFactories
 const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
-const dragOptions = {
-  // Keep channel cards reorder-only inside the panel list.
-  group: { name: `${config.type}-channels`, pull: false, put: false },
-  forceFallback: true,
-  fallbackOnBody: false,
-  fallbackTolerance: 4,
-  scroll: true
-}
 
 // 监听对话框打开，自动获取模型列表
 watch(() => state.showDialog, async (newVal) => {

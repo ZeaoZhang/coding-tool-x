@@ -18,6 +18,7 @@ let hasBackupMock;
 let readEnvMock;
 let getChannelsMock;
 let getEnabledChannelsMock;
+let markChannelAsRecentlyUsedMock;
 let applyChannelToSettingsMock;
 let clearNativeOAuthMock;
 let broadcastProxyStateMock;
@@ -115,6 +116,15 @@ beforeEach(() => {
   }));
   getChannelsMock = vi.fn(() => ({ channels }));
   getEnabledChannelsMock = vi.fn(() => channels.filter((channel) => channel.enabled !== false));
+  markChannelAsRecentlyUsedMock = vi.fn((channelId) => {
+    const index = channels.findIndex((channel) => channel.id === channelId);
+    if (index === -1) return null;
+    channels[index] = {
+      ...channels[index],
+      updatedAt: channels[index].updatedAt + 1000
+    };
+    return channels[index];
+  });
   applyChannelToSettingsMock = vi.fn();
   clearNativeOAuthMock = vi.fn();
   broadcastProxyStateMock = vi.fn();
@@ -153,6 +163,7 @@ beforeEach(() => {
     exports: {
       getChannels: getChannelsMock,
       getEnabledChannels: getEnabledChannelsMock,
+      markChannelAsRecentlyUsed: markChannelAsRecentlyUsedMock,
       applyChannelToSettings: applyChannelToSettingsMock
     }
   };
@@ -243,6 +254,7 @@ describe('gemini proxy routes', () => {
     expect(missingConfig.status).toBe(400);
     expect(missingChannels.status).toBe(400);
     expect(started.status).toBe(200);
+    expect(markChannelAsRecentlyUsedMock).toHaveBeenCalledWith('gem-2');
     expect(clearNativeOAuthMock).toHaveBeenCalledWith('gemini');
     expect(setProxyConfigMock).toHaveBeenCalledWith(22002);
     expect(started.body.activeChannel).toEqual(expect.objectContaining({
@@ -252,7 +264,7 @@ describe('gemini proxy routes', () => {
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'state', 'gemini-active.json'), 'utf8'))).toEqual({
       activeChannelId: 'gem-2'
     });
-    expect(broadcastProxyStateMock).toHaveBeenCalledWith('gemini', { running: false, port: null }, channels[0], channels);
+    expect(broadcastProxyStateMock).toHaveBeenCalledWith('gemini', { running: false, port: null }, channels[1], channels);
   });
 
   test('stop deletes backup, restores active channel, and removes state file', async () => {

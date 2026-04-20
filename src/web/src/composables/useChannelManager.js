@@ -127,7 +127,7 @@ export default function useChannelManager(config) {
   async function applyChannelOrder() {
     try {
       if (state.channels.length > 0) {
-        // 按更新时间排序（最新的在前）
+        // 渠道列表只保留滚动浏览，新增/新启用的渠道依赖 updatedAt 自动置前。
         const sorted = [...state.channels].sort((a, b) => {
           const aTime = a.updatedAt || a.createdAt || 0
           const bTime = b.updatedAt || b.createdAt || 0
@@ -143,15 +143,6 @@ export default function useChannelManager(config) {
       }
     } catch (error) {
       console.error('Failed to apply channel order:', error)
-    }
-  }
-
-  async function saveOrder() {
-    try {
-      const order = state.channels.map(ch => ch.id)
-      await updateNestedUIConfig('channelOrder', config.storageKeys.orderConfigKey, order)
-    } catch (error) {
-      console.error('Failed to save channel order:', error)
     }
   }
 
@@ -356,26 +347,6 @@ export default function useChannelManager(config) {
     }
   }
 
-  async function handleDragEnd(event) {
-    // 拖拽改变顺序时，更新被移动渠道的 updatedAt
-    // 这样它会自动按更新时间重新排序
-    if (event && event.newIndex !== event.oldIndex) {
-      const movedChannel = state.channels[event.newIndex]
-      if (movedChannel) {
-        try {
-          // 更新渠道的 updatedAt 时间戳
-          await config.api.update(movedChannel.id, {
-            ...movedChannel,
-            updatedAt: Date.now()
-          })
-          await loadChannels()
-        } catch (error) {
-          console.error('Failed to update channel order:', error)
-        }
-      }
-    }
-  }
-
   Promise.all([loadChannels(), loadCollapseSettings()])
 
   // 清理 watch
@@ -397,8 +368,7 @@ export default function useChannelManager(config) {
       handleDelete,
       handleToggleEnabled,
       handleApplyToSettings,
-      handleResetHealth,
-      handleDragEnd
+      handleResetHealth
     }
   }
 }

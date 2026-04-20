@@ -86,6 +86,90 @@ function saveForkRelations(relations) {
   fs.writeFileSync(relationsFile, JSON.stringify(relations, null, 2), 'utf8');
 }
 
+function invalidateSessionResultCache(projectName) {
+  if (!projectName) return;
+  globalCache.delete(`${CacheKeys.SESSIONS}${projectName}`);
+}
+
+function getClaudeForkMessageText(content) {
+  if (typeof content === 'string') {
+    return content === 'Warmup' ? '' : content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  const parts = [];
+  for (const item of content) {
+    if (item?.type === 'text' && item.text) {
+      parts.push(item.text);
+    } else if (item?.type === 'image') {
+      parts.push('[图片]');
+    }
+  }
+
+  return parts.join('\n\n').trim();
+}
+
+function splitTextPreserveEol(content) {
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const hasTrailingEol = content.endsWith('\r\n') || content.endsWith('\n');
+  return {
+    lines: content.split(/\r?\n/),
+    eol,
+    hasTrailingEol
+  };
+}
+
+function joinTextPreserveEol(lines, eol, hasTrailingEol) {
+  const text = lines.join(eol);
+  return hasTrailingEol ? `${text}${eol}` : text;
+}
+
+function sliceClaudeSessionContentByUserMessage(content, afterUserMessageNumber) {
+  if (!Number.isInteger(afterUserMessageNumber) || afterUserMessageNumber <= 0) {
+    return content;
+  }
+
+  const { lines, eol, hasTrailingEol } = splitTextPreserveEol(content);
+  const keptLines = [];
+  let matchedUserMessages = 0;
+
+  for (const line of lines) {
+    if (!line.trim()) {
+      keptLines.push(line);
+      continue;
+    }
+
+    let json;
+    try {
+      json = JSON.parse(line);
+    } catch (err) {
+      keptLines.push(line);
+      continue;
+    }
+
+    keptLines.push(line);
+
+    if (json.type !== 'user') {
+      continue;
+    }
+
+    const userText = getClaudeForkMessageText(json.message?.content);
+    if (!userText) {
+      continue;
+    }
+
+    matchedUserMessages += 1;
+    if (matchedUserMessages >= afterUserMessageNumber) {
+      return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
+    }
+  }
+
+  throw new Error(`afterUserMessageNumber ${afterUserMessageNumber} exceeds available user messages (${matchedUserMessages})`);
+}
+
 // Get all projects with stats (async version)
 async function getProjects(config) {
   const projectsDir = config.projectsDir;
@@ -585,11 +669,12 @@ function deleteSession(config, projectName, sessionId) {
 
   fs.unlinkSync(sessionFile);
   invalidateProjectsCache(config);
+  invalidateSessionResultCache(projectName);
   return { success: true };
 }
 
 // Fork a session
-function forkSession(config, projectName, sessionId) {
+function forkSession(config, projectName, sessionId, options = {}) {
   const projectDir = path.join(config.projectsDir, projectName);
   const sessionFile = path.join(projectDir, sessionId + '.jsonl');
 
@@ -598,7 +683,11 @@ function forkSession(config, projectName, sessionId) {
   }
 
   // Read the original session
-  const content = fs.readFileSync(sessionFile, 'utf8');
+  const originalContent = fs.readFileSync(sessionFile, 'utf8');
+  const content = sliceClaudeSessionContentByUserMessage(
+    originalContent,
+    options.afterUserMessageNumber
+  );
 
   // Generate new session ID (UUID v4)
   const newSessionId = crypto.randomUUID();
@@ -611,9 +700,19 @@ function forkSession(config, projectName, sessionId) {
   const forkRelations = getForkRelations();
   forkRelations[newSessionId] = sessionId;
   saveForkRelations(forkRelations);
+  if (options.alias) {
+    const { setAlias } = require('./alias');
+    setAlias(newSessionId, options.alias);
+  }
   invalidateProjectsCache(config);
+  invalidateSessionResultCache(projectName);
 
-  return { newSessionId, forkedFrom: sessionId };
+  return {
+    newSessionId,
+    forkedFrom: sessionId,
+    alias: options.alias || null,
+    afterUserMessageNumber: options.afterUserMessageNumber || null
+  };
 }
 
 // Get session order for a project

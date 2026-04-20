@@ -272,6 +272,10 @@ function getEnabledChannels() {
   return data.channels.filter(c => c.enabled !== false);
 }
 
+function markChannelAsRecentlyUsed(channelId) {
+  return updateChannel(channelId, {});
+}
+
 // 保存渠道顺序
 function saveChannelOrder(order) {
   const data = loadChannels();
@@ -442,6 +446,7 @@ module.exports = {
   getChannels,
   createChannel,
   updateChannel,
+  markChannelAsRecentlyUsed,
   deleteChannel,
   getEnabledChannels,
   saveChannelOrder,

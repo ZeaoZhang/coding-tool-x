@@ -604,7 +604,7 @@ function saveSessionOrder(projectHash, order) {
  * @param {string} sessionId - 原会话 ID
  * @returns {Object} Fork 结果
  */
-function forkSession(sessionId) {
+function forkSession(sessionId, options = {}) {
   const allSessions = getAllSessions();
   const sourceSession = allSessions.find(s => s.sessionId === sessionId);
 
@@ -616,6 +616,27 @@ function forkSession(sessionId) {
 
   if (!fullSession) {
     throw new Error('Failed to read source session');
+  }
+
+  const sourceMessages = Array.isArray(fullSession.messages) ? fullSession.messages : [];
+  let truncatedMessages = sourceMessages;
+  if (Number.isInteger(options.afterUserMessageNumber) && options.afterUserMessageNumber > 0) {
+    let matchedUserMessages = 0;
+    let stopIndex = -1;
+    for (let index = 0; index < sourceMessages.length; index += 1) {
+      if (sourceMessages[index]?.type !== 'user') continue;
+      matchedUserMessages += 1;
+      if (matchedUserMessages >= options.afterUserMessageNumber) {
+        stopIndex = index;
+        break;
+      }
+    }
+
+    if (stopIndex < 0) {
+      throw new Error(`afterUserMessageNumber ${options.afterUserMessageNumber} exceeds available user messages (${matchedUserMessages})`);
+    }
+
+    truncatedMessages = sourceMessages.slice(0, stopIndex + 1);
   }
 
   // 生成新的会话 ID
@@ -630,7 +651,8 @@ function forkSession(sessionId) {
     sessionId: newSessionId,
     startTime: new Date().toISOString(),
     lastUpdated: new Date().toISOString(),
-    forkedFrom: sessionId
+    forkedFrom: sessionId,
+    messages: truncatedMessages
   };
 
   // 写入新文件
@@ -639,12 +661,18 @@ function forkSession(sessionId) {
 
   try {
     fs.writeFileSync(newFilePath, JSON.stringify(newSession, null, 2), 'utf8');
+    if (options.alias) {
+      const { setAlias } = require('./alias');
+      setAlias(newSessionId, options.alias);
+    }
 
     return {
       success: true,
       sessionId: newSessionId,
       filePath: newFilePath,
-      forkedFrom: sessionId
+      forkedFrom: sessionId,
+      alias: options.alias || null,
+      afterUserMessageNumber: options.afterUserMessageNumber || null
     };
   } catch (err) {
     throw new Error('Failed to fork session: ' + err.message);

@@ -301,6 +301,10 @@ function updateChannel(id, updates) {
   return service.updateChannel(id, updates);
 }
 
+function markChannelAsRecentlyUsed(id) {
+  return service.updateChannel(id, {});
+}
+
 function deleteChannel(id) {
   return service.deleteChannel(id);
 }
@@ -323,6 +327,7 @@ module.exports = {
   getCurrentSettings,
   createChannel,
   updateChannel,
+  markChannelAsRecentlyUsed,
   deleteChannel,
   applyChannelToSettings,
   getBestChannelForRestore,

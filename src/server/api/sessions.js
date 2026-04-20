@@ -9,6 +9,115 @@ const { broadcastLog } = require('../websocket-server');
 const { NATIVE_PATHS } = require('../../config/paths');
 const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
 
+function resolveClaudeSessionFile(projectName, sessionId, fullPath) {
+  const possiblePaths = [
+    path.join(fullPath, '.claude', 'sessions', sessionId + '.jsonl'),
+    path.join(CLAUDE_PROJECTS_DIR, projectName, sessionId + '.jsonl')
+  ];
+
+  for (const testPath of possiblePaths) {
+    if (fs.existsSync(testPath)) {
+      return {
+        sessionFile: testPath,
+        triedPaths: possiblePaths
+      };
+    }
+  }
+
+  return {
+    sessionFile: null,
+    triedPaths: possiblePaths
+  };
+}
+
+function getClaudeUserText(content) {
+  if (typeof content === 'string') {
+    return content === 'Warmup' ? '' : content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  const parts = [];
+  for (const item of content) {
+    if (item?.type === 'text' && item.text) {
+      parts.push(item.text);
+    } else if (item?.type === 'image') {
+      parts.push('[图片]');
+    }
+  }
+
+  return parts.join('\n\n').trim();
+}
+
+function buildOutlinePreview(text = '') {
+  const firstLine = String(text)
+    .split('\n')
+    .map(line => line.trim())
+    .find(Boolean) || '（空消息）';
+  return firstLine.length > 42 ? `${firstLine.slice(0, 42)}...` : firstLine;
+}
+
+async function readClaudeSessionOutline(sessionFile) {
+  const outline = [];
+  const stream = fs.createReadStream(sessionFile, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  let userMessageNumber = 0;
+
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+
+      let json;
+      try {
+        json = JSON.parse(line);
+      } catch (err) {
+        continue;
+      }
+
+      if (json.type !== 'user') {
+        continue;
+      }
+
+      const userText = getClaudeUserText(json.message?.content);
+      if (!userText) {
+        continue;
+      }
+
+      userMessageNumber += 1;
+      outline.push({
+        userMessageNumber,
+        preview: buildOutlinePreview(userText),
+        timestamp: json.timestamp || null
+      });
+    }
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
+
+  return outline;
+}
+
+function normalizeForkOptions(body = {}) {
+  const alias = typeof body.alias === 'string' ? body.alias.trim() : '';
+  const rawNumber = body.afterUserMessageNumber;
+  const hasExplicitNumber = rawNumber !== undefined && rawNumber !== null && rawNumber !== '';
+  const parsedNumber = hasExplicitNumber ? parseInt(rawNumber, 10) : null;
+
+  if (hasExplicitNumber && (!Number.isInteger(parsedNumber) || parsedNumber <= 0)) {
+    const error = new Error('afterUserMessageNumber must be a positive integer');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    afterUserMessageNumber: parsedNumber,
+    alias: alias || null
+  };
+}
+
 module.exports = (config) => {
   // GET /api/sessions/search/global - Search sessions across all projects
   router.get('/search/global', async (req, res) => {
@@ -136,11 +245,11 @@ module.exports = (config) => {
   router.post('/:projectName/:sessionId/fork', (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
-      const result = forkSession(config, projectName, sessionId);
+      const result = forkSession(config, projectName, sessionId, normalizeForkOptions(req.body));
       res.json(result);
     } catch (error) {
       console.error('Error forking session:', error);
-      res.status(500).json({ error: error.message });
+      res.status(error.statusCode || 500).json({ error: error.message });
     }
   });
 
@@ -274,6 +383,57 @@ module.exports = (config) => {
     }
   });
 
+  // GET /api/sessions/:projectName/:sessionId/status - Lightweight status for live sync
+  router.get('/:projectName/:sessionId/status', async (req, res) => {
+    try {
+      const { projectName, sessionId } = req.params;
+      const { fullPath } = parseRealProjectPath(projectName);
+      const { sessionFile, triedPaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
+
+      if (!sessionFile) {
+        return res.status(404).json({
+          error: `Session file not found: ${sessionId}`,
+          triedPaths
+        });
+      }
+
+      const stats = await fs.promises.stat(sessionFile);
+      res.json({
+        sessionId,
+        lastModified: stats.mtime.toISOString(),
+        size: stats.size
+      });
+    } catch (error) {
+      console.error('Error fetching session status:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/sessions/:projectName/:sessionId/outline - Lightweight user outline for TOC and forking
+  router.get('/:projectName/:sessionId/outline', async (req, res) => {
+    try {
+      const { projectName, sessionId } = req.params;
+      const { fullPath } = parseRealProjectPath(projectName);
+      const { sessionFile, triedPaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
+
+      if (!sessionFile) {
+        return res.status(404).json({
+          error: `Session file not found: ${sessionId}`,
+          triedPaths
+        });
+      }
+
+      const outline = await readClaudeSessionOutline(sessionFile);
+      res.json({
+        sessionId,
+        items: outline
+      });
+    } catch (error) {
+      console.error('Error fetching session outline:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // GET /api/sessions/:projectName/:sessionId/messages - Get session messages with pagination
   router.get('/:projectName/:sessionId/messages', async (req, res) => {
     try {
@@ -290,20 +450,12 @@ module.exports = (config) => {
       console.log(`[Messages API] Parsed project path: ${fullPath}`);
 
       // Try to find session file
-      let sessionFile = null;
-      const possiblePaths = [
-        path.join(fullPath, '.claude', 'sessions', sessionId + '.jsonl'),
-        path.join(CLAUDE_PROJECTS_DIR, projectName, sessionId + '.jsonl')
-      ];
+      const { sessionFile, triedPaths: possiblePaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
 
       console.log(`[Messages API] Trying paths:`, possiblePaths);
 
-      for (const testPath of possiblePaths) {
-        if (fs.existsSync(testPath)) {
-          sessionFile = testPath;
-          console.log(`[Messages API] Found session file: ${sessionFile}`);
-          break;
-        }
+      if (sessionFile) {
+        console.log(`[Messages API] Found session file: ${sessionFile}`);
       }
 
       if (!sessionFile) {
@@ -330,6 +482,7 @@ module.exports = (config) => {
       const stream = fs.createReadStream(sessionFile, { encoding: 'utf8' });
       const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
       let lastAssistantModel = null;
+      let userMessageNumber = 0;
 
       try {
         for await (const line of rl) {
@@ -361,6 +514,7 @@ module.exports = (config) => {
               let deferredToolResultContent = '';
 
               if (json.type === 'user') {
+                const normalizedUserText = getClaudeUserText(json.message?.content);
                 if (typeof json.message?.content === 'string') {
                   message.content = json.message.content;
                 } else if (Array.isArray(json.message?.content)) {
@@ -387,6 +541,11 @@ module.exports = (config) => {
                   if (toolResultParts.length > 0) {
                     deferredToolResultContent = toolResultParts.join('\n\n');
                   }
+                }
+
+                if (normalizedUserText) {
+                  userMessageNumber += 1;
+                  message.userMessageNumber = userMessageNumber;
                 }
               } else if (json.type === 'assistant') {
                 if (Array.isArray(json.message?.content)) {
