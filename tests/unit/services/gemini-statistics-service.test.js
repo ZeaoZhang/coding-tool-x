@@ -123,13 +123,13 @@ describe('gemini-statistics-service', () => {
 
   test('recordRequest normalizes tokens via normalizeUsageTokens', () => {
     const service = require(MODULE_PATH);
-    const tokens = { input: 100, output: 50, cacheRead: 20, total: 150 };
+    const tokens = { input: 100, output: 50, cached: 20, total: 150 };
     service.recordRequest({ tokens });
     expect(mockNormalizeUsageTokens).toHaveBeenCalledWith(TOOL_TYPE, tokens);
     const callArg = mockRecordRequest.mock.calls[0][0];
     expect(callArg.tokens).toHaveProperty('input');
     expect(callArg.tokens).toHaveProperty('output');
-    expect(callArg.tokens).toHaveProperty('cacheRead');
+    expect(callArg.tokens).toHaveProperty('cached', 20);
   });
 
   test('empty shared stats results in graceful defaults with 0 values', () => {

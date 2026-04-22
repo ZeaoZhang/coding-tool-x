@@ -288,7 +288,13 @@
               <n-text depth="3" style="font-size: 11px; margin-top: 4px;">开启代理后将显示请求记录</n-text>
             </div>
 
-            <div v-for="log in logsToDisplay" :key="log.id" class="log-row" :class="{ 'action-row': log.type === 'action', 'error-row': log.status === 'error', 'new-log': log.isNew }">
+            <div
+              v-for="log in logsToDisplay"
+              :key="log.id"
+              class="log-row"
+              :class="{ 'action-row': log.type === 'action', 'error-row': log.status === 'error', 'new-log': log.isNew }"
+              :title="getLogTitle(log)"
+            >
               <!-- Action 类型日志 -->
               <template v-if="log.type === 'action'">
                 <div class="action-content">
@@ -309,25 +315,25 @@
                 <div class="log-col col-channel" :class="`col-channel-${channelType}`">
                   <n-tag size="tiny" type="success">{{ log.channel }}</n-tag>
                 </div>
-                <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.input || 0 }}</div>
-                <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.output || 0 }}</div>
+                <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'input') }}</div>
+                <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'output') }}</div>
                 <template v-if="channelType === 'claude'">
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cacheCreation || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cacheRead || 0 }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cacheCreation') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cacheRead') }}</div>
                 </template>
                 <template v-else-if="channelType === 'codex'">
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.reasoning || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'reasoning') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
                 <template v-else-if="channelType === 'gemini'">
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
                 <template v-else-if="channelType === 'opencode'">
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.reasoning || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.cached || 0 }}</div>
-                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ log.tokens?.total || 0 }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'reasoning') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
                 <div class="log-col col-time" :class="`col-time-${channelType}`">{{ log.time }}</div>
               </template>
@@ -793,6 +799,31 @@ function formatStatNumber(num) {
   if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M'
   if (num >= 1000) return (num / 1000).toFixed(1) + 'K'
   return num.toString()
+}
+
+function formatLogToken(log, key) {
+  if (log?.usageMissing) {
+    return '--'
+  }
+  return log?.tokens?.[key] || 0
+}
+
+function getLogTitle(log) {
+  if (!log || log.type === 'action' || log.status === 'error') {
+    return ''
+  }
+
+  const lines = []
+  if (log.model) {
+    lines.push(`模型: ${log.model}`)
+  }
+  if (log.originalModel && log.originalModel !== log.model) {
+    lines.push(`重定向: ${log.originalModel} -> ${log.model}`)
+  }
+  if (log.usageMissing) {
+    lines.push('上游响应未返回 usage，当前无法计算 token。')
+  }
+  return lines.join('\n')
 }
 
 // 防抖调用渠道统计（避免频繁日志导致大量请求）

@@ -4,6 +4,19 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.5.11] - 2026-04-22
+
+### Added
+- **本地 HTTPS Web UI 支持** - `ctx ui` 与 `ctx ui start` 新增 `--https` 模式，支持自动准备本地 HTTPS 证书并输出对应的 HTTPS / WSS 地址，便于在浏览器通知、OAuth 与本地安全上下文场景下使用
+- **浏览器通知模式** - 通知系统新增 `browser` 模式，通过本机回环接口与 WebSocket 向前端分发浏览器通知，支持 Claude、Codex、Gemini、OpenCode 四个平台的完成事件
+
+### Fixed
+- **模型重定向后的真实模型与 Token 统计** - 修复重定向后成功日志、实时面板和分析页无法稳定识别实际模型的问题；现在会统一按“响应模型 → 重定向目标模型 → 请求目标模型 → 原始模型”的顺序识别真实模型
+- **跨渠道 usage 字段归一化** - 统一 Claude、Codex/OpenAI、Gemini、OpenCode 网关的 usage 解析与落库规则，补齐 `cacheCreation`、`cacheRead`、`cached`、`reasoning` 等字段，减少因 provider 返回格式差异导致的统计丢失
+- **分析页模型维度聚合** - 修复分析面板更容易退化成工具类型视角的问题；当前会优先按真实模型聚合请求日志与当日实时日志，能看到各模型的实际 token 使用，而不仅是四个 CLI 维度
+- **OpenAI 兼容流式 usage 捕获** - 对流式 `chat/completions` 请求自动补齐 `stream_options.include_usage`，提升 Codex 与 OpenCode 在 OpenAI 兼容渠道下的 token 可观测性
+- **Web UI 启动前静态资源自检** - 启动 UI 时会先检查 `dist/web` 是否缺失或过期，并在需要时自动重建，减少后台启动后页面空白或静态资源不一致的问题
+
 ## [3.5.10] - 2026-04-20
 
 ### Added

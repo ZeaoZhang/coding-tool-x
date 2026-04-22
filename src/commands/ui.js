@@ -10,7 +10,9 @@ async function handleUI() {
 
   // 检查是否启用 LAN 访问 (--host 标志)
   const enableHost = process.argv.includes('--host');
+  const enableHttps = process.argv.includes('--https');
   const host = enableHost ? '0.0.0.0' : '127.0.0.1';
+  const protocol = enableHttps ? 'https' : 'http';
 
   if (!isDaemon) {
     console.clear();
@@ -18,15 +20,18 @@ async function handleUI() {
     if (enableHost) {
       console.log(chalk.yellow('[WARN]  LAN 访问已启用 (--host)\n'));
     }
+    if (enableHttps) {
+      console.log(chalk.yellow('[LOCK] 已启用本地 HTTPS 模式 (--https)\n'));
+    }
   }
 
   // 从配置加载端口
   const config = loadConfig();
   const port = config.ports?.webUI || 19999;
-  const url = `http://localhost:${port}`;
+  const url = `${protocol}://localhost:${port}`;
 
   try {
-    await startServer(port, host);
+    await startServer(port, host, { useHttps: enableHttps });
 
     // 自动打开浏览器（仅非 daemon 模式）
     if (!isDaemon) {
@@ -87,7 +92,7 @@ async function handleUI() {
       console.log(chalk.gray('按 Ctrl+C 停止服务器'));
     } else {
       // Daemon 模式：保持运行
-      console.log(chalk.green(`[OK] Coding-Tool 服务已在后台启动 (端口: ${port})`));
+      console.log(chalk.green(`[OK] Coding-Tool 服务已在后台启动 (${protocol.toUpperCase()} 端口: ${port})`));
     }
 
   } catch (error) {

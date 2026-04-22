@@ -13,7 +13,7 @@ const MANAGED_HOOK_NAME = 'coding-tool-notify';
 const MANAGED_OPENCODE_PLUGIN_FILE = 'coding-tool-notify.js';
 
 function normalizeType(type) {
-  return type === 'dialog' ? 'dialog' : 'notification';
+  return type === 'dialog' || type === 'browser' ? type : 'notification';
 }
 
 function ensureParentDir(filePath) {
@@ -118,9 +118,9 @@ function removeNotifyScript() {
 function parseManagedType(input) {
   const value = String(input || '');
   const matches = [
-    value.match(/--cc-notify-type=(dialog|notification)/i),
-    value.match(/--mode=(dialog|notification)/i),
-    value.match(/MODE\s*=\s*["'](dialog|notification)["']/i)
+    value.match(/--cc-notify-type=(dialog|notification|browser)/i),
+    value.match(/--mode=(dialog|notification|browser)/i),
+    value.match(/MODE\s*=\s*["'](dialog|notification|browser)["']/i)
   ];
 
   for (const match of matches) {
@@ -446,6 +446,7 @@ const { execSync, execFileSync } = require('child_process')
 
 const FEISHU_ENABLED = ${feishuEnabled ? 'true' : 'false'}
 const FEISHU_WEBHOOK_URL = ${JSON.stringify(feishuEnabled ? feishu.webhookUrl : '')}
+const CONFIG_FILE = ${JSON.stringify(PATHS.configFile)}
 
 function readArg(name) {
   const prefix = \`\${name}=\`
@@ -507,9 +508,76 @@ function resolveMessage(source, eventType, payload) {
   return 'Claude Code 任务已完成 | 等待交互'
 }
 
+function readWebUiPort() {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+    const port = parseInt(config?.ports?.webUI, 10)
+    return Number.isFinite(port) ? port : 19999
+  } catch (error) {
+    return 19999
+  }
+}
+
+function postBrowserNotification(source, eventType, message) {
+  const payload = JSON.stringify({
+    source,
+    eventType,
+    message
+  })
+  const port = readWebUiPort()
+  const attempts = [
+    { module: https, options: { rejectUnauthorized: false } },
+    { module: http, options: {} }
+  ]
+
+  return new Promise((resolve) => {
+    const runAttempt = (index) => {
+      const current = attempts[index]
+      if (!current) {
+        resolve()
+        return
+      }
+
+      const request = current.module.request({
+        hostname: '127.0.0.1',
+        port,
+        path: '/api/hooks/browser-event',
+        method: 'POST',
+        timeout: 1500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload)
+        },
+        ...current.options
+      }, (response) => {
+        response.resume()
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          resolve()
+          return
+        }
+        runAttempt(index + 1)
+      })
+
+      request.on('error', () => runAttempt(index + 1))
+      request.on('timeout', () => {
+        request.destroy()
+        runAttempt(index + 1)
+      })
+      request.write(payload)
+      request.end()
+    }
+
+    runAttempt(0)
+  })
+}
+
 function notify(mode, message) {
   const title = 'Coding Tool'
   const platform = os.platform()
+
+  if (mode === 'browser') {
+    return
+  }
 
   try {
     if (platform === 'darwin') {
@@ -635,7 +703,11 @@ function sendFeishu(message, source) {
   const payload = readOptionalPayload()
   const message = resolveMessage(source, eventType, payload)
 
-  notify(mode === 'dialog' ? 'dialog' : 'notification', message)
+  if (mode === 'browser') {
+    await postBrowserNotification(source, eventType, message)
+  } else {
+    notify(mode, message)
+  }
   await sendFeishu(message, source)
 })().catch(() => {
   process.exit(0)
@@ -1183,6 +1255,55 @@ function normalizePlatformInput(platform = {}) {
   };
 }
 
+function resolveBrowserNotificationTitle(source = 'claude') {
+  switch (String(source || '').toLowerCase()) {
+    case 'codex':
+      return 'Codex CLI';
+    case 'gemini':
+      return 'Gemini CLI';
+    case 'opencode':
+      return 'OpenCode';
+    default:
+      return 'Claude Code';
+  }
+}
+
+function resolveBrowserNotificationUrl(source = 'claude') {
+  switch (String(source || '').toLowerCase()) {
+    case 'codex':
+      return '/codex';
+    case 'gemini':
+      return '/gemini';
+    case 'opencode':
+      return '/opencode';
+    default:
+      return '/claude';
+  }
+}
+
+function emitBrowserNotification(input = {}) {
+  const source = String(input.source || 'claude').toLowerCase();
+  const message = String(input.message || '').trim();
+  if (!message) {
+    throw createValidationError('缺少浏览器通知内容');
+  }
+
+  const payload = {
+    type: 'browser-notification',
+    id: input.id || `${source}-${Date.now()}`,
+    source,
+    eventType: String(input.eventType || '').trim(),
+    title: String(input.title || resolveBrowserNotificationTitle(source)).trim(),
+    message,
+    url: String(input.url || resolveBrowserNotificationUrl(source)).trim(),
+    timestamp: Date.now()
+  };
+
+  const { broadcastBrowserNotification } = require('../websocket-server');
+  broadcastBrowserNotification(payload);
+  return payload;
+}
+
 function saveNotificationSettings(input = {}) {
   const existingFeishu = getFeishuConfig();
   const requestedWebhookUrl = String(input?.feishu?.webhookUrl || '').trim();
@@ -1220,7 +1341,7 @@ function saveNotificationSettings(input = {}) {
 }
 
 function parseNotifyTypeMarker(command) {
-  const marker = String(command || '').match(/--cc-notify-type=(['"])?(dialog|notification)\1/i);
+  const marker = String(command || '').match(/--cc-notify-type=(['"])?(dialog|notification|browser)\1/i);
   return marker?.[2] ? normalizeType(marker[2].toLowerCase()) : null;
 }
 
@@ -1566,6 +1687,15 @@ function testNotification({ type, testFeishu, webhookUrl } = {}) {
     return sendFeishuTest(webhookUrl);
   }
 
+  if (normalizeType(type) === 'browser') {
+    emitBrowserNotification({
+      source: 'claude',
+      title: 'coding-tool-x',
+      message: '这是一条浏览器测试通知'
+    });
+    return;
+  }
+
   runSystemNotification(type || 'notification', '这是一条测试通知');
 }
 
@@ -1576,6 +1706,7 @@ module.exports = {
   saveNotificationSettings,
   saveLegacyClaudeHookSettings,
   testNotification,
+  emitBrowserNotification,
   initDefaultHooks,
   syncManagedNotificationAssets,
   getOpenCodeManagedPluginPath,
@@ -1604,6 +1735,7 @@ module.exports = {
     getOpenCodeManagedPluginPath,
     generateNotifyScript,
     generateSystemNotificationCommand,
+    emitBrowserNotification,
     parseStopHookStatus,
     shouldRepairStopHook
   }

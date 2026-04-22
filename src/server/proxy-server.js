@@ -204,7 +204,8 @@ async function startProxyServer(options = {}) {
           channel: selectedChannel.name,
           channelId: selectedChannel.id,
           startTime: Date.now(),
-          sessionId: req.sessionId || null
+          sessionId: req.sessionId || null,
+          requestModel: req.body?.model || ''
         });
 
         proxyReq.removeHeader('x-api-key');
@@ -300,6 +301,7 @@ async function startProxyServer(options = {}) {
             if (meta) {
               meta.originalModel = originalModel;
               meta.redirectedModel = redirectedModel;
+              meta.requestModel = redirectedModel;
             }
 
             // 只在重定向规则变化时打印日志（避免每次请求都打印）

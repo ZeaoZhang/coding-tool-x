@@ -178,7 +178,7 @@ function processNewLogs(logList) {
     if (processedLogIds.has(log.id)) {
       break
     }
-    if (log.type !== 'action' && log.status !== 'error') {
+    if (log.type !== 'action' && log.status !== 'error' && !log.usageMissing) {
       stats.value.requests += 1
       const totalTokens = log.tokens?.total ?? (log.tokens?.input || 0) + (log.tokens?.output || 0)
       stats.value.tokens += totalTokens

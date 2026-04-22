@@ -131,7 +131,8 @@ async function startGeminiProxyServer(options = {}) {
         channel: activeChannel.name,
         channelId: activeChannel.id,
         startTime: Date.now(),
-        modelFromUrl
+        modelFromUrl,
+        requestModel: modelFromUrl
       });
 
       proxyReq.removeHeader('authorization');
@@ -214,6 +215,7 @@ async function startGeminiProxyServer(options = {}) {
               meta.originalModel = originalModel;
               meta.redirectedModel = redirectedModel;
               meta.modelFromUrl = redirectedModel;
+              meta.requestModel = redirectedModel;
             }
 
             // 只在重定向规则变化时打印日志（避免每次请求都打印）

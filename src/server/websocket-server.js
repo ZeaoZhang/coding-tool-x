@@ -504,11 +504,28 @@ function broadcastSchedulerState(source, schedulerState) {
   }
 }
 
+function broadcastBrowserNotification(notification = {}) {
+  if (wss && wsClients.size > 0) {
+    const message = JSON.stringify({
+      type: 'browser-notification',
+      ...notification,
+      timestamp: notification.timestamp || Date.now()
+    });
+
+    wsClients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  }
+}
+
 module.exports = {
   startWebSocketServer,
   stopWebSocketServer,
   broadcastLog,
   clearAllLogs,
   broadcastProxyState,
-  broadcastSchedulerState
+  broadcastSchedulerState,
+  broadcastBrowserNotification
 };

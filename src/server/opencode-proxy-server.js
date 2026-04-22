@@ -21,7 +21,11 @@ const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-
 const { persistProxyRequestSnapshot, loadClaudeRequestTemplate } = require('./services/request-logger');
 const { probeModelAvailability, fetchModelsFromProvider } = require('./services/model-detector');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
-const { redirectModel, resolveTargetUrl } = require('./services/base/proxy-utils');
+const {
+  redirectModel,
+  resolveTargetUrl,
+  ensureOpenAiStreamUsage
+} = require('./services/base/proxy-utils');
 const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
@@ -1932,6 +1936,8 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
     tokens: {
       input: Number(usage?.input_tokens || usage?.prompt_tokens || 0),
       output: Number(usage?.output_tokens || usage?.completion_tokens || 0),
+      cacheCreation: Number(usage?.cache_creation_input_tokens || 0),
+      cacheRead: Number(usage?.cache_read_input_tokens || 0),
       cached: Number(usage?.input_tokens_details?.cached_tokens || 0),
       reasoning: Number(usage?.output_tokens_details?.reasoning_tokens || 0),
       total: Number(usage?.total_tokens || 0)
@@ -3064,6 +3070,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   }
 
   const chatResponseObject = buildOpenAiChatCompletionsObject(parsedBody, originalPayload.model);
+  const loggingUsage = buildOpenAiResponsesObject(parsedBody, originalPayload.model).usage;
   if (wantsStream) {
     sendChatCompletionsSse(res, chatResponseObject);
   } else {
@@ -3073,7 +3080,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
     requestId,
     channel,
     model: chatResponseObject.model,
-    usage: chatResponseObject.usage,
+    usage: loggingUsage,
     startTime
   });
   recordSuccess(channel.id, 'opencode');
@@ -4114,6 +4121,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   }
 
   const chatResponseObject = buildOpenAiChatCompletionsObjectFromGemini(parsedBody, targetModel);
+  const loggingUsage = buildOpenAiResponsesObjectFromGemini(parsedBody, targetModel).usage;
   if (wantsStream) {
     sendChatCompletionsSse(res, chatResponseObject);
   } else {
@@ -4123,7 +4131,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
     requestId,
     channel,
     model: chatResponseObject.model,
-    usage: chatResponseObject.usage,
+    usage: loggingUsage,
     startTime
   });
   recordSuccess(channel.id, 'opencode');
@@ -4224,9 +4232,10 @@ async function startOpenCodeProxyServer(options = {}) {
       const requestId = `opencode-${Date.now()}-${Math.random()}`;
       requestMetadata.set(req, {
         id: requestId,
-      channel: activeChannel.name,
-      channelId: activeChannel.id,
-      startTime: Date.now()
+        channel: activeChannel.name,
+        channelId: activeChannel.id,
+        startTime: Date.now(),
+        requestModel: req.body?.model || ''
       });
 
       proxyReq.removeHeader('authorization');
@@ -4313,6 +4322,8 @@ async function startOpenCodeProxyServer(options = {}) {
           }
         });
 
+        let bodyMutated = false;
+
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
           const originalModel = req.body.model;
@@ -4320,14 +4331,14 @@ async function startOpenCodeProxyServer(options = {}) {
 
           if (redirectedModel !== originalModel) {
             req.body.model = redirectedModel;
-            // 更新 rawBody 以匹配修改后的 body
-            req.rawBody = Buffer.from(JSON.stringify(req.body));
+            bodyMutated = true;
 
             // 将原始模型和重定向模型存入 metadata，用于日志记录
             const meta = requestMetadata.get(req);
             if (meta) {
               meta.originalModel = originalModel;
               meta.redirectedModel = redirectedModel;
+              meta.requestModel = redirectedModel;
             }
 
             // 只在重定向规则变化时打印日志（避免每次请求都打印）
@@ -4338,6 +4349,14 @@ async function startOpenCodeProxyServer(options = {}) {
               console.log(`[OpenCode Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
             }
           }
+        }
+
+        if (shouldParseJson(req) && isChatCompletionsPath(req.url) && ensureOpenAiStreamUsage(req.body)) {
+          bodyMutated = true;
+        }
+
+        if (bodyMutated) {
+          req.rawBody = Buffer.from(JSON.stringify(req.body));
         }
 
         const release = (() => {

@@ -21,7 +21,8 @@ vi.mock('../../../src/server/services/gemini-settings-manager', () => ({
 
 vi.mock('../../../src/config/paths', () => ({
   PATHS: {
-    notifyHook: '/tmp/test-notify-hook.js'
+    notifyHook: '/tmp/test-notify-hook.js',
+    configFile: '/tmp/test-config.json'
   },
   NATIVE_PATHS: {
     claude: { settings: '/tmp/test-claude-settings.json' },
@@ -29,6 +30,17 @@ vi.mock('../../../src/config/paths', () => ({
     opencode: { config: '/tmp/test-opencode-config' }
   }
 }));
+
+const websocketModPath = require.resolve('../../../src/server/websocket-server');
+const mockBroadcastBrowserNotification = vi.fn();
+require.cache[websocketModPath] = {
+  id: websocketModPath,
+  filename: websocketModPath,
+  loaded: true,
+  exports: {
+    broadcastBrowserNotification: mockBroadcastBrowserNotification
+  }
+};
 
 const { _test, MANAGED_HOOK_NAME } = require('../../../src/server/services/notification-hooks');
 
@@ -45,6 +57,7 @@ const {
   generateNotifyScript,
   generateSystemNotificationCommand,
   buildOpenCodePluginContent,
+  emitBrowserNotification,
   parseStopHookStatus,
   buildStopHookCommand,
   shouldRepairStopHook
@@ -77,6 +90,10 @@ describe('parseManagedType', () => {
 
   test('parses --mode=notification', () => {
     expect(parseManagedType('--mode=notification --source=claude')).toBe('notification');
+  });
+
+  test('parses browser notification mode', () => {
+    expect(parseManagedType('node script.js --mode=browser --cc-notify-type=browser')).toBe('browser');
   });
 
   test('parses MODE = "dialog" pattern', () => {
@@ -407,6 +424,12 @@ describe('buildCodexNotifyCommand', () => {
     expect(result).toContain('--cc-notify-type=dialog');
   });
 
+  test('returns array with browser type', () => {
+    const result = buildCodexNotifyCommand('browser');
+    expect(result).toContain('--mode=browser');
+    expect(result).toContain('--cc-notify-type=browser');
+  });
+
   test('defaults to notification for invalid type', () => {
     const result = buildCodexNotifyCommand('invalid');
     expect(result).toContain('--mode=notification');
@@ -431,6 +454,12 @@ describe('buildClaudeCommand', () => {
     expect(result).toContain('--mode=dialog');
     expect(result).toContain('--cc-notify-type=dialog');
   });
+
+  test('builds command string for browser type', () => {
+    const result = buildClaudeCommand('browser');
+    expect(result).toContain('--mode=browser');
+    expect(result).toContain('--cc-notify-type=browser');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -449,6 +478,12 @@ describe('buildGeminiCommand', () => {
     const result = buildGeminiCommand('dialog');
     expect(result).toContain('--mode=dialog');
     expect(result).toContain('--cc-notify-type=dialog');
+  });
+
+  test('builds command string for browser type', () => {
+    const result = buildGeminiCommand('browser');
+    expect(result).toContain('--mode=browser');
+    expect(result).toContain('--cc-notify-type=browser');
   });
 });
 
@@ -507,6 +542,13 @@ describe('generateNotifyScript', () => {
     expect(script).toContain('System.Windows.Forms');
     expect(script).toContain('WorkingArea');
   });
+
+  test('embeds browser notification relay in generated script', () => {
+    const script = generateNotifyScript();
+    expect(script).toContain('postBrowserNotification');
+    expect(script).toContain('/api/hooks/browser-event');
+    expect(script).toContain('CONFIG_FILE');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -524,5 +566,30 @@ describe('buildOpenCodePluginContent', () => {
     const content = buildOpenCodePluginContent('dialog');
     expect(content).toContain('dialog');
     expect(content).toContain('CodingToolNotifyPlugin');
+  });
+});
+
+describe('emitBrowserNotification', () => {
+  beforeEach(() => {
+    mockBroadcastBrowserNotification.mockClear();
+  });
+
+  test('broadcasts websocket payload with derived title and route', () => {
+    const payload = emitBrowserNotification({
+      source: 'codex',
+      message: 'Codex CLI 回合已完成 | 等待交互'
+    });
+
+    expect(payload.title).toBe('Codex CLI');
+    expect(payload.url).toBe('/codex');
+    expect(mockBroadcastBrowserNotification).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'browser-notification',
+      source: 'codex',
+      message: 'Codex CLI 回合已完成 | 等待交互'
+    }));
+  });
+
+  test('rejects empty browser notification message', () => {
+    expect(() => emitBrowserNotification({ source: 'claude', message: '' })).toThrow('缺少浏览器通知内容');
   });
 });

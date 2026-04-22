@@ -110,6 +110,7 @@ function recordRequest(requestData = {}) {
       input: normalizedTokens.input,
       output: normalizedTokens.output,
       reasoning: normalizedTokens.reasoning,
+      cached: normalizedTokens.cached,
       cacheCreation: normalizedTokens.cacheCreation,
       cacheRead: normalizedTokens.cacheRead,
       total: normalizedTokens.total

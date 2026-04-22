@@ -85,25 +85,25 @@
                   <div class="col col-channel" :class="`col-channel-${source}`" :title="log.channel">
                     <n-tag size="small" type="success">{{ log.channel }}</n-tag>
                   </div>
-                  <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.input || 0 }}</div>
-                  <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.output || 0 }}</div>
+                  <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'input') }}</div>
+                  <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'output') }}</div>
                   <template v-if="source === 'claude'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cacheCreation || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cacheRead || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cacheCreation') }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cacheRead') }}</div>
                   </template>
                   <template v-else-if="source === 'codex'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.reasoning || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'reasoning') }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cached') }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'total') }}</div>
                   </template>
                   <template v-else-if="source === 'gemini'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cached') }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'total') }}</div>
                   </template>
                   <template v-else-if="source === 'opencode'">
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.reasoning || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.cached || 0 }}</div>
-                    <div class="col col-token" :class="`col-token-${source}`">{{ log.tokens?.total || 0 }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'reasoning') }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cached') }}</div>
+                    <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'total') }}</div>
                   </template>
                   <div class="col col-time" :class="`col-time-${source}`">{{ log.time }}</div>
                 </div>
@@ -114,6 +114,9 @@
                 <div v-if="log.originalModel && log.originalModel !== log.model" style="margin-top: 4px;">
                   <div style="font-weight: 600; margin-bottom: 4px;">模型重定向</div>
                   <div style="font-family: monospace; font-size: 12px;">{{ log.originalModel }} → {{ log.model }}</div>
+                </div>
+                <div v-if="log.usageMissing" style="margin-top: 6px; color: #d97706; font-size: 12px;">
+                  上游响应未返回 usage，当前仅确认实际模型，无法计算 token。
                 </div>
               </div>
               <div v-else>暂无模型信息</div>
@@ -182,6 +185,13 @@ function formatNumber(num) {
     return (num / 1000).toFixed(1) + 'K'
   }
   return num.toString()
+}
+
+function formatTokenCell(log, key) {
+  if (log.usageMissing) {
+    return '--'
+  }
+  return log.tokens?.[key] || 0
 }
 
 // 加载今日统计数据（根据 source 过滤）

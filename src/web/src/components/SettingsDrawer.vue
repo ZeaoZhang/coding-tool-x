@@ -210,6 +210,14 @@
                                   </n-text>
                                 </div>
                               </n-radio>
+                              <n-radio value="browser" :disabled="!browserNotificationAvailable">
+                                <div class="radio-content">
+                                  <n-text strong>{{ getNotificationModeTitle('browser') }}</n-text>
+                                  <n-text depth="3" style="font-size: 12px; display: block;">
+                                    {{ getNotificationModeDescription('browser') }}
+                                  </n-text>
+                                </div>
+                              </n-radio>
                               <n-radio value="dialog">
                                 <div class="radio-content">
                                   <n-text strong>{{ getNotificationModeTitle('dialog') }}</n-text>
@@ -237,6 +245,14 @@
                                 brew install terminal-notifier
                               </n-text>
                             </div>
+                          </n-alert>
+                          <n-alert
+                            v-if="notificationSettings[platform.key].type === 'browser'"
+                            type="info"
+                            :bordered="false"
+                            style="margin-top: 16px;"
+                          >
+                            当前权限状态：{{ browserNotificationPermissionText }}
                           </n-alert>
                       </div>
                     </div>
@@ -506,7 +522,7 @@
                   <div class="setting-label">
                     <n-text strong>开机自启</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      启用此选项后，重启电脑时 Coding-Tool 会自动启动
+                      启用此选项后，重启电脑时 coding-tool-x 会自动启动
                     </n-text>
                   </div>
 
@@ -1079,9 +1095,9 @@ const autoStartLoading = ref(false)
 const autoStartStatus = computed(() => autoStartEnabled.value ? '[v] 已启用' : '未启用')
 const autoStartHelp = computed(() => {
   if (autoStartEnabled.value) {
-    return '重启电脑时 Coding-Tool 会自动启动。如需禁用，点击下方按钮'
+    return '重启电脑时 coding-tool-x 会自动启动。如需禁用，点击下方按钮'
   } else {
-    return '启用后，重启电脑时 Coding-Tool 会自动启动'
+    return '启用后，重启电脑时 coding-tool-x 会自动启动'
   }
 })
 
@@ -1132,7 +1148,7 @@ const notificationHookPlatforms = [
 function createNotificationPlatformState(platform = {}) {
   return {
     enabled: platform.enabled === true,
-    type: platform.type === 'dialog' ? 'dialog' : 'notification',
+    type: platform.type === 'dialog' || platform.type === 'browser' ? platform.type : 'notification',
     external: platform.external === true
   }
 }
@@ -1159,8 +1175,34 @@ const notificationSettings = ref(createNotificationSettingsState())
 const originalNotificationSettings = ref(createNotificationSettingsState())
 const savingNotification = ref(false)
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
+const browserNotificationPermission = ref('default')
+const browserNotificationAvailable = computed(() => {
+  if (typeof window === 'undefined' || typeof Notification === 'undefined') {
+    return false
+  }
+  if (window.isSecureContext) {
+    return true
+  }
+  return ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+})
+
+const browserNotificationPermissionText = computed(() => {
+  if (!browserNotificationAvailable.value) {
+    return '当前环境不支持浏览器通知，请使用 localhost 或 HTTPS 页面'
+  }
+  if (browserNotificationPermission.value === 'granted') {
+    return '已授权'
+  }
+  if (browserNotificationPermission.value === 'denied') {
+    return '已被浏览器拒绝，请在浏览器站点设置里重新开启'
+  }
+  return '尚未授权，保存时会请求浏览器权限'
+})
 
 function getNotificationModeTitle(type = 'notification') {
+  if (type === 'browser') {
+    return '浏览器通知'
+  }
   if (type === 'dialog') {
     return '确认式弹窗'
   }
@@ -1178,6 +1220,18 @@ function getNotificationModeTitle(type = 'notification') {
 }
 
 function getNotificationModeDescription(type = 'notification') {
+  if (type === 'browser') {
+    if (!browserNotificationAvailable.value) {
+      return '当前页面环境不支持浏览器通知'
+    }
+    if (browserNotificationPermission.value === 'granted') {
+      return '通过当前打开的 Web 页面显示浏览器原生通知'
+    }
+    if (browserNotificationPermission.value === 'denied') {
+      return '浏览器通知权限已被拒绝，需要先在浏览器中重新授权'
+    }
+    return '通过当前打开的 Web 页面显示原生通知，保存时会请求权限'
+  }
   if (type === 'dialog') {
     return '强制提醒，需要手动点击确认才能关闭'
   }
@@ -1187,6 +1241,31 @@ function getNotificationModeDescription(type = 'notification') {
       return '轻量提醒，几秒后自动消失，带提示音（Windows 使用系统 Toast 风格提醒）'
     default:
       return '轻量提醒，几秒后自动消失，带提示音'
+  }
+}
+
+function refreshBrowserNotificationPermission() {
+  if (typeof Notification === 'undefined') {
+    browserNotificationPermission.value = 'unsupported'
+    return
+  }
+  browserNotificationPermission.value = Notification.permission
+}
+
+async function ensureBrowserNotificationPermission() {
+  if (!browserNotificationAvailable.value) {
+    throw new Error('当前页面环境不支持浏览器通知，请改用 HTTPS 或 localhost 页面')
+  }
+
+  refreshBrowserNotificationPermission()
+  if (browserNotificationPermission.value === 'granted') {
+    return
+  }
+
+  const permission = await Notification.requestPermission()
+  browserNotificationPermission.value = permission
+  if (permission !== 'granted') {
+    throw new Error('浏览器通知权限未授予')
   }
 }
 
@@ -1684,6 +1763,7 @@ async function loadNotificationSettings() {
       originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
       // 获取平台信息用于显示安装提示
       notificationPlatform.value = data.platform || ''
+      refreshBrowserNotificationPermission()
     }
   } catch (error) {
     console.error('Failed to load notification settings:', error)
@@ -1694,6 +1774,15 @@ async function loadNotificationSettings() {
 async function handleSaveNotification() {
   savingNotification.value = true
   try {
+    const needsBrowserPermission = notificationHookPlatforms.some((platform) => {
+      const state = notificationSettings.value[platform.key]
+      return state.enabled && state.type === 'browser'
+    })
+
+    if (needsBrowserPermission) {
+      await ensureBrowserNotificationPermission()
+    }
+
     const response = await fetch('/api/hooks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1911,6 +2000,7 @@ async function handleDisableAutoStart() {
 
 // 加载设置
 onMounted(() => {
+  refreshBrowserNotificationPermission()
   loadPanelSettings()
   loadSecurityStatus()
   loadModelMetadata()

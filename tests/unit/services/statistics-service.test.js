@@ -311,6 +311,20 @@ describe('getAvailableFilters', () => {
     expect(result.channels).toHaveLength(0);
     expect(result.models).toHaveLength(0);
   });
+
+  test('uses redirected model as available model filter when parsed model is empty', () => {
+    const mod = loadService();
+    mod.recordRequest(makeRequest({
+      timestamp: new Date('2025-06-15T04:00:00.000Z').toISOString(),
+      model: '',
+      originalModel: 'gpt-4o',
+      redirectedModel: 'gpt-4o-mini'
+    }));
+
+    const result = mod.getAvailableFilters('2025-06-15', '2025-06-15');
+    expect(result.models).toContain('gpt-4o-mini');
+    expect(result.models).not.toContain('gpt-4o');
+  });
 });
 
 // ─── recordRequest token accumulation ───────────────────────────────────────
@@ -346,5 +360,66 @@ describe('recordRequest token accumulation', () => {
     expect(stats.byModel['claude-3-5-sonnet'].tokens.total).toBe(150);
     expect(stats.byModel['claude-3-opus'].requests).toBe(1);
     expect(stats.byModel['claude-3-opus'].tokens.total).toBe(300);
+  });
+});
+
+describe('trend statistics', () => {
+  test('aggregates the same actual model across tool types in model trends', async () => {
+    const mod = loadService();
+    const date = '2025-06-15';
+
+    mod.recordRequest(makeRequest({
+      timestamp: new Date('2025-06-15T04:00:00.000Z').toISOString(),
+      toolType: 'codex',
+      model: 'gpt-4o-mini',
+      tokens: { input: 100, output: 50, total: 150 }
+    }));
+    mod.recordRequest(makeRequest({
+      timestamp: new Date('2025-06-15T05:00:00.000Z').toISOString(),
+      toolType: 'opencode',
+      model: 'gpt-4o-mini',
+      tokens: { input: 40, output: 10, total: 50 }
+    }));
+
+    const result = await mod.getTrendStatistics({
+      startDate: date,
+      endDate: date,
+      granularity: 'day',
+      groupBy: 'model',
+      metric: 'tokens'
+    });
+
+    expect(result.series).toHaveLength(1);
+    expect(result.series[0]).toEqual({
+      name: 'gpt-4o-mini',
+      data: [200]
+    });
+  });
+
+  test('groups redirected requests under the actual redirected model', async () => {
+    const mod = loadService();
+    const date = '2025-06-15';
+
+    mod.recordRequest(makeRequest({
+      timestamp: new Date('2025-06-15T04:00:00.000Z').toISOString(),
+      toolType: 'codex',
+      model: '',
+      originalModel: 'gpt-4o',
+      redirectedModel: 'gpt-4o-mini',
+      tokens: { input: 120, output: 30, total: 150 }
+    }));
+
+    const result = await mod.getTrendStatistics({
+      startDate: date,
+      endDate: date,
+      granularity: 'day',
+      groupBy: 'model',
+      metric: 'tokens'
+    });
+
+    expect(result.series[0]).toEqual({
+      name: 'gpt-4o-mini',
+      data: [150]
+    });
   });
 });
