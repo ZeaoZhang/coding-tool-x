@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const notificationHooks = require('../services/notification-hooks');
-const { createSameOriginGuard } = require('../services/network-access');
+const { createSameOriginGuard, isLoopbackRequest } = require('../services/network-access');
 
 router.use(createSameOriginGuard({
   message: '禁止跨站访问通知配置接口'
@@ -38,6 +38,23 @@ router.post('/test', async (req, res) => {
     });
   } catch (error) {
     console.error('Error testing notification hook settings:', error);
+    res.status(error.statusCode || 500).json({ error: error.message });
+  }
+});
+
+router.post('/browser-event', (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    return res.status(403).json({ error: '仅允许本机通知脚本访问浏览器通知接口' });
+  }
+
+  try {
+    const payload = notificationHooks.emitBrowserNotification(req.body || {});
+    res.json({
+      success: true,
+      notification: payload
+    });
+  } catch (error) {
+    console.error('Error dispatching browser notification event:', error);
     res.status(error.statusCode || 500).json({ error: error.message });
   }
 });

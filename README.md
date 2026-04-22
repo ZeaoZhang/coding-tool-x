@@ -63,7 +63,7 @@
 ### 通知
 
 - 支持 Claude、Codex、Gemini、OpenCode 的任务完成通知托管
-- 支持系统通知和弹窗模式
+- 支持系统通知、浏览器通知和弹窗模式
 - 支持飞书机器人 Webhook 通知
 
 ## 能力矩阵
@@ -136,6 +136,14 @@ ctx status
 ctx ui
 ```
 
+### 本地 HTTPS
+
+```bash
+ctx ui --https
+```
+
+如需后台运行 HTTPS 版本，可使用 `ctx ui start --https`。
+
 ### 开启局域网访问
 
 ```bash
@@ -172,7 +180,9 @@ ctx opencode start
 | `ctx restart` | 重启后台服务 |
 | `ctx status` | 查看后台服务状态 |
 | `ctx ui` | 前台启动 Web UI |
+| `ctx ui --https` | 前台启动本地 HTTPS Web UI |
 | `ctx ui start` | 后台启动 Web UI |
+| `ctx ui start --https` | 后台启动本地 HTTPS Web UI |
 | `ctx ui stop` | 停止后台 Web UI |
 | `ctx ui restart` | 重启后台 Web UI |
 

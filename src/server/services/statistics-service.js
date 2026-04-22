@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('../../config/paths');
+const { normalizeUsageTokens, resolveActualModel } = require('./proxy-log-helper');
 
 // 北京时间辅助（UTC+8），统一所有时间计算
 const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -189,6 +190,8 @@ function initStatsObject() {
       output: 0,
       cacheCreation: 0,
       cacheRead: 0,
+      cached: 0,
+      reasoning: 0,
       total: 0
     },
     cost: 0
@@ -202,7 +205,9 @@ function updateStats(stats, tokens, cost) {
   stats.tokens.output += tokens.output || 0;
   stats.tokens.cacheCreation += tokens.cacheCreation || 0;
   stats.tokens.cacheRead += tokens.cacheRead || 0;
-  stats.tokens.total += tokens.total || 0;
+  stats.tokens.cached += tokens.cached || 0;
+  stats.tokens.reasoning += tokens.reasoning || 0;
+  stats.tokens.total += getTokenTotal(tokens);
   stats.cost += cost || 0;
 }
 
@@ -226,6 +231,9 @@ function recordRequest(requestData) {
       session,
       project
     } = requestData;
+    const resolvedModel = resolveActualModel(model, requestData);
+    const modelKey = resolvedModel || 'unknown';
+    const totalTokens = getTokenTotal(tokens);
 
     // 1. 写入详细日志
     const logEntry = {
@@ -234,7 +242,7 @@ function recordRequest(requestData) {
       toolType,
       channel,
       channelId,
-      model,
+      model: resolvedModel,
       tokens,
       duration,
       success,
@@ -256,7 +264,7 @@ function recordRequest(requestData) {
 
     // 更新全局统计
     globalStats.global.totalRequests += 1;
-    globalStats.global.totalTokens += tokens.total || 0;
+    globalStats.global.totalTokens += totalTokens;
     globalStats.global.totalCost += cost || 0;
 
     // 按工具类型统计
@@ -283,10 +291,10 @@ function recordRequest(requestData) {
     updateStats(globalStats.byToolType[toolType].channels[channelId], tokens, cost);
 
     // 按工具类型 -> 模型统计
-    if (!globalStats.byToolType[toolType].models[model]) {
-      globalStats.byToolType[toolType].models[model] = initStatsObject();
+    if (!globalStats.byToolType[toolType].models[modelKey]) {
+      globalStats.byToolType[toolType].models[modelKey] = initStatsObject();
     }
-    updateStats(globalStats.byToolType[toolType].models[model], tokens, cost);
+    updateStats(globalStats.byToolType[toolType].models[modelKey], tokens, cost);
 
     // 按渠道统计（跨工具）
     if (!globalStats.byChannel[channelId]) {
@@ -303,13 +311,13 @@ function recordRequest(requestData) {
     updateStats(globalStats.byChannel[channelId], tokens, cost);
 
     // 按模型统计（跨工具）
-    if (!globalStats.byModel[model]) {
-      globalStats.byModel[model] = {
+    if (!globalStats.byModel[modelKey]) {
+      globalStats.byModel[modelKey] = {
         toolType,
         ...initStatsObject()
       };
     }
-    updateStats(globalStats.byModel[model], tokens, cost);
+    updateStats(globalStats.byModel[modelKey], tokens, cost);
 
     saveStatistics(globalStats);
 
@@ -321,7 +329,7 @@ function recordRequest(requestData) {
 
     // 更新每日汇总
     dailyStats.summary.requests += 1;
-    dailyStats.summary.tokens += tokens.total || 0;
+    dailyStats.summary.tokens += totalTokens;
     dailyStats.summary.cost += cost || 0;
 
     // 按小时统计
@@ -361,6 +369,15 @@ function recordRequest(requestData) {
     }
     updateStats(dailyStats.byToolType[toolType].channels[channelId], tokens, cost);
 
+    // 按工具类型 -> 模型
+    if (!dailyStats.byToolType[toolType].models) {
+      dailyStats.byToolType[toolType].models = {};
+    }
+    if (!dailyStats.byToolType[toolType].models[modelKey]) {
+      dailyStats.byToolType[toolType].models[modelKey] = initStatsObject();
+    }
+    updateStats(dailyStats.byToolType[toolType].models[modelKey], tokens, cost);
+
     // 按渠道统计
     if (!dailyStats.byChannel[channelId]) {
       dailyStats.byChannel[channelId] = {
@@ -372,13 +389,13 @@ function recordRequest(requestData) {
     updateStats(dailyStats.byChannel[channelId], tokens, cost);
 
     // 按模型统计
-    if (!dailyStats.byModel[model]) {
-      dailyStats.byModel[model] = {
+    if (!dailyStats.byModel[modelKey]) {
+      dailyStats.byModel[modelKey] = {
         toolType,
         ...initStatsObject()
       };
     }
-    updateStats(dailyStats.byModel[model], tokens, cost);
+    updateStats(dailyStats.byModel[modelKey], tokens, cost);
 
     saveDailyStats(date, dailyStats);
 
@@ -447,21 +464,23 @@ function readJsonlForHour(year, month, day, hour, groupBy, filters) {
       const ts = new Date(entry.timestamp);
       if (getCSTHour(ts) !== hour) continue;
 
+      const actualModel = resolveActualModel(entry.model, entry);
+
       // Apply filters
       if (filters) {
         if (filters.toolType && entry.toolType !== filters.toolType) continue;
         if (filters.channel && entry.channel !== filters.channel) continue;
-        if (filters.model && entry.model !== filters.model) continue;
+        if (filters.model && actualModel !== filters.model) continue;
       }
 
       let key;
-      if (groupBy === 'model') key = entry.model || 'unknown';
+      if (groupBy === 'model') key = actualModel || 'unknown';
       else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
       else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
       else continue;
 
       if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
-      result[key].tokens.total += entry.tokens?.total || 0;
+      result[key].tokens.total += getTokenTotal(entry.tokens);
       result[key].cost += entry.cost || 0;
       result[key].requests += 1;
     }
@@ -493,21 +512,23 @@ function readJsonlForDay(year, month, day, groupBy, filters) {
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
 
+      const actualModel = resolveActualModel(entry.model, entry);
+
       // Apply filters
       if (filters) {
         if (filters.toolType && entry.toolType !== filters.toolType) continue;
         if (filters.channel && entry.channel !== filters.channel) continue;
-        if (filters.model && entry.model !== filters.model) continue;
+        if (filters.model && actualModel !== filters.model) continue;
       }
 
       let key;
-      if (groupBy === 'model') key = entry.model || 'unknown';
+      if (groupBy === 'model') key = actualModel || 'unknown';
       else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
       else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
       else continue;
 
       if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
-      result[key].tokens.total += entry.tokens?.total || 0;
+      result[key].tokens.total += getTokenTotal(entry.tokens);
       result[key].cost += entry.cost || 0;
       result[key].requests += 1;
     }
@@ -541,7 +562,7 @@ function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
   const result = {};
 
   for (const entry of logs) {
-    if (!entry || entry.type === 'action') continue;
+    if (!entry || entry.type === 'action' || entry.status === 'error') continue;
 
     const ts = new Date(entry.timestamp || Date.now());
     if (Number.isNaN(ts.getTime())) continue;
@@ -549,11 +570,22 @@ function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
     const entryDate = getCSTDateStr(ts);
     if (entryDate !== dateStr || getCSTHour(ts) !== hour) continue;
 
+    const actualModel = resolveActualModel(entry.model, entry);
+    const normalizedTokens = normalizeUsageTokens(entry.source || mapSourceToToolType(entry.source), {
+      input: entry.inputTokens ?? entry.tokens?.input,
+      output: entry.outputTokens ?? entry.tokens?.output,
+      cacheCreation: entry.cacheCreation ?? entry.tokens?.cacheCreation,
+      cacheRead: entry.cacheRead ?? entry.tokens?.cacheRead,
+      cached: entry.cachedTokens ?? entry.tokens?.cached,
+      reasoning: entry.reasoningTokens ?? entry.tokens?.reasoning,
+      total: entry.totalTokens ?? entry.tokens?.total
+    });
+
     let key;
     if (groupBy === 'toolType') {
       key = mapSourceToToolType(entry.source);
     } else if (groupBy === 'model') {
-      key = entry.model || 'unknown';
+      key = actualModel || 'unknown';
     } else if (groupBy === 'channel') {
       key = entry.channel || 'unknown';
     } else {
@@ -564,11 +596,7 @@ function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
       result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
     }
 
-    const totalTokens = entry.totalTokens ||
-      entry.tokens?.total ||
-      (entry.inputTokens || 0) + (entry.outputTokens || 0) + (entry.reasoningTokens || 0);
-
-    result[key].tokens.total += totalTokens || 0;
+    result[key].tokens.total += normalizedTokens.total || 0;
     result[key].cost += entry.cost || 0;
     result[key].requests += 1;
   }
@@ -741,7 +769,7 @@ function aggregateDailyStatistics(dateStr) {
     }
 
     for (const [modelName, modelStats] of Object.entries(toolStats.models || {})) {
-      const key = getScopedKey(aggregated.byModel, modelName, toolType);
+      const key = modelName || 'unknown';
       if (!aggregated.byModel[key]) {
         aggregated.byModel[key] = createEmptyEntry(toolType);
       }
@@ -835,6 +863,7 @@ function getAvailableFilters(startDate, endDate) {
   const toolTypes = new Set();
   const channels = new Set();
   const models = new Set();
+  const includeProxyLogs = startDate <= getCSTDateStr(Date.now()) && getCSTDateStr(Date.now()) <= endDate;
 
   const start = new Date(startDate + 'T00:00:00');
   const end = new Date(endDate + 'T00:00:00');
@@ -852,12 +881,28 @@ function getAvailableFilters(startDate, endDate) {
         if (!line.trim()) continue;
         let entry;
         try { entry = JSON.parse(line); } catch { continue; }
+        const actualModel = resolveActualModel(entry.model, entry);
         if (entry.toolType) toolTypes.add(entry.toolType);
         if (entry.channel) channels.add(entry.channel);
-        if (entry.model) models.add(entry.model);
+        if (actualModel) models.add(actualModel);
       }
     } catch (err) {
       console.error('Failed to scan JSONL for filters:', err);
+    }
+  }
+
+  if (includeProxyLogs) {
+    for (const entry of loadProxyLogs()) {
+      if (!entry || entry.type === 'action' || entry.status === 'error') continue;
+      const ts = new Date(entry.timestamp || Date.now());
+      if (Number.isNaN(ts.getTime())) continue;
+      const entryDate = getCSTDateStr(ts);
+      if (entryDate < startDate || entryDate > endDate) continue;
+
+      toolTypes.add(mapSourceToToolType(entry.source));
+      if (entry.channel) channels.add(entry.channel);
+      const actualModel = resolveActualModel(entry.model, entry);
+      if (actualModel) models.add(actualModel);
     }
   }
 

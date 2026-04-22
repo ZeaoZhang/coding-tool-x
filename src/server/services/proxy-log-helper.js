@@ -12,6 +12,30 @@ function normalizeToolSource(source = '') {
   return 'claude';
 }
 
+function normalizeModelName(value = '') {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function resolveActualModel(model = '', metadata = {}) {
+  const candidates = [
+    model,
+    metadata.redirectedModel,
+    metadata.modelFromUrl,
+    metadata.requestModel,
+    metadata.model,
+    metadata.originalModel
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeModelName(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return '';
+}
+
 function normalizeUsageTokens(source, tokens = {}) {
   const normalizedSource = normalizeToolSource(source);
   const input = toNumber(tokens.input);
@@ -68,7 +92,8 @@ function buildSuccessLogPayload({
   redirectedModel,
   tokens,
   cost = 0,
-  timestamp = Date.now()
+  timestamp = Date.now(),
+  usageMissing = false
 }) {
   const normalized = normalizeUsageTokens(source, tokens);
   const payload = {
@@ -87,7 +112,8 @@ function buildSuccessLogPayload({
     totalTokens: normalized.total,
     cost,
     source: normalizeToolSource(source),
-    timestamp
+    timestamp,
+    usageMissing: Boolean(usageMissing)
   };
   if (originalModel) {
     payload.originalModel = originalModel;
@@ -151,40 +177,43 @@ function publishUsageLog({
   recordSuccess,
   allowBroadcast = true
 }) {
-  if (!hasMeaningfulUsage(source, tokens)) {
-    return null;
-  }
-
   const normalizedSource = normalizeToolSource(source);
+  const actualModel = resolveActualModel(model, metadata);
   const normalizedTokens = normalizeUsageTokens(normalizedSource, tokens);
+  const usageAvailable = hasMeaningfulUsage(normalizedSource, normalizedTokens);
   const requestId = metadata.id || `${normalizedSource}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const timestamp = Date.now();
   const cost = typeof calculateCost === 'function'
-    ? calculateCost(model || '', normalizedTokens)
+    ? calculateCost(actualModel || '', normalizedTokens)
     : 0;
+
+  if (!usageAvailable && !actualModel) {
+    return null;
+  }
 
   if (allowBroadcast && typeof broadcastLog === 'function') {
     broadcastLog(buildSuccessLogPayload({
       source: normalizedSource,
       requestId,
       channel: metadata.channel,
-      model,
+      model: actualModel,
       originalModel: metadata.originalModel,
       redirectedModel: metadata.redirectedModel,
       tokens: normalizedTokens,
       cost,
-      timestamp
+      timestamp,
+      usageMissing: !usageAvailable
     }));
   }
 
-  if (typeof recordRequest === 'function') {
+  if (usageAvailable && typeof recordRequest === 'function') {
     const entry = {
       id: requestId,
       timestamp: new Date(metadata.startTime || timestamp).toISOString(),
       toolType: normalizedSource === 'claude' ? 'claude-code' : normalizedSource,
       channel: metadata.channel,
       channelId: metadata.channelId,
-      model: model || '',
+      model: actualModel || '',
       tokens: {
         input: normalizedTokens.input,
         output: normalizedTokens.output,
@@ -213,8 +242,10 @@ function publishUsageLog({
 
   return {
     cost,
+    model: actualModel,
     tokens: normalizedTokens,
-    timestamp
+    timestamp,
+    usageMissing: !usageAvailable
   };
 }
 
@@ -250,6 +281,7 @@ function publishFailureLog({
 module.exports = {
   toNumber,
   normalizeToolSource,
+  resolveActualModel,
   normalizeUsageTokens,
   hasMeaningfulUsage,
   formatRealtimeTime,

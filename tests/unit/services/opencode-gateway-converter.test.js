@@ -174,4 +174,30 @@ describe('opencode-gateway-converter', () => {
       }
     });
   });
+
+  test('requests usage in streaming chat.completions conversions', () => {
+    const result = convertGeminiToOpenCodePayload({
+      payload: {
+        model: 'gemini-2.5-pro',
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'Summarize the diff' }]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.2
+        },
+        stream: true
+      },
+      options: {
+        targetApi: 'chat'
+      }
+    });
+
+    expect(result.requestBody.stream).toBe(true);
+    expect(result.requestBody.stream_options).toEqual({
+      include_usage: true
+    });
+  });
 });

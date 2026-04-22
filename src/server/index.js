@@ -1,3 +1,5 @@
+const http = require('http');
+const https = require('https');
 const express = require('express');
 const path = require('path');
 const chalk = require('chalk');
@@ -23,6 +25,8 @@ const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
 const { createRemoteMutationGuard } = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
+const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
+const { ensureHttpsCredentials } = require('./services/https-cert');
 
 function getInquirer() {
   return require('inquirer');
@@ -130,7 +134,21 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     console.log(chalk.green('[v] 端口已释放\n'));
   }
 
+  const webBuildState = inspectWebBuildState();
+  if (webBuildState.needsBuild) {
+    const reasonText = webBuildState.reason === 'dist-missing'
+      ? '缺少 Web UI 静态资源'
+      : '检测到 Web UI 静态资源已过期';
+    console.log(chalk.cyan(`[BUILD] ${reasonText}，正在重新构建...`));
+
+    const buildResult = await ensureWebDistReady({ state: webBuildState });
+    if (buildResult.built) {
+      console.log(chalk.green('[OK] Web UI 静态资源已更新\n'));
+    }
+  }
+
   const app = express();
+  const useHttps = options.useHttps === true || process.argv.includes('--https');
   const lanMode = host === '0.0.0.0';
   const allowRemoteMutation = process.env.CC_TOOL_ALLOW_REMOTE_WRITE === 'true';
 
@@ -245,7 +263,15 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   }
 
   // Start server（确保监听成功后才返回，避免命令误报“已启动”）
-  const server = app.listen(port, host);
+  let server;
+  if (useHttps) {
+    const httpsCredentials = ensureHttpsCredentials();
+    server = https.createServer(httpsCredentials, app);
+    server.listen(port, host);
+  } else {
+    server = http.createServer(app);
+    server.listen(port, host);
+  }
   await new Promise((resolve) => {
     const onListening = () => {
       server.off('error', onError);
@@ -270,17 +296,23 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   });
 
   console.log(`\n[START] Coding-Tool Web UI running at:`);
+  const protocol = useHttps ? 'https' : 'http';
+  const wsProtocol = useHttps ? 'wss' : 'ws';
   if (host === '0.0.0.0') {
     console.log(chalk.yellow(`   [WARN]  警告: 服务正在监听所有网络接口 (LAN 可访问)`));
-    console.log(`   http://localhost:${port}`);
-    console.log(chalk.gray(`   http://<your-ip>:${port} (LAN 访问)`));
+    console.log(`   ${protocol}://localhost:${port}`);
+    console.log(chalk.gray(`   ${protocol}://<your-ip>:${port} (LAN 访问)`));
   } else {
-    console.log(`   http://localhost:${port}`);
+    console.log(`   ${protocol}://localhost:${port}`);
   }
 
   // 附加 WebSocket 服务器到同一个端口
   attachWebSocketServer(server, { host });
-  console.log(`   ws://localhost:${port}/ws\n`);
+  console.log(`   ${wsProtocol}://localhost:${port}/ws\n`);
+
+  if (useHttps) {
+    console.log(chalk.gray('   [TIP] 首次访问自签名证书时，浏览器可能会提示手动信任本地证书'));
+  }
 
   if (host === '0.0.0.0' && !allowRemoteMutation) {
     console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作默认禁用'));

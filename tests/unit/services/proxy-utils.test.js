@@ -6,6 +6,7 @@ const {
   resolveTargetUrl,
   normalizeGatewaySourceType,
   normalizeNumber,
+  ensureOpenAiStreamUsage,
   logModelRedirect,
 } = require('../../../src/server/services/base/proxy-utils');
 
@@ -195,6 +196,42 @@ describe('proxy-utils', () => {
 
     it('should not clamp when max is null', () => {
       expect(normalizeNumber(999, 1, null)).toBe(999);
+    });
+  });
+
+  describe('ensureOpenAiStreamUsage', () => {
+    it('should inject include_usage for streaming chat completion payloads', () => {
+      const body = {
+        stream: true,
+        model: 'gpt-4o-mini'
+      };
+
+      expect(ensureOpenAiStreamUsage(body)).toBe(true);
+      expect(body.stream_options).toEqual({ include_usage: true });
+    });
+
+    it('should preserve existing stream_options fields', () => {
+      const body = {
+        stream: true,
+        stream_options: {
+          foo: 'bar'
+        }
+      };
+
+      expect(ensureOpenAiStreamUsage(body)).toBe(true);
+      expect(body.stream_options).toEqual({
+        foo: 'bar',
+        include_usage: true
+      });
+    });
+
+    it('should not mutate non-stream payloads', () => {
+      const body = {
+        stream: false
+      };
+
+      expect(ensureOpenAiStreamUsage(body)).toBe(false);
+      expect(body.stream_options).toBeUndefined();
     });
   });
 

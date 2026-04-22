@@ -108,6 +108,7 @@ function recordRequest(requestData = {}) {
     tokens: {
       input: normalizedTokens.input,
       output: normalizedTokens.output,
+      cached: normalizedTokens.cached,
       cacheCreation: normalizedTokens.cacheCreation,
       cacheRead: normalizedTokens.cacheRead,
       total: normalizedTokens.total

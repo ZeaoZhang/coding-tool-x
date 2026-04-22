@@ -3,6 +3,7 @@
 const {
   toNumber,
   normalizeToolSource,
+  resolveActualModel,
   normalizeUsageTokens,
   hasMeaningfulUsage,
   buildSuccessLogPayload,
@@ -101,6 +102,28 @@ describe('proxy-log-helper', () => {
       const result = normalizeUsageTokens('claude');
       expect(result.input).toBe(0);
       expect(result.total).toBe(0);
+    });
+  });
+
+  describe('resolveActualModel', () => {
+    it('should prefer parsed model when available', () => {
+      expect(resolveActualModel('gpt-4o-mini', {
+        redirectedModel: 'o4-mini',
+        originalModel: 'gpt-4o'
+      })).toBe('gpt-4o-mini');
+    });
+
+    it('should fall back to redirected model when parsed model is empty', () => {
+      expect(resolveActualModel('', {
+        redirectedModel: 'o4-mini',
+        originalModel: 'gpt-4o'
+      })).toBe('o4-mini');
+    });
+
+    it('should fall back to request/url model when redirect is absent', () => {
+      expect(resolveActualModel('', {
+        modelFromUrl: 'gemini-2.5-flash'
+      })).toBe('gemini-2.5-flash');
     });
   });
 
@@ -225,6 +248,41 @@ describe('proxy-log-helper', () => {
       expect(recordRequest).toHaveBeenCalledTimes(1);
       expect(recordSuccess).toHaveBeenCalledTimes(1);
       expect(recordSuccess).toHaveBeenCalledWith('ch1-id', 'claude');
+    });
+
+    it('should broadcast resolved actual model even when upstream usage is missing', () => {
+      const broadcastLog = vi.fn();
+      const recordRequest = vi.fn();
+      const recordSuccess = vi.fn();
+
+      const result = publishUsageLog({
+        source: 'codex',
+        metadata: {
+          id: 'req-redirected',
+          channel: 'redirected-channel',
+          channelId: 'redirected-channel-id',
+          originalModel: 'gpt-4o',
+          redirectedModel: 'gpt-4o-mini'
+        },
+        model: '',
+        tokens: {},
+        broadcastLog,
+        recordRequest,
+        recordSuccess,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result.model).toBe('gpt-4o-mini');
+      expect(result.usageMissing).toBe(true);
+      expect(broadcastLog).toHaveBeenCalledTimes(1);
+      expect(broadcastLog.mock.calls[0][0]).toMatchObject({
+        model: 'gpt-4o-mini',
+        originalModel: 'gpt-4o',
+        redirectedModel: 'gpt-4o-mini',
+        usageMissing: true
+      });
+      expect(recordRequest).not.toHaveBeenCalled();
+      expect(recordSuccess).toHaveBeenCalledWith('redirected-channel-id', 'codex');
     });
 
     it('should not call broadcastLog when allowBroadcast is false', () => {

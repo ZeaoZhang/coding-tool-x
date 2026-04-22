@@ -49,11 +49,11 @@
     <header class="header">
       <div class="logo-section" @click="goHome">
         <div class="logo-wrapper">
-          <img src="/logo.png" alt="Coding Tool Logo" class="logo-image" />
+          <img src="/logo.png" :alt="`${APP_NAME} logo`" class="logo-image" />
         </div>
         <div class="title-group">
-          <h1 class="title-main">Coding-Tool</h1>
-          <span class="title-sub">Vibe Coding增强工作助手</span>
+          <h1 class="title-main">{{ APP_NAME }}</h1>
+          <span class="title-sub">AI 编程工作台</span>
         </div>
       </div>
 
@@ -142,7 +142,6 @@
           @click="toggleTheme"
         />
 
-        <!-- 全局公用功能区分隔线 -->
         <div class="header-divider" />
 
         <!-- Favorites Button -->
@@ -179,56 +178,16 @@
         />
 
 
-        <!-- Config Templates Button -->
-        <HeaderButton
-          :icon="LayersOutline"
-          tooltip="配置模版管理"
-          @click="showConfigTemplatesDrawer = true"
-        />
-
-        <!-- Config Export/Import Button -->
-        <HeaderButton
-          :icon="CloudDownloadOutline"
-          tooltip="配置导出/导入"
-          @click="showConfigExportDrawer = true"
-        />
-
-        <HeaderButton
-          :icon="KeyOutline"
-          tooltip="OAuth 凭证管理"
-          @click="showOAuthCredentialsDrawer = true"
-        />
-
-        <!-- 功能区分隔线 -->
-        <div class="header-divider" />
-
-        <!-- Speed Test Button -->
-        <HeaderButton
-          :icon="SpeedometerOutline"
-          tooltip="渠道速度测试"
-          @click="showSpeedTestDrawer = true"
-        />
-
-        <!-- Settings Button -->
         <HeaderButton
           :icon="SettingsOutline"
           tooltip="设置"
           @click="showSettingsDrawer = true"
         />
-
-        <!-- Help Button -->
-        <HeaderButton
-          :icon="HelpCircleOutline"
-          tooltip="使用帮助"
-          @click="showHelpModal = true"
-        />
-
-        <!-- GitHub Link -->
-        <HeaderButton
-          :icon="LogoGithub"
-          tooltip="访问 GitHub 仓库"
-          @click="openGithub"
-        />
+        <n-dropdown trigger="click" placement="bottom-end" :options="moreMenuOptions" @select="handleMoreMenuSelect">
+          <div class="more-menu-trigger" aria-label="更多工具">
+            <HeaderButton :icon="EllipsisHorizontal" tooltip="更多工具" />
+          </div>
+        </n-dropdown>
       </div>
     </header>
 
@@ -316,11 +275,11 @@
     <PluginsDrawer v-model:visible="showPluginsDrawer" />
 
     <!-- Help Modal -->
-    <n-modal v-model:show="showHelpModal" preset="card" title="CODING-TOOL 使用帮助" style="width: 800px; max-width: 90vw;">
+    <n-modal v-model:show="showHelpModal" preset="card" :title="`${APP_NAME} 使用帮助`" style="width: 800px; max-width: 90vw;">
       <div class="help-content">
         <div class="help-section">
           <h4>[START] 快速开始</h4>
-          <p>CODING-TOOL 是 AI 编程工具的增强管理助手，支持 Claude Code、Codex 和 Gemini 三种 AI 工具，提供智能会话管理、动态渠道切换、全局搜索和实时监控功能。</p>
+          <p>{{ APP_NAME }} 是面向 Claude Code、Codex、Gemini 和 OpenCode 的统一 AI 编程工作台，提供会话管理、动态渠道切换、全局搜索与实时监控能力。</p>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">[STAR] 最简单的启动方式：</h5>
           <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058;">
@@ -477,7 +436,7 @@
             <code style="background: var(--bg-primary); padding: 2px 6px;">pm2 unstartup</code> 禁用开机自启
           </div>
 
-          <p style="color: #18a058; font-size: 12px; margin-top: 8px;">[TIP] 提示：配置开机自启后，重启电脑时 Coding-Tool 会自动启动，无需手动运行命令。</p>
+          <p style="color: #18a058; font-size: 12px; margin-top: 8px;">[TIP] 提示：配置开机自启后，重启电脑时 {{ APP_NAME }} 会自动启动，无需手动运行命令。</p>
         </div>
 
         <div class="help-section">
@@ -495,8 +454,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NTooltip, NSwitch, NSpin, NModal, NIcon, NText, NInput, NButton, NSpace } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, LogoGithub, HelpCircleOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, SpeedometerOutline, WarningOutline, FolderOpenOutline, LayersOutline, CloudDownloadOutline, ExtensionPuzzleOutline, StatsChartOutline, KeyOutline } from '@vicons/ionicons5'
+import { NTooltip, NSwitch, NSpin, NModal, NIcon, NText, NInput, NButton, NSpace, NDropdown } from 'naive-ui'
+import { ChatbubblesOutline, ServerOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, WarningOutline, FolderOpenOutline, ExtensionPuzzleOutline, StatsChartOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -546,6 +505,17 @@ const { dashboardData, isLoading: dashboardLoading, loadDashboard } = useDashboa
 
 const router = useRouter()
 const route = useRoute()
+const APP_NAME = 'coding-tool-x'
+
+const moreMenuOptions = [
+  { label: '配置模板', key: 'config-templates' },
+  { label: '配置导入/导出', key: 'config-export' },
+  { label: 'OAuth 凭证', key: 'oauth' },
+  { label: '渠道速度测试', key: 'speed-test' },
+  { type: 'divider', key: 'divider-1' },
+  { label: '使用帮助', key: 'help' },
+  { label: 'GitHub 仓库', key: 'github' }
+]
 
 // 导航状态
 const currentRoute = computed(() => route.name)
@@ -758,6 +728,32 @@ function openGithub() {
   window.open('https://github.com/ZeaoZhang/coding-tool', '_blank')
 }
 
+function handleMoreMenuSelect(key) {
+  if (key === 'config-templates') {
+    showConfigTemplatesDrawer.value = true
+    return
+  }
+  if (key === 'config-export') {
+    showConfigExportDrawer.value = true
+    return
+  }
+  if (key === 'oauth') {
+    showOAuthCredentialsDrawer.value = true
+    return
+  }
+  if (key === 'speed-test') {
+    showSpeedTestDrawer.value = true
+    return
+  }
+  if (key === 'help') {
+    showHelpModal.value = true
+    return
+  }
+  if (key === 'github') {
+    openGithub()
+  }
+}
+
 // 统一的代理切换处理器（根据当前 channel 路由到正确的代理）
 async function handleProxyToggle(newValue) {
   const channelType = currentChannel.value || 'claude'
@@ -898,6 +894,10 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.more-menu-trigger {
+  display: flex;
 }
 
 .header-divider {

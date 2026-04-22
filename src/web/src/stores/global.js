@@ -8,6 +8,7 @@ let reconnectAttempts = 0
 let isReceivingHistory = false
 let historyTimer = null
 const channelSourceByName = Object.create(null)
+const shownBrowserNotificationIds = new Set()
 
 function computeTodayRange() {
   const start = new Date()
@@ -19,6 +20,10 @@ function computeTodayRange() {
 }
 
 function resolveLogTotal(source, data) {
+  if (data.usageMissing) {
+    return null
+  }
+
   if (data.totalTokens !== undefined && data.totalTokens !== null) {
     return Number(data.totalTokens) || 0
   }
@@ -33,6 +38,23 @@ function resolveLogTotal(source, data) {
   }
 
   return input + output
+}
+
+function resolveLogModel(data = {}) {
+  const candidates = [
+    data.model,
+    data.redirectedModel,
+    data.modelFromUrl,
+    data.originalModel
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim()
+    }
+  }
+
+  return ''
 }
 
 export const useGlobalStore = defineStore('global', () => {
@@ -221,13 +243,14 @@ export const useGlobalStore = defineStore('global', () => {
       status: data.status || (data.error ? 'error' : 'success'),
       action: data.action || null,
       channel: data.channel || data.channelName || 'Unknown',
-      model: data.model,
+      model: resolveLogModel(data),
       originalModel: data.originalModel || null,
       redirectedModel: data.redirectedModel || null,
       message: data.message,
       error: data.error || null,
       statusCode: data.statusCode || null,
       stage: data.stage || null,
+      usageMissing: Boolean(data.usageMissing),
       timestamp,
       time,
       tokens: {
@@ -324,6 +347,39 @@ export const useGlobalStore = defineStore('global', () => {
     const { source, scheduler } = data
     if (schedulerState[source] && scheduler) {
       schedulerState[source] = scheduler
+    }
+  }
+
+  function showBrowserNotification(data) {
+    if (typeof window === 'undefined' || typeof Notification === 'undefined') {
+      return
+    }
+
+    if (Notification.permission !== 'granted') {
+      return
+    }
+
+    const notificationId = data.id || `${data.source || 'claude'}-${data.timestamp || Date.now()}`
+    if (shownBrowserNotificationIds.has(notificationId)) {
+      return
+    }
+    shownBrowserNotificationIds.add(notificationId)
+
+    const notification = new Notification(data.title || 'coding-tool-x', {
+      body: data.message || '任务已完成',
+      tag: notificationId,
+      icon: '/logo.png'
+    })
+
+    notification.onclick = () => {
+      try {
+        window.focus()
+        if (data.url) {
+          window.location.assign(data.url)
+        }
+      } catch (err) {
+        console.error('Failed to handle browser notification click:', err)
+      }
     }
   }
 
@@ -490,6 +546,8 @@ export const useGlobalStore = defineStore('global', () => {
             handleProxyStateUpdate(data)
           } else if (data.type === 'scheduler-state') {
             handleSchedulerStateUpdate(data)
+          } else if (data.type === 'browser-notification') {
+            showBrowserNotification(data)
           } else {
             appendLogEntry(data)
           }

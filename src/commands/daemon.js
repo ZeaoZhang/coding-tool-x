@@ -281,9 +281,13 @@ async function handleStart() {
 
     // 检查是否启用 LAN 访问 (--host 标志)
     const enableHost = process.argv.includes('--host');
+    const enableHttps = process.argv.includes('--https');
     const pmArgs = ['ui', '--daemon'];
     if (enableHost) {
       pmArgs.push('--host');
+    }
+    if (enableHttps) {
+      pmArgs.push('--https');
     }
     require('fs').mkdirSync(PATHS.logs, { recursive: true });
 
@@ -335,10 +339,10 @@ async function handleStart() {
       }
 
       console.log(chalk.green('\n[OK] Coding-Tool 服务已启动（后台运行）\n'));
-      console.log(chalk.gray(`Web UI: http://localhost:${port}`));
+      console.log(chalk.gray(`Web UI: ${enableHttps ? 'https' : 'http'}://localhost:${port}`));
       printPortToolIssue(readyState.degradedPortCheckIssue);
       if (enableHost) {
-        console.log(chalk.yellow(`[WARN]  LAN 访问已启用 (http://<your-ip>:${port})`));
+        console.log(chalk.yellow(`[WARN]  LAN 访问已启用 (${enableHttps ? 'https' : 'http'}://<your-ip>:${port})`));
       }
       console.log(chalk.gray('\n可以安全关闭此终端窗口'));
       console.log(chalk.gray('\n常用命令:'));

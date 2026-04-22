@@ -19,6 +19,7 @@ const mockRes = () => {
 
 // Stub network-access before loading the router
 const networkModPath = require.resolve('../../../src/server/services/network-access');
+const mockIsLoopbackRequest = vi.fn(() => true);
 require.cache[networkModPath] = {
   id: networkModPath,
   filename: networkModPath,
@@ -27,7 +28,7 @@ require.cache[networkModPath] = {
     createSameOriginGuard: () => (req, res, next) => next(),
     normalizeAddress: () => '',
     isLoopbackAddress: () => true,
-    isLoopbackRequest: () => true,
+    isLoopbackRequest: mockIsLoopbackRequest,
     isSameOriginRequest: () => true,
     createRemoteMutationGuard: () => (req, res, next) => next(),
     createRemoteRouteGuard: () => (req, res, next) => next()
@@ -39,6 +40,7 @@ const hooksModPath = require.resolve('../../../src/server/services/notification-
 const mockGetNotificationSettings = vi.fn();
 const mockSaveNotificationSettings = vi.fn();
 const mockTestNotification = vi.fn();
+const mockEmitBrowserNotification = vi.fn();
 
 require.cache[hooksModPath] = {
   id: hooksModPath,
@@ -47,7 +49,8 @@ require.cache[hooksModPath] = {
   exports: {
     getNotificationSettings: mockGetNotificationSettings,
     saveNotificationSettings: mockSaveNotificationSettings,
-    testNotification: mockTestNotification
+    testNotification: mockTestNotification,
+    emitBrowserNotification: mockEmitBrowserNotification
   }
 };
 
@@ -56,6 +59,7 @@ const router = require('../../../src/server/api/hooks');
 describe('hooks API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsLoopbackRequest.mockReturnValue(true);
   });
 
   describe('GET /', () => {
@@ -188,6 +192,50 @@ describe('hooks API', () => {
 
       expect(res.status).toHaveBeenCalledWith(502);
       expect(res.json).toHaveBeenCalledWith({ error: 'gateway error' });
+    });
+  });
+
+  describe('POST /browser-event', () => {
+    it('broadcasts browser notification payload for loopback requests', () => {
+      const notification = { source: 'codex', message: 'done' };
+      mockEmitBrowserNotification.mockReturnValue(notification);
+      const handler = findHandler(router, 'post', '/browser-event');
+      const req = mockReq({ body: { source: 'codex', message: 'done' } });
+      const res = mockRes();
+
+      handler(req, res);
+
+      expect(mockEmitBrowserNotification).toHaveBeenCalledWith({ source: 'codex', message: 'done' });
+      expect(res.json).toHaveBeenCalledWith({ success: true, notification });
+    });
+
+    it('rejects non-loopback browser event requests', () => {
+      mockIsLoopbackRequest.mockReturnValue(false);
+      const handler = findHandler(router, 'post', '/browser-event');
+      const req = mockReq({ body: { source: 'codex', message: 'done' } });
+      const res = mockRes();
+
+      handler(req, res);
+
+      expect(mockEmitBrowserNotification).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json).toHaveBeenCalledWith({ error: '仅允许本机通知脚本访问浏览器通知接口' });
+    });
+
+    it('uses service error status code when browser event emission fails', () => {
+      const error = new Error('bad payload');
+      error.statusCode = 422;
+      mockEmitBrowserNotification.mockImplementation(() => {
+        throw error;
+      });
+      const handler = findHandler(router, 'post', '/browser-event');
+      const req = mockReq({ body: { source: 'codex' } });
+      const res = mockRes();
+
+      handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(422);
+      expect(res.json).toHaveBeenCalledWith({ error: 'bad payload' });
     });
   });
 });

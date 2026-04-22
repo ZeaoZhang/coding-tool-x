@@ -14,7 +14,12 @@ const { createDecodedStream } = require('./services/response-decoder');
 const { getEffectiveApiKey } = require('./services/codex-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
-const { redirectModel, resolveTargetUrl } = require('./services/base/proxy-utils');
+const {
+  redirectModel,
+  resolveTargetUrl,
+  isChatCompletionsPath,
+  ensureOpenAiStreamUsage
+} = require('./services/base/proxy-utils');
 const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
@@ -139,9 +144,10 @@ async function startCodexProxyServer(options = {}) {
       const requestId = `codex-${Date.now()}-${Math.random()}`;
       requestMetadata.set(req, {
         id: requestId,
-      channel: activeChannel.name,
-      channelId: activeChannel.id,
-      startTime: Date.now()
+        channel: activeChannel.name,
+        channelId: activeChannel.id,
+        startTime: Date.now(),
+        requestModel: req.body?.model || ''
       });
 
       proxyReq.removeHeader('authorization');
@@ -216,6 +222,8 @@ async function startCodexProxyServer(options = {}) {
           }
         });
 
+        let bodyMutated = false;
+
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {
           const originalModel = req.body.model;
@@ -223,14 +231,14 @@ async function startCodexProxyServer(options = {}) {
 
           if (redirectedModel !== originalModel) {
             req.body.model = redirectedModel;
-            // 更新 rawBody 以匹配修改后的 body
-            req.rawBody = Buffer.from(JSON.stringify(req.body));
+            bodyMutated = true;
 
             // 将原始模型和重定向模型存入 metadata，用于日志记录
             const meta = requestMetadata.get(req);
             if (meta) {
               meta.originalModel = originalModel;
               meta.redirectedModel = redirectedModel;
+              meta.requestModel = redirectedModel;
             }
 
             // 只在重定向规则变化时打印日志（避免每次请求都打印）
@@ -241,6 +249,14 @@ async function startCodexProxyServer(options = {}) {
               console.log(`[Codex Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
             }
           }
+        }
+
+        if (shouldParseJson(req) && isChatCompletionsPath(req.url) && ensureOpenAiStreamUsage(req.body)) {
+          bodyMutated = true;
+        }
+
+        if (bodyMutated) {
+          req.rawBody = Buffer.from(JSON.stringify(req.body));
         }
 
         const target = resolveCodexTarget(channel.baseUrl, req.url);

@@ -8,6 +8,107 @@
  * 并确保模型重定向后仍能正确解析不同格式的响应。
  */
 
+function readNumericField(source, keys = []) {
+  for (const key of keys) {
+    if (!source || source[key] === undefined || source[key] === null) {
+      continue;
+    }
+    const value = Number(source[key]);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readNestedNumericField(source, pathVariants = []) {
+  for (const path of pathVariants) {
+    let current = source;
+    let missing = false;
+    for (const segment of path) {
+      if (!current || typeof current !== 'object' || !(segment in current)) {
+        missing = true;
+        break;
+      }
+      current = current[segment];
+    }
+    if (missing || current === undefined || current === null) {
+      continue;
+    }
+    const value = Number(current);
+    if (Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function parseUsageObject(rawUsage) {
+  if (!rawUsage || typeof rawUsage !== 'object') {
+    return null;
+  }
+
+  const tokens = {};
+  const hasAnthropicCacheFields =
+    rawUsage.cache_creation_input_tokens !== undefined ||
+    rawUsage.cache_read_input_tokens !== undefined ||
+    rawUsage.cacheCreationInputTokens !== undefined ||
+    rawUsage.cacheReadInputTokens !== undefined;
+  const hasOpenAiPromptFields =
+    rawUsage.prompt_tokens !== undefined ||
+    rawUsage.promptTokens !== undefined ||
+    rawUsage.prompt_tokens_details !== undefined ||
+    rawUsage.promptTokensDetails !== undefined;
+  const hasOpenAiResponseFields =
+    rawUsage.input_tokens_details !== undefined ||
+    rawUsage.inputTokensDetails !== undefined ||
+    rawUsage.output_tokens_details !== undefined ||
+    rawUsage.outputTokensDetails !== undefined;
+
+  const input = readNumericField(rawUsage, ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens']);
+  if (input !== undefined) tokens.input = input;
+
+  const output = readNumericField(rawUsage, ['output_tokens', 'completion_tokens', 'outputTokens', 'completionTokens']);
+  if (output !== undefined) tokens.output = output;
+
+  const total = readNumericField(rawUsage, ['total_tokens', 'totalTokens']);
+  if (total !== undefined) tokens.total = total;
+
+  const cacheCreation = readNumericField(rawUsage, ['cache_creation_input_tokens', 'cacheCreationInputTokens']);
+  if (cacheCreation !== undefined) tokens.cacheCreation = cacheCreation;
+
+  const cacheRead = readNumericField(rawUsage, ['cache_read_input_tokens', 'cacheReadInputTokens']);
+  if (cacheRead !== undefined) tokens.cacheRead = cacheRead;
+
+  const cached = readNestedNumericField(rawUsage, [
+    ['input_tokens_details', 'cached_tokens'],
+    ['prompt_tokens_details', 'cached_tokens'],
+    ['inputTokensDetails', 'cachedTokens'],
+    ['promptTokensDetails', 'cachedTokens']
+  ]);
+  if (cached !== undefined) tokens.cached = cached;
+
+  const reasoning = readNestedNumericField(rawUsage, [
+    ['output_tokens_details', 'reasoning_tokens'],
+    ['outputTokensDetails', 'reasoningTokens']
+  ]);
+  if (reasoning !== undefined) tokens.reasoning = reasoning;
+
+  // OpenAI/OpenAI-compatible usage commonly reports prompt/input totals that
+  // already include cache hits. Align with OpenCode's provider contract by
+  // moving cached prompt tokens into a dedicated field and keeping input as the
+  // net uncached prompt tokens.
+  if (!hasAnthropicCacheFields && (hasOpenAiPromptFields || hasOpenAiResponseFields) && tokens.cached !== undefined && tokens.input !== undefined) {
+    tokens.input = Math.max(tokens.input - tokens.cached, 0);
+  }
+
+  if (Object.keys(tokens).length === 0) {
+    return null;
+  }
+
+  return tokens;
+}
+
 /**
  * 从单个 SSE 事件的 parsed JSON 中提取 model 和 token 信息。
  * 自动检测 Claude / OpenAI / Gemini 格式。
@@ -42,71 +143,21 @@ function parseSSEUsage(parsed, eventType) {
       model = parsed.response.model;
     }
     if (parsed.response.usage) {
-      tokens = {
-        input: parsed.response.usage.input_tokens || 0,
-        output: parsed.response.usage.output_tokens || 0,
-        total: parsed.response.usage.total_tokens || 0,
-      };
-      if (parsed.response.usage.input_tokens_details &&
-          parsed.response.usage.input_tokens_details.cached_tokens !== undefined) {
-        tokens.cached = parsed.response.usage.input_tokens_details.cached_tokens;
-      }
-      if (parsed.response.usage.output_tokens_details &&
-          parsed.response.usage.output_tokens_details.reasoning_tokens !== undefined) {
-        tokens.reasoning = parsed.response.usage.output_tokens_details.reasoning_tokens;
-      }
+      tokens = parseUsageObject(parsed.response.usage);
     }
     isDone = true;
   }
 
   // === parsed.usage（Claude 原生 + OpenAI Chat Completions 共用） ===
   if (!tokens && parsed.usage) {
-    const t = {};
+    tokens = parseUsageObject(parsed.usage);
+  }
 
-    // Claude 格式字段
-    if (parsed.usage.input_tokens !== undefined) {
-      t.input = parsed.usage.input_tokens;
-    }
-    if (parsed.usage.output_tokens !== undefined) {
-      t.output = parsed.usage.output_tokens;
-    }
-    if (parsed.usage.cache_creation_input_tokens !== undefined) {
-      t.cacheCreation = parsed.usage.cache_creation_input_tokens;
-    }
-    if (parsed.usage.cache_read_input_tokens !== undefined) {
-      t.cacheRead = parsed.usage.cache_read_input_tokens;
-    }
-
-    // OpenAI Chat Completions 格式字段（fallback）
-    if (t.input === undefined && parsed.usage.prompt_tokens !== undefined) {
-      t.input = parsed.usage.prompt_tokens;
-    }
-    if (t.output === undefined && parsed.usage.completion_tokens !== undefined) {
-      t.output = parsed.usage.completion_tokens;
-    }
-    if (parsed.usage.total_tokens !== undefined) {
-      t.total = parsed.usage.total_tokens;
-    }
-
-    // OpenAI detailed breakdowns
-    if (parsed.usage.input_tokens_details &&
-        parsed.usage.input_tokens_details.cached_tokens !== undefined) {
-      t.cached = parsed.usage.input_tokens_details.cached_tokens;
-    }
-    if (parsed.usage.output_tokens_details &&
-        parsed.usage.output_tokens_details.reasoning_tokens !== undefined) {
-      t.reasoning = parsed.usage.output_tokens_details.reasoning_tokens;
-    }
-
-    // Gemini cache in OpenAI compat mode
-    if (parsed.usage.prompt_tokens_details &&
-        parsed.usage.prompt_tokens_details.cached_tokens !== undefined) {
-      t.cached = parsed.usage.prompt_tokens_details.cached_tokens;
-    }
-
-    if (Object.keys(t).length > 0) {
-      tokens = t;
-    }
+  if (!tokens && parsed.tokenUsage) {
+    tokens = parseUsageObject(parsed.tokenUsage);
+  }
+  if (!tokens && parsed.token_usage) {
+    tokens = parseUsageObject(parsed.token_usage);
   }
 
   // === Gemini Native 格式 ===

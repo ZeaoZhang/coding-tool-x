@@ -121,6 +121,45 @@ function normalizeNumber(value, defaultValue, max = null) {
 }
 
 /**
+ * 判断请求路径是否为 OpenAI Chat Completions。
+ * @param {string} requestPath
+ * @returns {boolean}
+ */
+function isChatCompletionsPath(requestPath = '') {
+  const normalized = String(requestPath || '').trim().toLowerCase();
+  return normalized.includes('/chat/completions');
+}
+
+/**
+ * 为流式 Chat Completions 请求补齐 usage 输出，方便统计真实 token。
+ * @param {object} body
+ * @returns {boolean} 是否发生了修改
+ */
+function ensureOpenAiStreamUsage(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return false;
+  }
+
+  if (body.stream !== true) {
+    return false;
+  }
+
+  const current = body.stream_options && typeof body.stream_options === 'object' && !Array.isArray(body.stream_options)
+    ? body.stream_options
+    : {};
+
+  if (current.include_usage === true) {
+    return false;
+  }
+
+  body.stream_options = {
+    ...current,
+    include_usage: true
+  };
+  return true;
+}
+
+/**
  * 记录模型重定向日志（避免重复打印）
  * @param {Map} cache - 重定向缓存 Map
  * @param {string} channelId
@@ -148,5 +187,7 @@ module.exports = {
   resolveTargetUrl,
   normalizeGatewaySourceType,
   normalizeNumber,
+  isChatCompletionsPath,
+  ensureOpenAiStreamUsage,
   logModelRedirect,
 };
