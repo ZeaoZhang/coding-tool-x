@@ -20,7 +20,13 @@ const { getEffectiveApiKey } = require('./services/channels');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel } = require('./services/base/proxy-utils');
-const { parseSSEUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
+const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
+const {
+  createClaudeStreamRecoveryState,
+  mergeClaudeStreamEvent,
+  buildAssistantMessageFromStreamState,
+  recoverClaudeUsageViaCountTokens
+} = require('./services/claude-token-recovery');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
@@ -170,6 +176,16 @@ function buildClaudeRequestSummary(req, sessionId = null) {
     sessionId: sessionId || null,
     contentLength: Number.isFinite(contentLength) ? contentLength : null
   };
+}
+
+function clearTokenDataUsage(tokenData) {
+  tokenData.inputTokens = 0;
+  tokenData.outputTokens = 0;
+  tokenData.cacheCreation = 0;
+  tokenData.cacheRead = 0;
+  tokenData.cachedTokens = 0;
+  tokenData.reasoningTokens = 0;
+  tokenData.totalTokens = 0;
 }
 
 async function startProxyServer(options = {}) {
@@ -396,9 +412,16 @@ async function startProxyServer(options = {}) {
         requestMetadata.delete(req);
       });
 
+      const isSseResponse = proxyRes.headers['content-type']?.includes('text/event-stream');
       let buffer = '';
       let tokenData = createTokenData();
       let usageRecorded = false;
+      const streamRecoveryState = createClaudeStreamRecoveryState();
+      const usageObservation = {
+        sawAnyUsage: false,
+        sawMessageStartUsage: false,
+        sawNonInitialUsage: false
+      };
       const parsedStream = createDecodedStream(proxyRes);
 
       function recordUsageIfReady() {
@@ -434,6 +457,10 @@ async function startProxyServer(options = {}) {
 
         buffer += chunk.toString('utf8');
 
+        if (!isSseResponse) {
+          return;
+        }
+
         const events = buffer.split('\n\n');
         buffer = events.pop() || '';
 
@@ -456,10 +483,19 @@ async function startProxyServer(options = {}) {
             if (!data || data === '[DONE]') return;
 
             const parsed = JSON.parse(data);
+            mergeClaudeStreamEvent(streamRecoveryState, eventType, parsed);
             const usage = parseSSEUsage(parsed, eventType);
+            if (usage.tokens) {
+              usageObservation.sawAnyUsage = true;
+              if (eventType === 'message_start') {
+                usageObservation.sawMessageStartUsage = true;
+              } else {
+                usageObservation.sawNonInitialUsage = true;
+              }
+            }
             mergeUsageIntoTokenData(tokenData, usage);
 
-            if (usage.isDone) {
+            if (usage.isDone && (!isSseResponse || usageObservation.sawNonInitialUsage)) {
               recordUsageIfReady();
             }
           } catch (err) {
@@ -477,8 +513,48 @@ async function startProxyServer(options = {}) {
       };
 
       parsedStream.on('end', () => {
-        recordUsageIfReady();
-        finalize();
+        void (async () => {
+          if (!isSseResponse) {
+            try {
+              const parsed = JSON.parse(buffer);
+              const usage = parseNonStreamingUsage(parsed);
+              mergeUsageIntoTokenData(tokenData, usage);
+            } catch (err) {
+            }
+          } else {
+            const assistantMessage = buildAssistantMessageFromStreamState(streamRecoveryState);
+            const shouldRecoverUsage = Boolean(assistantMessage)
+              && (!usageObservation.sawAnyUsage || (usageObservation.sawMessageStartUsage && !usageObservation.sawNonInitialUsage));
+
+            if (shouldRecoverUsage) {
+              try {
+                const recoveredUsage = await recoverClaudeUsageViaCountTokens({
+                  baseUrl: req.selectedChannel?.baseUrl || '',
+                  apiKey: req.effectiveApiKey || '',
+                  requestBody: req.body,
+                  assistantMessage
+                });
+                if (recoveredUsage) {
+                  tokenData.model = tokenData.model || streamRecoveryState.model || '';
+                  tokenData.inputTokens = Number(recoveredUsage.inputTokens || 0);
+                  tokenData.outputTokens = Number(recoveredUsage.outputTokens || 0);
+                  // Let publishUsageLog recompute Claude totals from the recovered
+                  // prompt/output pair plus any cache fields already present.
+                  tokenData.totalTokens = 0;
+                } else {
+                  tokenData.model = tokenData.model || streamRecoveryState.model || '';
+                  clearTokenDataUsage(tokenData);
+                }
+              } catch (error) {
+                tokenData.model = tokenData.model || streamRecoveryState.model || '';
+                clearTokenDataUsage(tokenData);
+              }
+            }
+          }
+
+          recordUsageIfReady();
+          finalize();
+        })();
       });
 
       parsedStream.on('error', (err) => {

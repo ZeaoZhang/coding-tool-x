@@ -64,6 +64,15 @@ function parseUsageObject(rawUsage) {
     rawUsage.inputTokensDetails !== undefined ||
     rawUsage.output_tokens_details !== undefined ||
     rawUsage.outputTokensDetails !== undefined;
+  const hasOpenAiCompatibilityFields =
+    hasOpenAiPromptFields ||
+    hasOpenAiResponseFields ||
+    rawUsage.cached_tokens !== undefined ||
+    rawUsage.cachedTokens !== undefined ||
+    rawUsage.reasoning_tokens !== undefined ||
+    rawUsage.reasoningTokens !== undefined ||
+    rawUsage.completion_tokens_details !== undefined ||
+    rawUsage.completionTokensDetails !== undefined;
 
   const input = readNumericField(rawUsage, ['input_tokens', 'prompt_tokens', 'inputTokens', 'promptTokens']);
   if (input !== undefined) tokens.input = input;
@@ -74,31 +83,43 @@ function parseUsageObject(rawUsage) {
   const total = readNumericField(rawUsage, ['total_tokens', 'totalTokens']);
   if (total !== undefined) tokens.total = total;
 
-  const cacheCreation = readNumericField(rawUsage, ['cache_creation_input_tokens', 'cacheCreationInputTokens']);
+  const cacheCreation = readNumericField(rawUsage, ['cache_creation_input_tokens', 'cacheCreationInputTokens'])
+    ?? readNestedNumericField(rawUsage, [
+      ['prompt_tokens_details', 'cache_creation_input_tokens'],
+      ['promptTokensDetails', 'cacheCreationInputTokens']
+    ]);
   if (cacheCreation !== undefined) tokens.cacheCreation = cacheCreation;
 
   const cacheRead = readNumericField(rawUsage, ['cache_read_input_tokens', 'cacheReadInputTokens']);
   if (cacheRead !== undefined) tokens.cacheRead = cacheRead;
 
-  const cached = readNestedNumericField(rawUsage, [
-    ['input_tokens_details', 'cached_tokens'],
-    ['prompt_tokens_details', 'cached_tokens'],
-    ['inputTokensDetails', 'cachedTokens'],
-    ['promptTokensDetails', 'cachedTokens']
-  ]);
+  const cached = readNumericField(rawUsage, ['cached_tokens', 'cachedTokens'])
+    ?? readNestedNumericField(rawUsage, [
+      ['input_tokens_details', 'cached_tokens'],
+      ['prompt_tokens_details', 'cached_tokens'],
+      ['inputTokensDetails', 'cachedTokens'],
+      ['promptTokensDetails', 'cachedTokens']
+    ]);
   if (cached !== undefined) tokens.cached = cached;
 
-  const reasoning = readNestedNumericField(rawUsage, [
-    ['output_tokens_details', 'reasoning_tokens'],
-    ['outputTokensDetails', 'reasoningTokens']
-  ]);
+  const reasoning = readNumericField(rawUsage, ['reasoning_tokens', 'reasoningTokens'])
+    ?? readNestedNumericField(rawUsage, [
+      ['completion_tokens_details', 'reasoning_tokens'],
+      ['output_tokens_details', 'reasoning_tokens'],
+      ['completionTokensDetails', 'reasoningTokens'],
+      ['outputTokensDetails', 'reasoningTokens']
+    ]);
   if (reasoning !== undefined) tokens.reasoning = reasoning;
+
+  if (tokens.total === undefined && tokens.input !== undefined && tokens.output !== undefined && !hasAnthropicCacheFields) {
+    tokens.total = tokens.input + tokens.output;
+  }
 
   // OpenAI/OpenAI-compatible usage commonly reports prompt/input totals that
   // already include cache hits. Align with OpenCode's provider contract by
   // moving cached prompt tokens into a dedicated field and keeping input as the
   // net uncached prompt tokens.
-  if (!hasAnthropicCacheFields && (hasOpenAiPromptFields || hasOpenAiResponseFields) && tokens.cached !== undefined && tokens.input !== undefined) {
+  if (!hasAnthropicCacheFields && hasOpenAiCompatibilityFields && tokens.cached !== undefined && tokens.input !== undefined) {
     tokens.input = Math.max(tokens.input - tokens.cached, 0);
   }
 
@@ -132,13 +153,16 @@ function parseSSEUsage(parsed, eventType) {
   if (eventType === 'message_start' && parsed.message && parsed.message.model) {
     model = parsed.message.model;
   }
+  if (!tokens && parsed.message && parsed.message.usage) {
+    tokens = parseUsageObject(parsed.message.usage);
+  }
   if (eventType === 'message_stop') {
     isDone = true;
   }
 
   // === OpenAI Responses API 格式 ===
   // data: {"type": "response.completed", "response": {"model", "usage": {...}}}
-  if (parsed.type === 'response.completed' && parsed.response) {
+  if ((parsed.type === 'response.completed' || parsed.type === 'response.incomplete') && parsed.response) {
     if (parsed.response.model) {
       model = parsed.response.model;
     }
@@ -170,6 +194,9 @@ function parseSSEUsage(parsed, eventType) {
     };
     if (parsed.usageMetadata.cachedContentTokenCount) {
       tokens.cached = parsed.usageMetadata.cachedContentTokenCount;
+    }
+    if (parsed.usageMetadata.thoughtsTokenCount) {
+      tokens.reasoning = parsed.usageMetadata.thoughtsTokenCount;
     }
   }
 
