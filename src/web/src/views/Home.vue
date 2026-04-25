@@ -76,9 +76,9 @@ onMounted(async () => {
 <style scoped>
 .dashboard-container {
   height: 100%;
-  background: var(--bg-primary);
+  background: var(--gradient-bg);
   overflow: hidden;
-  padding: 12px;
+  padding: 18px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -115,11 +115,12 @@ onMounted(async () => {
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  gap: 16px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
   box-sizing: border-box;
+  align-items: stretch;
 }
 
 /* 拖拽时的占位符样式 */
@@ -132,13 +133,13 @@ onMounted(async () => {
 }
 
 /* 响应式设计 */
-@media (max-width: 1600px) {
+@media (max-width: 1240px) {
   .dashboard-grid {
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 960px) {
   .dashboard-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -146,11 +147,11 @@ onMounted(async () => {
 
 @media (max-width: 1024px) {
   .dashboard-container {
-    padding: 10px;
+    padding: 14px;
   }
 
   .dashboard-grid {
-    gap: 10px;
+    gap: 12px;
   }
 }
 
@@ -162,12 +163,12 @@ onMounted(async () => {
 
 @media (max-width: 768px) {
   .dashboard-container {
-    padding: 8px;
+    padding: 10px;
     overflow-y: auto;
   }
 
   .dashboard-grid {
-    gap: 8px;
+    gap: 10px;
     overflow: visible;
     min-height: auto;
   }

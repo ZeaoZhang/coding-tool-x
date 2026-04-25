@@ -1,18 +1,56 @@
 const express = require('express');
 const { exec } = require('child_process');
-const { promisify } = require('util');
 const path = require('path');
 const fs = require('fs');
 const pm2 = require('pm2');
 const { HOME_DIR } = require('../../config/paths');
-
-const execAsync = promisify(exec);
+const PM2_BIN_PATH = require.resolve('pm2/bin/pm2');
 
 function getExecOptions(timeout = 30000, runtimePlatform = process.platform) {
   if (runtimePlatform === 'win32') {
     return { timeout, windowsHide: true };
   }
   return { shell: '/bin/bash', timeout, windowsHide: true };
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function getPm2CliCommand() {
+  return `${shellQuote(process.execPath)} ${shellQuote(PM2_BIN_PATH)}`;
+}
+
+function listMatchingFiles(dirPath, matcher) {
+  if (!fs.existsSync(dirPath)) {
+    return [];
+  }
+
+  return fs.readdirSync(dirPath)
+    .filter(fileName => matcher.test(fileName))
+    .map(fileName => path.join(dirPath, fileName));
+}
+
+function getStartupCommand(runtimePlatform = process.platform) {
+  const pm2Cli = getPm2CliCommand();
+  if (runtimePlatform === 'darwin') {
+    return `${pm2Cli} startup launchd -u $(whoami) --hp $(eval echo ~$(whoami))`;
+  }
+  if (runtimePlatform === 'linux') {
+    return `${pm2Cli} startup systemd -u $(whoami) --hp $(eval echo ~$(whoami))`;
+  }
+  return `${pm2Cli} startup`;
+}
+
+function getUnstartupCommand(runtimePlatform = process.platform) {
+  const pm2Cli = getPm2CliCommand();
+  if (runtimePlatform === 'darwin') {
+    return `${pm2Cli} unstartup launchd -u $(whoami)`;
+  }
+  if (runtimePlatform === 'linux') {
+    return `${pm2Cli} unstartup systemd -u $(whoami)`;
+  }
+  return `${pm2Cli} unstartup`;
 }
 
 /**
@@ -24,17 +62,21 @@ async function checkAutoStartStatus() {
     const platform = process.platform;
 
     if (platform === 'darwin') {
-      // macOS - check for LaunchDaemon
-      const launchDaemonsPath = path.join(HOME_DIR, 'Library/LaunchDaemons');
-      const pm2Files = fs.existsSync(launchDaemonsPath)
-        ? fs.readdirSync(launchDaemonsPath).filter(f => f.includes('pm2'))
-        : [];
+      const pm2Files = [
+        ...listMatchingFiles(path.join(HOME_DIR, 'Library/LaunchAgents'), /pm2/i),
+        ...listMatchingFiles(path.join(HOME_DIR, 'Library/LaunchDaemons'), /pm2/i),
+        ...listMatchingFiles('/Library/LaunchAgents', /pm2/i),
+        ...listMatchingFiles('/Library/LaunchDaemons', /pm2/i)
+      ];
 
-      return { enabled: pm2Files.length > 0, platform: 'darwin' };
+      return {
+        enabled: pm2Files.length > 0,
+        platform: 'darwin',
+        files: pm2Files
+      };
     } else if (platform === 'linux') {
       // Linux - check for systemd service
       const systemdPath = '/etc/systemd/system/pm2-root.service';
-      const userSystemdPath = path.join(HOME_DIR, '.config/systemd/user/pm2-*.service');
 
       const rootExists = fs.existsSync(systemdPath);
       const userExists = fs.existsSync(path.join(HOME_DIR, '.config/systemd/user')) &&
@@ -102,12 +144,7 @@ async function enableAutoStart() {
           }
 
           // Run startup command
-          const platform = process.platform;
-          const command = platform === 'darwin'
-            ? 'pm2 startup launchd -u $(whoami) --hp $(eval echo ~$(whoami))'
-            : platform === 'linux'
-            ? 'pm2 startup systemd -u $(whoami) --hp $(eval echo ~$(whoami))'
-            : 'pm2 startup';
+          const command = getStartupCommand();
 
           console.log(`Running startup command: ${command}`);
 
@@ -161,12 +198,7 @@ async function disableAutoStart() {
       }
 
       // Run unstartup command
-      const platform = process.platform;
-      const command = platform === 'darwin'
-        ? 'pm2 unstartup launchd -u $(whoami)'
-        : platform === 'linux'
-        ? 'pm2 unstartup systemd -u $(whoami)'
-        : 'pm2 unstartup';
+      const command = getUnstartupCommand();
 
       console.log(`Running unstartup command: ${command}`);
 
@@ -277,5 +309,8 @@ function createPm2AutostartRouter() {
 
 module.exports = createPm2AutostartRouter;
 module.exports._test = {
-  getExecOptions
+  getExecOptions,
+  getPm2CliCommand,
+  getStartupCommand,
+  getUnstartupCommand
 };

@@ -139,4 +139,25 @@ describe('daemon stop helpers', () => {
     expect(daemon._test.shouldStopPM2Process('online')).toBe(true);
     expect(daemon._test.shouldStopPM2Process('stopped')).toBe(false);
   });
+
+  test('detects stale pm2 runtime path from startup log', () => {
+    const issue = daemon._test.detectStalePm2RuntimeIssue(
+      "Error: Cannot find module '/Users/zhangzeao/workspace/coding-tool/node_modules/pm2/lib/ProcessContainerFork.js'"
+    );
+
+    expect(issue).toEqual({
+      missingPath: '/Users/zhangzeao/workspace/coding-tool/node_modules/pm2/lib/ProcessContainerFork.js',
+      currentPath: require.resolve('pm2/lib/ProcessContainerFork')
+    });
+  });
+
+  test('ignores current pm2 runtime path in startup log', () => {
+    const currentForkPath = require.resolve('pm2/lib/ProcessContainerFork');
+
+    expect(
+      daemon._test.detectStalePm2RuntimeIssue(
+        `Error: Cannot find module '${currentForkPath}'`
+      )
+    ).toBeNull();
+  });
 });

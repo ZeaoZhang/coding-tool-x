@@ -1,3 +1,4 @@
+const fs = require('fs');
 const pm2 = require('pm2');
 const path = require('path');
 const chalk = require('chalk');
@@ -12,6 +13,16 @@ const {
 } = require('../utils/port-helper');
 
 const PM2_APP_NAME = 'cc-tool';
+const STARTUP_LOG_FILE = 'cc-tool-out.log';
+const CURRENT_PM2_FORK_PATH = resolveCurrentPm2ForkPath();
+
+function resolveCurrentPm2ForkPath() {
+  try {
+    return require.resolve('pm2/lib/ProcessContainerFork');
+  } catch {
+    return '';
+  }
+}
 
 /**
  * 连接到 PM2
@@ -84,6 +95,78 @@ async function getCCToolProcess() {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizePathForComparison(filePath) {
+  return path.normalize(String(filePath || ''));
+}
+
+function getFileSize(filePath) {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
+
+function readLogChunkSince(filePath, startOffset = 0, maxBytes = 32768) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size <= startOffset) {
+      return '';
+    }
+
+    const safeOffset = Math.max(0, startOffset);
+    const readStart = Math.max(safeOffset, stat.size - maxBytes);
+    const length = stat.size - readStart;
+    if (length <= 0) {
+      return '';
+    }
+
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const buffer = Buffer.alloc(length);
+      fs.readSync(fd, buffer, 0, length, readStart);
+      return buffer.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
+}
+
+function extractMissingPm2ForkScriptPath(logText = '') {
+  const match = String(logText).match(/Cannot find module '([^']*ProcessContainerFork\.js)'/);
+  return match ? match[1] : '';
+}
+
+function detectStalePm2RuntimeIssue(logText = '', currentForkPath = CURRENT_PM2_FORK_PATH) {
+  const missingPath = extractMissingPm2ForkScriptPath(logText);
+  if (!missingPath || !currentForkPath) {
+    return null;
+  }
+
+  if (normalizePathForComparison(missingPath) === normalizePathForComparison(currentForkPath)) {
+    return null;
+  }
+
+  return {
+    missingPath,
+    currentPath: currentForkPath
+  };
+}
+
+function updatePM2Daemon() {
+  return new Promise((resolve, reject) => {
+    pm2.update((err, result) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(result);
+      }
+    });
+  });
 }
 
 function isPortOwnedByPid(port, pid) {
@@ -257,103 +340,195 @@ async function waitForServiceReady(port, timeoutMs = 15000, intervalMs = 500) {
   };
 }
 
+function buildStartOptions(port, enableHost, enableHttps) {
+  const pmArgs = ['ui', '--daemon'];
+  if (enableHost) {
+    pmArgs.push('--host');
+  }
+  if (enableHttps) {
+    pmArgs.push('--https');
+  }
+
+  return {
+    name: PM2_APP_NAME,
+    script: path.join(__dirname, '../index.js'),
+    args: pmArgs,
+    interpreter: 'node',
+    autorestart: true,
+    max_memory_restart: '500M',
+    env: {
+      NODE_ENV: 'production',
+      CC_TOOL_PORT: port
+    },
+    output: path.join(PATHS.logs, STARTUP_LOG_FILE),
+    error: path.join(PATHS.logs, STARTUP_LOG_FILE),
+    merge_logs: true,
+    log_date_format: 'YYYY-MM-DD HH:mm:ss'
+  };
+}
+
+async function attemptStartService(startOptions, port, options = {}) {
+  const allowPm2Refresh = options.allowPm2Refresh !== false;
+  const logPath = path.join(PATHS.logs, STARTUP_LOG_FILE);
+  const logOffset = getFileSize(logPath);
+
+  return new Promise((resolve, reject) => {
+    pm2.start(startOptions, async (err) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      try {
+        const readyState = await waitForServiceReady(port);
+        if (readyState.ready) {
+          resolve({ ok: true, readyState });
+          return;
+        }
+
+        const recentLogText = readLogChunkSince(logPath, logOffset);
+        const staleRuntimeIssue = allowPm2Refresh ? detectStalePm2RuntimeIssue(recentLogText) : null;
+
+        if (staleRuntimeIssue) {
+          console.log(chalk.yellow('\n[WARN]  检测到 PM2 守护进程仍引用旧的 pm2 运行时，正在自动刷新...'));
+          console.log(chalk.gray(`旧路径: ${staleRuntimeIssue.missingPath}`));
+          console.log(chalk.gray(`当前路径: ${staleRuntimeIssue.currentPath}`));
+
+          await updatePM2Daemon();
+
+          const recoveredState = await waitForServiceReady(port, 5000, 500);
+          if (recoveredState.ready) {
+            resolve({
+              ok: true,
+              readyState: recoveredState,
+              recoveredFromStalePm2: staleRuntimeIssue
+            });
+            return;
+          }
+
+          try {
+            await deletePM2Process(PM2_APP_NAME);
+          } catch {
+            // ignore stale process cleanup errors; the next retry will surface real failures
+          }
+
+          resolve({
+            retry: true,
+            recoveredFromStalePm2: staleRuntimeIssue
+          });
+          return;
+        }
+
+        resolve({
+          ok: false,
+          readyState
+        });
+      } catch (checkError) {
+        reject(checkError);
+      }
+    });
+  });
+}
+
+function cleanupFailedStart() {
+  return new Promise((resolve) => {
+    pm2.delete(PM2_APP_NAME, () => {
+      pm2.dump(() => {
+        resolve();
+      });
+    });
+  });
+}
+
 /**
  * 启动服务（后台）
  */
 async function handleStart() {
   try {
-    await connectPM2();
-
-    // 检查是否已经在运行
-    const existing = await getCCToolProcess();
-    if (existing && existing.pm2_env.status === 'online') {
-      console.log(chalk.yellow('\n[WARN]  服务已在运行中\n'));
-      console.log(chalk.gray(`进程 ID: ${existing.pid}`));
-      console.log(chalk.gray(`运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
-      console.log(chalk.gray('\n使用 ') + chalk.cyan('ctx status') + chalk.gray(' 查看详细状态'));
-      console.log(chalk.gray('使用 ') + chalk.cyan('ctx restart') + chalk.gray(' 重启服务\n'));
-      disconnectPM2();
-      return;
-    }
-
     const config = loadConfig();
     const port = config.ports?.webUI || 19999;
-
-    // 检查是否启用 LAN 访问 (--host 标志)
     const enableHost = process.argv.includes('--host');
     const enableHttps = process.argv.includes('--https');
-    const pmArgs = ['ui', '--daemon'];
-    if (enableHost) {
-      pmArgs.push('--host');
-    }
-    if (enableHttps) {
-      pmArgs.push('--https');
-    }
-    require('fs').mkdirSync(PATHS.logs, { recursive: true });
+    fs.mkdirSync(PATHS.logs, { recursive: true });
 
-    // 启动 PM2 进程
-    pm2.start({
-      name: PM2_APP_NAME,
-      script: path.join(__dirname, '../index.js'),
-      args: pmArgs,
-      interpreter: 'node',
-      autorestart: true,
-      max_memory_restart: '500M',
-      env: {
-        NODE_ENV: 'production',
-        CC_TOOL_PORT: port
-      },
-      output: path.join(PATHS.logs, 'cc-tool-out.log'),
-      error: path.join(PATHS.logs, 'cc-tool-out.log'),
-      merge_logs: true,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss'
-    }, async (err) => {
-      if (err) {
-        console.error(chalk.red('\n[ERROR] 启动服务失败:'), err.message);
-        disconnectPM2();
-        process.exit(1);
-      }
+    let readyState = null;
+    let recoveredFromStalePm2 = null;
 
-      let readyState = null;
-      try {
-        readyState = await waitForServiceReady(port);
-        if (!readyState.ready) {
-          const statusText = readyState.process?.pm2_env?.status || 'unknown';
-          console.error(chalk.red('\n[ERROR] Coding-Tool 服务启动失败，进程未就绪\n'));
-          console.error(chalk.gray(`PM2 状态: ${statusText}`));
-          printPortToolIssue(readyState.degradedPortCheckIssue);
-          console.error(chalk.yellow('[TIP] 请使用 ctx logs ui 查看详细日志\n'));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await connectPM2();
 
-          pm2.delete(PM2_APP_NAME, () => {
-            pm2.dump(() => {
-              disconnectPM2();
-              process.exit(1);
-            });
-          });
-          return;
+      const existing = await getCCToolProcess();
+      if (existing && existing.pm2_env.status === 'online') {
+        if (recoveredFromStalePm2) {
+          readyState = {
+            ready: true,
+            process: existing,
+            degradedPortCheckIssue: getPortToolIssue()
+          };
+          break;
         }
-      } catch (checkError) {
-        console.error(chalk.red('\n[ERROR] 启动后健康检查失败:'), checkError.message);
+
+        console.log(chalk.yellow('\n[WARN]  服务已在运行中\n'));
+        console.log(chalk.gray(`进程 ID: ${existing.pid}`));
+        console.log(chalk.gray(`运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
+        console.log(chalk.gray('\n使用 ') + chalk.cyan('ctx status') + chalk.gray(' 查看详细状态'));
+        console.log(chalk.gray('使用 ') + chalk.cyan('ctx restart') + chalk.gray(' 重启服务\n'));
+        disconnectPM2();
+        return;
+      }
+
+      const startResult = await attemptStartService(
+        buildStartOptions(port, enableHost, enableHttps),
+        port,
+        { allowPm2Refresh: attempt === 0 }
+      );
+
+      if (startResult.retry) {
+        recoveredFromStalePm2 = startResult.recoveredFromStalePm2 || recoveredFromStalePm2;
+        disconnectPM2();
+        continue;
+      }
+
+      if (!startResult.ok) {
+        readyState = startResult.readyState;
+        const statusText = readyState.process?.pm2_env?.status || 'unknown';
+        console.error(chalk.red('\n[ERROR] Coding-Tool 服务启动失败，进程未就绪\n'));
+        console.error(chalk.gray(`PM2 状态: ${statusText}`));
+        printPortToolIssue(readyState.degradedPortCheckIssue);
+        console.error(chalk.yellow('[TIP] 请使用 ctx logs ui 查看详细日志\n'));
+        await cleanupFailedStart();
         disconnectPM2();
         process.exit(1);
       }
 
-      console.log(chalk.green('\n[OK] Coding-Tool 服务已启动（后台运行）\n'));
-      console.log(chalk.gray(`Web UI: ${enableHttps ? 'https' : 'http'}://localhost:${port}`));
-      printPortToolIssue(readyState.degradedPortCheckIssue);
-      if (enableHost) {
-        console.log(chalk.yellow(`[WARN]  LAN 访问已启用 (${enableHttps ? 'https' : 'http'}://<your-ip>:${port})`));
-      }
-      console.log(chalk.gray('\n可以安全关闭此终端窗口'));
-      console.log(chalk.gray('\n常用命令:'));
-      console.log(chalk.gray('  ') + chalk.cyan('ctx status') + chalk.gray('   - 查看服务状态'));
-      console.log(chalk.gray('  ') + chalk.cyan('ctx logs') + chalk.gray('      - 查看实时日志'));
-      console.log(chalk.gray('  ') + chalk.cyan('ctx stop') + chalk.gray('      - 停止服务\n'));
+      readyState = startResult.readyState;
+      recoveredFromStalePm2 = startResult.recoveredFromStalePm2 || recoveredFromStalePm2;
+      break;
+    }
 
-      // 保存进程列表
-      pm2.dump((err) => {
-        disconnectPM2();
-      });
+    if (!readyState || !readyState.ready) {
+      console.error(chalk.red('\n[ERROR] Coding-Tool 服务启动失败，PM2 守护进程刷新后仍未恢复\n'));
+      disconnectPM2();
+      process.exit(1);
+    }
+
+    console.log(chalk.green('\n[OK] Coding-Tool 服务已启动（后台运行）\n'));
+    console.log(chalk.gray(`Web UI: ${enableHttps ? 'https' : 'http'}://localhost:${port}`));
+    if (recoveredFromStalePm2) {
+      console.log(chalk.green('[OK] 已自动修复旧 PM2 运行时路径残留'));
+    }
+    printPortToolIssue(readyState.degradedPortCheckIssue);
+    if (enableHost) {
+      console.log(chalk.yellow(`[WARN]  LAN 访问已启用 (${enableHttps ? 'https' : 'http'}://<your-ip>:${port})`));
+    }
+    console.log(chalk.gray('\n可以安全关闭此终端窗口'));
+    console.log(chalk.gray('\n常用命令:'));
+    console.log(chalk.gray('  ') + chalk.cyan('ctx status') + chalk.gray('   - 查看服务状态'));
+    console.log(chalk.gray('  ') + chalk.cyan('ctx logs') + chalk.gray('      - 查看实时日志'));
+    console.log(chalk.gray('  ') + chalk.cyan('ctx stop') + chalk.gray('      - 停止服务\n'));
+
+    pm2.dump(() => {
+      disconnectPM2();
     });
   } catch (error) {
     console.error(chalk.red('启动失败:'), error.message);
@@ -446,7 +621,6 @@ async function handleStatus() {
     }
 
     // 代理服务状态（从运行时文件检测）
-    const fs = require('fs');
     ensureStorageDirMigrated();
     const claudeActive = fs.existsSync(PATHS.activeChannel.claude);
     const codexActive = fs.existsSync(PATHS.activeChannel.codex);
@@ -516,6 +690,8 @@ module.exports = {
   handleRestart,
   handleStatus,
   _test: {
+    detectStalePm2RuntimeIssue,
+    extractMissingPm2ForkScriptPath,
     shouldTreatPortOwnershipAsReady,
     getManagedPorts,
     shouldStopPM2Process

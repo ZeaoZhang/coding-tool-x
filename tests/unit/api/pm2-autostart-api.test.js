@@ -123,6 +123,14 @@ describe('pm2-autostart api', () => {
     });
   });
 
+  test('helper startup commands use bundled pm2 binary instead of PATH lookup', () => {
+    const routerFactory = require('../../../src/server/api/pm2-autostart');
+
+    expect(routerFactory._test.getPm2CliCommand()).toContain(require.resolve('pm2/bin/pm2'));
+    expect(routerFactory._test.getStartupCommand('darwin')).toContain(require.resolve('pm2/bin/pm2'));
+    expect(routerFactory._test.getUnstartupCommand('linux')).toContain(require.resolve('pm2/bin/pm2'));
+  });
+
   test('GET / returns autostart status payload', async () => {
     const res = await request(buildApp()).get('/');
 
@@ -164,7 +172,8 @@ describe('pm2-autostart api', () => {
     });
     expect(pm2Stub.save).toHaveBeenCalled();
     expect(execSpy).toHaveBeenCalled();
-    expect(execSpy.mock.calls[0][0]).toContain('pm2 startup');
+    expect(execSpy.mock.calls[0][0]).toContain(require.resolve('pm2/bin/pm2'));
+    expect(execSpy.mock.calls[0][0]).toContain('startup');
   });
 
   test('POST / disable treats "not set" stderr as already disabled', async () => {

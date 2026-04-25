@@ -285,6 +285,61 @@ describe('proxy-log-helper', () => {
       expect(recordSuccess).toHaveBeenCalledWith('redirected-channel-id', 'codex');
     });
 
+    it('should preserve claude source while logging redirected GLM model and tokens', () => {
+      const broadcastLog = vi.fn();
+      const recordRequest = vi.fn();
+
+      const result = publishUsageLog({
+        source: 'claude',
+        metadata: {
+          id: 'req-glm',
+          channel: '智谱 GLM',
+          channelId: 'zhipu-id',
+          originalModel: 'claude-3-7-sonnet',
+          redirectedModel: 'glm-4.6'
+        },
+        model: '',
+        tokens: {
+          input: 1200,
+          output: 300,
+          cacheCreation: 200,
+          cacheRead: 50,
+          total: 1750
+        },
+        broadcastLog,
+        recordRequest
+      });
+
+      expect(result).not.toBeNull();
+      expect(result.model).toBe('glm-4.6');
+      expect(result.tokens).toMatchObject({
+        input: 1200,
+        output: 300,
+        cacheCreation: 200,
+        cacheRead: 50,
+        total: 1750
+      });
+      expect(broadcastLog).toHaveBeenCalledWith(expect.objectContaining({
+        source: 'claude',
+        channel: '智谱 GLM',
+        model: 'glm-4.6',
+        originalModel: 'claude-3-7-sonnet',
+        redirectedModel: 'glm-4.6',
+        inputTokens: 1200,
+        outputTokens: 300,
+        cacheCreation: 200,
+        cacheRead: 50,
+        totalTokens: 1750,
+        usageMissing: false
+      }));
+      expect(recordRequest).toHaveBeenCalledWith(expect.objectContaining({
+        toolType: 'claude-code',
+        model: 'glm-4.6',
+        originalModel: 'claude-3-7-sonnet',
+        redirectedModel: 'glm-4.6'
+      }));
+    });
+
     it('should not call broadcastLog when allowBroadcast is false', () => {
       const broadcastLog = vi.fn();
 

@@ -1924,6 +1924,12 @@ function reportOpenCodeGatewayFailure({
 }
 
 function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }) {
+  const parsedUsage = parseNonStreamingUsage({
+    model: model || '',
+    usage: usage && typeof usage === 'object' ? usage : {}
+  });
+  const parsedTokens = parsedUsage.tokens || {};
+
   return publishUsageLog({
     source: 'opencode',
     metadata: {
@@ -1932,15 +1938,15 @@ function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }
       channelId: channel?.id,
       startTime
     },
-    model: model || '',
+    model: parsedUsage.model || model || '',
     tokens: {
-      input: Number(usage?.input_tokens || usage?.prompt_tokens || 0),
-      output: Number(usage?.output_tokens || usage?.completion_tokens || 0),
-      cacheCreation: Number(usage?.cache_creation_input_tokens || 0),
-      cacheRead: Number(usage?.cache_read_input_tokens || 0),
-      cached: Number(usage?.input_tokens_details?.cached_tokens || 0),
-      reasoning: Number(usage?.output_tokens_details?.reasoning_tokens || 0),
-      total: Number(usage?.total_tokens || 0)
+      input: Number(parsedTokens.input || 0),
+      output: Number(parsedTokens.output || 0),
+      cacheCreation: Number(parsedTokens.cacheCreation || 0),
+      cacheRead: Number(parsedTokens.cacheRead || 0),
+      cached: Number(parsedTokens.cached || 0),
+      reasoning: Number(parsedTokens.reasoning || 0),
+      total: Number(parsedTokens.total || 0)
     },
     calculateCost,
     broadcastLog,

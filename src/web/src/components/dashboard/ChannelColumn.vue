@@ -1066,11 +1066,12 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--gradient-card);
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(247, 250, 248, 0.98) 100%);
+  border: 1px solid rgba(216, 225, 222, 0.92);
+  border-radius: 22px;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 22px 52px rgba(15, 23, 29, 0.1);
+  backdrop-filter: blur(14px);
 }
 
 .channel-header {
@@ -1078,7 +1079,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
-  background: var(--bg-primary);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.55) 100%);
   position: relative;
 }
 
@@ -1107,8 +1108,8 @@ onUnmounted(() => {
   content: '';
   position: absolute;
   bottom: 0;
-  left: 14px;
-  right: 14px;
+  left: 18px;
+  right: 18px;
   height: 2px;
   border-radius: 1px;
 }
@@ -1146,13 +1147,13 @@ onUnmounted(() => {
 }
 
 .header-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 24px rgba(15, 23, 29, 0.14);
 }
 
 .channel-header.claude .header-icon {
@@ -1176,11 +1177,17 @@ onUnmounted(() => {
 }
 
 .channel-title {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 700;
   margin: 0;
   color: var(--text-primary);
   letter-spacing: 0.3px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
 }
 
 .channel-content {
@@ -1190,16 +1197,16 @@ onUnmounted(() => {
   padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .card {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(247, 250, 248, 0.96) 100%);
+  border: 1px solid rgba(216, 225, 222, 0.92);
+  border-radius: 18px;
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 10px 28px rgba(15, 23, 29, 0.06);
   position: relative;
 }
 
@@ -1216,8 +1223,8 @@ onUnmounted(() => {
 }
 
 .card:hover {
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-  border-color: var(--border-secondary);
+  box-shadow: 0 18px 38px rgba(15, 23, 29, 0.1);
+  border-color: rgba(195, 208, 203, 0.95);
 }
 
 .card:hover::before {
@@ -1252,9 +1259,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
-  border-bottom: 1px solid var(--border-primary);
+  padding: 9px 12px;
+  background: linear-gradient(180deg, rgba(244, 247, 248, 0.96) 0%, rgba(255, 255, 255, 0.84) 100%);
+  border-bottom: 1px solid rgba(216, 225, 222, 0.9);
   position: relative;
   min-height: 24px;
 }
@@ -1291,7 +1298,7 @@ onUnmounted(() => {
   color: #10b981;
   background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(52, 211, 153, 0.1) 100%);
   border: 1px solid rgba(16, 185, 129, 0.2);
-  border-radius: 4px;
+  border-radius: 999px;
   white-space: nowrap;
   animation: pulse-runtime 2s ease-in-out infinite;
 }
@@ -1308,12 +1315,12 @@ onUnmounted(() => {
 }
 
 .card-body {
-  padding: 12px;
-  background: var(--bg-primary);
+  padding: 8px 10px;
+  background: transparent;
 }
 
 .card-body.compact {
-  padding: 10px 12px;
+  padding: 7px 10px;
 }
 
 .proxy-control {
@@ -1414,20 +1421,20 @@ onUnmounted(() => {
 .quick-access-list {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: 4px;
 }
 
 .access-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 14px;
+  background: rgba(244, 247, 248, 0.88);
+  border: 1px solid rgba(216, 225, 222, 0.9);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
-  min-height: 52px;
+  min-height: 44px;
   overflow: hidden;
 }
 
@@ -1441,9 +1448,9 @@ onUnmounted(() => {
 }
 
 .access-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 5px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1454,8 +1461,10 @@ onUnmounted(() => {
 .access-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* 项目卡片 */
@@ -1519,28 +1528,33 @@ onUnmounted(() => {
 
 .access-label {
   display: block;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.3px;
+  white-space: nowrap;
+  line-height: 1.1;
 }
 
 .access-value {
   display: block;
-  font-size: 18px;
+  font-size: 13px;
   font-weight: 800;
   color: var(--text-primary);
   line-height: 1;
+  white-space: nowrap;
 }
 
 .access-goto {
   display: block;
-  font-size: 12px;
+  font-size: 9px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.2;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stats-inline {
@@ -1558,9 +1572,9 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px;
-  background: var(--bg-secondary);
-  border-radius: 6px;
-  border: 1px solid var(--border-primary);
+  background: rgba(244, 247, 248, 0.9);
+  border-radius: 14px;
+  border: 1px solid rgba(216, 225, 222, 0.88);
   transition: all 0.2s ease;
 }
 
@@ -1735,8 +1749,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
+  border: 1px solid rgba(216, 225, 222, 0.88);
+  border-radius: 18px;
 }
 
 .logs-card-body {
@@ -1762,9 +1776,9 @@ onUnmounted(() => {
 
 .logs-table-header {
   display: flex;
-  padding: 10px 12px;
-  background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
-  border-bottom: 2px solid var(--border-primary);
+  padding: 8px 12px;
+  background: linear-gradient(180deg, rgba(237, 243, 241, 0.96) 0%, rgba(244, 247, 248, 0.92) 100%);
+  border-bottom: 1px solid rgba(216, 225, 222, 0.92);
   font-size: 11px;
   font-weight: 700;
   color: var(--text-tertiary);
@@ -1809,6 +1823,23 @@ onUnmounted(() => {
 
 [data-theme="dark"] .logs-header-opencode .log-col {
   color: rgba(251, 146, 60, 0.65);
+}
+
+[data-theme="dark"] .channel-column {
+  background: linear-gradient(180deg, rgba(17, 27, 32, 0.96) 0%, rgba(13, 22, 27, 0.98) 100%);
+  border-color: rgba(43, 66, 74, 0.9);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="dark"] .channel-header {
+  background: linear-gradient(180deg, rgba(22, 35, 41, 0.9) 0%, rgba(17, 27, 32, 0.78) 100%);
+}
+
+[data-theme="dark"] .card,
+[data-theme="dark"] .access-card,
+[data-theme="dark"] .stat-inline-item {
+  background: linear-gradient(180deg, rgba(17, 27, 32, 0.95) 0%, rgba(15, 26, 31, 0.98) 100%);
+  border-color: rgba(43, 66, 74, 0.9);
 }
 
 .logs-container {
@@ -2291,8 +2322,8 @@ onUnmounted(() => {
 /* Skills 按钮样式 */
 .skills-button {
   padding: 6px !important;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2329,8 +2360,8 @@ onUnmounted(() => {
 .lock-button {
   margin-left: 6px;
   padding: 6px !important;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
