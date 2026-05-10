@@ -4,6 +4,7 @@ const http = require('http');
 const path = require('path');
 
 const PROXY_SERVER_PATH = '../../../src/server/proxy-server';
+const CLAUDE_OPENAI_GATEWAY_PATH = '../../../src/server/services/claude-openai-gateway';
 
 let proxyPort = 9960;
 let proxyModule = null;
@@ -31,6 +32,8 @@ let loadClaudeRequestTemplate;
 let publishUsageLog;
 let publishFailureLog;
 let redirectModel;
+let normalizeGatewaySourceType;
+let ensureOpenAiStreamUsage;
 
 function createStubs() {
   allocateChannel = vi.fn();
@@ -60,6 +63,17 @@ function createStubs() {
   publishUsageLog = vi.fn(() => ({ model: 'MiniMax-M2.5', tokens: { input: 43, output: 32 } }));
   publishFailureLog = vi.fn();
   redirectModel = vi.fn((model) => model);
+  normalizeGatewaySourceType = vi.fn((value, fallback = 'claude') => value || fallback);
+  ensureOpenAiStreamUsage = vi.fn((body) => {
+    if (body && typeof body === 'object') {
+      body.stream_options = {
+        ...(body.stream_options || {}),
+        include_usage: true
+      };
+      return true;
+    }
+    return false;
+  });
 
   return [
     ['../../../src/server/services/channel-scheduler', {
@@ -114,7 +128,9 @@ function createStubs() {
       publishFailureLog
     }],
     ['../../../src/server/services/base/proxy-utils', {
-      redirectModel
+      redirectModel,
+      normalizeGatewaySourceType,
+      ensureOpenAiStreamUsage
     }]
   ];
 }
@@ -139,6 +155,7 @@ function cleanStubs() {
     delete require.cache[resolvedPath];
   }
   delete require.cache[require.resolve(PROXY_SERVER_PATH)];
+  delete require.cache[require.resolve(CLAUDE_OPENAI_GATEWAY_PATH)];
 }
 
 function createServer() {
@@ -475,6 +492,259 @@ describe('startProxyServer', () => {
         cached: 0,
         reasoning: 0,
         total: 0
+      })
+    }));
+  });
+
+  it('uses chat completions for non-official OpenAI-compatible Claude routes so reply and cache tokens survive', async () => {
+    upstreamServer = http.createServer((req, res) => {
+      let requestBody = '';
+      req.on('data', (chunk) => {
+        requestBody += chunk.toString('utf8');
+      });
+      req.on('end', () => {
+        const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+        const parsedBody = JSON.parse(requestBody);
+
+        expect(pathname).toBe('/v1/chat/completions');
+        expect(parsedBody.model).toBe('claude-sonnet-4-6');
+        expect(parsedBody.messages[0].content).toBe('Reply with exactly: pong');
+
+        res.writeHead(200, {
+          'Content-Type': 'application/json'
+        });
+        res.end(JSON.stringify({
+          id: 'chatcmpl_openai_non_stream',
+          object: 'chat.completion',
+          created: 1777089600,
+          model: 'MiniMax-M2.5',
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: 'pong'
+              },
+              finish_reason: 'stop'
+            }
+          ],
+          usage: {
+            prompt_tokens: 43,
+            completion_tokens: 32,
+            total_tokens: 75,
+            prompt_tokens_details: {
+              cached_tokens: 16
+            }
+          }
+        }));
+      });
+    });
+    await new Promise((resolve) => upstreamServer.listen(0, '127.0.0.1', resolve));
+
+    allocateChannel.mockResolvedValue({
+      id: 'channel-openai',
+      name: 'OpenAI Claude Gateway',
+      baseUrl: `http://127.0.0.1:${upstreamServer.address().port}/v1`,
+      gatewaySourceType: 'openai_compatible',
+      targetApi: 'responses'
+    });
+
+    proxyModule = require(PROXY_SERVER_PATH);
+    await proxyModule.startProxyServer();
+
+    const response = await postJson(proxyPort, '/v1/messages', {
+      model: 'claude-sonnet-4-6',
+      stream: false,
+      max_tokens: 32,
+      messages: [
+        {
+          role: 'user',
+          content: 'Reply with exactly: pong'
+        }
+      ]
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      id: 'chatcmpl_openai_non_stream',
+      type: 'message',
+      role: 'assistant',
+      model: 'MiniMax-M2.5',
+      content: [
+        {
+          type: 'text',
+          text: 'pong'
+        }
+      ],
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: {
+        input_tokens: 27,
+        output_tokens: 32,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 16
+      }
+    });
+    expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'claude',
+      metadata: expect.objectContaining({
+        channel: 'OpenAI Claude Gateway',
+        channelId: 'channel-openai',
+        requestModel: 'claude-sonnet-4-6'
+      }),
+      model: 'MiniMax-M2.5',
+      tokens: expect.objectContaining({
+        input: 27,
+        output: 32,
+        cacheRead: 16,
+        cached: 16
+      })
+    }));
+  });
+
+  it('streams chat completion tool calls back as Claude SSE events and records full usage', async () => {
+    upstreamServer = http.createServer((req, res) => {
+      let requestBody = '';
+      req.on('data', (chunk) => {
+        requestBody += chunk.toString('utf8');
+      });
+      req.on('end', () => {
+        const pathname = new URL(req.url, 'http://127.0.0.1').pathname;
+        const parsedBody = JSON.parse(requestBody);
+
+        expect(pathname).toBe('/v1/chat/completions');
+        expect(parsedBody.stream).toBe(true);
+        expect(parsedBody.stream_options).toEqual({ include_usage: true });
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream'
+        });
+        res.write(`data: ${JSON.stringify({
+          id: 'chatcmpl_openai_stream',
+          object: 'chat.completion.chunk',
+          created: 1777089601,
+          model: 'MiniMax-M2.5',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: {
+                      name: 'Task',
+                      arguments: ''
+                    }
+                  }
+                ]
+              },
+              finish_reason: null
+            }
+          ]
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          id: 'chatcmpl_openai_stream',
+          object: 'chat.completion.chunk',
+          created: 1777089601,
+          model: 'MiniMax-M2.5',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: {
+                      arguments: '{\"description\":\"ping\"}'
+                    }
+                  }
+                ]
+              },
+              finish_reason: null
+            }
+          ]
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          id: 'chatcmpl_openai_stream',
+          object: 'chat.completion.chunk',
+          created: 1777089601,
+          model: 'MiniMax-M2.5',
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: 'tool_calls'
+            }
+          ]
+        })}\n\n`);
+        res.write(`data: ${JSON.stringify({
+          id: 'chatcmpl_openai_stream',
+          object: 'chat.completion.chunk',
+          created: 1777089601,
+          model: 'MiniMax-M2.5',
+          choices: [],
+          usage: {
+            prompt_tokens: 14,
+            completion_tokens: 5,
+            total_tokens: 19,
+            prompt_tokens_details: {
+              cached_tokens: 4
+            }
+          }
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      });
+    });
+    await new Promise((resolve) => upstreamServer.listen(0, '127.0.0.1', resolve));
+
+    allocateChannel.mockResolvedValue({
+      id: 'channel-openai-stream',
+      name: 'OpenAI Claude Stream',
+      baseUrl: `http://127.0.0.1:${upstreamServer.address().port}/v1`,
+      gatewaySourceType: 'openai_compatible',
+      targetApi: 'responses'
+    });
+
+    proxyModule = require(PROXY_SERVER_PATH);
+    await proxyModule.startProxyServer();
+
+    const response = await postJson(proxyPort, '/v1/messages', {
+      model: 'claude-sonnet-4-6',
+      stream: true,
+      max_tokens: 32,
+      messages: [
+        {
+          role: 'user',
+          content: 'Use Task to say ping'
+        }
+      ]
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('event: message_start');
+    expect(response.body).toContain('"type":"tool_use"');
+    expect(response.body).toContain('"partial_json":"{\\"description\\":\\"ping\\"}"');
+    expect(response.body).toContain('event: message_stop');
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'claude',
+      metadata: expect.objectContaining({
+        channel: 'OpenAI Claude Stream',
+        channelId: 'channel-openai-stream',
+        requestModel: 'claude-sonnet-4-6'
+      }),
+      model: 'MiniMax-M2.5',
+      tokens: expect.objectContaining({
+        input: 10,
+        output: 5,
+        cacheRead: 4,
+        cached: 4
       })
     }));
   });

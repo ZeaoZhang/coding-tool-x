@@ -1,6 +1,7 @@
 const PRESET_WEBSITE_SOURCES = {
   claude: [
     { presetId: 'official', baseUrl: 'https://api.anthropic.com', websiteUrl: 'https://www.anthropic.com' },
+    { presetId: 'openai', baseUrl: 'https://api.openai.com/v1', websiteUrl: 'https://platform.openai.com' },
     { presetId: 'deepseek', baseUrl: 'https://api.deepseek.com/anthropic', websiteUrl: 'https://platform.deepseek.com' },
     { presetId: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/anthropic', websiteUrl: 'https://open.bigmodel.cn' },
     { presetId: 'kimi', baseUrl: 'https://api.moonshot.cn/anthropic', websiteUrl: 'https://platform.moonshot.cn' },

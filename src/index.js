@@ -31,6 +31,12 @@ function getVersion() {
   return packageJson.version;
 }
 
+function finishCli(code = 0) {
+  eventBus.emitSync('cli:shutdown', {});
+  PluginManager.shutdownPlugins();
+  process.exit(code);
+}
+
 // 显示帮助信息
 function showHelp() {
   const version = getVersion();
@@ -156,19 +162,19 @@ async function main() {
 
     if (subCommand === 'start') {
       await handleStart();
-      return;
+      return finishCli(0);
     }
     if (subCommand === 'stop') {
       await handleStop();
-      return;
+      return finishCli(0);
     }
     if (subCommand === 'restart') {
       await handleRestart();
-      return;
+      return finishCli(0);
     }
     if (subCommand === 'status') {
       await handleStatus();
-      return;
+      return finishCli(0);
     }
     if (subCommand === 'logs') {
       const options = {};
@@ -213,25 +219,25 @@ async function main() {
   // start 命令 - 启动服务（后台）
   if (args[0] === 'start') {
     await handleStart();
-    return;
+    return finishCli(0);
   }
 
   // stop 命令 - 停止服务
   if (args[0] === 'stop') {
     await handleStop();
-    return;
+    return finishCli(0);
   }
 
   // restart 命令 - 重启服务
   if (args[0] === 'restart') {
     await handleRestart();
-    return;
+    return finishCli(0);
   }
 
   // status 命令 - 查看服务状态
   if (args[0] === 'status') {
     await handleStatus();
-    return;
+    return finishCli(0);
   }
 
   // ui 命令 - Web UI 管理
@@ -239,10 +245,13 @@ async function main() {
     const subCommand = args[1];
     if (subCommand === 'start') {
       await handleStart();  // UI start 实际上就是启动整个服务
+      return finishCli(0);
     } else if (subCommand === 'stop') {
       await handleStop();
+      return finishCli(0);
     } else if (subCommand === 'restart') {
       await handleRestart();
+      return finishCli(0);
     } else {
       // 默认前台运行
       const { handleUI } = require('./commands/ui');
@@ -670,9 +679,7 @@ async function main() {
 
       case 'exit':
         console.log('\n[BYE] 再见！\n');
-        eventBus.emitSync('cli:shutdown', {});
-        PluginManager.shutdownPlugins();
-        process.exit(0);
+        finishCli(0);
         break;
 
       default:

@@ -6,7 +6,6 @@ const tomlStringify = require('@iarna/toml').stringify;
 const { PATHS } = require('../../config/paths');
 const { getCodexDir } = require('./codex-config');
 const { isProxyConfig, readConfig } = require('./codex-settings-manager');
-const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { syncCodexUserEnvironment } = require('./codex-env-manager');
 const BaseChannelService = require('./base/base-channel-service');
 
@@ -35,13 +34,17 @@ function resolveCurrentManagedChannel(channels = []) {
   return allChannels.find(ch => ch.enabled !== false) || null;
 }
 
+function channelRequiresOpenaiAuth() {
+  return false;
+}
+
 function buildManagedCodexEnvMap(channels = [], { includeProxyKey = false, activeChannel = null } = {}) {
   if (includeProxyKey) {
     return { [CODEX_MANAGED_ENV_KEY]: CODEX_PROXY_ENV_VALUE };
   }
 
   const targetChannel = activeChannel || resolveCurrentManagedChannel(channels);
-  if (targetChannel?.apiKey) {
+  if (!channelRequiresOpenaiAuth(targetChannel) && targetChannel?.apiKey) {
     return { [CODEX_MANAGED_ENV_KEY]: targetChannel.apiKey };
   }
   return {};
@@ -108,7 +111,7 @@ function writeCodexConfigForMultiChannel(channels) {
         base_url: ch.baseUrl,
         wire_api: ch.wireApi || 'responses',
         env_key: CODEX_MANAGED_ENV_KEY,
-        requires_openai_auth: ch.requiresOpenaiAuth !== false
+        requires_openai_auth: channelRequiresOpenaiAuth(ch)
       };
       if (ch.queryParams && Object.keys(ch.queryParams).length > 0) {
         config.model_providers[ch.providerKey].query_params = ch.queryParams;
@@ -147,7 +150,7 @@ class CodexChannelService extends BaseChannelService {
     ch.speedTestModel = ch.speedTestModel || null;
     ch.modelRedirects = Array.isArray(ch.modelRedirects) ? ch.modelRedirects : [];
     ch.gatewaySourceType = ch.gatewaySourceType || 'codex';
-    ch.requiresOpenaiAuth = ch.requiresOpenaiAuth !== false;
+    ch.requiresOpenaiAuth = false;
     ch.queryParams = ch.queryParams || {};
     return ch;
   }
@@ -193,12 +196,10 @@ class CodexChannelService extends BaseChannelService {
         return;
       }
     }
-    clearNativeOAuth('codex');
     syncAllChannelEnvVars();
   }
 
   _applyToNativeSettings(channel) {
-    clearNativeOAuth('codex');
     const codexDir = getCodexDir();
     const configPath = path.join(codexDir, 'config.toml');
 
@@ -224,7 +225,7 @@ class CodexChannelService extends BaseChannelService {
       base_url: channel.baseUrl,
       wire_api: channel.wireApi || 'responses',
       env_key: CODEX_MANAGED_ENV_KEY,
-      requires_openai_auth: channel.requiresOpenaiAuth !== false
+      requires_openai_auth: channelRequiresOpenaiAuth(channel)
     };
 
     if (channel.queryParams && Object.keys(channel.queryParams).length > 0) {

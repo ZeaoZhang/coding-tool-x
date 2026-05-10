@@ -210,6 +210,20 @@ describe('proxy-log-helper', () => {
       expect(payload.message).toBe('some error');
     });
 
+    it('should prefer structured message over raw error text for display', () => {
+      const payload = buildFailureLogPayload({
+        source: 'claude',
+        message: 'OpenAI gateway network error: aborted',
+        error: new Error('aborted'),
+        stage: 'openai_gateway_network'
+      });
+
+      expect(payload.message).toBe('OpenAI gateway network error: aborted');
+      expect(payload.error).toBe('OpenAI gateway network error: aborted');
+      expect(payload.rawError).toBe('aborted');
+      expect(payload.stage).toBe('openai_gateway_network');
+    });
+
     it('should generate request ID if not provided', () => {
       const payload = buildFailureLogPayload({ source: 'claude' });
       expect(payload.id).toBeTruthy();
@@ -389,6 +403,25 @@ describe('proxy-log-helper', () => {
       const payload = broadcastLog.mock.calls[0][0];
       expect(payload.status).toBe('error');
       expect(payload.message).toBe('Connection failed');
+    });
+
+    it('should keep the richer message when raw error is shorter', () => {
+      const broadcastLog = vi.fn();
+
+      publishFailureLog({
+        source: 'claude',
+        metadata: { channel: 'deepseek-channel' },
+        message: 'OpenAI gateway network error: aborted',
+        error: new Error('aborted'),
+        stage: 'openai_gateway_network',
+        broadcastLog
+      });
+
+      const payload = broadcastLog.mock.calls[0][0];
+      expect(payload.channel).toBe('deepseek-channel');
+      expect(payload.message).toBe('OpenAI gateway network error: aborted');
+      expect(payload.rawError).toBe('aborted');
+      expect(payload.stage).toBe('openai_gateway_network');
     });
   });
 });

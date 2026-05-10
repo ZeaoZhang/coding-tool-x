@@ -5,6 +5,7 @@ const { isProxyConfig } = require('./settings-manager');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { isWindowsLikePlatform } = require('../../utils/home-dir');
+const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
 // ── Claude 特有工具函数 ──
 
@@ -160,6 +161,27 @@ function resolveCurrentManagedChannel(channels = []) {
   return allChannels.find(ch => ch.enabled !== false) || null;
 }
 
+function normalizeClaudeTargetApi(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'chat' || normalized === 'chat/completions' || normalized === 'chat.completions') {
+    return 'chat.completions';
+  }
+  return 'responses';
+}
+
+function isOfficialOpenAiBaseUrl(baseUrl = '') {
+  try {
+    const parsed = new URL(String(baseUrl || '').trim());
+    return String(parsed.hostname || '').trim().toLowerCase() === 'api.openai.com';
+  } catch {
+    return false;
+  }
+}
+
+function isOpenAiCompatibleGateway(channel) {
+  return normalizeGatewaySourceType(channel?.gatewaySourceType, 'claude') === 'openai_compatible';
+}
+
 // ── ClaudeChannelService ──
 
 class ClaudeChannelService extends BaseChannelService {
@@ -177,6 +199,20 @@ class ClaudeChannelService extends BaseChannelService {
 
   _generateId() {
     return `channel-${Date.now()}`;
+  }
+
+  _applyDefaults(channel) {
+    const normalized = super._applyDefaults(channel);
+    normalized.presetId = normalized.presetId || 'official';
+    normalized.modelConfig = normalized.modelConfig || {};
+    normalized.modelRedirects = Array.isArray(normalized.modelRedirects) ? normalized.modelRedirects : [];
+    normalized.proxyUrl = normalized.proxyUrl || '';
+    normalized.speedTestModel = normalized.speedTestModel || null;
+    normalized.targetApi = normalizeClaudeTargetApi(normalized.targetApi);
+    if (isOpenAiCompatibleGateway(normalized) && !isOfficialOpenAiBaseUrl(normalized.baseUrl)) {
+      normalized.targetApi = 'chat.completions';
+    }
+    return normalized;
   }
 
   // Claude 使用缓存 + fs.watchFile
@@ -209,7 +245,7 @@ class ClaudeChannelService extends BaseChannelService {
   }
 
   _onAfterCreate(channel, _allChannels) {
-    if (!isProxyConfig() && channel.enabled !== false) {
+    if (!isProxyConfig() && channel.enabled !== false && !isOpenAiCompatibleGateway(channel)) {
       this._applyToNativeSettings(channel);
     }
   }
@@ -220,12 +256,18 @@ class ClaudeChannelService extends BaseChannelService {
     }
 
     if (oldChannel.enabled === false && nextChannel.enabled !== false) {
-      this._applyToNativeSettings(nextChannel);
+      if (!isOpenAiCompatibleGateway(nextChannel)) {
+        this._applyToNativeSettings(nextChannel);
+      }
       return;
     }
 
     const activeChannel = resolveCurrentManagedChannel(allChannels);
-    if (nextChannel.enabled !== false && activeChannel?.id === nextChannel.id) {
+    if (
+      nextChannel.enabled !== false
+      && activeChannel?.id === nextChannel.id
+      && !isOpenAiCompatibleGateway(nextChannel)
+    ) {
       this._applyToNativeSettings(nextChannel);
     }
   }
@@ -236,9 +278,25 @@ class ClaudeChannelService extends BaseChannelService {
     }
 
     const activeChannel = resolveCurrentManagedChannel(allChannels);
-    if (activeChannel) {
+    if (activeChannel && !isOpenAiCompatibleGateway(activeChannel)) {
       this._applyToNativeSettings(activeChannel);
     }
+  }
+
+  applyChannelToSettings(channelId) {
+    const data = this.loadChannels();
+    const channel = data.channels.find(ch => ch.id === channelId);
+    if (!channel) {
+      throw new Error('Channel not found');
+    }
+
+    if (isOpenAiCompatibleGateway(channel)) {
+      const error = new Error('OpenAI 格式渠道需要通过 Claude 代理使用，请先启动代理。');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return super.applyChannelToSettings(channelId);
   }
 
   _applyToNativeSettings(channel) {

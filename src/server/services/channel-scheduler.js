@@ -2,7 +2,7 @@ const { getAllChannels } = require('./channels');
 const { getChannels: getCodexChannels } = require('./codex-channels');
 const { getChannels: getGeminiChannels } = require('./gemini-channels');
 const { getChannels: getOpenCodeChannels } = require('./opencode-channels');
-const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen } = require('./channel-health');
+const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } = require('./channel-health');
 
 const channelProviders = {
   claude: () => getAllChannels(),
@@ -64,6 +64,11 @@ function unbindChannelSessions(source, channelId) {
 
 // 注册冻结回调，当渠道被冻结时解绑其会话
 setOnChannelFrozen(unbindChannelSessions);
+setChannelListProvider((source = 'claude') => {
+  const provider = channelProviders[source || 'claude'];
+  if (!provider) return [];
+  return provider();
+});
 
 function refreshChannels(source = 'claude') {
   const state = getState(source);

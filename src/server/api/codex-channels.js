@@ -166,7 +166,8 @@ module.exports = (config) => {
         modelRedirects: modelRedirects || [],
         speedTestModel: speedTestModel || null,
         presetId: presetId || null,
-        gatewaySourceType
+        gatewaySourceType,
+        requiresOpenaiAuth: false
       });
       res.json(channel);
       broadcastSchedulerState('codex', getSchedulerState('codex'));
@@ -188,11 +189,21 @@ module.exports = (config) => {
 
       const { channelId } = req.params;
       const updates = req.body;
+      const currentChannel = getChannels().channels.find(channel => channel.id === channelId) || null;
+      const finalApiKey = Object.prototype.hasOwnProperty.call(updates, 'apiKey')
+        ? updates.apiKey
+        : currentChannel?.apiKey;
       if (Object.prototype.hasOwnProperty.call(updates, 'providerKey')) {
         const providerKeyError = validateCodexProviderKey(updates.providerKey);
         if (providerKeyError) {
           return res.status(400).json({ error: providerKeyError });
         }
+      }
+      if (currentChannel) {
+        if (!finalApiKey) {
+          return res.status(400).json({ error: 'Missing required fields: apiKey' });
+        }
+        updates.requiresOpenaiAuth = false;
       }
 
       const channel = updateChannel(channelId, updates);

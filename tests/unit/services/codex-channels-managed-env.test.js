@@ -104,7 +104,7 @@ afterEach(() => {
 });
 
 describe('codex-channels managed env sync', () => {
-  test('applyChannelToSettings writes shared env key for single-channel mode', () => {
+  test('applyChannelToSettings defaults Codex channels to API key auth', () => {
     const channel = service.createChannel(
       'Primary',
       'provider-a',
@@ -122,12 +122,13 @@ describe('codex-channels managed env sync', () => {
     const config = loadConfigFromDisk();
     expect(config.model_provider).toBe('provider-a');
     expect(config.model_providers['provider-a'].env_key).toBe('CC_PROXY_KEY');
+    expect(config.model_providers['provider-a'].requires_openai_auth).toBe(false);
     expect(syncCodexUserEnvironmentMock).toHaveBeenLastCalledWith({
       CC_PROXY_KEY: 'secret-a'
     }, {
       replace: true
     });
-    expect(clearNativeOAuthMock).toHaveBeenCalledWith('codex');
+    expect(clearNativeOAuthMock).not.toHaveBeenCalled();
   });
 
   test('enabling another channel in single-channel mode auto-applies config and shared env', () => {
@@ -162,8 +163,35 @@ describe('codex-channels managed env sync', () => {
     }, {
       replace: true
     });
+    expect(clearNativeOAuthMock).not.toHaveBeenCalled();
     expect(channels.find(channel => channel.id === channelA.id).enabled).toBe(false);
     expect(channels.find(channel => channel.id === channelB.id).enabled).toBe(true);
+  });
+
+  test('legacy OpenAI auth flag is normalized back to API key auth', () => {
+    const channel = service.createChannel(
+      'Legacy OpenAI Login',
+      'provider-login',
+      'https://api.openai.com/v1',
+      'secret-login',
+      'responses',
+      { enabled: true, requiresOpenaiAuth: true }
+    );
+
+    syncCodexUserEnvironmentMock.mockClear();
+    clearNativeOAuthMock.mockClear();
+
+    service.applyChannelToSettings(channel.id);
+
+    const config = loadConfigFromDisk();
+    expect(config.model_provider).toBe('provider-login');
+    expect(config.model_providers['provider-login'].requires_openai_auth).toBe(false);
+    expect(syncCodexUserEnvironmentMock).toHaveBeenLastCalledWith({
+      CC_PROXY_KEY: 'secret-login'
+    }, {
+      replace: true
+    });
+    expect(clearNativeOAuthMock).not.toHaveBeenCalled();
   });
 
   test('proxy mode still syncs the shared env key to PROXY_KEY', () => {
