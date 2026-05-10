@@ -18,12 +18,17 @@ const channelHealth = new Map(); // `${source}:${channelId}` → health info
 
 // 冻结回调（用于通知调度器解绑会话）
 let onChannelFrozenCallback = null;
+let channelListProvider = null;
 
 /**
  * 设置渠道冻结时的回调
  */
 function setOnChannelFrozen(callback) {
   onChannelFrozenCallback = callback;
+}
+
+function setChannelListProvider(provider) {
+  channelListProvider = typeof provider === 'function' ? provider : null;
 }
 
 /**
@@ -69,6 +74,40 @@ function transitionFrozenChannelIfExpired(channelId, source = 'claude') {
   return health;
 }
 
+function getEnabledChannels(source = 'claude') {
+  if (!channelListProvider) {
+    return null;
+  }
+
+  try {
+    const channels = channelListProvider(source || 'claude');
+    if (!Array.isArray(channels)) {
+      return null;
+    }
+    return channels.filter(channel => channel && channel.enabled !== false);
+  } catch (err) {
+    console.warn(`[ChannelHealth] Failed to inspect ${source || 'claude'} channels before freezing: ${err.message}`);
+    return null;
+  }
+}
+
+function isLastAvailableChannel(channelId, source = 'claude') {
+  const enabledChannels = getEnabledChannels(source);
+  if (!enabledChannels) {
+    return false;
+  }
+
+  const currentExists = enabledChannels.some(channel => channel.id === channelId);
+  if (!currentExists) {
+    return false;
+  }
+
+  const availableChannels = enabledChannels.filter(channel =>
+    channel.id === channelId || isChannelAvailable(channel.id, source)
+  );
+  return availableChannels.length <= 1;
+}
+
 /**
  * 记录成功请求
  */
@@ -107,6 +146,11 @@ function recordFailure(channelId, source = 'claude', error) {
   // 如果当前是健康状态或检测中状态，检查是否需要冻结
   if (health.status === 'healthy' || health.status === 'checking') {
     if (health.consecutiveFailures >= healthConfig.failureThreshold) {
+      if (isLastAvailableChannel(channelId, source)) {
+        console.warn(`[ChannelHealth] Channel ${channelId} reached failure threshold but remains active because it is the last available ${source || 'claude'} channel`);
+        return;
+      }
+
       // 触发冻结
       const previousStatus = health.status;
       health.status = 'frozen';
@@ -241,5 +285,6 @@ module.exports = {
   getAllChannelHealthStatus,
   resetChannelHealth,
   setOnChannelFrozen,
+  setChannelListProvider,
   healthConfig,
 };

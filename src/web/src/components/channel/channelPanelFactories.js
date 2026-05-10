@@ -139,6 +139,12 @@ function getToolModelOptions(toolType) {
   return buildModelOptions(getAllModelsByToolType(toolType))
 }
 
+function resolveClaudeModelToolType(gatewaySourceType) {
+  return String(gatewaySourceType || '').trim().toLowerCase() === 'openai_compatible'
+    ? 'codex'
+    : 'claude'
+}
+
 const baseSections = {
   schedule: [
     {
@@ -250,12 +256,28 @@ const channelPanelFactories = {
         title: '模型重定向',
         description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
         collapsible: true,
-        showWhen: (form) => form.presetId === 'official',
+        showWhen: (form) => form.presetId === 'official' || form.gatewaySourceType === 'openai_compatible',
         fields: [
           {
             key: 'modelRedirects',
             type: 'model-redirect',
             fullWidth: true
+          }
+        ]
+      },
+      {
+        title: 'OpenAI 网关',
+        description: 'OpenAI 格式渠道需要通过 Claude 代理使用；优先选择 Responses API，不兼容时再切到 Chat Completions',
+        showWhen: (form) => form.gatewaySourceType === 'openai_compatible',
+        fields: [
+          {
+            key: 'targetApi',
+            label: '上游接口',
+            type: 'radio-group',
+            options: [
+              { label: 'Responses API', value: 'responses' },
+              { label: 'Chat Completions', value: 'chat.completions' }
+            ]
           }
         ]
       },
@@ -325,6 +347,7 @@ const channelPanelFactories = {
       modelRedirects: [],
       proxyUrl: '',
       gatewaySourceType: 'claude',
+      targetApi: 'responses',
       maxConcurrency: null,
       weight: 1,
       enabled: true,
@@ -348,6 +371,7 @@ const channelPanelFactories = {
       modelRedirects: channel.modelRedirects || [],
       proxyUrl: channel.proxyUrl || '',
       gatewaySourceType: channel.gatewaySourceType || 'claude',
+      targetApi: channel.targetApi || 'responses',
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false,
@@ -364,6 +388,7 @@ const channelPanelFactories = {
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'claude'
+      newForm.targetApi = preset.targetApi || newForm.targetApi || 'responses'
 
       if (preset.env) {
         newForm.modelConfig = {
@@ -378,11 +403,13 @@ const channelPanelFactories = {
     },
     fetchModelsForChannel: async (channelId, form) => {
       await loadDefaultModels()
+      const toolType = resolveClaudeModelToolType(form.gatewaySourceType)
+      const defaultOptions = getToolModelOptions(toolType)
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
       if (!channelId) {
-        form.availableModels = getToolModelOptions('claude')
+        form.availableModels = defaultOptions
         form.modelsFetching = false
         return
       }
@@ -391,7 +418,7 @@ const channelPanelFactories = {
         if (result.models && result.models.length > 0) {
           form.availableModels = mergeModelOptions(
             buildModelOptions(result.models),
-            getToolModelOptions('claude')
+            defaultOptions
           )
 
           // Show info message if using fallback default model
@@ -400,14 +427,12 @@ const channelPanelFactories = {
             form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
           }
         } else if (result.fallbackUsed || !result.supported) {
-          // Fetch failed, use default Claude models
-          form.availableModels = getToolModelOptions('claude')
+          form.availableModels = defaultOptions
           form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
-        // On error, use default Claude models
-        form.availableModels = getToolModelOptions('claude')
+        form.availableModels = defaultOptions
         // Try to extract error details from response
         const errorData = error.response?.data
         if (errorData) {
@@ -443,7 +468,8 @@ const channelPanelFactories = {
             modelRedirects: form.modelRedirects || [],
             proxyUrl: form.proxyUrl || '',
             speedTestModel: form.speedTestModel || null,
-            gatewaySourceType: form.gatewaySourceType || 'claude'
+            gatewaySourceType: form.gatewaySourceType || 'claude',
+            targetApi: form.targetApi || 'responses'
           }
         )
       },
@@ -462,7 +488,8 @@ const channelPanelFactories = {
           modelRedirects: form.modelRedirects || [],
           proxyUrl: form.proxyUrl || '',
           speedTestModel: form.speedTestModel || null,
-          gatewaySourceType: form.gatewaySourceType || 'claude'
+          gatewaySourceType: form.gatewaySourceType || 'claude',
+          targetApi: form.targetApi || 'responses'
         })
       },
       toggle: async (channel, enabled) => {

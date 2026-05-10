@@ -266,4 +266,57 @@ describe('channels service Claude settings integration', () => {
       apiKeyHelper: 'cmd /c echo key-primary'
     });
   });
+
+  test('does not write native Claude settings for OpenAI-compatible gateway channels', () => {
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+
+    const channel = channelsService.createChannel(
+      'OpenAI Gateway',
+      'https://api.openai.com/v1',
+      'sk-openai',
+      undefined,
+      {
+        gatewaySourceType: 'openai_compatible',
+        targetApi: 'responses'
+      }
+    );
+
+    expect(channel.targetApi).toBe('responses');
+    expect(fs.existsSync(settingsPath)).toBe(false);
+  });
+
+  test('defaults non-official OpenAI-compatible gateways to chat completions for fuller usage data', () => {
+    const channel = channelsService.createChannel(
+      'GLM Gateway',
+      'https://router.example.com/v1',
+      'sk-router',
+      undefined,
+      {
+        gatewaySourceType: 'openai_compatible',
+        targetApi: 'responses'
+      }
+    );
+
+    expect(channel.targetApi).toBe('chat.completions');
+    expect(channelsService.getAllChannels()[0].targetApi).toBe('chat.completions');
+  });
+
+  test('rejects apply-to-settings for OpenAI-compatible gateway channels', () => {
+    channelsService.createChannel(
+      'OpenAI Gateway',
+      'https://api.openai.com/v1',
+      'sk-openai',
+      undefined,
+      {
+        gatewaySourceType: 'openai_compatible',
+        targetApi: 'responses'
+      }
+    );
+
+    const channel = channelsService.getAllChannels()[0];
+
+    expect(() => channelsService.applyChannelToSettings(channel.id)).toThrow(
+      'OpenAI 格式渠道需要通过 Claude 代理使用，请先启动代理。'
+    );
+  });
 });

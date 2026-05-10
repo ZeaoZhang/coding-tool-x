@@ -13,6 +13,16 @@ export const claudePresets = [
     env: {}
   },
   {
+    id: 'openai',
+    name: 'OpenAI',
+    category: 'third_party',
+    websiteUrl: 'https://platform.openai.com',
+    baseUrl: 'https://api.openai.com/v1',
+    gatewaySourceType: 'openai_compatible',
+    targetApi: 'responses',
+    env: {}
+  },
+  {
     id: 'deepseek',
     name: 'DeepSeek',
     category: 'cn_official',

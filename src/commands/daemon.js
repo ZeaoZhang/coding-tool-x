@@ -85,6 +85,18 @@ function deletePM2Process(name) {
   });
 }
 
+function restartPM2Process(name) {
+  return new Promise((resolve, reject) => {
+    pm2.restart(name, (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
 /**
  * 获取 Coding-Tool 进程
  */
@@ -167,6 +179,41 @@ function updatePM2Daemon() {
       }
     });
   });
+}
+
+function dumpPM2State(timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve({ timedOut: true, err: null });
+    }, timeoutMs);
+
+    pm2.dump((err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve({ timedOut: false, err: err || null });
+    });
+  });
+}
+
+async function finalizePM2Session(options = {}) {
+  const shouldPersist = options.persist === true;
+  if (shouldPersist) {
+    const result = await dumpPM2State(options.timeoutMs);
+    if (result.err) {
+      console.log(chalk.yellow(`[WARN]  保存 PM2 状态失败: ${result.err.message}`));
+    } else if (result.timedOut) {
+      console.log(chalk.yellow('[WARN]  保存 PM2 状态超时，继续关闭 CLI 连接'));
+    }
+  }
+  disconnectPM2();
 }
 
 function isPortOwnedByPid(port, pid) {
@@ -432,10 +479,9 @@ async function attemptStartService(startOptions, port, options = {}) {
 
 function cleanupFailedStart() {
   return new Promise((resolve) => {
-    pm2.delete(PM2_APP_NAME, () => {
-      pm2.dump(() => {
-        resolve();
-      });
+    pm2.delete(PM2_APP_NAME, async () => {
+      await finalizePM2Session({ persist: true });
+      resolve();
     });
   });
 }
@@ -527,9 +573,7 @@ async function handleStart() {
     console.log(chalk.gray('  ') + chalk.cyan('ctx logs') + chalk.gray('      - 查看实时日志'));
     console.log(chalk.gray('  ') + chalk.cyan('ctx stop') + chalk.gray('      - 停止服务\n'));
 
-    pm2.dump(() => {
-      disconnectPM2();
-    });
+    await finalizePM2Session({ persist: true });
   } catch (error) {
     console.error(chalk.red('启动失败:'), error.message);
     disconnectPM2();
@@ -549,9 +593,7 @@ async function handleStop() {
     const stopResult = await stopAllManagedInstances(existing, config);
     printStopResult(stopResult);
 
-    pm2.dump(() => {
-      disconnectPM2();
-    });
+    await finalizePM2Session({ persist: true });
   } catch (error) {
     console.error(chalk.red('停止失败:'), error.message);
     disconnectPM2();
@@ -573,19 +615,9 @@ async function handleRestart() {
       return;
     }
 
-    pm2.restart(PM2_APP_NAME, (err) => {
-      if (err) {
-        console.error(chalk.red('\n[ERROR] 重启服务失败:'), err.message);
-        disconnectPM2();
-        process.exit(1);
-      }
-
-      console.log(chalk.green('\n[OK] Coding-Tool 服务已重启\n'));
-
-      pm2.dump((err) => {
-        disconnectPM2();
-      });
-    });
+    await restartPM2Process(PM2_APP_NAME);
+    console.log(chalk.green('\n[OK] Coding-Tool 服务已重启\n'));
+    await finalizePM2Session({ persist: true });
   } catch (error) {
     console.error(chalk.red('重启失败:'), error.message);
     disconnectPM2();

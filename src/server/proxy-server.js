@@ -19,7 +19,7 @@ const eventBus = require('../plugins/event-bus');
 const { getEffectiveApiKey } = require('./services/channels');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
-const { redirectModel } = require('./services/base/proxy-utils');
+const { redirectModel, normalizeGatewaySourceType } = require('./services/base/proxy-utils');
 const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const {
   createClaudeStreamRecoveryState,
@@ -27,6 +27,7 @@ const {
   buildAssistantMessageFromStreamState,
   recoverClaudeUsageViaCountTokens
 } = require('./services/claude-token-recovery');
+const { handleClaudeOpenAiGatewayRequest } = require('./services/claude-openai-gateway');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
@@ -327,6 +328,21 @@ async function startProxyServer(options = {}) {
               printedRedirectCache.set(channel.id, cachedRedirects);
               console.log(`[Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
             }
+          }
+        }
+
+        const gatewaySourceType = normalizeGatewaySourceType(channel.gatewaySourceType, 'claude');
+        if (gatewaySourceType === 'openai_compatible') {
+          const handled = await handleClaudeOpenAiGatewayRequest({
+            req,
+            res,
+            channel,
+            effectiveKey,
+            calculateCost,
+            onDone: release
+          });
+          if (handled) {
+            return;
           }
         }
 

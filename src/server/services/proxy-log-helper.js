@@ -135,10 +135,14 @@ function buildFailureLogPayload({
   stage,
   timestamp = Date.now()
 }) {
-  const errorMessage = String(
+  const rawErrorMessage = String(
     error?.message
-    || message
     || error
+    || ''
+  ).trim();
+  const displayMessage = String(
+    message
+    || rawErrorMessage
     || 'Request failed'
   );
 
@@ -149,8 +153,9 @@ function buildFailureLogPayload({
     time: formatRealtimeTime(timestamp),
     channel: channel || 'Unknown',
     model: model || '',
-    message: errorMessage,
-    error: errorMessage,
+    message: displayMessage,
+    error: displayMessage,
+    rawError: rawErrorMessage || undefined,
     statusCode: Number.isFinite(Number(statusCode)) ? Number(statusCode) : null,
     stage: stage || 'proxy',
     inputTokens: 0,

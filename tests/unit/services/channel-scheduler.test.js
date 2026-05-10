@@ -27,6 +27,7 @@ let getOpenCodeChannels;
 let isChannelAvailable;
 let getChannelHealthStatus;
 let setOnChannelFrozen;
+let setChannelListProvider;
 
 // The module under test – re-required each test
 let allocateChannel;
@@ -45,12 +46,13 @@ function injectStubs() {
   isChannelAvailable    = vi.fn(() => true);
   getChannelHealthStatus = vi.fn(() => ({ available: true }));
   setOnChannelFrozen    = vi.fn();
+  setChannelListProvider = vi.fn();
 
   require.cache[CHANNELS_PATH]  = { id: CHANNELS_PATH,  filename: CHANNELS_PATH,  loaded: true, exports: { getAllChannels } };
   require.cache[CODEX_PATH]     = { id: CODEX_PATH,     filename: CODEX_PATH,     loaded: true, exports: { getChannels: getCodexChannels } };
   require.cache[GEMINI_PATH]    = { id: GEMINI_PATH,    filename: GEMINI_PATH,    loaded: true, exports: { getChannels: getGeminiChannels } };
   require.cache[OPENCODE_PATH]  = { id: OPENCODE_PATH,  filename: OPENCODE_PATH,  loaded: true, exports: { getChannels: getOpenCodeChannels } };
-  require.cache[HEALTH_PATH]    = { id: HEALTH_PATH,    filename: HEALTH_PATH,    loaded: true, exports: { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen } };
+  require.cache[HEALTH_PATH]    = { id: HEALTH_PATH,    filename: HEALTH_PATH,    loaded: true, exports: { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } };
 }
 
 beforeEach(() => {

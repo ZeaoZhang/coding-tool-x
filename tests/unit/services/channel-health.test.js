@@ -74,6 +74,68 @@ describe('channel-health', () => {
       const status = channelHealth.getChannelHealthStatus('ch1', 'claude');
       expect(status.status).toBe('healthy');
     });
+
+    it('should not freeze the only enabled channel', () => {
+      const callback = vi.fn();
+      channelHealth.setOnChannelFrozen(callback);
+      channelHealth.setChannelListProvider(() => [
+        { id: 'ch1', enabled: true },
+        { id: 'disabled', enabled: false }
+      ]);
+
+      const threshold = channelHealth.healthConfig.failureThreshold;
+      for (let i = 0; i < threshold; i++) {
+        channelHealth.recordFailure('ch1', 'claude');
+      }
+
+      const status = channelHealth.getChannelHealthStatus('ch1', 'claude');
+      expect(status.status).toBe('healthy');
+      expect(status.consecutiveFailures).toBe(threshold);
+      expect(channelHealth.isChannelAvailable('ch1', 'claude')).toBe(true);
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it('should not freeze when every other enabled channel is already unavailable', () => {
+      channelHealth.setChannelListProvider(() => [
+        { id: 'ch1', enabled: true },
+        { id: 'ch2', enabled: true }
+      ]);
+
+      channelHealth.setChannelListProvider(null);
+      const threshold = channelHealth.healthConfig.failureThreshold;
+      for (let i = 0; i < threshold; i++) {
+        channelHealth.recordFailure('ch2', 'claude');
+      }
+      expect(channelHealth.isChannelAvailable('ch2', 'claude')).toBe(false);
+
+      channelHealth.setChannelListProvider(() => [
+        { id: 'ch1', enabled: true },
+        { id: 'ch2', enabled: true }
+      ]);
+      for (let i = 0; i < threshold; i++) {
+        channelHealth.recordFailure('ch1', 'claude');
+      }
+
+      const status = channelHealth.getChannelHealthStatus('ch1', 'claude');
+      expect(status.status).toBe('healthy');
+      expect(channelHealth.isChannelAvailable('ch1', 'claude')).toBe(true);
+    });
+
+    it('should still freeze a failing channel when another enabled channel is available', () => {
+      channelHealth.setChannelListProvider(() => [
+        { id: 'ch1', enabled: true },
+        { id: 'ch2', enabled: true }
+      ]);
+
+      const threshold = channelHealth.healthConfig.failureThreshold;
+      for (let i = 0; i < threshold; i++) {
+        channelHealth.recordFailure('ch1', 'claude');
+      }
+
+      const status = channelHealth.getChannelHealthStatus('ch1', 'claude');
+      expect(status.status).toBe('frozen');
+      expect(channelHealth.isChannelAvailable('ch2', 'claude')).toBe(true);
+    });
   });
 
   describe('freeze behavior', () => {

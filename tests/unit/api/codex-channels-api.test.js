@@ -44,8 +44,8 @@ let routerFactory;
 beforeEach(() => {
   getChannels = vi.fn(() => ({
     channels: [
-      { id: 'ch-1', name: 'Primary', providerKey: 'provider-a', baseUrl: 'https://api.example.com', enabled: true },
-      { id: 'ch-2', name: 'Secondary', providerKey: 'provider-b', baseUrl: 'https://api2.example.com', enabled: false }
+      { id: 'ch-1', name: 'Primary', providerKey: 'provider-a', baseUrl: 'https://api.example.com', apiKey: 'secret-a', requiresOpenaiAuth: false, enabled: true },
+      { id: 'ch-2', name: 'Secondary', providerKey: 'provider-b', baseUrl: 'https://api2.example.com', apiKey: 'secret-b', requiresOpenaiAuth: false, enabled: false }
     ]
   }));
   createChannel = vi.fn((name, providerKey, baseUrl, apiKey, wireApi, options) => ({
@@ -229,6 +229,14 @@ describe('codex-channels api', () => {
       id: 'new-channel',
       wireApi: 'responses'
     }));
+    expect(createChannel).toHaveBeenCalledWith(
+      'New',
+      'provider-x',
+      'https://new.example.com',
+      'secret',
+      'responses',
+      expect.objectContaining({ requiresOpenaiAuth: false })
+    );
 
     handler = findHandler(router, 'post', '/order');
     res = makeRes();
@@ -258,6 +266,56 @@ describe('codex-channels api', () => {
     handler({ params: { channelId: 'ch-1' } }, res);
     expect(resetChannelHealth).toHaveBeenCalledWith('ch-1', 'codex');
     expect(res._body.success).toBe(true);
+  });
+
+  test('rejects Codex channel creation without API key even when auth mode is requested', () => {
+    const router = routerFactory({});
+    const handler = findHandler(router, 'post', '/');
+    const res = makeRes();
+
+    handler({
+      body: {
+        name: 'OpenAI Login',
+        providerKey: 'provider-login',
+        baseUrl: 'https://api.openai.com/v1',
+        requiresOpenaiAuth: true
+      }
+    }, res);
+
+    expect(res._status).toBe(400);
+    expect(res._body.error).toBe('Missing required fields: apiKey');
+    expect(createChannel).not.toHaveBeenCalled();
+  });
+
+  test('rejects updating a Codex channel to API key auth without providing an API key', () => {
+    getChannels.mockReturnValue({
+      channels: [
+        {
+          id: 'ch-oauth',
+          name: 'OpenAI Login',
+          providerKey: 'provider-login',
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: '',
+          requiresOpenaiAuth: true,
+          enabled: true
+        }
+      ]
+    });
+
+    const router = routerFactory({});
+    const handler = findHandler(router, 'put', '/:channelId');
+    const res = makeRes();
+
+    handler({
+      params: { channelId: 'ch-oauth' },
+      body: {
+        requiresOpenaiAuth: false,
+        apiKey: ''
+      }
+    }, res);
+
+    expect(res._status).toBe(400);
+    expect(updateChannel).not.toHaveBeenCalled();
   });
 
   test('rejects reserved openai providerKey on create', () => {

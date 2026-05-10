@@ -12,6 +12,7 @@ const SPEED_TEST_PATH     = require.resolve('../../../src/server/services/speed-
 const PATHS_PATH          = require.resolve('../../../src/config/paths');
 const SETTINGS_MGR_PATH   = require.resolve('../../../src/server/services/settings-manager');
 const MODEL_META_PATH     = require.resolve('../../../src/config/model-metadata');
+const MODEL_DETECTOR_PATH = require.resolve('../../../src/server/services/model-detector');
 const WS_SERVER_PATH      = require.resolve('../../../src/server/websocket-server');
 const PROXY_SERVER_PATH   = require.resolve('../../../src/server/proxy-server');
 const NATIVE_OAUTH_PATH   = require.resolve('../../../src/server/services/native-oauth-adapters');
@@ -37,6 +38,7 @@ let runWithConcurrencyLimit;
 let deleteBackup;
 let isProxyConfig;
 let getDefaultSpeedTestModelByToolType;
+let fetchModelsFromProvider;
 let broadcastLog;
 let broadcastProxyState;
 let broadcastSchedulerState;
@@ -67,6 +69,15 @@ function injectStubs() {
   deleteBackup                     = vi.fn();
   isProxyConfig                    = vi.fn(() => false);
   getDefaultSpeedTestModelByToolType = vi.fn(() => 'claude-haiku-4-5');
+  fetchModelsFromProvider          = vi.fn(async () => ({
+    models: ['gpt-4.1'],
+    supported: true,
+    cached: false,
+    fallbackUsed: false,
+    lastChecked: '2026-04-25T00:00:00.000Z',
+    error: null,
+    errorHint: null
+  }));
   broadcastLog                     = vi.fn();
   broadcastProxyState              = vi.fn();
   broadcastSchedulerState          = vi.fn();
@@ -102,6 +113,10 @@ function injectStubs() {
   require.cache[MODEL_META_PATH] = {
     id: MODEL_META_PATH, filename: MODEL_META_PATH, loaded: true,
     exports: { getDefaultSpeedTestModelByToolType }
+  };
+  require.cache[MODEL_DETECTOR_PATH] = {
+    id: MODEL_DETECTOR_PATH, filename: MODEL_DETECTOR_PATH, loaded: true,
+    exports: { fetchModelsFromProvider }
   };
   require.cache[WS_SERVER_PATH] = {
     id: WS_SERVER_PATH, filename: WS_SERVER_PATH, loaded: true,
@@ -148,6 +163,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete require.cache[API_PATH];
+  delete require.cache[MODEL_DETECTOR_PATH];
 });
 
 // ── GET / ──────────────────────────────────────────────────────────────────
@@ -212,6 +228,50 @@ describe('GET /current - current settings', () => {
   });
 });
 
+// ── GET /:id/models ────────────────────────────────────────────────────────
+describe('GET /:id/models - fetch models', () => {
+  it('returns Claude default models for normal Claude channels', async () => {
+    getAllChannels.mockReturnValue([{ id: 'ch1', gatewaySourceType: 'claude' }]);
+
+    const handler = findHandler(router, 'get', '/:id/models');
+    const res = makeRes();
+    await handler({ params: { id: 'ch1' }, query: {} }, res);
+
+    expect(res._body).toEqual(expect.objectContaining({
+      channelId: 'ch1',
+      gatewaySourceType: 'claude',
+      models: ['claude-haiku-4-5']
+    }));
+    expect(fetchModelsFromProvider).not.toHaveBeenCalled();
+  });
+
+  it('probes OpenAI-compatible models and falls back to Codex defaults when needed', async () => {
+    getAllChannels.mockReturnValue([{ id: 'ch2', gatewaySourceType: 'openai_compatible', baseUrl: 'https://api.openai.com/v1' }]);
+    fetchModelsFromProvider.mockResolvedValueOnce({
+      models: [],
+      supported: true,
+      cached: false,
+      fallbackUsed: true,
+      lastChecked: '2026-04-25T00:00:00.000Z',
+      error: 'models unavailable',
+      errorHint: 'fallback'
+    });
+    getDefaultSpeedTestModelByToolType.mockImplementation((toolType) => toolType === 'codex' ? 'gpt-5-codex' : 'claude-haiku-4-5');
+
+    const handler = findHandler(router, 'get', '/:id/models');
+    const res = makeRes();
+    await handler({ params: { id: 'ch2' }, query: {} }, res);
+
+    expect(fetchModelsFromProvider).toHaveBeenCalledWith(expect.objectContaining({ id: 'ch2' }), 'openai_compatible');
+    expect(res._body).toEqual(expect.objectContaining({
+      channelId: 'ch2',
+      gatewaySourceType: 'openai_compatible',
+      models: ['gpt-5-codex'],
+      fallbackUsed: true
+    }));
+  });
+});
+
 // ── POST / ─────────────────────────────────────────────────────────────────
 describe('POST / - create channel', () => {
   it('returns 400 when name is missing', () => {
@@ -249,12 +309,14 @@ describe('POST / - create channel', () => {
     createChannel.mockReturnValue(created);
 
     const handler = findHandler(router, 'post', '/');
-    const req = { body: { name: 'New', baseUrl: 'http://api', apiKey: 'key1' } };
+    const req = { body: { name: 'New', baseUrl: 'http://api', apiKey: 'key1', targetApi: 'responses' } };
     const res = makeRes();
     handler(req, res);
 
     expect(res._body.channel).toEqual(created);
-    expect(createChannel).toHaveBeenCalledWith('New', 'http://api', 'key1', undefined, expect.any(Object));
+    expect(createChannel).toHaveBeenCalledWith('New', 'http://api', 'key1', undefined, expect.objectContaining({
+      targetApi: 'responses'
+    }));
     expect(broadcastSchedulerState).toHaveBeenCalled();
   });
 });
@@ -391,5 +453,21 @@ describe('GET /pool/status - pool status', () => {
 
     expect(getSchedulerState).toHaveBeenCalledWith('gemini');
     expect(res._body.source).toBe('gemini');
+  });
+});
+
+// ── POST /:id/apply-to-settings ────────────────────────────────────────────
+describe('POST /:id/apply-to-settings - apply channel', () => {
+  it('returns 400 when the channel requires proxy-only OpenAI gateway mode', async () => {
+    const error = new Error('OpenAI 格式渠道需要通过 Claude 代理使用，请先启动代理。');
+    error.statusCode = 400;
+    applyChannelToSettings.mockImplementation(() => { throw error; });
+
+    const handler = findHandler(router, 'post', '/:id/apply-to-settings');
+    const res = makeRes();
+    await handler({ params: { id: 'openai' } }, res);
+
+    expect(res._status).toBe(400);
+    expect(res._body.error).toContain('代理');
   });
 });

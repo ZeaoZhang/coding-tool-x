@@ -4,6 +4,21 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [3.5.14] - 2026-04-27
+
+### Added
+- **Claude 渠道支持 OpenAI 兼容网关** - Claude 渠道新增 OpenAI 预设和 `openai_compatible` 网关路径，可通过 Claude 代理转发到 OpenAI Responses API 或 Chat Completions，并支持模型列表探测、测速、模型重定向与请求日志统计
+- **OpenAI 网关目标接口选择** - OpenAI 官方渠道默认使用 Responses API，第三方 OpenAI 兼容渠道自动回退到 Chat Completions，减少 usage 缺失和接口不兼容问题
+
+### Changed
+- **Codex 渠道默认 API Key 认证** - 移除 Codex 渠道表单中的认证方式开关，创建和更新渠道均默认 API Key 模式，并将旧的 `requiresOpenaiAuth` 标记归一化为 `false`
+- **OpenAI 兼容渠道代理约束** - Claude 下的 OpenAI 格式渠道不再写入原生 Claude settings，应用到设置时会提示必须通过代理使用，避免把 OpenAI Key 写进 Claude 原生配置
+
+### Fixed
+- **后台命令退出与 PM2 状态保存** - `ctx start` / `stop` / `restart` / `status` 和 `ctx ui start|stop|restart` 完成后会主动关闭插件与 CLI 进程，并对 PM2 dump 加入超时保护，避免命令成功后挂起
+- **OpenAI 网关失败日志可读性** - 实时日志现在优先展示结构化错误消息，同时保留 `rawError`，避免只看到 `aborted` 这类过短失败信息
+- **Codex 配置写入认证标记** - 写入 `config.toml` 时固定输出 `requires_openai_auth = false` 并继续注入 `CC_PROXY_KEY`，保证 Codex API Key 渠道不再误走 OpenAI 登录态
+
 ## [3.5.11] - 2026-04-22
 
 ### Added

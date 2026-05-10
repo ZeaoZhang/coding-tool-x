@@ -13,12 +13,14 @@ const {
 } = require('../services/channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
+const { fetchModelsFromProvider } = require('../services/model-detector');
 const {
   testChannelSpeed,
   getLatencyLevel,
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
+const { normalizeGatewaySourceType } = require('../services/base/proxy-utils');
 const { PATHS } = require('../../config/paths');
 const { deleteBackup } = require('../services/settings-manager');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
@@ -28,6 +30,19 @@ const CLAUDE_GATEWAY_SOURCE_TYPE = 'claude';
 
 function getDefaultClaudeModel() {
   return getDefaultSpeedTestModelByToolType('claude');
+}
+
+function resolveClaudeGatewaySourceType(channel, requestedType) {
+  return normalizeGatewaySourceType(requestedType || channel?.gatewaySourceType, 'claude');
+}
+
+function getDefaultModelsForGatewaySourceType(gatewaySourceType) {
+  if (gatewaySourceType === 'openai_compatible' || gatewaySourceType === 'codex') {
+    const model = getDefaultSpeedTestModelByToolType('codex');
+    return model ? [model] : [];
+  }
+  const model = getDefaultClaudeModel();
+  return model ? [model] : [];
 }
 
 // GET /api/channels - Get all channels with health status
@@ -92,7 +107,8 @@ router.post('/', (req, res) => {
       modelRedirects,
       proxyUrl,
       speedTestModel,
-      gatewaySourceType
+      gatewaySourceType,
+      targetApi
     } = req.body;
 
     if (!name || !baseUrl) {
@@ -112,7 +128,8 @@ router.post('/', (req, res) => {
       modelRedirects: modelRedirects || [],
       proxyUrl: proxyUrl || '',
       speedTestModel: speedTestModel || null,
-      gatewaySourceType
+      gatewaySourceType,
+      targetApi
     });
     res.json({ channel });
     broadcastSchedulerState('claude', getSchedulerState('claude'));
@@ -224,7 +241,7 @@ router.post('/:id/apply-to-settings', async (req, res) => {
     });
   } catch (error) {
     console.error('Error applying channel to settings:', error);
-    res.status(500).json({ error: error.message });
+    res.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
@@ -256,7 +273,7 @@ router.post('/:id/speed-test', async (req, res) => {
       return res.status(404).json({ error: '渠道不存在' });
     }
 
-    const speedTestType = CLAUDE_GATEWAY_SOURCE_TYPE;
+    const speedTestType = resolveClaudeGatewaySourceType(channel);
     const result = await testChannelSpeed(channel, timeout, speedTestType);
     result.level = getLatencyLevel(result.latency);
     result.gatewaySourceType = speedTestType;
@@ -280,18 +297,46 @@ router.get('/:id/models', async (req, res) => {
       return res.status(404).json({ error: '渠道不存在' });
     }
 
-    const gatewaySourceType = CLAUDE_GATEWAY_SOURCE_TYPE;
-    const models = [getDefaultClaudeModel()];
-    const now = new Date().toISOString();
-    const result = {
-      models,
-      supported: models.length > 0,
-      cached: false,
-      fallbackUsed: false,
-      lastChecked: now,
-      error: models.length > 0 ? null : '未配置默认模型列表',
-      errorHint: models.length > 0 ? null : '请在设置中配置 Claude 默认模型'
-    };
+    const gatewaySourceType = resolveClaudeGatewaySourceType(channel, req.query.type);
+    const fallbackModels = getDefaultModelsForGatewaySourceType(gatewaySourceType);
+    let result;
+
+    if (gatewaySourceType === 'openai_compatible' || gatewaySourceType === 'codex') {
+      try {
+        result = await fetchModelsFromProvider(channel, gatewaySourceType);
+      } catch (error) {
+        result = {
+          models: [],
+          supported: true,
+          cached: false,
+          fallbackUsed: true,
+          lastChecked: new Date().toISOString(),
+          error: error.message || '获取模型列表失败',
+          errorHint: '已回退到默认模型列表'
+        };
+      }
+
+      if (!Array.isArray(result.models) || result.models.length === 0) {
+        result = {
+          ...result,
+          models: fallbackModels,
+          fallbackUsed: true,
+          error: result.error || (fallbackModels.length > 0 ? null : '未配置默认模型列表'),
+          errorHint: result.errorHint || (fallbackModels.length > 0 ? '已回退到默认模型列表' : '请在设置中配置默认模型')
+        };
+      }
+    } else {
+      const now = new Date().toISOString();
+      result = {
+        models: fallbackModels,
+        supported: fallbackModels.length > 0,
+        cached: false,
+        fallbackUsed: false,
+        lastChecked: now,
+        error: fallbackModels.length > 0 ? null : '未配置默认模型列表',
+        errorHint: fallbackModels.length > 0 ? null : '请在设置中配置 Claude 默认模型'
+      };
+    }
 
     res.json({
       channelId: id,
@@ -328,7 +373,7 @@ router.post('/speed-test-all', async (req, res) => {
       channels,
       safeConcurrency,
       async channel => {
-        const speedTestType = CLAUDE_GATEWAY_SOURCE_TYPE;
+        const speedTestType = resolveClaudeGatewaySourceType(channel);
         const result = await testChannelSpeed(channel, timeout, speedTestType);
         result.level = getLatencyLevel(result.latency);
         result.gatewaySourceType = speedTestType;
