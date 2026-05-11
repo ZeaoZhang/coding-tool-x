@@ -16,6 +16,7 @@ const { PATHS } = require('../../config/paths');
 // 内置模型优先级（当配置缺失时兜底）
 const MODEL_PRIORITY = {
   claude: [
+    'claude-opus-4-7',
     'claude-opus-4-6',
     'claude-sonnet-4-6',
     'claude-opus-4-5-20251101',
@@ -23,7 +24,11 @@ const MODEL_PRIORITY = {
     'claude-haiku-4-5-20251001'
   ],
   codex: [
+    'gpt-5.5',
     'gpt-5.4',
+    'gpt-5.4-mini',
+    'gpt-5.3-codex',
+    'gpt-5.3-codex-spark',
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
     'gpt-5.1-codex',
@@ -34,6 +39,8 @@ const MODEL_PRIORITY = {
     'gpt-5'
   ],
   gemini: [
+    'gemini-3.1-pro-preview',
+    'gemini-3.1-flash-preview',
     'gemini-3-pro-preview',
     'gemini-3-flash-preview',
     'gemini-2.5-pro',

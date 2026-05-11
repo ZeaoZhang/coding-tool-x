@@ -27,7 +27,7 @@ function injectStubs() {
     pricing: {
       claude:  { mode: 'auto', input: 3,    output: 15 },
       codex:   { mode: 'auto', input: 2,    output: 8  },
-      gemini:  { mode: 'auto', input: 1.25, output: 5  },
+      gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
     },
     defaultModels: {
       claude: ['claude-sonnet-4-6'],
@@ -52,7 +52,7 @@ function injectStubs() {
       pricing: {
         claude:  { mode: 'auto', input: 3,    output: 15 },
         codex:   { mode: 'auto', input: 2,    output: 8  },
-        gemini:  { mode: 'auto', input: 1.25, output: 5  },
+        gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
       },
       defaultModels: {
         claude: ['claude-sonnet-4-6'],

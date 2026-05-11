@@ -39,6 +39,15 @@ describe('model-pricing', () => {
       expect(typeof CLAUDE_MODEL_PRICING['claude-sonnet-4-6'].input).toBe('number');
       expect(typeof CLAUDE_MODEL_PRICING['claude-sonnet-4-6'].output).toBe('number');
     });
+
+    test('known model claude-opus-4-7 inherits current opus 4.6 pricing', () => {
+      expect(CLAUDE_MODEL_PRICING['claude-opus-4-7']).toEqual({
+        input: 5,
+        output: 25,
+        cacheCreation: 6.25,
+        cacheRead: 0.5
+      });
+    });
   });
 
   describe('CLAUDE_MODEL_ALIASES', () => {

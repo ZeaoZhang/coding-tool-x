@@ -69,7 +69,14 @@ describe('model-metadata', () => {
 
     test('gemini legacy alias resolves to current preview metadata', () => {
       const viaAlias = resolveModelMetadata('gemini-3.1-pro');
-      const canonical = resolveModelMetadata('gemini-3-pro-preview');
+      const canonical = resolveModelMetadata('gemini-3.1-pro-preview');
+      expect(viaAlias).not.toBeNull();
+      expect(viaAlias).toEqual(canonical);
+    });
+
+    test('claude opus 4.7 dotted alias resolves to canonical metadata', () => {
+      const viaAlias = resolveModelMetadata('claude-opus-4.7');
+      const canonical = resolveModelMetadata('claude-opus-4-7');
       expect(viaAlias).not.toBeNull();
       expect(viaAlias).toEqual(canonical);
     });
@@ -133,14 +140,41 @@ describe('model-metadata', () => {
     test('returns refreshed OpenAI official pricing for gpt-5.3-codex', () => {
       expect(resolveModelPricing('gpt-5.3-codex')).toEqual({
         input: 1.75,
-        output: 14
+        output: 14,
+        cacheRead: 0.175
+      });
+    });
+
+    test('returns OpenAI API pricing for gpt-5.5', () => {
+      expect(resolveModelPricing('gpt-5.5')).toEqual({
+        input: 5,
+        output: 30,
+        cacheRead: 0.5
+      });
+    });
+
+    test('returns sub2api opus family pricing for claude-opus-4-7', () => {
+      expect(resolveModelPricing('claude-opus-4-7')).toEqual({
+        input: 5,
+        output: 25,
+        cacheCreation: 6.25,
+        cacheRead: 0.5
+      });
+    });
+
+    test('returns refreshed Gemini 3.1 Pro preview pricing', () => {
+      expect(resolveModelPricing('gemini-3.1-pro-preview')).toEqual({
+        input: 2,
+        output: 12,
+        cacheRead: 0.2
       });
     });
 
     test('returns refreshed Gemini official pricing for gemini-2.5-flash', () => {
       expect(resolveModelPricing('gemini-2.5-flash')).toEqual({
         input: 0.3,
-        output: 2.5
+        output: 2.5,
+        cacheRead: 0.03
       });
     });
 
@@ -163,7 +197,11 @@ describe('model-metadata', () => {
     test('includes known model IDs', () => {
       const ids = getAllModelIds();
       expect(ids).toContain('claude-sonnet-4-6');
+      expect(ids).toContain('claude-opus-4-7');
       expect(ids).toContain('claude-opus-4-6');
+      expect(ids).toContain('gpt-5.5');
+      expect(ids).toContain('gemini-3.1-pro-preview');
+      expect(ids).toContain('gemini-3.1-flash-preview');
     });
   });
 
@@ -181,6 +219,26 @@ describe('model-metadata', () => {
       expect(defaults.claude.length).toBeGreaterThan(0);
       expect(defaults.codex.length).toBeGreaterThan(0);
       expect(defaults.gemini.length).toBeGreaterThan(0);
+    });
+
+    test('includes newest default models first in each family', () => {
+      const defaults = getDefaultModels();
+      expect(defaults.claude.slice(0, 3)).toEqual([
+        'claude-opus-4-7',
+        'claude-opus-4-6',
+        'claude-sonnet-4-6'
+      ]);
+      expect(defaults.codex.slice(0, 5)).toEqual([
+        'gpt-5.5',
+        'gpt-5.4',
+        'gpt-5.4-mini',
+        'gpt-5.3-codex',
+        'gpt-5.3-codex-spark'
+      ]);
+      expect(defaults.gemini.slice(0, 2)).toEqual([
+        'gemini-3.1-pro-preview',
+        'gemini-3.1-flash-preview'
+      ]);
     });
   });
 

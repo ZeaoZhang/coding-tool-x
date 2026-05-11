@@ -46,6 +46,7 @@ const DEFAULT_CONFIG = {
       mode: 'auto',
       input: 2.5,
       output: 15,
+      cacheRead: 0.25,
       models: {
         'gpt-5-codex': { mode: 'auto' },
         'gpt-4o-mini': { mode: 'auto' }
@@ -55,6 +56,7 @@ const DEFAULT_CONFIG = {
       mode: 'auto',
       input: 1.25,
       output: 10,
+      cacheRead: 0.125,
       models: {
         'gemini-2.5-pro': { mode: 'auto' },
         'gemini-2.5-flash': { mode: 'auto' }
@@ -64,6 +66,7 @@ const DEFAULT_CONFIG = {
       mode: 'auto',
       input: 2.5,
       output: 15,
+      cacheRead: 0.25,
       models: {}
     }
   }

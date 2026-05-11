@@ -7,7 +7,7 @@ const { allocateChannel, releaseChannel, getSchedulerState } = require('./servic
 const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
-const { resolveModelPricing } = require('./utils/pricing');
+const { resolveModelPricing, calculateTokenCost } = require('./utils/pricing');
 const { recordRequest: recordCodexRequest } = require('./services/codex-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { createDecodedStream } = require('./services/response-decoder');
@@ -52,7 +52,6 @@ const PRICING = {
 };
 
 const CODEX_BASE_PRICING = DEFAULT_CONFIG.pricing.codex;
-const ONE_MILLION = 1000000;
 
 // detectModelTier, redirectModel, resolveTargetUrl imported from services/base/proxy-utils
 
@@ -90,13 +89,7 @@ function calculateCost(model, tokens) {
   }
 
   const pricing = resolveModelPricing('codex', model, fallbackPricing, CODEX_BASE_PRICING);
-  const inputRate = typeof pricing.input === 'number' ? pricing.input : CODEX_BASE_PRICING.input;
-  const outputRate = typeof pricing.output === 'number' ? pricing.output : CODEX_BASE_PRICING.output;
-
-  return (
-    (tokens.input || 0) * inputRate / ONE_MILLION +
-    (tokens.output || 0) * outputRate / ONE_MILLION
-  );
+  return calculateTokenCost(pricing, tokens, CODEX_BASE_PRICING);
 }
 
 const jsonBodyParser = express.json({
@@ -598,5 +591,6 @@ module.exports = {
   startCodexProxyServer,
   stopCodexProxyServer,
   getCodexProxyStatus,
-  clearCodexRedirectCache
+  clearCodexRedirectCache,
+  calculateCost
 };
