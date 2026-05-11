@@ -14,7 +14,7 @@ const { recordSuccess, recordFailure } = require('./services/channel-health');
 const { loadConfig } = require('../config/loader');
 const DEFAULT_CONFIG = require('../config/default');
 const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
-const { resolveModelPricing } = require('./utils/pricing');
+const { resolveModelPricing, calculateTokenCost } = require('./utils/pricing');
 const { recordRequest: recordOpenCodeRequest } = require('./services/opencode-statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./services/opencode-channels');
@@ -58,7 +58,6 @@ const PRICING = {
 };
 
 const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
-const ONE_MILLION = 1000000;
 const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.59 (external, cli)';
 const CLAUDE_MESSAGES_BETA_FLAGS = Object.freeze([
   'claude-code-20250219',
@@ -133,13 +132,7 @@ function calculateCost(model, tokens) {
   }
 
   const pricing = resolveModelPricing('opencode', model, fallbackPricing, OPENCODE_BASE_PRICING);
-  const inputRate = typeof pricing.input === 'number' ? pricing.input : OPENCODE_BASE_PRICING.input;
-  const outputRate = typeof pricing.output === 'number' ? pricing.output : OPENCODE_BASE_PRICING.output;
-
-  return (
-    (tokens.input || 0) * inputRate / ONE_MILLION +
-    (tokens.output || 0) * outputRate / ONE_MILLION
-  );
+  return calculateTokenCost(pricing, tokens, OPENCODE_BASE_PRICING);
 }
 
 const jsonBodyParser = express.json({
@@ -4741,5 +4734,6 @@ module.exports = {
   stopOpenCodeProxyServer,
   getOpenCodeProxyStatus,
   clearOpenCodeRedirectCache,
-  collectProxyModelList
+  collectProxyModelList,
+  calculateCost
 };

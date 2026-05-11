@@ -8,6 +8,7 @@ const loading = ref(false);
 // 与后端默认配置保持一致的内置模型列表
 const FALLBACK_MODELS = {
   claude: [
+    'claude-opus-4-7',
     'claude-opus-4-6',
     'claude-sonnet-4-6',
     'claude-opus-4-5-20251101',
@@ -15,8 +16,11 @@ const FALLBACK_MODELS = {
     'claude-haiku-4-5-20251001'
   ],
   codex: [
+    'gpt-5.5',
     'gpt-5.4',
+    'gpt-5.4-mini',
     'gpt-5.3-codex',
+    'gpt-5.3-codex-spark',
     'gpt-5.2-codex',
     'gpt-5.1-codex-max',
     'gpt-5.1-codex',
@@ -27,6 +31,8 @@ const FALLBACK_MODELS = {
     'gpt-5'
   ],
   gemini: [
+    'gemini-3.1-pro-preview',
+    'gemini-3.1-flash-preview',
     'gemini-3-pro-preview',
     'gemini-3-flash-preview',
     'gemini-2.5-pro',

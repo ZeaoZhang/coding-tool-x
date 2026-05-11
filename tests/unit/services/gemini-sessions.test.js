@@ -35,7 +35,8 @@ beforeEach(() => {
     filename: require.resolve('../../../src/config/paths'),
     loaded: true,
     exports: {
-      HOME_DIR: homeDir
+      HOME_DIR: homeDir,
+      ensureStorageDirMigrated: vi.fn()
     }
   };
 
@@ -158,7 +159,7 @@ describe('gemini-sessions project discovery and querying', () => {
       model: 'gemini-2.5-pro',
       source: 'gemini'
     }));
-    expect(allSessions[1].cost).toBeCloseTo(0.000125, 8);
+    expect(allSessions[1].cost).toBeCloseTo(0.000225, 8);
 
     expect(geminiSessions.getProjectSessions(projectHash)).toEqual([
       {

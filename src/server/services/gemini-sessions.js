@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { HOME_DIR } = require('../../config/paths');
 const { getGeminiDir } = require('./gemini-config');
+const { resolveModelPricing } = require('../utils/pricing');
 
 // 路径映射缓存
 let pathMappingCache = null;
@@ -228,8 +229,10 @@ function readSessionMeta(filePath) {
           model = msg.model;
           const inputTokens = msg.tokens.input || 0;
           const outputTokens = msg.tokens.output || 0;
-          // gemini-2.5-pro: $1.25 / 1M input, $5 / 1M output
-          totalCost += (inputTokens * 1.25 / 1000000) + (outputTokens * 5 / 1000000);
+          const pricing = resolveModelPricing('gemini', msg.model);
+          const inputRate = typeof pricing.input === 'number' ? pricing.input : 1.25;
+          const outputRate = typeof pricing.output === 'number' ? pricing.output : 10;
+          totalCost += (inputTokens * inputRate / 1000000) + (outputTokens * outputRate / 1000000);
         }
       }
     });

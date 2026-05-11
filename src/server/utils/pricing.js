@@ -67,7 +67,32 @@ function resolveModelPricing(_toolKey, model, fallbackPricing = {}, defaultPrici
   };
 }
 
+function getRate(pricing, defaultPricing, key) {
+  if (typeof pricing?.[key] === 'number') return pricing[key];
+  if (typeof defaultPricing?.[key] === 'number') return defaultPricing[key];
+  return 0;
+}
+
+function calculateTokenCost(pricing = {}, tokens = {}, defaultPricing = {}) {
+  const inputRate = getRate(pricing, defaultPricing, 'input');
+  const outputRate = getRate(pricing, defaultPricing, 'output');
+  const cacheCreationRate = getRate(pricing, defaultPricing, 'cacheCreation');
+  const cacheReadRate = getRate(pricing, defaultPricing, 'cacheRead');
+  const inputTokens = Number(tokens.input || 0);
+  const outputTokens = Number(tokens.output || 0);
+  const cacheCreationTokens = Number(tokens.cacheCreation || 0);
+  const cacheReadTokens = Number(tokens.cacheRead || tokens.cached || 0);
+
+  return (
+    inputTokens * inputRate / 1000000 +
+    outputTokens * outputRate / 1000000 +
+    cacheCreationTokens * cacheCreationRate / 1000000 +
+    cacheReadTokens * cacheReadRate / 1000000
+  );
+}
+
 module.exports = {
   resolvePricing,
-  resolveModelPricing
+  resolveModelPricing,
+  calculateTokenCost
 };
