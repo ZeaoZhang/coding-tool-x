@@ -45,6 +45,7 @@ describe('loadUIConfig', () => {
     const config = loadUIConfig();
     expect(config).toHaveProperty('theme');
     expect(config).toHaveProperty('panelVisibility');
+    expect(config).toHaveProperty('channelBalance');
     expect(config).toHaveProperty('channelLocks');
     expect(config).toHaveProperty('channelCollapse');
     expect(config).toHaveProperty('channelOrder');
@@ -59,6 +60,7 @@ describe('loadUIConfig', () => {
     expect(config.theme).toBe('dark');
     // Defaults for missing keys are still present
     expect(config).toHaveProperty('panelVisibility');
+    expect(config.channelBalance.showRemaining).toBe(false);
     expect(config).toHaveProperty('channelLocks');
   });
 
@@ -167,6 +169,11 @@ describe('default config structure', () => {
     const config = loadUIConfig();
     expect(config.panelVisibility.showChannels).toBe(true);
     expect(config.panelVisibility.showLogs).toBe(true);
+  });
+
+  test('channelBalance defaults to not showing remaining balance', () => {
+    const config = loadUIConfig();
+    expect(config.channelBalance.showRemaining).toBe(false);
   });
 
   test('channelLocks defaults are all false', () => {

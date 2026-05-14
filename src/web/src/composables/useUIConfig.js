@@ -13,6 +13,9 @@ const uiConfig = ref({
     showChannels: true,
     showLogs: true
   },
+  channelBalance: {
+    showRemaining: false
+  },
   channelLocks: {
     claude: false,
     codex: false,

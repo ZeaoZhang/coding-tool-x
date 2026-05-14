@@ -23,6 +23,7 @@
           :channel="element"
           :collapsed="state.collapsed[element.id]"
           :header-tags="config.getHeaderTags(element, helpers)"
+          :balance="helpers.getChannelBalance(element)"
           :info-rows="config.buildInfoRows(element, helpers)"
           :meta="buildMeta(element)"
           :show-apply-button="config.showApplyButton"
@@ -34,6 +35,7 @@
           @edit="actions.handleEdit(element)"
           @delete="actions.handleDelete(element.id)"
           @toggle-enabled="value => actions.handleToggleEnabled(element, value)"
+          @refresh-balance="actions.handleRefreshBalance(element)"
           @open-website="url => emit('open-website', url)"
         />
       </div>
@@ -372,6 +374,7 @@ function getValidationMessage(key) {
 
 const helpers = {
   getChannelInflight,
+  getChannelBalance: (channel) => state.balances[channel.id] || null,
   formatFreeze: (remaining) => `冻结 ${remaining || 0}s`,
   maskApiKey: (key) => {
     if (!key) return '(未设置)'
@@ -379,6 +382,7 @@ const helpers = {
     return `${key.slice(0, 8)}******${key.slice(-4)}`
   },
   handleResetHealth: (channel) => actions.handleResetHealth(channel),
+  handleRefreshBalance: (channel) => actions.handleRefreshBalance(channel),
   handleOpenWebsite: (url) => emit('open-website', url)
 }
 

@@ -11,6 +11,9 @@ const DEFAULT_UI_CONFIG = {
     showChannels: true,
     showLogs: true
   },
+  channelBalance: {
+    showRemaining: false
+  },
   channelLocks: {
     claude: false,
     codex: false,
@@ -57,6 +60,7 @@ function readUIConfigFromFile() {
       ...data,
       theme: data.theme || DEFAULT_UI_CONFIG.theme,
       panelVisibility: { ...DEFAULT_UI_CONFIG.panelVisibility, ...data.panelVisibility },
+      channelBalance: { ...DEFAULT_UI_CONFIG.channelBalance, ...data.channelBalance },
       channelLocks: { ...DEFAULT_UI_CONFIG.channelLocks, ...data.channelLocks },
       channelCollapse: { ...DEFAULT_UI_CONFIG.channelCollapse, ...data.channelCollapse },
       channelOrder: { ...DEFAULT_UI_CONFIG.channelOrder, ...data.channelOrder }
