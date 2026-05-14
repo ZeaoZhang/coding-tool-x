@@ -53,6 +53,16 @@ export async function saveChannelOrder(order) {
   return response.data
 }
 
+export async function getChannelBalances(source) {
+  const response = await client.get('/channel-balances', { params: { source } })
+  return response.data
+}
+
+export async function refreshChannelBalance(source, channelId) {
+  const response = await client.post(`/channel-balances/${source}/${channelId}/refresh`)
+  return response.data
+}
+
 // Codex channels
 export async function getCodexChannels() {
   const response = await client.get('/codex/channels')

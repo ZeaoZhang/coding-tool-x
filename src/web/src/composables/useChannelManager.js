@@ -1,6 +1,7 @@
 import { reactive, watch, onUnmounted } from 'vue'
 import message, { dialog } from '../utils/message'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import { getChannelBalances, refreshChannelBalance } from '../api/channels'
 import { useGlobalStore } from '../stores/global'
 
 function getLocalCollapse(storageKey) {
@@ -30,6 +31,7 @@ export default function useChannelManager(config) {
 
   const state = reactive({
     channels: [],
+    balances: {},
     loading: false,
     toggling: {},
     collapsed: getLocalCollapse(config.storageKeys.localCollapse),
@@ -67,6 +69,7 @@ export default function useChannelManager(config) {
       const list = await config.api.fetch()
       state.channels = Array.isArray(list) ? [...list] : []
       await applyChannelOrder()
+      await loadChannelBalances()
       // 应用实时健康状态
       updateChannelHealth()
       scheduleFrozenChannelRefresh()
@@ -74,6 +77,22 @@ export default function useChannelManager(config) {
       message.error(resolveError(error, `${config.displayName} 渠道加载失败`))
     } finally {
       state.loading = false
+    }
+  }
+
+  async function loadChannelBalances() {
+    try {
+      const configData = await fetchUIConfig()
+      if (configData?.channelBalance?.showRemaining !== true) {
+        state.balances = {}
+        return
+      }
+
+      const response = await getChannelBalances(config.type)
+      state.balances = response?.enabled && response.balances ? response.balances : {}
+    } catch (error) {
+      state.balances = {}
+      console.error('Failed to load channel balances:', error)
     }
   }
 
@@ -122,6 +141,11 @@ export default function useChannelManager(config) {
       console.error('Failed to fetch UI config:', error)
     }
     return null
+  }
+
+  function invalidateUIConfigCache() {
+    lastUIConfig = null
+    lastUIConfigTime = 0
   }
 
   async function applyChannelOrder() {
@@ -347,12 +371,36 @@ export default function useChannelManager(config) {
     }
   }
 
+  async function handleRefreshBalance(channel) {
+    if (!channel?.id) return
+    try {
+      const response = await refreshChannelBalance(config.type, channel.id)
+      if (response?.enabled && response.balance) {
+        state.balances[channel.id] = response.balance
+      }
+    } catch (error) {
+      console.error('Failed to refresh channel balance:', error)
+    }
+  }
+
+  async function handleBalanceVisibilityChange() {
+    invalidateUIConfigCache()
+    await loadChannelBalances()
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('channel-balance-visibility-change', handleBalanceVisibilityChange)
+  }
+
   Promise.all([loadChannels(), loadCollapseSettings()])
 
   // 清理 watch
   onUnmounted(() => {
     clearFrozenChannelRefreshTimer()
     stopWatch()
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('channel-balance-visibility-change', handleBalanceVisibilityChange)
+    }
   })
 
   return {
@@ -368,7 +416,8 @@ export default function useChannelManager(config) {
       handleDelete,
       handleToggleEnabled,
       handleApplyToSettings,
-      handleResetHealth
+      handleResetHealth,
+      handleRefreshBalance
     }
   }
 }

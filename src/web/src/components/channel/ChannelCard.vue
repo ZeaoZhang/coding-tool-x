@@ -26,6 +26,17 @@
             {{ tag.text }}
           </n-tag>
         </template>
+        <n-tag
+          v-if="balance?.visible && balance.label"
+          size="tiny"
+          type="success"
+          :bordered="false"
+          class="balance-tag"
+          :title="balanceTitle"
+          @click.stop="emit('refresh-balance')"
+        >
+          {{ balance.label }}
+        </n-tag>
       </div>
       <div class="channel-actions">
         <n-button
@@ -132,7 +143,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { NButton, NIcon, NTag, NText, NSwitch } from 'naive-ui'
 import { ChevronDownOutline, OpenOutline, SpeedometerOutline, CheckmarkCircleOutline, CloseCircleOutline, CloseOutline } from '@vicons/ionicons5'
 
@@ -157,6 +168,10 @@ const props = defineProps({
     type: Object,
     default: () => ({ weight: 1, concurrencyText: '不限', concurrencyActive: false })
   },
+  balance: {
+    type: Object,
+    default: null
+  },
   showApplyButton: {
     type: Boolean,
     default: false
@@ -175,10 +190,23 @@ const props = defineProps({
   }
 })
 
-defineEmits(['toggle-collapse', 'apply', 'edit', 'delete', 'toggle-enabled', 'open-website'])
+const emit = defineEmits(['toggle-collapse', 'apply', 'edit', 'delete', 'toggle-enabled', 'open-website', 'refresh-balance'])
 
 const testing = ref(false)
 const testResult = ref(null)
+
+const balanceTitle = computed(() => {
+  if (!props.balance?.visible) return ''
+  const parts = []
+  if (props.balance.platform) parts.push(props.balance.platform)
+  if (props.balance.stale) parts.push('缓存')
+  if (props.balance.updatedAt) {
+    try {
+      parts.push(new Date(props.balance.updatedAt).toLocaleString())
+    } catch {}
+  }
+  return parts.join(' · ')
+})
 
 async function runTest() {
   if (!props.testFn) return
@@ -232,6 +260,11 @@ async function runTest() {
   font-weight: 600;
   color: var(--text-primary);
   font-size: 14px;
+}
+
+.balance-tag {
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .collapse-btn {

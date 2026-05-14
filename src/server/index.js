@@ -204,6 +204,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
   app.use('/api/ui-config', require('./api/ui-config'));
+  app.use('/api/channel-balances', require('./api/channel-balances'));
   app.use('/api/security', require('./api/security'));
   app.use('/api/channels', require('./api/channels'));
   app.use('/api/proxy', require('./api/proxy'));

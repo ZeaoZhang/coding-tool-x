@@ -87,6 +87,20 @@
                         @update:value="handleShowLogsChange"
                       />
                     </div>
+
+                    <!-- 显示剩余金额 -->
+                    <div class="visibility-item">
+                      <div class="visibility-info">
+                        <n-text strong>显示剩余金额</n-text>
+                        <n-text depth="3" style="font-size: 13px;">
+                          在渠道卡片显示可识别 API 网关的余额
+                        </n-text>
+                      </div>
+                      <n-switch
+                        :value="showChannelBalance"
+                        @update:value="handleShowChannelBalanceChange"
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -1071,6 +1085,7 @@ const { isDark, toggleTheme } = useTheme()
 // 面板可见性设置
 const showChannels = ref(true)
 const showLogs = ref(true)
+const showChannelBalance = ref(false)
 
 // 端口配置
 const ports = ref({
@@ -1661,6 +1676,7 @@ async function loadPanelSettings() {
     if (response.success && response.config) {
       showChannels.value = response.config.panelVisibility?.showChannels !== false // default true
       showLogs.value = response.config.panelVisibility?.showLogs !== false // default true
+      showChannelBalance.value = response.config.channelBalance?.showRemaining === true
     }
   } catch (err) {
     console.error('Failed to load panel settings:', err)
@@ -1672,6 +1688,7 @@ async function savePanelSettings() {
   try {
     await updateNestedUIConfig('panelVisibility', 'showChannels', showChannels.value)
     await updateNestedUIConfig('panelVisibility', 'showLogs', showLogs.value)
+    await updateNestedUIConfig('channelBalance', 'showRemaining', showChannelBalance.value)
   } catch (err) {
     console.error('Failed to save panel settings:', err)
   }
@@ -1694,6 +1711,15 @@ function handleShowLogsChange(value) {
   // 通知 Layout 组件更新
   window.dispatchEvent(new CustomEvent('panel-visibility-change', {
     detail: { showChannels: showChannels.value, showLogs: value }
+  }))
+}
+
+// 处理剩余金额显示切换
+function handleShowChannelBalanceChange(value) {
+  showChannelBalance.value = value
+  savePanelSettings()
+  window.dispatchEvent(new CustomEvent('channel-balance-visibility-change', {
+    detail: { showRemaining: value }
   }))
 }
 
