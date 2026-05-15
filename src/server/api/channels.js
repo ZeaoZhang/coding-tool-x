@@ -108,7 +108,8 @@ router.post('/', (req, res) => {
       proxyUrl,
       speedTestModel,
       gatewaySourceType,
-      targetApi
+      targetApi,
+      balanceToken
     } = req.body;
 
     if (!name || !baseUrl) {
@@ -129,7 +130,8 @@ router.post('/', (req, res) => {
       proxyUrl: proxyUrl || '',
       speedTestModel: speedTestModel || null,
       gatewaySourceType,
-      targetApi
+      targetApi,
+      balanceToken: balanceToken || ''
     });
     res.json({ channel });
     broadcastSchedulerState('claude', getSchedulerState('claude'));

@@ -122,7 +122,8 @@ module.exports = (config) => {
         modelRedirects,
         speedTestModel,
         presetId,
-        gatewaySourceType
+        gatewaySourceType,
+        balanceToken
       } = req.body;
 
       if (!name || !baseUrl) {
@@ -141,7 +142,8 @@ module.exports = (config) => {
         modelRedirects: modelRedirects || [],
         speedTestModel: speedTestModel || null,
         presetId: presetId || null,
-        gatewaySourceType
+        gatewaySourceType,
+        balanceToken: balanceToken || ''
       });
       res.json(channel);
       broadcastSchedulerState('gemini', getSchedulerState('gemini'));

@@ -64,6 +64,31 @@ describe('channel-balance service', () => {
     expect(service._test.normalizeBaseUrl('https://api.example.com/v1beta')).toBe('https://api.example.com');
   });
 
+  test('derives OpenRouter API base from /api/v1 provider URLs', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.detectPlatformByUrlHint('https://openrouter.ai/api/v1')).toBe('openrouter');
+    expect(service._test.buildOpenRouterApiBaseCandidates('https://openrouter.ai/api/v1', {})).toEqual([
+      'https://openrouter.ai/api/v1'
+    ]);
+    expect(service._test.buildOpenRouterApiBaseCandidates('https://openrouter.ai', {})).toEqual([
+      'https://openrouter.ai/api/v1'
+    ]);
+  });
+
+  test('derives 88code management API from OpenAI-compatible gateway paths', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.detectPlatformByUrlHint('88code')).toBe('88code');
+    expect(service._test.build88CodeApiBaseCandidates('https://www.88code.ai/openai/v1', {
+      providerKey: '88code',
+      websiteUrl: 'https://www.88code.ai'
+    })).toEqual([
+      'https://www.88code.ai/api',
+      'https://www.88code.ai/openai/api'
+    ]);
+  });
+
   test('parses metapi-compatible hub balance variants', () => {
     const service = loadServiceWithStubs();
     const payload = { data: { quota: 1000000, used_quota: 250000 } };
@@ -90,6 +115,12 @@ describe('channel-balance service', () => {
       remaining: 2,
       total: 2.5
     });
+    expect(service._test.buildHubBalanceSnapshot('aihubmix', payload)).toMatchObject({
+      visible: true,
+      platform: 'aihubmix',
+      remaining: 2,
+      total: 2.5
+    });
     expect(service._test.buildHubBalanceSnapshot('veloera', { data: { quota: 1000000, used_quota: 250000 } })).toMatchObject({
       visible: true,
       platform: 'veloera',
@@ -106,6 +137,316 @@ describe('channel-balance service', () => {
       visible: false,
       platform: 'new-api'
     });
+  });
+
+  test('recognizes AIHubMix status payloads that omit success envelopes', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.detectPlatformByUrlHint('https://aihubmix.com')).toBe('aihubmix');
+    expect(service._test.resolveStatusPlatform({
+      system_name: 'AIHubMix',
+      quota_per_unit: 500000
+    })).toBe('aihubmix');
+  });
+
+  test('keeps known official compatible-mode providers hidden instead of probing gateway adapters', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const server = await withJsonServer((req, res) => {
+      return sendJson(res, 500, { error: `unexpected probe ${req.url}` });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'dashscope',
+        name: 'DashScope',
+        baseUrl: `${server.baseUrl}/compatible-mode/v1`,
+        apiKey: 'sk-dashscope'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: false,
+        platform: 'dashscope'
+      });
+
+      const modelscope = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'modelscope',
+        name: 'ModelScope',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'ms-modelscope'
+      });
+
+      expect(modelscope).toMatchObject({
+        visible: false,
+        platform: 'modelscope'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('parses New API token usage payloads into key-specific balance snapshots', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildNewApiTokenUsageSnapshot({
+      code: true,
+      message: 'ok',
+      data: {
+        object: 'token_usage',
+        name: 'key-a',
+        total_granted: 2500000,
+        total_used: 500000,
+        total_available: 2000000,
+        unlimited_quota: false
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'new-api',
+      remaining: 4,
+      used: 1,
+      total: 5,
+      label: '余额 $4.00'
+    });
+  });
+
+  test('uses New API quota_per_unit when parsing token usage payloads', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildNewApiTokenUsageSnapshot({
+      data: {
+        total_granted: 1000000,
+        total_used: 144,
+        total_available: 999856,
+        unlimited_quota: false
+      }
+    }, { quotaUnit: 1000000 })).toMatchObject({
+      visible: true,
+      platform: 'new-api',
+      remaining: 0.999856,
+      used: 0.000144,
+      total: 1,
+      label: '余额 $1.00'
+    });
+  });
+
+  test('shows exhausted New API token usage as zero balance', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildNewApiTokenUsageSnapshot({
+      data: {
+        total_granted: 0,
+        total_used: 20120,
+        total_available: -20120,
+        unlimited_quota: false
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'new-api',
+      remaining: 0,
+      used: 0.04024,
+      total: 0,
+      label: '余额 $0.00'
+    });
+  });
+
+  test('still shows New API token usage when unlimited flag includes finite counters', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildNewApiTokenUsageSnapshot({
+      data: {
+        total_granted: 0,
+        total_used: 20120,
+        total_available: -20120,
+        unlimited_quota: true
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'new-api',
+      remaining: 0,
+      label: '余额 $0.00'
+    });
+  });
+
+  test('parses OpenRouter key limit payloads into key-specific balances', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildOpenRouterKeySnapshot({
+      data: {
+        label: 'prod-key',
+        usage: 3.25,
+        limit: 10,
+        limit_remaining: 6.75
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'openrouter',
+      remaining: 6.75,
+      used: 3.25,
+      total: 10,
+      label: '余额 $6.75'
+    });
+  });
+
+  test('parses OpenRouter credits payloads and shows exhausted accounts as zero balance', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildOpenRouterCreditsSnapshot({
+      data: {
+        total_credits: 0,
+        total_usage: 0
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'openrouter',
+      remaining: 0,
+      used: 0,
+      total: 0,
+      label: '余额 $0.00'
+    });
+  });
+
+  test('parses SiliconFlow user info balances', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildSiliconFlowUserInfoSnapshot({
+      status: true,
+      data: {
+        id: 'user-id',
+        balance: '12.34',
+        chargeBalance: '20',
+        totalBalance: '25'
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'siliconflow',
+      remaining: 12.34,
+      used: 12.66,
+      total: 25,
+      label: '余额 $12.34'
+    });
+  });
+
+  test('parses 88code usage payloads into visible balance snapshots', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.build88CodeUsageSnapshot({
+      creditLimit: 100,
+      currentCredits: 42.25,
+      subscriptionEntityList: [
+        { subscriptionName: 'FREE', creditLimit: 5, currentCredits: 5, isActive: true },
+        { subscriptionName: 'PLUS', creditLimit: 100, currentCredits: 42.25, isActive: true }
+      ]
+    })).toMatchObject({
+      visible: true,
+      platform: '88code',
+      remaining: 42.25,
+      used: 57.75,
+      total: 100,
+      label: '余额 $42.25'
+    });
+  });
+
+  test('falls back to 88code subscription data when usage payload is not usable', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push({ url: req.url, method: req.method, authorization: req.headers.authorization });
+      if (req.url === '/api/usage') {
+        return sendJson(res, 200, {
+          code: 0,
+          ok: true,
+          msg: 'ok',
+          data: {
+            creditLimit: null,
+            currentCredits: null,
+            subscriptionEntityList: null
+          }
+        });
+      }
+      if (req.url === '/api/subscription') {
+        return sendJson(res, 200, {
+          code: 0,
+          ok: true,
+          msg: 'ok',
+          data: [
+            {
+              id: 2,
+              subscriptionPlanName: 'PAYGO',
+              subscriptionStatus: '活跃中',
+              isActive: true,
+              remainingDays: 30,
+              creditLimit: 0,
+              currentCredits: 13.4
+            },
+            {
+              id: 1,
+              subscriptionPlanName: 'PLUS',
+              subscriptionStatus: '活跃中',
+              isActive: true,
+              remainingDays: 12,
+              currentCredits: 25,
+              subscriptionPlan: { creditLimit: 100 }
+            }
+          ]
+        });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'code88',
+        name: '88-code',
+        providerKey: '88code',
+        baseUrl: `${server.baseUrl}/openai/v1`,
+        apiKey: '88_secret'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: '88code',
+        remaining: 25,
+        used: 75,
+        total: 100,
+        label: '余额 $25.00'
+      });
+      expect(seen.map(item => `${item.method} ${item.url}`)).toEqual([
+        'POST /api/usage',
+        'POST /api/subscription'
+      ]);
+      expect(seen.every(item => item.authorization === 'Bearer 88_secret')).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('hides 88code balance when management endpoints fail', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const server = await withJsonServer((req, res) => {
+      if (req.url === '/api/usage' || req.url === '/api/subscription') {
+        return sendJson(res, 401, { code: 401, ok: false, msg: 'unauthorized' });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'code88-fail',
+        providerKey: '88code',
+        baseUrl: `${server.baseUrl}/openai/v1`,
+        apiKey: '88_secret'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: false,
+        platform: '88code'
+      });
+      expect(snapshot).not.toHaveProperty('label');
+    } finally {
+      await server.close();
+    }
   });
 
   test('fetches Sub2API balance and monthly subscription remaining amount', async () => {
@@ -150,6 +491,164 @@ describe('channel-balance service', () => {
     }
   });
 
+  test('fetches Sub2API model API key balance through /v1/usage', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/api/status') return sendJson(res, 404, { error: 'missing' });
+      if (req.url === '/api/v1/auth/me') {
+        return sendJson(res, 401, { code: 'INVALID_TOKEN', message: 'Invalid token' });
+      }
+      if (req.url === '/v1/usage') {
+        expect(req.headers.authorization).toBe('Bearer sk-model-key');
+        return sendJson(res, 200, {
+          balance: 8981.477687,
+          isValid: true,
+          mode: 'unrestricted',
+          planName: '钱包余额',
+          remaining: 8981.477687,
+          unit: 'USD',
+          usage: {
+            total: { cost: 1017.02283365 }
+          }
+        });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'sub2-model-key',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-model-key'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'sub2api',
+        remaining: 8981.477687,
+        label: '余额 $8981.48'
+      });
+      expect(seen).toEqual([
+        '/v1/usage'
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('parses Sub2API quota-limited /v1/usage responses', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildSub2ApiUsageSnapshot({
+      isValid: true,
+      mode: 'quota_limited',
+      status: 'active',
+      remaining: 8.5,
+      unit: 'USD',
+      quota: {
+        limit: 10,
+        used: 1.5,
+        remaining: 8.5,
+        unit: 'USD'
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'sub2api',
+      remaining: 8.5,
+      used: 1.5,
+      total: 10,
+      label: '余额 $8.50'
+    });
+  });
+
+  test('parses Sub2API subscription monthly remaining from /v1/usage', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildSub2ApiUsageSnapshot({
+      isValid: true,
+      mode: 'unrestricted',
+      planName: 'Pro',
+      unit: 'USD',
+      subscription: {
+        monthly_limit_usd: 20,
+        monthly_usage_usd: 4.25
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'sub2api',
+      monthlyRemaining: 15.75,
+      label: '月余 $15.75'
+    });
+  });
+
+  test('recognizes Sub2API error envelopes without exposing an upstream error', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const server = await withJsonServer((req, res) => {
+      if (req.url === '/api/status') return sendJson(res, 404, { error: 'missing' });
+      if (req.url === '/api/v1/auth/me') {
+        return sendJson(res, 401, { code: 'INVALID_TOKEN', message: 'Invalid token' });
+      }
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 401, { error: { type: 'authentication_error' } });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'sub2-invalid-token',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-model-key'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: false,
+        platform: 'sub2api'
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('prefers a dedicated balance token over the model API key', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const authHeaders = [];
+    const server = await withJsonServer((req, res) => {
+      authHeaders.push(req.headers.authorization || '');
+      if (req.url === '/api/status') {
+        return sendJson(res, 200, { success: true, data: { system_name: 'New API', quota_per_unit: 500000 } });
+      }
+      if (req.url === '/api/user/self') {
+        return sendJson(res, 200, { success: true, data: { quota: 1000000, used_quota: 0 } });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'dedicated-balance-token',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'model-key',
+        balanceToken: 'balance-session'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'new-api',
+        remaining: 2
+      });
+      expect(authHeaders).toContain('Bearer balance-session');
+      expect(authHeaders).not.toContain('Bearer model-key');
+    } finally {
+      await server.close();
+    }
+  });
+
   test('uses cache and returns stale visible snapshot after refresh failure', async () => {
     const service = loadServiceWithStubs();
     service._test.clearBalanceCache();
@@ -176,8 +675,258 @@ describe('channel-balance service', () => {
 
       expect(first.remaining).toBe(3);
       expect(cached.remaining).toBe(3);
-      expect(userSelfCount).toBe(2);
+      expect(userSelfCount).toBe(3);
       expect(stale).toMatchObject({ visible: true, remaining: 3, stale: true });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('records the first successful balance endpoint and reuses it on refresh', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/api/status') {
+        return sendJson(res, 200, { success: true, data: { system_name: 'New API' } });
+      }
+      if (req.url === '/api/user/self') {
+        return sendJson(res, 200, { success: true, data: { quota: 2000000, used_quota: 500000 } });
+      }
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 200, { mode: 'unrestricted', remaining: 99, isValid: true });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const channel = { id: 'strategy-cache', baseUrl: `${server.baseUrl}/v1`, apiKey: 'secret' };
+      const first = await service._test.refreshChannelBalanceSnapshot('codex', channel);
+      const forced = await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true });
+
+      expect(first).toMatchObject({
+        visible: true,
+        platform: 'new-api',
+        remaining: 4
+      });
+      expect(forced).toMatchObject({
+        visible: true,
+        platform: 'new-api',
+        remaining: 4
+      });
+      expect(seen).toEqual([
+        '/api/status',
+        '/api/user/self',
+        '/api/user/self'
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('fetches New API key-specific balance with the model API key', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 404, { error: 'not sub2api' });
+      }
+      if (req.url === '/api/status') {
+        return sendJson(res, 200, {
+          success: true,
+          data: {
+            system_name: 'New API',
+            quota_per_unit: 1000000
+          }
+        });
+      }
+      if (req.url === '/api/usage/token') {
+        expect(req.headers.authorization).toBe('Bearer sk-newapi-key');
+        return sendJson(res, 200, {
+          code: true,
+          message: 'ok',
+          data: {
+            object: 'token_usage',
+            name: 'new-api-key',
+            total_granted: 3000000,
+            total_used: 1250000,
+            total_available: 1750000,
+            unlimited_quota: false
+          }
+        });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'new-api-token-usage',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-newapi-key'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'new-api',
+        remaining: 1.75,
+        used: 1.25,
+        total: 3,
+        label: '余额 $1.75'
+      });
+      expect(seen).toEqual([
+        '/v1/usage',
+        '/api/status',
+        '/api/usage/token'
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('fetches OpenRouter key balance before generic gateway probes', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/api/v1/key') {
+        expect(req.headers.authorization).toBe('Bearer sk-or-test');
+        return sendJson(res, 200, {
+          data: {
+            label: 'limited-key',
+            usage: 2,
+            limit: 5,
+            limit_remaining: 3
+          }
+        });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const channel = {
+        id: 'openrouter-key',
+        baseUrl: `${server.baseUrl}/api/v1`,
+        apiKey: 'sk-or-test'
+      };
+      const first = await service._test.refreshChannelBalanceSnapshot('codex', channel);
+      const forced = await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true });
+
+      expect(first).toMatchObject({
+        visible: true,
+        platform: 'openrouter',
+        remaining: 3,
+        used: 2,
+        total: 5,
+        label: '余额 $3.00'
+      });
+      expect(forced).toMatchObject({
+        visible: true,
+        platform: 'openrouter',
+        remaining: 3
+      });
+      expect(seen).toEqual([
+        '/api/v1/key',
+        '/api/v1/key'
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('falls back to OpenRouter account credits when key limits are absent', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/api/v1/key' || req.url === '/api/v1/auth/key') {
+        return sendJson(res, 200, {
+          data: {
+            label: 'account-key',
+            usage: 0,
+            limit: null,
+            limit_remaining: null
+          }
+        });
+      }
+      if (req.url === '/api/v1/credits') {
+        expect(req.headers.authorization).toBe('Bearer sk-or-test');
+        return sendJson(res, 200, {
+          data: {
+            total_credits: 0,
+            total_usage: 0
+          }
+        });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'openrouter-credits',
+        name: 'OpenRouter',
+        baseUrl: `${server.baseUrl}/api/v1`,
+        apiKey: 'sk-or-test'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'openrouter',
+        remaining: 0,
+        used: 0,
+        total: 0,
+        label: '余额 $0.00'
+      });
+      expect(seen).toEqual([
+        '/api/v1/key',
+        '/api/v1/auth/key',
+        '/api/v1/credits'
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('fetches SiliconFlow balance through the official user info endpoint', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/v1/user/info') {
+        expect(req.headers.authorization).toBe('Bearer sk-silicon');
+        return sendJson(res, 200, {
+          status: true,
+          data: {
+            balance: 9.5,
+            chargeBalance: 10,
+            totalBalance: 10
+          }
+        });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'siliconflow',
+        name: 'SiliconFlow',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-silicon'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'siliconflow',
+        remaining: 9.5,
+        total: 10,
+        label: '余额 $9.50'
+      });
+      expect(seen).toEqual(['/v1/user/info']);
     } finally {
       await server.close();
     }
