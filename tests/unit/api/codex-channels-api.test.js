@@ -224,7 +224,7 @@ describe('codex-channels api', () => {
 
     let handler = findHandler(router, 'post', '/');
     let res = makeRes();
-    handler({ body: { name: 'New', providerKey: 'provider-x', baseUrl: 'https://new.example.com', apiKey: 'secret' } }, res);
+    handler({ body: { name: 'New', providerKey: 'provider-x', baseUrl: 'https://new.example.com', apiKey: 'secret', balanceToken: 'balance-session' } }, res);
     expect(res._body).toEqual(expect.objectContaining({
       id: 'new-channel',
       wireApi: 'responses'
@@ -235,7 +235,7 @@ describe('codex-channels api', () => {
       'https://new.example.com',
       'secret',
       'responses',
-      expect.objectContaining({ requiresOpenaiAuth: false })
+      expect.objectContaining({ requiresOpenaiAuth: false, balanceToken: 'balance-session' })
     );
 
     handler = findHandler(router, 'post', '/order');

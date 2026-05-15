@@ -141,7 +141,8 @@ module.exports = (config) => {
         modelRedirects,
         speedTestModel,
         presetId,
-        gatewaySourceType
+        gatewaySourceType,
+        balanceToken
       } = req.body;
 
       if (!name || !providerKey || !baseUrl) {
@@ -167,6 +168,7 @@ module.exports = (config) => {
         speedTestModel: speedTestModel || null,
         presetId: presetId || null,
         gatewaySourceType,
+        balanceToken: balanceToken || '',
         requiresOpenaiAuth: false
       });
       res.json(channel);

@@ -97,7 +97,17 @@ function validateProviderKey(value) {
 
 function buildAuthPayload(form) {
   return {
-    apiKey: form.apiKey || ''
+    apiKey: form.apiKey || '',
+    balanceToken: form.balanceToken || ''
+  }
+}
+
+function buildBalanceCredentialField(label = '余额凭据') {
+  return {
+    key: 'balanceToken',
+    label,
+    type: 'password',
+    placeholder: '选填：余额接口需要的会话 Token / Cookie'
   }
 }
 
@@ -234,6 +244,7 @@ const channelPanelFactories = {
             required: true,
             placeholder: 'sk-...'
           },
+          buildBalanceCredentialField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -336,6 +347,7 @@ const channelPanelFactories = {
       name: 'Claude 官方',
       baseUrl: 'https://api.anthropic.com',
       apiKey: '',
+      balanceToken: '',
       websiteUrl: 'https://www.anthropic.com',
       speedTestModel: '',
       modelConfig: {
@@ -360,6 +372,7 @@ const channelPanelFactories = {
       name: channel.name || '',
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
+      balanceToken: channel.balanceToken || '',
       websiteUrl: channel.websiteUrl || '',
       speedTestModel: channel.speedTestModel || '',
       modelConfig: {
@@ -469,7 +482,8 @@ const channelPanelFactories = {
             proxyUrl: form.proxyUrl || '',
             speedTestModel: form.speedTestModel || null,
             gatewaySourceType: form.gatewaySourceType || 'claude',
-            targetApi: form.targetApi || 'responses'
+            targetApi: form.targetApi || 'responses',
+            balanceToken: authPayload.balanceToken
           }
         )
       },
@@ -489,7 +503,8 @@ const channelPanelFactories = {
           proxyUrl: form.proxyUrl || '',
           speedTestModel: form.speedTestModel || null,
           gatewaySourceType: form.gatewaySourceType || 'claude',
-          targetApi: form.targetApi || 'responses'
+          targetApi: form.targetApi || 'responses',
+          balanceToken: authPayload.balanceToken
         })
       },
       toggle: async (channel, enabled) => {
@@ -589,6 +604,7 @@ const channelPanelFactories = {
             required: true,
             placeholder: 'sk-...'
           },
+          buildBalanceCredentialField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -630,6 +646,7 @@ const channelPanelFactories = {
       providerKey: 'openai-official',
       baseUrl: 'https://api.openai.com/v1',
       apiKey: '',
+      balanceToken: '',
       websiteUrl: 'https://platform.openai.com',
       gatewaySourceType: 'codex',
       speedTestModel: '',
@@ -648,6 +665,7 @@ const channelPanelFactories = {
       providerKey: channel.providerKey || '',
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
+      balanceToken: channel.balanceToken || '',
       websiteUrl: channel.websiteUrl || '',
       gatewaySourceType: channel.gatewaySourceType || 'codex',
       speedTestModel: channel.speedTestModel || '',
@@ -730,7 +748,8 @@ const channelPanelFactories = {
             modelRedirects: form.modelRedirects || [],
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
-            gatewaySourceType: form.gatewaySourceType || 'codex'
+            gatewaySourceType: form.gatewaySourceType || 'codex',
+            balanceToken: authPayload.balanceToken
           }
         )
       },
@@ -747,7 +766,8 @@ const channelPanelFactories = {
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
-          gatewaySourceType: form.gatewaySourceType || 'codex'
+          gatewaySourceType: form.gatewaySourceType || 'codex',
+          balanceToken: authPayload.balanceToken
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
@@ -835,6 +855,7 @@ const channelPanelFactories = {
             required: true,
             placeholder: 'AIza...'
           },
+          buildBalanceCredentialField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -876,6 +897,7 @@ const channelPanelFactories = {
       model: 'gemini-2.5-pro',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKey: '',
+      balanceToken: '',
       websiteUrl: 'https://ai.google.dev',
       gatewaySourceType: 'gemini',
       speedTestModel: '',
@@ -894,6 +916,7 @@ const channelPanelFactories = {
       model: channel.model || '',
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
+      balanceToken: channel.balanceToken || '',
       websiteUrl: channel.websiteUrl || '',
       gatewaySourceType: channel.gatewaySourceType || 'gemini',
       speedTestModel: channel.speedTestModel || '',
@@ -975,7 +998,8 @@ const channelPanelFactories = {
             modelRedirects: form.modelRedirects || [],
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
-            gatewaySourceType: form.gatewaySourceType || 'gemini'
+            gatewaySourceType: form.gatewaySourceType || 'gemini',
+            balanceToken: authPayload.balanceToken
           }
         )
       },
@@ -993,7 +1017,8 @@ const channelPanelFactories = {
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
-          gatewaySourceType: form.gatewaySourceType || 'gemini'
+          gatewaySourceType: form.gatewaySourceType || 'gemini',
+          balanceToken: authPayload.balanceToken
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),
@@ -1077,6 +1102,7 @@ const channelPanelFactories = {
             required: true,
             placeholder: 'sk-...'
           },
+          buildBalanceCredentialField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -1133,6 +1159,7 @@ const channelPanelFactories = {
       baseUrl: 'https://openrouter.ai/api/v1',
       wireApi: 'openai',
       apiKey: '',
+      balanceToken: '',
       websiteUrl: 'https://openrouter.ai',
       model: '',
       gatewaySourceType: 'codex',
@@ -1153,6 +1180,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       wireApi: channel.wireApi || 'openai',
       apiKey: channel.apiKey || '',
+      balanceToken: channel.balanceToken || '',
       websiteUrl: channel.websiteUrl || '',
       model: channel.model || '',
       gatewaySourceType: channel.gatewaySourceType || 'codex',
@@ -1269,7 +1297,8 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
             websiteUrl: form.websiteUrl || '',
-            allowedModels: form.allowedModels || []
+            allowedModels: form.allowedModels || [],
+            balanceToken: authPayload.balanceToken
           }
         )
       },
@@ -1289,7 +1318,8 @@ const channelPanelFactories = {
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
-          allowedModels: form.allowedModels || []
+          allowedModels: form.allowedModels || [],
+          balanceToken: authPayload.balanceToken
         })
       },
       toggle: async (channel, enabled) => updateOpenCodeChannel(channel.id, { enabled }),

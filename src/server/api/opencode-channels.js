@@ -261,7 +261,8 @@ module.exports = (config) => {
         modelRedirects,
         speedTestModel,
         presetId,
-        websiteUrl
+        websiteUrl,
+        balanceToken
       } = req.body;
 
       if (!name || !baseUrl) {
@@ -282,7 +283,8 @@ module.exports = (config) => {
         modelRedirects: modelRedirects || [],
         speedTestModel: speedTestModel || null,
         presetId,
-        websiteUrl
+        websiteUrl,
+        balanceToken: balanceToken || ''
       });
 
       res.json(channel);
