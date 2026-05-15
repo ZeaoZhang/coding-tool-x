@@ -114,6 +114,8 @@ function loadChannels() {
           enabled: ch.enabled !== false, // 默认启用
           weight: ch.weight || 1,
           maxConcurrency: ch.maxConcurrency || null,
+          balanceToken: ch.balanceToken || '',
+          balanceUserId: ch.balanceUserId || null,
           modelRedirects: ch.modelRedirects || [],
           speedTestModel: ch.speedTestModel || null,
           gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'gemini')
@@ -165,6 +167,8 @@ function initializeFromEnv() {
         enabled: true,
         weight: 1,
         maxConcurrency: null,
+        balanceToken: '',
+        balanceUserId: null,
         gatewaySourceType: 'gemini',
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -222,6 +226,8 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     enabled: extraConfig.enabled !== false, // 默认启用
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
+    balanceToken: extraConfig.balanceToken || '',
+    balanceUserId: extraConfig.balanceUserId || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
     gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'gemini'),
@@ -269,6 +275,8 @@ function updateChannel(channelId, updates) {
     createdAt: oldChannel.createdAt, // 保持创建时间
     modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
     speedTestModel: updates.speedTestModel !== undefined ? updates.speedTestModel : (oldChannel.speedTestModel || null),
+    balanceToken: updates.balanceToken !== undefined ? updates.balanceToken : (oldChannel.balanceToken || ''),
+    balanceUserId: updates.balanceUserId !== undefined ? updates.balanceUserId : (oldChannel.balanceUserId || null),
     gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
     updatedAt: Date.now()
   };

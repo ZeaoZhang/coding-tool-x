@@ -309,14 +309,15 @@ describe('POST / - create channel', () => {
     createChannel.mockReturnValue(created);
 
     const handler = findHandler(router, 'post', '/');
-    const req = { body: { name: 'New', baseUrl: 'http://api', apiKey: 'key1', targetApi: 'responses', balanceToken: 'balance-session' } };
+    const req = { body: { name: 'New', baseUrl: 'http://api', apiKey: 'key1', targetApi: 'responses', balanceToken: 'balance-session', balanceUserId: 8899 } };
     const res = makeRes();
     handler(req, res);
 
     expect(res._body.channel).toEqual(created);
     expect(createChannel).toHaveBeenCalledWith('New', 'http://api', 'key1', undefined, expect.objectContaining({
       targetApi: 'responses',
-      balanceToken: 'balance-session'
+      balanceToken: 'balance-session',
+      balanceUserId: 8899
     }));
     expect(broadcastSchedulerState).toHaveBeenCalled();
   });

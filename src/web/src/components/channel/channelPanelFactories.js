@@ -47,6 +47,7 @@ const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i
+const MANUAL_BALANCE_CREDENTIAL_PLATFORMS = new Set(['anyrouter'])
 
 function normalizeConcurrency(value) {
   const num = Number(value)
@@ -96,10 +97,29 @@ function validateProviderKey(value) {
 }
 
 function buildAuthPayload(form) {
+  const shouldKeepManualBalanceCredential = form._showChannelBalance !== true || shouldShowManualBalanceCredential(form)
   return {
     apiKey: form.apiKey || '',
-    balanceToken: form.balanceToken || ''
+    balanceToken: shouldKeepManualBalanceCredential ? (form.balanceToken || '') : '',
+    balanceUserId: shouldKeepManualBalanceCredential ? (form.balanceUserId || null) : null
   }
+}
+
+function detectBalancePlatform(form = {}) {
+  const text = [
+    form.presetId,
+    form.providerKey,
+    form.name,
+    form.websiteUrl,
+    form.baseUrl
+  ].map(value => String(value || '').trim().toLowerCase()).join(' ')
+  if (text.includes('anyrouter')) return 'anyrouter'
+  return null
+}
+
+function shouldShowManualBalanceCredential(form = {}) {
+  if (form._showChannelBalance !== true) return false
+  return MANUAL_BALANCE_CREDENTIAL_PLATFORMS.has(detectBalancePlatform(form))
 }
 
 function buildBalanceCredentialField(label = '余额凭据') {
@@ -107,7 +127,20 @@ function buildBalanceCredentialField(label = '余额凭据') {
     key: 'balanceToken',
     label,
     type: 'password',
+    showWhen: shouldShowManualBalanceCredential,
     placeholder: '选填：余额接口需要的会话 Token / Cookie'
+  }
+}
+
+function buildBalanceUserIdField() {
+  return {
+    key: 'balanceUserId',
+    label: '余额用户 ID',
+    type: 'number',
+    min: 1,
+    clearable: true,
+    showWhen: shouldShowManualBalanceCredential,
+    placeholder: '选填：New API / AnyRouter 需要 New-Api-User 时填写'
   }
 }
 
@@ -245,6 +278,7 @@ const channelPanelFactories = {
             placeholder: 'sk-...'
           },
           buildBalanceCredentialField(),
+          buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -348,6 +382,7 @@ const channelPanelFactories = {
       baseUrl: 'https://api.anthropic.com',
       apiKey: '',
       balanceToken: '',
+      balanceUserId: null,
       websiteUrl: 'https://www.anthropic.com',
       speedTestModel: '',
       modelConfig: {
@@ -373,6 +408,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       balanceToken: channel.balanceToken || '',
+      balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
       speedTestModel: channel.speedTestModel || '',
       modelConfig: {
@@ -483,7 +519,8 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             gatewaySourceType: form.gatewaySourceType || 'claude',
             targetApi: form.targetApi || 'responses',
-            balanceToken: authPayload.balanceToken
+            balanceToken: authPayload.balanceToken,
+            balanceUserId: authPayload.balanceUserId
           }
         )
       },
@@ -504,7 +541,8 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           gatewaySourceType: form.gatewaySourceType || 'claude',
           targetApi: form.targetApi || 'responses',
-          balanceToken: authPayload.balanceToken
+          balanceToken: authPayload.balanceToken,
+          balanceUserId: authPayload.balanceUserId
         })
       },
       toggle: async (channel, enabled) => {
@@ -605,6 +643,7 @@ const channelPanelFactories = {
             placeholder: 'sk-...'
           },
           buildBalanceCredentialField(),
+          buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -647,6 +686,7 @@ const channelPanelFactories = {
       baseUrl: 'https://api.openai.com/v1',
       apiKey: '',
       balanceToken: '',
+      balanceUserId: null,
       websiteUrl: 'https://platform.openai.com',
       gatewaySourceType: 'codex',
       speedTestModel: '',
@@ -666,6 +706,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       balanceToken: channel.balanceToken || '',
+      balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
       gatewaySourceType: channel.gatewaySourceType || 'codex',
       speedTestModel: channel.speedTestModel || '',
@@ -749,7 +790,8 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
             gatewaySourceType: form.gatewaySourceType || 'codex',
-            balanceToken: authPayload.balanceToken
+            balanceToken: authPayload.balanceToken,
+            balanceUserId: authPayload.balanceUserId
           }
         )
       },
@@ -767,7 +809,8 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           gatewaySourceType: form.gatewaySourceType || 'codex',
-          balanceToken: authPayload.balanceToken
+          balanceToken: authPayload.balanceToken,
+          balanceUserId: authPayload.balanceUserId
         })
       },
       toggle: async (channel, enabled) => updateCodexChannel(channel.id, { enabled }),
@@ -856,6 +899,7 @@ const channelPanelFactories = {
             placeholder: 'AIza...'
           },
           buildBalanceCredentialField(),
+          buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -898,6 +942,7 @@ const channelPanelFactories = {
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKey: '',
       balanceToken: '',
+      balanceUserId: null,
       websiteUrl: 'https://ai.google.dev',
       gatewaySourceType: 'gemini',
       speedTestModel: '',
@@ -917,6 +962,7 @@ const channelPanelFactories = {
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
       balanceToken: channel.balanceToken || '',
+      balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
       gatewaySourceType: channel.gatewaySourceType || 'gemini',
       speedTestModel: channel.speedTestModel || '',
@@ -999,7 +1045,8 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
             gatewaySourceType: form.gatewaySourceType || 'gemini',
-            balanceToken: authPayload.balanceToken
+            balanceToken: authPayload.balanceToken,
+            balanceUserId: authPayload.balanceUserId
           }
         )
       },
@@ -1018,7 +1065,8 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           gatewaySourceType: form.gatewaySourceType || 'gemini',
-          balanceToken: authPayload.balanceToken
+          balanceToken: authPayload.balanceToken,
+          balanceUserId: authPayload.balanceUserId
         })
       },
       toggle: async (channel, enabled) => updateGeminiChannel(channel.id, { enabled }),
@@ -1103,6 +1151,7 @@ const channelPanelFactories = {
             placeholder: 'sk-...'
           },
           buildBalanceCredentialField(),
+          buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
             label: '官网链接',
@@ -1160,6 +1209,7 @@ const channelPanelFactories = {
       wireApi: 'openai',
       apiKey: '',
       balanceToken: '',
+      balanceUserId: null,
       websiteUrl: 'https://openrouter.ai',
       model: '',
       gatewaySourceType: 'codex',
@@ -1181,6 +1231,7 @@ const channelPanelFactories = {
       wireApi: channel.wireApi || 'openai',
       apiKey: channel.apiKey || '',
       balanceToken: channel.balanceToken || '',
+      balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
       model: channel.model || '',
       gatewaySourceType: channel.gatewaySourceType || 'codex',
@@ -1298,7 +1349,8 @@ const channelPanelFactories = {
             presetId: form.presetId || null,
             websiteUrl: form.websiteUrl || '',
             allowedModels: form.allowedModels || [],
-            balanceToken: authPayload.balanceToken
+            balanceToken: authPayload.balanceToken,
+            balanceUserId: authPayload.balanceUserId
           }
         )
       },
@@ -1319,7 +1371,8 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           allowedModels: form.allowedModels || [],
-          balanceToken: authPayload.balanceToken
+          balanceToken: authPayload.balanceToken,
+          balanceUserId: authPayload.balanceUserId
         })
       },
       toggle: async (channel, enabled) => updateOpenCodeChannel(channel.id, { enabled }),

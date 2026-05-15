@@ -77,6 +77,8 @@ function loadChannels() {
           enabled: ch.enabled !== false,
           weight: ch.weight || 1,
           maxConcurrency: ch.maxConcurrency || null,
+          balanceToken: ch.balanceToken || '',
+          balanceUserId: ch.balanceUserId || null,
           modelRedirects: ch.modelRedirects || [],
           speedTestModel: ch.speedTestModel || null,
           wireApi: ch.wireApi || 'openai',  // OpenCode 默认使用 OpenAI 兼容格式
@@ -155,6 +157,8 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
     enabled: extraConfig.enabled !== false,
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
+    balanceToken: extraConfig.balanceToken || '',
+    balanceUserId: extraConfig.balanceUserId || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
     model: extraConfig.model || null,
@@ -207,6 +211,8 @@ function updateChannel(channelId, updates) {
     createdAt: oldChannel.createdAt,
     modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
     speedTestModel: updates.speedTestModel !== undefined ? updates.speedTestModel : (oldChannel.speedTestModel || null),
+    balanceToken: updates.balanceToken !== undefined ? updates.balanceToken : (oldChannel.balanceToken || ''),
+    balanceUserId: updates.balanceUserId !== undefined ? updates.balanceUserId : (oldChannel.balanceUserId || null),
     gatewaySourceType: normalizeGatewaySourceType(
       updates.gatewaySourceType !== undefined
         ? updates.gatewaySourceType

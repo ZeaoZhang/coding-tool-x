@@ -649,6 +649,91 @@ describe('channel-balance service', () => {
     }
   });
 
+  test('uses New API user headers and cookie balance credentials for AnyRouter-style sessions', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push({
+        url: req.url,
+        authorization: req.headers.authorization,
+        cookie: req.headers.cookie,
+        newApiUser: req.headers['new-api-user']
+      });
+      if (req.url === '/api/user/self' && req.headers.cookie === 'session=session-value' && req.headers['new-api-user'] === '8899') {
+        return sendJson(res, 200, {
+          success: true,
+          data: {
+            id: 8899,
+            quota: 1250000,
+            used_quota: 250000
+          }
+        });
+      }
+      if (req.url === '/api/user/self') {
+        return sendJson(res, 401, { success: false, message: 'missing New-Api-User' });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'anyrouter-session',
+        name: 'AnyRouter',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-model-key',
+        balanceToken: 'session-value',
+        balanceUserId: 8899
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'anyrouter',
+        remaining: 2.5,
+        used: 0.5,
+        total: 3,
+        label: '余额 $2.50'
+      });
+      expect(seen.some(item => item.authorization === 'Bearer session-value' && item.newApiUser === '8899')).toBe(true);
+      expect(seen.some(item => item.cookie === 'session=session-value' && item.newApiUser === '8899')).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('keeps AnyRouter model API keys hidden when only model routing works', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const server = await withJsonServer((req, res) => {
+      if (req.url === '/v1/models') {
+        return sendJson(res, 200, { data: [{ id: 'gpt-4.1' }] });
+      }
+      if (req.url === '/api/user/self' || req.url === '/api/status' || req.url === '/api/usage/token') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<!doctype html><html><title>AnyRouter</title></html>');
+        return;
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'anyrouter-api-key',
+        name: 'AnyRouter',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-anyrouter-key'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: false,
+        platform: 'anyrouter'
+      });
+      expect(snapshot).not.toHaveProperty('label');
+    } finally {
+      await server.close();
+    }
+  });
+
   test('uses cache and returns stale visible snapshot after refresh failure', async () => {
     const service = loadServiceWithStubs();
     service._test.clearBalanceCache();

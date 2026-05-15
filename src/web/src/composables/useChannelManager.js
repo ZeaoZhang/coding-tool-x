@@ -37,6 +37,7 @@ export default function useChannelManager(config) {
     collapsed: getLocalCollapse(config.storageKeys.localCollapse),
     showDialog: false,
     editingChannel: null,
+    showChannelBalance: false,
     formData: config.getInitialForm()
   })
 
@@ -84,10 +85,14 @@ export default function useChannelManager(config) {
     try {
       const configData = await fetchUIConfig()
       if (configData?.channelBalance?.showRemaining !== true) {
+        state.showChannelBalance = false
+        state.formData._showChannelBalance = false
         state.balances = {}
         return
       }
 
+      state.showChannelBalance = true
+      state.formData._showChannelBalance = true
       const response = await getChannelBalances(config.type)
       state.balances = response?.enabled && response.balances ? response.balances : {}
     } catch (error) {
@@ -200,6 +205,7 @@ export default function useChannelManager(config) {
   function openAddDialog() {
     state.editingChannel = null
     state.formData = config.getInitialForm()
+    state.formData._showChannelBalance = state.showChannelBalance
     clearValidation()
     state.showDialog = true
   }
@@ -208,12 +214,14 @@ export default function useChannelManager(config) {
     state.showDialog = false
     state.editingChannel = null
     state.formData = config.getInitialForm()
+    state.formData._showChannelBalance = state.showChannelBalance
     clearValidation()
   }
 
   function handleEdit(channel) {
     state.editingChannel = channel
     state.formData = config.mapChannelToForm(channel)
+    state.formData._showChannelBalance = state.showChannelBalance
     clearValidation()
     state.showDialog = true
   }
@@ -386,6 +394,7 @@ export default function useChannelManager(config) {
   async function handleBalanceVisibilityChange() {
     invalidateUIConfigCache()
     await loadChannelBalances()
+    state.formData._showChannelBalance = state.showChannelBalance
   }
 
   if (typeof window !== 'undefined') {

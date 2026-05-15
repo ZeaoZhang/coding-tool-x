@@ -26,17 +26,6 @@
             {{ tag.text }}
           </n-tag>
         </template>
-        <n-tag
-          v-if="balance?.visible && balance.label"
-          size="tiny"
-          type="success"
-          :bordered="false"
-          class="balance-tag"
-          :title="balanceTitle"
-          @click.stop="emit('refresh-balance')"
-        >
-          {{ balance.label }}
-        </n-tag>
       </div>
       <div class="channel-actions">
         <n-button
@@ -127,6 +116,17 @@
         </n-button>
         <div class="footer-spacer"></div>
         <div class="channel-meta">
+          <n-tag
+            v-if="balance?.visible && balance.label"
+            size="tiny"
+            type="success"
+            :bordered="false"
+            class="balance-meta-tag"
+            :title="balanceTitle"
+            @click.stop="emit('refresh-balance')"
+          >
+            {{ balance.label }}
+          </n-tag>
           <span class="meta-item">
             权重: <span class="meta-value">{{ meta.weight }}</span>
           </span>
@@ -262,11 +262,6 @@ async function runTest() {
   font-size: 14px;
 }
 
-.balance-tag {
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
 .collapse-btn {
   flex-shrink: 0;
 }
@@ -400,12 +395,28 @@ async function runTest() {
 
 .channel-meta {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
   font-size: 12px;
+}
+
+.balance-meta-tag {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 140px;
+}
+
+.balance-meta-tag :deep(.n-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .meta-item {
   color: var(--text-tertiary);
+  white-space: nowrap;
 }
 
 .meta-value {
@@ -496,7 +507,8 @@ async function runTest() {
 
   .channel-meta {
     align-self: stretch;
-    justify-content: space-between;
+    justify-content: flex-start;
+    gap: 8px 12px;
   }
 }
 
