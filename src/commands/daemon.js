@@ -181,7 +181,10 @@ function updatePM2Daemon() {
   });
 }
 
-function dumpPM2State(timeoutMs = 2000) {
+function dumpPM2State(options = {}) {
+  const timeoutMs = options.timeoutMs || 2000;
+  const force = options.force === true;
+
   return new Promise((resolve) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -192,7 +195,7 @@ function dumpPM2State(timeoutMs = 2000) {
       resolve({ timedOut: true, err: null });
     }, timeoutMs);
 
-    pm2.dump((err) => {
+    pm2.dump(force, (err) => {
       if (settled) {
         return;
       }
@@ -206,7 +209,10 @@ function dumpPM2State(timeoutMs = 2000) {
 async function finalizePM2Session(options = {}) {
   const shouldPersist = options.persist === true;
   if (shouldPersist) {
-    const result = await dumpPM2State(options.timeoutMs);
+    const result = await dumpPM2State({
+      timeoutMs: options.timeoutMs,
+      force: options.force === true
+    });
     if (result.err) {
       console.log(chalk.yellow(`[WARN]  保存 PM2 状态失败: ${result.err.message}`));
     } else if (result.timedOut) {
@@ -593,7 +599,10 @@ async function handleStop() {
     const stopResult = await stopAllManagedInstances(existing, config);
     printStopResult(stopResult);
 
-    await finalizePM2Session({ persist: true });
+    await finalizePM2Session({
+      persist: stopResult.hadPM2Process,
+      force: true
+    });
   } catch (error) {
     console.error(chalk.red('停止失败:'), error.message);
     disconnectPM2();

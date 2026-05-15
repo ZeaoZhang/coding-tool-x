@@ -32,7 +32,10 @@ beforeEach(() => {
     list: vi.fn((cb) => cb(null, processList)),
     stop: vi.fn((name, cb) => cb(null)),
     delete: vi.fn((name, cb) => cb(null)),
-    dump: vi.fn((cb) => cb && cb(null))
+    dump: vi.fn((force, cb) => {
+      const callback = typeof force === 'function' ? force : cb;
+      callback && callback(null);
+    })
   };
 
   loadConfig = vi.fn(() => ({
@@ -113,9 +116,35 @@ describe('daemon handleStop', () => {
 
     expect(pm2Mock.stop).toHaveBeenCalledWith('cc-tool', expect.any(Function));
     expect(pm2Mock.delete).toHaveBeenCalledWith('cc-tool', expect.any(Function));
-    expect(pm2Mock.dump).toHaveBeenCalled();
+    expect(pm2Mock.dump).toHaveBeenCalledWith(true, expect.any(Function));
     expect(pm2Mock.disconnect).toHaveBeenCalled();
     expect(killProcessByPort).not.toHaveBeenCalled();
+  });
+
+  test('forces pm2 dump after deleting the last process to clear stale startup state', async () => {
+    processList = [{ name: 'cc-tool', pid: 1234, pm2_env: { status: 'stopped' } }];
+    pm2Mock.dump.mockImplementation((force, cb) => {
+      cb(force ? null : new Error('Process list empty, cannot save empty list'));
+    });
+
+    await daemon.handleStop();
+
+    expect(pm2Mock.delete).toHaveBeenCalledWith('cc-tool', expect.any(Function));
+    expect(pm2Mock.dump).toHaveBeenCalledWith(true, expect.any(Function));
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Process list empty'));
+  });
+
+  test('does not dump pm2 state when only orphaned ports were cleaned', async () => {
+    const releaseChecks = [false, true, true, true, true, true];
+    waitForPortRelease.mockImplementation(() => Promise.resolve(releaseChecks.shift() ?? true));
+    killProcessByPort.mockImplementation((port) => port === 19999);
+
+    await daemon.handleStop();
+
+    expect(pm2Mock.delete).not.toHaveBeenCalled();
+    expect(pm2Mock.dump).not.toHaveBeenCalled();
+    expect(killProcessByPort).toHaveBeenCalledWith(19999);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Coding-Tool 服务已停止'));
   });
 
   test('cleans orphaned managed ports even when pm2 process record is already stopped', async () => {

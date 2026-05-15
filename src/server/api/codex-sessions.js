@@ -39,6 +39,29 @@ function normalizeForkOptions(body = {}) {
   };
 }
 
+function withUserAnchorContext(paginatedMessages, sortedMessages) {
+  if (paginatedMessages.length === 0 || paginatedMessages.some(message => message.type === 'user')) {
+    return paginatedMessages;
+  }
+
+  const userAnchor = sortedMessages.find(message => message.type === 'user' && message.userMessageNumber);
+  if (!userAnchor) {
+    return paginatedMessages;
+  }
+
+  return [
+    ...paginatedMessages,
+    {
+      type: 'user',
+      content: '',
+      timestamp: userAnchor.timestamp || null,
+      model: null,
+      userMessageNumber: userAnchor.userMessageNumber,
+      anchorOnly: true
+    }
+  ];
+}
+
 module.exports = (config) => {
   // ============================================
   // 静态路由必须放在参数路由之前
@@ -389,7 +412,7 @@ module.exports = (config) => {
       const totalMessages = messages.length;
       const start = (pageNum - 1) * limitNum;
       const end = start + limitNum;
-      const paginatedMessages = messages.slice(start, end);
+      const paginatedMessages = withUserAnchorContext(messages.slice(start, end), messages);
 
       res.json({
         messages: paginatedMessages,

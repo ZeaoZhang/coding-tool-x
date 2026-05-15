@@ -142,7 +142,8 @@ module.exports = (config) => {
         speedTestModel,
         presetId,
         gatewaySourceType,
-        balanceToken
+        balanceToken,
+        balanceUserId
       } = req.body;
 
       if (!name || !providerKey || !baseUrl) {
@@ -169,6 +170,7 @@ module.exports = (config) => {
         presetId: presetId || null,
         gatewaySourceType,
         balanceToken: balanceToken || '',
+        balanceUserId: balanceUserId || null,
         requiresOpenaiAuth: false
       });
       res.json(channel);

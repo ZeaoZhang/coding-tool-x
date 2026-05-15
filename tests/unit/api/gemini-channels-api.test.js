@@ -169,11 +169,12 @@ describe('gemini-channels api', () => {
 
     handler = findHandler(router, 'post', '/');
     res = makeRes();
-    handler({ body: { name: 'New Gem', baseUrl: 'https://new.gem', apiKey: 'secret', balanceToken: 'balance-session' } }, res);
+    handler({ body: { name: 'New Gem', baseUrl: 'https://new.gem', apiKey: 'secret', balanceToken: 'balance-session', balanceUserId: 8899 } }, res);
     expect(res._body).toEqual(expect.objectContaining({
       id: 'gem-new',
       model: 'gemini-2.0-flash',
-      balanceToken: 'balance-session'
+      balanceToken: 'balance-session',
+      balanceUserId: 8899
     }));
 
     handler = findHandler(router, 'post', '/order');

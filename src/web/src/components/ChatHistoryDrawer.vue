@@ -88,7 +88,7 @@
 
               <div class="messages-list">
                 <ChatMessage
-                  v-for="(message, index) in messages"
+                  v-for="{ message, index } in visibleMessages"
                   :key="messageAnchorIds[index] || index"
                   :message="message"
                   :message-anchor-id="messageAnchorIds[index]"
@@ -182,12 +182,18 @@ const messageAnchorIds = computed(() => {
 const loadedUserAnchors = computed(() => {
   const map = new Map()
   messages.value.forEach((message, index) => {
-    if (message.type !== 'user' || !message.userMessageNumber) {
+    if (message.anchorOnly || message.type !== 'user' || !message.userMessageNumber) {
       return
     }
     map.set(message.userMessageNumber, messageAnchorIds.value[index])
   })
   return map
+})
+
+const visibleMessages = computed(() => {
+  return messages.value
+    .map((message, index) => ({ message, index }))
+    .filter(({ message }) => !message.anchorOnly)
 })
 
 const tocItems = computed(() => outlineItems.value)

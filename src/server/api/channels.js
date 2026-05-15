@@ -109,7 +109,8 @@ router.post('/', (req, res) => {
       speedTestModel,
       gatewaySourceType,
       targetApi,
-      balanceToken
+      balanceToken,
+      balanceUserId
     } = req.body;
 
     if (!name || !baseUrl) {
@@ -131,7 +132,8 @@ router.post('/', (req, res) => {
       speedTestModel: speedTestModel || null,
       gatewaySourceType,
       targetApi,
-      balanceToken: balanceToken || ''
+      balanceToken: balanceToken || '',
+      balanceUserId: balanceUserId || null
     });
     res.json({ channel });
     broadcastSchedulerState('claude', getSchedulerState('claude'));

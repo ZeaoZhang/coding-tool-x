@@ -215,11 +215,12 @@ describe('opencode-channels api', () => {
 
     let handler = findHandler(router, 'post', '/');
     let res = makeRes();
-    handler({ body: { name: 'New Open', baseUrl: 'https://new.open', apiKey: 'secret', model: 'gpt-5', balanceToken: 'balance-session' } }, res);
+    handler({ body: { name: 'New Open', baseUrl: 'https://new.open', apiKey: 'secret', model: 'gpt-5', balanceToken: 'balance-session', balanceUserId: 8899 } }, res);
     expect(res._body).toEqual(expect.objectContaining({
       id: 'open-new',
       model: 'gpt-5',
-      balanceToken: 'balance-session'
+      balanceToken: 'balance-session',
+      balanceUserId: 8899
     }));
 
     handler = findHandler(router, 'post', '/order');

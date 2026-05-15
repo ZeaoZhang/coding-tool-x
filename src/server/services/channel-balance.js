@@ -38,12 +38,67 @@ function resolveBalanceToken(channel = {}) {
   );
 }
 
+function resolveBalanceUserId(channel = {}) {
+  const raw = channel.balanceUserId
+    ?? channel.platformUserId
+    ?? channel.newApiUserId
+    ?? null;
+  const parsed = parseFiniteNumber(raw);
+  if (parsed == null || parsed <= 0) return null;
+  return Math.trunc(parsed);
+}
+
+function buildUserIdHeaders(userId) {
+  if (!userId) return {};
+  const value = String(userId);
+  return {
+    'New-Api-User': value,
+    'Veloera-User': value,
+    'voapi-user': value,
+    'User-id': value,
+    'Rix-Api-User': value,
+    'neo-api-user': value
+  };
+}
+
 function buildAuthHeaders(token, extra = {}) {
   return {
     Accept: 'application/json',
     Authorization: `Bearer ${stripBearer(token)}`,
     ...extra
   };
+}
+
+function hasDedicatedBalanceToken(channel = {}) {
+  return !!String(
+    channel.balanceToken
+    || channel.balanceApiKey
+    || channel.balanceAuthToken
+    || ''
+  ).trim();
+}
+
+function buildCookieCandidates(token) {
+  const raw = stripBearer(token);
+  if (!raw) return [];
+
+  const candidates = [];
+  const normalized = raw.replace(/^cookie:\s*/i, '').trim();
+  if (!normalized) return [];
+  if (normalized.includes('=')) {
+    candidates.push(normalized);
+  }
+  candidates.push(`session=${normalized}`);
+  candidates.push(`token=${normalized}`);
+  return Array.from(new Set(candidates));
+}
+
+function shouldTryCookieAuth(token, channel = {}, hintedPlatform = null) {
+  const raw = stripBearer(token);
+  if (!raw) return false;
+  return hasDedicatedBalanceToken(channel)
+    || raw.includes('=')
+    || (hintedPlatform === 'anyrouter' && !isLikelyModelApiKey(raw));
 }
 
 function isLikelyModelApiKey(token) {
@@ -887,7 +942,9 @@ function buildBalanceProbeStrategies(baseUrl, channel = {}, token = '') {
       type: 'hub-user-self',
       baseUrl,
       platform: HUB_PLATFORMS.has(hintedPlatform) ? hintedPlatform : null,
-      hintedPlatform
+      hintedPlatform,
+      userId: resolveBalanceUserId(channel),
+      allowCookieAuth: shouldTryCookieAuth(token, channel, hintedPlatform)
     });
   };
   const addNewApiTokenUsageStrategy = () => {
@@ -991,8 +1048,29 @@ async function runSub2ApiUsageStrategy(strategy, token) {
   return buildSub2ApiUsageSnapshot(payload);
 }
 
+async function fetchHubUserSelfWithCookie(baseUrl, token, platform, quotaUnit, userId) {
+  for (const cookie of buildCookieCandidates(token)) {
+    const payload = await tryRequestJson(joinUrl(baseUrl, '/api/user/self'), {
+      headers: {
+        Accept: 'application/json',
+        Cookie: cookie,
+        ...buildUserIdHeaders(userId)
+      }
+    });
+    const snapshot = buildHubBalanceSnapshot(platform, {
+      ...payload,
+      data: payload?.data && typeof payload.data === 'object'
+        ? { ...payload.data, quota_per_unit: quotaUnit || payload.data.quota_per_unit }
+        : payload?.data
+    });
+    if (snapshot.visible) return snapshot;
+  }
+  return makeHiddenSnapshot(platform);
+}
+
 async function runHubUserSelfStrategy(strategy, token) {
-  const headers = buildAuthHeaders(token);
+  const userId = strategy.userId || null;
+  const headers = buildAuthHeaders(token, buildUserIdHeaders(userId));
   let platform = strategy.platform;
   let quotaUnit = null;
   if (!HUB_PLATFORMS.has(platform)) {
@@ -1002,13 +1080,21 @@ async function runHubUserSelfStrategy(strategy, token) {
   }
   if (!HUB_PLATFORMS.has(platform)) return { snapshot: makeHiddenSnapshot(platform), strategy };
 
-  const payload = await requestJson(joinUrl(strategy.baseUrl, '/api/user/self'), { headers });
-  const snapshot = buildHubBalanceSnapshot(platform, {
-    ...payload,
-    data: payload?.data && typeof payload.data === 'object'
-      ? { ...payload.data, quota_per_unit: quotaUnit || payload.data.quota_per_unit }
-      : payload?.data
-  });
+  let snapshot = makeHiddenSnapshot(platform);
+  try {
+    const payload = await requestJson(joinUrl(strategy.baseUrl, '/api/user/self'), { headers });
+    snapshot = buildHubBalanceSnapshot(platform, {
+      ...payload,
+      data: payload?.data && typeof payload.data === 'object'
+        ? { ...payload.data, quota_per_unit: quotaUnit || payload.data.quota_per_unit }
+        : payload?.data
+    });
+  } catch (error) {
+    if (!strategy.allowCookieAuth) throw error;
+  }
+  if (!snapshot.visible && strategy.allowCookieAuth) {
+    snapshot = await fetchHubUserSelfWithCookie(strategy.baseUrl, token, platform, quotaUnit, userId);
+  }
   return {
     snapshot,
     strategy: {
@@ -1341,6 +1427,8 @@ module.exports = {
     buildSub2ApiUsageSnapshot,
     resolveStatusPlatform,
     resolveBalanceToken,
+    resolveBalanceUserId,
+    buildCookieCandidates,
     build88CodeApiBaseCandidates,
     buildOpenRouterApiBaseCandidates,
     buildSiliconFlowApiBaseCandidates,
