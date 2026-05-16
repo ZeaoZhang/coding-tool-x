@@ -431,6 +431,7 @@ const PATHS = {
   sessionCache: path.join(CACHE_DIR, 'session-cache.json'),
   sessionHasCache: path.join(CACHE_DIR, 'session-has-cache.json'),
   channelModels: path.join(CACHE_DIR, 'channel-models.json'),
+  channelBalanceStrategies: path.join(CACHE_DIR, 'channel-balance-strategies.json'),
   envBackups: path.join(BACKUPS_DIR, 'env'),
   proxyRuntime: {
     claude: path.join(RUNTIME_DIR, 'claude-proxy.json'),

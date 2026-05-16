@@ -1,15 +1,50 @@
 'use strict';
 
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
+const path = require('path');
 
 const SERVICE_PATH = require.resolve('../../../src/server/services/channel-balance');
 const UI_CONFIG_PATH = require.resolve('../../../src/server/services/ui-config');
 const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
+const CODEX_CHANNELS_PATH = require.resolve('../../../src/server/services/codex-channels');
+const GEMINI_CHANNELS_PATH = require.resolve('../../../src/server/services/gemini-channels');
+const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
+const PATHS_PATH = require.resolve('../../../src/config/paths');
 
-function loadServiceWithStubs({ uiConfig = { channelBalance: { showRemaining: true } }, channelsStub } = {}) {
+function loadServiceWithStubs({
+  uiConfig = { channelBalance: { showRemaining: true } },
+  channelsStub,
+  codexChannelsStub,
+  geminiChannelsStub,
+  opencodeChannelsStub,
+  strategyCachePath
+} = {}) {
   delete require.cache[SERVICE_PATH];
   delete require.cache[UI_CONFIG_PATH];
   delete require.cache[CHANNELS_PATH];
+  delete require.cache[CODEX_CHANNELS_PATH];
+  delete require.cache[GEMINI_CHANNELS_PATH];
+  delete require.cache[OPENCODE_CHANNELS_PATH];
+  delete require.cache[PATHS_PATH];
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-balance-test-'));
+  const cacheDir = path.join(tempDir, 'cache');
+  const channelBalanceStrategies = strategyCachePath || path.join(cacheDir, 'channel-balance-strategies.json');
+
+  require.cache[PATHS_PATH] = {
+    id: PATHS_PATH,
+    filename: PATHS_PATH,
+    loaded: true,
+    exports: {
+      PATHS: {
+        storage: tempDir,
+        channelModels: path.join(cacheDir, 'channel-models.json'),
+        channelBalanceStrategies
+      }
+    }
+  };
 
   require.cache[UI_CONFIG_PATH] = {
     id: UI_CONFIG_PATH,
@@ -26,6 +61,30 @@ function loadServiceWithStubs({ uiConfig = { channelBalance: { showRemaining: tr
       filename: CHANNELS_PATH,
       loaded: true,
       exports: channelsStub
+    };
+  }
+  if (codexChannelsStub) {
+    require.cache[CODEX_CHANNELS_PATH] = {
+      id: CODEX_CHANNELS_PATH,
+      filename: CODEX_CHANNELS_PATH,
+      loaded: true,
+      exports: codexChannelsStub
+    };
+  }
+  if (geminiChannelsStub) {
+    require.cache[GEMINI_CHANNELS_PATH] = {
+      id: GEMINI_CHANNELS_PATH,
+      filename: GEMINI_CHANNELS_PATH,
+      loaded: true,
+      exports: geminiChannelsStub
+    };
+  }
+  if (opencodeChannelsStub) {
+    require.cache[OPENCODE_CHANNELS_PATH] = {
+      id: OPENCODE_CHANNELS_PATH,
+      filename: OPENCODE_CHANNELS_PATH,
+      loaded: true,
+      exports: opencodeChannelsStub
     };
   }
 
@@ -54,6 +113,10 @@ describe('channel-balance service', () => {
     delete require.cache[SERVICE_PATH];
     delete require.cache[UI_CONFIG_PATH];
     delete require.cache[CHANNELS_PATH];
+    delete require.cache[CODEX_CHANNELS_PATH];
+    delete require.cache[GEMINI_CHANNELS_PATH];
+    delete require.cache[OPENCODE_CHANNELS_PATH];
+    delete require.cache[PATHS_PATH];
   });
 
   test('normalizes OpenAI-style API paths to provider roots', () => {
@@ -810,6 +873,54 @@ describe('channel-balance service', () => {
     }
   });
 
+  test('persists the successful balance endpoint across service reloads', async () => {
+    const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-balance-strategy-cache-'));
+    const strategyCachePath = path.join(cacheDir, 'strategies.json');
+    let service = loadServiceWithStubs({ strategyCachePath });
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/api/status') {
+        return sendJson(res, 200, { success: true, data: { system_name: 'New API' } });
+      }
+      if (req.url === '/api/user/self') {
+        return sendJson(res, 200, { success: true, data: { quota: 2000000, used_quota: 500000 } });
+      }
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 200, { mode: 'unrestricted', remaining: 99, isValid: true });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const channel = { id: 'persistent-strategy-cache', baseUrl: `${server.baseUrl}/v1`, apiKey: 'secret' };
+      const first = await service._test.refreshChannelBalanceSnapshot('codex', channel);
+
+      delete require.cache[SERVICE_PATH];
+      service = loadServiceWithStubs({ strategyCachePath });
+      const reloaded = await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true });
+
+      expect(first).toMatchObject({
+        visible: true,
+        platform: 'new-api',
+        remaining: 4
+      });
+      expect(reloaded).toMatchObject({
+        visible: true,
+        platform: 'new-api',
+        remaining: 4
+      });
+      expect(seen).toEqual([
+        '/api/status',
+        '/api/user/self',
+        '/api/user/self'
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('fetches New API key-specific balance with the model API key', async () => {
     const service = loadServiceWithStubs();
     service._test.clearBalanceCache();
@@ -1032,5 +1143,52 @@ describe('channel-balance service', () => {
       source: 'claude',
       balances: {}
     });
+  });
+
+  test('loads balances only for enabled channels', async () => {
+    let enabledRequests = 0;
+    let disabledRequests = 0;
+    const enabledServer = await withJsonServer((req, res) => {
+      enabledRequests += 1;
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 200, { mode: 'unrestricted', remaining: 8.25, isValid: true });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+    const disabledServer = await withJsonServer((req, res) => {
+      disabledRequests += 1;
+      return sendJson(res, 500, { error: `disabled channel should not be requested: ${req.url}` });
+    });
+
+    try {
+      const service = loadServiceWithStubs({
+        codexChannelsStub: {
+          getChannels: vi.fn(() => ({
+            channels: [
+              { id: 'enabled-new-api', enabled: true, baseUrl: `${enabledServer.baseUrl}/v1`, apiKey: 'sk-enabled' },
+              { id: 'disabled-new-api', enabled: false, baseUrl: `${disabledServer.baseUrl}/v1`, apiKey: 'sk-disabled' }
+            ]
+          }))
+        }
+      });
+
+      const result = await service.getChannelBalances('codex');
+
+      expect(result.enabled).toBe(true);
+      expect(result.balances).toMatchObject({
+        'enabled-new-api': {
+          visible: true,
+          platform: 'sub2api',
+          remaining: 8.25
+        }
+      });
+      expect(Object.keys(result.balances)).toEqual(['enabled-new-api']);
+      expect(service._test.getEnabledBalanceChannels('codex').map(channel => channel.id)).toEqual(['enabled-new-api']);
+      expect(enabledRequests).toBeGreaterThan(0);
+      expect(disabledRequests).toBe(0);
+    } finally {
+      await enabledServer.close();
+      await disabledServer.close();
+    }
   });
 });
