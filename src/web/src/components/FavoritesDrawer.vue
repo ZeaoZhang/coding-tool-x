@@ -177,7 +177,7 @@ import { copySessionLaunchCommand } from '../api/sessions'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
-const { drawerWidth } = useResponsiveDrawer(800, 700)
+const { drawerWidth } = useResponsiveDrawer(720)
 
 const props = defineProps({
   visible: {

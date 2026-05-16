@@ -1035,7 +1035,7 @@ import {
 } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
-const { drawerWidth, isMobile } = useResponsiveDrawer(680)
+const { drawerWidth, isMobile } = useResponsiveDrawer(720)
 import {
   SettingsOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
