@@ -31,7 +31,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible'])
 
-const { drawerWidth } = useResponsiveDrawer(700, 600)
+const { drawerWidth } = useResponsiveDrawer(720)
 
 const visible = computed({
   get: () => props.visible,

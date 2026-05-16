@@ -139,7 +139,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:show', 'error'])
 
-const { drawerWidth } = useResponsiveDrawer(900, 800)
+const { drawerWidth } = useResponsiveDrawer(720)
 const TOC_SAFETY_GAP = 12
 const PAGE_SIZE = 20
 

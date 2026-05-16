@@ -339,7 +339,7 @@ import McpFormDrawer from './McpFormDrawer.vue'
 import McpServerDetailDrawer from './McpServerDetailDrawer.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
-const { drawerWidth } = useResponsiveDrawer(600)
+const { drawerWidth } = useResponsiveDrawer(720)
 
 const props = defineProps({
   visible: {
