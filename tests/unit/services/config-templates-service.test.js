@@ -12,6 +12,7 @@ let mcpServers;
 let mcpPresets;
 let promptPresets;
 let convertCommandToCodexMock;
+let convertCommandToGeminiMock;
 let templatesService;
 
 function writeFile(filePath, content) {
@@ -100,6 +101,7 @@ beforeEach(() => {
     }
   };
   convertCommandToCodexMock = vi.fn((content) => ({ content: `CODEX::${content}` }));
+  convertCommandToGeminiMock = vi.fn((content) => ({ content: `GEMINI::${content}` }));
 
   require.cache[require.resolve('../../../src/config/paths')] = {
     id: require.resolve('../../../src/config/paths'),
@@ -172,7 +174,8 @@ beforeEach(() => {
     filename: require.resolve('../../../src/server/services/format-converter'),
     loaded: true,
     exports: {
-      convertCommandToCodex: convertCommandToCodexMock
+      convertCommandToCodex: convertCommandToCodexMock,
+      convertCommandToGemini: convertCommandToGeminiMock
     }
   };
 
@@ -364,11 +367,16 @@ describe('config-templates-service apply and preview', () => {
         skills: { applied: 0, items: [] },
         agents: {
           applied: 1,
-          files: ['.claude/agents/reviewer.md', '.opencode/agents/reviewer.md']
+          files: ['.claude/agents/reviewer.md', '.opencode/agents/reviewer.md', '.gemini/agents/reviewer.md']
         },
         commands: {
           applied: 1,
-          files: ['.claude/commands/git/fix.md', '.codex/prompts/git/fix.md', '.opencode/commands/git/fix.md']
+          files: [
+            '.claude/commands/git/fix.md',
+            '.codex/prompts/git/fix.md',
+            '.opencode/commands/git/fix.md',
+            '.gemini/commands/git/fix.toml'
+          ]
         },
         plugins: {
           applied: 1,
@@ -377,8 +385,6 @@ describe('config-templates-service apply and preview', () => {
         mcpServers: { applied: 2 },
         skipped: [
           { type: 'agent', item: 'reviewer', reason: 'Codex agents 仅支持用户级配置，项目目录应用时已跳过' },
-          { type: 'agent', item: 'reviewer', reason: 'Gemini 不支持 agents，已跳过' },
-          { type: 'command', item: 'fix', reason: 'Gemini 不支持 commands，已跳过' },
           { type: 'mcpServer', item: 'missing-server', reason: '未找到对应 MCP 服务配置，已跳过' }
         ]
       },
@@ -390,8 +396,11 @@ describe('config-templates-service apply and preview', () => {
     expect(fs.readFileSync(path.join(targetDir, 'GEMINI.md'), 'utf8')).toBe('# GEMINI');
     expect(fs.readFileSync(path.join(targetDir, '.opencode', 'AGENTS.md'), 'utf8')).toBe('# OPENCODE');
     expect(fs.readFileSync(path.join(targetDir, '.claude', 'agents', 'reviewer.md'), 'utf8')).toContain('Review carefully');
+    expect(fs.readFileSync(path.join(targetDir, '.gemini', 'agents', 'reviewer.md'), 'utf8')).toContain('Review carefully');
     expect(fs.readFileSync(path.join(targetDir, '.codex', 'prompts', 'git', 'fix.md'), 'utf8')).toContain('CODEX::');
+    expect(fs.readFileSync(path.join(targetDir, '.gemini', 'commands', 'git', 'fix.toml'), 'utf8')).toContain('GEMINI::');
     expect(convertCommandToCodexMock).toHaveBeenCalled();
+    expect(convertCommandToGeminiMock).toHaveBeenCalled();
     expect(readJson(path.join(targetDir, '.mcp.json'))).toEqual({
       mcpServers: {
         'local-server': {

@@ -1,7 +1,7 @@
 /**
  * Agents API 路由
  *
- * 管理 Claude Code 自定义代理
+ * 管理 Claude/Codex/Gemini/OpenCode 自定义代理
  */
 
 const express = require('express');
@@ -11,7 +11,7 @@ const { AgentsService } = require('../services/agents-service');
 const { PATHS, HOME_DIR } = require('../../config/paths');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const agentServices = new Map();
 const DEFAULT_PROJECT_ALLOWED_ROOTS = [HOME_DIR, process.cwd()];
 

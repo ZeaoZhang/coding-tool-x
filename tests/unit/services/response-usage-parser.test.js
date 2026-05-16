@@ -1,6 +1,8 @@
 const {
   parseSSEUsage,
   parseNonStreamingUsage,
+  splitSSEEvents,
+  parseSSEEventText,
   mergeUsageIntoTokenData,
   createTokenData
 } = require('../../../src/server/services/base/response-usage-parser');
@@ -193,6 +195,26 @@ describe('response-usage-parser', () => {
       total: 576,
       cached: 128,
       reasoning: 33
+    });
+  });
+
+  test('splits and parses CRLF-framed Gemini SSE usage events', () => {
+    const frame = [
+      'data: {"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":134,"thoughtsTokenCount":128},"modelVersion":"gemini-3.1-pro-preview"}',
+      '',
+      ''
+    ].join('\r\n');
+    const { events, remainder } = splitSSEEvents(frame);
+    const event = parseSSEEventText(events[0]);
+    const parsed = parseSSEUsage(JSON.parse(event.data), event.eventType);
+
+    expect(events).toHaveLength(1);
+    expect(remainder).toBe('');
+    expect(parsed.tokens).toEqual({
+      input: 5,
+      output: 1,
+      total: 134,
+      reasoning: 128
     });
   });
 

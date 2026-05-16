@@ -223,7 +223,7 @@ const CLI_TYPE_OPTIONS = [
 const CLI_CAPABILITIES = {
   claude: { skills: true, agents: true, commands: true },
   codex: { skills: true, agents: true, commands: true },
-  gemini: { skills: true, agents: false, commands: false },
+  gemini: { skills: true, agents: true, commands: true },
   opencode: { skills: true, agents: true, commands: true }
 }
 

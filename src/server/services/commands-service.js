@@ -1,24 +1,26 @@
 /**
  * Commands 服务
  *
- * 管理 Claude/OpenCode 自定义命令的 CRUD 操作
+ * 管理 Claude/Gemini/OpenCode 自定义命令的 CRUD 操作
  * 支持从 GitHub 仓库扫描和安装命令
  */
 
 const fs = require('fs');
 const path = require('path');
+const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('./repo-scanner-base');
 const { NATIVE_PATHS } = require('../../config/paths');
 const {
-  parseCommandContent,
   parseFrontmatter
 } = require('./format-converter');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'gemini', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CLAUDE_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'commands');
+const GEMINI_COMMANDS_DIR = path.join(NATIVE_PATHS.gemini.dir, 'commands');
 
 const PLATFORM_CONFIG = {
   claude: {
@@ -38,6 +40,12 @@ const PLATFORM_CONFIG = {
       return modern;
     },
     repoType: 'opencode-commands'
+  },
+  gemini: {
+    userCommandsDir: GEMINI_COMMANDS_DIR,
+    projectCommandsDir: (projectPath) => path.join(projectPath, '.gemini', 'commands'),
+    repoType: 'gemini-commands',
+    fileExtension: '.toml'
   }
 };
 
@@ -86,11 +94,46 @@ function generateCommandFrontmatter(data) {
   return lines.join('\n');
 }
 
+function getCommandFileExtension(platform) {
+  return PLATFORM_CONFIG[platform]?.fileExtension || '.md';
+}
+
+function getCommandTargetName(name, platform) {
+  return `${name}${getCommandFileExtension(platform)}`;
+}
+
+function parseGeminiCommandToml(content) {
+  try {
+    const parsed = toml.parse(content);
+    return {
+      description: parsed.description || '',
+      body: parsed.prompt || ''
+    };
+  } catch (err) {
+    return {
+      description: '',
+      body: content,
+      parseError: err.message
+    };
+  }
+}
+
+function generateGeminiCommandToml({ description, body }) {
+  const data = {
+    prompt: body || ''
+  };
+  if (description) {
+    data.description = description;
+  }
+  return tomlStringify(data);
+}
+
 /**
  * 递归扫描目录获取命令文件
  */
-function scanCommandsDir(dir, basePath, scope) {
+function scanCommandsDir(dir, basePath, scope, platform = 'claude') {
   const commands = [];
+  const fileExtension = getCommandFileExtension(platform);
 
   if (!fs.existsSync(dir)) {
     return commands;
@@ -104,17 +147,19 @@ function scanCommandsDir(dir, basePath, scope) {
 
       if (entry.isDirectory() && !entry.name.startsWith('.')) {
         // 递归扫描子目录
-        const subCommands = scanCommandsDir(fullPath, basePath, scope);
+        const subCommands = scanCommandsDir(fullPath, basePath, scope, platform);
         commands.push(...subCommands);
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      } else if (entry.isFile() && entry.name.endsWith(fileExtension)) {
         // 解析命令文件
         try {
           const content = fs.readFileSync(fullPath, 'utf-8');
-          const { frontmatter, body } = parseFrontmatter(content);
+          const parsed = platform === 'gemini'
+            ? { frontmatter: {}, body: '', gemini: parseGeminiCommandToml(content) }
+            : { ...parseFrontmatter(content), gemini: null };
 
           // 计算相对路径和命令名
           const relativePath = path.relative(basePath, fullPath);
-          const commandName = entry.name.replace(/\.md$/, '');
+          const commandName = entry.name.slice(0, -fileExtension.length);
           const namespace = path.dirname(relativePath);
 
           commands.push({
@@ -123,13 +168,14 @@ function scanCommandsDir(dir, basePath, scope) {
             scope,
             path: relativePath,
             fullPath,
-            description: frontmatter.description || '',
-            allowedTools: frontmatter['allowed-tools'] || '',
-            argumentHint: frontmatter['argument-hint'] || '',
-            agent: frontmatter.agent || '',
-            model: frontmatter.model || '',
-            subtask: frontmatter.subtask || '',
-            body,
+            description: parsed.gemini?.description || parsed.frontmatter.description || '',
+            allowedTools: parsed.frontmatter['allowed-tools'] || '',
+            argumentHint: parsed.frontmatter['argument-hint'] || '',
+            agent: parsed.frontmatter.agent || '',
+            model: parsed.frontmatter.model || '',
+            subtask: parsed.frontmatter.subtask || '',
+            body: parsed.gemini?.body ?? parsed.body,
+            parseError: parsed.gemini?.parseError || '',
             fullContent: content,
             updatedAt: fs.statSync(fullPath).mtime.getTime()
           });
@@ -150,13 +196,15 @@ function scanCommandsDir(dir, basePath, scope) {
  */
 class CommandsRepoScanner extends RepoScannerBase {
   constructor(platform, installDir) {
+    const normalizedPlatform = normalizePlatform(platform);
     super({
-      type: PLATFORM_CONFIG[platform]?.repoType || 'commands',
+      type: PLATFORM_CONFIG[normalizedPlatform]?.repoType || 'commands',
       installDir,
       markerFile: null, // 直接扫描 .md 文件
-      fileExtension: '.md',
+      fileExtension: getCommandFileExtension(normalizedPlatform),
       defaultRepos: DEFAULT_REPOS
     });
+    this.platform = normalizedPlatform;
   }
 
   /**
@@ -166,12 +214,15 @@ class CommandsRepoScanner extends RepoScannerBase {
     try {
       // 计算相对路径
       const relativePath = baseDir ? file.path.slice(baseDir.length + 1) : file.path;
-      const fileName = path.basename(file.path, '.md');
+      const fileExtension = getCommandFileExtension(this.platform);
+      const fileName = path.basename(file.path, fileExtension);
       const namespace = path.dirname(relativePath);
 
       // 获取文件内容
       const content = await this.fetchRawContent(repo, file.path);
-      const { frontmatter, body } = this.parseFrontmatter(content);
+      const parsed = this.platform === 'gemini'
+        ? { frontmatter: {}, body: '', gemini: parseGeminiCommandToml(content) }
+        : { ...this.parseFrontmatter(content), gemini: null };
 
       return {
         key: `${repo.owner}/${repo.name}:${relativePath}`,
@@ -180,13 +231,14 @@ class CommandsRepoScanner extends RepoScannerBase {
         scope: 'remote',
         path: relativePath,
         repoPath: file.path,
-        description: frontmatter.description || '',
-        allowedTools: frontmatter['allowed-tools'] || '',
-        argumentHint: frontmatter['argument-hint'] || '',
-        agent: frontmatter.agent || '',
-        model: frontmatter.model || '',
-        subtask: frontmatter.subtask || '',
-        body,
+        description: parsed.gemini?.description || parsed.frontmatter.description || '',
+        allowedTools: parsed.frontmatter['allowed-tools'] || '',
+        argumentHint: parsed.frontmatter['argument-hint'] || '',
+        agent: parsed.frontmatter.agent || '',
+        model: parsed.frontmatter.model || '',
+        subtask: parsed.frontmatter.subtask || '',
+        body: parsed.gemini?.body ?? parsed.body,
+        parseError: parsed.gemini?.parseError || '',
         fullContent: content,
         installed: this.isInstalled(relativePath),
         readmeUrl: `https://github.com/${repo.owner}/${repo.name}/blob/${repo.branch}/${file.path}`,
@@ -257,6 +309,29 @@ class CommandsService {
     return this.projectCommandsDir(projectPath);
   }
 
+  _generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body }) {
+    if (this.platform === 'gemini') {
+      return generateGeminiCommandToml({ description, body });
+    }
+
+    const frontmatterData = {};
+    if (description) frontmatterData.description = description;
+    if (this.platform !== 'opencode') {
+      if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
+      if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
+    }
+    if (agent) frontmatterData.agent = agent;
+    if (model) frontmatterData.model = model;
+    if (typeof subtask === 'boolean') frontmatterData.subtask = subtask;
+
+    let content = '';
+    if (Object.keys(frontmatterData).length > 0) {
+      content = generateCommandFrontmatter(frontmatterData) + '\n\n';
+    }
+    content += body || '';
+    return content;
+  }
+
   /**
    * 获取所有命令列表
    * @param {string} projectPath - 项目路径（可选，用于获取项目级命令）
@@ -265,13 +340,13 @@ class CommandsService {
     const commands = [];
 
     // 获取用户级命令
-    const userCommands = scanCommandsDir(this.userCommandsDir, this.userCommandsDir, 'user');
+    const userCommands = scanCommandsDir(this.userCommandsDir, this.userCommandsDir, 'user', this.platform);
     commands.push(...userCommands);
 
     // 获取项目级命令（如果提供了项目路径）
     if (projectPath) {
       const projectCommandsDir = this.getProjectCommandsDir(projectPath);
-      const projectCommands = scanCommandsDir(projectCommandsDir, projectCommandsDir, 'project');
+      const projectCommands = scanCommandsDir(projectCommandsDir, projectCommandsDir, 'project', this.platform);
       commands.push(...projectCommands);
     }
 
@@ -341,8 +416,8 @@ class CommandsService {
       : this.getProjectCommandsDir(projectPath);
 
     const relativePath = namespace
-      ? path.join(namespace, `${name}.md`)
-      : `${name}.md`;
+      ? path.join(namespace, getCommandTargetName(name, this.platform))
+      : getCommandTargetName(name, this.platform);
 
     const fullPath = path.join(baseDir, relativePath);
 
@@ -351,7 +426,9 @@ class CommandsService {
     }
 
     const content = fs.readFileSync(fullPath, 'utf-8');
-    const { frontmatter, body } = parseFrontmatter(content);
+    const parsed = this.platform === 'gemini'
+      ? { frontmatter: {}, body: '', gemini: parseGeminiCommandToml(content) }
+      : { ...parseFrontmatter(content), gemini: null };
 
     return {
       name,
@@ -359,13 +436,14 @@ class CommandsService {
       scope,
       path: relativePath,
       fullPath,
-      description: frontmatter.description || '',
-      allowedTools: frontmatter['allowed-tools'] || '',
-      argumentHint: frontmatter['argument-hint'] || '',
-      agent: frontmatter.agent || '',
-      model: frontmatter.model || '',
-      subtask: frontmatter.subtask || '',
-      body,
+      description: parsed.gemini?.description || parsed.frontmatter.description || '',
+      allowedTools: parsed.frontmatter['allowed-tools'] || '',
+      argumentHint: parsed.frontmatter['argument-hint'] || '',
+      agent: parsed.frontmatter.agent || '',
+      model: parsed.frontmatter.model || '',
+      subtask: parsed.frontmatter.subtask || '',
+      body: parsed.gemini?.body ?? parsed.body,
+      parseError: parsed.gemini?.parseError || '',
       fullContent: content,
       updatedAt: fs.statSync(fullPath).mtime.getTime()
     };
@@ -391,29 +469,14 @@ class CommandsService {
     const targetDir = namespace ? path.join(baseDir, namespace) : baseDir;
     ensureDir(targetDir);
 
-    const filePath = path.join(targetDir, `${name}.md`);
+    const filePath = path.join(targetDir, getCommandTargetName(name, this.platform));
 
     // 检查是否已存在
     if (fs.existsSync(filePath)) {
       throw new Error(`命令 "${name}" 已存在`);
     }
 
-    // 生成文件内容
-    const frontmatterData = {};
-    if (description) frontmatterData.description = description;
-    if (this.platform !== 'opencode') {
-      if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
-      if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
-    }
-    if (agent) frontmatterData.agent = agent;
-    if (model) frontmatterData.model = model;
-    if (typeof subtask === 'boolean') frontmatterData.subtask = subtask;
-
-    let content = '';
-    if (Object.keys(frontmatterData).length > 0) {
-      content = generateCommandFrontmatter(frontmatterData) + '\n\n';
-    }
-    content += body || '';
+    const content = this._generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body });
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
@@ -429,8 +492,8 @@ class CommandsService {
       : this.getProjectCommandsDir(projectPath);
 
     const relativePath = namespace
-      ? path.join(namespace, `${name}.md`)
-      : `${name}.md`;
+      ? path.join(namespace, getCommandTargetName(name, this.platform))
+      : getCommandTargetName(name, this.platform);
 
     const filePath = path.join(baseDir, relativePath);
 
@@ -438,22 +501,7 @@ class CommandsService {
       throw new Error(`命令 "${name}" 不存在`);
     }
 
-    // 生成文件内容
-    const frontmatterData = {};
-    if (description) frontmatterData.description = description;
-    if (this.platform !== 'opencode') {
-      if (allowedTools) frontmatterData['allowed-tools'] = allowedTools;
-      if (argumentHint) frontmatterData['argument-hint'] = argumentHint;
-    }
-    if (agent) frontmatterData.agent = agent;
-    if (model) frontmatterData.model = model;
-    if (typeof subtask === 'boolean') frontmatterData.subtask = subtask;
-
-    let content = '';
-    if (Object.keys(frontmatterData).length > 0) {
-      content = generateCommandFrontmatter(frontmatterData) + '\n\n';
-    }
-    content += body || '';
+    const content = this._generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body });
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
@@ -469,8 +517,8 @@ class CommandsService {
       : this.getProjectCommandsDir(projectPath);
 
     const relativePath = namespace
-      ? path.join(namespace, `${name}.md`)
-      : `${name}.md`;
+      ? path.join(namespace, getCommandTargetName(name, this.platform))
+      : getCommandTargetName(name, this.platform);
 
     const filePath = path.join(baseDir, relativePath);
 

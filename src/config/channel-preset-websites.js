@@ -13,7 +13,8 @@ const PRESET_WEBSITE_SOURCES = {
     { presetId: 'openai', baseUrl: 'https://api.openai.com/v1', websiteUrl: 'https://platform.openai.com' }
   ],
   gemini: [
-    { presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', websiteUrl: 'https://ai.google.dev' }
+    { presetId: 'google', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', websiteUrl: 'https://ai.google.dev' },
+    { presetId: 'vertex_ai_v1', baseUrl: 'https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/publishers/google', websiteUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs' }
   ],
   opencode: [
     { presetId: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', websiteUrl: 'https://openrouter.ai' },

@@ -270,8 +270,8 @@
 
     <!-- Skills/Commands/Agents Drawers -->
     <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" />
-    <CommandsDrawer v-model:visible="showCommandsDrawer" />
-    <AgentsDrawer v-model:visible="showAgentsDrawer" />
+    <CommandsDrawer v-model:visible="showCommandsDrawer" :platform="commandsDrawerPlatform" />
+    <AgentsDrawer v-model:visible="showAgentsDrawer" :platform="agentsDrawerPlatform" />
     <PluginsDrawer v-model:visible="showPluginsDrawer" />
 
     <!-- Help Modal -->
@@ -549,7 +549,9 @@ const showOAuthCredentialsDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const skillsDrawerPlatform = ref('')
 const showCommandsDrawer = ref(false)
+const commandsDrawerPlatform = ref('')
 const showAgentsDrawer = ref(false)
+const agentsDrawerPlatform = ref('')
 const showPluginsDrawer = ref(false)
 
 // Chat history drawer state
@@ -833,11 +835,13 @@ function openOAuthCredentialsDrawer(event) {
   showOAuthCredentialsDrawer.value = true
 }
 
-function openCommandsDrawer() {
+function openCommandsDrawer(event) {
+  commandsDrawerPlatform.value = event?.detail?.platform || ''
   showCommandsDrawer.value = true
 }
 
-function openAgentsDrawer() {
+function openAgentsDrawer(event) {
+  agentsDrawerPlatform.value = event?.detail?.platform || ''
   showAgentsDrawer.value = true
 }
 

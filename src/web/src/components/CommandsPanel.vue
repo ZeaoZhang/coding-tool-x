@@ -192,6 +192,10 @@ const props = defineProps({
   projectPath: {
     type: String,
     default: null
+  },
+  platform: {
+    type: String,
+    default: ''
   }
 })
 
@@ -211,8 +215,12 @@ const registryMap = ref({})
 const togglingKeys = ref({})
 
 const currentPlatform = computed(() => {
+  if (['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+    return props.platform
+  }
   const channel = route.meta.channel
   if (channel === 'codex') return 'codex'
+  if (channel === 'gemini') return 'gemini'
   if (channel === 'opencode') return 'opencode'
   return 'claude'
 })
@@ -220,6 +228,8 @@ const currentPlatform = computed(() => {
 const commandUsageHint = computed(() =>
   currentPlatform.value === 'opencode'
     ? '使用 /命令名 在 OpenCode 中调用'
+    : currentPlatform.value === 'gemini'
+    ? '使用 /命令名 在 Gemini CLI 中调用'
     : '使用 /命令名 在 Claude Code 中调用'
 )
 

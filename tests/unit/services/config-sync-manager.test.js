@@ -8,6 +8,7 @@ let configsDir;
 let codexConfigPath;
 let convertSkillToCodexMock;
 let convertCommandToCodexMock;
+let convertCommandToGeminiMock;
 let ConfigSyncManager;
 
 function writeFile(filePath, content) {
@@ -28,6 +29,12 @@ beforeEach(() => {
     content: `${content}\n# prompt`,
     warnings: ['command warning']
   }));
+  convertCommandToGeminiMock = vi.fn((content) => ({
+    content: 'prompt = "Run fix"\n',
+    warnings: content.includes('allowed-tools')
+      ? ['allowed-tools 字段在 Gemini commands 中不支持，已忽略']
+      : []
+  }));
 
   const pathsModulePath = require.resolve('../../../src/config/paths');
   require.cache[pathsModulePath] = {
@@ -45,6 +52,9 @@ beforeEach(() => {
         codex: {
           config: codexConfigPath
         },
+        gemini: {
+          dir: path.join(testDir, '.gemini')
+        },
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
         }
@@ -61,7 +71,8 @@ beforeEach(() => {
     loaded: true,
     exports: {
       convertSkillToCodex: convertSkillToCodexMock,
-      convertCommandToCodex: convertCommandToCodexMock
+      convertCommandToCodex: convertCommandToCodexMock,
+      convertCommandToGemini: convertCommandToGeminiMock
     }
   };
 
@@ -148,6 +159,37 @@ describe('ConfigSyncManager direct sync helpers', () => {
     expect(removeResult).toEqual({ success: true });
     expect(updatedConfig.agents?.researcher).toBeUndefined();
     expect(fs.existsSync(managedConfigPath)).toBe(false);
+  });
+
+  test('syncToGemini writes command TOML and agent markdown files', () => {
+    writeFile(
+      path.join(configsDir, 'commands', 'git', 'fix.md'),
+      '---\ndescription: "Fix issues"\nallowed-tools: Bash\n---\nRun fix'
+    );
+    writeFile(
+      path.join(configsDir, 'agents', 'reviewer.md'),
+      '---\nname: Reviewer\ndescription: "Review changes"\n---\nReview carefully'
+    );
+    const manager = new ConfigSyncManager();
+
+    const commandResult = manager.syncToGemini('commands', 'git/fix.md');
+    const agentResult = manager.syncToGemini('agents', 'reviewer.md');
+    const commandTarget = path.join(testDir, '.gemini', 'commands', 'git', 'fix.toml');
+    const agentTarget = path.join(testDir, '.gemini', 'agents', 'reviewer.md');
+
+    expect(commandResult).toEqual({
+      success: true,
+      target: commandTarget,
+      warnings: ['allowed-tools 字段在 Gemini commands 中不支持，已忽略']
+    });
+    expect(fs.readFileSync(commandTarget, 'utf8')).toContain('prompt = "Run fix"');
+    expect(agentResult).toEqual({ success: true, target: agentTarget });
+    expect(fs.readFileSync(agentTarget, 'utf8')).toContain('Review carefully');
+
+    expect(manager.removeFromGemini('commands', 'git/fix.md')).toEqual({ success: true });
+    expect(manager.removeFromGemini('agents', 'reviewer.md')).toEqual({ success: true });
+    expect(fs.existsSync(commandTarget)).toBe(false);
+    expect(fs.existsSync(agentTarget)).toBe(false);
   });
 });
 

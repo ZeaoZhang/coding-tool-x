@@ -73,6 +73,18 @@
             <template #trigger>
               <span
                 class="platform-icon"
+                :class="{ active: registryInfo.platforms?.gemini }"
+                @click.stop="emit('toggle-platform', agent, 'gemini', !registryInfo.platforms?.gemini)"
+              >
+                <n-icon size="14"><SparklesOutline /></n-icon>
+              </span>
+            </template>
+            Gemini CLI {{ registryInfo.platforms?.gemini ? '已启用' : '未启用' }}
+          </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="platform-icon"
                 :class="{ active: registryInfo.platforms?.opencode }"
                 @click.stop="emit('toggle-platform', agent, 'opencode', !registryInfo.platforms?.opencode)"
               >
@@ -108,7 +120,7 @@
 
 <script setup>
 import { NButton, NTag, NIcon, NSwitch, NTooltip } from 'naive-ui'
-import { HammerOutline, ShieldOutline, LogoApple, TerminalOutline, CodeSlashOutline } from '@vicons/ionicons5'
+import { HammerOutline, ShieldOutline, LogoApple, TerminalOutline, CodeSlashOutline, SparklesOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
   agent: {

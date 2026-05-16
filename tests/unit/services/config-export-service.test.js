@@ -346,6 +346,8 @@ describe('config-export-service export flows', () => {
     expect(result.success).toBe(true);
     expect(result.data.data.configTemplates).toEqual([{ id: 'custom', name: 'Custom', isBuiltin: false }]);
     expect(result.data.data.channelsByType.codex).toHaveLength(1);
+    expect(result.data.data.agentsByPlatform.gemini[0].fileName).toBe('gemini-agent');
+    expect(result.data.data.commandsByPlatform.gemini[0].name).toBe('gemini-command');
     expect(result.data.data.skillsByPlatform.gemini[0].directory).toBe('gemini-skill');
     expect(result.data.data.markdownFiles['AGENTS.md']).toBe('# Root agents');
     expect(result.data.data.oauthCredentials).toEqual({ version: 1 });
@@ -388,6 +390,21 @@ describe('config-export-service import flows', () => {
           'CLAUDE.md': '# Imported Claude',
           'README.md': '# should be ignored'
         },
+        agentsByPlatform: {
+          gemini: [{
+            fileName: 'gemini-helper',
+            name: 'Gemini Helper',
+            description: 'Helps Gemini',
+            systemPrompt: 'Help with Gemini work'
+          }]
+        },
+        commandsByPlatform: {
+          gemini: [{
+            name: 'gemini-review',
+            path: 'gemini-review.toml',
+            fullContent: 'description = "Review with Gemini"\nprompt = "Review this"\n'
+          }]
+        },
         prompts: {
           activePresetId: 'preset-1',
           presets: {
@@ -411,8 +428,12 @@ describe('config-export-service import flows', () => {
     expect(saveConfigMock).toHaveBeenCalledWith({ ports: { webUI: 20000 } });
     expect(mcpService.saveServer).toHaveBeenCalled();
     expect(fs.readFileSync(path.join(testDir, 'CLAUDE.md'), 'utf8')).toBe('# Imported Claude');
+    expect(fs.readFileSync(path.join(testDir, 'agents-install', 'gemini', 'gemini-helper.md'), 'utf8')).toContain('Help with Gemini work');
+    expect(fs.readFileSync(path.join(testDir, 'commands-install', 'gemini', 'gemini-review.toml'), 'utf8')).toContain('Review this');
     expect(fs.existsSync(path.join(testDir, 'README.md'))).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'store', 'oauth.json'), 'utf8'))).toEqual({ version: 2 });
+    expect(result.results.agents.success).toBe(1);
+    expect(result.results.commands.success).toBe(1);
     expect(result.results.markdownFiles.success).toBe(1);
     expect(result.results.markdownFiles.failed).toBe(1);
   });

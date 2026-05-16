@@ -93,6 +93,9 @@ beforeEach(() => {
         codex: {
           config: path.join(testDir, '.codex', 'config.toml')
         },
+        gemini: {
+          dir: path.join(testDir, '.gemini')
+        },
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
         }
@@ -181,6 +184,55 @@ describe('AgentsService local file management', () => {
       tools: 'read,write',
       permissionMode: 'acceptEdits',
       skills: 'debug'
+    }));
+
+    expect(service.deleteAgent('reviewer', 'user')).toEqual({
+      success: true,
+      message: '代理已删除'
+    });
+    expect(service.getAgent('reviewer', 'user')).toBeNull();
+  });
+
+  test('creates, lists, reads, and deletes gemini user and project agents', () => {
+    const projectPath = path.join(testDir, 'project-gemini');
+    fs.mkdirSync(projectPath, { recursive: true });
+    const service = new AgentsService('gemini');
+
+    const userAgent = service.createAgent({
+      fileName: 'reviewer',
+      scope: 'user',
+      name: 'Reviewer',
+      description: 'Reviews code',
+      tools: 'read,write',
+      model: 'gemini-2.5-pro',
+      systemPrompt: 'Review everything'
+    });
+    const projectAgent = service.createAgent({
+      fileName: 'local-helper',
+      scope: 'project',
+      projectPath,
+      name: 'Local Helper',
+      description: 'Project specific',
+      systemPrompt: 'Help locally'
+    });
+
+    const listed = service.listAgents(projectPath);
+    const loaded = service.getAgent('reviewer', 'user');
+
+    expect(userAgent).toEqual(expect.objectContaining({
+      fileName: 'reviewer',
+      description: 'Reviews code',
+      model: 'gemini-2.5-pro',
+      systemPrompt: 'Review everything'
+    }));
+    expect(userAgent.fullPath).toBe(path.join(testDir, '.gemini', 'agents', 'reviewer.md'));
+    expect(fs.realpathSync(projectAgent.fullPath)).toBe(fs.realpathSync(path.join(projectPath, '.gemini', 'agents', 'local-helper.md')));
+    expect(listed.total).toBe(2);
+    expect(listed.userCount).toBe(1);
+    expect(listed.projectCount).toBe(1);
+    expect(loaded).toEqual(expect.objectContaining({
+      tools: 'read,write',
+      model: 'gemini-2.5-pro'
     }));
 
     expect(service.deleteAgent('reviewer', 'user')).toEqual({

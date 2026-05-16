@@ -122,6 +122,7 @@ module.exports = (config) => {
         modelRedirects,
         speedTestModel,
         presetId,
+        apiFormat,
         gatewaySourceType,
         balanceToken,
         balanceUserId
@@ -143,6 +144,7 @@ module.exports = (config) => {
         modelRedirects: modelRedirects || [],
         speedTestModel: speedTestModel || null,
         presetId: presetId || null,
+        apiFormat: apiFormat || 'gemini_api',
         gatewaySourceType,
         balanceToken: balanceToken || '',
         balanceUserId: balanceUserId || null

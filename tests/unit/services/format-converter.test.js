@@ -6,6 +6,7 @@ const {
   convertSkillToCodex,
   convertSkillToClaude,
   convertCommandToCodex,
+  convertCommandToGemini,
   convertCommandToClaude,
   convertSkillsBatch,
   convertCommandsBatch,
@@ -407,6 +408,30 @@ describe('convertCommandToCodex', () => {
     const result = convertCommandToCodex(content);
     expect(result.content).not.toContain('---');
     expect(result.content).toContain('Plain prompt text only.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// convertCommandToGemini
+// ---------------------------------------------------------------------------
+describe('convertCommandToGemini', () => {
+  test('converts Claude command frontmatter and body to Gemini TOML', () => {
+    const content = [
+      '---',
+      'description: Fix linting errors',
+      'allowed-tools: Bash',
+      'model: claude-opus-4-5',
+      '---',
+      'Please fix all lint errors.'
+    ].join('\n');
+
+    const result = convertCommandToGemini(content);
+
+    expect(result.format).toBe('gemini');
+    expect(result.content).toContain('description = "Fix linting errors"');
+    expect(result.content).toContain('prompt = "Please fix all lint errors."');
+    expect(result.warnings.join(' ')).toContain('allowed-tools');
+    expect(result.warnings.join(' ')).toContain('model');
   });
 });
 

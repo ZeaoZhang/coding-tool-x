@@ -36,7 +36,7 @@
             Plugins 插件
           </n-tooltip>
         </template>
-        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
+        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode'">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
@@ -256,12 +256,12 @@ function handleShowSkills() {
 
 // 处理显示 Commands
 function handleShowCommands() {
-  window.dispatchEvent(new CustomEvent('open-commands-drawer'))
+  window.dispatchEvent(new CustomEvent('open-commands-drawer', { detail: { platform: currentChannel.value } }))
 }
 
 // 处理显示 Agents
 function handleShowAgents() {
-  window.dispatchEvent(new CustomEvent('open-agents-drawer'))
+  window.dispatchEvent(new CustomEvent('open-agents-drawer', { detail: { platform: currentChannel.value } }))
 }
 
 // 处理显示 Plugins

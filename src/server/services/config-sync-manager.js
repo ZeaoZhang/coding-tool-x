@@ -4,7 +4,7 @@
  * Manages file synchronization between cc-tool central storage and CLI directories:
  * - Claude Code: ~/.claude/{skills,commands,agents,plugins}/
  * - Codex CLI: ~/.codex/skills/, ~/.codex/prompts/
- * - Gemini CLI: ~/.gemini/skills/
+ * - Gemini CLI: ~/.gemini/{skills,commands,agents}/
  * - OpenCode CLI: ~/.config/opencode/{skills,commands,agents,plugins}/
  *
  * Config types:
@@ -19,7 +19,7 @@ const path = require('path');
 const os = require('os');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const { convertSkillToCodex, convertCommandToCodex } = require('./format-converter');
+const { convertSkillToCodex, convertCommandToCodex, convertCommandToGemini } = require('./format-converter');
 const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../../config/paths');
 
 // Paths
@@ -53,7 +53,9 @@ const CONFIG_TYPES = {
     codexTarget: 'prompts',
     codexSupported: true,
     convertForCodex: true,
-    geminiSupported: false,
+    geminiTarget: 'commands',
+    geminiExtension: '.toml',
+    geminiSupported: true,
     opencodeTarget: 'commands',
     opencodeLegacyTarget: 'command',
     opencodeSupported: true
@@ -63,7 +65,8 @@ const CONFIG_TYPES = {
     extension: '.md',
     claudeTarget: 'agents',
     codexSupported: true,
-    geminiSupported: false,
+    geminiTarget: 'agents',
+    geminiSupported: true,
     opencodeTarget: 'agents',
     opencodeLegacyTarget: 'agent',
     opencodeSupported: true
@@ -384,7 +387,7 @@ class ConfigSyncManager {
 
   /**
    * Sync a config item to Gemini CLI
-   * Currently only skills are supported
+   * Supports skills, commands, and agents.
    * @param {string} type - Config type
    * @param {string} name - Item name
    * @returns {Object} Result with success status
@@ -411,10 +414,21 @@ class ConfigSyncManager {
     }
 
     try {
-      const targetPath = path.join(this.geminiDir, config.geminiTarget, safeName);
+      const targetPath = this._getGeminiTargetPath(config, safeName);
       this._ensureDir(path.dirname(targetPath));
-      this._copyDirRecursive(sourcePath, targetPath);
-      console.log(`[ConfigSyncManager] Synced ${type}/${name} to Gemini (directory)`);
+      if (config.isDirectory) {
+        this._copyDirRecursive(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Gemini (directory)`);
+      } else if (type === 'commands') {
+        const content = fs.readFileSync(sourcePath, 'utf-8');
+        const result = convertCommandToGemini(content);
+        fs.writeFileSync(targetPath, result.content, 'utf-8');
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Gemini (command TOML)`);
+        return { success: true, target: targetPath, warnings: result.warnings || [] };
+      } else {
+        this._copyFile(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Gemini (file)`);
+      }
       return { success: true, target: targetPath };
     } catch (err) {
       console.error(`[ConfigSyncManager] Sync to Gemini failed:`, err.message);
@@ -443,15 +457,21 @@ class ConfigSyncManager {
       return { success: true, skipped: true, reason: 'Not supported by Gemini' };
     }
 
-    const targetPath = path.join(this.geminiDir, config.geminiTarget, safeName);
+    const targetPath = this._getGeminiTargetPath(config, safeName);
     if (!fs.existsSync(targetPath)) {
       console.log(`[ConfigSyncManager] Target not found (already removed): ${targetPath}`);
       return { success: true, message: 'Already removed' };
     }
 
     try {
-      this._removeRecursive(targetPath);
-      console.log(`[ConfigSyncManager] Removed ${type}/${name} from Gemini (directory)`);
+      if (config.isDirectory) {
+        this._removeRecursive(targetPath);
+        console.log(`[ConfigSyncManager] Removed ${type}/${name} from Gemini (directory)`);
+      } else {
+        fs.unlinkSync(targetPath);
+        console.log(`[ConfigSyncManager] Removed ${type}/${name} from Gemini (file)`);
+        this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.geminiDir, config.geminiTarget));
+      }
       return { success: true };
     } catch (err) {
       console.error(`[ConfigSyncManager] Remove from Gemini failed:`, err.message);
@@ -616,6 +636,9 @@ class ConfigSyncManager {
           const result = this.syncToGemini(type, name);
           if (result.success && !result.skipped) {
             results.synced.push({ type, name, platform: 'gemini' });
+            if (result.warnings && result.warnings.length > 0) {
+              results.warnings.push({ type, name, platform: 'gemini', warnings: result.warnings });
+            }
           } else if (!result.success) {
             results.errors.push({ type, name, platform: 'gemini', error: result.error });
           }
@@ -760,6 +783,17 @@ class ConfigSyncManager {
     }
 
     return modernDir;
+  }
+
+  _getGeminiTargetPath(config, safeName) {
+    const targetName = config.geminiExtension
+      ? safeName.replace(new RegExp(`${this._escapeRegExp(path.extname(safeName))}$`, 'i'), config.geminiExtension)
+      : safeName;
+    return path.join(this.geminiDir, config.geminiTarget, targetName);
+  }
+
+  _escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   /**

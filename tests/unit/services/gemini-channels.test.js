@@ -103,6 +103,7 @@ describe('getChannels - valid file', () => {
     expect(ch.enabled).toBe(true);       // default applied
     expect(ch.weight).toBe(1);           // default applied
     expect(ch.modelRedirects).toEqual([]); // default applied
+    expect(ch.apiFormat).toBe('gemini_api');
     expect(ch.gatewaySourceType).toBe('gemini'); // normalizeGatewaySourceType stub
     expect(ch.websiteUrl).toBe('https://ai.google.dev');
   });
@@ -147,11 +148,13 @@ describe('createChannel', () => {
     const ch = service.createChannel('Beta', 'https://beta.com', 'k', 'gemini-1.5', {
       weight: 3,
       maxConcurrency: 5,
-      enabled: false
+      enabled: false,
+      apiFormat: 'vertex_ai_v1'
     });
     expect(ch.weight).toBe(3);
     expect(ch.maxConcurrency).toBe(5);
     expect(ch.enabled).toBe(false);
+    expect(ch.apiFormat).toBe('vertex_ai_v1');
   });
 });
 
@@ -160,10 +163,11 @@ describe('createChannel', () => {
 describe('updateChannel', () => {
   it('updates channel fields and persists the change', () => {
     const ch = service.createChannel('Gamma', 'https://gamma.com', 'key-g');
-    const updated = service.updateChannel(ch.id, { name: 'Gamma-Updated', weight: 2 });
+    const updated = service.updateChannel(ch.id, { name: 'Gamma-Updated', weight: 2, apiFormat: 'vertex_ai_v1' });
 
     expect(updated.name).toBe('Gamma-Updated');
     expect(updated.weight).toBe(2);
+    expect(updated.apiFormat).toBe('vertex_ai_v1');
     expect(updated.id).toBe(ch.id); // ID preserved
 
     const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));

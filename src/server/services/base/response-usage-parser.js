@@ -218,6 +218,48 @@ function parseNonStreamingUsage(parsed) {
   return parseSSEUsage(parsed, '');
 }
 
+function splitSSEEvents(buffer = '') {
+  const normalized = String(buffer || '');
+  const events = [];
+  let cursor = 0;
+  const separator = /\r?\n\r?\n/g;
+  let match;
+
+  while ((match = separator.exec(normalized)) !== null) {
+    events.push(normalized.slice(cursor, match.index));
+    cursor = separator.lastIndex;
+  }
+
+  return {
+    events,
+    remainder: normalized.slice(cursor)
+  };
+}
+
+function parseSSEEventText(eventText = '') {
+  if (!String(eventText || '').trim()) {
+    return null;
+  }
+
+  let eventType = '';
+  const dataLines = [];
+
+  String(eventText).split(/\r?\n/).forEach((line) => {
+    if (line.startsWith('event:')) {
+      eventType = line.substring(6).trim();
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.substring(5).trim());
+    }
+  });
+
+  const data = dataLines.join('\n');
+  if (!data || data === '[DONE]') {
+    return null;
+  }
+
+  return { eventType, data };
+}
+
 /**
  * 将解析结果合并到 tokenData 对象。
  *
@@ -260,6 +302,8 @@ function createTokenData() {
 module.exports = {
   parseSSEUsage,
   parseNonStreamingUsage,
+  splitSSEEvents,
+  parseSSEEventText,
   mergeUsageIntoTokenData,
   createTokenData
 };

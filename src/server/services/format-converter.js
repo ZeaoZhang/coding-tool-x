@@ -1,10 +1,12 @@
 /**
  * 格式转换服务
  *
- * 支持 Claude Code ↔ Codex CLI 格式互转
+ * 支持 Claude Code ↔ Codex CLI/Gemini CLI 格式互转
  * - Skills: SKILL.md 格式转换
  * - Commands/Prompts: 命令/提示格式转换
  */
+
+const tomlStringify = require('@iarna/toml').stringify;
 
 // Codex CLI 限制
 const CODEX_LIMITS = {
@@ -435,6 +437,35 @@ function convertCommandToCodex(claudeContent, options = {}) {
 }
 
 /**
+ * 转换 Command: Claude Code → Gemini CLI (Custom Command TOML)
+ */
+function convertCommandToGemini(claudeContent, options = {}) {
+  const { frontmatter, body } = parseFrontmatter(claudeContent);
+  const warnings = [];
+
+  const commandConfig = {
+    prompt: body || ''
+  };
+
+  if (frontmatter.description) {
+    commandConfig.description = frontmatter.description;
+  }
+
+  const unsupportedFields = ['allowed-tools', 'model', 'context', 'agent', 'hooks'];
+  for (const field of unsupportedFields) {
+    if (frontmatter[field]) {
+      warnings.push(`${field} 字段在 Gemini commands 中不支持，已忽略`);
+    }
+  }
+
+  return {
+    content: tomlStringify(commandConfig),
+    warnings,
+    format: 'gemini'
+  };
+}
+
+/**
  * 转换 Command: Codex CLI (Custom Prompt) → Claude Code
  */
 function convertCommandToClaude(codexContent, options = {}) {
@@ -606,6 +637,7 @@ module.exports = {
 
   // Commands 转换
   convertCommandToCodex,
+  convertCommandToGemini,
   convertCommandToClaude,
   convertCommandsBatch,
 
