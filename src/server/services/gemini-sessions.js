@@ -5,6 +5,9 @@ const { HOME_DIR } = require('../../config/paths');
 const { getGeminiDir } = require('./gemini-config');
 const { resolveModelPricing } = require('../utils/pricing');
 
+const HASH_RE = /^[a-f0-9]{64}$/;
+const SESSION_FILE_RE = /^session-(.*)-([a-f0-9]+)\.(json|jsonl)$/;
+
 // 路径映射缓存
 let pathMappingCache = null;
 let pathMappingCacheTime = 0;
@@ -24,6 +27,266 @@ function getTmpDir() {
  */
 function getFilePathHash(filePath) {
   return crypto.createHash('sha256').update(filePath).digest('hex');
+}
+
+function isDirectory(dirPath) {
+  try {
+    return fs.statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function readTextFile(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+function readProjectRootFile(projectDir) {
+  const projectRoot = readTextFile(path.join(projectDir, '.project_root')).trim();
+  return projectRoot || null;
+}
+
+function loadProjectRootsByStorageName() {
+  const projectsPath = path.join(getGeminiDir(), 'projects.json');
+  const content = readTextFile(projectsPath);
+  if (!content) {
+    return new Map();
+  }
+
+  try {
+    const parsed = JSON.parse(content);
+    const projects = parsed && typeof parsed.projects === 'object' && parsed.projects
+      ? parsed.projects
+      : {};
+    return new Map(
+      Object.entries(projects)
+        .filter(([projectRoot, storageName]) => projectRoot && typeof storageName === 'string')
+        .map(([projectRoot, storageName]) => [storageName, projectRoot])
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+function extractContentText(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item && typeof item.text === 'string') return item.text;
+        if (item && typeof item.content === 'string') return item.content;
+        if (item && typeof item === 'object') return JSON.stringify(item);
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  if (value && typeof value.text === 'string') {
+    return value.text;
+  }
+
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+
+  return '';
+}
+
+function normalizeMessageRecord(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+
+  const normalized = { ...record };
+  if (Object.prototype.hasOwnProperty.call(record, 'content')) {
+    normalized.content = extractContentText(record.content);
+  }
+  return normalized;
+}
+
+function upsertMessage(messages, indexById, message) {
+  if (!message) {
+    return;
+  }
+
+  if (message.id && indexById.has(message.id)) {
+    const index = indexById.get(message.id);
+    messages[index] = {
+      ...messages[index],
+      ...message
+    };
+    return;
+  }
+
+  if (message.id) {
+    indexById.set(message.id, messages.length);
+  }
+  messages.push(message);
+}
+
+function normalizeSessionObject(session) {
+  if (!session || typeof session !== 'object') {
+    return null;
+  }
+
+  const messages = [];
+  const indexById = new Map();
+  if (Array.isArray(session.messages)) {
+    session.messages.forEach((message) => {
+      upsertMessage(messages, indexById, normalizeMessageRecord(message));
+    });
+  }
+
+  return {
+    ...session,
+    messages
+  };
+}
+
+function parseSessionContent(content) {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return normalizeSessionObject(JSON.parse(trimmed));
+  } catch {
+    // Current Gemini CLI stores sessions as JSONL. Fall through to line parsing.
+  }
+
+  const session = {};
+  const messages = [];
+  const indexById = new Map();
+  const lines = trimmed.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+
+  lines.forEach((line) => {
+    const record = JSON.parse(line);
+    if (record.$set && typeof record.$set === 'object') {
+      Object.assign(session, record.$set);
+      return;
+    }
+
+    if (record.type) {
+      upsertMessage(messages, indexById, normalizeMessageRecord(record));
+      return;
+    }
+
+    if (record && typeof record === 'object') {
+      Object.assign(session, record);
+    }
+  });
+
+  return normalizeSessionObject({
+    ...session,
+    messages
+  });
+}
+
+function readSessionHeader(filePath) {
+  const content = readTextFile(filePath).trim();
+  if (!content) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    const firstLine = content.split(/\r?\n/).find(line => line.trim());
+    if (!firstLine) {
+      return null;
+    }
+    try {
+      return JSON.parse(firstLine);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function scanProjectEntries() {
+  const tmpDir = getTmpDir();
+
+  if (!isDirectory(tmpDir)) {
+    return [];
+  }
+
+  const projectRootsByStorageName = loadProjectRootsByStorageName();
+  const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+
+  return entries
+    .filter(entry => entry.isDirectory())
+    .map((entry) => {
+      const projectDir = path.join(tmpDir, entry.name);
+      const chatsDir = path.join(projectDir, 'chats');
+      const projectRoot = readProjectRootFile(projectDir) || projectRootsByStorageName.get(entry.name) || null;
+      const projectHash = HASH_RE.test(entry.name)
+        ? entry.name
+        : (projectRoot ? getFilePathHash(projectRoot) : null);
+
+      if (!isDirectory(chatsDir) && !HASH_RE.test(entry.name)) {
+        return null;
+      }
+
+      return {
+        storageName: entry.name,
+        projectDir,
+        chatsDir,
+        projectRoot,
+        projectHash
+      };
+    })
+    .filter(Boolean);
+}
+
+function scanEntrySessionFiles(projectEntry) {
+  if (!projectEntry || !isDirectory(projectEntry.chatsDir)) {
+    return [];
+  }
+
+  const entries = fs.readdirSync(projectEntry.chatsDir, { withFileTypes: true });
+
+  return entries
+    .filter(entry => entry.isFile() && SESSION_FILE_RE.test(entry.name))
+    .map(entry => {
+      const match = entry.name.match(SESSION_FILE_RE);
+
+      return {
+        filePath: path.join(projectEntry.chatsDir, entry.name),
+        timestamp: match[1],
+        shortId: match[2],
+        extension: match[3],
+        projectHash: projectEntry.projectHash,
+        storageName: projectEntry.storageName,
+        projectDir: projectEntry.projectDir,
+        projectRoot: projectEntry.projectRoot
+      };
+    });
+}
+
+function resolveProjectHashForEntry(projectEntry) {
+  if (projectEntry.projectHash) {
+    return projectEntry.projectHash;
+  }
+
+  const sessionFiles = scanEntrySessionFiles(projectEntry);
+  for (const file of sessionFiles) {
+    const header = readSessionHeader(file.filePath);
+    if (header?.projectHash) {
+      return header.projectHash;
+    }
+  }
+
+  return projectEntry.storageName;
 }
 
 /**
@@ -94,15 +357,35 @@ function buildPathMapping() {
     return pathMappingCache;
   }
 
-  const projectHashes = scanProjects();
-  if (projectHashes.length === 0) {
+  const projectEntries = scanProjectEntries();
+  if (projectEntries.length === 0) {
     pathMappingCache = new Map();
     pathMappingCacheTime = now;
     return pathMappingCache;
   }
 
-  const targetHashes = new Set(projectHashes);
   const results = new Map();
+  const targetHashes = new Set();
+  projectEntries.forEach((entry) => {
+    const projectHash = resolveProjectHashForEntry(entry);
+    if (!projectHash) {
+      return;
+    }
+    if (entry.projectRoot) {
+      results.set(projectHash, entry.projectRoot);
+      return;
+    }
+    if (HASH_RE.test(projectHash)) {
+      targetHashes.add(projectHash);
+    }
+  });
+
+  if (targetHashes.size === 0) {
+    pathMappingCache = results;
+    pathMappingCacheTime = now;
+    return results;
+  }
+
   const homeDir = HOME_DIR;
 
   // 定义要扫描的目录及其最大深度
@@ -144,19 +427,17 @@ function buildPathMapping() {
  * @returns {Array} 项目 hash 数组
  */
 function scanProjects() {
-  const tmpDir = getTmpDir();
-
-  if (!fs.existsSync(tmpDir)) {
-    return [];
-  }
-
-  const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
-
-  return entries
-    .filter(entry => entry.isDirectory())
-    // 过滤掉非项目目录（如 bin）- projectHash 是 64 位十六进制字符串
-    .filter(entry => /^[a-f0-9]{64}$/.test(entry.name))
-    .map(entry => entry.name); // 项目 hash
+  const seen = new Set();
+  return scanProjectEntries()
+    .map(resolveProjectHashForEntry)
+    .filter(Boolean)
+    .filter((projectHash) => {
+      if (seen.has(projectHash)) {
+        return false;
+      }
+      seen.add(projectHash);
+      return true;
+    });
 }
 
 /**
@@ -165,32 +446,12 @@ function scanProjects() {
  * @returns {Array} 会话文件路径数组
  */
 function scanProjectSessions(projectHash) {
-  const chatsDir = path.join(getTmpDir(), projectHash, 'chats');
-
-  if (!fs.existsSync(chatsDir)) {
-    return [];
-  }
-
-  const entries = fs.readdirSync(chatsDir, { withFileTypes: true });
-
-  return entries
-    .filter(entry => entry.isFile() && entry.name.match(/^session-.*\.json$/))
-    .map(entry => {
-      const filePath = path.join(chatsDir, entry.name);
-      // 文件名格式：session-2025-11-23T02-09-87570eb4.json
-      // session-{timestamp}-{shortId}.json
-      const match = entry.name.match(/^session-(.*)-([a-f0-9]+)\.json$/);
-
-      if (!match) return null;
-
-      return {
-        filePath,
-        timestamp: match[1],
-        shortId: match[2],
-        projectHash
-      };
-    })
-    .filter(Boolean);
+  return scanProjectEntries()
+    .filter((entry) => entry.storageName === projectHash || resolveProjectHashForEntry(entry) === projectHash)
+    .flatMap((entry) => scanEntrySessionFiles({
+      ...entry,
+      projectHash: resolveProjectHashForEntry(entry)
+    }));
 }
 
 /**
@@ -201,7 +462,10 @@ function scanProjectSessions(projectHash) {
 function readSessionMeta(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
-    const session = JSON.parse(content);
+    const session = parseSessionContent(content);
+    if (!session) {
+      return null;
+    }
 
     // Gemini 会话文件结构
     // {
@@ -212,7 +476,7 @@ function readSessionMeta(filePath) {
     //   messages: [...]
     // }
 
-    const messages = session.messages || [];
+    const messages = Array.isArray(session.messages) ? session.messages : [];
     const firstUserMessage = messages.find(msg => msg.type === 'user');
 
     // 计算总 tokens（从所有消息中累加）
@@ -243,7 +507,7 @@ function readSessionMeta(filePath) {
       startTime: session.startTime,
       lastUpdated: session.lastUpdated,
       messageCount: messages.length,
-      firstMessage: firstUserMessage ? firstUserMessage.content : '',
+      firstMessage: firstUserMessage ? extractContentText(firstUserMessage.content) : '',
       tokens: totalTokens,
       cost: totalCost,
       model: model || 'gemini-2.5-pro',
@@ -263,7 +527,7 @@ function readSessionMeta(filePath) {
 function readSessionFull(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(content);
+    return parseSessionContent(content);
   } catch (err) {
     console.error(`[Gemini Sessions] Failed to read session: ${filePath}`, err);
     return null;
@@ -275,11 +539,15 @@ function readSessionFull(filePath) {
  * @returns {Array} 会话对象数组
  */
 function getAllSessions() {
-  const projectHashes = scanProjects();
+  const projectEntries = scanProjectEntries();
   const allSessions = [];
 
-  projectHashes.forEach(projectHash => {
-    const sessionFiles = scanProjectSessions(projectHash);
+  projectEntries.forEach(projectEntry => {
+    const resolvedProjectHash = resolveProjectHashForEntry(projectEntry);
+    const sessionFiles = scanEntrySessionFiles({
+      ...projectEntry,
+      projectHash: resolvedProjectHash
+    });
 
     sessionFiles.forEach(file => {
       const meta = readSessionMeta(file.filePath);
@@ -299,6 +567,10 @@ function getAllSessions() {
 
       allSessions.push({
         ...meta,
+        projectHash: meta.projectHash || resolvedProjectHash,
+        storageName: projectEntry.storageName,
+        projectDir: projectEntry.projectDir,
+        projectRoot: projectEntry.projectRoot,
         filePath: file.filePath,
         size,
         mtime,
@@ -332,7 +604,9 @@ function normalizeSession(geminiSession) {
     cost: geminiSession.cost,
     model: geminiSession.model,
     projectHash: geminiSession.projectHash,
-    projectName: geminiSession.projectHash // 兼容前端统一使用 projectName
+    projectName: geminiSession.projectHash, // 兼容前端统一使用 projectName
+    storageName: geminiSession.storageName,
+    projectRoot: geminiSession.projectRoot
   };
 }
 
@@ -358,7 +632,7 @@ function getProjects() {
     const projectHash = session.projectHash;
 
     if (!projectMap.has(projectHash)) {
-      const projectPath = getProjectPath(projectHash);
+      const projectPath = session.projectRoot || getProjectPath(projectHash);
 
       // 如果找到了真实路径，使用目录名作为显示名称
       let displayName;
@@ -377,6 +651,8 @@ function getProjects() {
         name: projectHash,
         displayName,
         path: projectPath,
+        fullPath: projectPath,
+        storageName: session.storageName,
         sessionCount: 0,
         lastUpdated: session.lastUpdated,
         source: 'gemini'
@@ -454,7 +730,9 @@ function deleteSession(sessionId) {
  * @returns {Object} 删除结果
  */
 function deleteProject(projectHash) {
-  const projectDir = path.join(getTmpDir(), projectHash);
+  const projectEntry = scanProjectEntries()
+    .find(entry => entry.storageName === projectHash || resolveProjectHashForEntry(entry) === projectHash);
+  const projectDir = projectEntry ? projectEntry.projectDir : path.join(getTmpDir(), projectHash);
 
   if (!fs.existsSync(projectDir)) {
     throw new Error('Project not found');
@@ -542,8 +820,8 @@ function searchSessions(keyword, contextLength = 35) {
       let content = '';
 
       // 提取消息内容
-      if (msg.type === 'user' || msg.type === 'assistant') {
-        content = msg.content || '';
+      if (msg.type === 'user' || msg.type === 'assistant' || msg.type === 'gemini') {
+        content = extractContentText(msg.content);
       }
 
       // 搜索关键词
@@ -654,7 +932,8 @@ function forkSession(sessionId, options = {}) {
   const newSessionId = crypto.randomUUID();
   const timestamp = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
   const shortId = crypto.randomBytes(4).toString('hex');
-  const newFileName = `session-${timestamp}-${shortId}.json`;
+  const newExtension = path.extname(sourceSession.filePath) === '.jsonl' ? 'jsonl' : 'json';
+  const newFileName = `session-${timestamp}-${shortId}.${newExtension}`;
 
   // 创建新会话
   const newSession = {
@@ -667,11 +946,16 @@ function forkSession(sessionId, options = {}) {
   };
 
   // 写入新文件
-  const chatsDir = path.join(getTmpDir(), sourceSession.projectHash, 'chats');
+  const chatsDir = path.dirname(sourceSession.filePath);
   const newFilePath = path.join(chatsDir, newFileName);
 
   try {
-    fs.writeFileSync(newFilePath, JSON.stringify(newSession, null, 2), 'utf8');
+    if (newExtension === 'jsonl') {
+      const { messages, ...sessionHeader } = newSession;
+      fs.writeFileSync(newFilePath, `${JSON.stringify(sessionHeader)}\n${truncatedMessages.map(message => JSON.stringify(message)).join('\n')}\n`, 'utf8');
+    } else {
+      fs.writeFileSync(newFilePath, JSON.stringify(newSession, null, 2), 'utf8');
+    }
     if (options.alias) {
       const { setAlias } = require('./alias');
       setAlias(newSessionId, options.alias);
@@ -695,13 +979,15 @@ function forkSession(sessionId, options = {}) {
  */
 function getProjectAndSessionCounts() {
   try {
-    const projectHashes = scanProjects();
+    const projectEntries = scanProjectEntries();
     let sessionCount = 0;
-    projectHashes.forEach((hash) => {
-      sessionCount += scanProjectSessions(hash).length;
+    const projectHashes = new Set();
+    projectEntries.forEach((entry) => {
+      projectHashes.add(resolveProjectHashForEntry(entry));
+      sessionCount += scanEntrySessionFiles(entry).length;
     });
     return {
-      projectCount: projectHashes.length,
+      projectCount: Array.from(projectHashes).filter(Boolean).length,
       sessionCount
     };
   } catch (err) {
