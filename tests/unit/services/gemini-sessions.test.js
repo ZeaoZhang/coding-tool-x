@@ -23,6 +23,21 @@ function createGeminiSession(projectHash, fileName, session) {
   return sessionPath;
 }
 
+function createGeminiJsonlSession(storageName, fileName, header, records = [], projectRoot = null) {
+  const projectDir = path.join(geminiDir, 'tmp', storageName);
+  const sessionPath = path.join(projectDir, 'chats', fileName);
+  fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+  if (projectRoot) {
+    fs.writeFileSync(path.join(projectDir, '.project_root'), projectRoot, 'utf8');
+  }
+  fs.writeFileSync(
+    sessionPath,
+    [header, ...records].map(record => JSON.stringify(record)).join('\n') + '\n',
+    'utf8'
+  );
+  return sessionPath;
+}
+
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-sessions-service-'));
   homeDir = path.join(testDir, 'home');
@@ -92,22 +107,116 @@ describe('gemini-sessions project discovery and querying', () => {
     expect(geminiSessions.getProjectPath(resolvedHash)).toBe(projectPath);
     expect(geminiSessions.getProjectPath(unresolvedHash)).toBeNull();
     expect(geminiSessions.getProjects()).toEqual([
-      {
+      expect.objectContaining({
         name: unresolvedHash,
         displayName: `Project ${unresolvedHash.substring(0, 8)}`,
         path: null,
+        fullPath: null,
         sessionCount: 1,
         lastUpdated: '2026-03-18T10:00:00.000Z',
         source: 'gemini'
-      },
-      {
+      }),
+      expect.objectContaining({
         name: resolvedHash,
         displayName: 'demo-app',
         path: projectPath,
+        fullPath: projectPath,
         sessionCount: 1,
         lastUpdated: '2026-03-17T10:00:00.000Z',
         source: 'gemini'
-      }
+      })
+    ]);
+  });
+
+  test('discovers current Gemini slug directories and parses JSONL session streams', () => {
+    const projectPath = path.join(homeDir, 'workspace', 'slug-app');
+    fs.mkdirSync(projectPath, { recursive: true });
+    const projectHash = hashPath(projectPath);
+    const jsonlPath = createGeminiJsonlSession(
+      'slug-app',
+      'session-2026-05-16T13-48-d5bee61b.jsonl',
+      {
+        sessionId: 'jsonl-session',
+        projectHash,
+        startTime: '2026-05-16T13:48:39.855Z',
+        lastUpdated: '2026-05-16T13:48:39.855Z',
+        kind: 'main'
+      },
+      [
+        {
+          id: 'user-1',
+          timestamp: '2026-05-16T13:49:00.000Z',
+          type: 'user',
+          content: [{ text: 'Find JSONL needle' }]
+        },
+        {
+          $set: {
+            lastUpdated: '2026-05-16T13:50:00.000Z'
+          }
+        },
+        {
+          id: 'assistant-1',
+          timestamp: '2026-05-16T13:50:00.000Z',
+          type: 'gemini',
+          content: 'JSONL Needle answer',
+          model: 'gemini-3.1-pro-preview',
+          tokens: { total: 12, input: 5, output: 7 }
+        },
+        {
+          id: 'assistant-1',
+          timestamp: '2026-05-16T13:50:01.000Z',
+          type: 'gemini',
+          content: 'JSONL Needle answer',
+          model: 'gemini-3.1-pro-preview',
+          tokens: { total: 12, input: 5, output: 7 },
+          toolCalls: [{ name: 'read_file' }]
+        }
+      ],
+      projectPath
+    );
+
+    expect(geminiSessions.getProjectAndSessionCounts()).toEqual({ projectCount: 1, sessionCount: 1 });
+    expect(geminiSessions.getProjectPath(projectHash)).toBe(projectPath);
+    expect(geminiSessions.getProjects()).toEqual([
+      expect.objectContaining({
+        name: projectHash,
+        displayName: 'slug-app',
+        path: projectPath,
+        fullPath: projectPath,
+        storageName: 'slug-app',
+        sessionCount: 1,
+        lastUpdated: '2026-05-16T13:50:00.000Z',
+        source: 'gemini'
+      })
+    ]);
+    expect(geminiSessions.getProjectSessions(projectHash)).toEqual([
+      expect.objectContaining({
+        sessionId: 'jsonl-session',
+        filePath: jsonlPath,
+        firstMessage: 'Find JSONL needle',
+        projectHash,
+        projectName: projectHash,
+        storageName: 'slug-app',
+        projectRoot: projectPath,
+        model: 'gemini-3.1-pro-preview',
+        tokens: 12,
+        source: 'gemini'
+      })
+    ]);
+    expect(geminiSessions.getSessionById('jsonl-session').messages).toEqual([
+      expect.objectContaining({ type: 'user', content: 'Find JSONL needle' }),
+      expect.objectContaining({ type: 'gemini', content: 'JSONL Needle answer', toolCalls: [{ name: 'read_file' }] })
+    ]);
+    expect(geminiSessions.searchSessions('needle')).toEqual([
+      expect.objectContaining({
+        sessionId: 'jsonl-session',
+        projectHash,
+        matchCount: 2,
+        matches: [
+          expect.objectContaining({ role: 'user', context: 'Find JSONL needle' }),
+          expect.objectContaining({ role: 'gemini', context: 'JSONL Needle answer' })
+        ]
+      })
     ]);
   });
 
@@ -175,7 +284,9 @@ describe('gemini-sessions project discovery and querying', () => {
         cost: 0,
         model: 'gemini-2.5-pro',
         projectHash,
-        projectName: projectHash
+        projectName: projectHash,
+        storageName: projectHash,
+        projectRoot: null
       },
       {
         sessionId: 'older-session',
@@ -190,7 +301,9 @@ describe('gemini-sessions project discovery and querying', () => {
         cost: expect.any(Number),
         model: 'gemini-2.5-pro',
         projectHash,
-        projectName: projectHash
+        projectName: projectHash,
+        storageName: projectHash,
+        projectRoot: null
       }
     ]);
     expect(geminiSessions.getRecentSessions(1)).toEqual([
