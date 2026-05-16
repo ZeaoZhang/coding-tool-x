@@ -155,10 +155,10 @@ function truncateDesc(desc) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 16px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 6px;
+  border-radius: 12px;
   transition: all 0.15s ease;
   cursor: pointer;
 }
@@ -166,7 +166,7 @@ function truncateDesc(desc) {
 .command-card:hover {
   border-color: #18a058;
   background: var(--bg-tertiary);
-  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 
 .command-card.is-project {

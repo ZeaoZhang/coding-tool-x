@@ -562,7 +562,7 @@ onUnmounted(() => {
 
 /* Claude 渠道列宽 (6列) */
 .col-channel-claude {
-  flex: 0 0 90px;
+  flex: 1 1 80px;
   min-width: 0;
   overflow: hidden;
 }
@@ -574,8 +574,8 @@ onUnmounted(() => {
 }
 
 .col-time-claude {
-  flex: 0 0 100px;
-  min-width: 100px;
+  flex: 0 0 85px;
+  min-width: 85px;
   font-family: monospace;
   font-size: 11px;
   justify-content: flex-end;
@@ -585,7 +585,7 @@ onUnmounted(() => {
 
 /* Codex 渠道列宽 (7列，需要压缩) */
 .col-channel-codex {
-  flex: 0 0 75px;
+  flex: 1 1 65px;
   min-width: 0;
   overflow: hidden;
 }
@@ -597,8 +597,8 @@ onUnmounted(() => {
 }
 
 .col-time-codex {
-  flex: 0 0 92px;
-  min-width: 92px;
+  flex: 0 0 80px;
+  min-width: 80px;
   font-family: monospace;
   font-size: 11px;
   justify-content: flex-end;
@@ -608,7 +608,7 @@ onUnmounted(() => {
 
 /* Gemini 渠道列宽 (6列) */
 .col-channel-gemini {
-  flex: 0 0 90px;
+  flex: 1 1 80px;
   min-width: 0;
   overflow: hidden;
 }
@@ -620,8 +620,8 @@ onUnmounted(() => {
 }
 
 .col-time-gemini {
-  flex: 0 0 100px;
-  min-width: 100px;
+  flex: 0 0 85px;
+  min-width: 85px;
   font-family: monospace;
   font-size: 11px;
   justify-content: flex-end;
@@ -631,7 +631,7 @@ onUnmounted(() => {
 
 /* OpenCode 渠道列宽 (7列，需要压缩) */
 .col-channel-opencode {
-  flex: 0 0 75px;
+  flex: 1 1 65px;
   min-width: 0;
   overflow: hidden;
 }
@@ -643,8 +643,8 @@ onUnmounted(() => {
 }
 
 .col-time-opencode {
-  flex: 0 0 92px;
-  min-width: 92px;
+  flex: 0 0 80px;
+  min-width: 80px;
   font-family: monospace;
   font-size: 11px;
   justify-content: flex-end;
