@@ -73,14 +73,14 @@ function truncate(text, len) {
 .skill-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 8px;
-  padding: 12px 16px;
+  border-radius: 12px;
+  padding: 16px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 .skill-card:hover {
   border-color: var(--primary-color);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
 }
 .skill-card.installed {
   border-left: 3px solid var(--success-color);
