@@ -135,6 +135,11 @@ describe('proxy-utils', () => {
         .toBe('https://api.example.com');
     });
 
+    it('should deduplicate /v1beta when both baseUrl and path have it', () => {
+      expect(resolveTargetUrl('https://api.example.com/v1beta', '/v1beta/models/gemini-2.5-pro:generateContent'))
+        .toBe('https://api.example.com');
+    });
+
     it('should not strip /v1 when path does not start with /v1', () => {
       expect(resolveTargetUrl('https://api.example.com/v1', '/chat/completions'))
         .toBe('https://api.example.com/v1');
