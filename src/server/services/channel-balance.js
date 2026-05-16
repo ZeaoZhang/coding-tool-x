@@ -1,7 +1,10 @@
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { URL } = require('url');
+const { PATHS } = require('../../config/paths');
 const { loadUIConfig } = require('./ui-config');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -16,6 +19,66 @@ const UNSUPPORTED_BALANCE_PLATFORMS = new Set(['dashscope', 'modelscope']);
 
 const balanceCache = new Map();
 const balanceStrategyCache = new Map();
+let strategyCacheLoaded = false;
+
+function getStrategyCacheFilePath() {
+  return PATHS.channelBalanceStrategies
+    || path.join(PATHS.storage || path.dirname(PATHS.channelModels), 'cache', 'channel-balance-strategies.json');
+}
+
+function loadPersistedStrategyCache() {
+  if (strategyCacheLoaded) return;
+  strategyCacheLoaded = true;
+
+  try {
+    const filePath = getStrategyCacheFilePath();
+    if (!fs.existsSync(filePath)) return;
+    const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    const entries = payload && typeof payload === 'object' ? payload.entries : null;
+    if (!entries || typeof entries !== 'object') return;
+    Object.entries(entries).forEach(([key, value]) => {
+      const strategy = value?.strategy && typeof value.strategy === 'object' ? value.strategy : null;
+      if (strategy?.type) {
+        balanceStrategyCache.set(key, strategy);
+      }
+    });
+  } catch {
+    // A corrupt strategy cache should only cost a fresh probe, not break balance display.
+  }
+}
+
+function writePersistedStrategyCache() {
+  try {
+    const filePath = getStrategyCacheFilePath();
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const entries = {};
+    balanceStrategyCache.forEach((strategy, key) => {
+      if (strategy?.type) {
+        entries[key] = {
+          strategy,
+          updatedAt: nowIso()
+        };
+      }
+    });
+    fs.writeFileSync(filePath, JSON.stringify({ version: 1, entries }, null, 2), 'utf8');
+  } catch {
+    // Persisting the optimization is best-effort; in-memory cache still works.
+  }
+}
+
+function rememberBalanceStrategy(key, strategy) {
+  if (!key || !strategy?.type) return;
+  loadPersistedStrategyCache();
+  balanceStrategyCache.set(key, strategy);
+  writePersistedStrategyCache();
+}
+
+function forgetBalanceStrategy(key) {
+  loadPersistedStrategyCache();
+  if (balanceStrategyCache.delete(key)) {
+    writePersistedStrategyCache();
+  }
+}
 
 function nowIso(now = Date.now()) {
   return new Date(now).toISOString();
@@ -1275,24 +1338,25 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
 
   let lastSnapshot = null;
   const token = resolveBalanceToken(channel);
+  loadPersistedStrategyCache();
   const cachedStrategy = balanceStrategyCache.get(key);
   if (cachedStrategy) {
     const strategyResult = await tryBalanceStrategy(cachedStrategy, token, channel);
     if (strategyResult?.snapshot?.visible) {
-      balanceStrategyCache.set(key, strategyResult.strategy);
+      rememberBalanceStrategy(key, strategyResult.strategy);
       balanceCache.set(key, {
         snapshot: strategyResult.snapshot,
         expiresAt: currentTime + CACHE_TTL_MS
       });
       return strategyResult.snapshot;
     }
-    balanceStrategyCache.delete(key);
+    forgetBalanceStrategy(key);
   }
 
   for (const baseUrl of bases) {
     const result = await probeBalanceFromBase(baseUrl, channel, token);
     if (result?.snapshot?.visible) {
-      balanceStrategyCache.set(key, result.strategy);
+      rememberBalanceStrategy(key, result.strategy);
       balanceCache.set(key, {
         snapshot: result.snapshot,
         expiresAt: currentTime + CACHE_TTL_MS
@@ -1333,6 +1397,10 @@ function getChannelsForSource(source) {
   return [];
 }
 
+function getEnabledBalanceChannels(source) {
+  return getChannelsForSource(source).filter(channel => channel?.enabled !== false);
+}
+
 function isBalanceDisplayEnabled() {
   try {
     return loadUIConfig().channelBalance?.showRemaining === true;
@@ -1369,7 +1437,7 @@ async function getChannelBalances(source, options = {}) {
     return { enabled: false, source: normalizedSource, balances: {} };
   }
 
-  const channels = getChannelsForSource(normalizedSource);
+  const channels = getEnabledBalanceChannels(normalizedSource);
   const entries = await mapWithConcurrency(channels, 4, async (channel) => {
     const snapshot = await refreshChannelBalanceSnapshot(normalizedSource, channel, options);
     return [channel.id, snapshot];
@@ -1388,7 +1456,7 @@ async function refreshChannelBalance(source, channelId) {
     return { enabled: false, source: normalizedSource, channelId, balance: makeHiddenSnapshot() };
   }
 
-  const channels = getChannelsForSource(normalizedSource);
+  const channels = getEnabledBalanceChannels(normalizedSource);
   const channel = channels.find(item => String(item.id) === String(channelId));
   if (!channel) {
     const error = new Error('Channel not found');
@@ -1408,6 +1476,7 @@ async function refreshChannelBalance(source, channelId) {
 function clearBalanceCache() {
   balanceCache.clear();
   balanceStrategyCache.clear();
+  strategyCacheLoaded = false;
 }
 
 module.exports = {
@@ -1435,6 +1504,7 @@ module.exports = {
     build88CodeUsageSnapshot,
     build88CodeSubscriptionSnapshot,
     buildBalanceProbeStrategies,
+    getEnabledBalanceChannels,
     runBalanceStrategy,
     refreshChannelBalanceSnapshot,
     makeVisibleSnapshot,
