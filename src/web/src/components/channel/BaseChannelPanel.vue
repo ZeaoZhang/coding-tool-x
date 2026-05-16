@@ -377,6 +377,7 @@ const helpers = {
   getChannelBalance: (channel) => state.balances[channel.id] || null,
   formatFreeze: (remaining) => `冻结 ${remaining || 0}s`,
   maskApiKey: (key) => {
+    if (key === undefined) return '已隐藏'
     if (!key) return '(未设置)'
     if (key.length <= 12) return '******'
     return `${key.slice(0, 8)}******${key.slice(-4)}`

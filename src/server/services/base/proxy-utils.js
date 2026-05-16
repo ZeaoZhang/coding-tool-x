@@ -67,10 +67,10 @@ function redirectModel(originalModel, channel, options = {}) {
 }
 
 /**
- * 解析代理目标 URL，避免 /v1/v1 重复
+ * 解析代理目标 URL，避免 API 版本段重复
  *
- * 当 baseUrl 以 /v1 结尾且请求路径也以 /v1 开头时，
- * 去掉 baseUrl 的 /v1 后缀，因为 http-proxy 会自动拼接 req.url。
+ * 当 baseUrl 和请求路径都包含同一个 API 版本段时，去掉 baseUrl 的
+ * 版本后缀，因为 http-proxy 会自动拼接 req.url。
  *
  * @param {string} baseUrl - 渠道配置的 base_url
  * @param {string} requestPath - 请求路径
@@ -80,6 +80,9 @@ function resolveTargetUrl(baseUrl, requestPath) {
   let target = baseUrl || '';
   if (target.endsWith('/')) {
     target = target.slice(0, -1);
+  }
+  if (target.endsWith('/v1beta') && requestPath.startsWith('/v1beta')) {
+    return target.slice(0, -7);
   }
   if (target.endsWith('/v1') && requestPath.startsWith('/v1')) {
     target = target.slice(0, -3);

@@ -301,6 +301,36 @@ export const useGlobalStore = defineStore('global', () => {
     }
   }
 
+  function mergeProxyChannels(existingChannels = [], incomingChannels = []) {
+    if (!Array.isArray(incomingChannels)) {
+      return existingChannels
+    }
+
+    const existingById = new Map(
+      existingChannels
+        .filter(channel => channel?.id)
+        .map(channel => [channel.id, channel])
+    )
+
+    return incomingChannels.map((incoming) => {
+      const existing = existingById.get(incoming?.id)
+      if (!existing) {
+        return incoming
+      }
+      if (!Object.prototype.hasOwnProperty.call(incoming, 'apiKey') && existing.apiKey) {
+        return {
+          ...existing,
+          ...incoming,
+          apiKey: existing.apiKey
+        }
+      }
+      return {
+        ...existing,
+        ...incoming
+      }
+    })
+  }
+
   if (typeof window !== 'undefined' && !window[ADVANCED_CONFIG_FLAG]) {
     window.addEventListener('advanced-config-change', (event) => {
       if (event.detail?.maxLogs) {
@@ -319,25 +349,25 @@ export const useGlobalStore = defineStore('global', () => {
     if (source === 'claude') {
       patchProxyState(claudeProxy, proxy, activeChannel)
       if (channels) {
-        claudeChannels.value = channels
+        claudeChannels.value = mergeProxyChannels(claudeChannels.value, channels)
         rebuildChannelSourceCache()
       }
     } else if (source === 'codex') {
       patchProxyState(codexProxy, proxy, activeChannel)
       if (channels) {
-        codexChannels.value = channels
+        codexChannels.value = mergeProxyChannels(codexChannels.value, channels)
         rebuildChannelSourceCache()
       }
     } else if (source === 'gemini') {
       patchProxyState(geminiProxy, proxy, activeChannel)
       if (channels) {
-        geminiChannels.value = channels
+        geminiChannels.value = mergeProxyChannels(geminiChannels.value, channels)
         rebuildChannelSourceCache()
       }
     } else if (source === 'opencode') {
       patchProxyState(opencodeProxy, proxy, activeChannel)
       if (channels) {
-        opencodeChannels.value = channels
+        opencodeChannels.value = mergeProxyChannels(opencodeChannels.value, channels)
         rebuildChannelSourceCache()
       }
     }
