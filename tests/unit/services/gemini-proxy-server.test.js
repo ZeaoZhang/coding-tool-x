@@ -1,0 +1,57 @@
+describe('gemini-proxy-server compatibility helpers', () => {
+  let proxyServer;
+
+  beforeEach(() => {
+    delete require.cache[require.resolve('../../../src/server/gemini-proxy-server')];
+    proxyServer = require('../../../src/server/gemini-proxy-server');
+  });
+
+  afterEach(() => {
+    delete require.cache[require.resolve('../../../src/server/gemini-proxy-server')];
+  });
+
+  test('strips function response ids for Vertex AI v1 payloads', () => {
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                id: 'call-1',
+                name: 'lookup',
+                response: { answer: 'ok' }
+              }
+            },
+            {
+              function_response: {
+                id: 'call-2',
+                name: 'search',
+                response: { result: 'found' }
+              }
+            }
+          ]
+        }
+      ]
+    };
+
+    expect(proxyServer._test.stripVertexFunctionResponseIds(body)).toBe(true);
+    expect(body.contents[0].parts[0].functionResponse).toEqual({
+      name: 'lookup',
+      response: { answer: 'ok' }
+    });
+    expect(body.contents[0].parts[1].function_response).toEqual({
+      name: 'search',
+      response: { result: 'found' }
+    });
+  });
+
+  test('builds Vertex AI v1 publisher model path from Gemini CLI model path', () => {
+    const baseUrl = 'https://us-central1-aiplatform.googleapis.com/v1/projects/demo/locations/us-central1/publishers/google';
+    const requestPath = '/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse';
+
+    expect(proxyServer._test.buildVertexAiV1Path(baseUrl, requestPath)).toBe(
+      '/models/gemini-2.5-pro:streamGenerateContent?alt=sse'
+    );
+  });
+});

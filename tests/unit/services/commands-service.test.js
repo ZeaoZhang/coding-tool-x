@@ -14,6 +14,7 @@ function stubModules() {
     exports: {
       NATIVE_PATHS: {
         claude: { settings: path.join(testDir, 'claude-settings.json') },
+        gemini: { dir: path.join(testDir, '.gemini') },
         opencode: { config: path.join(testDir, 'opencode-config') }
       }
     }
@@ -25,7 +26,6 @@ function stubModules() {
     filename: formatConverterPath,
     loaded: true,
     exports: {
-      parseCommandContent: vi.fn(),
       parseFrontmatter: (content = '') => {
         const match = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
         const frontmatter = {};
@@ -88,6 +88,10 @@ function stubModules() {
 
     async listRemoteItems() {
       return repoScannerState.remoteItems;
+    }
+
+    parseFrontmatter(content = '') {
+      return require('../../../src/server/services/format-converter').parseFrontmatter(content);
     }
 
     uninstall(relativePath) {
@@ -199,6 +203,45 @@ describe('CommandsService local command management', () => {
     expect(command.argumentHint).toBe('');
     expect(fs.readFileSync(command.fullPath, 'utf8')).not.toContain('allowed-tools');
   });
+
+  test('Gemini commands use TOML files in user and project scopes', () => {
+    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const service = new CommandsService('gemini');
+    const projectPath = path.join(testDir, 'project-gemini');
+
+    const created = service.createCommand({
+      name: 'review',
+      scope: 'user',
+      description: 'Review code',
+      allowedTools: 'Read,Edit',
+      argumentHint: 'file',
+      body: 'Review this'
+    });
+    const projectCommand = service.createCommand({
+      name: 'local',
+      scope: 'project',
+      projectPath,
+      namespace: 'team',
+      description: 'Local review',
+      body: 'Review locally'
+    });
+
+    expect(created.path).toBe('review.toml');
+    expect(created.description).toBe('Review code');
+    expect(created.body).toBe('Review this');
+    expect(created.allowedTools).toBe('');
+    expect(fs.readFileSync(created.fullPath, 'utf8')).toContain('prompt = "Review this"');
+    expect(fs.readFileSync(created.fullPath, 'utf8')).not.toContain('allowed-tools');
+    expect(projectCommand.path).toBe(path.join('team', 'local.toml'));
+
+    const listed = service.listCommands(projectPath);
+    expect(listed.total).toBe(2);
+    expect(listed.projectCount).toBe(1);
+
+    const deleted = service.deleteCommand('local', 'project', projectPath, 'team');
+    expect(deleted.success).toBe(true);
+    expect(service.getCommand('local', 'project', projectPath, 'team')).toBeNull();
+  });
 });
 
 describe('CommandsService remote merge and stats', () => {
@@ -230,6 +273,27 @@ describe('CommandsService remote merge and stats', () => {
     expect(stats.total).toBe(2);
     expect(stats.namespaces.team).toBe(1);
     expect(stats.namespaces['(root)']).toBe(1);
+  });
+
+  test('Gemini remote command parser reads TOML metadata and body', async () => {
+    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const service = new CommandsService('gemini');
+    const repo = { owner: 'google-gemini', name: 'gemini-cli', branch: 'main' };
+    const file = { path: '.gemini/commands/team/review.toml' };
+
+    service.repoScanner.fetchRawContent = vi.fn(async () => 'description = "Review code"\nprompt = "Check this change"\n');
+
+    const item = await service.repoScanner.fetchAndParseItem(file, repo, '.gemini/commands');
+
+    expect(item).toEqual(expect.objectContaining({
+      name: 'review',
+      namespace: 'team',
+      path: path.join('team', 'review.toml'),
+      description: 'Review code',
+      body: 'Check this change',
+      repoPath: '.gemini/commands/team/review.toml'
+    }));
+    expect(item.readmeUrl).toContain('google-gemini/gemini-cli');
   });
 
   test('repo management delegates to scanner', async () => {

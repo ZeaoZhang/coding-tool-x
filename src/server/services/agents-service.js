@@ -1,7 +1,7 @@
 /**
  * Agents 服务
  *
- * 管理 Claude/OpenCode 自定义代理的 CRUD 操作
+ * 管理 Claude/Codex/Gemini/OpenCode 自定义代理的 CRUD 操作
  * 支持从 GitHub 仓库扫描和安装代理
  */
 
@@ -16,12 +16,13 @@ const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 const CODEX_AGENTS_DIR = path.join(path.dirname(CODEX_CONFIG_PATH), 'agents');
 const CLAUDE_AGENTS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'agents');
+const GEMINI_AGENTS_DIR = path.join(NATIVE_PATHS.gemini.dir, 'agents');
 const CODEX_CONFIG_MODES = new Set(['none', 'managed', 'custom']);
 
 const PLATFORM_CONFIG = {
@@ -47,6 +48,11 @@ const PLATFORM_CONFIG = {
     userAgentsDir: CODEX_AGENTS_DIR,
     projectAgentsDir: () => null,
     repoType: 'agents'
+  },
+  gemini: {
+    userAgentsDir: GEMINI_AGENTS_DIR,
+    projectAgentsDir: (projectPath) => path.join(projectPath, '.gemini', 'agents'),
+    repoType: 'gemini-agents'
   }
 };
 

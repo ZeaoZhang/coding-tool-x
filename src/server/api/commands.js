@@ -1,14 +1,14 @@
 /**
  * Commands API 路由
  *
- * 管理 Claude Code 自定义命令
+ * 管理 Claude/Gemini/OpenCode 自定义命令
  */
 
 const express = require('express');
 const { CommandsService } = require('../services/commands-service');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'gemini', 'opencode'];
 const commandServices = new Map();
 
 function resolvePlatform(rawPlatform) {

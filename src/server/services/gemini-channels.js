@@ -6,6 +6,13 @@ const { resolveChannelWebsiteUrl } = require('../../config/channel-preset-websit
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
+const GEMINI_API_FORMATS = new Set(['gemini_api', 'vertex_ai_v1']);
+
+function normalizeGeminiApiFormat(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return GEMINI_API_FORMATS.has(normalized) ? normalized : 'gemini_api';
+}
+
 /**
  * Gemini 渠道管理服务（多渠道架构）
  *
@@ -118,6 +125,7 @@ function loadChannels() {
           balanceUserId: ch.balanceUserId || null,
           modelRedirects: ch.modelRedirects || [],
           speedTestModel: ch.speedTestModel || null,
+          apiFormat: normalizeGeminiApiFormat(ch.apiFormat),
           gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'gemini')
         };
         normalized.websiteUrl = resolveChannelWebsiteUrl('gemini', normalized);
@@ -169,6 +177,7 @@ function initializeFromEnv() {
         maxConcurrency: null,
         balanceToken: '',
         balanceUserId: null,
+        apiFormat: 'gemini_api',
         gatewaySourceType: 'gemini',
         createdAt: Date.now(),
         updatedAt: Date.now()
@@ -230,6 +239,7 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     balanceUserId: extraConfig.balanceUserId || null,
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
+    apiFormat: normalizeGeminiApiFormat(extraConfig.apiFormat),
     gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'gemini'),
     createdAt: Date.now(),
     updatedAt: Date.now()
@@ -275,6 +285,7 @@ function updateChannel(channelId, updates) {
     createdAt: oldChannel.createdAt, // 保持创建时间
     modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
     speedTestModel: updates.speedTestModel !== undefined ? updates.speedTestModel : (oldChannel.speedTestModel || null),
+    apiFormat: updates.apiFormat !== undefined ? normalizeGeminiApiFormat(updates.apiFormat) : normalizeGeminiApiFormat(oldChannel.apiFormat),
     balanceToken: updates.balanceToken !== undefined ? updates.balanceToken : (oldChannel.balanceToken || ''),
     balanceUserId: updates.balanceUserId !== undefined ? updates.balanceUserId : (oldChannel.balanceUserId || null),
     gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
@@ -502,5 +513,8 @@ module.exports = {
   isProxyConfig,
   getGeminiDir,
   applyChannelToSettings,
-  disableAllChannels
+  disableAllChannels,
+  _test: {
+    normalizeGeminiApiFormat
+  }
 };

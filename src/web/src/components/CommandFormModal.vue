@@ -118,11 +118,15 @@ const isEdit = computed(() => !!props.command)
 const userScopeLabel = computed(() =>
   props.platform === 'opencode'
     ? '用户级 (~/.config/opencode/commands/)'
+    : props.platform === 'gemini'
+    ? '用户级 (~/.gemini/commands/)'
     : '用户级 (~/.claude/commands/)'
 )
 const projectScopeLabel = computed(() =>
   props.platform === 'opencode'
     ? '项目级 (.opencode/commands/)'
+    : props.platform === 'gemini'
+    ? '项目级 (.gemini/commands/)'
     : '项目级 (.claude/commands/)'
 )
 

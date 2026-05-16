@@ -8,14 +8,24 @@ export const geminiPresets = [
     name: 'Google AI',
     category: 'official',
     websiteUrl: 'https://ai.google.dev',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta'
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    apiFormat: 'gemini_api'
+  },
+  {
+    id: 'vertex_ai_v1',
+    name: 'Vertex AI v1',
+    category: 'official',
+    websiteUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs',
+    baseUrl: 'https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/publishers/google',
+    apiFormat: 'vertex_ai_v1'
   },
   {
     id: 'custom',
     name: '自定义',
     category: 'custom',
     websiteUrl: '',
-    baseUrl: ''
+    baseUrl: '',
+    apiFormat: 'gemini_api'
   }
 ]
 

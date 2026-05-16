@@ -170,11 +170,15 @@ const userScopeLabel = computed(() =>
     ? '用户级 (~/.codex/config.toml)'
     : props.platform === 'opencode'
     ? '用户级 (~/.config/opencode/agents/)'
+    : props.platform === 'gemini'
+    ? '用户级 (~/.gemini/agents/)'
     : '用户级 (~/.claude/agents/)'
 )
 const projectScopeLabel = computed(() =>
   props.platform === 'opencode'
     ? '项目级 (.opencode/agents/)'
+    : props.platform === 'gemini'
+    ? '项目级 (.gemini/agents/)'
     : '项目级 (.claude/agents/)'
 )
 

@@ -16,14 +16,13 @@
       </div>
       <h2 class="channel-title">{{ channelTitle }}</h2>
 
-      <!-- Skills 区域 (Claude / Codex / Gemini / OpenCode) -->
+      <!-- 配置入口 (Claude / Codex / Gemini / OpenCode) -->
       <div v-if="['claude', 'codex', 'gemini', 'opencode'].includes(channelType)" class="claude-extra-area">
-        <!-- Skills 管理按钮 -->
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-button
               text
-              class="skills-button"
+              class="config-shortcut-button"
               @click="openSkillsManager"
               title="Skills 技能管理"
             >
@@ -35,6 +34,40 @@
             </n-button>
           </template>
           Skills 技能管理
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              text
+              class="config-shortcut-button"
+              @click="openCommandsManager"
+              title="Commands 命令管理"
+            >
+              <template #icon>
+                <n-icon :size="18">
+                  <TerminalOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          Commands 命令管理
+        </n-tooltip>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              text
+              class="config-shortcut-button"
+              @click="openAgentsManager"
+              title="Agents 代理管理"
+            >
+              <template #icon>
+                <n-icon :size="18">
+                  <PersonOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          Agents 代理管理
         </n-tooltip>
       </div>
 
@@ -391,6 +424,8 @@ import {
   LockOpen,
   ReorderTwoOutline,
   ExtensionPuzzleOutline,
+  TerminalOutline,
+  PersonOutline,
   StatsChartOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
@@ -1024,6 +1059,14 @@ function setupStatsTimer() {
 
 function openSkillsManager() {
   window.dispatchEvent(new CustomEvent('open-skills-drawer', { detail: { platform: props.channelType } }))
+}
+
+function openCommandsManager() {
+  window.dispatchEvent(new CustomEvent('open-commands-drawer', { detail: { platform: props.channelType } }))
+}
+
+function openAgentsManager() {
+  window.dispatchEvent(new CustomEvent('open-agents-drawer', { detail: { platform: props.channelType } }))
 }
 
 onMounted(async () => {
@@ -2319,7 +2362,8 @@ onUnmounted(() => {
   background: rgba(255, 255, 255, 0.15);
 }
 
-/* Skills 按钮样式 */
+/* 配置快捷按钮样式 */
+.config-shortcut-button,
 .skills-button {
   padding: 6px !important;
   width: 28px;
@@ -2334,11 +2378,13 @@ onUnmounted(() => {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
+.config-shortcut-button .n-icon,
 .skills-button .n-icon {
   color: var(--text-color-3);
   transition: all 0.25s ease;
 }
 
+.config-shortcut-button:hover,
 .skills-button:hover {
   background: linear-gradient(135deg, rgba(24, 160, 88, 0.1), rgba(24, 160, 88, 0.05));
   border-color: rgba(24, 160, 88, 0.3);
@@ -2346,11 +2392,13 @@ onUnmounted(() => {
   transform: translateY(-1px);
 }
 
+.config-shortcut-button:hover .n-icon,
 .skills-button:hover .n-icon {
   color: #18a058;
   transform: scale(1.1);
 }
 
+.config-shortcut-button:active,
 .skills-button:active {
   transform: translateY(0);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
@@ -2867,6 +2915,7 @@ onUnmounted(() => {
     line-height: 18px;
   }
 
+  .config-shortcut-button,
   .skills-button {
     padding: 4px 8px;
     font-size: 10px;
@@ -2968,12 +3017,14 @@ onUnmounted(() => {
     line-height: 16px;
   }
 
+  .config-shortcut-button,
   .skills-button {
     padding: 3px 6px;
     font-size: 9px;
     gap: 3px;
   }
 
+  .config-shortcut-button .n-icon,
   .skills-button .n-icon {
     font-size: 12px !important;
   }

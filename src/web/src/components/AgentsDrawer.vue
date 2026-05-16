@@ -11,7 +11,12 @@
           <span>Custom Agents</span>
         </div>
       </template>
-      <AgentsPanel @back="visible = false" :hide-back="true" :in-drawer="true" />
+      <AgentsPanel
+        @back="visible = false"
+        :hide-back="true"
+        :in-drawer="true"
+        :platform="props.platform"
+      />
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -23,7 +28,11 @@ import AgentsPanel from './AgentsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  platform: {
+    type: String,
+    default: ''
+  }
 })
 
 const emit = defineEmits(['update:visible'])

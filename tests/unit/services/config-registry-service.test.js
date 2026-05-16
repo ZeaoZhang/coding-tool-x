@@ -68,7 +68,7 @@ describe('ConfigRegistryService item persistence', () => {
     });
     service.setItem('commands', 'nested/review.md', {
       enabled: true,
-      platforms: { codex: true, opencode: true }
+      platforms: { codex: true, gemini: true, opencode: true }
     });
 
     expect(created.platforms).toEqual({
@@ -97,7 +97,7 @@ describe('ConfigRegistryService item persistence', () => {
     expect(stats.byPlatform).toMatchObject({
       claude: 0,
       codex: 1,
-      gemini: 0,
+      gemini: 1,
       opencode: 2
     });
   });

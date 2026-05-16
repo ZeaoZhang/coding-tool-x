@@ -12,7 +12,7 @@ const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
-const { convertCommandToCodex } = require('./format-converter');
+const { convertCommandToCodex, convertCommandToGemini } = require('./format-converter');
 const mcpService = require('./mcp-service');
 const promptsService = require('./prompts-service');
 const pluginsService = new PluginsService();
@@ -499,6 +499,10 @@ function generateCommandContent(command) {
   return lines.join('\n') + '\n\n' + (command.body || '');
 }
 
+function buildTemplateCommandFileName(commandName, format) {
+  return `${commandName}.${format === 'gemini' ? 'toml' : 'md'}`;
+}
+
 /**
  * 转换为 OpenCode MCP 结构（local/remote）
  */
@@ -588,6 +592,9 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     if (aiConfigTypes.includes('opencode')) {
       agentTargets.push({ baseDir: path.join(targetDir, '.opencode', 'agents'), prefix: '.opencode/agents' });
     }
+    if (aiConfigTypes.includes('gemini')) {
+      agentTargets.push({ baseDir: path.join(targetDir, '.gemini', 'agents'), prefix: '.gemini/agents' });
+    }
 
     for (const target of agentTargets) {
       ensureDir(target.baseDir);
@@ -606,9 +613,6 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
       if (aiConfigTypes.includes('codex')) {
         pushSkipped(results.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录应用时已跳过');
       }
-      if (aiConfigTypes.includes('gemini')) {
-        pushSkipped(results.skipped, 'agent', fileName, 'Gemini 不支持 agents，已跳过');
-      }
       if (written) {
         results.agents.applied++;
       }
@@ -626,6 +630,9 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     if (aiConfigTypes.includes('opencode')) {
       commandTargets.push({ baseDir: path.join(targetDir, '.opencode', 'commands'), prefix: '.opencode/commands', format: 'claude' });
     }
+    if (aiConfigTypes.includes('gemini')) {
+      commandTargets.push({ baseDir: path.join(targetDir, '.gemini', 'commands'), prefix: '.gemini/commands', format: 'gemini' });
+    }
 
     for (const target of commandTargets) {
       ensureDir(target.baseDir);
@@ -638,22 +645,20 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
         let content = generateCommandContent(command);
         if (target.format === 'codex') {
           content = convertCommandToCodex(content).content;
+        } else if (target.format === 'gemini') {
+          content = convertCommandToGemini(content).content;
         }
         const targetCmdDir = command.namespace
           ? path.join(target.baseDir, command.namespace)
           : target.baseDir;
         ensureDir(targetCmdDir);
-        const filePath = path.join(targetCmdDir, `${commandName}.md`);
+        const filePath = path.join(targetCmdDir, buildTemplateCommandFileName(commandName, target.format));
         fs.writeFileSync(filePath, content, 'utf-8');
         const relativePath = command.namespace
-          ? `${target.prefix}/${command.namespace}/${commandName}.md`
-          : `${target.prefix}/${commandName}.md`;
+          ? `${target.prefix}/${command.namespace}/${buildTemplateCommandFileName(commandName, target.format)}`
+          : `${target.prefix}/${buildTemplateCommandFileName(commandName, target.format)}`;
         results.commands.files.push(relativePath);
         written = true;
-      }
-
-      if (aiConfigTypes.includes('gemini')) {
-        pushSkipped(results.skipped, 'command', commandName, 'Gemini 不支持 commands，已跳过');
       }
       if (written) {
         results.commands.applied++;
@@ -795,6 +800,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     const agentPrefixes = [];
     if (aiConfigTypes.includes('claude')) agentPrefixes.push('.claude/agents');
     if (aiConfigTypes.includes('opencode')) agentPrefixes.push('.opencode/agents');
+    if (aiConfigTypes.includes('gemini')) agentPrefixes.push('.gemini/agents');
 
     for (const agent of template.agents) {
       const fileName = resolveItemName(agent.fileName, agent.name, 'agent').toLowerCase().replace(/\s+/g, '-');
@@ -812,9 +818,6 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       if (aiConfigTypes.includes('codex')) {
         pushSkipped(preview.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录预览时已跳过');
       }
-      if (aiConfigTypes.includes('gemini')) {
-        pushSkipped(preview.skipped, 'agent', fileName, 'Gemini 不支持 agents，已跳过');
-      }
       if (applicable) {
         preview.summary.agents++;
       }
@@ -826,14 +829,16 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     if (aiConfigTypes.includes('claude')) commandPrefixes.push('.claude/commands');
     if (aiConfigTypes.includes('codex')) commandPrefixes.push('.codex/prompts');
     if (aiConfigTypes.includes('opencode')) commandPrefixes.push('.opencode/commands');
+    if (aiConfigTypes.includes('gemini')) commandPrefixes.push('.gemini/commands');
 
     for (const command of template.commands) {
       const commandName = resolveItemName(command.name, null, 'command');
       let applicable = false;
       for (const prefix of commandPrefixes) {
+        const extension = prefix === '.gemini/commands' ? 'toml' : 'md';
         const relativePath = command.namespace
-          ? `${prefix}/${command.namespace}/${commandName}.md`
-          : `${prefix}/${commandName}.md`;
+          ? `${prefix}/${command.namespace}/${commandName}.${extension}`
+          : `${prefix}/${commandName}.${extension}`;
         const fullPath = path.join(targetDir, relativePath);
         if (fs.existsSync(fullPath)) {
           preview.willOverwrite.push(relativePath);
@@ -841,9 +846,6 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
           preview.willCreate.push(relativePath);
         }
         applicable = true;
-      }
-      if (aiConfigTypes.includes('gemini')) {
-        pushSkipped(preview.skipped, 'command', commandName, 'Gemini 不支持 commands，已跳过');
       }
       if (applicable) {
         preview.summary.commands++;

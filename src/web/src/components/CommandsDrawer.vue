@@ -11,7 +11,12 @@
           <span>Custom Commands</span>
         </div>
       </template>
-      <CommandsPanel @back="visible = false" :hide-back="true" :in-drawer="true" />
+      <CommandsPanel
+        @back="visible = false"
+        :hide-back="true"
+        :in-drawer="true"
+        :platform="props.platform"
+      />
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -23,7 +28,11 @@ import CommandsPanel from './CommandsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  platform: {
+    type: String,
+    default: ''
+  }
 })
 
 const emit = defineEmits(['update:visible'])

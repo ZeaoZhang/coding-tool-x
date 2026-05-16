@@ -31,8 +31,8 @@ const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 
 const PLATFORM_SUPPORT = {
   skills: { claude: true, codex: true, gemini: true, opencode: true },
-  commands: { claude: true, codex: true, gemini: false, opencode: true },
-  agents: { claude: true, codex: true, gemini: false, opencode: true },
+  commands: { claude: true, codex: true, gemini: true, opencode: true },
+  agents: { claude: true, codex: true, gemini: true, opencode: true },
   plugins: { claude: true, codex: false, gemini: false, opencode: true }
 };
 

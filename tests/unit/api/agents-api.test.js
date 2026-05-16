@@ -31,6 +31,7 @@ beforeEach(() => {
   services = {
     claude: createMockService(),
     codex: createMockService(),
+    gemini: createMockService(),
     opencode: createMockService()
   };
 
@@ -138,7 +139,7 @@ function call(app, method, url, body) {
 
 describe('agents api middleware and listing', () => {
   test('rejects unsupported platform in middleware', async () => {
-    const res = await request(buildApp()).get('/?platform=gemini');
+    const res = await request(buildApp()).get('/?platform=unsupported');
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
@@ -151,6 +152,15 @@ describe('agents api middleware and listing', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('opencode');
     expect(services.opencode.listAgents).toHaveBeenCalledWith(resolvedAllowedProjectPath);
+  });
+
+  test('lists Gemini agents for a validated project path', async () => {
+    const res = await request(buildApp()).get(`/?platform=gemini&projectPath=${encodeURIComponent(allowedProjectPath)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('gemini');
+    expect(services.gemini.listAgents).toHaveBeenCalledWith(resolvedAllowedProjectPath);
   });
 
   test('returns 400 for invalid optional projectPath', async () => {

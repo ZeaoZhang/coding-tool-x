@@ -45,8 +45,8 @@ const CC_SECURITY_PATH = PATHS.security;
 const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
 const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
-const AGENT_PLATFORMS = ['claude', 'codex', 'opencode'];
-const COMMAND_PLATFORMS = ['claude', 'opencode'];
+const AGENT_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const COMMAND_PLATFORMS = ['claude', 'gemini', 'opencode'];
 const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 
 function getOpenCodeConfigPaths() {
@@ -386,14 +386,15 @@ function resolveAgentRelativePath(agent, platform) {
   return platform === 'codex' ? `${baseName}.toml` : `${baseName}.md`;
 }
 
-function resolveCommandRelativePath(command) {
+function resolveCommandRelativePath(command, platform = 'claude') {
   if (typeof command?.path === 'string' && command.path.trim()) {
     return command.path.trim();
   }
+  const extension = platform === 'gemini' ? '.toml' : '.md';
   if (command?.namespace) {
-    return path.join(command.namespace, `${command.name}.md`);
+    return path.join(command.namespace, `${command.name}${extension}`);
   }
-  return command?.name ? `${command.name}.md` : null;
+  return command?.name ? `${command.name}${extension}` : null;
 }
 
 function pickPrimaryChannel(channels = []) {
@@ -1399,7 +1400,7 @@ async function importConfigs(importData, options = {}) {
           const baseDir = commandsService.userCommandsDir;
 
           for (const command of platformCommands) {
-            const relativePath = resolveCommandRelativePath(command);
+            const relativePath = resolveCommandRelativePath(command, platform);
             const content = command.fullContent || command.content || buildCommandContent(command);
 
             const status = relativePath ? writeTextFile(baseDir, relativePath, content, overwrite) : 'failed';

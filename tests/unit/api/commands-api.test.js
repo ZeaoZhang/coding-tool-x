@@ -6,6 +6,7 @@ let services;
 beforeEach(() => {
   services = {
     claude: createMockService(),
+    gemini: createMockService(),
     opencode: createMockService()
   };
 
@@ -113,6 +114,15 @@ describe('commands api basic routes', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('opencode');
     expect(services.opencode.listCommands).toHaveBeenCalledWith('/tmp/project');
+  });
+
+  test('lists commands for Gemini platform', async () => {
+    const res = await request(buildApp()).get('/?platform=gemini&projectPath=/tmp/project');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('gemini');
+    expect(services.gemini.listCommands).toHaveBeenCalledWith('/tmp/project');
   });
 
   test('returns command stats', async () => {

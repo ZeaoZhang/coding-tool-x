@@ -15,7 +15,14 @@ const { getEffectiveApiKey } = require('./services/gemini-channels');
 const { persistProxyRequestSnapshot } = require('./services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('./services/proxy-log-helper');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('./services/base/proxy-utils');
-const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
+const {
+  parseSSEUsage,
+  parseNonStreamingUsage,
+  splitSSEEvents,
+  parseSSEEventText,
+  mergeUsageIntoTokenData,
+  createTokenData
+} = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
 
 let proxyServer = null;
@@ -47,6 +54,12 @@ const PRICING = {
 };
 
 const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
+const jsonBodyParser = express.json({
+  limit: '100mb',
+  verify: (req, res, buf) => {
+    req.rawBody = Buffer.from(buf);
+  }
+});
 
 // resolveGeminiTarget replaced by resolveTargetUrl from proxy-utils
 const resolveGeminiTarget = resolveTargetUrl;
@@ -54,6 +67,77 @@ const resolveGeminiTarget = resolveTargetUrl;
 // Gemini uses exact-match only redirect (no tier fallback)
 function redirectModel(originalModel, channel) {
   return redirectModelBase(originalModel, channel, { useTierFallback: false });
+}
+
+function shouldParseJson(req) {
+  const contentType = req.headers['content-type'] || '';
+  return req.method === 'POST' && contentType.includes('application/json');
+}
+
+function isVertexAiV1Channel(channel) {
+  return String(channel?.apiFormat || '').trim().toLowerCase() === 'vertex_ai_v1';
+}
+
+function stripVertexFunctionResponseIdsFromParts(parts) {
+  if (!Array.isArray(parts)) return false;
+  let changed = false;
+
+  for (const part of parts) {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) continue;
+    const functionResponse = part.functionResponse || part.function_response;
+    if (!functionResponse || typeof functionResponse !== 'object' || Array.isArray(functionResponse)) continue;
+    if (Object.prototype.hasOwnProperty.call(functionResponse, 'id')) {
+      delete functionResponse.id;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function stripVertexFunctionResponseIds(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false;
+  let changed = false;
+
+  if (Array.isArray(body.contents)) {
+    for (const content of body.contents) {
+      changed = stripVertexFunctionResponseIdsFromParts(content?.parts) || changed;
+    }
+  }
+
+  if (Array.isArray(body.cachedContent?.contents)) {
+    for (const content of body.cachedContent.contents) {
+      changed = stripVertexFunctionResponseIdsFromParts(content?.parts) || changed;
+    }
+  }
+
+  return changed;
+}
+
+function buildVertexAiV1Path(baseUrl, requestPath) {
+  let basePath = '';
+  try {
+    basePath = new URL(baseUrl).pathname.replace(/\/+$/, '');
+  } catch (_) {
+    basePath = String(baseUrl || '').replace(/\/+$/, '');
+  }
+
+  if (!basePath) {
+    return requestPath;
+  }
+
+  const actionMatch = String(requestPath || '').match(/\/models\/([^/:?]+)(:[^?]*)?(\?.*)?$/);
+  if (!actionMatch) {
+    return requestPath;
+  }
+
+  const encodedModel = actionMatch[1];
+  const suffix = actionMatch[2] || '';
+  const query = actionMatch[3] || '';
+  if (basePath.includes('/publishers/google')) {
+    return `/models/${encodedModel}${suffix}${query}`;
+  }
+  return `${basePath}/models/${encodedModel}${suffix}${query}`;
 }
 
 /**
@@ -109,6 +193,14 @@ async function startGeminiProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+
+    proxyApp.use((req, res, next) => {
+      if (shouldParseJson(req)) {
+        return jsonBodyParser(req, res, next);
+      }
+      return next();
+    });
+
     const proxy = httpProxy.createProxyServer({});
 
     proxy.on('proxyReq', (proxyReq, req) => {
@@ -137,6 +229,15 @@ async function startGeminiProxyServer(options = {}) {
       proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
       if (!proxyReq.getHeader('content-type')) {
         proxyReq.setHeader('content-type', 'application/json');
+      }
+
+      if (shouldParseJson(req) && (req.rawBody || req.body)) {
+        const bodyBuffer = req.rawBody
+          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
+          : Buffer.from(JSON.stringify(req.body));
+        proxyReq.setHeader('Content-Length', bodyBuffer.length);
+        proxyReq.write(bodyBuffer);
+        proxyReq.end();
       }
     });
 
@@ -222,6 +323,20 @@ async function startGeminiProxyServer(options = {}) {
               console.log(`[Gemini Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
             }
           }
+        }
+
+        let bodyMutated = false;
+
+        if (isVertexAiV1Channel(channel) && stripVertexFunctionResponseIds(req.body)) {
+          bodyMutated = true;
+        }
+
+        if (isVertexAiV1Channel(channel)) {
+          req.url = buildVertexAiV1Path(channel.baseUrl, req.url);
+        }
+
+        if (bodyMutated) {
+          req.rawBody = Buffer.from(JSON.stringify(req.body));
         }
 
         const target = resolveGeminiTarget(channel.baseUrl, req.url);
@@ -363,29 +478,18 @@ async function startGeminiProxyServer(options = {}) {
 
         // 检查是否是 SSE 流
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || '';
+          const parsedEvents = splitSSEEvents(buffer);
+          buffer = parsedEvents.remainder;
 
-          events.forEach((eventText) => {
+          parsedEvents.events.forEach((eventText) => {
             if (!eventText.trim()) return;
 
             try {
-              const lines = eventText.split('\n');
-              let eventType = '';
-              let data = '';
+              const event = parseSSEEventText(eventText);
+              if (!event) return;
 
-              lines.forEach(line => {
-                if (line.startsWith('event:')) {
-                  eventType = line.substring(6).trim();
-                } else if (line.startsWith('data:')) {
-                  data = line.substring(5).trim();
-                }
-              });
-
-              if (!data || data === '[DONE]') return;
-
-              const parsed = JSON.parse(data);
-              const usage = parseSSEUsage(parsed, eventType);
+              const parsed = JSON.parse(event.data);
+              const usage = parseSSEUsage(parsed, event.eventType);
               mergeUsageIntoTokenData(tokenData, usage);
 
               if (usage.isDone) {
@@ -568,5 +672,9 @@ module.exports = {
   stopGeminiProxyServer,
   getGeminiProxyStatus,
   clearGeminiRedirectCache,
-  calculateCost
+  calculateCost,
+  _test: {
+    buildVertexAiV1Path,
+    stripVertexFunctionResponseIds
+  }
 };

@@ -188,6 +188,12 @@ function resolveClaudeModelToolType(gatewaySourceType) {
     : 'claude'
 }
 
+function formatGeminiApiFormat(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (normalized === 'vertex_ai_v1') return 'Vertex AI v1'
+  return 'Gemini API'
+}
+
 const baseSections = {
   schedule: [
     {
@@ -941,6 +947,7 @@ const channelPanelFactories = {
       model: 'gemini-2.5-pro',
       baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
       apiKey: '',
+      apiFormat: 'gemini_api',
       balanceToken: '',
       balanceUserId: null,
       websiteUrl: 'https://ai.google.dev',
@@ -961,6 +968,7 @@ const channelPanelFactories = {
       model: channel.model || '',
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
+      apiFormat: channel.apiFormat || 'gemini_api',
       balanceToken: channel.balanceToken || '',
       balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
@@ -983,6 +991,7 @@ const channelPanelFactories = {
       newForm.name = preset.name
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.apiFormat = preset.apiFormat || 'gemini_api'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'gemini'
       return applyPresetAuth(newForm)
     },
@@ -1044,6 +1053,7 @@ const channelPanelFactories = {
             modelRedirects: form.modelRedirects || [],
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
+            apiFormat: form.apiFormat || 'gemini_api',
             gatewaySourceType: form.gatewaySourceType || 'gemini',
             balanceToken: authPayload.balanceToken,
             balanceUserId: authPayload.balanceUserId
@@ -1064,6 +1074,7 @@ const channelPanelFactories = {
           modelRedirects: form.modelRedirects || [],
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
+          apiFormat: form.apiFormat || 'gemini_api',
           gatewaySourceType: form.gatewaySourceType || 'gemini',
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId
@@ -1089,6 +1100,7 @@ const channelPanelFactories = {
     },
     buildInfoRows: (channel, helpers) => ([
       { label: 'Model', value: channel.model, mono: true },
+      { label: 'API', value: formatGeminiApiFormat(channel.apiFormat) },
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
