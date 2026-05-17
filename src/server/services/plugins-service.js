@@ -10,6 +10,8 @@ const http = require('http');
 const https = require('https');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 const AdmZip = require('adm-zip');
 const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('../../plugins/registry');
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
@@ -17,10 +19,18 @@ const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-man
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { maskToken } = require('./oauth-utils');
+const {
+  assertInsideAllowedRoots,
+  normalizeSafeFileStem,
+  normalizeSafeRelativePath,
+  resolveInsideRoot
+} = require('./config-artifact-paths');
 
 const CLAUDE_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
 const CLAUDE_INSTALLED_FILE = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
 const CLAUDE_MARKETPLACES_FILE = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
+const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'plugins');
+const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const REPO_SOURCE_META_FILE = '.cc-tool-plugin-source.json';
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
@@ -28,7 +38,61 @@ const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 const DEFAULT_REPOS_BY_PLATFORM = {
   claude: [],
+  codex: [],
+  gemini: [],
   opencode: []
+};
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const PLATFORM_CAPABILITIES = {
+  claude: {
+    platform: 'claude',
+    supportsPlugins: true,
+    repositories: true,
+    market: true,
+    install: true,
+    uninstall: true,
+    toggle: true,
+    config: true,
+    import: true,
+    syncRepos: true
+  },
+  codex: {
+    platform: 'codex',
+    supportsPlugins: true,
+    repositories: true,
+    market: true,
+    install: true,
+    uninstall: true,
+    toggle: true,
+    config: false,
+    import: false,
+    syncRepos: false
+  },
+  gemini: {
+    platform: 'gemini',
+    supportsPlugins: false,
+    repositories: false,
+    market: false,
+    install: false,
+    uninstall: false,
+    toggle: false,
+    config: false,
+    import: false,
+    syncRepos: false,
+    disabledReason: 'Gemini plugin management is not implemented yet'
+  },
+  opencode: {
+    platform: 'opencode',
+    supportsPlugins: true,
+    repositories: true,
+    market: true,
+    install: true,
+    uninstall: true,
+    toggle: true,
+    config: true,
+    import: false,
+    syncRepos: false
+  }
 };
 
 function cloneRepos(repos = []) {
@@ -50,8 +114,61 @@ function normalizeRepoDirectory(directory = '') {
   return normalizeRepoPath(directory);
 }
 
+function normalizePluginRepoDirectory(directory = '', label = 'plugin directory') {
+  return normalizeSafeRelativePath(directory || '', label, {
+    allowEmpty: true,
+    allowHiddenSegments: true
+  });
+}
+
+function normalizePluginPathName(name = '', label = 'plugin name') {
+  return normalizeSafeRelativePath(name, label, {
+    allowHiddenSegments: false
+  });
+}
+
+function normalizePluginCacheSegment(value = '', label = 'plugin segment', fallback = 'local') {
+  const rawValue = String(value || '').trim() || fallback;
+  return normalizeSafeFileStem(rawValue, label, {
+    allowDots: true,
+    pattern: /^[a-zA-Z0-9][a-zA-Z0-9._@+-]*$/
+  });
+}
+
+function resolvePluginConfigFile(configDir, name) {
+  const safeName = normalizePluginPathName(name, 'plugin config name');
+  return resolveInsideRoot(configDir, `${safeName}.json`, 'Plugin config path');
+}
+
+function joinRepoPath(...parts) {
+  return normalizeRepoPath(parts.filter(Boolean).join('/'));
+}
+
 function stripGitSuffix(value = '') {
   return String(value || '').replace(/\.git$/i, '');
+}
+
+function slugifyCodexKey(value = '', fallback = 'local') {
+  const slug = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.git$/i, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || fallback;
+}
+
+function splitPluginMarketplaceKey(key = '') {
+  const value = String(key || '');
+  const atIndex = value.lastIndexOf('@');
+  if (atIndex <= 0) return { name: value, marketplace: '' };
+  return {
+    name: value.slice(0, atIndex),
+    marketplace: value.slice(atIndex + 1)
+  };
 }
 
 function isWindowsAbsolutePath(input = '') {
@@ -210,15 +327,22 @@ function stripJsonComments(input = '') {
 
 class PluginsService {
   constructor(platform = 'claude') {
-    this.platform = ['claude', 'opencode'].includes(platform) ? platform : 'claude';
+    this.platform = SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
     this.configDir = PATHS.config || path.join((PATHS.base || process.env.HOME || os.homedir()), 'config');
     this.ccToolConfigDir = path.dirname(PATHS.pluginRepos.claude);
     this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
     this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
-    this.marketCachePath = this.platform === 'opencode'
-      ? PATHS.pluginMarketCache.opencode
-      : PATHS.pluginMarketCache.claude;
+    this.codexPluginsCacheDir = CODEX_PLUGINS_CACHE_DIR;
+    this.marketCachePath = PATHS.pluginMarketCache[this.platform] || PATHS.pluginMarketCache.claude;
     this._marketCache = null;
+  }
+
+  getCapabilities() {
+    return { ...(PLATFORM_CAPABILITIES[this.platform] || PLATFORM_CAPABILITIES.claude) };
+  }
+
+  _pluginsSupported() {
+    return this.getCapabilities().supportsPlugins !== false;
   }
 
   normalizeRepoConfig(repo = {}) {
@@ -426,6 +550,14 @@ class PluginsService {
     return this.platform === 'opencode';
   }
 
+  _isCodex() {
+    return this.platform === 'codex';
+  }
+
+  _isGemini() {
+    return this.platform === 'gemini';
+  }
+
   _getOpenCodePluginsDir() {
     if (fs.existsSync(this.opencodeLegacyPluginsDir) && !fs.existsSync(this.opencodePluginsDir)) {
       return this.opencodeLegacyPluginsDir;
@@ -539,12 +671,184 @@ class PluginsService {
     return plugins;
   }
 
+  _readFirstMarkdownParagraph(filePath) {
+    if (!fs.existsSync(filePath)) return '';
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const lines = content
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#') && !line.startsWith('<!--'));
+      return lines[0] || '';
+    } catch {
+      return '';
+    }
+  }
+
+  _listCodexCachedPlugins() {
+    const cacheDir = this.codexPluginsCacheDir;
+    if (!fs.existsSync(cacheDir)) return [];
+
+    const plugins = [];
+    try {
+      const marketplaces = fs.readdirSync(cacheDir, { withFileTypes: true });
+      for (const marketplaceEntry of marketplaces) {
+        if (!marketplaceEntry.isDirectory() || marketplaceEntry.name.startsWith('.')) continue;
+        const marketplaceDir = path.join(cacheDir, marketplaceEntry.name);
+        const pluginEntries = fs.readdirSync(marketplaceDir, { withFileTypes: true });
+
+        for (const pluginEntry of pluginEntries) {
+          if (!pluginEntry.isDirectory() || pluginEntry.name.startsWith('.')) continue;
+          const pluginRoot = path.join(marketplaceDir, pluginEntry.name);
+          const versionEntries = fs.readdirSync(pluginRoot, { withFileTypes: true })
+            .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'));
+          const selectedVersion = versionEntries
+            .map(entry => ({
+              name: entry.name,
+              fullPath: path.join(pluginRoot, entry.name),
+              mtimeMs: fs.statSync(path.join(pluginRoot, entry.name)).mtimeMs
+            }))
+            .sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+          if (!selectedVersion) continue;
+
+          const description = this._readFirstMarkdownParagraph(path.join(selectedVersion.fullPath, 'README.md'));
+          const manifest = this._readLocalManifest(selectedVersion.fullPath, [
+            '.codex-plugin/plugin.json',
+            'plugin.json',
+            'package.json'
+          ]) || {};
+          plugins.push({
+            name: manifest.name || pluginEntry.name,
+            marketplace: marketplaceEntry.name,
+            version: manifest.version || selectedVersion.name,
+            installPath: selectedVersion.fullPath,
+            directory: path.relative(CODEX_PLUGINS_DIR, selectedVersion.fullPath),
+            source: 'codex-cache',
+            installed: true,
+            enabled: this._isCodexPluginEnabled(manifest.name || pluginEntry.name, marketplaceEntry.name),
+            pluginType: 'cache',
+            description: manifest.description || description
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[PluginsService] Failed to scan Codex plugin cache:', err.message);
+    }
+
+    plugins.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    return plugins;
+  }
+
+  _readLocalManifest(rootDir, candidates = []) {
+    for (const candidate of candidates) {
+      const manifestPath = path.join(rootDir, candidate);
+      if (!fs.existsSync(manifestPath)) continue;
+      try {
+        return JSON.parse(stripJsonComments(fs.readFileSync(manifestPath, 'utf8')));
+      } catch {
+        // try next candidate
+      }
+    }
+    return null;
+  }
+
+  _readCodexConfig() {
+    const filePath = NATIVE_PATHS.codex.config;
+    if (!fs.existsSync(filePath)) return { filePath, config: {} };
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      if (!raw.trim()) return { filePath, config: {} };
+      return { filePath, config: toml.parse(raw) };
+    } catch (err) {
+      console.error('[PluginsService] Failed to read Codex config:', err.message);
+      return { filePath, config: {} };
+    }
+  }
+
+  _writeCodexConfig(config) {
+    const filePath = NATIVE_PATHS.codex.config;
+    this._ensureDir(path.dirname(filePath));
+    const safeConfig = JSON.parse(JSON.stringify(config || {}));
+    fs.writeFileSync(filePath, tomlStringify(safeConfig), 'utf8');
+  }
+
+  _isCodexPluginEnabled(name, marketplace = '') {
+    const { config } = this._readCodexConfig();
+    const plugins = config.plugins || {};
+    if (marketplace) {
+      const exact = plugins[`${name}@${marketplace}`];
+      if (exact && typeof exact === 'object' && exact.enabled === false) return false;
+    }
+    for (const [key, value] of Object.entries(plugins)) {
+      const parsed = splitPluginMarketplaceKey(key);
+      if (parsed.name === name && value && typeof value === 'object' && value.enabled === false) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  _setCodexPluginEnabled(name, marketplace, enabled) {
+    const { config } = this._readCodexConfig();
+    const nextConfig = (config && typeof config === 'object') ? { ...config } : {};
+    nextConfig.plugins = { ...(nextConfig.plugins || {}) };
+    const pluginKey = marketplace ? `${name}@${marketplace}` : name;
+    nextConfig.plugins[pluginKey] = {
+      ...(nextConfig.plugins[pluginKey] || {}),
+      enabled: !!enabled
+    };
+    this._writeCodexConfig(nextConfig);
+  }
+
+  _registerCodexMarketplace(marketplace, source) {
+    const { config } = this._readCodexConfig();
+    const nextConfig = (config && typeof config === 'object') ? { ...config } : {};
+    nextConfig.marketplaces = { ...(nextConfig.marketplaces || {}) };
+    nextConfig.marketplaces[marketplace] = {
+      ...(nextConfig.marketplaces[marketplace] || {}),
+      source_type: isLikelyLocalPath(source) ? 'local' : 'git',
+      source,
+      last_updated: new Date().toISOString()
+    };
+    this._writeCodexConfig(nextConfig);
+  }
+
+  _unregisterCodexPlugin(name, marketplace = '') {
+    const { config } = this._readCodexConfig();
+    const nextConfig = (config && typeof config === 'object') ? { ...config } : {};
+    const plugins = { ...(nextConfig.plugins || {}) };
+    for (const key of Object.keys(plugins)) {
+      const parsed = splitPluginMarketplaceKey(key);
+      if (parsed.name === name && (!marketplace || parsed.marketplace === marketplace)) {
+        delete plugins[key];
+      }
+    }
+    nextConfig.plugins = plugins;
+    this._writeCodexConfig(nextConfig);
+  }
+
+  _resolveCodexMarketplaceName(repo, explicit = '') {
+    if (explicit) return slugifyCodexKey(explicit);
+    if (repo.marketplace) return slugifyCodexKey(repo.marketplace);
+    if (repo.provider === 'local') return slugifyCodexKey(repo.localPath, 'local');
+    if (repo.provider === 'gitlab') return slugifyCodexKey(repo.projectPath, 'gitlab');
+    return slugifyCodexKey(repo.name || repo.owner || 'github');
+  }
+
   /**
    * List all installed plugins with their status
    * Reads from Claude Code's native installed_plugins.json
    * @returns {Object} { plugins: Array }
    */
   listPlugins() {
+    if (!this._pluginsSupported()) {
+      return { plugins: [] };
+    }
+
+    if (this._isCodex()) {
+      return { plugins: this._listCodexCachedPlugins() };
+    }
+
     if (this._isOpenCode()) {
       const plugins = [];
       const seen = new Set();
@@ -690,6 +994,22 @@ class PluginsService {
    * @returns {Object|null} Plugin details or null
    */
   getPlugin(name) {
+    if (this._isCodex()) {
+      const plugin = this.listPlugins().plugins.find(p => p.name === name || `${p.name}@${p.marketplace}` === name);
+      if (!plugin) return null;
+      const manifest = plugin.installPath
+        ? this._readLocalManifest(plugin.installPath, ['.codex-plugin/plugin.json', 'plugin.json', 'package.json'])
+        : null;
+      return {
+        name: plugin.name,
+        ...plugin,
+        author: manifest?.author || '',
+        commands: manifest?.commands || [],
+        hooks: manifest?.hooks || [],
+        manifest
+      };
+    }
+
     if (this._isOpenCode()) {
       const plugin = this.listPlugins().plugins.find(p => p.name === name || p.directory === name);
       if (!plugin) return null;
@@ -731,6 +1051,34 @@ class PluginsService {
    * @returns {Promise<Object>} Installation result
    */
   async installPlugin(source, repoInfo = null) {
+    if (this._isCodex()) {
+      if (repoInfo && repoInfo.directory) {
+        return this._installFromRepoDirectory(repoInfo);
+      }
+
+      const parsedSource = this.parseRepoTreeSource(source);
+      if (parsedSource) {
+        return this._installFromRepoDirectory(parsedSource);
+      }
+
+      const parsedRepo = this._repoFromGitUrl(source, 'main');
+      if (parsedRepo) {
+        return this._installFromRepoDirectory({ ...parsedRepo, directory: '' });
+      }
+
+      return {
+        success: false,
+        error: 'Codex plugin install expects repository metadata, a GitHub/GitLab tree URL, or a Git repository URL'
+      };
+    }
+
+    if (!this._pluginsSupported()) {
+      return {
+        success: false,
+        error: `${this.platform} plugin management is not supported`
+      };
+    }
+
     if (this._isOpenCode()) {
       if (repoInfo && repoInfo.directory) {
         return this._installFromRepoDirectory(repoInfo, { installRoot: this._getOpenCodePluginsDir() });
@@ -779,30 +1127,46 @@ class PluginsService {
    */
   async _installFromRepoDirectory(repoInfo, options = {}) {
     const normalizedRepo = this.normalizeRepoConfig(repoInfo);
-    const directory = normalizeRepoPath(repoInfo.directory || '');
-    const pluginName = directory.split('/').pop();
-    const installRoot = options.installRoot || INSTALLED_DIR;
+    const directory = normalizePluginRepoDirectory(repoInfo.directory || normalizedRepo.directory || '');
+    const pluginName = directory.split('/').filter(Boolean).pop() || slugifyCodexKey(normalizedRepo.name, 'plugin');
+    const manifestCandidates = this._getManifestCandidates(directory);
 
     try {
       let manifest;
-      try {
-        manifest = await this.fetchRepoJson(normalizedRepo, `${directory}/plugin.json`);
-      } catch {
+      let manifestPath = '';
+      for (const candidate of manifestCandidates) {
         try {
-          manifest = await this.fetchRepoJson(normalizedRepo, `${directory}/package.json`);
+          manifestPath = joinRepoPath(directory, candidate);
+          manifest = await this.fetchRepoJson(normalizedRepo, manifestPath);
+          break;
         } catch {
-          manifest = { name: pluginName, version: '1.0.0' };
+          manifestPath = '';
         }
       }
+      if (!manifest) {
+        manifest = { name: pluginName, version: '1.0.0' };
+      }
+
+      const installedPluginName = String(manifest.name || pluginName || 'plugin').trim() || 'plugin';
+      const installRoot = this._resolvePluginInstallRoot(normalizedRepo, repoInfo, manifest, options);
 
       // Create plugin directory
-      const pluginDir = path.join(installRoot, manifest.name || pluginName);
+      const pluginDir = this._isCodex()
+        ? installRoot
+        : resolveInsideRoot(
+          installRoot,
+          normalizePluginPathName(installedPluginName, 'plugin name'),
+          'Plugin install path',
+          { allowHiddenSegments: false }
+        );
       if (!fs.existsSync(pluginDir)) {
         fs.mkdirSync(pluginDir, { recursive: true });
       }
 
       if (normalizedRepo.provider === 'local') {
-        const sourceDir = path.join(normalizedRepo.localPath, directory);
+        const sourceDir = directory
+          ? resolveInsideRoot(normalizedRepo.localPath, directory, 'Plugin directory', { allowHiddenSegments: true })
+          : normalizedRepo.localPath;
         if (!fs.existsSync(sourceDir)) {
           throw new Error(`Plugin directory not found: ${directory}`);
         }
@@ -843,7 +1207,10 @@ class PluginsService {
             throw new Error('Empty archive');
           }
 
-          const sourceDir = path.join(tempDir, extractedDir, directory);
+          const extractedRoot = path.join(tempDir, extractedDir);
+          const sourceDir = directory
+            ? resolveInsideRoot(extractedRoot, directory, 'Plugin directory', { allowHiddenSegments: true })
+            : extractedRoot;
           if (!fs.existsSync(sourceDir)) {
             throw new Error(`Plugin directory not found: ${directory}`);
           }
@@ -854,13 +1221,33 @@ class PluginsService {
       }
 
       // Write plugin.json if not exists
-      const manifestPath = path.join(pluginDir, 'plugin.json');
-      if (!fs.existsSync(manifestPath)) {
-        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+      const fallbackManifestPath = path.join(pluginDir, this._isCodex() ? '.codex-plugin/plugin.json' : 'plugin.json');
+      if (!fs.existsSync(fallbackManifestPath)) {
+        this._ensureDir(path.dirname(fallbackManifestPath));
+        fs.writeFileSync(fallbackManifestPath, JSON.stringify(manifest, null, 2));
       }
 
-      if (!this._isOpenCode()) {
-        const installedPluginName = manifest.name || pluginName;
+      if (this._isCodex()) {
+        const marketplace = this._resolveCodexMarketplaceName(normalizedRepo, repoInfo.marketplace);
+        const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
+        this.writeRepoSourceMeta(pluginDir, {
+          repoId: normalizedRepo.id,
+          repoProvider: normalizedRepo.provider,
+          repoOwner: normalizedRepo.owner || '',
+          repoName: normalizedRepo.name || '',
+          repoBranch: normalizedRepo.branch,
+          repoDirectory: directory,
+          repoHost: normalizedRepo.host || '',
+          repoProjectPath: normalizedRepo.projectPath || '',
+          repoLocalPath: normalizedRepo.localPath || '',
+          repoUrl: normalizedRepo.repoUrl || buildRepoUrl(normalizedRepo),
+          marketplace,
+          manifestPath,
+          source: sourceUrl
+        });
+        this._registerCodexMarketplace(marketplace, normalizedRepo.repoUrl || buildRepoUrl(normalizedRepo));
+        this._setCodexPluginEnabled(installedPluginName, marketplace, true);
+      } else if (!this._isOpenCode()) {
         const installTimestamp = new Date().toISOString();
         const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
         const repoSourceMeta = {
@@ -933,6 +1320,43 @@ class PluginsService {
     }
   }
 
+  _getManifestCandidates() {
+    if (this._isCodex()) {
+      return ['.codex-plugin/plugin.json', 'plugin.json', 'package.json'];
+    }
+    if (this._isOpenCode()) {
+      return ['package.json', 'plugin.json'];
+    }
+    return ['.claude-plugin/plugin.json', 'plugin.json', 'package.json'];
+  }
+
+  _resolvePluginInstallRoot(normalizedRepo, repoInfo, manifest, options = {}) {
+    if (!this._isCodex()) {
+      return options.installRoot || INSTALLED_DIR;
+    }
+
+    const marketplace = normalizePluginCacheSegment(
+      this._resolveCodexMarketplaceName(normalizedRepo, repoInfo.marketplace),
+      'Codex marketplace',
+      'local'
+    );
+    const pluginName = normalizePluginCacheSegment(
+      manifest.name || normalizeRepoPath(repoInfo.directory || '').split('/').pop() || 'plugin',
+      'Codex plugin name',
+      'plugin'
+    );
+    const version = normalizePluginCacheSegment(
+      String(manifest.version || repoInfo.version || 'local').trim() || 'local',
+      'Codex plugin version',
+      'local'
+    );
+    return resolveInsideRoot(
+      this.codexPluginsCacheDir,
+      path.posix.join(marketplace, pluginName, version),
+      'Codex plugin cache path'
+    );
+  }
+
   /**
    * Parse GitHub/GitLab tree URL or local path
    * @private
@@ -986,13 +1410,56 @@ class PluginsService {
    * @returns {Object} Uninstallation result
    */
   uninstallPlugin(name) {
+    if (this._isCodex()) {
+      const plugins = this.listPlugins().plugins;
+      const target = plugins.find(plugin => plugin.name === name || `${plugin.name}@${plugin.marketplace}` === name);
+      if (!target) {
+        return {
+          success: false,
+          error: `Plugin "${name}" not found`
+        };
+      }
+
+      const pluginRoot = target.installPath
+        ? assertInsideAllowedRoots(
+          path.dirname(assertInsideAllowedRoots(target.installPath, [this.codexPluginsCacheDir], 'Codex plugin install path')),
+          [this.codexPluginsCacheDir],
+          'Codex plugin root'
+        )
+        : resolveInsideRoot(
+          this.codexPluginsCacheDir,
+          path.posix.join(
+            normalizePluginCacheSegment(target.marketplace || '', 'Codex marketplace', 'local'),
+            normalizePluginCacheSegment(target.name || name, 'Codex plugin name', 'plugin')
+          ),
+          'Codex plugin root'
+        );
+      if (pluginRoot && fs.existsSync(pluginRoot)) {
+        fs.rmSync(pluginRoot, { recursive: true, force: true });
+      }
+      this._unregisterCodexPlugin(target.name, target.marketplace || '');
+
+      return {
+        success: true,
+        message: 'Plugin uninstalled successfully'
+      };
+    }
+
+    if (!this._pluginsSupported()) {
+      return {
+        success: false,
+        error: `${this.platform} plugin management is not supported`
+      };
+    }
+
     if (this._isOpenCode()) {
+      const safeName = normalizePluginPathName(name, 'plugin name');
       const pluginsDir = this._getOpenCodePluginsDir();
       let removed = false;
 
       // Remove from opencode config.plugin (npm plugins)
       const configured = this._listOpenCodeConfiguredPlugins();
-      const next = configured.filter(p => p !== name);
+      const next = configured.filter(p => p !== safeName);
       if (next.length !== configured.length) {
         this._setOpenCodeConfiguredPlugins(next);
         removed = true;
@@ -1000,7 +1467,7 @@ class PluginsService {
 
       // Remove local plugin directory/file
       if (fs.existsSync(pluginsDir)) {
-        const directPath = path.join(pluginsDir, name);
+        const directPath = resolveInsideRoot(pluginsDir, safeName, 'OpenCode plugin path');
         if (fs.existsSync(directPath)) {
           fs.rmSync(directPath, { recursive: true, force: true });
           removed = true;
@@ -1008,8 +1475,9 @@ class PluginsService {
           const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
           for (const entry of entries) {
             const baseName = entry.name.replace(path.extname(entry.name), '');
-            if (entry.name === name || baseName === name) {
-              fs.rmSync(path.join(pluginsDir, entry.name), { recursive: true, force: true });
+            if (entry.name === safeName || baseName === safeName) {
+              const entryPath = resolveInsideRoot(pluginsDir, entry.name, 'OpenCode plugin path');
+              fs.rmSync(entryPath, { recursive: true, force: true });
               removed = true;
               break;
             }
@@ -1025,22 +1493,28 @@ class PluginsService {
 
     // Claude: Remove from native installed_plugins.json and delete install directories
     let removed = false;
+    const safeName = normalizePluginPathName(name, 'plugin name');
     if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
       try {
         const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
         if (data.plugins) {
           const keysToDelete = [];
-          const baseName = name.split('/').pop(); // handle "plugins/pr-review-toolkit" → "pr-review-toolkit"
+          const baseName = safeName.split('/').pop(); // handle "plugins/pr-review-toolkit" → "pr-review-toolkit"
           for (const [key, installations] of Object.entries(data.plugins)) {
             const [pluginName] = key.split('@');
-            if (pluginName === name || key === name || pluginName === baseName) {
+            if (pluginName === safeName || key === safeName || pluginName === baseName) {
               keysToDelete.push(key);
               // Delete install directories
               if (Array.isArray(installations)) {
                 for (const install of installations) {
                   if (install.installPath && fs.existsSync(install.installPath)) {
                     try {
-                      fs.rmSync(install.installPath, { recursive: true, force: true });
+                      const installPath = assertInsideAllowedRoots(
+                        install.installPath,
+                        [INSTALLED_DIR, CLAUDE_PLUGINS_DIR],
+                        'Claude plugin install path'
+                      );
+                      fs.rmSync(installPath, { recursive: true, force: true });
                     } catch (e) {
                       console.error('[PluginsService] Failed to delete install dir:', e.message);
                     }
@@ -1090,6 +1564,24 @@ class PluginsService {
    * @returns {Object} Updated plugin info
    */
   togglePlugin(name, enabled) {
+    if (this._isCodex()) {
+      const plugins = this.listPlugins().plugins;
+      const target = plugins.find(plugin => plugin.name === name || `${plugin.name}@${plugin.marketplace}` === name);
+      if (!target) {
+        throw new Error(`Plugin "${name}" not found`);
+      }
+      this._setCodexPluginEnabled(target.name, target.marketplace || '', enabled);
+      return {
+        name: target.name,
+        enabled,
+        success: true
+      };
+    }
+
+    if (!this._pluginsSupported()) {
+      throw new Error(`${this.platform} plugin management is not supported`);
+    }
+
     if (this._isOpenCode()) {
       const configured = this._listOpenCodeConfiguredPlugins();
       const exists = configured.includes(name);
@@ -1159,10 +1651,18 @@ class PluginsService {
    * @returns {Object} Result
    */
   updatePluginConfig(name, config) {
+    if (this._isCodex()) {
+      throw new Error('Codex cached plugins do not support config updates');
+    }
+
+    if (!this._pluginsSupported()) {
+      throw new Error(`${this.platform} plugin management is not supported`);
+    }
+
     if (this._isOpenCode()) {
       const configDir = path.join(OPENCODE_CONFIG_DIR, 'plugins-config');
-      this._ensureDir(configDir);
-      const configFile = path.join(configDir, `${name}.json`);
+      const configFile = resolvePluginConfigFile(configDir, name);
+      this._ensureDir(path.dirname(configFile));
       fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
       return {
         success: true,
@@ -1175,11 +1675,11 @@ class PluginsService {
       throw new Error(`Plugin "${name}" not found`);
     }
 
-    const configFile = path.join(CONFIG_DIR, `${name}.json`);
+    const configFile = resolvePluginConfigFile(CONFIG_DIR, name);
 
     // Ensure config directory exists
-    if (!fs.existsSync(CONFIG_DIR)) {
-      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    if (!fs.existsSync(path.dirname(configFile))) {
+      fs.mkdirSync(path.dirname(configFile), { recursive: true });
     }
 
     fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
@@ -1195,7 +1695,7 @@ class PluginsService {
    * @returns {string} Config file path
    */
   getReposConfigPath() {
-    const filePath = this._isOpenCode() ? PATHS.pluginRepos.opencode : PATHS.pluginRepos.claude;
+    const filePath = PATHS.pluginRepos[this.platform] || PATHS.pluginRepos.claude;
     this._ensureDir(path.dirname(filePath));
     return filePath;
   }
@@ -1242,6 +1742,10 @@ class PluginsService {
    * @returns {Array} Repos list
    */
   getRepos() {
+    if (!this.getCapabilities().repositories) {
+      return [];
+    }
+
     const repos = [];
     const seenRepos = new Set();
     const pushRepo = (repo) => {
@@ -1271,7 +1775,7 @@ class PluginsService {
     }
 
     // 2. Load Claude Code's native marketplace config (Claude only)
-    if (!this._isOpenCode() && fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
+    if (this.platform === 'claude' && fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
       try {
         const marketplaces = JSON.parse(fs.readFileSync(CLAUDE_MARKETPLACES_FILE, 'utf8'));
         const entries = [];
@@ -1644,11 +2148,10 @@ class PluginsService {
   scanLocalRepoTree(currentDir, repoRoot, tree) {
     const entries = fs.readdirSync(currentDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name.startsWith('.')) continue;
       const fullPath = path.join(currentDir, entry.name);
       const relativePath = normalizeRepoPath(path.relative(repoRoot, fullPath));
       if (entry.isDirectory()) {
-        if (entry.name === 'node_modules') continue;
+        if (entry.name === 'node_modules' || entry.name === '.git') continue;
         tree.push({ path: relativePath, type: 'tree', name: entry.name });
         this.scanLocalRepoTree(fullPath, repoRoot, tree);
       } else {
@@ -1704,7 +2207,12 @@ class PluginsService {
 
   async fetchRepoFileContent(repo, filePath, file = null) {
     if (repo.provider === 'local') {
-      return fs.readFileSync(path.join(repo.localPath, filePath), 'utf-8');
+      const safeFilePath = normalizePluginRepoDirectory(filePath, 'plugin repository file path');
+      if (!safeFilePath) {
+        throw new Error('Invalid plugin repository file path');
+      }
+      const localFilePath = resolveInsideRoot(repo.localPath, safeFilePath, 'Plugin repository file path', { allowHiddenSegments: true });
+      return fs.readFileSync(localFilePath, 'utf-8');
     }
     if (repo.provider === 'gitlab') {
       return this.fetchGitLabFileContent(repo, filePath);
@@ -1820,7 +2328,7 @@ class PluginsService {
    * @returns {Promise<Object>} Sync results
    */
   async syncRepos() {
-    if (this._isOpenCode()) {
+    if (!this.getCapabilities().syncRepos) {
       return { success: true, results: [] };
     }
 
@@ -1957,26 +2465,28 @@ class PluginsService {
   }
 
   buildMarketPluginItem(repo, data = {}) {
+    const itemRepo = data.repo || repo;
     return {
       name: data.name,
       displayName: data.displayName || '',
       description: data.description || '',
-      author: data.author || repo.owner || repo.projectPath || 'unknown',
+      author: data.author || itemRepo.owner || itemRepo.projectPath || 'unknown',
       version: data.version || '1.0.0',
       category: data.category || 'general',
-      repoUrl: data.repoUrl || repo.repoUrl || buildRepoUrl(repo),
-      repoProvider: repo.provider,
-      repoOwner: repo.owner || '',
-      repoName: repo.name || '',
-      repoBranch: repo.branch || 'main',
-      repoHost: repo.host || '',
-      repoProjectPath: repo.projectPath || '',
-      repoLocalPath: repo.localPath || '',
-      repoId: repo.id,
+      marketplace: data.marketplace || repo.marketplace || '',
+      repoUrl: data.repoUrl || itemRepo.repoUrl || buildRepoUrl(itemRepo),
+      repoProvider: itemRepo.provider,
+      repoOwner: itemRepo.owner || '',
+      repoName: itemRepo.name || '',
+      repoBranch: itemRepo.branch || 'main',
+      repoHost: itemRepo.host || '',
+      repoProjectPath: itemRepo.projectPath || '',
+      repoLocalPath: itemRepo.localPath || '',
+      repoId: itemRepo.id,
       directory: normalizeRepoPath(data.directory || data.name || ''),
       installSource: data.installSource || '',
       marketplaceFormat: data.marketplaceFormat || '',
-      readmeUrl: this.buildRepoBrowserUrl(repo, data.directory || data.name || ''),
+      readmeUrl: this.buildRepoBrowserUrl(itemRepo, data.directory || data.name || ''),
       lspServers: data.lspServers || null,
       commands: data.commands || [],
       hooks: data.hooks || [],
@@ -2017,7 +2527,7 @@ class PluginsService {
           version: manifest.version || manifest.opencode?.minimumVersion || '1.0.0',
           category: firstCategory ? String(firstCategory).toLowerCase() : 'general',
           directory: file.path,
-          installSource: githubRepo ? '' : installSource,
+          installSource,
           marketplaceFormat: 'opencode-plugin-json',
           repoUrl
         });
@@ -2029,11 +2539,182 @@ class PluginsService {
       .map(item => item.value);
   }
 
+  _repoFromMarketplaceSource(parentRepo, source) {
+    if (!source) return { repo: parentRepo, directory: '', installSource: '' };
+
+    if (typeof source === 'string') {
+      const raw = source.trim();
+      if (!raw) return { repo: parentRepo, directory: '', installSource: '' };
+      if (isLikelyLocalPath(raw) || raw.startsWith('.')) {
+        return {
+          repo: parentRepo,
+          directory: normalizeRepoPath(raw.replace(/^\.\//, '')),
+          installSource: ''
+        };
+      }
+      const parsedTree = this.parseRepoTreeSource(raw);
+      if (parsedTree) {
+        return { repo: this.normalizeRepoConfig(parsedTree), directory: parsedTree.directory, installSource: raw };
+      }
+      const parsedRepo = this._repoFromGitUrl(raw, parentRepo.branch || 'main');
+      if (parsedRepo) {
+        return { repo: parsedRepo, directory: '', installSource: raw };
+      }
+      return { repo: parentRepo, directory: normalizeRepoPath(raw.replace(/^\.\//, '')), installSource: raw };
+    }
+
+    if (typeof source !== 'object') {
+      return { repo: parentRepo, directory: '', installSource: '' };
+    }
+
+    const sourceType = source.source || source.type || '';
+    const rawPath = source.path || source.directory || '';
+    if (sourceType === 'local' || (!source.url && rawPath)) {
+      return {
+        repo: parentRepo,
+        directory: normalizeRepoPath(String(rawPath).replace(/^\.\//, '')),
+        installSource: ''
+      };
+    }
+
+    if (source.url) {
+      const branch = source.ref || source.branch || source.sha || parentRepo.branch || 'main';
+      const parsedRepo = this._repoFromGitUrl(source.url, branch);
+      if (parsedRepo) {
+        return {
+          repo: parsedRepo,
+          directory: normalizeRepoPath(rawPath),
+          installSource: source.url
+        };
+      }
+    }
+
+    return {
+      repo: parentRepo,
+      directory: normalizeRepoPath(rawPath),
+      installSource: source.url || ''
+    };
+  }
+
+  _repoFromGitUrl(url = '', branch = 'main') {
+    const value = String(url || '').trim();
+    if (!value) return null;
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return null;
+    }
+
+    const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '').split('/').filter(Boolean);
+    if (parsed.hostname.includes('github') && parts.length >= 2) {
+      return this.normalizeRepoConfig({
+        provider: 'github',
+        host: `${parsed.protocol}//${parsed.host}`,
+        owner: parts[0],
+        name: parts[1],
+        branch,
+        repoUrl: value
+      });
+    }
+
+    if (parsed.hostname.includes('gitlab') && parts.length >= 1) {
+      return this.normalizeRepoConfig({
+        provider: 'gitlab',
+        host: `${parsed.protocol}//${parsed.host}`,
+        projectPath: parts.join('/'),
+        branch,
+        repoUrl: value
+      });
+    }
+
+    return null;
+  }
+
+  async _readManifestFromRepo(repo, directory, candidates) {
+    for (const candidate of candidates) {
+      try {
+        return await this.fetchRepoJson(repo, joinRepoPath(directory, candidate));
+      } catch {
+        // try next candidate
+      }
+    }
+    return null;
+  }
+
+  async _fetchClaudeMarketplacePlugins(repo, marketplace, readJson) {
+    if (!marketplace || !Array.isArray(marketplace.plugins)) return [];
+    const results = [];
+    for (const plugin of marketplace.plugins) {
+      const sourceInfo = this._repoFromMarketplaceSource(repo, plugin.source);
+      const canReadManifest = sourceInfo.repo.provider === 'local' || sourceInfo.repo.id === repo.id;
+      const manifest = canReadManifest
+        ? await this._readManifestFromRepo(sourceInfo.repo, sourceInfo.directory, [
+            '.claude-plugin/plugin.json',
+            'plugin.json',
+            'package.json'
+          ])
+        : null;
+      results.push(this.buildMarketPluginItem(repo, {
+        repo: sourceInfo.repo,
+        name: manifest?.name || plugin.name,
+        description: manifest?.description || plugin.description || '',
+        author: manifest?.author || plugin.author?.name || marketplace.owner?.name || repo.owner,
+        version: manifest?.version || plugin.version || '1.0.0',
+        category: plugin.category || 'general',
+        directory: sourceInfo.directory || plugin.name,
+        marketplace: marketplace.name || repo.marketplace || '',
+        installSource: sourceInfo.directory ? '' : sourceInfo.installSource,
+        marketplaceFormat: 'claude-marketplace',
+        lspServers: plugin.lspServers || null,
+        commands: manifest?.commands || [],
+        hooks: manifest?.hooks || []
+      }));
+    }
+    return results;
+  }
+
+  async _fetchCodexMarketplacePlugins(repo, marketplace) {
+    if (!marketplace || !Array.isArray(marketplace.plugins)) return [];
+    const marketplaceName = this._resolveCodexMarketplaceName(repo, marketplace.name || marketplace.interface?.displayName || repo.marketplace);
+    const results = [];
+    for (const plugin of marketplace.plugins) {
+      const sourceInfo = this._repoFromMarketplaceSource(repo, plugin.source);
+      const canReadManifest = sourceInfo.repo.provider === 'local' || sourceInfo.repo.id === repo.id;
+      const manifest = canReadManifest
+        ? await this._readManifestFromRepo(sourceInfo.repo, sourceInfo.directory, [
+            '.codex-plugin/plugin.json',
+            'plugin.json',
+            'package.json'
+          ])
+        : null;
+      results.push(this.buildMarketPluginItem(repo, {
+        repo: sourceInfo.repo,
+        name: manifest?.name || plugin.name,
+        description: manifest?.description || plugin.description || '',
+        author: manifest?.author || plugin.author?.name || marketplace.owner?.name || repo.owner,
+        version: manifest?.version || plugin.version || '1.0.0',
+        category: plugin.category || 'general',
+        directory: sourceInfo.directory || plugin.name,
+        marketplace: marketplaceName,
+        installSource: sourceInfo.directory ? '' : sourceInfo.installSource,
+        marketplaceFormat: 'codex-marketplace',
+        commands: manifest?.commands || [],
+        hooks: manifest?.hooks || []
+      }));
+    }
+    return results;
+  }
+
   /**
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
    */
   async getMarketPlugins(forceRefresh = false) {
+    if (!this.getCapabilities().market) {
+      return [];
+    }
+
     if (forceRefresh) {
       this.clearMarketCache({ removeFile: false });
     }
@@ -2074,22 +2755,21 @@ class PluginsService {
           return this.fetchRepoJson(repo, normalizedPath, file);
         };
 
-        // Try to fetch marketplace.json first (official format)
-        if (fileMap.has('.claude-plugin/marketplace.json')) {
+        // Claude official marketplace format
+        if (this.platform === 'claude' && fileMap.has('.claude-plugin/marketplace.json')) {
           const marketplace = await readJson('.claude-plugin/marketplace.json');
           if (marketplace && marketplace.plugins) {
-            for (const plugin of marketplace.plugins) {
-              marketPlugins.push(this.buildMarketPluginItem(repo, {
-                name: plugin.name,
-                description: plugin.description || '',
-                author: plugin.author?.name || marketplace.owner?.name || repo.owner,
-                version: plugin.version || '1.0.0',
-                category: plugin.category || 'general',
-                directory: plugin.source?.replace(/^\.\//, '') || plugin.name,
-                lspServers: plugin.lspServers || null
-              }));
-            }
+            marketPlugins.push(...await this._fetchClaudeMarketplacePlugins(repo, marketplace, readJson));
             continue; // Skip legacy format check
+          }
+        }
+
+        // Codex marketplace format generated by plugin-creator
+        if (this._isCodex() && fileMap.has('.agents/plugins/marketplace.json')) {
+          const marketplace = await readJson('.agents/plugins/marketplace.json');
+          if (marketplace && marketplace.plugins) {
+            marketPlugins.push(...await this._fetchCodexMarketplacePlugins(repo, marketplace));
+            continue;
           }
         }
 
@@ -2100,6 +2780,34 @@ class PluginsService {
             marketPlugins.push(...openCodeMarketplacePlugins);
             continue;
           }
+        }
+
+        const nestedManifestFiles = files.filter(file => {
+          if (this._isCodex()) return file.path.endsWith('/.codex-plugin/plugin.json');
+          if (this.platform === 'claude') return file.path.endsWith('/.claude-plugin/plugin.json');
+          return false;
+        });
+        const nestedDirs = new Set();
+        for (const file of nestedManifestFiles) {
+          const marker = this._isCodex() ? '/.codex-plugin/plugin.json' : '/.claude-plugin/plugin.json';
+          const dir = normalizeRepoPath(file.path.slice(0, -marker.length));
+          if (!dir || nestedDirs.has(dir)) continue;
+          nestedDirs.add(dir);
+          const manifest = await readJson(file.path);
+          marketPlugins.push(this.buildMarketPluginItem(repo, {
+            name: manifest.name || dir.split('/').pop(),
+            description: manifest.description || '',
+            author: manifest.author || repo.owner,
+            version: manifest.version || '1.0.0',
+            directory: dir,
+            marketplace: this._isCodex() ? this._resolveCodexMarketplaceName(repo) : '',
+            marketplaceFormat: this._isCodex() ? 'codex-manifest' : 'claude-manifest',
+            commands: manifest.commands || [],
+            hooks: manifest.hooks || []
+          }));
+        }
+        if (nestedDirs.size > 0) {
+          continue;
         }
 
         // Legacy format: each directory is a plugin with plugin.json/package.json

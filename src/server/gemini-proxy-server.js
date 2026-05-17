@@ -140,6 +140,58 @@ function buildVertexAiV1Path(baseUrl, requestPath) {
   return `${basePath}/models/${encodedModel}${suffix}${query}`;
 }
 
+function parseJsonSafely(value) {
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function extractGeminiUpstreamErrorMessage(rawBody, statusCode) {
+  const body = String(rawBody || '').trim();
+  const fallback = `Gemini upstream error: HTTP ${statusCode || 500}`;
+
+  if (!body) {
+    return fallback;
+  }
+
+  const parsed = parseJsonSafely(body);
+  const message = parsed?.error?.message
+    || parsed?.message
+    || (typeof parsed?.error === 'string' ? parsed.error : '')
+    || '';
+
+  if (message) {
+    return `Gemini upstream error (${statusCode || parsed?.error?.code || 500}): ${message}`;
+  }
+
+  const sseDataLine = body
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .find(line => line.startsWith('data:'));
+  if (sseDataLine) {
+    const eventPayload = sseDataLine.slice(5).trim();
+    if (eventPayload && eventPayload !== '[DONE]') {
+      const eventJson = parseJsonSafely(eventPayload);
+      const eventMessage = eventJson?.error?.message
+        || eventJson?.message
+        || (typeof eventJson?.error === 'string' ? eventJson.error : '')
+        || '';
+      if (eventMessage) {
+        return `Gemini upstream error (${statusCode || eventJson?.error?.code || 500}): ${eventMessage}`;
+      }
+    }
+  }
+
+  return `Gemini upstream error (${statusCode || 500}): ${body.slice(0, 500)}`;
+}
+
+function isHttpErrorStatus(statusCode) {
+  const code = Number(statusCode);
+  return Number.isFinite(code) && (code < 200 || code >= 300);
+}
+
 /**
  * 计算请求成本
  */
@@ -430,6 +482,8 @@ async function startGeminiProxyServer(options = {}) {
       let buffer = '';
       let tokenData = createTokenData();
       let usageRecorded = false;
+      const upstreamStatusCode = Number(proxyRes.statusCode) || 200;
+      const isUpstreamError = isHttpErrorStatus(upstreamStatusCode);
       const parsedStream = createDecodedStream(proxyRes);
 
       function recordUsageIfReady() {
@@ -477,7 +531,7 @@ async function startGeminiProxyServer(options = {}) {
         buffer += chunk.toString('utf8');
 
         // 检查是否是 SSE 流
-        if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
+        if (!isUpstreamError && proxyRes.headers['content-type']?.includes('text/event-stream')) {
           const parsedEvents = splitSSEEvents(buffer);
           buffer = parsedEvents.remainder;
 
@@ -503,6 +557,26 @@ async function startGeminiProxyServer(options = {}) {
       });
 
       parsedStream.on('end', () => {
+        if (isUpstreamError) {
+          const message = extractGeminiUpstreamErrorMessage(buffer, upstreamStatusCode);
+          const error = new Error(buffer.trim() || message);
+          recordFailure(metadata.channelId, 'gemini', error);
+          publishFailureLog({
+            source: 'gemini',
+            metadata,
+            message,
+            error,
+            statusCode: upstreamStatusCode,
+            stage: 'upstream_response',
+            broadcastLog
+          });
+
+          if (!isResponseClosed) {
+            requestMetadata.delete(req);
+          }
+          return;
+        }
+
         // 如果不是流式响应，尝试从完整响应中解析
         if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
           try {
@@ -675,6 +749,8 @@ module.exports = {
   calculateCost,
   _test: {
     buildVertexAiV1Path,
+    extractGeminiUpstreamErrorMessage,
+    isHttpErrorStatus,
     stripVertexFunctionResponseIds
   }
 };

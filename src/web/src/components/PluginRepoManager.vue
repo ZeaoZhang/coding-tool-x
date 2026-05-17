@@ -20,7 +20,7 @@
         <n-spin :show="loadingRepos">
           <div
             v-for="repo in repos"
-            :key="`${repo.owner}/${repo.name}`"
+            :key="repo.id || `${repo.owner}/${repo.name}/${repo.localPath || ''}`"
             class="repo-item"
           >
             <div class="repo-main">
@@ -117,12 +117,12 @@
       </div>
 
       <!-- 推荐仓库 -->
-      <div class="recommended">
+      <div v-if="recommendedRepos.length > 0" class="recommended">
         <div class="recommended-title">推荐仓库</div>
         <div class="recommended-list">
           <div
             v-for="rec in recommendedRepos"
-            :key="`${rec.owner}/${rec.name}`"
+            :key="rec.url || `${rec.owner}/${rec.name}`"
             class="recommended-item"
             :class="{ added: isRepoAdded(rec) }"
             @click="!isRepoAdded(rec) && quickAdd(rec)"
@@ -265,6 +265,9 @@ const recommendedRepos = computed(() => {
       { owner: 'awesome-opencode', name: 'awesome-opencode', url: 'https://github.com/awesome-opencode/awesome-opencode', description: 'OpenCode 生态聚合', branch: 'main' },
       { owner: 'sst', name: 'opencode', url: 'https://github.com/sst/opencode', description: 'OpenCode 官方仓库', branch: 'dev' }
     ]
+  }
+  if (props.platform === 'codex') {
+    return []
   }
   return [
     { owner: 'anthropics', name: 'claude-plugins-official', url: 'https://github.com/anthropics/claude-plugins-official', description: '官方插件库', branch: 'main' }

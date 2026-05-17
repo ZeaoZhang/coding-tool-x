@@ -69,13 +69,20 @@
           安装此技能
         </n-button>
         <n-button
-          v-if="detail?.installed"
+          v-if="detail?.installed && !detail?.protected"
           type="error"
           tertiary
           :loading="uninstalling"
           @click="handleUninstall"
         >
           卸载
+        </n-button>
+        <n-button
+          v-else-if="detail?.installed && detail?.protected"
+          tertiary
+          disabled
+        >
+          受保护
         </n-button>
       </div>
     </template>
@@ -175,6 +182,7 @@ async function loadDetail() {
 
 async function handleInstall() {
   if (!props.skill) return
+  if (props.skill.protected) return
 
   installing.value = true
   try {
@@ -208,6 +216,7 @@ async function handleInstall() {
 
 async function handleUninstall() {
   if (!detail.value) return
+  if (detail.value.protected) return
 
   uninstalling.value = true
   try {

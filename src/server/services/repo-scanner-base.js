@@ -13,37 +13,13 @@ const http = require('http');
 const { createWriteStream } = require('fs');
 const AdmZip = require('adm-zip');
 const { PATHS, getRepoScannerReposPath, getRepoScannerCachePath } = require('../../config/paths');
+const {
+  normalizeSafeRelativePath,
+  resolveInsideRoot
+} = require('./config-artifact-paths');
 
 // 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
-
-function normalizeSafeRelativePath(input, errorLabel) {
-  const raw = String(input || '').replace(/\\/g, '/').trim();
-  if (!raw || raw.includes('\0')) {
-    throw new Error(`Invalid ${errorLabel}`);
-  }
-
-  const normalized = path.posix.normalize(raw).replace(/^(\.\/)+/, '');
-  if (!normalized ||
-      normalized === '.' ||
-      normalized === '..' ||
-      normalized.startsWith('../') ||
-      normalized.includes('/../') ||
-      path.posix.isAbsolute(normalized)) {
-    throw new Error(`Invalid ${errorLabel}`);
-  }
-
-  return normalized;
-}
-
-function resolveInsideRoot(rootDir, relativePath, errorLabel) {
-  const resolvedRoot = path.resolve(rootDir);
-  const resolvedPath = path.resolve(resolvedRoot, relativePath);
-  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
-    throw new Error(`${errorLabel} escapes target directory`);
-  }
-  return resolvedPath;
-}
 
 /**
  * 仓库配置结构
@@ -449,7 +425,8 @@ class RepoScannerBase {
    * 卸载项目
    */
   uninstall(targetName) {
-    const dest = path.join(this.installDir, targetName);
+    const safeTargetName = normalizeSafeRelativePath(targetName, 'target name');
+    const dest = resolveInsideRoot(this.installDir, safeTargetName, 'Target path');
 
     if (fs.existsSync(dest)) {
       if (fs.statSync(dest).isDirectory()) {

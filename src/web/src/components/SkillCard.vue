@@ -8,13 +8,20 @@
       </div>
       <div class="card-actions" @click.stop>
         <n-button
-          v-if="skill.installed"
+          v-if="skill.installed && !skill.protected"
           size="small"
           type="error"
           :loading="uninstalling"
           :focusable="false"
           @click="$emit('uninstall', skill)"
         >卸载</n-button>
+        <n-button
+          v-else-if="skill.installed && skill.protected"
+          size="small"
+          tertiary
+          disabled
+          :focusable="false"
+        >受保护</n-button>
         <n-button
           v-else
           size="small"

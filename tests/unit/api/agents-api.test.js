@@ -310,6 +310,19 @@ describe('remote install and uninstall routes', () => {
     expect(services.claude.installFromRemote).toHaveBeenCalledWith(agent);
   });
 
+  test('returns 400 when service rejects remote install validation', async () => {
+    services.claude.installFromRemote.mockRejectedValue(new Error('代理仓库路径不合法'));
+    const res = await request(buildApp()).post('/install', {
+      fileName: 'helper-agent',
+      repoOwner: 'demo',
+      repoName: 'repo',
+      repoPath: 'agents/helper-agent.md'
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
   test('requires fileName when uninstalling', async () => {
     const res = await request(buildApp()).post('/uninstall', {});
 

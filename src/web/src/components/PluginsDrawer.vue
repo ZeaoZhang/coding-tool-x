@@ -11,7 +11,13 @@
           <span>Plugins</span>
         </div>
       </template>
-      <PluginsPanel @back="visible = false" :hide-back="true" :in-drawer="true" :drawer-visible="visible" />
+      <PluginsPanel
+        @back="visible = false"
+        :hide-back="true"
+        :in-drawer="true"
+        :drawer-visible="visible"
+        :platform="props.platform"
+      />
     </n-drawer-content>
   </n-drawer>
 </template>
@@ -23,7 +29,8 @@ import PluginsPanel from './PluginsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  platform: { type: String, default: '' }
 })
 
 const emit = defineEmits(['update:visible'])

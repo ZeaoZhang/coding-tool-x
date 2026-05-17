@@ -6,6 +6,17 @@ let services;
 beforeEach(() => {
   services = {
     claude: createMockService(),
+    codex: createMockService(),
+    gemini: createMockService({
+      capabilities: {
+        platform: 'gemini',
+        supportsPlugins: false,
+        repositories: false,
+        market: false,
+        install: false,
+        uninstall: false
+      }
+    }),
     opencode: createMockService()
   };
 
@@ -31,8 +42,16 @@ afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
 });
 
-function createMockService() {
+function createMockService(overrides = {}) {
   return {
+    getCapabilities: vi.fn(() => overrides.capabilities || {
+      platform: 'claude',
+      supportsPlugins: true,
+      repositories: true,
+      market: true,
+      install: true,
+      uninstall: true
+    }),
     listPlugins: vi.fn(() => ({ plugins: [{ name: 'demo-plugin', enabled: true }] })),
     getMarketPlugins: vi.fn(async () => [{ name: 'market-plugin' }]),
     installPlugin: vi.fn(async () => ({
@@ -128,12 +147,36 @@ describe('GET / and GET /market', () => {
     expect(services.opencode.listPlugins).toHaveBeenCalled();
   });
 
+  test('lists plugins for Codex platform instead of falling back to Claude', async () => {
+    const res = await request(buildApp()).get('/?platform=codex');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('codex');
+    expect(services.codex.listPlugins).toHaveBeenCalled();
+    expect(services.claude.listPlugins).not.toHaveBeenCalled();
+  });
+
   test('passes refresh flag to market lookup', async () => {
     const res = await request(buildApp()).get('/market?platform=claude&refresh=1');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(services.claude.getMarketPlugins).toHaveBeenCalledWith(true);
+  });
+
+  test('GET /capabilities returns platform capability contract', async () => {
+    const res = await request(buildApp()).get('/capabilities?platform=gemini');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('gemini');
+    expect(res.body.capabilities).toEqual(expect.objectContaining({
+      platform: 'gemini',
+      supportsPlugins: false,
+      repositories: false
+    }));
+    expect(services.gemini.getCapabilities).toHaveBeenCalled();
   });
 });
 
@@ -186,6 +229,20 @@ describe('POST /install', () => {
   test('returns 400 when service reports failure', async () => {
     services.claude.installPlugin.mockResolvedValue({ success: false, error: 'bad plugin' });
     const res = await request(buildApp()).post('/install', { source: 'bad-plugin' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('returns 400 when service rejects unsafe repo directory', async () => {
+    services.claude.installPlugin.mockRejectedValue(new Error('Invalid plugin directory'));
+    const res = await request(buildApp()).post('/install', {
+      directory: '../demo-plugin',
+      repo: {
+        owner: 'demo',
+        name: 'plugins'
+      }
+    });
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
@@ -302,6 +359,16 @@ describe('single plugin routes', () => {
   test('DELETE /:name returns 400 when uninstall fails', async () => {
     services.claude.uninstallPlugin.mockReturnValue({ success: false, error: 'not found' });
     const res = await request(buildApp()).delete('/demo-plugin');
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('DELETE /:name returns 400 when service rejects unsafe plugin name', async () => {
+    services.claude.uninstallPlugin.mockImplementation(() => {
+      throw new Error('Invalid plugin name');
+    });
+    const res = await request(buildApp()).delete('/..%2Fdemo-plugin');
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);

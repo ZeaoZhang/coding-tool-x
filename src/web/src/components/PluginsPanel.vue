@@ -9,11 +9,11 @@
         <span class="panel-title">Plugins 插件管理</span>
       </div>
       <div class="header-right">
-        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
+        <n-button v-if="capabilities.repositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
+        <n-button v-if="capabilities.import" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -27,11 +27,11 @@
     <!-- 抽屉模式头部 -->
     <div class="drawer-header-bar" v-if="inDrawer">
       <div class="header-right">
-        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
+        <n-button v-if="capabilities.repositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
+        <n-button v-if="capabilities.import" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -73,7 +73,7 @@
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="plugins.length === 0">配置仓库源</n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="plugins.length === 0 && capabilities.repositories">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
@@ -82,6 +82,9 @@
             v-for="plugin in filteredPlugins"
             :key="plugin.key"
             :plugin="plugin"
+            :readonly="plugin.readonly || (!capabilities.install && !capabilities.uninstall)"
+            :can-install="capabilities.install"
+            :can-uninstall="capabilities.uninstall"
             :installing="!!installingKeys[plugin.key]"
             :uninstalling="!!uninstallingKeys[plugin.key]"
             @install="handleInstall"
@@ -93,13 +96,13 @@
     </div>
 
     <!-- 底部提示 -->
-    <div class="panel-footer">
+    <div v-if="capabilities.install || capabilities.uninstall" class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
       <span>安装/卸载后需重启 {{ currentPlatformLabel }} 生效</span>
     </div>
 
     <!-- 弹窗组件 -->
-    <PluginRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
+    <PluginRepoManager v-if="capabilities.repositories" v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
     <PluginDetailDrawer
       v-model:visible="detailDrawerVisible"
       :plugin="selectedPlugin"
@@ -114,7 +117,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
-import { getPlugins, getMarketPlugins, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
+import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
 import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
@@ -123,7 +126,8 @@ import PluginDetailDrawer from './PluginDetailDrawer.vue'
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
   hideBack: { type: Boolean, default: false },
-  drawerVisible: { type: Boolean, default: false }
+  drawerVisible: { type: Boolean, default: false },
+  platform: { type: String, default: '' }
 })
 
 defineEmits(['back', 'updated'])
@@ -141,13 +145,33 @@ const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
 const loadRequestId = ref(0)
+const capabilities = ref({
+  supportsPlugins: true,
+  repositories: true,
+  market: true,
+  install: true,
+  uninstall: true,
+  import: true,
+  syncRepos: true
+})
 
 const currentPlatform = computed(() => {
-  return route.meta.channel === 'opencode' ? 'opencode' : 'claude'
+  if (props.platform && ['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+    return props.platform
+  }
+  const channel = route.meta.channel
+  if (channel === 'codex' || channel === 'gemini' || channel === 'opencode') return channel
+  return 'claude'
 })
 
 const currentPlatformLabel = computed(() => {
-  return currentPlatform.value === 'opencode' ? 'OpenCode' : 'Claude Code'
+  const map = {
+    claude: 'Claude Code',
+    codex: 'Codex CLI',
+    gemini: 'Gemini CLI',
+    opencode: 'OpenCode'
+  }
+  return map[currentPlatform.value] || 'Claude Code'
 })
 
 const filterOptions = [
@@ -173,15 +197,53 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的插件'
   if (filterStatus.value === 'installed') return '暂无已安装的插件'
   if (filterStatus.value === 'uninstalled') return '所有插件都已安装'
+  if (capabilities.value.supportsPlugins === false) return capabilities.value.disabledReason || `${currentPlatformLabel.value} 暂未提供插件管理能力`
   return '暂无可用插件，请配置仓库源'
 })
+
+async function loadCapabilities(platform) {
+  try {
+    const res = await getPluginCapabilities(platform)
+    if (res.success && res.capabilities) {
+      capabilities.value = {
+        supportsPlugins: true,
+        repositories: false,
+        market: false,
+        install: false,
+        uninstall: false,
+        import: false,
+        syncRepos: false,
+        ...res.capabilities
+      }
+      return
+    }
+  } catch {
+    // 旧服务端降级：保留 Claude/OpenCode 可用，Codex 不再前端硬编码只读
+  }
+  capabilities.value = {
+    supportsPlugins: currentPlatform.value !== 'gemini',
+    repositories: currentPlatform.value !== 'gemini',
+    market: currentPlatform.value !== 'gemini',
+    install: currentPlatform.value !== 'gemini',
+    uninstall: currentPlatform.value !== 'gemini',
+    import: currentPlatform.value === 'claude',
+    syncRepos: currentPlatform.value === 'claude'
+  }
+}
 
 async function loadData(force = false) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
   loading.value = true
   try {
-    if (force) {
+    await loadCapabilities(platform)
+
+    if (capabilities.value.supportsPlugins === false) {
+      plugins.value = []
+      return
+    }
+
+    if (force && capabilities.value.syncRepos) {
       await syncPluginRepos(platform).catch(() => {})
     }
 
@@ -231,13 +293,15 @@ async function loadData(force = false) {
 
     plugins.value = mergePluginLists(installedList, marketList)
 
-    getMarketPlugins(platform, force)
-      .catch(() => ({ success: true, plugins: [] }))
-      .then((marketRes) => {
-        if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
-        marketList = marketRes.success ? marketRes.plugins : []
-        plugins.value = mergePluginLists(installedList, marketList)
-      })
+    if (capabilities.value.market) {
+      getMarketPlugins(platform, force)
+        .catch(() => ({ success: true, plugins: [] }))
+        .then((marketRes) => {
+          if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
+          marketList = marketRes.success ? marketRes.plugins : []
+          plugins.value = mergePluginLists(installedList, marketList)
+        })
+    }
   } catch (err) {
     message.error('加载插件失败: ' + err.message)
   } finally {
@@ -266,6 +330,7 @@ async function handleImport() {
 }
 
 async function handleInstall(plugin) {
+  if (!capabilities.value.install || plugin.readonly) return
   if (!plugin.installSource && !plugin.repoOwner && !plugin.repoProjectPath && !plugin.repoLocalPath) {
     return message.error('缺少可安装来源')
   }
@@ -300,6 +365,7 @@ async function handleInstall(plugin) {
 }
 
 async function handleUninstall(plugin) {
+  if (!capabilities.value.uninstall || plugin.readonly) return
   uninstallingKeys.value[plugin.key] = true
   try {
     const res = await uninstallPlugin(plugin.name, currentPlatform.value)

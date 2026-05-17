@@ -155,6 +155,25 @@ describe('repo-scanner-base install and utility helpers', () => {
     ).rejects.toThrow('Invalid item path');
   });
 
+  test('installFromRepo rejects unsafe target paths before downloading', async () => {
+    const scanner = createScanner([]);
+    const downloadSpy = vi.spyOn(scanner, 'downloadFile');
+
+    await expect(
+      scanner.installFromRepo('items/hello.md', { owner: 'demo', name: 'repo', branch: 'main' }, '../hello.md')
+    ).rejects.toThrow('Invalid target name');
+    await expect(
+      scanner.installFromRepo('items/hello.md', { owner: 'demo', name: 'repo', branch: 'main' }, '/tmp/hello.md')
+    ).rejects.toThrow('Invalid target name');
+    await expect(
+      scanner.installFromRepo('items/hello.md', { owner: 'demo', name: 'repo', branch: 'main' }, 'C:\\temp\\hello.md')
+    ).rejects.toThrow('Invalid target name');
+    await expect(
+      scanner.installFromRepo('items/hello.md', { owner: 'demo', name: 'repo', branch: 'main' }, 'bad\0hello.md')
+    ).rejects.toThrow('Invalid target name');
+    expect(downloadSpy).not.toHaveBeenCalled();
+  });
+
   test('uninstall removes directories and reports missing targets as not installed', () => {
     const scanner = createScanner([]);
     const installedDir = path.join(testDir, 'installed', 'bundle');
@@ -164,6 +183,20 @@ describe('repo-scanner-base install and utility helpers', () => {
     expect(scanner.uninstall('bundle')).toEqual({ success: true, message: 'Uninstalled successfully' });
     expect(fs.existsSync(installedDir)).toBe(false);
     expect(scanner.uninstall('bundle')).toEqual({ success: true, message: 'Not installed' });
+  });
+
+  test('uninstall supports nested targets and rejects unsafe paths', () => {
+    const scanner = createScanner([]);
+    const nestedFile = path.join(testDir, 'installed', 'team', 'review.md');
+    fs.mkdirSync(path.dirname(nestedFile), { recursive: true });
+    fs.writeFileSync(nestedFile, 'review', 'utf8');
+
+    expect(scanner.uninstall('team/review.md')).toEqual({ success: true, message: 'Uninstalled successfully' });
+    expect(fs.existsSync(nestedFile)).toBe(false);
+    expect(() => scanner.uninstall('../victim.md')).toThrow('Invalid target name');
+    expect(() => scanner.uninstall('/tmp/victim.md')).toThrow('Invalid target name');
+    expect(() => scanner.uninstall('C:\\temp\\victim.md')).toThrow('Invalid target name');
+    expect(() => scanner.uninstall('bad\0victim.md')).toThrow('Invalid target name');
   });
 
   test('parseFrontmatter strips BOM and returns metadata plus trimmed body', () => {

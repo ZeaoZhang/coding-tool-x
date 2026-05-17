@@ -53,7 +53,16 @@ function stubFormatConverter() {
     filename: fc,
     loaded: true,
     exports: {
-      parseSkillContent: vi.fn((c) => ({ name: 'test', description: 'desc', body: c, format: 'claude' }))
+      parseSkillContent: vi.fn((c, options = {}) => {
+        const nameMatch = String(c || '').match(/^name:\s*(.+)$/m);
+        const descriptionMatch = String(c || '').match(/^description:\s*(.+)$/m);
+        return {
+          name: nameMatch ? nameMatch[1].replace(/^["']|["']$/g, '') : 'test',
+          description: descriptionMatch ? descriptionMatch[1].replace(/^["']|["']$/g, '') : 'desc',
+          body: c,
+          format: options.platform === 'codex' ? 'codex' : 'claude'
+        };
+      })
     }
   };
 }
@@ -274,6 +283,50 @@ describe('SkillService.getInstalledSkills', () => {
     const skills = svc.getInstalledSkills();
     expect(Array.isArray(skills)).toBe(true);
   });
+
+  it('listSkills includes skills installed only in the native platform directory', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('codex');
+    const nativeSkillDir = path.join(svc.installDir, 'native-only');
+    fs.mkdirSync(nativeSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nativeSkillDir, 'SKILL.md'),
+      '---\nname: Native Only\ndescription: From native dir\n---\nUse native skill',
+      'utf-8'
+    );
+
+    const skills = await svc.listSkills(true);
+    const nativeSkill = skills.find(skill => skill.directory === 'native-only');
+
+    expect(nativeSkill).toEqual(expect.objectContaining({
+      directory: 'native-only',
+      installed: true,
+      source: 'native-installed'
+    }));
+  });
+
+  it('marks Codex .system skills as protected system-installed entries', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('codex');
+    const systemSkillDir = path.join(svc.installDir, '.system', 'skill-installer');
+    fs.mkdirSync(systemSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(systemSkillDir, 'SKILL.md'),
+      '---\nname: skill-installer\ndescription: System skill\n---\nBody',
+      'utf-8'
+    );
+
+    const skills = await svc.listSkills(true);
+    const systemSkill = skills.find(skill => skill.directory === '.system/skill-installer');
+
+    expect(systemSkill).toEqual(expect.objectContaining({
+      directory: '.system/skill-installer',
+      installed: true,
+      source: 'system-installed',
+      protected: true,
+      isLocal: false
+    }));
+  });
 });
 
 describe('SkillService file operations', () => {
@@ -322,6 +375,21 @@ describe('SkillService file operations', () => {
     expect(fs.readFileSync(path.join(svc.storageDir, 'bundle', 'assets', 'icon.bin')).toString()).toBe('png');
   });
 
+  it('createSkillWithFiles rejects unsafe file paths', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+
+    expect(() => svc.createSkillWithFiles({
+      directory: 'bundle',
+      files: [
+        { path: 'SKILL.md', content: '# Title' },
+        { path: '../outside.txt', content: 'escape' }
+      ]
+    })).toThrow(/Invalid skill file path/);
+
+    expect(fs.existsSync(path.join(svc.storageDir, 'outside.txt'))).toBe(false);
+  });
+
   it('getSkillFileContent returns text files as utf-8', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
@@ -346,6 +414,19 @@ describe('SkillService file operations', () => {
 
     expect(result.isBase64).toBe(true);
     expect(Buffer.from(result.content, 'base64').toString()).toBe('bin-data');
+  });
+
+  it('rejects path traversal in skill file operations', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const skillDir = path.join(svc.installDir, 'my-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'README.md'), '# Readme', 'utf-8');
+
+    expect(() => svc.getSkillFileContent('my-skill', '../secret.txt')).toThrow(/Invalid skill file path/);
+    expect(() => svc.addSkillFiles('my-skill', [{ path: '../secret.txt', content: 'x' }])).toThrow(/Invalid skill file path/);
+    expect(() => svc.deleteSkillFile('my-skill', '../secret.txt')).toThrow(/Invalid skill file path/);
+    expect(() => svc.updateSkillFile('my-skill', '../secret.txt', 'x')).toThrow(/Invalid skill file path/);
   });
 
   it('addSkillFiles writes nested files into installed skill', () => {
@@ -398,6 +479,32 @@ describe('SkillService file operations', () => {
     expect(fs.existsSync(path.join(svc.installDir, 'local-skill', 'SKILL.md'))).toBe(true);
   });
 
+  it('uninstallSkill rejects unsafe target directories without deleting outside files', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const outsideDir = path.join(testDir, 'victim');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    fs.writeFileSync(path.join(outsideDir, 'SKILL.md'), '# Victim', 'utf-8');
+
+    expect(() => svc.uninstallSkill('../victim')).toThrow(/Invalid skill directory/);
+    expect(fs.existsSync(path.join(outsideDir, 'SKILL.md'))).toBe(true);
+  });
+
+  it('refuses to uninstall or modify Codex system skills', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('codex');
+    const systemSkillDir = path.join(svc.installDir, '.system', 'skill-installer');
+    fs.mkdirSync(systemSkillDir, { recursive: true });
+    fs.writeFileSync(path.join(systemSkillDir, 'SKILL.md'), '# System', 'utf-8');
+    fs.writeFileSync(path.join(systemSkillDir, 'README.md'), '# Readme', 'utf-8');
+
+    expect(() => svc.uninstallSkill('.system/skill-installer')).toThrow(/系统技能/);
+    expect(() => svc.addSkillFiles('.system/skill-installer', [{ path: 'notes.md', content: 'x' }])).toThrow(/系统技能/);
+    expect(() => svc.deleteSkillFile('.system/skill-installer', 'README.md')).toThrow(/系统技能/);
+    expect(() => svc.updateSkillFile('.system/skill-installer', 'README.md', 'x')).toThrow(/系统技能/);
+    expect(fs.existsSync(path.join(systemSkillDir, 'SKILL.md'))).toBe(true);
+  });
+
   it('uninstallSkill returns not installed when target is absent', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
@@ -406,5 +513,34 @@ describe('SkillService file operations', () => {
       success: true,
       message: 'Not installed'
     });
+  });
+});
+
+describe('SkillService local repository path safety', () => {
+  it('rejects unsafe local repo scan directories', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repoRoot = path.join(testDir, 'repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+
+    await expect(svc.fetchLocalRepoSkills({
+      provider: 'local',
+      localPath: repoRoot,
+      directory: '../outside'
+    })).rejects.toThrow(/Invalid skill repository directory/);
+  });
+
+  it('rejects unsafe local repo skill file paths', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repoRoot = path.join(testDir, 'repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+
+    await expect(svc.fetchSkillFileContent({
+      provider: 'local',
+      localPath: repoRoot
+    }, {
+      path: '../secret/SKILL.md'
+    })).rejects.toThrow(/Invalid skill repository file path/);
   });
 });

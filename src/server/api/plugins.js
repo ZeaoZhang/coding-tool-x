@@ -7,9 +7,10 @@
 const express = require('express');
 const { PluginsService } = require('../services/plugins-service');
 const { maskToken } = require('../services/oauth-utils');
+const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const pluginServices = new Map();
 
 function resolvePlatform(rawPlatform) {
@@ -64,6 +65,28 @@ function sanitizeRepos(service, repos = []) {
 }
 
 /**
+ * 获取平台插件能力
+ * GET /api/plugins/capabilities
+ */
+router.get('/capabilities', (req, res) => {
+  try {
+    const { platform, service } = getPluginsService(req);
+    const capabilities = typeof service.getCapabilities === 'function'
+      ? service.getCapabilities()
+      : { platform, supportsPlugins: true };
+
+    res.json({
+      success: true,
+      platform,
+      capabilities
+    });
+  } catch (err) {
+    console.error('[Plugins API] Get capabilities error:', err);
+    sendApiError(res, err);
+  }
+});
+
+/**
  * 获取插件列表
  * GET /api/plugins
  */
@@ -79,10 +102,7 @@ router.get('/', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] List plugins error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -107,10 +127,7 @@ router.get('/market', async (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Get market plugins error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -164,10 +181,7 @@ router.post('/install', async (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Install plugin error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -188,10 +202,7 @@ router.get('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Get repos error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -223,10 +234,7 @@ router.post('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Add repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -243,10 +251,7 @@ router.delete('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Remove repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -271,10 +276,7 @@ router.put('/repos/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Toggle repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -298,10 +300,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Remove repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -333,10 +332,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Toggle repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -367,10 +363,7 @@ router.put('/repos/auth', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Update repo auth error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -391,10 +384,7 @@ router.post('/repos/sync', async (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Sync repos error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -415,10 +405,7 @@ router.post('/sync', async (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Sync plugins error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -504,10 +491,7 @@ router.get('/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Get plugin error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -536,10 +520,7 @@ router.delete('/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Uninstall plugin error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -571,10 +552,7 @@ router.put('/:name/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Toggle plugin error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -605,10 +583,7 @@ router.put('/:name/config', (req, res) => {
     });
   } catch (err) {
     console.error('[Plugins API] Update plugin config error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 

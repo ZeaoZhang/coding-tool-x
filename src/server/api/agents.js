@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { AgentsService } = require('../services/agents-service');
 const { PATHS, HOME_DIR } = require('../../config/paths');
+const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
@@ -245,10 +246,7 @@ router.get('/', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] List agents error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -276,10 +274,7 @@ router.get('/stats', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Get stats error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -333,10 +328,7 @@ router.get('/:scope/:fileName', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Get agent error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -419,10 +411,7 @@ router.post('/', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Create agent error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -496,10 +485,7 @@ router.put('/:scope/:fileName', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Update agent error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -546,10 +532,7 @@ router.delete('/:scope/:fileName', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Delete agent error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -581,10 +564,7 @@ router.get('/all', async (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] List all agents error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -609,10 +589,7 @@ router.get('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Get repos error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -648,10 +625,7 @@ router.post('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Add repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -680,10 +654,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Remove repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -713,10 +684,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Toggle repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -768,10 +736,7 @@ router.post('/install', async (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Install agent error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -815,10 +780,7 @@ router.post('/uninstall', (req, res) => {
     });
   } catch (err) {
     console.error('[Agents API] Uninstall agent error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 

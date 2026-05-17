@@ -270,8 +270,9 @@ function escapeYamlString(str) {
  * 检测 Skill 格式
  * @returns {'claude' | 'codex' | 'unknown'}
  */
-function detectSkillFormat(content) {
+function detectSkillFormat(content, options = {}) {
   const { frontmatter } = parseFrontmatter(content);
+  const platform = options.platform || '';
 
   // Codex 特征: 有 metadata 对象
   if (frontmatter.metadata && typeof frontmatter.metadata === 'object') {
@@ -281,6 +282,11 @@ function detectSkillFormat(content) {
   // Claude Code 特征: 有 allowed-tools 或 license
   if (frontmatter['allowed-tools'] || frontmatter.license) {
     return 'claude';
+  }
+
+  // 在 Codex 平台上下文中，metadata 是可选的；name + description 已足够作为 Codex skill。
+  if (platform === 'codex' && frontmatter.name && frontmatter.description) {
+    return 'codex';
   }
 
   // 两者都有 name 和 description，无法区分时默认 claude
@@ -559,9 +565,9 @@ function convertCommandsBatch(commands, targetFormat) {
 /**
  * 解析 Skill 内容（支持双格式）
  */
-function parseSkillContent(content) {
+function parseSkillContent(content, options = {}) {
   const { frontmatter, body } = parseFrontmatter(content);
-  const format = detectSkillFormat(content);
+  const format = detectSkillFormat(content, options);
 
   const result = {
     name: frontmatter.name || '',

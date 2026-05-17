@@ -25,8 +25,8 @@
           </template>
           Skills 技能
         </n-tooltip>
-        <!-- Claude / OpenCode 共享功能 -->
-        <template v-if="currentChannel === 'claude' || currentChannel === 'opencode'">
+        <!-- Claude / Codex / OpenCode 共享功能 -->
+        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowPlugins">
@@ -251,7 +251,7 @@ function handleShowRecent() {
 
 // 处理显示 Skills
 function handleShowSkills() {
-  window.dispatchEvent(new CustomEvent('open-skills-drawer'))
+  window.dispatchEvent(new CustomEvent('open-skills-drawer', { detail: { platform: currentChannel.value } }))
 }
 
 // 处理显示 Commands
@@ -266,7 +266,7 @@ function handleShowAgents() {
 
 // 处理显示 Plugins
 function handleShowPlugins() {
-  window.dispatchEvent(new CustomEvent('open-plugins-drawer'))
+  window.dispatchEvent(new CustomEvent('open-plugins-drawer', { detail: { platform: currentChannel.value } }))
 }
 
 onMounted(() => {

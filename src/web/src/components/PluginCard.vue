@@ -4,13 +4,14 @@
       <div class="card-title">
         <span class="name">{{ plugin.name }}</span>
         <n-tag v-if="plugin.installed" type="info" size="small">已安装</n-tag>
+        <n-tag v-if="readonly" type="default" size="small">缓存</n-tag>
         <n-tag v-if="plugin.repoProvider === 'gitlab'" type="info" size="small">GitLab</n-tag>
         <n-tag v-else-if="plugin.repoProvider === 'local'" type="info" size="small">本地</n-tag>
         <n-tag v-else-if="plugin.repoOwner" type="info" size="small">{{ plugin.repoOwner }}</n-tag>
       </div>
-      <div class="card-actions" @click.stop>
+      <div v-if="!readonly" class="card-actions" @click.stop>
         <n-button
-          v-if="plugin.installed"
+          v-if="plugin.installed && canUninstall"
           size="small"
           type="error"
           :loading="uninstalling"
@@ -18,7 +19,7 @@
           @click="$emit('uninstall', plugin)"
         >卸载</n-button>
         <n-button
-          v-else
+          v-else-if="canInstall"
           size="small"
           type="primary"
           :loading="installing"
@@ -43,6 +44,9 @@ import { NTag, NButton, NIcon } from 'naive-ui'
 
 defineProps({
   plugin: { type: Object, required: true },
+  readonly: { type: Boolean, default: false },
+  canInstall: { type: Boolean, default: true },
+  canUninstall: { type: Boolean, default: true },
   installing: { type: Boolean, default: false },
   uninstalling: { type: Boolean, default: false }
 })

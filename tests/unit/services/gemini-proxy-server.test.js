@@ -54,4 +54,19 @@ describe('gemini-proxy-server compatibility helpers', () => {
       '/models/gemini-2.5-pro:streamGenerateContent?alt=sse'
     );
   });
+
+  test('classifies non-2xx upstream responses as errors before usage parsing', () => {
+    expect(proxyServer._test.isHttpErrorStatus(503)).toBe(true);
+    expect(proxyServer._test.isHttpErrorStatus(200)).toBe(false);
+
+    expect(proxyServer._test.extractGeminiUpstreamErrorMessage(JSON.stringify({
+      error: {
+        code: 503,
+        message: 'No available Gemini accounts: no available accounts',
+        status: 'INTERNAL'
+      }
+    }), 503)).toBe(
+      'Gemini upstream error (503): No available Gemini accounts: no available accounts'
+    );
+  });
 });
