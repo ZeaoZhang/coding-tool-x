@@ -148,6 +148,23 @@ describe('POST /servers', () => {
     expect(res.body.success).toBe(true);
     expect(mockService.saveServer).toHaveBeenCalledWith(payload);
   });
+
+  test('saves streamable_http server configs pasted from standard MCP JSON', async () => {
+    const payload = {
+      id: 'finData',
+      name: 'finData',
+      server: {
+        type: 'streamable_http',
+        url: 'https://mcp.api-inference.modelscope.net/ee05eeb4aa204c/mcp'
+      }
+    };
+
+    const res = await request(buildApp()).post('/servers', payload);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(mockService.saveServer).toHaveBeenCalledWith(payload);
+  });
 });
 
 describe('DELETE /servers/:id', () => {

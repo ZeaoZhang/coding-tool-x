@@ -23,7 +23,7 @@ const OPENCODE_SESSIONS_PATH       = require.resolve('../../../src/server/servic
 const CODEX_CHANNELS_PATH          = require.resolve('../../../src/server/services/codex-channels');
 const GEMINI_CHANNELS_PATH         = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_CHANNELS_PATH       = require.resolve('../../../src/server/services/opencode-channels');
-const STATS_PATH                   = require.resolve('../../../src/server/services/statistics-service');
+const CLAUDE_STATS_PATH            = require.resolve('../../../src/server/services/claude-statistics-service');
 const CODEX_STATS_PATH             = require.resolve('../../../src/server/services/codex-statistics-service');
 const GEMINI_STATS_PATH            = require.resolve('../../../src/server/services/gemini-statistics-service');
 const OPENCODE_STATS_PATH          = require.resolve('../../../src/server/services/opencode-statistics-service');
@@ -92,7 +92,7 @@ function injectStubs() {
   stub(CODEX_CHANNELS_PATH,    { getChannels: getCodexChannels });
   stub(GEMINI_CHANNELS_PATH,   { getChannels: getGeminiChannels });
   stub(OPENCODE_CHANNELS_PATH, { getChannels: getOpenCodeChannels });
-  stub(STATS_PATH,             { getTodayStatistics });
+  stub(CLAUDE_STATS_PATH,      { getTodayStatistics });
   stub(CODEX_STATS_PATH,       { getTodayStatistics: getCodexTodayStatistics });
   stub(GEMINI_STATS_PATH,      { getTodayStatistics: getGeminiTodayStatistics });
   stub(OPENCODE_STATS_PATH,    { getTodayStatistics: getOpenCodeTodayStatistics });
@@ -104,7 +104,7 @@ function cleanStubs() {
     PROXY_SERVER_PATH, CODEX_PROXY_PATH, GEMINI_PROXY_PATH, OPENCODE_PROXY_PATH,
     SESSIONS_PATH, CODEX_SESSIONS_PATH, GEMINI_SESSIONS_PATH, OPENCODE_SESSIONS_PATH,
     CODEX_CHANNELS_PATH, GEMINI_CHANNELS_PATH, OPENCODE_CHANNELS_PATH,
-    STATS_PATH, CODEX_STATS_PATH, GEMINI_STATS_PATH, OPENCODE_STATS_PATH,
+    CLAUDE_STATS_PATH, CODEX_STATS_PATH, GEMINI_STATS_PATH, OPENCODE_STATS_PATH,
     DASHBOARD_PATH
   ];
   paths.forEach(p => delete require.cache[p]);

@@ -142,7 +142,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import { TrashOutline, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
-import { getTodayStatistics, getOpenCodeTodayStatistics } from '../api/statistics'
+import { getTodayStatistics, getClaudeTodayStatistics, getOpenCodeTodayStatistics } from '../api/statistics'
 import { clearProxyLogs } from '../api/proxy'
 import message from '../utils/message'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -206,16 +206,18 @@ async function loadTodayStats() {
       return
     }
 
+    if (props.source === 'claude') {
+      const stats = await getClaudeTodayStatistics()
+      todayStats.value = {
+        requests: stats?.summary?.requests || 0,
+        tokens: stats?.summary?.tokens || 0
+      }
+      return
+    }
+
     const stats = await getTodayStatistics()
 
-    // 根据 source 获取对应工具类型的统计
-    // Claude 的 toolType 是 'claude-code'，Codex 的是 'codex'，Gemini 的是 'gemini'
-    let toolType = 'claude-code'
-    if (props.source === 'codex') {
-      toolType = 'codex'
-    } else if (props.source === 'gemini') {
-      toolType = 'gemini'
-    }
+    const toolType = props.source === 'gemini' ? 'gemini' : 'codex'
 
     const toolStats = stats.byToolType?.[toolType]
 

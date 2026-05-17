@@ -213,6 +213,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/config', require('./api/config'));
   app.use('/api/convert', require('./api/convert'));
   app.use('/api/statistics', require('./api/statistics'));
+  app.use('/api/claude/statistics', require('./api/claude-statistics'));
   app.use('/api/codex/statistics', require('./api/codex-statistics'));
   app.use('/api/gemini/statistics', require('./api/gemini-statistics'));
   app.use('/api/pm2-autostart', require('./api/pm2-autostart')());

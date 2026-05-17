@@ -199,9 +199,8 @@
       <pre class="paste-example">{
   "mcpServers": {
     "服务器名称": {
-      "command": "npx",
-      "args": ["-y", "package-name"],
-      "env": { "API_KEY": "xxx" }
+      "type": "streamable_http",
+      "url": "https://example.com/mcp"
     }
   }
 }</pre>
@@ -750,7 +749,7 @@ function handleParse() {
       }
 
       if (config.url) {
-        server.server.type = config.type || 'http'
+        server.server.type = config.type || 'streamable_http'
         server.server.url = config.url
         if (config.headers && typeof config.headers === 'object') {
           server.server.headers = config.headers
