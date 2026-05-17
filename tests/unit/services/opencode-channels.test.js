@@ -19,11 +19,13 @@ const PROXY_UTILS_MODULE    = require.resolve('../../../src/server/services/base
 const OPENCODE_SM_MODULE    = require.resolve('../../../src/server/services/opencode-settings-manager');
 const OPENCODE_PROXY_MODULE = require.resolve('../../../src/server/opencode-proxy-server');
 const OPENCODE_CH_MODULE    = require.resolve('../../../src/server/services/opencode-channels');
+const CHANNEL_BALANCE_MODULE = require.resolve('../../../src/server/services/channel-balance');
 
 // ─── Per-test state ───────────────────────────────────────────────────────────
 
 let testDir, channelsFile, codexChannelsFile;
 let clearNativeOAuth;
+let clearChannelBalanceCache;
 let setChannelConfig;
 let clearManagedChannelConfig;
 let getOpenCodeProxyStatus;
@@ -31,6 +33,7 @@ let service;
 
 function injectStubs() {
   clearNativeOAuth       = vi.fn();
+  clearChannelBalanceCache = vi.fn();
   setChannelConfig       = vi.fn();
   clearManagedChannelConfig = vi.fn();
   getOpenCodeProxyStatus = vi.fn(() => ({ running: false }));
@@ -72,6 +75,11 @@ function injectStubs() {
     id: OPENCODE_PROXY_MODULE, filename: OPENCODE_PROXY_MODULE, loaded: true,
     exports: { getOpenCodeProxyStatus }
   };
+
+  require.cache[CHANNEL_BALANCE_MODULE] = {
+    id: CHANNEL_BALANCE_MODULE, filename: CHANNEL_BALANCE_MODULE, loaded: true,
+    exports: { clearChannelBalanceCache }
+  };
 }
 
 beforeEach(() => {
@@ -86,6 +94,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete require.cache[OPENCODE_CH_MODULE];
+  delete require.cache[CHANNEL_BALANCE_MODULE];
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -303,6 +312,21 @@ describe('updateChannel', () => {
       apiKey: 'key-next'
     }));
   });
+
+  it('clears balance cache when a disabled channel is re-enabled', () => {
+    getOpenCodeProxyStatus.mockReturnValue({ running: true });
+    const ch = service.createChannel('Retry', 'https://retry.example', 'key-retry', {
+      enabled: false,
+      model: 'gpt-4.1-mini'
+    });
+
+    service.updateChannel(ch.id, { enabled: true });
+
+    expect(clearChannelBalanceCache).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      id: ch.id,
+      enabled: true
+    }));
+  });
 });
 
 // ─── CRUD: deleteChannel ──────────────────────────────────────────────────────
@@ -383,6 +407,21 @@ describe('single-channel enforcement (proxy OFF)', () => {
     const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
     const s1 = saved.channels.find(c => c.id === ch1.id);
     expect(s1.enabled).toBe(true); // unchanged
+  });
+});
+
+describe('applyChannelToSettings', () => {
+  it('clears balance cache when applying a disabled channel', () => {
+    const ch = service.createChannel('Balance Retry', 'https://retry.example', 'retry-key', {
+      enabled: false,
+      model: 'gpt-4.1-mini'
+    });
+
+    service.applyChannelToSettings(ch.id);
+
+    expect(clearChannelBalanceCache).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      id: ch.id
+    }));
   });
 });
 

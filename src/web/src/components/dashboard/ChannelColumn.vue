@@ -1057,16 +1057,23 @@ function setupStatsTimer() {
   }, delay)
 }
 
-function openSkillsManager() {
+function blurShortcutButton(event) {
+  event?.currentTarget?.blur?.()
+}
+
+function openSkillsManager(event) {
   window.dispatchEvent(new CustomEvent('open-skills-drawer', { detail: { platform: props.channelType } }))
+  blurShortcutButton(event)
 }
 
-function openCommandsManager() {
+function openCommandsManager(event) {
   window.dispatchEvent(new CustomEvent('open-commands-drawer', { detail: { platform: props.channelType } }))
+  blurShortcutButton(event)
 }
 
-function openAgentsManager() {
+function openAgentsManager(event) {
   window.dispatchEvent(new CustomEvent('open-agents-drawer', { detail: { platform: props.channelType } }))
+  blurShortcutButton(event)
 }
 
 onMounted(async () => {
@@ -2363,8 +2370,12 @@ onUnmounted(() => {
 }
 
 /* 配置快捷按钮样式 */
-.config-shortcut-button,
-.skills-button {
+.config-shortcut-button {
+  --asset-shortcut-text: var(--text-color-3);
+  --n-text-color: var(--asset-shortcut-text) !important;
+  --n-text-color-hover: var(--asset-shortcut-text) !important;
+  --n-text-color-pressed: var(--asset-shortcut-text) !important;
+  --n-text-color-focus: var(--asset-shortcut-text) !important;
   padding: 6px !important;
   width: 28px;
   height: 28px;
@@ -2374,32 +2385,43 @@ onUnmounted(() => {
   border-radius: 5px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--asset-shortcut-text) !important;
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.18s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-.config-shortcut-button .n-icon,
-.skills-button .n-icon {
-  color: var(--text-color-3);
-  transition: all 0.25s ease;
+.config-shortcut-button .n-icon {
+  color: var(--asset-shortcut-text) !important;
+  transition: transform 0.18s ease;
+}
+
+.config-shortcut-button :deep(.n-button__content),
+.config-shortcut-button :deep(.n-button__icon) {
+  color: var(--asset-shortcut-text) !important;
 }
 
 .config-shortcut-button:hover,
-.skills-button:hover {
-  background: linear-gradient(135deg, rgba(24, 160, 88, 0.1), rgba(24, 160, 88, 0.05));
-  border-color: rgba(24, 160, 88, 0.3);
-  box-shadow: 0 4px 12px rgba(24, 160, 88, 0.15);
+.config-shortcut-button:focus,
+.config-shortcut-button:focus-visible {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+  color: var(--asset-shortcut-text) !important;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
   transform: translateY(-1px);
 }
 
 .config-shortcut-button:hover .n-icon,
-.skills-button:hover .n-icon {
-  color: #18a058;
+.config-shortcut-button:focus .n-icon,
+.config-shortcut-button:focus-visible .n-icon {
+  color: var(--asset-shortcut-text) !important;
   transform: scale(1.1);
 }
 
-.config-shortcut-button:active,
-.skills-button:active {
+.config-shortcut-button:active {
+  background: var(--bg-secondary);
+  border-color: var(--border-primary);
+  color: var(--asset-shortcut-text) !important;
   transform: translateY(0);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
@@ -2915,8 +2937,7 @@ onUnmounted(() => {
     line-height: 18px;
   }
 
-  .config-shortcut-button,
-  .skills-button {
+  .config-shortcut-button {
     padding: 4px 8px;
     font-size: 10px;
     gap: 4px;
@@ -3017,15 +3038,13 @@ onUnmounted(() => {
     line-height: 16px;
   }
 
-  .config-shortcut-button,
-  .skills-button {
+  .config-shortcut-button {
     padding: 3px 6px;
     font-size: 9px;
     gap: 3px;
   }
 
-  .config-shortcut-button .n-icon,
-  .skills-button .n-icon {
+  .config-shortcut-button .n-icon {
     font-size: 12px !important;
   }
 

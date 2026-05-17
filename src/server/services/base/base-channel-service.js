@@ -13,6 +13,14 @@ const crypto = require('crypto');
 const { normalizeGatewaySourceType, normalizeNumber } = require('./proxy-utils');
 const { resolveChannelWebsiteUrl } = require('../../../config/channel-preset-websites');
 
+function clearChannelBalanceCache(platform, channel) {
+  try {
+    require('../channel-balance').clearChannelBalanceCache(platform, channel);
+  } catch (_) {
+    // Balance cache invalidation is an optimization; channel updates must still succeed.
+  }
+}
+
 class BaseChannelService {
   /**
    * @param {object} config
@@ -121,6 +129,9 @@ class BaseChannelService {
     }
 
     this.saveChannels(data);
+    if (oldChannel.enabled === false && nextChannel.enabled !== false) {
+      clearChannelBalanceCache(this.platform, nextChannel);
+    }
     this._onAfterUpdate(oldChannel, nextChannel, data.channels);
     return nextChannel;
   }
@@ -154,10 +165,14 @@ class BaseChannelService {
     }
 
     // 单渠道模式：只启用目标渠道
+    const wasEnabled = channel.enabled !== false;
     data.channels.forEach(ch => {
       ch.enabled = ch.id === channelId;
     });
     this.saveChannels(data);
+    if (!wasEnabled) {
+      clearChannelBalanceCache(this.platform, channel);
+    }
     this._applyToNativeSettings(channel);
     return channel;
   }

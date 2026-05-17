@@ -1,16 +1,22 @@
 <template>
-  <div class="commands-panel" :class="{ 'in-drawer': props.inDrawer }">
+  <div class="commands-panel asset-panel" :class="{ 'in-drawer': props.inDrawer }">
     <!-- 头部 -->
-    <div class="panel-header" v-if="!props.inDrawer">
-      <div class="header-left">
+    <div class="asset-panel-header" v-if="!props.inDrawer">
+      <div class="asset-title-group">
         <n-button v-if="!props.hideBack" text @click="handleBack" class="back-btn">
           <template #icon>
             <n-icon><ArrowBackOutline /></n-icon>
           </template>
         </n-button>
-        <span class="panel-title">Custom Commands</span>
+        <div class="asset-heading">
+          <div class="asset-title-row">
+            <span class="asset-title">命令管理</span>
+            <span class="asset-platform-pill">{{ currentPlatformLabel }}</span>
+          </div>
+          <div class="asset-subtitle">维护 slash commands、作用域和跨平台启用状态</div>
+        </div>
       </div>
-      <div class="header-right">
+      <div class="asset-action-row">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
@@ -27,8 +33,8 @@
     </div>
 
     <!-- Drawer 模式下的简化头部 -->
-    <div class="drawer-header-bar" v-if="props.inDrawer">
-      <div class="header-right">
+    <div class="asset-drawer-toolbar" v-if="props.inDrawer">
+      <div class="asset-action-row">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
@@ -45,24 +51,33 @@
     </div>
 
     <!-- 统计栏 -->
-    <div class="stats-bar">
-      <span class="stats-text">
-        共 {{ commands.length }} 个命令
-        <template v-if="commands.length > 0">
-          · 用户级: {{ userCount }} · 项目级: {{ projectCount }}
-          <template v-if="managedCount > 0"> · 托管: {{ managedCount }}</template>
-        </template>
+    <div class="asset-summary">
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">全部</span>
+        <span class="asset-summary-value">{{ commands.length }}</span>
+      </span>
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">用户级</span>
+        <span class="asset-summary-value">{{ userCount }}</span>
+      </span>
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">项目级</span>
+        <span class="asset-summary-value">{{ projectCount }}</span>
+      </span>
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">托管</span>
+        <span class="asset-summary-value">{{ managedCount }}</span>
       </span>
     </div>
 
     <!-- 搜索和筛选 -->
-    <div class="filter-bar">
+    <div class="asset-filter-bar">
       <n-input
         v-model:value="searchQuery"
-        placeholder="搜索命令..."
+        placeholder="搜索命令、描述或命名空间"
         clearable
         size="small"
-        class="search-input"
+        class="asset-search"
       >
         <template #prefix>
           <n-icon><SearchOutline /></n-icon>
@@ -72,14 +87,14 @@
         v-model:value="filterScope"
         :options="scopeOptions"
         size="small"
-        class="filter-select"
+        class="asset-filter"
       />
     </div>
 
     <!-- 命令列表 -->
-    <div class="commands-content">
+    <div class="asset-panel-content">
       <n-spin :show="loading">
-        <div v-if="filteredCommands.length === 0 && !loading" class="empty-state">
+        <div v-if="filteredCommands.length === 0 && !loading" class="asset-empty">
           <n-empty :description="emptyText">
             <template #icon>
               <n-icon size="48" color="var(--text-quaternary)">
@@ -94,7 +109,7 @@
           </n-empty>
         </div>
 
-        <div v-else class="commands-grid">
+        <div v-else class="asset-list">
           <CommandCard
             v-for="cmd in filteredCommands"
             :key="cmd.path"
@@ -113,8 +128,8 @@
     </div>
 
     <!-- 提示信息 -->
-    <div class="panel-footer">
-      <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
+    <div class="asset-footer">
+      <n-icon size="14" class="asset-info-icon"><InformationCircleOutline /></n-icon>
       <span>{{ commandUsageHint }}</span>
     </div>
 
@@ -127,35 +142,11 @@
       @saved="handleSaved"
     />
 
-    <!-- 详情抽屉 -->
-    <n-drawer v-model:show="showDetailDrawer" :width="500">
-      <n-drawer-content :title="selectedCommand?.name ? '/' + selectedCommand.name : '命令详情'">
-        <template v-if="selectedCommand">
-          <n-descriptions bordered :column="1">
-            <n-descriptions-item label="作用域">
-              {{ selectedCommand.scope === 'user' ? '用户级' : '项目级' }}
-            </n-descriptions-item>
-            <n-descriptions-item label="命名空间" v-if="selectedCommand.namespace">
-              {{ selectedCommand.namespace }}
-            </n-descriptions-item>
-            <n-descriptions-item label="描述" v-if="selectedCommand.description">
-              {{ selectedCommand.description }}
-            </n-descriptions-item>
-            <n-descriptions-item label="允许的工具" v-if="selectedCommand.allowedTools">
-              {{ selectedCommand.allowedTools }}
-            </n-descriptions-item>
-            <n-descriptions-item label="参数提示" v-if="selectedCommand.argumentHint">
-              {{ selectedCommand.argumentHint }}
-            </n-descriptions-item>
-          </n-descriptions>
-
-          <div class="detail-section">
-            <h4>命令内容</h4>
-            <n-code :code="selectedCommand.body || '(无内容)'" language="markdown" word-wrap />
-          </div>
-        </template>
-      </n-drawer-content>
-    </n-drawer>
+    <CommandDetailDrawer
+      v-model:visible="showDetailDrawer"
+      :command="selectedCommand"
+      :platform="currentPlatform"
+    />
   </div>
 </template>
 
@@ -163,8 +154,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  NButton, NInput, NSelect, NIcon, NSpin, NEmpty,
-  NDrawer, NDrawerContent, NDescriptions, NDescriptionsItem, NCode
+  NButton, NInput, NSelect, NIcon, NSpin, NEmpty
 } from 'naive-ui'
 import {
   ArrowBackOutline,
@@ -178,6 +168,7 @@ import { getCommands, deleteCommand } from '../api/commands'
 import { listItems, toggleEnabled, togglePlatform, syncAll } from '../api/config-registry'
 import message from '../utils/message'
 import CommandCard from './CommandCard.vue'
+import CommandDetailDrawer from './CommandDetailDrawer.vue'
 import CommandFormModal from './CommandFormModal.vue'
 
 const props = defineProps({
@@ -232,6 +223,16 @@ const commandUsageHint = computed(() =>
     ? '使用 /命令名 在 Gemini CLI 中调用'
     : '使用 /命令名 在 Claude Code 中调用'
 )
+
+const currentPlatformLabel = computed(() => {
+  const map = {
+    claude: 'Claude Code',
+    codex: 'Codex CLI',
+    gemini: 'Gemini CLI',
+    opencode: 'OpenCode'
+  }
+  return map[currentPlatform.value] || 'Claude Code'
+})
 
 const scopeOptions = [
   { label: '全部', value: 'all' },
@@ -389,153 +390,11 @@ watch(currentPlatform, () => {
 </script>
 
 <style scoped>
-.commands-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: var(--bg-primary);
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .back-btn {
   padding: 4px;
 }
 
-.panel-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .action-btn {
-  font-size: 12px;
   padding: 4px 8px;
-}
-
-.stats-bar {
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.stats-text {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-
-.filter-bar {
-  display: flex;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-primary);
-}
-
-.search-input {
-  flex: 1;
-}
-
-.filter-select {
-  width: 100px;
-}
-
-.commands-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-
-.commands-content :deep(.n-spin-container) {
-  min-height: 300px;
-}
-
-.empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-
-.commands-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.panel-footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 16px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  border-top: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-
-.info-icon {
-  color: var(--text-quaternary);
-}
-
-/* Drawer 模式样式 */
-.commands-panel.in-drawer {
-  height: 100%;
-}
-
-.drawer-header-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-
-.commands-panel.in-drawer .filter-bar {
-  padding: 10px 12px;
-}
-
-.commands-panel.in-drawer .stats-bar {
-  padding: 10px 12px;
-}
-
-.commands-panel.in-drawer .commands-content {
-  padding: 12px;
-}
-
-.commands-panel.in-drawer .panel-footer {
-  padding: 8px 12px;
-}
-
-/* 详情部分 */
-.detail-section {
-  margin-top: 16px;
-}
-
-.detail-section h4 {
-  margin: 0 0 8px 0;
-  font-size: 13px;
-  color: var(--text-secondary);
 }
 </style>

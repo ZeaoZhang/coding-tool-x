@@ -277,43 +277,120 @@
 
                 <n-divider />
 
-                <!-- 飞书通知 -->
+                <!-- 远程 Bot 通知 -->
                 <div class="setting-item">
                   <div class="setting-label">
-                    <n-text strong>飞书机器人通知</n-text>
+                    <n-text strong>远程 Bot 通知</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      任务完成时同时发送飞书机器人通知，适合需要远程提醒的场景
+                      支持 GenericAgent 同款微信、QQ、飞书、企业微信、钉钉、Telegram 渠道
                     </n-text>
                   </div>
 
                   <div class="notification-options">
-                    <!-- 开启飞书通知 -->
-                    <div class="visibility-item">
-                      <div class="visibility-info">
-                        <n-text strong>启用飞书通知</n-text>
-                        <n-text depth="3" style="font-size: 13px;">
-                          通过飞书机器人 Webhook 发送通知
-                        </n-text>
-                      </div>
-                      <n-switch
-                        v-model:value="notificationSettings.feishu.enabled"
+                    <div class="remote-provider-toolbar">
+                      <n-select
+                        v-model:value="newRemoteProviderType"
+                        :options="remoteProviderOptions"
+                        size="small"
+                        style="max-width: 220px;"
                       />
+                      <n-button size="small" secondary type="primary" @click="addRemoteProvider">
+                        <template #icon>
+                          <n-icon><AddOutline /></n-icon>
+                        </template>
+                        添加渠道
+                      </n-button>
                     </div>
 
-                    <!-- 飞书 Webhook URL -->
-                    <div v-if="notificationSettings.feishu.enabled" class="notification-type-section">
-                      <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
-                        飞书机器人 Webhook URL
-                      </n-text>
-                      <n-input
-                        v-model:value="notificationSettings.feishu.webhookUrl"
-                        placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx"
-                        type="text"
-                        clearable
-                      />
-                      <n-text depth="3" style="font-size: 12px; margin-top: 8px; display: block;">
-                        在飞书群设置中添加自定义机器人，复制 Webhook 地址粘贴到这里
-                      </n-text>
+                    <n-empty
+                      v-if="notificationSettings.remoteNotifications.providers.length === 0"
+                      description="还没有远程通知渠道"
+                      style="padding: 20px 0;"
+                    />
+
+                    <div
+                      v-for="provider in notificationSettings.remoteNotifications.providers"
+                      :key="provider.id"
+                      class="remote-provider-card"
+                    >
+                      <div class="remote-provider-header">
+                        <div>
+                          <n-text strong>{{ provider.name || getRemoteProviderLabel(provider.type) }}</n-text>
+                          <n-text depth="3" style="font-size: 12px; display: block;">
+                            {{ getRemoteProviderDescription(provider.type) }}
+                          </n-text>
+                        </div>
+                        <n-space size="small" align="center">
+                          <n-switch v-model:value="provider.enabled" />
+                          <n-button size="small" quaternary type="error" @click="removeRemoteProvider(provider.id)">
+                            删除
+                          </n-button>
+                        </n-space>
+                      </div>
+
+                      <div class="remote-provider-fields">
+                        <n-input
+                          v-model:value="provider.name"
+                          size="small"
+                          placeholder="渠道名称"
+                        />
+
+                        <template v-if="provider.type === 'wechatBot'">
+                          <n-input v-model:value="provider.config.tokenFile" size="small" placeholder="token.json 路径，例如 ~/.wxbot/token.json" />
+                          <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="或直接填写 bot_token" />
+                          <n-input v-model:value="provider.config.targetUserId" size="small" placeholder="接收用户 ID" />
+                          <n-input v-model:value="provider.config.contextToken" size="small" placeholder="context_token，可选" />
+                        </template>
+
+                        <template v-else-if="provider.type === 'qqBot'">
+                          <n-input v-model:value="provider.config.endpoint" size="small" placeholder="OneBot HTTP 地址，例如 http://127.0.0.1:3000" />
+                          <n-input v-model:value="provider.config.accessToken" size="small" type="password" show-password-on="click" placeholder="Access Token，可选" />
+                          <n-select v-model:value="provider.config.targetType" size="small" :options="qqTargetOptions" />
+                          <n-input v-model:value="provider.config.targetId" size="small" placeholder="QQ 用户号或群号" />
+                        </template>
+
+                        <template v-else-if="provider.type === 'feishuBot'">
+                          <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+                        </template>
+
+                        <template v-else-if="provider.type === 'wecomBot'">
+                          <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="企业微信群机器人 Webhook URL" />
+                          <n-input v-model:value="provider.config.botId" size="small" placeholder="GA bot_id，可选记录" />
+                          <n-input v-model:value="provider.config.secret" size="small" type="password" show-password-on="click" placeholder="GA secret，可选记录" />
+                          <n-input v-model:value="provider.config.targetChatId" size="small" placeholder="chat_id，可选记录" />
+                        </template>
+
+                        <template v-else-if="provider.type === 'dingtalkBot'">
+                          <n-select v-model:value="provider.config.mode" size="small" :options="dingtalkModeOptions" />
+                          <template v-if="provider.config.mode === 'app'">
+                            <n-input v-model:value="provider.config.clientId" size="small" placeholder="App Key / Client ID" />
+                            <n-input v-model:value="provider.config.clientSecret" size="small" type="password" show-password-on="click" placeholder="App Secret" />
+                            <n-select v-model:value="provider.config.targetType" size="small" :options="dingtalkTargetOptions" />
+                            <n-input v-model:value="provider.config.targetId" size="small" placeholder="用户 ID 或群会话 ID" />
+                          </template>
+                          <n-input v-else v-model:value="provider.config.webhookUrl" size="small" placeholder="钉钉自定义机器人 Webhook URL" />
+                        </template>
+
+                        <template v-else-if="provider.type === 'telegramBot'">
+                          <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="Bot Token" />
+                          <n-input v-model:value="provider.config.chatId" size="small" placeholder="Chat ID" />
+                          <n-input v-model:value="provider.config.proxy" size="small" placeholder="Proxy，可选，例如 http://127.0.0.1:2082" />
+                        </template>
+                      </div>
+
+                      <div class="remote-provider-actions">
+                        <n-button
+                          size="small"
+                          secondary
+                          :loading="testingRemoteProviderId === provider.id"
+                          @click="testRemoteProvider(provider)"
+                        >
+                          测试
+                        </n-button>
+                        <n-text depth="3" style="font-size: 12px;">
+                          {{ getRemoteProviderHint(provider.type) }}
+                        </n-text>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1168,10 +1245,126 @@ function createNotificationPlatformState(platform = {}) {
   }
 }
 
+const REMOTE_PROVIDER_DEFINITIONS = {
+  wechatBot: {
+    label: '微信 Bot',
+    description: '使用 GenericAgent 同款个人微信 iLink Bot token 发送通知',
+    hint: '首次 token 可由 GA 微信 Bot 扫码生成；也可以直接填写 bot_token。'
+  },
+  qqBot: {
+    label: 'QQ Bot',
+    description: '通过 OneBot / NapCat / go-cqhttp 兼容 HTTP 接口发送通知',
+    hint: 'GA 当前构建已移除 QQ 前端，这里按 OneBot 兼容桥接入。'
+  },
+  feishuBot: {
+    label: '飞书 Bot',
+    description: '通过飞书自定义机器人 Webhook 发送通知',
+    hint: '兼容原有飞书通知配置。'
+  },
+  wecomBot: {
+    label: '企业微信 Bot',
+    description: '通过企业微信群机器人 Webhook 发送通知',
+    hint: 'bot_id / secret 字段用于记录 GA 长连接配置，通知发送优先使用 Webhook。'
+  },
+  dingtalkBot: {
+    label: '钉钉 Bot',
+    description: '支持钉钉自定义机器人 Webhook，保留 GA App 模式配置字段',
+    hint: '当前自动测试和通知脚本支持 Webhook；App 模式需要会话上下文，先做配置记录。'
+  },
+  telegramBot: {
+    label: 'Telegram Bot',
+    description: '通过 Telegram Bot API sendMessage 发送通知',
+    hint: '需要 Bot Token 和 Chat ID。'
+  }
+}
+
+const remoteProviderOptions = Object.entries(REMOTE_PROVIDER_DEFINITIONS).map(([value, item]) => ({
+  label: item.label,
+  value
+}))
+const qqTargetOptions = [
+  { label: '私聊', value: 'private' },
+  { label: '群聊', value: 'group' }
+]
+const dingtalkModeOptions = [
+  { label: 'Webhook', value: 'webhook' },
+  { label: 'GA App 模式', value: 'app' }
+]
+const dingtalkTargetOptions = [
+  { label: '群会话', value: 'group' },
+  { label: '用户', value: 'user' }
+]
+
+function createRemoteProviderConfig(type) {
+  switch (type) {
+    case 'wechatBot':
+      return { tokenFile: '~/.wxbot/token.json', botToken: '', targetUserId: '', contextToken: '' }
+    case 'qqBot':
+      return { endpoint: 'http://127.0.0.1:3000', accessToken: '', targetType: 'private', targetId: '' }
+    case 'feishuBot':
+      return { webhookUrl: '' }
+    case 'wecomBot':
+      return { webhookUrl: '', botId: '', secret: '', targetChatId: '' }
+    case 'dingtalkBot':
+      return { mode: 'webhook', webhookUrl: '', clientId: '', clientSecret: '', targetType: 'group', targetId: '' }
+    case 'telegramBot':
+      return { botToken: '', chatId: '', proxy: '' }
+    default:
+      return {}
+  }
+}
+
+function createRemoteProvider(type = 'telegramBot') {
+  return {
+    id: `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type,
+    name: getRemoteProviderLabel(type),
+    enabled: false,
+    config: createRemoteProviderConfig(type)
+  }
+}
+
+function normalizeRemoteProvider(provider = {}) {
+  const type = REMOTE_PROVIDER_DEFINITIONS[provider.type] ? provider.type : 'telegramBot'
+  return {
+    id: provider.id || `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type,
+    name: provider.name || getRemoteProviderLabel(type),
+    enabled: provider.enabled === true,
+    config: {
+      ...createRemoteProviderConfig(type),
+      ...(provider.config || {})
+    }
+  }
+}
+
+function getRemoteProviderLabel(type) {
+  return REMOTE_PROVIDER_DEFINITIONS[type]?.label || '远程 Bot'
+}
+
+function getRemoteProviderDescription(type) {
+  return REMOTE_PROVIDER_DEFINITIONS[type]?.description || ''
+}
+
+function getRemoteProviderHint(type) {
+  return REMOTE_PROVIDER_DEFINITIONS[type]?.hint || ''
+}
+
 function createNotificationSettingsState(data = {}) {
   const legacyClaudeState = {
     enabled: data?.stopHook?.enabled,
     type: data?.stopHook?.type
+  }
+  const providers = Array.isArray(data?.remoteNotifications?.providers)
+    ? data.remoteNotifications.providers.map(normalizeRemoteProvider)
+    : []
+  if (providers.length === 0 && data?.feishu?.enabled === true) {
+    providers.push({
+      ...createRemoteProvider('feishuBot'),
+      id: 'feishu-default',
+      enabled: true,
+      config: { webhookUrl: data.feishu.webhookUrl || '' }
+    })
   }
 
   return {
@@ -1182,6 +1375,9 @@ function createNotificationSettingsState(data = {}) {
     feishu: {
       enabled: data?.feishu?.enabled === true,
       webhookUrl: data?.feishu?.webhookUrl || ''
+    },
+    remoteNotifications: {
+      providers
     }
   }
 }
@@ -1189,6 +1385,8 @@ function createNotificationSettingsState(data = {}) {
 const notificationSettings = ref(createNotificationSettingsState())
 const originalNotificationSettings = ref(createNotificationSettingsState())
 const savingNotification = ref(false)
+const testingRemoteProviderId = ref('')
+const newRemoteProviderType = ref('telegramBot')
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
 const browserNotificationPermission = ref('default')
 const browserNotificationAvailable = computed(() => {
@@ -1281,6 +1479,35 @@ async function ensureBrowserNotificationPermission() {
   browserNotificationPermission.value = permission
   if (permission !== 'granted') {
     throw new Error('浏览器通知权限未授予')
+  }
+}
+
+function addRemoteProvider() {
+  notificationSettings.value.remoteNotifications.providers.push(createRemoteProvider(newRemoteProviderType.value))
+}
+
+function removeRemoteProvider(providerId) {
+  notificationSettings.value.remoteNotifications.providers =
+    notificationSettings.value.remoteNotifications.providers.filter(provider => provider.id !== providerId)
+}
+
+async function testRemoteProvider(provider) {
+  testingRemoteProviderId.value = provider.id
+  try {
+    const response = await fetch('/api/hooks/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || '测试通知发送失败')
+    }
+    message.success(data.message || '测试通知已发送')
+  } catch (error) {
+    message.error('测试失败：' + error.message)
+  } finally {
+    testingRemoteProviderId.value = ''
   }
 }
 
@@ -1823,8 +2050,15 @@ async function handleSaveNotification() {
           ])
         ),
         feishu: {
-          enabled: notificationSettings.value.feishu.enabled,
-          webhookUrl: notificationSettings.value.feishu.webhookUrl
+          enabled: notificationSettings.value.remoteNotifications.providers.some(provider => (
+            provider.type === 'feishuBot' &&
+            provider.enabled &&
+            provider.config?.webhookUrl
+          )),
+          webhookUrl: notificationSettings.value.remoteNotifications.providers.find(provider => provider.type === 'feishuBot')?.config?.webhookUrl || ''
+        },
+        remoteNotifications: {
+          providers: notificationSettings.value.remoteNotifications.providers
         }
       })
     })

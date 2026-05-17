@@ -1,14 +1,20 @@
 <template>
-  <div class="plugins-panel" :class="{ 'in-drawer': inDrawer }">
+  <div class="plugins-panel asset-panel" :class="{ 'in-drawer': inDrawer }">
     <!-- 独立模式头部 -->
-    <div class="panel-header" v-if="!inDrawer">
-      <div class="header-left">
+    <div class="asset-panel-header" v-if="!inDrawer">
+      <div class="asset-title-group">
         <n-button v-if="!hideBack" text @click="$emit('back')" class="back-btn">
           <template #icon><n-icon><ArrowBackOutline /></n-icon></template>
         </n-button>
-        <span class="panel-title">Plugins 插件管理</span>
+        <div class="asset-heading">
+          <div class="asset-title-row">
+            <span class="asset-title">插件管理</span>
+            <span class="asset-platform-pill">{{ currentPlatformLabel }}</span>
+          </div>
+          <div class="asset-subtitle">管理平台插件、仓库源和市场安装状态</div>
+        </div>
       </div>
-      <div class="header-right">
+      <div class="asset-action-row">
         <n-button v-if="capabilities.repositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
@@ -25,8 +31,8 @@
     </div>
 
     <!-- 抽屉模式头部 -->
-    <div class="drawer-header-bar" v-if="inDrawer">
-      <div class="header-right">
+    <div class="asset-drawer-toolbar" v-if="inDrawer">
+      <div class="asset-action-row">
         <n-button v-if="capabilities.repositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
@@ -43,33 +49,39 @@
     </div>
 
     <!-- 统计栏 -->
-    <div class="stats-bar">
-      <span class="stats-text">
-        共 {{ plugins.length }} 个插件
-        <template v-if="plugins.length > 0">
-          · 已安装: {{ installedCount }} · 未安装: {{ plugins.length - installedCount }}
-        </template>
+    <div class="asset-summary">
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">全部</span>
+        <span class="asset-summary-value">{{ plugins.length }}</span>
+      </span>
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">已安装</span>
+        <span class="asset-summary-value">{{ installedCount }}</span>
+      </span>
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">可安装</span>
+        <span class="asset-summary-value">{{ plugins.length - installedCount }}</span>
       </span>
     </div>
 
     <!-- 搜索筛选 -->
-    <div class="filter-bar">
+    <div class="asset-filter-bar">
       <n-input
         v-model:value="searchQuery"
-        placeholder="搜索插件..."
+        placeholder="搜索插件名称或描述"
         clearable
         size="small"
-        class="search-input"
+        class="asset-search"
       >
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
-      <n-select v-model:value="filterStatus" :options="filterOptions" size="small" class="filter-select" />
+      <n-select v-model:value="filterStatus" :options="filterOptions" size="small" class="asset-filter" />
     </div>
 
     <!-- 内容区域 -->
-    <div class="panel-content">
+    <div class="asset-panel-content">
       <n-spin :show="loading">
-        <div v-if="filteredPlugins.length === 0 && !loading" class="empty-state">
+        <div v-if="filteredPlugins.length === 0 && !loading" class="asset-empty">
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
@@ -77,7 +89,7 @@
             </template>
           </n-empty>
         </div>
-        <div v-else class="card-list">
+        <div v-else class="asset-list">
           <PluginCard
             v-for="plugin in filteredPlugins"
             :key="plugin.key"
@@ -96,8 +108,8 @@
     </div>
 
     <!-- 底部提示 -->
-    <div v-if="capabilities.install || capabilities.uninstall" class="panel-footer">
-      <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
+    <div v-if="capabilities.install || capabilities.uninstall" class="asset-footer">
+      <n-icon size="14" class="asset-info-icon"><InformationCircleOutline /></n-icon>
       <span>安装/卸载后需重启 {{ currentPlatformLabel }} 生效</span>
     </div>
 
@@ -401,86 +413,6 @@ watch(() => currentPlatform.value, () => {
 </script>
 
 <style scoped>
-.plugins-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  background: var(--bg-primary);
-}
-.panel-header, .drawer-header-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-.drawer-header-bar { padding: 8px 12px; }
-.header-left, .header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .back-btn { padding: 4px; }
-.panel-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.action-btn {
-  font-size: 12px;
-  padding: 4px 8px;
-}
-.stats-bar {
-  display: flex;
-  align-items: center;
-  padding: 10px 16px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-primary);
-}
-.plugins-panel.in-drawer .stats-bar { padding: 10px 12px; }
-.stats-text {
-  font-size: 12px;
-  color: var(--text-tertiary);
-}
-.filter-bar {
-  display: flex;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-primary);
-}
-.plugins-panel.in-drawer .filter-bar { padding: 10px 12px; }
-.search-input { flex: 1; }
-.filter-select { width: 100px; }
-.panel-content {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-}
-.plugins-panel.in-drawer .panel-content { padding: 12px; }
-.panel-content :deep(.n-spin-container) { min-height: 200px; }
-.empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 200px;
-}
-.card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.panel-footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 16px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-  border-top: 1px solid var(--border-primary);
-  background: var(--bg-secondary);
-}
-.plugins-panel.in-drawer .panel-footer { padding: 8px 12px; }
-.info-icon { color: var(--text-quaternary); }
+.action-btn { padding: 4px 8px; }
 </style>

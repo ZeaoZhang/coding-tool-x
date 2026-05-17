@@ -250,23 +250,31 @@ function handleShowRecent() {
 }
 
 // 处理显示 Skills
-function handleShowSkills() {
+function blurToolbarButton(event) {
+  event?.currentTarget?.blur?.()
+}
+
+function handleShowSkills(event) {
   window.dispatchEvent(new CustomEvent('open-skills-drawer', { detail: { platform: currentChannel.value } }))
+  blurToolbarButton(event)
 }
 
 // 处理显示 Commands
-function handleShowCommands() {
+function handleShowCommands(event) {
   window.dispatchEvent(new CustomEvent('open-commands-drawer', { detail: { platform: currentChannel.value } }))
+  blurToolbarButton(event)
 }
 
 // 处理显示 Agents
-function handleShowAgents() {
+function handleShowAgents(event) {
   window.dispatchEvent(new CustomEvent('open-agents-drawer', { detail: { platform: currentChannel.value } }))
+  blurToolbarButton(event)
 }
 
 // 处理显示 Plugins
-function handleShowPlugins() {
+function handleShowPlugins(event) {
   window.dispatchEvent(new CustomEvent('open-plugins-drawer', { detail: { platform: currentChannel.value } }))
+  blurToolbarButton(event)
 }
 
 onMounted(() => {
@@ -334,14 +342,36 @@ onUnmounted(() => {
 }
 
 .toolbar-btn {
+  --toolbar-button-text: var(--text-secondary);
+  --n-text-color: var(--toolbar-button-text) !important;
+  --n-text-color-hover: var(--toolbar-button-text) !important;
+  --n-text-color-pressed: var(--toolbar-button-text) !important;
+  --n-text-color-focus: var(--toolbar-button-text) !important;
+  --n-color-hover: transparent !important;
+  --n-color-pressed: transparent !important;
+  --n-color-focus: transparent !important;
   padding: 5px !important;
   border-radius: 4px;
-  color: var(--text-secondary);
+  color: var(--toolbar-button-text) !important;
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.toolbar-btn:hover {
-  background: var(--hover-bg);
-  color: var(--primary-color, #18a058);
+.toolbar-btn :deep(.n-button__content),
+.toolbar-btn :deep(.n-button__icon) {
+  color: var(--toolbar-button-text) !important;
+}
+
+.toolbar-btn:hover,
+.toolbar-btn:focus,
+.toolbar-btn:focus-visible,
+.toolbar-btn:active {
+  background: transparent;
+  color: var(--toolbar-button-text) !important;
+  transform: translateY(-1px);
+}
+
+.toolbar-btn:active {
+  transform: translateY(0);
 }
 
 .toolbar-divider {

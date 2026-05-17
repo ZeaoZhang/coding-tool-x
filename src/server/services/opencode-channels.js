@@ -9,6 +9,14 @@ const {
 } = require('./opencode-settings-manager');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
+function clearChannelBalanceCache(channel) {
+  try {
+    require('./channel-balance').clearChannelBalanceCache('opencode', channel);
+  } catch (_) {
+    // Balance cache invalidation is best-effort and should not block channel updates.
+  }
+}
+
 /**
  * OpenCode 渠道管理服务
  * 存储位置: ~/.cc-tool/opencode-channels.json
@@ -238,6 +246,9 @@ function updateChannel(channelId, updates) {
   }
 
   saveChannels(data);
+  if (oldChannel.enabled === false && merged.enabled !== false) {
+    clearChannelBalanceCache(merged);
+  }
 
   if (!isProxyRunning) {
     if (oldChannel.enabled === false && merged.enabled !== false) {
@@ -313,11 +324,15 @@ function applyChannelToSettings(channelId) {
     throw new Error('Channel not found');
   }
 
+  const wasEnabled = channel.enabled !== false;
   // In single-channel mode, only this channel should be enabled
   data.channels.forEach(ch => {
     ch.enabled = ch.id === channelId;
   });
   saveChannels(data);
+  if (!wasEnabled) {
+    clearChannelBalanceCache(channel);
+  }
 
   setChannelConfig(buildNativeConfigChannel(channel));
 

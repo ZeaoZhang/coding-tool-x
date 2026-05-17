@@ -1,35 +1,41 @@
 <template>
-  <div class="agent-card" :class="{ 'is-project': agent.scope === 'project', 'managed': registryInfo }" @click="emit('click', agent)">
-    <div class="card-main">
-      <div class="card-header">
-        <div class="agent-name">{{ agent.name }}</div>
-        <div class="agent-badges">
-          <n-tag :type="agent.scope === 'user' ? 'info' : 'success'" size="tiny" :bordered="false">
-            {{ agent.scope === 'user' ? '用户级' : '项目级' }}
-          </n-tag>
-          <n-tag v-if="agent.model" type="warning" size="tiny" :bordered="false">
-            {{ agent.model }}
-          </n-tag>
+  <div class="agent-card asset-card" :class="{ 'is-project': agent.scope === 'project', 'is-managed': registryInfo }" @click="emit('click', agent)">
+    <div class="asset-card-main">
+      <div class="asset-card-top">
+        <div class="asset-card-title-stack">
+          <div class="asset-card-title-row">
+            <span class="asset-status-dot" :class="{ active: registryInfo?.enabled || agent.scope === 'project' }"></span>
+            <span class="asset-name">{{ agent.name }}</span>
+          </div>
+          <div class="asset-tags">
+            <n-tag :type="agent.scope === 'user' ? 'info' : 'success'" size="tiny" :bordered="false">
+              {{ agent.scope === 'user' ? '用户级' : '项目级' }}
+            </n-tag>
+            <n-tag v-if="registryInfo" type="success" size="tiny" :bordered="false">托管</n-tag>
+            <n-tag v-if="agent.model" type="warning" size="tiny" :bordered="false">
+              {{ agent.model }}
+            </n-tag>
+          </div>
         </div>
       </div>
 
-      <div class="agent-desc" v-if="agent.description">
+      <div class="asset-description" v-if="agent.description">
         {{ truncateDesc(agent.description) }}
       </div>
 
-      <div class="agent-meta">
-        <span class="meta-item" v-if="agent.tools">
+      <div class="asset-meta">
+        <span class="asset-meta-item" v-if="agent.tools">
           <n-icon size="12"><HammerOutline /></n-icon>
           {{ truncateTools(agent.tools) }}
         </span>
-        <span class="meta-item" v-if="agent.permissionMode">
+        <span class="asset-meta-item" v-if="agent.permissionMode">
           <n-icon size="12"><ShieldOutline /></n-icon>
           {{ agent.permissionMode }}
         </span>
       </div>
     </div>
 
-    <div class="card-actions">
+    <div class="asset-card-actions">
       <!-- 注册表管理模式 -->
       <template v-if="registryInfo">
         <n-tooltip trigger="hover">
@@ -44,11 +50,11 @@
           </template>
           {{ registryInfo.enabled ? '已启用' : '已禁用' }}
         </n-tooltip>
-        <div class="platform-icons">
+        <div class="asset-platform-strip">
           <n-tooltip trigger="hover">
             <template #trigger>
               <span
-                class="platform-icon"
+                class="asset-platform-icon"
                 :class="{ active: registryInfo.platforms?.claude }"
                 @click.stop="emit('toggle-platform', agent, 'claude', !registryInfo.platforms?.claude)"
               >
@@ -60,7 +66,7 @@
           <n-tooltip trigger="hover">
             <template #trigger>
               <span
-                class="platform-icon"
+                class="asset-platform-icon"
                 :class="{ active: registryInfo.platforms?.codex }"
                 @click.stop="emit('toggle-platform', agent, 'codex', !registryInfo.platforms?.codex)"
               >
@@ -72,7 +78,7 @@
           <n-tooltip trigger="hover">
             <template #trigger>
               <span
-                class="platform-icon"
+                class="asset-platform-icon"
                 :class="{ active: registryInfo.platforms?.gemini }"
                 @click.stop="emit('toggle-platform', agent, 'gemini', !registryInfo.platforms?.gemini)"
               >
@@ -84,7 +90,7 @@
           <n-tooltip trigger="hover">
             <template #trigger>
               <span
-                class="platform-icon"
+                class="asset-platform-icon"
                 :class="{ active: registryInfo.platforms?.opencode }"
                 @click.stop="emit('toggle-platform', agent, 'opencode', !registryInfo.platforms?.opencode)"
               >
@@ -155,115 +161,7 @@ function truncateTools(tools) {
 </script>
 
 <style scoped>
-.agent-card {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: 12px;
-  transition: all 0.15s ease;
-  cursor: pointer;
-}
-
-.agent-card:hover {
-  border-color: #18a058;
-  background: var(--bg-tertiary);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-}
-
-.agent-card.is-project {
-  border-left: 3px solid #18a058;
-}
-
-.agent-card.managed {
-  border-left: 3px solid var(--primary-color);
-}
-
-.card-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.agent-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.agent-badges {
-  display: flex;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.agent-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  margin-bottom: 8px;
-}
-
-.agent-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.meta-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.asset-meta-item {
   max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card-actions {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.platform-icons {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 8px;
-}
-
-.platform-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  cursor: pointer;
-  color: var(--text-tertiary);
-  background: var(--bg-tertiary);
-  transition: all 0.2s ease;
-}
-
-.platform-icon:hover {
-  background: var(--bg-quaternary);
-}
-
-.platform-icon.active {
-  color: var(--primary-color);
-  background: rgba(24, 160, 88, 0.1);
 }
 </style>

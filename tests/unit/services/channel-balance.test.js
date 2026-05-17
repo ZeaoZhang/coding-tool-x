@@ -767,7 +767,9 @@ describe('channel-balance service', () => {
   test('keeps AnyRouter model API keys hidden when only model routing works', async () => {
     const service = loadServiceWithStubs();
     service._test.clearBalanceCache();
+    const seen = [];
     const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
       if (req.url === '/v1/models') {
         return sendJson(res, 200, { data: [{ id: 'gpt-4.1' }] });
       }
@@ -792,6 +794,58 @@ describe('channel-balance service', () => {
         platform: 'anyrouter'
       });
       expect(snapshot).not.toHaveProperty('label');
+      const forced = await service._test.refreshChannelBalanceSnapshot('codex', {
+        id: 'anyrouter-api-key',
+        name: 'AnyRouter',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-anyrouter-key'
+      }, { force: true });
+      expect(forced).toMatchObject({
+        visible: false,
+        platform: 'anyrouter'
+      });
+      expect(seen).toEqual(['/api/user/self', '/v1/usage']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('retries hidden balance probes only after the channel balance cache is cleared', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/api/status' || req.url === '/api/usage/token') {
+        return sendJson(res, 404, { error: 'missing' });
+      }
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 200, { mode: 'limited', isValid: false });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+
+    try {
+      const channel = {
+        id: 'hidden-retry',
+        name: 'AnyRouter',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'sk-hidden'
+      };
+      const first = await service._test.refreshChannelBalanceSnapshot('codex', channel);
+      const forced = await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true });
+      service._test.clearChannelBalanceCache('codex', channel);
+      const afterReenable = await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true });
+
+      expect(first).toMatchObject({ visible: false, platform: 'anyrouter' });
+      expect(forced).toMatchObject({ visible: false, platform: 'anyrouter' });
+      expect(afterReenable).toMatchObject({ visible: false, platform: 'anyrouter' });
+      expect(seen).toEqual([
+        '/api/user/self',
+        '/v1/usage',
+        '/api/user/self',
+        '/v1/usage'
+      ]);
     } finally {
       await server.close();
     }

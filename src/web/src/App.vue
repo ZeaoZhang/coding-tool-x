@@ -145,6 +145,8 @@ onMounted(() => {
 </script>
 
 <style>
+@import './styles/asset-management.css';
+
 /* 全局 CSS 变量 - 亮色主题 */
 :root {
   --bg-primary: #ffffff;
@@ -167,6 +169,7 @@ onMounted(() => {
   --shadow-sm: 0 8px 20px rgba(15, 23, 29, 0.06);
   --shadow-md: 0 18px 42px rgba(15, 23, 29, 0.10);
   --shadow-lg: 0 30px 70px rgba(15, 23, 29, 0.14);
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
 
   --gradient-header: linear-gradient(135deg, #f8fbfc 0%, #eef6f3 52%, #e9f7f1 100%);
   --gradient-bg: linear-gradient(180deg, #f4f7f8 0%, #eef4f2 100%);
@@ -196,6 +199,7 @@ onMounted(() => {
   --shadow-sm: 0 10px 24px rgba(0, 0, 0, 0.24);
   --shadow-md: 0 22px 52px rgba(0, 0, 0, 0.30);
   --shadow-lg: 0 36px 76px rgba(0, 0, 0, 0.36);
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
 
   --gradient-header: linear-gradient(135deg, #111b20 0%, #152229 52%, #12262b 100%);
   --gradient-bg: linear-gradient(180deg, #091217 0%, #0d171c 100%);

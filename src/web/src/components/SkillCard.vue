@@ -1,54 +1,61 @@
 <template>
-  <div class="skill-card" :class="{ installed: skill.installed }" @click="$emit('click', skill)">
-    <div class="card-header">
-      <div class="card-title">
-        <span class="name">{{ skill.name }}</span>
-        <n-tag v-if="skill.installed" type="info" size="small">已安装</n-tag>
-        <n-tag v-if="getSkillSourceTag(skill)" type="info" size="small">{{ getSkillSourceTag(skill) }}</n-tag>
+  <div class="skill-card asset-card" :class="{ 'is-installed': skill.installed, 'is-protected': skill.protected }" @click="$emit('click', skill)">
+    <div class="asset-card-main">
+      <div class="asset-card-top">
+        <div class="asset-card-title-stack">
+          <div class="asset-card-title-row">
+            <span class="asset-status-dot" :class="{ active: skill.installed }"></span>
+            <span class="asset-name">{{ skill.name }}</span>
+          </div>
+          <div class="asset-tags">
+            <n-tag v-if="skill.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
+            <n-tag v-if="skill.protected" type="default" size="tiny" :bordered="false">受保护</n-tag>
+            <n-tag v-if="getSkillSourceTag(skill)" type="info" size="tiny" :bordered="false">{{ getSkillSourceTag(skill) }}</n-tag>
+          </div>
+        </div>
       </div>
-      <div class="card-actions" @click.stop>
-        <n-button
-          v-if="skill.installed && !skill.protected"
-          size="small"
-          type="error"
-          :loading="uninstalling"
-          :focusable="false"
-          @click="$emit('uninstall', skill)"
-        >卸载</n-button>
-        <n-button
-          v-else-if="skill.installed && skill.protected"
-          size="small"
-          tertiary
-          disabled
-          :focusable="false"
-        >受保护</n-button>
-        <n-button
-          v-else
-          size="small"
-          type="primary"
-          :loading="installing"
-          :disabled="!canInstallSkill(skill)"
-          :focusable="false"
-          @click="$emit('install', skill)"
-        >安装</n-button>
-      </div>
-    </div>
-    <div class="card-body">
-      <div class="description" v-if="skill.description">{{ truncate(skill.description, 80) }}</div>
-      <div class="meta">
-        <span class="meta-item">{{ skill.directory }}</span>
-        <span v-if="getSkillSourceLocation(skill)" class="meta-item source-item" :title="getSkillSourceLocation(skill)">
+      <div class="asset-description" v-if="skill.description">{{ truncate(skill.description, 120) }}</div>
+      <div class="asset-meta">
+        <span class="asset-meta-item mono">{{ skill.directory }}</span>
+        <span v-if="getSkillSourceLocation(skill)" class="asset-meta-item source-item" :title="getSkillSourceLocation(skill)">
           {{ getSkillSourceLocation(skill) }}
         </span>
         <a
           v-if="getSkillSourceLink(skill)"
-          class="meta-link"
+          class="asset-link"
           :href="getSkillSourceLink(skill)"
           target="_blank"
           rel="noopener noreferrer"
           @click.stop
         >{{ getSkillSourceLinkLabel(skill) }}</a>
       </div>
+    </div>
+    <div class="asset-card-actions" @click.stop>
+      <n-button
+        v-if="skill.installed && !skill.protected"
+        size="small"
+        tertiary
+        type="error"
+        :loading="uninstalling"
+        :focusable="false"
+        @click="$emit('uninstall', skill)"
+      >卸载</n-button>
+      <n-button
+        v-else-if="skill.installed && skill.protected"
+        size="small"
+        tertiary
+        disabled
+        :focusable="false"
+      >受保护</n-button>
+      <n-button
+        v-else
+        size="small"
+        type="primary"
+        :loading="installing"
+        :disabled="!canInstallSkill(skill)"
+        :focusable="false"
+        @click="$emit('install', skill)"
+      >安装</n-button>
     </div>
   </div>
 </template>
@@ -77,71 +84,7 @@ function truncate(text, len) {
 </script>
 
 <style scoped>
-.skill-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: 12px;
-  padding: 16px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-.skill-card:hover {
-  border-color: var(--primary-color);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-}
-.skill-card.installed {
-  border-left: 3px solid var(--success-color);
-}
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.card-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.card-title .name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.description {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.4;
-}
-.meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  font-size: 12px;
-}
-.meta-item {
-  color: var(--text-tertiary);
-  font-family: monospace;
-}
 .source-item {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.meta-link {
-  color: var(--primary-color);
-  text-decoration: none;
-}
-.meta-link:hover {
-  text-decoration: underline;
-}
-
 </style>

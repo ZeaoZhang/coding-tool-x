@@ -16,16 +16,19 @@ const NATIVE_OAUTH_MODULE = require.resolve('../../../src/server/services/native
 const PROXY_UTILS_MODULE  = require.resolve('../../../src/server/services/base/proxy-utils');
 const GEMINI_PROXY_MODULE = require.resolve('../../../src/server/gemini-proxy-server');
 const GEMINI_CH_MODULE    = require.resolve('../../../src/server/services/gemini-channels');
+const CHANNEL_BALANCE_MODULE = require.resolve('../../../src/server/services/channel-balance');
 
 // ─── Per-test state ───────────────────────────────────────────────────────────
 
 let testDir, channelsFile, geminiDir;
 let clearNativeOAuth;
+let clearChannelBalanceCache;
 let getGeminiProxyStatus;
 let service;
 
 function injectStubs() {
   clearNativeOAuth     = vi.fn();
+  clearChannelBalanceCache = vi.fn();
   getGeminiProxyStatus = vi.fn(() => ({ running: false }));
 
   require.cache[PATHS_MODULE] = {
@@ -59,6 +62,11 @@ function injectStubs() {
     id: GEMINI_PROXY_MODULE, filename: GEMINI_PROXY_MODULE, loaded: true,
     exports: { getGeminiProxyStatus }
   };
+
+  require.cache[CHANNEL_BALANCE_MODULE] = {
+    id: CHANNEL_BALANCE_MODULE, filename: CHANNEL_BALANCE_MODULE, loaded: true,
+    exports: { clearChannelBalanceCache }
+  };
 }
 
 beforeEach(() => {
@@ -74,6 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete require.cache[GEMINI_CH_MODULE];
+  delete require.cache[CHANNEL_BALANCE_MODULE];
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -185,6 +194,18 @@ describe('updateChannel', () => {
     expect(() => service.updateChannel(ch1.id, { name: 'Two' }))
       .toThrow(/already exists/i);
   });
+
+  it('clears balance cache when a disabled channel is re-enabled', () => {
+    getGeminiProxyStatus.mockReturnValue({ running: true });
+    const ch = service.createChannel('Retry', 'https://retry.example', 'key-retry', 'gemini-2.5-pro', { enabled: false });
+
+    service.updateChannel(ch.id, { enabled: true });
+
+    expect(clearChannelBalanceCache).toHaveBeenCalledWith('gemini', expect.objectContaining({
+      id: ch.id,
+      enabled: true
+    }));
+  });
 });
 
 // ─── deleteChannel ────────────────────────────────────────────────────────────
@@ -280,6 +301,16 @@ describe('applyChannelToSettings', () => {
 
   it('throws when channel id is not found', () => {
     expect(() => service.applyChannelToSettings('ghost-id')).toThrow('Channel not found');
+  });
+
+  it('clears balance cache when applying a disabled channel', () => {
+    const ch = service.createChannel('Balance Retry', 'https://retry.example', 'retry-key', 'gemini-2.5-pro', { enabled: false });
+
+    service.applyChannelToSettings(ch.id);
+
+    expect(clearChannelBalanceCache).toHaveBeenCalledWith('gemini', expect.objectContaining({
+      id: ch.id
+    }));
   });
 
   it('calls clearNativeOAuth with "gemini"', () => {
