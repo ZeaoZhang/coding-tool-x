@@ -10,6 +10,11 @@ export async function getTodayStatistics() {
   return response.data
 }
 
+export async function getClaudeTodayStatistics() {
+  const response = await client.get('/claude/statistics/today')
+  return response.data
+}
+
 export async function getCodexTodayStatistics() {
   const response = await client.get('/codex/statistics/today')
   return response.data

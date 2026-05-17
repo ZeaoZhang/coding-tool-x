@@ -181,7 +181,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       }
 
       if (channelType === 'claude') {
-        const response = await api.getTodayStatistics()
+        const response = await api.getClaudeTodayStatistics()
         dashboardData.value.todayStats.claude = parseStats(response)
       } else if (channelType === 'codex') {
         const response = await api.getCodexTodayStatistics()

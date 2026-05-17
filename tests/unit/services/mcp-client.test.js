@@ -161,10 +161,10 @@ describe('mcp-client', () => {
   });
 
   // ============================================================================
-  // HTTP transport
+  // Streamable HTTP transport
   // ============================================================================
 
-  describe('HTTP transport', () => {
+  describe('Streamable HTTP transport', () => {
     it('uses POST-only streamable HTTP and reuses MCP session headers', async () => {
       const requests = [];
       const server = http.createServer((req, res) => {
@@ -235,7 +235,7 @@ describe('mcp-client', () => {
       const { port } = server.address();
 
       const client = new mcpClient.McpClient({
-        type: 'http',
+        type: 'streamable_http',
         url: `http://127.0.0.1:${port}/mcp/`
       }, { timeout: 3000 });
 
@@ -480,7 +480,7 @@ describe('mcp-client', () => {
       const { port } = server.address();
 
       const client = new mcpClient.McpClient({
-        type: 'http',
+        type: 'streamable_http',
         url: `http://127.0.0.1:${port}/mcp`
       }, { timeout: 3000 });
 

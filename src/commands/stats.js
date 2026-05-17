@@ -4,7 +4,7 @@ const { loadConfig } = require('../config/loader');
 
 const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode'];
 const TOOL_ENDPOINTS = {
-  claude: '/api/statistics',
+  claude: '/api/claude/statistics',
   codex: '/api/codex/statistics',
   gemini: '/api/gemini/statistics',
   opencode: '/api/opencode/statistics'

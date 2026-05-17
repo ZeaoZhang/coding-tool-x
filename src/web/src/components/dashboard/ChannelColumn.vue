@@ -442,7 +442,7 @@ import {
   updateOpenCodeChannel
 } from '../../api/channels'
 import {
-  getTodayStatistics,
+  getClaudeTodayStatistics,
   getCodexTodayStatistics,
   getGeminiTodayStatistics,
   getOpenCodeTodayStatistics
@@ -803,7 +803,7 @@ async function loadChannelStats() {
   try {
     let statsData
     if (props.channelType === 'claude') {
-      statsData = await getTodayStatistics()
+      statsData = await getClaudeTodayStatistics()
     } else if (props.channelType === 'codex') {
       statsData = await getCodexTodayStatistics()
     } else if (props.channelType === 'gemini') {

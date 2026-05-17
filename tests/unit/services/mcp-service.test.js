@@ -205,6 +205,14 @@ describe('mcp-service', () => {
       expect(() => service.validateServerSpec({ type: 'sse', url: 'http://localhost:3000' })).not.toThrow();
     });
 
+    it('accepts valid streamable_http spec', () => {
+      expect(() => service.validateServerSpec({ type: 'streamable_http', url: 'http://localhost:8000/mcp' })).not.toThrow();
+    });
+
+    it('rejects http because streamable_http is the only HTTP MCP transport type', () => {
+      expect(() => service.validateServerSpec({ type: 'http', url: 'http://localhost:8000/mcp' })).toThrow(/无效的服务器类型/);
+    });
+
     it('throws when name/spec is missing (null)', () => {
       expect(() => service.validateServerSpec(null)).toThrow();
     });
@@ -433,6 +441,23 @@ describe('mcp-service', () => {
       expect(jsonExport.content).toContain('srv-export-a');
       expect(jsonExport.content).toContain('srv-export-b');
     });
+
+    it('exports remote servers as streamable_http', async () => {
+      await service.saveServer({
+        id: 'srv-streamable-export',
+        name: 'Remote',
+        server: { type: 'streamable_http', url: 'https://example.com/mcp' },
+        apps: { claude: true, codex: true, gemini: true, opencode: false }
+      }, { syncPlatforms: false });
+
+      const claudeExport = service.exportServers('claude');
+      const codexExport = service.exportServers('codex');
+      const geminiExport = service.exportServers('gemini');
+
+      expect(claudeExport.content).toContain('"type": "streamable_http"');
+      expect(codexExport.content).toContain('"type":"streamable_http"');
+      expect(geminiExport.content).toContain('"type": "streamable_http"');
+    });
   });
 
   describe('MCP client interactions', () => {
@@ -462,11 +487,11 @@ describe('mcp-service', () => {
       expect(client.initialize).toHaveBeenCalled();
     });
 
-    it('testServer performs the same MCP handshake for http servers', async () => {
+    it('testServer performs the same MCP handshake for streamable_http servers', async () => {
       await service.saveServer({
-        id: 'srv-http',
-        name: 'HTTP Server',
-        server: { type: 'http', url: 'http://127.0.0.1:8000/mcp' }
+        id: 'srv-streamable-http',
+        name: 'Streamable HTTP Server',
+        server: { type: 'streamable_http', url: 'http://127.0.0.1:8000/mcp' }
       }, { syncPlatforms: false });
 
       const client = {
@@ -477,7 +502,7 @@ describe('mcp-service', () => {
       };
       McpClientMock.mockImplementation(function MockClient() { return client; });
 
-      const result = await service.testServer('srv-http');
+      const result = await service.testServer('srv-streamable-http');
 
       expect(result.success).toBe(true);
       expect(result.message).toBe('服务器 MCP 握手成功');

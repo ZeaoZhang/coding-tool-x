@@ -1,8 +1,8 @@
 /**
  * MCP JSON-RPC Client Wrapper
  *
- * Reusable client for communicating with MCP servers over stdio or HTTP/SSE
- * transports using the JSON-RPC 2.0 protocol.
+ * Reusable client for communicating with MCP servers over stdio, Streamable
+ * HTTP, or legacy SSE transports using the JSON-RPC 2.0 protocol.
  *
  * Usage:
  *   const client = new McpClient({ type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-time'] });
@@ -216,13 +216,13 @@ function resolveLegacySseEndpoint(baseUrl, endpoint) {
 class McpClient extends EventEmitter {
   /**
    * @param {object} serverSpec - Server specification
-   * @param {string} [serverSpec.type='stdio'] - Transport type: 'stdio' | 'http' | 'sse'
+   * @param {string} [serverSpec.type='stdio'] - Transport type: 'stdio' | 'streamable_http' | 'sse'
    * @param {string} [serverSpec.command] - Command for stdio transport
    * @param {string[]} [serverSpec.args] - Args for stdio transport
    * @param {object} [serverSpec.env] - Additional env vars for stdio transport
    * @param {string} [serverSpec.cwd] - Working directory for stdio transport
-   * @param {string} [serverSpec.url] - URL for http/sse transport
-   * @param {object} [serverSpec.headers] - Additional headers for http/sse transport
+   * @param {string} [serverSpec.url] - URL for streamable_http/sse transport
+   * @param {object} [serverSpec.headers] - Additional headers for streamable_http/sse transport
    * @param {object} [options] - Client options
    * @param {number} [options.timeout=10000] - Operation timeout in ms
    */
@@ -270,7 +270,7 @@ class McpClient extends EventEmitter {
 
     if (this._type === 'stdio') {
       await this._connectStdio();
-    } else if (this._type === 'http' || this._type === 'sse') {
+    } else if (this._type === 'streamable_http' || this._type === 'sse') {
       await this._connectHttp();
     } else {
       throw new McpClientError(`Unsupported transport type: ${this._type}`);
@@ -619,7 +619,7 @@ class McpClient extends EventEmitter {
     const { url } = this._spec;
 
     if (!url) {
-      throw new McpClientError('http/sse transport requires a "url" field');
+      throw new McpClientError('streamable_http/sse transport requires a "url" field');
     }
 
     try {

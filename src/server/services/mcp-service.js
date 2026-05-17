@@ -9,8 +9,6 @@ const path = require('path');
 const os = require('os');
 const toml = require('@iarna/toml');
 const { spawn } = require('child_process');
-const http = require('http');
-const https = require('https');
 const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
@@ -35,6 +33,18 @@ const OPENCODE_CONFIG_PATHS = {
 // serverId -> { client, timestamp }
 const mcpClientPool = new Map();
 const POOL_TTL = 5 * 60 * 1000; // 5 minutes
+const STREAMABLE_HTTP_TYPE = 'streamable_http';
+const MCP_SERVER_TYPES = ['stdio', STREAMABLE_HTTP_TYPE, 'sse'];
+const REMOTE_MCP_SERVER_TYPES = [STREAMABLE_HTTP_TYPE, 'sse'];
+
+function normalizeServerSpec(spec = {}) {
+  if (!spec || typeof spec !== 'object') {
+    return spec;
+  }
+  const normalized = { ...spec };
+  normalized.type = normalized.type || 'stdio';
+  return normalized;
+}
 
 // MCP 预设模板
 const MCP_PRESETS = [
@@ -545,6 +555,7 @@ function getAllServers() {
       continue;
     }
     server.apps = normalizeServerApps(server.apps);
+    server.server = normalizeServerSpec(server.server);
   }
 
   return servers;
@@ -567,6 +578,8 @@ async function saveServer(server, options = {}) {
   if (!server.id || !server.id.trim()) {
     throw new Error('MCP 服务器 ID 不能为空');
   }
+
+  server.server = normalizeServerSpec(server.server);
 
   // 验证服务器配置
   validateServerSpec(server.server);
@@ -675,15 +688,15 @@ function validateServerSpec(spec) {
 
   const type = spec.type || 'stdio';
 
-  if (!['stdio', 'http', 'sse'].includes(type)) {
-    throw new Error(`无效的服务器类型: ${type}，必须是 stdio、http 或 sse`);
+  if (!MCP_SERVER_TYPES.includes(type)) {
+    throw new Error(`无效的服务器类型: ${spec.type || type}，必须是 stdio、streamable_http 或 sse`);
   }
 
   if (type === 'stdio') {
     if (!spec.command || !spec.command.trim()) {
       throw new Error('stdio 类型必须指定 command');
     }
-  } else if (type === 'http' || type === 'sse') {
+  } else if (REMOTE_MCP_SERVER_TYPES.includes(type)) {
     if (!spec.url || !spec.url.trim()) {
       throw new Error(`${type} 类型必须指定 url`);
     }
@@ -892,7 +905,7 @@ function convertToCodexFormat(spec) {
     if (spec.cwd) {
       result.cwd = spec.cwd;
     }
-  } else if (result.type === 'http' || result.type === 'sse') {
+  } else if (REMOTE_MCP_SERVER_TYPES.includes(result.type)) {
     result.url = spec.url || '';
     if (spec.headers && Object.keys(spec.headers).length > 0) {
       result.http_headers = spec.headers;
@@ -1023,7 +1036,7 @@ function convertFromOpenCodeFormat(spec) {
 
   if (sourceType === 'remote') {
     const result = {
-      type: 'http',
+      type: STREAMABLE_HTTP_TYPE,
       url: spec.url || ''
     };
     if (spec.headers && typeof spec.headers === 'object') {
@@ -1033,7 +1046,7 @@ function convertFromOpenCodeFormat(spec) {
   }
 
   // 已经是通用格式时直接兼容处理
-  if (sourceType === 'stdio' || sourceType === 'http' || sourceType === 'sse') {
+  if (sourceType === 'stdio' || REMOTE_MCP_SERVER_TYPES.includes(sourceType)) {
     return convertFromCodexFormat(spec);
   }
 
@@ -1256,7 +1269,7 @@ function convertFromCodexFormat(spec) {
     if (spec.cwd) {
       result.cwd = spec.cwd;
     }
-  } else if (result.type === 'http' || result.type === 'sse') {
+  } else if (REMOTE_MCP_SERVER_TYPES.includes(result.type)) {
     result.url = spec.url || '';
     if (spec.http_headers) {
       result.headers = spec.http_headers;
@@ -1324,7 +1337,7 @@ async function testServer(serverId) {
   try {
     if (type === 'stdio') {
       return await testStdioServer(spec);
-    } else if (type === 'http' || type === 'sse') {
+    } else if (REMOTE_MCP_SERVER_TYPES.includes(type)) {
       return await testHttpServer(spec);
     } else {
       return { success: false, message: `不支持的服务器类型: ${type}` };
@@ -1468,7 +1481,7 @@ async function testStdioServer(spec) {
 }
 
 /**
- * 测试 http/sse 类型服务器
+ * 测试 streamable_http/sse 类型服务器
  */
 async function testHttpServer(spec) {
   const startTime = Date.now();

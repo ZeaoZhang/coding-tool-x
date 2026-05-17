@@ -132,8 +132,8 @@
                   <span class="radio-label">stdio</span>
                   <span class="radio-desc">本地命令</span>
                 </n-radio>
-                <n-radio value="http">
-                  <span class="radio-label">http</span>
+                <n-radio value="streamable_http">
+                  <span class="radio-label">streamable_http</span>
                 </n-radio>
                 <n-radio value="sse">
                   <span class="radio-label">sse</span>
@@ -180,7 +180,7 @@
               </div>
             </template>
 
-            <!-- http/sse 配置 -->
+            <!-- streamable_http/sse 配置 -->
             <template v-else>
               <div class="field">
                 <label class="field-label">
@@ -398,6 +398,7 @@ function selectPreset(index) {
   if (preset.server) {
     serverType.value = preset.server.type || 'stdio'
     formData.server = { ...preset.server }
+    formData.server.type = serverType.value
 
     if (preset.server.env) {
       envList.value = Object.entries(preset.server.env).map(([key, value]) => ({ key, value }))
@@ -451,6 +452,7 @@ function fillEditingData() {
   if (server.server) {
     serverType.value = server.server.type || 'stdio'
     formData.server = { ...server.server }
+    formData.server.type = serverType.value
 
     if (server.server.env) {
       envList.value = Object.entries(server.server.env).map(([key, value]) => ({ key, value }))
@@ -484,7 +486,7 @@ async function handleSave() {
     return
   }
 
-  if ((serverType.value === 'http' || serverType.value === 'sse') && !formData.server.url?.trim()) {
+  if ((serverType.value === 'streamable_http' || serverType.value === 'sse') && !formData.server.url?.trim()) {
     message.error('请输入 URL')
     return
   }

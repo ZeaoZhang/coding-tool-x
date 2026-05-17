@@ -21,7 +21,7 @@ const { getChannels: getGeminiChannels } = require('../services/gemini-channels'
 const { getChannels: getOpenCodeChannels } = require('../services/opencode-channels');
 
 // Statistics
-const { getTodayStatistics } = require('../services/statistics-service');
+const { getTodayStatistics: getClaudeTodayStatistics } = require('../services/claude-statistics-service');
 const { getTodayStatistics: getCodexTodayStatistics } = require('../services/codex-statistics-service');
 const { getTodayStatistics: getGeminiTodayStatistics } = require('../services/gemini-statistics-service');
 const { getTodayStatistics: getOpenCodeTodayStatistics } = require('../services/opencode-statistics-service');
@@ -74,7 +74,7 @@ router.get('/init', async (req, res) => {
       Promise.resolve(getOpenCodeProxyStatus()),
 
       // Today Stats (所有平台)
-      Promise.resolve(getTodayStatistics()),
+      Promise.resolve(getClaudeTodayStatistics()),
       Promise.resolve(getCodexTodayStatistics()),
       Promise.resolve(getGeminiTodayStatistics()),
       Promise.resolve(getOpenCodeTodayStatistics()),
