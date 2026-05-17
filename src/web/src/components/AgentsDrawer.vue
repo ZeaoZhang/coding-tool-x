@@ -5,10 +5,10 @@
     placement="right"
     :mask-closable="true"
   >
-    <n-drawer-content closable>
+    <n-drawer-content closable :native-scrollbar="false" :body-content-style="bodyStyle">
       <template #header>
         <div class="drawer-header">
-          <span>Custom Agents</span>
+          <span>代理管理</span>
         </div>
       </template>
       <AgentsPanel
@@ -43,6 +43,13 @@ const visible = computed({
   get: () => props.visible,
   set: (val) => emit('update:visible', val)
 })
+
+const bodyStyle = {
+  padding: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden'
+}
 </script>
 
 <style scoped>

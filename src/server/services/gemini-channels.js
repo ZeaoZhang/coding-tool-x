@@ -8,6 +8,14 @@ const { normalizeGatewaySourceType } = require('./base/proxy-utils');
 
 const GEMINI_API_FORMATS = new Set(['gemini_api', 'vertex_ai_v1']);
 
+function clearChannelBalanceCache(channel) {
+  try {
+    require('./channel-balance').clearChannelBalanceCache('gemini', channel);
+  } catch (_) {
+    // Balance cache invalidation is best-effort and should not block channel updates.
+  }
+}
+
 function normalizeGeminiApiFormat(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return GEMINI_API_FORMATS.has(normalized) ? normalized : 'gemini_api';
@@ -311,6 +319,9 @@ function updateChannel(channelId, updates) {
   }
 
   saveChannels(data);
+  if (oldChannel.enabled === false && nextChannel.enabled !== false) {
+    clearChannelBalanceCache(nextChannel);
+  }
 
   // Only sync .env when proxy is OFF.
   // In dynamic switching mode, defer local config writes until proxy stop.
@@ -340,6 +351,7 @@ function applyChannelToSettings(channelId, channels = null) {
     throw new Error('Channel not found');
   }
 
+  const wasEnabled = channel.enabled !== false;
   // In single-channel mode, only this channel should be enabled
   data.channels.forEach(ch => {
     ch.enabled = ch.id === channelId;
@@ -347,6 +359,9 @@ function applyChannelToSettings(channelId, channels = null) {
   // Only persist when we loaded from disk (not when called with in-memory channels from updateChannel)
   if (!channels) {
     saveChannels(data);
+  }
+  if (!wasEnabled) {
+    clearChannelBalanceCache(channel);
   }
 
   clearNativeOAuth('gemini');

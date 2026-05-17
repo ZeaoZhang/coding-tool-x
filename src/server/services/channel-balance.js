@@ -80,6 +80,19 @@ function forgetBalanceStrategy(key) {
   }
 }
 
+function isRememberedHiddenStrategy(strategy) {
+  return strategy?.type === 'unsupported-balance'
+    || strategy?.type === 'unavailable-balance';
+}
+
+function makeUnavailableBalanceStrategy(snapshot = {}, baseUrl = '') {
+  return {
+    type: 'unavailable-balance',
+    platform: snapshot.platform || null,
+    baseUrl: normalizeBaseUrl(baseUrl) || baseUrl || null
+  };
+}
+
 function nowIso(now = Date.now()) {
   return new Date(now).toISOString();
 }
@@ -1270,6 +1283,12 @@ async function runBalanceStrategy(strategy, token, channel = {}) {
       strategy
     };
   }
+  if (strategy.type === 'unavailable-balance') {
+    return {
+      snapshot: makeHiddenSnapshot(strategy.platform || null),
+      strategy
+    };
+  }
   if (strategy.type === 'siliconflow-user-info') {
     return {
       snapshot: await runSiliconFlowUserInfoStrategy(strategy, token),
@@ -1292,6 +1311,7 @@ async function tryBalanceStrategy(strategy, token, channel = {}) {
 
 async function probeBalanceFromBase(baseUrl, channel, token) {
   let lastSnapshot = null;
+  let lastHiddenStrategy = null;
   for (const strategy of buildBalanceProbeStrategies(baseUrl, channel, token)) {
     const result = await tryBalanceStrategy(strategy, token, channel);
     if (result) return result;
@@ -1304,8 +1324,11 @@ async function probeBalanceFromBase(baseUrl, channel, token) {
             : strategy.platform || null
       );
     }
+    if (isRememberedHiddenStrategy(strategy)) {
+      lastHiddenStrategy = strategy;
+    }
   }
-  return lastSnapshot ? { snapshot: lastSnapshot, strategy: null } : null;
+  return lastSnapshot ? { snapshot: lastSnapshot, strategy: lastHiddenStrategy } : null;
 }
 
 function buildCacheKey(source, channel) {
@@ -1341,6 +1364,27 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
   loadPersistedStrategyCache();
   const cachedStrategy = balanceStrategyCache.get(key);
   if (cachedStrategy) {
+    if (isRememberedHiddenStrategy(cachedStrategy)) {
+      const strategyResult = await runBalanceStrategy(cachedStrategy, token, channel);
+      const hiddenSnapshot = strategyResult?.snapshot || makeHiddenSnapshot(cachedStrategy.platform || null);
+      if (cached?.snapshot?.visible) {
+        const staleSnapshot = {
+          ...cached.snapshot,
+          stale: true
+        };
+        balanceCache.set(key, {
+          snapshot: staleSnapshot,
+          expiresAt: currentTime + CACHE_TTL_MS
+        });
+        return staleSnapshot;
+      }
+      balanceCache.set(key, {
+        snapshot: hiddenSnapshot,
+        expiresAt: currentTime + CACHE_TTL_MS
+      });
+      return hiddenSnapshot;
+    }
+
     const strategyResult = await tryBalanceStrategy(cachedStrategy, token, channel);
     if (strategyResult?.snapshot?.visible) {
       rememberBalanceStrategy(key, strategyResult.strategy);
@@ -1366,6 +1410,13 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
     lastSnapshot = result?.snapshot || makeHiddenSnapshot(null, { updatedAt: nowIso(currentTime) });
   }
 
+  const hiddenStrategy = lastSnapshot
+    ? makeUnavailableBalanceStrategy(lastSnapshot, bases[0])
+    : null;
+  if (hiddenStrategy) {
+    rememberBalanceStrategy(key, hiddenStrategy);
+  }
+
   if (cached?.snapshot?.visible) {
     const staleSnapshot = {
       ...cached.snapshot,
@@ -1379,6 +1430,38 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
   }
 
   return lastSnapshot || makeHiddenSnapshot(null, { updatedAt: nowIso(currentTime) });
+}
+
+function clearChannelBalanceCache(source, channel) {
+  const normalizedSource = validateSource(source);
+  if (!channel) return;
+  loadPersistedStrategyCache();
+
+  const exactKey = buildCacheKey(normalizedSource, channel);
+  const identity = channel.id || channel.name || 'unknown';
+  const prefix = `${normalizedSource}:${identity}:`;
+  let strategyChanged = false;
+
+  balanceCache.delete(exactKey);
+  for (const key of Array.from(balanceCache.keys())) {
+    if (key.startsWith(prefix)) {
+      balanceCache.delete(key);
+    }
+  }
+
+  if (balanceStrategyCache.delete(exactKey)) {
+    strategyChanged = true;
+  }
+  for (const key of Array.from(balanceStrategyCache.keys())) {
+    if (key.startsWith(prefix)) {
+      balanceStrategyCache.delete(key);
+      strategyChanged = true;
+    }
+  }
+
+  if (strategyChanged) {
+    writePersistedStrategyCache();
+  }
 }
 
 function getChannelsForSource(source) {
@@ -1482,8 +1565,10 @@ function clearBalanceCache() {
 module.exports = {
   getChannelBalances,
   refreshChannelBalance,
+  clearChannelBalanceCache,
   _test: {
     clearBalanceCache,
+    clearChannelBalanceCache,
     normalizeBaseUrl,
     buildBaseCandidates,
     buildHubBalanceSnapshot,

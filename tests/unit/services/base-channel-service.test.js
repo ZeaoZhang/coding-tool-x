@@ -6,6 +6,8 @@ const BaseChannelService = require('../../../src/server/services/base/base-chann
 
 let tempDir;
 let channelsFile;
+let clearChannelBalanceCache;
+const CHANNEL_BALANCE_PATH = require.resolve('../../../src/server/services/channel-balance');
 
 function createService(overrides = {}) {
   return new BaseChannelService({
@@ -20,9 +22,17 @@ function createService(overrides = {}) {
 beforeEach(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-base-channel-test-'));
   channelsFile = path.join(tempDir, 'channels', 'test.json');
+  clearChannelBalanceCache = vi.fn();
+  require.cache[CHANNEL_BALANCE_PATH] = {
+    id: CHANNEL_BALANCE_PATH,
+    filename: CHANNEL_BALANCE_PATH,
+    loaded: true,
+    exports: { clearChannelBalanceCache }
+  };
 });
 
 afterEach(() => {
+  delete require.cache[CHANNEL_BALANCE_PATH];
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -132,6 +142,29 @@ describe('BaseChannelService', () => {
       expect(enabled[0].name).toBe('Ch2');
     });
 
+    it('clears the balance cache when a channel is re-enabled', () => {
+      const svc = createService({ isProxyRunning: () => true });
+      const ch = svc.createChannel({ name: 'Ch1', enabled: false, baseUrl: 'https://api.example', apiKey: 'sk-test' });
+
+      const updated = svc.updateChannel(ch.id, { enabled: true });
+
+      expect(clearChannelBalanceCache).toHaveBeenCalledWith('test', expect.objectContaining({
+        id: ch.id,
+        enabled: true
+      }));
+      expect(updated.enabled).toBe(true);
+    });
+
+    it('does not clear the balance cache for ordinary edits', () => {
+      const svc = createService();
+      const ch = svc.createChannel({ name: 'Ch1', enabled: true });
+      clearChannelBalanceCache.mockClear();
+
+      svc.updateChannel(ch.id, { name: 'Ch1 edited' });
+
+      expect(clearChannelBalanceCache).not.toHaveBeenCalled();
+    });
+
     it('should update updatedAt timestamp', () => {
       const svc = createService();
       const ch = svc.createChannel({ name: 'Ch1' });
@@ -193,10 +226,15 @@ describe('BaseChannelService', () => {
       svc.createChannel({ name: 'Ch1', enabled: true });
       svc.createChannel({ name: 'Ch2', enabled: true });
       const data = svc.getChannels();
-      svc.applyChannelToSettings(data.channels[0].id);
+      const disabled = svc.updateChannel(data.channels[0].id, { enabled: false });
+      clearChannelBalanceCache.mockClear();
+      svc.applyChannelToSettings(disabled.id);
       const after = svc.getChannels();
       expect(after.channels[0].enabled).toBe(true);
       expect(after.channels[1].enabled).toBe(false);
+      expect(clearChannelBalanceCache).toHaveBeenCalledWith('test', expect.objectContaining({
+        id: disabled.id
+      }));
     });
 
     it('should throw for non-existent channel', () => {
