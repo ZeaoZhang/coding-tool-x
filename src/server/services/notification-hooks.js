@@ -3,6 +3,8 @@ const path = require('path');
 const os = require('os');
 const http = require('http');
 const https = require('https');
+const crypto = require('crypto');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const { execSync, execFileSync } = require('child_process');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { loadUIConfig, saveUIConfig } = require('./ui-config');
@@ -31,6 +33,13 @@ const REMOTE_PROVIDER_LABELS = {
 
 function normalizeType(type) {
   return type === 'dialog' || type === 'browser' ? type : 'notification';
+}
+
+function createClientId(prefix = 'coding-tool') {
+  const randomPart = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+    : crypto.randomBytes(8).toString('hex');
+  return `${prefix}-${randomPart}`;
 }
 
 function ensureParentDir(filePath) {
@@ -102,10 +111,7 @@ function normalizeProviderConfig(type, config = {}) {
       };
     case 'wecomBot':
       return {
-        webhookUrl: trimString(source.webhookUrl),
-        botId: trimString(source.botId),
-        secret: trimString(source.secret),
-        targetChatId: trimString(source.targetChatId)
+        webhookUrl: trimString(source.webhookUrl)
       };
     case 'dingtalkBot':
       return {
@@ -142,33 +148,11 @@ function normalizeRemoteProvider(provider = {}, index = 0) {
   };
 }
 
-function legacyFeishuToProvider(feishu = {}) {
-  const webhookUrl = trimString(feishu.webhookUrl);
-  if (!webhookUrl && feishu.enabled !== true) {
-    return null;
-  }
-
-  return {
-    id: 'feishu-default',
-    type: 'feishuBot',
-    name: '飞书 Bot',
-    enabled: feishu.enabled === true,
-    config: {
-      webhookUrl
-    }
-  };
-}
-
-function normalizeRemoteNotificationsConfig(remoteNotifications = {}, options = {}) {
+function normalizeRemoteNotificationsConfig(remoteNotifications = {}) {
   const source = remoteNotifications && typeof remoteNotifications === 'object' ? remoteNotifications : {};
   const providers = Array.isArray(source.providers)
     ? source.providers.map((provider, index) => normalizeRemoteProvider(provider, index)).filter(Boolean)
     : [];
-
-  const fallbackProvider = legacyFeishuToProvider(options.fallbackFeishu);
-  if (fallbackProvider && !providers.some((provider) => provider.type === 'feishuBot')) {
-    providers.push(fallbackProvider);
-  }
 
   return {
     providers
@@ -176,35 +160,7 @@ function normalizeRemoteNotificationsConfig(remoteNotifications = {}, options = 
 }
 
 function getRemoteNotificationsConfig(uiConfig = loadUIConfig()) {
-  return normalizeRemoteNotificationsConfig(uiConfig.remoteNotifications, {
-    fallbackFeishu: uiConfig.feishuNotification
-  });
-}
-
-function getFeishuCompatFromRemote(remoteNotifications = {}) {
-  const remote = normalizeRemoteNotificationsConfig(remoteNotifications);
-  const feishuProvider = remote.providers.find((provider) => provider.type === 'feishuBot');
-  return {
-    enabled: feishuProvider?.enabled === true,
-    webhookUrl: feishuProvider?.config?.webhookUrl || ''
-  };
-}
-
-function getFeishuConfig() {
-  const uiConfig = loadUIConfig();
-  const remote = getRemoteNotificationsConfig(uiConfig);
-  const feishuProvider = remote.providers.find((provider) => provider.type === 'feishuBot');
-  if (feishuProvider) {
-    return {
-      enabled: feishuProvider.enabled === true,
-      webhookUrl: feishuProvider.config?.webhookUrl || ''
-    };
-  }
-
-  return {
-    enabled: uiConfig.feishuNotification?.enabled === true,
-    webhookUrl: uiConfig.feishuNotification?.webhookUrl || ''
-  };
+  return normalizeRemoteNotificationsConfig(uiConfig.remoteNotifications);
 }
 
 function applyClaudeDisablePreference(uiConfig = {}, claudeEnabled) {
@@ -217,15 +173,13 @@ function applyClaudeDisablePreference(uiConfig = {}, claudeEnabled) {
   return nextConfig;
 }
 
-function saveNotificationUiConfig(remoteNotifications = {}, claudeEnabled, feishu = {}) {
+function saveNotificationUiConfig(remoteNotifications = {}, claudeEnabled) {
   let uiConfig = loadUIConfig();
   if (typeof claudeEnabled === 'boolean') {
     uiConfig = applyClaudeDisablePreference(uiConfig, claudeEnabled);
   }
-  uiConfig.remoteNotifications = normalizeRemoteNotificationsConfig(remoteNotifications, {
-    fallbackFeishu: feishu
-  });
-  uiConfig.feishuNotification = getFeishuCompatFromRemote(uiConfig.remoteNotifications);
+  uiConfig.remoteNotifications = normalizeRemoteNotificationsConfig(remoteNotifications);
+  delete uiConfig.feishuNotification;
   saveUIConfig(uiConfig);
 }
 
@@ -335,8 +289,8 @@ function validateRemoteProviderConfig(provider = {}) {
   }
 }
 
-function validateRemoteNotifications(remoteNotifications = {}, options = {}) {
-  const remote = normalizeRemoteNotificationsConfig(remoteNotifications, options);
+function validateRemoteNotifications(remoteNotifications = {}) {
+  const remote = normalizeRemoteNotificationsConfig(remoteNotifications);
   remote.providers.forEach((provider) => {
     if (provider.enabled === true) {
       validateRemoteProviderConfig(provider);
@@ -669,18 +623,9 @@ function runWindowsPowerShellCommand(command) {
   });
 }
 
-function generateNotifyScript(remoteNotifications = {}, legacyFeishu = null) {
-  const sourceIsLegacyFeishu = remoteNotifications &&
-    typeof remoteNotifications === 'object' &&
-    !Array.isArray(remoteNotifications.providers) &&
-    ('enabled' in remoteNotifications || 'webhookUrl' in remoteNotifications);
-  const remote = normalizeRemoteNotificationsConfig(
-    sourceIsLegacyFeishu ? {} : remoteNotifications,
-    { fallbackFeishu: legacyFeishu || (sourceIsLegacyFeishu ? remoteNotifications : null) }
-  );
+function generateNotifyScript(remoteNotifications = {}) {
+  const remote = normalizeRemoteNotificationsConfig(remoteNotifications);
   const enabledProviders = remote.providers.filter((provider) => provider.enabled === true);
-  const feishuCompat = getFeishuCompatFromRemote(remote);
-  const feishuEnabled = feishuCompat.enabled === true && !!feishuCompat.webhookUrl;
 
   return `#!/usr/bin/env node
 // Coding Tool 通知脚本 - 自动生成，请勿手动修改
@@ -691,10 +636,24 @@ const https = require('https')
 const crypto = require('crypto')
 const { execSync, execFileSync } = require('child_process')
 
-const FEISHU_ENABLED = ${feishuEnabled ? 'true' : 'false'}
-const FEISHU_WEBHOOK_URL = ${JSON.stringify(feishuEnabled ? feishuCompat.webhookUrl : '')}
+function createHttpsProxyAgent(proxyUrl) {
+  try {
+    const { HttpsProxyAgent } = require('https-proxy-agent')
+    return new HttpsProxyAgent(proxyUrl)
+  } catch (error) {
+    return null
+  }
+}
+
 const REMOTE_PROVIDERS = ${JSON.stringify(enabledProviders)}
 const CONFIG_FILE = ${JSON.stringify(PATHS.configFile)}
+
+function createClientId(prefix = 'coding-tool') {
+  const randomPart = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+    : crypto.randomBytes(8).toString('hex')
+  return prefix + '-' + randomPart
+}
 
 function readArg(name) {
   const prefix = \`\${name}=\`
@@ -880,7 +839,7 @@ function notify(mode, message) {
   }
 }
 
-function postJson(url, data, headers = {}) {
+function postJson(url, data, headers = {}, extraOptions = {}) {
   return new Promise((resolve) => {
     try {
       const urlObj = new URL(url)
@@ -895,6 +854,7 @@ function postJson(url, data, headers = {}) {
           'Content-Length': Buffer.byteLength(body),
           ...headers
         },
+        ...extraOptions,
         timeout: 10000
       }
 
@@ -914,6 +874,16 @@ function postJson(url, data, headers = {}) {
       resolve()
     }
   })
+}
+
+function sendTelegramMessage(config = {}, ctx, send = postJson) {
+  const url = 'https://api.telegram.org/bot' + config.botToken + '/sendMessage'
+  const payload = {
+    chat_id: config.chatId,
+    text: formatPlainMessage(ctx)
+  }
+  const agent = config.proxy ? createHttpsProxyAgent(config.proxy) : null
+  return send(url, payload, {}, agent ? { agent } : {})
 }
 
 function buildNotificationContext(message, source, eventType) {
@@ -950,6 +920,70 @@ function readWechatToken(config = {}) {
   }
 }
 
+function fetchDingTalkAccessToken(config = {}) {
+  if (!config.clientId || !config.clientSecret) return Promise.resolve('')
+  return new Promise((resolve) => {
+    try {
+      const data = JSON.stringify({ appKey: config.clientId, appSecret: config.clientSecret })
+      const req = https.request({
+        hostname: 'api.dingtalk.com',
+        path: '/v1.0/oauth2/accessToken',
+        method: 'POST',
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data)
+        }
+      }, (response) => {
+        let body = ''
+        response.setEncoding('utf8')
+        response.on('data', (chunk) => { body += chunk })
+        response.on('end', () => {
+          try {
+            const parsed = JSON.parse(body)
+            resolve(parsed.accessToken || '')
+          } catch (error) {
+            resolve('')
+          }
+        })
+      })
+      req.on('error', () => resolve(''))
+      req.on('timeout', () => {
+        req.destroy()
+        resolve('')
+      })
+      req.write(data)
+      req.end()
+    } catch (error) {
+      resolve('')
+    }
+  })
+}
+
+async function sendDingTalkAppMessage(config = {}, ctx) {
+  const token = await fetchDingTalkAccessToken(config)
+  if (!token || !config.targetId) return
+  const isGroup = config.targetType !== 'user'
+  const payload = {
+    robotCode: config.clientId,
+    msgKey: 'sampleMarkdown',
+    msgParam: JSON.stringify({
+      title: ctx.title,
+      text: '### ' + ctx.title + '\\n\\n- 来源: ' + ctx.source + '\\n- 状态: ' + ctx.message + '\\n- 时间: ' + ctx.timestamp + '\\n- 设备: ' + ctx.hostname
+    })
+  }
+  if (isGroup) {
+    payload.openConversationId = config.targetId
+  } else {
+    payload.userIds = [config.targetId]
+  }
+  return postJson(
+    'https://api.dingtalk.com/v1.0/robot/' + (isGroup ? 'groupMessages/send' : 'oToMessages/batchSend'),
+    payload,
+    { 'x-acs-dingtalk-access-token': token }
+  )
+}
+
 function sendRemoteProvider(provider, ctx) {
   const config = provider?.config || {}
   switch (provider?.type) {
@@ -960,7 +994,7 @@ function sendRemoteProvider(provider, ctx) {
         msg: {
           from_user_id: '',
           to_user_id: config.targetUserId,
-          client_id: 'coding-tool-' + crypto.randomUUID().replace(/-/g, '').slice(0, 16),
+          client_id: createClientId('coding-tool'),
           message_type: 2,
           message_state: 2,
           item_list: [{ type: 1, text_item: { text: formatPlainMessage(ctx) } }],
@@ -1010,7 +1044,8 @@ function sendRemoteProvider(provider, ctx) {
       })
     }
     case 'dingtalkBot': {
-      if (!config.webhookUrl || config.mode === 'app') return Promise.resolve()
+      if (config.mode === 'app') return sendDingTalkAppMessage(config, ctx)
+      if (!config.webhookUrl) return Promise.resolve()
       return postJson(config.webhookUrl, {
         msgtype: 'markdown',
         markdown: {
@@ -1021,10 +1056,7 @@ function sendRemoteProvider(provider, ctx) {
     }
     case 'telegramBot': {
       if (!config.botToken || !config.chatId) return Promise.resolve()
-      return postJson('https://api.telegram.org/bot' + config.botToken + '/sendMessage', {
-        chat_id: config.chatId,
-        text: formatPlainMessage(ctx)
-      })
+      return sendTelegramMessage(config, ctx)
     }
     default:
       return Promise.resolve()
@@ -1270,9 +1302,9 @@ function runWindowsPowerShellCommand(command) {
 `;
 }
 
-function writeNotifyScript(remoteNotifications = {}, feishu = null) {
+function writeNotifyScript(remoteNotifications = {}) {
   ensureParentDir(PATHS.notifyHook);
-  fs.writeFileSync(PATHS.notifyHook, generateNotifyScript(remoteNotifications, feishu), { mode: 0o755 });
+  fs.writeFileSync(PATHS.notifyHook, generateNotifyScript(remoteNotifications), { mode: 0o755 });
 }
 
 function getClaudeHookStatus() {
@@ -1582,7 +1614,6 @@ function getNotificationSettings() {
   return {
     success: true,
     platform: os.platform(),
-    feishu: getFeishuCompatFromRemote(remoteNotifications),
     remoteNotifications,
     remoteProviderTypes: REMOTE_PROVIDER_TYPES.map((type) => ({
       type,
@@ -1654,17 +1685,10 @@ function emitBrowserNotification(input = {}) {
 }
 
 function saveNotificationSettings(input = {}) {
-  const existingFeishu = getFeishuConfig();
-  const requestedWebhookUrl = String(input?.feishu?.webhookUrl || '').trim();
-  const feishu = {
-    enabled: input?.feishu?.enabled === true,
-    webhookUrl: requestedWebhookUrl || (input?.feishu?.enabled === true ? existingFeishu.webhookUrl || '' : '')
-  };
   const remoteNotifications = validateRemoteNotifications(
     input.remoteNotifications !== undefined
       ? input.remoteNotifications
-      : {},
-    { fallbackFeishu: feishu }
+      : {}
   );
   const platforms = {
     claude: normalizePlatformInput(input?.platforms?.claude),
@@ -1673,11 +1697,11 @@ function saveNotificationSettings(input = {}) {
     opencode: normalizePlatformInput(input?.platforms?.opencode)
   };
 
-  saveNotificationUiConfig(remoteNotifications, platforms.claude.enabled, feishu);
+  saveNotificationUiConfig(remoteNotifications, platforms.claude.enabled);
 
   const hasManagedPlatform = Object.values(platforms).some((platform) => platform.enabled);
   if (hasManagedPlatform) {
-    writeNotifyScript(remoteNotifications, feishu);
+    writeNotifyScript(remoteNotifications);
   }
 
   saveClaudeHook(platforms.claude.enabled, platforms.claude.type);
@@ -1812,15 +1836,7 @@ function buildLegacyClaudeSaveInput(input = {}, currentSettings = getNotificatio
       gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
       opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
     },
-    feishu: input.feishu !== undefined
-      ? {
-          enabled: input.feishu?.enabled === true,
-          webhookUrl: input.feishu?.webhookUrl || ''
-        }
-      : {
-          enabled: currentSettings?.feishu?.enabled === true,
-          webhookUrl: currentSettings?.feishu?.webhookUrl || ''
-        }
+    remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
   };
 }
 
@@ -1828,7 +1844,6 @@ function getLegacyClaudeHookSettings() {
   return {
     success: true,
     stopHook: parseStopHookStatus(readClaudeSettings()),
-    feishu: getFeishuConfig(),
     platform: os.platform()
   };
 }
@@ -1860,10 +1875,7 @@ function initDefaultHooks() {
             gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
             opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
           },
-          feishu: {
-            enabled: currentSettings?.feishu?.enabled === true,
-            webhookUrl: currentSettings?.feishu?.webhookUrl || ''
-          }
+          remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
         });
         console.log('[Claude Hooks] 检测到旧版 Stop hook 路径，已自动修复');
       } else {
@@ -1880,10 +1892,7 @@ function initDefaultHooks() {
         gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
         opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
       },
-      feishu: {
-        enabled: currentSettings?.feishu?.enabled === true,
-        webhookUrl: currentSettings?.feishu?.webhookUrl || ''
-      }
+      remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
     });
     console.log('[Claude Hooks] 已自动开启任务完成通知（右上角卡片）');
   } catch (error) {
@@ -1941,7 +1950,7 @@ function sendFeishuTest(webhookUrl) {
   });
 }
 
-function requestJson(url, data, headers = {}) {
+function requestJson(url, data, headers = {}, extraOptions = {}) {
   return new Promise((resolve, reject) => {
     try {
       const urlObj = new URL(url);
@@ -1957,7 +1966,8 @@ function requestJson(url, data, headers = {}) {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
           ...headers
-        }
+        },
+        ...extraOptions
       }, (response) => {
         response.resume();
         if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -1969,6 +1979,51 @@ function requestJson(url, data, headers = {}) {
       request.on('error', reject);
       request.on('timeout', () => {
         request.destroy(new Error('远程通知测试超时'));
+      });
+      request.write(body);
+      request.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+function requestDingTalkAccessToken(config = {}) {
+  if (!config.clientId || !config.clientSecret) {
+    return Promise.resolve('');
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const body = JSON.stringify({ appKey: config.clientId, appSecret: config.clientSecret });
+      const request = https.request({
+        hostname: 'api.dingtalk.com',
+        path: '/v1.0/oauth2/accessToken',
+        method: 'POST',
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        }
+      }, (response) => {
+        let responseBody = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => { responseBody += chunk; });
+        response.on('end', () => {
+          try {
+            const parsed = JSON.parse(responseBody);
+            if (response.statusCode >= 200 && response.statusCode < 300 && parsed.accessToken) {
+              resolve(parsed.accessToken);
+              return;
+            }
+            reject(new Error(`钉钉 Access Token 获取失败: ${responseBody.slice(0, 300)}`));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      request.on('error', reject);
+      request.on('timeout', () => {
+        request.destroy(new Error('钉钉 Access Token 获取超时'));
       });
       request.write(body);
       request.end();
@@ -2025,17 +2080,14 @@ async function sendRemoteProviderTest(providerInput = {}) {
       });
     case 'dingtalkBot':
       if (config.mode === 'app') {
-        throw createValidationError('钉钉 App 模式需要运行时会话上下文，当前测试仅支持 Webhook 模式');
+        return sendDingTalkAppProviderTest(config, ctx);
       }
       return requestJson(config.webhookUrl, {
         msgtype: 'markdown',
         markdown: { title: ctx.title, text: `### ${ctx.title}\n\n- 状态: ${ctx.message}\n- 时间: ${ctx.timestamp}` }
       });
     case 'telegramBot':
-      return requestJson(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
-        chat_id: config.chatId,
-        text: formatProviderText(ctx)
-      });
+      return requestTelegramMessage(config, ctx);
     case 'wechatBot':
       if (!config.botToken && config.tokenFile) {
         try {
@@ -2051,20 +2103,57 @@ async function sendRemoteProviderTest(providerInput = {}) {
         msg: {
           from_user_id: '',
           to_user_id: config.targetUserId,
-          client_id: `coding-tool-${Date.now()}`,
+          client_id: createClientId('coding-tool'),
           message_type: 2,
           message_state: 2,
-          item_list: [{ type: 1, text_item: { text: formatProviderText(ctx) } }]
+          item_list: [{ type: 1, text_item: { text: formatProviderText(ctx) } }],
+          ...(config.contextToken ? { context_token: config.contextToken } : {})
         },
         base_info: { channel_version: '2.1.8' }
       }, {
         AuthorizationType: 'ilink_bot_token',
         Authorization: `Bearer ${config.botToken}`,
-        'X-WECHAT-UIN': Buffer.from(String(Date.now())).toString('base64')
+        'X-WECHAT-UIN': Buffer.from(String(Math.floor(Math.random() * 0xffffffff))).toString('base64')
       });
     default:
       throw createValidationError('不支持的远程通知渠道');
   }
+}
+
+function requestTelegramMessage(config = {}, ctx) {
+  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+  const payload = {
+    chat_id: config.chatId,
+    text: formatProviderText(ctx)
+  };
+  const agent = config.proxy ? new HttpsProxyAgent(config.proxy) : null;
+  return requestJson(url, payload, {}, agent ? { agent } : {});
+}
+
+async function sendDingTalkAppProviderTest(config = {}, ctx) {
+  const token = await requestDingTalkAccessToken(config);
+  if (!token) {
+    throw createValidationError('钉钉 App Access Token 获取失败');
+  }
+  const isGroup = config.targetType !== 'user';
+  const payload = {
+    robotCode: config.clientId,
+    msgKey: 'sampleMarkdown',
+    msgParam: JSON.stringify({
+      title: ctx.title,
+      text: `### ${ctx.title}\n\n- 状态: ${ctx.message}\n- 时间: ${ctx.timestamp}\n- 设备: ${ctx.hostname}`
+    })
+  };
+  if (isGroup) {
+    payload.openConversationId = config.targetId;
+  } else {
+    payload.userIds = [config.targetId];
+  }
+  return requestJson(
+    'https://api.dingtalk.com/v1.0/robot/' + (isGroup ? 'groupMessages/send' : 'oToMessages/batchSend'),
+    payload,
+    { 'x-acs-dingtalk-access-token': token }
+  );
 }
 
 function generateSystemNotificationCommand(type, message, platformOverride = os.platform()) {
@@ -2152,7 +2241,7 @@ function syncManagedNotificationAssets() {
   const hasManagedPlatform = Object.values(settings?.platforms || {}).some((platform) => platform?.enabled === true);
 
   if (hasManagedPlatform) {
-    writeNotifyScript(settings.remoteNotifications || {}, settings.feishu || {});
+    writeNotifyScript(settings.remoteNotifications || {});
   } else {
     removeNotifyScript();
   }
@@ -2160,13 +2249,9 @@ function syncManagedNotificationAssets() {
   return settings;
 }
 
-function testNotification({ type, testFeishu, webhookUrl, provider } = {}) {
+function testNotification({ type, provider } = {}) {
   if (provider) {
     return sendRemoteProviderTest(provider);
-  }
-
-  if (testFeishu && webhookUrl) {
-    return sendFeishuTest(webhookUrl);
   }
 
   if (normalizeType(type) === 'browser') {

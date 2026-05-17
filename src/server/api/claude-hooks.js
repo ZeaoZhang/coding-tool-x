@@ -35,7 +35,7 @@ router.post('/test', async (req, res) => {
     await notificationHooks.testNotification(req.body || {});
     res.json({
       success: true,
-      message: req.body?.testFeishu ? '飞书测试通知已发送' : '系统测试通知已发送'
+      message: '系统测试通知已发送'
     });
   } catch (error) {
     console.error('Error testing notification:', error);

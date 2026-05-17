@@ -82,7 +82,6 @@ describe('claude-hooks api', () => {
       const settings = {
         success: true,
         stopHook: { enabled: true, type: 'dialog' },
-        feishu: { enabled: false, webhookUrl: '' },
         platform: 'win32'
       };
       mockGetLegacyClaudeHookSettings.mockReturnValue(settings);
@@ -127,15 +126,13 @@ describe('claude-hooks api', () => {
     it('maps legacy payload through unified service and appends success message', () => {
       const saved = {
         success: true,
-        stopHook: { enabled: true, type: 'notification' },
-        feishu: { enabled: true, webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/test' }
+        stopHook: { enabled: true, type: 'notification' }
       };
       mockSaveLegacyClaudeHookSettings.mockReturnValue(saved);
       const handler = findHandler(router, 'post', '/');
       const req = mockReq({
         body: {
-          stopHook: { enabled: true, type: 'notification' },
-          feishu: { enabled: true, webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/test' }
+          stopHook: { enabled: true, type: 'notification' }
         }
       });
       const res = mockRes();
@@ -174,7 +171,7 @@ describe('claude-hooks api', () => {
   });
 
   describe('POST /test', () => {
-    it('returns success with system message when testFeishu is absent', async () => {
+    it('returns success with system message', async () => {
       mockTestNotification.mockResolvedValue(undefined);
       const handler = findHandler(router, 'post', '/test');
       const req = mockReq({ body: {} });
@@ -184,18 +181,6 @@ describe('claude-hooks api', () => {
 
       expect(mockTestNotification).toHaveBeenCalledWith({});
       expect(res.json).toHaveBeenCalledWith({ success: true, message: '系统测试通知已发送' });
-    });
-
-    it('returns feishu message when testFeishu is true', async () => {
-      mockTestNotification.mockResolvedValue(undefined);
-      const handler = findHandler(router, 'post', '/test');
-      const req = mockReq({ body: { testFeishu: true, webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/test' } });
-      const res = mockRes();
-
-      await handler(req, res);
-
-      expect(mockTestNotification).toHaveBeenCalledWith(req.body);
-      expect(res.json).toHaveBeenCalledWith({ success: true, message: '飞书测试通知已发送' });
     });
 
     it('returns 500 when testNotification rejects', async () => {
