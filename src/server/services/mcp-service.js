@@ -1471,62 +1471,36 @@ async function testStdioServer(spec) {
  * 测试 http/sse 类型服务器
  */
 async function testHttpServer(spec) {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const timeout = 10000;
+  const startTime = Date.now();
+  let client = null;
 
-    try {
-      const url = new URL(spec.url);
-      const isHttps = url.protocol === 'https:';
-      const client = isHttps ? https : http;
+  try {
+    client = new McpClient(spec, { timeout: 10000 });
+    await client.connect();
+    await client.initialize();
 
-      const options = {
-        hostname: url.hostname,
-        port: url.port || (isHttps ? 443 : 80),
-        path: url.pathname + url.search,
-        method: 'GET',
-        timeout: timeout,
-        headers: {
-          ...spec.headers
-        }
-      };
-
-      const req = client.request(options, (res) => {
-        resolve({
-          success: res.statusCode >= 200 && res.statusCode < 500,
-          message: res.statusCode >= 200 && res.statusCode < 400
-            ? `服务器响应正常 (HTTP ${res.statusCode})`
-            : `服务器响应异常 (HTTP ${res.statusCode})`,
-          duration: Date.now() - startTime
-        });
-      });
-
-      req.on('error', (err) => {
-        resolve({
-          success: false,
-          message: `连接失败: ${err.message}`,
-          duration: Date.now() - startTime
-        });
-      });
-
-      req.on('timeout', () => {
-        req.destroy();
-        resolve({
-          success: false,
-          message: '连接超时',
-          duration: timeout
-        });
-      });
-
-      req.end();
-    } catch (err) {
-      resolve({
-        success: false,
-        message: `URL 无效: ${err.message}`,
-        duration: Date.now() - startTime
-      });
+    return {
+      success: true,
+      message: '服务器 MCP 握手成功',
+      duration: Date.now() - startTime
+    };
+  } catch (err) {
+    const failure = buildMcpFailureResult(err, err.message, Date.now() - startTime);
+    return {
+      success: false,
+      message: failure.message,
+      hint: failure.hint,
+      duration: failure.duration
+    };
+  } finally {
+    if (client) {
+      try {
+        await client.disconnect();
+      } catch (err) {
+        // ignore cleanup failures
+      }
     }
-  });
+  }
 }
 
 /**

@@ -462,6 +462,30 @@ describe('mcp-service', () => {
       expect(client.initialize).toHaveBeenCalled();
     });
 
+    it('testServer performs the same MCP handshake for http servers', async () => {
+      await service.saveServer({
+        id: 'srv-http',
+        name: 'HTTP Server',
+        server: { type: 'http', url: 'http://127.0.0.1:8000/mcp' }
+      }, { syncPlatforms: false });
+
+      const client = {
+        connected: false,
+        connect: vi.fn(async () => { client.connected = true; }),
+        initialize: vi.fn(async () => {}),
+        disconnect: vi.fn(async () => {})
+      };
+      McpClientMock.mockImplementation(function MockClient() { return client; });
+
+      const result = await service.testServer('srv-http');
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe('服务器 MCP 握手成功');
+      expect(client.connect).toHaveBeenCalled();
+      expect(client.initialize).toHaveBeenCalled();
+      expect(client.disconnect).toHaveBeenCalled();
+    });
+
     it('callServerTool truncates oversized results', async () => {
       const client = {
         connected: false,
