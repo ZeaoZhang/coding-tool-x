@@ -14,6 +14,7 @@ function stubModules() {
     exports: {
       NATIVE_PATHS: {
         claude: { settings: path.join(testDir, 'claude-settings.json') },
+        codex: { config: path.join(testDir, '.codex', 'config.toml') },
         gemini: { dir: path.join(testDir, '.gemini') },
         opencode: { config: path.join(testDir, 'opencode-config') }
       }
@@ -188,6 +189,42 @@ describe('CommandsService local command management', () => {
     expect(() => service.createCommand({ name: 'review', scope: 'user' })).toThrow(/已存在/);
   });
 
+  test('rejects unsafe namespaces in service-level file operations', () => {
+    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const service = new CommandsService('claude');
+
+    expect(() => service.createCommand({
+      name: 'review',
+      scope: 'user',
+      namespace: '../outside',
+      body: 'x'
+    })).toThrow(/Invalid command namespace/);
+
+    service.createCommand({ name: 'review', scope: 'user', namespace: 'team' });
+    expect(() => service.getCommand('review', 'user', null, '../team')).toThrow(/Invalid command namespace/);
+    expect(() => service.updateCommand({ name: 'review', scope: 'user', namespace: '../team' })).toThrow(/Invalid command namespace/);
+    expect(() => service.deleteCommand('review', 'user', null, '../team')).toThrow(/Invalid command namespace/);
+    expect(fs.existsSync(path.join(service.userCommandsDir, 'team', 'review.md'))).toBe(true);
+  });
+
+  test('supports nested command namespaces', () => {
+    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const service = new CommandsService('claude');
+
+    const created = service.createCommand({
+      name: 'review',
+      scope: 'user',
+      namespace: 'team/backend',
+      body: 'nested'
+    });
+
+    expect(created.path).toBe(path.join('team', 'backend', 'review.md'));
+    expect(service.getCommand('review', 'user', null, 'team/backend')).toEqual(expect.objectContaining({
+      namespace: 'team/backend',
+      body: 'nested'
+    }));
+  });
+
   test('OpenCode commands omit Claude-specific frontmatter fields', () => {
     const { CommandsService } = require('../../../src/server/services/commands-service');
     const service = new CommandsService('opencode');
@@ -202,6 +239,24 @@ describe('CommandsService local command management', () => {
     expect(command.allowedTools).toBe('');
     expect(command.argumentHint).toBe('');
     expect(fs.readFileSync(command.fullPath, 'utf8')).not.toContain('allowed-tools');
+  });
+
+  test('Codex commands use markdown files in the native user directory', () => {
+    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const service = new CommandsService('codex');
+    const command = service.createCommand({
+      name: 'review',
+      scope: 'user',
+      description: 'Review code',
+      model: 'gpt-5.4',
+      body: 'Review this'
+    });
+
+    expect(command.path).toBe('review.md');
+    expect(command.fullPath).toBe(path.join(testDir, '.codex', 'commands', 'review.md'));
+    expect(command.description).toBe('Review code');
+    expect(command.model).toBe('gpt-5.4');
+    expect(service.listCommands().commands.map(item => item.name)).toEqual(['review']);
   });
 
   test('Gemini commands use TOML files in user and project scopes', () => {

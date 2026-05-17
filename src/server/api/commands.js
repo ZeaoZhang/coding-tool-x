@@ -1,14 +1,15 @@
 /**
  * Commands API 路由
  *
- * 管理 Claude/Gemini/OpenCode 自定义命令
+ * 管理 Claude/Codex/Gemini/OpenCode 自定义命令
  */
 
 const express = require('express');
 const { CommandsService } = require('../services/commands-service');
+const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const commandServices = new Map();
 
 function resolvePlatform(rawPlatform) {
@@ -45,10 +46,7 @@ router.get('/', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] List commands error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -69,10 +67,7 @@ router.get('/stats', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Get stats error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -117,10 +112,7 @@ router.get('/:scope/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Get command error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -177,10 +169,7 @@ router.post('/', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Create command error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -230,10 +219,7 @@ router.put('/:scope/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Update command error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -270,10 +256,7 @@ router.delete('/:scope/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Delete command error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -298,10 +281,7 @@ router.get('/all', async (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] List all commands error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -320,10 +300,7 @@ router.get('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Get repos error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -353,10 +330,7 @@ router.post('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Add repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -379,10 +353,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Remove repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -406,10 +377,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Toggle repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -439,10 +407,7 @@ router.post('/install', async (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Install command error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -472,10 +437,7 @@ router.post('/uninstall', (req, res) => {
     });
   } catch (err) {
     console.error('[Commands API] Uninstall command error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 

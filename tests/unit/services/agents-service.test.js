@@ -287,6 +287,29 @@ describe('AgentsService remote repo operations', () => {
 });
 
 describe('AgentsService codex mode', () => {
+  test('lists codex agents that exist only as native toml files', () => {
+    const service = new AgentsService('codex');
+    const nativeAgentPath = path.join(testDir, '.codex', 'agents', 'dependency-expert.toml');
+    writeFile(nativeAgentPath, 'model = "gpt-5.4-mini"\n');
+
+    const listed = service.listAgents();
+    const loaded = service.getAgent('dependency-expert', 'user');
+
+    expect(listed.total).toBe(1);
+    expect(listed.userCount).toBe(1);
+    expect(listed.agents[0]).toEqual(expect.objectContaining({
+      fileName: 'dependency-expert',
+      configMode: 'managed',
+      configFile: nativeAgentPath,
+      model: 'gpt-5.4-mini',
+      source: 'native-file'
+    }));
+    expect(loaded).toEqual(expect.objectContaining({
+      fileName: 'dependency-expert',
+      fullPath: nativeAgentPath
+    }));
+  });
+
   test('creates, updates, and deletes codex agents with managed config files', () => {
     const service = new AgentsService('codex');
 

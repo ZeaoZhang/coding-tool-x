@@ -5,6 +5,7 @@
 const express = require('express');
 const { SkillService } = require('../services/skill-service');
 const { maskToken } = require('../services/oauth-utils');
+const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
@@ -84,10 +85,7 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] List skills error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -116,10 +114,7 @@ router.get('/detail/*', async (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Get skill detail error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -138,10 +133,7 @@ router.get('/installed', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Get installed skills error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -184,10 +176,7 @@ router.post('/install', async (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Install skill error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -209,7 +198,7 @@ router.post('/install-local', (req, res) => {
     res.json({ success: true, platform, ...result });
   } catch (err) {
     console.error('[Skills API] Install local skill error:', err);
-    res.status(500).json({ success: false, message: err.message });
+    sendApiError(res, err);
   }
 });
 
@@ -259,10 +248,7 @@ router.post('/create', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Create skill error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -292,10 +278,7 @@ router.post('/uninstall', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Uninstall skill error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -314,10 +297,7 @@ router.get('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Get repos error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -349,10 +329,7 @@ router.post('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Add repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -369,10 +346,7 @@ router.delete('/repos', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Remove repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -390,10 +364,7 @@ router.put('/repos/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Toggle repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -425,10 +396,7 @@ router.put('/repos/auth', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Update repo auth error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -451,10 +419,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Remove repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -479,10 +444,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Toggle repo error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -529,10 +491,7 @@ router.post('/create-with-files', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Create skill with files error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -554,10 +513,7 @@ router.get('/:directory/files', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Get skill files error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -588,10 +544,7 @@ router.get('/:directory/file/*', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Get skill file content error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -622,10 +575,7 @@ router.post('/:directory/files', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Add skill files error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -655,10 +605,7 @@ router.delete('/:directory/file/*', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Delete skill file error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 
@@ -697,10 +644,7 @@ router.put('/:directory/file/*', (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] Update skill file error:', err);
-    res.status(500).json({
-      success: false,
-      message: err.message
-    });
+    sendApiError(res, err);
   }
 });
 

@@ -272,7 +272,7 @@
     <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" />
     <CommandsDrawer v-model:visible="showCommandsDrawer" :platform="commandsDrawerPlatform" />
     <AgentsDrawer v-model:visible="showAgentsDrawer" :platform="agentsDrawerPlatform" />
-    <PluginsDrawer v-model:visible="showPluginsDrawer" />
+    <PluginsDrawer v-model:visible="showPluginsDrawer" :platform="pluginsDrawerPlatform" />
 
     <!-- Help Modal -->
     <n-modal v-model:show="showHelpModal" preset="card" :title="`${APP_NAME} 使用帮助`" style="width: 800px; max-width: 90vw;">
@@ -553,6 +553,7 @@ const commandsDrawerPlatform = ref('')
 const showAgentsDrawer = ref(false)
 const agentsDrawerPlatform = ref('')
 const showPluginsDrawer = ref(false)
+const pluginsDrawerPlatform = ref('')
 
 // Chat history drawer state
 const showChatHistory = ref(false)
@@ -845,7 +846,8 @@ function openAgentsDrawer(event) {
   showAgentsDrawer.value = true
 }
 
-function openPluginsDrawer() {
+function openPluginsDrawer(event) {
+  pluginsDrawerPlatform.value = event?.detail?.platform || ''
   showPluginsDrawer.value = true
 }
 

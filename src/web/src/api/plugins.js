@@ -15,6 +15,14 @@ export async function getPlugins(platform = 'claude') {
 }
 
 /**
+ * 获取平台插件能力
+ */
+export async function getPluginCapabilities(platform = 'claude') {
+  const response = await client.get('/plugins/capabilities', { params: { platform } })
+  return response.data
+}
+
+/**
  * 获取市场插件列表
  */
 export async function getMarketPlugins(platform = 'claude', forceRefresh = false) {

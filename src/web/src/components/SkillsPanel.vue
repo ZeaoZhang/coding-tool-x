@@ -226,6 +226,7 @@ async function handleImport() {
 }
 
 async function handleInstall(skill) {
+  if (skill.protected) return
   installingKeys.value[skill.key] = true
   try {
     let res
@@ -261,6 +262,7 @@ async function handleInstall(skill) {
 }
 
 async function handleUninstall(skill) {
+  if (skill.protected) return
   uninstallingKeys.value[skill.key] = true
   try {
     const res = await uninstallSkill(skill.directory, currentPlatform.value)

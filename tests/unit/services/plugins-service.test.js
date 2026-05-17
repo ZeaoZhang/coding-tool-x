@@ -25,6 +25,8 @@ beforeEach(() => {
     exports: {
       NATIVE_PATHS: {
         claude: { settings: path.join(testDir, 'settings.json') },
+        codex: { config: path.join(testDir, '.codex', 'config.toml') },
+        gemini: { config: path.join(testDir, '.gemini', 'settings.json') },
         opencode: { config: testDir }
       },
       PATHS: {
@@ -32,10 +34,14 @@ beforeEach(() => {
         plugins: { registry: path.join(testDir, 'registry.json') },
         pluginRepos: {
           claude: path.join(testDir, 'plugin-repos.json'),
+          codex: path.join(testDir, 'codex-plugin-repos.json'),
+          gemini: path.join(testDir, 'gemini-plugin-repos.json'),
           opencode: path.join(testDir, 'opencode-plugin-repos.json')
         },
         pluginMarketCache: {
           claude: path.join(testDir, 'plugins-market-cache.json'),
+          codex: path.join(testDir, 'codex-plugins-market-cache.json'),
+          gemini: path.join(testDir, 'gemini-plugins-market-cache.json'),
           opencode: path.join(testDir, 'opencode-plugins-market-cache.json')
         }
       }
@@ -215,7 +221,7 @@ describe('stripJsonComments', () => {
 // DEFAULT_REPOS_BY_PLATFORM
 // ---------------------------------------------------------------------------
 describe('DEFAULT_REPOS_BY_PLATFORM', () => {
-  test('has claude and opencode keys', () => {
+  test('has plugin repository support for managed platforms', () => {
     const mod = loadModule();
     expect(mod.PluginsService).toBeDefined();
     const svc = new mod.PluginsService('opencode');
@@ -258,6 +264,27 @@ describe('PluginsService', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('opencode');
     expect(svc.platform).toBe('opencode');
+  });
+
+  test('custom platform codex is accepted', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('codex');
+    expect(svc.platform).toBe('codex');
+  });
+
+  test('future platform gemini is recognized without pretending plugin support exists', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('gemini');
+
+    expect(svc.platform).toBe('gemini');
+    expect(svc.getCapabilities()).toEqual(expect.objectContaining({
+      platform: 'gemini',
+      supportsPlugins: false,
+      repositories: false,
+      install: false,
+      uninstall: false
+    }));
+    expect(svc.getRepos()).toEqual([]);
   });
 
   test('unknown platform falls back to claude', () => {
@@ -355,6 +382,70 @@ describe('PluginsService market cache and repository management', () => {
     expect(repos).toHaveLength(2);
     expect(repos.some(repo => repo.owner === 'demo' && repo.name === 'plugins')).toBe(true);
     expect(repos.some(repo => repo.owner === 'other' && repo.name === 'market')).toBe(true);
+  });
+
+  test('getMarketPlugins reads Claude official marketplace entries with string and git-subdir sources', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'claude-official-marketplace');
+
+    fs.mkdirSync(path.join(repoRoot, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins', 'demo-claude', '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        owner: { name: 'Anthropic' },
+        plugins: [
+          {
+            name: 'demo-claude',
+            source: './plugins/demo-claude',
+            description: 'Marketplace description',
+            category: 'Productivity',
+            author: { name: 'Claude Team' }
+          },
+          {
+            name: 'remote-claude',
+            source: {
+              source: 'git-subdir',
+              url: 'https://github.com/acme/remote-plugins.git',
+              path: 'plugins/remote-claude',
+              ref: 'dev'
+            },
+            description: 'Remote plugin'
+          }
+        ]
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'demo-claude', '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'demo-claude', version: '0.2.0', description: 'Manifest description' }),
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot });
+
+    const plugins = await svc.getMarketPlugins(true);
+
+    expect(plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'demo-claude',
+        directory: 'plugins/demo-claude',
+        marketplaceFormat: 'claude-marketplace',
+        description: 'Manifest description',
+        repoProvider: 'local',
+        repoLocalPath: repoRoot
+      }),
+      expect.objectContaining({
+        name: 'remote-claude',
+        directory: 'plugins/remote-claude',
+        marketplaceFormat: 'claude-marketplace',
+        repoProvider: 'github',
+        repoOwner: 'acme',
+        repoName: 'remote-plugins',
+        repoBranch: 'dev',
+        repoUrl: 'https://github.com/acme/remote-plugins.git'
+      })
+    ]));
   });
 
   test('addRepo derives owner and name from URL', () => {
@@ -474,6 +565,16 @@ describe('PluginsService OpenCode helpers', () => {
     expect(fs.existsSync(path.join(pluginsDir, 'local-plugin.js'))).toBe(false);
   });
 
+  test('uninstallPlugin rejects unsafe opencode plugin names', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('opencode');
+    const outsidePath = path.join(testDir, 'outside-plugin.js');
+    fs.writeFileSync(outsidePath, 'export default {};', 'utf8');
+
+    expect(() => svc.uninstallPlugin('../outside-plugin')).toThrow(/Invalid plugin name/);
+    expect(fs.existsSync(outsidePath)).toBe(true);
+  });
+
   test('updatePluginConfig writes opencode plugin config file', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('opencode');
@@ -484,5 +585,216 @@ describe('PluginsService OpenCode helpers', () => {
     expect(
       JSON.parse(fs.readFileSync(path.join(testDir, 'plugins-config', 'demo-plugin.json'), 'utf8'))
     ).toEqual({ enabled: true, mode: 'strict' });
+  });
+
+  test('updatePluginConfig rejects unsafe opencode plugin config names', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('opencode');
+
+    expect(() => svc.updatePluginConfig('../escape', { enabled: true })).toThrow(/Invalid plugin config name/);
+    expect(fs.existsSync(path.join(testDir, 'escape.json'))).toBe(false);
+  });
+
+  test('getMarketPlugins keeps OpenCode marketplace entries installable', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('opencode');
+    const repoRoot = path.join(testDir, 'opencode-marketplace');
+
+    fs.mkdirSync(path.join(repoRoot, 'plugins'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'codex.plugin.json'),
+      JSON.stringify({
+        name: 'codex',
+        displayName: 'OpenHax Codex',
+        description: 'OAuth authentication plugin',
+        links: { repository: 'https://github.com/open-hax/codex' },
+        authors: [{ name: 'open-hax' }],
+        categories: ['integration']
+      }),
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot });
+
+    const plugins = await svc.getMarketPlugins(true);
+
+    expect(plugins).toEqual([
+      expect.objectContaining({
+        name: 'codex',
+        marketplaceFormat: 'opencode-plugin-json',
+        installSource: 'codex',
+        repoUrl: 'https://github.com/open-hax/codex'
+      })
+    ]);
+  });
+});
+
+describe('PluginsService Codex helpers', () => {
+  test('listPlugins discovers cached codex plugin directories', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('codex');
+    const pluginDir = path.join(testDir, '.codex', 'plugins', 'cache', 'openai-curated', 'build-ios-apps', 'dc902811');
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(path.join(pluginDir, 'README.md'), '# Build iOS Apps\n\nNative iOS workflows', 'utf8');
+
+    const result = svc.listPlugins();
+
+    expect(result.plugins).toEqual([
+      expect.objectContaining({
+        name: 'build-ios-apps',
+        marketplace: 'openai-curated',
+        version: 'dc902811',
+        source: 'codex-cache',
+        installed: true,
+        enabled: true,
+        installPath: pluginDir,
+        description: 'Native iOS workflows'
+      })
+    ]);
+  });
+
+  test('getMarketPlugins reads Codex marketplace repos and install/uninstall writes Codex config', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('codex');
+    const repoRoot = path.join(testDir, 'codex-marketplace');
+    const pluginRoot = path.join(repoRoot, 'plugins', 'demo-codex');
+
+    fs.mkdirSync(path.join(repoRoot, '.agents', 'plugins'), { recursive: true });
+    fs.mkdirSync(path.join(pluginRoot, '.codex-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.agents', 'plugins', 'marketplace.json'),
+      JSON.stringify({
+        name: 'local-codex-market',
+        interface: { displayName: 'Local Codex Market' },
+        plugins: [
+          {
+            name: 'demo-codex',
+            source: { source: 'local', path: './plugins/demo-codex' },
+            category: 'Productivity',
+            policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' }
+          }
+        ]
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(pluginRoot, '.codex-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'demo-codex', version: '0.1.0', description: 'Demo Codex plugin' }),
+      'utf8'
+    );
+    fs.writeFileSync(path.join(pluginRoot, 'README.md'), '# Demo\n\nDemo readme', 'utf8');
+
+    const repos = svc.addRepo({ provider: 'local', localPath: repoRoot });
+    const marketPlugins = await svc.getMarketPlugins(true);
+
+    expect(repos).toEqual([expect.objectContaining({ provider: 'local', localPath: repoRoot })]);
+    expect(marketPlugins).toEqual([
+      expect.objectContaining({
+        name: 'demo-codex',
+        directory: 'plugins/demo-codex',
+        marketplace: 'local-codex-market',
+        marketplaceFormat: 'codex-marketplace',
+        repoProvider: 'local',
+        repoLocalPath: repoRoot
+      })
+    ]);
+
+    const installResult = await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot,
+      directory: 'plugins/demo-codex',
+      marketplace: 'local-codex-market'
+    });
+
+    expect(installResult).toEqual(expect.objectContaining({
+      success: true,
+      plugin: expect.objectContaining({ name: 'demo-codex', version: '0.1.0' })
+    }));
+    expect(fs.existsSync(path.join(
+      testDir,
+      '.codex',
+      'plugins',
+      'cache',
+      'local-codex-market',
+      'demo-codex',
+      '0.1.0',
+      '.codex-plugin',
+      'plugin.json'
+    ))).toBe(true);
+    expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).toContain('"demo-codex@local-codex-market"');
+    expect(svc.listPlugins().plugins).toEqual([
+      expect.objectContaining({
+        name: 'demo-codex',
+        marketplace: 'local-codex-market',
+        enabled: true,
+        description: 'Demo Codex plugin'
+      })
+    ]);
+
+    const uninstallResult = svc.uninstallPlugin('demo-codex');
+
+    expect(uninstallResult.success).toBe(true);
+    expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'local-codex-market', 'demo-codex'))).toBe(false);
+    expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).not.toContain('demo-codex@local-codex-market');
+  });
+
+  test('uninstallPlugin rejects codex cache paths outside the cache root', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('codex');
+    const outsidePath = path.join(testDir, 'outside-cache', 'plugin-version');
+    fs.mkdirSync(outsidePath, { recursive: true });
+    svc.listPlugins = vi.fn(() => ({
+      plugins: [{
+        name: 'evil',
+        marketplace: 'external',
+        installPath: outsidePath
+      }]
+    }));
+
+    expect(() => svc.uninstallPlugin('evil')).toThrow(/Codex plugin install path/);
+    expect(fs.existsSync(outsidePath)).toBe(true);
+  });
+});
+
+describe('PluginsService Claude uninstall safety', () => {
+  test('uninstallPlugin does not delete installPath outside allowed plugin roots', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const outsidePath = path.join(testDir, 'outside-plugin');
+    const installedFile = path.join(testDir, 'plugins', 'installed_plugins.json');
+    fs.mkdirSync(outsidePath, { recursive: true });
+    fs.mkdirSync(path.dirname(installedFile), { recursive: true });
+    fs.writeFileSync(path.join(outsidePath, 'plugin.json'), JSON.stringify({ name: 'demo' }), 'utf8');
+    fs.writeFileSync(
+      installedFile,
+      JSON.stringify({
+        plugins: {
+          'demo@ctx': [{
+            version: '1.0.0',
+            installPath: outsidePath
+          }]
+        }
+      }),
+      'utf8'
+    );
+
+    const result = svc.uninstallPlugin('demo');
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(outsidePath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(installedFile, 'utf8')).plugins).toEqual({});
+  });
+});
+
+describe('PluginsService local repository path safety', () => {
+  test('fetchRepoFileContent rejects unsafe local repo paths', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'plugin-repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+
+    await expect(svc.fetchRepoFileContent({
+      provider: 'local',
+      localPath: repoRoot
+    }, '../outside/plugin.json')).rejects.toThrow(/Invalid plugin repository file path/);
   });
 });

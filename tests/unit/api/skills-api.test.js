@@ -202,6 +202,18 @@ describe('POST /install', () => {
     expect(res.status).toBe(500);
     expect(res.body.success).toBe(false);
   });
+
+  test('validation error from service → 400', async () => {
+    mockService.installSkill.mockRejectedValue(new Error('Invalid skill directory'));
+    const app = buildApp();
+    const res = await request(app).post('/install', {
+      directory: '../bad',
+      repo: { owner: 'anthropics', name: 'skills' }
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -221,6 +233,15 @@ describe('POST /uninstall', () => {
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
     expect(res.body.message).toMatch(/directory/i);
+  });
+
+  test('validation error from uninstall service → 400', async () => {
+    mockService.uninstallSkill.mockImplementation(() => { throw new Error('Invalid skill directory'); });
+    const app = buildApp();
+    const res = await request(app).post('/uninstall', { directory: '../bad' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 });
 

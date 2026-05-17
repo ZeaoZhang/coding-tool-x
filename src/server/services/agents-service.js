@@ -13,6 +13,11 @@ const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('./repo-scanner-base');
 const { NATIVE_PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
+const {
+  normalizeSafeFileStem,
+  normalizeSafeRelativePath,
+  resolveInsideRoot
+} = require('./config-artifact-paths');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
@@ -65,39 +70,29 @@ function normalizePlatform(platform) {
 }
 
 function assertSafeAgentFileName(fileName) {
-  if (typeof fileName !== 'string') {
-    throw new Error('代理文件名必须是字符串');
-  }
-
-  const normalized = fileName.trim();
-  if (!normalized) {
-    throw new Error('代理文件名不能为空');
-  }
-
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(normalized) || normalized.includes('..')) {
+  try {
+    return normalizeSafeFileStem(fileName, 'agent file name', {
+      allowDots: true,
+      pattern: /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
+    });
+  } catch {
     throw new Error('代理文件名只能包含字母、数字、点号、横杠和下划线，且不能包含连续点');
   }
 }
 
 function assertSafeRepoPath(repoPath) {
-  if (typeof repoPath !== 'string' || !repoPath.trim()) {
-    throw new Error('代理仓库路径不能为空');
-  }
-
-  const raw = repoPath.replace(/\\/g, '/').trim();
-  const normalized = path.posix.normalize(raw).replace(/^(\.\/)+/, '');
-  if (!normalized ||
-      normalized === '.' ||
-      normalized === '..' ||
-      normalized.startsWith('../') ||
-      normalized.includes('/../') ||
-      path.posix.isAbsolute(normalized)) {
+  let normalized = '';
+  try {
+    normalized = normalizeSafeRelativePath(repoPath, 'agent repo path');
+  } catch {
     throw new Error('代理仓库路径不合法');
   }
 
   if (!normalized.endsWith('.md')) {
     throw new Error('代理仓库路径必须是 .md 文件');
   }
+
+  return normalized;
 }
 
 function assertSafeProjectPath(projectPath) {
@@ -164,7 +159,8 @@ function isPlainObject(value) {
 }
 
 function getCodexManagedAgentConfigPath(fileName) {
-  return path.join(CODEX_AGENTS_DIR, `${fileName}.toml`);
+  const safeFileName = assertSafeAgentFileName(fileName);
+  return resolveInsideRoot(CODEX_AGENTS_DIR, `${safeFileName}.toml`, 'Codex agent config path');
 }
 
 function normalizeCodexConfigPath(configPath) {
@@ -501,8 +497,13 @@ class AgentsRepoScanner extends RepoScannerBase {
    * 检查代理是否已安装
    */
   isInstalled(fileName) {
-    const fullPath = path.join(this.installDir, `${fileName}.md`);
-    return fs.existsSync(fullPath);
+    try {
+      const safeFileName = assertSafeAgentFileName(fileName);
+      const fullPath = resolveInsideRoot(this.installDir, `${safeFileName}.md`, 'Agent path');
+      return fs.existsSync(fullPath);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -516,8 +517,8 @@ class AgentsRepoScanner extends RepoScannerBase {
    * 安装代理
    */
   async installAgent(item) {
-    assertSafeAgentFileName(item?.fileName);
-    assertSafeRepoPath(item?.repoPath);
+    const safeFileName = assertSafeAgentFileName(item?.fileName);
+    const safeRepoPath = assertSafeRepoPath(item?.repoPath);
 
     const repo = {
       owner: item.repoOwner,
@@ -526,7 +527,7 @@ class AgentsRepoScanner extends RepoScannerBase {
     };
 
     // 代理安装到根目录，使用文件名
-    return this.installFromRepo(item.repoPath, repo, `${item.fileName}.md`);
+    return this.installFromRepo(safeRepoPath, repo, `${safeFileName}.md`);
   }
 }
 
@@ -555,6 +556,22 @@ class AgentsService {
     if (!projectPath) return null;
     const safeProjectPath = assertSafeProjectPath(projectPath);
     return this.projectAgentsDir(safeProjectPath);
+  }
+
+  _getBaseDir(scope, projectPath = null) {
+    return scope === 'user'
+      ? this.userAgentsDir
+      : this.getProjectAgentsDir(projectPath);
+  }
+
+  _resolveAgentFilePath(baseDir, fileName) {
+    if (!baseDir) {
+      throw new Error('项目路径不能为空');
+    }
+    const safeFileName = assertSafeAgentFileName(fileName);
+    const relativePath = `${safeFileName}.md`;
+    const fullPath = resolveInsideRoot(baseDir, relativePath, 'Agent path');
+    return { safeFileName, relativePath, fullPath };
   }
 
   /**
@@ -647,17 +664,14 @@ class AgentsService {
    * 获取单个代理详情
    */
   getAgent(fileName, scope, projectPath = null) {
-    assertSafeAgentFileName(fileName);
+    const safeFileName = assertSafeAgentFileName(fileName);
 
     if (this.platform === 'codex') {
-      return this.getCodexAgent(fileName, scope);
+      return this.getCodexAgent(safeFileName, scope);
     }
 
-    const baseDir = scope === 'user'
-      ? this.userAgentsDir
-      : this.getProjectAgentsDir(projectPath);
-
-    const filePath = path.join(baseDir, `${fileName}.md`);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { relativePath, fullPath: filePath } = this._resolveAgentFilePath(baseDir, safeFileName);
 
     if (!fs.existsSync(filePath)) {
       return null;
@@ -667,10 +681,10 @@ class AgentsService {
     const { frontmatter, body } = parseFrontmatter(content);
 
     return {
-      name: frontmatter.name || fileName,
-      fileName,
+      name: frontmatter.name || safeFileName,
+      fileName: safeFileName,
       scope,
-      path: `${fileName}.md`,
+      path: relativePath,
       fullPath: filePath,
       description: frontmatter.description || '',
       tools: frontmatter.tools || '',
@@ -687,10 +701,10 @@ class AgentsService {
    * 创建代理
    */
   createAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
-    assertSafeAgentFileName(fileName);
+    const safeFileName = assertSafeAgentFileName(fileName);
 
     if (this.platform === 'codex') {
-      return this.createCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent });
+      return this.createCodexAgent({ fileName: safeFileName, scope, description, model, configMode, configFile, configContent });
     }
 
     if (this.platform === 'claude' && (!name || !name.trim())) {
@@ -701,21 +715,18 @@ class AgentsService {
       throw new Error('代理描述不能为空');
     }
 
-    const baseDir = scope === 'user'
-      ? this.userAgentsDir
-      : this.getProjectAgentsDir(projectPath);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { fullPath: filePath } = this._resolveAgentFilePath(baseDir, safeFileName);
 
     ensureDir(baseDir);
 
-    const filePath = path.join(baseDir, `${fileName}.md`);
-
     // 检查是否已存在
     if (fs.existsSync(filePath)) {
-      throw new Error(`代理 "${fileName}" 已存在`);
+      throw new Error(`代理 "${safeFileName}" 已存在`);
     }
 
     // 生成文件内容
-    const frontmatterData = { name: (name || fileName), description };
+    const frontmatterData = { name: (name || safeFileName), description };
     if (tools) frontmatterData.tools = tools;
     if (model) frontmatterData.model = model;
     if (permissionMode) frontmatterData.permissionMode = permissionMode;
@@ -725,32 +736,29 @@ class AgentsService {
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
-    return this.getAgent(fileName, scope, projectPath);
+    return this.getAgent(safeFileName, scope, projectPath);
   }
 
   /**
    * 更新代理
    */
   updateAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
-    assertSafeAgentFileName(fileName);
+    const safeFileName = assertSafeAgentFileName(fileName);
 
     if (this.platform === 'codex') {
-      return this.updateCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent });
+      return this.updateCodexAgent({ fileName: safeFileName, scope, description, model, configMode, configFile, configContent });
     }
 
-    const baseDir = scope === 'user'
-      ? this.userAgentsDir
-      : this.getProjectAgentsDir(projectPath);
-
-    const filePath = path.join(baseDir, `${fileName}.md`);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { fullPath: filePath } = this._resolveAgentFilePath(baseDir, safeFileName);
 
     if (!fs.existsSync(filePath)) {
-      throw new Error(`代理 "${fileName}" 不存在`);
+      throw new Error(`代理 "${safeFileName}" 不存在`);
     }
 
     // 生成文件内容
     const frontmatterData = {
-      name: name || fileName,
+      name: name || safeFileName,
       description: description || ''
     };
     if (tools) frontmatterData.tools = tools;
@@ -762,24 +770,21 @@ class AgentsService {
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
-    return this.getAgent(fileName, scope, projectPath);
+    return this.getAgent(safeFileName, scope, projectPath);
   }
 
   /**
    * 删除代理
    */
   deleteAgent(fileName, scope, projectPath = null) {
-    assertSafeAgentFileName(fileName);
+    const safeFileName = assertSafeAgentFileName(fileName);
 
     if (this.platform === 'codex') {
-      return this.deleteCodexAgent(fileName, scope);
+      return this.deleteCodexAgent(safeFileName, scope);
     }
 
-    const baseDir = scope === 'user'
-      ? this.userAgentsDir
-      : this.getProjectAgentsDir(projectPath);
-
-    const filePath = path.join(baseDir, `${fileName}.md`);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { fullPath: filePath } = this._resolveAgentFilePath(baseDir, safeFileName);
 
     if (!fs.existsSync(filePath)) {
       return { success: false, message: '代理不存在' };
@@ -861,23 +866,27 @@ class AgentsService {
     if (!agent || typeof agent !== 'object') {
       throw new Error('无效的代理安装参数');
     }
-    assertSafeAgentFileName(agent.fileName);
-    assertSafeRepoPath(agent.repoPath);
-    return this.repoScanner.installAgent(agent);
+    const safeFileName = assertSafeAgentFileName(agent.fileName);
+    const safeRepoPath = assertSafeRepoPath(agent.repoPath);
+    return this.repoScanner.installAgent({
+      ...agent,
+      fileName: safeFileName,
+      repoPath: safeRepoPath
+    });
   }
 
   /**
    * 卸载代理
    */
   uninstallAgent(fileName) {
-    assertSafeAgentFileName(fileName);
-    return this.repoScanner.uninstall(`${fileName}.md`);
+    const safeFileName = assertSafeAgentFileName(fileName);
+    return this.repoScanner.uninstall(`${safeFileName}.md`);
   }
 
   listCodexAgents() {
     const config = readCodexTomlConfig();
     const agentsTable = isPlainObject(config.agents) ? config.agents : {};
-    const agents = [];
+    const agentsByName = new Map();
 
     for (const [key, value] of Object.entries(agentsTable)) {
       if (!isPlainObject(value)) {
@@ -907,7 +916,7 @@ class AgentsService {
         }
       }
 
-      agents.push({
+      agentsByName.set(key, {
         name: key,
         fileName: key,
         scope: 'user',
@@ -924,9 +933,85 @@ class AgentsService {
         configMode,
         configReadError,
         resolvedConfigFile,
-        updatedAt
+        updatedAt,
+        source: 'codex-config'
       });
     }
+
+    if (fs.existsSync(CODEX_AGENTS_DIR)) {
+      try {
+        const entries = fs.readdirSync(CODEX_AGENTS_DIR, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile() || !entry.name.endsWith('.toml')) {
+            continue;
+          }
+
+          const fileName = entry.name.slice(0, -'.toml'.length);
+          try {
+            assertSafeAgentFileName(fileName);
+          } catch {
+            continue;
+          }
+
+          const configFilePath = path.join(CODEX_AGENTS_DIR, entry.name);
+          const parsedConfigFile = readCodexAgentConfigFile(configFilePath);
+          const existing = agentsByName.get(fileName);
+          const model = isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string'
+            ? parsedConfigFile.data.model
+            : '';
+          const updatedAt = parsedConfigFile.updatedAt || fs.statSync(configFilePath).mtime.getTime();
+
+          if (existing) {
+            if (!existing.configFile) {
+              existing.configFile = configFilePath;
+              existing.configMode = inferCodexConfigMode(configFilePath);
+              existing.path = configFilePath;
+              existing.fullPath = configFilePath;
+              existing.resolvedConfigFile = configFilePath;
+            }
+            if (!existing.fullContent && parsedConfigFile.content) {
+              existing.fullContent = parsedConfigFile.content;
+            }
+            if (!existing.model && model) {
+              existing.model = model;
+            }
+            if (parsedConfigFile.error && !existing.configReadError) {
+              existing.configReadError = parsedConfigFile.error;
+            }
+            existing.updatedAt = Math.max(existing.updatedAt || 0, updatedAt);
+            existing.source = existing.source === 'codex-config'
+              ? 'codex-config+native-file'
+              : existing.source;
+            continue;
+          }
+
+          agentsByName.set(fileName, {
+            name: fileName,
+            fileName,
+            scope: 'user',
+            path: configFilePath,
+            fullPath: configFilePath,
+            description: '',
+            tools: '',
+            model,
+            permissionMode: '',
+            skills: '',
+            systemPrompt: '',
+            fullContent: parsedConfigFile.content,
+            configFile: configFilePath,
+            configMode: inferCodexConfigMode(configFilePath),
+            configReadError: parsedConfigFile.error || '',
+            resolvedConfigFile: configFilePath,
+            updatedAt,
+            source: 'native-file'
+          });
+        }
+      } catch (err) {
+        console.warn('[AgentsService] Failed to scan Codex agents dir:', err.message);
+      }
+    }
+
+    const agents = Array.from(agentsByName.values());
 
     agents.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 

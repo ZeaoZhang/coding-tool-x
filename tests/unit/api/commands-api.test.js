@@ -6,6 +6,7 @@ let services;
 beforeEach(() => {
   services = {
     claude: createMockService(),
+    codex: createMockService(),
     gemini: createMockService(),
     opencode: createMockService()
   };
@@ -125,6 +126,16 @@ describe('commands api basic routes', () => {
     expect(services.gemini.listCommands).toHaveBeenCalledWith('/tmp/project');
   });
 
+  test('lists commands for Codex platform instead of falling back to Claude', async () => {
+    const res = await request(buildApp()).get('/?platform=codex&projectPath=/tmp/project');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('codex');
+    expect(services.codex.listCommands).toHaveBeenCalledWith('/tmp/project');
+    expect(services.claude.listCommands).not.toHaveBeenCalled();
+  });
+
   test('returns command stats', async () => {
     const res = await request(buildApp()).get('/stats');
 
@@ -172,6 +183,20 @@ describe('commands api CRUD routes', () => {
       projectPath: '/tmp/project',
       subtask: true
     }));
+  });
+
+  test('returns 400 when service rejects unsafe namespace on create', async () => {
+    services.claude.createCommand.mockImplementation(() => {
+      throw new Error('Invalid command namespace');
+    });
+    const res = await request(buildApp()).post('/', {
+      name: 'review',
+      scope: 'user',
+      namespace: '../team'
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 
   test('updates a command', async () => {
@@ -245,5 +270,15 @@ describe('commands api repo and remote routes', () => {
     expect(uninstallRes.status).toBe(200);
     expect(uninstallRes.body.success).toBe(true);
     expect(services.claude.uninstallCommand).toHaveBeenCalledWith('review.md');
+  });
+
+  test('returns 400 when service rejects unsafe remote uninstall path', async () => {
+    services.claude.uninstallCommand.mockImplementation(() => {
+      throw new Error('Invalid target name');
+    });
+    const res = await request(buildApp()).post('/uninstall', { path: '../review.md' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 });

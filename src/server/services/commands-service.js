@@ -1,7 +1,7 @@
 /**
  * Commands 服务
  *
- * 管理 Claude/Gemini/OpenCode 自定义命令的 CRUD 操作
+ * 管理 Claude/Codex/Gemini/OpenCode 自定义命令的 CRUD 操作
  * 支持从 GitHub 仓库扫描和安装命令
  */
 
@@ -14,12 +14,18 @@ const { NATIVE_PATHS } = require('../../config/paths');
 const {
   parseFrontmatter
 } = require('./format-converter');
+const {
+  normalizeSafeFileStem,
+  normalizeSafeRelativePath,
+  resolveInsideRoot
+} = require('./config-artifact-paths');
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CLAUDE_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'commands');
+const CODEX_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'commands');
 const GEMINI_COMMANDS_DIR = path.join(NATIVE_PATHS.gemini.dir, 'commands');
 
 const PLATFORM_CONFIG = {
@@ -27,6 +33,11 @@ const PLATFORM_CONFIG = {
     userCommandsDir: CLAUDE_COMMANDS_DIR,
     projectCommandsDir: (projectPath) => path.join(projectPath, '.claude', 'commands'),
     repoType: 'commands'
+  },
+  codex: {
+    userCommandsDir: CODEX_COMMANDS_DIR,
+    projectCommandsDir: (projectPath) => path.join(projectPath, '.codex', 'commands'),
+    repoType: 'codex-commands'
   },
   opencode: {
     userCommandsDir: path.join(OPENCODE_CONFIG_DIR, 'commands'),
@@ -100,6 +111,35 @@ function getCommandFileExtension(platform) {
 
 function getCommandTargetName(name, platform) {
   return `${name}${getCommandFileExtension(platform)}`;
+}
+
+function normalizeCommandName(name) {
+  if (!name || !String(name).trim()) {
+    throw new Error('命令名称不能为空');
+  }
+
+  try {
+    return normalizeSafeFileStem(name, 'command name', {
+      allowDots: false,
+      pattern: /^[a-zA-Z0-9_-]+$/
+    });
+  } catch {
+    throw new Error('命令名只能包含字母、数字、横杠和下划线');
+  }
+}
+
+function normalizeCommandNamespace(namespace) {
+  return normalizeSafeRelativePath(namespace || '', 'command namespace', {
+    allowEmpty: true,
+    allowHiddenSegments: false
+  });
+}
+
+function buildCommandRelativePath(name, namespace, platform) {
+  const safeName = normalizeCommandName(name);
+  const safeNamespace = normalizeCommandNamespace(namespace);
+  const fileName = getCommandTargetName(safeName, platform);
+  return safeNamespace ? path.posix.join(safeNamespace, fileName) : fileName;
 }
 
 function parseGeminiCommandToml(content) {
@@ -257,8 +297,13 @@ class CommandsRepoScanner extends RepoScannerBase {
    * 检查命令是否已安装
    */
   isInstalled(relativePath) {
-    const fullPath = path.join(this.installDir, relativePath);
-    return fs.existsSync(fullPath);
+    try {
+      const safeRelativePath = normalizeSafeRelativePath(relativePath, 'command path');
+      const fullPath = resolveInsideRoot(this.installDir, safeRelativePath, 'Command path');
+      return fs.existsSync(fullPath);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -307,6 +352,21 @@ class CommandsService {
   getProjectCommandsDir(projectPath) {
     if (!projectPath) return null;
     return this.projectCommandsDir(projectPath);
+  }
+
+  _getBaseDir(scope, projectPath = null) {
+    return scope === 'user'
+      ? this.userCommandsDir
+      : this.getProjectCommandsDir(projectPath);
+  }
+
+  _resolveCommandPath(baseDir, name, namespace = null) {
+    if (!baseDir) {
+      throw new Error('项目路径不能为空');
+    }
+    const relativePath = buildCommandRelativePath(name, namespace, this.platform);
+    const fullPath = resolveInsideRoot(baseDir, relativePath, 'Command path');
+    return { relativePath, fullPath };
   }
 
   _generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body }) {
@@ -411,15 +471,10 @@ class CommandsService {
    * 获取单个命令详情
    */
   getCommand(name, scope, projectPath = null, namespace = null) {
-    const baseDir = scope === 'user'
-      ? this.userCommandsDir
-      : this.getProjectCommandsDir(projectPath);
-
-    const relativePath = namespace
-      ? path.join(namespace, getCommandTargetName(name, this.platform))
-      : getCommandTargetName(name, this.platform);
-
-    const fullPath = path.join(baseDir, relativePath);
+    const safeName = normalizeCommandName(name);
+    const safeNamespace = normalizeCommandNamespace(namespace);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { relativePath, fullPath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
 
     if (!fs.existsSync(fullPath)) {
       return null;
@@ -431,8 +486,8 @@ class CommandsService {
       : { ...parseFrontmatter(content), gemini: null };
 
     return {
-      name,
-      namespace,
+      name: safeName,
+      namespace: safeNamespace || null,
       scope,
       path: relativePath,
       fullPath,
@@ -453,74 +508,53 @@ class CommandsService {
    * 创建命令
    */
   createCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body }) {
-    if (!name || !name.trim()) {
-      throw new Error('命令名称不能为空');
-    }
-
-    // 验证命令名：只允许字母、数字、横杠、下划线
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      throw new Error('命令名只能包含字母、数字、横杠和下划线');
-    }
-
-    const baseDir = scope === 'user'
-      ? this.userCommandsDir
-      : this.getProjectCommandsDir(projectPath);
-
-    const targetDir = namespace ? path.join(baseDir, namespace) : baseDir;
+    const safeName = normalizeCommandName(name);
+    const safeNamespace = normalizeCommandNamespace(namespace);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { fullPath: filePath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
+    const targetDir = path.dirname(filePath);
     ensureDir(targetDir);
-
-    const filePath = path.join(targetDir, getCommandTargetName(name, this.platform));
 
     // 检查是否已存在
     if (fs.existsSync(filePath)) {
-      throw new Error(`命令 "${name}" 已存在`);
+      throw new Error(`命令 "${safeName}" 已存在`);
     }
 
     const content = this._generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body });
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
-    return this.getCommand(name, scope, projectPath, namespace);
+    return this.getCommand(safeName, scope, projectPath, safeNamespace);
   }
 
   /**
    * 更新命令
    */
   updateCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body }) {
-    const baseDir = scope === 'user'
-      ? this.userCommandsDir
-      : this.getProjectCommandsDir(projectPath);
-
-    const relativePath = namespace
-      ? path.join(namespace, getCommandTargetName(name, this.platform))
-      : getCommandTargetName(name, this.platform);
-
-    const filePath = path.join(baseDir, relativePath);
+    const safeName = normalizeCommandName(name);
+    const safeNamespace = normalizeCommandNamespace(namespace);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { fullPath: filePath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
 
     if (!fs.existsSync(filePath)) {
-      throw new Error(`命令 "${name}" 不存在`);
+      throw new Error(`命令 "${safeName}" 不存在`);
     }
 
     const content = this._generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body });
 
     fs.writeFileSync(filePath, content, 'utf-8');
 
-    return this.getCommand(name, scope, projectPath, namespace);
+    return this.getCommand(safeName, scope, projectPath, safeNamespace);
   }
 
   /**
    * 删除命令
    */
   deleteCommand(name, scope, projectPath = null, namespace = null) {
-    const baseDir = scope === 'user'
-      ? this.userCommandsDir
-      : this.getProjectCommandsDir(projectPath);
-
-    const relativePath = namespace
-      ? path.join(namespace, getCommandTargetName(name, this.platform))
-      : getCommandTargetName(name, this.platform);
-
-    const filePath = path.join(baseDir, relativePath);
+    const safeName = normalizeCommandName(name);
+    const safeNamespace = normalizeCommandNamespace(namespace);
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const { fullPath: filePath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
 
     if (!fs.existsSync(filePath)) {
       return { success: false, message: '命令不存在' };
@@ -529,8 +563,8 @@ class CommandsService {
     fs.unlinkSync(filePath);
 
     // 如果目录为空，删除目录
-    if (namespace) {
-      const namespaceDir = path.join(baseDir, namespace);
+    if (safeNamespace) {
+      const namespaceDir = resolveInsideRoot(baseDir, safeNamespace, 'Command namespace');
       try {
         const remaining = fs.readdirSync(namespaceDir);
         if (remaining.length === 0) {

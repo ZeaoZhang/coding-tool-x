@@ -207,6 +207,16 @@ describe('detectSkillFormat', () => {
     expect(detectSkillFormat(content)).toBe('claude');
   });
 
+  test('returns "codex" for name and description in codex platform context', () => {
+    const content = '---\nname: s\ndescription: d\n---\nbody';
+    expect(detectSkillFormat(content, { platform: 'codex' })).toBe('codex');
+  });
+
+  test('keeps Claude-only fields Claude even in codex platform context', () => {
+    const content = '---\nname: s\ndescription: d\nallowed-tools: Bash\n---\nbody';
+    expect(detectSkillFormat(content, { platform: 'codex' })).toBe('claude');
+  });
+
   test('returns "unknown" when no frontmatter', () => {
     expect(detectSkillFormat('just plain text')).toBe('unknown');
   });
@@ -563,6 +573,15 @@ describe('parseSkillContent', () => {
     expect(result.format).toBe('claude');
     expect(result.allowedTools).toBe('Bash,Read');
     expect(result.license).toBe('MIT');
+  });
+
+  test('parses name and description as codex when platform context is codex', () => {
+    const content = '---\nname: codex-s\ndescription: Codex without metadata\n---\nbody';
+    const result = parseSkillContent(content, { platform: 'codex' });
+
+    expect(result.name).toBe('codex-s');
+    expect(result.description).toBe('Codex without metadata');
+    expect(result.format).toBe('codex');
   });
 
   test('fullContent is preserved', () => {

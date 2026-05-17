@@ -26,6 +26,7 @@ function isGitHubSkill(skill = {}) {
 }
 
 export function canInstallSkill(skill = {}) {
+  if (skill?.protected) return false;
   return Boolean(
     skill?.installSource
     || skill?.isLocal
@@ -36,6 +37,8 @@ export function canInstallSkill(skill = {}) {
 }
 
 export function getSkillSourceTag(skill = {}) {
+  if (skill?.protected || skill?.source === 'system-installed') return '系统';
+  if (skill?.source === 'native-installed') return '原生';
   if (isLocalRepoSkill(skill)) return '本地仓库';
   if (isManagedLocalSkill(skill)) return '本地技能';
   if (isGitLabSkill(skill)) return 'GitLab';

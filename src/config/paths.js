@@ -473,10 +473,14 @@ const PATHS = {
   },
   pluginRepos: {
     claude: path.join(REPOS_PLUGINS_DIR, 'claude.json'),
+    codex: path.join(REPOS_PLUGINS_DIR, 'codex.json'),
+    gemini: path.join(REPOS_PLUGINS_DIR, 'gemini.json'),
     opencode: path.join(REPOS_PLUGINS_DIR, 'opencode.json')
   },
   pluginMarketCache: {
     claude: path.join(CACHE_PLUGINS_DIR, 'claude-market.json'),
+    codex: path.join(CACHE_PLUGINS_DIR, 'codex-market.json'),
+    gemini: path.join(CACHE_PLUGINS_DIR, 'gemini-market.json'),
     opencode: path.join(CACHE_PLUGINS_DIR, 'opencode-market.json')
   },
 
@@ -575,8 +579,12 @@ const LEGACY_STORAGE_RELOCATIONS = [
 
   // 插件仓库缓存
   { source: rootEntry('plugin-repos.json'), target: PATHS.pluginRepos.claude },
+  { source: rootEntry('codex-plugin-repos.json'), target: PATHS.pluginRepos.codex },
+  { source: rootEntry('gemini-plugin-repos.json'), target: PATHS.pluginRepos.gemini },
   { source: rootEntry('opencode-plugin-repos.json'), target: PATHS.pluginRepos.opencode },
   { source: rootEntry('plugins-market-cache.json'), target: PATHS.pluginMarketCache.claude },
+  { source: rootEntry('codex-plugins-market-cache.json'), target: PATHS.pluginMarketCache.codex },
+  { source: rootEntry('gemini-plugins-market-cache.json'), target: PATHS.pluginMarketCache.gemini },
   { source: rootEntry('opencode-plugins-market-cache.json'), target: PATHS.pluginMarketCache.opencode },
 
   // 已废弃但需要保留的数据
