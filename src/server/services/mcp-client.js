@@ -166,6 +166,49 @@ function buildMissingCommandMessage(command, resolvedCommand, env = {}) {
   return [hint.title, ...hint.details].join('\n')
 }
 
+function parseSseEvent(block = '') {
+  const lines = String(block).split('\n');
+  const dataLines = [];
+  let eventType = 'message';
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith(':')) {
+      continue;
+    }
+
+    const separatorIdx = line.indexOf(':');
+    const field = separatorIdx === -1 ? line : line.slice(0, separatorIdx);
+    let value = separatorIdx === -1 ? '' : line.slice(separatorIdx + 1);
+    if (value.startsWith(' ')) {
+      value = value.slice(1);
+    }
+
+    if (field === 'event') {
+      eventType = value || 'message';
+    } else if (field === 'data') {
+      dataLines.push(value);
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  return {
+    eventType,
+    data: dataLines.join('\n')
+  };
+}
+
+function resolveLegacySseEndpoint(baseUrl, endpoint) {
+  const endpointText = String(endpoint || '').trim();
+  if (!endpointText) {
+    throw new McpClientError('SSE endpoint event did not include a request URL');
+  }
+  return new URL(endpointText, baseUrl).toString();
+}
+
 // ============================================================================
 // McpClient
 // ============================================================================
@@ -205,6 +248,10 @@ class McpClient extends EventEmitter {
     this._sseAbortController = null;
     this._httpSessionUrl = null;
     this._httpSessionId = null;
+    this._legacySseMode = false;
+    this._sseRequest = null;
+    this._sseResponse = null;
+    this._sseBuffer = '';
     this._negotiatedProtocolVersion = MCP_PROTOCOL_VERSION;
   }
 
@@ -575,13 +622,57 @@ class McpClient extends EventEmitter {
       throw new McpClientError('http/sse transport requires a "url" field');
     }
 
-    // For HTTP transport, we verify the server is reachable with a GET request.
-    // The MCP Streamable HTTP transport uses a single endpoint for both
-    // POST (JSON-RPC requests) and GET (SSE event stream).
+    try {
+      new URL(url);
+    } catch (err) {
+      throw new McpClientError(`Invalid URL: ${err.message}`);
+    }
+
+    if (this._type === 'sse') {
+      await this._connectLegacySse();
+      return;
+    }
+
+    // Streamable HTTP sends each JSON-RPC message as a POST to the MCP endpoint.
+    // Do not probe with GET here: valid servers may return 405 when they do not
+    // expose an unsolicited SSE stream on the same endpoint.
+    this._httpSessionUrl = url;
+  }
+
+  /** @private */
+  async _connectLegacySse() {
+    const { url } = this._spec;
+
     return new Promise((resolve, reject) => {
+      let settled = false;
       const timer = setTimeout(() => {
-        reject(new McpClientError(`HTTP connection timeout after ${this._timeout}ms`));
+        cleanup();
+        reject(new McpClientError(`SSE connection timeout after ${this._timeout}ms`));
       }, this._timeout);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        if (this._sseRequest && !this._sseRequest.destroyed) {
+          this._sseRequest.destroy();
+        }
+        if (this._sseResponse && !this._sseResponse.destroyed) {
+          this._sseResponse.destroy();
+        }
+        this._sseRequest = null;
+        this._sseResponse = null;
+      };
+
+      const settle = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) {
+          cleanup();
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
 
       try {
         const parsedUrl = new URL(url);
@@ -600,36 +691,70 @@ class McpClient extends EventEmitter {
         };
 
         const req = client.request(options, (res) => {
-          clearTimeout(timer);
+          this._sseResponse = res;
 
           if (res.statusCode >= 200 && res.statusCode < 400) {
-            // Store the base URL for sending requests
-            this._httpSessionUrl = url;
-            // We don't keep this SSE connection open during connect;
-            // we will open a new one per request or use POST.
-            res.destroy();
-            resolve();
+            const contentType = res.headers['content-type'] || '';
+            if (!contentType.includes('text/event-stream')) {
+              settle(new McpClientError(`SSE endpoint returned unsupported content type: ${contentType || 'unknown'}`));
+              return;
+            }
+
+            res.on('data', (chunk) => {
+              this._sseBuffer += chunk.toString();
+              const events = this._drainSseEvents();
+
+              for (const event of events) {
+                if (!settled && event.eventType === 'endpoint') {
+                  try {
+                    this._httpSessionUrl = resolveLegacySseEndpoint(url, event.data);
+                    this._legacySseMode = true;
+                    settle(null);
+                  } catch (err) {
+                    settle(err);
+                  }
+                  continue;
+                }
+
+                this._handleSseEvent(event);
+              }
+            });
+
+            res.on('end', () => {
+              if (!settled) {
+                settle(new McpClientError('SSE endpoint closed before endpoint event'));
+                return;
+              }
+              this._handleHttpDisconnect('SSE stream closed');
+            });
+
+            res.on('error', (err) => {
+              if (!settled) {
+                settle(new McpClientError(`SSE stream error: ${err.message}`));
+                return;
+              }
+              this._handleHttpDisconnect(`SSE stream error: ${err.message}`);
+            });
           } else {
-            res.destroy();
-            reject(new McpClientError(`HTTP server returned status ${res.statusCode}`));
+            res.resume();
+            settle(new McpClientError(`SSE server returned status ${res.statusCode}`));
           }
         });
 
+        this._sseRequest = req;
+
         req.on('error', (err) => {
-          clearTimeout(timer);
-          reject(new McpClientError(`HTTP connection failed: ${err.message}`));
+          settle(new McpClientError(`SSE connection failed: ${err.message}`));
         });
 
         req.on('timeout', () => {
           req.destroy();
-          clearTimeout(timer);
-          reject(new McpClientError(`HTTP connection timeout after ${this._timeout}ms`));
+          settle(new McpClientError(`SSE connection timeout after ${this._timeout}ms`));
         });
 
         req.end();
       } catch (err) {
-        clearTimeout(timer);
-        reject(new McpClientError(`Invalid URL: ${err.message}`));
+        settle(new McpClientError(`Invalid URL: ${err.message}`));
       }
     });
   }
@@ -684,7 +809,7 @@ class McpClient extends EventEmitter {
             const trimmedData = data.trim();
 
             if (!trimmedData) {
-              if (isNotification || res.statusCode === 202 || res.statusCode === 204) {
+              if (isNotification || res.statusCode === 204 || (res.statusCode === 202 && this._legacySseMode)) {
                 resolve();
                 return;
               }
@@ -745,39 +870,101 @@ class McpClient extends EventEmitter {
 
   /** @private */
   _parseSsePayload(data) {
-    // Parse Server-Sent Events format
-    const lines = data.split('\n');
-    let eventData = '';
+    const previousBuffer = this._sseBuffer;
+    this._sseBuffer = data;
+    const events = this._drainSseEvents({ flush: true });
+    this._sseBuffer = previousBuffer;
 
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        eventData += line.slice(6);
-      } else if (line === '' && eventData) {
-        try {
-          const msg = JSON.parse(eventData);
-          this._handleMessage(msg);
-        } catch (err) {
-          this.emit('stderr', `[invalid SSE data]: ${eventData}`);
-        }
-        eventData = '';
-      }
-    }
-
-    // Handle trailing data without a final empty line
-    if (eventData) {
-      try {
-        const msg = JSON.parse(eventData);
-        this._handleMessage(msg);
-      } catch (err) {
-        this.emit('stderr', `[invalid SSE data]: ${eventData}`);
-      }
+    for (const event of events) {
+      this._handleSseEvent(event);
     }
   }
 
   /** @private */
+  _drainSseEvents({ flush = false } = {}) {
+    const events = [];
+    let normalized = this._sseBuffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    let delimiterIdx;
+
+    while ((delimiterIdx = normalized.indexOf('\n\n')) !== -1) {
+      const block = normalized.slice(0, delimiterIdx);
+      normalized = normalized.slice(delimiterIdx + 2);
+      const event = parseSseEvent(block);
+      if (event && event.data) {
+        events.push(event);
+      }
+    }
+
+    if (flush && normalized.trim()) {
+      const event = parseSseEvent(normalized);
+      if (event && event.data) {
+        events.push(event);
+      }
+      normalized = '';
+    }
+
+    this._sseBuffer = normalized;
+    return events;
+  }
+
+  /** @private */
+  _handleSseEvent(event) {
+    if (!event || !event.data || event.data === '[DONE]') {
+      return;
+    }
+
+    if (event.eventType === 'endpoint') {
+      return;
+    }
+
+    try {
+      const msg = JSON.parse(event.data);
+      this._handleMessage(msg);
+    } catch (err) {
+      this.emit('stderr', `[invalid SSE data]: ${event.data}`);
+    }
+  }
+
+  /** @private */
+  _handleHttpDisconnect(message) {
+    if (!this._connected) {
+      return;
+    }
+
+    this._connected = false;
+    this._initialized = false;
+
+    for (const [id, pending] of this._pending) {
+      clearTimeout(pending.timer);
+      pending.reject(new McpClientError(message));
+    }
+    this._pending.clear();
+
+    this.emit('disconnected');
+  }
+
+  /** @private */
   _disconnectHttp() {
+    if (this._sseRequest && !this._sseRequest.destroyed) {
+      try {
+        this._sseRequest.destroy();
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (this._sseResponse && !this._sseResponse.destroyed) {
+      try {
+        this._sseResponse.destroy();
+      } catch (e) {
+        // ignore
+      }
+    }
+    this._sseRequest = null;
+    this._sseResponse = null;
+    this._sseBuffer = '';
     this._httpSessionUrl = null;
     this._httpSessionId = null;
+    this._legacySseMode = false;
     this._negotiatedProtocolVersion = MCP_PROTOCOL_VERSION;
   }
 
