@@ -64,7 +64,7 @@ describe('hooks API', () => {
 
   describe('GET /', () => {
     it('returns notification settings', () => {
-      const settings = { feishu: { enabled: true, webhook: 'https://example.com' } };
+      const settings = { remoteNotifications: { providers: [] } };
       mockGetNotificationSettings.mockReturnValue(settings);
       const handler = findHandler(router, 'get', '/');
       const req = mockReq();
@@ -105,15 +105,15 @@ describe('hooks API', () => {
 
   describe('POST /', () => {
     it('saves settings and returns result with message', () => {
-      const saved = { feishu: { enabled: false } };
+      const saved = { remoteNotifications: { providers: [] } };
       mockSaveNotificationSettings.mockReturnValue(saved);
       const handler = findHandler(router, 'post', '/');
-      const req = mockReq({ body: { feishu: { enabled: false } } });
+      const req = mockReq({ body: { remoteNotifications: { providers: [] } } });
       const res = mockRes();
 
       handler(req, res);
 
-      expect(mockSaveNotificationSettings).toHaveBeenCalledWith({ feishu: { enabled: false } });
+      expect(mockSaveNotificationSettings).toHaveBeenCalledWith({ remoteNotifications: { providers: [] } });
       expect(res.json).toHaveBeenCalledWith({ ...saved, message: '通知设置已保存' });
     });
 
@@ -145,7 +145,7 @@ describe('hooks API', () => {
   });
 
   describe('POST /test', () => {
-    it('returns success with system message when testFeishu is absent', async () => {
+    it('returns success with system message when provider is absent', async () => {
       mockTestNotification.mockResolvedValue(undefined);
       const handler = findHandler(router, 'post', '/test');
       const req = mockReq({ body: {} });
@@ -157,15 +157,16 @@ describe('hooks API', () => {
       expect(res.json).toHaveBeenCalledWith({ success: true, message: '系统测试通知已发送' });
     });
 
-    it('returns feishu message when testFeishu is true', async () => {
+    it('returns provider message when testing a remote provider', async () => {
       mockTestNotification.mockResolvedValue(undefined);
       const handler = findHandler(router, 'post', '/test');
-      const req = mockReq({ body: { testFeishu: true } });
+      const req = mockReq({ body: { provider: { type: 'telegramBot', name: 'Telegram' } } });
       const res = mockRes();
 
       await handler(req, res);
 
-      expect(res.json).toHaveBeenCalledWith({ success: true, message: '飞书测试通知已发送' });
+      expect(mockTestNotification).toHaveBeenCalledWith({ provider: { type: 'telegramBot', name: 'Telegram' } });
+      expect(res.json).toHaveBeenCalledWith({ success: true, message: 'Telegram 测试通知已发送' });
     });
 
     it('returns 500 when testNotification rejects', async () => {

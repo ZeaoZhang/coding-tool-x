@@ -58,6 +58,8 @@ const {
   generateSystemNotificationCommand,
   buildOpenCodePluginContent,
   emitBrowserNotification,
+  normalizeRemoteNotificationsConfig,
+  validateRemoteProviderConfig,
   parseStopHookStatus,
   buildStopHookCommand,
   shouldRepairStopHook
@@ -404,6 +406,44 @@ describe('validateFeishuWebhookUrl', () => {
   });
 });
 
+describe('remote notification providers', () => {
+  test('normalizes all GA-style remote provider types', () => {
+    const result = normalizeRemoteNotificationsConfig({
+      providers: [
+        { type: 'wechatBot', config: { tokenFile: '~/.wxbot/token.json', targetUserId: 'wx-user' } },
+        { type: 'qqBot', config: { endpoint: 'http://127.0.0.1:3000', targetType: 'group', targetId: '123' } },
+        { type: 'feishuBot', config: { webhookUrl: 'https://open.feishu.cn/open-apis/bot/v2/hook/a' } },
+        { type: 'wecomBot', config: { webhookUrl: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=a' } },
+        { type: 'dingtalkBot', config: { webhookUrl: 'https://oapi.dingtalk.com/robot/send?access_token=a' } },
+        { type: 'telegramBot', config: { botToken: 'token', chatId: '1' } }
+      ]
+    });
+
+    expect(result.providers.map(provider => provider.type)).toEqual([
+      'wechatBot',
+      'qqBot',
+      'feishuBot',
+      'wecomBot',
+      'dingtalkBot',
+      'telegramBot'
+    ]);
+  });
+
+  test('validates qq provider target id', () => {
+    expect(() => validateRemoteProviderConfig({
+      type: 'qqBot',
+      config: { endpoint: 'http://127.0.0.1:3000', targetId: '' }
+    })).toThrow('请填写QQ 接收对象 ID');
+  });
+
+  test('validates telegram provider required fields', () => {
+    expect(() => validateRemoteProviderConfig({
+      type: 'telegramBot',
+      config: { botToken: 'token', chatId: '' }
+    })).toThrow('请填写Telegram Chat ID');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // buildCodexNotifyCommand
 // ---------------------------------------------------------------------------
@@ -491,23 +531,6 @@ describe('buildGeminiCommand', () => {
 // generateNotifyScript
 // ---------------------------------------------------------------------------
 describe('generateNotifyScript', () => {
-  test('sets FEISHU_ENABLED=false when feishu.enabled is false', () => {
-    const script = generateNotifyScript({ enabled: false, webhookUrl: '' });
-    expect(script).toContain('FEISHU_ENABLED = false');
-  });
-
-  test('sets FEISHU_ENABLED=true and includes webhook URL when feishu enabled with URL', () => {
-    const url = 'https://open.feishu.cn/open-apis/bot/v2/hook/test123';
-    const script = generateNotifyScript({ enabled: true, webhookUrl: url });
-    expect(script).toContain('FEISHU_ENABLED = true');
-    expect(script).toContain(url);
-  });
-
-  test('sets FEISHU_ENABLED=false when called with no argument', () => {
-    const script = generateNotifyScript();
-    expect(script).toContain('FEISHU_ENABLED = false');
-  });
-
   test('uses Windows popup command for generated notification command', () => {
     const command = generateSystemNotificationCommand('notification', '这是一条测试通知', 'win32');
     expect(command).toContain('PresentationFramework');
@@ -548,6 +571,53 @@ describe('generateNotifyScript', () => {
     expect(script).toContain('postBrowserNotification');
     expect(script).toContain('/api/hooks/browser-event');
     expect(script).toContain('CONFIG_FILE');
+  });
+
+  test('embeds enabled remote providers in generated script', () => {
+    const script = generateNotifyScript({
+      providers: [
+        {
+          type: 'telegramBot',
+          enabled: true,
+          config: { botToken: 'telegram-token', chatId: '123', proxy: 'http://127.0.0.1:2082' }
+        },
+        {
+          type: 'qqBot',
+          enabled: false,
+          config: { endpoint: 'http://127.0.0.1:3000', targetId: '456' }
+        }
+      ]
+    });
+    expect(script).toContain('REMOTE_PROVIDERS');
+    expect(script).toContain('telegram-token');
+    expect(script).not.toContain('127.0.0.1:3000');
+    expect(script).toContain('sendRemoteProvider');
+    expect(script).toContain('createHttpsProxyAgent');
+    expect(script).toContain("require('https-proxy-agent')");
+    expect(script).toContain('http://127.0.0.1:2082');
+  });
+
+  test('embeds DingTalk app sender in generated script', () => {
+    const script = generateNotifyScript({
+      providers: [
+        {
+          type: 'dingtalkBot',
+          enabled: true,
+          config: {
+            mode: 'app',
+            clientId: 'ding-client',
+            clientSecret: 'ding-secret',
+            targetType: 'group',
+            targetId: 'group-id'
+          }
+        }
+      ]
+    });
+
+    expect(script).toContain('fetchDingTalkAccessToken');
+    expect(script).toContain('/v1.0/oauth2/accessToken');
+    expect(script).toContain('/v1.0/robot/');
+    expect(script).toContain('ding-client');
   });
 });
 

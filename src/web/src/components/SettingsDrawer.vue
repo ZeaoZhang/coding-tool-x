@@ -355,9 +355,6 @@
 
                         <template v-else-if="provider.type === 'wecomBot'">
                           <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="企业微信群机器人 Webhook URL" />
-                          <n-input v-model:value="provider.config.botId" size="small" placeholder="GA bot_id，可选记录" />
-                          <n-input v-model:value="provider.config.secret" size="small" type="password" show-password-on="click" placeholder="GA secret，可选记录" />
-                          <n-input v-model:value="provider.config.targetChatId" size="small" placeholder="chat_id，可选记录" />
                         </template>
 
                         <template v-else-if="provider.type === 'dingtalkBot'">
@@ -1259,17 +1256,17 @@ const REMOTE_PROVIDER_DEFINITIONS = {
   feishuBot: {
     label: '飞书 Bot',
     description: '通过飞书自定义机器人 Webhook 发送通知',
-    hint: '兼容原有飞书通知配置。'
+    hint: '填写飞书自定义机器人 Webhook URL。'
   },
   wecomBot: {
     label: '企业微信 Bot',
     description: '通过企业微信群机器人 Webhook 发送通知',
-    hint: 'bot_id / secret 字段用于记录 GA 长连接配置，通知发送优先使用 Webhook。'
+    hint: '当前通知发送使用企业微信群机器人 Webhook；GA 的 bot_id / secret 长连接模式不适合单向通知。'
   },
   dingtalkBot: {
     label: '钉钉 Bot',
-    description: '支持钉钉自定义机器人 Webhook，保留 GA App 模式配置字段',
-    hint: '当前自动测试和通知脚本支持 Webhook；App 模式需要会话上下文，先做配置记录。'
+    description: '支持钉钉自定义机器人 Webhook 和 GA 同款 App 模式',
+    hint: 'App 模式需要 App Key / App Secret，并填写用户 ID 或群会话 ID。'
   },
   telegramBot: {
     label: 'Telegram Bot',
@@ -1304,7 +1301,7 @@ function createRemoteProviderConfig(type) {
     case 'feishuBot':
       return { webhookUrl: '' }
     case 'wecomBot':
-      return { webhookUrl: '', botId: '', secret: '', targetChatId: '' }
+      return { webhookUrl: '' }
     case 'dingtalkBot':
       return { mode: 'webhook', webhookUrl: '', clientId: '', clientSecret: '', targetType: 'group', targetId: '' }
     case 'telegramBot':
@@ -1358,24 +1355,12 @@ function createNotificationSettingsState(data = {}) {
   const providers = Array.isArray(data?.remoteNotifications?.providers)
     ? data.remoteNotifications.providers.map(normalizeRemoteProvider)
     : []
-  if (providers.length === 0 && data?.feishu?.enabled === true) {
-    providers.push({
-      ...createRemoteProvider('feishuBot'),
-      id: 'feishu-default',
-      enabled: true,
-      config: { webhookUrl: data.feishu.webhookUrl || '' }
-    })
-  }
 
   return {
     claude: createNotificationPlatformState(data?.platforms?.claude || legacyClaudeState),
     codex: createNotificationPlatformState(data?.platforms?.codex),
     gemini: createNotificationPlatformState(data?.platforms?.gemini),
     opencode: createNotificationPlatformState(data?.platforms?.opencode),
-    feishu: {
-      enabled: data?.feishu?.enabled === true,
-      webhookUrl: data?.feishu?.webhookUrl || ''
-    },
     remoteNotifications: {
       providers
     }
@@ -2049,14 +2034,6 @@ async function handleSaveNotification() {
             }
           ])
         ),
-        feishu: {
-          enabled: notificationSettings.value.remoteNotifications.providers.some(provider => (
-            provider.type === 'feishuBot' &&
-            provider.enabled &&
-            provider.config?.webhookUrl
-          )),
-          webhookUrl: notificationSettings.value.remoteNotifications.providers.find(provider => provider.type === 'feishuBot')?.config?.webhookUrl || ''
-        },
         remoteNotifications: {
           providers: notificationSettings.value.remoteNotifications.providers
         }
