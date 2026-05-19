@@ -626,6 +626,222 @@ describe('PluginsService OpenCode helpers', () => {
       })
     ]);
   });
+
+  test('plain GitHub repository URLs install through OpenCode local plugin flow', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('opencode');
+    const spy = vi.spyOn(svc, '_installFromRepoDirectory').mockResolvedValue({
+      success: true,
+      plugin: { name: 'remote-opencode', version: '1.0.0' }
+    });
+
+    const result = await svc.installPlugin('https://github.com/acme/remote-opencode.git');
+
+    expect(result.success).toBe(true);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'github',
+        owner: 'acme',
+        name: 'remote-opencode',
+        directory: ''
+      }),
+      expect.objectContaining({
+        installRoot: path.join(testDir, 'plugins')
+      })
+    );
+  });
+
+  test('local OpenCode repository install is listed as a local plugin', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('opencode');
+    const repoRoot = path.join(testDir, 'opencode-local-repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'package.json'),
+      JSON.stringify({ name: 'local-opencode-demo', version: '0.4.0', description: 'Local OpenCode demo' }),
+      'utf8'
+    );
+
+    const installResult = await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot
+    });
+
+    expect(installResult.success).toBe(true);
+    expect(svc.listPlugins().plugins).toEqual([
+      expect.objectContaining({
+        name: 'local-opencode-demo',
+        directory: 'local-opencode-demo',
+        version: '0.4.0',
+        description: 'Local OpenCode demo',
+        pluginType: 'local'
+      })
+    ]);
+  });
+});
+
+describe('PluginsService Claude native plugin integration', () => {
+  test('installPlugin writes Claude cache, marketplace, installed registry, and enabled setting', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'claude-marketplace');
+    const pluginRoot = path.join(repoRoot, 'plugins', 'demo-claude');
+
+    fs.mkdirSync(path.join(pluginRoot, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(pluginRoot, 'skills', 'hello'), { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'demo-claude', version: '0.3.0', description: 'Demo Claude plugin' }),
+      'utf8'
+    );
+    fs.writeFileSync(path.join(pluginRoot, 'skills', 'hello', 'SKILL.md'), '---\ndescription: Hello\n---\nHello\n', 'utf8');
+
+    const installResult = await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot,
+      directory: 'plugins/demo-claude',
+      marketplace: 'local-claude-market'
+    });
+
+    expect(installResult).toEqual(expect.objectContaining({
+      success: true,
+      plugin: expect.objectContaining({ name: 'demo-claude', version: '0.3.0' })
+    }));
+
+    const nativePluginDir = path.join(
+      testDir,
+      'plugins',
+      'cache',
+      'local-claude-market',
+      'demo-claude',
+      '0.3.0'
+    );
+    expect(fs.existsSync(path.join(nativePluginDir, '.claude-plugin', 'plugin.json'))).toBe(true);
+    expect(fs.existsSync(path.join(nativePluginDir, 'skills', 'hello', 'SKILL.md'))).toBe(true);
+
+    const installed = JSON.parse(fs.readFileSync(path.join(testDir, 'plugins', 'installed_plugins.json'), 'utf8'));
+    expect(installed).toEqual(expect.objectContaining({
+      version: 2,
+      plugins: expect.objectContaining({
+        'demo-claude@local-claude-market': [
+          expect.objectContaining({
+            scope: 'user',
+            installPath: nativePluginDir,
+            version: '0.3.0'
+          })
+        ]
+      })
+    }));
+
+    const settings = JSON.parse(fs.readFileSync(path.join(testDir, 'settings.json'), 'utf8'));
+    expect(settings.enabledPlugins['demo-claude@local-claude-market']).toBe(true);
+    expect(settings.extraKnownMarketplaces['local-claude-market'].source).toEqual(expect.objectContaining({
+      source: 'directory',
+      path: path.join(testDir, 'plugins', 'marketplaces', 'local-claude-market')
+    }));
+
+    const marketplace = JSON.parse(fs.readFileSync(
+      path.join(testDir, 'plugins', 'marketplaces', 'local-claude-market', '.claude-plugin', 'marketplace.json'),
+      'utf8'
+    ));
+    expect(marketplace.plugins).toEqual([
+      expect.objectContaining({
+        name: 'demo-claude',
+        source: './plugins/demo-claude'
+      })
+    ]);
+    expect(fs.existsSync(path.join(
+      testDir,
+      'plugins',
+      'marketplaces',
+      'local-claude-market',
+      'plugins',
+      'demo-claude',
+      '.claude-plugin',
+      'plugin.json'
+    ))).toBe(true);
+
+    expect(svc.listPlugins().plugins).toEqual([
+      expect.objectContaining({
+        name: 'demo-claude',
+        marketplace: 'local-claude-market',
+        enabled: true,
+        installPath: nativePluginDir,
+        description: 'Demo Claude plugin'
+      })
+    ]);
+  });
+
+  test('togglePlugin updates Claude enabledPlugins state', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'claude-toggle-marketplace');
+    fs.mkdirSync(path.join(repoRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'toggle-demo', version: '1.0.0', description: 'Toggle demo' }),
+      'utf8'
+    );
+
+    await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot,
+      marketplace: 'toggle-market'
+    });
+    const result = svc.togglePlugin('toggle-demo', false);
+
+    expect(result).toEqual(expect.objectContaining({ success: true, enabled: false }));
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, 'settings.json'), 'utf8')).enabledPlugins['toggle-demo@toggle-market']).toBe(false);
+    expect(svc.listPlugins().plugins[0]).toEqual(expect.objectContaining({
+      name: 'toggle-demo',
+      enabled: false
+    }));
+  });
+
+  test('uninstallPlugin removes Claude cache entry and enabledPlugins state', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'claude-uninstall-marketplace');
+    fs.mkdirSync(path.join(repoRoot, '.claude-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'remove-demo', version: '1.0.0', description: 'Remove demo' }),
+      'utf8'
+    );
+
+    await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot,
+      marketplace: 'remove-market'
+    });
+    const pluginDir = path.join(testDir, 'plugins', 'cache', 'remove-market', 'remove-demo', '1.0.0');
+
+    const result = svc.uninstallPlugin('remove-demo');
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(pluginDir)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, 'plugins', 'installed_plugins.json'), 'utf8')).plugins).toEqual({});
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, 'settings.json'), 'utf8')).enabledPlugins).toEqual({});
+  });
+
+  test('plain GitHub repository URLs install through Claude native repo-directory flow', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const spy = vi.spyOn(svc, '_installFromRepoDirectory').mockResolvedValue({
+      success: true,
+      plugin: { name: 'remote-demo', version: '1.0.0' }
+    });
+
+    const result = await svc.installPlugin('https://github.com/acme/remote-demo.git');
+
+    expect(result.success).toBe(true);
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'github',
+      owner: 'acme',
+      name: 'remote-demo',
+      directory: ''
+    }));
+  });
 });
 
 describe('PluginsService Codex helpers', () => {
@@ -735,6 +951,33 @@ describe('PluginsService Codex helpers', () => {
     expect(uninstallResult.success).toBe(true);
     expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'local-codex-market', 'demo-codex'))).toBe(false);
     expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).not.toContain('demo-codex@local-codex-market');
+  });
+
+  test('getMarketPlugins discovers root-level Codex plugin manifests', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('codex');
+    const repoRoot = path.join(testDir, 'root-codex-plugin');
+
+    fs.mkdirSync(path.join(repoRoot, '.codex-plugin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.codex-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'root-codex-demo', version: '0.2.0', description: 'Root Codex demo' }),
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot, marketplace: 'root-market' });
+
+    const marketPlugins = await svc.getMarketPlugins(true);
+
+    expect(marketPlugins).toEqual([
+      expect.objectContaining({
+        name: 'root-codex-demo',
+        directory: '',
+        marketplace: 'root-market',
+        marketplaceFormat: 'codex-manifest',
+        repoProvider: 'local',
+        repoLocalPath: repoRoot
+      })
+    ]);
   });
 
   test('uninstallPlugin rejects codex cache paths outside the cache root', () => {

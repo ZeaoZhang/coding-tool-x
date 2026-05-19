@@ -42,7 +42,8 @@ function extractRepoPayload(source = {}) {
     projectPath: repo.projectPath || source.projectPath || '',
     localPath: repo.localPath || source.localPath || '',
     repoUrl: repo.repoUrl || repo.url || source.repoUrl || source.url || '',
-    token: repo.token || source.token || ''
+    token: repo.token || source.token || '',
+    marketplace: repo.marketplace || source.marketplace || ''
   };
 }
 
@@ -140,12 +141,13 @@ router.post('/install', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { directory, repo, gitUrl, source } = req.body;
+    const hasDirectoryField = Object.prototype.hasOwnProperty.call(req.body, 'directory');
 
     // Support both new format (directory + repo) and legacy format (gitUrl)
     let installUrl;
     if (source) {
       installUrl = source;
-    } else if (directory && repo) {
+    } else if (repo && hasDirectoryField) {
       installUrl = '';
     } else if (gitUrl) {
       installUrl = gitUrl;
@@ -158,10 +160,10 @@ router.post('/install', async (req, res) => {
 
     const result = await service.installPlugin(
       installUrl,
-      directory && repo
+      repo && hasDirectoryField
         ? {
             ...extractRepoPayload({ repo }),
-            directory
+            directory: directory || ''
           }
         : null
     );

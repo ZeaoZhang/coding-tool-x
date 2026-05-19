@@ -286,6 +286,8 @@ async function loadData(force = false) {
           repoLocalPath: p.repoLocalPath || marketInfo.repoLocalPath || '',
           repoId: p.repoId || marketInfo.repoId || '',
           repoUrl: p.repoUrl || marketInfo.repoUrl || '',
+          marketplace: p.marketplace || marketInfo.marketplace || '',
+          installSource: p.installSource || marketInfo.installSource || '',
           readmeUrl: p.readmeUrl || marketInfo.readmeUrl || '',
           directory: p.directory || marketInfo.directory || p.installPath || ''
         }
@@ -361,7 +363,8 @@ async function handleInstall(plugin) {
           branch: plugin.repoBranch || 'main',
           projectPath: plugin.repoProjectPath,
           localPath: plugin.repoLocalPath,
-          repoUrl: plugin.repoUrl
+          repoUrl: plugin.repoUrl,
+          marketplace: plugin.marketplace
         },
         currentPlatform.value
       )
