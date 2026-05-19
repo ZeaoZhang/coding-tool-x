@@ -192,6 +192,22 @@ describe('POST /install', () => {
     expect(services.opencode.installPlugin).toHaveBeenCalledWith('npm:demo-plugin', null);
   });
 
+  test('source installs stay source-based even when repo metadata is present', async () => {
+    const res = await request(buildApp()).post('/install', {
+      platform: 'opencode',
+      source: 'https://github.com/demo/opencode-plugin.git',
+      repo: {
+        owner: 'demo',
+        name: 'opencode-plugin',
+        marketplace: 'demo-market'
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.opencode.installPlugin).toHaveBeenCalledWith('https://github.com/demo/opencode-plugin.git', null);
+  });
+
   test('installs from directory + repo payload with provider context', async () => {
     const res = await request(buildApp()).post('/install', {
       platform: 'claude',
@@ -201,7 +217,8 @@ describe('POST /install', () => {
         provider: 'gitlab',
         host: 'https://gitlab.example.com',
         projectPath: 'team/demo-plugins',
-        branch: 'main'
+        branch: 'main',
+        marketplace: 'team-market'
       }
     });
 
@@ -214,7 +231,36 @@ describe('POST /install', () => {
         provider: 'gitlab',
         host: 'https://gitlab.example.com',
         projectPath: 'team/demo-plugins',
-        directory: 'plugins/demo-plugin'
+        directory: 'plugins/demo-plugin',
+        marketplace: 'team-market'
+      })
+    );
+  });
+
+  test('installs a root-level repo plugin without dropping marketplace context', async () => {
+    const res = await request(buildApp()).post('/install', {
+      platform: 'codex',
+      directory: '',
+      repo: {
+        id: 'repo-2',
+        provider: 'github',
+        owner: 'demo',
+        name: 'root-plugin',
+        marketplace: 'root-market'
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(services.codex.installPlugin).toHaveBeenCalledWith(
+      '',
+      expect.objectContaining({
+        id: 'repo-2',
+        provider: 'github',
+        owner: 'demo',
+        name: 'root-plugin',
+        directory: '',
+        marketplace: 'root-market'
       })
     );
   });

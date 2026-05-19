@@ -37,7 +37,7 @@
         size="small"
         type="primary"
         :loading="installing"
-        :disabled="!canInstall(plugin)"
+        :disabled="!hasInstallSource(plugin)"
         :focusable="false"
         @click="$emit('install', plugin)"
       >安装</n-button>
@@ -63,7 +63,7 @@ function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
 }
 
-function canInstall(plugin) {
+function hasInstallSource(plugin) {
   return !!(plugin?.installSource || plugin?.repoOwner || plugin?.repoProjectPath || plugin?.repoLocalPath)
 }
 
