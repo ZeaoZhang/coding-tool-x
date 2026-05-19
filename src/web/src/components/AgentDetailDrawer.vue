@@ -81,13 +81,7 @@
                 </div>
               </div>
 
-              <div v-if="agent.path || agent.fullPath" class="asset-detail-info-section">
-                <h3 class="asset-detail-section-title">路径</h3>
-                <div class="asset-detail-box">
-                  <n-icon :size="16"><DocumentTextOutline /></n-icon>
-                  <code>{{ agent.fullPath || agent.path }}</code>
-                </div>
-              </div>
+              <AssetPathField :path="agentPath" />
             </div>
           </n-tab-pane>
 
@@ -110,6 +104,7 @@ import { computed } from 'vue'
 import { NAlert, NDrawer, NDrawerContent, NIcon, NSpin, NTag, NTabs, NTabPane } from 'naive-ui'
 import { DocumentTextOutline, HammerOutline, PersonOutline } from '@vicons/ionicons5'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import AssetPathField from './AssetPathField.vue'
 
 const { drawerWidth } = useResponsiveDrawer(600)
 
@@ -168,6 +163,8 @@ const detailContent = computed(() => {
     ? (props.agent.fullContent || '(无内容)')
     : (props.agent.systemPrompt || '(无内容)')
 })
+
+const agentPath = computed(() => props.agent?.fullPath || props.agent?.path || '')
 
 function formatScope(scope) {
   return scope === 'project' ? '项目级' : '用户级'

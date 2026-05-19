@@ -521,6 +521,31 @@
   font-size: 12px;
 }
 
+.asset-detail-path-box {
+  align-items: flex-start;
+}
+
+.asset-detail-path-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.asset-detail-path-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.asset-detail-path-copy {
+  flex: 0 0 auto;
+  margin: -4px -4px -4px 4px;
+  color: var(--text-tertiary);
+}
+
+.asset-detail-path-copy:hover {
+  color: var(--text-primary);
+}
+
 .asset-detail-link {
   min-width: 0;
   overflow-wrap: anywhere;

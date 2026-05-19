@@ -70,13 +70,7 @@
                 </div>
               </div>
 
-              <div v-if="command.path || command.fullPath" class="asset-detail-info-section">
-                <h3 class="asset-detail-section-title">路径</h3>
-                <div class="asset-detail-box">
-                  <n-icon :size="16"><DocumentTextOutline /></n-icon>
-                  <code>{{ command.fullPath || command.path }}</code>
-                </div>
-              </div>
+              <AssetPathField :path="commandPath" />
             </div>
           </n-tab-pane>
 
@@ -99,6 +93,7 @@ import { computed } from 'vue'
 import { NDrawer, NDrawerContent, NIcon, NTag, NTabs, NTabPane } from 'naive-ui'
 import { DocumentTextOutline, HammerOutline, TerminalOutline } from '@vicons/ionicons5'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import AssetPathField from './AssetPathField.vue'
 
 const { drawerWidth } = useResponsiveDrawer(600)
 
@@ -139,6 +134,8 @@ const platformLabel = computed(() => {
   }
   return map[props.platform] || ''
 })
+
+const commandPath = computed(() => props.command?.fullPath || props.command?.path || '')
 
 function formatScope(scope) {
   return scope === 'project' ? '项目级' : '用户级'

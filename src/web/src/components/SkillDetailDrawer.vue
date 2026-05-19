@@ -40,13 +40,7 @@
                 <p class="asset-detail-description">{{ detail.description || '暂无描述' }}</p>
               </div>
 
-              <div class="asset-detail-info-section" v-if="detail.directory">
-                <h3 class="asset-detail-section-title">目录</h3>
-                <div class="asset-detail-box">
-                  <n-icon :size="16"><FolderOutline /></n-icon>
-                  <code>{{ detail.directory }}</code>
-                </div>
-              </div>
+              <AssetPathField :path="skillPath" />
 
               <div class="asset-detail-info-section" v-if="sourceLocation || sourceLink">
                 <h3 class="asset-detail-section-title">来源</h3>
@@ -127,7 +121,6 @@ import {
   CopyOutline,
   DocumentTextOutline,
   ExtensionPuzzleOutline,
-  FolderOutline,
   GitBranchOutline
 } from '@vicons/ionicons5'
 import { marked } from 'marked'
@@ -135,6 +128,7 @@ import { getSkillDetail, installSkill, uninstallSkill } from '../api/skills'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { copyTextToClipboard } from '../utils/clipboard'
 import message from '../utils/message'
+import AssetPathField from './AssetPathField.vue'
 import {
   canInstallSkill,
   formatSkillSourceText,
@@ -194,6 +188,7 @@ const renderedContent = computed(() => {
 const sourceLocation = computed(() => detail.value ? getSkillSourceLocation(detail.value) : '')
 const sourceLink = computed(() => detail.value ? getSkillSourceLink(detail.value) : '')
 const sourceLinkLabel = computed(() => detail.value ? getSkillSourceLinkLabel(detail.value) : '')
+const skillPath = computed(() => detail.value?.installPath || detail.value?.path || detail.value?.fullPath || '')
 
 function buildSkillRepoContext(skill) {
   return {
