@@ -72,9 +72,9 @@ function handleClick() {
   justify-content: center;
   width: 40px;
   height: 40px;
-  border: 1px solid rgba(195, 208, 203, 0.92);
+  border: 1px solid var(--border-primary);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--bg-elevated);
   cursor: pointer;
   transition: all 0.2s ease;
   padding: 0;
@@ -88,7 +88,7 @@ function handleClick() {
 }
 
 .header-button:hover:not(.disabled) {
-  background: rgba(255, 255, 255, 0.96);
+  background: color-mix(in srgb, var(--bg-elevated) 90%, var(--primary-color) 10%);
   border-color: rgba(24, 160, 88, 0.24);
   box-shadow: 0 14px 30px rgba(15, 23, 29, 0.12);
 }
@@ -116,13 +116,14 @@ function handleClick() {
 }
 
 [data-theme="dark"] .header-button {
-  background: rgba(17, 27, 32, 0.9);
-  border-color: rgba(43, 66, 74, 0.94);
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+  background: rgba(13, 23, 30, 0.92);
+  border-color: rgba(54, 76, 86, 0.9);
+  box-shadow: none;
 }
 
 [data-theme="dark"] .header-button:hover:not(.disabled) {
-  background: rgba(22, 35, 41, 0.98);
+  background: rgba(20, 34, 42, 0.98);
   border-color: rgba(24, 160, 88, 0.28);
+  box-shadow: 0 0 0 1px rgba(24, 160, 88, 0.08);
 }
 </style>

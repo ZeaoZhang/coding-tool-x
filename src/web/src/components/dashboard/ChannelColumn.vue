@@ -612,6 +612,12 @@ const showRecentSessions = ref(false)
 
 // localStorage key
 const LOCK_STORAGE_KEY = 'channelLocks'
+const CHANNEL_COLLAPSE_STORAGE_KEYS = {
+  claude: 'claudeChannelCollapse',
+  codex: 'codexChannelCollapse',
+  gemini: 'geminiChannelCollapse',
+  opencode: 'opencodeChannelCollapse'
+}
 
 // 从 localStorage 读取锁定状态
 function getLockFromStorage() {
@@ -991,6 +997,37 @@ function setQuickToggleLoading(channelId, value) {
   }
 }
 
+async function syncChannelCollapseForToggle(channelId, enabled) {
+  if (!channelId) return
+  const storageKey = CHANNEL_COLLAPSE_STORAGE_KEYS[props.channelType]
+  let collapse = {}
+
+  try {
+    const stored = storageKey ? localStorage.getItem(storageKey) : null
+    collapse = stored ? JSON.parse(stored) : {}
+  } catch (error) {
+    collapse = {}
+  }
+
+  if (enabled) {
+    delete collapse[channelId]
+  } else {
+    collapse[channelId] = true
+  }
+
+  try {
+    if (storageKey) {
+      localStorage.setItem(storageKey, JSON.stringify(collapse))
+    }
+  } catch (error) {}
+
+  try {
+    await updateNestedUIConfig('channelCollapse', props.channelType, collapse)
+  } catch (error) {
+    console.error('Failed to sync channel collapse state:', error)
+  }
+}
+
 async function handleQuickToggle(channel, enabled) {
   if (!channel || isQuickToggleLoading(channel.id)) return
   setQuickToggleLoading(channel.id, true)
@@ -1008,9 +1045,11 @@ async function handleQuickToggle(channel, enabled) {
 
     if (updateFn) {
       await updateFn(channel.id, { enabled })
+      await syncChannelCollapseForToggle(channel.id, enabled)
       message.success(enabled ? `渠道「${channel.name}」已启用` : `渠道「${channel.name}」已停用`)
       // 使用全局 store 的 loadChannels 刷新数据
       await loadGlobalChannels()
+      window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: props.channelType } }))
     }
   } catch (error) {
     message.error('操作失败: ' + error.message)
@@ -1116,12 +1155,11 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(247, 250, 248, 0.98) 100%);
-  border: 1px solid rgba(216, 225, 222, 0.92);
-  border-radius: 22px;
+  background: var(--gradient-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 18px;
   overflow: hidden;
   box-shadow: 0 22px 52px rgba(15, 23, 29, 0.1);
-  backdrop-filter: blur(14px);
 }
 
 .channel-header {
@@ -1129,7 +1167,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.55) 100%);
+  background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-secondary) 100%);
   position: relative;
 }
 
@@ -1165,7 +1203,7 @@ onUnmounted(() => {
 }
 
 .channel-header.claude {
-  background: linear-gradient(135deg, rgba(24, 160, 88, 0.08) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(24, 160, 88, 0.10) 0%, var(--bg-secondary) 100%);
 }
 
 .channel-header.claude::after {
@@ -1173,7 +1211,7 @@ onUnmounted(() => {
 }
 
 .channel-header.codex {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.10) 0%, var(--bg-secondary) 100%);
 }
 
 .channel-header.codex::after {
@@ -1181,7 +1219,7 @@ onUnmounted(() => {
 }
 
 .channel-header.gemini {
-  background: linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.10) 0%, var(--bg-secondary) 100%);
 }
 
 .channel-header.gemini::after {
@@ -1189,7 +1227,7 @@ onUnmounted(() => {
 }
 
 .channel-header.opencode {
-  background: linear-gradient(135deg, rgba(234, 88, 12, 0.08) 0%, transparent 100%);
+  background: linear-gradient(135deg, rgba(234, 88, 12, 0.10) 0%, var(--bg-secondary) 100%);
 }
 
 .channel-header.opencode::after {
@@ -1251,11 +1289,11 @@ onUnmounted(() => {
 }
 
 .card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(247, 250, 248, 0.96) 100%);
-  border: 1px solid rgba(216, 225, 222, 0.92);
-  border-radius: 18px;
+  background: var(--gradient-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   box-shadow: 0 10px 28px rgba(15, 23, 29, 0.06);
   position: relative;
 }
@@ -1274,7 +1312,7 @@ onUnmounted(() => {
 
 .card:hover {
   box-shadow: 0 18px 38px rgba(15, 23, 29, 0.1);
-  border-color: rgba(195, 208, 203, 0.95);
+  border-color: var(--border-secondary);
 }
 
 .card:hover::before {
@@ -1310,8 +1348,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
-  background: linear-gradient(180deg, rgba(244, 247, 248, 0.96) 0%, rgba(255, 255, 255, 0.84) 100%);
-  border-bottom: 1px solid rgba(216, 225, 222, 0.9);
+  background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+  border-bottom: 1px solid var(--border-primary);
   position: relative;
   min-height: 24px;
 }
@@ -1479,10 +1517,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 5px;
   padding: 7px 8px;
-  border-radius: 14px;
-  background: rgba(244, 247, 248, 0.88);
-  border: 1px solid rgba(216, 225, 222, 0.9);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   position: relative;
   min-height: 44px;
   overflow: hidden;
@@ -1529,7 +1567,7 @@ onUnmounted(() => {
 
 .access-card-projects:hover .access-icon {
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(139, 92, 246, 0.25));
-  transform: scale(1.1) rotate(-5deg);
+  transform: translateY(-1px);
 }
 
 /* 对话卡片 */
@@ -1544,7 +1582,7 @@ onUnmounted(() => {
 
 .access-card-sessions:hover .access-icon {
   background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(5, 150, 105, 0.25));
-  transform: scale(1.1) rotate(5deg);
+  transform: translateY(-1px);
 }
 
 /* 前往卡片 */
@@ -1559,7 +1597,7 @@ onUnmounted(() => {
 
 .access-card-goto:hover .access-icon {
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(251, 146, 60, 0.25));
-  transform: scale(1.1) translateX(3px);
+  transform: translateX(2px);
 }
 
 .access-card.clickable:hover {
@@ -1622,9 +1660,9 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px;
-  background: rgba(244, 247, 248, 0.9);
-  border-radius: 14px;
-  border: 1px solid rgba(216, 225, 222, 0.88);
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  border: 1px solid var(--border-primary);
   transition: all 0.2s ease;
 }
 
@@ -1799,8 +1837,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid rgba(216, 225, 222, 0.88);
-  border-radius: 18px;
+  border: 1px solid var(--border-primary);
+  border-radius: 14px;
 }
 
 .logs-card-body {
@@ -1827,8 +1865,8 @@ onUnmounted(() => {
 .logs-table-header {
   display: flex;
   padding: 8px 12px;
-  background: linear-gradient(180deg, rgba(237, 243, 241, 0.96) 0%, rgba(244, 247, 248, 0.92) 100%);
-  border-bottom: 1px solid rgba(216, 225, 222, 0.92);
+  background: linear-gradient(180deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
+  border-bottom: 1px solid var(--border-primary);
   font-size: 11px;
   font-weight: 700;
   color: var(--text-tertiary);
@@ -1876,20 +1914,41 @@ onUnmounted(() => {
 }
 
 [data-theme="dark"] .channel-column {
-  background: linear-gradient(180deg, rgba(17, 27, 32, 0.96) 0%, rgba(13, 22, 27, 0.98) 100%);
-  border-color: rgba(43, 66, 74, 0.9);
-  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.28);
+  background: linear-gradient(180deg, rgba(18, 27, 34, 0.98) 0%, rgba(9, 16, 22, 0.98) 100%);
+  border-color: rgba(54, 76, 86, 0.82);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
 }
 
 [data-theme="dark"] .channel-header {
-  background: linear-gradient(180deg, rgba(22, 35, 41, 0.9) 0%, rgba(17, 27, 32, 0.78) 100%);
+  background: linear-gradient(180deg, rgba(22, 34, 42, 0.9) 0%, rgba(13, 22, 29, 0.82) 100%);
 }
 
 [data-theme="dark"] .card,
 [data-theme="dark"] .access-card,
 [data-theme="dark"] .stat-inline-item {
-  background: linear-gradient(180deg, rgba(17, 27, 32, 0.95) 0%, rgba(15, 26, 31, 0.98) 100%);
-  border-color: rgba(43, 66, 74, 0.9);
+  background: linear-gradient(180deg, rgba(18, 28, 35, 0.94) 0%, rgba(12, 21, 28, 0.96) 100%);
+  border-color: rgba(54, 76, 86, 0.78);
+}
+
+[data-theme="dark"] .card:hover,
+[data-theme="dark"] .access-card.clickable:hover,
+[data-theme="dark"] .stat-inline-item:hover {
+  border-color: rgba(76, 101, 112, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+[data-theme="dark"] .card-header {
+  background: linear-gradient(180deg, rgba(22, 34, 42, 0.92) 0%, rgba(14, 24, 31, 0.96) 100%);
+  border-bottom-color: rgba(54, 76, 86, 0.72);
+}
+
+[data-theme="dark"] .logs-table-wrapper {
+  background: rgba(9, 16, 22, 0.96);
+}
+
+[data-theme="dark"] .logs-table-header {
+  background: linear-gradient(180deg, rgba(18, 29, 37, 0.96) 0%, rgba(11, 20, 27, 0.98) 100%);
+  border-bottom-color: rgba(54, 76, 86, 0.76);
 }
 
 .logs-container {
@@ -1937,6 +1996,15 @@ onUnmounted(() => {
 
 .log-row:nth-child(even) {
   background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .log-row {
+  background: rgba(9, 16, 22, 0.96);
+  border-bottom-color: rgba(54, 76, 86, 0.58);
+}
+
+[data-theme="dark"] .log-row:nth-child(even) {
+  background: rgba(13, 22, 29, 0.96);
 }
 
 .log-row:hover {
@@ -2118,7 +2186,8 @@ onUnmounted(() => {
 }
 
 [data-theme="dark"] .col-token {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-secondary);
 }
 
 .col-time {

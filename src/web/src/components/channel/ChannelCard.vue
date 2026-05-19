@@ -254,12 +254,22 @@ async function runTest() {
   gap: 8px;
   flex: 1;
   min-width: 0;
+  margin-right: 12px;
 }
 
 .channel-name {
   font-weight: 600;
   color: var(--text-primary);
   font-size: 14px;
+  flex: 1 1 auto;
+  min-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-title :deep(.n-tag) {
+  flex-shrink: 0;
 }
 
 .collapse-btn {
@@ -274,7 +284,7 @@ async function runTest() {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 
 /* 测试结果样式 */
@@ -473,6 +483,7 @@ async function runTest() {
 
   .channel-title {
     font-size: 13px;
+    margin-right: 0;
   }
 
   .channel-actions {
@@ -524,6 +535,7 @@ async function runTest() {
 
   .channel-name {
     font-size: 12px;
+    min-width: 0;
   }
 
   .channel-title :deep(.n-tag) {

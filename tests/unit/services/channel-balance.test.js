@@ -152,6 +152,15 @@ describe('channel-balance service', () => {
     ]);
   });
 
+  test('derives NewCLI website roots from gateway paths', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.detectPlatformByUrlHint('https://code.newcli.com/claude/aws')).toBe('newcli');
+    expect(service._test.buildNewCliWebBaseCandidates('https://code.newcli.com/claude/aws', {})).toEqual([
+      'https://code.newcli.com'
+    ]);
+  });
+
   test('parses metapi-compatible hub balance variants', () => {
     const service = loadServiceWithStubs();
     const payload = { data: { quota: 1000000, used_quota: 250000 } };
@@ -409,6 +418,39 @@ describe('channel-balance service', () => {
     });
   });
 
+  test('parses NewCLI dashboard subscriptions into visible balance snapshots', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildNewCliDashboardSnapshot({
+      success: true,
+      data: {
+        subscription: {
+          active: [
+            {
+              status: 'ACTIVE',
+              quotaRemaining: 2500000,
+              quotaUsed: 500000,
+              plan: { quotaLimit: 3000000 }
+            },
+            {
+              status: 'EXPIRED',
+              quotaRemaining: 1000000,
+              quotaUsed: 0,
+              plan: { quotaLimit: 1000000 }
+            }
+          ]
+        }
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'newcli',
+      remaining: 2.5,
+      used: 0.5,
+      total: 3,
+      label: '余额 $2.50'
+    });
+  });
+
   test('falls back to 88code subscription data when usage payload is not usable', async () => {
     const service = loadServiceWithStubs();
     service._test.clearBalanceCache();
@@ -507,6 +549,84 @@ describe('channel-balance service', () => {
         platform: '88code'
       });
       expect(snapshot).not.toHaveProperty('label');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('fetches NewCLI balance from the website dashboard with dedicated cookie credentials', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push({ url: req.url, cookie: req.headers.cookie, authorization: req.headers.authorization });
+      if (req.url === '/api/user/dashboard' && req.headers.cookie === 'auth_token=session-value') {
+        return sendJson(res, 200, {
+          success: true,
+          data: {
+            subscription: {
+              active: [
+                {
+                  status: 'ACTIVE',
+                  quotaRemaining: 4200000,
+                  quotaUsed: 800000,
+                  plan: { quotaLimit: 5000000 }
+                }
+              ]
+            }
+          }
+        });
+      }
+      return sendJson(res, 401, { message: '请先登录' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('claude', {
+        id: 'newcli',
+        name: 'NewCLI',
+        baseUrl: `${server.baseUrl}/claude/aws`,
+        apiKey: 'sk-ant-model',
+        balanceToken: 'auth_token=session-value'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'newcli',
+        remaining: 4.2,
+        used: 0.8,
+        total: 5,
+        label: '余额 $4.20'
+      });
+      expect(seen).toEqual([
+        { url: '/api/user/dashboard', cookie: 'auth_token=session-value', authorization: undefined }
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('keeps NewCLI model API keys hidden without probing website login endpoints', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      return sendJson(res, 500, { error: `unexpected probe ${req.url}` });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('claude', {
+        id: 'newcli-model-key',
+        name: 'NewCLI',
+        baseUrl: `${server.baseUrl}/claude/aws`,
+        apiKey: 'sk-ant-model'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: false,
+        platform: 'newcli'
+      });
+      expect(seen).toEqual([]);
     } finally {
       await server.close();
     }

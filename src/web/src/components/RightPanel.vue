@@ -81,7 +81,7 @@
       <div class="panel-header">
         <div class="header-title">
           <h3>{{ channelTitle }}</h3>
-          <n-text depth="3" class="header-hint">拖拽调整顺序</n-text>
+          <n-text depth="3" class="header-hint">启用渠道优先显示</n-text>
         </div>
         <n-button type="primary" size="small" @click="handleAddClick">
           <template #icon><n-icon><AddOutline /></n-icon></template>

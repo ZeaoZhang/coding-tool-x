@@ -892,9 +892,9 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   justify-content: space-between;
   padding: 10px 22px;
   background: var(--gradient-header);
-  border-bottom: 1px solid rgba(195, 208, 203, 0.9);
+  border-bottom: 1px solid var(--border-primary);
   flex-shrink: 0;
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.35);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.34) inset;
 }
 
 .header-actions {
@@ -903,8 +903,8 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   gap: 8px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.54);
-  border: 1px solid rgba(216, 225, 222, 0.92);
+  background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+  border: 1px solid var(--border-primary);
   box-shadow: 0 14px 34px rgba(15, 23, 29, 0.08);
 }
 
@@ -958,7 +958,7 @@ function handleViewHistoryFromFavorites({ session, channel }) {
 }
 
 .logo-section:hover {
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--hover-bg);
 }
 
 .logo-wrapper {
@@ -988,10 +988,7 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  background: linear-gradient(135deg, #18a058, #10b981);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--brand-title-color);
   line-height: 1.2;
 }
 
@@ -1008,8 +1005,8 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   margin-left: 28px;
   padding: 6px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(216, 225, 222, 0.92);
+  background: color-mix(in srgb, var(--bg-primary) 86%, transparent);
+  border: 1px solid var(--border-primary);
   box-shadow: 0 14px 36px rgba(15, 23, 29, 0.08);
 }
 
@@ -1029,7 +1026,7 @@ function handleViewHistoryFromFavorites({ session, channel }) {
 }
 
 .nav-tab.active {
-  background: linear-gradient(135deg, rgba(24, 160, 88, 0.13), rgba(24, 160, 88, 0.06));
+  background: var(--primary-color-soft);
 }
 
 .nav-tab.active::after {
@@ -1037,7 +1034,7 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 1px solid rgba(24, 160, 88, 0.16);
+  border: 1px solid rgba(24, 160, 88, 0.22);
   background: transparent;
 }
 
@@ -1257,12 +1254,13 @@ function handleViewHistoryFromFavorites({ session, channel }) {
 
 [data-theme="dark"] .header-actions,
 [data-theme="dark"] .nav-tabs {
-  background: rgba(17, 27, 32, 0.74);
-  border-color: rgba(43, 66, 74, 0.94);
+  background: rgba(12, 21, 27, 0.86);
+  border-color: rgba(54, 76, 86, 0.9);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.26);
 }
 
 [data-theme="dark"] .logo-section:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 @media (max-width: 1024px) {
