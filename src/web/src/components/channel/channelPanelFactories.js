@@ -47,7 +47,7 @@ const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i
-const MANUAL_BALANCE_CREDENTIAL_PLATFORMS = new Set(['anyrouter'])
+const MANUAL_BALANCE_CREDENTIAL_PLATFORMS = new Set(['anyrouter', 'newcli'])
 
 function normalizeConcurrency(value) {
   const num = Number(value)
@@ -114,6 +114,7 @@ function detectBalancePlatform(form = {}) {
     form.baseUrl
   ].map(value => String(value || '').trim().toLowerCase()).join(' ')
   if (text.includes('anyrouter')) return 'anyrouter'
+  if (text.includes('code.newcli.com') || text.includes('newcli') || text.includes('new-cli')) return 'newcli'
   return null
 }
 
@@ -128,7 +129,7 @@ function buildBalanceCredentialField(label = '余额凭据') {
     label,
     type: 'password',
     showWhen: shouldShowManualBalanceCredential,
-    placeholder: '选填：余额接口需要的会话 Token / Cookie'
+    placeholder: '选填：余额接口需要的会话 Token / Cookie（NewCLI 可填完整 Cookie）'
   }
 }
 
@@ -569,9 +570,6 @@ const channelPanelFactories = {
       } else if (channel.health?.status === 'checking') {
         tags.push({ text: '检测中', type: 'warning' })
       }
-      if (channel.enabled === false) {
-        tags.push({ text: '未启用', type: 'default' })
-      }
       return tags
     },
     buildInfoRows: (channel, helpers) => {
@@ -835,9 +833,6 @@ const channelPanelFactories = {
       } else if (channel.health?.status === 'checking') {
         tags.push({ text: '检测中', type: 'warning' })
       }
-      if (channel.enabled === false) {
-        tags.push({ text: '已禁用', type: 'default' })
-      }
       return tags
     },
     buildInfoRows: (channel, helpers) => ([
@@ -1092,9 +1087,6 @@ const channelPanelFactories = {
         tags.push({ text: helpers.formatFreeze(channel.health.freezeRemaining), type: 'error' })
       } else if (channel.health?.status === 'checking') {
         tags.push({ text: '检测中', type: 'warning' })
-      }
-      if (channel.enabled === false) {
-        tags.push({ text: '已禁用', type: 'default' })
       }
       return tags
     },
@@ -1399,9 +1391,6 @@ const channelPanelFactories = {
         tags.push({ text: helpers.formatFreeze(channel.health.freezeRemaining), type: 'error' })
       } else if (channel.health?.status === 'checking') {
         tags.push({ text: '检测中', type: 'warning' })
-      }
-      if (channel.enabled === false) {
-        tags.push({ text: '已禁用', type: 'default' })
       }
       return tags
     },

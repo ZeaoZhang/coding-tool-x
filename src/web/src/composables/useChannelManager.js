@@ -316,7 +316,11 @@ export default function useChannelManager(config) {
       const enabled = typeof value === 'boolean' ? value : channel.enabled === false
       await config.api.toggle(channel, enabled)
       message.success(`${config.displayName} 渠道已${enabled ? '启用' : '禁用'}`)
-      if (!enabled) {
+      if (enabled) {
+        delete state.collapsed[channel.id]
+        setLocalCollapse(config.storageKeys.localCollapse, state.collapsed)
+        saveCollapseSettings()
+      } else {
         state.collapsed[channel.id] = true
         setLocalCollapse(config.storageKeys.localCollapse, state.collapsed)
         saveCollapseSettings()
