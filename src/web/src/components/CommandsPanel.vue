@@ -221,6 +221,8 @@ const commandUsageHint = computed(() =>
     ? '使用 /命令名 在 OpenCode 中调用'
     : currentPlatform.value === 'gemini'
     ? '使用 /命令名 在 Gemini CLI 中调用'
+    : currentPlatform.value === 'codex'
+    ? '使用 /命令名 在 Codex CLI 中调用'
     : '使用 /命令名 在 Claude Code 中调用'
 )
 

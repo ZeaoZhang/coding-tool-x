@@ -329,6 +329,56 @@ describe('SkillService.getInstalledSkills', () => {
   });
 });
 
+describe('SkillService.getSkillDetail', () => {
+  it('returns absolute paths for installed skills', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const skillDir = path.join(svc.installDir, 'detail-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: Detail Skill\ndescription: Has path\n---\nBody',
+      'utf-8'
+    );
+
+    const detail = await svc.getSkillDetail('detail-skill');
+
+    expect(detail).toEqual(expect.objectContaining({
+      directory: 'detail-skill',
+      installed: true,
+      path: skillDir,
+      installPath: skillDir,
+      fullPath: path.join(skillDir, 'SKILL.md')
+    }));
+  });
+
+  it('returns absolute paths for local repository skills', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repoRoot = path.join(testDir, 'repo');
+    const skillDir = path.join(repoRoot, 'skills', 'repo-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: Repo Skill\ndescription: From repo\n---\nBody',
+      'utf-8'
+    );
+
+    const detail = await svc.getSkillDetail('repo-skill', {
+      provider: 'local',
+      localPath: repoRoot,
+      directory: 'skills'
+    }, 'skills/repo-skill');
+
+    expect(detail).toEqual(expect.objectContaining({
+      directory: 'repo-skill',
+      installed: false,
+      path: skillDir,
+      fullPath: path.join(skillDir, 'SKILL.md')
+    }));
+  });
+});
+
 describe('SkillService file operations', () => {
   it('createCustomSkill writes SKILL.md with frontmatter into storage dir', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');

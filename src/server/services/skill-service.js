@@ -2041,7 +2041,8 @@ ${content}
   async getSkillDetail(directory, repoHint = null, fullDirectoryHint = '') {
     const safeDirectory = this.normalizeSkillDirectory(directory);
     // 先检查本地是否安装
-    const localPath = path.join(this.resolveInstallPath(safeDirectory).path, 'SKILL.md');
+    const localSkillDir = this.resolveInstallPath(safeDirectory).path;
+    const localPath = path.join(localSkillDir, 'SKILL.md');
 
     if (fs.existsSync(localPath)) {
       const content = fs.readFileSync(localPath, 'utf-8');
@@ -2058,6 +2059,9 @@ ${content}
         content: body,
         fullContent: content,
         installed: true,
+        path: localSkillDir,
+        fullPath: localPath,
+        installPath: localSkillDir,
         source: this.isProtectedSkillDirectory(safeDirectory) ? 'system-installed' : 'local',
         protected: this.isProtectedSkillDirectory(safeDirectory)
       };
@@ -2086,7 +2090,8 @@ ${content}
         repoProjectPath: repo.projectPath || null,
         repoLocalPath: repo.localPath || null,
         repoId: repo.id,
-        repoUrl: repo.repoUrl || buildRepoUrl(repo)
+        repoUrl: repo.repoUrl || buildRepoUrl(repo),
+        path: fullDirectory
       };
     };
 
@@ -2106,7 +2111,11 @@ ${content}
               : path.join(repo.localPath, 'SKILL.md');
             if (!fs.existsSync(skillMdPath)) continue;
             const content = fs.readFileSync(skillMdPath, 'utf-8');
-            return parseRemoteSkillContent(content, repo, candidateDir);
+            return {
+              ...parseRemoteSkillContent(content, repo, candidateDir),
+              path: path.dirname(skillMdPath),
+              fullPath: skillMdPath
+            };
           }
           return null;
         }

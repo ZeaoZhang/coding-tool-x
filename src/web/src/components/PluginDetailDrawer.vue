@@ -49,12 +49,7 @@
                 </div>
               </div>
 
-              <div class="asset-detail-info-section" v-if="plugin?.directory || plugin?.installPath">
-                <h3 class="asset-detail-section-title">安装路径</h3>
-                <div class="asset-detail-box">
-                  <code>{{ plugin.installPath || plugin.directory }}</code>
-                </div>
-              </div>
+              <AssetPathField :path="pluginPath" />
             </div>
           </n-tab-pane>
 
@@ -89,6 +84,7 @@ import {
 import { marked } from 'marked'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { getPluginReadme } from '../api/plugins'
+import AssetPathField from './AssetPathField.vue'
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -124,6 +120,7 @@ const readmeContent = ref('')
 const loadingReadme = ref(false)
 
 const isRemoteRepoLink = computed(() => /^(https?:)?\/\//.test(props.plugin?.repoUrl || props.plugin?.gitUrl || ''))
+const pluginPath = computed(() => props.plugin?.installPath || props.plugin?.fullPath || props.plugin?.path || props.plugin?.directory || '')
 
 const bodyContentStyle = {
   height: '100%',

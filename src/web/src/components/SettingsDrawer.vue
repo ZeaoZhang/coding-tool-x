@@ -277,12 +277,12 @@
 
                 <n-divider />
 
-                <!-- 远程 Bot 通知 -->
+                <!-- 远程通知渠道 -->
                 <div class="setting-item">
                   <div class="setting-label">
-                    <n-text strong>远程 Bot 通知</n-text>
+                    <n-text strong>远程通知渠道</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      支持 GenericAgent 同款微信、QQ、飞书、企业微信、钉钉、Telegram 渠道
+                      支持微信、QQ、飞书、企业微信、钉钉、Telegram
                     </n-text>
                   </div>
 
@@ -314,64 +314,140 @@
                       class="remote-provider-card"
                     >
                       <div class="remote-provider-header">
-                        <div>
-                          <n-text strong>{{ provider.name || getRemoteProviderLabel(provider.type) }}</n-text>
-                          <n-text depth="3" style="font-size: 12px; display: block;">
-                            {{ getRemoteProviderDescription(provider.type) }}
-                          </n-text>
+                        <div class="remote-provider-title-row">
+                          <div class="remote-provider-avatar">
+                            {{ getRemoteProviderInitial(provider.type) }}
+                          </div>
+                          <div class="remote-provider-title">
+                            <div class="remote-provider-name-row">
+                              <n-text strong>{{ provider.name || getRemoteProviderLabel(provider.type) }}</n-text>
+                              <n-tag
+                                size="tiny"
+                                :bordered="false"
+                                :type="provider.enabled ? 'success' : 'default'"
+                              >
+                                {{ provider.enabled ? '已启用' : '未启用' }}
+                              </n-tag>
+                            </div>
+                            <n-text depth="3" style="font-size: 12px; display: block;">
+                              {{ getRemoteProviderDescription(provider.type) }}
+                            </n-text>
+                          </div>
                         </div>
                         <n-space size="small" align="center">
-                          <n-switch v-model:value="provider.enabled" />
-                          <n-button size="small" quaternary type="error" @click="removeRemoteProvider(provider.id)">
-                            删除
+                          <n-switch v-model:value="provider.enabled" size="small" />
+                          <n-button size="small" quaternary circle type="error" @click="removeRemoteProvider(provider.id)">
+                            <template #icon>
+                              <n-icon><TrashOutline /></n-icon>
+                            </template>
                           </n-button>
                         </n-space>
                       </div>
 
                       <div class="remote-provider-fields">
-                        <n-input
-                          v-model:value="provider.name"
-                          size="small"
-                          placeholder="渠道名称"
-                        />
+                        <div class="remote-field">
+                          <span class="remote-field-label">渠道名称</span>
+                          <n-input
+                            v-model:value="provider.name"
+                            size="small"
+                            placeholder="例如：我的飞书"
+                          />
+                        </div>
 
                         <template v-if="provider.type === 'wechatBot'">
-                          <n-input v-model:value="provider.config.tokenFile" size="small" placeholder="token.json 路径，例如 ~/.wxbot/token.json" />
-                          <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="或直接填写 bot_token" />
-                          <n-input v-model:value="provider.config.targetUserId" size="small" placeholder="接收用户 ID" />
-                          <n-input v-model:value="provider.config.contextToken" size="small" placeholder="context_token，可选" />
+                          <div class="remote-field remote-field-wide">
+                            <span class="remote-field-label">token.json 路径</span>
+                            <n-input v-model:value="provider.config.tokenFile" size="small" placeholder="~/.wxbot/token.json" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">Token</span>
+                            <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="可直接填写 token" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">接收用户 ID</span>
+                            <n-input v-model:value="provider.config.targetUserId" size="small" placeholder="user id" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">Context Token</span>
+                            <n-input v-model:value="provider.config.contextToken" size="small" placeholder="可选" />
+                          </div>
                         </template>
 
                         <template v-else-if="provider.type === 'qqBot'">
-                          <n-input v-model:value="provider.config.endpoint" size="small" placeholder="OneBot HTTP 地址，例如 http://127.0.0.1:3000" />
-                          <n-input v-model:value="provider.config.accessToken" size="small" type="password" show-password-on="click" placeholder="Access Token，可选" />
-                          <n-select v-model:value="provider.config.targetType" size="small" :options="qqTargetOptions" />
-                          <n-input v-model:value="provider.config.targetId" size="small" placeholder="QQ 用户号或群号" />
+                          <div class="remote-field remote-field-wide">
+                            <span class="remote-field-label">OneBot HTTP 地址</span>
+                            <n-input v-model:value="provider.config.endpoint" size="small" placeholder="http://127.0.0.1:3000" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">Access Token</span>
+                            <n-input v-model:value="provider.config.accessToken" size="small" type="password" show-password-on="click" placeholder="可选" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">接收类型</span>
+                            <n-select v-model:value="provider.config.targetType" size="small" :options="qqTargetOptions" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">用户号或群号</span>
+                            <n-input v-model:value="provider.config.targetId" size="small" placeholder="QQ ID" />
+                          </div>
                         </template>
 
                         <template v-else-if="provider.type === 'feishuBot'">
-                          <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+                          <div class="remote-field remote-field-wide">
+                            <span class="remote-field-label">Webhook URL</span>
+                            <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+                          </div>
                         </template>
 
                         <template v-else-if="provider.type === 'wecomBot'">
-                          <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="企业微信群机器人 Webhook URL" />
+                          <div class="remote-field remote-field-wide">
+                            <span class="remote-field-label">Webhook URL</span>
+                            <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="企业微信群机器人 Webhook URL" />
+                          </div>
                         </template>
 
                         <template v-else-if="provider.type === 'dingtalkBot'">
-                          <n-select v-model:value="provider.config.mode" size="small" :options="dingtalkModeOptions" />
+                          <div class="remote-field">
+                            <span class="remote-field-label">接入模式</span>
+                            <n-select v-model:value="provider.config.mode" size="small" :options="dingtalkModeOptions" />
+                          </div>
                           <template v-if="provider.config.mode === 'app'">
-                            <n-input v-model:value="provider.config.clientId" size="small" placeholder="App Key / Client ID" />
-                            <n-input v-model:value="provider.config.clientSecret" size="small" type="password" show-password-on="click" placeholder="App Secret" />
-                            <n-select v-model:value="provider.config.targetType" size="small" :options="dingtalkTargetOptions" />
-                            <n-input v-model:value="provider.config.targetId" size="small" placeholder="用户 ID 或群会话 ID" />
+                            <div class="remote-field">
+                              <span class="remote-field-label">App Key</span>
+                              <n-input v-model:value="provider.config.clientId" size="small" placeholder="Client ID" />
+                            </div>
+                            <div class="remote-field">
+                              <span class="remote-field-label">App Secret</span>
+                              <n-input v-model:value="provider.config.clientSecret" size="small" type="password" show-password-on="click" placeholder="Secret" />
+                            </div>
+                            <div class="remote-field">
+                              <span class="remote-field-label">接收类型</span>
+                              <n-select v-model:value="provider.config.targetType" size="small" :options="dingtalkTargetOptions" />
+                            </div>
+                            <div class="remote-field">
+                              <span class="remote-field-label">接收对象 ID</span>
+                              <n-input v-model:value="provider.config.targetId" size="small" placeholder="用户 ID 或群会话 ID" />
+                            </div>
                           </template>
-                          <n-input v-else v-model:value="provider.config.webhookUrl" size="small" placeholder="钉钉自定义机器人 Webhook URL" />
+                          <div v-else class="remote-field remote-field-wide">
+                            <span class="remote-field-label">Webhook URL</span>
+                            <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="钉钉自定义机器人 Webhook URL" />
+                          </div>
                         </template>
 
                         <template v-else-if="provider.type === 'telegramBot'">
-                          <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="Bot Token" />
-                          <n-input v-model:value="provider.config.chatId" size="small" placeholder="Chat ID" />
-                          <n-input v-model:value="provider.config.proxy" size="small" placeholder="Proxy，可选，例如 http://127.0.0.1:2082" />
+                          <div class="remote-field">
+                            <span class="remote-field-label">Token</span>
+                            <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="Telegram token" />
+                          </div>
+                          <div class="remote-field">
+                            <span class="remote-field-label">Chat ID</span>
+                            <n-input v-model:value="provider.config.chatId" size="small" placeholder="Chat ID" />
+                          </div>
+                          <div class="remote-field remote-field-wide">
+                            <span class="remote-field-label">Proxy</span>
+                            <n-input v-model:value="provider.config.proxy" size="small" placeholder="可选，例如 http://127.0.0.1:2082" />
+                          </div>
                         </template>
                       </div>
 
@@ -1114,7 +1190,8 @@ import {
   SettingsOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
   SunnyOutline, MoonOutline, NotificationsOutline,
-  SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline
+  SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline,
+  TrashOutline
 } from '@vicons/ionicons5'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { getSecurityStatus, setSecurityPassword } from '../api/security'
@@ -1244,35 +1321,53 @@ function createNotificationPlatformState(platform = {}) {
 
 const REMOTE_PROVIDER_DEFINITIONS = {
   wechatBot: {
-    label: '微信 Bot',
-    description: '使用 GenericAgent 同款个人微信 iLink Bot token 发送通知',
-    hint: '首次 token 可由 GA 微信 Bot 扫码生成；也可以直接填写 bot_token。'
+    label: '微信',
+    description: '使用个人微信 iLink token 发送通知',
+    hint: '首次 token 可由 GA 微信扫码生成；也可以直接填写 token。'
   },
   qqBot: {
-    label: 'QQ Bot',
+    label: 'QQ',
     description: '通过 OneBot / NapCat / go-cqhttp 兼容 HTTP 接口发送通知',
     hint: 'GA 当前构建已移除 QQ 前端，这里按 OneBot 兼容桥接入。'
   },
   feishuBot: {
-    label: '飞书 Bot',
+    label: '飞书',
     description: '通过飞书自定义机器人 Webhook 发送通知',
     hint: '填写飞书自定义机器人 Webhook URL。'
   },
   wecomBot: {
-    label: '企业微信 Bot',
+    label: '企业微信',
     description: '通过企业微信群机器人 Webhook 发送通知',
     hint: '当前通知发送使用企业微信群机器人 Webhook；GA 的 bot_id / secret 长连接模式不适合单向通知。'
   },
   dingtalkBot: {
-    label: '钉钉 Bot',
+    label: '钉钉',
     description: '支持钉钉自定义机器人 Webhook 和 GA 同款 App 模式',
     hint: 'App 模式需要 App Key / App Secret，并填写用户 ID 或群会话 ID。'
   },
   telegramBot: {
-    label: 'Telegram Bot',
+    label: 'Telegram',
     description: '通过 Telegram Bot API sendMessage 发送通知',
-    hint: '需要 Bot Token 和 Chat ID。'
+    hint: '需要 Token 和 Chat ID。'
   }
+}
+
+const REMOTE_PROVIDER_INITIALS = {
+  wechatBot: '微',
+  qqBot: 'Q',
+  feishuBot: '飞',
+  wecomBot: '企',
+  dingtalkBot: '钉',
+  telegramBot: 'T'
+}
+
+const LEGACY_REMOTE_PROVIDER_NAMES = {
+  wechatBot: '微信 Bot',
+  qqBot: 'QQ Bot',
+  feishuBot: '飞书 Bot',
+  wecomBot: '企业微信 Bot',
+  dingtalkBot: '钉钉 Bot',
+  telegramBot: 'Telegram Bot'
 }
 
 const remoteProviderOptions = Object.entries(REMOTE_PROVIDER_DEFINITIONS).map(([value, item]) => ({
@@ -1323,10 +1418,12 @@ function createRemoteProvider(type = 'telegramBot') {
 
 function normalizeRemoteProvider(provider = {}) {
   const type = REMOTE_PROVIDER_DEFINITIONS[provider.type] ? provider.type : 'telegramBot'
+  const legacyName = LEGACY_REMOTE_PROVIDER_NAMES[type]
+  const name = provider.name && provider.name !== legacyName ? provider.name : getRemoteProviderLabel(type)
   return {
     id: provider.id || `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type,
-    name: provider.name || getRemoteProviderLabel(type),
+    name,
     enabled: provider.enabled === true,
     config: {
       ...createRemoteProviderConfig(type),
@@ -1336,7 +1433,7 @@ function normalizeRemoteProvider(provider = {}) {
 }
 
 function getRemoteProviderLabel(type) {
-  return REMOTE_PROVIDER_DEFINITIONS[type]?.label || '远程 Bot'
+  return REMOTE_PROVIDER_DEFINITIONS[type]?.label || '远程通知'
 }
 
 function getRemoteProviderDescription(type) {
@@ -1345,6 +1442,10 @@ function getRemoteProviderDescription(type) {
 
 function getRemoteProviderHint(type) {
   return REMOTE_PROVIDER_DEFINITIONS[type]?.hint || ''
+}
+
+function getRemoteProviderInitial(type) {
+  return REMOTE_PROVIDER_INITIALS[type] || '通'
 }
 
 function createNotificationSettingsState(data = {}) {
@@ -2706,6 +2807,132 @@ watch(activeMenu, (newVal, oldVal) => {
   flex-direction: column;
   gap: 2px;
   padding: 4px 0;
+}
+
+.remote-provider-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.remote-provider-card {
+  padding: 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.remote-provider-card:hover {
+  border-color: var(--border-secondary);
+  box-shadow: 0 2px 8px rgba(148, 163, 184, 0.1);
+}
+
+[data-theme="dark"] .remote-provider-card {
+  background: rgba(30, 41, 59, 0.4);
+  border-color: rgba(148, 163, 184, 0.15);
+}
+
+.remote-provider-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.remote-provider-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.remote-provider-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+}
+
+[data-theme="dark"] .remote-provider-avatar {
+  background: rgba(15, 23, 42, 0.55);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+
+.remote-provider-title {
+  min-width: 0;
+}
+
+.remote-provider-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.remote-provider-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.remote-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.remote-field-wide {
+  grid-column: 1 / -1;
+}
+
+.remote-field-label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.remote-provider-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-primary);
+}
+
+[data-theme="dark"] .remote-provider-actions {
+  border-top-color: rgba(148, 163, 184, 0.12);
+}
+
+@media (max-width: 768px) {
+  .remote-provider-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .remote-provider-header,
+  .remote-provider-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .remote-provider-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* 安全设置样式 */
