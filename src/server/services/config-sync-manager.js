@@ -6,6 +6,7 @@
  * - Codex CLI: ~/.codex/skills/, ~/.codex/prompts/
  * - Gemini CLI: ~/.gemini/{skills,commands,agents}/
  * - OpenCode CLI: ~/.config/opencode/{skills,commands,agents,plugins}/
+ * - Pi Agent: ~/.pi/agent/{skills,prompts,extensions}/
  *
  * Config types:
  * - skills: directory-based (each skill is a dir with SKILL.md)
@@ -29,6 +30,7 @@ const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');
 const GEMINI_DIR = path.join(HOME, '.gemini');
 const OPENCODE_DIR = NATIVE_PATHS.opencode.config;
+const PI_AGENT_DIR = NATIVE_PATHS.pi.dir;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 
 // Config type definitions
@@ -44,7 +46,9 @@ const CONFIG_TYPES = {
     geminiSupported: true,
     opencodeTarget: 'skills',
     opencodeLegacyTarget: 'skill',
-    opencodeSupported: true
+    opencodeSupported: true,
+    piTarget: 'skills',
+    piSupported: true
   },
   commands: {
     isDirectory: false,
@@ -58,7 +62,9 @@ const CONFIG_TYPES = {
     geminiSupported: true,
     opencodeTarget: 'commands',
     opencodeLegacyTarget: 'command',
-    opencodeSupported: true
+    opencodeSupported: true,
+    piTarget: 'prompts',
+    piSupported: true
   },
   agents: {
     isDirectory: false,
@@ -69,7 +75,8 @@ const CONFIG_TYPES = {
     geminiSupported: true,
     opencodeTarget: 'agents',
     opencodeLegacyTarget: 'agent',
-    opencodeSupported: true
+    opencodeSupported: true,
+    piSupported: false
   },
   plugins: {
     isDirectory: true,
@@ -78,7 +85,9 @@ const CONFIG_TYPES = {
     geminiSupported: false,
     opencodeTarget: 'plugins',
     opencodeLegacyTarget: 'plugin',
-    opencodeSupported: true
+    opencodeSupported: true,
+    piTarget: 'extensions',
+    piSupported: true
   }
 };
 
@@ -90,6 +99,7 @@ class ConfigSyncManager {
     this.codexDir = CODEX_DIR;
     this.geminiDir = GEMINI_DIR;
     this.opencodeDir = OPENCODE_DIR;
+    this.piDir = PI_AGENT_DIR;
     this.configTypes = CONFIG_TYPES;
   }
 
@@ -575,9 +585,89 @@ class ConfigSyncManager {
   }
 
   /**
+   * Sync a config item to Pi Agent.
+   * Pi treats commands as prompt templates and plugins as extensions/packages.
+   */
+  syncToPi(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    if (!config.piSupported) {
+      console.log(`[ConfigSyncManager] ${type} not supported natively by Pi, skipping`);
+      return { success: true, skipped: true, reason: 'Not supported natively by Pi' };
+    }
+
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
+    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    if (!fs.existsSync(sourcePath)) {
+      console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
+      return { success: false, error: 'Source not found' };
+    }
+
+    const targetPath = path.join(this.piDir, config.piTarget, safeName);
+    try {
+      if (config.isDirectory) {
+        this._ensureDir(path.dirname(targetPath));
+        this._copyDirRecursive(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Pi (directory)`);
+      } else {
+        this._ensureDir(path.dirname(targetPath));
+        this._copyFile(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Pi (file)`);
+      }
+
+      return { success: true, target: targetPath };
+    } catch (err) {
+      console.error('[ConfigSyncManager] Sync to Pi failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  removeFromPi(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
+    if (!config.piSupported) {
+      return { success: true, skipped: true, reason: 'Not supported natively by Pi' };
+    }
+
+    const targetPath = path.join(this.piDir, config.piTarget, safeName);
+    if (!fs.existsSync(targetPath)) {
+      return { success: true, message: 'Already removed' };
+    }
+
+    try {
+      if (config.isDirectory) {
+        this._removeRecursive(targetPath);
+      } else {
+        fs.unlinkSync(targetPath);
+        this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.piDir, config.piTarget));
+      }
+      console.log(`[ConfigSyncManager] Removed ${type}/${name} from Pi`);
+      return { success: true };
+    } catch (err) {
+      console.error('[ConfigSyncManager] Remove from Pi failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Batch sync based on registry data
    * @param {string} type - Config type
-   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode } } }
+   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode, pi } } }
    * @returns {Object} Results summary
    */
   syncAll(type, registryItems) {
@@ -662,6 +752,20 @@ class ConfigSyncManager {
             results.removed.push({ type, name, platform: 'opencode' });
           }
         }
+
+        if (platforms.pi) {
+          const result = this.syncToPi(type, name);
+          if (result.success && !result.skipped) {
+            results.synced.push({ type, name, platform: 'pi' });
+          } else if (!result.success) {
+            results.errors.push({ type, name, platform: 'pi', error: result.error });
+          }
+        } else {
+          const result = this.removeFromPi(type, name);
+          if (result.success && !result.message && !result.skipped) {
+            results.removed.push({ type, name, platform: 'pi' });
+          }
+        }
       } else {
         // Item disabled, remove from all platforms
         const claudeResult = this.removeFromClaude(type, name);
@@ -682,6 +786,11 @@ class ConfigSyncManager {
         const opencodeResult = this.removeFromOpenCode(type, name);
         if (opencodeResult.success && !opencodeResult.message && !opencodeResult.skipped) {
           results.removed.push({ type, name, platform: 'opencode' });
+        }
+
+        const piResult = this.removeFromPi(type, name);
+        if (piResult.success && !piResult.message && !piResult.skipped) {
+          results.removed.push({ type, name, platform: 'pi' });
         }
       }
     }

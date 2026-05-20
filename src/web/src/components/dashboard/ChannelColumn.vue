@@ -1,7 +1,11 @@
 <template>
   <div class="channel-column">
     <!-- 渠道头部 -->
-    <div class="channel-header" :class="channelType">
+    <div
+      class="channel-header"
+      :class="[channelType, { 'custom-cli': platformConfig.custom }]"
+      :style="platformConfig.custom ? { '--channel-accent': accentColor } : null"
+    >
       <!-- 拖拽手柄 -->
       <div class="drag-handle" title="拖拽排序">
         <n-icon :size="16">
@@ -16,8 +20,8 @@
       </div>
       <h2 class="channel-title">{{ channelTitle }}</h2>
 
-      <!-- 配置入口 (Claude / Codex / Gemini / OpenCode) -->
-      <div v-if="['claude', 'codex', 'gemini', 'opencode'].includes(channelType)" class="claude-extra-area">
+      <!-- 配置入口 -->
+      <div v-if="platformConfig.supportsManagedConfig !== false" class="claude-extra-area">
         <n-tooltip trigger="hover">
           <template #trigger>
             <n-button
@@ -52,7 +56,7 @@
           </template>
           Commands 命令管理
         </n-tooltip>
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="platformConfig.supportsAgents !== false" trigger="hover">
           <template #trigger>
             <n-button
               text
@@ -90,7 +94,7 @@
     <!-- 滚动内容区 -->
     <div v-if="!isLocked" class="channel-content">
       <!-- 代理控制 -->
-      <div class="card">
+      <div v-if="platformConfig.supportsProxy !== false" class="card">
         <div class="card-header">
           <n-icon :size="16">
             <PowerOutline />
@@ -193,7 +197,11 @@
         </div>
         <div class="card-body" style="padding: 8px 10px;">
           <div class="quick-access-list">
-            <div class="access-card access-card-projects clickable" @click="goToProjects">
+            <div
+              class="access-card access-card-projects"
+              :class="{ clickable: platformConfig.supportsProjects !== false, disabled: platformConfig.supportsProjects === false }"
+              @click="goToProjects"
+            >
               <div class="access-icon">
                 <n-icon :size="16"><FolderOutline /></n-icon>
               </div>
@@ -202,7 +210,11 @@
                 <span class="access-value">{{ stats.projects }}</span>
               </div>
             </div>
-            <div class="access-card access-card-sessions clickable" @click="showRecentSessions = true">
+            <div
+              class="access-card access-card-sessions"
+              :class="{ clickable: platformConfig.supportsSessions !== false, disabled: platformConfig.supportsSessions === false }"
+              @click="openRecentSessions"
+            >
               <div class="access-icon">
                 <n-icon :size="16"><ChatbubblesOutline /></n-icon>
               </div>
@@ -211,7 +223,11 @@
                 <span class="access-value">{{ stats.sessions }}</span>
               </div>
             </div>
-            <div class="access-card access-card-goto clickable" @click="goToChannelPage">
+            <div
+              class="access-card access-card-goto"
+              :class="{ clickable: platformConfig.supportsProjects !== false, disabled: platformConfig.supportsProjects === false }"
+              @click="goToChannelPage"
+            >
               <div class="access-icon">
                 <n-icon :size="16"><ArrowForwardOutline /></n-icon>
               </div>
@@ -304,7 +320,7 @@
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
-            <template v-else-if="channelType === 'opencode'">
+            <template v-else-if="channelType === 'opencode' || channelType === 'pi'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">推理</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
@@ -363,7 +379,7 @@
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
-                <template v-else-if="channelType === 'opencode'">
+                <template v-else-if="channelType === 'opencode' || channelType === 'pi'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'reasoning') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
@@ -393,7 +409,11 @@
     </div>
 
     <!-- 最新对话抽屉 -->
-    <RecentSessionsDrawer v-model:visible="showRecentSessions" :channel="channelType" />
+    <RecentSessionsDrawer
+      v-if="platformConfig.supportsSessions !== false"
+      v-model:visible="showRecentSessions"
+      :channel="channelType"
+    />
   </div>
 </template>
 
@@ -402,19 +422,11 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { NIcon, NText, NSwitch, NTag, NButton, NTooltip, NPopover, useMessage } from 'naive-ui'
 import {
-  ChatboxEllipsesOutline,
-  CodeSlashOutline,
-  SparklesOutline,
   PowerOutline,
   RocketOutline,
   TrendingUpOutline,
-  FlashOutline,
   RadioOutline,
   TrashOutline,
-  DocumentTextOutline,
-  ChevronForwardOutline,
-  ChevronDownOutline,
-  SwapHorizontalOutline,
   CheckmarkCircleOutline,
   CloseCircleOutline,
   FolderOutline,
@@ -425,11 +437,12 @@ import {
   ReorderTwoOutline,
   ExtensionPuzzleOutline,
   TerminalOutline,
-  PersonOutline,
-  StatsChartOutline
+  PersonOutline
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
+import { useUIConfig } from '../../composables/useUIConfig'
+import { getPlatformConfig } from '../../config/platforms'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import {
   getUIConfig,
@@ -439,34 +452,38 @@ import {
   updateChannel,
   updateCodexChannel,
   updateGeminiChannel,
-  updateOpenCodeChannel
+  updateOpenCodeChannel,
+  updatePiChannel
 } from '../../api/channels'
 import {
   getClaudeTodayStatistics,
   getCodexTodayStatistics,
   getGeminiTodayStatistics,
-  getOpenCodeTodayStatistics
+  getOpenCodeTodayStatistics,
+  getPiTodayStatistics
 } from '../../api/statistics'
 
 const props = defineProps({
   channelType: {
     type: String,
-    required: true,
-    validator: (value) => ['claude', 'codex', 'gemini', 'opencode'].includes(value)
+    required: true
   }
 })
 
 const router = useRouter()
 const message = useMessage()
+const { uiConfig } = useUIConfig()
 const {
   claudeProxy,
   codexProxy,
   geminiProxy,
   opencodeProxy,
+  piProxy,
   claudeChannels,
   codexChannels,
   geminiChannels,
   opencodeChannels,
+  piChannels,
   schedulerState,
   getProxyState,
   startProxy,
@@ -482,32 +499,10 @@ const {
 const { dashboardData, isLoading: dashboardLoading, loadDashboard } = useDashboard()
 
 // 渠道配置
-const channelConfig = {
-  claude: {
-    title: 'ClaudeCode',
-    subtitle: '智能编程助手',
-    icon: ChatboxEllipsesOutline
-  },
-  codex: {
-    title: 'Codex-CLI',
-    subtitle: '高效代码生成',
-    icon: CodeSlashOutline
-  },
-  gemini: {
-    title: 'Gemini-CLI',
-    subtitle: '多模态AI助手',
-    icon: SparklesOutline
-  },
-  opencode: {
-    title: 'OpenCode',
-    subtitle: 'AI 代码助手',
-    icon: ExtensionPuzzleOutline
-  }
-}
-
-const channelTitle = computed(() => channelConfig[props.channelType].title)
-const channelSubtitle = computed(() => channelConfig[props.channelType].subtitle)
-const channelIcon = computed(() => channelConfig[props.channelType].icon)
+const platformConfig = computed(() => getPlatformConfig(props.channelType, uiConfig.value.customCliPlatforms))
+const channelTitle = computed(() => platformConfig.value.title || platformConfig.value.label || props.channelType)
+const channelIcon = computed(() => platformConfig.value.icon || TerminalOutline)
+const accentColor = computed(() => platformConfig.value.color || '#64748b')
 
 // 代理状态（根据渠道类型选择）
 const proxyState = computed(() => {
@@ -515,6 +510,17 @@ const proxyState = computed(() => {
   if (props.channelType === 'codex') return codexProxy.value
   if (props.channelType === 'gemini') return geminiProxy.value
   if (props.channelType === 'opencode') return opencodeProxy.value
+  if (props.channelType === 'pi') return piProxy.value
+  if (platformConfig.value.custom) {
+    return {
+      running: false,
+      loading: false,
+      activeChannel: null,
+      port: null,
+      runtime: null,
+      startTime: null
+    }
+  }
   return {}
 })
 
@@ -524,7 +530,8 @@ const channelTypeName = computed(() => {
   if (props.channelType === 'codex') return 'Codex'
   if (props.channelType === 'gemini') return 'Gemini'
   if (props.channelType === 'opencode') return 'OpenCode'
-  return ''
+  if (props.channelType === 'pi') return 'Pi'
+  return platformConfig.value.label || props.channelType
 })
 
 // 统计数据
@@ -564,10 +571,7 @@ const isAnimating = ref({
 
 // 模型统计数据（用于图表）
 const modelStats = computed(() => {
-  const toolType = props.channelType === 'claude' ? 'claude' :
-                   props.channelType === 'codex' ? 'codex' :
-                   props.channelType === 'opencode' ? 'opencode' : 'gemini'
-  return dashboardData.value?.todayStats?.[toolType]?.byModel || {}
+  return dashboardData.value?.todayStats?.[props.channelType]?.byModel || {}
 })
 
 // 数字滚动动画函数
@@ -616,7 +620,8 @@ const CHANNEL_COLLAPSE_STORAGE_KEYS = {
   claude: 'claudeChannelCollapse',
   codex: 'codexChannelCollapse',
   gemini: 'geminiChannelCollapse',
-  opencode: 'opencodeChannelCollapse'
+  opencode: 'opencodeChannelCollapse',
+  pi: 'piChannelCollapse'
 }
 
 // 从 localStorage 读取锁定状态
@@ -752,9 +757,13 @@ const logStreams = {
   claude: getLogs('claude'),
   codex: getLogs('codex'),
   gemini: getLogs('gemini'),
-  opencode: getLogs('opencode')
+  opencode: getLogs('opencode'),
+  pi: getLogs('pi')
 }
 const logsToDisplay = computed(() => {
+  if (!supportsKnownRuntime()) {
+    return []
+  }
   const stream = logStreams[props.channelType] || logStreams.claude
   const list = stream.value || []
   return list.slice(0, maxLogs.value)
@@ -772,6 +781,7 @@ const channels = computed(() => {
   else if (props.channelType === 'codex') list = codexChannels.value || []
   else if (props.channelType === 'gemini') list = geminiChannels.value || []
   else if (props.channelType === 'opencode') list = opencodeChannels.value || []
+  else if (props.channelType === 'pi') list = piChannels.value || []
 
   // 启用的排前面，禁用的排后面
   const enabled = list.filter(ch => ch.enabled !== false)
@@ -790,7 +800,7 @@ function getChannelInflight(channelId) {
 // 当前状态文本
 const statusText = computed(() => {
   const enabledCount = channels.value.filter(ch => ch.enabled !== false).length
-  if (proxyState.value.proxy?.running) {
+  if (proxyState.value.running) {
     return `${enabledCount}个渠道调度中`
   }
   return channels.value.length > 0 ? `${enabledCount}个渠道已启用` : '无渠道'
@@ -816,6 +826,8 @@ async function loadChannelStats() {
       statsData = await getGeminiTodayStatistics()
     } else if (props.channelType === 'opencode') {
       statsData = await getOpenCodeTodayStatistics()
+    } else if (props.channelType === 'pi') {
+      statsData = await getPiTodayStatistics()
     }
 
     // 从 byChannel 提取各渠道统计
@@ -847,6 +859,10 @@ function formatLogToken(log, key) {
     return '--'
   }
   return log?.tokens?.[key] || 0
+}
+
+function supportsKnownRuntime() {
+  return ['claude', 'codex', 'gemini', 'opencode', 'pi'].includes(props.channelType)
 }
 
 function getLogTitle(log) {
@@ -946,6 +962,10 @@ function formatTime(timestamp) {
 
 // 处理代理切换
 async function handleProxyToggle(value) {
+  if (platformConfig.value.supportsProxy === false || !supportsKnownRuntime()) {
+    message.warning(`${channelTitle.value} 暂未接入动态代理`)
+    return
+  }
   const proxyState = getProxyState(props.channelType)
   proxyState.value.loading = true
   try {
@@ -974,12 +994,28 @@ async function handleProxyToggle(value) {
 
 // 跳转到项目列表
 function goToProjects() {
+  if (platformConfig.value.supportsProjects === false || !supportsKnownRuntime()) {
+    message.info(`${channelTitle.value} 当前仅作为首页显示项`)
+    return
+  }
   router.push({ name: `${props.channelType}-projects` })
 }
 
 // 跳转到渠道单独页面
 function goToChannelPage() {
+  if (platformConfig.value.supportsProjects === false || !supportsKnownRuntime()) {
+    message.info(`${channelTitle.value} 当前仅作为首页显示项`)
+    return
+  }
   router.push({ name: `${props.channelType}-projects` })
+}
+
+function openRecentSessions() {
+  if (platformConfig.value.supportsSessions === false || !supportsKnownRuntime()) {
+    message.info(`${channelTitle.value} 当前没有托管会话列表`)
+    return
+  }
+  showRecentSessions.value = true
 }
 
 // 快捷切换渠道状态
@@ -1041,6 +1077,8 @@ async function handleQuickToggle(channel, enabled) {
       updateFn = updateGeminiChannel
     } else if (props.channelType === 'opencode') {
       updateFn = updateOpenCodeChannel
+    } else if (props.channelType === 'pi') {
+      updateFn = updatePiChannel
     }
 
     if (updateFn) {
@@ -1111,6 +1149,11 @@ function openCommandsManager(event) {
 }
 
 function openAgentsManager(event) {
+  if (platformConfig.value.supportsAgents === false) {
+    message.info(`${channelTitle.value} 的 Agent 能力通过插件/扩展提供`)
+    blurShortcutButton(event)
+    return
+  }
   window.dispatchEvent(new CustomEvent('open-agents-drawer', { detail: { platform: props.channelType } }))
   blurShortcutButton(event)
 }
@@ -1234,6 +1277,22 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #ea580c, rgba(234, 88, 12, 0.3));
 }
 
+.channel-header.pi {
+  background: linear-gradient(135deg, rgba(15, 159, 154, 0.10) 0%, var(--bg-secondary) 100%);
+}
+
+.channel-header.pi::after {
+  background: linear-gradient(90deg, #0f9f9a, rgba(15, 159, 154, 0.3));
+}
+
+.channel-header.custom-cli {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--channel-accent, #64748b) 12%, transparent) 0%, var(--bg-secondary) 100%);
+}
+
+.channel-header.custom-cli::after {
+  background: linear-gradient(90deg, var(--channel-accent, #64748b), color-mix(in srgb, var(--channel-accent, #64748b) 32%, transparent));
+}
+
 .header-icon {
   width: 36px;
   height: 36px;
@@ -1261,6 +1320,16 @@ onUnmounted(() => {
 
 .channel-header.opencode .header-icon {
   background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%);
+  color: white;
+}
+
+.channel-header.pi .header-icon {
+  background: linear-gradient(135deg, #0f9f9a 0%, #0f766e 100%);
+  color: white;
+}
+
+.channel-header.custom-cli .header-icon {
+  background: linear-gradient(135deg, var(--channel-accent, #64748b) 0%, color-mix(in srgb, var(--channel-accent, #64748b) 72%, #0f172a) 100%);
   color: white;
 }
 
@@ -1610,6 +1679,17 @@ onUnmounted(() => {
   opacity: 1;
 }
 
+.access-card.disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.access-card.disabled:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: var(--border-primary);
+}
+
 .access-card.clickable:active {
   transform: translateY(0);
 }
@@ -1792,6 +1872,16 @@ onUnmounted(() => {
   border-left-color: #ea580c;
 }
 
+.stats-card-pi,
+.chart-card:has(+ .stats-card-pi),
+.card:has(.panel-card):nth-child(4) {
+  border-left-color: #0f9f9a;
+}
+
+.chart-card.chart-card-pi {
+  border-left-color: #0f9f9a;
+}
+
 .chart-card {
   padding: 0;
   overflow: hidden;
@@ -1896,6 +1986,11 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
+.logs-header-pi .log-col {
+  color: rgba(15, 159, 154, 0.7);
+  font-weight: 600;
+}
+
 /* 暗色主题下稍微提亮 */
 [data-theme="dark"] .logs-header-claude .log-col {
   color: rgba(52, 211, 153, 0.65);
@@ -1911,6 +2006,10 @@ onUnmounted(() => {
 
 [data-theme="dark"] .logs-header-opencode .log-col {
   color: rgba(251, 146, 60, 0.65);
+}
+
+[data-theme="dark"] .logs-header-pi .log-col {
+  color: rgba(45, 212, 191, 0.65);
 }
 
 [data-theme="dark"] .channel-column {
@@ -2269,6 +2368,21 @@ onUnmounted(() => {
   min-width: 55px;
 }
 
+.col-channel-pi {
+  flex: 2.5 1 70px;
+  min-width: 55px;
+}
+
+.col-token-pi {
+  flex: 1.2 1 45px;
+  min-width: 40px;
+}
+
+.col-time-pi {
+  flex: 1.8 1 60px;
+  min-width: 55px;
+}
+
 /* Claude 额外区域样式 (MCP & Skills) */
 .claude-extra-area {
   display: flex;
@@ -2608,6 +2722,17 @@ onUnmounted(() => {
   background: radial-gradient(circle, rgba(234, 88, 12, 0.15) 0%, transparent 70%);
 }
 
+.locked-pi {
+  background: linear-gradient(135deg,
+    rgba(15, 159, 154, 0.03) 0%,
+    var(--bg-secondary) 50%,
+    rgba(15, 159, 154, 0.02) 100%);
+}
+
+.locked-pi::before {
+  background: radial-gradient(circle, rgba(15, 159, 154, 0.15) 0%, transparent 70%);
+}
+
 /* 锁定内容 */
 .locked-content {
   display: flex;
@@ -2732,6 +2857,25 @@ onUnmounted(() => {
 .locked-opencode .lock-icon .n-icon {
   color: #ea580c;
   filter: drop-shadow(0 2px 4px rgba(234, 88, 12, 0.3));
+}
+
+.locked-pi .lock-icon {
+  background: linear-gradient(135deg,
+    rgba(15, 159, 154, 0.12) 0%,
+    var(--bg-primary) 100%);
+  border-color: rgba(15, 159, 154, 0.25);
+  box-shadow:
+    0 8px 24px rgba(15, 159, 154, 0.15),
+    0 0 0 1px rgba(15, 159, 154, 0.1) inset;
+}
+
+.locked-pi .lock-icon::before {
+  background: radial-gradient(circle, rgba(15, 159, 154, 0.3) 0%, transparent 60%);
+}
+
+.locked-pi .lock-icon .n-icon {
+  color: #0f9f9a;
+  filter: drop-shadow(0 2px 4px rgba(15, 159, 154, 0.3));
 }
 
 .lock-icon .n-icon {

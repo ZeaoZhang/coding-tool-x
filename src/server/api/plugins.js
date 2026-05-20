@@ -10,7 +10,7 @@ const { maskToken } = require('../services/oauth-utils');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const pluginServices = new Map();
 
 function resolvePlatform(rawPlatform) {

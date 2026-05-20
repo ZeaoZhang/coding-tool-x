@@ -106,6 +106,97 @@
 
                 <n-divider />
 
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>首页 CLI 显示</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      固定四个槽位，默认是 Claude Code / Codex / Gemini / OpenCode；Pi 和自定义 CLI 可替换任一列
+                    </n-text>
+                  </div>
+
+                  <div class="home-cli-settings">
+                    <div class="home-cli-slots">
+                      <div v-for="(_, index) in homeCliColumns" :key="index" class="home-cli-slot">
+                        <n-text depth="3" style="font-size: 12px;">第 {{ index + 1 }} 列</n-text>
+                        <n-select
+                          :value="homeCliColumns[index]"
+                          :options="homeCliOptions"
+                          size="small"
+                          @update:value="value => handleHomeCliSlotChange(index, value)"
+                        />
+                      </div>
+                    </div>
+
+                    <div class="custom-cli-list">
+                      <div
+                        v-for="(platform, index) in customCliPlatforms"
+                        :key="platform.key || index"
+                        class="custom-cli-item"
+                      >
+                        <div class="custom-cli-grid">
+                          <n-input
+                            v-model:value="platform.key"
+                            size="small"
+                            placeholder="key，如 aider"
+                            @blur="normalizeCustomCliEdits"
+                          />
+                          <n-input
+                            v-model:value="platform.name"
+                            size="small"
+                            placeholder="名称"
+                          />
+                          <n-input
+                            v-model:value="platform.command"
+                            size="small"
+                            placeholder="启动命令"
+                          />
+                          <n-input
+                            v-model:value="platform.configDir"
+                            size="small"
+                            placeholder="配置目录（可选）"
+                          />
+                          <n-input
+                            v-model:value="platform.icon"
+                            size="small"
+                            placeholder="图标名（可选）"
+                          />
+                          <n-input
+                            v-model:value="platform.color"
+                            size="small"
+                            placeholder="颜色（可选）"
+                          />
+                        </div>
+                        <div class="custom-cli-actions">
+                          <n-switch v-model:value="platform.enabled" size="small" />
+                          <n-text depth="3" style="font-size: 12px;">可作为首页列</n-text>
+                          <n-button text size="small" type="error" @click="removeCustomCliPlatform(index)">
+                            <template #icon><n-icon><TrashOutline /></n-icon></template>
+                          </n-button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="home-cli-actions">
+                      <n-button size="small" @click="addCustomCliPlatform">
+                        <template #icon><n-icon><AddOutline /></n-icon></template>
+                        新增自定义 CLI
+                      </n-button>
+                      <n-button size="small" @click="resetHomeCliColumns">恢复默认四列</n-button>
+                      <n-button
+                        type="primary"
+                        size="small"
+                        :loading="savingHomeCli"
+                        :disabled="!homeCliDirty"
+                        @click="saveHomeCliSettings"
+                      >
+                        保存首页显示
+                      </n-button>
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
                 <!-- 主题设置 -->
                 <div class="setting-item">
                   <div class="setting-label">
@@ -591,6 +682,21 @@
                         :max="65535"
                         :show-button="false"
                         placeholder="20091"
+                      >
+                        <template #prefix>
+                          <n-icon><OptionsOutline /></n-icon>
+                        </template>
+                      </n-input-number>
+                    </div>
+
+                    <div class="port-field">
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Pi Agent 托管端口</n-text>
+                      <n-input-number
+                        v-model:value="ports.piProxy"
+                        :min="1024"
+                        :max="65535"
+                        :show-button="false"
+                        placeholder="20092"
                       >
                         <template #prefix>
                           <n-icon><OptionsOutline /></n-icon>
@@ -1193,7 +1299,8 @@ import {
   SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline,
   TrashOutline
 } from '@vicons/ionicons5'
-import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import { getUIConfig, saveUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import { DEFAULT_HOME_CLI_COLUMNS, buildCliPlatformOptions, normalizeCustomCliPlatforms, normalizeHomeCliColumns } from '../config/platforms'
 import { getSecurityStatus, setSecurityPassword } from '../api/security'
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
@@ -1244,16 +1351,25 @@ const ports = ref({
   proxy: 20088,
   codexProxy: 20089,
   geminiProxy: 20090,
-  opencodeProxy: 20091
+  opencodeProxy: 20091,
+  piProxy: 20092
 })
 const originalPorts = ref({
   webUI: 19999,
   proxy: 20088,
   codexProxy: 20089,
   geminiProxy: 20090,
-  opencodeProxy: 20091
+  opencodeProxy: 20091,
+  piProxy: 20092
 })
 const savingPorts = ref(false)
+const homeCliColumns = ref([...DEFAULT_HOME_CLI_COLUMNS])
+const customCliPlatforms = ref([])
+const originalHomeCliSettings = ref({
+  homeCliColumns: [...DEFAULT_HOME_CLI_COLUMNS],
+  customCliPlatforms: []
+})
+const savingHomeCli = ref(false)
 
 // 开机自启配置
 const autoStartEnabled = ref(false)
@@ -1922,9 +2038,17 @@ const portsChanged = computed(() => {
     ports.value.codexProxy !== originalPorts.value.codexProxy ||
     ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
     ports.value.opencodeProxy !== originalPorts.value.opencodeProxy ||
+    ports.value.piProxy !== originalPorts.value.piProxy ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
+})
+
+const homeCliOptions = computed(() => buildCliPlatformOptions(customCliPlatforms.value))
+
+const homeCliDirty = computed(() => {
+  return JSON.stringify(homeCliColumns.value) !== JSON.stringify(originalHomeCliSettings.value.homeCliColumns) ||
+    JSON.stringify(normalizeCustomCliPlatforms(customCliPlatforms.value)) !== JSON.stringify(originalHomeCliSettings.value.customCliPlatforms)
 })
 
 const securityFormError = computed(() => {
@@ -1990,9 +2114,93 @@ async function loadPanelSettings() {
       showChannels.value = response.config.panelVisibility?.showChannels !== false // default true
       showLogs.value = response.config.panelVisibility?.showLogs !== false // default true
       showChannelBalance.value = response.config.channelBalance?.showRemaining === true
+      const normalizedCustom = normalizeCustomCliPlatforms(response.config.customCliPlatforms || [])
+      const normalizedColumns = normalizeHomeCliColumns(
+        response.config.homeCliColumns || response.config.dashboardChannelOrder,
+        normalizedCustom
+      )
+      customCliPlatforms.value = normalizedCustom.map(platform => ({ ...platform }))
+      homeCliColumns.value = normalizedColumns
+      originalHomeCliSettings.value = {
+        homeCliColumns: [...normalizedColumns],
+        customCliPlatforms: normalizedCustom.map(platform => ({ ...platform }))
+      }
     }
   } catch (err) {
     console.error('Failed to load panel settings:', err)
+  }
+}
+
+function normalizeCustomCliEdits() {
+  customCliPlatforms.value = normalizeCustomCliPlatforms(customCliPlatforms.value)
+  homeCliColumns.value = normalizeHomeCliColumns(homeCliColumns.value, customCliPlatforms.value)
+}
+
+function handleHomeCliSlotChange(index, value) {
+  const next = [...homeCliColumns.value]
+  const duplicateIndex = next.findIndex((item, itemIndex) => item === value && itemIndex !== index)
+  next[index] = value
+  if (duplicateIndex >= 0) {
+    next[duplicateIndex] = homeCliColumns.value[index]
+  }
+  homeCliColumns.value = normalizeHomeCliColumns(next, customCliPlatforms.value)
+}
+
+function addCustomCliPlatform() {
+  const count = customCliPlatforms.value.length + 1
+  customCliPlatforms.value.push({
+    key: `custom-cli-${count}`,
+    name: `Custom CLI ${count}`,
+    command: '',
+    configDir: '',
+    icon: '',
+    color: '',
+    enabled: true
+  })
+  normalizeCustomCliEdits()
+}
+
+function removeCustomCliPlatform(index) {
+  customCliPlatforms.value.splice(index, 1)
+  normalizeCustomCliEdits()
+}
+
+function resetHomeCliColumns() {
+  homeCliColumns.value = [...DEFAULT_HOME_CLI_COLUMNS]
+}
+
+async function saveHomeCliSettings() {
+  savingHomeCli.value = true
+  try {
+    normalizeCustomCliEdits()
+    const custom = normalizeCustomCliPlatforms(customCliPlatforms.value)
+    const columns = normalizeHomeCliColumns(homeCliColumns.value, custom)
+    const response = await getUIConfig()
+    const baseConfig = response.success && response.config ? response.config : {}
+    const saveResult = await saveUIConfig({
+      ...baseConfig,
+      customCliPlatforms: custom,
+      homeCliColumns: columns,
+      dashboardChannelOrder: columns
+    })
+    if (!saveResult.success) {
+      throw new Error(saveResult.message || '保存失败')
+    }
+    customCliPlatforms.value = custom.map(platform => ({ ...platform }))
+    homeCliColumns.value = columns
+    originalHomeCliSettings.value = {
+      homeCliColumns: [...columns],
+      customCliPlatforms: custom.map(platform => ({ ...platform }))
+    }
+    try {
+      localStorage.setItem('dashboardChannelOrder', JSON.stringify(columns))
+    } catch {}
+    window.dispatchEvent(new CustomEvent('home-cli-columns-change', { detail: { homeCliColumns: columns, customCliPlatforms: custom } }))
+    message.success('首页 CLI 显示已保存')
+  } catch (err) {
+    message.error('保存失败: ' + err.message)
+  } finally {
+    savingHomeCli.value = false
   }
 }
 
@@ -2075,7 +2283,8 @@ async function loadPortsConfig() {
         proxy: data.ports?.proxy || 20088,
         codexProxy: data.ports?.codexProxy || 20089,
         geminiProxy: data.ports?.geminiProxy || 20090,
-        opencodeProxy: data.ports?.opencodeProxy || 20091
+        opencodeProxy: data.ports?.opencodeProxy || 20091,
+        piProxy: data.ports?.piProxy || 20092
       }
       originalPorts.value = { ...ports.value }
 
@@ -2743,6 +2952,68 @@ watch(activeMenu, (newVal, oldVal) => {
   font-size: 13px;
 }
 
+.home-cli-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.home-cli-slots {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.home-cli-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.custom-cli-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.custom-cli-item {
+  padding: 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .custom-cli-item {
+  background: rgba(30, 41, 59, 0.4);
+  border-color: rgba(148, 163, 184, 0.15);
+}
+
+.custom-cli-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.custom-cli-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.custom-cli-actions .n-button {
+  margin-left: auto;
+}
+
+.home-cli-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* 高级设置选项样式 */
 .advanced-options {
   display: flex;
@@ -3149,6 +3420,11 @@ watch(activeMenu, (newVal, oldVal) => {
   .speed-test-default-row {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .home-cli-slots,
+  .custom-cli-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

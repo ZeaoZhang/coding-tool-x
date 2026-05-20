@@ -11,7 +11,8 @@ const PROXY_START_LOG_PATTERNS = {
   ],
   codex: [/Codex proxy server started on http:\/\/127\.0\.0\.1:\d+/],
   gemini: [/Gemini proxy server started on http:\/\/127\.0\.0\.1:\d+/],
-  opencode: [/OpenCode proxy server started on http:\/\/127\.0\.0\.1:\d+/]
+  opencode: [/OpenCode proxy server started on http:\/\/127\.0\.0\.1:\d+/],
+  pi: [/Pi 受管 Provider Extension 已自动启用，端口: \d+/]
 };
 
 function getRuntimeFilePath(proxyType) {

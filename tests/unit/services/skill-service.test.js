@@ -17,7 +17,8 @@ function stubPaths() {
         claude:    { dir: path.join(testDir, 'native-claude'),   skills: path.join(testDir, 'claude-skills') },
         codex:     { dir: path.join(testDir, 'native-codex'),    skills: path.join(testDir, 'codex-skills') },
         gemini:    { dir: path.join(testDir, 'native-gemini'),   skills: path.join(testDir, 'gemini-skills') },
-        opencode:  { dir: path.join(testDir, 'native-opencode'), config: path.join(testDir, 'opencode-config'), skills: path.join(testDir, 'opencode-skills') }
+        opencode:  { dir: path.join(testDir, 'native-opencode'), config: path.join(testDir, 'opencode-config'), skills: path.join(testDir, 'opencode-skills') },
+        pi: { dir: path.join(testDir, 'native-pi'), skills: path.join(testDir, 'native-pi', 'skills') }
       },
       HOME_DIR: testDir,
       PATHS: {
@@ -27,19 +28,22 @@ function stubPaths() {
           claude:   path.join(testDir, 'local', 'claude'),
           codex:    path.join(testDir, 'local', 'codex'),
           gemini:   path.join(testDir, 'local', 'gemini'),
-          opencode: path.join(testDir, 'local', 'opencode')
+          opencode: path.join(testDir, 'local', 'opencode'),
+          pi: path.join(testDir, 'local', 'pi')
         },
         skillRepos: {
           claude:   path.join(testDir, 'repos', 'claude.json'),
           codex:    path.join(testDir, 'repos', 'codex.json'),
           gemini:   path.join(testDir, 'repos', 'gemini.json'),
-          opencode: path.join(testDir, 'repos', 'opencode.json')
+          opencode: path.join(testDir, 'repos', 'opencode.json'),
+          pi: path.join(testDir, 'repos', 'pi.json')
         },
         skillCaches: {
           claude:   path.join(testDir, 'cache', 'claude.json'),
           codex:    path.join(testDir, 'cache', 'codex.json'),
           gemini:   path.join(testDir, 'cache', 'gemini.json'),
-          opencode: path.join(testDir, 'cache', 'opencode.json')
+          opencode: path.join(testDir, 'cache', 'opencode.json'),
+          pi: path.join(testDir, 'cache', 'pi.json')
         }
       }
     }
@@ -84,17 +88,18 @@ afterEach(() => {
 });
 
 describe('skill-service constants', () => {
-  it('DEFAULT_REPOS_BY_PLATFORM has all four platform keys', () => {
+  it('DEFAULT_REPOS_BY_PLATFORM has all managed platform keys', () => {
     const { DEFAULT_REPOS_BY_PLATFORM } = require('../../../src/server/services/skill-service');
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('claude');
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('codex');
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('gemini');
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('opencode');
+    expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('pi');
   });
 
   it('each platform entry is an array', () => {
     const { DEFAULT_REPOS_BY_PLATFORM } = require('../../../src/server/services/skill-service');
-    for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
+    for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
       expect(Array.isArray(DEFAULT_REPOS_BY_PLATFORM[platform])).toBe(true);
     }
   });
@@ -139,6 +144,12 @@ describe('SkillService constructor', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('gemini');
     expect(svc.platform).toBe('gemini');
+  });
+
+  it('sets platform to pi when passed pi', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('pi');
+    expect(svc.platform).toBe('pi');
   });
 
   it('sets platform to opencode when passed opencode', () => {
@@ -567,6 +578,57 @@ describe('SkillService file operations', () => {
 });
 
 describe('SkillService local repository path safety', () => {
+  it('scans only the configured skills directory in mixed plugin/skill repositories', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repoRoot = path.join(testDir, 'mixed-skill-plugin-repo');
+
+    fs.mkdirSync(path.join(repoRoot, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins', 'skill-bundle', 'skills', 'nested-demo'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'skills', 'plain-skill'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'template'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'mixed-market',
+        plugins: [{ name: 'skill-bundle', source: './plugins/skill-bundle' }]
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'skill-bundle', 'skills', 'nested-demo', 'SKILL.md'),
+      '---\nname: Nested Demo\ndescription: Plugin-contained skill\n---\nBody',
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'skills', 'plain-skill', 'SKILL.md'),
+      '---\nname: Plain Skill\ndescription: Plain repository skill\n---\nBody',
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'template', 'SKILL.md'),
+      '---\nname: Template Skill\ndescription: Template\n---\nBody',
+      'utf8'
+    );
+
+    const skills = await svc.fetchLocalRepoSkills({
+      provider: 'local',
+      localPath: repoRoot,
+      directory: 'skills',
+      branch: 'main',
+      id: 'local:mixed::skills'
+    });
+
+    expect(skills).toEqual([
+      expect.objectContaining({
+        name: 'Plain Skill',
+        directory: 'plain-skill',
+        fullDirectory: 'skills/plain-skill',
+        repoDirectory: 'skills'
+      })
+    ]);
+  });
+
   it('rejects unsafe local repo scan directories', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');

@@ -17,7 +17,21 @@ beforeEach(() => {
         uninstall: false
       }
     }),
-    opencode: createMockService()
+    opencode: createMockService(),
+    pi: createMockService({
+      capabilities: {
+        platform: 'pi',
+        supportsPlugins: true,
+        repositories: true,
+        market: true,
+        install: true,
+        uninstall: true,
+        toggle: true,
+        config: true,
+        import: false,
+        syncRepos: false
+      }
+    })
   };
 
   const PluginsServiceStub = function(platform = 'claude') {
@@ -157,6 +171,16 @@ describe('GET / and GET /market', () => {
     expect(services.claude.listPlugins).not.toHaveBeenCalled();
   });
 
+  test('lists plugins for Pi platform', async () => {
+    const res = await request(buildApp()).get('/?platform=pi');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('pi');
+    expect(services.pi.listPlugins).toHaveBeenCalled();
+    expect(services.claude.listPlugins).not.toHaveBeenCalled();
+  });
+
   test('passes refresh flag to market lookup', async () => {
     const res = await request(buildApp()).get('/market?platform=claude&refresh=1');
 
@@ -177,6 +201,21 @@ describe('GET / and GET /market', () => {
       repositories: false
     }));
     expect(services.gemini.getCapabilities).toHaveBeenCalled();
+  });
+
+  test('GET /capabilities returns Pi package/extension capability contract', async () => {
+    const res = await request(buildApp()).get('/capabilities?platform=pi');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('pi');
+    expect(res.body.capabilities).toEqual(expect.objectContaining({
+      platform: 'pi',
+      supportsPlugins: true,
+      repositories: true,
+      config: true
+    }));
+    expect(services.pi.getCapabilities).toHaveBeenCalled();
   });
 });
 

@@ -23,6 +23,7 @@ const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
+const { startPiProxyServer } = require('./pi-proxy-server');
 const { createRemoteMutationGuard } = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
@@ -200,6 +201,14 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/opencode/channels', require('./api/opencode-channels')(config));
   app.use('/api/opencode/proxy', require('./api/opencode-proxy'));
   app.use('/api/opencode/statistics', require('./api/opencode-statistics'));
+
+  // Pi Agent API Routes
+  app.use('/api/pi/projects', require('./api/pi-projects')(config));
+  app.use('/api/pi/sessions', require('./api/pi-sessions')(config));
+  app.use('/api/pi/channels', require('./api/pi-channels')(config));
+  app.use('/api/pi/proxy', require('./api/pi-proxy'));
+  app.use('/api/pi/statistics', require('./api/pi-statistics'));
+  app.use('/api/pi/config', require('./api/pi-config'));
 
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
@@ -438,6 +447,23 @@ function autoRestoreProxies() {
       })
       .catch((err) => {
         console.error(chalk.red(`[ERROR] OpenCode 代理启动失败: ${err.message}`));
+      });
+  }
+
+  // 检查 Pi 受管 Provider Extension 状态文件
+  const piActiveFile = PATHS.activeChannel.pi;
+  if (fs.existsSync(piActiveFile)) {
+    console.log(chalk.cyan('\n[SYNC] 检测到 Pi 受管渠道状态文件，正在自动恢复...'));
+    startPiProxyServer({ preserveStartTime: true })
+      .then((result) => {
+        if (result.success) {
+          console.log(chalk.green(`[OK] Pi 受管 Provider Extension 已自动启用，端口: ${result.port}`));
+        } else {
+          console.error(chalk.red(`[ERROR] Pi 受管 Provider Extension 恢复失败: ${result.error || 'Unknown error'}`));
+        }
+      })
+      .catch((err) => {
+        console.error(chalk.red(`[ERROR] Pi 受管 Provider Extension 恢复失败: ${err.message}`));
       });
   }
 }

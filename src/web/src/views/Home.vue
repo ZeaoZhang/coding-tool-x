@@ -16,13 +16,16 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import draggable from 'vuedraggable'
 import ChannelColumn from '../components/dashboard/ChannelColumn.vue'
 import { useUIConfig } from '../composables/useUIConfig'
+import {
+  DEFAULT_HOME_CLI_COLUMNS,
+  normalizeHomeCliColumns
+} from '../config/platforms'
 
 const STORAGE_KEY = 'dashboardChannelOrder'
-const DEFAULT_ORDER = ['claude', 'codex', 'gemini', 'opencode']
 
 const { uiConfig, updateConfig, loadUIConfig } = useUIConfig()
 
@@ -32,12 +35,10 @@ function getOrderFromStorage() {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       const order = JSON.parse(stored)
-      if (Array.isArray(order) && order.length === 4) {
-        return order
-      }
+      return normalizeHomeCliColumns(order, uiConfig.value.customCliPlatforms)
     }
   } catch (e) {}
-  return DEFAULT_ORDER
+  return DEFAULT_HOME_CLI_COLUMNS
 }
 
 // 保存顺序到 localStorage
@@ -47,29 +48,49 @@ function saveOrderToStorage(order) {
   } catch (e) {}
 }
 
+function applyHomeColumns(order, customCliPlatforms = uiConfig.value.customCliPlatforms) {
+  const normalized = normalizeHomeCliColumns(order, customCliPlatforms)
+  channelList.value = normalized.map(type => ({ type }))
+  saveOrderToStorage(normalized)
+  return normalized
+}
+
 // 初始化使用 localStorage 的顺序
 const channelList = ref(getOrderFromStorage().map(type => ({ type })))
 
 // 拖拽结束后保存
 async function onDragEnd() {
-  const order = channelList.value.map(item => item.type)
+  const order = normalizeHomeCliColumns(
+    channelList.value.map(item => item.type),
+    uiConfig.value.customCliPlatforms
+  )
+  channelList.value = order.map(type => ({ type }))
 
   // 同时保存到 localStorage 和服务端
   saveOrderToStorage(order)
+  await updateConfig('homeCliColumns', order)
   await updateConfig('dashboardChannelOrder', order)
+}
+
+function handleHomeCliColumnsChange(event) {
+  const detail = event?.detail || {}
+  applyHomeColumns(detail.homeCliColumns, detail.customCliPlatforms)
 }
 
 // 组件挂载时从服务端加载配置并同步
 onMounted(async () => {
+  window.addEventListener('home-cli-columns-change', handleHomeCliColumnsChange)
   await loadUIConfig()
 
   // 如果服务端有保存的顺序，使用服务端的
-  if (uiConfig.value.dashboardChannelOrder && Array.isArray(uiConfig.value.dashboardChannelOrder) && uiConfig.value.dashboardChannelOrder.length === 4) {
-    const serverOrder = uiConfig.value.dashboardChannelOrder
-    channelList.value = serverOrder.map(type => ({ type }))
-    // 同步到 localStorage
-    saveOrderToStorage(serverOrder)
-  }
+  applyHomeColumns(
+    uiConfig.value.homeCliColumns || uiConfig.value.dashboardChannelOrder,
+    uiConfig.value.customCliPlatforms
+  )
+})
+
+onUnmounted(() => {
+  window.removeEventListener('home-cli-columns-change', handleHomeCliColumnsChange)
 })
 </script>
 

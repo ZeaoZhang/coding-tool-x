@@ -111,6 +111,16 @@
         </div>
         <div
           class="nav-tab"
+          :class="{ active: currentChannel === 'pi' }"
+          @click="router.push({ name: 'pi-projects' })"
+        >
+          <n-icon :size="18" class="nav-icon">
+            <PlanetOutline />
+          </n-icon>
+          <span class="nav-label">Pi</span>
+        </div>
+        <div
+          class="nav-tab"
           :class="{ active: currentRoute === 'analytics' }"
           @click="router.push({ name: 'analytics' })"
         >
@@ -455,7 +465,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon, NText, NInput, NButton, NSpace, NDropdown } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, WarningOutline, FolderOpenOutline, ExtensionPuzzleOutline, StatsChartOutline, EllipsisHorizontal } from '@vicons/ionicons5'
+import { ChatbubblesOutline, ServerOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, WarningOutline, FolderOpenOutline, ExtensionPuzzleOutline, PlanetOutline, StatsChartOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -493,6 +503,7 @@ const {
   codexProxy,
   geminiProxy,
   opencodeProxy,
+  piProxy,
   startProxy,
   stopProxy
 } = useGlobalState()
@@ -669,12 +680,14 @@ const effectiveProxyRunning = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.running
   if (currentChannel.value === 'gemini') return geminiProxy.value.running
   if (currentChannel.value === 'opencode') return opencodeProxy.value.running
+  if (currentChannel.value === 'pi') return piProxy.value.running
   return claudeProxy.value.running
 })
 const effectiveProxyLoading = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.loading
   if (currentChannel.value === 'gemini') return geminiProxy.value.loading
   if (currentChannel.value === 'opencode') return opencodeProxy.value.loading
+  if (currentChannel.value === 'pi') return piProxy.value.loading
   return claudeProxy.value.loading
 })
 
@@ -682,6 +695,7 @@ function getCurrentProxyState(channelType = currentChannel.value) {
   if (channelType === 'codex') return codexProxy
   if (channelType === 'gemini') return geminiProxy
   if (channelType === 'opencode') return opencodeProxy
+  if (channelType === 'pi') return piProxy
   return claudeProxy
 }
 

@@ -27,23 +27,22 @@ const CLAUDE_DIRS = {
 
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 
 const PLATFORM_SUPPORT = {
-  skills: { claude: true, codex: true, gemini: true, opencode: true },
-  commands: { claude: true, codex: true, gemini: true, opencode: true },
-  agents: { claude: true, codex: true, gemini: true, opencode: true },
-  plugins: { claude: true, codex: false, gemini: false, opencode: true }
+  skills: { claude: true, codex: true, gemini: true, opencode: true, pi: true },
+  commands: { claude: true, codex: true, gemini: true, opencode: true, pi: true },
+  agents: { claude: true, codex: true, gemini: true, opencode: true, pi: false },
+  plugins: { claude: true, codex: false, gemini: false, opencode: true, pi: true }
 };
 
 function normalizePlatforms(type, platforms = {}) {
   const support = PLATFORM_SUPPORT[type] || {};
-  const normalized = {
-    claude: !!platforms.claude,
-    codex: !!platforms.codex,
-    gemini: !!platforms.gemini,
-    opencode: !!platforms.opencode
-  };
+  const normalized = {};
+
+  for (const platform of SUPPORTED_PLATFORMS) {
+    normalized[platform] = !!platforms?.[platform];
+  }
 
   for (const platform of SUPPORTED_PLATFORMS) {
     if (support[platform] === false) {
@@ -585,7 +584,8 @@ class ConfigRegistryService {
         claude: 0,
         codex: 0,
         gemini: 0,
-        opencode: 0
+        opencode: 0,
+        pi: 0
       }
     };
 
@@ -598,7 +598,8 @@ class ConfigRegistryService {
         claude: items.filter(i => i.platforms?.claude).length,
         codex: items.filter(i => i.platforms?.codex).length,
         gemini: items.filter(i => i.platforms?.gemini).length,
-        opencode: items.filter(i => i.platforms?.opencode).length
+        opencode: items.filter(i => i.platforms?.opencode).length,
+        pi: items.filter(i => i.platforms?.pi).length
       };
 
       stats.byType[type] = typeStats;
@@ -607,6 +608,7 @@ class ConfigRegistryService {
       stats.byPlatform.codex += typeStats.codex;
       stats.byPlatform.gemini += typeStats.gemini;
       stats.byPlatform.opencode += typeStats.opencode;
+      stats.byPlatform.pi += typeStats.pi;
     }
 
     return stats;

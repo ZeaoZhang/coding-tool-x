@@ -71,6 +71,20 @@ const routes = [
     props: true,
     meta: { channel: 'opencode' }
   },
+  // Pi Agent 渠道路由
+  {
+    path: '/pi',
+    name: 'pi-projects',
+    component: ProjectList,
+    meta: { channel: 'pi' }
+  },
+  {
+    path: '/pi/sessions/:projectName',
+    name: 'pi-sessions',
+    component: SessionList,
+    props: true,
+    meta: { channel: 'pi' }
+  },
   // 工作区管理路由
   {
     path: '/workspaces',
