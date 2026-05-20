@@ -11,13 +11,13 @@
           size="small"
           @update:value="handleProxyToggle"
         />
-        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
+        <n-tag v-if="managedConfigChannel && installedSkillsCount > 0" type="success" size="small" :bordered="false">
           {{ installedSkillsCount }} 技能
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <!-- Skills: Claude / Codex / Gemini / OpenCode 支持 -->
-        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode'">
+        <!-- Skills: Claude / Codex / Gemini / OpenCode / Pi 支持 -->
+        <n-tooltip trigger="hover" v-if="skillsChannel">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
               <template #icon><n-icon :size="18"><ExtensionPuzzleOutline /></n-icon></template>
@@ -26,7 +26,7 @@
           Skills 技能
         </n-tooltip>
         <!-- Claude / Codex / OpenCode 共享功能 -->
-        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
+        <template v-if="pluginChannel">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowPlugins">
@@ -36,8 +36,8 @@
             Plugins 插件
           </n-tooltip>
         </template>
-        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode'">
-          <n-tooltip trigger="hover">
+        <template v-if="commandsChannel || agentsChannel">
+          <n-tooltip v-if="commandsChannel" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
                 <template #icon><n-icon :size="18"><TerminalOutline /></n-icon></template>
@@ -45,7 +45,7 @@
             </template>
             Commands 命令
           </n-tooltip>
-          <n-tooltip trigger="hover">
+          <n-tooltip v-if="agentsChannel" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowAgents">
                 <template #icon><n-icon :size="18"><PersonOutline /></n-icon></template>
@@ -93,6 +93,7 @@
         <CodexChannelPanel v-else-if="currentChannel === 'codex'" ref="codexPanelRef" @open-website="openWebsite" />
         <GeminiChannelPanel v-else-if="currentChannel === 'gemini'" ref="geminiPanelRef" @open-website="openWebsite" />
         <OpenCodeChannelPanel v-else-if="currentChannel === 'opencode'" ref="opencodePanelRef" @open-website="openWebsite" />
+        <PiChannelPanel v-else-if="currentChannel === 'pi'" ref="piPanelRef" @open-website="openWebsite" />
       </div>
     </div>
 
@@ -122,6 +123,7 @@ import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
+import PiChannelPanel from './channel/PiChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
 import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
@@ -157,8 +159,17 @@ const claudePanelRef = ref(null)
 const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
 const opencodePanelRef = ref(null)
+const piPanelRef = ref(null)
 const installedSkillsCount = ref(0)
 const oauthSummaries = ref({})
+const managedConfigChannels = ['claude', 'codex', 'gemini', 'opencode', 'pi']
+const pluginChannels = ['claude', 'codex', 'opencode', 'pi']
+const agentChannels = ['claude', 'codex', 'gemini', 'opencode']
+const managedConfigChannel = computed(() => managedConfigChannels.includes(currentChannel.value))
+const skillsChannel = managedConfigChannel
+const commandsChannel = managedConfigChannel
+const pluginChannel = computed(() => pluginChannels.includes(currentChannel.value))
+const agentsChannel = computed(() => agentChannels.includes(currentChannel.value))
 
 // 当前渠道是否处于 OAuth 控制模式
 const isOAuthControlled = computed(() => {
@@ -189,7 +200,7 @@ function openOAuthCredentialsDrawer() {
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
-  if (!['claude', 'codex', 'gemini', 'opencode'].includes(currentChannel.value)) {
+  if (!managedConfigChannel.value) {
     installedSkillsCount.value = 0
     return
   }
@@ -207,14 +218,16 @@ const channelRefs = {
   claude: claudePanelRef,
   codex: codexPanelRef,
   gemini: geminiPanelRef,
-  opencode: opencodePanelRef
+  opencode: opencodePanelRef,
+  pi: piPanelRef
 }
 
 const channelTitles = {
   claude: 'Claude 渠道管理',
   codex: 'Codex 渠道管理',
   gemini: 'Gemini 渠道管理',
-  opencode: 'OpenCode 渠道管理'
+  opencode: 'OpenCode 渠道管理',
+  pi: 'Pi Agent 渠道管理'
 }
 
 const channelTitle = computed(() => channelTitles[currentChannel.value] || 'Claude 渠道管理')

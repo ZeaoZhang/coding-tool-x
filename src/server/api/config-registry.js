@@ -43,6 +43,42 @@ function validatePlatform(platform) {
   return null;
 }
 
+const PLATFORM_SYNC_METHODS = {
+  claude: { sync: 'syncToClaude', remove: 'removeFromClaude' },
+  codex: { sync: 'syncToCodex', remove: 'removeFromCodex' },
+  gemini: { sync: 'syncToGemini', remove: 'removeFromGemini' },
+  opencode: { sync: 'syncToOpenCode', remove: 'removeFromOpenCode' },
+  pi: { sync: 'syncToPi', remove: 'removeFromPi' }
+};
+
+function syncPlatform(type, name, platform) {
+  const method = PLATFORM_SYNC_METHODS[platform]?.sync;
+  if (method && typeof syncManager[method] === 'function') {
+    syncManager[method](type, name);
+  }
+}
+
+function removePlatform(type, name, platform) {
+  const method = PLATFORM_SYNC_METHODS[platform]?.remove;
+  if (method && typeof syncManager[method] === 'function') {
+    syncManager[method](type, name);
+  }
+}
+
+function syncEnabledPlatforms(type, name, platforms = {}) {
+  for (const platform of VALID_PLATFORMS) {
+    if (platforms?.[platform]) {
+      syncPlatform(type, name, platform);
+    }
+  }
+}
+
+function removeAllPlatforms(type, name) {
+  for (const platform of VALID_PLATFORMS) {
+    removePlatform(type, name, platform);
+  }
+}
+
 /**
  * GET /api/config-registry/stats
  * Get statistics for all config types
@@ -193,24 +229,10 @@ router.put('/:type/:name/toggle', async (req, res) => {
     // Apply sync based on new state
     if (enabled) {
       // Sync to platforms where platform=true
-      if (item.platforms?.claude) {
-        syncManager.syncToClaude(type, name);
-      }
-      if (item.platforms?.codex) {
-        syncManager.syncToCodex(type, name);
-      }
-      if (item.platforms?.gemini) {
-        syncManager.syncToGemini(type, name);
-      }
-      if (item.platforms?.opencode) {
-        syncManager.syncToOpenCode(type, name);
-      }
+      syncEnabledPlatforms(type, name, item.platforms);
     } else {
       // Remove from all platforms
-      syncManager.removeFromClaude(type, name);
-      syncManager.removeFromCodex(type, name);
-      syncManager.removeFromGemini(type, name);
-      syncManager.removeFromOpenCode(type, name);
+      removeAllPlatforms(type, name);
     }
 
     res.json({
@@ -279,26 +301,10 @@ router.put('/:type/:name/platform/:platform', async (req, res) => {
     // Apply sync based on new state
     if (enabled && item.enabled) {
       // Sync to this platform (only if item is enabled)
-      if (platform === 'claude') {
-        syncManager.syncToClaude(type, name);
-      } else if (platform === 'codex') {
-        syncManager.syncToCodex(type, name);
-      } else if (platform === 'gemini') {
-        syncManager.syncToGemini(type, name);
-      } else if (platform === 'opencode') {
-        syncManager.syncToOpenCode(type, name);
-      }
+      syncPlatform(type, name, platform);
     } else {
       // Remove from this platform
-      if (platform === 'claude') {
-        syncManager.removeFromClaude(type, name);
-      } else if (platform === 'codex') {
-        syncManager.removeFromCodex(type, name);
-      } else if (platform === 'gemini') {
-        syncManager.removeFromGemini(type, name);
-      } else if (platform === 'opencode') {
-        syncManager.removeFromOpenCode(type, name);
-      }
+      removePlatform(type, name, platform);
     }
 
     res.json({

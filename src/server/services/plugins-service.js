@@ -42,9 +42,10 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   claude: [],
   codex: [],
   gemini: [],
-  opencode: []
+  opencode: [],
+  pi: []
 };
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const PLATFORM_CAPABILITIES = {
   claude: {
     platform: 'claude',
@@ -94,6 +95,19 @@ const PLATFORM_CAPABILITIES = {
     config: true,
     import: false,
     syncRepos: false
+  },
+  pi: {
+    platform: 'pi',
+    supportsPlugins: true,
+    repositories: true,
+    market: true,
+    install: true,
+    uninstall: true,
+    toggle: true,
+    config: true,
+    import: false,
+    syncRepos: false,
+    pluginKindLabel: 'packages/extensions'
   }
 };
 
@@ -175,6 +189,13 @@ function splitPluginMarketplaceKey(key = '') {
     name: value.slice(0, atIndex),
     marketplace: value.slice(atIndex + 1)
   };
+}
+
+function normalizeMarketplaceSkillPaths(skills = []) {
+  if (!Array.isArray(skills)) return [];
+  return skills
+    .map(skill => normalizeRepoPath(String(skill || '').replace(/^\.\//, '')))
+    .filter(Boolean);
 }
 
 function hasRepoInstallInfo(repoInfo = null) {
@@ -571,6 +592,10 @@ class PluginsService {
     return this.platform === 'opencode';
   }
 
+  _isPi() {
+    return this.platform === 'pi';
+  }
+
   _isCodex() {
     return this.platform === 'codex';
   }
@@ -594,6 +619,98 @@ class PluginsService {
     if (fs.existsSync(json)) return json;
     if (fs.existsSync(config)) return config;
     return json;
+  }
+
+  _readPiSettings() {
+    const filePath = NATIVE_PATHS.pi.settings;
+    if (!fs.existsSync(filePath)) return {};
+
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      return raw.trim() ? JSON.parse(raw) : {};
+    } catch (err) {
+      console.error('[PluginsService] Failed to read Pi settings:', err.message);
+      return {};
+    }
+  }
+
+  _writePiSettings(settings = {}) {
+    this._ensureDir(path.dirname(NATIVE_PATHS.pi.settings));
+    fs.writeFileSync(NATIVE_PATHS.pi.settings, JSON.stringify(settings, null, 2), 'utf8');
+  }
+
+  _listPiPackages() {
+    const settings = this._readPiSettings();
+    return Array.isArray(settings.packages)
+      ? settings.packages.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
+  }
+
+  _setPiPackages(packages = []) {
+    const settings = this._readPiSettings();
+    const seen = new Set();
+    settings.packages = packages
+      .map(item => String(item || '').trim())
+      .filter((item) => {
+        if (!item || seen.has(item)) return false;
+        seen.add(item);
+        return true;
+      });
+    this._writePiSettings(settings);
+  }
+
+  _listPiDisabledPackages() {
+    const settings = this._readPiSettings();
+    return Array.isArray(settings.disabledPackages)
+      ? settings.disabledPackages.map(item => String(item || '').trim()).filter(Boolean)
+      : [];
+  }
+
+  _setPiDisabledPackages(packages = []) {
+    const settings = this._readPiSettings();
+    const seen = new Set();
+    settings.disabledPackages = packages
+      .map(item => String(item || '').trim())
+      .filter((item) => {
+        if (!item || seen.has(item)) return false;
+        seen.add(item);
+        return true;
+      });
+    this._writePiSettings(settings);
+  }
+
+  _listPiLocalExtensions() {
+    const plugins = [];
+    const extensionsDir = NATIVE_PATHS.pi.extensions;
+    if (!fs.existsSync(extensionsDir)) return plugins;
+
+    try {
+      const disabled = new Set(this._listPiDisabledPackages());
+      const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        const fullPath = path.join(extensionsDir, entry.name);
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!entry.isDirectory() && !['.js', '.mjs', '.cjs', '.ts'].includes(ext)) continue;
+        const name = entry.isDirectory() ? entry.name : entry.name.slice(0, -ext.length);
+        plugins.push({
+          name,
+          directory: entry.name,
+          installPath: fullPath,
+          source: 'pi-extension',
+          version: 'local',
+          description: '',
+          installed: true,
+          enabled: !disabled.has(name) && !disabled.has(entry.name),
+          pluginType: entry.isDirectory() ? 'extension-directory' : 'extension-file',
+          pluginKind: 'extension'
+        });
+      }
+    } catch (err) {
+      console.error('[PluginsService] Failed to list Pi extensions:', err.message);
+    }
+
+    return plugins;
   }
 
   _readOpenCodeConfig() {
@@ -1112,6 +1229,36 @@ class PluginsService {
       return { plugins };
     }
 
+    if (this._isPi()) {
+      const disabled = new Set(this._listPiDisabledPackages());
+      const plugins = [];
+      const seen = new Set();
+
+      for (const pkg of this._listPiPackages()) {
+        if (seen.has(pkg)) continue;
+        seen.add(pkg);
+        plugins.push({
+          name: pkg,
+          directory: pkg,
+          source: 'pi-settings',
+          version: 'latest',
+          description: '',
+          installed: true,
+          enabled: !disabled.has(pkg),
+          pluginType: 'package',
+          pluginKind: 'package'
+        });
+      }
+
+      for (const extension of this._listPiLocalExtensions()) {
+        if (seen.has(extension.name)) continue;
+        seen.add(extension.name);
+        plugins.push(extension);
+      }
+
+      return { plugins };
+    }
+
     const plugins = [];
 
     // Read Claude Code's installed_plugins.json
@@ -1251,6 +1398,12 @@ class PluginsService {
       return plugin;
     }
 
+    if (this._isPi()) {
+      const plugin = this.listPlugins().plugins.find(p => p.name === name || p.directory === name);
+      if (!plugin) return null;
+      return plugin;
+    }
+
     const plugin = getPlugin(name);
     if (!plugin) {
       return null;
@@ -1311,6 +1464,40 @@ class PluginsService {
       return {
         success: false,
         error: `${this.platform} plugin management is not supported`
+      };
+    }
+
+    if (this._isPi()) {
+      if (hasRepoInstallInfo(repoInfo)) {
+        return this._installFromRepoDirectory(repoInfo, { installRoot: NATIVE_PATHS.pi.extensions });
+      }
+
+      const parsedSource = this.parseRepoTreeSource(source);
+      if (parsedSource) {
+        return this._installFromRepoDirectory(parsedSource, { installRoot: NATIVE_PATHS.pi.extensions });
+      }
+
+      const parsedRepo = this._repoFromGitUrl(source, 'main');
+      if (parsedRepo) {
+        return this._installFromRepoDirectory({ ...parsedRepo, directory: '' }, { installRoot: NATIVE_PATHS.pi.extensions });
+      }
+
+      const packageName = String(source || '').trim();
+      if (packageName && !/^https?:\/\//.test(packageName)) {
+        const packages = this._listPiPackages();
+        if (!packages.includes(packageName)) {
+          packages.push(packageName);
+          this._setPiPackages(packages);
+        }
+        return {
+          success: true,
+          plugin: { name: packageName, version: 'latest', description: '', pluginKind: 'package' }
+        };
+      }
+
+      return {
+        success: false,
+        error: 'Pi plugin install expects package name, repository metadata, a GitHub/GitLab tree URL, or a Git repository URL'
       };
     }
 
@@ -1552,7 +1739,7 @@ class PluginsService {
         } catch (e) {
           console.error('[PluginsService] Failed to update native installed_plugins.json:', e.message);
         }
-      } else if (!this._isOpenCode()) {
+      } else if (!this._isOpenCode() && !this._isPi()) {
         const installTimestamp = new Date().toISOString();
         const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
         const repoSourceMeta = {
@@ -1582,6 +1769,21 @@ class PluginsService {
         }
 
         this.writeRepoSourceMeta(pluginDir, repoSourceMeta);
+      } else if (this._isPi()) {
+        const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
+        this.writeRepoSourceMeta(pluginDir, {
+          repoId: normalizedRepo.id,
+          repoProvider: normalizedRepo.provider,
+          repoOwner: normalizedRepo.owner || '',
+          repoName: normalizedRepo.name || '',
+          repoBranch: normalizedRepo.branch,
+          repoDirectory: directory,
+          repoHost: normalizedRepo.host || '',
+          repoProjectPath: normalizedRepo.projectPath || '',
+          repoLocalPath: normalizedRepo.localPath || '',
+          repoUrl: normalizedRepo.repoUrl || buildRepoUrl(normalizedRepo),
+          source: sourceUrl
+        });
       }
 
       return {
@@ -1606,6 +1808,9 @@ class PluginsService {
     }
     if (this._isOpenCode()) {
       return ['package.json', 'plugin.json'];
+    }
+    if (this._isPi()) {
+      return ['pi.json', 'extension.json', 'plugin.json', 'package.json'];
     }
     return ['.claude-plugin/plugin.json', 'plugin.json', 'package.json'];
   }
@@ -1735,6 +1940,42 @@ class PluginsService {
       return {
         success: false,
         error: `${this.platform} plugin management is not supported`
+      };
+    }
+
+    if (this._isPi()) {
+      const safeName = normalizePluginPathName(name, 'plugin name');
+      const packages = this._listPiPackages();
+      let removed = false;
+      const nextPackages = packages.filter(pkg => pkg !== safeName && pkg !== name);
+      if (nextPackages.length !== packages.length) {
+        this._setPiPackages(nextPackages);
+        removed = true;
+      }
+
+      const extensionsDir = NATIVE_PATHS.pi.extensions;
+      if (fs.existsSync(extensionsDir)) {
+        const directPath = resolveInsideRoot(extensionsDir, safeName, 'Pi extension path');
+        if (fs.existsSync(directPath)) {
+          fs.rmSync(directPath, { recursive: true, force: true });
+          removed = true;
+        } else {
+          const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
+          for (const entry of entries) {
+            const baseName = entry.name.replace(path.extname(entry.name), '');
+            if (entry.name === safeName || baseName === safeName) {
+              const entryPath = resolveInsideRoot(extensionsDir, entry.name, 'Pi extension path');
+              fs.rmSync(entryPath, { recursive: true, force: true });
+              removed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      return {
+        success: true,
+        message: removed ? 'Plugin removed successfully' : 'Plugin not found'
       };
     }
 
@@ -1870,6 +2111,22 @@ class PluginsService {
       throw new Error(`${this.platform} plugin management is not supported`);
     }
 
+    if (this._isPi()) {
+      const targetName = String(name || '').trim();
+      const disabled = new Set(this._listPiDisabledPackages());
+      if (enabled) {
+        disabled.delete(targetName);
+      } else {
+        disabled.add(targetName);
+      }
+      this._setPiDisabledPackages(Array.from(disabled));
+      return {
+        name: targetName,
+        enabled,
+        success: true
+      };
+    }
+
     if (this._isOpenCode()) {
       const configured = this._listOpenCodeConfiguredPlugins();
       const exists = configured.includes(name);
@@ -1961,6 +2218,19 @@ class PluginsService {
 
     if (!this._pluginsSupported()) {
       throw new Error(`${this.platform} plugin management is not supported`);
+    }
+
+    if (this._isPi()) {
+      const settings = this._readPiSettings();
+      settings.packageConfig = settings.packageConfig && typeof settings.packageConfig === 'object' && !Array.isArray(settings.packageConfig)
+        ? settings.packageConfig
+        : {};
+      settings.packageConfig[name] = config;
+      this._writePiSettings(settings);
+      return {
+        success: true,
+        message: `Configuration updated for plugin "${name}"`
+      };
     }
 
     if (this._isOpenCode()) {
@@ -2798,6 +3068,10 @@ class PluginsService {
       lspServers: data.lspServers || null,
       commands: data.commands || [],
       hooks: data.hooks || [],
+      containsSkills: Boolean(data.containsSkills),
+      skillPaths: Array.isArray(data.skillPaths) ? data.skillPaths : [],
+      pluginKind: data.pluginKind || (data.containsSkills ? 'skill-bundle' : 'plugin'),
+      strict: data.strict,
       isInstalled: false
     };
   }
@@ -2982,6 +3256,7 @@ class PluginsService {
     const results = [];
     for (const plugin of marketplace.plugins) {
       const sourceInfo = this._repoFromMarketplaceSource(repo, plugin.source);
+      const skillPaths = normalizeMarketplaceSkillPaths(plugin.skills);
       const canReadManifest = sourceInfo.repo.provider === 'local' || sourceInfo.repo.id === repo.id;
       const manifest = canReadManifest
         ? await this._readManifestFromRepo(sourceInfo.repo, sourceInfo.directory, [
@@ -3003,7 +3278,11 @@ class PluginsService {
         marketplaceFormat: 'claude-marketplace',
         lspServers: plugin.lspServers || null,
         commands: manifest?.commands || [],
-        hooks: manifest?.hooks || []
+        hooks: manifest?.hooks || [],
+        containsSkills: skillPaths.length > 0,
+        skillPaths,
+        pluginKind: skillPaths.length > 0 ? 'skill-bundle' : 'plugin',
+        strict: Object.prototype.hasOwnProperty.call(plugin, 'strict') ? plugin.strict : undefined
       }));
     }
     return results;
@@ -3162,7 +3441,12 @@ class PluginsService {
 
         for (const dir of pluginDirs) {
           try {
-            const manifest = await readJson(`${dir}/plugin.json`);
+            const manifest = this._isPi()
+              ? await this._readManifestFromRepo(repo, dir, ['pi.json', 'extension.json', 'plugin.json', 'package.json'])
+              : await readJson(`${dir}/plugin.json`);
+            if (!manifest) {
+              throw new Error(`File not found: ${dir}/plugin.json`);
+            }
 
             marketPlugins.push(this.buildMarketPluginItem(repo, {
               name: manifest.name || dir,
@@ -3170,6 +3454,7 @@ class PluginsService {
               author: manifest.author || repo.owner,
               version: manifest.version || '1.0.0',
               directory: dir,
+              pluginKind: this._isPi() ? 'extension' : undefined,
               commands: manifest.commands || [],
               hooks: manifest.hooks || []
             }));

@@ -75,7 +75,8 @@ describe('ConfigRegistryService item persistence', () => {
       claude: true,
       codex: false,
       gemini: false,
-      opencode: false
+      opencode: false,
+      pi: false
     });
     expect(updated.createdAt).toBe(created.createdAt);
     expect(updated.enabled).toBe(false);
@@ -83,7 +84,8 @@ describe('ConfigRegistryService item persistence', () => {
       claude: false,
       codex: false,
       gemini: false,
-      opencode: true
+      opencode: true,
+      pi: false
     });
 
     const stats = service.getStats();
@@ -98,7 +100,8 @@ describe('ConfigRegistryService item persistence', () => {
       claude: 0,
       codex: 1,
       gemini: 1,
-      opencode: 2
+      opencode: 2,
+      pi: 0
     });
   });
 

@@ -65,7 +65,7 @@ beforeEach(() => {
     listItems: vi.fn((type) => ({
       'demo-item': {
         enabled: true,
-        platforms: { claude: true, codex: false, gemini: false, opencode: true },
+        platforms: { claude: true, codex: false, gemini: false, opencode: true, pi: true },
         type
       }
     })),
@@ -78,16 +78,16 @@ beforeEach(() => {
       if (name === 'missing-item') return null;
       return {
         enabled: true,
-        platforms: { claude: true, codex: true, gemini: false, opencode: false }
+        platforms: { claude: true, codex: true, gemini: false, opencode: false, pi: true }
       };
     }),
     toggleEnabled: vi.fn((_type, _name, enabled) => ({
       enabled,
-      platforms: { claude: true, codex: enabled, gemini: false, opencode: false }
+      platforms: { claude: true, codex: enabled, gemini: false, opencode: false, pi: enabled }
     })),
     togglePlatform: vi.fn((_type, _name, platform, enabled) => ({
       enabled: true,
-      platforms: { claude: true, codex: platform === 'codex' ? enabled : false, gemini: false, opencode: false }
+      platforms: { claude: true, codex: platform === 'codex' ? enabled : false, gemini: false, opencode: false, pi: platform === 'pi' ? enabled : false }
     }))
   };
 
@@ -96,10 +96,12 @@ beforeEach(() => {
     syncToCodex: vi.fn(),
     syncToGemini: vi.fn(),
     syncToOpenCode: vi.fn(),
+    syncToPi: vi.fn(),
     removeFromClaude: vi.fn(),
     removeFromCodex: vi.fn(),
     removeFromGemini: vi.fn(),
     removeFromOpenCode: vi.fn(),
+    removeFromPi: vi.fn(),
     syncAll: vi.fn(() => ({
       synced: ['demo-item'],
       removed: [],
@@ -119,7 +121,7 @@ beforeEach(() => {
     exports: {
       ConfigRegistryService: ConfigRegistryServiceMock,
       CONFIG_TYPES: ['skills', 'commands', 'agents', 'plugins'],
-      SUPPORTED_PLATFORMS: ['claude', 'codex', 'gemini', 'opencode']
+      SUPPORTED_PLATFORMS: ['claude', 'codex', 'gemini', 'opencode', 'pi']
     }
   };
 
@@ -193,11 +195,13 @@ describe('config-registry api import and toggle routes', () => {
     expect(enable.status).toBe(200);
     expect(syncManager.syncToClaude).toHaveBeenCalledWith('skills', 'demo-item');
     expect(syncManager.syncToCodex).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.syncToPi).toHaveBeenCalledWith('skills', 'demo-item');
     expect(disable.status).toBe(200);
     expect(syncManager.removeFromClaude).toHaveBeenCalledWith('skills', 'demo-item');
     expect(syncManager.removeFromCodex).toHaveBeenCalledWith('skills', 'demo-item');
     expect(syncManager.removeFromGemini).toHaveBeenCalledWith('skills', 'demo-item');
     expect(syncManager.removeFromOpenCode).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.removeFromPi).toHaveBeenCalledWith('skills', 'demo-item');
   });
 
   test('toggle platform validates input and syncs specific platforms', async () => {
@@ -216,6 +220,18 @@ describe('config-registry api import and toggle routes', () => {
     expect(syncManager.removeFromCodex).toHaveBeenCalledWith('skills', 'demo-item');
   });
 
+  test('toggle platform syncs Pi through Pi-specific config path', async () => {
+    const app = buildApp();
+
+    const enable = await request(app).put('/skills/demo-item/platform/pi', { enabled: true });
+    const disable = await request(app).put('/skills/demo-item/platform/pi', { enabled: false });
+
+    expect(enable.status).toBe(200);
+    expect(syncManager.syncToPi).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(disable.status).toBe(200);
+    expect(syncManager.removeFromPi).toHaveBeenCalledWith('skills', 'demo-item');
+  });
+
   test('syncs all registry items for a type', async () => {
     const res = await request(buildApp()).post('/skills/sync', {});
 
@@ -223,7 +239,7 @@ describe('config-registry api import and toggle routes', () => {
     expect(syncManager.syncAll).toHaveBeenCalledWith('skills', {
       'demo-item': {
         enabled: true,
-        platforms: { claude: true, codex: false, gemini: false, opencode: true },
+        platforms: { claude: true, codex: false, gemini: false, opencode: true, pi: true },
         type: 'skills'
       }
     });

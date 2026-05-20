@@ -10,21 +10,25 @@ const { getProxyStatus } = require('../proxy-server');
 const { getCodexProxyStatus } = require('../codex-proxy-server');
 const { getGeminiProxyStatus } = require('../gemini-proxy-server');
 const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
+const { getPiProxyStatus } = require('../pi-proxy-server');
 const { getProjectAndSessionCounts: getClaudeCounts } = require('../services/sessions');
 const { getProjectAndSessionCounts: getCodexCounts } = require('../services/codex-sessions');
 const { getProjectAndSessionCounts: getGeminiCounts } = require('../services/gemini-sessions');
 const { getProjectAndSessionCounts: getOpenCodeCounts } = require('../services/opencode-sessions');
+const { getProjectAndSessionCounts: getPiCounts } = require('../services/pi-sessions');
 
 // Channel-specific services
 const { getChannels: getCodexChannels } = require('../services/codex-channels');
 const { getChannels: getGeminiChannels } = require('../services/gemini-channels');
 const { getChannels: getOpenCodeChannels } = require('../services/opencode-channels');
+const { getChannels: getPiChannels } = require('../services/pi-channels');
 
 // Statistics
 const { getTodayStatistics: getClaudeTodayStatistics } = require('../services/claude-statistics-service');
 const { getTodayStatistics: getCodexTodayStatistics } = require('../services/codex-statistics-service');
 const { getTodayStatistics: getGeminiTodayStatistics } = require('../services/gemini-statistics-service');
 const { getTodayStatistics: getOpenCodeTodayStatistics } = require('../services/opencode-statistics-service');
+const { getTodayStatistics: getPiTodayStatistics } = require('../services/pi-statistics-service');
 
 /**
  * GET /api/dashboard/init
@@ -42,18 +46,22 @@ router.get('/init', async (req, res) => {
       codexChannels,
       geminiChannels,
       opencodeChannels,
+      piChannels,
       claudeProxyStatus,
       codexProxyStatus,
       geminiProxyStatus,
       opencodeProxyStatus,
+      piProxyStatus,
       claudeTodayStats,
       codexTodayStats,
       geminiTodayStats,
       opencodeTodayStats,
+      piTodayStats,
       claudeCounts,
       codexCounts,
       geminiCounts,
-      opencodeCounts
+      opencodeCounts,
+      piCounts
     ] = await Promise.all([
       // UI Config
       Promise.resolve(loadUIConfig()),
@@ -66,24 +74,28 @@ router.get('/init', async (req, res) => {
       Promise.resolve(getCodexChannels()),
       Promise.resolve(getGeminiChannels()),
       Promise.resolve(getOpenCodeChannels()),
+      Promise.resolve(getPiChannels()),
 
       // Proxy Status
       Promise.resolve(getProxyStatus()),
       Promise.resolve(getCodexProxyStatus()),
       Promise.resolve(getGeminiProxyStatus()),
       Promise.resolve(getOpenCodeProxyStatus()),
+      Promise.resolve(getPiProxyStatus()),
 
       // Today Stats (所有平台)
       Promise.resolve(getClaudeTodayStatistics()),
       Promise.resolve(getCodexTodayStatistics()),
       Promise.resolve(getGeminiTodayStatistics()),
       Promise.resolve(getOpenCodeTodayStatistics()),
+      Promise.resolve(getPiTodayStatistics()),
 
       // 轻量级统计
       Promise.resolve(getClaudeCounts(config)),
       Promise.resolve(getCodexCounts()),
       Promise.resolve(getGeminiCounts()),
-      Promise.resolve(getOpenCodeCounts())
+      Promise.resolve(getOpenCodeCounts()),
+      Promise.resolve(getPiCounts())
     ]);
 
     // 格式化统计数据：取 summary 和 byModel 中的数据
@@ -108,25 +120,29 @@ router.get('/init', async (req, res) => {
           claude: claudeChannels,
           codex: codexChannels,
           gemini: geminiChannels,
-          opencode: opencodeChannels.channels || []
+          opencode: opencodeChannels.channels || [],
+          pi: piChannels.channels || []
         },
         proxyStatus: {
           claude: claudeProxyStatus,
           codex: codexProxyStatus,
           gemini: geminiProxyStatus,
-          opencode: opencodeProxyStatus
+          opencode: opencodeProxyStatus,
+          pi: piProxyStatus
         },
         counts: {
           claude: claudeCounts || { projectCount: 0, sessionCount: 0 },
           codex: codexCounts || { projectCount: 0, sessionCount: 0 },
           gemini: geminiCounts || { projectCount: 0, sessionCount: 0 },
-          opencode: opencodeCounts || { projectCount: 0, sessionCount: 0 }
+          opencode: opencodeCounts || { projectCount: 0, sessionCount: 0 },
+          pi: piCounts || { projectCount: 0, sessionCount: 0 }
         },
         todayStats: {
           claude: formatStats(claudeTodayStats),
           codex: formatStats(codexTodayStats),
           gemini: formatStats(geminiTodayStats),
-          opencode: formatStats(opencodeTodayStats)
+          opencode: formatStats(opencodeTodayStats),
+          pi: formatStats(piTodayStats)
         }
       }
     });

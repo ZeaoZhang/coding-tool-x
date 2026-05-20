@@ -22,7 +22,7 @@ const {
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CLAUDE_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'commands');
 const CODEX_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'commands');
@@ -57,6 +57,11 @@ const PLATFORM_CONFIG = {
     projectCommandsDir: (projectPath) => path.join(projectPath, '.gemini', 'commands'),
     repoType: 'gemini-commands',
     fileExtension: '.toml'
+  },
+  pi: {
+    userCommandsDir: NATIVE_PATHS.pi.prompts,
+    projectCommandsDir: (projectPath) => path.join(projectPath, '.pi', 'prompts'),
+    repoType: 'pi-prompts'
   }
 };
 
@@ -372,6 +377,9 @@ class CommandsService {
   _generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body }) {
     if (this.platform === 'gemini') {
       return generateGeminiCommandToml({ description, body });
+    }
+    if (this.platform === 'pi') {
+      return body || '';
     }
 
     const frontmatterData = {};

@@ -190,6 +190,7 @@ import {
 import { createCommand, updateCommand } from '../api/commands'
 import message from '../utils/message'
 import MarkdownEditor from './MarkdownEditor.vue'
+import { getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   visible: {
@@ -220,19 +221,16 @@ const visible = computed({
 const isEdit = computed(() => !!props.command)
 const modalTitle = computed(() => isEdit.value ? '编辑命令' : '创建命令')
 const currentPlatformLabel = computed(() => {
-  const labels = {
-    claude: 'Claude Code',
-    codex: 'Codex CLI',
-    gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
-  }
-  return labels[props.platform] || 'Claude Code'
+  const platform = getPlatformConfig(props.platform)
+  return platform.label || platform.title || 'Claude Code'
 })
 const userScopePath = computed(() =>
   props.platform === 'opencode'
     ? '~/.config/opencode/commands/'
     : props.platform === 'gemini'
     ? '~/.gemini/commands/'
+    : props.platform === 'pi'
+    ? '~/.pi/agent/prompts/'
     : props.platform === 'codex'
     ? '~/.codex/commands/'
     : '~/.claude/commands/'
@@ -242,11 +240,13 @@ const projectScopePath = computed(() =>
     ? '.opencode/commands/'
     : props.platform === 'gemini'
     ? '.gemini/commands/'
+    : props.platform === 'pi'
+    ? '.pi/prompts/'
     : props.platform === 'codex'
     ? '.codex/commands/'
     : '.claude/commands/'
 )
-const supportsCommandMetadata = computed(() => props.platform !== 'opencode' && props.platform !== 'gemini')
+const supportsCommandMetadata = computed(() => props.platform !== 'opencode' && props.platform !== 'gemini' && props.platform !== 'pi')
 const scopeBadgeText = computed(() => formData.value.scope === 'project' ? '项目级' : '用户级')
 const commandTitle = computed(() => formData.value.name ? `/${formData.value.name}` : '编辑命令')
 const commandFormatLabel = computed(() => props.platform === 'gemini' ? 'TOML' : 'Markdown')

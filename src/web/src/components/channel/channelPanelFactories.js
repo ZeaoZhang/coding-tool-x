@@ -41,6 +41,16 @@ import {
   probeOpenCodeChannelModels,
   testOpenCodeChannelSpeed
 } from '../../api/channels'
+import {
+  getPiChannels,
+  createPiChannel,
+  updatePiChannel,
+  deletePiChannel,
+  resetPiChannelHealth,
+  fetchPiChannelModels,
+  probePiChannelModels,
+  testPiChannelSpeed
+} from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
 
 const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
@@ -1398,6 +1408,302 @@ const channelPanelFactories = {
       { label: '入口协议', value: formatOpenCodeGatewaySourceType(channel.gatewaySourceType), mono: true },
       { label: 'Wire API', value: channel.wireApi || 'openai', mono: true },
       { label: 'Provider Key', value: channel.providerKey || '(未设置)', mono: true },
+      { label: 'Model', value: channel.model || '(默认)', mono: true },
+      { label: 'URL', value: channel.baseUrl },
+      {
+        label: 'Key',
+        value: helpers.maskApiKey(channel.apiKey),
+        mono: true,
+        action: channel.health?.status !== 'healthy'
+          ? () => helpers.handleResetHealth(channel)
+          : null,
+        actionLabel: '重置状态'
+      }
+    ])
+  }),
+  pi: () => ({
+    type: 'pi',
+    displayName: 'Pi Agent',
+    schedulerSource: 'pi',
+    storageKeys: {
+      localCollapse: 'piChannelCollapse',
+      collapseConfigKey: 'pi',
+      orderConfigKey: 'pi'
+    },
+    emptyDescription: '暂无 Pi 渠道',
+    showEmptyAction: true,
+    emptyActionText: '添加 Pi 渠道',
+    modalWidth: 600,
+    formLabelWidth: 95,
+    showApplyButton: false,
+    presets: opencodePresets,
+    presetCategories: opencodePresetCategories,
+    getPresetById: getOpenCodePresetById,
+    formSections: [
+      {
+        title: '供应商预设',
+        fields: [
+          {
+            key: 'presetId',
+            label: '选择预设',
+            type: 'preset',
+            placeholder: '选择供应商预设'
+          }
+        ]
+      },
+      {
+        title: '基本信息',
+        fields: [
+          { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
+          {
+            key: 'providerKey',
+            label: 'Provider Key',
+            type: 'text',
+            required: true,
+            placeholder: 'openai-official',
+            validate: validateProviderKey
+          },
+          {
+            key: 'baseUrl',
+            label: 'Base URL',
+            type: 'text',
+            required: true,
+            placeholder: 'https://api.example.com/v1',
+            validate: (value) => validateHttpUrl('Base URL', value, { required: true })
+          },
+          {
+            key: 'apiKey',
+            label: 'API Key',
+            type: 'password',
+            required: true,
+            placeholder: 'sk-...'
+          },
+          buildBalanceCredentialField(),
+          buildBalanceUserIdField(),
+          {
+            key: 'websiteUrl',
+            label: '官网链接',
+            type: 'text',
+            placeholder: 'https://（选填）',
+            validate: (value) => validateHttpUrl('官网链接', value, { required: false })
+          },
+          {
+            key: 'model',
+            label: '默认模型',
+            type: 'select',
+            placeholder: '选择或输入默认模型（留空则由 Pi 决定）',
+            options: [],
+            clearable: true
+          },
+          {
+            key: 'speedTestModel',
+            label: '测速模型',
+            type: 'select',
+            placeholder: '选择用于测速的模型（留空则使用默认模型）',
+            options: [],
+            clearable: true
+          },
+          {
+            key: 'allowedModels',
+            label: '可用模型',
+            type: 'model-multi-select',
+            placeholder: '选择注册到 Pi Provider Extension 的模型',
+            description: '留空时使用检测到的所有模型；写入受管 extension 的 pi.registerProvider()'
+          }
+        ]
+      },
+      {
+        title: '模型重定向',
+        description: '仅在 coding-tool-x 托管 Provider Extension 启用时用于模型选择提示',
+        collapsible: true,
+        fields: [
+          {
+            key: 'modelRedirects',
+            type: 'model-redirect',
+            fullWidth: true
+          }
+        ]
+      },
+      {
+        title: '调度配置',
+        fields: baseSections.schedule
+      }
+    ],
+    getInitialForm: () => ({
+      presetId: 'openrouter',
+      name: 'OpenRouter',
+      providerKey: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      wireApi: 'openai',
+      providerApi: 'openai-completions',
+      apiKey: '',
+      balanceToken: '',
+      balanceUserId: null,
+      websiteUrl: 'https://openrouter.ai',
+      model: '',
+      gatewaySourceType: 'codex',
+      speedTestModel: '',
+      modelRedirects: [],
+      allowedModels: [],
+      maxConcurrency: null,
+      weight: 1,
+      enabled: true,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }),
+    mapChannelToForm: (channel) => ({
+      presetId: channel.presetId || 'custom',
+      name: channel.name || '',
+      providerKey: channel.providerKey || channel.provider || channel.name || '',
+      baseUrl: channel.baseUrl || '',
+      wireApi: channel.wireApi || 'openai',
+      providerApi: channel.providerApi || channel.api || 'openai-completions',
+      apiKey: channel.apiKey || '',
+      balanceToken: channel.balanceToken || '',
+      balanceUserId: channel.balanceUserId ?? null,
+      websiteUrl: channel.websiteUrl || '',
+      model: channel.model || '',
+      gatewaySourceType: channel.gatewaySourceType || 'codex',
+      speedTestModel: channel.speedTestModel || '',
+      modelRedirects: channel.modelRedirects || [],
+      allowedModels: channel.allowedModels || [],
+      maxConcurrency: channel.maxConcurrency ?? null,
+      weight: channel.weight || 1,
+      enabled: channel.enabled !== false,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }),
+    onPresetChange: (presetId, form) => {
+      const preset = getOpenCodePresetById(presetId)
+      if (!preset) return form
+      const newForm = { ...form, presetId }
+      newForm.name = preset.name
+      newForm.providerKey = (preset.id || preset.name || 'provider')
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-|-$/g, '')
+      newForm.baseUrl = preset.baseUrl
+      newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.wireApi = preset.wireApi || 'openai'
+      newForm.providerApi = 'openai-completions'
+      newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'codex'
+      return applyPresetAuth(newForm)
+    },
+    fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
+      await loadDefaultModels()
+      form.modelsFetching = true
+      form.modelsFetchError = null
+      form.modelsFetchErrorHint = null
+      if (!channelId) {
+        if (!form.baseUrl) {
+          form.availableModels = []
+          form.modelsFetching = false
+          return
+        }
+        try {
+          const result = await probePiChannelModels({
+            baseUrl: form.baseUrl,
+            apiKey: form.apiKey || '',
+            gatewaySourceType: form.gatewaySourceType || 'codex'
+          })
+          form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+          if (result.error) {
+            form.modelsFetchError = result.error
+            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+          }
+        } catch (error) {
+          form.availableModels = []
+          form.modelsFetchError = error.message || '获取模型列表失败'
+          form.modelsFetchErrorHint = '请手动填写模型名称'
+        } finally {
+          form.modelsFetching = false
+        }
+        return
+      }
+      try {
+        const result = await fetchPiChannelModels(channelId, { forceRefresh })
+        form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+        if (result.error) {
+          form.modelsFetchError = result.error
+          form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+        }
+      } catch (error) {
+        form.availableModels = []
+        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchErrorHint = '请手动填写模型名称'
+      } finally {
+        form.modelsFetching = false
+      }
+    },
+    testFn: testPiChannelSpeed,
+    api: {
+      fetch: async () => {
+        const data = await getPiChannels()
+        return data.channels || []
+      },
+      create: async (form) => {
+        const authPayload = buildAuthPayload(form)
+        await createPiChannel(form.name, form.baseUrl, authPayload.apiKey, {
+          wireApi: form.wireApi || 'openai',
+          providerApi: form.providerApi || 'openai-completions',
+          providerKey: form.providerKey,
+          maxConcurrency: normalizeConcurrency(form.maxConcurrency),
+          weight: normalizeWeight(form.weight),
+          enabled: form.enabled,
+          model: form.model || null,
+          gatewaySourceType: form.gatewaySourceType || 'codex',
+          modelRedirects: form.modelRedirects || [],
+          speedTestModel: form.speedTestModel || null,
+          presetId: form.presetId || null,
+          websiteUrl: form.websiteUrl || '',
+          allowedModels: form.allowedModels || [],
+          balanceToken: authPayload.balanceToken,
+          balanceUserId: authPayload.balanceUserId
+        })
+      },
+      update: async (channel, form) => {
+        const authPayload = buildAuthPayload(form)
+        await updatePiChannel(channel.id, {
+          name: form.name,
+          providerKey: form.providerKey,
+          baseUrl: form.baseUrl,
+          apiKey: authPayload.apiKey,
+          wireApi: form.wireApi || 'openai',
+          providerApi: form.providerApi || 'openai-completions',
+          websiteUrl: form.websiteUrl,
+          model: form.model || null,
+          gatewaySourceType: form.gatewaySourceType || 'codex',
+          maxConcurrency: normalizeConcurrency(form.maxConcurrency),
+          weight: normalizeWeight(form.weight),
+          enabled: form.enabled,
+          modelRedirects: form.modelRedirects || [],
+          speedTestModel: form.speedTestModel || null,
+          presetId: form.presetId || null,
+          allowedModels: form.allowedModels || [],
+          balanceToken: authPayload.balanceToken,
+          balanceUserId: authPayload.balanceUserId
+        })
+      },
+      toggle: async (channel, enabled) => updatePiChannel(channel.id, { enabled }),
+      remove: deletePiChannel,
+      resetHealth: async (channel) => resetPiChannelHealth(channel.id)
+    },
+    getHeaderTags: (channel, helpers) => {
+      const tags = []
+      if (channel.health?.status === 'frozen') {
+        tags.push({ text: helpers.formatFreeze(channel.health.freezeRemaining), type: 'error' })
+      } else if (channel.health?.status === 'checking') {
+        tags.push({ text: '检测中', type: 'warning' })
+      }
+      return tags
+    },
+    buildInfoRows: (channel, helpers) => ([
+      { label: 'Provider', value: channel.providerKey || channel.provider || '(未设置)', mono: true },
+      { label: 'API', value: channel.providerApi || channel.api || 'openai-completions', mono: true },
       { label: 'Model', value: channel.model || '(默认)', mono: true },
       { label: 'URL', value: channel.baseUrl },
       {

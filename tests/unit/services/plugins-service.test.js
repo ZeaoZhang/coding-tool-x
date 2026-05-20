@@ -27,7 +27,14 @@ beforeEach(() => {
         claude: { settings: path.join(testDir, 'settings.json') },
         codex: { config: path.join(testDir, '.codex', 'config.toml') },
         gemini: { config: path.join(testDir, '.gemini', 'settings.json') },
-        opencode: { config: testDir }
+        opencode: { config: testDir },
+        pi: {
+          dir: path.join(testDir, '.pi', 'agent'),
+          settings: path.join(testDir, '.pi', 'agent', 'settings.json'),
+          extensions: path.join(testDir, '.pi', 'agent', 'extensions'),
+          skills: path.join(testDir, '.pi', 'agent', 'skills'),
+          prompts: path.join(testDir, '.pi', 'agent', 'prompts')
+        }
       },
       PATHS: {
         base: testDir,
@@ -36,13 +43,15 @@ beforeEach(() => {
           claude: path.join(testDir, 'plugin-repos.json'),
           codex: path.join(testDir, 'codex-plugin-repos.json'),
           gemini: path.join(testDir, 'gemini-plugin-repos.json'),
-          opencode: path.join(testDir, 'opencode-plugin-repos.json')
+          opencode: path.join(testDir, 'opencode-plugin-repos.json'),
+          pi: path.join(testDir, 'pi-plugin-repos.json')
         },
         pluginMarketCache: {
           claude: path.join(testDir, 'plugins-market-cache.json'),
           codex: path.join(testDir, 'codex-plugins-market-cache.json'),
           gemini: path.join(testDir, 'gemini-plugins-market-cache.json'),
-          opencode: path.join(testDir, 'opencode-plugins-market-cache.json')
+          opencode: path.join(testDir, 'opencode-plugins-market-cache.json'),
+          pi: path.join(testDir, 'pi-plugins-market-cache.json')
         }
       }
     }
@@ -272,6 +281,21 @@ describe('PluginsService', () => {
     expect(svc.platform).toBe('codex');
   });
 
+  test('pi platform is accepted with package/extension capabilities', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+
+    expect(svc.platform).toBe('pi');
+    expect(svc.getCapabilities()).toEqual(expect.objectContaining({
+      platform: 'pi',
+      supportsPlugins: true,
+      repositories: true,
+      install: true,
+      uninstall: true,
+      pluginKindLabel: 'packages/extensions'
+    }));
+  });
+
   test('future platform gemini is recognized without pretending plugin support exists', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('gemini');
@@ -446,6 +470,66 @@ describe('PluginsService market cache and repository management', () => {
         repoUrl: 'https://github.com/acme/remote-plugins.git'
       })
     ]));
+  });
+
+  test('getMarketPlugins classifies Claude marketplace entries that bundle skills', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'mixed-skill-plugin-marketplace');
+
+    fs.mkdirSync(path.join(repoRoot, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins', 'skill-bundle', '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins', 'skill-bundle', 'skills', 'nested-demo'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'skills', 'plain-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'mixed-market',
+        owner: { name: 'Anthropic' },
+        plugins: [
+          {
+            name: 'skill-bundle',
+            source: './plugins/skill-bundle',
+            description: 'A plugin that bundles skills',
+            strict: false,
+            skills: ['./plugins/skill-bundle/skills/nested-demo', './skills/plain-skill']
+          }
+        ]
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'skill-bundle', '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'skill-bundle', version: '0.4.0', description: 'Manifest description' }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'skill-bundle', 'skills', 'nested-demo', 'SKILL.md'),
+      '---\nname: Nested Demo\ndescription: Should not become a plugin row\n---\nBody',
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'skills', 'plain-skill', 'SKILL.md'),
+      '---\nname: Plain Skill\ndescription: Plain repository skill\n---\nBody',
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot });
+
+    const plugins = await svc.getMarketPlugins(true);
+
+    expect(plugins).toEqual([
+      expect.objectContaining({
+        name: 'skill-bundle',
+        directory: 'plugins/skill-bundle',
+        marketplace: 'mixed-market',
+        marketplaceFormat: 'claude-marketplace',
+        containsSkills: true,
+        pluginKind: 'skill-bundle',
+        strict: false,
+        skillPaths: ['plugins/skill-bundle/skills/nested-demo', 'skills/plain-skill']
+      })
+    ]);
+    expect(plugins.map(plugin => plugin.name)).not.toEqual(expect.arrayContaining(['Nested Demo', 'Plain Skill']));
   });
 
   test('addRepo derives owner and name from URL', () => {
@@ -675,6 +759,95 @@ describe('PluginsService OpenCode helpers', () => {
         version: '0.4.0',
         description: 'Local OpenCode demo',
         pluginType: 'local'
+      })
+    ]);
+  });
+});
+
+describe('PluginsService Pi helpers', () => {
+  test('listPlugins merges Pi packages and local extensions', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+    const piExtensionsDir = path.join(testDir, '.pi', 'agent', 'extensions');
+
+    fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      piSettingsPath,
+      JSON.stringify({ packages: ['pi-package'], disabledPackages: ['local-extension'] }),
+      'utf8'
+    );
+    fs.mkdirSync(path.join(piExtensionsDir, 'local-extension'), { recursive: true });
+    fs.writeFileSync(
+      path.join(piExtensionsDir, 'local-extension', 'pi.json'),
+      JSON.stringify({ name: 'local-extension', version: '0.1.0' }),
+      'utf8'
+    );
+
+    const result = svc.listPlugins();
+
+    expect(result.plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'pi-package',
+        source: 'pi-settings',
+        pluginKind: 'package',
+        enabled: true
+      }),
+      expect.objectContaining({
+        name: 'local-extension',
+        source: 'pi-extension',
+        pluginKind: 'extension',
+        enabled: false
+      })
+    ]));
+  });
+
+  test('package install, toggle, config, and uninstall update Pi settings', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+
+    const installResult = await svc.installPlugin('acme/pi-provider');
+    const toggleResult = svc.togglePlugin('acme/pi-provider', false);
+    const configResult = svc.updatePluginConfig('acme/pi-provider', { model: 'pi-fast' });
+    const uninstallResult = svc.uninstallPlugin('acme/pi-provider');
+    const settings = JSON.parse(fs.readFileSync(piSettingsPath, 'utf8'));
+
+    expect(installResult).toEqual(expect.objectContaining({
+      success: true,
+      plugin: expect.objectContaining({ name: 'acme/pi-provider', pluginKind: 'package' })
+    }));
+    expect(toggleResult).toEqual(expect.objectContaining({ success: true, enabled: false }));
+    expect(configResult.success).toBe(true);
+    expect(uninstallResult.success).toBe(true);
+    expect(settings.packages).toEqual([]);
+    expect(settings.disabledPackages).toContain('acme/pi-provider');
+    expect(settings.packageConfig['acme/pi-provider']).toEqual({ model: 'pi-fast' });
+  });
+
+  test('local Pi repository install is listed as an extension', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const repoRoot = path.join(testDir, 'pi-local-repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'pi.json'),
+      JSON.stringify({ name: 'local-pi-extension', version: '0.4.0', description: 'Local Pi extension' }),
+      'utf8'
+    );
+
+    const installResult = await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot
+    });
+
+    expect(installResult.success).toBe(true);
+    expect(svc.listPlugins().plugins).toEqual([
+      expect.objectContaining({
+        name: 'local-pi-extension',
+        directory: 'local-pi-extension',
+        source: 'pi-extension',
+        pluginKind: 'extension'
       })
     ]);
   });

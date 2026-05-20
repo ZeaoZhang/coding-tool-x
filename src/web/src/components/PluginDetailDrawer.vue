@@ -13,6 +13,9 @@
                 <n-tag v-if="plugin?.version" size="tiny" :bordered="false" type="info">
                   v{{ plugin.version }}
                 </n-tag>
+                <n-tag v-if="plugin?.pluginKind === 'skill-bundle'" size="tiny" :bordered="false" type="warning">
+                  技能包插件
+                </n-tag>
                 <span v-if="plugin?.author" class="asset-detail-subtle">
                   <n-icon :size="12"><PersonOutline /></n-icon>
                   {{ plugin.author }}
@@ -30,6 +33,15 @@
               <div class="asset-detail-info-section">
                 <h3 class="asset-detail-section-title">描述</h3>
                 <p class="asset-detail-description">{{ plugin?.description || '暂无描述' }}</p>
+              </div>
+
+              <div class="asset-detail-info-section" v-if="skillPaths.length > 0">
+                <h3 class="asset-detail-section-title">包含技能</h3>
+                <div class="asset-detail-list">
+                  <div v-for="skillPath in skillPaths" :key="skillPath" class="asset-detail-row">
+                    <span class="asset-detail-value mono">{{ skillPath }}</span>
+                  </div>
+                </div>
               </div>
 
               <div class="asset-detail-info-section" v-if="plugin?.repoUrl || plugin?.gitUrl || plugin?.repoLocalPath">
@@ -121,6 +133,7 @@ const loadingReadme = ref(false)
 
 const isRemoteRepoLink = computed(() => /^(https?:)?\/\//.test(props.plugin?.repoUrl || props.plugin?.gitUrl || ''))
 const pluginPath = computed(() => props.plugin?.installPath || props.plugin?.fullPath || props.plugin?.path || props.plugin?.directory || '')
+const skillPaths = computed(() => Array.isArray(props.plugin?.skillPaths) ? props.plugin.skillPaths : [])
 
 const bodyContentStyle = {
   height: '100%',

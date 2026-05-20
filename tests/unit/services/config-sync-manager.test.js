@@ -57,6 +57,12 @@ beforeEach(() => {
         },
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
+        },
+        pi: {
+          dir: path.join(testDir, '.pi', 'agent'),
+          skills: path.join(testDir, '.pi', 'agent', 'skills'),
+          prompts: path.join(testDir, '.pi', 'agent', 'prompts'),
+          extensions: path.join(testDir, '.pi', 'agent', 'extensions')
         }
       },
       HOME_DIR: testDir,
@@ -191,6 +197,36 @@ describe('ConfigSyncManager direct sync helpers', () => {
     expect(fs.existsSync(commandTarget)).toBe(false);
     expect(fs.existsSync(agentTarget)).toBe(false);
   });
+
+  test('syncToPi maps skills, commands, and plugins while skipping native agents', () => {
+    writeFile(path.join(configsDir, 'skills', 'review-skill', 'SKILL.md'), '# Skill');
+    writeFile(path.join(configsDir, 'commands', 'team', 'review.md'), 'Review this');
+    writeFile(path.join(configsDir, 'plugins', 'demo-extension', 'index.ts'), 'export default {}');
+    writeFile(path.join(configsDir, 'agents', 'reviewer.md'), '# Agent');
+    const manager = new ConfigSyncManager();
+
+    const skillResult = manager.syncToPi('skills', 'review-skill');
+    const commandResult = manager.syncToPi('commands', 'team/review.md');
+    const pluginResult = manager.syncToPi('plugins', 'demo-extension');
+    const agentResult = manager.syncToPi('agents', 'reviewer.md');
+
+    const skillTarget = path.join(testDir, '.pi', 'agent', 'skills', 'review-skill');
+    const commandTarget = path.join(testDir, '.pi', 'agent', 'prompts', 'team', 'review.md');
+    const pluginTarget = path.join(testDir, '.pi', 'agent', 'extensions', 'demo-extension');
+
+    expect(skillResult).toEqual({ success: true, target: skillTarget });
+    expect(commandResult).toEqual({ success: true, target: commandTarget });
+    expect(pluginResult).toEqual({ success: true, target: pluginTarget });
+    expect(agentResult).toEqual({ success: true, skipped: true, reason: 'Not supported natively by Pi' });
+    expect(fs.readFileSync(path.join(skillTarget, 'SKILL.md'), 'utf8')).toBe('# Skill');
+    expect(fs.readFileSync(commandTarget, 'utf8')).toBe('Review this');
+    expect(fs.readFileSync(path.join(pluginTarget, 'index.ts'), 'utf8')).toBe('export default {}');
+
+    expect(manager.removeFromPi('commands', 'team/review.md')).toEqual({ success: true });
+    expect(manager.removeFromPi('plugins', 'demo-extension')).toEqual({ success: true });
+    expect(fs.existsSync(commandTarget)).toBe(false);
+    expect(fs.existsSync(pluginTarget)).toBe(false);
+  });
 });
 
 describe('ConfigSyncManager aggregation', () => {
@@ -200,26 +236,29 @@ describe('ConfigSyncManager aggregation', () => {
     vi.spyOn(manager, 'syncToCodex').mockReturnValue({ success: true, warnings: ['converted'] });
     vi.spyOn(manager, 'syncToGemini').mockReturnValue({ success: false, error: 'missing source' });
     vi.spyOn(manager, 'syncToOpenCode').mockReturnValue({ success: true });
+    vi.spyOn(manager, 'syncToPi').mockReturnValue({ success: true });
     vi.spyOn(manager, 'removeFromClaude').mockReturnValue({ success: true });
     vi.spyOn(manager, 'removeFromCodex').mockReturnValue({ success: true, message: 'Already removed' });
     vi.spyOn(manager, 'removeFromGemini').mockReturnValue({ success: true, skipped: true });
     vi.spyOn(manager, 'removeFromOpenCode').mockReturnValue({ success: true });
+    vi.spyOn(manager, 'removeFromPi').mockReturnValue({ success: true, skipped: true });
 
     const result = manager.syncAll('skills', {
       alpha: {
         enabled: true,
-        platforms: { claude: true, codex: true, gemini: true, opencode: true }
+        platforms: { claude: true, codex: true, gemini: true, opencode: true, pi: true }
       },
       beta: {
         enabled: false,
-        platforms: { claude: true, codex: false, gemini: false, opencode: false }
+        platforms: { claude: true, codex: false, gemini: false, opencode: false, pi: false }
       }
     });
 
     expect(result.synced).toEqual([
       { type: 'skills', name: 'alpha', platform: 'claude' },
       { type: 'skills', name: 'alpha', platform: 'codex' },
-      { type: 'skills', name: 'alpha', platform: 'opencode' }
+      { type: 'skills', name: 'alpha', platform: 'opencode' },
+      { type: 'skills', name: 'alpha', platform: 'pi' }
     ]);
     expect(result.removed).toEqual([
       { type: 'skills', name: 'beta', platform: 'claude' },

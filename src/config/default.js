@@ -11,13 +11,14 @@ const DEFAULT_CONFIG = {
   defaultProject: null,
   maxDisplaySessions: 100,
   pageSize: 15,
-  currentCliType: 'claude',  // 当前CLI工具类型: claude, codex, gemini, opencode
+  currentCliType: 'claude',  // 当前CLI工具类型: claude, codex, gemini, opencode, pi
   ports: {
     webUI: 19999,       // Web UI 页面端口 (同时用于 WebSocket)
     proxy: 20088,       // Claude 代理服务端口
     codexProxy: 20089,  // Codex 代理服务端口
     geminiProxy: 20090, // Gemini 代理服务端口
-    opencodeProxy: 20091  // OpenCode 代理服务端口
+    opencodeProxy: 20091, // OpenCode 代理服务端口
+    piProxy: 20092       // Pi Agent 托管 provider 状态端口占位
   },
   maxLogs: 100,
   statsInterval: 30,
@@ -63,6 +64,13 @@ const DEFAULT_CONFIG = {
       }
     },
     opencode: {
+      mode: 'auto',
+      input: 2.5,
+      output: 15,
+      cacheRead: 0.25,
+      models: {}
+    },
+    pi: {
       mode: 'auto',
       input: 2.5,
       output: 15,

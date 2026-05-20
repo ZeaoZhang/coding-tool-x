@@ -172,6 +172,7 @@ import message from '../utils/message'
 import AgentCard from './AgentCard.vue'
 import AgentDetailDrawer from './AgentDetailDrawer.vue'
 import AgentFormModal from './AgentFormModal.vue'
+import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   hideBack: {
@@ -207,15 +208,16 @@ const editingAgent = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
+const managedAgentPlatforms = BUILT_IN_CLI_PLATFORMS
+  .filter(platform => platform.supportsAgents !== false)
+  .map(platform => platform.key)
 
 const currentPlatform = computed(() => {
-  if (['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+  if (managedAgentPlatforms.includes(props.platform)) {
     return props.platform
   }
   const channel = route.meta.channel
-  if (channel === 'codex') return 'codex'
-  if (channel === 'gemini') return 'gemini'
-  if (channel === 'opencode') return 'opencode'
+  if (managedAgentPlatforms.includes(channel)) return channel
   return 'claude'
 })
 
@@ -228,13 +230,8 @@ const agentUsageHint = computed(() =>
 )
 
 const currentPlatformLabel = computed(() => {
-  const map = {
-    claude: 'Claude Code',
-    codex: 'Codex CLI',
-    gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
-  }
-  return map[currentPlatform.value] || 'Claude Code'
+  const platform = getPlatformConfig(currentPlatform.value)
+  return platform.label || platform.title || 'Claude Code'
 })
 
 const scopeOptions = [

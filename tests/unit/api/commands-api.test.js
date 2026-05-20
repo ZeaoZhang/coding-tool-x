@@ -8,7 +8,8 @@ beforeEach(() => {
     claude: createMockService(),
     codex: createMockService(),
     gemini: createMockService(),
-    opencode: createMockService()
+    opencode: createMockService(),
+    pi: createMockService()
   };
 
   const CommandsServiceStub = function(platform = 'claude') {
@@ -133,6 +134,16 @@ describe('commands api basic routes', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('codex');
     expect(services.codex.listCommands).toHaveBeenCalledWith('/tmp/project');
+    expect(services.claude.listCommands).not.toHaveBeenCalled();
+  });
+
+  test('lists commands for Pi prompt templates', async () => {
+    const res = await request(buildApp()).get('/?platform=pi&projectPath=/tmp/project');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('pi');
+    expect(services.pi.listCommands).toHaveBeenCalledWith('/tmp/project');
     expect(services.claude.listCommands).not.toHaveBeenCalled();
   });
 

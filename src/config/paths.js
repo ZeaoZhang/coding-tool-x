@@ -392,6 +392,8 @@ const PATHS = {
   forkRelations: path.join(CONFIG_DIR, 'fork-relations.json'),
   opencodeProjectOrder: path.join(CONFIG_DIR, 'opencode-project-order.json'),
   opencodeSessionOrder: path.join(CONFIG_DIR, 'opencode-session-order.json'),
+  piProjectOrder: path.join(CONFIG_DIR, 'pi-project-order.json'),
+  piSessionOrder: path.join(CONFIG_DIR, 'pi-session-order.json'),
 
   // 渠道配置
   channelsDir: CHANNELS_DIR,
@@ -399,14 +401,16 @@ const PATHS = {
     claude: path.join(CHANNELS_DIR, 'claude.json'),
     codex: path.join(CHANNELS_DIR, 'codex.json'),
     gemini: path.join(CHANNELS_DIR, 'gemini.json'),
-    opencode: path.join(CHANNELS_DIR, 'opencode.json')
+    opencode: path.join(CHANNELS_DIR, 'opencode.json'),
+    pi: path.join(CHANNELS_DIR, 'pi.json')
   },
   activeChannelDir: ACTIVE_CHANNELS_DIR,
   activeChannel: {
     claude: path.join(ACTIVE_CHANNELS_DIR, 'claude.json'),
     codex: path.join(ACTIVE_CHANNELS_DIR, 'codex.json'),
     gemini: path.join(ACTIVE_CHANNELS_DIR, 'gemini.json'),
-    opencode: path.join(ACTIVE_CHANNELS_DIR, 'opencode.json')
+    opencode: path.join(ACTIVE_CHANNELS_DIR, 'opencode.json'),
+    pi: path.join(ACTIVE_CHANNELS_DIR, 'pi.json')
   },
 
   // 统计与日志快照
@@ -437,7 +441,8 @@ const PATHS = {
     claude: path.join(RUNTIME_DIR, 'claude-proxy.json'),
     codex: path.join(RUNTIME_DIR, 'codex-proxy.json'),
     gemini: path.join(RUNTIME_DIR, 'gemini-proxy.json'),
-    opencode: path.join(RUNTIME_DIR, 'opencode-proxy.json')
+    opencode: path.join(RUNTIME_DIR, 'opencode-proxy.json'),
+    pi: path.join(RUNTIME_DIR, 'pi-proxy.json')
   },
 
   // 请求记录
@@ -445,7 +450,8 @@ const PATHS = {
     claude: path.join(REQUESTS_DIR, 'claude.jsonl'),
     codex: path.join(REQUESTS_DIR, 'codex.jsonl'),
     gemini: path.join(REQUESTS_DIR, 'gemini.jsonl'),
-    opencode: path.join(REQUESTS_DIR, 'opencode.jsonl')
+    opencode: path.join(REQUESTS_DIR, 'opencode.jsonl'),
+    pi: path.join(REQUESTS_DIR, 'pi.jsonl')
   },
   claudeRequestTemplate: path.join(REQUESTS_DIR, 'claude-request-template.json'),
 
@@ -457,31 +463,36 @@ const PATHS = {
     claude: path.join(LOCAL_SKILLS_DIR, 'claude'),
     codex: path.join(LOCAL_SKILLS_DIR, 'codex'),
     gemini: path.join(LOCAL_SKILLS_DIR, 'gemini'),
-    opencode: path.join(LOCAL_SKILLS_DIR, 'opencode')
+    opencode: path.join(LOCAL_SKILLS_DIR, 'opencode'),
+    pi: path.join(LOCAL_SKILLS_DIR, 'pi')
   },
   skillRepos: {
     claude: path.join(REPOS_SKILLS_DIR, 'claude.json'),
     codex: path.join(REPOS_SKILLS_DIR, 'codex.json'),
     gemini: path.join(REPOS_SKILLS_DIR, 'gemini.json'),
-    opencode: path.join(REPOS_SKILLS_DIR, 'opencode.json')
+    opencode: path.join(REPOS_SKILLS_DIR, 'opencode.json'),
+    pi: path.join(REPOS_SKILLS_DIR, 'pi.json')
   },
   skillCaches: {
     claude: path.join(CACHE_SKILLS_DIR, 'claude.json'),
     codex: path.join(CACHE_SKILLS_DIR, 'codex.json'),
     gemini: path.join(CACHE_SKILLS_DIR, 'gemini.json'),
-    opencode: path.join(CACHE_SKILLS_DIR, 'opencode.json')
+    opencode: path.join(CACHE_SKILLS_DIR, 'opencode.json'),
+    pi: path.join(CACHE_SKILLS_DIR, 'pi.json')
   },
   pluginRepos: {
     claude: path.join(REPOS_PLUGINS_DIR, 'claude.json'),
     codex: path.join(REPOS_PLUGINS_DIR, 'codex.json'),
     gemini: path.join(REPOS_PLUGINS_DIR, 'gemini.json'),
-    opencode: path.join(REPOS_PLUGINS_DIR, 'opencode.json')
+    opencode: path.join(REPOS_PLUGINS_DIR, 'opencode.json'),
+    pi: path.join(REPOS_PLUGINS_DIR, 'pi.json')
   },
   pluginMarketCache: {
     claude: path.join(CACHE_PLUGINS_DIR, 'claude-market.json'),
     codex: path.join(CACHE_PLUGINS_DIR, 'codex-market.json'),
     gemini: path.join(CACHE_PLUGINS_DIR, 'gemini-market.json'),
-    opencode: path.join(CACHE_PLUGINS_DIR, 'opencode-market.json')
+    opencode: path.join(CACHE_PLUGINS_DIR, 'opencode-market.json'),
+    pi: path.join(CACHE_PLUGINS_DIR, 'pi-market.json')
   },
 
   // 原生路径兼容
@@ -521,16 +532,20 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('fork-relations.json'), target: PATHS.forkRelations },
   { source: rootEntry('opencode-project-order.json'), target: PATHS.opencodeProjectOrder },
   { source: rootEntry('opencode-session-order.json'), target: PATHS.opencodeSessionOrder },
+  { source: rootEntry('pi-project-order.json'), target: PATHS.piProjectOrder },
+  { source: rootEntry('pi-session-order.json'), target: PATHS.piSessionOrder },
 
   // 渠道相关
   { source: rootEntry('channels.json'), target: PATHS.channels.claude },
   { source: rootEntry('codex-channels.json'), target: PATHS.channels.codex },
   { source: rootEntry('gemini-channels.json'), target: PATHS.channels.gemini },
   { source: rootEntry('opencode-channels.json'), target: PATHS.channels.opencode },
+  { source: rootEntry('pi-channels.json'), target: PATHS.channels.pi },
   { source: rootEntry('active-channel.json'), target: PATHS.activeChannel.claude },
   { source: rootEntry('codex-active-channel.json'), target: PATHS.activeChannel.codex },
   { source: rootEntry('gemini-active-channel.json'), target: PATHS.activeChannel.gemini },
   { source: rootEntry('opencode-active-channel.json'), target: PATHS.activeChannel.opencode },
+  { source: rootEntry('pi-active-channel.json'), target: PATHS.activeChannel.pi },
 
   // 统计与日志
   { source: rootEntry('statistics.json'), target: PATHS.statistics.summary },
@@ -553,12 +568,14 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('codex-proxy-runtime.json'), target: PATHS.proxyRuntime.codex },
   { source: rootEntry('gemini-proxy-runtime.json'), target: PATHS.proxyRuntime.gemini },
   { source: rootEntry('opencode-proxy-runtime.json'), target: PATHS.proxyRuntime.opencode },
+  { source: rootEntry('pi-proxy-runtime.json'), target: PATHS.proxyRuntime.pi },
   { source: rootEntry('notify-hook.js'), target: PATHS.notifyHook },
   { source: rootEntry('claude-request-template.json'), target: PATHS.claudeRequestTemplate },
   { source: rootEntry('claude-requests.jsonl'), target: PATHS.requestSnapshots.claude },
   { source: rootEntry('codex-requests.jsonl'), target: PATHS.requestSnapshots.codex },
   { source: rootEntry('gemini-requests.jsonl'), target: PATHS.requestSnapshots.gemini },
   { source: rootEntry('opencode-requests.jsonl'), target: PATHS.requestSnapshots.opencode },
+  { source: rootEntry('pi-requests.jsonl'), target: PATHS.requestSnapshots.pi },
 
   // 备份
   { source: rootEntry('env-backups'), target: PATHS.envBackups },
@@ -568,24 +585,29 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('codex-skills'), target: PATHS.localSkills.codex },
   { source: rootEntry('gemini-skills'), target: PATHS.localSkills.gemini },
   { source: rootEntry('opencode-skills'), target: PATHS.localSkills.opencode },
+  { source: rootEntry('pi-skills'), target: PATHS.localSkills.pi },
   { source: rootEntry('skill-repos.json'), target: PATHS.skillRepos.claude },
   { source: rootEntry('codex-skill-repos.json'), target: PATHS.skillRepos.codex },
   { source: rootEntry('gemini-skill-repos.json'), target: PATHS.skillRepos.gemini },
   { source: rootEntry('opencode-skill-repos.json'), target: PATHS.skillRepos.opencode },
+  { source: rootEntry('pi-skill-repos.json'), target: PATHS.skillRepos.pi },
   { source: rootEntry('skills-cache.json'), target: PATHS.skillCaches.claude },
   { source: rootEntry('codex-skills-cache.json'), target: PATHS.skillCaches.codex },
   { source: rootEntry('gemini-skills-cache.json'), target: PATHS.skillCaches.gemini },
   { source: rootEntry('opencode-skills-cache.json'), target: PATHS.skillCaches.opencode },
+  { source: rootEntry('pi-skills-cache.json'), target: PATHS.skillCaches.pi },
 
   // 插件仓库缓存
   { source: rootEntry('plugin-repos.json'), target: PATHS.pluginRepos.claude },
   { source: rootEntry('codex-plugin-repos.json'), target: PATHS.pluginRepos.codex },
   { source: rootEntry('gemini-plugin-repos.json'), target: PATHS.pluginRepos.gemini },
   { source: rootEntry('opencode-plugin-repos.json'), target: PATHS.pluginRepos.opencode },
+  { source: rootEntry('pi-plugin-repos.json'), target: PATHS.pluginRepos.pi },
   { source: rootEntry('plugins-market-cache.json'), target: PATHS.pluginMarketCache.claude },
   { source: rootEntry('codex-plugins-market-cache.json'), target: PATHS.pluginMarketCache.codex },
   { source: rootEntry('gemini-plugins-market-cache.json'), target: PATHS.pluginMarketCache.gemini },
   { source: rootEntry('opencode-plugins-market-cache.json'), target: PATHS.pluginMarketCache.opencode },
+  { source: rootEntry('pi-plugins-market-cache.json'), target: PATHS.pluginMarketCache.pi },
 
   // 已废弃但需要保留的数据
   { source: rootEntry('oauth-tokens.json'), target: PATHS.legacy.oauthTokens }
@@ -765,6 +787,10 @@ function getOpenCodeConfigDir() {
   return preferredDir;
 }
 
+function getPiAgentDir() {
+  return resolveExistingEnvPath(process.env.PI_CODING_AGENT_DIR) || path.join(HOME_DIR, '.pi', 'agent');
+}
+
 // 工具特定的原生配置路径（不改变）
 const NATIVE_PATHS = {
   // Claude Code 原生配置
@@ -808,6 +834,18 @@ const NATIVE_PATHS = {
     messages: path.join(getOpenCodeDataDir(), 'storage', 'message'),
     log: path.join(getOpenCodeDataDir(), 'log'),
     auth: path.join(getOpenCodeDataDir(), 'auth.json')
+  },
+
+  // Pi Agent 原生配置
+  pi: {
+    dir: getPiAgentDir(),
+    settings: path.join(getPiAgentDir(), 'settings.json'),
+    auth: path.join(getPiAgentDir(), 'auth.json'),
+    models: path.join(getPiAgentDir(), 'models.json'),
+    sessions: path.join(getPiAgentDir(), 'sessions'),
+    skills: path.join(getPiAgentDir(), 'skills'),
+    prompts: path.join(getPiAgentDir(), 'prompts'),
+    extensions: path.join(getPiAgentDir(), 'extensions')
   }
 };
 
@@ -827,5 +865,6 @@ module.exports = {
   getCodexDir,
   getGeminiDir,
   getOpenCodeDataDir,
-  getOpenCodeConfigDir
+  getOpenCodeConfigDir,
+  getPiAgentDir
 };

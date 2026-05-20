@@ -25,7 +25,7 @@ const {
   resolveInsideRoot
 } = require('./config-artifact-paths');
 
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
@@ -173,7 +173,8 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   claude: [],
   codex: [],
   gemini: [],
-  opencode: []
+  opencode: [],
+  pi: []
 };
 
 const PLATFORM_CONFIG = {
@@ -200,6 +201,12 @@ const PLATFORM_CONFIG = {
     storageDir: PATHS.localSkills.opencode,
     reposFile: PATHS.skillRepos.opencode,
     cacheFile: PATHS.skillCaches.opencode
+  },
+  pi: {
+    installDir: NATIVE_PATHS.pi.skills,
+    storageDir: PATHS.localSkills.pi,
+    reposFile: PATHS.skillRepos.pi,
+    cacheFile: PATHS.skillCaches.pi
   }
 };
 

@@ -130,6 +130,7 @@ import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
 import SkillCreateModal from './SkillCreateModal.vue'
 import SkillDetailDrawer from './SkillDetailDrawer.vue'
+import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -154,24 +155,22 @@ const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
 const loadRequestId = ref(0)
+const managedSkillPlatforms = BUILT_IN_CLI_PLATFORMS
+  .filter(platform => platform.supportsSkills !== false)
+  .map(platform => platform.key)
 
 const currentPlatform = computed(() => {
-  if (props.platform && ['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+  if (props.platform && managedSkillPlatforms.includes(props.platform)) {
     return props.platform
   }
   const channel = route.meta.channel
-  if (channel === 'codex' || channel === 'gemini' || channel === 'opencode') return channel
+  if (managedSkillPlatforms.includes(channel)) return channel
   return 'claude'
 })
 
 const currentPlatformLabel = computed(() => {
-  const map = {
-    claude: 'Claude Code',
-    codex: 'Codex CLI',
-    gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
-  }
-  return map[currentPlatform.value] || 'Claude Code'
+  const platform = getPlatformConfig(currentPlatform.value)
+  return platform.label || platform.title || 'Claude Code'
 })
 
 const filterOptions = [

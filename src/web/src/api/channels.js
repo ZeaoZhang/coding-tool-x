@@ -332,3 +332,97 @@ export async function stopOpenCodeProxy() {
   const response = await client.post('/opencode/proxy/stop')
   return response.data
 }
+
+// ============================================
+// Pi Agent Channel APIs
+// ============================================
+
+export async function getPiChannels() {
+  const response = await client.get('/pi/channels')
+  return response.data
+}
+
+export async function getEnabledPiChannels() {
+  const data = await getPiChannels()
+  return {
+    channels: (data.channels || []).filter(ch => ch.enabled !== false)
+  }
+}
+
+export async function createPiChannel(name, baseUrl, apiKey, extra = {}) {
+  const response = await client.post('/pi/channels', {
+    name,
+    baseUrl,
+    apiKey,
+    wireApi: extra.wireApi || 'openai',
+    providerApi: extra.providerApi || extra.wireApi || 'openai-completions',
+    providerKey: extra.providerKey || '',
+    gatewaySourceType: extra.gatewaySourceType || 'codex',
+    enabled: extra.enabled !== false,
+    weight: extra.weight || 1,
+    maxConcurrency: extra.maxConcurrency || null,
+    model: extra.model || null,
+    modelRedirects: extra.modelRedirects || [],
+    speedTestModel: extra.speedTestModel || null,
+    presetId: extra.presetId || null,
+    websiteUrl: extra.websiteUrl || ''
+  })
+  return response.data
+}
+
+export async function updatePiChannel(channelId, updates) {
+  const response = await client.put(`/pi/channels/${channelId}`, updates)
+  return response.data
+}
+
+export async function deletePiChannel(channelId) {
+  const response = await client.delete(`/pi/channels/${channelId}`)
+  return response.data
+}
+
+export async function savePiChannelOrder(order) {
+  const response = await client.post('/pi/channels/order', { order })
+  return response.data
+}
+
+export async function resetPiChannelHealth(channelId) {
+  const response = await client.post(`/pi/channels/${channelId}/reset-health`)
+  return response.data
+}
+
+export async function testPiChannelSpeed(channelId, timeout = 20000) {
+  const response = await client.post(`/pi/channels/${channelId}/speed-test`, { timeout })
+  return response.data
+}
+
+export async function testAllPiChannelsSpeed(timeout = 20000) {
+  const response = await client.post('/pi/channels/speed-test-all', { timeout }, { timeout: 120000 })
+  return response.data
+}
+
+export async function fetchPiChannelModels(channelId, { forceRefresh = false } = {}) {
+  const response = await client.get(`/pi/channels/${channelId}/models`, {
+    params: forceRefresh ? { forceRefresh: 'true' } : {}
+  })
+  return response.data
+}
+
+export async function probePiChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
+  const response = await client.post('/pi/channels/probe-models', { baseUrl, apiKey, gatewaySourceType })
+  return response.data
+}
+
+export async function getPiProxyStatus() {
+  const response = await client.get('/pi/proxy/status')
+  return response.data
+}
+
+export async function startPiProxy() {
+  const response = await client.post('/pi/proxy/start')
+  return response.data
+}
+
+export async function stopPiProxy() {
+  const response = await client.post('/pi/proxy/stop')
+  return response.data
+}

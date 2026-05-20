@@ -170,6 +170,7 @@ import message from '../utils/message'
 import CommandCard from './CommandCard.vue'
 import CommandDetailDrawer from './CommandDetailDrawer.vue'
 import CommandFormModal from './CommandFormModal.vue'
+import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   hideBack: {
@@ -204,21 +205,24 @@ const editingCommand = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
+const managedCommandPlatforms = BUILT_IN_CLI_PLATFORMS
+  .filter(platform => platform.supportsCommands !== false)
+  .map(platform => platform.key)
 
 const currentPlatform = computed(() => {
-  if (['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+  if (managedCommandPlatforms.includes(props.platform)) {
     return props.platform
   }
   const channel = route.meta.channel
-  if (channel === 'codex') return 'codex'
-  if (channel === 'gemini') return 'gemini'
-  if (channel === 'opencode') return 'opencode'
+  if (managedCommandPlatforms.includes(channel)) return channel
   return 'claude'
 })
 
 const commandUsageHint = computed(() =>
   currentPlatform.value === 'opencode'
     ? '使用 /命令名 在 OpenCode 中调用'
+    : currentPlatform.value === 'pi'
+    ? '使用 Pi prompt template 调用'
     : currentPlatform.value === 'gemini'
     ? '使用 /命令名 在 Gemini CLI 中调用'
     : currentPlatform.value === 'codex'
@@ -227,13 +231,8 @@ const commandUsageHint = computed(() =>
 )
 
 const currentPlatformLabel = computed(() => {
-  const map = {
-    claude: 'Claude Code',
-    codex: 'Codex CLI',
-    gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
-  }
-  return map[currentPlatform.value] || 'Claude Code'
+  const platform = getPlatformConfig(currentPlatform.value)
+  return platform.label || platform.title || 'Claude Code'
 })
 
 const scopeOptions = [

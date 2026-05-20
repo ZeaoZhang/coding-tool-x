@@ -14,25 +14,29 @@ export const useDashboardStore = defineStore('dashboard', () => {
       claude: [],
       codex: [],
       gemini: [],
-      opencode: []
+      opencode: [],
+      pi: []
     },
     proxyStatus: {
       claude: {},
       codex: {},
       gemini: {},
-      opencode: {}
+      opencode: {},
+      pi: {}
     },
     todayStats: {
       claude: emptyStats(),
       codex: emptyStats(),
       gemini: emptyStats(),
-      opencode: emptyStats()
+      opencode: emptyStats(),
+      pi: emptyStats()
     },
     counts: {
       claude: emptyCounts(),
       codex: emptyCounts(),
       gemini: emptyCounts(),
-      opencode: emptyCounts()
+      opencode: emptyCounts(),
+      pi: emptyCounts()
     }
   })
 
@@ -92,25 +96,29 @@ export const useDashboardStore = defineStore('dashboard', () => {
             claude: data.channels?.claude || [],
             codex: data.channels?.codex || [],
             gemini: data.channels?.gemini || [],
-            opencode: data.channels?.opencode || []
+            opencode: data.channels?.opencode || [],
+            pi: data.channels?.pi || []
           },
           proxyStatus: {
             claude: data.proxyStatus?.claude || {},
             codex: data.proxyStatus?.codex || {},
             gemini: data.proxyStatus?.gemini || {},
-            opencode: data.proxyStatus?.opencode || {}
+            opencode: data.proxyStatus?.opencode || {},
+            pi: data.proxyStatus?.pi || {}
           },
           todayStats: {
             claude: formatStats(data.todayStats?.claude),
             codex: formatStats(data.todayStats?.codex),
             gemini: formatStats(data.todayStats?.gemini),
-            opencode: formatStats(data.todayStats?.opencode)
+            opencode: formatStats(data.todayStats?.opencode),
+            pi: formatStats(data.todayStats?.pi)
           },
           counts: {
             claude: data.counts?.claude || emptyCounts(),
             codex: data.counts?.codex || emptyCounts(),
             gemini: data.counts?.gemini || emptyCounts(),
-            opencode: data.counts?.opencode || emptyCounts()
+            opencode: data.counts?.opencode || emptyCounts(),
+            pi: data.counts?.pi || emptyCounts()
           }
         }
 
@@ -142,6 +150,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeChannels()
         if (response.success) dashboardData.value.channels.opencode = response.channels
+      } else if (channelType === 'pi') {
+        const response = await api.getPiChannels()
+        if (response.success) dashboardData.value.channels.pi = response.channels
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} channels:`, err)
@@ -162,6 +173,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeProxyStatus()
         if (response.success) dashboardData.value.proxyStatus.opencode = response
+      } else if (channelType === 'pi') {
+        const response = await api.getPiProxyStatus()
+        if (response.success) dashboardData.value.proxyStatus.pi = response
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} proxy status:`, err)
@@ -192,6 +206,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeTodayStatistics()
         dashboardData.value.todayStats.opencode = parseStats(response)
+      } else if (channelType === 'pi') {
+        const response = await api.getPiTodayStatistics()
+        dashboardData.value.todayStats.pi = parseStats(response)
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} stats:`, err)

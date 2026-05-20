@@ -266,7 +266,7 @@ const recommendedRepos = computed(() => {
     ]
   }
   return [
-    { provider: 'github', owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main' },
+    { provider: 'github', owner: 'anthropics', name: 'skills', description: '官方技能库', branch: 'main', directory: 'skills' },
     { provider: 'github', owner: 'ComposioHQ', name: 'awesome-claude-skills', description: '社区精选', branch: 'master' },
     { provider: 'github', owner: 'cexll', name: 'myclaude', description: '多智能体工作流', branch: 'master' }
   ]
