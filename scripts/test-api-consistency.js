@@ -40,6 +40,11 @@ const CHANNELS = [
     name: 'opencode',
     projectsFactory: require('../src/server/api/opencode-projects'),
     sessionsFactory: require('../src/server/api/opencode-sessions')
+  },
+  {
+    name: 'pi',
+    projectsFactory: require('../src/server/api/pi-projects'),
+    sessionsFactory: require('../src/server/api/pi-sessions')
   }
 ];
 
