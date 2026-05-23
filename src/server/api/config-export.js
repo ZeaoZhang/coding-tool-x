@@ -31,6 +31,15 @@ function resolveChannelsByType(exportData) {
 
 function buildPreviewSummary(data) {
   const channelsByType = resolveChannelsByType(data);
+  const pluginsByPlatform = data?.data?.pluginsByPlatform && typeof data.data.pluginsByPlatform === 'object'
+    ? data.data.pluginsByPlatform
+    : {};
+  const platformPlugins = Object.values(pluginsByPlatform).flatMap((snapshot) => (
+    Array.isArray(snapshot?.plugins) ? snapshot.plugins : []
+  ));
+  const plugins = platformPlugins.length > 0
+    ? platformPlugins
+    : (Array.isArray(data.data.plugins) ? data.data.plugins : []);
   const allChannels = [
     ...channelsByType.claude.map(c => ({ ...c, type: c.type || 'claude' })),
     ...channelsByType.codex.map(c => ({ ...c, type: c.type || 'codex' })),
@@ -44,7 +53,7 @@ function buildPreviewSummary(data) {
     counts: {
       configTemplates: (data.data.configTemplates || []).length,
       channels: allChannels.length,
-      plugins: (data.data.plugins || []).length
+      plugins: plugins.length
     },
     items: {
       configTemplates: (data.data.configTemplates || []).map(t => ({
@@ -57,9 +66,10 @@ function buildPreviewSummary(data) {
         name: c.name,
         type: c.type
       })),
-      plugins: (data.data.plugins || []).map(p => ({
+      plugins: plugins.map(p => ({
         name: p.name,
         type: p.type,
+        platform: p.platform,
         version: p.version
       }))
     }
