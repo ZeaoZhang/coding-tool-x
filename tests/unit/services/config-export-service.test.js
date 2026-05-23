@@ -20,6 +20,7 @@ let saveConfigMock;
 let loadUIConfigMock;
 let saveUIConfigMock;
 let admZipInstances;
+let PluginsServiceStub;
 
 function stubModules() {
   const pathsModulePath = require.resolve('../../../src/config/paths');
@@ -33,13 +34,31 @@ function stubModules() {
         uiConfig: path.join(testDir, 'store', 'ui-config.json'),
         prompts: path.join(testDir, 'store', 'prompts.json'),
         security: path.join(testDir, 'store', 'security.json'),
-        oauthCredentials: path.join(testDir, 'store', 'oauth.json')
+        oauthCredentials: path.join(testDir, 'store', 'oauth.json'),
+        pluginRepos: {
+          claude: path.join(testDir, 'repos', 'plugins', 'claude.json'),
+          codex: path.join(testDir, 'repos', 'plugins', 'codex.json'),
+          gemini: path.join(testDir, 'repos', 'plugins', 'gemini.json'),
+          opencode: path.join(testDir, 'repos', 'plugins', 'opencode.json'),
+          pi: path.join(testDir, 'repos', 'plugins', 'pi.json')
+        },
+        pluginMarketCache: {
+          claude: path.join(testDir, 'cache', 'plugins', 'claude-market.json'),
+          codex: path.join(testDir, 'cache', 'plugins', 'codex-market.json'),
+          gemini: path.join(testDir, 'cache', 'plugins', 'gemini-market.json'),
+          opencode: path.join(testDir, 'cache', 'plugins', 'opencode-market.json'),
+          pi: path.join(testDir, 'cache', 'plugins', 'pi-market.json')
+        }
       },
       NATIVE_PATHS: {
         claude: { settings: path.join(testDir, '.claude', 'settings.json') },
         codex: { config: path.join(testDir, '.codex', 'config.toml'), auth: path.join(testDir, '.codex', 'auth.json') },
         gemini: { env: path.join(testDir, '.gemini', '.env') },
-        opencode: { config: path.join(testDir, '.opencode') }
+        opencode: { config: path.join(testDir, '.opencode') },
+        pi: {
+          settings: path.join(testDir, '.pi', 'settings.json'),
+          extensions: path.join(testDir, '.pi', 'extensions')
+        }
       }
     }
   };
@@ -132,6 +151,88 @@ function stubModules() {
   }
   SkillServiceStub = SkillServiceFake;
 
+  class PluginsServiceFake {
+    constructor(platform) {
+      this.platform = platform;
+    }
+    listPlugins() {
+      const pluginMap = {
+        claude: [{
+          name: 'claude-native',
+          marketplace: 'ctx',
+          version: '1.0.0',
+          installPath: path.join(testDir, '.claude', 'plugins', 'cache', 'ctx', 'claude-native', '1.0.0'),
+          enabled: true,
+          source: 'claude-native'
+        }],
+        codex: [{
+          name: 'codex-plugin',
+          marketplace: 'ctx',
+          version: '2.0.0',
+          installPath: path.join(testDir, '.codex', 'plugins', 'cache', 'ctx', 'codex-plugin', '2.0.0'),
+          directory: path.join('ctx', 'codex-plugin', '2.0.0'),
+          enabled: false,
+          source: 'codex-cache',
+          repoUrl: 'https://github.com/demo/codex-plugin'
+        }],
+        gemini: [],
+        opencode: [
+          {
+            name: '@demo/opencode-plugin',
+            directory: '@demo/opencode-plugin',
+            pluginType: 'npm',
+            version: 'latest',
+            enabled: true,
+            source: 'opencode-config'
+          },
+          {
+            name: 'local-opencode',
+            directory: 'local-opencode',
+            pluginType: 'local',
+            version: '1.0.0',
+            installPath: path.join(testDir, '.opencode', 'plugins', 'local-opencode'),
+            enabled: true,
+            source: 'opencode-local'
+          }
+        ],
+        pi: [
+          {
+            name: '@demo/pi-package',
+            directory: '@demo/pi-package',
+            pluginType: 'package',
+            pluginKind: 'package',
+            version: 'latest',
+            enabled: false,
+            source: 'pi-settings'
+          },
+          {
+            name: 'pi-extension',
+            directory: 'pi-extension',
+            pluginType: 'extension-directory',
+            pluginKind: 'extension',
+            version: 'local',
+            installPath: path.join(testDir, '.pi', 'extensions', 'pi-extension'),
+            enabled: true,
+            source: 'pi-extension'
+          }
+        ]
+      };
+      return { plugins: pluginMap[this.platform] || [] };
+    }
+    getRepos() {
+      return [{
+        id: `${this.platform}:repo`,
+        provider: 'github',
+        owner: 'demo',
+        name: `${this.platform}-plugins`,
+        branch: 'main',
+        repoUrl: `https://github.com/demo/${this.platform}-plugins`,
+        enabled: true
+      }];
+    }
+  }
+  PluginsServiceStub = PluginsServiceFake;
+
   workspaceService = {
     loadWorkspaces: vi.fn(() => ({ workspaces: [{ id: 'ws-1', name: 'Workspace 1' }] })),
     saveWorkspaces: vi.fn()
@@ -200,6 +301,12 @@ function stubModules() {
     filename: require.resolve('../../../src/server/services/skill-service'),
     loaded: true,
     exports: { SkillService: SkillServiceStub }
+  };
+  require.cache[require.resolve('../../../src/server/services/plugins-service')] = {
+    id: require.resolve('../../../src/server/services/plugins-service'),
+    filename: require.resolve('../../../src/server/services/plugins-service'),
+    loaded: true,
+    exports: { PluginsService: PluginsServiceStub }
   };
   require.cache[require.resolve('../../../src/server/services/workspace-service')] = {
     id: require.resolve('../../../src/server/services/workspace-service'),
@@ -291,7 +398,46 @@ function stubModules() {
 
   fs.mkdirSync(path.join(testDir, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.claude', 'settings.json'), JSON.stringify({ hooks: {} }), 'utf8');
+  const claudePluginDir = path.join(testDir, '.claude', 'plugins', 'cache', 'ctx', 'claude-native', '1.0.0');
+  fs.mkdirSync(claudePluginDir, { recursive: true });
+  fs.writeFileSync(path.join(claudePluginDir, 'plugin.json'), JSON.stringify({ name: 'claude-native', version: '1.0.0' }), 'utf8');
+  fs.writeFileSync(path.join(claudePluginDir, 'README.md'), 'Claude plugin', 'utf8');
+  fs.writeFileSync(path.join(testDir, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify({
+    version: 2,
+    plugins: {
+      'claude-native@ctx': [{ installPath: claudePluginDir, version: '1.0.0' }]
+    }
+  }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.claude', 'plugins', 'known_marketplaces.json'), JSON.stringify({
+    ctx: { source: { source: 'directory', path: path.dirname(claudePluginDir) } }
+  }), 'utf8');
+  const codexPluginDir = path.join(testDir, '.codex', 'plugins', 'cache', 'ctx', 'codex-plugin', '2.0.0');
+  fs.mkdirSync(path.join(codexPluginDir, '.codex-plugin'), { recursive: true });
+  fs.writeFileSync(path.join(codexPluginDir, '.codex-plugin', 'plugin.json'), JSON.stringify({ name: 'codex-plugin', version: '2.0.0' }), 'utf8');
+  fs.writeFileSync(path.join(codexPluginDir, 'README.md'), 'Codex plugin', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.codex'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.codex', 'config.toml'), '[plugins.\"codex-plugin@ctx\"]\nenabled = false\n[marketplaces.ctx]\nsource_type = \"git\"\nsource = \"https://github.com/demo/codex-plugin\"\n', 'utf8');
+  const openCodePluginDir = path.join(testDir, '.opencode', 'plugins', 'local-opencode');
+  fs.mkdirSync(openCodePluginDir, { recursive: true });
+  fs.writeFileSync(path.join(openCodePluginDir, 'package.json'), JSON.stringify({ name: 'local-opencode', version: '1.0.0' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.opencode', 'opencode.json'), JSON.stringify({ plugin: ['@demo/opencode-plugin'] }), 'utf8');
+  const piExtensionDir = path.join(testDir, '.pi', 'extensions', 'pi-extension');
+  fs.mkdirSync(piExtensionDir, { recursive: true });
+  fs.writeFileSync(path.join(piExtensionDir, 'pi.json'), JSON.stringify({ name: 'pi-extension', version: 'local' }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'settings.json'), JSON.stringify({
+    packages: ['@demo/pi-package'],
+    disabledPackages: ['@demo/pi-package']
+  }), 'utf8');
   fs.mkdirSync(path.join(testDir, 'store'), { recursive: true });
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
+    const repoPath = path.join(testDir, 'repos', 'plugins', `${platform}.json`);
+    const cachePath = path.join(testDir, 'cache', 'plugins', `${platform}-market.json`);
+    fs.mkdirSync(path.dirname(repoPath), { recursive: true });
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(repoPath, JSON.stringify({ repos: [{ owner: 'demo', name: `${platform}-plugins` }] }), 'utf8');
+    fs.writeFileSync(cachePath, JSON.stringify({ plugins: [{ name: `${platform}-market-plugin` }] }), 'utf8');
+  }
   fs.writeFileSync(path.join(testDir, 'store', 'ui-config.json'), JSON.stringify({ theme: 'dark' }), 'utf8');
   fs.writeFileSync(path.join(testDir, 'store', 'prompts.json'), JSON.stringify({ activePresetId: null, presets: {} }), 'utf8');
   fs.writeFileSync(path.join(testDir, 'store', 'security.json'), JSON.stringify({ passwordEnabled: false }), 'utf8');
@@ -317,6 +463,7 @@ afterEach(() => {
     '../../../src/server/services/agents-service',
     '../../../src/server/services/commands-service',
     '../../../src/server/services/skill-service',
+    '../../../src/server/services/plugins-service',
     '../../../src/server/services/workspace-service',
     '../../../src/server/services/favorites',
     '../../../src/server/services/mcp-service',
@@ -349,6 +496,22 @@ describe('config-export-service export flows', () => {
     expect(result.data.data.agentsByPlatform.gemini[0].fileName).toBe('gemini-agent');
     expect(result.data.data.commandsByPlatform.gemini[0].name).toBe('gemini-command');
     expect(result.data.data.skillsByPlatform.gemini[0].directory).toBe('gemini-skill');
+    expect(result.data.data.pluginsByPlatform.codex.plugins[0]).toMatchObject({
+      platform: 'codex',
+      name: 'codex-plugin',
+      marketplace: 'ctx',
+      enabled: false
+    });
+    expect(result.data.data.pluginsByPlatform.codex.control.nativeConfig.content).toContain('codex-plugin@ctx');
+    expect(result.data.data.pluginsByPlatform.opencode.plugins.map(plugin => plugin.name)).toEqual([
+      '@demo/opencode-plugin',
+      'local-opencode'
+    ]);
+    expect(result.data.data.pluginsByPlatform.pi.plugins.map(plugin => plugin.name)).toEqual([
+      '@demo/pi-package',
+      'pi-extension'
+    ]);
+    expect(result.data.data.pluginsByPlatform.pi.control.nativeSettings.content.disabledPackages).toEqual(['@demo/pi-package']);
     expect(result.data.data.markdownFiles['AGENTS.md']).toBe('# Root agents');
     expect(result.data.data.oauthCredentials).toEqual({ version: 1 });
   });
@@ -405,6 +568,61 @@ describe('config-export-service import flows', () => {
             fullContent: 'description = "Review with Gemini"\nprompt = "Review this"\n'
           }]
         },
+        pluginsByPlatform: {
+          codex: {
+            plugins: [{
+              platform: 'codex',
+              type: 'codex-cache',
+              name: 'codex-import',
+              marketplace: 'ctx',
+              version: '1.0.0',
+              directory: path.join('ctx', 'codex-import', '1.0.0'),
+              enabled: false,
+              files: [{
+                path: '.codex-plugin/plugin.json',
+                encoding: 'base64',
+                content: Buffer.from(JSON.stringify({ name: 'codex-import', version: '1.0.0' })).toString('base64')
+              }]
+            }],
+            control: {
+              nativeConfig: {
+                format: 'text',
+                fileName: 'config.toml',
+                content: '[plugins."codex-import@ctx"]\nenabled = false\n'
+              }
+            }
+          },
+          opencode: {
+            plugins: [{
+              platform: 'opencode',
+              type: 'opencode-package',
+              pluginType: 'npm',
+              name: '@demo/imported-opencode',
+              enabled: true
+            }]
+          },
+          pi: {
+            plugins: [{
+              platform: 'pi',
+              type: 'pi-extension',
+              pluginType: 'extension-directory',
+              name: 'pi-import',
+              directory: 'pi-import',
+              files: [{
+                path: 'pi.json',
+                encoding: 'base64',
+                content: Buffer.from(JSON.stringify({ name: 'pi-import' })).toString('base64')
+              }]
+            }],
+            control: {
+              nativeSettings: {
+                format: 'json',
+                fileName: 'settings.json',
+                content: { packages: ['@demo/imported-pi'], disabledPackages: [] }
+              }
+            }
+          }
+        },
         prompts: {
           activePresetId: 'preset-1',
           presets: {
@@ -430,6 +648,11 @@ describe('config-export-service import flows', () => {
     expect(fs.readFileSync(path.join(testDir, 'CLAUDE.md'), 'utf8')).toBe('# Imported Claude');
     expect(fs.readFileSync(path.join(testDir, 'agents-install', 'gemini', 'gemini-helper.md'), 'utf8')).toContain('Help with Gemini work');
     expect(fs.readFileSync(path.join(testDir, 'commands-install', 'gemini', 'gemini-review.toml'), 'utf8')).toContain('Review this');
+    expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'ctx', 'codex-import', '1.0.0', '.codex-plugin', 'plugin.json'))).toBe(true);
+    expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).toContain('codex-import@ctx');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.opencode', 'opencode.json'), 'utf8')).plugin).toContain('@demo/imported-opencode');
+    expect(fs.existsSync(path.join(testDir, '.pi', 'extensions', 'pi-import', 'pi.json'))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'settings.json'), 'utf8')).packages).toEqual(['@demo/imported-pi']);
     expect(fs.existsSync(path.join(testDir, 'README.md'))).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'store', 'oauth.json'), 'utf8'))).toEqual({ version: 2 });
     expect(result.results.agents.success).toBe(1);

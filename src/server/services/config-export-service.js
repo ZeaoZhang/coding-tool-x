@@ -6,6 +6,8 @@
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
+const toml = require('toml');
+const tomlStringify = require('@iarna/toml').stringify;
 const configTemplatesService = require('./config-templates-service');
 const channelsService = require('./channels');
 const codexChannelsService = require('./codex-channels');
@@ -14,6 +16,7 @@ const opencodeChannelsService = require('./opencode-channels');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
+const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
 const CONFIG_VERSION = '1.4.0';
@@ -48,6 +51,14 @@ const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 's
 const AGENT_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const COMMAND_PLATFORMS = ['claude', 'gemini', 'opencode'];
 const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const PLUGIN_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const CLAUDE_MARKETPLACES_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
+const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'plugins');
+const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
+const OPENCODE_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugins');
+const OPENCODE_LEGACY_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugin');
+const PI_SETTINGS_PATH = NATIVE_PATHS.pi?.settings || path.join(PATHS.base, 'pi-settings.json');
+const PI_EXTENSIONS_DIR = NATIVE_PATHS.pi?.extensions || path.join(PATHS.base, 'pi-extensions');
 
 function getOpenCodeConfigPaths() {
   try {
@@ -517,7 +528,7 @@ function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs
   }
 
   try {
-    if (!hasNativeConfigFor('codex')) {
+    if (!hasNativeConfigFor('codex') && (importChannelsByType.codex || []).length > 0) {
       codexChannelsService.writeCodexConfigForMultiChannel(importChannelsByType.codex || []);
     }
   } catch (err) {
@@ -543,7 +554,7 @@ function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs
   }
 
   try {
-    if (!hasNativeConfigFor('opencode')) {
+    if (!hasNativeConfigFor('opencode') && (importChannelsByType.opencode || []).length > 0) {
       const openCodeSpecs = getNativeConfigSpecs().opencode || {};
       const preferredSpec = [
         openCodeSpecs.opencodeJsonc,
@@ -654,6 +665,295 @@ function collectPluginFiles(pluginDir, basePath = '') {
 
   files.sort((a, b) => a.path.localeCompare(b.path));
   return files;
+}
+
+function getOpenCodePluginsDir() {
+  if (fs.existsSync(OPENCODE_LEGACY_PLUGINS_DIR) && !fs.existsSync(OPENCODE_PLUGINS_DIR)) {
+    return OPENCODE_LEGACY_PLUGINS_DIR;
+  }
+  return OPENCODE_PLUGINS_DIR;
+}
+
+function detectPluginManifest(pluginDir, candidates = []) {
+  for (const candidate of candidates) {
+    const manifestPath = path.join(pluginDir, candidate);
+    const manifest = readJsonFileSafe(manifestPath);
+    if (manifest) {
+      return {
+        manifest,
+        manifestPath: candidate
+      };
+    }
+  }
+  return {
+    manifest: {},
+    manifestPath: ''
+  };
+}
+
+function buildManagedPluginExportItem(plugin, platform, baseDir, options = {}) {
+  const directory = plugin.directory || plugin.name;
+  const installPath = plugin.installPath || (directory ? path.join(baseDir, directory) : '');
+  if (!installPath || !fs.existsSync(installPath)) {
+    return null;
+  }
+
+  const pluginDir = assertPathInside(baseDir, installPath);
+  if (!pluginDir) {
+    return null;
+  }
+
+  const { manifest, manifestPath } = detectPluginManifest(pluginDir, options.manifestCandidates || []);
+  const files = collectPluginFiles(pluginDir);
+  if (files.length === 0) {
+    return null;
+  }
+
+  return {
+    platform,
+    type: options.type || 'managed',
+    pluginType: plugin.pluginType || options.pluginType || 'local',
+    pluginKind: plugin.pluginKind || options.pluginKind || 'plugin',
+    name: manifest.name || plugin.name || path.basename(pluginDir),
+    version: manifest.version || plugin.version || '1.0.0',
+    description: manifest.description || plugin.description || '',
+    author: manifest.author || plugin.author || '',
+    directory: path.relative(baseDir, pluginDir),
+    marketplace: plugin.marketplace || '',
+    enabled: plugin.enabled !== false,
+    installed: plugin.installed !== false,
+    source: plugin.source || '',
+    installSource: plugin.installSource || '',
+    repoId: plugin.repoId || '',
+    repoProvider: plugin.repoProvider || '',
+    repoOwner: plugin.repoOwner || '',
+    repoName: plugin.repoName || '',
+    repoBranch: plugin.repoBranch || '',
+    repoDirectory: plugin.repoDirectory || '',
+    repoHost: plugin.repoHost || '',
+    repoProjectPath: plugin.repoProjectPath || '',
+    repoLocalPath: plugin.repoLocalPath || '',
+    repoUrl: plugin.repoUrl || '',
+    manifest,
+    manifestPath,
+    files
+  };
+}
+
+function assertPathInside(baseDir, targetPath) {
+  if (!baseDir || !targetPath) return null;
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedTarget = path.resolve(targetPath);
+  const relative = path.relative(resolvedBase, resolvedTarget);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    return null;
+  }
+  return resolvedTarget;
+}
+
+function readJsonConfigSnapshot(filePath) {
+  const content = readJsonFileSafe(filePath);
+  return content ? { path: filePath, content } : null;
+}
+
+function exportPluginControlSnapshot(platform, service) {
+  const snapshot = {};
+  const reposPath = PATHS.pluginRepos?.[platform];
+  const marketCachePath = PATHS.pluginMarketCache?.[platform];
+  const repos = readJsonConfigSnapshot(reposPath);
+  const marketCache = readJsonConfigSnapshot(marketCachePath);
+
+  if (repos) {
+    snapshot.repos = repos;
+  }
+  if (marketCache) {
+    snapshot.marketCache = marketCache;
+  }
+
+  try {
+    const serviceRepos = service.getRepos?.() || [];
+    if (serviceRepos.length > 0) {
+      snapshot.resolvedRepos = serviceRepos;
+    }
+  } catch (err) {
+    // repo metadata is supplemental; file snapshots remain the source of truth
+  }
+
+  return snapshot;
+}
+
+function exportClaudePluginsByPlatform(service) {
+  const installedPlugins = service.listPlugins().plugins || [];
+  const plugins = [];
+
+  for (const plugin of installedPlugins) {
+    if (plugin.installPath && fs.existsSync(plugin.installPath)) {
+      const pluginDir = assertPathInside(CLAUDE_PLUGINS_DIR, plugin.installPath)
+        || assertPathInside(LEGACY_PLUGINS_DIR, plugin.installPath);
+      if (pluginDir) {
+        const { manifest, manifestPath } = detectPluginManifest(pluginDir, [
+          '.claude-plugin/plugin.json',
+          'plugin.json',
+          'package.json'
+        ]);
+        const files = collectPluginFiles(pluginDir);
+        if (files.length > 0) {
+          plugins.push({
+            platform: 'claude',
+            type: 'native',
+            pluginType: plugin.pluginType || 'native',
+            pluginKind: plugin.pluginKind || 'plugin',
+            name: manifest.name || plugin.name || path.basename(pluginDir),
+            marketplace: plugin.marketplace || '',
+            version: manifest.version || plugin.version || '1.0.0',
+            description: manifest.description || plugin.description || '',
+            author: manifest.author || plugin.author || '',
+            directory: path.relative(CLAUDE_PLUGINS_DIR, pluginDir),
+            enabled: plugin.enabled !== false,
+            installedAt: plugin.installedAt,
+            scope: plugin.scope,
+            source: plugin.source || '',
+            repoId: plugin.repoId || '',
+            repoProvider: plugin.repoProvider || '',
+            repoOwner: plugin.repoOwner || '',
+            repoName: plugin.repoName || '',
+            repoBranch: plugin.repoBranch || '',
+            repoDirectory: plugin.repoDirectory || '',
+            repoHost: plugin.repoHost || '',
+            repoProjectPath: plugin.repoProjectPath || '',
+            repoLocalPath: plugin.repoLocalPath || '',
+            repoUrl: plugin.repoUrl || '',
+            manifest,
+            manifestPath,
+            files
+          });
+        }
+      }
+    }
+  }
+
+  const legacyPluginNames = new Set(plugins.map(plugin => plugin.name));
+  for (const plugin of exportLegacyPlugins()) {
+    if (!legacyPluginNames.has(plugin.name)) {
+      plugins.push({ ...plugin, platform: 'claude' });
+    }
+  }
+
+  const control = exportPluginControlSnapshot('claude', service);
+  const installedRegistry = readJsonConfigSnapshot(NATIVE_PLUGINS_REGISTRY);
+  const knownMarketplaces = readJsonConfigSnapshot(CLAUDE_MARKETPLACES_REGISTRY);
+  const legacyRegistry = readJsonConfigSnapshot(LEGACY_PLUGINS_REGISTRY);
+  if (installedRegistry) control.installedRegistry = installedRegistry;
+  if (knownMarketplaces) control.knownMarketplaces = knownMarketplaces;
+  if (legacyRegistry) control.legacyRegistry = legacyRegistry;
+
+  return { plugins, control };
+}
+
+function exportCodexPluginsByPlatform(service) {
+  const plugins = (service.listPlugins().plugins || [])
+    .map(plugin => buildManagedPluginExportItem(plugin, 'codex', CODEX_PLUGINS_CACHE_DIR, {
+      type: 'codex-cache',
+      pluginType: 'cache',
+      manifestCandidates: ['.codex-plugin/plugin.json', 'plugin.json', 'package.json']
+    }))
+    .filter(Boolean);
+  const control = exportPluginControlSnapshot('codex', service);
+  const codexConfig = readNativeConfigSnapshot({ path: NATIVE_PATHS.codex.config, format: 'text' });
+  if (codexConfig) {
+    control.nativeConfig = codexConfig;
+  }
+  return { plugins, control };
+}
+
+function exportOpenCodePluginsByPlatform(service) {
+  const pluginsDir = getOpenCodePluginsDir();
+  const plugins = (service.listPlugins().plugins || [])
+    .map((plugin) => {
+      if (plugin.pluginType === 'npm' || plugin.source === 'opencode-config') {
+        return {
+          platform: 'opencode',
+          type: 'opencode-package',
+          pluginType: 'npm',
+          pluginKind: plugin.pluginKind || 'plugin',
+          name: plugin.name,
+          directory: plugin.directory || plugin.name,
+          version: plugin.version || 'latest',
+          description: plugin.description || '',
+          enabled: plugin.enabled !== false,
+          installed: plugin.installed !== false,
+          source: plugin.source || 'opencode-config'
+        };
+      }
+      return buildManagedPluginExportItem(plugin, 'opencode', pluginsDir, {
+        type: 'opencode-local',
+        pluginType: plugin.pluginType || 'local',
+        manifestCandidates: ['package.json', 'plugin.json']
+      });
+    })
+    .filter(Boolean);
+  const control = exportPluginControlSnapshot('opencode', service);
+  return { plugins, control };
+}
+
+function exportPiPluginsByPlatform(service) {
+  const plugins = (service.listPlugins().plugins || [])
+    .map((plugin) => {
+      if (plugin.pluginType === 'package' || plugin.source === 'pi-settings') {
+        return {
+          platform: 'pi',
+          type: 'pi-package',
+          pluginType: 'package',
+          pluginKind: plugin.pluginKind || 'package',
+          name: plugin.name,
+          directory: plugin.directory || plugin.name,
+          version: plugin.version || 'latest',
+          description: plugin.description || '',
+          enabled: plugin.enabled !== false,
+          installed: plugin.installed !== false,
+          source: plugin.source || 'pi-settings'
+        };
+      }
+      return buildManagedPluginExportItem(plugin, 'pi', PI_EXTENSIONS_DIR, {
+        type: 'pi-extension',
+        pluginType: plugin.pluginType || 'extension',
+        pluginKind: plugin.pluginKind || 'extension',
+        manifestCandidates: ['pi.json', 'extension.json', 'plugin.json', 'package.json']
+      });
+    })
+    .filter(Boolean);
+  const control = exportPluginControlSnapshot('pi', service);
+  const piSettings = readNativeConfigSnapshot({ path: PI_SETTINGS_PATH, format: 'json' });
+  if (piSettings) {
+    control.nativeSettings = piSettings;
+  }
+  return { plugins, control };
+}
+
+function exportPluginsSnapshotByPlatform() {
+  return PLUGIN_PLATFORMS.reduce((result, platform) => {
+    try {
+      const service = new PluginsService(platform);
+      if (platform === 'claude') {
+        result[platform] = exportClaudePluginsByPlatform(service);
+      } else if (platform === 'codex') {
+        result[platform] = exportCodexPluginsByPlatform(service);
+      } else if (platform === 'opencode') {
+        result[platform] = exportOpenCodePluginsByPlatform(service);
+      } else if (platform === 'pi') {
+        result[platform] = exportPiPluginsByPlatform(service);
+      } else {
+        result[platform] = {
+          plugins: service.listPlugins().plugins || [],
+          control: exportPluginControlSnapshot(platform, service)
+        };
+      }
+    } catch (err) {
+      console.warn(`[ConfigExport] Failed to export plugins for ${platform}:`, err.message);
+      result[platform] = { plugins: [], control: {} };
+    }
+    return result;
+  }, {});
 }
 
 function exportSkillsSnapshot(platform = 'claude') {
@@ -814,6 +1114,381 @@ function exportPluginsSnapshot() {
   return [...legacyPlugins, ...nativePlugins];
 }
 
+function getPluginsByPlatformItems(plugins = [], pluginsByPlatform = {}) {
+  const result = Object.fromEntries(PLUGIN_PLATFORMS.map(platform => [platform, []]));
+  const hasStructuredPlugins = pluginsByPlatform
+    && typeof pluginsByPlatform === 'object'
+    && Object.keys(pluginsByPlatform).length > 0;
+
+  if (hasStructuredPlugins) {
+    for (const platform of PLUGIN_PLATFORMS) {
+      const platformSnapshot = pluginsByPlatform[platform];
+      const platformPlugins = Array.isArray(platformSnapshot?.plugins)
+        ? platformSnapshot.plugins
+        : (Array.isArray(platformSnapshot) ? platformSnapshot : []);
+      result[platform] = platformPlugins.map(plugin => ({
+        ...plugin,
+        platform
+      }));
+    }
+  }
+
+  if (!hasStructuredPlugins && Array.isArray(plugins)) {
+    for (const plugin of plugins) {
+      const platform = PLUGIN_PLATFORMS.includes(plugin?.platform) ? plugin.platform : 'claude';
+      result[platform].push({ ...plugin, platform });
+    }
+  }
+
+  return result;
+}
+
+function writePluginFiles(pluginDir, files = []) {
+  let failed = false;
+
+  for (const file of files) {
+    const filePath = resolveSafePath(pluginDir, file.path);
+    if (!filePath) {
+      failed = true;
+      break;
+    }
+
+    ensureDir(path.dirname(filePath));
+
+    try {
+      if (file.encoding === SKILL_FILE_ENCODING) {
+        fs.writeFileSync(filePath, Buffer.from(file.content || '', SKILL_FILE_ENCODING));
+      } else {
+        fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
+      }
+    } catch (err) {
+      console.error(`[ConfigImport] Failed to write plugin file ${file.path}:`, err);
+      failed = true;
+      break;
+    }
+  }
+
+  return !failed && files.length > 0;
+}
+
+function pluginNameForPath(plugin = {}) {
+  return plugin.name || plugin.id || plugin.directory || 'plugin';
+}
+
+function sanitizePackageName(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/[^a-zA-Z0-9._@+-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'plugin';
+}
+
+function resolvePluginImportDir(baseDir, plugin = {}) {
+  const directory = plugin.directory && !String(plugin.directory).includes('..')
+    ? plugin.directory
+    : sanitizePackageName(pluginNameForPath(plugin));
+  return resolveSafePath(baseDir, directory);
+}
+
+function readTomlFileSafe(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return {};
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    return content.trim() ? toml.parse(content) : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function mergeTomlFile(filePath, updates = {}, overwrite = true) {
+  if (!filePath || !updates || typeof updates !== 'object') {
+    return 'failed';
+  }
+  if (fs.existsSync(filePath) && !overwrite) {
+    return 'skipped';
+  }
+  const existing = readTomlFileSafe(filePath);
+  const nextValue = {
+    ...existing,
+    ...updates,
+    plugins: {
+      ...((existing.plugins && typeof existing.plugins === 'object') ? existing.plugins : {}),
+      ...((updates.plugins && typeof updates.plugins === 'object') ? updates.plugins : {})
+    },
+    marketplaces: {
+      ...((existing.marketplaces && typeof existing.marketplaces === 'object') ? existing.marketplaces : {}),
+      ...((updates.marketplaces && typeof updates.marketplaces === 'object') ? updates.marketplaces : {})
+    }
+  };
+  if (Object.keys(nextValue.plugins).length === 0) delete nextValue.plugins;
+  if (Object.keys(nextValue.marketplaces).length === 0) delete nextValue.marketplaces;
+
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, tomlStringify(JSON.parse(JSON.stringify(nextValue))), 'utf8');
+  return 'success';
+}
+
+function mergePluginRepoConfig(platform, snapshot = {}, overwrite = true) {
+  const reposPath = PATHS.pluginRepos?.[platform];
+  const marketCachePath = PATHS.pluginMarketCache?.[platform];
+  let changed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  const reposContent = snapshot.control?.repos?.content;
+  if (reposPath && reposContent && typeof reposContent === 'object') {
+    const status = writeJsonFileAbsolute(reposPath, reposContent, overwrite);
+    if (status === 'success') changed++;
+    else if (status === 'skipped') skipped++;
+    else failed++;
+  }
+
+  const marketCacheContent = snapshot.control?.marketCache?.content;
+  if (marketCachePath && marketCacheContent && typeof marketCacheContent === 'object') {
+    const status = writeJsonFileAbsolute(marketCachePath, marketCacheContent, overwrite);
+    if (status === 'success') changed++;
+    else if (status === 'skipped') skipped++;
+    else failed++;
+  }
+
+  return { changed, skipped, failed };
+}
+
+function mergeCodexPluginConfig(snapshot = {}, plugins = [], overwrite = true) {
+  const nativeConfig = snapshot.control?.nativeConfig;
+  if (nativeConfig?.content !== undefined) {
+    return writeNativeConfigAbsolute({ path: NATIVE_PATHS.codex.config, format: 'text' }, nativeConfig, overwrite);
+  }
+
+  const pluginEntries = {};
+  const marketplaces = {};
+  for (const plugin of plugins) {
+    if (!plugin?.name) continue;
+    const pluginKey = plugin.marketplace ? `${plugin.name}@${plugin.marketplace}` : plugin.name;
+    pluginEntries[pluginKey] = { enabled: plugin.enabled !== false };
+    if (plugin.marketplace && plugin.repoUrl) {
+      marketplaces[plugin.marketplace] = {
+        source_type: plugin.repoLocalPath ? 'local' : 'git',
+        source: plugin.repoUrl,
+        last_updated: new Date().toISOString()
+      };
+    }
+  }
+
+  if (Object.keys(pluginEntries).length === 0 && Object.keys(marketplaces).length === 0) {
+    return 'skipped';
+  }
+
+  return mergeTomlFile(NATIVE_PATHS.codex.config, {
+    ...(Object.keys(pluginEntries).length > 0 ? { plugins: pluginEntries } : {}),
+    ...(Object.keys(marketplaces).length > 0 ? { marketplaces } : {})
+  }, overwrite);
+}
+
+function writeOpenCodePluginConfig(packages = [], overwrite = true) {
+  if (packages.length === 0) return 'skipped';
+  const openCodePaths = getOpenCodeConfigPaths();
+  const configPath = [
+    openCodePaths.opencodec,
+    openCodePaths.opencode,
+    openCodePaths.config
+  ].find(filePath => filePath && fs.existsSync(filePath))
+    || openCodePaths.opencode
+    || path.join(NATIVE_PATHS.opencode.config, 'opencode.json');
+  const existing = readJsonFileSafe(configPath) || {};
+  if (fs.existsSync(configPath) && !overwrite) {
+    return 'skipped';
+  }
+  const existingPlugins = Array.isArray(existing.plugin) ? existing.plugin : [];
+  const mergedPlugins = Array.from(new Set([...existingPlugins, ...packages]));
+  return writeJsonFileAbsolute(configPath, { ...existing, plugin: mergedPlugins }, true);
+}
+
+function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
+  const nativeSettings = snapshot.control?.nativeSettings;
+  if (nativeSettings?.content !== undefined) {
+    return writeNativeConfigAbsolute({ path: PI_SETTINGS_PATH, format: 'json' }, nativeSettings, overwrite);
+  }
+
+  const settings = readJsonFileSafe(PI_SETTINGS_PATH) || {};
+  if (fs.existsSync(PI_SETTINGS_PATH) && !overwrite) {
+    return 'skipped';
+  }
+  const existingPackages = Array.isArray(settings.packages) ? settings.packages : [];
+  const existingDisabled = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
+  const packagePlugins = plugins.filter(plugin => plugin.type === 'pi-package' || plugin.pluginType === 'package');
+  const packages = packagePlugins.map(plugin => plugin.name).filter(Boolean);
+  const disabledPackages = packagePlugins
+    .filter(plugin => plugin.enabled === false)
+    .map(plugin => plugin.name)
+    .filter(Boolean);
+
+  if (packages.length === 0 && disabledPackages.length === 0) {
+    return 'skipped';
+  }
+
+  return writeJsonFileAbsolute(PI_SETTINGS_PATH, {
+    ...settings,
+    packages: Array.from(new Set([...existingPackages, ...packages])),
+    disabledPackages: Array.from(new Set([...existingDisabled, ...disabledPackages]))
+  }, true);
+}
+
+function importPluginToDirectory(platform, plugin, baseDir, overwrite) {
+  const files = Array.isArray(plugin.files) ? plugin.files : [];
+  if (files.length === 0) {
+    return 'skipped';
+  }
+
+  const pluginDir = resolvePluginImportDir(baseDir, plugin);
+  if (!pluginDir) {
+    return 'failed';
+  }
+
+  if (fs.existsSync(pluginDir)) {
+    if (!overwrite) {
+      return 'skipped';
+    }
+    fs.rmSync(pluginDir, { recursive: true, force: true });
+  }
+
+  ensureDir(pluginDir);
+  const wroteFiles = writePluginFiles(pluginDir, files);
+  if (!wroteFiles) {
+    return 'failed';
+  }
+
+  const sourceMeta = {
+    repoId: plugin.repoId || '',
+    repoProvider: plugin.repoProvider || '',
+    repoOwner: plugin.repoOwner || '',
+    repoName: plugin.repoName || '',
+    repoBranch: plugin.repoBranch || '',
+    repoDirectory: plugin.repoDirectory || '',
+    repoHost: plugin.repoHost || '',
+    repoProjectPath: plugin.repoProjectPath || '',
+    repoLocalPath: plugin.repoLocalPath || '',
+    repoUrl: plugin.repoUrl || '',
+    marketplace: plugin.marketplace || '',
+    source: plugin.source || ''
+  };
+  if (Object.values(sourceMeta).some(Boolean)) {
+    writeJsonFileAbsolute(path.join(pluginDir, '.cc-tool-plugin-source.json'), sourceMeta, true);
+  }
+
+  if (platform === 'claude') {
+    updateClaudePluginRegistry(plugin, pluginDir);
+  }
+
+  return 'success';
+}
+
+function applyImportStatus(results, status) {
+  if (status === 'success') {
+    results.plugins.success++;
+  } else if (status === 'skipped') {
+    results.plugins.skipped++;
+  } else {
+    results.plugins.failed++;
+  }
+}
+
+function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins = [], overwrite = true, results) {
+  const pluginsByPlatform = getPluginsByPlatformItems(legacyPlugins, snapshotByPlatform);
+
+  for (const platform of PLUGIN_PLATFORMS) {
+    const snapshot = snapshotByPlatform?.[platform] && typeof snapshotByPlatform[platform] === 'object'
+      ? snapshotByPlatform[platform]
+      : {};
+    const repoStatus = mergePluginRepoConfig(platform, snapshot, overwrite);
+    results.plugins.success += repoStatus.changed;
+    results.plugins.skipped += repoStatus.skipped;
+    results.plugins.failed += repoStatus.failed;
+
+    const plugins = pluginsByPlatform[platform] || [];
+    const hasControl = snapshot?.control && Object.keys(snapshot.control).length > 0;
+
+    if (platform === 'codex' && (hasControl || plugins.length > 0)) {
+      applyImportStatus(results, mergeCodexPluginConfig(snapshot, plugins, overwrite));
+    } else if (platform === 'opencode' && (hasControl || plugins.length > 0)) {
+      const packages = plugins
+        .filter(plugin => plugin.type === 'opencode-package' || plugin.pluginType === 'npm')
+        .map(plugin => plugin.name || plugin.directory)
+        .filter(Boolean);
+      applyImportStatus(results, writeOpenCodePluginConfig(packages, overwrite));
+    } else if (platform === 'pi' && (hasControl || plugins.length > 0)) {
+      applyImportStatus(results, writePiPluginSettings(plugins, snapshot, overwrite));
+    }
+
+    for (const plugin of plugins) {
+      try {
+        if (platform === 'codex') {
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, CODEX_PLUGINS_CACHE_DIR, overwrite));
+        } else if (platform === 'opencode') {
+          if (plugin.type === 'opencode-package' || plugin.pluginType === 'npm') {
+            continue;
+          }
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, getOpenCodePluginsDir(), overwrite));
+        } else if (platform === 'pi') {
+          if (plugin.type === 'pi-package' || plugin.pluginType === 'package') {
+            continue;
+          }
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, PI_EXTENSIONS_DIR, overwrite));
+        } else if (platform === 'claude') {
+          const isLegacy = plugin.type === 'legacy';
+          applyImportStatus(results, importPluginToDirectory(
+            platform,
+            plugin,
+            isLegacy ? LEGACY_PLUGINS_DIR : CLAUDE_PLUGINS_DIR,
+            overwrite
+          ));
+        }
+      } catch (err) {
+        console.error(`[ConfigImport] Failed to import ${platform} plugin ${plugin?.name}:`, err);
+        results.plugins.failed++;
+      }
+    }
+  }
+}
+
+function updateClaudePluginRegistry(plugin, pluginDir) {
+  const pluginName = plugin.name || path.basename(pluginDir);
+  const marketplace = plugin.marketplace || '';
+  const nativeKey = marketplace ? `${pluginName}@${marketplace}` : pluginName;
+  const installed = readJsonFileSafe(NATIVE_PLUGINS_REGISTRY) || { version: 2, plugins: {} };
+  installed.version = installed.version || 2;
+  installed.plugins = installed.plugins && typeof installed.plugins === 'object' ? installed.plugins : {};
+  installed.plugins[nativeKey] = [{
+    scope: plugin.scope || 'user',
+    installPath: pluginDir,
+    version: plugin.version || '1.0.0',
+    installedAt: plugin.installedAt || new Date().toISOString(),
+    lastUpdated: new Date().toISOString(),
+    ...(plugin.source ? { source: plugin.source } : {}),
+    ...(plugin.repoUrl ? { repoUrl: plugin.repoUrl } : {}),
+    ...(plugin.repoProvider ? { repoProvider: plugin.repoProvider } : {}),
+    ...(plugin.repoOwner ? { repoOwner: plugin.repoOwner } : {}),
+    ...(plugin.repoName ? { repoName: plugin.repoName } : {}),
+    ...(plugin.repoBranch ? { repoBranch: plugin.repoBranch } : {}),
+    ...(plugin.repoDirectory ? { repoDirectory: plugin.repoDirectory } : {}),
+    ...(plugin.repoHost ? { repoHost: plugin.repoHost } : {}),
+    ...(plugin.repoProjectPath ? { repoProjectPath: plugin.repoProjectPath } : {}),
+    ...(plugin.repoLocalPath ? { repoLocalPath: plugin.repoLocalPath } : {}),
+    ...(plugin.repoId ? { repoId: plugin.repoId } : {})
+  }];
+  writeJsonFileAbsolute(NATIVE_PLUGINS_REGISTRY, installed, true);
+
+  const settings = readJsonFileSafe(CLAUDE_SETTINGS_PATH) || {};
+  settings.enabledPlugins = settings.enabledPlugins && typeof settings.enabledPlugins === 'object'
+    ? settings.enabledPlugins
+    : {};
+  settings.enabledPlugins[nativeKey] = plugin.enabled !== false;
+  writeJsonFileAbsolute(CLAUDE_SETTINGS_PATH, settings, true);
+}
+
 function writeTextFile(baseDir, relativePath, content, overwrite) {
   if (!content && content !== '') {
     return 'failed';
@@ -871,6 +1546,7 @@ function exportAllConfigs() {
 
     // 获取 Plugins 配置
     const plugins = exportPluginsSnapshot();
+    const pluginsByPlatform = exportPluginsSnapshotByPlatform();
     const nativeConfigs = exportNativeConfigs();
     const oauthCredentials = readJsonFileSafe(PATHS.oauthCredentials);
 
@@ -923,6 +1599,7 @@ function exportAllConfigs() {
         commandsByPlatform,
         mcpServers: mcpServers || [],
         plugins: plugins || [],
+        pluginsByPlatform,
         markdownFiles: markdownFiles,
         uiConfig: uiConfig,
         prompts: prompts,
@@ -1017,6 +1694,8 @@ async function importConfigs(importData, options = {}) {
       skillsByPlatform = {},
       commands = [],
       commandsByPlatform = {},
+      plugins = [],
+      pluginsByPlatform = {},
       mcpServers = [],
       markdownFiles = {},
       uiConfig = null,
@@ -1252,8 +1931,17 @@ async function importConfigs(importData, options = {}) {
       }
     }
 
-    // 导入 Plugins
-    if (importData.data.plugins && importData.data.plugins.length > 0) {
+    // 导入 Plugins（优先使用多平台结构，兼容旧结构 plugins）
+    if (pluginsByPlatform && typeof pluginsByPlatform === 'object' && Object.keys(pluginsByPlatform).length > 0) {
+      importPluginsByPlatformSnapshot(pluginsByPlatform, plugins, overwrite, results);
+    }
+
+    // 导入旧版 Plugins 结构。新包已经通过 pluginsByPlatform 处理过，避免重复写入。
+    if (
+      (!pluginsByPlatform || Object.keys(pluginsByPlatform).length === 0) &&
+      importData.data.plugins &&
+      importData.data.plugins.length > 0
+    ) {
       const plugins = importData.data.plugins;
 
       try {
