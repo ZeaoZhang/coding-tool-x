@@ -261,6 +261,21 @@ function run() {
     }
   );
 
+  let hostsShortcutCalled = false;
+  assertCliEntryCanRunWithoutInteractiveDeps(
+    ['--hosts'],
+    require.resolve('../src/commands/ui'),
+    {
+      handleUI: () => {
+        hostsShortcutCalled = true;
+        return Promise.resolve();
+      }
+    },
+    () => {
+      assert.strictEqual(hostsShortcutCalled, true, 'CLI --hosts 快捷入口应进入 Web UI 启动逻辑');
+    }
+  );
+
   const serverEntryPath = require.resolve('../src/server');
   delete require.cache[serverEntryPath];
   withPatchedModuleLoad(['inquirer', 'rxjs'], () => {

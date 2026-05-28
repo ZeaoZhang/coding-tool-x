@@ -164,6 +164,10 @@ describe('daemon handleStop', () => {
 });
 
 describe('daemon stop helpers', () => {
+  test('maps LAN host mode to a canonical --host daemon arg', () => {
+    expect(daemon._test.buildStartOptions(19999, true, false).args).toContain('--host');
+  });
+
   test('should only send stop to active pm2 states', () => {
     expect(daemon._test.shouldStopPM2Process('online')).toBe(true);
     expect(daemon._test.shouldStopPM2Process('stopped')).toBe(false);
