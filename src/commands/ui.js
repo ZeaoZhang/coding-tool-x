@@ -3,13 +3,14 @@ const { startServer } = require('../server');
 const open = require('open');
 const { getProxyStatus } = require('../server/proxy-server');
 const { loadConfig } = require('../config/loader');
+const { hasHostFlag } = require('../utils/cli-flags');
 
 async function handleUI() {
   // 检查是否为 daemon 模式（PM2 启动）
   const isDaemon = process.argv.includes('--daemon');
 
-  // 检查是否启用 LAN 访问 (--host 标志)
-  const enableHost = process.argv.includes('--host');
+  // 检查是否启用 LAN 访问 (--host/--hosts 标志)
+  const enableHost = hasHostFlag();
   const enableHttps = process.argv.includes('--https');
   const host = enableHost ? '0.0.0.0' : '127.0.0.1';
   const protocol = enableHttps ? 'https' : 'http';
@@ -18,7 +19,7 @@ async function handleUI() {
     console.clear();
     console.log(chalk.cyan.bold('\n[NET] 启动 Coding-Tool Web UI...\n'));
     if (enableHost) {
-      console.log(chalk.yellow('[WARN]  LAN 访问已启用 (--host)\n'));
+      console.log(chalk.yellow('[WARN]  LAN 访问已启用 (--host/--hosts)\n'));
     }
     if (enableHttps) {
       console.log(chalk.yellow('[LOCK] 已启用本地 HTTPS 模式 (--https)\n'));

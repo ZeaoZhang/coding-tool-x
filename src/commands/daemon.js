@@ -11,6 +11,7 @@ const {
   getPortToolIssue,
   formatPortToolIssue
 } = require('../utils/port-helper');
+const { hasHostFlag } = require('../utils/cli-flags');
 
 const PM2_APP_NAME = 'cc-tool';
 const STARTUP_LOG_FILE = 'cc-tool-out.log';
@@ -499,7 +500,7 @@ async function handleStart() {
   try {
     const config = loadConfig();
     const port = config.ports?.webUI || 19999;
-    const enableHost = process.argv.includes('--host');
+    const enableHost = hasHostFlag();
     const enableHttps = process.argv.includes('--https');
     fs.mkdirSync(PATHS.logs, { recursive: true });
 
@@ -733,6 +734,7 @@ module.exports = {
   _test: {
     detectStalePm2RuntimeIssue,
     extractMissingPm2ForkScriptPath,
+    buildStartOptions,
     shouldTreatPortOwnershipAsReady,
     getManagedPorts,
     shouldStopPM2Process
