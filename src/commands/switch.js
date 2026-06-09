@@ -3,7 +3,6 @@ const chalk = require('chalk');
 const { getAvailableProjects } = require('../utils/session');
 const { promptSelectProject } = require('../ui/prompts');
 const { saveConfig } = require('../config/loader');
-const { HOME_DIR } = require('../config/paths');
 
 /**
  * 切换项目
@@ -29,10 +28,7 @@ async function switchProject(config) {
   config.defaultProject = selectedProject;
 
   // 保存到配置文件（保留其余字段）
-  saveConfig({
-    ...config,
-    projectsDir: config.projectsDir.replace(HOME_DIR, '~')
-  });
+  saveConfig({ ...config });
 
   // 使用解析后的名称显示
   const { parseRealProjectPath } = require('../server/services/sessions');

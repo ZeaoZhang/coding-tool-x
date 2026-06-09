@@ -204,6 +204,14 @@ describe('getProjects', () => {
     expect(result.sort()).toEqual(['proj-one', 'proj-two']);
   });
 
+  test('uses Claude native projects dir when config.projectsDir is absent', async () => {
+    fs.mkdirSync(path.join(projectsDir, 'native-proj'));
+
+    const { getProjects } = require('../../../src/server/services/sessions');
+    const result = await getProjects({});
+    expect(result).toEqual(['native-proj']);
+  });
+
   test('returns [] when projects directory does not exist', async () => {
     const { getProjects } = require('../../../src/server/services/sessions');
     const result = await getProjects({ projectsDir: path.join(testDir, 'nonexistent') });
@@ -221,6 +229,17 @@ describe('deleteProject', () => {
 
     const { deleteProject } = require('../../../src/server/services/sessions');
     const result = deleteProject({ projectsDir }, 'to-delete');
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(projDir)).toBe(false);
+  });
+
+  test('uses Claude native projects dir when deleting without config.projectsDir', () => {
+    const projDir = path.join(projectsDir, 'native-delete');
+    fs.mkdirSync(projDir);
+
+    const { deleteProject } = require('../../../src/server/services/sessions');
+    const result = deleteProject({}, 'native-delete');
 
     expect(result.success).toBe(true);
     expect(fs.existsSync(projDir)).toBe(false);

@@ -2,12 +2,17 @@
 const fs = require('fs');
 const path = require('path');
 const chalk = require('chalk');
+const { NATIVE_PATHS } = require('../config/paths');
+
+function resolveProjectsDir(config = {}) {
+  return config.projectsDir || NATIVE_PATHS.claude.projects;
+}
 
 /**
  * 获取会话目录
  */
 function getSessionsDir(config) {
-  return path.join(config.projectsDir, config.currentProject);
+  return path.join(resolveProjectsDir(config), config.currentProject);
 }
 
 /**
@@ -196,7 +201,7 @@ function parseLinesWithTail(headLines, tailLines) {
  * 获取所有可用的项目
  */
 async function getAvailableProjects(config) {
-  const projectsDir = config.projectsDir;
+  const projectsDir = resolveProjectsDir(config);
   if (!fs.existsSync(projectsDir)) {
     console.log(chalk.red(`项目目录不存在: ${projectsDir}`));
     return [];
@@ -204,8 +209,9 @@ async function getAvailableProjects(config) {
 
   // 获取项目列表和统计信息（包含解析后的名称）
   const { getProjectsWithStats, getProjectOrder } = require('../server/services/sessions');
-  const projects = await getProjectsWithStats(config);
-  const savedOrder = getProjectOrder(config);
+  const resolvedConfig = { ...config, projectsDir };
+  const projects = await getProjectsWithStats(resolvedConfig);
+  const savedOrder = getProjectOrder(resolvedConfig);
   const projectList = Array.isArray(projects) ? projects : [];
 
   // 按保存的顺序排列

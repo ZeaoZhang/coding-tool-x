@@ -1,13 +1,7 @@
 // 默认配置
-const path = require('path');
-const os = require('os');
-const { resolvePreferredHomeDir } = require('../utils/home-dir');
 const modelMetadataConfig = require('./model-metadata.json');
 
-const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
-
 const DEFAULT_CONFIG = {
-  projectsDir: path.join(HOME_DIR, '.claude', 'projects'),
   defaultProject: null,
   maxDisplaySessions: 100,
   pageSize: 15,

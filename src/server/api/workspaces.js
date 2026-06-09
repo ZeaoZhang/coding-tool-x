@@ -33,6 +33,24 @@ function validateBranchName(branchName) {
   }
 }
 
+function normalizeBranchMode(branchMode) {
+  if (typeof branchMode !== 'string' || !branchMode.trim()) {
+    return '';
+  }
+  return branchMode.trim();
+}
+
+function validateBranchMode(branchMode) {
+  const normalized = normalizeBranchMode(branchMode);
+  if (!normalized) {
+    return { valid: true, normalized: '' };
+  }
+  if (normalized !== 'existing' && normalized !== 'new') {
+    return { valid: false, normalized, message: `分支模式不合法: ${normalized}` };
+  }
+  return { valid: true, normalized };
+}
+
 /**
  * GET /api/workspaces
  * 获取所有工作区列表
@@ -226,6 +244,17 @@ router.post('/', (req, res) => {
         });
       }
 
+      const branchModeValidation = validateBranchMode(proj.branchMode);
+      if (!branchModeValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: branchModeValidation.message
+        });
+      }
+      if (branchModeValidation.normalized) {
+        proj.branchMode = branchModeValidation.normalized;
+      }
+
       const normalizedBranch = normalizeBranchName(proj.branch);
       if (normalizedBranch) {
         const branchValidation = validateBranchName(normalizedBranch);
@@ -329,14 +358,22 @@ router.put('/:id/last-used', (req, res) => {
 router.post('/:id/projects', (req, res) => {
   try {
     const { id } = req.params;
-    const { sourcePath, name, createWorktree, branch, baseBranch } = req.body;
+    const { sourcePath, name, createWorktree, branch, baseBranch, branchMode } = req.body;
     const normalizedBranch = normalizeBranchName(branch);
     const normalizedBaseBranch = normalizeBranchName(baseBranch);
+    const branchModeValidation = validateBranchMode(branchMode);
 
     if (!sourcePath || !sourcePath.trim()) {
       return res.status(400).json({
         success: false,
         message: '项目源路径不能为空'
+      });
+    }
+
+    if (!branchModeValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: branchModeValidation.message
       });
     }
 
@@ -364,6 +401,7 @@ router.post('/:id/projects', (req, res) => {
       sourcePath,
       name,
       createWorktree,
+      branchMode: branchModeValidation.normalized || branchMode,
       branch: normalizedBranch || branch,
       baseBranch: normalizedBaseBranch || baseBranch
     });

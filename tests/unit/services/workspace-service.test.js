@@ -180,16 +180,22 @@ describe('workspace-service workspace lifecycle', () => {
     expect(service.loadWorkspaces().workspaces).toHaveLength(1);
   });
 
-  test('createWorkspace falls back to creating a new worktree branch when checkout fails', () => {
+  test('createWorkspace creates a new worktree branch after updating the base branch', () => {
     const repoPath = createRepo('repo-b');
-    const addCalls = [];
-    execFileSyncSpy.mockImplementation((command, args) => {
-      if (command === 'git' && args[0] === 'worktree' && args[1] === 'add') {
-        addCalls.push([...args]);
-        if (args[3] !== '-b') {
-          throw new Error('branch not found');
-        }
+    const gitCalls = [];
+    execFileSyncSpy.mockImplementation((command, args, options = {}) => {
+      if (command !== 'git') return '';
+      gitCalls.push({ args: [...args], cwd: options.cwd });
+
+      if (args[0] === 'worktree' && args[1] === 'list') {
+        return [
+          `worktree ${options.cwd}`,
+          'HEAD 1234567',
+          'branch refs/heads/main',
+          ''
+        ].join('\n');
       }
+
       return '';
     });
 
@@ -200,14 +206,57 @@ describe('workspace-service workspace lifecycle', () => {
       projects: [{
         sourcePath: repoPath,
         name: 'app',
+        branchMode: 'new',
         branch: 'feature/new',
         baseBranch: 'main'
       }]
     });
 
+    expect(gitCalls).toEqual([
+      { args: ['fetch', '--all', '--prune'], cwd: repoPath },
+      { args: ['show-ref', '--verify', '--quiet', 'refs/heads/main'], cwd: repoPath },
+      { args: ['show-ref', '--verify', '--quiet', 'refs/remotes/origin/main'], cwd: repoPath },
+      { args: ['worktree', 'list', '--porcelain'], cwd: repoPath },
+      { args: ['pull', '--ff-only'], cwd: repoPath },
+      { args: ['worktree', 'add', path.join(testDir, 'branch-space', 'app'), '-b', 'feature/new', 'main'], cwd: repoPath }
+    ]);
+  });
+
+  test('createWorkspace forces existing branch checkout instead of creating a duplicate branch', () => {
+    const repoPath = createRepo('repo-existing-busy');
+    const addCalls = [];
+    execFileSyncSpy.mockImplementation((command, args) => {
+      if (command === 'git' && args[0] === 'worktree' && args[1] === 'add') {
+        addCalls.push([...args]);
+        if (!args.includes('--force')) {
+          throw Object.assign(new Error("fatal: 'main' is already used by worktree"), {
+            stderr: Buffer.from("fatal: 'main' is already used by worktree")
+          });
+        }
+      }
+      return '';
+    });
+
+    const service = loadWorkspaceService();
+
+    const workspace = service.createWorkspace({
+      name: 'existing-space',
+      baseDir: testDir,
+      projects: [{
+        sourcePath: repoPath,
+        name: 'app',
+        branchMode: 'existing',
+        branch: 'main'
+      }]
+    });
+
+    expect(workspace.projects[0].worktrees).toEqual([
+      { branch: 'main', path: path.join(testDir, 'existing-space', 'app') }
+    ]);
+
     expect(addCalls).toEqual([
-      ['worktree', 'add', path.join(testDir, 'branch-space', 'app'), 'feature/new'],
-      ['worktree', 'add', path.join(testDir, 'branch-space', 'app'), '-b', 'feature/new', 'main']
+      ['worktree', 'add', path.join(testDir, 'existing-space', 'app'), 'main'],
+      ['worktree', 'add', '--force', path.join(testDir, 'existing-space', 'app'), 'main']
     ]);
   });
 
@@ -285,6 +334,51 @@ describe('workspace-service project management', () => {
 
     symlinkSpy.mockRestore();
     unlinkSpy.mockRestore();
+  });
+
+  test('addProjectToWorkspace forces existing branch checkout instead of creating a duplicate branch', () => {
+    const repoPath = createRepo('repo-add-existing-busy');
+    const workspacePath = path.join(testDir, 'workspace-add-existing');
+    fs.mkdirSync(workspacePath, { recursive: true });
+    seedWorkspaces({
+      workspaces: [{
+        id: 'ws-1',
+        name: 'Workspace Add Existing',
+        path: workspacePath,
+        projects: []
+      }]
+    });
+
+    const addCalls = [];
+    execFileSyncSpy.mockImplementation((command, args) => {
+      if (command === 'git' && args[0] === 'worktree' && args[1] === 'add') {
+        addCalls.push([...args]);
+        if (!args.includes('--force')) {
+          throw Object.assign(new Error("fatal: 'feature/live' is already used by worktree"), {
+            stderr: Buffer.from("fatal: 'feature/live' is already used by worktree")
+          });
+        }
+      }
+      return '';
+    });
+
+    const service = loadWorkspaceService();
+
+    const workspace = service.addProjectToWorkspace('ws-1', {
+      sourcePath: repoPath,
+      name: 'app',
+      branchMode: 'existing',
+      branch: 'feature/live'
+    });
+
+    expect(workspace.projects[0].worktrees).toEqual([
+      { branch: 'feature/live', path: path.join(workspacePath, 'app') }
+    ]);
+
+    expect(addCalls).toEqual([
+      ['worktree', 'add', path.join(workspacePath, 'app'), 'feature/live'],
+      ['worktree', 'add', '--force', path.join(workspacePath, 'app'), 'feature/live']
+    ]);
   });
 
   test('getAllAvailableProjects merges installed channels and sorts by last use', async () => {

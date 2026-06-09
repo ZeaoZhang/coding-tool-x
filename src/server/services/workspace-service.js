@@ -1,5 +1,6 @@
 // 多项目工作区服务
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PATHS } = require('../../config/paths');
@@ -43,6 +44,206 @@ function resolveCurrentBranch(repoPath) {
     }).trim();
   } catch (error) {
     return 'main';
+  }
+}
+
+function getGitErrorMessage(error) {
+  const stderr = error && error.stderr ? error.stderr.toString().trim() : '';
+  return stderr || (error && error.message) || String(error);
+}
+
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeBranchMode(projectConfig = {}) {
+  const branchMode = normalizeString(projectConfig.branchMode);
+  if (branchMode === 'new' || branchMode === 'existing') {
+    return branchMode;
+  }
+  return normalizeString(projectConfig.baseBranch) ? 'new' : 'existing';
+}
+
+function normalizeGitBranchRef(branchName) {
+  return normalizeString(branchName).replace(/^refs\/heads\//, '');
+}
+
+function parseGitWorktrees(output) {
+  const worktrees = [];
+  const lines = output.split('\n');
+  let current = {};
+
+  for (const line of lines) {
+    if (line.startsWith('worktree ')) {
+      if (current.path) {
+        worktrees.push(current);
+      }
+      current = { path: line.substring(9) };
+    } else if (line.startsWith('branch ')) {
+      current.branch = line.substring(7);
+    } else if (line.startsWith('HEAD ')) {
+      current.head = line.substring(5);
+    }
+  }
+
+  if (current.path) {
+    worktrees.push(current);
+  }
+
+  return worktrees;
+}
+
+function listGitWorktrees(repoPath) {
+  const output = runGitCommand(['worktree', 'list', '--porcelain'], {
+    cwd: repoPath
+  });
+  return parseGitWorktrees(output);
+}
+
+function hasGitRef(repoPath, ref) {
+  try {
+    runGitCommand(['show-ref', '--verify', '--quiet', ref], {
+      cwd: repoPath,
+      stdio: 'ignore'
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function findWorktreeForBranch(repoPath, branchName) {
+  const normalizedBranch = normalizeGitBranchRef(branchName);
+  const refName = `refs/heads/${normalizedBranch}`;
+  return listGitWorktrees(repoPath).find(wt => wt.branch === refName);
+}
+
+function pullBaseBranch(worktreePath, baseBranch) {
+  try {
+    runGitCommand(['pull', '--ff-only'], { cwd: worktreePath });
+  } catch (error) {
+    try {
+      runGitCommand(['remote', 'get-url', 'origin'], { cwd: worktreePath });
+    } catch (_) {
+      return;
+    }
+    const normalizedBaseBranch = normalizeGitBranchRef(baseBranch);
+    runGitCommand(['pull', '--ff-only', 'origin', normalizedBaseBranch], {
+      cwd: worktreePath
+    });
+  }
+}
+
+function removeTemporaryWorktree(repoPath, tempWorktreePath) {
+  try {
+    runGitCommand(['worktree', 'remove', tempWorktreePath, '--force'], {
+      cwd: repoPath
+    });
+  } catch (error) {
+    console.warn(`移除临时 worktree 失败: ${tempWorktreePath}`, error.message);
+  } finally {
+    if (fs.existsSync(tempWorktreePath)) {
+      fs.rmSync(tempWorktreePath, { recursive: true, force: true });
+    }
+  }
+}
+
+function updateBaseBranch(repoPath, baseBranch) {
+  const normalizedBaseBranch = normalizeGitBranchRef(baseBranch);
+  if (!normalizedBaseBranch) {
+    return null;
+  }
+
+  runGitCommand(['fetch', '--all', '--prune'], { cwd: repoPath });
+
+  const localRef = `refs/heads/${normalizedBaseBranch}`;
+  const remoteRef = `refs/remotes/origin/${normalizedBaseBranch}`;
+  const hasLocalBranch = hasGitRef(repoPath, localRef);
+  const hasRemoteBranch = hasGitRef(repoPath, remoteRef);
+  if (!hasLocalBranch && !hasRemoteBranch) {
+    throw new Error(`基础分支不存在: ${normalizedBaseBranch}`);
+  }
+
+  const existingWorktree = hasLocalBranch ? findWorktreeForBranch(repoPath, normalizedBaseBranch) : null;
+  if (existingWorktree) {
+    pullBaseBranch(existingWorktree.path, normalizedBaseBranch);
+    return normalizedBaseBranch;
+  }
+
+  const tempParent = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-base-'));
+  const tempWorktreePath = path.join(tempParent, 'worktree');
+  try {
+    if (hasLocalBranch) {
+      runGitCommand(['worktree', 'add', tempWorktreePath, normalizedBaseBranch], {
+        cwd: repoPath
+      });
+    } else {
+      runGitCommand(['worktree', 'add', tempWorktreePath, '-b', normalizedBaseBranch, `origin/${normalizedBaseBranch}`], {
+        cwd: repoPath
+      });
+    }
+    pullBaseBranch(tempWorktreePath, normalizedBaseBranch);
+    return normalizedBaseBranch;
+  } finally {
+    removeTemporaryWorktree(repoPath, tempWorktreePath);
+    if (fs.existsSync(tempParent)) {
+      fs.rmSync(tempParent, { recursive: true, force: true });
+    }
+  }
+}
+
+function createGitWorktree({ sourcePath, worktreePath, branch, baseBranch, branchMode, actionLabel }) {
+  let targetBranch = normalizeString(branch);
+  if (!targetBranch) {
+    try {
+      targetBranch = resolveCurrentBranch(sourcePath);
+    } catch (e) {
+      targetBranch = 'main';
+    }
+  }
+
+  const resolvedBranchMode = branchMode === 'new' ? 'new' : 'existing';
+
+  if (resolvedBranchMode === 'new') {
+    const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
+    const updatedBaseBranch = updateBaseBranch(sourcePath, baseBranch);
+    if (updatedBaseBranch) {
+      worktreeArgs.push(updatedBaseBranch);
+    }
+
+    try {
+      runGitCommand(worktreeArgs, { cwd: sourcePath });
+      return { branch: targetBranch, path: worktreePath };
+    } catch (error) {
+      throw new Error(`创建 worktree 失败: ${getGitErrorMessage(error)}`);
+    }
+  }
+
+  try {
+    runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+      cwd: sourcePath
+    });
+    return { branch: targetBranch, path: worktreePath };
+  } catch (error) {
+    const message = getGitErrorMessage(error);
+    if (/already (checked out|used by worktree)/i.test(message)) {
+      try {
+        runGitCommand(['worktree', 'add', '--force', worktreePath, targetBranch], {
+          cwd: sourcePath
+        });
+        return { branch: targetBranch, path: worktreePath };
+      } catch (forceError) {
+        throw new Error(
+          `无法${actionLabel}：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
+          `仓库路径: ${sourcePath}\n` +
+          `错误详情: ${getGitErrorMessage(forceError)}\n\n` +
+          `解决方案：\n` +
+          `1. 指定不同的分支名\n` +
+          `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
+        );
+      }
+    }
+    throw new Error(`创建 worktree 失败: ${message}`);
   }
 }
 
@@ -147,31 +348,7 @@ function getGitWorktrees(repoPath) {
     if (!isGitRepo(repoPath)) {
       return [];
     }
-    const output = runGitCommand(['worktree', 'list', '--porcelain'], {
-      cwd: repoPath
-    });
-
-    const worktrees = [];
-    const lines = output.split('\n');
-    let current = {};
-
-    for (const line of lines) {
-      if (line.startsWith('worktree ')) {
-        if (current.path) {
-          worktrees.push(current);
-        }
-        current = { path: line.substring(9) };
-      } else if (line.startsWith('branch ')) {
-        current.branch = line.substring(7);
-      } else if (line.startsWith('HEAD ')) {
-        current.head = line.substring(5);
-      }
-    }
-
-    if (current.path) {
-      worktrees.push(current);
-    }
-
+    const worktrees = listGitWorktrees(repoPath);
     return worktrees.filter(wt => wt.path !== repoPath); // 排除主仓库
   } catch (error) {
     console.error('获取 worktree 列表失败:', error.message);
@@ -308,48 +485,19 @@ function createWorkspace(options) {
 
       // Git 仓库且需要创建 worktree：直接在工作区目录内创建，无需额外 symlink
       if (isGit && useWorktree) {
-        // 获取当前分支作为默认分支
-        let targetBranch = branch;
-        if (!targetBranch) {
-          try {
-            targetBranch = resolveCurrentBranch(sourcePath);
-          } catch (e) {
-            targetBranch = 'main';
-          }
-        }
-
         // worktree 直接创建到工作区目录内的项目路径
         const worktreePath = symlinkPath;
-
-        try {
-          // 尝试检出已有分支
-          runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
-            cwd: sourcePath
-          });
-        } catch (error) {
-          // 如果分支不存在，尝试创建新分支
-          try {
-            const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
-            if (baseBranch && baseBranch.trim()) {
-              worktreeArgs.push(baseBranch.trim());
-            }
-            runGitCommand(worktreeArgs, {
-              cwd: sourcePath
-            });
-          } catch (err) {
-            if (err.message.includes('already checked out')) {
-              throw new Error(
-                `无法创建 worktree：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
-                `错误详情: ${err.message}\n\n` +
-                `提示：请为此项目指定不同的分支名，或禁用 worktree 模式。`
-              );
-            }
-            throw new Error(`创建 worktree 失败: ${err.message}`);
-          }
-        }
+        const createdWorktree = createGitWorktree({
+          sourcePath,
+          worktreePath,
+          branch,
+          baseBranch,
+          branchMode: normalizeBranchMode(proj),
+          actionLabel: '创建 worktree'
+        });
 
         targetPath = worktreePath;
-        worktrees.push({ branch: targetBranch, path: worktreePath });
+        worktrees.push(createdWorktree);
       } else if (isGit) {
         // Git 仓库但不创建 worktree：symlink 指向源路径，记录已有 worktrees
         worktrees = getGitWorktrees(sourcePath);
@@ -509,44 +657,18 @@ function addProjectToWorkspace(workspaceId, projectConfig) {
 
   // Git 仓库且需要创建 worktree：直接在工作区目录内创建，无需额外 symlink
   if (isGit && useWorktree) {
-    let targetBranch = branch;
-    if (!targetBranch) {
-      try {
-        targetBranch = resolveCurrentBranch(sourcePath);
-      } catch (e) {
-        targetBranch = 'main';
-      }
-    }
-
     const worktreePath = symlinkPath;
-
-    try {
-      runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
-        cwd: sourcePath
-      });
-    } catch (error) {
-      try {
-        const worktreeArgs = ['worktree', 'add', worktreePath, '-b', targetBranch];
-        if (baseBranch && baseBranch.trim()) {
-          worktreeArgs.push(baseBranch.trim());
-        }
-        runGitCommand(worktreeArgs, { cwd: sourcePath });
-      } catch (err) {
-        if (err.message && err.message.includes('already checked out')) {
-          throw new Error(
-            `无法添加项目：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
-            `仓库路径: ${sourcePath}\n\n` +
-            `解决方案：\n` +
-            `1. 指定不同的分支名\n` +
-            `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
-          );
-        }
-        throw new Error(`创建 worktree 失败: ${err.message}`);
-      }
-    }
+    const createdWorktree = createGitWorktree({
+      sourcePath,
+      worktreePath,
+      branch,
+      baseBranch,
+      branchMode: normalizeBranchMode(projectConfig),
+      actionLabel: '添加项目'
+    });
 
     targetPath = worktreePath;
-    worktrees.push({ branch: targetBranch, path: worktreePath });
+    worktrees.push(createdWorktree);
   } else if (isGit) {
     // Git 仓库但不创建 worktree：symlink 指向源路径
     worktrees = getGitWorktrees(sourcePath);

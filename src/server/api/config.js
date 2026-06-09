@@ -330,7 +330,6 @@ router.post('/default-models', (req, res) => {
     // Save config
     const newConfig = {
       ...config,
-      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
       defaultModels: newDefaultModels
     };
 
@@ -378,7 +377,6 @@ router.post('/default-models/reset', (req, res) => {
     // Save config
     const newConfig = {
       ...config,
-      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
       defaultModels: newDefaultModels
     };
 
@@ -489,7 +487,6 @@ router.post('/advanced', (req, res) => {
     // 更新配置
     const newConfig = {
       ...config,
-      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
       ports: normalizedPorts,
       maxLogs: maxLogs !== undefined ? parseInt(maxLogs) : config.maxLogs,
       statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,

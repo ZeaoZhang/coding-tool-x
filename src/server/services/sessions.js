@@ -17,6 +17,17 @@ const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
 const CODEX_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'projects');
 const GEMINI_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'projects');
 
+function resolveProjectsDir(config = {}) {
+  return config.projectsDir || CLAUDE_PROJECTS_DIR;
+}
+
+function withResolvedProjectsDir(config = {}) {
+  return {
+    ...config,
+    projectsDir: resolveProjectsDir(config)
+  };
+}
+
 // Base directory for cc-tool data
 function getCcToolDir() {
   return PATHS.base;
@@ -182,7 +193,7 @@ function sliceClaudeSessionContentByUserMessage(content, afterUserMessageNumber)
 
 // Get all projects with stats (async version)
 async function getProjects(config) {
-  const projectsDir = config.projectsDir;
+  const projectsDir = resolveProjectsDir(config);
 
   if (!fs.existsSync(projectsDir)) {
     return [];
@@ -383,16 +394,17 @@ function extractCwdFromSessionHeader(sessionFile) {
 
 // Get projects with detailed stats (with caching) - async version
 async function getProjectsWithStats(config, options = {}) {
+  const resolvedConfig = withResolvedProjectsDir(config);
   if (!options.force) {
     // Check enhanced cache first
-    const cacheKey = `${CacheKeys.PROJECTS}${config.projectsDir}`;
+    const cacheKey = `${CacheKeys.PROJECTS}${resolvedConfig.projectsDir}`;
     const enhancedCached = globalCache.get(cacheKey);
     if (enhancedCached) {
       return enhancedCached;
     }
 
     // Check old cache
-    const cached = getCachedProjects(config);
+    const cached = getCachedProjects(resolvedConfig);
     if (cached) {
       globalCache.set(cacheKey, cached, 300000); // 5分钟
       return cached;
@@ -400,22 +412,22 @@ async function getProjectsWithStats(config, options = {}) {
   }
 
   try {
-    const data = await buildProjectsWithStats(config);
+    const data = await buildProjectsWithStats(resolvedConfig);
     if (!Array.isArray(data)) {
-      console.warn(`[getProjectsWithStats] Unexpected non-array result for ${config.projectsDir}, returning empty array.`);
+      console.warn(`[getProjectsWithStats] Unexpected non-array result for ${resolvedConfig.projectsDir}, returning empty array.`);
       return [];
     }
-    setCachedProjects(config, data);
-    globalCache.set(`${CacheKeys.PROJECTS}${config.projectsDir}`, data, 300000);
+    setCachedProjects(resolvedConfig, data);
+    globalCache.set(`${CacheKeys.PROJECTS}${resolvedConfig.projectsDir}`, data, 300000);
     return data;
   } catch (err) {
-    console.error(`[getProjectsWithStats] Failed to build projects for ${config.projectsDir}:`, err);
+    console.error(`[getProjectsWithStats] Failed to build projects for ${resolvedConfig.projectsDir}:`, err);
     return [];
   }
 }
 
 async function buildProjectsWithStats(config) {
-  const projectsDir = config.projectsDir;
+  const projectsDir = resolveProjectsDir(config);
 
   if (!fs.existsSync(projectsDir)) {
     return [];
@@ -482,7 +494,7 @@ async function buildProjectsWithStats(config) {
 
 // 获取 Claude 项目/会话数量（轻量统计）
 function getProjectAndSessionCounts(config) {
-  const projectsDir = config.projectsDir;
+  const projectsDir = resolveProjectsDir(config);
   if (!fs.existsSync(projectsDir)) {
     return { projectCount: 0, sessionCount: 0 };
   }
@@ -670,7 +682,8 @@ async function getSessionsForProject(config, projectName) {
 
 // Delete a session
 function deleteSession(config, projectName, sessionId) {
-  const projectDir = path.join(config.projectsDir, projectName);
+  const resolvedConfig = withResolvedProjectsDir(config);
+  const projectDir = path.join(resolvedConfig.projectsDir, projectName);
   const sessionFile = path.join(projectDir, sessionId + '.jsonl');
 
   if (!fs.existsSync(sessionFile)) {
@@ -678,14 +691,15 @@ function deleteSession(config, projectName, sessionId) {
   }
 
   fs.unlinkSync(sessionFile);
-  invalidateProjectsCache(config);
+  invalidateProjectsCache(resolvedConfig);
   invalidateSessionResultCache(projectName);
   return { success: true };
 }
 
 // Fork a session
 function forkSession(config, projectName, sessionId, options = {}) {
-  const projectDir = path.join(config.projectsDir, projectName);
+  const resolvedConfig = withResolvedProjectsDir(config);
+  const projectDir = path.join(resolvedConfig.projectsDir, projectName);
   const sessionFile = path.join(projectDir, sessionId + '.jsonl');
 
   if (!fs.existsSync(sessionFile)) {
@@ -714,7 +728,7 @@ function forkSession(config, projectName, sessionId, options = {}) {
     const { setAlias } = require('./alias');
     setAlias(newSessionId, options.alias);
   }
-  invalidateProjectsCache(config);
+  invalidateProjectsCache(resolvedConfig);
   invalidateSessionResultCache(projectName);
 
   return {
@@ -766,7 +780,8 @@ function saveSessionOrder(projectName, order) {
 
 // Delete a project (remove the entire project directory)
 function deleteProject(config, projectName) {
-  const projectDir = path.join(config.projectsDir, projectName);
+  const resolvedConfig = withResolvedProjectsDir(config);
+  const projectDir = path.join(resolvedConfig.projectsDir, projectName);
 
   if (!fs.existsSync(projectDir)) {
     throw new Error('Project not found');
@@ -776,19 +791,20 @@ function deleteProject(config, projectName) {
   fs.rmSync(projectDir, { recursive: true, force: true });
 
   // Remove from order file if exists
-  const order = getProjectOrder(config);
+  const order = getProjectOrder(resolvedConfig);
   const newOrder = order.filter(name => name !== projectName);
   if (newOrder.length !== order.length) {
-    saveProjectOrder(config, newOrder);
+    saveProjectOrder(resolvedConfig, newOrder);
   }
 
-  invalidateProjectsCache(config);
+  invalidateProjectsCache(resolvedConfig);
   return { success: true };
 }
 
 // Search sessions for keyword
 function searchSessions(config, projectName, keyword, contextLength = 15) {
-  const projectDir = path.join(config.projectsDir, projectName);
+  const resolvedConfig = withResolvedProjectsDir(config);
+  const projectDir = path.join(resolvedConfig.projectsDir, projectName);
 
   if (!fs.existsSync(projectDir)) {
     return [];
