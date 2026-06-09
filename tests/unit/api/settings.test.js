@@ -173,6 +173,28 @@ describe('settings API router', () => {
     expect(res._data).toMatchObject({ success: true });
   });
 
+  it('POST /model-settings does not force projectsDir into saved config', () => {
+    loaderStub.loadConfig.mockReturnValue({
+      modelMetadataOverrides: {},
+    });
+
+    const router = loadRouter();
+    const handler = findHandler(router, 'post', '/model-settings');
+    const req = mockReq({
+      body: {
+        overrides: {
+          'my-model': { limit: { context: 8192 } },
+        },
+      },
+    });
+    const res = mockRes();
+
+    handler(req, res);
+
+    const savedConfig = loaderStub.saveConfig.mock.calls[0][0];
+    expect(savedConfig).not.toHaveProperty('projectsDir');
+  });
+
   it('POST /model-settings returns 400 when overrides is an array', () => {
     const router = loadRouter();
     const handler = findHandler(router, 'post', '/model-settings');
@@ -337,6 +359,22 @@ describe('settings API router', () => {
     const savedConfig = loaderStub.saveConfig.mock.calls[0][0];
     expect(savedConfig.modelMetadataOverrides).not.toHaveProperty('claude-3-opus');
     expect(res._data).toMatchObject({ success: true, modelId: 'claude-3-opus' });
+  });
+
+  it('DELETE /model-settings/:modelId does not force projectsDir into saved config', () => {
+    loaderStub.loadConfig.mockReturnValue({
+      modelMetadataOverrides: { 'claude-3-opus': { limit: { context: 1 } } },
+    });
+
+    const router = loadRouter();
+    const handler = findHandler(router, 'delete', '/model-settings/:modelId');
+    const req = mockReq({ params: { modelId: 'claude-3-opus' } });
+    const res = mockRes();
+
+    handler(req, res);
+
+    const savedConfig = loaderStub.saveConfig.mock.calls[0][0];
+    expect(savedConfig).not.toHaveProperty('projectsDir');
   });
 
   it('DELETE /model-settings/:modelId returns 500 on loadConfig error', () => {

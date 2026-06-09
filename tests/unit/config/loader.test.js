@@ -17,6 +17,7 @@ const EVENTBUS_PATH  = require.resolve('../../../src/plugins/event-bus');
 
 let testDir;
 let testConfigFile;
+let nativeProjectsDir;
 
 // Stable stub references – reassigned in beforeEach
 let emitSync;
@@ -28,6 +29,7 @@ function injectStubs() {
   // We use a getter so the value is read lazily at call time.
   const pathsStub = {
     get PATHS() { return { configFile: testConfigFile }; },
+    get NATIVE_PATHS() { return { claude: { projects: nativeProjectsDir } }; },
     ensureStorageDirMigrated: vi.fn()
   };
 
@@ -44,11 +46,14 @@ function injectStubs() {
 let loadConfig;
 let saveConfig;
 let expandHome;
+let resolveClaudeProjectsDir;
+let normalizeConfigForSave;
 let getConfigFilePath;
 
 beforeEach(() => {
   testDir        = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-loader-test-'));
   testConfigFile = path.join(testDir, 'config.json');
+  nativeProjectsDir = path.join(testDir, 'claude-native', 'projects');
 
   delete require.cache[LOADER_PATH];
 
@@ -58,6 +63,8 @@ beforeEach(() => {
   loadConfig     = loader.loadConfig;
   saveConfig     = loader.saveConfig;
   expandHome     = loader.expandHome;
+  resolveClaudeProjectsDir = loader.resolveClaudeProjectsDir;
+  normalizeConfigForSave = loader.normalizeConfigForSave;
   getConfigFilePath = loader.getConfigFilePath;
 });
 
@@ -134,9 +141,9 @@ describe('loadConfig with no config file', () => {
     }
   });
 
-  it('expands ~ in projectsDir', () => {
+  it('uses Claude native projectsDir at runtime without a config file', () => {
     const config = loadConfig();
-    expect(config.projectsDir).not.toMatch(/^~/);
+    expect(config.projectsDir).toBe(nativeProjectsDir);
   });
 
   it('emits config:loaded event', () => {
@@ -191,6 +198,18 @@ describe('loadConfig with existing config file', () => {
     expect(config.projectsDir).toMatch(/my[/\\]projects/);
   });
 
+  it('uses Claude native projectsDir when the config file omits projectsDir', () => {
+    writeConfig({ maxLogs: 7 });
+    const config = loadConfig();
+    expect(config.projectsDir).toBe(nativeProjectsDir);
+  });
+
+  it('treats stale default-shaped projectsDir as native runtime path', () => {
+    writeConfig({ projectsDir: path.join(testDir, 'old-home', '.claude', 'projects') });
+    const config = loadConfig();
+    expect(config.projectsDir).toBe(nativeProjectsDir);
+  });
+
   it('emits config:loaded with merged config', () => {
     writeConfig({ maxLogs: 7 });
     loadConfig();
@@ -229,6 +248,7 @@ describe('saveConfig', () => {
       id: PATHS_PATH, filename: PATHS_PATH, loaded: true,
       exports: {
         get PATHS() { return { configFile: deep }; },
+        get NATIVE_PATHS() { return { claude: { projects: nativeProjectsDir } }; },
         ensureStorageDirMigrated: vi.fn()
       }
     };
@@ -254,6 +274,41 @@ describe('saveConfig', () => {
     saveConfig(cfg);
     const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
     expect(parsed).toEqual(cfg);
+  });
+
+  it('omits native Claude projectsDir when saving runtime config', () => {
+    saveConfig({ maxLogs: 10, projectsDir: nativeProjectsDir });
+    const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
+    expect(parsed).toEqual({ maxLogs: 10 });
+  });
+
+  it('omits stale default-shaped projectsDir when saving', () => {
+    saveConfig({
+      maxLogs: 10,
+      projectsDir: path.join(testDir, 'old-home', '.claude', 'projects')
+    });
+    const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
+    expect(parsed).toEqual({ maxLogs: 10 });
+  });
+
+  it('preserves custom projectsDir when saving', () => {
+    const customProjectsDir = path.join(testDir, 'custom-projects');
+    fs.mkdirSync(customProjectsDir, { recursive: true });
+
+    saveConfig({ maxLogs: 10, projectsDir: customProjectsDir });
+    const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
+
+    expect(parsed.projectsDir).toBe(customProjectsDir);
+  });
+});
+
+describe('projectsDir helpers', () => {
+  it('resolves absent projectsDir to Claude native projectsDir', () => {
+    expect(resolveClaudeProjectsDir({})).toBe(nativeProjectsDir);
+  });
+
+  it('normalizes default projectsDir out before save', () => {
+    expect(normalizeConfigForSave({ projectsDir: nativeProjectsDir })).not.toHaveProperty('projectsDir');
   });
 });
 

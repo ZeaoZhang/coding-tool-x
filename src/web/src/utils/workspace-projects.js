@@ -31,12 +31,14 @@ export function normalizeWorkspaceProjectForSubmit(project = {}) {
     return normalized
   }
 
+  normalized.branchMode = project.branchMode === 'new' ? 'new' : 'existing'
+
   const branch = trimString(project.branch)
   if (branch) {
     normalized.branch = branch
   }
 
-  if (project.branchMode === 'new') {
+  if (normalized.branchMode === 'new') {
     const baseBranch = trimString(project.baseBranch)
     if (baseBranch) {
       normalized.baseBranch = baseBranch

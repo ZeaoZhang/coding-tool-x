@@ -172,6 +172,7 @@ describe('workspace creation and mutation', () => {
       projects: [{
         sourcePath: '/tmp/project',
         createWorktree: true,
+        branchMode: 'new',
         branch: ' feature/test ',
         baseBranch: ' main '
       }]
@@ -182,10 +183,27 @@ describe('workspace creation and mutation', () => {
     expect(workspaceService.createWorkspace).toHaveBeenCalledWith(expect.objectContaining({
       name: 'Workspace',
       projects: [expect.objectContaining({
+        branchMode: 'new',
         branch: 'feature/test',
         baseBranch: 'main'
       })]
     }));
+  });
+
+  test('rejects invalid branch mode on create', async () => {
+    const res = await request(buildApp()).post('/', {
+      name: 'Workspace',
+      projects: [{
+        sourcePath: '/tmp/project',
+        createWorktree: true,
+        branchMode: 'surprise',
+        branch: 'feature/test'
+      }]
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain('分支模式不合法');
   });
 
   test('allows worktree creation without branch and defers to workspace service fallback', async () => {
@@ -250,6 +268,7 @@ describe('workspace project and launch routes', () => {
       sourcePath: '/tmp/project',
       name: 'project-a',
       createWorktree: true,
+      branchMode: 'new',
       branch: ' feature/a ',
       baseBranch: ' main '
     });
@@ -258,9 +277,23 @@ describe('workspace project and launch routes', () => {
     expect(res.body.success).toBe(true);
     expect(workspaceService.addProjectToWorkspace).toHaveBeenCalledWith('ws-1', expect.objectContaining({
       sourcePath: '/tmp/project',
+      branchMode: 'new',
       branch: 'feature/a',
       baseBranch: 'main'
     }));
+  });
+
+  test('rejects invalid branch mode when adding project', async () => {
+    const res = await request(buildApp()).post('/ws-1/projects', {
+      sourcePath: '/tmp/project',
+      createWorktree: true,
+      branchMode: 'surprise',
+      branch: 'feature/a'
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain('分支模式不合法');
   });
 
   test('allows adding worktree project without branch and keeps blank branch value', async () => {

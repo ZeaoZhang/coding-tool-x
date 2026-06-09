@@ -47,7 +47,6 @@ function injectStubs() {
   require.cache[DEFAULT_PATH] = {
     id: DEFAULT_PATH, filename: DEFAULT_PATH, loaded: true,
     exports: {
-      projectsDir: '~/projects',
       ports: { proxy: 9960 },
       pricing: {
         claude:  { mode: 'auto', input: 3,    output: 15 },
@@ -150,6 +149,27 @@ describe('POST /advanced', () => {
     expect(res._data.success).toBe(true);
   });
 
+  test('does not force projectsDir into saved advanced config', () => {
+    loadConfig.mockReturnValueOnce({
+      ports: { proxy: 9960, webUI: 9999, codexProxy: 9961, geminiProxy: 9962, opencodeProxy: 9963 },
+      pricing: {
+        claude:  { mode: 'auto', input: 3, output: 15 },
+        codex:   { mode: 'auto', input: 2, output: 8 },
+        gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
+      },
+      modelDiscovery: { useV1ModelsEndpoint: false },
+      currentProject: 'test',
+    });
+
+    const handler = findHandler(router, 'post', '/advanced');
+    const req = mockReq({ body: { maxLogs: 120 } });
+    const res = mockRes();
+    handler(req, res);
+
+    const saved = saveConfig.mock.calls[0][0];
+    expect(saved).not.toHaveProperty('projectsDir');
+  });
+
   test('clamps negative pricing values to 0', () => {
     const handler = findHandler(router, 'post', '/advanced');
     const req = mockReq({
@@ -222,6 +242,36 @@ describe('POST /default-models', () => {
 
     expect(res._data.success).toBe(true);
     expect(saveConfig).toHaveBeenCalled();
+  });
+
+  test('does not force projectsDir into saved defaultModels config', () => {
+    loadConfig.mockReturnValueOnce({
+      ports: { proxy: 9960, webUI: 9999, codexProxy: 9961, geminiProxy: 9962, opencodeProxy: 9963 },
+      pricing: {
+        claude:  { mode: 'auto', input: 3, output: 15 },
+        codex:   { mode: 'auto', input: 2, output: 8 },
+        gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
+      },
+      defaultModels: {
+        claude: ['claude-sonnet-4-6'],
+        codex:  ['gpt-4.1'],
+        gemini: ['gemini-2.5-pro'],
+      },
+      modelDiscovery: { useV1ModelsEndpoint: false },
+      currentProject: 'test',
+    });
+
+    const handler = findHandler(router, 'post', '/default-models');
+    const req = mockReq({
+      body: {
+        defaultModels: { claude: ['claude-opus-4-5'] },
+      },
+    });
+    const res = mockRes();
+    handler(req, res);
+
+    const saved = saveConfig.mock.calls[0][0];
+    expect(saved).not.toHaveProperty('projectsDir');
   });
 
   test('returns 400 when defaultModels is not an object', () => {

@@ -188,6 +188,8 @@ async function createWorkspace() {
 
       let createWorktree = false;
       let branch = '';
+      let branchMode = 'existing';
+      let baseBranch = '';
 
       if (isGit) {
         const { shouldCreateWorktree } = await inquirer.prompt([
@@ -200,11 +202,24 @@ async function createWorkspace() {
         ]);
 
         if (shouldCreateWorktree) {
+          const { selectedBranchMode } = await inquirer.prompt([
+            {
+              type: 'list',
+              name: 'selectedBranchMode',
+              message: '选择 worktree 分支模式:',
+              choices: [
+                { name: '使用已有分支', value: 'existing' },
+                { name: '新建分支', value: 'new' }
+              ],
+              default: 'existing'
+            }
+          ]);
+
           const { branchName } = await inquirer.prompt([
             {
               type: 'input',
               name: 'branchName',
-              message: '输入分支名:',
+              message: selectedBranchMode === 'new' ? '输入新分支名:' : '输入已有分支名:',
               validate: input => {
                 if (!input || !input.trim()) {
                   return '分支名不能为空';
@@ -214,7 +229,20 @@ async function createWorkspace() {
             }
           ]);
 
+          if (selectedBranchMode === 'new') {
+            const { baseBranchName } = await inquirer.prompt([
+              {
+                type: 'input',
+                name: 'baseBranchName',
+                message: '输入基础分支（可选，如 main）:',
+                default: ''
+              }
+            ]);
+            baseBranch = baseBranchName;
+          }
+
           createWorktree = true;
+          branchMode = selectedBranchMode;
           branch = branchName;
         }
       }
@@ -223,7 +251,9 @@ async function createWorkspace() {
         sourcePath,
         name: linkName,
         createWorktree,
-        branch
+        branch,
+        branchMode,
+        baseBranch
       });
 
       console.log(chalk.green(`\n[v] 已添加: ${linkName}\n`));
@@ -245,7 +275,9 @@ async function createWorkspace() {
     projects.forEach((proj, index) => {
       console.log(chalk.gray(`  ${index + 1}. ${proj.name} → ${proj.sourcePath}`));
       if (proj.createWorktree) {
-        console.log(chalk.gray(`     (创建 worktree: ${proj.branch})`));
+        const modeLabel = proj.branchMode === 'new' ? '新建分支' : '已有分支';
+        const baseLabel = proj.branchMode === 'new' && proj.baseBranch ? `，基于 ${proj.baseBranch}` : '';
+        console.log(chalk.gray(`     (创建 worktree: ${modeLabel} ${proj.branch}${baseLabel})`));
       }
     });
     console.log('');

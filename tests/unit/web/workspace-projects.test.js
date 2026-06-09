@@ -29,6 +29,7 @@ describe('workspace project utils', () => {
       sourcePath: 'C:\\repo\\app',
       name: 'app',
       createWorktree: true,
+      branchMode: 'existing',
       branch: 'feature/existing'
     });
   });
@@ -46,6 +47,7 @@ describe('workspace project utils', () => {
       sourcePath: '/repo/app',
       name: 'app',
       createWorktree: true,
+      branchMode: 'new',
       branch: 'feature/new',
       baseBranch: 'main'
     });

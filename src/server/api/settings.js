@@ -90,7 +90,6 @@ function handleSaveModelSettings(req, res) {
     const config = loadConfig();
     const newConfig = {
       ...config,
-      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
       modelMetadataOverrides: overrides && typeof overrides === 'object'
         ? overrides
         : (config.modelMetadataOverrides || {})
@@ -124,7 +123,6 @@ function handleDeleteModelOverride(req, res) {
 
     const newConfig = {
       ...config,
-      projectsDir: config.projectsDir.replace(require('os').homedir(), '~'),
       modelMetadataOverrides: overrides
     };
     saveConfig(newConfig);
