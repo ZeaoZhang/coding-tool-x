@@ -177,9 +177,12 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   pi: []
 };
 
+const CLAUDE_SKILLS_DIR = NATIVE_PATHS.claude.skills
+  || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'skills');
+
 const PLATFORM_CONFIG = {
   claude: {
-    installDir: path.join(HOME_DIR, '.claude', 'skills'),
+    installDir: CLAUDE_SKILLS_DIR,
     storageDir: PATHS.localSkills.claude,
     reposFile: PATHS.skillRepos.claude,
     cacheFile: PATHS.skillCaches.claude

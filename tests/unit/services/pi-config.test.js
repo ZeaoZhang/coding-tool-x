@@ -1,4 +1,5 @@
 const path = require('path');
+const os = require('os');
 
 const PI_CONFIG_PATH = require.resolve('../../../src/server/services/pi-config');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
@@ -56,5 +57,36 @@ describe('pi-config path resolution', () => {
     const windowsPath = 'C:\\Users\\demo\\.pi\\agent';
 
     expect(getPiAgentDir({ PI_CODING_AGENT_DIR: windowsPath })).toBe(path.resolve(windowsPath));
+  });
+});
+
+describe('config paths Pi native paths', () => {
+  const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+
+  afterEach(() => {
+    if (originalPiAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
+    }
+    delete require.cache[PATHS_PATH];
+  });
+
+  test('expands PI_CODING_AGENT_DIR for NATIVE_PATHS.pi', () => {
+    process.env.PI_CODING_AGENT_DIR = '~/custom-pi-agent';
+    delete require.cache[PATHS_PATH];
+
+    const { NATIVE_PATHS, getPiAgentDir } = require('../../../src/config/paths');
+    const expectedDir = path.resolve(os.homedir(), 'custom-pi-agent');
+
+    expect(getPiAgentDir()).toBe(expectedDir);
+    expect(NATIVE_PATHS.pi).toEqual(expect.objectContaining({
+      dir: expectedDir,
+      settings: path.join(expectedDir, 'settings.json'),
+      skills: path.join(expectedDir, 'skills'),
+      prompts: path.join(expectedDir, 'prompts'),
+      extensions: path.join(expectedDir, 'extensions'),
+      packages: path.join(expectedDir, 'packages')
+    }));
   });
 });

@@ -171,6 +171,27 @@
             <n-transfer v-model:value="formData.mcpServers" :options="mcpOptions" source-title="可用 MCP Servers" target-title="已选 MCP Servers" />
           </n-card>
         </template>
+
+        <!-- Pi Agent 配置 -->
+        <template v-if="formData.cliType === 'pi'">
+          <n-card title="Pi Prompt Templates" size="small" style="margin-bottom: 16px">
+            <n-tag size="small" type="success">.pi/prompts</n-tag>
+          </n-card>
+          <!-- Skills -->
+          <n-card title="Skills" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
+          </n-card>
+          <!-- Prompt Templates -->
+          <n-card title="Prompt Templates" size="small" style="margin-bottom: 16px">
+            <template #header-extra><n-tag size="small">已选 {{ formData.commands.length }}</n-tag></template>
+            <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Prompt Templates" target-title="已选 Prompt Templates" />
+          </n-card>
+          <!-- MCP Servers -->
+          <n-card title="MCP Servers" size="small">
+            <n-tag size="small" type="default">packages/extensions</n-tag>
+          </n-card>
+        </template>
       </n-form>
     </n-scrollbar>
 
@@ -190,7 +211,7 @@ import { ref, computed, watch } from 'vue'
 import {
   NModal, NScrollbar, NForm, NFormItem, NInput, NCard, NSwitch,
   NCollapseTransition, NTransfer, NTag, NSpace, NButton,
-  NText, NSelect, NEmpty,
+  NSelect, NEmpty,
   useMessage
 } from 'naive-ui'
 import { createTemplate, updateTemplate } from '@/api/config-templates'
@@ -217,14 +238,16 @@ const CLI_TYPE_OPTIONS = [
   { label: 'Claude Code', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   { label: 'Gemini', value: 'gemini' },
-  { label: 'OpenCode', value: 'opencode' }
+  { label: 'OpenCode', value: 'opencode' },
+  { label: 'Pi Agent', value: 'pi' }
 ]
 
 const CLI_CAPABILITIES = {
   claude: { skills: true, agents: true, commands: true },
   codex: { skills: true, agents: true, commands: true },
   gemini: { skills: true, agents: true, commands: true },
-  opencode: { skills: true, agents: true, commands: true }
+  opencode: { skills: true, agents: true, commands: true },
+  pi: { skills: true, agents: false, commands: true }
 }
 
 const isEdit = computed(() => !!props.template?.id)
@@ -241,7 +264,8 @@ function getDefaultFormData() {
       claude: { enabled: false, content: '' },
       codex: { enabled: false, content: '' },
       gemini: { enabled: false, content: '' },
-      opencode: { enabled: false, content: '' }
+      opencode: { enabled: false, content: '' },
+      pi: { enabled: false, content: '' }
     },
     claudeMd: { enabled: false, content: '' },
     skills: [],
@@ -270,7 +294,9 @@ const skillOptions = computed(() => {
 })
 
 const agentOptions = computed(() => {
-  const agents = props.availableConfigs?.agents || []
+  const platform = formData.value.cliType
+  const agentsByPlatform = props.availableConfigs?.agentsByPlatform || {}
+  const agents = (platform && agentsByPlatform[platform]) ? agentsByPlatform[platform] : (props.availableConfigs?.agents || [])
   return agents.map(a => ({
     value: a.fileName,
     label: a.name || a.fileName,
@@ -279,7 +305,9 @@ const agentOptions = computed(() => {
 })
 
 const commandOptions = computed(() => {
-  const commands = props.availableConfigs?.commands || []
+  const platform = formData.value.cliType
+  const commandsByPlatform = props.availableConfigs?.commandsByPlatform || {}
+  const commands = (platform && commandsByPlatform[platform]) ? commandsByPlatform[platform] : (props.availableConfigs?.commands || [])
   return commands.map(c => ({
     value: c.namespace ? `${c.namespace}/${c.name}` : c.name,
     label: c.namespace ? `${c.namespace}/${c.name}` : c.name,
@@ -329,7 +357,9 @@ const selectedSkillDirectories = computed({
 const selectedAgentFileNames = computed({
   get: () => formData.value.agents.map(a => a.fileName),
   set: (fileNames) => {
-    const agents = props.availableConfigs?.agents || []
+    const platform = formData.value.cliType
+    const agentsByPlatform = props.availableConfigs?.agentsByPlatform || {}
+    const agents = (platform && agentsByPlatform[platform]) ? agentsByPlatform[platform] : (props.availableConfigs?.agents || [])
     formData.value.agents = fileNames.map(fn => {
       const found = agents.find(a => a.fileName === fn)
       return found ? { ...found } : { fileName: fn }
@@ -340,7 +370,9 @@ const selectedAgentFileNames = computed({
 const selectedCommandNames = computed({
   get: () => formData.value.commands.map(c => c.namespace ? `${c.namespace}/${c.name}` : c.name),
   set: (names) => {
-    const commands = props.availableConfigs?.commands || []
+    const platform = formData.value.cliType
+    const commandsByPlatform = props.availableConfigs?.commandsByPlatform || {}
+    const commands = (platform && commandsByPlatform[platform]) ? commandsByPlatform[platform] : (props.availableConfigs?.commands || [])
     formData.value.commands = names.map(n => {
       const found = commands.find(c => (c.namespace ? `${c.namespace}/${c.name}` : c.name) === n)
       return found ? { ...found } : { name: n }
@@ -370,11 +402,12 @@ watch(() => props.show, (newVal) => {
         claude: { enabled: false, content: '' },
         codex: { enabled: false, content: '' },
         gemini: { enabled: false, content: '' },
-        opencode: { enabled: false, content: '' }
+        opencode: { enabled: false, content: '' },
+        pi: { enabled: false, content: '' }
       }
 
       if (props.template.aiConfigs) {
-        for (const key of ['claude', 'codex', 'gemini', 'opencode']) {
+        for (const key of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
           if (props.template.aiConfigs[key]) {
             aiConfigs[key] = { ...props.template.aiConfigs[key] }
           }

@@ -13,6 +13,7 @@ const channelsService = require('./channels');
 const codexChannelsService = require('./codex-channels');
 const geminiChannelsService = require('./gemini-channels');
 const opencodeChannelsService = require('./opencode-channels');
+const piChannelsService = require('./pi-channels');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
@@ -23,12 +24,16 @@ const CONFIG_VERSION = '1.4.0';
 const SKILL_FILE_ENCODING = 'base64';
 const SKILL_IGNORE_DIRS = new Set(['.git']);
 const SKILL_IGNORE_FILES = new Set(['.DS_Store']);
+const NATIVE_DIR_FILE_ENCODING = 'base64';
+const NATIVE_DIR_IGNORE_DIRS = new Set(['.git']);
+const NATIVE_DIR_IGNORE_FILES = new Set(['.DS_Store']);
 const CC_TOOL_DIR = PATHS.base;
 const LEGACY_CC_TOOL_DIR = PATHS.base;
 const CLAUDE_SETTINGS_PATH = NATIVE_PATHS.claude.settings;
 const LEGACY_PLUGINS_DIR = path.join(LEGACY_CC_TOOL_DIR, 'plugins', 'installed');
 const LEGACY_PLUGINS_REGISTRY = path.join(LEGACY_CC_TOOL_DIR, 'plugins', 'registry.json');
-const CLAUDE_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
+const CLAUDE_PLUGINS_DIR = NATIVE_PATHS.claude.plugins
+  || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
 const NATIVE_PLUGINS_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
 const PLUGIN_IGNORE_DIRS = new Set(['.git', 'node_modules', '.DS_Store']);
 const PLUGIN_IGNORE_FILES = new Set(['.DS_Store']);
@@ -49,8 +54,8 @@ const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
 const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const AGENT_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
-const COMMAND_PLATFORMS = ['claude', 'gemini', 'opencode'];
-const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const COMMAND_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const PLUGIN_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const CLAUDE_MARKETPLACES_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
 const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'plugins');
@@ -59,6 +64,49 @@ const OPENCODE_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugins');
 const OPENCODE_LEGACY_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugin');
 const PI_SETTINGS_PATH = NATIVE_PATHS.pi?.settings || path.join(PATHS.base, 'pi-settings.json');
 const PI_EXTENSIONS_DIR = NATIVE_PATHS.pi?.extensions || path.join(PATHS.base, 'pi-extensions');
+
+function normalizePiResourceType(value = '') {
+  const key = String(value || '').trim().replace(/[\s_-]+/g, '').toLowerCase();
+  const map = {
+    extension: 'extension',
+    extensions: 'extension',
+    plugin: 'extension',
+    plugins: 'extension',
+    skill: 'skill',
+    skills: 'skill',
+    prompt: 'promptTemplate',
+    prompts: 'promptTemplate',
+    prompttemplate: 'promptTemplate',
+    prompttemplates: 'promptTemplate',
+    command: 'promptTemplate',
+    commands: 'promptTemplate',
+    theme: 'theme',
+    themes: 'theme',
+    mcp: 'mcp',
+    subagent: 'subagent',
+    subagents: 'subagent'
+  };
+  return map[key] || String(value || '').trim();
+}
+
+function normalizePiResourceTypes(input = []) {
+  const result = [];
+  const add = (value) => {
+    const normalized = normalizePiResourceType(value);
+    if (normalized && !result.includes(normalized)) result.push(normalized);
+  };
+  if (Array.isArray(input)) {
+    input.forEach(add);
+  } else if (input && typeof input === 'object') {
+    for (const [key, value] of Object.entries(input)) {
+      if (value === false || value == null) continue;
+      add(key);
+    }
+  } else if (input) {
+    add(input);
+  }
+  return result;
+}
 
 function getOpenCodeConfigPaths() {
   try {
@@ -81,6 +129,7 @@ function getOpenCodeNotificationPluginPath() {
 function getNativeConfigSpecs() {
   const openCodeConfigPaths = getOpenCodeConfigPaths();
   const openCodeNotificationPluginPath = getOpenCodeNotificationPluginPath();
+  const piDir = NATIVE_PATHS.pi.dir || path.dirname(NATIVE_PATHS.pi.settings);
   return {
     claude: {
       settings: { path: NATIVE_PATHS.claude.settings, format: 'json' }
@@ -100,6 +149,18 @@ function getNativeConfigSpecs() {
       ...(openCodeNotificationPluginPath
         ? { codingToolNotifyPlugin: { path: openCodeNotificationPluginPath, format: 'text' } }
         : {})
+    },
+    pi: {
+      settings: { path: NATIVE_PATHS.pi.settings, format: 'json' },
+      auth: { path: NATIVE_PATHS.pi.auth, format: 'json', mode: 0o600 },
+      models: { path: NATIVE_PATHS.pi.models, format: 'json' },
+      prompts: { path: NATIVE_PATHS.pi.prompts, format: 'directory' },
+      skills: { path: NATIVE_PATHS.pi.skills, format: 'directory' },
+      extensions: { path: NATIVE_PATHS.pi.extensions, format: 'directory' },
+      themes: { path: NATIVE_PATHS.pi.themes || path.join(piDir, 'themes'), format: 'directory' },
+      packages: { path: NATIVE_PATHS.pi.packages || path.join(piDir, 'packages'), format: 'directory' },
+      npmPackages: { path: path.join(piDir, 'npm'), format: 'directory' },
+      gitPackages: { path: path.join(piDir, 'git'), format: 'directory' }
     }
   };
 }
@@ -135,6 +196,10 @@ function readNativeConfigSnapshot(spec) {
   }
 
   try {
+    if (spec.format === 'directory') {
+      return readNativeDirectorySnapshot(spec.path);
+    }
+
     const rawContent = fs.readFileSync(spec.path, 'utf8');
     if (spec.format === 'json') {
       try {
@@ -160,6 +225,61 @@ function readNativeConfigSnapshot(spec) {
   } catch (err) {
     return null;
   }
+}
+
+function collectNativeDirectoryFiles(baseDir) {
+  const files = [];
+  const stack = [baseDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (err) {
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (NATIVE_DIR_IGNORE_DIRS.has(entry.name)) {
+          continue;
+        }
+        stack.push(path.join(currentDir, entry.name));
+      } else if (entry.isFile()) {
+        if (NATIVE_DIR_IGNORE_FILES.has(entry.name)) {
+          continue;
+        }
+        const fullPath = path.join(currentDir, entry.name);
+        const relativePath = path.relative(baseDir, fullPath);
+        try {
+          const content = fs.readFileSync(fullPath);
+          files.push({
+            path: relativePath,
+            encoding: NATIVE_DIR_FILE_ENCODING,
+            content: content.toString(NATIVE_DIR_FILE_ENCODING)
+          });
+        } catch (err) {
+          continue;
+        }
+      }
+    }
+  }
+
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return files;
+}
+
+function readNativeDirectorySnapshot(dirPath) {
+  const files = collectNativeDirectoryFiles(dirPath);
+  if (files.length === 0) {
+    return null;
+  }
+  return {
+    format: 'directory',
+    fileName: path.basename(dirPath),
+    files
+  };
 }
 
 function writeJsonFileAbsolute(filePath, data, overwrite, options = {}) {
@@ -198,6 +318,9 @@ function writeTextFileAbsolute(filePath, content, overwrite, options = {}) {
 
 function writeNativeConfigAbsolute(spec, entry, overwrite) {
   if (!spec?.path || !entry || entry.content === undefined) {
+    if (spec?.format === 'directory' && entry?.files !== undefined) {
+      return writeNativeDirectoryAbsolute(spec.path, entry.files, overwrite);
+    }
     return 'failed';
   }
 
@@ -207,6 +330,44 @@ function writeNativeConfigAbsolute(spec, entry, overwrite) {
   }
 
   return writeTextFileAbsolute(spec.path, String(entry.content), overwrite, { mode: spec.mode });
+}
+
+function writeNativeDirectoryAbsolute(dirPath, files = [], overwrite) {
+  if (!dirPath || !Array.isArray(files)) {
+    return 'failed';
+  }
+  if (files.length === 0) {
+    return 'skipped';
+  }
+  if (fs.existsSync(dirPath) && !overwrite) {
+    return 'skipped';
+  }
+  if (fs.existsSync(dirPath)) {
+    fs.rmSync(dirPath, { recursive: true, force: true });
+  }
+  ensureDir(dirPath);
+
+  let failed = false;
+  for (const file of files) {
+    const filePath = resolveSafePath(dirPath, file.path);
+    if (!filePath) {
+      failed = true;
+      break;
+    }
+    try {
+      ensureDir(path.dirname(filePath));
+      if (file.encoding === NATIVE_DIR_FILE_ENCODING || file.encoding === SKILL_FILE_ENCODING) {
+        fs.writeFileSync(filePath, Buffer.from(file.content || '', file.encoding));
+      } else {
+        fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
+      }
+    } catch (err) {
+      failed = true;
+      break;
+    }
+  }
+
+  return failed ? 'failed' : 'success';
 }
 
 function getConfigFilePath() {
@@ -231,7 +392,7 @@ function buildExportReadme(exportData) {
 - 插件 (Plugins)
 - MCP 服务器配置
 - OAuth 凭证管理池
-- 各平台原生配置（Claude / Codex / Gemini / OpenCode）
+- 各平台原生配置（Claude / Codex / Gemini / OpenCode / Pi）
 - UI 配置（主题、面板显示、排序等）
 - Prompts 预设
 - 安全配置
@@ -878,6 +1039,8 @@ function exportOpenCodePluginsByPlatform(service) {
           pluginKind: plugin.pluginKind || 'plugin',
           name: plugin.name,
           directory: plugin.directory || plugin.name,
+          installSource: plugin.installSource || plugin.source || plugin.name,
+          resourceTypes: normalizePiResourceTypes(plugin.resourceTypes || plugin.resources),
           version: plugin.version || 'latest',
           description: plugin.description || '',
           enabled: plugin.enabled !== false,
@@ -923,10 +1086,6 @@ function exportPiPluginsByPlatform(service) {
     })
     .filter(Boolean);
   const control = exportPluginControlSnapshot('pi', service);
-  const piSettings = readNativeConfigSnapshot({ path: PI_SETTINGS_PATH, format: 'json' });
-  if (piSettings) {
-    control.nativeSettings = piSettings;
-  }
   return { plugins, control };
 }
 
@@ -1320,10 +1479,42 @@ function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
   const existingPackages = Array.isArray(settings.packages) ? settings.packages : [];
   const existingDisabled = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
   const packagePlugins = plugins.filter(plugin => plugin.type === 'pi-package' || plugin.pluginType === 'package');
-  const packages = packagePlugins.map(plugin => plugin.name).filter(Boolean);
+  const packageIdentity = (item) => {
+    if (typeof item === 'string') return item;
+    if (!item || typeof item !== 'object') return '';
+    return item.name || item.installSource || item.source || '';
+  };
+  const buildPackageEntry = (plugin) => {
+    const name = plugin.name || plugin.directory || plugin.installSource || '';
+    if (!name) return null;
+    const installSource = plugin.installSource || plugin.packageSource || '';
+    const resourceTypes = normalizePiResourceTypes(plugin.resourceTypes || plugin.resources);
+    if (!installSource || installSource === name) {
+      if (resourceTypes.length === 0 && !plugin.version && !plugin.description) return name;
+    }
+    return {
+      name,
+      ...(installSource ? { source: installSource, installSource } : {}),
+      ...(plugin.version ? { version: plugin.version } : {}),
+      ...(plugin.description ? { description: plugin.description } : {}),
+      ...(resourceTypes.length > 0 ? { resourceTypes } : {})
+    };
+  };
+  const mergePackageEntries = (current, additions) => {
+    const result = [];
+    const seen = new Set();
+    for (const item of [...current, ...additions]) {
+      const identity = packageIdentity(item);
+      if (!identity || seen.has(identity)) continue;
+      seen.add(identity);
+      result.push(item);
+    }
+    return result;
+  };
+  const packages = packagePlugins.map(buildPackageEntry).filter(Boolean);
   const disabledPackages = packagePlugins
     .filter(plugin => plugin.enabled === false)
-    .map(plugin => plugin.name)
+    .map(buildPackageEntry)
     .filter(Boolean);
 
   if (packages.length === 0 && disabledPackages.length === 0) {
@@ -1332,8 +1523,8 @@ function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
 
   return writeJsonFileAbsolute(PI_SETTINGS_PATH, {
     ...settings,
-    packages: Array.from(new Set([...existingPackages, ...packages])),
-    disabledPackages: Array.from(new Set([...existingDisabled, ...disabledPackages]))
+    packages: mergePackageEntries(existingPackages, packages),
+    disabledPackages: mergePackageEntries(existingDisabled, disabledPackages)
   }, true);
 }
 
@@ -1507,7 +1698,8 @@ function getAllChannelsByType() {
   const codex = codexChannelsService.getChannels()?.channels || [];
   const gemini = geminiChannelsService.getChannels()?.channels || [];
   const opencode = opencodeChannelsService.getChannels()?.channels || [];
-  return { claude, codex, gemini, opencode };
+  const pi = piChannelsService.getChannels()?.channels || [];
+  return { claude, codex, gemini, opencode, pi };
 }
 
 /**
@@ -1718,7 +1910,8 @@ async function importConfigs(importData, options = {}) {
         : (Array.isArray(channels) ? channels : []),
       codex: hasTypedChannels && Array.isArray(channelsByType.codex) ? channelsByType.codex : [],
       gemini: hasTypedChannels && Array.isArray(channelsByType.gemini) ? channelsByType.gemini : [],
-      opencode: hasTypedChannels && Array.isArray(channelsByType.opencode) ? channelsByType.opencode : []
+      opencode: hasTypedChannels && Array.isArray(channelsByType.opencode) ? channelsByType.opencode : [],
+      pi: hasTypedChannels && Array.isArray(channelsByType.pi) ? channelsByType.pi : []
     };
 
     // 导入配置模板
@@ -1814,6 +2007,18 @@ async function importConfigs(importData, options = {}) {
       (channel.providerKey && c.providerKey === channel.providerKey) ||
       (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
     ));
+
+    importTypedChannels('pi', piChannelsService, channel => {
+      const { name, baseUrl, apiKey, ...extraConfig } = channel;
+      piChannelsService.createChannel(name, baseUrl, apiKey, extraConfig);
+    }, (existingChannels, channel) => existingChannels.find(c =>
+      (channel.id && c.id === channel.id) ||
+      (channel.providerKey && c.providerKey === channel.providerKey) ||
+      (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
+    ));
+    if ((importChannelsByType.pi || []).length > 0 && typeof piChannelsService.syncManagedProviderExtension === 'function') {
+      piChannelsService.syncManagedProviderExtension();
+    }
 
     // 导入工作区配置
     if (workspaces && overwrite) {

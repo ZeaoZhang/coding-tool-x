@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 
 let testDir;
+let globalClaudeDir;
 
 function stubModules() {
   const pathsModulePath = require.resolve('../../../src/config/paths');
@@ -12,6 +13,10 @@ function stubModules() {
     loaded: true,
     exports: {
       NATIVE_PATHS: {
+        claude: {
+          dir: globalClaudeDir,
+          settings: path.join(globalClaudeDir, 'settings.json')
+        },
         opencode: { config: path.join(testDir, 'opencode') },
         gemini: { env: path.join(testDir, 'gemini', '.env') }
       },
@@ -34,6 +39,7 @@ function stubModules() {
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompts-service-'));
+  globalClaudeDir = path.join(testDir, 'custom-claude');
   stubModules();
   delete require.cache[require.resolve('../../../src/server/services/prompts-service')];
 });
@@ -53,7 +59,7 @@ afterEach(() => {
 
 describe('prompts-service initialization and preset management', () => {
   test('initializes with builtins and imports existing Claude prompt as current preset', () => {
-    const claudePromptPath = path.join(testDir, '.claude', 'CLAUDE.md');
+    const claudePromptPath = path.join(globalClaudeDir, 'CLAUDE.md');
     fs.mkdirSync(path.dirname(claudePromptPath), { recursive: true });
     fs.writeFileSync(claudePromptPath, '# Existing prompt', 'utf8');
 
@@ -72,7 +78,7 @@ describe('prompts-service initialization and preset management', () => {
       id: 'custom',
       name: 'Custom',
       content: 'hello',
-      apps: { claude: true }
+      apps: { claude: true, pi: true }
     });
 
     expect(saved.apps).toEqual({
@@ -81,6 +87,7 @@ describe('prompts-service initialization and preset management', () => {
       gemini: true,
       opencode: false
     });
+    expect(saved.apps.pi).toBeUndefined();
     expect(() => promptsService.deletePreset('tpl-code-review')).toThrow(/内置模板/);
     expect(promptsService.deletePreset('custom')).toBe(true);
   });
@@ -99,7 +106,7 @@ describe('prompts-service platform sync', () => {
     const preset = await promptsService.activatePreset('team-preset');
 
     expect(preset.id).toBe('team-preset');
-    expect(fs.readFileSync(path.join(testDir, '.claude', 'CLAUDE.md'), 'utf8')).toBe('team instructions');
+    expect(fs.readFileSync(path.join(globalClaudeDir, 'CLAUDE.md'), 'utf8')).toBe('team instructions');
     expect(fs.existsSync(path.join(testDir, '.codex', 'AGENTS.md'))).toBe(false);
     expect(fs.readFileSync(path.join(testDir, '.gemini', 'GEMINI.md'), 'utf8')).toBe('team instructions');
     expect(fs.readFileSync(path.join(testDir, 'opencode', 'AGENTS.md'), 'utf8')).toBe('team instructions');
@@ -120,7 +127,7 @@ describe('prompts-service platform sync', () => {
 
     expect(result.claude).toBe(true);
     expect(active.activePresetId).toBeNull();
-    expect(fs.existsSync(path.join(testDir, '.claude', 'CLAUDE.md'))).toBe(false);
+    expect(fs.existsSync(path.join(globalClaudeDir, 'CLAUDE.md'))).toBe(false);
   });
 });
 

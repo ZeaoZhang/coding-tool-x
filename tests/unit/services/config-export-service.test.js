@@ -8,6 +8,7 @@ let channelsService;
 let codexChannelsService;
 let geminiChannelsService;
 let opencodeChannelsService;
+let piChannelsService;
 let AgentsServiceStub;
 let CommandsServiceStub;
 let SkillServiceStub;
@@ -56,8 +57,15 @@ function stubModules() {
         gemini: { env: path.join(testDir, '.gemini', '.env') },
         opencode: { config: path.join(testDir, '.opencode') },
         pi: {
+          dir: path.join(testDir, '.pi'),
           settings: path.join(testDir, '.pi', 'settings.json'),
-          extensions: path.join(testDir, '.pi', 'extensions')
+          auth: path.join(testDir, '.pi', 'auth.json'),
+          models: path.join(testDir, '.pi', 'models.json'),
+          extensions: path.join(testDir, '.pi', 'extensions'),
+          skills: path.join(testDir, '.pi', 'skills'),
+          prompts: path.join(testDir, '.pi', 'prompts'),
+          themes: path.join(testDir, '.pi', 'themes'),
+          packages: path.join(testDir, '.pi', 'packages')
         }
       }
     }
@@ -95,6 +103,12 @@ function stubModules() {
     createChannel: vi.fn(),
     updateChannel: vi.fn()
   };
+  piChannelsService = {
+    getChannels: vi.fn(() => ({ channels: [{ id: 'pi-1', name: 'Pi', baseUrl: 'https://pi.example', providerKey: 'pi-managed', apiKey: 'pkey', enabled: true }] })),
+    createChannel: vi.fn(),
+    updateChannel: vi.fn(),
+    syncManagedProviderExtension: vi.fn()
+  };
 
   class AgentsServiceFake {
     constructor(platform) {
@@ -122,6 +136,30 @@ function stubModules() {
       this.userCommandsDir = path.join(testDir, 'commands-install', platform);
     }
     listCommands() {
+      if (this.platform === 'pi') {
+        return {
+          commands: [{
+            name: 'pi-command',
+            namespace: 'review',
+            path: path.join('review', 'pi-command.md'),
+            description: '',
+            body: 'Review this with Pi',
+            fullContent: 'Review this with Pi'
+          }]
+        };
+      }
+      if (this.platform === 'codex') {
+        return {
+          commands: [{
+            name: 'codex-command',
+            namespace: 'ops',
+            path: path.join('ops', 'codex-command.md'),
+            description: 'Codex command',
+            body: 'Review this with Codex',
+            fullContent: 'Review this with Codex'
+          }]
+        };
+      }
       return {
         commands: [{
           name: `${this.platform}-command`,
@@ -284,6 +322,12 @@ function stubModules() {
     loaded: true,
     exports: opencodeChannelsService
   };
+  require.cache[require.resolve('../../../src/server/services/pi-channels')] = {
+    id: require.resolve('../../../src/server/services/pi-channels'),
+    filename: require.resolve('../../../src/server/services/pi-channels'),
+    loaded: true,
+    exports: piChannelsService
+  };
   require.cache[require.resolve('../../../src/server/services/agents-service')] = {
     id: require.resolve('../../../src/server/services/agents-service'),
     filename: require.resolve('../../../src/server/services/agents-service'),
@@ -390,11 +434,15 @@ function stubModules() {
   };
 
   // create installed skill files
-  for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
     const skillDir = path.join(testDir, 'skills-install', platform, `${platform}-skill`);
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: "${platform} skill"\n---\nbody`, 'utf8');
   }
+
+  const piPromptDir = path.join(testDir, 'commands-install', 'pi');
+  fs.mkdirSync(path.join(piPromptDir, 'review'), { recursive: true });
+  fs.writeFileSync(path.join(piPromptDir, 'review', 'pi-command.md'), 'Review this with Pi', 'utf8');
 
   fs.mkdirSync(path.join(testDir, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.claude', 'settings.json'), JSON.stringify({ hooks: {} }), 'utf8');
@@ -424,11 +472,27 @@ function stubModules() {
   const piExtensionDir = path.join(testDir, '.pi', 'extensions', 'pi-extension');
   fs.mkdirSync(piExtensionDir, { recursive: true });
   fs.writeFileSync(path.join(piExtensionDir, 'pi.json'), JSON.stringify({ name: 'pi-extension', version: 'local' }), 'utf8');
+  fs.writeFileSync(path.join(piExtensionDir, 'provider.ts'), 'export default {}', 'utf8');
   fs.mkdirSync(path.join(testDir, '.pi'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.pi', 'settings.json'), JSON.stringify({
     packages: ['@demo/pi-package'],
     disabledPackages: ['@demo/pi-package']
   }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.pi', 'auth.json'), JSON.stringify({ token: 'pi-token' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.pi', 'models.json'), JSON.stringify({ models: ['pi-fast'] }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi', 'prompts', 'review'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'prompts', 'review', 'native-prompt.md'), 'Native Pi prompt', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi', 'skills', 'native-pi-skill'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'skills', 'native-pi-skill', 'SKILL.md'), 'Native Pi skill', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi', 'themes'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'themes', 'night.json'), JSON.stringify({ name: 'night' }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi', 'packages', 'managed-package'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'packages', 'managed-package', 'package.json'), JSON.stringify({ name: 'managed-package' }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi', 'npm', '@demo', 'pi-package', 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'npm', '@demo', 'pi-package', 'package.json'), JSON.stringify({ name: '@demo/pi-package' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.pi', 'npm', '@demo', 'pi-package', 'node_modules', 'dep', 'index.js'), 'module.exports = true', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.pi', 'git', 'provider'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.pi', 'git', 'provider', 'package.json'), JSON.stringify({ name: 'provider' }), 'utf8');
   fs.mkdirSync(path.join(testDir, 'store'), { recursive: true });
   for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
     const repoPath = path.join(testDir, 'repos', 'plugins', `${platform}.json`);
@@ -460,6 +524,7 @@ afterEach(() => {
     '../../../src/server/services/codex-channels',
     '../../../src/server/services/gemini-channels',
     '../../../src/server/services/opencode-channels',
+    '../../../src/server/services/pi-channels',
     '../../../src/server/services/agents-service',
     '../../../src/server/services/commands-service',
     '../../../src/server/services/skill-service',
@@ -493,9 +558,32 @@ describe('config-export-service export flows', () => {
     expect(result.success).toBe(true);
     expect(result.data.data.configTemplates).toEqual([{ id: 'custom', name: 'Custom', isBuiltin: false }]);
     expect(result.data.data.channelsByType.codex).toHaveLength(1);
+    expect(result.data.data.channelsByType.pi[0]).toMatchObject({
+      id: 'pi-1',
+      name: 'Pi',
+      providerKey: 'pi-managed'
+    });
     expect(result.data.data.agentsByPlatform.gemini[0].fileName).toBe('gemini-agent');
+    expect(result.data.data.commandsByPlatform.codex[0]).toMatchObject({
+      platform: 'codex',
+      name: 'codex-command',
+      path: path.join('ops', 'codex-command.md'),
+      body: 'Review this with Codex'
+    });
     expect(result.data.data.commandsByPlatform.gemini[0].name).toBe('gemini-command');
+    expect(result.data.data.commandsByPlatform.pi[0]).toMatchObject({
+      platform: 'pi',
+      name: 'pi-command',
+      path: path.join('review', 'pi-command.md'),
+      body: 'Review this with Pi'
+    });
     expect(result.data.data.skillsByPlatform.gemini[0].directory).toBe('gemini-skill');
+    expect(result.data.data.skillsByPlatform.pi[0]).toMatchObject({
+      platform: 'pi',
+      directory: 'pi-skill',
+      name: 'pi skill'
+    });
+    expect(Buffer.from(result.data.data.skillsByPlatform.pi[0].files[0].content, 'base64').toString('utf8')).toContain('pi skill');
     expect(result.data.data.pluginsByPlatform.codex.plugins[0]).toMatchObject({
       platform: 'codex',
       name: 'codex-plugin',
@@ -511,7 +599,18 @@ describe('config-export-service export flows', () => {
       '@demo/pi-package',
       'pi-extension'
     ]);
-    expect(result.data.data.pluginsByPlatform.pi.control.nativeSettings.content.disabledPackages).toEqual(['@demo/pi-package']);
+    expect(result.data.data.pluginsByPlatform.pi.control.nativeSettings).toBeUndefined();
+    expect(result.data.data.nativeConfigs.pi.settings.content.packages).toEqual(['@demo/pi-package']);
+    expect(result.data.data.nativeConfigs.pi.settings.content.disabledPackages).toEqual(['@demo/pi-package']);
+    expect(result.data.data.nativeConfigs.pi.auth.content).toEqual({ token: 'pi-token' });
+    expect(result.data.data.nativeConfigs.pi.models.content.models).toEqual(['pi-fast']);
+    expect(result.data.data.nativeConfigs.pi.prompts.files.map(file => file.path)).toContain(path.join('review', 'native-prompt.md'));
+    expect(result.data.data.nativeConfigs.pi.skills.files.map(file => file.path)).toContain(path.join('native-pi-skill', 'SKILL.md'));
+    expect(result.data.data.nativeConfigs.pi.extensions.files.map(file => file.path)).toContain(path.join('pi-extension', 'provider.ts'));
+    expect(result.data.data.nativeConfigs.pi.themes.files.map(file => file.path)).toContain('night.json');
+    expect(result.data.data.nativeConfigs.pi.packages.files.map(file => file.path)).toContain(path.join('managed-package', 'package.json'));
+    expect(result.data.data.nativeConfigs.pi.npmPackages.files.map(file => file.path)).toContain(path.join('@demo', 'pi-package', 'node_modules', 'dep', 'index.js'));
+    expect(result.data.data.nativeConfigs.pi.gitPackages.files.map(file => file.path)).toContain(path.join('provider', 'package.json'));
     expect(result.data.data.markdownFiles['AGENTS.md']).toBe('# Root agents');
     expect(result.data.data.oauthCredentials).toEqual({ version: 1 });
   });
@@ -540,6 +639,7 @@ describe('config-export-service import flows', () => {
 
   test('importConfigs writes prompts, oauth, markdown and app config, and imports channels/templates', async () => {
     codexChannelsService.getChannels.mockReturnValue({ channels: [] });
+    piChannelsService.getChannels.mockReturnValue({ channels: [] });
     const service = require('../../../src/server/services/config-export-service');
     const importData = {
       version: '1.4.0',
@@ -547,7 +647,8 @@ describe('config-export-service import flows', () => {
         configTemplates: [{ id: 'tpl-1', name: 'Imported Template' }],
         channelsByType: {
           claude: [{ id: 'claude-import', name: 'Claude Import', baseUrl: 'https://claude.import', apiKey: 'ckey' }],
-          codex: [{ id: 'codex-import', name: 'Codex Import', providerKey: 'openai', baseUrl: 'https://codex.import', apiKey: 'okey' }]
+          codex: [{ id: 'codex-import', name: 'Codex Import', providerKey: 'openai', baseUrl: 'https://codex.import', apiKey: 'okey' }],
+          pi: [{ id: 'pi-import', name: 'Pi Import', providerKey: 'pi-managed', baseUrl: 'https://pi.import', apiKey: 'pkey', enabled: true }]
         },
         markdownFiles: {
           'CLAUDE.md': '# Imported Claude',
@@ -566,6 +667,23 @@ describe('config-export-service import flows', () => {
             name: 'gemini-review',
             path: 'gemini-review.toml',
             fullContent: 'description = "Review with Gemini"\nprompt = "Review this"\n'
+          }],
+          pi: [{
+            name: 'pi-review',
+            path: 'review/pi-review.md',
+            fullContent: 'Review this with Pi'
+          }]
+        },
+        skillsByPlatform: {
+          pi: [{
+            platform: 'pi',
+            directory: 'pi-import-skill',
+            name: 'Pi Import Skill',
+            files: [{
+              path: 'SKILL.md',
+              encoding: 'base64',
+              content: Buffer.from('---\nname: "Pi Import Skill"\n---\nbody').toString('base64')
+            }]
           }]
         },
         pluginsByPlatform: {
@@ -602,24 +720,99 @@ describe('config-export-service import flows', () => {
             }]
           },
           pi: {
-            plugins: [{
-              platform: 'pi',
-              type: 'pi-extension',
-              pluginType: 'extension-directory',
-              name: 'pi-import',
-              directory: 'pi-import',
-              files: [{
-                path: 'pi.json',
-                encoding: 'base64',
-                content: Buffer.from(JSON.stringify({ name: 'pi-import' })).toString('base64')
-              }]
-            }],
+            plugins: [
+              {
+                platform: 'pi',
+                type: 'pi-package',
+                pluginType: 'package',
+                name: 'pi-import-package',
+                installSource: 'npm:pi-import-package',
+                resourceTypes: ['extensions', 'skills'],
+                enabled: false
+              },
+              {
+                platform: 'pi',
+                type: 'pi-extension',
+                pluginType: 'extension-directory',
+                name: 'pi-import',
+                directory: 'pi-import',
+                files: [{
+                  path: 'pi.json',
+                  encoding: 'base64',
+                  content: Buffer.from(JSON.stringify({ name: 'pi-import' })).toString('base64')
+                }]
+              }
+            ],
             control: {
               nativeSettings: {
                 format: 'json',
                 fileName: 'settings.json',
                 content: { packages: ['@demo/imported-pi'], disabledPackages: [] }
               }
+            }
+          }
+        },
+        nativeConfigs: {
+          pi: {
+            settings: {
+              format: 'json',
+              fileName: 'settings.json',
+              content: { packages: ['@demo/native-pi'], disabledPackages: [] }
+            },
+            auth: {
+              format: 'json',
+              fileName: 'auth.json',
+              content: { token: 'imported-pi-token' }
+            },
+            models: {
+              format: 'json',
+              fileName: 'models.json',
+              content: { models: ['imported-pi-model'] }
+            },
+            prompts: {
+              format: 'directory',
+              fileName: 'prompts',
+              files: [{
+                path: 'imported/prompt.md',
+                encoding: 'base64',
+                content: Buffer.from('Imported Pi prompt').toString('base64')
+              }]
+            },
+            npmPackages: {
+              format: 'directory',
+              fileName: 'npm',
+              files: [{
+                path: '@demo/native-pi/package.json',
+                encoding: 'base64',
+                content: Buffer.from(JSON.stringify({ name: '@demo/native-pi' })).toString('base64')
+              }]
+            },
+            themes: {
+              format: 'directory',
+              fileName: 'themes',
+              files: [{
+                path: 'imported-theme.json',
+                encoding: 'base64',
+                content: Buffer.from(JSON.stringify({ name: 'imported-theme' })).toString('base64')
+              }]
+            },
+            packages: {
+              format: 'directory',
+              fileName: 'packages',
+              files: [{
+                path: 'imported-package/package.json',
+                encoding: 'base64',
+                content: Buffer.from(JSON.stringify({ name: 'imported-package' })).toString('base64')
+              }]
+            },
+            gitPackages: {
+              format: 'directory',
+              fileName: 'git',
+              files: [{
+                path: 'native-git/package.json',
+                encoding: 'base64',
+                content: Buffer.from(JSON.stringify({ name: 'native-git' })).toString('base64')
+              }]
             }
           }
         },
@@ -642,21 +835,37 @@ describe('config-export-service import flows', () => {
     expect(configTemplatesService.createCustomTemplate).toHaveBeenCalled();
     expect(channelsService.createChannel).toHaveBeenCalled();
     expect(codexChannelsService.createChannel).toHaveBeenCalled();
+    expect(piChannelsService.createChannel).toHaveBeenCalledWith('Pi Import', 'https://pi.import', 'pkey', expect.objectContaining({
+      providerKey: 'pi-managed',
+      enabled: true
+    }));
+    expect(piChannelsService.syncManagedProviderExtension).toHaveBeenCalled();
     expect(promptsService.activatePreset).toHaveBeenCalledWith('preset-1');
     expect(saveConfigMock).toHaveBeenCalledWith({ ports: { webUI: 20000 } });
     expect(mcpService.saveServer).toHaveBeenCalled();
     expect(fs.readFileSync(path.join(testDir, 'CLAUDE.md'), 'utf8')).toBe('# Imported Claude');
     expect(fs.readFileSync(path.join(testDir, 'agents-install', 'gemini', 'gemini-helper.md'), 'utf8')).toContain('Help with Gemini work');
     expect(fs.readFileSync(path.join(testDir, 'commands-install', 'gemini', 'gemini-review.toml'), 'utf8')).toContain('Review this');
+    expect(fs.readFileSync(path.join(testDir, 'commands-install', 'pi', 'review', 'pi-review.md'), 'utf8')).toBe('Review this with Pi');
+    expect(fs.readFileSync(path.join(testDir, 'skills-install', 'pi', 'pi-import-skill', 'SKILL.md'), 'utf8')).toContain('Pi Import Skill');
     expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'ctx', 'codex-import', '1.0.0', '.codex-plugin', 'plugin.json'))).toBe(true);
     expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).toContain('codex-import@ctx');
     expect(JSON.parse(fs.readFileSync(path.join(testDir, '.opencode', 'opencode.json'), 'utf8')).plugin).toContain('@demo/imported-opencode');
     expect(fs.existsSync(path.join(testDir, '.pi', 'extensions', 'pi-import', 'pi.json'))).toBe(true);
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'settings.json'), 'utf8')).packages).toEqual(['@demo/imported-pi']);
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'settings.json'), 'utf8')).packages).toEqual(['@demo/native-pi']);
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'auth.json'), 'utf8'))).toEqual({ token: 'imported-pi-token' });
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'models.json'), 'utf8'))).toEqual({ models: ['imported-pi-model'] });
+    expect(fs.readFileSync(path.join(testDir, '.pi', 'prompts', 'imported', 'prompt.md'), 'utf8')).toBe('Imported Pi prompt');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'npm', '@demo', 'native-pi', 'package.json'), 'utf8')).name).toBe('@demo/native-pi');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'themes', 'imported-theme.json'), 'utf8')).name).toBe('imported-theme');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'packages', 'imported-package', 'package.json'), 'utf8')).name).toBe('imported-package');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'git', 'native-git', 'package.json'), 'utf8')).name).toBe('native-git');
     expect(fs.existsSync(path.join(testDir, 'README.md'))).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'store', 'oauth.json'), 'utf8'))).toEqual({ version: 2 });
     expect(result.results.agents.success).toBe(1);
-    expect(result.results.commands.success).toBe(1);
+    expect(result.results.commands.success).toBe(2);
+    expect(result.results.skills.success).toBe(1);
+    expect(result.results.nativeConfigs.success).toBe(8);
     expect(result.results.markdownFiles.success).toBe(1);
     expect(result.results.markdownFiles.failed).toBe(1);
   });

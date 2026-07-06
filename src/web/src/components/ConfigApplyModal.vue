@@ -39,7 +39,7 @@
               <n-space align="center" :size="4">
                 <n-icon :size="16" :color="ai.color"><DocumentTextOutline /></n-icon>
                 <span>{{ ai.name }}</span>
-                <n-text depth="3" style="font-size: 12px">({{ ai.fileName }})</n-text>
+                <n-text depth="3" style="font-size: 12px">({{ ai.fileName || ai.name }})</n-text>
               </n-space>
             </n-checkbox>
           </n-space>
@@ -69,7 +69,7 @@
               :type="getAiConfigTagType(aiCfg.type)"
               size="small"
             >
-              {{ aiCfg.fileName }}
+              {{ aiCfg.fileName || aiCfg.name }}
             </n-tag>
             <n-tag v-if="previewData.summary.skills" type="info" size="small">{{ previewData.summary.skills }} Skills</n-tag>
             <n-tag v-if="previewData.summary.agents" type="info" size="small">{{ previewData.summary.agents }} Agents</n-tag>
@@ -178,20 +178,24 @@ const AI_CONFIG_INFO = {
   claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
-  opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
+  opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' },
+  pi: { key: 'pi', name: 'Pi prompt templates', fileName: '.pi/prompts', color: '#0f9f9a' }
 }
 
 // 获取可用的 AI 配置列表（优先展示当前 CLI 对应配置）
 const availableAiConfigs = computed(() => {
-  const aiConfigs = props.template?.aiConfigs
-  if (!aiConfigs) return []
+  const aiConfigs = props.template?.aiConfigs || {}
+  const cliType = props.template?.cliType
+
+  if (cliType === 'pi' && AI_CONFIG_INFO.pi) {
+    return [AI_CONFIG_INFO.pi]
+  }
 
   const allEnabled = Object.entries(aiConfigs)
     .filter(([, cfg]) => cfg?.enabled && cfg?.content)
     .map(([key]) => AI_CONFIG_INFO[key])
     .filter(Boolean)
 
-  const cliType = props.template?.cliType
   if (cliType && cliType !== 'all') {
     const preferred = aiConfigs[cliType]
     if (preferred?.enabled && preferred?.content && AI_CONFIG_INFO[cliType]) {
@@ -237,7 +241,8 @@ function getAiConfigTagType(type) {
     claude: 'warning',
     codex: 'success',
     gemini: 'info',
-    opencode: 'error'
+    opencode: 'error',
+    pi: 'success'
   }
   return typeMap[type] || 'default'
 }

@@ -26,7 +26,8 @@ const {
   resolveInsideRoot
 } = require('./config-artifact-paths');
 
-const CLAUDE_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
+const CLAUDE_PLUGINS_DIR = NATIVE_PATHS.claude.plugins
+  || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
 const CLAUDE_INSTALLED_FILE = path.join(CLAUDE_PLUGINS_DIR, 'installed_plugins.json');
 const CLAUDE_MARKETPLACES_FILE = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
 const CLAUDE_PLUGINS_CACHE_DIR = path.join(CLAUDE_PLUGINS_DIR, 'cache');
@@ -189,6 +190,127 @@ function splitPluginMarketplaceKey(key = '') {
     name: value.slice(0, atIndex),
     marketplace: value.slice(atIndex + 1)
   };
+}
+
+function normalizePiPackageEntry(item = null) {
+  if (typeof item === 'string') {
+    const name = item.trim();
+    return name ? {
+      name,
+      source: name,
+      directory: name,
+      installSource: name,
+      resourceTypes: []
+    } : null;
+  }
+  if (!item || typeof item !== 'object') return null;
+
+  const rawName = item.name || item.package || item.id || item.source || item.path || '';
+  const name = String(rawName || '').trim();
+  if (!name) return null;
+
+  const directory = String(item.directory || item.path || name).trim() || name;
+  const installSource = String(item.installSource || item.source || item.url || item.packageSource || name).trim() || name;
+  return {
+    ...item,
+    name,
+    source: item.source || installSource,
+    directory,
+    installSource,
+    resourceTypes: normalizePiResourceTypes(item.resourceTypes || item.resources || item.provides || item.capabilities)
+  };
+}
+
+function getPiPackageIdentity(item = null) {
+  const normalized = normalizePiPackageEntry(item);
+  return normalized?.name || '';
+}
+
+function piPackageSettingValue(item = null) {
+  const normalized = normalizePiPackageEntry(item);
+  if (!normalized) return null;
+  if (typeof item === 'string') return normalized.name;
+
+  const next = { ...item };
+  next.name = normalized.name;
+  next.directory = normalized.directory;
+  next.source = normalized.installSource;
+  const resourceTypes = normalizePiResourceTypes(next.resourceTypes || next.resources || normalized.resourceTypes);
+  if (resourceTypes.length > 0) {
+    next.resourceTypes = resourceTypes;
+  } else {
+    delete next.resourceTypes;
+  }
+  return next;
+}
+
+function normalizePiResourceType(value = '') {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  const key = normalized
+    .replace(/[\s_-]+/g, '')
+    .toLowerCase();
+  const map = {
+    extension: 'extension',
+    extensions: 'extension',
+    plugin: 'extension',
+    plugins: 'extension',
+    skill: 'skill',
+    skills: 'skill',
+    prompt: 'promptTemplate',
+    prompts: 'promptTemplate',
+    prompttemplate: 'promptTemplate',
+    prompttemplates: 'promptTemplate',
+    prompttemplating: 'promptTemplate',
+    command: 'promptTemplate',
+    commands: 'promptTemplate',
+    theme: 'theme',
+    themes: 'theme',
+    mcp: 'mcp',
+    subagent: 'subagent',
+    subagents: 'subagent',
+    agent: 'subagent',
+    agents: 'subagent'
+  };
+  return map[key] || normalized;
+}
+
+function normalizePiResourceTypes(input = []) {
+  const values = [];
+  const pushValue = (value) => {
+    const normalized = normalizePiResourceType(value);
+    if (normalized && !values.includes(normalized)) values.push(normalized);
+  };
+
+  if (Array.isArray(input)) {
+    input.forEach(pushValue);
+  } else if (input && typeof input === 'object') {
+    for (const [key, value] of Object.entries(input)) {
+      if (value === false || value == null) continue;
+      if (Array.isArray(value)) {
+        if (value.length > 0) pushValue(key);
+      } else if (typeof value === 'object') {
+        if (Object.keys(value).length > 0) pushValue(key);
+      } else {
+        pushValue(key);
+      }
+    }
+  } else if (input) {
+    pushValue(input);
+  }
+
+  return values;
+}
+
+function isPiPackageInstallSource(value = '') {
+  const source = String(value || '').trim();
+  if (!source) return false;
+  if (isLikelyLocalPath(source)) return true;
+  if (/^(npm|git):/i.test(source)) return true;
+  if (/^https?:\/\//i.test(source)) return true;
+  if (/^ssh:\/\//i.test(source)) return true;
+  if (/^git@[^:]+:.+/i.test(source)) return true;
+  return !source.startsWith('-');
 }
 
 function normalizeMarketplaceSkillPaths(skills = []) {
@@ -565,11 +687,14 @@ class PluginsService {
         plugin.repoId || '',
         plugin.repoProvider || '',
         plugin.repoOwner || '',
-        plugin.repoName || '',
-        plugin.repoProjectPath || '',
-        plugin.repoLocalPath || '',
-        plugin.directory || plugin.installSource || ''
-      ].join('::');
+      plugin.repoName || '',
+      plugin.repoProjectPath || '',
+      plugin.repoLocalPath || '',
+      plugin.directory || '',
+      plugin.installSource || '',
+      plugin.pluginKind || '',
+      plugin.marketplaceFormat || ''
+    ].join('::');
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push({
@@ -642,7 +767,7 @@ class PluginsService {
   _listPiPackages() {
     const settings = this._readPiSettings();
     return Array.isArray(settings.packages)
-      ? settings.packages.map(item => String(item || '').trim()).filter(Boolean)
+      ? settings.packages.map(normalizePiPackageEntry).filter(Boolean)
       : [];
   }
 
@@ -650,33 +775,113 @@ class PluginsService {
     const settings = this._readPiSettings();
     const seen = new Set();
     settings.packages = packages
-      .map(item => String(item || '').trim())
+      .map(item => piPackageSettingValue(item))
       .filter((item) => {
-        if (!item || seen.has(item)) return false;
-        seen.add(item);
+        const name = getPiPackageIdentity(item);
+        if (!name || seen.has(name)) return false;
+        seen.add(name);
         return true;
       });
     this._writePiSettings(settings);
   }
 
-  _listPiDisabledPackages() {
+  _listPiDisabledPackageEntries() {
     const settings = this._readPiSettings();
     return Array.isArray(settings.disabledPackages)
-      ? settings.disabledPackages.map(item => String(item || '').trim()).filter(Boolean)
+      ? settings.disabledPackages.map(normalizePiPackageEntry).filter(Boolean)
       : [];
+  }
+
+  _listPiDisabledPackages() {
+    return this._listPiDisabledPackageEntries().map(item => item.name).filter(Boolean);
   }
 
   _setPiDisabledPackages(packages = []) {
     const settings = this._readPiSettings();
     const seen = new Set();
     settings.disabledPackages = packages
-      .map(item => String(item || '').trim())
+      .map(item => piPackageSettingValue(item))
       .filter((item) => {
-        if (!item || seen.has(item)) return false;
-        seen.add(item);
+        const name = getPiPackageIdentity(item);
+        if (!name || seen.has(name)) return false;
+        seen.add(name);
         return true;
       });
     this._writePiSettings(settings);
+  }
+
+  _runPiPackageCommand(args = []) {
+    execFileSync('pi', args, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: 'pipe',
+      timeout: 120000
+    });
+  }
+
+  _registerPiPackageReference(packageName, metadata = {}) {
+    const packages = this._listPiPackages();
+    const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
+    const displayName = String(metadata.name || packageName || installSource).trim();
+    if (!packages.some(pkg => pkg.name === displayName || pkg.installSource === installSource)) {
+      const resourceTypes = normalizePiResourceTypes(metadata.resourceTypes || metadata.resources);
+      const entry = installSource && installSource !== displayName
+        ? {
+            name: displayName,
+            source: installSource,
+            ...(metadata.version ? { version: metadata.version } : {}),
+            ...(metadata.description ? { description: metadata.description } : {}),
+            ...(resourceTypes.length > 0 ? { resourceTypes } : {})
+          }
+        : displayName;
+      packages.push(entry);
+      this._setPiPackages(packages);
+    }
+  }
+
+  _buildPiPackagePlugin(packageName, metadata = {}) {
+    const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
+    const name = String(metadata.name || packageName || installSource).trim();
+    const resourceTypes = normalizePiResourceTypes(metadata.resourceTypes || metadata.resources);
+    return {
+      name,
+      directory: name,
+      installSource: installSource || name,
+      version: metadata.version || 'latest',
+      description: metadata.description || '',
+      pluginKind: 'package',
+      pluginType: 'package',
+      ...(resourceTypes.length > 0 ? { resourceTypes } : {})
+    };
+  }
+
+  _installPiPackage(packageName, metadata = {}) {
+    const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
+    const plugin = this._buildPiPackagePlugin(packageName, { ...metadata, installSource });
+    try {
+      this._runPiPackageCommand(['install', installSource || packageName]);
+      return {
+        success: true,
+        plugin
+      };
+    } catch (err) {
+      this._registerPiPackageReference(packageName, { ...metadata, installSource, name: plugin.name });
+      return {
+        success: true,
+        registeredOnly: true,
+        warning: `Failed to run "pi install"; saved the package reference so Pi can resolve it later. ${err.message}`,
+        plugin
+      };
+    }
+  }
+
+  _removePiPackage(packageName) {
+    try {
+      this._runPiPackageCommand(['remove', packageName]);
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
 
   _listPiLocalExtensions() {
@@ -1230,21 +1435,26 @@ class PluginsService {
     }
 
     if (this._isPi()) {
-      const disabled = new Set(this._listPiDisabledPackages());
+      const disabledEntries = this._listPiDisabledPackageEntries();
+      const disabled = new Set(disabledEntries.flatMap(item => [item.name, item.installSource].filter(Boolean)));
       const plugins = [];
       const seen = new Set();
 
       for (const pkg of this._listPiPackages()) {
-        if (seen.has(pkg)) continue;
-        seen.add(pkg);
+        const seenKey = pkg.installSource || pkg.name;
+        if (seen.has(seenKey)) continue;
+        seen.add(seenKey);
         plugins.push({
-          name: pkg,
-          directory: pkg,
+          ...pkg,
+          name: pkg.name,
+          directory: pkg.directory || pkg.name,
+          installSource: pkg.installSource || pkg.source || pkg.name,
+          resourceTypes: normalizePiResourceTypes(pkg.resourceTypes || pkg.resources),
           source: 'pi-settings',
-          version: 'latest',
-          description: '',
+          version: pkg.version || 'latest',
+          description: pkg.description || '',
           installed: true,
-          enabled: !disabled.has(pkg),
+          enabled: !disabled.has(pkg.name) && !disabled.has(pkg.installSource),
           pluginType: 'package',
           pluginKind: 'package'
         });
@@ -1468,31 +1678,42 @@ class PluginsService {
     }
 
     if (this._isPi()) {
+      const packageMetadata = repoInfo && typeof repoInfo === 'object'
+        ? {
+            name: repoInfo.name || repoInfo.packageName || repoInfo.displayName,
+            version: repoInfo.version,
+            description: repoInfo.description,
+            resourceTypes: repoInfo.resourceTypes || repoInfo.resources,
+            installSource: repoInfo.installSource || repoInfo.source
+          }
+        : {};
+      const explicitPackageSource = String(source || packageMetadata.installSource || '').trim();
+
+      if (
+        repoInfo?.pluginKind === 'package' ||
+        repoInfo?.pluginType === 'package' ||
+        (explicitPackageSource && isPiPackageInstallSource(explicitPackageSource) && !hasRepoInstallInfo(repoInfo))
+      ) {
+        return this._installPiPackage(explicitPackageSource, packageMetadata);
+      }
+
       if (hasRepoInstallInfo(repoInfo)) {
         return this._installFromRepoDirectory(repoInfo, { installRoot: NATIVE_PATHS.pi.extensions });
       }
 
       const parsedSource = this.parseRepoTreeSource(source);
       if (parsedSource) {
-        return this._installFromRepoDirectory(parsedSource, { installRoot: NATIVE_PATHS.pi.extensions });
+        return this._installPiPackage(source);
       }
 
       const parsedRepo = this._repoFromGitUrl(source, 'main');
       if (parsedRepo) {
-        return this._installFromRepoDirectory({ ...parsedRepo, directory: '' }, { installRoot: NATIVE_PATHS.pi.extensions });
+        return this._installPiPackage(source);
       }
 
       const packageName = String(source || '').trim();
-      if (packageName && !/^https?:\/\//.test(packageName)) {
-        const packages = this._listPiPackages();
-        if (!packages.includes(packageName)) {
-          packages.push(packageName);
-          this._setPiPackages(packages);
-        }
-        return {
-          success: true,
-          plugin: { name: packageName, version: 'latest', description: '', pluginKind: 'package' }
-        };
+      if (packageName && isPiPackageInstallSource(packageName)) {
+        return this._installPiPackage(packageName);
       }
 
       return {
@@ -1944,17 +2165,46 @@ class PluginsService {
     }
 
     if (this._isPi()) {
-      const safeName = normalizePluginPathName(name, 'plugin name');
+      const targetName = String(name || '').trim();
+      let safeName = '';
+      try {
+        safeName = normalizePluginPathName(targetName, 'plugin name');
+      } catch {
+        safeName = '';
+      }
       const packages = this._listPiPackages();
       let removed = false;
-      const nextPackages = packages.filter(pkg => pkg !== safeName && pkg !== name);
+      const packageToRemove = packages.find(pkg =>
+        pkg.name === targetName ||
+        pkg.name === safeName ||
+        pkg.installSource === targetName ||
+        pkg.installSource === safeName
+      );
+      if (packageToRemove) {
+        this._removePiPackage(packageToRemove.installSource || packageToRemove.name);
+      }
+      const nextPackages = packages.filter(pkg =>
+        pkg.name !== safeName &&
+        pkg.name !== targetName &&
+        pkg.installSource !== safeName &&
+        pkg.installSource !== targetName
+      );
       if (nextPackages.length !== packages.length) {
         this._setPiPackages(nextPackages);
+        const disabledEntries = this._listPiDisabledPackageEntries().filter(pkg =>
+          pkg.name !== safeName &&
+          pkg.name !== targetName &&
+          pkg.installSource !== safeName &&
+          pkg.installSource !== targetName &&
+          pkg.name !== packageToRemove?.name &&
+          pkg.installSource !== packageToRemove?.installSource
+        );
+        this._setPiDisabledPackages(disabledEntries);
         removed = true;
       }
 
       const extensionsDir = NATIVE_PATHS.pi.extensions;
-      if (fs.existsSync(extensionsDir)) {
+      if (safeName && fs.existsSync(extensionsDir)) {
         const directPath = resolveInsideRoot(extensionsDir, safeName, 'Pi extension path');
         if (fs.existsSync(directPath)) {
           fs.rmSync(directPath, { recursive: true, force: true });
@@ -2113,11 +2363,18 @@ class PluginsService {
 
     if (this._isPi()) {
       const targetName = String(name || '').trim();
-      const disabled = new Set(this._listPiDisabledPackages());
+      const packages = this._listPiPackages();
+      const targetPackage = packages.find(pkg => pkg.name === targetName || pkg.installSource === targetName);
+      const disabledEntries = this._listPiDisabledPackageEntries();
+      const disabled = new Set(disabledEntries.flatMap(item => [item.name, item.installSource].filter(Boolean)));
       if (enabled) {
         disabled.delete(targetName);
+        if (targetPackage) {
+          disabled.delete(targetPackage.name);
+          disabled.delete(targetPackage.installSource);
+        }
       } else {
-        disabled.add(targetName);
+        disabled.add(targetPackage || targetName);
       }
       this._setPiDisabledPackages(Array.from(disabled));
       return {
@@ -3068,9 +3325,12 @@ class PluginsService {
       lspServers: data.lspServers || null,
       commands: data.commands || [],
       hooks: data.hooks || [],
+      resourceTypes: normalizePiResourceTypes(data.resourceTypes || data.resources),
+      resources: data.resources || null,
       containsSkills: Boolean(data.containsSkills),
       skillPaths: Array.isArray(data.skillPaths) ? data.skillPaths : [],
       pluginKind: data.pluginKind || (data.containsSkills ? 'skill-bundle' : 'plugin'),
+      pluginType: data.pluginType || '',
       strict: data.strict,
       isInstalled: false
     };
@@ -3320,6 +3580,96 @@ class PluginsService {
     return results;
   }
 
+  _normalizePiCatalogEntries(catalog = null) {
+    if (Array.isArray(catalog)) return catalog;
+    if (!catalog || typeof catalog !== 'object') return [];
+    for (const key of ['packages', 'plugins', 'extensions']) {
+      if (Array.isArray(catalog[key])) return catalog[key];
+    }
+    return [];
+  }
+
+  _normalizePiCatalogPackage(repo, entry = {}, catalog = {}, defaults = {}) {
+    if (!entry || typeof entry !== 'object') return null;
+    const installSource = String(
+      entry.installSource ||
+      entry.source ||
+      entry.package ||
+      entry.url ||
+      entry.repo ||
+      entry.repository ||
+      entry.name ||
+      ''
+    ).trim();
+    const name = String(entry.name || entry.id || entry.package || installSource || '').trim();
+    if (!name || !installSource) return null;
+
+    const resourceTypes = normalizePiResourceTypes(
+      entry.resourceTypes ||
+      entry.resources ||
+      entry.provides ||
+      entry.pi?.resources ||
+      defaults.resourceTypes
+    );
+    return this.buildMarketPluginItem(repo, {
+      name,
+      displayName: entry.displayName || entry.title || '',
+      description: entry.description || '',
+      author: entry.author || catalog.author || repo.owner,
+      version: entry.version || 'latest',
+      category: entry.category || 'general',
+      directory: entry.directory || name,
+      marketplace: entry.marketplace || repo.marketplace || catalog.name || defaults.marketplace || '',
+      installSource,
+      marketplaceFormat: defaults.marketplaceFormat || 'pi-package-catalog',
+      pluginKind: 'package',
+      pluginType: 'package',
+      resourceTypes,
+      resources: entry.resources || entry.provides || null,
+      repoUrl: entry.repoUrl || entry.repositoryUrl || entry.repository || repo.repoUrl || buildRepoUrl(repo)
+    });
+  }
+
+  async _fetchPiPackageCatalogPlugins(repo, fileMap, readJson) {
+    if (!this._isPi()) return [];
+    const catalogFiles = ['pi-packages.json', '.pi/packages.json', 'packages.json'];
+    for (const catalogPath of catalogFiles) {
+      if (!fileMap.has(catalogPath)) continue;
+      const catalog = await readJson(catalogPath);
+      const entries = this._normalizePiCatalogEntries(catalog);
+      const plugins = entries
+        .map(entry => this._normalizePiCatalogPackage(repo, entry, catalog, {
+          marketplaceFormat: 'pi-package-catalog'
+        }))
+        .filter(Boolean);
+      if (plugins.length > 0) return plugins;
+    }
+
+    const manifestPath = fileMap.has('pi.json') ? 'pi.json' : (fileMap.has('package.json') ? 'package.json' : '');
+    if (!manifestPath) return [];
+    const manifest = await readJson(manifestPath);
+    const piMeta = manifest.pi && typeof manifest.pi === 'object' ? manifest.pi : {};
+    const installSource = piMeta.installSource || manifest.installSource || manifest.name;
+    const resourceTypes = normalizePiResourceTypes(
+      piMeta.resourceTypes ||
+      piMeta.resources ||
+      manifest.resourceTypes ||
+      manifest.resources
+    );
+    if (!installSource || resourceTypes.length === 0) return [];
+    const plugin = this._normalizePiCatalogPackage(repo, {
+      name: manifest.name || repo.name,
+      installSource,
+      version: manifest.version,
+      description: manifest.description,
+      author: manifest.author,
+      resourceTypes
+    }, { name: repo.marketplace || repo.name }, {
+      marketplaceFormat: manifestPath === 'pi.json' ? 'pi-manifest' : 'pi-package-manifest'
+    });
+    return plugin ? [plugin] : [];
+  }
+
   /**
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
@@ -3392,6 +3742,15 @@ class PluginsService {
           const openCodeMarketplacePlugins = await this._fetchOpenCodeMarketplacePlugins(repo, repo.branch || 'main');
           if (openCodeMarketplacePlugins.length > 0) {
             marketPlugins.push(...openCodeMarketplacePlugins);
+            continue;
+          }
+        }
+
+        // Pi package catalog format: pi-packages.json / .pi/packages.json / packages.json
+        if (this._isPi()) {
+          const piPackagePlugins = await this._fetchPiPackageCatalogPlugins(repo, fileMap, readJson);
+          if (piPackagePlugins.length > 0) {
+            marketPlugins.push(...piPackagePlugins);
             continue;
           }
         }

@@ -19,7 +19,7 @@ const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homed
 const MCP_SERVERS_FILE = PATHS.mcpServers;
 
 // 各平台配置文件路径
-const CLAUDE_CONFIG_PATH = path.join(HOME_DIR, '.claude.json');
+const CLAUDE_CONFIG_PATH = NATIVE_PATHS.claude.mcp || path.join(HOME_DIR, '.claude.json');
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 const GEMINI_CONFIG_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;

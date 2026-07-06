@@ -46,14 +46,16 @@ const CLI_TYPE_MAP = {
   claude: { label: 'Claude', color: '#cc785c', textColor: '#fff', borderColor: '#cc785c' },
   codex: { label: 'Codex', color: '#10a37f', textColor: '#fff', borderColor: '#10a37f' },
   gemini: { label: 'Gemini', color: '#4285f4', textColor: '#fff', borderColor: '#4285f4' },
-  opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' }
+  opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' },
+  pi: { label: 'Pi Agent', color: '#0f9f9a', textColor: '#fff', borderColor: '#0f9f9a' }
 }
 
 const CLI_AI_FILE = {
   claude: 'CLAUDE.md',
   codex: 'AGENTS.md',
   gemini: 'GEMINI.md',
-  opencode: '.opencode/AGENTS.md'
+  opencode: '.opencode/AGENTS.md',
+  pi: '.pi/prompts'
 }
 
 function cliTypeLabel(type) {
@@ -70,6 +72,7 @@ const activeAiConfigFile = computed(() => {
   const t = props.template
   const cliType = t?.cliType
   if (!cliType || cliType === 'all') return null
+  if (cliType === 'pi' && t?.commands?.length) return CLI_AI_FILE.pi
   const aiCfg = t?.aiConfigs?.[cliType]
   if (aiCfg?.enabled) return CLI_AI_FILE[cliType] || null
   // fallback: legacy claudeMd

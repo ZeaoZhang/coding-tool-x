@@ -496,7 +496,7 @@ const PATHS = {
   },
 
   // 原生路径兼容
-  skills: path.join(HOME_DIR, '.claude', 'skills'),
+  skills: path.join(getClaudeConfigDir(), 'skills'),
 
   // 旧版本遗留文件搬迁目标
   legacy: {
@@ -730,6 +730,16 @@ function resolveExistingEnvPath(envValue) {
   return trimmed || '';
 }
 
+function expandHomePath(input = '') {
+  if (input === '~') {
+    return HOME_DIR;
+  }
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(HOME_DIR, input.slice(2));
+  }
+  return input;
+}
+
 function pickExistingDir(candidates, fallback) {
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
@@ -788,7 +798,8 @@ function getOpenCodeConfigDir() {
 }
 
 function getPiAgentDir() {
-  return resolveExistingEnvPath(process.env.PI_CODING_AGENT_DIR) || path.join(HOME_DIR, '.pi', 'agent');
+  const configuredDir = resolveExistingEnvPath(process.env.PI_CODING_AGENT_DIR);
+  return path.resolve(expandHomePath(configuredDir || path.join(HOME_DIR, '.pi', 'agent')));
 }
 
 // 工具特定的原生配置路径（不改变）
@@ -798,7 +809,13 @@ const NATIVE_PATHS = {
     dir: getClaudeConfigDir(),
     settings: path.join(getClaudeConfigDir(), 'settings.json'),
     settingsBackup: path.join(getClaudeConfigDir(), 'settings.json.cc-tool-backup'),
+    prompt: path.join(getClaudeConfigDir(), 'CLAUDE.md'),
     projects: path.join(getClaudeConfigDir(), 'projects'),
+    skills: path.join(getClaudeConfigDir(), 'skills'),
+    commands: path.join(getClaudeConfigDir(), 'commands'),
+    agents: path.join(getClaudeConfigDir(), 'agents'),
+    plugins: path.join(getClaudeConfigDir(), 'plugins'),
+    mcp: path.join(HOME_DIR, '.claude.json'),
     credentials: path.join(getClaudeConfigDir(), '.credentials.json')
   },
 
@@ -845,7 +862,9 @@ const NATIVE_PATHS = {
     sessions: path.join(getPiAgentDir(), 'sessions'),
     skills: path.join(getPiAgentDir(), 'skills'),
     prompts: path.join(getPiAgentDir(), 'prompts'),
-    extensions: path.join(getPiAgentDir(), 'extensions')
+    extensions: path.join(getPiAgentDir(), 'extensions'),
+    themes: path.join(getPiAgentDir(), 'themes'),
+    packages: path.join(getPiAgentDir(), 'packages')
   }
 };
 

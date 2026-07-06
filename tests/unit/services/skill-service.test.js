@@ -14,7 +14,11 @@ function stubPaths() {
     loaded: true,
     exports: {
       NATIVE_PATHS: {
-        claude:    { dir: path.join(testDir, 'native-claude'),   skills: path.join(testDir, 'claude-skills') },
+        claude: {
+          dir: path.join(testDir, 'native-claude'),
+          settings: path.join(testDir, 'native-claude', 'settings.json'),
+          skills: path.join(testDir, 'claude-skills')
+        },
         codex:     { dir: path.join(testDir, 'native-codex'),    skills: path.join(testDir, 'codex-skills') },
         gemini:    { dir: path.join(testDir, 'native-gemini'),   skills: path.join(testDir, 'gemini-skills') },
         opencode:  { dir: path.join(testDir, 'native-opencode'), config: path.join(testDir, 'opencode-config'), skills: path.join(testDir, 'opencode-skills') },
@@ -132,6 +136,12 @@ describe('SkillService constructor', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService();
     expect(svc.platform).toBe('claude');
+  });
+
+  it('uses the configured Claude native skills directory', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    expect(svc.installDir).toBe(path.join(testDir, 'claude-skills'));
   });
 
   it('sets platform to codex when passed codex', () => {
