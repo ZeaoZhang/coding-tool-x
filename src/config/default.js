@@ -5,9 +5,12 @@ const { resolvePreferredHomeDir } = require('../utils/home-dir');
 const modelMetadataConfig = require('./model-metadata.json');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+const CLAUDE_CONFIG_DIR = (typeof process.env.CLAUDE_CONFIG_DIR === 'string' && process.env.CLAUDE_CONFIG_DIR.trim())
+  ? process.env.CLAUDE_CONFIG_DIR.trim()
+  : path.join(HOME_DIR, '.claude');
 
 const DEFAULT_CONFIG = {
-  projectsDir: path.join(HOME_DIR, '.claude', 'projects'),
+  projectsDir: path.join(CLAUDE_CONFIG_DIR, 'projects'),
   defaultProject: null,
   maxDisplaySessions: 100,
   pageSize: 15,

@@ -6,6 +6,7 @@ let testDir;
 let configDir;
 let agentList;
 let commandList;
+let commandListByPlatform;
 let skillsByPlatform;
 let pluginList;
 let mcpServers;
@@ -56,11 +57,41 @@ beforeEach(() => {
       body: 'skip'
     }
   ];
+  commandListByPlatform = {
+    claude: commandList,
+    codex: [{
+      scope: 'user',
+      name: 'codex-fix',
+      namespace: 'git',
+      description: 'Fix issues with Codex',
+      body: 'echo codex'
+    }],
+    gemini: [{
+      scope: 'user',
+      name: 'gemini-fix',
+      description: 'Fix issues with Gemini',
+      body: 'echo gemini'
+    }],
+    opencode: [{
+      scope: 'user',
+      name: 'opencode-fix',
+      description: 'Fix issues with OpenCode',
+      body: 'echo opencode'
+    }],
+    pi: [{
+      scope: 'user',
+      name: 'inspect',
+      namespace: 'pi-tools',
+      description: 'Inspect with Pi',
+      body: 'Inspect this with Pi'
+    }]
+  };
   skillsByPlatform = {
     claude: [{ directory: 'skill-claude', name: 'Skill Claude', description: 'Claude skill' }],
     codex: [{ directory: 'skill-codex', description: 'Codex skill' }],
     gemini: [{ directory: 'skill-gemini', name: 'Skill Gemini' }],
-    opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode' }]
+    opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode' }],
+    pi: [{ directory: 'skill-pi', name: 'Skill Pi', description: 'Pi skill' }]
   };
   pluginList = [
     { name: 'plugin-a', description: 'Plugin A', version: '1.2.3', source: 'local', repoUrl: 'https://example.com/plugin-a.git' }
@@ -133,8 +164,11 @@ beforeEach(() => {
     loaded: true,
     exports: {
       CommandsService: class {
+        constructor(platform = 'claude') {
+          this.platform = platform;
+        }
         listCommands() {
-          return { commands: commandList };
+          return { commands: commandListByPlatform[this.platform] || commandList };
         }
       }
     }
@@ -237,7 +271,8 @@ describe('config-templates-service persistence and discovery', () => {
         claude: { enabled: true, content: '# CLAUDE' },
         codex: { enabled: false, content: '' },
         gemini: { enabled: false, content: '' },
-        opencode: { enabled: true, content: '# CLAUDE' }
+        opencode: { enabled: true, content: '# CLAUDE' },
+        pi: { enabled: false, content: '' }
       }
     }));
 
@@ -255,7 +290,8 @@ describe('config-templates-service persistence and discovery', () => {
         claude: { enabled: true, content: '# CLAUDE' },
         codex: { enabled: true, content: '# AGENTS' },
         gemini: { enabled: false, content: '' },
-        opencode: { enabled: true, content: '# AGENTS' }
+        opencode: { enabled: true, content: '# AGENTS' },
+        pi: { enabled: false, content: '' }
       }
     }));
     expect(typeof updated.updatedAt).toBe('string');
@@ -272,7 +308,8 @@ describe('config-templates-service persistence and discovery', () => {
       claude: [{ directory: 'skill-claude', name: 'Skill Claude', description: 'Claude skill', repoOwner: null, repoName: null, repoBranch: null }],
       codex: [{ directory: 'skill-codex', name: 'skill-codex', description: 'Codex skill', repoOwner: null, repoName: null, repoBranch: null }],
       gemini: [{ directory: 'skill-gemini', name: 'Skill Gemini', description: '', repoOwner: null, repoName: null, repoBranch: null }],
-      opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode', description: '', repoOwner: null, repoName: null, repoBranch: null }]
+      opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode', description: '', repoOwner: null, repoName: null, repoBranch: null }],
+      pi: [{ directory: 'skill-pi', name: 'Skill Pi', description: 'Pi skill', repoOwner: null, repoName: null, repoBranch: null }]
     });
     expect(result.agents).toEqual([
       expect.objectContaining({
@@ -283,12 +320,20 @@ describe('config-templates-service persistence and discovery', () => {
         systemPrompt: 'Review carefully'
       })
     ]);
-    expect(result.commands).toEqual([
+    expect(result.commands).toEqual(expect.arrayContaining([
       expect.objectContaining({
         name: 'fix',
         namespace: 'git',
         description: 'Fix issues',
         body: 'echo fix'
+      })
+    ]));
+    expect(result.commandsByPlatform.pi).toEqual([
+      expect.objectContaining({
+        name: 'inspect',
+        namespace: 'pi-tools',
+        description: 'Inspect with Pi',
+        body: 'Inspect this with Pi'
       })
     ]);
     expect(result.plugins).toEqual([
@@ -440,6 +485,112 @@ describe('config-templates-service apply and preview', () => {
       plugins: ['plugin-a'],
       mcpServers: ['local-server', 'preset-server', 'missing-server']
     }));
+  });
+
+  test('applies Pi template commands as prompt templates and skips project agents', () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Pi Starter',
+      cliType: 'pi',
+      agents: [
+        {
+          fileName: 'reviewer',
+          name: 'Reviewer',
+          description: 'Review changes',
+          systemPrompt: 'Review carefully'
+        }
+      ],
+      commands: [
+        {
+          name: 'inspect',
+          namespace: 'pi-tools',
+          description: 'Inspect with Pi',
+          body: 'Inspect this with Pi'
+        }
+      ],
+      plugins: [{ name: 'plugin-a' }],
+      mcpServers: ['local-server']
+    });
+
+    const targetDir = path.join(testDir, 'pi-workspace');
+    const result = templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['pi']
+    });
+
+    expect(result).toEqual({
+      success: true,
+      results: {
+        aiConfigs: [],
+        skills: { applied: 0, items: [] },
+        agents: {
+          applied: 0,
+          files: []
+        },
+        commands: {
+          applied: 1,
+          files: ['.pi/prompts/pi-tools/inspect.md']
+        },
+        plugins: {
+          applied: 1,
+          items: ['plugin-a']
+        },
+        mcpServers: { applied: 0 },
+        skipped: [
+          { type: 'aiConfig', item: 'Pi prompt templates', reason: 'Pi 项目级提示模板通过 .pi/prompts 写入，未生成单独 AI 配置文件' },
+          { type: 'agent', item: 'reviewer', reason: 'Pi agents 需通过扩展或包提供，项目目录应用时已跳过' },
+          { type: 'mcpServer', item: 'local-server', reason: 'Pi MCP 由 packages/extensions 提供，未写入项目 MCP 配置' }
+        ]
+      },
+      template: 'Pi Starter'
+    });
+
+    expect(fs.readFileSync(path.join(targetDir, '.pi', 'prompts', 'pi-tools', 'inspect.md'), 'utf8')).toContain('Inspect this with Pi');
+    expect(readJson(path.join(targetDir, '.pi', 'settings.json')).packages).toEqual(['plugin-a']);
+    expect(fs.existsSync(path.join(targetDir, '.mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(targetDir, '.pi', 'agents'))).toBe(false);
+    expect(readJson(path.join(targetDir, '.ctx-config.json'))).toEqual(expect.objectContaining({
+      templateId: template.id,
+      aiConfigTypes: ['pi'],
+      aiConfigPaths: [],
+      commands: ['inspect'],
+      mcpServers: ['local-server']
+    }));
+  });
+
+  test('previews Pi prompt-template command targets and unsupported project agents', () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Pi Preview',
+      cliType: 'pi',
+      agents: [{ fileName: 'reviewer', name: 'Reviewer', systemPrompt: 'Review carefully' }],
+      commands: [{ name: 'sync', body: 'echo sync' }],
+      plugins: [{ name: 'plugin-a' }],
+      mcpServers: ['missing-server']
+    });
+
+    const targetDir = path.join(testDir, 'pi-preview-workspace');
+    writeFile(path.join(targetDir, '.pi', 'prompts', 'sync.md'), 'old prompt');
+
+    const preview = templatesService.previewTemplateApplication(targetDir, template.id, {
+      aiConfigTypes: ['pi']
+    });
+
+    expect(preview).toEqual({
+      willCreate: ['.pi/settings.json'],
+      willOverwrite: ['.pi/prompts/sync.md'],
+      skipped: [
+        { type: 'aiConfig', item: 'Pi prompt templates', reason: 'Pi 项目级提示模板通过 .pi/prompts 写入，预览不生成单独 AI 配置文件' },
+        { type: 'agent', item: 'reviewer', reason: 'Pi agents 需通过扩展或包提供，项目目录预览时已跳过' },
+        { type: 'mcpServer', item: 'missing-server', reason: '未找到对应 MCP 服务配置，预览已跳过' }
+      ],
+      summary: {
+        aiConfigs: [],
+        skills: 0,
+        agents: 0,
+        commands: 1,
+        plugins: 1,
+        mcpServers: 0,
+        skipped: 3
+      }
+    });
   });
 
   test('previews overwrites and falls back to default AI config when requested types are invalid', () => {

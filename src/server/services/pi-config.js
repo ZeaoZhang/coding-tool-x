@@ -26,6 +26,7 @@ function getPiPaths(env = process.env) {
     skills: path.join(agentDir, 'skills'),
     prompts: path.join(agentDir, 'prompts'),
     extensions: path.join(agentDir, 'extensions'),
+    themes: path.join(agentDir, 'themes'),
     packages: path.join(agentDir, 'packages'),
     managedProviderExtension: path.join(agentDir, 'extensions', 'coding-tool-x-provider.ts')
   };
@@ -82,7 +83,9 @@ function getPiStatus() {
     sessionsDir: paths.sessions,
     skillsDir: paths.skills,
     promptsDir: paths.prompts,
-    extensionsDir: paths.extensions
+    extensionsDir: paths.extensions,
+    themesDir: paths.themes,
+    packagesDir: paths.packages
   };
 }
 

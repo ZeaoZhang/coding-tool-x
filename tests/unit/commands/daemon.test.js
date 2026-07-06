@@ -44,7 +44,8 @@ beforeEach(() => {
       proxy: 20088,
       codexProxy: 20089,
       geminiProxy: 20090,
-      opencodeProxy: 20091
+      opencodeProxy: 20091,
+      piProxy: 20092
     }
   }));
 
@@ -70,8 +71,17 @@ beforeEach(() => {
     id: PATHS_PATH,
     filename: PATHS_PATH,
     loaded: true,
-    exports: {
-      PATHS: { logs: '/tmp/logs' },
+      exports: {
+      PATHS: {
+        logs: '/tmp/logs',
+        activeChannel: {
+          claude: '/tmp/channels/claude.json',
+          codex: '/tmp/channels/codex.json',
+          gemini: '/tmp/channels/gemini.json',
+          opencode: '/tmp/channels/opencode.json',
+          pi: '/tmp/channels/pi.json'
+        }
+      },
       ensureStorageDirMigrated: vi.fn()
     }
   };
@@ -135,7 +145,7 @@ describe('daemon handleStop', () => {
   });
 
   test('does not dump pm2 state when only orphaned ports were cleaned', async () => {
-    const releaseChecks = [false, true, true, true, true, true];
+    const releaseChecks = [false, true, true, true, true, true, true];
     waitForPortRelease.mockImplementation(() => Promise.resolve(releaseChecks.shift() ?? true));
     killProcessByPort.mockImplementation((port) => port === 19999);
 
@@ -150,7 +160,7 @@ describe('daemon handleStop', () => {
   test('cleans orphaned managed ports even when pm2 process record is already stopped', async () => {
     processList = [{ name: 'cc-tool', pid: 1234, pm2_env: { status: 'stopped' } }];
 
-    const releaseChecks = [false, true, true, true, true, true];
+    const releaseChecks = [false, true, true, true, true, true, true];
     waitForPortRelease.mockImplementation(() => Promise.resolve(releaseChecks.shift() ?? true));
     killProcessByPort.mockImplementation((port) => port === 19999);
 

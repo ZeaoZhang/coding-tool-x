@@ -24,7 +24,8 @@ const {
 const DEFAULT_REPOS = [];
 const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
-const CLAUDE_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'commands');
+const CLAUDE_COMMANDS_DIR = NATIVE_PATHS.claude.commands
+  || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'commands');
 const CODEX_COMMANDS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'commands');
 const GEMINI_COMMANDS_DIR = path.join(NATIVE_PATHS.gemini.dir, 'commands');
 

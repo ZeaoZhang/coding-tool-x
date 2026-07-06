@@ -17,12 +17,12 @@ const REGISTRY_FILE = PATHS.configRegistry;
 const CONFIGS_DIR = PATHS.configs;
 
 // Claude Code native directories
-const CLAUDE_HOME_DIR = path.dirname(NATIVE_PATHS.claude.settings);
+const CLAUDE_HOME_DIR = NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings);
 const CLAUDE_DIRS = {
-  skills: path.join(CLAUDE_HOME_DIR, 'skills'),
-  commands: path.join(CLAUDE_HOME_DIR, 'commands'),
-  agents: path.join(CLAUDE_HOME_DIR, 'agents'),
-  plugins: path.join(CLAUDE_HOME_DIR, 'plugins')
+  skills: NATIVE_PATHS.claude.skills || path.join(CLAUDE_HOME_DIR, 'skills'),
+  commands: NATIVE_PATHS.claude.commands || path.join(CLAUDE_HOME_DIR, 'commands'),
+  agents: NATIVE_PATHS.claude.agents || path.join(CLAUDE_HOME_DIR, 'agents'),
+  plugins: NATIVE_PATHS.claude.plugins || path.join(CLAUDE_HOME_DIR, 'plugins')
 };
 
 // Valid config types

@@ -47,6 +47,7 @@ beforeEach(() => {
       },
       NATIVE_PATHS: {
         claude: {
+          dir: path.join(testDir, 'custom-claude'),
           settings: path.join(testDir, '.claude', 'settings.json')
         },
         codex: {
@@ -105,7 +106,7 @@ describe('ConfigSyncManager direct sync helpers', () => {
     const manager = new ConfigSyncManager();
 
     const syncResult = manager.syncToClaude('commands', 'nested/review.md');
-    const targetPath = path.join(testDir, '.claude', 'commands', 'nested', 'review.md');
+    const targetPath = path.join(testDir, 'custom-claude', 'commands', 'nested', 'review.md');
 
     expect(syncResult).toEqual({
       success: true,

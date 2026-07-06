@@ -26,7 +26,8 @@ const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 const CODEX_AGENTS_DIR = path.join(path.dirname(CODEX_CONFIG_PATH), 'agents');
-const CLAUDE_AGENTS_DIR = path.join(path.dirname(NATIVE_PATHS.claude.settings), 'agents');
+const CLAUDE_AGENTS_DIR = NATIVE_PATHS.claude.agents
+  || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'agents');
 const GEMINI_AGENTS_DIR = path.join(NATIVE_PATHS.gemini.dir, 'agents');
 const CODEX_CONFIG_MODES = new Set(['none', 'managed', 'custom']);
 

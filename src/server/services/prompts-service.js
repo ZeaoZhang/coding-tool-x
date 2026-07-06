@@ -16,7 +16,8 @@ const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homed
 const PROMPTS_FILE = PATHS.prompts;
 
 // 各平台提示词文件路径
-const CLAUDE_PROMPT_PATH = path.join(HOME_DIR, '.claude', 'CLAUDE.md');
+const CLAUDE_CONFIG_DIR = NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings);
+const CLAUDE_PROMPT_PATH = NATIVE_PATHS.claude.prompt || path.join(CLAUDE_CONFIG_DIR, 'CLAUDE.md');
 const CODEX_PROMPT_PATH = path.join(HOME_DIR, '.codex', 'AGENTS.md');
 const GEMINI_PROMPT_PATH = path.join(HOME_DIR, '.gemini', 'GEMINI.md');
 const OPENCODE_PROMPT_PATH = path.join(NATIVE_PATHS.opencode.config, 'AGENTS.md');

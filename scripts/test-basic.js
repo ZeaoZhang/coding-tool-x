@@ -221,10 +221,11 @@ function run() {
         proxy: 20088,
         codexProxy: 20089,
         geminiProxy: 20090,
-        opencodeProxy: 19999
+        opencodeProxy: 19999,
+        piProxy: 20092
       }
     }),
-    [19999, 20088, 20089, 20090],
+    [19999, 20088, 20089, 20090, 20092],
     'daemon 管理端口列表应去重并按配置返回'
   );
 

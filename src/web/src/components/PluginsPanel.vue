@@ -175,6 +175,10 @@ const currentPlatform = computed(() => {
   if (props.platform && managedPluginPlatforms.includes(props.platform)) {
     return props.platform
   }
+  const queryPlatform = Array.isArray(route.query.platform)
+    ? route.query.platform[0]
+    : route.query.platform
+  if (managedPluginPlatforms.includes(queryPlatform)) return queryPlatform
   const channel = route.meta.channel
   if (managedPluginPlatforms.includes(channel)) return channel
   return 'claude'

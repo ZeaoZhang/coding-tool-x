@@ -6,6 +6,7 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const childProcess = require('child_process');
 
 let testDir;
 let listPluginsMock;
@@ -14,9 +15,29 @@ let updatePluginMock;
 let addPluginMock;
 let installPluginCoreMock;
 let uninstallPluginCoreMock;
+let execFileSyncSpy;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-'));
+  execFileSyncSpy = vi.spyOn(childProcess, 'execFileSync').mockImplementation((cmd, args) => {
+    if (cmd !== 'pi') {
+      return Buffer.from('');
+    }
+    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+    fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
+    const settings = fs.existsSync(piSettingsPath)
+      ? JSON.parse(fs.readFileSync(piSettingsPath, 'utf8') || '{}')
+      : {};
+    settings.packages = Array.isArray(settings.packages) ? settings.packages : [];
+    if (args?.[0] === 'install' && args[1] && !settings.packages.includes(args[1])) {
+      settings.packages.push(args[1]);
+    }
+    if ((args?.[0] === 'remove' || args?.[0] === 'uninstall') && args[1]) {
+      settings.packages = settings.packages.filter(pkg => pkg !== args[1]);
+    }
+    fs.writeFileSync(piSettingsPath, JSON.stringify(settings, null, 2), 'utf8');
+    return Buffer.from('');
+  });
 
   // Stub paths
   const p = require.resolve('../../../src/config/paths');
@@ -33,7 +54,9 @@ beforeEach(() => {
           settings: path.join(testDir, '.pi', 'agent', 'settings.json'),
           extensions: path.join(testDir, '.pi', 'agent', 'extensions'),
           skills: path.join(testDir, '.pi', 'agent', 'skills'),
-          prompts: path.join(testDir, '.pi', 'agent', 'prompts')
+          prompts: path.join(testDir, '.pi', 'agent', 'prompts'),
+          themes: path.join(testDir, '.pi', 'agent', 'themes'),
+          packages: path.join(testDir, '.pi', 'agent', 'packages')
         }
       },
       PATHS: {
@@ -107,6 +130,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
+  execFileSyncSpy.mockRestore();
   delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
   delete require.cache[require.resolve('../../../src/config/paths')];
   delete require.cache[require.resolve('../../../src/plugins/registry')];
@@ -802,7 +826,100 @@ describe('PluginsService Pi helpers', () => {
     ]));
   });
 
-  test('package install, toggle, config, and uninstall update Pi settings', async () => {
+  test('listPlugins normalizes object-shaped Pi packages without object-string labels', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+
+    fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      piSettingsPath,
+      JSON.stringify({
+        packages: [
+          { name: '@demo/object-package', type: 'npm', version: '0.3.0', description: 'Object package' },
+          '@demo/string-package',
+          { name: '@demo/object-package', type: 'npm' }
+        ],
+        disabledPackages: [{ name: '@demo/object-package' }]
+      }),
+      'utf8'
+    );
+
+    const result = svc.listPlugins();
+
+    expect(result.plugins.map(plugin => plugin.name)).toEqual([
+      '@demo/object-package',
+      '@demo/string-package'
+    ]);
+    expect(result.plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: '@demo/object-package',
+        directory: '@demo/object-package',
+        version: '0.3.0',
+        description: 'Object package',
+        pluginKind: 'package',
+        enabled: false
+      }),
+      expect.objectContaining({
+        name: '@demo/string-package',
+        directory: '@demo/string-package',
+        pluginKind: 'package',
+        enabled: true
+      })
+    ]));
+    expect(result.plugins.map(plugin => plugin.name)).not.toContain('[object Object]');
+  });
+
+  test('object-shaped Pi packages preserve install source and resources through toggle/config/uninstall', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+
+    fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      piSettingsPath,
+      JSON.stringify({
+        packages: [{
+          name: 'pi-subagents',
+          source: 'npm:pi-subagents',
+          type: 'npm',
+          version: '1.2.3',
+          description: 'Subagents package',
+          resourceTypes: ['extensions', 'skills']
+        }],
+        disabledPackages: [{
+          name: 'pi-subagents',
+          source: 'npm:pi-subagents'
+        }]
+      }),
+      'utf8'
+    );
+
+    const listed = svc.listPlugins().plugins[0];
+    const enableResult = svc.togglePlugin('pi-subagents', true);
+    const configResult = svc.updatePluginConfig('pi-subagents', { mode: 'review' });
+    const uninstallResult = svc.uninstallPlugin('pi-subagents');
+    const settings = JSON.parse(fs.readFileSync(piSettingsPath, 'utf8'));
+
+    expect(listed).toEqual(expect.objectContaining({
+      name: 'pi-subagents',
+      installSource: 'npm:pi-subagents',
+      resourceTypes: ['extension', 'skill'],
+      pluginKind: 'package',
+      enabled: false
+    }));
+    expect(enableResult).toEqual(expect.objectContaining({ success: true, enabled: true }));
+    expect(configResult.success).toBe(true);
+    expect(execFileSyncSpy).toHaveBeenCalledWith('pi', ['remove', 'npm:pi-subagents'], expect.objectContaining({
+      stdio: 'pipe'
+    }));
+    expect(uninstallResult.success).toBe(true);
+    expect(settings.packages).toEqual([]);
+    expect(settings.disabledPackages).toEqual([]);
+    expect(settings.packageConfig['pi-subagents']).toEqual({ mode: 'review' });
+  });
+
+  test('package install uses pi install before toggle, config, and uninstall update Pi settings', async () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('pi');
     const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
@@ -817,12 +934,94 @@ describe('PluginsService Pi helpers', () => {
       success: true,
       plugin: expect.objectContaining({ name: 'acme/pi-provider', pluginKind: 'package' })
     }));
+    expect(execFileSyncSpy).toHaveBeenCalledWith('pi', ['install', 'acme/pi-provider'], expect.objectContaining({
+      stdio: 'pipe'
+    }));
     expect(toggleResult).toEqual(expect.objectContaining({ success: true, enabled: false }));
     expect(configResult.success).toBe(true);
     expect(uninstallResult.success).toBe(true);
     expect(settings.packages).toEqual([]);
-    expect(settings.disabledPackages).toContain('acme/pi-provider');
+    expect(settings.disabledPackages).toEqual([]);
     expect(settings.packageConfig['acme/pi-provider']).toEqual({ model: 'pi-fast' });
+  });
+
+  test('Pi package source classification installs npm, git, https, ssh, and local sources through pi install', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const localPackagePath = path.join(testDir, 'local-pi-package');
+    fs.mkdirSync(localPackagePath, { recursive: true });
+
+    const sources = [
+      'npm:@scope/pkg',
+      'git:github.com/acme/pi-tool',
+      'https://github.com/acme/pi-tool',
+      'ssh://git@github.com/acme/pi-tool.git',
+      'git@github.com:acme/pi-tool.git',
+      localPackagePath
+    ];
+
+    for (const source of sources) {
+      const result = await svc.installPlugin(source);
+      expect(result.success).toBe(true);
+    }
+
+    for (const source of sources) {
+      expect(execFileSyncSpy).toHaveBeenCalledWith('pi', ['install', source], expect.objectContaining({
+        stdio: 'pipe'
+      }));
+    }
+  });
+
+  test('package install reports registeredOnly when pi CLI is unavailable', async () => {
+    const { PluginsService } = loadModule();
+    execFileSyncSpy.mockImplementation(() => {
+      throw new Error('spawn pi ENOENT');
+    });
+    const svc = new PluginsService('pi');
+
+    const result = await svc.installPlugin('acme/offline-provider');
+    const settings = JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'agent', 'settings.json'), 'utf8'));
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      registeredOnly: true,
+      warning: expect.stringContaining('pi install')
+    }));
+    expect(result.plugin).toEqual(expect.objectContaining({
+      name: 'acme/offline-provider',
+      pluginKind: 'package'
+    }));
+    expect(settings.packages).toEqual(['acme/offline-provider']);
+  });
+
+  test('registeredOnly fallback records object package metadata when source and display name differ', async () => {
+    const { PluginsService } = loadModule();
+    execFileSyncSpy.mockImplementation(() => {
+      throw new Error('spawn pi ENOENT');
+    });
+    const svc = new PluginsService('pi');
+
+    const result = await svc.installPlugin('npm:pi-subagents', {
+      pluginKind: 'package',
+      name: 'pi-subagents',
+      resourceTypes: ['extensions', 'skills']
+    });
+    const settings = JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'agent', 'settings.json'), 'utf8'));
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      registeredOnly: true,
+      plugin: expect.objectContaining({
+        name: 'pi-subagents',
+        installSource: 'npm:pi-subagents',
+        resourceTypes: ['extension', 'skill']
+      })
+    }));
+    expect(settings.packages).toEqual([expect.objectContaining({
+      name: 'pi-subagents',
+      source: 'npm:pi-subagents',
+      resourceTypes: ['extension', 'skill']
+    })]);
   });
 
   test('local Pi repository install is listed as an extension', async () => {
@@ -850,6 +1049,66 @@ describe('PluginsService Pi helpers', () => {
         pluginKind: 'extension'
       })
     ]);
+  });
+
+  test('Pi package catalogs expose installable package sources and resource metadata', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('pi');
+    const repoRoot = path.join(testDir, 'pi-package-catalog');
+
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'pi-packages.json'),
+      JSON.stringify({
+        name: 'community-pi-packages',
+        packages: [
+          {
+            name: 'pi-subagents',
+            source: 'npm:pi-subagents',
+            version: '0.8.0',
+            description: 'Subagent support',
+            resources: ['extensions', 'skills']
+          },
+          {
+            name: 'pi-search',
+            installSource: 'git:github.com/justhil/pi-search',
+            resourceTypes: ['extension', 'promptTemplates']
+          },
+          {
+            name: 'pi-subagents',
+            source: 'git:github.com/mirror/pi-subagents',
+            resourceTypes: ['extensions']
+          }
+        ]
+      }),
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot, marketplace: 'pi-community' });
+
+    const plugins = await svc.getMarketPlugins(true);
+
+    expect(plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'pi-subagents',
+        installSource: 'npm:pi-subagents',
+        marketplace: 'pi-community',
+        marketplaceFormat: 'pi-package-catalog',
+        pluginKind: 'package',
+        pluginType: 'package',
+        resourceTypes: ['extension', 'skill']
+      }),
+      expect.objectContaining({
+        name: 'pi-search',
+        installSource: 'git:github.com/justhil/pi-search',
+        marketplaceFormat: 'pi-package-catalog',
+        resourceTypes: ['extension', 'promptTemplate']
+      }),
+      expect.objectContaining({
+        name: 'pi-subagents',
+        installSource: 'git:github.com/mirror/pi-subagents'
+      })
+    ]));
+    expect(plugins.filter(plugin => plugin.name === 'pi-subagents')).toHaveLength(2);
   });
 });
 

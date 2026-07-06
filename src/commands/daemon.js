@@ -259,7 +259,8 @@ function getManagedPorts(config = loadConfig()) {
     config.ports?.proxy || 20088,
     config.ports?.codexProxy || 20089,
     config.ports?.geminiProxy || 20090,
-    config.ports?.opencodeProxy || 20091
+    config.ports?.opencodeProxy || 20091,
+    config.ports?.piProxy || 20092
   ].filter((port, index, list) => Number.isInteger(port) && port > 0 && list.indexOf(port) === index);
 }
 
@@ -667,6 +668,7 @@ async function handleStatus() {
     const codexActive = fs.existsSync(PATHS.activeChannel.codex);
     const geminiActive = fs.existsSync(PATHS.activeChannel.gemini);
     const opencodeActive = fs.existsSync(PATHS.activeChannel.opencode);
+    const piActive = fs.existsSync(PATHS.activeChannel.pi);
 
     console.log(chalk.bold('\n[PROXY] 代理服务:'));
 
@@ -681,6 +683,9 @@ async function handleStatus() {
 
     console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.opencodeProxy || 20091})`));
+
+    console.log(chalk.gray('  Pi Agent:') + (piActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
+      chalk.gray(` (http://localhost:${config.ports?.piProxy || 20092})`));
 
     console.log(chalk.bold('\n[TIP] 提示:'));
     console.log(chalk.gray('  • 代理服务通过 Web UI 界面控制'));
