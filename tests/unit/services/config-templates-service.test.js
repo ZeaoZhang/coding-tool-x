@@ -538,17 +538,27 @@ describe('config-templates-service apply and preview', () => {
           applied: 1,
           items: ['plugin-a']
         },
-        mcpServers: { applied: 0 },
+        mcpServers: { applied: 1 },
         skipped: [
           { type: 'aiConfig', item: 'OMP command templates', reason: 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件' },
-          { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过' },
-          { type: 'mcpServer', item: 'local-server', reason: 'OMP MCP 由 packages/extensions 提供，未写入项目 MCP 配置' }
+          { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过' }
         ]
       },
       template: 'Pi Starter'
     });
 
     expect(fs.readFileSync(path.join(targetDir, '.omp', 'commands', 'pi-tools', 'inspect.md'), 'utf8')).toContain('Inspect this with Pi');
+    expect(readJson(path.join(targetDir, '.omp', 'mcp.json'))).toEqual({
+      mcpServers: {
+        'local-server': {
+          type: 'stdio',
+          command: 'npx',
+          args: ['-y', '@ctx/local-server'],
+          env: { TOKEN: 'abc' },
+          cwd: '/workspace/local-server'
+        }
+      }
+    });
     expect(readYaml(path.join(targetDir, '.omp', 'config.yml')).packages).toEqual(['plugin-a']);
     expect(fs.existsSync(path.join(targetDir, '.mcp.json'))).toBe(false);
     expect(fs.existsSync(path.join(targetDir, '.omp', 'agents'))).toBe(false);
@@ -568,7 +578,7 @@ describe('config-templates-service apply and preview', () => {
       agents: [{ fileName: 'reviewer', name: 'Reviewer', systemPrompt: 'Review carefully' }],
       commands: [{ name: 'sync', body: 'echo sync' }],
       plugins: [{ name: 'plugin-a' }],
-      mcpServers: ['missing-server']
+      mcpServers: ['local-server', 'missing-server']
     });
 
     const targetDir = path.join(testDir, 'pi-preview-workspace');
@@ -579,7 +589,7 @@ describe('config-templates-service apply and preview', () => {
     });
 
     expect(preview).toEqual({
-      willCreate: ['.omp/config.yml'],
+      willCreate: ['.omp/mcp.json', '.omp/config.yml'],
       willOverwrite: ['.omp/commands/sync.md'],
       skipped: [
         { type: 'aiConfig', item: 'OMP command templates', reason: 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件' },
@@ -592,7 +602,7 @@ describe('config-templates-service apply and preview', () => {
         agents: 0,
         commands: 1,
         plugins: 1,
-        mcpServers: 0,
+        mcpServers: 1,
         skipped: 3
       }
     });

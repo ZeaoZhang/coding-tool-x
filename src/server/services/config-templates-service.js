@@ -600,6 +600,30 @@ function convertToOpenCodeMcpSpec(spec = {}) {
   return result;
 }
 
+function convertToOmpMcpSpec(spec = {}) {
+  const type = spec.type || 'stdio';
+  const copyCommonFields = (target) => {
+    for (const key of ['timeout', 'auth', 'oauth']) {
+      if (spec[key] !== undefined) {
+        target[key] = spec[key];
+      }
+    }
+    return target;
+  };
+
+  if (type === 'streamable_http') {
+    const result = {
+      type: 'http',
+      url: spec.url || ''
+    };
+    if (spec.headers && typeof spec.headers === 'object') {
+      result.headers = spec.headers;
+    }
+    return copyCommonFields(result);
+  }
+  return copyCommonFields({ ...spec });
+}
+
 /**
  * 应用模板到项目目录（完整应用，写入实际文件）
  * @param {string} targetDir - 目标项目目录
@@ -745,10 +769,12 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
 
   const hasMcp = template.mcpServers?.length > 0;
   const writesGenericMcpConfig = hasMcp && aiConfigTypes.some(type => type !== 'pi');
+  const writesOmpMcpConfig = hasMcp && aiConfigTypes.includes('pi');
   const hasPluginsForOpenCode = aiConfigTypes.includes('opencode') && template.plugins?.length > 0;
   const hasPluginsForPi = aiConfigTypes.includes('pi') && template.plugins?.length > 0;
   if (hasMcp || hasPluginsForOpenCode || hasPluginsForPi) {
     const mcpConfig = { mcpServers: {} };
+    const ompMcpConfig = { mcpServers: {} };
     const opencodeConfig = { mcp: {}, plugin: [] };
     const allServers = mcpService.getAllServers();
     const presets = mcpService.getPresets();
@@ -767,11 +793,12 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
         if (writesGenericMcpConfig) {
           mcpConfig.mcpServers[serverId] = serverSpec;
         }
+        if (writesOmpMcpConfig) {
+          ompMcpConfig.mcpServers[serverId] = convertToOmpMcpSpec(serverSpec);
+        }
         opencodeConfig.mcp[serverId] = convertToOpenCodeMcpSpec(serverSpec);
-        if (writesGenericMcpConfig) {
+        if (writesGenericMcpConfig || writesOmpMcpConfig) {
           results.mcpServers.applied++;
-        } else if (aiConfigTypes.includes('pi')) {
-          pushSkipped(results.skipped, 'mcpServer', serverId, 'OMP MCP 由 packages/extensions 提供，未写入项目 MCP 配置');
         }
       } else {
         pushSkipped(results.skipped, 'mcpServer', serverId, '未找到对应 MCP 服务配置，已跳过');
@@ -781,6 +808,11 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     if (writesGenericMcpConfig && Object.keys(mcpConfig.mcpServers).length > 0) {
       const mcpPath = path.join(targetDir, '.mcp.json');
       writeJsonFile(mcpPath, mcpConfig);
+    }
+
+    if (writesOmpMcpConfig && Object.keys(ompMcpConfig.mcpServers).length > 0) {
+      const ompMcpPath = path.join(targetDir, '.omp', 'mcp.json');
+      writeJsonFile(ompMcpPath, ompMcpConfig);
     }
 
     if (hasPluginsForOpenCode) {
@@ -938,6 +970,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
   }
 
   const writesGenericMcpConfig = template.mcpServers?.length > 0 && aiConfigTypes.some(type => type !== 'pi');
+  const writesOmpMcpConfig = template.mcpServers?.length > 0 && aiConfigTypes.includes('pi');
   const allServers = mcpService.getAllServers();
   const presets = mcpService.getPresets();
   let resolvableMcpCount = 0;
@@ -950,22 +983,30 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       }
     }
     if (serverSpec) {
-      if (writesGenericMcpConfig) {
+      if (writesGenericMcpConfig || writesOmpMcpConfig) {
         resolvableMcpCount++;
-      } else if (aiConfigTypes.includes('pi')) {
-        pushSkipped(preview.skipped, 'mcpServer', serverId, 'OMP MCP 由 packages/extensions 提供，预览不写入项目 MCP 配置');
       }
     } else {
       pushSkipped(preview.skipped, 'mcpServer', serverId, '未找到对应 MCP 服务配置，预览已跳过');
     }
   }
 
-  if (resolvableMcpCount > 0) {
+  if (writesGenericMcpConfig && resolvableMcpCount > 0) {
     const mcpPath = path.join(targetDir, '.mcp.json');
     if (fs.existsSync(mcpPath)) {
       preview.willOverwrite.push('.mcp.json');
     } else {
       preview.willCreate.push('.mcp.json');
+    }
+    preview.summary.mcpServers = resolvableMcpCount;
+  }
+
+  if (writesOmpMcpConfig && resolvableMcpCount > 0) {
+    const ompMcpPath = path.join(targetDir, '.omp/mcp.json');
+    if (fs.existsSync(ompMcpPath)) {
+      preview.willOverwrite.push('.omp/mcp.json');
+    } else {
+      preview.willCreate.push('.omp/mcp.json');
     }
     preview.summary.mcpServers = resolvableMcpCount;
   }

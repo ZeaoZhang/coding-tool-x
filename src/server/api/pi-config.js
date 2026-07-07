@@ -61,7 +61,7 @@ function buildCapabilities() {
     mapped: {
       command: 'commands/prompts',
       plugin: 'packages/extensions',
-      mcp: 'OMP discovery capability',
+      mcp: 'mcp.json',
       agent: 'OMP discovery capability'
     },
     writable: {
@@ -74,7 +74,7 @@ function buildCapabilities() {
       promptTemplates: true,
       packages: true,
       extensions: true,
-      mcp: false,
+      mcp: true,
       agent: false
     },
     notes: [

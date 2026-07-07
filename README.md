@@ -45,10 +45,10 @@
 
 - 集中存储在 `~/.cc-tool`
 - 保留并同步各平台原生配置目录，而不是替代原生用法
-- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP commands 通过 Commands 管理
+- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP 同步为原生 prompt templates
 - 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
 - OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
-- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP MCP 能力由 extensions / packages 提供，不写入虚构的 OMP MCP 配置文件
+- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP 写入原生 `mcp.json`
 - 支持 OAuth 凭证池管理与回写原生配置
 - 支持 ZIP / JSON 配置导入导出
 
@@ -73,12 +73,12 @@
 | --- | --- | --- | --- | --- | --- |
 | 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
 | 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持 |
-| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 通过 Commands 管理 slash commands |
+| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 写入 OMP prompt templates |
 | Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
 | Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
 | Agents 管理 | 支持 | 用户级 | 支持 | 支持 | 不提供直接原生管理 |
 | Plugins 管理 | 支持 | 支持 | - | 支持 | 映射为 packages / extensions |
-| MCP 管理 | 支持 | 支持 | 支持 | 支持 | 由 extensions / packages 提供能力 |
+| MCP 管理 | 支持 | 支持 | 支持 | 支持 | 写入 OMP `mcp.json` |
 | OAuth 凭证托管 | 支持 | 支持 | 支持 | 支持 | - |
 | 通知托管 | 支持 | 支持 | 支持 | 支持 | 支持 |
 | 请求 / 会话统计 | 支持 | 支持 | 支持 | 支持 | 支持 |
@@ -87,7 +87,7 @@
 
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取依赖本机 `sqlite3`
-- OMP 的原生资源轴是 skills、commands、packages / extensions；MCP 和 Agents 不作为独立可写配置文件管理
+- OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
 
 ## 安装
 

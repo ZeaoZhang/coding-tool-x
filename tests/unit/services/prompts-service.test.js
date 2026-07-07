@@ -18,7 +18,11 @@ function stubModules() {
           settings: path.join(globalClaudeDir, 'settings.json')
         },
         opencode: { config: path.join(testDir, 'opencode') },
-        gemini: { env: path.join(testDir, 'gemini', '.env') }
+        gemini: { env: path.join(testDir, 'gemini', '.env') },
+        pi: {
+          dir: path.join(testDir, 'omp-agent'),
+          prompts: path.join(testDir, 'omp-agent', 'prompts')
+        }
       },
       PATHS: {
         prompts: path.join(testDir, 'store', 'prompts.json')
@@ -85,9 +89,9 @@ describe('prompts-service initialization and preset management', () => {
       claude: true,
       codex: true,
       gemini: true,
-      opencode: false
+      opencode: false,
+      pi: true
     });
-    expect(saved.apps.pi).toBeUndefined();
     expect(() => promptsService.deletePreset('tpl-code-review')).toThrow(/内置模板/);
     expect(promptsService.deletePreset('custom')).toBe(true);
   });
@@ -100,16 +104,19 @@ describe('prompts-service platform sync', () => {
       id: 'team-preset',
       name: 'Team Preset',
       content: 'team instructions',
-      apps: { claude: true, codex: false, gemini: true, opencode: true }
+      apps: { claude: true, codex: false, gemini: true, opencode: true, pi: true }
     });
 
     const preset = await promptsService.activatePreset('team-preset');
+    const ompTemplatePath = path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'team-preset.md');
 
     expect(preset.id).toBe('team-preset');
     expect(fs.readFileSync(path.join(globalClaudeDir, 'CLAUDE.md'), 'utf8')).toBe('team instructions');
     expect(fs.existsSync(path.join(testDir, '.codex', 'AGENTS.md'))).toBe(false);
     expect(fs.readFileSync(path.join(testDir, '.gemini', 'GEMINI.md'), 'utf8')).toBe('team instructions');
     expect(fs.readFileSync(path.join(testDir, 'opencode', 'AGENTS.md'), 'utf8')).toBe('team instructions');
+    expect(fs.readFileSync(ompTemplatePath, 'utf8')).toContain('team instructions');
+    expect(fs.readFileSync(ompTemplatePath, 'utf8')).toContain('description: "Team Preset"');
   });
 
   test('deactivatePrompt clears active preset and removes prompt files', async () => {
@@ -118,16 +125,44 @@ describe('prompts-service platform sync', () => {
       id: 'team-preset',
       name: 'Team Preset',
       content: 'team instructions',
-      apps: { claude: true }
+      apps: { claude: true, pi: true }
     });
     await promptsService.activatePreset('team-preset');
+    const userTemplate = path.join(testDir, 'omp-agent', 'prompts', 'user-owned.md');
+    fs.mkdirSync(path.dirname(userTemplate), { recursive: true });
+    fs.writeFileSync(userTemplate, 'keep me', 'utf8');
 
     const result = await promptsService.deactivatePrompt();
     const active = promptsService.getActivePreset();
 
     expect(result.claude).toBe(true);
+    expect(result.pi).toBe(true);
     expect(active.activePresetId).toBeNull();
     expect(fs.existsSync(path.join(globalClaudeDir, 'CLAUDE.md'))).toBe(false);
+    expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'team-preset.md'))).toBe(false);
+    expect(fs.existsSync(userTemplate)).toBe(true);
+  });
+
+  test('activating a different OMP preset removes the previous managed template', async () => {
+    const promptsService = require('../../../src/server/services/prompts-service');
+    promptsService.savePreset({
+      id: 'first',
+      name: 'First',
+      content: 'first instructions',
+      apps: { pi: true, claude: false, codex: false, gemini: false, opencode: false }
+    });
+    promptsService.savePreset({
+      id: 'second',
+      name: 'Second',
+      content: 'second instructions',
+      apps: { pi: true, claude: false, codex: false, gemini: false, opencode: false }
+    });
+
+    await promptsService.activatePreset('first');
+    await promptsService.activatePreset('second');
+
+    expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'first.md'))).toBe(false);
+    expect(fs.readFileSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'second.md'), 'utf8')).toContain('second instructions');
   });
 });
 
@@ -145,6 +180,8 @@ describe('prompts-service import and stats', () => {
     expect(imported.name).toBe('Imported Codex');
     expect(imported.apps.codex).toBe(true);
     expect(platformStatus.codex.exists).toBe(true);
+    expect(platformStatus.pi.path).toBe(path.join(testDir, 'omp-agent', 'prompts'));
+    expect(Array.isArray(platformStatus.pi.templates)).toBe(true);
     expect(stats.total).toBeGreaterThanOrEqual(4);
   });
 

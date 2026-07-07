@@ -73,6 +73,11 @@
               <span class="app-name">OpenCode</span>
               <span class="app-path">~/.config/opencode/AGENTS.md</span>
             </label>
+            <label class="app-toggle">
+              <n-switch v-model:value="form.apps.pi" />
+              <span class="app-name">OMP</span>
+              <span class="app-path">~/.omp/agent/prompts/coding-tool-x/*.md</span>
+            </label>
           </div>
         </div>
 
@@ -152,7 +157,8 @@ const form = reactive({
     claude: true,
     codex: true,
     gemini: true,
-    opencode: true
+    opencode: true,
+    pi: false
   }
 })
 
@@ -167,14 +173,15 @@ function initForm() {
       claude: props.editingPreset.apps?.claude ?? true,
       codex: props.editingPreset.apps?.codex ?? true,
       gemini: props.editingPreset.apps?.gemini ?? true,
-      opencode: props.editingPreset.apps?.opencode ?? true
+      opencode: props.editingPreset.apps?.opencode ?? true,
+      pi: props.editingPreset.apps?.pi ?? false
     }
   } else {
     form.id = ''
     form.name = ''
     form.description = ''
     form.content = ''
-    form.apps = { claude: true, codex: true, gemini: true, opencode: true }
+    form.apps = { claude: true, codex: true, gemini: true, opencode: true, pi: false }
   }
   idError.value = ''
 }

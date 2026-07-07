@@ -106,6 +106,7 @@ function getPiPaths(env = process.env, options = {}) {
     models: path.join(agentDir, 'models.yml'),
     modelsYml: path.join(agentDir, 'models.yml'),
     modelsJsonLegacy: path.join(agentDir, 'models.json'),
+    mcp: path.join(agentDir, 'mcp.json'),
     sessions: path.join(agentDir, 'sessions'),
     skills: path.join(agentDir, 'skills'),
     prompts: path.join(agentDir, 'prompts'),

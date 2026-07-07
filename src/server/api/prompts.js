@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const promptsService = require('../services/prompts-service');
+const PROMPT_FILE_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 
 /**
  * GET /api/prompts/presets
@@ -203,7 +204,7 @@ router.get('/platform/:platform', (req, res) => {
   try {
     const { platform } = req.params;
 
-    if (!['claude', 'codex', 'gemini', 'opencode'].includes(platform)) {
+    if (!PROMPT_FILE_PLATFORMS.includes(platform)) {
       return res.status(400).json({
         success: false,
         error: `无效的平台: ${platform}`
@@ -234,7 +235,7 @@ router.post('/import/:platform', (req, res) => {
     const { platform } = req.params;
     const { name } = req.body;
 
-    if (!['claude', 'codex', 'gemini', 'opencode'].includes(platform)) {
+    if (!PROMPT_FILE_PLATFORMS.includes(platform)) {
       return res.status(400).json({
         success: false,
         error: `无效的平台: ${platform}`
