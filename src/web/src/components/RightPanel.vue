@@ -16,7 +16,7 @@
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <!-- Skills: Claude / Codex / Gemini / OpenCode / Pi 支持 -->
+        <!-- Skills: Claude / Codex / Gemini / OpenCode / OMP 支持 -->
         <n-tooltip trigger="hover" v-if="skillsChannel">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
@@ -227,7 +227,7 @@ const channelTitles = {
   codex: 'Codex 渠道管理',
   gemini: 'Gemini 渠道管理',
   opencode: 'OpenCode 渠道管理',
-  pi: 'Pi Agent 渠道管理'
+  pi: 'OMP 渠道管理'
 }
 
 const channelTitle = computed(() => channelTitles[currentChannel.value] || 'Claude 渠道管理')

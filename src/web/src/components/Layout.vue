@@ -117,7 +117,7 @@
           <n-icon :size="18" class="nav-icon">
             <PlanetOutline />
           </n-icon>
-          <span class="nav-label">Pi</span>
+          <span class="nav-label">OMP</span>
         </div>
         <div
           class="nav-tab"

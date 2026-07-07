@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const yaml = require('js-yaml');
 
 let testDir;
 let configDir;
@@ -23,6 +24,10 @@ function writeFile(filePath, content) {
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function readYaml(filePath) {
+  return yaml.load(fs.readFileSync(filePath, 'utf8'));
 }
 
 beforeEach(() => {
@@ -527,7 +532,7 @@ describe('config-templates-service apply and preview', () => {
         },
         commands: {
           applied: 1,
-          files: ['.pi/prompts/pi-tools/inspect.md']
+          files: ['.omp/commands/pi-tools/inspect.md']
         },
         plugins: {
           applied: 1,
@@ -535,18 +540,18 @@ describe('config-templates-service apply and preview', () => {
         },
         mcpServers: { applied: 0 },
         skipped: [
-          { type: 'aiConfig', item: 'Pi prompt templates', reason: 'Pi 项目级提示模板通过 .pi/prompts 写入，未生成单独 AI 配置文件' },
-          { type: 'agent', item: 'reviewer', reason: 'Pi agents 需通过扩展或包提供，项目目录应用时已跳过' },
-          { type: 'mcpServer', item: 'local-server', reason: 'Pi MCP 由 packages/extensions 提供，未写入项目 MCP 配置' }
+          { type: 'aiConfig', item: 'OMP command templates', reason: 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件' },
+          { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过' },
+          { type: 'mcpServer', item: 'local-server', reason: 'OMP MCP 由 packages/extensions 提供，未写入项目 MCP 配置' }
         ]
       },
       template: 'Pi Starter'
     });
 
-    expect(fs.readFileSync(path.join(targetDir, '.pi', 'prompts', 'pi-tools', 'inspect.md'), 'utf8')).toContain('Inspect this with Pi');
-    expect(readJson(path.join(targetDir, '.pi', 'settings.json')).packages).toEqual(['plugin-a']);
+    expect(fs.readFileSync(path.join(targetDir, '.omp', 'commands', 'pi-tools', 'inspect.md'), 'utf8')).toContain('Inspect this with Pi');
+    expect(readYaml(path.join(targetDir, '.omp', 'config.yml')).packages).toEqual(['plugin-a']);
     expect(fs.existsSync(path.join(targetDir, '.mcp.json'))).toBe(false);
-    expect(fs.existsSync(path.join(targetDir, '.pi', 'agents'))).toBe(false);
+    expect(fs.existsSync(path.join(targetDir, '.omp', 'agents'))).toBe(false);
     expect(readJson(path.join(targetDir, '.ctx-config.json'))).toEqual(expect.objectContaining({
       templateId: template.id,
       aiConfigTypes: ['pi'],
@@ -567,18 +572,18 @@ describe('config-templates-service apply and preview', () => {
     });
 
     const targetDir = path.join(testDir, 'pi-preview-workspace');
-    writeFile(path.join(targetDir, '.pi', 'prompts', 'sync.md'), 'old prompt');
+    writeFile(path.join(targetDir, '.omp', 'commands', 'sync.md'), 'old prompt');
 
     const preview = templatesService.previewTemplateApplication(targetDir, template.id, {
       aiConfigTypes: ['pi']
     });
 
     expect(preview).toEqual({
-      willCreate: ['.pi/settings.json'],
-      willOverwrite: ['.pi/prompts/sync.md'],
+      willCreate: ['.omp/config.yml'],
+      willOverwrite: ['.omp/commands/sync.md'],
       skipped: [
-        { type: 'aiConfig', item: 'Pi prompt templates', reason: 'Pi 项目级提示模板通过 .pi/prompts 写入，预览不生成单独 AI 配置文件' },
-        { type: 'agent', item: 'reviewer', reason: 'Pi agents 需通过扩展或包提供，项目目录预览时已跳过' },
+        { type: 'aiConfig', item: 'OMP command templates', reason: 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件' },
+        { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录预览时已跳过' },
         { type: 'mcpServer', item: 'missing-server', reason: '未找到对应 MCP 服务配置，预览已跳过' }
       ],
       summary: {

@@ -59,7 +59,7 @@ module.exports = () => {
   router.get('/', (req, res) => {
     try {
       if (!isPiInstalled()) {
-        return res.json({ channels: [], installed: false, error: 'Pi CLI not installed' });
+        return res.json({ channels: [], installed: false, error: 'OMP CLI not installed' });
       }
       const data = getChannels();
       const channels = (data.channels || []).map(ch => ({
@@ -68,7 +68,7 @@ module.exports = () => {
       }));
       res.json({ channels, installed: true });
     } catch (err) {
-      console.error('[Pi Channels API] Failed to get channels:', err);
+      console.error('[OMP Channels API] Failed to get channels:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -76,7 +76,7 @@ module.exports = () => {
   router.get('/enabled', (req, res) => {
     try {
       if (!isPiInstalled()) {
-        return res.json({ channels: [], installed: false, error: 'Pi CLI not installed' });
+        return res.json({ channels: [], installed: false, error: 'OMP CLI not installed' });
       }
       const data = getChannels();
       const channels = (data.channels || [])
@@ -84,7 +84,7 @@ module.exports = () => {
         .map(ch => ({ ...ch, health: getChannelHealthStatus(ch.id, 'pi') }));
       res.json({ channels, installed: true });
     } catch (err) {
-      console.error('[Pi Channels API] Failed to get enabled channels:', err);
+      console.error('[OMP Channels API] Failed to get enabled channels:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -108,7 +108,7 @@ module.exports = () => {
         errorHint: models.length > 0 ? null : (listResult.errorHint || '请手动填写模型名称')
       });
     } catch (error) {
-      console.error('[Pi Channels API] Error probing models:', error);
+      console.error('[OMP Channels API] Error probing models:', error);
       res.status(500).json({ error: 'Failed to probe models' });
     }
   });
@@ -153,7 +153,7 @@ module.exports = () => {
         errorHint
       });
     } catch (error) {
-      console.error('[Pi Channels API] Error fetching models:', error);
+      console.error('[OMP Channels API] Error fetching models:', error);
       res.status(500).json({ error: 'Failed to fetch model list', channelId: req.params.channelId });
     }
   });
@@ -206,7 +206,7 @@ module.exports = () => {
       res.json(channel);
       broadcastSchedulerState('pi', getSchedulerState('pi'));
     } catch (err) {
-      console.error('[Pi Channels API] Failed to create channel:', err);
+      console.error('[OMP Channels API] Failed to create channel:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -217,7 +217,7 @@ module.exports = () => {
       res.json(channel);
       broadcastSchedulerState('pi', getSchedulerState('pi'));
     } catch (err) {
-      console.error('[Pi Channels API] Failed to update channel:', err);
+      console.error('[OMP Channels API] Failed to update channel:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -228,7 +228,7 @@ module.exports = () => {
       res.json(result);
       broadcastSchedulerState('pi', getSchedulerState('pi'));
     } catch (err) {
-      console.error('[Pi Channels API] Failed to delete channel:', err);
+      console.error('[OMP Channels API] Failed to delete channel:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -243,7 +243,7 @@ module.exports = () => {
       res.json({ success: true });
       broadcastSchedulerState('pi', getSchedulerState('pi'));
     } catch (err) {
-      console.error('[Pi Channels API] Failed to save order:', err);
+      console.error('[OMP Channels API] Failed to save order:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -254,7 +254,7 @@ module.exports = () => {
       res.json({ success: true });
       broadcastSchedulerState('pi', getSchedulerState('pi'));
     } catch (err) {
-      console.error('[Pi Channels API] Failed to reset health:', err);
+      console.error('[OMP Channels API] Failed to reset health:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -268,7 +268,7 @@ module.exports = () => {
       const result = await testChannelSpeed(channel, req.body?.timeout || 20000, resolveGatewaySourceType(channel));
       res.json(result);
     } catch (error) {
-      console.error('[Pi Channels API] Speed test failed:', error);
+      console.error('[OMP Channels API] Speed test failed:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -306,7 +306,7 @@ module.exports = () => {
         }
       });
     } catch (error) {
-      console.error('[Pi Channels API] Speed test all failed:', error);
+      console.error('[OMP Channels API] Speed test all failed:', error);
       res.status(500).json({ error: error.message });
     }
   });

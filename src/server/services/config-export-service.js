@@ -8,6 +8,7 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
+const yaml = require('js-yaml');
 const configTemplatesService = require('./config-templates-service');
 const channelsService = require('./channels');
 const codexChannelsService = require('./codex-channels');
@@ -62,7 +63,7 @@ const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'pl
 const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
 const OPENCODE_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugins');
 const OPENCODE_LEGACY_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugin');
-const PI_SETTINGS_PATH = NATIVE_PATHS.pi?.settings || path.join(PATHS.base, 'pi-settings.json');
+const PI_SETTINGS_PATH = NATIVE_PATHS.pi?.settings || path.join(PATHS.base, 'pi-config.yml');
 const PI_EXTENSIONS_DIR = NATIVE_PATHS.pi?.extensions || path.join(PATHS.base, 'pi-extensions');
 
 function normalizePiResourceType(value = '') {
@@ -151,9 +152,10 @@ function getNativeConfigSpecs() {
         : {})
     },
     pi: {
-      settings: { path: NATIVE_PATHS.pi.settings, format: 'json' },
+      settings: { path: NATIVE_PATHS.pi.settings, format: 'yaml' },
       auth: { path: NATIVE_PATHS.pi.auth, format: 'json', mode: 0o600 },
-      models: { path: NATIVE_PATHS.pi.models, format: 'json' },
+      models: { path: NATIVE_PATHS.pi.models, format: 'yaml' },
+      commands: { path: NATIVE_PATHS.pi.commands || path.join(piDir, 'commands'), format: 'directory' },
       prompts: { path: NATIVE_PATHS.pi.prompts, format: 'directory' },
       skills: { path: NATIVE_PATHS.pi.skills, format: 'directory' },
       extensions: { path: NATIVE_PATHS.pi.extensions, format: 'directory' },
@@ -176,6 +178,17 @@ function readJsonFileSafe(filePath) {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
     return JSON.parse(content);
+  } catch (err) {
+    return null;
+  }
+}
+
+function readYamlFileSafe(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const parsed = yaml.load(content);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
   } catch (err) {
     return null;
   }
@@ -207,6 +220,22 @@ function readNativeConfigSnapshot(spec) {
           format: 'json',
           fileName: path.basename(spec.path),
           content: JSON.parse(rawContent)
+        };
+      } catch (err) {
+        return {
+          format: 'text',
+          fileName: path.basename(spec.path),
+          content: rawContent
+        };
+      }
+    }
+
+    if (spec.format === 'yaml') {
+      try {
+        return {
+          format: 'yaml',
+          fileName: path.basename(spec.path),
+          content: yaml.load(rawContent) || {}
         };
       } catch (err) {
         return {
@@ -299,6 +328,18 @@ function writeJsonFileAbsolute(filePath, data, overwrite, options = {}) {
   return 'success';
 }
 
+function writeYamlFileAbsolute(filePath, data, overwrite, options = {}) {
+  if (data === undefined) {
+    return 'failed';
+  }
+  return writeTextFileAbsolute(
+    filePath,
+    yaml.dump(data || {}, { lineWidth: 120, noRefs: true, sortKeys: false }),
+    overwrite,
+    options
+  );
+}
+
 function writeTextFileAbsolute(filePath, content, overwrite, options = {}) {
   if (content === undefined || content === null) {
     return 'failed';
@@ -327,6 +368,14 @@ function writeNativeConfigAbsolute(spec, entry, overwrite) {
   const format = entry.format || spec.format || 'text';
   if (format === 'json' && entry.content && typeof entry.content === 'object') {
     return writeJsonFileAbsolute(spec.path, entry.content, overwrite, { mode: spec.mode });
+  }
+  if (format === 'yaml' && entry.content && typeof entry.content === 'object') {
+    return writeTextFileAbsolute(
+      spec.path,
+      yaml.dump(entry.content, { lineWidth: 120, noRefs: true, sortKeys: false }),
+      overwrite,
+      { mode: spec.mode }
+    );
   }
 
   return writeTextFileAbsolute(spec.path, String(entry.content), overwrite, { mode: spec.mode });
@@ -392,7 +441,7 @@ function buildExportReadme(exportData) {
 - 插件 (Plugins)
 - MCP 服务器配置
 - OAuth 凭证管理池
-- 各平台原生配置（Claude / Codex / Gemini / OpenCode / Pi）
+- 各平台原生配置（Claude / Codex / Gemini / OpenCode / OMP）
 - UI 配置（主题、面板显示、排序等）
 - Prompts 预设
 - 安全配置
@@ -1469,10 +1518,13 @@ function writeOpenCodePluginConfig(packages = [], overwrite = true) {
 function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
   const nativeSettings = snapshot.control?.nativeSettings;
   if (nativeSettings?.content !== undefined) {
-    return writeNativeConfigAbsolute({ path: PI_SETTINGS_PATH, format: 'json' }, nativeSettings, overwrite);
+    return writeNativeConfigAbsolute({ path: PI_SETTINGS_PATH, format: 'yaml' }, {
+      ...nativeSettings,
+      format: 'yaml'
+    }, overwrite);
   }
 
-  const settings = readJsonFileSafe(PI_SETTINGS_PATH) || {};
+  const settings = readYamlFileSafe(PI_SETTINGS_PATH) || {};
   if (fs.existsSync(PI_SETTINGS_PATH) && !overwrite) {
     return 'skipped';
   }
@@ -1521,7 +1573,7 @@ function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
     return 'skipped';
   }
 
-  return writeJsonFileAbsolute(PI_SETTINGS_PATH, {
+  return writeYamlFileAbsolute(PI_SETTINGS_PATH, {
     ...settings,
     packages: mergePackageEntries(existingPackages, packages),
     disabledPackages: mergePackageEntries(existingDisabled, disabledPackages)

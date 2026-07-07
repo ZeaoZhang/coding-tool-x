@@ -6,7 +6,7 @@
  * - Codex CLI: ~/.codex/skills/, ~/.codex/prompts/
  * - Gemini CLI: ~/.gemini/{skills,commands,agents}/
  * - OpenCode CLI: ~/.config/opencode/{skills,commands,agents,plugins}/
- * - Pi Agent: ~/.pi/agent/{skills,prompts,extensions}/
+ * - OMP: ~/.omp/agent/{skills,commands,prompts,extensions}/
  *
  * Config types:
  * - skills: directory-based (each skill is a dir with SKILL.md)
@@ -63,7 +63,7 @@ const CONFIG_TYPES = {
     opencodeTarget: 'commands',
     opencodeLegacyTarget: 'command',
     opencodeSupported: true,
-    piTarget: 'prompts',
+    piTarget: 'commands',
     piSupported: true
   },
   agents: {
@@ -585,8 +585,8 @@ class ConfigSyncManager {
   }
 
   /**
-   * Sync a config item to Pi Agent.
-   * Pi treats commands as prompt templates and plugins as extensions/packages.
+   * Sync a config item to OMP.
+   * OMP treats commands as slash-command files and plugins as extensions/packages.
    */
   syncToPi(type, name) {
     const config = this.configTypes[type];
@@ -595,8 +595,8 @@ class ConfigSyncManager {
     }
 
     if (!config.piSupported) {
-      console.log(`[ConfigSyncManager] ${type} not supported natively by Pi, skipping`);
-      return { success: true, skipped: true, reason: 'Not supported natively by Pi' };
+      console.log(`[ConfigSyncManager] ${type} not supported natively by OMP, skipping`);
+      return { success: true, skipped: true, reason: 'Not supported natively by OMP' };
     }
 
     const safeName = this._normalizeSafeRelativeName(name);
@@ -615,16 +615,16 @@ class ConfigSyncManager {
       if (config.isDirectory) {
         this._ensureDir(path.dirname(targetPath));
         this._copyDirRecursive(sourcePath, targetPath);
-        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Pi (directory)`);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to OMP (directory)`);
       } else {
         this._ensureDir(path.dirname(targetPath));
         this._copyFile(sourcePath, targetPath);
-        console.log(`[ConfigSyncManager] Synced ${type}/${name} to Pi (file)`);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to OMP (file)`);
       }
 
       return { success: true, target: targetPath };
     } catch (err) {
-      console.error('[ConfigSyncManager] Sync to Pi failed:', err.message);
+      console.error('[ConfigSyncManager] Sync to OMP failed:', err.message);
       return { success: false, error: err.message };
     }
   }
@@ -641,7 +641,7 @@ class ConfigSyncManager {
     }
 
     if (!config.piSupported) {
-      return { success: true, skipped: true, reason: 'Not supported natively by Pi' };
+      return { success: true, skipped: true, reason: 'Not supported natively by OMP' };
     }
 
     const targetPath = path.join(this.piDir, config.piTarget, safeName);
@@ -656,10 +656,10 @@ class ConfigSyncManager {
         fs.unlinkSync(targetPath);
         this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.piDir, config.piTarget));
       }
-      console.log(`[ConfigSyncManager] Removed ${type}/${name} from Pi`);
+      console.log(`[ConfigSyncManager] Removed ${type}/${name} from OMP`);
       return { success: true };
     } catch (err) {
-      console.error('[ConfigSyncManager] Remove from Pi failed:', err.message);
+      console.error('[ConfigSyncManager] Remove from OMP failed:', err.message);
       return { success: false, error: err.message };
     }
   }

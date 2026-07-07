@@ -110,7 +110,7 @@
                   <div class="setting-label">
                     <n-text strong>首页 CLI 显示</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      固定四个槽位，默认是 Claude Code / Codex / Gemini / OpenCode；Pi 和自定义 CLI 可替换任一列
+                      固定四个槽位，默认是 Claude Code / Codex / Gemini / OpenCode；OMP 和自定义 CLI 可替换任一列
                     </n-text>
                   </div>
 
@@ -690,7 +690,7 @@
                     </div>
 
                     <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Pi Agent 托管端口</n-text>
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">OMP 托管端口</n-text>
                       <n-input-number
                         v-model:value="ports.piProxy"
                         :min="1024"

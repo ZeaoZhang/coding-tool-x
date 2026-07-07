@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 const { PATHS } = require('../../config/paths');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
@@ -24,7 +25,7 @@ const AI_CONFIG_MAP = {
   codex: { fileName: 'AGENTS.md', name: 'Codex' },
   gemini: { fileName: 'GEMINI.md', name: 'Gemini' },
   opencode: { fileName: '.opencode/AGENTS.md', name: 'OpenCode' },
-  pi: { fileName: null, name: 'Pi prompt templates' }
+  pi: { fileName: null, name: 'OMP command templates' }
 };
 
 const CLI_DEFAULT_AI_TYPE = {
@@ -527,18 +528,28 @@ function writeJsonFile(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
+function writeYamlFile(filePath, data) {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, yaml.dump(data || {}, {
+    lineWidth: 120,
+    noRefs: true,
+    sortKeys: false
+  }), 'utf-8');
+}
+
 function mergePiProjectPackages(targetDir, plugins = []) {
   const packages = plugins.map(plugin => plugin.name).filter(Boolean);
   if (packages.length === 0) {
     return false;
   }
 
-  const piDir = path.join(targetDir, '.pi');
-  const settingsPath = path.join(piDir, 'settings.json');
+  const piDir = path.join(targetDir, '.omp');
+  const settingsPath = path.join(piDir, 'config.yml');
   let settings = {};
   if (fs.existsSync(settingsPath)) {
     try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      const parsed = yaml.load(fs.readFileSync(settingsPath, 'utf-8'));
+      settings = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
     } catch (err) {
       settings = {};
     }
@@ -546,7 +557,7 @@ function mergePiProjectPackages(targetDir, plugins = []) {
 
   const existingPackages = Array.isArray(settings.packages) ? settings.packages : [];
   settings.packages = Array.from(new Set([...existingPackages, ...packages]));
-  writeJsonFile(settingsPath, settings);
+  writeYamlFile(settingsPath, settings);
   return true;
 }
 
@@ -621,7 +632,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
     const configInfo = AI_CONFIG_MAP[aiConfigType];
     if (!configInfo?.fileName) {
-      pushSkipped(results.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'Pi 项目级提示模板通过 .pi/prompts 写入，未生成单独 AI 配置文件');
+      pushSkipped(results.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件');
     } else if (aiConfig?.enabled && aiConfig?.content) {
       const configPath = path.join(targetDir, configInfo.fileName);
       ensureDir(path.dirname(configPath));
@@ -663,7 +674,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
         pushSkipped(results.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录应用时已跳过');
       }
       if (aiConfigTypes.includes('pi')) {
-        pushSkipped(results.skipped, 'agent', fileName, 'Pi agents 需通过扩展或包提供，项目目录应用时已跳过');
+        pushSkipped(results.skipped, 'agent', fileName, 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过');
       }
       if (written) {
         results.agents.applied++;
@@ -686,7 +697,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
       commandTargets.push({ baseDir: path.join(targetDir, '.gemini', 'commands'), prefix: '.gemini/commands', format: 'gemini' });
     }
     if (aiConfigTypes.includes('pi')) {
-      commandTargets.push({ baseDir: path.join(targetDir, '.pi', 'prompts'), prefix: '.pi/prompts', format: 'pi' });
+      commandTargets.push({ baseDir: path.join(targetDir, '.omp', 'commands'), prefix: '.omp/commands', format: 'pi' });
     }
 
     for (const target of commandTargets) {
@@ -760,7 +771,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
         if (writesGenericMcpConfig) {
           results.mcpServers.applied++;
         } else if (aiConfigTypes.includes('pi')) {
-          pushSkipped(results.skipped, 'mcpServer', serverId, 'Pi MCP 由 packages/extensions 提供，未写入项目 MCP 配置');
+          pushSkipped(results.skipped, 'mcpServer', serverId, 'OMP MCP 由 packages/extensions 提供，未写入项目 MCP 配置');
         }
       } else {
         pushSkipped(results.skipped, 'mcpServer', serverId, '未找到对应 MCP 服务配置，已跳过');
@@ -845,7 +856,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
     const configInfo = AI_CONFIG_MAP[aiConfigType];
     if (!configInfo?.fileName) {
-      pushSkipped(preview.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'Pi 项目级提示模板通过 .pi/prompts 写入，预览不生成单独 AI 配置文件');
+      pushSkipped(preview.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件');
     } else if (aiConfig?.enabled && aiConfig?.content) {
       const configPath = path.join(targetDir, configInfo.fileName);
       if (fs.existsSync(configPath)) {
@@ -888,7 +899,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
         pushSkipped(preview.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录预览时已跳过');
       }
       if (aiConfigTypes.includes('pi')) {
-        pushSkipped(preview.skipped, 'agent', fileName, 'Pi agents 需通过扩展或包提供，项目目录预览时已跳过');
+        pushSkipped(preview.skipped, 'agent', fileName, 'OMP agents 需通过扩展或包提供，项目目录预览时已跳过');
       }
       if (applicable) {
         preview.summary.agents++;
@@ -902,7 +913,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     if (aiConfigTypes.includes('codex')) commandPrefixes.push('.codex/prompts');
     if (aiConfigTypes.includes('opencode')) commandPrefixes.push('.opencode/commands');
     if (aiConfigTypes.includes('gemini')) commandPrefixes.push('.gemini/commands');
-    if (aiConfigTypes.includes('pi')) commandPrefixes.push('.pi/prompts');
+    if (aiConfigTypes.includes('pi')) commandPrefixes.push('.omp/commands');
 
     for (const command of template.commands) {
       const commandName = resolveItemName(command.name, null, 'command');
@@ -942,7 +953,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       if (writesGenericMcpConfig) {
         resolvableMcpCount++;
       } else if (aiConfigTypes.includes('pi')) {
-        pushSkipped(preview.skipped, 'mcpServer', serverId, 'Pi MCP 由 packages/extensions 提供，预览不写入项目 MCP 配置');
+        pushSkipped(preview.skipped, 'mcpServer', serverId, 'OMP MCP 由 packages/extensions 提供，预览不写入项目 MCP 配置');
       }
     } else {
       pushSkipped(preview.skipped, 'mcpServer', serverId, '未找到对应 MCP 服务配置，预览已跳过');
@@ -972,11 +983,11 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     if (aiConfigTypes.includes('opencode') || aiConfigTypes.includes('pi')) {
       preview.summary.plugins = template.plugins.length;
       if (aiConfigTypes.includes('pi')) {
-        const piSettingsPath = path.join(targetDir, '.pi/settings.json');
+        const piSettingsPath = path.join(targetDir, '.omp/config.yml');
         if (fs.existsSync(piSettingsPath)) {
-          preview.willOverwrite.push('.pi/settings.json');
+          preview.willOverwrite.push('.omp/config.yml');
         } else {
-          preview.willCreate.push('.pi/settings.json');
+          preview.willCreate.push('.omp/config.yml');
         }
       }
     } else {

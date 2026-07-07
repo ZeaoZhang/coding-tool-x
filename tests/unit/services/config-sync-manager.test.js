@@ -60,10 +60,11 @@ beforeEach(() => {
           config: path.join(testDir, '.config', 'opencode')
         },
         pi: {
-          dir: path.join(testDir, '.pi', 'agent'),
-          skills: path.join(testDir, '.pi', 'agent', 'skills'),
-          prompts: path.join(testDir, '.pi', 'agent', 'prompts'),
-          extensions: path.join(testDir, '.pi', 'agent', 'extensions')
+          dir: path.join(testDir, '.omp', 'agent'),
+          skills: path.join(testDir, '.omp', 'agent', 'skills'),
+          commands: path.join(testDir, '.omp', 'agent', 'commands'),
+          prompts: path.join(testDir, '.omp', 'agent', 'prompts'),
+          extensions: path.join(testDir, '.omp', 'agent', 'extensions')
         }
       },
       HOME_DIR: testDir,
@@ -211,14 +212,14 @@ describe('ConfigSyncManager direct sync helpers', () => {
     const pluginResult = manager.syncToPi('plugins', 'demo-extension');
     const agentResult = manager.syncToPi('agents', 'reviewer.md');
 
-    const skillTarget = path.join(testDir, '.pi', 'agent', 'skills', 'review-skill');
-    const commandTarget = path.join(testDir, '.pi', 'agent', 'prompts', 'team', 'review.md');
-    const pluginTarget = path.join(testDir, '.pi', 'agent', 'extensions', 'demo-extension');
+    const skillTarget = path.join(testDir, '.omp', 'agent', 'skills', 'review-skill');
+    const commandTarget = path.join(testDir, '.omp', 'agent', 'commands', 'team', 'review.md');
+    const pluginTarget = path.join(testDir, '.omp', 'agent', 'extensions', 'demo-extension');
 
     expect(skillResult).toEqual({ success: true, target: skillTarget });
     expect(commandResult).toEqual({ success: true, target: commandTarget });
     expect(pluginResult).toEqual({ success: true, target: pluginTarget });
-    expect(agentResult).toEqual({ success: true, skipped: true, reason: 'Not supported natively by Pi' });
+    expect(agentResult).toEqual({ success: true, skipped: true, reason: 'Not supported natively by OMP' });
     expect(fs.readFileSync(path.join(skillTarget, 'SKILL.md'), 'utf8')).toBe('# Skill');
     expect(fs.readFileSync(commandTarget, 'utf8')).toBe('Review this');
     expect(fs.readFileSync(path.join(pluginTarget, 'index.ts'), 'utf8')).toBe('export default {}');

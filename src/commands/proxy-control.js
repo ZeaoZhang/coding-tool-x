@@ -22,6 +22,11 @@ const CHANNEL_CONFIG = {
     name: 'OpenCode',
     icon: '[*]',
     apiPath: '/api/opencode/proxy'
+  },
+  pi: {
+    name: 'OMP',
+    icon: '[*]',
+    apiPath: '/api/pi/proxy'
   }
 };
 
@@ -99,7 +104,7 @@ async function handleProxyStart(channel) {
   const channelInfo = CHANNEL_CONFIG[channel];
   if (!channelInfo) {
     console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode\n'));
+    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, pi\n'));
     process.exit(1);
   }
 

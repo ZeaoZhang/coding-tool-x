@@ -202,7 +202,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/opencode/proxy', require('./api/opencode-proxy'));
   app.use('/api/opencode/statistics', require('./api/opencode-statistics'));
 
-  // Pi Agent API Routes
+  // OMP API Routes
   app.use('/api/pi/projects', require('./api/pi-projects')(config));
   app.use('/api/pi/sessions', require('./api/pi-sessions')(config));
   app.use('/api/pi/channels', require('./api/pi-channels')(config));
@@ -450,20 +450,20 @@ function autoRestoreProxies() {
       });
   }
 
-  // 检查 Pi 受管 Provider Extension 状态文件
+  // 检查 OMP 受管 provider 配置状态文件
   const piActiveFile = PATHS.activeChannel.pi;
   if (fs.existsSync(piActiveFile)) {
-    console.log(chalk.cyan('\n[SYNC] 检测到 Pi 受管渠道状态文件，正在自动恢复...'));
+    console.log(chalk.cyan('\n[SYNC] 检测到 OMP 受管渠道状态文件，正在自动恢复...'));
     startPiProxyServer({ preserveStartTime: true })
       .then((result) => {
         if (result.success) {
-          console.log(chalk.green(`[OK] Pi 受管 Provider Extension 已自动启用，端口: ${result.port}`));
+          console.log(chalk.green(`[OK] OMP models.yml 受管 provider 已自动启用，端口: ${result.port}`));
         } else {
-          console.error(chalk.red(`[ERROR] Pi 受管 Provider Extension 恢复失败: ${result.error || 'Unknown error'}`));
+          console.error(chalk.red(`[ERROR] OMP models.yml 受管 provider 恢复失败: ${result.error || 'Unknown error'}`));
         }
       })
       .catch((err) => {
-        console.error(chalk.red(`[ERROR] Pi 受管 Provider Extension 恢复失败: ${err.message}`));
+        console.error(chalk.red(`[ERROR] OMP models.yml 受管 provider 恢复失败: ${err.message}`));
       });
   }
 }

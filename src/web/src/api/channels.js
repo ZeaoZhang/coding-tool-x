@@ -334,7 +334,7 @@ export async function stopOpenCodeProxy() {
 }
 
 // ============================================
-// Pi Agent Channel APIs
+// OMP Channel APIs
 // ============================================
 
 export async function getPiChannels() {

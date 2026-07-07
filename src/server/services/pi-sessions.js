@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PATHS, HOME_DIR } = require('../../config/paths');
-const { getPiPaths, isPiInstalled } = require('./pi-config');
+const { getPiCommand, getPiPaths, isPiInstalled, resolvePiRuntime } = require('./pi-config');
 
 const PROJECT_ORDER_FILE = PATHS.piProjectOrder;
 const SESSION_ORDER_FILE = PATHS.piSessionOrder;
@@ -242,7 +242,7 @@ function getAllSessions() {
       try {
         return parseSessionFile(filePath);
       } catch (error) {
-        console.warn('[Pi Sessions] Failed to parse session:', filePath, error.message);
+        console.warn('[OMP Sessions] Failed to parse session:', filePath, error.message);
         return null;
       }
     })
@@ -438,12 +438,15 @@ function buildLaunchCommand(sessionId, cwd, options = {}) {
   if (options.rpc) {
     args.push('--mode rpc');
   }
+  if (options.sessionDir) {
+    args.push('--session-dir', shellQuote(options.sessionDir));
+  }
   if (options.fork) {
     args.push('--fork', shellQuote(sessionId));
   } else {
     args.push('--session', shellQuote(sessionId));
   }
-  return `pi ${args.join(' ')}`;
+  return `${getPiCommand()} ${args.join(' ')}`;
 }
 
 function shellQuote(value) {
@@ -452,8 +455,10 @@ function shellQuote(value) {
 
 function isPiCliInstalled() {
   if (isPiInstalled()) return true;
+  const runtime = resolvePiRuntime();
+  if (runtime.installed) return true;
   try {
-    execFileSync('pi', ['--version'], { stdio: 'ignore', timeout: 3000 });
+    execFileSync(getPiCommand(), ['--version'], { stdio: 'ignore', timeout: 3000 });
     return true;
   } catch {
     return false;

@@ -1423,16 +1423,16 @@ const channelPanelFactories = {
   }),
   pi: () => ({
     type: 'pi',
-    displayName: 'Pi Agent',
+    displayName: 'OMP',
     schedulerSource: 'pi',
     storageKeys: {
       localCollapse: 'piChannelCollapse',
       collapseConfigKey: 'pi',
       orderConfigKey: 'pi'
     },
-    emptyDescription: '暂无 Pi 渠道',
+    emptyDescription: '暂无 OMP 渠道',
     showEmptyAction: true,
-    emptyActionText: '添加 Pi 渠道',
+    emptyActionText: '添加 OMP 渠道',
     modalWidth: 600,
     formLabelWidth: 95,
     showApplyButton: false,
@@ -1491,7 +1491,7 @@ const channelPanelFactories = {
             key: 'model',
             label: '默认模型',
             type: 'select',
-            placeholder: '选择或输入默认模型（留空则由 Pi 决定）',
+            placeholder: '选择或输入默认模型（留空则由 OMP 决定）',
             options: [],
             clearable: true
           },
@@ -1507,14 +1507,14 @@ const channelPanelFactories = {
             key: 'allowedModels',
             label: '可用模型',
             type: 'model-multi-select',
-            placeholder: '选择注册到 Pi Provider Extension 的模型',
-            description: '留空时使用检测到的所有模型；写入受管 extension 的 pi.registerProvider()'
+            placeholder: '选择注册到 OMP models.yml 的模型',
+            description: '留空时使用检测到的所有模型；写入受管 OMP models.yml provider'
           }
         ]
       },
       {
         title: '模型重定向',
-        description: '仅在 coding-tool-x 托管 Provider Extension 启用时用于模型选择提示',
+        description: '仅在 coding-tool-x 托管 OMP models.yml provider 启用时用于模型选择提示',
         collapsible: true,
         fields: [
           {

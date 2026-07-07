@@ -179,7 +179,7 @@ const AI_CONFIG_INFO = {
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
   opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' },
-  pi: { key: 'pi', name: 'Pi prompt templates', fileName: '.pi/prompts', color: '#0f9f9a' }
+  pi: { key: 'pi', name: 'OMP command templates', fileName: '.omp/commands', color: '#0f9f9a' }
 }
 
 // 获取可用的 AI 配置列表（优先展示当前 CLI 对应配置）

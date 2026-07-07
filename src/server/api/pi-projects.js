@@ -18,7 +18,7 @@ module.exports = () => {
         return res.json({
           projects: [],
           currentProject: null,
-          error: 'Pi CLI not installed or not found'
+          error: 'OMP CLI not installed or not found'
         });
       }
 
@@ -28,10 +28,10 @@ module.exports = () => {
         currentProject: projects[0] ? projects[0].name : null
       });
     } catch (err) {
-      console.error('[Pi API] Failed to get projects:', err);
+      console.error('[OMP API] Failed to get projects:', err);
       if (err.code === 'ENOENT') {
         return res.status(404).json({
-          error: 'Pi data directory not found',
+          error: 'OMP data directory not found',
           projects: []
         });
       }
@@ -42,7 +42,7 @@ module.exports = () => {
   router.post('/order', (req, res) => {
     try {
       if (!isPiInstalled()) {
-        return res.status(404).json({ error: 'Pi CLI not installed' });
+        return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { order } = req.body || {};
       if (!Array.isArray(order)) {
@@ -51,7 +51,7 @@ module.exports = () => {
       saveProjectOrder(order);
       res.json({ success: true });
     } catch (err) {
-      console.error('[Pi API] Failed to save project order:', err);
+      console.error('[OMP API] Failed to save project order:', err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -59,7 +59,7 @@ module.exports = () => {
   router.delete('/:projectName', (req, res) => {
     try {
       if (!isPiInstalled()) {
-        return res.status(404).json({ error: 'Pi CLI not installed' });
+        return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const result = deleteProject(req.params.projectName);
       res.json(result);
@@ -67,7 +67,7 @@ module.exports = () => {
       if (isNotFoundError(err)) {
         return res.status(404).json({ error: err.message });
       }
-      console.error('[Pi API] Failed to delete project:', err);
+      console.error('[OMP API] Failed to delete project:', err);
       res.status(500).json({ error: err.message });
     }
   });

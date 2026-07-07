@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 const { getPiPaths, ensurePiDir } = require('./pi-config');
 
-const MANAGED_HEADER = '// Managed by coding-tool-x. Do not edit while Pi provider channels are enabled.';
+const MANAGED_PROVIDER_PREFIX = 'ctx-';
 
 function normalizeProviderId(value = '') {
   return String(value || '')
@@ -14,9 +15,34 @@ function normalizeProviderId(value = '') {
     || 'coding-tool-x';
 }
 
+function getManagedProviderId(channel = {}) {
+  const baseId = normalizeProviderId(channel.providerKey || channel.provider || channel.name || channel.id);
+  return baseId.startsWith(MANAGED_PROVIDER_PREFIX) ? baseId : `${MANAGED_PROVIDER_PREFIX}${baseId}`;
+}
+
+function isManagedProviderId(providerId = '') {
+  return String(providerId || '').startsWith(MANAGED_PROVIDER_PREFIX);
+}
+
 function normalizeProviderApi(value = '') {
   const normalized = String(value || '').trim();
-  return normalized || 'openai-completions';
+  if (!normalized || normalized === 'openai' || normalized === 'chat' || normalized === 'chat.completions') {
+    return 'openai-completions';
+  }
+  if (normalized === 'responses') {
+    return 'openai-responses';
+  }
+  return normalized;
+}
+
+function defaultCost() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+}
+
+function normalizeModelInput(value) {
+  if (!Array.isArray(value)) return ['text', 'image'];
+  const filtered = value.filter(item => item === 'text' || item === 'image');
+  return filtered.length > 0 ? filtered : ['text', 'image'];
 }
 
 function normalizeModels(channel = {}) {
@@ -29,7 +55,7 @@ function normalizeModels(channel = {}) {
       name: id,
       reasoning: false,
       input: ['text', 'image'],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: defaultCost(),
       contextWindow: 128000,
       maxTokens: 4096
     });
@@ -39,19 +65,27 @@ function normalizeModels(channel = {}) {
     channel.models.forEach((model) => {
       if (typeof model === 'string') {
         add(model);
-      } else if (model && typeof model === 'object') {
-        const id = String(model.id || model.name || '').trim();
-        if (!id || models.some(item => item.id === id)) return;
-        models.push({
-          id,
-          name: model.name || id,
-          reasoning: model.reasoning === true,
-          input: Array.isArray(model.input) ? model.input : ['text', 'image'],
-          cost: model.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: Number(model.contextWindow || model.context_window || 128000),
-          maxTokens: Number(model.maxTokens || model.max_tokens || 4096)
-        });
+        return;
       }
+      if (!model || typeof model !== 'object') return;
+      const id = String(model.id || model.name || '').trim();
+      if (!id || models.some(item => item.id === id)) return;
+      models.push({
+        id,
+        name: model.name || id,
+        api: model.api ? normalizeProviderApi(model.api) : undefined,
+        reasoning: model.reasoning === true,
+        input: normalizeModelInput(model.input),
+        cost: model.cost || defaultCost(),
+        contextWindow: Number(model.contextWindow || model.context_window || 128000),
+        maxTokens: Number(model.maxTokens || model.max_tokens || 4096),
+        headers: model.headers && typeof model.headers === 'object' && !Array.isArray(model.headers)
+          ? model.headers
+          : undefined,
+        compat: model.compat && typeof model.compat === 'object' && !Array.isArray(model.compat)
+          ? model.compat
+          : undefined
+      });
     });
   }
 
@@ -61,19 +95,26 @@ function normalizeModels(channel = {}) {
     channel.allowedModels.forEach(add);
   }
 
-  return models;
+  return models.map((model) => {
+    const next = { ...model };
+    Object.keys(next).forEach((key) => {
+      if (next[key] === undefined) delete next[key];
+    });
+    return next;
+  });
 }
 
 function buildProviderEntry(channel = {}) {
-  const providerId = normalizeProviderId(channel.providerKey || channel.provider || channel.name || channel.id);
   const entry = {
-    id: providerId,
-    name: channel.name || providerId,
     baseUrl: String(channel.baseUrl || '').trim(),
-    apiKey: String(channel.apiKey || '').trim(),
     api: normalizeProviderApi(channel.providerApi || channel.api || channel.wireApi),
     models: normalizeModels(channel)
   };
+
+  const apiKey = String(channel.apiKey || '').trim();
+  if (apiKey) {
+    entry.apiKey = apiKey;
+  }
 
   if (channel.headers && typeof channel.headers === 'object' && !Array.isArray(channel.headers)) {
     entry.headers = channel.headers;
@@ -82,58 +123,121 @@ function buildProviderEntry(channel = {}) {
   return entry;
 }
 
-function buildManagedExtensionSource(channels = []) {
-  const providers = channels
-    .filter(channel => channel && channel.enabled !== false && channel.baseUrl)
-    .map(buildProviderEntry);
-
-  if (providers.length === 0) {
-    return `${MANAGED_HEADER}\nexport default function () {}\n`;
-  }
-
-  return `${MANAGED_HEADER}
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-const providers = ${JSON.stringify(providers, null, 2)};
-
-export default function (pi: ExtensionAPI) {
-  for (const provider of providers) {
-    pi.registerProvider(provider.id, {
-      name: provider.name,
-      baseUrl: provider.baseUrl,
-      apiKey: provider.apiKey,
-      api: provider.api,
-      headers: provider.headers,
-      models: provider.models
-    });
+function readModelsConfig(filePath = getPiPaths().modelsYml) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return { providers: {} };
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) {
+      return { providers: {} };
+    }
+    const parsed = yaml.load(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { providers: {} };
+    }
+    if (!parsed.providers || typeof parsed.providers !== 'object' || Array.isArray(parsed.providers)) {
+      parsed.providers = {};
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Failed to read OMP models.yml: ${error.message}`);
   }
 }
-`;
+
+function writeModelsConfig(config, filePath = getPiPaths().modelsYml) {
+  ensurePiDir(path.dirname(filePath));
+  const doc = yaml.dump(config || { providers: {} }, {
+    lineWidth: 120,
+    noRefs: true,
+    sortKeys: false
+  });
+  fs.writeFileSync(filePath, doc, 'utf8');
 }
 
-function writeManagedProviderExtension(channels = []) {
-  const paths = getPiPaths();
-  ensurePiDir(path.dirname(paths.managedProviderExtension));
-  fs.writeFileSync(paths.managedProviderExtension, buildManagedExtensionSource(channels), 'utf8');
-  return paths.managedProviderExtension;
-}
-
-function removeManagedProviderExtension() {
-  const target = getPiPaths().managedProviderExtension;
-  if (fs.existsSync(target)) {
+function removeLegacyManagedExtension(paths = getPiPaths()) {
+  const target = paths.managedProviderExtension;
+  if (target && fs.existsSync(target)) {
     fs.unlinkSync(target);
   }
 }
 
-function isManagedProviderExtensionActive() {
-  return fs.existsSync(getPiPaths().managedProviderExtension);
+function pruneManagedProviders(providers = {}) {
+  Object.keys(providers).forEach((providerId) => {
+    if (isManagedProviderId(providerId)) {
+      delete providers[providerId];
+    }
+  });
+}
+
+function buildManagedModelsConfig(channels = [], baseConfig = readModelsConfig()) {
+  const next = {
+    ...baseConfig,
+    providers: {
+      ...(baseConfig.providers || {})
+    }
+  };
+  pruneManagedProviders(next.providers);
+
+  channels
+    .filter(channel => channel && channel.enabled !== false && channel.baseUrl)
+    .forEach((channel) => {
+      next.providers[getManagedProviderId(channel)] = buildProviderEntry(channel);
+    });
+
+  return next;
+}
+
+function writeManagedOmpProviders(channels = []) {
+  const paths = getPiPaths();
+  const config = buildManagedModelsConfig(channels, readModelsConfig(paths.modelsYml));
+  writeModelsConfig(config, paths.modelsYml);
+  removeLegacyManagedExtension(paths);
+  return paths.modelsYml;
+}
+
+function removeManagedOmpProviders() {
+  const paths = getPiPaths();
+  const config = readModelsConfig(paths.modelsYml);
+  const before = Object.keys(config.providers || {}).length;
+  pruneManagedProviders(config.providers);
+  const after = Object.keys(config.providers || {}).length;
+  if (before !== after) {
+    writeModelsConfig(config, paths.modelsYml);
+  }
+  removeLegacyManagedExtension(paths);
+}
+
+function isManagedOmpProvidersActive() {
+  const paths = getPiPaths();
+  if (!fs.existsSync(paths.modelsYml)) {
+    return false;
+  }
+  const config = readModelsConfig(paths.modelsYml);
+  return Object.keys(config.providers || {}).some(isManagedProviderId);
+}
+
+function buildManagedExtensionSource(channels = []) {
+  return yaml.dump(buildManagedModelsConfig(channels, { providers: {} }), {
+    lineWidth: 120,
+    noRefs: true,
+    sortKeys: false
+  });
 }
 
 module.exports = {
+  MANAGED_PROVIDER_PREFIX,
   buildManagedExtensionSource,
+  buildManagedModelsConfig,
   buildProviderEntry,
-  isManagedProviderExtensionActive,
+  getManagedProviderId,
+  isManagedOmpProvidersActive,
+  isManagedProviderExtensionActive: isManagedOmpProvidersActive,
   normalizeProviderId,
-  removeManagedProviderExtension,
-  writeManagedProviderExtension
+  readModelsConfig,
+  removeManagedOmpProviders,
+  removeManagedProviderExtension: removeManagedOmpProviders,
+  writeManagedOmpProviders,
+  writeManagedProviderExtension: writeManagedOmpProviders,
+  writeModelsConfig
 };

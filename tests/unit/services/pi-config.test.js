@@ -31,18 +31,29 @@ describe('pi-config path resolution', () => {
     expect(getPiAgentDir(env)).toBe(path.resolve(env.PI_CODING_AGENT_DIR));
     expect(getPiPaths(env)).toEqual(expect.objectContaining({
       agentDir: path.resolve(env.PI_CODING_AGENT_DIR),
-      settings: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'settings.json'),
+      settings: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'config.yml'),
+      models: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'models.yml'),
+      modelsYml: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'models.yml'),
       sessions: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'sessions'),
       skills: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'skills'),
-      prompts: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'prompts'),
+      commands: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'commands'),
       extensions: path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'extensions')
     }));
   });
 
-  test('defaults to HOME_DIR/.pi/agent', () => {
+  test('defaults to HOME_DIR/.omp/agent', () => {
     const { getPiAgentDir } = require('../../../src/server/services/pi-config');
 
-    expect(getPiAgentDir({})).toBe(path.resolve(homeDir, '.pi', 'agent'));
+    expect(getPiAgentDir({})).toBe(path.resolve(homeDir, '.omp', 'agent'));
+  });
+
+  test('uses OMP_PROFILE before legacy PI_PROFILE for profile agent directories', () => {
+    const { getPiAgentDir } = require('../../../src/server/services/pi-config');
+
+    expect(getPiAgentDir({ OMP_PROFILE: 'work', PI_PROFILE: 'legacy' }))
+      .toBe(path.resolve(homeDir, '.omp', 'profiles', 'work', 'agent'));
+    expect(getPiAgentDir({ PI_PROFILE: 'legacy' }))
+      .toBe(path.resolve(homeDir, '.omp', 'profiles', 'legacy', 'agent'));
   });
 
   test('expands tilde paths against configured HOME_DIR', () => {
@@ -54,7 +65,7 @@ describe('pi-config path resolution', () => {
 
   test('preserves Windows-style env paths without forcing Unix home expansion', () => {
     const { getPiAgentDir } = require('../../../src/server/services/pi-config');
-    const windowsPath = 'C:\\Users\\demo\\.pi\\agent';
+    const windowsPath = 'C:\\Users\\demo\\.omp\\agent';
 
     expect(getPiAgentDir({ PI_CODING_AGENT_DIR: windowsPath })).toBe(path.resolve(windowsPath));
   });
@@ -82,9 +93,11 @@ describe('config paths Pi native paths', () => {
     expect(getPiAgentDir()).toBe(expectedDir);
     expect(NATIVE_PATHS.pi).toEqual(expect.objectContaining({
       dir: expectedDir,
-      settings: path.join(expectedDir, 'settings.json'),
+      settings: path.join(expectedDir, 'config.yml'),
+      models: path.join(expectedDir, 'models.yml'),
+      modelsYml: path.join(expectedDir, 'models.yml'),
       skills: path.join(expectedDir, 'skills'),
-      prompts: path.join(expectedDir, 'prompts'),
+      commands: path.join(expectedDir, 'commands'),
       extensions: path.join(expectedDir, 'extensions'),
       packages: path.join(expectedDir, 'packages')
     }));

@@ -93,7 +93,7 @@ describe('pi-projects api', () => {
     expect(res.body).toEqual({
       projects: [],
       currentProject: null,
-      error: 'Pi CLI not installed or not found'
+      error: 'OMP CLI not installed or not found'
     });
   });
 

@@ -63,7 +63,7 @@ function call(app, method, url, body) {
 beforeEach(() => {
   piSessionsService = {
     buildLaunchCommand: vi.fn((sessionId, _cwd, options = {}) =>
-      options.rpc ? `pi --mode rpc --session "${sessionId}"` : `pi --session "${sessionId}"`
+      options.rpc ? `omp --mode rpc --session "${sessionId}"` : `omp --session "${sessionId}"`
     ),
     getProjects: vi.fn(() => [{ name: 'repo-pi', fullPath: '/workspace/repo-pi', displayName: 'Repo Pi' }]),
     getSessionsByProject: vi.fn(() => [{ sessionId: 'pi-1', size: 42 }]),
@@ -180,8 +180,8 @@ describe('pi-sessions api', () => {
     expect(launched.body).toEqual(expect.objectContaining({
       success: true,
       cwd: '/workspace/repo-pi',
-      command: 'pi --mode rpc --session "pi-1"',
-      copyCommand: 'cd "/workspace/repo-pi" && pi --mode rpc --session "pi-1"'
+      command: 'omp --mode rpc --session "pi-1"',
+      copyCommand: 'cd "/workspace/repo-pi" && omp --mode rpc --session "pi-1"'
     }));
     expect(broadcastLogMock).toHaveBeenCalledWith(expect.objectContaining({
       action: 'launch_pi_session',

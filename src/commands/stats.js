@@ -2,12 +2,13 @@ const chalk = require('chalk');
 const http = require('http');
 const { loadConfig } = require('../config/loader');
 
-const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode'];
+const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
 const TOOL_ENDPOINTS = {
   claude: '/api/claude/statistics',
   codex: '/api/codex/statistics',
   gemini: '/api/gemini/statistics',
-  opencode: '/api/opencode/statistics'
+  opencode: '/api/opencode/statistics',
+  pi: '/api/pi/statistics'
 };
 
 /**
@@ -248,7 +249,7 @@ async function handleStats(type = null, options = {}) {
   try {
     if (!validateToolType(type)) {
       console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
-      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode\n'));
+      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode, pi\n'));
       process.exit(1);
     }
 

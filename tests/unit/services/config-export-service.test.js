@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const yaml = require('js-yaml');
 
 let testDir;
 let configTemplatesService;
@@ -57,15 +58,17 @@ function stubModules() {
         gemini: { env: path.join(testDir, '.gemini', '.env') },
         opencode: { config: path.join(testDir, '.opencode') },
         pi: {
-          dir: path.join(testDir, '.pi'),
-          settings: path.join(testDir, '.pi', 'settings.json'),
-          auth: path.join(testDir, '.pi', 'auth.json'),
-          models: path.join(testDir, '.pi', 'models.json'),
-          extensions: path.join(testDir, '.pi', 'extensions'),
-          skills: path.join(testDir, '.pi', 'skills'),
-          prompts: path.join(testDir, '.pi', 'prompts'),
-          themes: path.join(testDir, '.pi', 'themes'),
-          packages: path.join(testDir, '.pi', 'packages')
+          dir: path.join(testDir, '.omp'),
+          settings: path.join(testDir, '.omp', 'config.yml'),
+          auth: path.join(testDir, '.omp', 'auth.json'),
+          models: path.join(testDir, '.omp', 'models.yml'),
+          modelsYml: path.join(testDir, '.omp', 'models.yml'),
+          extensions: path.join(testDir, '.omp', 'extensions'),
+          skills: path.join(testDir, '.omp', 'skills'),
+          prompts: path.join(testDir, '.omp', 'prompts'),
+          commands: path.join(testDir, '.omp', 'commands'),
+          themes: path.join(testDir, '.omp', 'themes'),
+          packages: path.join(testDir, '.omp', 'packages')
         }
       }
     }
@@ -249,7 +252,7 @@ function stubModules() {
             pluginType: 'extension-directory',
             pluginKind: 'extension',
             version: 'local',
-            installPath: path.join(testDir, '.pi', 'extensions', 'pi-extension'),
+            installPath: path.join(testDir, '.omp', 'extensions', 'pi-extension'),
             enabled: true,
             source: 'pi-extension'
           }
@@ -469,30 +472,30 @@ function stubModules() {
   fs.mkdirSync(openCodePluginDir, { recursive: true });
   fs.writeFileSync(path.join(openCodePluginDir, 'package.json'), JSON.stringify({ name: 'local-opencode', version: '1.0.0' }), 'utf8');
   fs.writeFileSync(path.join(testDir, '.opencode', 'opencode.json'), JSON.stringify({ plugin: ['@demo/opencode-plugin'] }), 'utf8');
-  const piExtensionDir = path.join(testDir, '.pi', 'extensions', 'pi-extension');
+  const piExtensionDir = path.join(testDir, '.omp', 'extensions', 'pi-extension');
   fs.mkdirSync(piExtensionDir, { recursive: true });
   fs.writeFileSync(path.join(piExtensionDir, 'pi.json'), JSON.stringify({ name: 'pi-extension', version: 'local' }), 'utf8');
   fs.writeFileSync(path.join(piExtensionDir, 'provider.ts'), 'export default {}', 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'settings.json'), JSON.stringify({
+  fs.mkdirSync(path.join(testDir, '.omp'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'config.yml'), yaml.dump({
     packages: ['@demo/pi-package'],
     disabledPackages: ['@demo/pi-package']
   }), 'utf8');
-  fs.writeFileSync(path.join(testDir, '.pi', 'auth.json'), JSON.stringify({ token: 'pi-token' }), 'utf8');
-  fs.writeFileSync(path.join(testDir, '.pi', 'models.json'), JSON.stringify({ models: ['pi-fast'] }), 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi', 'prompts', 'review'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'prompts', 'review', 'native-prompt.md'), 'Native Pi prompt', 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi', 'skills', 'native-pi-skill'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'skills', 'native-pi-skill', 'SKILL.md'), 'Native Pi skill', 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi', 'themes'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'themes', 'night.json'), JSON.stringify({ name: 'night' }), 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi', 'packages', 'managed-package'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'packages', 'managed-package', 'package.json'), JSON.stringify({ name: 'managed-package' }), 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi', 'npm', '@demo', 'pi-package', 'node_modules', 'dep'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'npm', '@demo', 'pi-package', 'package.json'), JSON.stringify({ name: '@demo/pi-package' }), 'utf8');
-  fs.writeFileSync(path.join(testDir, '.pi', 'npm', '@demo', 'pi-package', 'node_modules', 'dep', 'index.js'), 'module.exports = true', 'utf8');
-  fs.mkdirSync(path.join(testDir, '.pi', 'git', 'provider'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.pi', 'git', 'provider', 'package.json'), JSON.stringify({ name: 'provider' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'auth.json'), JSON.stringify({ token: 'pi-token' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'models.yml'), yaml.dump({ providers: { 'ctx-pi': { models: [{ id: 'pi-fast' }] } } }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'prompts', 'review'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'prompts', 'review', 'native-prompt.md'), 'Native Pi prompt', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'skills', 'native-pi-skill'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'skills', 'native-pi-skill', 'SKILL.md'), 'Native Pi skill', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'themes'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'themes', 'night.json'), JSON.stringify({ name: 'night' }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'packages', 'managed-package'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'packages', 'managed-package', 'package.json'), JSON.stringify({ name: 'managed-package' }), 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'npm', '@demo', 'pi-package', 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'pi-package', 'package.json'), JSON.stringify({ name: '@demo/pi-package' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'pi-package', 'node_modules', 'dep', 'index.js'), 'module.exports = true', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'git', 'provider'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'git', 'provider', 'package.json'), JSON.stringify({ name: 'provider' }), 'utf8');
   fs.mkdirSync(path.join(testDir, 'store'), { recursive: true });
   for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
     const repoPath = path.join(testDir, 'repos', 'plugins', `${platform}.json`);
@@ -603,7 +606,7 @@ describe('config-export-service export flows', () => {
     expect(result.data.data.nativeConfigs.pi.settings.content.packages).toEqual(['@demo/pi-package']);
     expect(result.data.data.nativeConfigs.pi.settings.content.disabledPackages).toEqual(['@demo/pi-package']);
     expect(result.data.data.nativeConfigs.pi.auth.content).toEqual({ token: 'pi-token' });
-    expect(result.data.data.nativeConfigs.pi.models.content.models).toEqual(['pi-fast']);
+    expect(result.data.data.nativeConfigs.pi.models.content.providers['ctx-pi'].models[0].id).toBe('pi-fast');
     expect(result.data.data.nativeConfigs.pi.prompts.files.map(file => file.path)).toContain(path.join('review', 'native-prompt.md'));
     expect(result.data.data.nativeConfigs.pi.skills.files.map(file => file.path)).toContain(path.join('native-pi-skill', 'SKILL.md'));
     expect(result.data.data.nativeConfigs.pi.extensions.files.map(file => file.path)).toContain(path.join('pi-extension', 'provider.ts'));
@@ -745,8 +748,8 @@ describe('config-export-service import flows', () => {
             ],
             control: {
               nativeSettings: {
-                format: 'json',
-                fileName: 'settings.json',
+                format: 'yaml',
+                fileName: 'config.yml',
                 content: { packages: ['@demo/imported-pi'], disabledPackages: [] }
               }
             }
@@ -755,8 +758,8 @@ describe('config-export-service import flows', () => {
         nativeConfigs: {
           pi: {
             settings: {
-              format: 'json',
-              fileName: 'settings.json',
+              format: 'yaml',
+              fileName: 'config.yml',
               content: { packages: ['@demo/native-pi'], disabledPackages: [] }
             },
             auth: {
@@ -765,9 +768,9 @@ describe('config-export-service import flows', () => {
               content: { token: 'imported-pi-token' }
             },
             models: {
-              format: 'json',
-              fileName: 'models.json',
-              content: { models: ['imported-pi-model'] }
+              format: 'yaml',
+              fileName: 'models.yml',
+              content: { providers: { 'ctx-imported': { models: [{ id: 'imported-pi-model' }] } } }
             },
             prompts: {
               format: 'directory',
@@ -851,15 +854,17 @@ describe('config-export-service import flows', () => {
     expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'ctx', 'codex-import', '1.0.0', '.codex-plugin', 'plugin.json'))).toBe(true);
     expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).toContain('codex-import@ctx');
     expect(JSON.parse(fs.readFileSync(path.join(testDir, '.opencode', 'opencode.json'), 'utf8')).plugin).toContain('@demo/imported-opencode');
-    expect(fs.existsSync(path.join(testDir, '.pi', 'extensions', 'pi-import', 'pi.json'))).toBe(true);
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'settings.json'), 'utf8')).packages).toEqual(['@demo/native-pi']);
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'auth.json'), 'utf8'))).toEqual({ token: 'imported-pi-token' });
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'models.json'), 'utf8'))).toEqual({ models: ['imported-pi-model'] });
-    expect(fs.readFileSync(path.join(testDir, '.pi', 'prompts', 'imported', 'prompt.md'), 'utf8')).toBe('Imported Pi prompt');
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'npm', '@demo', 'native-pi', 'package.json'), 'utf8')).name).toBe('@demo/native-pi');
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'themes', 'imported-theme.json'), 'utf8')).name).toBe('imported-theme');
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'packages', 'imported-package', 'package.json'), 'utf8')).name).toBe('imported-package');
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'git', 'native-git', 'package.json'), 'utf8')).name).toBe('native-git');
+    expect(fs.existsSync(path.join(testDir, '.omp', 'extensions', 'pi-import', 'pi.json'))).toBe(true);
+    expect(yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'config.yml'), 'utf8')).packages).toEqual(['@demo/native-pi']);
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'auth.json'), 'utf8'))).toEqual({ token: 'imported-pi-token' });
+    expect(yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'models.yml'), 'utf8'))).toEqual({
+      providers: { 'ctx-imported': { models: [{ id: 'imported-pi-model' }] } }
+    });
+    expect(fs.readFileSync(path.join(testDir, '.omp', 'prompts', 'imported', 'prompt.md'), 'utf8')).toBe('Imported Pi prompt');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'native-pi', 'package.json'), 'utf8')).name).toBe('@demo/native-pi');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'themes', 'imported-theme.json'), 'utf8')).name).toBe('imported-theme');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'packages', 'imported-package', 'package.json'), 'utf8')).name).toBe('imported-package');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'git', 'native-git', 'package.json'), 'utf8')).name).toBe('native-git');
     expect(fs.existsSync(path.join(testDir, 'README.md'))).toBe(false);
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'store', 'oauth.json'), 'utf8'))).toEqual({ version: 2 });
     expect(result.results.agents.success).toBe(1);
