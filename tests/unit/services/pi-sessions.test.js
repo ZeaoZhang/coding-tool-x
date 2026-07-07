@@ -40,6 +40,24 @@ beforeEach(() => {
       }
     }
   };
+  require.cache[PI_CONFIG_PATH] = {
+    id: PI_CONFIG_PATH,
+    filename: PI_CONFIG_PATH,
+    loaded: true,
+    exports: {
+      getPiCommand: () => 'omp',
+      getPiPaths: () => ({
+        agentDir: path.join(testDir, '.omp', 'agent'),
+        sessions: sessionDir
+      }),
+      isPiInstalled: () => true,
+      resolvePiRuntime: () => ({
+        runtime: 'omp',
+        command: 'omp',
+        installed: true
+      })
+    }
+  };
 });
 
 afterEach(() => {

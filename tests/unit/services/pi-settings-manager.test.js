@@ -71,6 +71,95 @@ describe('pi-settings-manager OMP models.yml sync', () => {
     expect(config.providers['ctx-demo'].models.map(model => model.id)).toEqual(['gpt-demo', 'gpt-demo-mini']);
   });
 
+  test('creates a single ctx backup before the first managed models.yml write', () => {
+    const originalConfig = {
+      providers: {
+        openai: {
+          baseUrl: 'https://api.openai.com/v1',
+          api: 'openai-responses'
+        }
+      }
+    };
+    fs.writeFileSync(paths.modelsYml, yaml.dump(originalConfig), 'utf8');
+
+    const manager = require('../../../src/server/services/pi-settings-manager');
+    manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      providerKey: 'demo',
+      baseUrl: 'https://demo.example/v1',
+      model: 'gpt-demo'
+    }], { now: new Date('2026-07-07T01:02:03.004Z') });
+    manager.writeManagedOmpProviders([{
+      id: 'channel-2',
+      providerKey: 'demo-2',
+      baseUrl: 'https://demo-2.example/v1',
+      model: 'gpt-demo-2'
+    }]);
+
+    const backups = fs.readdirSync(testDir)
+      .filter(name => name.startsWith('models.yml.ctx-backup-'));
+    expect(backups).toHaveLength(1);
+    expect(backups[0]).toBe('models.yml.ctx-backup-2026-07-07T01-02-03-004Z');
+    expect(yaml.load(fs.readFileSync(path.join(testDir, backups[0]), 'utf8'))).toEqual(originalConfig);
+  });
+
+  test('validates OMP models.yml and records warnings when omp is available', () => {
+    require.cache[PI_CONFIG_PATH].exports.resolvePiRuntime = vi.fn(() => ({
+      runtime: 'omp',
+      command: 'omp',
+      installed: true
+    }));
+    const modelsRunner = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({ warnings: ['json warning'] }),
+      stderr: 'stderr warning\n'
+    }));
+
+    const manager = require('../../../src/server/services/pi-settings-manager');
+    manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      providerKey: 'demo',
+      baseUrl: 'https://demo.example/v1',
+      model: 'gpt-demo'
+    }], { modelsRunner });
+
+    expect(modelsRunner).toHaveBeenCalledWith('omp', ['models', '--json'], expect.objectContaining({
+      encoding: 'utf8',
+      timeout: 5000
+    }));
+    expect(manager.getLastManagedOmpSyncResult()).toEqual(expect.objectContaining({
+      path: paths.modelsYml,
+      warnings: ['stderr warning', 'json warning'],
+      validation: expect.objectContaining({
+        skipped: false,
+        command: 'omp',
+        warnings: ['stderr warning', 'json warning']
+      })
+    }));
+  });
+
+  test('throws a clear error when OMP models.yml validation fails', () => {
+    require.cache[PI_CONFIG_PATH].exports.resolvePiRuntime = vi.fn(() => ({
+      runtime: 'omp',
+      command: 'omp',
+      installed: true
+    }));
+    const modelsRunner = vi.fn(() => ({
+      status: 1,
+      stdout: '',
+      stderr: 'schema failed'
+    }));
+
+    const manager = require('../../../src/server/services/pi-settings-manager');
+
+    expect(() => manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      providerKey: 'demo',
+      baseUrl: 'https://demo.example/v1',
+      model: 'gpt-demo'
+    }], { modelsRunner })).toThrow('OMP models.yml validation failed: schema failed');
+  });
+
   test('removes only managed ctx providers and deletes legacy extension', () => {
     fs.mkdirSync(path.dirname(paths.managedProviderExtension), { recursive: true });
     fs.writeFileSync(paths.managedProviderExtension, 'legacy extension', 'utf8');

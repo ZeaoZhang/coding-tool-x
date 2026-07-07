@@ -126,6 +126,8 @@ router.post('/start', async (req, res) => {
       port: proxyResult.port,
       activeChannel: sanitizeChannel(activeChannel),
       mode: 'models-yml-provider-config',
+      sync: proxyResult.sync || null,
+      warnings: proxyResult.warnings || [],
       message: `OMP models.yml provider config enabled, active channel: ${activeChannel.name}`
     });
   } catch (error) {

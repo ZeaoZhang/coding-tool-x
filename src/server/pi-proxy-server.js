@@ -4,27 +4,38 @@ const { syncManagedOmpProviders, disableManagedOmpProviders, getEnabledChannels 
 
 let running = false;
 let currentPort = null;
+let lastSyncResult = null;
 
 async function startPiProxyServer(options = {}) {
   const preserveStartTime = options.preserveStartTime || false;
   const config = loadConfig();
   currentPort = config.ports?.piProxy || 20092;
-  syncManagedOmpProviders();
+  lastSyncResult = syncManagedOmpProviders();
   running = true;
   saveProxyStartTime('pi', preserveStartTime);
-  return { success: true, port: currentPort };
+  return {
+    success: true,
+    port: currentPort,
+    sync: lastSyncResult,
+    warnings: lastSyncResult?.warnings || []
+  };
 }
 
 async function stopPiProxyServer(options = {}) {
   const clearStartTime = options.clearStartTime !== false;
   const stoppedPort = currentPort;
-  disableManagedOmpProviders();
+  lastSyncResult = disableManagedOmpProviders();
   running = false;
   currentPort = null;
   if (clearStartTime) {
     clearProxyStartTime('pi');
   }
-  return { success: true, port: stoppedPort };
+  return {
+    success: true,
+    port: stoppedPort,
+    sync: lastSyncResult,
+    warnings: lastSyncResult?.warnings || []
+  };
 }
 
 function getPiProxyStatus() {
@@ -32,6 +43,7 @@ function getPiProxyStatus() {
   const startTime = getProxyStartTime('pi', { allowRecovery: running });
   const runtime = getProxyRuntime('pi', { allowRecovery: running });
   const enabledCount = getEnabledChannels().length;
+  const validation = lastSyncResult?.validation || null;
   return {
     running,
     port: currentPort,
@@ -39,7 +51,11 @@ function getPiProxyStatus() {
     startTime,
     runtime,
     mode: 'models-yml-provider-config',
-    enabledChannelsCount: enabledCount
+    enabledChannelsCount: enabledCount,
+    modelsPath: lastSyncResult?.modelsPath || lastSyncResult?.path || null,
+    backupPath: lastSyncResult?.backupPath || null,
+    modelsValidation: validation,
+    warnings: lastSyncResult?.warnings || []
   };
 }
 
