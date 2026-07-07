@@ -109,7 +109,7 @@
                 <n-icon size="14"><PlanetOutline /></n-icon>
               </span>
             </template>
-            Pi Agent {{ registryInfo.platforms?.pi ? '已启用' : '未启用' }}
+            OMP {{ registryInfo.platforms?.pi ? '已启用' : '未启用' }}
           </n-tooltip>
         </div>
       </template>

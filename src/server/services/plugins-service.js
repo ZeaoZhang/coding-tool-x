@@ -12,12 +12,14 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
+const yaml = require('js-yaml');
 const AdmZip = require('adm-zip');
 const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('../../plugins/registry');
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
+const { getPiCommand } = require('./pi-config');
 const { maskToken } = require('./oauth-utils');
 const {
   assertInsideAllowedRoots,
@@ -748,20 +750,36 @@ class PluginsService {
 
   _readPiSettings() {
     const filePath = NATIVE_PATHS.pi.settings;
-    if (!fs.existsSync(filePath)) return {};
+    if (!fs.existsSync(filePath)) {
+      const legacyPath = NATIVE_PATHS.pi.settingsJsonLegacy;
+      if (legacyPath && fs.existsSync(legacyPath)) {
+        try {
+          const raw = fs.readFileSync(legacyPath, 'utf8');
+          return raw.trim() ? JSON.parse(raw) : {};
+        } catch (err) {
+          console.error('[PluginsService] Failed to read legacy OMP settings:', err.message);
+        }
+      }
+      return {};
+    }
 
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
-      return raw.trim() ? JSON.parse(raw) : {};
+      const parsed = raw.trim() ? yaml.load(raw) : {};
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
     } catch (err) {
-      console.error('[PluginsService] Failed to read Pi settings:', err.message);
+      console.error('[PluginsService] Failed to read OMP settings:', err.message);
       return {};
     }
   }
 
   _writePiSettings(settings = {}) {
     this._ensureDir(path.dirname(NATIVE_PATHS.pi.settings));
-    fs.writeFileSync(NATIVE_PATHS.pi.settings, JSON.stringify(settings, null, 2), 'utf8');
+    fs.writeFileSync(NATIVE_PATHS.pi.settings, yaml.dump(settings, {
+      lineWidth: 120,
+      noRefs: true,
+      sortKeys: false
+    }), 'utf8');
   }
 
   _listPiPackages() {
@@ -811,7 +829,7 @@ class PluginsService {
   }
 
   _runPiPackageCommand(args = []) {
-    execFileSync('pi', args, {
+    execFileSync(getPiCommand(), args, {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: 'pipe',
@@ -869,7 +887,7 @@ class PluginsService {
       return {
         success: true,
         registeredOnly: true,
-        warning: `Failed to run "pi install"; saved the package reference so Pi can resolve it later. ${err.message}`,
+        warning: `Failed to run "${getPiCommand()} install"; saved the package reference so OMP can resolve it later. ${err.message}`,
         plugin
       };
     }
@@ -912,7 +930,7 @@ class PluginsService {
         });
       }
     } catch (err) {
-      console.error('[PluginsService] Failed to list Pi extensions:', err.message);
+      console.error('[PluginsService] Failed to list OMP extensions:', err.message);
     }
 
     return plugins;
@@ -1718,7 +1736,7 @@ class PluginsService {
 
       return {
         success: false,
-        error: 'Pi plugin install expects package name, repository metadata, a GitHub/GitLab tree URL, or a Git repository URL'
+        error: 'OMP plugin install expects package name, repository metadata, a GitHub/GitLab tree URL, or a Git repository URL'
       };
     }
 
@@ -2205,7 +2223,7 @@ class PluginsService {
 
       const extensionsDir = NATIVE_PATHS.pi.extensions;
       if (safeName && fs.existsSync(extensionsDir)) {
-        const directPath = resolveInsideRoot(extensionsDir, safeName, 'Pi extension path');
+        const directPath = resolveInsideRoot(extensionsDir, safeName, 'OMP extension path');
         if (fs.existsSync(directPath)) {
           fs.rmSync(directPath, { recursive: true, force: true });
           removed = true;
@@ -2214,7 +2232,7 @@ class PluginsService {
           for (const entry of entries) {
             const baseName = entry.name.replace(path.extname(entry.name), '');
             if (entry.name === safeName || baseName === safeName) {
-              const entryPath = resolveInsideRoot(extensionsDir, entry.name, 'Pi extension path');
+              const entryPath = resolveInsideRoot(extensionsDir, entry.name, 'OMP extension path');
               fs.rmSync(entryPath, { recursive: true, force: true });
               removed = true;
               break;
@@ -3746,7 +3764,7 @@ class PluginsService {
           }
         }
 
-        // Pi package catalog format: pi-packages.json / .pi/packages.json / packages.json
+        // OMP package catalog format; legacy catalog filenames may still include pi.
         if (this._isPi()) {
           const piPackagePlugins = await this._fetchPiPackageCatalogPlugins(repo, fileMap, readJson);
           if (piPackagePlugins.length > 0) {

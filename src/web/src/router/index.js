@@ -71,7 +71,7 @@ const routes = [
     props: true,
     meta: { channel: 'opencode' }
   },
-  // Pi Agent 渠道路由
+  // OMP 渠道路由
   {
     path: '/pi',
     name: 'pi-projects',

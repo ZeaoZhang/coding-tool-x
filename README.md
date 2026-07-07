@@ -1,17 +1,17 @@
 # coding-tool-x
 
-> 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode、Pi Agent 的统一增强控制台
+> 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP 的统一增强控制台
 > Web UI + CLI + 多平台代理 + 配置托管 + 工作区编排 + 分析面板
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D14.0.0-43853d?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
-![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20Pi-1f6feb?style=flat-square)
+![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20OMP-1f6feb?style=flat-square)
 
 ![Home Preview](docs/home.png)
 
 `coding-tool-x` 把多个 Coding CLI 的常用管理能力收拢到一套界面里: 会话查看、渠道代理、配置同步、工作区组织、MCP / Skills / Commands / Agents / Plugins 管理、OAuth 凭证托管、通知设置、统计分析和配置导入导出。
 
-如果你同时在用 Claude Code、Codex CLI、Gemini CLI、OpenCode、Pi Agent，这个项目的目标就是把这些分散在不同目录、不同配置文件、不同命令里的日常操作，尽量放回一个统一入口。
+如果你同时在用 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP，这个项目的目标就是把这些分散在不同目录、不同配置文件、不同命令里的日常操作，尽量放回一个统一入口。
 
 ## 适合做什么
 
@@ -26,7 +26,7 @@
 
 ### 会话与项目
 
-- 支持 Claude、Codex、Gemini、OpenCode、Pi 五个平台的项目与会话列表
+- 支持 Claude、Codex、Gemini、OpenCode、OMP 五个平台的项目与会话列表
 - 支持项目排序、项目搜索、会话排序、会话搜索
 - 支持最近会话、收藏、别名、聊天记录查看
 - 支持新建会话、删除会话、复制启动命令
@@ -45,10 +45,10 @@
 
 - 集中存储在 `~/.cc-tool`
 - 保留并同步各平台原生配置目录，而不是替代原生用法
-- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；Pi prompt templates 通过 Commands 管理
+- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP commands 通过 Commands 管理
 - 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
-- Pi Commands 按 Pi 原生语义管理为 prompt templates，Pi Plugins 按 packages / extensions 管理
-- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；Pi MCP 能力由 extensions / packages 提供，不写入虚构的 Pi MCP 配置文件
+- OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
+- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP MCP 能力由 extensions / packages 提供，不写入虚构的 OMP MCP 配置文件
 - 支持 OAuth 凭证池管理与回写原生配置
 - 支持 ZIP / JSON 配置导入导出
 
@@ -63,19 +63,19 @@
 
 ### 通知
 
-- 支持 Claude、Codex、Gemini、OpenCode、Pi 的任务完成通知托管
+- 支持 Claude、Codex、Gemini、OpenCode、OMP 的任务完成通知托管
 - 支持系统通知、浏览器通知和弹窗模式
 - 支持飞书机器人 Webhook 通知
 
 ## 能力矩阵
 
-| 能力 | Claude | Codex | Gemini | OpenCode | Pi |
+| 能力 | Claude | Codex | Gemini | OpenCode | OMP |
 | --- | --- | --- | --- | --- | --- |
 | 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
 | 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持 |
-| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 通过 Commands 管理 prompt templates |
+| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 通过 Commands 管理 slash commands |
 | Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
-| Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 prompt templates |
+| Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
 | Agents 管理 | 支持 | 用户级 | 支持 | 支持 | 不提供直接原生管理 |
 | Plugins 管理 | 支持 | 支持 | - | 支持 | 映射为 packages / extensions |
 | MCP 管理 | 支持 | 支持 | 支持 | 支持 | 由 extensions / packages 提供能力 |
@@ -87,7 +87,7 @@
 
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取依赖本机 `sqlite3`
-- Pi 的原生资源轴是 skills、prompt templates、packages / extensions；MCP 和 Agents 不作为独立可写配置文件管理
+- OMP 的原生资源轴是 skills、commands、packages / extensions；MCP 和 Agents 不作为独立可写配置文件管理
 
 ## 安装
 
@@ -197,7 +197,7 @@ ctx pi start
 | `ctx codex start\|stop\|restart\|status` | Codex 代理管理 |
 | `ctx gemini start\|stop\|restart\|status` | Gemini 代理管理 |
 | `ctx opencode start\|stop\|restart\|status` | OpenCode 代理管理 |
-| `ctx pi start\|stop\|restart\|status` | Pi 代理管理 |
+| `ctx pi start\|stop\|restart\|status` | OMP 代理管理（保留 `pi` 命令键兼容旧路由） |
 
 ### 日志与统计
 
@@ -278,7 +278,7 @@ ctx pi start
 | Codex Proxy | `20089` |
 | Gemini Proxy | `20090` |
 | OpenCode Proxy | `20091` |
-| Pi Proxy | `20092` |
+| OMP Proxy | `20092` |
 
 可通过 `ctx port` 修改。
 
@@ -310,7 +310,7 @@ ctx pi start
 - OpenCode:
   - 配置: `~/.config/opencode`
   - 数据: `~/.local/share/opencode`
-- Pi: `${PI_CODING_AGENT_DIR:-~/.pi/agent}`
+- OMP: `${PI_CODING_AGENT_DIR:-~/.omp/agent}`（`OMP_PROFILE` 会落到 `~/.omp/profiles/<name>/agent`，`PI_CODING_AGENT_DIR` 保留为兼容覆盖项）
 
 ## 开发
 

@@ -78,9 +78,9 @@ export const BUILT_IN_CLI_PLATFORMS = [
   },
   {
     key: 'pi',
-    title: 'Pi Agent',
-    label: 'Pi Agent',
-    command: 'pi',
+    title: 'OMP',
+    label: 'OMP',
+    command: 'omp',
     icon: PlanetOutline,
     color: '#0f9f9a',
     defaultVisible: false,

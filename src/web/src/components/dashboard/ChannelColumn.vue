@@ -530,7 +530,7 @@ const channelTypeName = computed(() => {
   if (props.channelType === 'codex') return 'Codex'
   if (props.channelType === 'gemini') return 'Gemini'
   if (props.channelType === 'opencode') return 'OpenCode'
-  if (props.channelType === 'pi') return 'Pi'
+  if (props.channelType === 'pi') return 'OMP'
   return platformConfig.value.label || props.channelType
 })
 

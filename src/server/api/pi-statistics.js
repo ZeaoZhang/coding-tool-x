@@ -10,7 +10,7 @@ router.get('/summary', (req, res) => {
   try {
     res.json(getStatistics());
   } catch (error) {
-    console.error('[Pi] Failed to get statistics:', error);
+    console.error('[OMP] Failed to get statistics:', error);
     res.status(500).json({ error: 'Failed to get statistics' });
   }
 });
@@ -19,7 +19,7 @@ router.get('/today', (req, res) => {
   try {
     res.json(getTodayStatistics());
   } catch (error) {
-    console.error('[Pi] Failed to get today statistics:', error);
+    console.error('[OMP] Failed to get today statistics:', error);
     res.status(500).json({ error: 'Failed to get today statistics' });
   }
 });
@@ -32,7 +32,7 @@ router.get('/daily/:date', (req, res) => {
     }
     res.json(getDailyStatistics(date));
   } catch (error) {
-    console.error('[Pi] Failed to get daily statistics:', error);
+    console.error('[OMP] Failed to get daily statistics:', error);
     res.status(500).json({ error: 'Failed to get daily statistics' });
   }
 });

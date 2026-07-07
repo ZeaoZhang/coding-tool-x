@@ -6,6 +6,7 @@ const {
   getPiPaths,
   getPiStatus,
   readJsonFile,
+  readYamlFile,
   readPiSettings
 } = require('../services/pi-config');
 
@@ -43,8 +44,13 @@ function normalizeArray(value) {
 function buildCapabilities() {
   return {
     platform: 'pi',
+    runtime: 'omp',
     native: {
+      config: true,
       settings: true,
+      models: true,
+      commands: true,
+      notes: true,
       extensions: true,
       skills: true,
       promptTemplates: true,
@@ -53,12 +59,16 @@ function buildCapabilities() {
       sessions: true
     },
     mapped: {
-      command: 'promptTemplates',
+      command: 'commands/prompts',
       plugin: 'packages/extensions',
-      mcp: 'extension/package capability',
-      agent: 'extension/package capability'
+      mcp: 'OMP discovery capability',
+      agent: 'OMP discovery capability'
     },
     writable: {
+      config: true,
+      models: true,
+      commands: true,
+      notes: true,
       settings: true,
       skills: true,
       promptTemplates: true,
@@ -68,8 +78,8 @@ function buildCapabilities() {
       agent: false
     },
     notes: [
-      'Pi does not expose native MCP or sub-agent config files; coding-tool-x treats them as package/extension capabilities.',
-      'Provider channels are enabled by writing a managed Pi extension that calls pi.registerProvider().'
+      'The pi channel is backed by OMP. coding-tool-x keeps the pi route/key for compatibility.',
+      'Provider channels are enabled by merging managed ctx-* providers into OMP models.yml.'
     ]
   };
 }
@@ -79,13 +89,17 @@ router.get('/', (req, res) => {
     const paths = getPiPaths();
     const settings = readPiSettings();
     const resources = {
-      settings: readJsonFile(paths.settings, {}),
+      config: readYamlFile(paths.config, {}),
+      settings: readYamlFile(paths.settings, {}),
       auth: fs.existsSync(paths.auth) ? { exists: true, path: paths.auth } : { exists: false, path: paths.auth },
-      models: readJsonFile(paths.models, {}),
+      models: readYamlFile(paths.modelsYml, {}),
+      legacyModels: readJsonFile(paths.modelsJsonLegacy, {}),
       packages: normalizeArray(settings.packages),
       disabledPackages: normalizeArray(settings.disabledPackages),
       skills: listDirEntries(paths.skills),
       prompts: listDirEntries(paths.prompts, { extensions: ['.md'], includeDirectories: true }),
+      commands: listDirEntries(paths.commands, { extensions: ['.md'], includeDirectories: true }),
+      notes: listDirEntries(paths.notes, { extensions: ['.md'], includeDirectories: true }),
       extensions: listDirEntries(paths.extensions, { extensions: ['.js', '.mjs', '.cjs', '.ts'], includeDirectories: true }),
       sessionsDir: paths.sessions
     };
@@ -97,7 +111,7 @@ router.get('/', (req, res) => {
       resources
     });
   } catch (error) {
-    console.error('[Pi Config API] Failed to read config:', error);
+    console.error('[OMP Config API] Failed to read config:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -120,10 +134,12 @@ router.get('/resources', (req, res) => {
       packages: normalizeArray(settings.packages),
       skills: listDirEntries(paths.skills),
       prompts: listDirEntries(paths.prompts, { extensions: ['.md'], includeDirectories: true }),
+      commands: listDirEntries(paths.commands, { extensions: ['.md'], includeDirectories: true }),
+      notes: listDirEntries(paths.notes, { extensions: ['.md'], includeDirectories: true }),
       extensions: listDirEntries(paths.extensions, { extensions: ['.js', '.mjs', '.cjs', '.ts'], includeDirectories: true })
     });
   } catch (error) {
-    console.error('[Pi Config API] Failed to list resources:', error);
+    console.error('[OMP Config API] Failed to list resources:', error);
     res.status(500).json({ error: error.message });
   }
 });

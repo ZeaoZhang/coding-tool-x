@@ -1,9 +1,9 @@
 const { PATHS } = require('../../config/paths');
 const BaseChannelService = require('./base/base-channel-service');
 const {
-  writeManagedProviderExtension,
-  removeManagedProviderExtension,
-  isManagedProviderExtensionActive
+  writeManagedOmpProviders,
+  removeManagedOmpProviders,
+  isManagedOmpProvidersActive
 } = require('./pi-settings-manager');
 
 class PiChannelService extends BaseChannelService {
@@ -12,7 +12,7 @@ class PiChannelService extends BaseChannelService {
       platform: 'pi',
       channelsFilePath: PATHS.channels.pi,
       defaultGatewaySource: 'codex',
-      isProxyRunning: () => isManagedProviderExtensionActive()
+      isProxyRunning: () => isManagedOmpProvidersActive()
     });
   }
 
@@ -29,32 +29,40 @@ class PiChannelService extends BaseChannelService {
   }
 
   _applyToNativeSettings(channel) {
-    writeManagedProviderExtension([channel]);
+    writeManagedOmpProviders([channel]);
   }
 
   _onAfterCreate(_channel, allChannels) {
-    this.syncManagedProviderExtension(allChannels);
+    this.syncManagedOmpProviders(allChannels);
   }
 
   _onAfterUpdate(_oldChannel, _newChannel, allChannels) {
-    this.syncManagedProviderExtension(allChannels);
+    this.syncManagedOmpProviders(allChannels);
   }
 
   _onAfterDelete(_channel, allChannels) {
-    this.syncManagedProviderExtension(allChannels);
+    this.syncManagedOmpProviders(allChannels);
+  }
+
+  syncManagedOmpProviders(channels = this.getChannels().channels) {
+    const enabledChannels = (channels || []).filter(channel => channel.enabled !== false);
+    if (enabledChannels.length === 0) {
+      removeManagedOmpProviders();
+      return null;
+    }
+    return writeManagedOmpProviders(enabledChannels);
+  }
+
+  disableManagedOmpProviders() {
+    removeManagedOmpProviders();
   }
 
   syncManagedProviderExtension(channels = this.getChannels().channels) {
-    const enabledChannels = (channels || []).filter(channel => channel.enabled !== false);
-    if (enabledChannels.length === 0) {
-      removeManagedProviderExtension();
-      return null;
-    }
-    return writeManagedProviderExtension(enabledChannels);
+    return this.syncManagedOmpProviders(channels);
   }
 
   disableManagedProviderExtension() {
-    removeManagedProviderExtension();
+    this.disableManagedOmpProviders();
   }
 }
 
@@ -76,6 +84,8 @@ module.exports = {
   applyChannelToSettings: (id) => service.applyChannelToSettings(id),
   disableAllChannels: () => service.disableAllChannels(),
   getEffectiveApiKey: (channel) => channel?.apiKey || null,
+  syncManagedOmpProviders: (channels) => service.syncManagedOmpProviders(channels),
+  disableManagedOmpProviders: () => service.disableManagedOmpProviders(),
   syncManagedProviderExtension: (channels) => service.syncManagedProviderExtension(channels),
   disableManagedProviderExtension: () => service.disableManagedProviderExtension()
 };

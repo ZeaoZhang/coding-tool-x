@@ -684,7 +684,7 @@ async function handleStatus() {
     console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.opencodeProxy || 20091})`));
 
-    console.log(chalk.gray('  Pi Agent:') + (piActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
+    console.log(chalk.gray('  OMP:     ') + (piActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.piProxy || 20092})`));
 
     console.log(chalk.bold('\n[TIP] 提示:'));

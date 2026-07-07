@@ -122,7 +122,7 @@ const cliTypeFilterOptions = [
   { label: 'Codex', value: 'codex' },
   { label: 'Gemini', value: 'gemini' },
   { label: 'OpenCode', value: 'opencode' },
-  { label: 'Pi Agent', value: 'pi' }
+  { label: 'OMP', value: 'pi' }
 ]
 
 const deletingId = ref(null)

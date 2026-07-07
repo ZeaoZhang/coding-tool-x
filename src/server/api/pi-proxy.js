@@ -84,7 +84,7 @@ router.get('/status', (req, res) => {
     res.json({
       proxy,
       config: {
-        mode: 'managed-provider-extension',
+        mode: 'models-yml-provider-config',
         nativeProxyProtocol: false
       },
       activeChannel: sanitizeChannel(activeChannel),
@@ -101,7 +101,7 @@ router.post('/start', async (req, res) => {
     const enabledChannels = getEnabledChannels();
     if (enabledChannels.length === 0) {
       return res.status(400).json({
-        error: 'No enabled Pi channel found. Please create and enable a channel first.'
+        error: 'No enabled OMP channel found. Please create and enable a channel first.'
       });
     }
 
@@ -111,7 +111,7 @@ router.post('/start', async (req, res) => {
 
     const proxyResult = await startPiProxyServer();
     if (!proxyResult.success) {
-      return res.status(500).json({ error: 'Failed to start Pi managed provider extension' });
+      return res.status(500).json({ error: 'Failed to enable OMP models.yml provider config' });
     }
 
     const { broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
@@ -125,11 +125,11 @@ router.post('/start', async (req, res) => {
       success: true,
       port: proxyResult.port,
       activeChannel: sanitizeChannel(activeChannel),
-      mode: 'managed-provider-extension',
-      message: `Pi managed provider extension enabled, active channel: ${activeChannel.name}`
+      mode: 'models-yml-provider-config',
+      message: `OMP models.yml provider config enabled, active channel: ${activeChannel.name}`
     });
   } catch (error) {
-    console.error('[Pi Proxy] Start failed:', error);
+    console.error('[OMP Proxy] Start failed:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -144,7 +144,7 @@ router.post('/stop', async (req, res) => {
     broadcastSchedulerState('pi', getSchedulerState('pi'));
     res.json({ success: true, ...result });
   } catch (error) {
-    console.error('[Pi Proxy] Stop failed:', error);
+    console.error('[OMP Proxy] Stop failed:', error);
     res.status(500).json({ error: error.message });
   }
 });

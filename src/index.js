@@ -66,7 +66,8 @@ function showHelp() {
   console.log('  ctx codex start         启动 Codex 代理');
   console.log('  ctx gemini start        启动 Gemini 代理');
   console.log('  ctx opencode start      启动 OpenCode 代理');
-  console.log(chalk.gray('  (codex/gemini/opencode 命令与 claude 类似)\n'));
+  console.log('  ctx pi start            启用 OMP 受管模型配置');
+  console.log(chalk.gray('  (codex/gemini/opencode/pi 命令与 claude 类似)\n'));
 
   console.log(chalk.yellow('[LOG] 日志管理:'));
   console.log('  ctx logs                查看所有日志');
@@ -260,8 +261,8 @@ async function main() {
     return;
   }
 
-  // claude/codex/gemini/opencode 代理管理命令
-  const channels = ['claude', 'codex', 'gemini', 'opencode'];
+  // claude/codex/gemini/opencode/pi 代理管理命令
+  const channels = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
   if (channels.includes(args[0])) {
     const channel = args[0];
     const action = args[1] || 'status';

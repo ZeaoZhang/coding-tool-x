@@ -7,6 +7,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
+const yaml = require('js-yaml');
 
 let testDir;
 let listPluginsMock;
@@ -20,13 +21,13 @@ let execFileSyncSpy;
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-'));
   execFileSyncSpy = vi.spyOn(childProcess, 'execFileSync').mockImplementation((cmd, args) => {
-    if (cmd !== 'pi') {
+    if (cmd !== 'omp') {
       return Buffer.from('');
     }
-    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+    const piSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
     fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
     const settings = fs.existsSync(piSettingsPath)
-      ? JSON.parse(fs.readFileSync(piSettingsPath, 'utf8') || '{}')
+      ? (yaml.load(fs.readFileSync(piSettingsPath, 'utf8')) || {})
       : {};
     settings.packages = Array.isArray(settings.packages) ? settings.packages : [];
     if (args?.[0] === 'install' && args[1] && !settings.packages.includes(args[1])) {
@@ -35,7 +36,7 @@ beforeEach(() => {
     if ((args?.[0] === 'remove' || args?.[0] === 'uninstall') && args[1]) {
       settings.packages = settings.packages.filter(pkg => pkg !== args[1]);
     }
-    fs.writeFileSync(piSettingsPath, JSON.stringify(settings, null, 2), 'utf8');
+    fs.writeFileSync(piSettingsPath, yaml.dump(settings), 'utf8');
     return Buffer.from('');
   });
 
@@ -50,13 +51,15 @@ beforeEach(() => {
         gemini: { config: path.join(testDir, '.gemini', 'settings.json') },
         opencode: { config: testDir },
         pi: {
-          dir: path.join(testDir, '.pi', 'agent'),
-          settings: path.join(testDir, '.pi', 'agent', 'settings.json'),
-          extensions: path.join(testDir, '.pi', 'agent', 'extensions'),
-          skills: path.join(testDir, '.pi', 'agent', 'skills'),
-          prompts: path.join(testDir, '.pi', 'agent', 'prompts'),
-          themes: path.join(testDir, '.pi', 'agent', 'themes'),
-          packages: path.join(testDir, '.pi', 'agent', 'packages')
+          dir: path.join(testDir, '.omp', 'agent'),
+          settings: path.join(testDir, '.omp', 'agent', 'config.yml'),
+          settingsJsonLegacy: path.join(testDir, '.pi', 'agent', 'settings.json'),
+          extensions: path.join(testDir, '.omp', 'agent', 'extensions'),
+          skills: path.join(testDir, '.omp', 'agent', 'skills'),
+          prompts: path.join(testDir, '.omp', 'agent', 'prompts'),
+          commands: path.join(testDir, '.omp', 'agent', 'commands'),
+          themes: path.join(testDir, '.omp', 'agent', 'themes'),
+          packages: path.join(testDir, '.omp', 'agent', 'packages')
         }
       },
       PATHS: {
@@ -792,13 +795,13 @@ describe('PluginsService Pi helpers', () => {
   test('listPlugins merges Pi packages and local extensions', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('pi');
-    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
-    const piExtensionsDir = path.join(testDir, '.pi', 'agent', 'extensions');
+    const piSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
+    const piExtensionsDir = path.join(testDir, '.omp', 'agent', 'extensions');
 
     fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
     fs.writeFileSync(
       piSettingsPath,
-      JSON.stringify({ packages: ['pi-package'], disabledPackages: ['local-extension'] }),
+      yaml.dump({ packages: ['pi-package'], disabledPackages: ['local-extension'] }),
       'utf8'
     );
     fs.mkdirSync(path.join(piExtensionsDir, 'local-extension'), { recursive: true });
@@ -829,12 +832,12 @@ describe('PluginsService Pi helpers', () => {
   test('listPlugins normalizes object-shaped Pi packages without object-string labels', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('pi');
-    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+    const piSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
 
     fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
     fs.writeFileSync(
       piSettingsPath,
-      JSON.stringify({
+      yaml.dump({
         packages: [
           { name: '@demo/object-package', type: 'npm', version: '0.3.0', description: 'Object package' },
           '@demo/string-package',
@@ -873,12 +876,12 @@ describe('PluginsService Pi helpers', () => {
   test('object-shaped Pi packages preserve install source and resources through toggle/config/uninstall', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('pi');
-    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+    const piSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
 
     fs.mkdirSync(path.dirname(piSettingsPath), { recursive: true });
     fs.writeFileSync(
       piSettingsPath,
-      JSON.stringify({
+      yaml.dump({
         packages: [{
           name: 'pi-subagents',
           source: 'npm:pi-subagents',
@@ -899,7 +902,7 @@ describe('PluginsService Pi helpers', () => {
     const enableResult = svc.togglePlugin('pi-subagents', true);
     const configResult = svc.updatePluginConfig('pi-subagents', { mode: 'review' });
     const uninstallResult = svc.uninstallPlugin('pi-subagents');
-    const settings = JSON.parse(fs.readFileSync(piSettingsPath, 'utf8'));
+    const settings = yaml.load(fs.readFileSync(piSettingsPath, 'utf8'));
 
     expect(listed).toEqual(expect.objectContaining({
       name: 'pi-subagents',
@@ -910,7 +913,7 @@ describe('PluginsService Pi helpers', () => {
     }));
     expect(enableResult).toEqual(expect.objectContaining({ success: true, enabled: true }));
     expect(configResult.success).toBe(true);
-    expect(execFileSyncSpy).toHaveBeenCalledWith('pi', ['remove', 'npm:pi-subagents'], expect.objectContaining({
+    expect(execFileSyncSpy).toHaveBeenCalledWith('omp', ['remove', 'npm:pi-subagents'], expect.objectContaining({
       stdio: 'pipe'
     }));
     expect(uninstallResult.success).toBe(true);
@@ -919,22 +922,22 @@ describe('PluginsService Pi helpers', () => {
     expect(settings.packageConfig['pi-subagents']).toEqual({ mode: 'review' });
   });
 
-  test('package install uses pi install before toggle, config, and uninstall update Pi settings', async () => {
+  test('package install uses omp install before toggle, config, and uninstall update Pi settings', async () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('pi');
-    const piSettingsPath = path.join(testDir, '.pi', 'agent', 'settings.json');
+    const piSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
 
     const installResult = await svc.installPlugin('acme/pi-provider');
     const toggleResult = svc.togglePlugin('acme/pi-provider', false);
     const configResult = svc.updatePluginConfig('acme/pi-provider', { model: 'pi-fast' });
     const uninstallResult = svc.uninstallPlugin('acme/pi-provider');
-    const settings = JSON.parse(fs.readFileSync(piSettingsPath, 'utf8'));
+    const settings = yaml.load(fs.readFileSync(piSettingsPath, 'utf8'));
 
     expect(installResult).toEqual(expect.objectContaining({
       success: true,
       plugin: expect.objectContaining({ name: 'acme/pi-provider', pluginKind: 'package' })
     }));
-    expect(execFileSyncSpy).toHaveBeenCalledWith('pi', ['install', 'acme/pi-provider'], expect.objectContaining({
+    expect(execFileSyncSpy).toHaveBeenCalledWith('omp', ['install', 'acme/pi-provider'], expect.objectContaining({
       stdio: 'pipe'
     }));
     expect(toggleResult).toEqual(expect.objectContaining({ success: true, enabled: false }));
@@ -945,7 +948,7 @@ describe('PluginsService Pi helpers', () => {
     expect(settings.packageConfig['acme/pi-provider']).toEqual({ model: 'pi-fast' });
   });
 
-  test('Pi package source classification installs npm, git, https, ssh, and local sources through pi install', async () => {
+  test('Pi package source classification installs npm, git, https, ssh, and local sources through omp install', async () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('pi');
     const localPackagePath = path.join(testDir, 'local-pi-package');
@@ -966,7 +969,7 @@ describe('PluginsService Pi helpers', () => {
     }
 
     for (const source of sources) {
-      expect(execFileSyncSpy).toHaveBeenCalledWith('pi', ['install', source], expect.objectContaining({
+      expect(execFileSyncSpy).toHaveBeenCalledWith('omp', ['install', source], expect.objectContaining({
         stdio: 'pipe'
       }));
     }
@@ -975,17 +978,17 @@ describe('PluginsService Pi helpers', () => {
   test('package install reports registeredOnly when pi CLI is unavailable', async () => {
     const { PluginsService } = loadModule();
     execFileSyncSpy.mockImplementation(() => {
-      throw new Error('spawn pi ENOENT');
+      throw new Error('spawn omp ENOENT');
     });
     const svc = new PluginsService('pi');
 
     const result = await svc.installPlugin('acme/offline-provider');
-    const settings = JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'agent', 'settings.json'), 'utf8'));
+    const settings = yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'agent', 'config.yml'), 'utf8'));
 
     expect(result).toEqual(expect.objectContaining({
       success: true,
       registeredOnly: true,
-      warning: expect.stringContaining('pi install')
+      warning: expect.stringContaining('omp install')
     }));
     expect(result.plugin).toEqual(expect.objectContaining({
       name: 'acme/offline-provider',
@@ -997,7 +1000,7 @@ describe('PluginsService Pi helpers', () => {
   test('registeredOnly fallback records object package metadata when source and display name differ', async () => {
     const { PluginsService } = loadModule();
     execFileSyncSpy.mockImplementation(() => {
-      throw new Error('spawn pi ENOENT');
+      throw new Error('spawn omp ENOENT');
     });
     const svc = new PluginsService('pi');
 
@@ -1006,7 +1009,7 @@ describe('PluginsService Pi helpers', () => {
       name: 'pi-subagents',
       resourceTypes: ['extensions', 'skills']
     });
-    const settings = JSON.parse(fs.readFileSync(path.join(testDir, '.pi', 'agent', 'settings.json'), 'utf8'));
+    const settings = yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'agent', 'config.yml'), 'utf8'));
 
     expect(result).toEqual(expect.objectContaining({
       success: true,

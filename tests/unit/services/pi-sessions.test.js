@@ -24,7 +24,7 @@ function loadModule() {
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-sessions-'));
-  sessionDir = path.join(testDir, '.pi', 'agent', 'sessions');
+  sessionDir = path.join(testDir, '.omp', 'agent', 'sessions');
 
   delete require.cache[PI_SESSIONS_PATH];
   delete require.cache[PI_CONFIG_PATH];
@@ -50,6 +50,15 @@ afterEach(() => {
 });
 
 describe('Pi session parser', () => {
+  test('builds OMP launch commands by default', () => {
+    const { buildLaunchCommand } = loadModule();
+
+    expect(buildLaunchCommand('pi-session-1', '/repo/demo', { rpc: true }))
+      .toBe('omp --mode rpc --session "pi-session-1"');
+    expect(buildLaunchCommand('pi-session-1', '/repo/demo', { fork: true }))
+      .toBe('omp --fork "pi-session-1"');
+  });
+
   test('parses v3 JSONL header, roles, usage, and latest model change', () => {
     const sessionFile = path.join(sessionDir, 'session-1.jsonl');
     writeJsonl(sessionFile, [

@@ -193,7 +193,7 @@ describe('pi-channels api', () => {
     expect(res._body).toEqual({
       channels: [],
       installed: false,
-      error: 'Pi CLI not installed'
+      error: 'OMP CLI not installed'
     });
   });
 

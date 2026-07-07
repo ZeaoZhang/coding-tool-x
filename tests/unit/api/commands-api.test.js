@@ -137,7 +137,7 @@ describe('commands api basic routes', () => {
     expect(services.claude.listCommands).not.toHaveBeenCalled();
   });
 
-  test('lists commands for Pi prompt templates', async () => {
+  test('lists commands for Pi/OMP commands', async () => {
     const res = await request(buildApp()).get('/?platform=pi&projectPath=/tmp/project');
 
     expect(res.status).toBe(200);

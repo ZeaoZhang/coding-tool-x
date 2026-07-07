@@ -172,20 +172,20 @@
           </n-card>
         </template>
 
-        <!-- Pi Agent 配置 -->
+        <!-- OMP 配置 -->
         <template v-if="formData.cliType === 'pi'">
-          <n-card title="Pi Prompt Templates" size="small" style="margin-bottom: 16px">
-            <n-tag size="small" type="success">.pi/prompts</n-tag>
+          <n-card title="OMP Commands" size="small" style="margin-bottom: 16px">
+            <n-tag size="small" type="success">.omp/commands</n-tag>
           </n-card>
           <!-- Skills -->
           <n-card title="Skills" size="small" style="margin-bottom: 16px">
             <template #header-extra><n-tag size="small">已选 {{ formData.skills.length }}</n-tag></template>
             <n-transfer v-model:value="selectedSkillDirectories" :options="skillOptions" source-title="可用 Skills" target-title="已选 Skills" />
           </n-card>
-          <!-- Prompt Templates -->
-          <n-card title="Prompt Templates" size="small" style="margin-bottom: 16px">
+          <!-- Commands -->
+          <n-card title="Commands" size="small" style="margin-bottom: 16px">
             <template #header-extra><n-tag size="small">已选 {{ formData.commands.length }}</n-tag></template>
-            <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Prompt Templates" target-title="已选 Prompt Templates" />
+            <n-transfer v-model:value="selectedCommandNames" :options="commandOptions" source-title="可用 Commands" target-title="已选 Commands" />
           </n-card>
           <!-- MCP Servers -->
           <n-card title="MCP Servers" size="small">
@@ -239,7 +239,7 @@ const CLI_TYPE_OPTIONS = [
   { label: 'Codex', value: 'codex' },
   { label: 'Gemini', value: 'gemini' },
   { label: 'OpenCode', value: 'opencode' },
-  { label: 'Pi Agent', value: 'pi' }
+  { label: 'OMP', value: 'pi' }
 ]
 
 const CLI_CAPABILITIES = {

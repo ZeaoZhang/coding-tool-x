@@ -60,9 +60,9 @@ const PLATFORM_CONFIG = {
     fileExtension: '.toml'
   },
   pi: {
-    userCommandsDir: NATIVE_PATHS.pi.prompts,
-    projectCommandsDir: (projectPath) => path.join(projectPath, '.pi', 'prompts'),
-    repoType: 'pi-prompts'
+    userCommandsDir: NATIVE_PATHS.pi.commands || path.join(NATIVE_PATHS.pi.dir, 'commands'),
+    projectCommandsDir: (projectPath) => path.join(projectPath, '.omp', 'commands'),
+    repoType: 'pi-commands'
   }
 };
 

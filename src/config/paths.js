@@ -797,9 +797,32 @@ function getOpenCodeConfigDir() {
   return preferredDir;
 }
 
+function normalizeOmpProfileName(profile = '') {
+  const value = String(profile || '').trim();
+  return value && value !== 'default' ? value : '';
+}
+
+function getOmpProfileName() {
+  if (process.env.OMP_PROFILE !== undefined) {
+    return normalizeOmpProfileName(process.env.OMP_PROFILE);
+  }
+  return normalizeOmpProfileName(process.env.PI_PROFILE);
+}
+
+function getOmpConfigRoot() {
+  return expandHomePath(resolveExistingEnvPath(process.env.PI_CONFIG_DIR) || path.join(HOME_DIR, '.omp'));
+}
+
 function getPiAgentDir() {
   const configuredDir = resolveExistingEnvPath(process.env.PI_CODING_AGENT_DIR);
-  return path.resolve(expandHomePath(configuredDir || path.join(HOME_DIR, '.pi', 'agent')));
+  if (configuredDir) {
+    return path.resolve(expandHomePath(configuredDir));
+  }
+  const profile = getOmpProfileName();
+  const agentDir = profile
+    ? path.join(getOmpConfigRoot(), 'profiles', profile, 'agent')
+    : path.join(getOmpConfigRoot(), 'agent');
+  return path.resolve(agentDir);
 }
 
 // 工具特定的原生配置路径（不改变）
@@ -853,15 +876,21 @@ const NATIVE_PATHS = {
     auth: path.join(getOpenCodeDataDir(), 'auth.json')
   },
 
-  // Pi Agent 原生配置
+  // OMP 原生配置。外部仍使用 pi 渠道键，内部默认落到 OMP 配置目录。
   pi: {
     dir: getPiAgentDir(),
-    settings: path.join(getPiAgentDir(), 'settings.json'),
+    config: path.join(getPiAgentDir(), 'config.yml'),
+    settings: path.join(getPiAgentDir(), 'config.yml'),
+    settingsJsonLegacy: path.join(getPiAgentDir(), 'settings.json'),
     auth: path.join(getPiAgentDir(), 'auth.json'),
-    models: path.join(getPiAgentDir(), 'models.json'),
+    models: path.join(getPiAgentDir(), 'models.yml'),
+    modelsYml: path.join(getPiAgentDir(), 'models.yml'),
+    modelsJsonLegacy: path.join(getPiAgentDir(), 'models.json'),
     sessions: path.join(getPiAgentDir(), 'sessions'),
     skills: path.join(getPiAgentDir(), 'skills'),
     prompts: path.join(getPiAgentDir(), 'prompts'),
+    commands: path.join(getPiAgentDir(), 'commands'),
+    notes: path.join(getPiAgentDir(), 'notes'),
     extensions: path.join(getPiAgentDir(), 'extensions'),
     themes: path.join(getPiAgentDir(), 'themes'),
     packages: path.join(getPiAgentDir(), 'packages')
