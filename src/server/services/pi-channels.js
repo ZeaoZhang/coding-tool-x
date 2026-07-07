@@ -3,7 +3,8 @@ const BaseChannelService = require('./base/base-channel-service');
 const {
   writeManagedOmpProviders,
   removeManagedOmpProviders,
-  isManagedOmpProvidersActive
+  isManagedOmpProvidersActive,
+  getLastManagedOmpSyncResult
 } = require('./pi-settings-manager');
 
 class PiChannelService extends BaseChannelService {
@@ -48,13 +49,15 @@ class PiChannelService extends BaseChannelService {
     const enabledChannels = (channels || []).filter(channel => channel.enabled !== false);
     if (enabledChannels.length === 0) {
       removeManagedOmpProviders();
-      return null;
+      return getLastManagedOmpSyncResult();
     }
-    return writeManagedOmpProviders(enabledChannels);
+    writeManagedOmpProviders(enabledChannels);
+    return getLastManagedOmpSyncResult();
   }
 
   disableManagedOmpProviders() {
     removeManagedOmpProviders();
+    return getLastManagedOmpSyncResult();
   }
 
   syncManagedProviderExtension(channels = this.getChannels().channels) {

@@ -28,20 +28,75 @@ function getOmpProfile(env = process.env) {
   return normalizeProfileName(env.PI_PROFILE);
 }
 
+function isAbsolutePathLike(value = '') {
+  return path.isAbsolute(value) || /^[a-zA-Z]:[\\/]/.test(value) || String(value).startsWith('\\\\');
+}
+
+function getOmpConfigRoot(env = process.env) {
+  const configured = expandHome(env.PI_CONFIG_DIR || '');
+  if (!configured) return path.join(HOME_DIR, '.omp');
+  return isAbsolutePathLike(configured) ? configured : path.join(HOME_DIR, configured);
+}
+
 function getDefaultOmpAgentDir(env = process.env) {
-  const configRoot = expandHome(env.PI_CONFIG_DIR || path.join(HOME_DIR, '.omp'));
+  const configRoot = getOmpConfigRoot(env);
   const profile = getOmpProfile(env);
   return profile
     ? path.join(configRoot, 'profiles', profile, 'agent')
     : path.join(configRoot, 'agent');
 }
 
-function getPiAgentDir(env = process.env) {
-  return path.resolve(expandHome(env.PI_CODING_AGENT_DIR || getDefaultOmpAgentDir(env)));
+function getLegacyPiAgentDir() {
+  return path.join(HOME_DIR, '.pi', 'agent');
 }
 
-function getPiPaths(env = process.env) {
-  const agentDir = getPiAgentDir(env);
+function getFallbackPiAgentDir(runtime, env = process.env) {
+  const configured = expandHome(env.PI_CODING_AGENT_DIR || '');
+  if (configured) return configured;
+  return runtime?.runtime === 'pi' ? getLegacyPiAgentDir(env) : getDefaultOmpAgentDir(env);
+}
+
+function buildCommandEnv(env = process.env) {
+  return {
+    ...process.env,
+    ...env
+  };
+}
+
+function runPiCommand(command, args = [], env = process.env, options = {}, stdio = ['ignore', 'pipe', 'pipe']) {
+  const runner = options.commandRunner || execFileSync;
+  return runner(command, args, {
+    encoding: 'utf8',
+    env: buildCommandEnv(env),
+    stdio,
+    timeout: options.timeout || 3000
+  });
+}
+
+function readOmpAgentDirFromCommand(command, env = process.env, options = {}) {
+  try {
+    const output = runPiCommand(command, ['config', 'path'], env, options);
+    const agentDir = String(output || '').trim().split(/\r?\n/).find(Boolean);
+    return agentDir ? path.resolve(expandHome(agentDir)) : '';
+  } catch {
+    return '';
+  }
+}
+
+function getPiAgentDir(env = process.env, options = {}) {
+  const runtime = options.runtime || resolvePiRuntime(env, options);
+  if (runtime.runtime === 'omp' && runtime.installed) {
+    const commandAgentDir = readOmpAgentDirFromCommand(runtime.command, env, options);
+    if (commandAgentDir) {
+      return commandAgentDir;
+    }
+  }
+  return path.resolve(expandHome(getFallbackPiAgentDir(runtime, env)));
+}
+
+function getPiPaths(env = process.env, options = {}) {
+  const runtime = options.runtime || resolvePiRuntime(env, options);
+  const agentDir = getPiAgentDir(env, { ...options, runtime });
   return {
     agentDir,
     config: path.join(agentDir, 'config.yml'),
@@ -118,47 +173,64 @@ function getPiCommand(env = process.env) {
   return String(env.OMP_COMMAND || env.PI_COMMAND || DEFAULT_OMP_COMMAND).trim() || DEFAULT_OMP_COMMAND;
 }
 
-function commandExists(command) {
+function commandExists(command, env = process.env, options = {}) {
   try {
-    execFileSync(command, ['--version'], {
-      stdio: 'ignore',
-      timeout: 3000
-    });
+    runPiCommand(command, ['--version'], env, options, 'ignore');
     return true;
   } catch {
     return false;
   }
 }
 
-function resolvePiRuntime(env = process.env) {
+function resolvePiRuntime(env = process.env, options = {}) {
   const configured = env.OMP_COMMAND || env.PI_COMMAND;
   if (configured) {
     const command = getPiCommand(env);
+    const source = env.OMP_COMMAND ? 'OMP_COMMAND' : 'PI_COMMAND';
     return {
       command,
       runtime: command === LEGACY_PI_COMMAND ? 'pi' : 'omp',
-      installed: commandExists(command),
-      configured: true
+      installed: commandExists(command, env, options),
+      configured: true,
+      commandSource: source
     };
   }
 
-  if (commandExists(DEFAULT_OMP_COMMAND)) {
-    return { command: DEFAULT_OMP_COMMAND, runtime: 'omp', installed: true, configured: false };
+  if (commandExists(DEFAULT_OMP_COMMAND, env, options)) {
+    return {
+      command: DEFAULT_OMP_COMMAND,
+      runtime: 'omp',
+      installed: true,
+      configured: false,
+      commandSource: 'path'
+    };
   }
 
-  if (commandExists(LEGACY_PI_COMMAND)) {
-    return { command: LEGACY_PI_COMMAND, runtime: 'pi', installed: true, configured: false };
+  if (commandExists(LEGACY_PI_COMMAND, env, options)) {
+    return {
+      command: LEGACY_PI_COMMAND,
+      runtime: 'pi',
+      installed: true,
+      configured: false,
+      commandSource: 'path'
+    };
   }
 
-  return { command: DEFAULT_OMP_COMMAND, runtime: 'omp', installed: false, configured: false };
+  return {
+    command: DEFAULT_OMP_COMMAND,
+    runtime: 'omp',
+    installed: false,
+    configured: false,
+    commandSource: 'fallback'
+  };
 }
 
-function isPiInstalled() {
-  const runtime = resolvePiRuntime();
+function isPiInstalled(env = process.env, options = {}) {
+  const runtime = options.runtime || resolvePiRuntime(env, options);
   if (runtime.installed) {
     return true;
   }
-  return fs.existsSync(getPiPaths().agentDir);
+  return fs.existsSync(getPiPaths(env, { ...options, runtime }).agentDir);
 }
 
 function readTextFile(filePath, fallback = '') {
@@ -170,17 +242,20 @@ function readTextFile(filePath, fallback = '') {
   }
 }
 
-function getPiStatus() {
-  const paths = getPiPaths();
-  const runtime = resolvePiRuntime();
+function getPiStatus(env = process.env, options = {}) {
+  const runtime = resolvePiRuntime(env, options);
+  const paths = getPiPaths(env, { ...options, runtime });
   return {
-    installed: isPiInstalled(),
+    installed: isPiInstalled(env, { ...options, runtime }),
     runtime: runtime.runtime,
     command: runtime.command,
+    commandSource: runtime.commandSource,
     agentDir: paths.agentDir,
     settingsPath: paths.settings,
     authPath: paths.auth,
     modelsPath: paths.modelsYml,
+    modelsYmlPath: paths.modelsYml,
+    modelsJsonLegacyPath: paths.modelsJsonLegacy,
     sessionsDir: paths.sessions,
     skillsDir: paths.skills,
     promptsDir: paths.prompts,
