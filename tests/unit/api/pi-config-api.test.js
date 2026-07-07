@@ -154,11 +154,11 @@ describe('pi-config api', () => {
     expect(res.body.capabilities.mapped).toEqual(expect.objectContaining({
       command: 'commands/prompts',
       plugin: 'packages/extensions',
-      mcp: 'OMP discovery capability',
+      mcp: 'mcp.json',
       agent: 'OMP discovery capability'
     }));
     expect(res.body.capabilities.writable).toEqual(expect.objectContaining({
-      mcp: false,
+      mcp: true,
       agent: false
     }));
     expect(res.body.resources.packages).toEqual(['demo-package']);

@@ -886,6 +886,7 @@ const NATIVE_PATHS = {
     models: path.join(getPiAgentDir(), 'models.yml'),
     modelsYml: path.join(getPiAgentDir(), 'models.yml'),
     modelsJsonLegacy: path.join(getPiAgentDir(), 'models.json'),
+    mcp: path.join(getPiAgentDir(), 'mcp.json'),
     sessions: path.join(getPiAgentDir(), 'sessions'),
     skills: path.join(getPiAgentDir(), 'skills'),
     prompts: path.join(getPiAgentDir(), 'prompts'),
