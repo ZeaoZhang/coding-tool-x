@@ -621,7 +621,7 @@ function removeProjectFromWorkspace(workspaceId, projectName) {
 
 
 /**
- * 获取所有渠道（Claude/Codex/Gemini）的项目并集
+ * 获取所有渠道（Claude/Codex/Gemini/OpenCode/OMP）的项目并集
  * @returns {Promise<Array>} 去重后的项目列表
  */
 async function getAllAvailableProjects() {
@@ -630,6 +630,7 @@ async function getAllAvailableProjects() {
   const codexSessionsService = require('./codex-sessions');
   const geminiSessionsService = require('./gemini-sessions');
   const opencodeSessionsService = require('./opencode-sessions');
+  const piSessionsService = require('./pi-sessions');
   const { isCodexInstalled } = require('./codex-config');
   const { isGeminiInstalled } = require('./gemini-config');
   const { isOpenCodeInstalled } = require('./opencode-sessions');
@@ -647,7 +648,7 @@ async function getAllAvailableProjects() {
     seenKeys.add(projectKey);
 
     const displayName = project.displayName || (projectPath ? path.basename(projectPath) : project.name);
-    const lastUsedValue = project.lastUsed || project.lastUpdated || null;
+    const lastUsedValue = project.lastUsed || project.lastUpdated || project.mtimeMs || null;
     const lastUsed = typeof lastUsedValue === 'string'
       ? new Date(lastUsedValue).getTime()
       : (lastUsedValue || 0);
@@ -702,6 +703,16 @@ async function getAllAvailableProjects() {
     console.error('获取 opencode 项目失败:', error.message);
   }
 
+  try {
+    const piProjects = piSessionsService.getProjects();
+    const list = Array.isArray(piProjects) ? piProjects : [];
+    if (list.length > 0 || piSessionsService.isPiInstalled()) {
+      list.forEach(project => addProject('pi', project));
+    }
+  } catch (error) {
+    console.error('获取 OMP 项目失败:', error.message);
+  }
+
   // 按最后使用时间排序
   allProjects.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
 
@@ -711,7 +722,7 @@ async function getAllAvailableProjects() {
 /**
  * 在工作区中启动 CLI 工具
  * @param {string} workspaceId 工作区 ID
- * @param {string} tool 工具名称 (claude/codex/gemini/opencode)
+ * @param {string} tool 工具名称 (claude/codex/gemini/opencode/pi/omp)
  * @param {string} projectName 可选，工作区内的项目名
  * @returns {object} 启动信息
  */
@@ -738,15 +749,18 @@ function getLaunchCommand(workspaceId, tool, projectName = null) {
     }
   }
 
+  const normalizedTool = tool === 'omp' ? 'pi' : tool;
+
   // 根据工具类型生成启动命令
   const commands = {
     claude: 'claude',
     codex: 'codex',
     gemini: 'gemini',
-    opencode: 'opencode'
+    opencode: 'opencode',
+    pi: 'omp'
   };
 
-  const cmd = commands[tool];
+  const cmd = commands[normalizedTool];
   if (!cmd) {
     throw new Error(`不支持的工具: ${tool}`);
   }

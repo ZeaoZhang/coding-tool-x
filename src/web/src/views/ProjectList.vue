@@ -248,7 +248,7 @@ function getChannelBaseCommand(channel) {
   if (channel === 'codex') return 'codex'
   if (channel === 'gemini') return 'gemini'
   if (channel === 'opencode') return 'opencode'
-  if (channel === 'pi') return 'pi'
+  if (channel === 'pi') return 'omp'
   return 'claude'
 }
 

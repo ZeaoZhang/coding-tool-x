@@ -11,6 +11,7 @@ const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
 const CODEX_CHANNELS_PATH = require.resolve('../../../src/server/services/codex-channels');
 const GEMINI_CHANNELS_PATH = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
+const PI_CHANNELS_PATH = require.resolve('../../../src/server/services/pi-channels');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 
 function loadServiceWithStubs({
@@ -19,6 +20,7 @@ function loadServiceWithStubs({
   codexChannelsStub,
   geminiChannelsStub,
   opencodeChannelsStub,
+  piChannelsStub,
   strategyCachePath
 } = {}) {
   delete require.cache[SERVICE_PATH];
@@ -27,6 +29,7 @@ function loadServiceWithStubs({
   delete require.cache[CODEX_CHANNELS_PATH];
   delete require.cache[GEMINI_CHANNELS_PATH];
   delete require.cache[OPENCODE_CHANNELS_PATH];
+  delete require.cache[PI_CHANNELS_PATH];
   delete require.cache[PATHS_PATH];
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-balance-test-'));
@@ -87,6 +90,14 @@ function loadServiceWithStubs({
       exports: opencodeChannelsStub
     };
   }
+  if (piChannelsStub) {
+    require.cache[PI_CHANNELS_PATH] = {
+      id: PI_CHANNELS_PATH,
+      filename: PI_CHANNELS_PATH,
+      loaded: true,
+      exports: piChannelsStub
+    };
+  }
 
   return require(SERVICE_PATH);
 }
@@ -116,6 +127,7 @@ describe('channel-balance service', () => {
     delete require.cache[CODEX_CHANNELS_PATH];
     delete require.cache[GEMINI_CHANNELS_PATH];
     delete require.cache[OPENCODE_CHANNELS_PATH];
+    delete require.cache[PI_CHANNELS_PATH];
     delete require.cache[PATHS_PATH];
   });
 
@@ -1319,6 +1331,23 @@ describe('channel-balance service', () => {
     });
   });
 
+  test('accepts OMP as a valid source when balance display is disabled', async () => {
+    const service = loadServiceWithStubs({
+      uiConfig: { channelBalance: { showRemaining: false } },
+      piChannelsStub: {
+        getChannels: vi.fn(() => {
+          throw new Error('should not read OMP channels');
+        })
+      }
+    });
+
+    await expect(service.getChannelBalances('pi')).resolves.toEqual({
+      enabled: false,
+      source: 'pi',
+      balances: {}
+    });
+  });
+
   test('loads balances only for enabled channels', async () => {
     let enabledRequests = 0;
     let disabledRequests = 0;
@@ -1360,6 +1389,67 @@ describe('channel-balance service', () => {
       expect(service._test.getEnabledBalanceChannels('codex').map(channel => channel.id)).toEqual(['enabled-new-api']);
       expect(enabledRequests).toBeGreaterThan(0);
       expect(disabledRequests).toBe(0);
+    } finally {
+      await enabledServer.close();
+      await disabledServer.close();
+    }
+  });
+
+  test('loads balances from enabled OMP channels', async () => {
+    const seenAuth = [];
+    const enabledServer = await withJsonServer((req, res) => {
+      seenAuth.push({
+        url: req.url,
+        auth: req.headers.authorization,
+        userId: req.headers['new-api-user']
+      });
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 200, { mode: 'unrestricted', remaining: 4.5, isValid: true });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+    const disabledServer = await withJsonServer((_req, res) => {
+      return sendJson(res, 500, { error: 'disabled OMP channel should not be requested' });
+    });
+
+    try {
+      const service = loadServiceWithStubs({
+        piChannelsStub: {
+          getChannels: vi.fn(() => ({
+            channels: [
+              {
+                id: 'omp-enabled',
+                enabled: true,
+                baseUrl: `${enabledServer.baseUrl}/v1`,
+                apiKey: 'sk-api-key',
+                balanceToken: 'balance-token',
+                balanceUserId: 8899
+              },
+              {
+                id: 'omp-disabled',
+                enabled: false,
+                baseUrl: `${disabledServer.baseUrl}/v1`,
+                apiKey: 'sk-disabled'
+              }
+            ]
+          }))
+        }
+      });
+
+      const result = await service.getChannelBalances('pi');
+
+      expect(result.enabled).toBe(true);
+      expect(result.source).toBe('pi');
+      expect(result.balances).toMatchObject({
+        'omp-enabled': {
+          visible: true,
+          platform: 'sub2api',
+          remaining: 4.5
+        }
+      });
+      expect(Object.keys(result.balances)).toEqual(['omp-enabled']);
+      expect(service._test.getEnabledBalanceChannels('pi').map(channel => channel.id)).toEqual(['omp-enabled']);
+      expect(seenAuth.some(item => item.auth === 'Bearer balance-token')).toBe(true);
     } finally {
       await enabledServer.close();
       await disabledServer.close();

@@ -13,6 +13,7 @@ const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
 const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
 const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
 const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
+const { getEffectiveApiKey: getPiEffectiveApiKey } = require('./pi-channels');
 const { loadClaudeRequestTemplate } = require('./request-logger');
 
 // 测试结果缓存
@@ -102,6 +103,8 @@ function resolveExplicitModel(channel, model) {
 
 function resolveEffectiveApiKey(channel, channelType) {
   switch (channelType) {
+    case 'pi':
+      return getPiEffectiveApiKey(channel);
     case 'codex':
       return getCodexEffectiveApiKey(channel);
     case 'gemini':
@@ -376,11 +379,14 @@ function extractJsonPayloads(responseData) {
  * 测试单个渠道的连接速度和 API 功能
  * @param {Object} channel - 渠道配置
  * @param {number} timeout - 超时时间（毫秒）
- * @param {string} channelType - 渠道类型：'claude' | 'codex' | 'gemini'
+ * @param {string} channelType - 请求格式类型：'claude' | 'codex' | 'gemini' | 'opencode'
+ * @param {Object} options - 可选行为
+ * @param {string} options.authSourceType - API key 来源平台；OMP 使用 'pi'，请求格式仍由 channelType 决定
  * @returns {Promise<Object>} 测试结果
  */
-async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType = 'claude') {
+async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType = 'claude', options = {}) {
   const sanitizedTimeout = sanitizeTimeout(timeout);
+  const authSourceType = options?.authSourceType || channelType;
 
   try {
     if (!channel.baseUrl) {
@@ -416,7 +422,7 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
       };
     }
 
-    const effectiveApiKey = resolveEffectiveApiKey(channel, channelType);
+    const effectiveApiKey = resolveEffectiveApiKey(channel, authSourceType);
     if (!effectiveApiKey) {
       return {
         channelId: channel.id,

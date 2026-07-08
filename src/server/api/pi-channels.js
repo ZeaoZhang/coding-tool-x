@@ -265,7 +265,9 @@ module.exports = () => {
       if (!channel) {
         return res.status(404).json({ error: 'Channel not found' });
       }
-      const result = await testChannelSpeed(channel, req.body?.timeout || 20000, resolveGatewaySourceType(channel));
+      const result = await testChannelSpeed(channel, req.body?.timeout || 20000, resolveGatewaySourceType(channel), {
+        authSourceType: 'pi'
+      });
       res.json(result);
     } catch (error) {
       console.error('[OMP Channels API] Speed test failed:', error);
@@ -281,7 +283,9 @@ module.exports = () => {
       const results = await runWithConcurrencyLimit(
         channels,
         safeConcurrency,
-        channel => testChannelSpeed(channel, timeout, resolveGatewaySourceType(channel))
+        channel => testChannelSpeed(channel, timeout, resolveGatewaySourceType(channel), {
+          authSourceType: 'pi'
+        })
       );
       results.sort((a, b) => {
         if (a.success && !b.success) return -1;
