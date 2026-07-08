@@ -281,6 +281,15 @@ describe('pi-channels api', () => {
     handler({ body: { order: ['pi-2', 'pi-1'] } }, res);
     expect(saveChannelOrder).toHaveBeenCalledWith(['pi-2', 'pi-1']);
 
+    handler = findHandler(router, 'post', '/:channelId/speed-test');
+    res = makeRes();
+    await handler({ params: { channelId: 'pi-1' }, body: { timeout: 8000 } }, res);
+    expect(res._body).toEqual(expect.objectContaining({
+      channelId: 'pi-1',
+      timeout: 8000,
+      gatewaySourceType: 'codex'
+    }));
+
     handler = findHandler(router, 'post', '/speed-test-all');
     res = makeRes();
     await handler({ body: { timeout: 9000, concurrency: 4 } }, res);
@@ -291,6 +300,27 @@ describe('pi-channels api', () => {
       avgLatency: 88,
       concurrency: 4
     });
+    expect(testChannelSpeed).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ id: 'pi-1' }),
+      8000,
+      'codex',
+      { authSourceType: 'pi' }
+    );
+    expect(testChannelSpeed).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: 'pi-1' }),
+      9000,
+      'codex',
+      { authSourceType: 'pi' }
+    );
+    expect(testChannelSpeed).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ id: 'pi-2' }),
+      9000,
+      'gemini',
+      { authSourceType: 'pi' }
+    );
 
     handler = findHandler(router, 'post', '/:channelId/reset-health');
     res = makeRes();

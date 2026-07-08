@@ -49,7 +49,7 @@
 - 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
 - OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
 - 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP 写入原生 `mcp.json`
-- 支持 OAuth 凭证池管理与回写原生配置
+- 支持 Claude、Codex、Gemini、OpenCode 的 OAuth 凭证池管理与回写原生配置；OMP auth 通过原生配置导入导出保留
 - 支持 ZIP / JSON 配置导入导出
 
 ### 工作区与运维
@@ -72,22 +72,24 @@
 | 能力 | Claude | Codex | Gemini | OpenCode | OMP |
 | --- | --- | --- | --- | --- | --- |
 | 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
-| 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持 |
+| 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持，含余额显示与批量测速 |
 | Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 写入 OMP prompt templates |
 | Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
 | Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
 | Agents 管理 | 支持 | 用户级 | 支持 | 支持 | 不提供直接原生管理 |
 | Plugins 管理 | 支持 | 支持 | - | 支持 | 映射为 packages / extensions |
 | MCP 管理 | 支持 | 支持 | 支持 | 支持 | 写入 OMP `mcp.json` |
-| OAuth 凭证托管 | 支持 | 支持 | 支持 | 支持 | - |
+| OAuth 凭证托管 | 支持 | 支持 | 支持 | 支持 | 原生 auth 导入导出，不提供 OAuth 抽屉托管 |
 | 通知托管 | 支持 | 支持 | 支持 | 支持 | 支持 |
-| 请求 / 会话统计 | 支持 | 支持 | 支持 | 支持 | 支持 |
+| 请求 / 会话统计 | 支持 | 支持 | 支持 | 支持 | 共享统计优先，空时回退到 OMP session usage |
 
 补充说明:
 
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取依赖本机 `sqlite3`
 - OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
+- OMP 在内部继续使用兼容平台键 `pi`，用户界面显示为 OMP，启动命令使用 `omp`
+- OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
 
 ## 安装
 

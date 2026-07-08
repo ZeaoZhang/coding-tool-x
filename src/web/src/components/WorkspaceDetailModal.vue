@@ -27,6 +27,9 @@
         <n-button type="success" size="small" @click="launchCLI('gemini')" :disabled="!workspace.exists">
           Gemini CLI
         </n-button>
+        <n-button type="warning" size="small" @click="launchCLI('pi')" :disabled="!workspace.exists">
+          OMP
+        </n-button>
       </n-space>
       <n-text depth="3" style="display: block; margin-top: 6px; font-size: 11px">
         点击按钮将复制启动命令到剪贴板
