@@ -357,6 +357,8 @@ export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
     wireApi: extra.wireApi || 'openai',
     providerApi: extra.providerApi || extra.wireApi || 'openai-completions',
     providerKey: extra.providerKey || '',
+    authMode: extra.authMode || 'api_key',
+    oauthProviderId: extra.oauthProviderId || '',
     gatewaySourceType: extra.gatewaySourceType || 'openai_compatible',
     enabled: extra.enabled !== false,
     weight: extra.weight || 1,
@@ -410,8 +412,8 @@ export async function fetchOmpChannelModels(channelId, { forceRefresh = false } 
   return response.data
 }
 
-export async function probeOmpChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
-  const response = await client.post('/omp/channels/probe-models', { baseUrl, apiKey, gatewaySourceType })
+export async function probeOmpChannelModels(config) {
+  const response = await client.post('/omp/channels/probe-models', config)
   return response.data
 }
 

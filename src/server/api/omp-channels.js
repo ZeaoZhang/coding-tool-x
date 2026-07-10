@@ -61,6 +61,63 @@ function collectPreferredModels(channel = {}) {
   ]);
 }
 
+function resolveModelDiscoverySourceType(gatewaySourceType) {
+  return gatewaySourceType === 'opencode' ? 'openai_compatible' : gatewaySourceType;
+}
+
+async function discoverOmpModels(channel, gatewaySourceType, { forceRefresh = false } = {}) {
+  if (channel?.authMode === 'oauth' && !String(channel.apiKey || '').trim()) {
+    const preferredModels = collectPreferredModels(channel);
+    return {
+      models: preferredModels,
+      supported: preferredModels.length > 0,
+      cached: false,
+      fallbackUsed: true,
+      fetchedAt: new Date().toISOString(),
+      error: preferredModels.length > 0 ? null : 'OAuth 渠道未配置 API Key，无法直接调用远端模型列表接口',
+      errorHint: '请手动填写默认模型、测速模型或可用模型；运行时由 OMP 的登录凭证提供访问权限'
+    };
+  }
+
+  const discoverySourceType = resolveModelDiscoverySourceType(gatewaySourceType);
+  const listResult = await fetchModelsFromProvider(channel, discoverySourceType, {
+    useV1ModelsEndpoint: true,
+    forceRefresh
+  });
+  const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
+
+  if (listedModels.length > 0) {
+    return {
+      models: listedModels,
+      supported: true,
+      cached: !!listResult.cached,
+      fallbackUsed: false,
+      fetchedAt: listResult.lastChecked || new Date().toISOString(),
+      error: null,
+      errorHint: null
+    };
+  }
+
+  const probe = await probeModelAvailability(channel, discoverySourceType, {
+    stopOnFirstAvailable: false,
+    preferredModels: collectPreferredModels(channel),
+    forceRefresh
+  });
+  const probedModels = Array.isArray(probe.availableModels) ? uniqueModels(probe.availableModels) : [];
+
+  return {
+    models: probedModels,
+    supported: probedModels.length > 0,
+    cached: !!probe.cached || !!listResult.cached,
+    fallbackUsed: probedModels.length > 0,
+    fetchedAt: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
+    error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
+    errorHint: probedModels.length > 0
+      ? '模型列表接口不可用，已自动切换为模型探测结果'
+      : (listResult.errorHint || '请手动填写模型名称')
+  };
+}
+
 function attachAuthProvider(channel, snapshot) {
   const authProvider = findAuthProviderForKey(channel.providerKey || channel.provider || channel.name, snapshot);
   if (!authProvider) return channel;
@@ -116,23 +173,40 @@ module.exports = () => {
 
   router.post('/probe-models', async (req, res) => {
     try {
-      const { baseUrl, apiKey, gatewaySourceType } = req.body || {};
+      const {
+        baseUrl,
+        apiKey,
+        gatewaySourceType,
+        authMode,
+        oauthProviderId,
+        model,
+        speedTestModel,
+        allowedModels,
+        modelRedirects
+      } = req.body || {};
       if (!baseUrl) {
         return res.status(400).json({ error: 'baseUrl is required' });
       }
-      const tempChannel = { baseUrl, apiKey: apiKey || '', gatewaySourceType: gatewaySourceType || 'openai_compatible' };
+      const tempChannel = {
+        name: 'Temporary OMP Channel',
+        baseUrl,
+        apiKey: apiKey || '',
+        gatewaySourceType: gatewaySourceType || 'openai_compatible',
+        authMode: authMode === 'oauth' ? 'oauth' : 'api_key',
+        oauthProviderId: oauthProviderId || '',
+        model: model || null,
+        speedTestModel: speedTestModel || null,
+        allowedModels: Array.isArray(allowedModels) ? allowedModels : [],
+        modelRedirects: Array.isArray(modelRedirects) ? modelRedirects : []
+      };
       const resolvedGatewaySourceType = resolveGatewaySourceType(tempChannel);
-      const modelListSourceType = resolvedGatewaySourceType === 'opencode' ? 'openai_compatible' : resolvedGatewaySourceType;
-      const listResult = await fetchModelsFromProvider(tempChannel, modelListSourceType, {
-        useV1ModelsEndpoint: true,
-        forceRefresh: true
-      });
-      const models = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
+      const result = await discoverOmpModels(tempChannel, resolvedGatewaySourceType, { forceRefresh: true });
       res.json({
-        models,
-        supported: models.length > 0,
-        error: models.length > 0 ? null : (listResult.error || '未返回可用模型列表'),
-        errorHint: models.length > 0 ? null : (listResult.errorHint || '请手动填写模型名称')
+        models: result.models,
+        supported: result.supported,
+        fallbackUsed: result.fallbackUsed,
+        error: result.error,
+        errorHint: result.errorHint
       });
     } catch (error) {
       console.error('[OMP Channels API] Error probing models:', error);
@@ -150,35 +224,18 @@ module.exports = () => {
       }
       const forceRefresh = req.query.forceRefresh === 'true';
       const gatewaySourceType = resolveGatewaySourceType(channel);
-      const modelListSourceType = gatewaySourceType === 'opencode' ? 'openai_compatible' : gatewaySourceType;
-      const listResult = await fetchModelsFromProvider(channel, modelListSourceType, {
-        useV1ModelsEndpoint: true,
-        forceRefresh
-      });
-      let models = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
-      let error = models.length > 0 ? null : listResult.error;
-      let errorHint = models.length > 0 ? null : listResult.errorHint;
-
-      if (models.length === 0) {
-        const probe = await probeModelAvailability(channel, gatewaySourceType, {
-          stopOnFirstAvailable: false,
-          preferredModels: collectPreferredModels(channel)
-        });
-        models = Array.isArray(probe.availableModels) ? uniqueModels(probe.availableModels) : [];
-        error = models.length > 0 ? null : (error || '无法获取可用模型');
-        errorHint = models.length > 0 ? '模型列表接口不可用，已自动切换为模型探测结果' : (errorHint || '请手动填写模型名称');
-      }
+      const result = await discoverOmpModels(channel, gatewaySourceType, { forceRefresh });
 
       res.json({
         channelId,
         gatewaySourceType,
-        models,
-        supported: models.length > 0,
-        cached: !!listResult.cached,
-        fallbackUsed: false,
-        fetchedAt: listResult.lastChecked || new Date().toISOString(),
-        error,
-        errorHint
+        models: result.models,
+        supported: result.supported,
+        cached: result.cached,
+        fallbackUsed: result.fallbackUsed,
+        fetchedAt: result.fetchedAt,
+        error: result.error,
+        errorHint: result.errorHint
       });
     } catch (error) {
       console.error('[OMP Channels API] Error fetching models:', error);
@@ -203,6 +260,8 @@ module.exports = () => {
         speedTestModel,
         providerKey,
         providerApi,
+        authMode,
+        oauthProviderId,
         presetId,
         websiteUrl,
         balanceToken,
@@ -212,7 +271,8 @@ module.exports = () => {
       if (!name || !baseUrl) {
         return res.status(400).json({ error: 'Missing required fields: name and baseUrl' });
       }
-      if (!apiKey) {
+      const normalizedAuthMode = authMode === 'oauth' ? 'oauth' : 'api_key';
+      if (!apiKey && normalizedAuthMode !== 'oauth') {
         return res.status(400).json({ error: 'API Key is required' });
       }
 
@@ -220,6 +280,8 @@ module.exports = () => {
         wireApi: wireApi || 'openai',
         providerApi: providerApi || wireApi || 'openai-completions',
         providerKey,
+        authMode: normalizedAuthMode,
+        oauthProviderId: oauthProviderId || providerKey || '',
         enabled,
         weight,
         maxConcurrency,

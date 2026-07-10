@@ -49,7 +49,6 @@ import {
   resetOmpChannelHealth,
   fetchOmpChannelModels,
   probeOmpChannelModels,
-  getOmpAuthProviders,
   testOmpChannelSpeed
 } from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
@@ -111,6 +110,8 @@ function buildAuthPayload(form) {
   const shouldKeepManualBalanceCredential = form._showChannelBalance !== true || shouldShowManualBalanceCredential(form)
   return {
     apiKey: form.apiKey || '',
+    authMode: form.authMode === 'oauth' ? 'oauth' : 'api_key',
+    oauthProviderId: form.oauthProviderId || form.providerKey || '',
     balanceToken: shouldKeepManualBalanceCredential ? (form.balanceToken || '') : '',
     balanceUserId: shouldKeepManualBalanceCredential ? (form.balanceUserId || null) : null
   }
@@ -158,92 +159,6 @@ function buildBalanceUserIdField() {
 
 function applyPresetAuth(form) {
   return { ...form }
-}
-
-let ompAuthProvidersCache = null
-let ompAuthProvidersCacheTime = 0
-const OMP_AUTH_PROVIDERS_TTL = 30000
-
-function normalizeProviderId(value = '') {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-}
-
-function getOmpAuthProviderMatch(form = {}) {
-  const snapshot = form.authProviders || {}
-  const aliases = snapshot.aliases || {}
-  const providerKey = normalizeProviderId(form.providerKey || form.provider || form.name || '')
-  if (!providerKey) return null
-  const resolved = aliases[providerKey] || providerKey
-  const providers = Array.isArray(snapshot.providers) ? snapshot.providers : []
-  return providers.find(provider => provider.id === resolved) || null
-}
-
-function getOmpAuthProviderStatus(form = {}) {
-  if (form.authProvidersFetching) {
-    return {
-      tags: [{ text: '识别中', type: 'info' }],
-      message: ''
-    }
-  }
-  if (form.authProvidersError) {
-    return {
-      tags: [{ text: '识别失败', type: 'warning' }],
-      message: form.authProvidersError,
-      warning: true
-    }
-  }
-  const provider = getOmpAuthProviderMatch(form)
-  if (!provider) {
-    return { tags: [], message: '' }
-  }
-  if (provider.checked === false) {
-    return {
-      tags: [
-        { text: provider.name || provider.id, type: 'info' },
-        { text: '未检查账号', type: 'info' }
-      ],
-      message: 'OMP 支持该 provider 登录，当前仅识别支持状态',
-      warning: false
-    }
-  }
-  const accountCount = Number(provider.accountCount || 0)
-  const accounts = Array.isArray(provider.accounts) ? provider.accounts : []
-  return {
-    tags: [
-      { text: provider.name || provider.id, type: provider.loggedIn ? 'success' : 'warning' },
-      { text: provider.loggedIn ? `${accountCount} 个账号` : '未登录', type: provider.loggedIn ? 'success' : 'warning' }
-    ],
-    message: provider.loggedIn
-      ? accounts.map(account => account.identity).filter(Boolean).slice(0, 2).join(' · ')
-      : 'OMP 支持该 provider 登录，但本机当前未检测到账号',
-    warning: !provider.loggedIn
-  }
-}
-
-async function loadOmpAuthProvidersForForm(form, { forceRefresh = false } = {}) {
-  const now = Date.now()
-  if (!forceRefresh && ompAuthProvidersCache && now - ompAuthProvidersCacheTime < OMP_AUTH_PROVIDERS_TTL) {
-    form.authProviders = ompAuthProvidersCache
-    form.authProvidersError = null
-    return
-  }
-  form.authProvidersFetching = true
-  form.authProvidersError = null
-  try {
-    const snapshot = await getOmpAuthProviders({ forceRefresh })
-    ompAuthProvidersCache = snapshot
-    ompAuthProvidersCacheTime = Date.now()
-    form.authProviders = snapshot
-  } catch (error) {
-    form.authProvidersError = error.message || '无法识别 OMP 登录渠道'
-  } finally {
-    form.authProvidersFetching = false
-  }
 }
 
 function formatAllowedModels(channel = {}) {
@@ -1560,16 +1475,6 @@ const channelPanelFactories = {
             validate: validateProviderKey
           },
           {
-            key: 'ompAuthProvider',
-            label: '登录渠道',
-            type: 'auth-provider-status',
-            showWhen: (form) => {
-              const status = getOmpAuthProviderStatus(form)
-              return status.tags.length > 0 || !!status.message
-            },
-            getStatus: getOmpAuthProviderStatus
-          },
-          {
             key: 'baseUrl',
             label: 'Base URL',
             type: 'text',
@@ -1582,7 +1487,8 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
-            placeholder: 'sk-...'
+            placeholder: 'sk-...',
+            validate: (value) => validateRequired('API Key', value)
           },
           buildBalanceCredentialField(),
           buildBalanceUserIdField(),
@@ -1657,10 +1563,7 @@ const channelPanelFactories = {
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null,
-      authProviders: null,
-      authProvidersFetching: false,
-      authProvidersError: null
+      modelsFetchErrorHint: null
     }),
     mapChannelToForm: (channel) => ({
       presetId: channel.presetId || 'custom',
@@ -1684,10 +1587,7 @@ const channelPanelFactories = {
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null,
-      authProviders: null,
-      authProvidersFetching: false,
-      authProvidersError: null
+      modelsFetchErrorHint: null
     }),
     onPresetChange: (presetId, form) => {
       const preset = getOpenCodePresetById(presetId)
@@ -1706,9 +1606,7 @@ const channelPanelFactories = {
       return applyPresetAuth(newForm)
     },
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
-      const authProvidersPromise = loadOmpAuthProvidersForForm(form, { forceRefresh })
       await loadDefaultModels()
-      await authProvidersPromise
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
@@ -1722,7 +1620,13 @@ const channelPanelFactories = {
           const result = await probeOmpChannelModels({
             baseUrl: form.baseUrl,
             apiKey: form.apiKey || '',
-            gatewaySourceType: form.gatewaySourceType || 'openai_compatible'
+            gatewaySourceType: form.gatewaySourceType || 'openai_compatible',
+            authMode: 'api_key',
+            oauthProviderId: '',
+            model: form.model || null,
+            speedTestModel: form.speedTestModel || null,
+            allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
+            modelRedirects: Array.isArray(form.modelRedirects) ? form.modelRedirects : []
           })
           form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
           if (result.error) {
@@ -1765,6 +1669,8 @@ const channelPanelFactories = {
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
           providerKey: form.providerKey,
+          authMode: 'api_key',
+          oauthProviderId: '',
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
@@ -1788,6 +1694,8 @@ const channelPanelFactories = {
           apiKey: authPayload.apiKey,
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
+          authMode: 'api_key',
+          oauthProviderId: '',
           websiteUrl: form.websiteUrl,
           model: form.model || null,
           gatewaySourceType: form.gatewaySourceType || 'openai_compatible',

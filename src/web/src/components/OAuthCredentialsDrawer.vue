@@ -262,12 +262,13 @@ const visible = computed({
   set: (value) => emit('update:visible', value)
 })
 
-const toolOrder = ['claude', 'codex', 'gemini', 'opencode']
+const toolOrder = ['claude', 'codex', 'gemini', 'opencode', 'omp']
 const toolLabels = {
   claude: 'Claude',
   codex: 'Codex',
   gemini: 'Gemini',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  omp: 'OMP'
 }
 
 const currentTool = ref('claude')
@@ -374,6 +375,8 @@ function nativeStorageLabel(storage) {
   if (value === 'keychain') return 'Keychain'
   if (value === 'file') return '凭证文件'
   if (value === 'auth-file') return 'auth.json'
+  if (value === 'auth-broker') return 'OMP Auth Broker'
+  if (value === 'auth-broker-existing') return 'OMP Auth Broker'
   if (value === 'settings-env') return 'settings.env'
   if (value === 'encrypted-file') return '加密文件'
   if (value === 'legacy-file') return '旧文件'

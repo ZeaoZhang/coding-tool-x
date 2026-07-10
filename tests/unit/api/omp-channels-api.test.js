@@ -242,15 +242,76 @@ describe('omp-channels api', () => {
     res = makeRes();
     await handler({ body: { baseUrl: 'https://omp.new/v1', apiKey: 'secret', gatewaySourceType: 'opencode' } }, res);
     expect(fetchModelsFromProvider).toHaveBeenCalledWith(
-      { baseUrl: 'https://omp.new/v1', apiKey: 'secret', gatewaySourceType: 'opencode' },
+      expect.objectContaining({
+        name: 'Temporary OMP Channel',
+        baseUrl: 'https://omp.new/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'opencode'
+      }),
       'openai_compatible',
       expect.objectContaining({ useV1ModelsEndpoint: true, forceRefresh: true })
     );
     expect(res._body).toEqual({
       models: ['gpt-5'],
       supported: true,
+      fallbackUsed: false,
       error: null,
       errorHint: null
+    });
+
+    fetchModelsFromProvider.mockResolvedValueOnce({
+      models: [],
+      cached: false,
+      error: '未返回可用模型列表',
+      errorHint: '请手动填写模型名称'
+    });
+    res = makeRes();
+    await handler({
+      body: {
+        baseUrl: 'https://omp.new/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'openai_compatible',
+        model: 'manual-model'
+      }
+    }, res);
+    expect(probeModelAvailability).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Temporary OMP Channel',
+        baseUrl: 'https://omp.new/v1',
+        model: 'manual-model'
+      }),
+      'openai_compatible',
+      expect.objectContaining({
+        stopOnFirstAvailable: false,
+        preferredModels: ['manual-model'],
+        forceRefresh: true
+      })
+    );
+    expect(res._body).toEqual({
+      models: ['gpt-5', 'gpt-5-mini'],
+      supported: true,
+      fallbackUsed: true,
+      error: null,
+      errorHint: '模型列表接口不可用，已自动切换为模型探测结果'
+    });
+
+    res = makeRes();
+    await handler({
+      body: {
+        baseUrl: 'https://omp.oauth/v1',
+        authMode: 'oauth',
+        providerKey: 'openai-codex',
+        gatewaySourceType: 'openai_compatible',
+        model: 'gpt-5',
+        allowedModels: ['gpt-5-mini']
+      }
+    }, res);
+    expect(res._body).toEqual({
+      models: ['gpt-5', 'gpt-5-mini'],
+      supported: true,
+      fallbackUsed: true,
+      error: null,
+      errorHint: '请手动填写默认模型、测速模型或可用模型；运行时由 OMP 的登录凭证提供访问权限'
     });
 
     handler = findHandler(router, 'get', '/:channelId/models');
@@ -269,6 +330,7 @@ describe('omp-channels api', () => {
       gatewaySourceType: 'codex',
       models: ['gpt-5', 'gpt-5-mini'],
       supported: true,
+      fallbackUsed: true,
       error: null,
       errorHint: '模型列表接口不可用，已自动切换为模型探测结果'
     }));
@@ -311,6 +373,30 @@ describe('omp-channels api', () => {
     );
     expect(res._body).toEqual(expect.objectContaining({ id: 'omp-new' }));
     expect(broadcastSchedulerState).toHaveBeenCalledWith('omp', { queue: 0 });
+
+    res = makeRes();
+    handler({
+      body: {
+        name: 'OAuth OMP',
+        baseUrl: 'https://oauth.omp/v1',
+        authMode: 'oauth',
+        providerKey: 'openai-codex',
+        oauthProviderId: 'openai-codex',
+        gatewaySourceType: 'openai_compatible',
+        model: 'gpt-5'
+      }
+    }, res);
+    expect(createChannel).toHaveBeenCalledWith(
+      'OAuth OMP',
+      'https://oauth.omp/v1',
+      undefined,
+      expect.objectContaining({
+        authMode: 'oauth',
+        oauthProviderId: 'openai-codex',
+        providerKey: 'openai-codex',
+        model: 'gpt-5'
+      })
+    );
 
     handler = findHandler(router, 'post', '/order');
     res = makeRes();
