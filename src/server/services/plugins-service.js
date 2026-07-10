@@ -19,7 +19,7 @@ const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore }
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
-const { getPiCommand } = require('./pi-config');
+const { getOmpCommand } = require('./omp-config');
 const { maskToken } = require('./oauth-utils');
 const {
   assertInsideAllowedRoots,
@@ -46,9 +46,9 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   codex: [],
   gemini: [],
   opencode: [],
-  pi: []
+  omp: []
 };
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const PLATFORM_CAPABILITIES = {
   claude: {
     platform: 'claude',
@@ -99,8 +99,8 @@ const PLATFORM_CAPABILITIES = {
     import: false,
     syncRepos: false
   },
-  pi: {
-    platform: 'pi',
+  omp: {
+    platform: 'omp',
     supportsPlugins: true,
     repositories: true,
     market: true,
@@ -194,7 +194,7 @@ function splitPluginMarketplaceKey(key = '') {
   };
 }
 
-function normalizePiPackageEntry(item = null) {
+function normalizeOmpPackageEntry(item = null) {
   if (typeof item === 'string') {
     const name = item.trim();
     return name ? {
@@ -219,17 +219,17 @@ function normalizePiPackageEntry(item = null) {
     source: item.source || installSource,
     directory,
     installSource,
-    resourceTypes: normalizePiResourceTypes(item.resourceTypes || item.resources || item.provides || item.capabilities)
+    resourceTypes: normalizeOmpResourceTypes(item.resourceTypes || item.resources || item.provides || item.capabilities)
   };
 }
 
-function getPiPackageIdentity(item = null) {
-  const normalized = normalizePiPackageEntry(item);
+function getOmpPackageIdentity(item = null) {
+  const normalized = normalizeOmpPackageEntry(item);
   return normalized?.name || '';
 }
 
-function piPackageSettingValue(item = null) {
-  const normalized = normalizePiPackageEntry(item);
+function ompPackageSettingValue(item = null) {
+  const normalized = normalizeOmpPackageEntry(item);
   if (!normalized) return null;
   if (typeof item === 'string') return normalized.name;
 
@@ -237,7 +237,7 @@ function piPackageSettingValue(item = null) {
   next.name = normalized.name;
   next.directory = normalized.directory;
   next.source = normalized.installSource;
-  const resourceTypes = normalizePiResourceTypes(next.resourceTypes || next.resources || normalized.resourceTypes);
+  const resourceTypes = normalizeOmpResourceTypes(next.resourceTypes || next.resources || normalized.resourceTypes);
   if (resourceTypes.length > 0) {
     next.resourceTypes = resourceTypes;
   } else {
@@ -246,7 +246,7 @@ function piPackageSettingValue(item = null) {
   return next;
 }
 
-function normalizePiResourceType(value = '') {
+function normalizeOmpResourceType(value = '') {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
   const key = normalized
@@ -277,10 +277,10 @@ function normalizePiResourceType(value = '') {
   return map[key] || normalized;
 }
 
-function normalizePiResourceTypes(input = []) {
+function normalizeOmpResourceTypes(input = []) {
   const values = [];
   const pushValue = (value) => {
-    const normalized = normalizePiResourceType(value);
+    const normalized = normalizeOmpResourceType(value);
     if (normalized && !values.includes(normalized)) values.push(normalized);
   };
 
@@ -304,7 +304,7 @@ function normalizePiResourceTypes(input = []) {
   return values;
 }
 
-function isPiPackageInstallSource(value = '') {
+function isOmpPackageInstallSource(value = '') {
   const source = String(value || '').trim();
   if (!source) return false;
   if (isLikelyLocalPath(source)) return true;
@@ -719,8 +719,8 @@ class PluginsService {
     return this.platform === 'opencode';
   }
 
-  _isPi() {
-    return this.platform === 'pi';
+  _isOmp() {
+    return this.platform === 'omp';
   }
 
   _isCodex() {
@@ -748,10 +748,10 @@ class PluginsService {
     return json;
   }
 
-  _readPiSettings() {
-    const filePath = NATIVE_PATHS.pi.settings;
+  _readOmpSettings() {
+    const filePath = NATIVE_PATHS.omp.settings;
     if (!fs.existsSync(filePath)) {
-      const legacyPath = NATIVE_PATHS.pi.settingsJsonLegacy;
+      const legacyPath = NATIVE_PATHS.omp.settingsJsonLegacy;
       if (legacyPath && fs.existsSync(legacyPath)) {
         try {
           const raw = fs.readFileSync(legacyPath, 'utf8');
@@ -773,63 +773,63 @@ class PluginsService {
     }
   }
 
-  _writePiSettings(settings = {}) {
-    this._ensureDir(path.dirname(NATIVE_PATHS.pi.settings));
-    fs.writeFileSync(NATIVE_PATHS.pi.settings, yaml.dump(settings, {
+  _writeOmpSettings(settings = {}) {
+    this._ensureDir(path.dirname(NATIVE_PATHS.omp.settings));
+    fs.writeFileSync(NATIVE_PATHS.omp.settings, yaml.dump(settings, {
       lineWidth: 120,
       noRefs: true,
       sortKeys: false
     }), 'utf8');
   }
 
-  _listPiPackages() {
-    const settings = this._readPiSettings();
+  _listOmpPackages() {
+    const settings = this._readOmpSettings();
     return Array.isArray(settings.packages)
-      ? settings.packages.map(normalizePiPackageEntry).filter(Boolean)
+      ? settings.packages.map(normalizeOmpPackageEntry).filter(Boolean)
       : [];
   }
 
-  _setPiPackages(packages = []) {
-    const settings = this._readPiSettings();
+  _setOmpPackages(packages = []) {
+    const settings = this._readOmpSettings();
     const seen = new Set();
     settings.packages = packages
-      .map(item => piPackageSettingValue(item))
+      .map(item => ompPackageSettingValue(item))
       .filter((item) => {
-        const name = getPiPackageIdentity(item);
+        const name = getOmpPackageIdentity(item);
         if (!name || seen.has(name)) return false;
         seen.add(name);
         return true;
       });
-    this._writePiSettings(settings);
+    this._writeOmpSettings(settings);
   }
 
-  _listPiDisabledPackageEntries() {
-    const settings = this._readPiSettings();
+  _listOmpDisabledPackageEntries() {
+    const settings = this._readOmpSettings();
     return Array.isArray(settings.disabledPackages)
-      ? settings.disabledPackages.map(normalizePiPackageEntry).filter(Boolean)
+      ? settings.disabledPackages.map(normalizeOmpPackageEntry).filter(Boolean)
       : [];
   }
 
-  _listPiDisabledPackages() {
-    return this._listPiDisabledPackageEntries().map(item => item.name).filter(Boolean);
+  _listOmpDisabledPackages() {
+    return this._listOmpDisabledPackageEntries().map(item => item.name).filter(Boolean);
   }
 
-  _setPiDisabledPackages(packages = []) {
-    const settings = this._readPiSettings();
+  _setOmpDisabledPackages(packages = []) {
+    const settings = this._readOmpSettings();
     const seen = new Set();
     settings.disabledPackages = packages
-      .map(item => piPackageSettingValue(item))
+      .map(item => ompPackageSettingValue(item))
       .filter((item) => {
-        const name = getPiPackageIdentity(item);
+        const name = getOmpPackageIdentity(item);
         if (!name || seen.has(name)) return false;
         seen.add(name);
         return true;
       });
-    this._writePiSettings(settings);
+    this._writeOmpSettings(settings);
   }
 
-  _runPiPackageCommand(args = []) {
-    execFileSync(getPiCommand(), args, {
+  _runOmpPackageCommand(args = []) {
+    execFileSync(getOmpCommand(), args, {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: 'pipe',
@@ -837,12 +837,12 @@ class PluginsService {
     });
   }
 
-  _registerPiPackageReference(packageName, metadata = {}) {
-    const packages = this._listPiPackages();
+  _registerOmpPackageReference(packageName, metadata = {}) {
+    const packages = this._listOmpPackages();
     const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
     const displayName = String(metadata.name || packageName || installSource).trim();
     if (!packages.some(pkg => pkg.name === displayName || pkg.installSource === installSource)) {
-      const resourceTypes = normalizePiResourceTypes(metadata.resourceTypes || metadata.resources);
+      const resourceTypes = normalizeOmpResourceTypes(metadata.resourceTypes || metadata.resources);
       const entry = installSource && installSource !== displayName
         ? {
             name: displayName,
@@ -853,14 +853,14 @@ class PluginsService {
           }
         : displayName;
       packages.push(entry);
-      this._setPiPackages(packages);
+      this._setOmpPackages(packages);
     }
   }
 
-  _buildPiPackagePlugin(packageName, metadata = {}) {
+  _buildOmpPackagePlugin(packageName, metadata = {}) {
     const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
     const name = String(metadata.name || packageName || installSource).trim();
-    const resourceTypes = normalizePiResourceTypes(metadata.resourceTypes || metadata.resources);
+    const resourceTypes = normalizeOmpResourceTypes(metadata.resourceTypes || metadata.resources);
     return {
       name,
       directory: name,
@@ -873,42 +873,42 @@ class PluginsService {
     };
   }
 
-  _installPiPackage(packageName, metadata = {}) {
+  _installOmpPackage(packageName, metadata = {}) {
     const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
-    const plugin = this._buildPiPackagePlugin(packageName, { ...metadata, installSource });
+    const plugin = this._buildOmpPackagePlugin(packageName, { ...metadata, installSource });
     try {
-      this._runPiPackageCommand(['install', installSource || packageName]);
+      this._runOmpPackageCommand(['install', installSource || packageName]);
       return {
         success: true,
         plugin
       };
     } catch (err) {
-      this._registerPiPackageReference(packageName, { ...metadata, installSource, name: plugin.name });
+      this._registerOmpPackageReference(packageName, { ...metadata, installSource, name: plugin.name });
       return {
         success: true,
         registeredOnly: true,
-        warning: `Failed to run "${getPiCommand()} install"; saved the package reference so OMP can resolve it later. ${err.message}`,
+        warning: `Failed to run "${getOmpCommand()} install"; saved the package reference so OMP can resolve it later. ${err.message}`,
         plugin
       };
     }
   }
 
-  _removePiPackage(packageName) {
+  _removeOmpPackage(packageName) {
     try {
-      this._runPiPackageCommand(['remove', packageName]);
+      this._runOmpPackageCommand(['remove', packageName]);
       return true;
     } catch (err) {
       return false;
     }
   }
 
-  _listPiLocalExtensions() {
+  _listOmpLocalExtensions() {
     const plugins = [];
-    const extensionsDir = NATIVE_PATHS.pi.extensions;
+    const extensionsDir = NATIVE_PATHS.omp.extensions;
     if (!fs.existsSync(extensionsDir)) return plugins;
 
     try {
-      const disabled = new Set(this._listPiDisabledPackages());
+      const disabled = new Set(this._listOmpDisabledPackages());
       const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.name.startsWith('.')) continue;
@@ -920,7 +920,7 @@ class PluginsService {
           name,
           directory: entry.name,
           installPath: fullPath,
-          source: 'pi-extension',
+          source: 'omp-extension',
           version: 'local',
           description: '',
           installed: true,
@@ -1452,13 +1452,13 @@ class PluginsService {
       return { plugins };
     }
 
-    if (this._isPi()) {
-      const disabledEntries = this._listPiDisabledPackageEntries();
+    if (this._isOmp()) {
+      const disabledEntries = this._listOmpDisabledPackageEntries();
       const disabled = new Set(disabledEntries.flatMap(item => [item.name, item.installSource].filter(Boolean)));
       const plugins = [];
       const seen = new Set();
 
-      for (const pkg of this._listPiPackages()) {
+      for (const pkg of this._listOmpPackages()) {
         const seenKey = pkg.installSource || pkg.name;
         if (seen.has(seenKey)) continue;
         seen.add(seenKey);
@@ -1467,8 +1467,8 @@ class PluginsService {
           name: pkg.name,
           directory: pkg.directory || pkg.name,
           installSource: pkg.installSource || pkg.source || pkg.name,
-          resourceTypes: normalizePiResourceTypes(pkg.resourceTypes || pkg.resources),
-          source: 'pi-settings',
+          resourceTypes: normalizeOmpResourceTypes(pkg.resourceTypes || pkg.resources),
+          source: 'omp-settings',
           version: pkg.version || 'latest',
           description: pkg.description || '',
           installed: true,
@@ -1478,7 +1478,7 @@ class PluginsService {
         });
       }
 
-      for (const extension of this._listPiLocalExtensions()) {
+      for (const extension of this._listOmpLocalExtensions()) {
         if (seen.has(extension.name)) continue;
         seen.add(extension.name);
         plugins.push(extension);
@@ -1626,7 +1626,7 @@ class PluginsService {
       return plugin;
     }
 
-    if (this._isPi()) {
+    if (this._isOmp()) {
       const plugin = this.listPlugins().plugins.find(p => p.name === name || p.directory === name);
       if (!plugin) return null;
       return plugin;
@@ -1695,7 +1695,7 @@ class PluginsService {
       };
     }
 
-    if (this._isPi()) {
+    if (this._isOmp()) {
       const packageMetadata = repoInfo && typeof repoInfo === 'object'
         ? {
             name: repoInfo.name || repoInfo.packageName || repoInfo.displayName,
@@ -1710,28 +1710,28 @@ class PluginsService {
       if (
         repoInfo?.pluginKind === 'package' ||
         repoInfo?.pluginType === 'package' ||
-        (explicitPackageSource && isPiPackageInstallSource(explicitPackageSource) && !hasRepoInstallInfo(repoInfo))
+        (explicitPackageSource && isOmpPackageInstallSource(explicitPackageSource) && !hasRepoInstallInfo(repoInfo))
       ) {
-        return this._installPiPackage(explicitPackageSource, packageMetadata);
+        return this._installOmpPackage(explicitPackageSource, packageMetadata);
       }
 
       if (hasRepoInstallInfo(repoInfo)) {
-        return this._installFromRepoDirectory(repoInfo, { installRoot: NATIVE_PATHS.pi.extensions });
+        return this._installFromRepoDirectory(repoInfo, { installRoot: NATIVE_PATHS.omp.extensions });
       }
 
       const parsedSource = this.parseRepoTreeSource(source);
       if (parsedSource) {
-        return this._installPiPackage(source);
+        return this._installOmpPackage(source);
       }
 
       const parsedRepo = this._repoFromGitUrl(source, 'main');
       if (parsedRepo) {
-        return this._installPiPackage(source);
+        return this._installOmpPackage(source);
       }
 
       const packageName = String(source || '').trim();
-      if (packageName && isPiPackageInstallSource(packageName)) {
-        return this._installPiPackage(packageName);
+      if (packageName && isOmpPackageInstallSource(packageName)) {
+        return this._installOmpPackage(packageName);
       }
 
       return {
@@ -1978,7 +1978,7 @@ class PluginsService {
         } catch (e) {
           console.error('[PluginsService] Failed to update native installed_plugins.json:', e.message);
         }
-      } else if (!this._isOpenCode() && !this._isPi()) {
+      } else if (!this._isOpenCode() && !this._isOmp()) {
         const installTimestamp = new Date().toISOString();
         const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
         const repoSourceMeta = {
@@ -2008,7 +2008,7 @@ class PluginsService {
         }
 
         this.writeRepoSourceMeta(pluginDir, repoSourceMeta);
-      } else if (this._isPi()) {
+      } else if (this._isOmp()) {
         const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
         this.writeRepoSourceMeta(pluginDir, {
           repoId: normalizedRepo.id,
@@ -2048,8 +2048,8 @@ class PluginsService {
     if (this._isOpenCode()) {
       return ['package.json', 'plugin.json'];
     }
-    if (this._isPi()) {
-      return ['pi.json', 'extension.json', 'plugin.json', 'package.json'];
+    if (this._isOmp()) {
+      return ['omp.json', 'extension.json', 'plugin.json', 'package.json'];
     }
     return ['.claude-plugin/plugin.json', 'plugin.json', 'package.json'];
   }
@@ -2182,7 +2182,7 @@ class PluginsService {
       };
     }
 
-    if (this._isPi()) {
+    if (this._isOmp()) {
       const targetName = String(name || '').trim();
       let safeName = '';
       try {
@@ -2190,7 +2190,7 @@ class PluginsService {
       } catch {
         safeName = '';
       }
-      const packages = this._listPiPackages();
+      const packages = this._listOmpPackages();
       let removed = false;
       const packageToRemove = packages.find(pkg =>
         pkg.name === targetName ||
@@ -2199,7 +2199,7 @@ class PluginsService {
         pkg.installSource === safeName
       );
       if (packageToRemove) {
-        this._removePiPackage(packageToRemove.installSource || packageToRemove.name);
+        this._removeOmpPackage(packageToRemove.installSource || packageToRemove.name);
       }
       const nextPackages = packages.filter(pkg =>
         pkg.name !== safeName &&
@@ -2208,8 +2208,8 @@ class PluginsService {
         pkg.installSource !== targetName
       );
       if (nextPackages.length !== packages.length) {
-        this._setPiPackages(nextPackages);
-        const disabledEntries = this._listPiDisabledPackageEntries().filter(pkg =>
+        this._setOmpPackages(nextPackages);
+        const disabledEntries = this._listOmpDisabledPackageEntries().filter(pkg =>
           pkg.name !== safeName &&
           pkg.name !== targetName &&
           pkg.installSource !== safeName &&
@@ -2217,11 +2217,11 @@ class PluginsService {
           pkg.name !== packageToRemove?.name &&
           pkg.installSource !== packageToRemove?.installSource
         );
-        this._setPiDisabledPackages(disabledEntries);
+        this._setOmpDisabledPackages(disabledEntries);
         removed = true;
       }
 
-      const extensionsDir = NATIVE_PATHS.pi.extensions;
+      const extensionsDir = NATIVE_PATHS.omp.extensions;
       if (safeName && fs.existsSync(extensionsDir)) {
         const directPath = resolveInsideRoot(extensionsDir, safeName, 'OMP extension path');
         if (fs.existsSync(directPath)) {
@@ -2379,11 +2379,11 @@ class PluginsService {
       throw new Error(`${this.platform} plugin management is not supported`);
     }
 
-    if (this._isPi()) {
+    if (this._isOmp()) {
       const targetName = String(name || '').trim();
-      const packages = this._listPiPackages();
+      const packages = this._listOmpPackages();
       const targetPackage = packages.find(pkg => pkg.name === targetName || pkg.installSource === targetName);
-      const disabledEntries = this._listPiDisabledPackageEntries();
+      const disabledEntries = this._listOmpDisabledPackageEntries();
       const disabled = new Set(disabledEntries.flatMap(item => [item.name, item.installSource].filter(Boolean)));
       if (enabled) {
         disabled.delete(targetName);
@@ -2394,7 +2394,7 @@ class PluginsService {
       } else {
         disabled.add(targetPackage || targetName);
       }
-      this._setPiDisabledPackages(Array.from(disabled));
+      this._setOmpDisabledPackages(Array.from(disabled));
       return {
         name: targetName,
         enabled,
@@ -2495,13 +2495,13 @@ class PluginsService {
       throw new Error(`${this.platform} plugin management is not supported`);
     }
 
-    if (this._isPi()) {
-      const settings = this._readPiSettings();
+    if (this._isOmp()) {
+      const settings = this._readOmpSettings();
       settings.packageConfig = settings.packageConfig && typeof settings.packageConfig === 'object' && !Array.isArray(settings.packageConfig)
         ? settings.packageConfig
         : {};
       settings.packageConfig[name] = config;
-      this._writePiSettings(settings);
+      this._writeOmpSettings(settings);
       return {
         success: true,
         message: `Configuration updated for plugin "${name}"`
@@ -3343,7 +3343,7 @@ class PluginsService {
       lspServers: data.lspServers || null,
       commands: data.commands || [],
       hooks: data.hooks || [],
-      resourceTypes: normalizePiResourceTypes(data.resourceTypes || data.resources),
+      resourceTypes: normalizeOmpResourceTypes(data.resourceTypes || data.resources),
       resources: data.resources || null,
       containsSkills: Boolean(data.containsSkills),
       skillPaths: Array.isArray(data.skillPaths) ? data.skillPaths : [],
@@ -3598,7 +3598,7 @@ class PluginsService {
     return results;
   }
 
-  _normalizePiCatalogEntries(catalog = null) {
+  _normalizeOmpCatalogEntries(catalog = null) {
     if (Array.isArray(catalog)) return catalog;
     if (!catalog || typeof catalog !== 'object') return [];
     for (const key of ['packages', 'plugins', 'extensions']) {
@@ -3607,7 +3607,7 @@ class PluginsService {
     return [];
   }
 
-  _normalizePiCatalogPackage(repo, entry = {}, catalog = {}, defaults = {}) {
+  _normalizeOmpCatalogPackage(repo, entry = {}, catalog = {}, defaults = {}) {
     if (!entry || typeof entry !== 'object') return null;
     const installSource = String(
       entry.installSource ||
@@ -3622,11 +3622,11 @@ class PluginsService {
     const name = String(entry.name || entry.id || entry.package || installSource || '').trim();
     if (!name || !installSource) return null;
 
-    const resourceTypes = normalizePiResourceTypes(
+    const resourceTypes = normalizeOmpResourceTypes(
       entry.resourceTypes ||
       entry.resources ||
       entry.provides ||
-      entry.pi?.resources ||
+      entry.omp?.resources ||
       defaults.resourceTypes
     );
     return this.buildMarketPluginItem(repo, {
@@ -3639,7 +3639,7 @@ class PluginsService {
       directory: entry.directory || name,
       marketplace: entry.marketplace || repo.marketplace || catalog.name || defaults.marketplace || '',
       installSource,
-      marketplaceFormat: defaults.marketplaceFormat || 'pi-package-catalog',
+      marketplaceFormat: defaults.marketplaceFormat || 'omp-package-catalog',
       pluginKind: 'package',
       pluginType: 'package',
       resourceTypes,
@@ -3648,34 +3648,34 @@ class PluginsService {
     });
   }
 
-  async _fetchPiPackageCatalogPlugins(repo, fileMap, readJson) {
-    if (!this._isPi()) return [];
-    const catalogFiles = ['pi-packages.json', '.pi/packages.json', 'packages.json'];
+  async _fetchOmpPackageCatalogPlugins(repo, fileMap, readJson) {
+    if (!this._isOmp()) return [];
+    const catalogFiles = ['omp-packages.json', '.omp/packages.json', 'packages.json'];
     for (const catalogPath of catalogFiles) {
       if (!fileMap.has(catalogPath)) continue;
       const catalog = await readJson(catalogPath);
-      const entries = this._normalizePiCatalogEntries(catalog);
+      const entries = this._normalizeOmpCatalogEntries(catalog);
       const plugins = entries
-        .map(entry => this._normalizePiCatalogPackage(repo, entry, catalog, {
-          marketplaceFormat: 'pi-package-catalog'
+        .map(entry => this._normalizeOmpCatalogPackage(repo, entry, catalog, {
+          marketplaceFormat: 'omp-package-catalog'
         }))
         .filter(Boolean);
       if (plugins.length > 0) return plugins;
     }
 
-    const manifestPath = fileMap.has('pi.json') ? 'pi.json' : (fileMap.has('package.json') ? 'package.json' : '');
+    const manifestPath = fileMap.has('omp.json') ? 'omp.json' : (fileMap.has('package.json') ? 'package.json' : '');
     if (!manifestPath) return [];
     const manifest = await readJson(manifestPath);
-    const piMeta = manifest.pi && typeof manifest.pi === 'object' ? manifest.pi : {};
-    const installSource = piMeta.installSource || manifest.installSource || manifest.name;
-    const resourceTypes = normalizePiResourceTypes(
-      piMeta.resourceTypes ||
-      piMeta.resources ||
+    const ompMeta = manifest.omp && typeof manifest.omp === 'object' ? manifest.omp: {};
+    const installSource = ompMeta.installSource || manifest.installSource || manifest.name;
+    const resourceTypes = normalizeOmpResourceTypes(
+      ompMeta.resourceTypes ||
+      ompMeta.resources ||
       manifest.resourceTypes ||
       manifest.resources
     );
     if (!installSource || resourceTypes.length === 0) return [];
-    const plugin = this._normalizePiCatalogPackage(repo, {
+    const plugin = this._normalizeOmpCatalogPackage(repo, {
       name: manifest.name || repo.name,
       installSource,
       version: manifest.version,
@@ -3683,7 +3683,7 @@ class PluginsService {
       author: manifest.author,
       resourceTypes
     }, { name: repo.marketplace || repo.name }, {
-      marketplaceFormat: manifestPath === 'pi.json' ? 'pi-manifest' : 'pi-package-manifest'
+      marketplaceFormat: manifestPath === 'omp.json' ? 'omp-manifest' : 'omp-package-manifest'
     });
     return plugin ? [plugin] : [];
   }
@@ -3764,11 +3764,11 @@ class PluginsService {
           }
         }
 
-        // OMP package catalog format; legacy catalog filenames may still include pi.
-        if (this._isPi()) {
-          const piPackagePlugins = await this._fetchPiPackageCatalogPlugins(repo, fileMap, readJson);
-          if (piPackagePlugins.length > 0) {
-            marketPlugins.push(...piPackagePlugins);
+        // OMP package catalog format; legacy catalog filenames may still include omp.
+        if (this._isOmp()) {
+          const ompPackagePlugins = await this._fetchOmpPackageCatalogPlugins(repo, fileMap, readJson);
+          if (ompPackagePlugins.length > 0) {
+            marketPlugins.push(...ompPackagePlugins);
             continue;
           }
         }
@@ -3818,8 +3818,8 @@ class PluginsService {
 
         for (const dir of pluginDirs) {
           try {
-            const manifest = this._isPi()
-              ? await this._readManifestFromRepo(repo, dir, ['pi.json', 'extension.json', 'plugin.json', 'package.json'])
+            const manifest = this._isOmp()
+              ? await this._readManifestFromRepo(repo, dir, ['omp.json', 'extension.json', 'plugin.json', 'package.json'])
               : await readJson(`${dir}/plugin.json`);
             if (!manifest) {
               throw new Error(`File not found: ${dir}/plugin.json`);
@@ -3831,7 +3831,7 @@ class PluginsService {
               author: manifest.author || repo.owner,
               version: manifest.version || '1.0.0',
               directory: dir,
-              pluginKind: this._isPi() ? 'extension' : undefined,
+              pluginKind: this._isOmp() ? 'extension' : undefined,
               commands: manifest.commands || [],
               hooks: manifest.hooks || []
             }));

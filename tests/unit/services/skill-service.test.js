@@ -22,7 +22,7 @@ function stubPaths() {
         codex:     { dir: path.join(testDir, 'native-codex'),    skills: path.join(testDir, 'codex-skills') },
         gemini:    { dir: path.join(testDir, 'native-gemini'),   skills: path.join(testDir, 'gemini-skills') },
         opencode:  { dir: path.join(testDir, 'native-opencode'), config: path.join(testDir, 'opencode-config'), skills: path.join(testDir, 'opencode-skills') },
-        pi: { dir: path.join(testDir, 'native-pi'), skills: path.join(testDir, 'native-pi', 'skills') }
+        omp: { dir: path.join(testDir, 'native-omp'), skills: path.join(testDir, 'native-omp', 'skills') }
       },
       HOME_DIR: testDir,
       PATHS: {
@@ -33,21 +33,21 @@ function stubPaths() {
           codex:    path.join(testDir, 'local', 'codex'),
           gemini:   path.join(testDir, 'local', 'gemini'),
           opencode: path.join(testDir, 'local', 'opencode'),
-          pi: path.join(testDir, 'local', 'pi')
+          omp: path.join(testDir, 'local', 'omp')
         },
         skillRepos: {
           claude:   path.join(testDir, 'repos', 'claude.json'),
           codex:    path.join(testDir, 'repos', 'codex.json'),
           gemini:   path.join(testDir, 'repos', 'gemini.json'),
           opencode: path.join(testDir, 'repos', 'opencode.json'),
-          pi: path.join(testDir, 'repos', 'pi.json')
+          omp: path.join(testDir, 'repos', 'omp.json')
         },
         skillCaches: {
           claude:   path.join(testDir, 'cache', 'claude.json'),
           codex:    path.join(testDir, 'cache', 'codex.json'),
           gemini:   path.join(testDir, 'cache', 'gemini.json'),
           opencode: path.join(testDir, 'cache', 'opencode.json'),
-          pi: path.join(testDir, 'cache', 'pi.json')
+          omp: path.join(testDir, 'cache', 'omp.json')
         }
       }
     }
@@ -98,12 +98,12 @@ describe('skill-service constants', () => {
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('codex');
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('gemini');
     expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('opencode');
-    expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('pi');
+    expect(DEFAULT_REPOS_BY_PLATFORM).toHaveProperty('omp');
   });
 
   it('each platform entry is an array', () => {
     const { DEFAULT_REPOS_BY_PLATFORM } = require('../../../src/server/services/skill-service');
-    for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
+    for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
       expect(Array.isArray(DEFAULT_REPOS_BY_PLATFORM[platform])).toBe(true);
     }
   });
@@ -156,10 +156,10 @@ describe('SkillService constructor', () => {
     expect(svc.platform).toBe('gemini');
   });
 
-  it('sets platform to pi when passed pi', () => {
+  it('sets platform to omp when passed omp', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
-    const svc = new SkillService('pi');
-    expect(svc.platform).toBe('pi');
+    const svc = new SkillService('omp');
+    expect(svc.platform).toBe('omp');
   });
 
   it('sets platform to opencode when passed opencode', () => {

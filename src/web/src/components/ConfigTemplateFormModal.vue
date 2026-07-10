@@ -173,7 +173,7 @@
         </template>
 
         <!-- OMP 配置 -->
-        <template v-if="formData.cliType === 'pi'">
+        <template v-if="formData.cliType === 'omp'">
           <n-card title="OMP Commands" size="small" style="margin-bottom: 16px">
             <n-tag size="small" type="success">.omp/commands</n-tag>
           </n-card>
@@ -239,7 +239,7 @@ const CLI_TYPE_OPTIONS = [
   { label: 'Codex', value: 'codex' },
   { label: 'Gemini', value: 'gemini' },
   { label: 'OpenCode', value: 'opencode' },
-  { label: 'OMP', value: 'pi' }
+  { label: 'OMP', value: 'omp' }
 ]
 
 const CLI_CAPABILITIES = {
@@ -247,7 +247,7 @@ const CLI_CAPABILITIES = {
   codex: { skills: true, agents: true, commands: true },
   gemini: { skills: true, agents: true, commands: true },
   opencode: { skills: true, agents: true, commands: true },
-  pi: { skills: true, agents: false, commands: true }
+  omp: { skills: true, agents: false, commands: true }
 }
 
 const isEdit = computed(() => !!props.template?.id)
@@ -265,7 +265,7 @@ function getDefaultFormData() {
       codex: { enabled: false, content: '' },
       gemini: { enabled: false, content: '' },
       opencode: { enabled: false, content: '' },
-      pi: { enabled: false, content: '' }
+      omp: { enabled: false, content: '' }
     },
     claudeMd: { enabled: false, content: '' },
     skills: [],
@@ -403,11 +403,11 @@ watch(() => props.show, (newVal) => {
         codex: { enabled: false, content: '' },
         gemini: { enabled: false, content: '' },
         opencode: { enabled: false, content: '' },
-        pi: { enabled: false, content: '' }
+        omp: { enabled: false, content: '' }
       }
 
       if (props.template.aiConfigs) {
-        for (const key of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
+        for (const key of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
           if (props.template.aiConfigs[key]) {
             aiConfigs[key] = { ...props.template.aiConfigs[key] }
           }

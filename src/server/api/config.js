@@ -409,7 +409,7 @@ router.get('/advanced', (req, res) => {
         codexProxy: config.ports?.codexProxy || 20089,
         geminiProxy: config.ports?.geminiProxy || 20090,
         opencodeProxy: config.ports?.opencodeProxy || 20091,
-        piProxy: config.ports?.piProxy || 20092
+        ompProxy: config.ports?.ompProxy || 20092
       },
       maxLogs: config.maxLogs || 100,
       statsInterval: config.statsInterval || 30,

@@ -1,0 +1,96 @@
+{
+  "name": "coding-tool-x",
+  "version": "3.6.11",
+  "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
+  "main": "src/index.js",
+  "bin": {
+    "ctx": "bin/ctx.js"
+  },
+  "scripts": {
+    "start": "node bin/ctx.js",
+    "test": "npm run test:basic && npm run test:api && npm run test:codex-agents && npm run test:skills && npm run test:plugins-market",
+    "test:basic": "node scripts/test-basic.js && npm run test:unit",
+    "test:api": "node scripts/test-api-consistency.js",
+    "test:codex-agents": "node scripts/test-codex-agents.js",
+    "test:skills": "node scripts/test-skill-providers.js",
+    "test:plugins-market": "node scripts/test-plugin-market-cache.js",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:windows": "node scripts/test-windows-regression.js",
+    "benchmark:codex": "node scripts/benchmark-codex-loading.js",
+    "build:web": "cd src/web && npm run build",
+    "prepack": "npm run build:web",
+    "dev:web": "cd src/web && npm run dev",
+    "dev:server": "nodemon"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "claude-cli",
+    "session-manager",
+    "cli",
+    "interactive",
+    "conversation",
+    "history",
+    "cc switch"
+  ],
+  "author": "CooperJiang",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "files": [
+    "bin/",
+    "src/commands/",
+    "src/config/",
+    "src/plugins/",
+    "src/server/",
+    "src/ui/",
+    "src/utils/",
+    "src/index.js",
+    "src/reset-config.js",
+    "docs/",
+    "dist/",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "adm-zip": "^0.5.16",
+    "ajv": "^8.17.1",
+    "chalk": "^4.1.2",
+    "express": "^4.21.2",
+    "http-proxy": "^1.18.1",
+    "https-proxy-agent": "^7.0.6",
+    "inquirer": "^8.2.7",
+    "js-yaml": "^4.1.1",
+    "open": "^8.4.2",
+    "ora": "^5.4.1",
+    "pm2": "^6.0.14",
+    "rxjs": "^7.8.2",
+    "semver": "^7.6.0",
+    "toml": "^3.0.0",
+    "ws": "^8.18.3"
+  },
+  "overrides": {
+    "basic-ftp": "^5.2.0",
+    "lodash": "^4.17.23",
+    "lodash-es": "^4.17.23",
+    "qs": "^6.15.0",
+    "systeminformation": "^5.31.4"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.0",
+    "nodemon": "^3.0.2",
+    "vitest": "^4.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZeaoZhang/coding-tool.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZeaoZhang/coding-tool/issues"
+  },
+  "homepage": "https://github.com/ZeaoZhang/coding-tool#readme"
+}

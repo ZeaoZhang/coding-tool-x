@@ -229,7 +229,7 @@ const userScopePath = computed(() =>
     ? '~/.config/opencode/commands/'
     : props.platform === 'gemini'
     ? '~/.gemini/commands/'
-    : props.platform === 'pi'
+    : props.platform === 'omp'
     ? '~/.omp/agent/commands/'
     : props.platform === 'codex'
     ? '~/.codex/commands/'
@@ -240,13 +240,13 @@ const projectScopePath = computed(() =>
     ? '.opencode/commands/'
     : props.platform === 'gemini'
     ? '.gemini/commands/'
-    : props.platform === 'pi'
+    : props.platform === 'omp'
     ? '.omp/commands/'
     : props.platform === 'codex'
     ? '.codex/commands/'
     : '.claude/commands/'
 )
-const supportsCommandMetadata = computed(() => props.platform !== 'opencode' && props.platform !== 'gemini' && props.platform !== 'pi')
+const supportsCommandMetadata = computed(() => props.platform !== 'opencode' && props.platform !== 'gemini' && props.platform !== 'omp')
 const scopeBadgeText = computed(() => formData.value.scope === 'project' ? '项目级' : '用户级')
 const commandTitle = computed(() => formData.value.name ? `/${formData.value.name}` : '编辑命令')
 const commandFormatLabel = computed(() => props.platform === 'gemini' ? 'TOML' : 'Markdown')

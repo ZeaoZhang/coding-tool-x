@@ -42,7 +42,7 @@ stubModule(
   { getEffectiveApiKey: () => null }
 );
 stubModule(
-  path.join(PROJECT_ROOT, 'src/server/services/pi-channels.js'),
+  path.join(PROJECT_ROOT, 'src/server/services/omp-channels.js'),
   { getEffectiveApiKey: (channel) => channel?.apiKey || null }
 );
 stubModule(
@@ -220,7 +220,7 @@ describe('testChannelSpeed', () => {
         },
         5000,
         'codex',
-        { authSourceType: 'pi' }
+        { authSourceType: 'omp' }
       );
 
       expect(result.success).toBe(true);

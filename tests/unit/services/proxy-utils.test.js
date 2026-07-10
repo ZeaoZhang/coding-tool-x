@@ -161,6 +161,7 @@ describe('proxy-utils', () => {
       expect(normalizeGatewaySourceType('claude')).toBe('claude');
       expect(normalizeGatewaySourceType('codex')).toBe('codex');
       expect(normalizeGatewaySourceType('gemini')).toBe('gemini');
+      expect(normalizeGatewaySourceType('opencode')).toBe('opencode');
       expect(normalizeGatewaySourceType('openai_compatible')).toBe('openai_compatible');
     });
 

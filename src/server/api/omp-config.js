@@ -3,12 +3,15 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 const {
-  getPiPaths,
-  getPiStatus,
+  getOmpPaths,
+  getOmpStatus,
   readJsonFile,
   readYamlFile,
-  readPiSettings
-} = require('../services/pi-config');
+  readOmpSettings
+} = require('../services/omp-config');
+const {
+  getOmpAuthProviderSnapshot
+} = require('../services/omp-auth-providers');
 
 function listDirEntries(dirPath, options = {}) {
   const { extensions = null, includeDirectories = true } = options;
@@ -43,7 +46,7 @@ function normalizeArray(value) {
 
 function buildCapabilities() {
   return {
-    platform: 'pi',
+    platform: 'omp',
     runtime: 'omp',
     native: {
       config: true,
@@ -78,7 +81,7 @@ function buildCapabilities() {
       agent: false
     },
     notes: [
-      'The pi channel is backed by OMP. coding-tool-x keeps the pi route/key for compatibility.',
+      'The omp channel is backed by OMP and uses omp as its platform key.',
       'Provider channels are enabled by merging managed ctx-* providers into OMP models.yml.'
     ]
   };
@@ -86,12 +89,13 @@ function buildCapabilities() {
 
 router.get('/', (req, res) => {
   try {
-    const paths = getPiPaths();
-    const settings = readPiSettings();
+    const paths = getOmpPaths();
+    const settings = readOmpSettings();
     const resources = {
       config: readYamlFile(paths.config, {}),
       settings: readYamlFile(paths.settings, {}),
       auth: fs.existsSync(paths.auth) ? { exists: true, path: paths.auth } : { exists: false, path: paths.auth },
+      authProviders: getOmpAuthProviderSnapshot({ accountCheck: false }),
       models: readYamlFile(paths.modelsYml, {}),
       legacyModels: readJsonFile(paths.modelsJsonLegacy, {}),
       packages: normalizeArray(settings.packages),
@@ -106,7 +110,7 @@ router.get('/', (req, res) => {
 
     res.json({
       success: true,
-      status: getPiStatus(),
+      status: getOmpStatus(),
       capabilities: buildCapabilities(),
       resources
     });
@@ -119,15 +123,28 @@ router.get('/', (req, res) => {
 router.get('/capabilities', (req, res) => {
   res.json({
     success: true,
-    platform: 'pi',
+    platform: 'omp',
     capabilities: buildCapabilities()
   });
 });
 
+router.get('/auth-providers', (req, res) => {
+  try {
+    const forceRefresh = req.query.forceRefresh === 'true';
+    res.json({
+      success: true,
+      ...getOmpAuthProviderSnapshot({ forceRefresh })
+    });
+  } catch (error) {
+    console.error('[OMP Config API] Failed to list auth providers:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/resources', (req, res) => {
   try {
-    const paths = getPiPaths();
-    const settings = readPiSettings();
+    const paths = getOmpPaths();
+    const settings = readOmpSettings();
     res.json({
       success: true,
       paths,

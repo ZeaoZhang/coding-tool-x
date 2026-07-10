@@ -1,11 +1,11 @@
 const express = require('express');
 const http = require('http');
 
-let piSessionsService;
+let ompSessionsService;
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/pi-projects')];
-  const createRouter = require('../../../src/server/api/pi-projects');
+  delete require.cache[require.resolve('../../../src/server/api/omp-projects')];
+  const createRouter = require('../../../src/server/api/omp-projects');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -59,25 +59,25 @@ function call(app, method, url, body) {
 }
 
 beforeEach(() => {
-  piSessionsService = {
-    getProjects: vi.fn(() => [{ name: 'repo-pi' }]),
+  ompSessionsService = {
+    getProjects: vi.fn(() => [{ name: 'repo-omp' }]),
     saveProjectOrder: vi.fn(),
     deleteProject: vi.fn(() => ({ success: true })),
-    isPiInstalled: vi.fn(() => true)
+    isOmpInstalled: vi.fn(() => true)
   };
 
-  require.cache[require.resolve('../../../src/server/services/pi-sessions')] = {
-    id: require.resolve('../../../src/server/services/pi-sessions'),
-    filename: require.resolve('../../../src/server/services/pi-sessions'),
+  require.cache[require.resolve('../../../src/server/services/omp-sessions')] = {
+    id: require.resolve('../../../src/server/services/omp-sessions'),
+    filename: require.resolve('../../../src/server/services/omp-sessions'),
     loaded: true,
-    exports: piSessionsService
+    exports: ompSessionsService
   };
 });
 
 afterEach(() => {
   [
-    '../../../src/server/api/pi-projects',
-    '../../../src/server/services/pi-sessions'
+    '../../../src/server/api/omp-projects',
+    '../../../src/server/services/omp-sessions'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -85,9 +85,9 @@ afterEach(() => {
   });
 });
 
-describe('pi-projects api', () => {
-  test('GET / returns empty payload when Pi is not installed', async () => {
-    piSessionsService.isPiInstalled.mockReturnValue(false);
+describe('omp-projects api', () => {
+  test('GET / returns empty payload when OMP is not installed', async () => {
+    ompSessionsService.isOmpInstalled.mockReturnValue(false);
     const res = await request(buildApp()).get('/');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
@@ -101,29 +101,29 @@ describe('pi-projects api', () => {
     const res = await request(buildApp()).get('/');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      projects: [{ name: 'repo-pi' }],
-      currentProject: 'repo-pi'
+      projects: [{ name: 'repo-omp' }],
+      currentProject: 'repo-omp'
     });
   });
 
   test('POST /order validates body and DELETE proxies project removal', async () => {
     const app = buildApp();
     const invalid = await request(app).post('/order', { order: 'bad' });
-    const valid = await request(app).post('/order', { order: ['repo-pi'] });
-    const deleted = await request(app).delete('/repo-pi');
+    const valid = await request(app).post('/order', { order: ['repo-omp'] });
+    const deleted = await request(app).delete('/repo-omp');
 
     expect(invalid.status).toBe(400);
     expect(valid.status).toBe(200);
-    expect(piSessionsService.saveProjectOrder).toHaveBeenCalledWith(['repo-pi']);
+    expect(ompSessionsService.saveProjectOrder).toHaveBeenCalledWith(['repo-omp']);
     expect(deleted.status).toBe(200);
-    expect(piSessionsService.deleteProject).toHaveBeenCalledWith('repo-pi');
+    expect(ompSessionsService.deleteProject).toHaveBeenCalledWith('repo-omp');
   });
 
   test('DELETE returns 404 for not found errors', async () => {
-    piSessionsService.deleteProject.mockImplementationOnce(() => {
+    ompSessionsService.deleteProject.mockImplementationOnce(() => {
       throw new Error('Project not found');
     });
-    const res = await request(buildApp()).delete('/repo-pi');
+    const res = await request(buildApp()).delete('/repo-omp');
     expect(res.status).toBe(404);
   });
 });

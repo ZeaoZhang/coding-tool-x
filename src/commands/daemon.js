@@ -260,7 +260,7 @@ function getManagedPorts(config = loadConfig()) {
     config.ports?.codexProxy || 20089,
     config.ports?.geminiProxy || 20090,
     config.ports?.opencodeProxy || 20091,
-    config.ports?.piProxy || 20092
+    config.ports?.ompProxy || 20092
   ].filter((port, index, list) => Number.isInteger(port) && port > 0 && list.indexOf(port) === index);
 }
 
@@ -668,7 +668,7 @@ async function handleStatus() {
     const codexActive = fs.existsSync(PATHS.activeChannel.codex);
     const geminiActive = fs.existsSync(PATHS.activeChannel.gemini);
     const opencodeActive = fs.existsSync(PATHS.activeChannel.opencode);
-    const piActive = fs.existsSync(PATHS.activeChannel.pi);
+    const ompActive = fs.existsSync(PATHS.activeChannel.omp);
 
     console.log(chalk.bold('\n[PROXY] 代理服务:'));
 
@@ -684,8 +684,8 @@ async function handleStatus() {
     console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
       chalk.gray(` (http://localhost:${config.ports?.opencodeProxy || 20091})`));
 
-    console.log(chalk.gray('  OMP:     ') + (piActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.piProxy || 20092})`));
+    console.log(chalk.gray('  OMP:     ') + (ompActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
+      chalk.gray(` (http://localhost:${config.ports?.ompProxy || 20092})`));
 
     console.log(chalk.bold('\n[TIP] 提示:'));
     console.log(chalk.gray('  • 代理服务通过 Web UI 界面控制'));

@@ -27,13 +27,13 @@ const CLAUDE_DIRS = {
 
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 
 const PLATFORM_SUPPORT = {
-  skills: { claude: true, codex: true, gemini: true, opencode: true, pi: true },
-  commands: { claude: true, codex: true, gemini: true, opencode: true, pi: true },
-  agents: { claude: true, codex: true, gemini: true, opencode: true, pi: false },
-  plugins: { claude: true, codex: false, gemini: false, opencode: true, pi: true }
+  skills: { claude: true, codex: true, gemini: true, opencode: true, omp: true },
+  commands: { claude: true, codex: true, gemini: true, opencode: true, omp: true },
+  agents: { claude: true, codex: true, gemini: true, opencode: true, omp: false },
+  plugins: { claude: true, codex: false, gemini: false, opencode: true, omp: true }
 };
 
 function normalizePlatforms(type, platforms = {}) {
@@ -585,7 +585,7 @@ class ConfigRegistryService {
         codex: 0,
         gemini: 0,
         opencode: 0,
-        pi: 0
+        omp: 0
       }
     };
 
@@ -599,7 +599,7 @@ class ConfigRegistryService {
         codex: items.filter(i => i.platforms?.codex).length,
         gemini: items.filter(i => i.platforms?.gemini).length,
         opencode: items.filter(i => i.platforms?.opencode).length,
-        pi: items.filter(i => i.platforms?.pi).length
+        omp: items.filter(i => i.platforms?.omp).length
       };
 
       stats.byType[type] = typeStats;
@@ -608,7 +608,7 @@ class ConfigRegistryService {
       stats.byPlatform.codex += typeStats.codex;
       stats.byPlatform.gemini += typeStats.gemini;
       stats.byPlatform.opencode += typeStats.opencode;
-      stats.byPlatform.pi += typeStats.pi;
+      stats.byPlatform.omp += typeStats.omp;
     }
 
     return stats;

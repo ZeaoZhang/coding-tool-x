@@ -47,7 +47,7 @@ const CLI_TYPE_MAP = {
   codex: { label: 'Codex', color: '#10a37f', textColor: '#fff', borderColor: '#10a37f' },
   gemini: { label: 'Gemini', color: '#4285f4', textColor: '#fff', borderColor: '#4285f4' },
   opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' },
-  pi: { label: 'OMP', color: '#0f9f9a', textColor: '#fff', borderColor: '#0f9f9a' }
+  omp: { label: 'OMP', color: '#0f9f9a', textColor: '#fff', borderColor: '#0f9f9a' }
 }
 
 const CLI_AI_FILE = {
@@ -55,7 +55,7 @@ const CLI_AI_FILE = {
   codex: 'AGENTS.md',
   gemini: 'GEMINI.md',
   opencode: '.opencode/AGENTS.md',
-  pi: '.omp/commands'
+  omp: '.omp/commands'
 }
 
 function cliTypeLabel(type) {
@@ -72,7 +72,7 @@ const activeAiConfigFile = computed(() => {
   const t = props.template
   const cliType = t?.cliType
   if (!cliType || cliType === 'all') return null
-  if (cliType === 'pi' && t?.commands?.length) return CLI_AI_FILE.pi
+  if (cliType === 'omp' && t?.commands?.length) return CLI_AI_FILE.omp
   const aiCfg = t?.aiConfigs?.[cliType]
   if (aiCfg?.enabled) return CLI_AI_FILE[cliType] || null
   // fallback: legacy claudeMd

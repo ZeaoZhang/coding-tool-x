@@ -337,92 +337,102 @@ export async function stopOpenCodeProxy() {
 // OMP Channel APIs
 // ============================================
 
-export async function getPiChannels() {
-  const response = await client.get('/pi/channels')
+export async function getOmpChannels() {
+  const response = await client.get('/omp/channels')
   return response.data
 }
 
-export async function getEnabledPiChannels() {
-  const data = await getPiChannels()
+export async function getEnabledOmpChannels() {
+  const data = await getOmpChannels()
   return {
     channels: (data.channels || []).filter(ch => ch.enabled !== false)
   }
 }
 
-export async function createPiChannel(name, baseUrl, apiKey, extra = {}) {
-  const response = await client.post('/pi/channels', {
+export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
+  const response = await client.post('/omp/channels', {
     name,
     baseUrl,
     apiKey,
     wireApi: extra.wireApi || 'openai',
     providerApi: extra.providerApi || extra.wireApi || 'openai-completions',
     providerKey: extra.providerKey || '',
-    gatewaySourceType: extra.gatewaySourceType || 'codex',
+    gatewaySourceType: extra.gatewaySourceType || 'openai_compatible',
     enabled: extra.enabled !== false,
     weight: extra.weight || 1,
     maxConcurrency: extra.maxConcurrency || null,
     model: extra.model || null,
     modelRedirects: extra.modelRedirects || [],
+    allowedModels: extra.allowedModels || [],
     speedTestModel: extra.speedTestModel || null,
     presetId: extra.presetId || null,
-    websiteUrl: extra.websiteUrl || ''
+    websiteUrl: extra.websiteUrl || '',
+    balanceToken: extra.balanceToken || '',
+    balanceUserId: extra.balanceUserId || null
   })
   return response.data
 }
 
-export async function updatePiChannel(channelId, updates) {
-  const response = await client.put(`/pi/channels/${channelId}`, updates)
+export async function updateOmpChannel(channelId, updates) {
+  const response = await client.put(`/omp/channels/${channelId}`, updates)
   return response.data
 }
 
-export async function deletePiChannel(channelId) {
-  const response = await client.delete(`/pi/channels/${channelId}`)
+export async function deleteOmpChannel(channelId) {
+  const response = await client.delete(`/omp/channels/${channelId}`)
   return response.data
 }
 
-export async function savePiChannelOrder(order) {
-  const response = await client.post('/pi/channels/order', { order })
+export async function saveOmpChannelOrder(order) {
+  const response = await client.post('/omp/channels/order', { order })
   return response.data
 }
 
-export async function resetPiChannelHealth(channelId) {
-  const response = await client.post(`/pi/channels/${channelId}/reset-health`)
+export async function resetOmpChannelHealth(channelId) {
+  const response = await client.post(`/omp/channels/${channelId}/reset-health`)
   return response.data
 }
 
-export async function testPiChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/pi/channels/${channelId}/speed-test`, { timeout })
+export async function testOmpChannelSpeed(channelId, timeout = 20000) {
+  const response = await client.post(`/omp/channels/${channelId}/speed-test`, { timeout })
   return response.data
 }
 
-export async function testAllPiChannelsSpeed(timeout = 20000) {
-  const response = await client.post('/pi/channels/speed-test-all', { timeout }, { timeout: 120000 })
+export async function testAllOmpChannelsSpeed(timeout = 20000) {
+  const response = await client.post('/omp/channels/speed-test-all', { timeout }, { timeout: 120000 })
   return response.data
 }
 
-export async function fetchPiChannelModels(channelId, { forceRefresh = false } = {}) {
-  const response = await client.get(`/pi/channels/${channelId}/models`, {
+export async function fetchOmpChannelModels(channelId, { forceRefresh = false } = {}) {
+  const response = await client.get(`/omp/channels/${channelId}/models`, {
     params: forceRefresh ? { forceRefresh: 'true' } : {}
   })
   return response.data
 }
 
-export async function probePiChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
-  const response = await client.post('/pi/channels/probe-models', { baseUrl, apiKey, gatewaySourceType })
+export async function probeOmpChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
+  const response = await client.post('/omp/channels/probe-models', { baseUrl, apiKey, gatewaySourceType })
   return response.data
 }
 
-export async function getPiProxyStatus() {
-  const response = await client.get('/pi/proxy/status')
+export async function getOmpAuthProviders({ forceRefresh = false } = {}) {
+  const response = await client.get('/omp/config/auth-providers', {
+    params: forceRefresh ? { forceRefresh: 'true' } : {}
+  })
   return response.data
 }
 
-export async function startPiProxy() {
-  const response = await client.post('/pi/proxy/start')
+export async function getOmpProxyStatus() {
+  const response = await client.get('/omp/proxy/status')
   return response.data
 }
 
-export async function stopPiProxy() {
-  const response = await client.post('/pi/proxy/stop')
+export async function startOmpProxy() {
+  const response = await client.post('/omp/proxy/start')
+  return response.data
+}
+
+export async function stopOmpProxy() {
+  const response = await client.post('/omp/proxy/stop')
   return response.data
 }

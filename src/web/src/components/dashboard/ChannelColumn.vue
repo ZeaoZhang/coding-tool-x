@@ -320,7 +320,7 @@
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
-            <template v-else-if="channelType === 'opencode' || channelType === 'pi'">
+            <template v-else-if="channelType === 'opencode' || channelType === 'omp'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">推理</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
@@ -379,7 +379,7 @@
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
-                <template v-else-if="channelType === 'opencode' || channelType === 'pi'">
+                <template v-else-if="channelType === 'opencode' || channelType === 'omp'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'reasoning') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
@@ -453,14 +453,14 @@ import {
   updateCodexChannel,
   updateGeminiChannel,
   updateOpenCodeChannel,
-  updatePiChannel
+  updateOmpChannel
 } from '../../api/channels'
 import {
   getClaudeTodayStatistics,
   getCodexTodayStatistics,
   getGeminiTodayStatistics,
   getOpenCodeTodayStatistics,
-  getPiTodayStatistics
+  getOmpTodayStatistics
 } from '../../api/statistics'
 
 const props = defineProps({
@@ -478,12 +478,12 @@ const {
   codexProxy,
   geminiProxy,
   opencodeProxy,
-  piProxy,
+  ompProxy,
   claudeChannels,
   codexChannels,
   geminiChannels,
   opencodeChannels,
-  piChannels,
+  ompChannels,
   schedulerState,
   getProxyState,
   startProxy,
@@ -510,7 +510,7 @@ const proxyState = computed(() => {
   if (props.channelType === 'codex') return codexProxy.value
   if (props.channelType === 'gemini') return geminiProxy.value
   if (props.channelType === 'opencode') return opencodeProxy.value
-  if (props.channelType === 'pi') return piProxy.value
+  if (props.channelType === 'omp') return ompProxy.value
   if (platformConfig.value.custom) {
     return {
       running: false,
@@ -530,7 +530,7 @@ const channelTypeName = computed(() => {
   if (props.channelType === 'codex') return 'Codex'
   if (props.channelType === 'gemini') return 'Gemini'
   if (props.channelType === 'opencode') return 'OpenCode'
-  if (props.channelType === 'pi') return 'OMP'
+  if (props.channelType === 'omp') return 'OMP'
   return platformConfig.value.label || props.channelType
 })
 
@@ -621,7 +621,7 @@ const CHANNEL_COLLAPSE_STORAGE_KEYS = {
   codex: 'codexChannelCollapse',
   gemini: 'geminiChannelCollapse',
   opencode: 'opencodeChannelCollapse',
-  pi: 'piChannelCollapse'
+  omp: 'ompChannelCollapse'
 }
 
 // 从 localStorage 读取锁定状态
@@ -758,7 +758,7 @@ const logStreams = {
   codex: getLogs('codex'),
   gemini: getLogs('gemini'),
   opencode: getLogs('opencode'),
-  pi: getLogs('pi')
+  omp: getLogs('omp')
 }
 const logsToDisplay = computed(() => {
   if (!supportsKnownRuntime()) {
@@ -781,7 +781,7 @@ const channels = computed(() => {
   else if (props.channelType === 'codex') list = codexChannels.value || []
   else if (props.channelType === 'gemini') list = geminiChannels.value || []
   else if (props.channelType === 'opencode') list = opencodeChannels.value || []
-  else if (props.channelType === 'pi') list = piChannels.value || []
+  else if (props.channelType === 'omp') list = ompChannels.value || []
 
   // 启用的排前面，禁用的排后面
   const enabled = list.filter(ch => ch.enabled !== false)
@@ -826,8 +826,8 @@ async function loadChannelStats() {
       statsData = await getGeminiTodayStatistics()
     } else if (props.channelType === 'opencode') {
       statsData = await getOpenCodeTodayStatistics()
-    } else if (props.channelType === 'pi') {
-      statsData = await getPiTodayStatistics()
+    } else if (props.channelType === 'omp') {
+      statsData = await getOmpTodayStatistics()
     }
 
     // 从 byChannel 提取各渠道统计
@@ -862,7 +862,7 @@ function formatLogToken(log, key) {
 }
 
 function supportsKnownRuntime() {
-  return ['claude', 'codex', 'gemini', 'opencode', 'pi'].includes(props.channelType)
+  return ['claude', 'codex', 'gemini', 'opencode', 'omp'].includes(props.channelType)
 }
 
 function getLogTitle(log) {
@@ -1077,8 +1077,8 @@ async function handleQuickToggle(channel, enabled) {
       updateFn = updateGeminiChannel
     } else if (props.channelType === 'opencode') {
       updateFn = updateOpenCodeChannel
-    } else if (props.channelType === 'pi') {
-      updateFn = updatePiChannel
+    } else if (props.channelType === 'omp') {
+      updateFn = updateOmpChannel
     }
 
     if (updateFn) {
@@ -1277,11 +1277,11 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #ea580c, rgba(234, 88, 12, 0.3));
 }
 
-.channel-header.pi {
+.channel-header.omp {
   background: linear-gradient(135deg, rgba(15, 159, 154, 0.10) 0%, var(--bg-secondary) 100%);
 }
 
-.channel-header.pi::after {
+.channel-header.omp::after {
   background: linear-gradient(90deg, #0f9f9a, rgba(15, 159, 154, 0.3));
 }
 
@@ -1323,7 +1323,7 @@ onUnmounted(() => {
   color: white;
 }
 
-.channel-header.pi .header-icon {
+.channel-header.omp .header-icon {
   background: linear-gradient(135deg, #0f9f9a 0%, #0f766e 100%);
   color: white;
 }
@@ -1872,13 +1872,13 @@ onUnmounted(() => {
   border-left-color: #ea580c;
 }
 
-.stats-card-pi,
-.chart-card:has(+ .stats-card-pi),
+.stats-card-omp,
+.chart-card:has(+ .stats-card-omp),
 .card:has(.panel-card):nth-child(4) {
   border-left-color: #0f9f9a;
 }
 
-.chart-card.chart-card-pi {
+.chart-card.chart-card-omp {
   border-left-color: #0f9f9a;
 }
 
@@ -1986,7 +1986,7 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.logs-header-pi .log-col {
+.logs-header-omp .log-col {
   color: rgba(15, 159, 154, 0.7);
   font-weight: 600;
 }
@@ -2008,7 +2008,7 @@ onUnmounted(() => {
   color: rgba(251, 146, 60, 0.65);
 }
 
-[data-theme="dark"] .logs-header-pi .log-col {
+[data-theme="dark"] .logs-header-omp .log-col {
   color: rgba(45, 212, 191, 0.65);
 }
 
@@ -2368,17 +2368,17 @@ onUnmounted(() => {
   min-width: 55px;
 }
 
-.col-channel-pi {
+.col-channel-omp {
   flex: 2.5 1 70px;
   min-width: 55px;
 }
 
-.col-token-pi {
+.col-token-omp {
   flex: 1.2 1 45px;
   min-width: 40px;
 }
 
-.col-time-pi {
+.col-time-omp {
   flex: 1.8 1 60px;
   min-width: 55px;
 }
@@ -2722,14 +2722,14 @@ onUnmounted(() => {
   background: radial-gradient(circle, rgba(234, 88, 12, 0.15) 0%, transparent 70%);
 }
 
-.locked-pi {
+.locked-omp {
   background: linear-gradient(135deg,
     rgba(15, 159, 154, 0.03) 0%,
     var(--bg-secondary) 50%,
     rgba(15, 159, 154, 0.02) 100%);
 }
 
-.locked-pi::before {
+.locked-omp::before {
   background: radial-gradient(circle, rgba(15, 159, 154, 0.15) 0%, transparent 70%);
 }
 
@@ -2859,7 +2859,7 @@ onUnmounted(() => {
   filter: drop-shadow(0 2px 4px rgba(234, 88, 12, 0.3));
 }
 
-.locked-pi .lock-icon {
+.locked-omp .lock-icon {
   background: linear-gradient(135deg,
     rgba(15, 159, 154, 0.12) 0%,
     var(--bg-primary) 100%);
@@ -2869,11 +2869,11 @@ onUnmounted(() => {
     0 0 0 1px rgba(15, 159, 154, 0.1) inset;
 }
 
-.locked-pi .lock-icon::before {
+.locked-omp .lock-icon::before {
   background: radial-gradient(circle, rgba(15, 159, 154, 0.3) 0%, transparent 60%);
 }
 
-.locked-pi .lock-icon .n-icon {
+.locked-omp .lock-icon .n-icon {
   color: #0f9f9a;
   filter: drop-shadow(0 2px 4px rgba(15, 159, 154, 0.3));
 }

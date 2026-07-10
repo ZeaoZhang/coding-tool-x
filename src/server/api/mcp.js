@@ -5,8 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const mcpService = require('../services/mcp-service');
-const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
-const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'pi'];
+const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'omp'];
 
 /**
  * GET /api/mcp/servers

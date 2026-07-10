@@ -14,6 +14,7 @@ const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
 const { handleUpdate } = require('./commands/update');
 const { ensureStorageDirMigrated } = require('./config/paths');
+const { normalizePlatformKey } = require('./shared/platforms');
 const PluginManager = require('./plugins/plugin-manager');
 const eventBus = require('./plugins/event-bus');
 const chalk = require('chalk');
@@ -66,13 +67,14 @@ function showHelp() {
   console.log('  ctx codex start         启动 Codex 代理');
   console.log('  ctx gemini start        启动 Gemini 代理');
   console.log('  ctx opencode start      启动 OpenCode 代理');
-  console.log('  ctx pi start            启用 OMP 受管模型配置');
-  console.log(chalk.gray('  (codex/gemini/opencode/pi 命令与 claude 类似)\n'));
+  console.log('  ctx omp start           启用 OMP 受管模型配置');
+  console.log(chalk.gray('  (codex/gemini/opencode/omp 命令与 claude 类似)\n'));
 
   console.log(chalk.yellow('[LOG] 日志管理:'));
   console.log('  ctx logs                查看所有日志');
   console.log('  ctx logs ui             查看 UI 日志');
   console.log('  ctx logs claude         查看 Claude 日志');
+  console.log('  ctx logs omp            查看 OMP 相关 UI/server 日志');
   console.log('  ctx logs --lines 100    查看最近 100 行');
   console.log('  ctx logs --follow       实时跟踪日志');
   console.log('  ctx logs --clear        清空日志\n');
@@ -80,6 +82,7 @@ function showHelp() {
   console.log(chalk.yellow('[STATS] 统计信息:'));
   console.log('  ctx stats               查看总体统计');
   console.log('  ctx stats claude        查看 Claude 统计');
+  console.log('  ctx stats omp           查看 OMP 统计');
   console.log('  ctx stats --today       查看今日统计');
   console.log('  ctx stats export        导出统计数据\n');
 
@@ -261,10 +264,11 @@ async function main() {
     return;
   }
 
-  // claude/codex/gemini/opencode/pi 代理管理命令
-  const channels = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
-  if (channels.includes(args[0])) {
-    const channel = args[0];
+  // claude/codex/gemini/opencode/omp 代理管理命令
+  const channels = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+  const normalizedChannel = normalizePlatformKey(args[0]);
+  if (channels.includes(normalizedChannel)) {
+    const channel = String(args[0] || '').trim().toLowerCase();
     const action = args[1] || 'status';
 
     switch (action) {

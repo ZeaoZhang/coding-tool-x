@@ -30,7 +30,7 @@ const CLAUDE_CODE_DIR = NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.cla
 const CODEX_DIR = path.join(HOME, '.codex');
 const GEMINI_DIR = path.join(HOME, '.gemini');
 const OPENCODE_DIR = NATIVE_PATHS.opencode.config;
-const PI_AGENT_DIR = NATIVE_PATHS.pi.dir;
+const OMP_AGENT_DIR = NATIVE_PATHS.omp.dir;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 
 // Config type definitions
@@ -47,8 +47,8 @@ const CONFIG_TYPES = {
     opencodeTarget: 'skills',
     opencodeLegacyTarget: 'skill',
     opencodeSupported: true,
-    piTarget: 'skills',
-    piSupported: true
+    ompTarget: 'skills',
+    ompSupported: true
   },
   commands: {
     isDirectory: false,
@@ -63,8 +63,8 @@ const CONFIG_TYPES = {
     opencodeTarget: 'commands',
     opencodeLegacyTarget: 'command',
     opencodeSupported: true,
-    piTarget: 'commands',
-    piSupported: true
+    ompTarget: 'commands',
+    ompSupported: true
   },
   agents: {
     isDirectory: false,
@@ -76,7 +76,7 @@ const CONFIG_TYPES = {
     opencodeTarget: 'agents',
     opencodeLegacyTarget: 'agent',
     opencodeSupported: true,
-    piSupported: false
+    ompSupported: false
   },
   plugins: {
     isDirectory: true,
@@ -86,8 +86,8 @@ const CONFIG_TYPES = {
     opencodeTarget: 'plugins',
     opencodeLegacyTarget: 'plugin',
     opencodeSupported: true,
-    piTarget: 'extensions',
-    piSupported: true
+    ompTarget: 'extensions',
+    ompSupported: true
   }
 };
 
@@ -99,7 +99,7 @@ class ConfigSyncManager {
     this.codexDir = CODEX_DIR;
     this.geminiDir = GEMINI_DIR;
     this.opencodeDir = OPENCODE_DIR;
-    this.piDir = PI_AGENT_DIR;
+    this.ompDir = OMP_AGENT_DIR;
     this.configTypes = CONFIG_TYPES;
   }
 
@@ -588,13 +588,13 @@ class ConfigSyncManager {
    * Sync a config item to OMP.
    * OMP treats commands as slash-command files and plugins as extensions/packages.
    */
-  syncToPi(type, name) {
+  syncToOmp(type, name) {
     const config = this.configTypes[type];
     if (!config) {
       return { success: false, error: `Unknown config type: ${type}` };
     }
 
-    if (!config.piSupported) {
+    if (!config.ompSupported) {
       console.log(`[ConfigSyncManager] ${type} not supported natively by OMP, skipping`);
       return { success: true, skipped: true, reason: 'Not supported natively by OMP' };
     }
@@ -610,7 +610,7 @@ class ConfigSyncManager {
       return { success: false, error: 'Source not found' };
     }
 
-    const targetPath = path.join(this.piDir, config.piTarget, safeName);
+    const targetPath = path.join(this.ompDir, config.ompTarget, safeName);
     try {
       if (config.isDirectory) {
         this._ensureDir(path.dirname(targetPath));
@@ -629,7 +629,7 @@ class ConfigSyncManager {
     }
   }
 
-  removeFromPi(type, name) {
+  removeFromOmp(type, name) {
     const config = this.configTypes[type];
     if (!config) {
       return { success: false, error: `Unknown config type: ${type}` };
@@ -640,11 +640,11 @@ class ConfigSyncManager {
       return { success: false, error: 'Invalid config item name' };
     }
 
-    if (!config.piSupported) {
+    if (!config.ompSupported) {
       return { success: true, skipped: true, reason: 'Not supported natively by OMP' };
     }
 
-    const targetPath = path.join(this.piDir, config.piTarget, safeName);
+    const targetPath = path.join(this.ompDir, config.ompTarget, safeName);
     if (!fs.existsSync(targetPath)) {
       return { success: true, message: 'Already removed' };
     }
@@ -654,7 +654,7 @@ class ConfigSyncManager {
         this._removeRecursive(targetPath);
       } else {
         fs.unlinkSync(targetPath);
-        this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.piDir, config.piTarget));
+        this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.ompDir, config.ompTarget));
       }
       console.log(`[ConfigSyncManager] Removed ${type}/${name} from OMP`);
       return { success: true };
@@ -667,7 +667,7 @@ class ConfigSyncManager {
   /**
    * Batch sync based on registry data
    * @param {string} type - Config type
-   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode, pi } } }
+   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode, omp } } }
    * @returns {Object} Results summary
    */
   syncAll(type, registryItems) {
@@ -753,17 +753,17 @@ class ConfigSyncManager {
           }
         }
 
-        if (platforms.pi) {
-          const result = this.syncToPi(type, name);
+        if (platforms.omp) {
+          const result = this.syncToOmp(type, name);
           if (result.success && !result.skipped) {
-            results.synced.push({ type, name, platform: 'pi' });
+            results.synced.push({ type, name, platform: 'omp' });
           } else if (!result.success) {
-            results.errors.push({ type, name, platform: 'pi', error: result.error });
+            results.errors.push({ type, name, platform: 'omp', error: result.error });
           }
         } else {
-          const result = this.removeFromPi(type, name);
+          const result = this.removeFromOmp(type, name);
           if (result.success && !result.message && !result.skipped) {
-            results.removed.push({ type, name, platform: 'pi' });
+            results.removed.push({ type, name, platform: 'omp' });
           }
         }
       } else {
@@ -788,9 +788,9 @@ class ConfigSyncManager {
           results.removed.push({ type, name, platform: 'opencode' });
         }
 
-        const piResult = this.removeFromPi(type, name);
-        if (piResult.success && !piResult.message && !piResult.skipped) {
-          results.removed.push({ type, name, platform: 'pi' });
+        const ompResult = this.removeFromOmp(type, name);
+        if (ompResult.success && !ompResult.message && !ompResult.skipped) {
+          results.removed.push({ type, name, platform: 'omp' });
         }
       }
     }

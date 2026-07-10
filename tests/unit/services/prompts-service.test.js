@@ -19,7 +19,7 @@ function stubModules() {
         },
         opencode: { config: path.join(testDir, 'opencode') },
         gemini: { env: path.join(testDir, 'gemini', '.env') },
-        pi: {
+        omp: {
           dir: path.join(testDir, 'omp-agent'),
           prompts: path.join(testDir, 'omp-agent', 'prompts')
         }
@@ -82,7 +82,7 @@ describe('prompts-service initialization and preset management', () => {
       id: 'custom',
       name: 'Custom',
       content: 'hello',
-      apps: { claude: true, pi: true }
+      apps: { claude: true, omp: true }
     });
 
     expect(saved.apps).toEqual({
@@ -90,7 +90,7 @@ describe('prompts-service initialization and preset management', () => {
       codex: true,
       gemini: true,
       opencode: false,
-      pi: true
+      omp: true
     });
     expect(() => promptsService.deletePreset('tpl-code-review')).toThrow(/内置模板/);
     expect(promptsService.deletePreset('custom')).toBe(true);
@@ -104,7 +104,7 @@ describe('prompts-service platform sync', () => {
       id: 'team-preset',
       name: 'Team Preset',
       content: 'team instructions',
-      apps: { claude: true, codex: false, gemini: true, opencode: true, pi: true }
+      apps: { claude: true, codex: false, gemini: true, opencode: true, omp: true }
     });
 
     const preset = await promptsService.activatePreset('team-preset');
@@ -125,7 +125,7 @@ describe('prompts-service platform sync', () => {
       id: 'team-preset',
       name: 'Team Preset',
       content: 'team instructions',
-      apps: { claude: true, pi: true }
+      apps: { claude: true, omp: true }
     });
     await promptsService.activatePreset('team-preset');
     const userTemplate = path.join(testDir, 'omp-agent', 'prompts', 'user-owned.md');
@@ -136,7 +136,7 @@ describe('prompts-service platform sync', () => {
     const active = promptsService.getActivePreset();
 
     expect(result.claude).toBe(true);
-    expect(result.pi).toBe(true);
+    expect(result.omp).toBe(true);
     expect(active.activePresetId).toBeNull();
     expect(fs.existsSync(path.join(globalClaudeDir, 'CLAUDE.md'))).toBe(false);
     expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'team-preset.md'))).toBe(false);
@@ -149,13 +149,13 @@ describe('prompts-service platform sync', () => {
       id: 'first',
       name: 'First',
       content: 'first instructions',
-      apps: { pi: true, claude: false, codex: false, gemini: false, opencode: false }
+      apps: { omp: true, claude: false, codex: false, gemini: false, opencode: false }
     });
     promptsService.savePreset({
       id: 'second',
       name: 'Second',
       content: 'second instructions',
-      apps: { pi: true, claude: false, codex: false, gemini: false, opencode: false }
+      apps: { omp: true, claude: false, codex: false, gemini: false, opencode: false }
     });
 
     await promptsService.activatePreset('first');
@@ -180,8 +180,8 @@ describe('prompts-service import and stats', () => {
     expect(imported.name).toBe('Imported Codex');
     expect(imported.apps.codex).toBe(true);
     expect(platformStatus.codex.exists).toBe(true);
-    expect(platformStatus.pi.path).toBe(path.join(testDir, 'omp-agent', 'prompts'));
-    expect(Array.isArray(platformStatus.pi.templates)).toBe(true);
+    expect(platformStatus.omp.path).toBe(path.join(testDir, 'omp-agent', 'prompts'));
+    expect(Array.isArray(platformStatus.omp.templates)).toBe(true);
     expect(stats.total).toBeGreaterThanOrEqual(4);
   });
 

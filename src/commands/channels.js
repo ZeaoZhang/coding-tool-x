@@ -2,12 +2,14 @@
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
+const { normalizePlatformKey } = require('../shared/platforms');
 
 /**
  * 获取当前类型的渠道服务
  */
 function getChannelServices(cliType) {
-  if (cliType === 'claude') {
+  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
+  if (normalizedCliType === 'claude') {
     const {
       getAllChannels,
       createChannel,
@@ -15,7 +17,7 @@ function getChannelServices(cliType) {
     } = require('../server/services/channels');
     const { getProxyStatus } = require('../server/proxy-server');
     return { getAllChannels, createChannel, updateChannel, getProxyStatus };
-  } else if (cliType === 'codex') {
+  } else if (normalizedCliType === 'codex') {
     const {
       getChannels,
       createChannel,
@@ -31,7 +33,7 @@ function getChannelServices(cliType) {
       updateChannel,
       getProxyStatus: getCodexProxyStatus
     };
-  } else if (cliType === 'gemini') {
+  } else if (normalizedCliType === 'gemini') {
     const {
       getChannels,
       createChannel,
@@ -47,7 +49,7 @@ function getChannelServices(cliType) {
       updateChannel,
       getProxyStatus: getGeminiProxyStatus
     };
-  } else if (cliType === 'opencode') {
+  } else if (normalizedCliType === 'opencode') {
     const {
       getChannels,
       createChannel,
@@ -63,7 +65,27 @@ function getChannelServices(cliType) {
       updateChannel,
       getProxyStatus: getOpenCodeProxyStatus
     };
+  } else if (normalizedCliType === 'omp') {
+    const {
+      getChannels,
+      createChannel,
+      updateChannel
+    } = require('../server/services/omp-channels');
+    const { getOmpProxyStatus } = require('../server/omp-proxy-server');
+    return {
+      getAllChannels: () => {
+        const result = getChannels();
+        return Array.isArray(result?.channels) ? result.channels : [];
+      },
+      createChannel,
+      updateChannel,
+      getProxyStatus: getOmpProxyStatus,
+      supportsCliCreate: false,
+      managedProviderConfig: true
+    };
   }
+
+  return null;
 }
 
 /**
@@ -76,13 +98,8 @@ async function handleChannelManagement() {
   console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
-  const cliType = config.currentCliType || 'claude';
+  const cliType = normalizePlatformKey(config.currentCliType || 'claude');
   const services = getChannelServices(cliType);
-  if (!services || typeof services.createChannel !== 'function') {
-    console.log(chalk.red(`当前 CLI 类型 (${cliType}) 暂不支持添加渠道`));
-    await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
-    return;
-  }
   if (!services || typeof services.getAllChannels !== 'function') {
     console.log(chalk.red(`当前 CLI 类型 (${cliType}) 暂不支持渠道管理`));
     await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
@@ -93,7 +110,13 @@ async function handleChannelManagement() {
 
   if (channels.length === 0) {
     console.log(chalk.yellow('还没有添加任何渠道'));
-    console.log(chalk.gray('提示: 使用主菜单的"添加渠道"功能来添加新渠道\n'));
+    if (cliType === 'omp') {
+      console.log(chalk.gray('提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。\n'));
+    } else if (services.supportsCliCreate === false || typeof services.createChannel !== 'function') {
+      console.log(chalk.gray('提示: 当前平台不支持在 CLI 中添加渠道，请通过 Web UI 添加。\n'));
+    } else {
+      console.log(chalk.gray('提示: 使用主菜单的"添加渠道"功能来添加新渠道\n'));
+    }
 
     const { action } = await inquirer.prompt([
       {
@@ -129,8 +152,18 @@ async function handleAddChannel() {
   console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
-  const cliType = config.currentCliType || 'claude';
+  const cliType = normalizePlatformKey(config.currentCliType || 'claude');
   const services = getChannelServices(cliType);
+
+  if (!services || services.supportsCliCreate === false || typeof services.createChannel !== 'function') {
+    if (cliType === 'omp') {
+      console.log(chalk.yellow('OMP 渠道创建/编辑需要使用 Web UI 或 API，以便配置 providerKey、providerApi、模型白名单等 OMP 字段。\n'));
+    } else {
+      console.log(chalk.red(`当前 CLI 类型 (${cliType}) 暂不支持添加渠道\n`));
+    }
+    await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
+    return;
+  }
 
   const answers = await inquirer.prompt([
     {
@@ -280,12 +313,7 @@ async function handleChannelStatus() {
 
   try {
     const { getSchedulerState } = require('../server/services/channel-scheduler');
-    const sources = [
-      { key: 'claude', label: 'Claude (Claude Code)' },
-      { key: 'codex', label: 'Codex (OpenAI)' },
-      { key: 'gemini', label: 'Gemini' },
-      { key: 'opencode', label: 'OpenCode' }
-    ];
+    const sources = buildSchedulerSources();
 
     sources.forEach((source) => {
       const state = getSchedulerState(source.key);
@@ -317,13 +345,18 @@ async function handleChannelStatus() {
 module.exports = {
   handleChannelManagement,
   handleAddChannel,
-  handleChannelStatus
+  handleChannelStatus,
+  _test: {
+    buildSchedulerSources,
+    getChannelServices
+  }
 };
 
 /**
  * 统一的多渠道选择处理
  */
 async function handleChannelToggle(channels, services, cliType) {
+  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
   const choices = channels.map(channel => {
     const enabled = channel.enabled !== false;
     const detailParts = [];
@@ -333,12 +366,29 @@ async function handleChannelToggle(channels, services, cliType) {
       detailParts.push(cleaned);
     }
 
-    if (cliType === 'codex' && channel.providerKey) {
+    if (normalizedCliType === 'codex' && channel.providerKey) {
       detailParts.push(`provider ${channel.providerKey}`);
     }
 
-    if (cliType === 'gemini' && channel.model) {
+    if (normalizedCliType === 'gemini' && channel.model) {
       detailParts.push(`model ${channel.model}`);
+    }
+
+    if (normalizedCliType === 'omp') {
+      if (channel.providerKey) {
+        detailParts.push(`provider ${channel.providerKey}`);
+      }
+      if (channel.model) {
+        detailParts.push(`model ${channel.model}`);
+      }
+      const allowedModels = Array.isArray(channel.allowedModels) && channel.allowedModels.length > 0
+        ? channel.allowedModels
+        : channel.models;
+      if (Array.isArray(allowedModels) && allowedModels.length > 0) {
+        const preview = allowedModels.slice(0, 3).join(', ');
+        const suffix = allowedModels.length > 3 ? ` +${allowedModels.length - 3}` : '';
+        detailParts.push(`models ${preview}${suffix}`);
+      }
     }
 
     if (channel.maxConcurrency) {
@@ -389,10 +439,10 @@ async function handleChannelToggle(channels, services, cliType) {
   }
 
   if (hasChanged) {
-    broadcastSchedulerSnapshot(cliType);
+    broadcastSchedulerSnapshot(normalizedCliType);
   }
 
-  await handleAdvancedConfig(services, cliType);
+  await handleAdvancedConfig(services, normalizedCliType);
 
   console.log(
     chalk.cyan(
@@ -503,13 +553,24 @@ async function handleAdvancedConfig(services, cliType) {
 }
 
 function broadcastSchedulerSnapshot(source = 'claude') {
+  const normalizedSource = normalizePlatformKey(source || 'claude');
   try {
     const { getSchedulerState } = require('../server/services/channel-scheduler');
     const { broadcastSchedulerState } = require('../server/websocket-server');
-    broadcastSchedulerState(source, getSchedulerState(source));
+    broadcastSchedulerState(normalizedSource, getSchedulerState(normalizedSource));
   } catch (err) {
     // ignore when scheduler not available
   }
+}
+
+function buildSchedulerSources() {
+  return [
+    { key: 'claude', label: 'Claude (Claude Code)' },
+    { key: 'codex', label: 'Codex (OpenAI)' },
+    { key: 'gemini', label: 'Gemini' },
+    { key: 'opencode', label: 'OpenCode' },
+    { key: 'omp', label: 'OMP' }
+  ];
 }
 
 async function handleLegacySwitch(channels, services) {

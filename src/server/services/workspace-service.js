@@ -630,7 +630,7 @@ async function getAllAvailableProjects() {
   const codexSessionsService = require('./codex-sessions');
   const geminiSessionsService = require('./gemini-sessions');
   const opencodeSessionsService = require('./opencode-sessions');
-  const piSessionsService = require('./pi-sessions');
+  const ompSessionsService = require('./omp-sessions');
   const { isCodexInstalled } = require('./codex-config');
   const { isGeminiInstalled } = require('./gemini-config');
   const { isOpenCodeInstalled } = require('./opencode-sessions');
@@ -704,10 +704,10 @@ async function getAllAvailableProjects() {
   }
 
   try {
-    const piProjects = piSessionsService.getProjects();
-    const list = Array.isArray(piProjects) ? piProjects : [];
-    if (list.length > 0 || piSessionsService.isPiInstalled()) {
-      list.forEach(project => addProject('pi', project));
+    const ompProjects = ompSessionsService.getProjects();
+    const list = Array.isArray(ompProjects) ? ompProjects : [];
+    if (list.length > 0 || ompSessionsService.isOmpInstalled()) {
+      list.forEach(project => addProject('omp', project));
     }
   } catch (error) {
     console.error('获取 OMP 项目失败:', error.message);
@@ -722,7 +722,7 @@ async function getAllAvailableProjects() {
 /**
  * 在工作区中启动 CLI 工具
  * @param {string} workspaceId 工作区 ID
- * @param {string} tool 工具名称 (claude/codex/gemini/opencode/pi/omp)
+ * @param {string} tool 工具名称 (claude/codex/gemini/opencode/omp/omp)
  * @param {string} projectName 可选，工作区内的项目名
  * @returns {object} 启动信息
  */
@@ -749,7 +749,7 @@ function getLaunchCommand(workspaceId, tool, projectName = null) {
     }
   }
 
-  const normalizedTool = tool === 'omp' ? 'pi' : tool;
+  const normalizedTool = tool === 'omp' ? 'omp' : tool;
 
   // 根据工具类型生成启动命令
   const commands = {
@@ -757,7 +757,7 @@ function getLaunchCommand(workspaceId, tool, projectName = null) {
     codex: 'codex',
     gemini: 'gemini',
     opencode: 'opencode',
-    pi: 'omp'
+    omp: 'omp'
   };
 
   const cmd = commands[normalizedTool];

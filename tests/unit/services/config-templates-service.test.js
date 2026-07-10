@@ -83,12 +83,12 @@ beforeEach(() => {
       description: 'Fix issues with OpenCode',
       body: 'echo opencode'
     }],
-    pi: [{
+    omp: [{
       scope: 'user',
       name: 'inspect',
-      namespace: 'pi-tools',
-      description: 'Inspect with Pi',
-      body: 'Inspect this with Pi'
+      namespace: 'omp-tools',
+      description: 'Inspect with OMP',
+      body: 'Inspect this with OMP'
     }]
   };
   skillsByPlatform = {
@@ -96,7 +96,7 @@ beforeEach(() => {
     codex: [{ directory: 'skill-codex', description: 'Codex skill' }],
     gemini: [{ directory: 'skill-gemini', name: 'Skill Gemini' }],
     opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode' }],
-    pi: [{ directory: 'skill-pi', name: 'Skill Pi', description: 'Pi skill' }]
+    omp: [{ directory: 'skill-omp', name: 'Skill OMP', description: 'OMP skill' }]
   };
   pluginList = [
     { name: 'plugin-a', description: 'Plugin A', version: '1.2.3', source: 'local', repoUrl: 'https://example.com/plugin-a.git' }
@@ -277,7 +277,7 @@ describe('config-templates-service persistence and discovery', () => {
         codex: { enabled: false, content: '' },
         gemini: { enabled: false, content: '' },
         opencode: { enabled: true, content: '# CLAUDE' },
-        pi: { enabled: false, content: '' }
+        omp: { enabled: false, content: '' }
       }
     }));
 
@@ -296,7 +296,7 @@ describe('config-templates-service persistence and discovery', () => {
         codex: { enabled: true, content: '# AGENTS' },
         gemini: { enabled: false, content: '' },
         opencode: { enabled: true, content: '# AGENTS' },
-        pi: { enabled: false, content: '' }
+        omp: { enabled: false, content: '' }
       }
     }));
     expect(typeof updated.updatedAt).toBe('string');
@@ -314,7 +314,7 @@ describe('config-templates-service persistence and discovery', () => {
       codex: [{ directory: 'skill-codex', name: 'skill-codex', description: 'Codex skill', repoOwner: null, repoName: null, repoBranch: null }],
       gemini: [{ directory: 'skill-gemini', name: 'Skill Gemini', description: '', repoOwner: null, repoName: null, repoBranch: null }],
       opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode', description: '', repoOwner: null, repoName: null, repoBranch: null }],
-      pi: [{ directory: 'skill-pi', name: 'Skill Pi', description: 'Pi skill', repoOwner: null, repoName: null, repoBranch: null }]
+      omp: [{ directory: 'skill-omp', name: 'Skill OMP', description: 'OMP skill', repoOwner: null, repoName: null, repoBranch: null }]
     });
     expect(result.agents).toEqual([
       expect.objectContaining({
@@ -333,12 +333,12 @@ describe('config-templates-service persistence and discovery', () => {
         body: 'echo fix'
       })
     ]));
-    expect(result.commandsByPlatform.pi).toEqual([
+    expect(result.commandsByPlatform.omp).toEqual([
       expect.objectContaining({
         name: 'inspect',
-        namespace: 'pi-tools',
-        description: 'Inspect with Pi',
-        body: 'Inspect this with Pi'
+        namespace: 'omp-tools',
+        description: 'Inspect with OMP',
+        body: 'Inspect this with OMP'
       })
     ]);
     expect(result.plugins).toEqual([
@@ -492,10 +492,10 @@ describe('config-templates-service apply and preview', () => {
     }));
   });
 
-  test('applies Pi template commands as prompt templates and skips project agents', () => {
+  test('applies OMP template commands as prompt templates and skips project agents', () => {
     const template = templatesService.createCustomTemplate({
-      name: 'Pi Starter',
-      cliType: 'pi',
+      name: 'OMP Starter',
+      cliType: 'omp',
       agents: [
         {
           fileName: 'reviewer',
@@ -507,18 +507,18 @@ describe('config-templates-service apply and preview', () => {
       commands: [
         {
           name: 'inspect',
-          namespace: 'pi-tools',
-          description: 'Inspect with Pi',
-          body: 'Inspect this with Pi'
+          namespace: 'omp-tools',
+          description: 'Inspect with OMP',
+          body: 'Inspect this with OMP'
         }
       ],
       plugins: [{ name: 'plugin-a' }],
       mcpServers: ['local-server']
     });
 
-    const targetDir = path.join(testDir, 'pi-workspace');
+    const targetDir = path.join(testDir, 'omp-workspace');
     const result = templatesService.applyTemplateToProject(targetDir, template.id, {
-      aiConfigTypes: ['pi']
+      aiConfigTypes: ['omp']
     });
 
     expect(result).toEqual({
@@ -532,7 +532,7 @@ describe('config-templates-service apply and preview', () => {
         },
         commands: {
           applied: 1,
-          files: ['.omp/commands/pi-tools/inspect.md']
+          files: ['.omp/commands/omp-tools/inspect.md']
         },
         plugins: {
           applied: 1,
@@ -544,10 +544,10 @@ describe('config-templates-service apply and preview', () => {
           { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过' }
         ]
       },
-      template: 'Pi Starter'
+      template: 'OMP Starter'
     });
 
-    expect(fs.readFileSync(path.join(targetDir, '.omp', 'commands', 'pi-tools', 'inspect.md'), 'utf8')).toContain('Inspect this with Pi');
+    expect(fs.readFileSync(path.join(targetDir, '.omp', 'commands', 'omp-tools', 'inspect.md'), 'utf8')).toContain('Inspect this with OMP');
     expect(readJson(path.join(targetDir, '.omp', 'mcp.json'))).toEqual({
       mcpServers: {
         'local-server': {
@@ -564,28 +564,28 @@ describe('config-templates-service apply and preview', () => {
     expect(fs.existsSync(path.join(targetDir, '.omp', 'agents'))).toBe(false);
     expect(readJson(path.join(targetDir, '.ctx-config.json'))).toEqual(expect.objectContaining({
       templateId: template.id,
-      aiConfigTypes: ['pi'],
+      aiConfigTypes: ['omp'],
       aiConfigPaths: [],
       commands: ['inspect'],
       mcpServers: ['local-server']
     }));
   });
 
-  test('previews Pi prompt-template command targets and unsupported project agents', () => {
+  test('previews OMP prompt-template command targets and unsupported project agents', () => {
     const template = templatesService.createCustomTemplate({
-      name: 'Pi Preview',
-      cliType: 'pi',
+      name: 'OMP Preview',
+      cliType: 'omp',
       agents: [{ fileName: 'reviewer', name: 'Reviewer', systemPrompt: 'Review carefully' }],
       commands: [{ name: 'sync', body: 'echo sync' }],
       plugins: [{ name: 'plugin-a' }],
       mcpServers: ['local-server', 'missing-server']
     });
 
-    const targetDir = path.join(testDir, 'pi-preview-workspace');
+    const targetDir = path.join(testDir, 'omp-preview-workspace');
     writeFile(path.join(targetDir, '.omp', 'commands', 'sync.md'), 'old prompt');
 
     const preview = templatesService.previewTemplateApplication(targetDir, template.id, {
-      aiConfigTypes: ['pi']
+      aiConfigTypes: ['omp']
     });
 
     expect(preview).toEqual({

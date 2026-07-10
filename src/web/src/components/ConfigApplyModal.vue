@@ -179,7 +179,7 @@ const AI_CONFIG_INFO = {
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
   opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' },
-  pi: { key: 'pi', name: 'OMP command templates', fileName: '.omp/commands', color: '#0f9f9a' }
+  omp: { key: 'omp', name: 'OMP command templates', fileName: '.omp/commands', color: '#0f9f9a' }
 }
 
 // 获取可用的 AI 配置列表（优先展示当前 CLI 对应配置）
@@ -187,8 +187,8 @@ const availableAiConfigs = computed(() => {
   const aiConfigs = props.template?.aiConfigs || {}
   const cliType = props.template?.cliType
 
-  if (cliType === 'pi' && AI_CONFIG_INFO.pi) {
-    return [AI_CONFIG_INFO.pi]
+  if (cliType === 'omp' && AI_CONFIG_INFO.omp) {
+    return [AI_CONFIG_INFO.omp]
   }
 
   const allEnabled = Object.entries(aiConfigs)
@@ -242,7 +242,7 @@ function getAiConfigTagType(type) {
     codex: 'success',
     gemini: 'info',
     opencode: 'error',
-    pi: 'success'
+    omp: 'success'
   }
   return typeMap[type] || 'default'
 }

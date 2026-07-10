@@ -88,6 +88,34 @@
                 :available-models="state.formData.availableModels"
                 :channel-type="config.type"
               />
+              <!-- 登录 provider 识别状态 -->
+              <div
+                v-else-if="field.type === 'auth-provider-status'"
+                class="auth-provider-status"
+              >
+                <n-space
+                  v-if="getFieldStatus(field).tags.length > 0"
+                  size="small"
+                  class="auth-provider-tags"
+                >
+                  <n-tag
+                    v-for="tag in getFieldStatus(field).tags"
+                    :key="tag.text"
+                    size="small"
+                    :type="tag.type || 'default'"
+                    :bordered="false"
+                  >
+                    {{ tag.text }}
+                  </n-tag>
+                </n-space>
+                <div
+                  v-if="getFieldStatus(field).message"
+                  class="auth-provider-message"
+                  :class="{ warning: getFieldStatus(field).warning }"
+                >
+                  {{ getFieldStatus(field).message }}
+                </div>
+              </div>
               <!-- 多选模型选择器 -->
               <n-select
                 v-else-if="field.type === 'model-multi-select'"
@@ -209,7 +237,8 @@ import {
   NAutoComplete,
   NRadioGroup,
   NRadio,
-  NSpace
+  NSpace,
+  NTag
 } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import ChannelCard from './ChannelCard.vue'
@@ -370,6 +399,18 @@ function getValidationStatus(key) {
 function getValidationMessage(key) {
   const flatKey = key.replace(/\./g, '_')
   return validation[flatKey]?.message || validation[key]?.message
+}
+
+function getFieldStatus(field) {
+  if (typeof field.getStatus !== 'function') {
+    return { tags: [], message: '' }
+  }
+  const status = field.getStatus(state.formData) || {}
+  return {
+    tags: Array.isArray(status.tags) ? status.tags : [],
+    message: status.message || '',
+    warning: status.warning === true
+  }
 }
 
 const helpers = {

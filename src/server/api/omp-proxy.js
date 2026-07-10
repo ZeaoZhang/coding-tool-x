@@ -3,15 +3,15 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 const {
-  startPiProxyServer,
-  stopPiProxyServer,
-  getPiProxyStatus
-} = require('../pi-proxy-server');
+  startOmpProxyServer,
+  stopOmpProxyServer,
+  getOmpProxyStatus
+} = require('../omp-proxy-server');
 const {
   getChannels,
   getEnabledChannels,
   markChannelAsRecentlyUsed
-} = require('../services/pi-channels');
+} = require('../services/omp-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 
@@ -37,7 +37,7 @@ function selectLatestEnabledChannel(channels) {
 
 function saveActiveChannelId(channelId) {
   ensureStorageDirMigrated();
-  const filePath = PATHS.activeChannel.pi;
+  const filePath = PATHS.activeChannel.omp;
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -48,8 +48,8 @@ function saveActiveChannelId(channelId) {
 function loadActiveChannelId() {
   ensureStorageDirMigrated();
   try {
-    if (!fs.existsSync(PATHS.activeChannel.pi)) return null;
-    const data = JSON.parse(fs.readFileSync(PATHS.activeChannel.pi, 'utf8'));
+    if (!fs.existsSync(PATHS.activeChannel.omp)) return null;
+    const data = JSON.parse(fs.readFileSync(PATHS.activeChannel.omp, 'utf8'));
     return data.activeChannelId || null;
   } catch {
     return null;
@@ -58,8 +58,8 @@ function loadActiveChannelId() {
 
 function removeActiveChannelFile() {
   ensureStorageDirMigrated();
-  if (fs.existsSync(PATHS.activeChannel.pi)) {
-    fs.unlinkSync(PATHS.activeChannel.pi);
+  if (fs.existsSync(PATHS.activeChannel.omp)) {
+    fs.unlinkSync(PATHS.activeChannel.omp);
   }
 }
 
@@ -77,7 +77,7 @@ function resolveActiveChannel(channels, activeChannelId = null) {
 
 router.get('/status', (req, res) => {
   try {
-    const proxy = getPiProxyStatus();
+    const proxy = getOmpProxyStatus();
     const { channels } = getChannels();
     const enabledChannels = channels.filter(ch => ch.enabled !== false);
     const activeChannel = resolveActiveChannel(channels, loadActiveChannelId());
@@ -109,17 +109,17 @@ router.post('/start', async (req, res) => {
     currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
     saveActiveChannelId(currentChannel.id);
 
-    const proxyResult = await startPiProxyServer();
+    const proxyResult = await startOmpProxyServer();
     if (!proxyResult.success) {
       return res.status(500).json({ error: 'Failed to enable OMP models.yml provider config' });
     }
 
     const { broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
-    const updatedStatus = getPiProxyStatus();
+    const updatedStatus = getOmpProxyStatus();
     const { channels: latestChannels } = getChannels();
     const activeChannel = latestChannels.find(channel => channel.id === currentChannel.id) || currentChannel;
-    broadcastProxyState('pi', updatedStatus, activeChannel, latestChannels);
-    broadcastSchedulerState('pi', getSchedulerState('pi'));
+    broadcastProxyState('omp', updatedStatus, activeChannel, latestChannels);
+    broadcastSchedulerState('omp', getSchedulerState('omp'));
 
     res.json({
       success: true,
@@ -138,12 +138,12 @@ router.post('/start', async (req, res) => {
 
 router.post('/stop', async (req, res) => {
   try {
-    const result = await stopPiProxyServer();
+    const result = await stopOmpProxyServer();
     removeActiveChannelFile();
     const { broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
     const { channels } = getChannels();
-    broadcastProxyState('pi', getPiProxyStatus(), null, channels);
-    broadcastSchedulerState('pi', getSchedulerState('pi'));
+    broadcastProxyState('omp', getOmpProxyStatus(), null, channels);
+    broadcastSchedulerState('omp', getSchedulerState('omp'));
     res.json({ success: true, ...result });
   } catch (error) {
     console.error('[OMP Proxy] Stop failed:', error);

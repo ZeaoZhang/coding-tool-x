@@ -11,7 +11,7 @@ const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
 const CODEX_CHANNELS_PATH = require.resolve('../../../src/server/services/codex-channels');
 const GEMINI_CHANNELS_PATH = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
-const PI_CHANNELS_PATH = require.resolve('../../../src/server/services/pi-channels');
+const OMP_CHANNELS_PATH = require.resolve('../../../src/server/services/omp-channels');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 
 function loadServiceWithStubs({
@@ -20,7 +20,7 @@ function loadServiceWithStubs({
   codexChannelsStub,
   geminiChannelsStub,
   opencodeChannelsStub,
-  piChannelsStub,
+  ompChannelsStub,
   strategyCachePath
 } = {}) {
   delete require.cache[SERVICE_PATH];
@@ -29,7 +29,7 @@ function loadServiceWithStubs({
   delete require.cache[CODEX_CHANNELS_PATH];
   delete require.cache[GEMINI_CHANNELS_PATH];
   delete require.cache[OPENCODE_CHANNELS_PATH];
-  delete require.cache[PI_CHANNELS_PATH];
+  delete require.cache[OMP_CHANNELS_PATH];
   delete require.cache[PATHS_PATH];
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-balance-test-'));
@@ -90,12 +90,12 @@ function loadServiceWithStubs({
       exports: opencodeChannelsStub
     };
   }
-  if (piChannelsStub) {
-    require.cache[PI_CHANNELS_PATH] = {
-      id: PI_CHANNELS_PATH,
-      filename: PI_CHANNELS_PATH,
+  if (ompChannelsStub) {
+    require.cache[OMP_CHANNELS_PATH] = {
+      id: OMP_CHANNELS_PATH,
+      filename: OMP_CHANNELS_PATH,
       loaded: true,
-      exports: piChannelsStub
+      exports: ompChannelsStub
     };
   }
 
@@ -127,7 +127,7 @@ describe('channel-balance service', () => {
     delete require.cache[CODEX_CHANNELS_PATH];
     delete require.cache[GEMINI_CHANNELS_PATH];
     delete require.cache[OPENCODE_CHANNELS_PATH];
-    delete require.cache[PI_CHANNELS_PATH];
+    delete require.cache[OMP_CHANNELS_PATH];
     delete require.cache[PATHS_PATH];
   });
 
@@ -1334,16 +1334,16 @@ describe('channel-balance service', () => {
   test('accepts OMP as a valid source when balance display is disabled', async () => {
     const service = loadServiceWithStubs({
       uiConfig: { channelBalance: { showRemaining: false } },
-      piChannelsStub: {
+      ompChannelsStub: {
         getChannels: vi.fn(() => {
           throw new Error('should not read OMP channels');
         })
       }
     });
 
-    await expect(service.getChannelBalances('pi')).resolves.toEqual({
+    await expect(service.getChannelBalances('omp')).resolves.toEqual({
       enabled: false,
-      source: 'pi',
+      source: 'omp',
       balances: {}
     });
   });
@@ -1414,7 +1414,7 @@ describe('channel-balance service', () => {
 
     try {
       const service = loadServiceWithStubs({
-        piChannelsStub: {
+        ompChannelsStub: {
           getChannels: vi.fn(() => ({
             channels: [
               {
@@ -1436,10 +1436,10 @@ describe('channel-balance service', () => {
         }
       });
 
-      const result = await service.getChannelBalances('pi');
+      const result = await service.getChannelBalances('omp');
 
       expect(result.enabled).toBe(true);
-      expect(result.source).toBe('pi');
+      expect(result.source).toBe('omp');
       expect(result.balances).toMatchObject({
         'omp-enabled': {
           visible: true,
@@ -1448,7 +1448,7 @@ describe('channel-balance service', () => {
         }
       });
       expect(Object.keys(result.balances)).toEqual(['omp-enabled']);
-      expect(service._test.getEnabledBalanceChannels('pi').map(channel => channel.id)).toEqual(['omp-enabled']);
+      expect(service._test.getEnabledBalanceChannels('omp').map(channel => channel.id)).toEqual(['omp-enabled']);
       expect(seenAuth.some(item => item.auth === 'Bearer balance-token')).toBe(true);
     } finally {
       await enabledServer.close();

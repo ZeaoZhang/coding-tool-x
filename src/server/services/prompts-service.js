@@ -21,17 +21,17 @@ const CLAUDE_PROMPT_PATH = NATIVE_PATHS.claude.prompt || path.join(CLAUDE_CONFIG
 const CODEX_PROMPT_PATH = path.join(HOME_DIR, '.codex', 'AGENTS.md');
 const GEMINI_PROMPT_PATH = path.join(HOME_DIR, '.gemini', 'GEMINI.md');
 const OPENCODE_PROMPT_PATH = path.join(NATIVE_PATHS.opencode.config, 'AGENTS.md');
-const PI_PROMPTS_DIR = NATIVE_PATHS.pi?.prompts
-  || path.join(NATIVE_PATHS.pi?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'prompts');
-const MANAGED_OMP_PROMPTS_DIR = path.join(PI_PROMPTS_DIR, 'coding-tool-x');
+const OMP_PROMPTS_DIR = NATIVE_PATHS.omp?.prompts
+  || path.join(NATIVE_PATHS.omp?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'prompts');
+const MANAGED_OMP_PROMPTS_DIR = path.join(OMP_PROMPTS_DIR, 'coding-tool-x');
 
-function normalizeApps(apps = {}, defaults = { claude: true, codex: true, gemini: true, opencode: false, pi: false }) {
+function normalizeApps(apps = {}, defaults = { claude: true, codex: true, gemini: true, opencode: false, omp: false }) {
   return {
     claude: apps.claude !== undefined ? !!apps.claude : defaults.claude,
     codex: apps.codex !== undefined ? !!apps.codex : defaults.codex,
     gemini: apps.gemini !== undefined ? !!apps.gemini : defaults.gemini,
     opencode: apps.opencode !== undefined ? !!apps.opencode : defaults.opencode,
-    pi: apps.pi !== undefined ? !!apps.pi : defaults.pi
+    omp: apps.omp !== undefined ? !!apps.omp: defaults.omp
   };
 }
 
@@ -216,7 +216,7 @@ function initPromptsData() {
         name: '当前使用',
         description: '从现有配置导入',
         content: existingContent,
-        apps: normalizeApps({ claude: true, codex: false, gemini: false, opencode: false, pi: false }),
+        apps: normalizeApps({ claude: true, codex: false, gemini: false, opencode: false, omp: false }),
         isBuiltin: false,
         isImported: true,
         createdAt: Date.now(),
@@ -239,7 +239,7 @@ function initPromptsData() {
       preset.apps.codex !== normalizedApps.codex ||
       preset.apps.gemini !== normalizedApps.gemini ||
       preset.apps.opencode !== normalizedApps.opencode
-      || preset.apps.pi !== normalizedApps.pi
+      || preset.apps.omp !== normalizedApps.omp
     ) {
       preset.apps = normalizedApps;
       updated = true;
@@ -333,7 +333,7 @@ function savePreset(preset) {
   writeJsonFile(PROMPTS_FILE, data);
 
   if (wasActive) {
-    if (existing && normalizeApps(existing.apps).pi && !preset.apps.pi) {
+    if (existing && normalizeApps(existing.apps).omp && !preset.apps.omp) {
       deleteOmpPromptTemplate(existing);
     }
     syncPresetToAllPlatforms(preset);
@@ -362,7 +362,7 @@ function deletePreset(id) {
     data.activePresetId = null;
   }
 
-  if (normalizeApps(preset.apps).pi) {
+  if (normalizeApps(preset.apps).omp) {
     deleteOmpPromptTemplate(preset);
   }
 
@@ -388,7 +388,7 @@ async function activatePreset(id) {
   data.activePresetId = id;
   writeJsonFile(PROMPTS_FILE, data);
 
-  if (previousPreset && previousPreset.id !== id && normalizeApps(previousPreset.apps).pi) {
+  if (previousPreset && previousPreset.id !== id && normalizeApps(previousPreset.apps).omp) {
     deleteOmpPromptTemplate(previousPreset);
   }
 
@@ -415,7 +415,7 @@ async function deactivatePrompt() {
     codex: deleteFile(CODEX_PROMPT_PATH),
     gemini: deleteFile(GEMINI_PROMPT_PATH),
     opencode: deleteFile(OPENCODE_PROMPT_PATH),
-    pi: activePreset && normalizeApps(activePreset.apps).pi
+    omp: activePreset && normalizeApps(activePreset.apps).omp
       ? deleteOmpPromptTemplate(activePreset)
       : false
   };
@@ -456,7 +456,7 @@ function syncPresetToAllPlatforms(preset) {
     console.log('[Prompts] Synced to OpenCode:', OPENCODE_PROMPT_PATH);
   }
 
-  if (apps.pi) {
+  if (apps.omp) {
     const targetPath = writeOmpPromptTemplate(preset);
     console.log('[Prompts] Synced to OMP:', targetPath);
   }
@@ -507,7 +507,7 @@ function readPlatformPrompt(platform) {
       return readTextFile(GEMINI_PROMPT_PATH, '');
     case 'opencode':
       return readTextFile(OPENCODE_PROMPT_PATH, '');
-    case 'pi':
+    case 'omp':
       throw new Error('OMP 使用 prompts/ 目录中的模板文件，请通过平台状态查看模板列表');
     default:
       throw new Error(`无效的平台: ${platform}`);
@@ -515,7 +515,7 @@ function readPlatformPrompt(platform) {
 }
 
 function listOmpPromptTemplates() {
-  if (!fs.existsSync(PI_PROMPTS_DIR)) {
+  if (!fs.existsSync(OMP_PROMPTS_DIR)) {
     return [];
   }
 
@@ -527,7 +527,7 @@ function listOmpPromptTemplates() {
       if (entry.isDirectory()) {
         walk(fullPath);
       } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.md') {
-        const relativePath = path.relative(PI_PROMPTS_DIR, fullPath);
+        const relativePath = path.relative(OMP_PROMPTS_DIR, fullPath);
         results.push({
           name: path.basename(entry.name, '.md'),
           path: fullPath,
@@ -539,7 +539,7 @@ function listOmpPromptTemplates() {
   };
 
   try {
-    walk(PI_PROMPTS_DIR);
+    walk(OMP_PROMPTS_DIR);
   } catch (err) {
     console.error(`[Prompts] Failed to list OMP prompt templates:`, err.message);
   }
@@ -572,10 +572,10 @@ function getPlatformStatus() {
       exists: fs.existsSync(OPENCODE_PROMPT_PATH),
       content: readTextFile(OPENCODE_PROMPT_PATH, '')
     },
-    pi: {
-      path: PI_PROMPTS_DIR,
+    omp: {
+      path: OMP_PROMPTS_DIR,
       managedPath: MANAGED_OMP_PROMPTS_DIR,
-      exists: fs.existsSync(PI_PROMPTS_DIR),
+      exists: fs.existsSync(OMP_PROMPTS_DIR),
       templates: listOmpPromptTemplates()
     }
   };
@@ -599,7 +599,7 @@ function importFromPlatform(platform, presetName) {
     name: presetName || `从 ${platform} 导入`,
     description: `从 ${platform} 导入的提示词`,
     content,
-    apps: normalizeApps({ claude: false, codex: false, gemini: false, opencode: false, pi: false }),
+    apps: normalizeApps({ claude: false, codex: false, gemini: false, opencode: false, omp: false }),
     isBuiltin: false,
     createdAt: Date.now(),
     updatedAt: Date.now()

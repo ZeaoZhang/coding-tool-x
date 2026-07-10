@@ -221,7 +221,7 @@ const currentPlatform = computed(() => {
 const commandUsageHint = computed(() =>
   currentPlatform.value === 'opencode'
     ? '使用 /命令名 在 OpenCode 中调用'
-    : currentPlatform.value === 'pi'
+    : currentPlatform.value === 'omp'
     ? '使用 OMP slash command 调用'
     : currentPlatform.value === 'gemini'
     ? '使用 /命令名 在 Gemini CLI 中调用'

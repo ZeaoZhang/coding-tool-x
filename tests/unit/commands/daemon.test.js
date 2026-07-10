@@ -45,7 +45,7 @@ beforeEach(() => {
       codexProxy: 20089,
       geminiProxy: 20090,
       opencodeProxy: 20091,
-      piProxy: 20092
+      ompProxy: 20092
     }
   }));
 
@@ -79,7 +79,7 @@ beforeEach(() => {
           codex: '/tmp/channels/codex.json',
           gemini: '/tmp/channels/gemini.json',
           opencode: '/tmp/channels/opencode.json',
-          pi: '/tmp/channels/pi.json'
+          omp: '/tmp/channels/omp.json'
         }
       },
       ensureStorageDirMigrated: vi.fn()

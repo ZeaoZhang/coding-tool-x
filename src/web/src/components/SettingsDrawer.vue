@@ -692,7 +692,7 @@
                     <div class="port-field">
                       <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">OMP 托管端口</n-text>
                       <n-input-number
-                        v-model:value="ports.piProxy"
+                        v-model:value="ports.ompProxy"
                         :min="1024"
                         :max="65535"
                         :show-button="false"
@@ -1352,7 +1352,7 @@ const ports = ref({
   codexProxy: 20089,
   geminiProxy: 20090,
   opencodeProxy: 20091,
-  piProxy: 20092
+  ompProxy: 20092
 })
 const originalPorts = ref({
   webUI: 19999,
@@ -1360,7 +1360,7 @@ const originalPorts = ref({
   codexProxy: 20089,
   geminiProxy: 20090,
   opencodeProxy: 20091,
-  piProxy: 20092
+  ompProxy: 20092
 })
 const savingPorts = ref(false)
 const homeCliColumns = ref([...DEFAULT_HOME_CLI_COLUMNS])
@@ -1424,6 +1424,13 @@ const notificationHookPlatforms = [
     description: '当 OpenCode 会话空闲或发生错误时发送系统通知',
     implementation: '通过 OpenCode 插件事件（session.idle / session.error）发送通知',
     externalMessage: '检测到其他 OpenCode 通知配置时，本界面只管理 Coding Tool 生成的插件文件。'
+  },
+  {
+    key: 'omp',
+    label: 'OMP',
+    description: '当 OMP 回合完成或等待下一步交互时发送系统通知',
+    implementation: '通过 OMP 托管 Extension 事件发送通知',
+    externalMessage: '检测到其他 OMP 通知扩展时，本界面只管理 Coding Tool 生成的扩展文件。'
   }
 ]
 
@@ -1578,6 +1585,7 @@ function createNotificationSettingsState(data = {}) {
     codex: createNotificationPlatformState(data?.platforms?.codex),
     gemini: createNotificationPlatformState(data?.platforms?.gemini),
     opencode: createNotificationPlatformState(data?.platforms?.opencode),
+    omp: createNotificationPlatformState(data?.platforms?.omp || data?.platforms?.omp),
     remoteNotifications: {
       providers
     }
@@ -2038,7 +2046,7 @@ const portsChanged = computed(() => {
     ports.value.codexProxy !== originalPorts.value.codexProxy ||
     ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
     ports.value.opencodeProxy !== originalPorts.value.opencodeProxy ||
-    ports.value.piProxy !== originalPorts.value.piProxy ||
+    ports.value.ompProxy !== originalPorts.value.ompProxy ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
@@ -2284,7 +2292,7 @@ async function loadPortsConfig() {
         codexProxy: data.ports?.codexProxy || 20089,
         geminiProxy: data.ports?.geminiProxy || 20090,
         opencodeProxy: data.ports?.opencodeProxy || 20091,
-        piProxy: data.ports?.piProxy || 20092
+        ompProxy: data.ports?.ompProxy || 20092
       }
       originalPorts.value = { ...ports.value }
 

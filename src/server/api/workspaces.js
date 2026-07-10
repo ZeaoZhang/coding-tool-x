@@ -411,7 +411,7 @@ router.delete('/:id/projects/:projectName', (req, res) => {
 /**
  * POST /api/workspaces/:id/launch
  * 获取在工作区启动 CLI 工具的命令
- * Body: { tool: 'claude' | 'codex' | 'gemini' | 'opencode' | 'pi' | 'omp', projectName?: string }
+ * Body: { tool: 'claude' | 'codex' | 'gemini' | 'opencode' | 'omp' | 'omp', projectName?: string }
  */
 router.post('/:id/launch', (req, res) => {
   try {

@@ -48,7 +48,7 @@ const PLATFORM_SYNC_METHODS = {
   codex: { sync: 'syncToCodex', remove: 'removeFromCodex' },
   gemini: { sync: 'syncToGemini', remove: 'removeFromGemini' },
   opencode: { sync: 'syncToOpenCode', remove: 'removeFromOpenCode' },
-  pi: { sync: 'syncToPi', remove: 'removeFromPi' }
+  omp: { sync: 'syncToOmp', remove: 'removeFromOmp' }
 };
 
 function syncPlatform(type, name, platform) {

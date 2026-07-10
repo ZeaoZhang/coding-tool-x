@@ -1,5 +1,5 @@
-const TOOL_TYPE = 'pi';
-const MODULE_PATH = '../../../src/server/services/pi-statistics-service';
+const TOOL_TYPE = 'omp';
+const MODULE_PATH = '../../../src/server/services/omp-statistics-service';
 
 const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();
@@ -36,7 +36,7 @@ beforeEach(() => {
     }
   };
 
-  const sessionsPath = require.resolve('../../../src/server/services/pi-sessions');
+  const sessionsPath = require.resolve('../../../src/server/services/omp-sessions');
   require.cache[sessionsPath] = {
     id: sessionsPath,
     filename: sessionsPath,
@@ -78,7 +78,7 @@ afterEach(() => {
   [
     MODULE_PATH,
     '../../../src/server/services/statistics-service',
-    '../../../src/server/services/pi-sessions',
+    '../../../src/server/services/omp-sessions',
     '../../../src/server/services/proxy-log-helper'
   ].forEach((mod) => {
     try {
@@ -87,7 +87,7 @@ afterEach(() => {
   });
 });
 
-describe('pi-statistics-service', () => {
+describe('omp-statistics-service', () => {
   test('uses shared OMP statistics when they exist', () => {
     mockGetStatistics.mockReturnValue({
       lastUpdated: '2026-07-08T01:00:00.000Z',

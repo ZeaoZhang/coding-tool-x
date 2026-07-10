@@ -1,14 +1,15 @@
 const chalk = require('chalk');
 const http = require('http');
 const { loadConfig } = require('../config/loader');
+const { normalizePlatformKey } = require('../shared/platforms');
 
-const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const TOOL_ENDPOINTS = {
   claude: '/api/claude/statistics',
   codex: '/api/codex/statistics',
   gemini: '/api/gemini/statistics',
   opencode: '/api/opencode/statistics',
-  pi: '/api/pi/statistics'
+  omp: '/api/omp/statistics'
 };
 
 /**
@@ -80,7 +81,7 @@ async function checkUIService() {
 
 function validateToolType(type) {
   if (!type) return true;
-  return TOOL_TYPES.includes(type);
+  return TOOL_TYPES.includes(normalizePlatformKey(type));
 }
 
 function getDateString(offsetDays = 0) {
@@ -175,7 +176,8 @@ function getRangeDays(timeRange) {
 }
 
 async function fetchToolStats(toolType, timeRange) {
-  const endpointBase = TOOL_ENDPOINTS[toolType];
+  const normalizedToolType = normalizePlatformKey(toolType);
+  const endpointBase = TOOL_ENDPOINTS[normalizedToolType];
   if (!endpointBase) {
     throw new Error(`不支持的渠道类型: ${toolType}`);
   }
@@ -236,6 +238,7 @@ function buildDisplayPayload(type, timeRange, data) {
  * 查看统计信息
  */
 async function handleStats(type = null, options = {}) {
+  const normalizedType = type ? normalizePlatformKey(type) : null;
   // 检查 UI 服务
   const uiRunning = await checkUIService();
   if (!uiRunning) {
@@ -247,16 +250,16 @@ async function handleStats(type = null, options = {}) {
   const timeRange = options.today ? 'today' : options.week ? 'week' : options.month ? 'month' : 'all';
 
   try {
-    if (!validateToolType(type)) {
+    if (!validateToolType(normalizedType)) {
       console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
-      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode, pi\n'));
+      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode, omp\n'));
       process.exit(1);
     }
 
     let payload;
-    if (type) {
-      const summary = await fetchToolStats(type, timeRange);
-      payload = buildDisplayPayload(type, timeRange, summary);
+    if (normalizedType) {
+      const summary = await fetchToolStats(normalizedType, timeRange);
+      payload = buildDisplayPayload(normalizedType, timeRange, summary);
     } else {
       const overall = await fetchOverallStats(timeRange);
       payload = buildDisplayPayload(null, timeRange, overall);
@@ -275,7 +278,7 @@ async function handleStats(type = null, options = {}) {
 function displayStats(stats) {
   const type = stats.type;
   const timeRange = stats.timeRange;
-  const title = type ? `${type.toUpperCase()} 统计信息` : '总体统计信息';
+  const title = type ? `${getToolDisplayName(type)} 统计信息` : '总体统计信息';
   const rangeText = {
     today: '今日',
     week: '本周',
@@ -317,11 +320,11 @@ function displayStats(stats) {
   }
 
   if (!type && stats.byToolType) {
-    const iconMap = { claude: '[*]', codex: '[*]', gemini: '[*]', opencode: '[*]' };
+    const iconMap = { claude: '[*]', codex: '[*]', gemini: '[*]', opencode: '[*]', omp: '[*]' };
     console.log(chalk.bold('\n[CH] 分渠道汇总:'));
     TOOL_TYPES.forEach((toolType) => {
       const item = stats.byToolType[toolType] || emptySummary();
-      console.log(chalk.gray(`  ${iconMap[toolType]} ${toolType.toUpperCase()}:`));
+      console.log(chalk.gray(`  ${iconMap[toolType]} ${getToolDisplayName(toolType)}:`));
       console.log(
         chalk.gray(
           `     请求: ${formatNumber(item.requests)}  |  Tokens: ${formatNumber(item.tokens)}  |  成本: $${normalizeNumber(item.cost).toFixed(4)}`
@@ -333,8 +336,15 @@ function displayStats(stats) {
   console.log(chalk.gray('\n[TIP] 提示:'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats --today') + chalk.gray(' 查看今日统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats claude') + chalk.gray(' 查看特定渠道'));
+  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats omp') + chalk.gray(' 查看 OMP 统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats opencode') + chalk.gray(' 查看 OpenCode 统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats export') + chalk.gray(' 导出统计数据\n'));
+}
+
+function getToolDisplayName(type) {
+  const normalizedType = normalizePlatformKey(type);
+  if (normalizedType === 'omp') return 'OMP';
+  return String(normalizedType || '').toUpperCase();
 }
 
 /**
@@ -350,6 +360,7 @@ function formatNumber(num) {
  */
 async function handleStatsExport(type = null, format = 'json') {
   console.log(chalk.cyan('\n[EXPORT] 导出统计数据...\n'));
+  const normalizedType = type ? normalizePlatformKey(type) : null;
 
   const uiRunning = await checkUIService();
   if (!uiRunning) {
@@ -358,9 +369,9 @@ async function handleStatsExport(type = null, format = 'json') {
   }
 
   try {
-    if (!validateToolType(type)) {
+    if (!validateToolType(normalizedType)) {
       console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
-      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode\n'));
+      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode, omp\n'));
       process.exit(1);
     }
 
@@ -370,9 +381,9 @@ async function handleStatsExport(type = null, format = 'json') {
     }
 
     let payload;
-    if (type) {
-      const summary = await fetchToolStats(type, 'all');
-      payload = buildDisplayPayload(type, 'all', summary);
+    if (normalizedType) {
+      const summary = await fetchToolStats(normalizedType, 'all');
+      payload = buildDisplayPayload(normalizedType, 'all', summary);
     } else {
       const overall = await fetchOverallStats('all');
       payload = buildDisplayPayload(null, 'all', overall);
@@ -380,7 +391,7 @@ async function handleStatsExport(type = null, format = 'json') {
 
     const fs = require('fs');
     const path = require('path');
-    const filename = `cc-tool-stats-${type || 'all'}-${Date.now()}.json`;
+    const filename = `cc-tool-stats-${normalizedType || 'all'}-${Date.now()}.json`;
     const filepath = path.join(process.cwd(), filename);
 
     fs.writeFileSync(filepath, JSON.stringify(payload, null, 2));
@@ -395,5 +406,11 @@ async function handleStatsExport(type = null, format = 'json') {
 
 module.exports = {
   handleStats,
-  handleStatsExport
+  handleStatsExport,
+  _test: {
+    buildDisplayPayload,
+    fetchToolStats,
+    getToolDisplayName,
+    validateToolType
+  }
 };

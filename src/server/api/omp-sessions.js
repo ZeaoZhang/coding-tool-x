@@ -11,9 +11,9 @@ const {
   deleteSession,
   forkSession,
   saveSessionOrder,
-  isPiInstalled,
+  isOmpInstalled,
   HOME_DIR
-} = require('../services/pi-sessions');
+} = require('../services/omp-sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 
@@ -29,7 +29,7 @@ function quoteForShell(value) {
 module.exports = () => {
   router.get('/search/global', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { keyword } = req.query;
@@ -40,7 +40,7 @@ module.exports = () => {
       }
       const sessions = searchSessions(keyword, contextLength);
       const totalMatches = sessions.reduce((sum, session) => sum + (session.matchCount || 0), 0);
-      res.json({ keyword, totalMatches, sessions, source: 'pi' });
+      res.json({ keyword, totalMatches, sessions, source: 'omp' });
     } catch (err) {
       console.error('[OMP API] Failed to search sessions:', err);
       res.status(500).json({ error: err.message });
@@ -49,11 +49,11 @@ module.exports = () => {
 
   router.get('/recent/list', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const limit = parseInt(req.query.limit, 10) || 5;
-      res.json({ sessions: getRecentSessions(limit), source: 'pi' });
+      res.json({ sessions: getRecentSessions(limit), source: 'omp' });
     } catch (err) {
       console.error('[OMP API] Failed to get recent sessions:', err);
       res.status(500).json({ error: err.message });
@@ -62,7 +62,7 @@ module.exports = () => {
 
   router.get('/:projectName/search', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { projectName } = req.params;
@@ -83,7 +83,7 @@ module.exports = () => {
 
   router.get('/:projectName', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { projectName } = req.params;
@@ -110,7 +110,7 @@ module.exports = () => {
 
   router.get('/:projectName/:sessionId/status', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const session = getSessionById(req.params.sessionId);
@@ -130,7 +130,7 @@ module.exports = () => {
 
   router.get('/:projectName/:sessionId/outline', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const session = getSessionById(req.params.sessionId);
@@ -159,7 +159,7 @@ module.exports = () => {
 
   router.get('/:projectName/:sessionId/messages', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { sessionId } = req.params;
@@ -186,7 +186,7 @@ module.exports = () => {
           gitRepository: null,
           cwd: session?.directory || null,
           provider: session?.provider || '',
-          model: session?.model || 'pi'
+          model: session?.model || 'omp'
         },
         pagination: {
           page: pageNum,
@@ -203,7 +203,7 @@ module.exports = () => {
 
   router.delete('/:projectName/:sessionId', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       res.json(deleteSession(req.params.sessionId));
@@ -218,7 +218,7 @@ module.exports = () => {
 
   router.post('/:projectName/batch-delete', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { sessionIds } = req.body || {};
@@ -259,7 +259,7 @@ module.exports = () => {
 
   router.post('/:projectName/:sessionId/fork', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       res.json(forkSession(req.params.sessionId, req.body || {}));
@@ -274,7 +274,7 @@ module.exports = () => {
 
   router.post('/:projectName/order', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { order } = req.body || {};
@@ -291,7 +291,7 @@ module.exports = () => {
 
   router.post('/:projectName/:sessionId/launch', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { projectName, sessionId } = req.params;
@@ -309,9 +309,9 @@ module.exports = () => {
         action: 'launch_pi_session',
         message: `复制 OMP 会话启动命令 ${sessionId.substring(0, 8)}`,
         sessionId,
-        tool: 'pi',
-        toolType: 'pi',
-        source: 'pi',
+        tool: 'omp',
+        toolType: 'omp',
+        source: 'omp',
         timestamp: Date.now()
       });
 
@@ -320,7 +320,7 @@ module.exports = () => {
         cwd,
         sessionFile: session.filePath,
         sessionId,
-        tool: 'pi',
+        tool: 'omp',
         command,
         copyCommand
       });

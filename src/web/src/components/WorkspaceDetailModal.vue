@@ -27,7 +27,7 @@
         <n-button type="success" size="small" @click="launchCLI('gemini')" :disabled="!workspace.exists">
           Gemini CLI
         </n-button>
-        <n-button type="warning" size="small" @click="launchCLI('pi')" :disabled="!workspace.exists">
+        <n-button type="warning" size="small" @click="launchCLI('omp')" :disabled="!workspace.exists">
           OMP
         </n-button>
       </n-space>

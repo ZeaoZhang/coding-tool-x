@@ -30,8 +30,8 @@ export async function getOpenCodeTodayStatistics() {
   return response.data
 }
 
-export async function getPiTodayStatistics() {
-  const response = await client.get('/pi/statistics/today')
+export async function getOmpTodayStatistics() {
+  const response = await client.get('/omp/statistics/today')
   return response.data
 }
 

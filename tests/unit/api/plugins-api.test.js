@@ -18,9 +18,9 @@ beforeEach(() => {
       }
     }),
     opencode: createMockService(),
-    pi: createMockService({
+    omp: createMockService({
       capabilities: {
-        platform: 'pi',
+        platform: 'omp',
         supportsPlugins: true,
         repositories: true,
         market: true,
@@ -171,13 +171,13 @@ describe('GET / and GET /market', () => {
     expect(services.claude.listPlugins).not.toHaveBeenCalled();
   });
 
-  test('lists plugins for Pi platform', async () => {
-    const res = await request(buildApp()).get('/?platform=pi');
+  test('lists plugins for OMP platform', async () => {
+    const res = await request(buildApp()).get('/?platform=omp');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.platform).toBe('pi');
-    expect(services.pi.listPlugins).toHaveBeenCalled();
+    expect(res.body.platform).toBe('omp');
+    expect(services.omp.listPlugins).toHaveBeenCalled();
     expect(services.claude.listPlugins).not.toHaveBeenCalled();
   });
 
@@ -203,19 +203,19 @@ describe('GET / and GET /market', () => {
     expect(services.gemini.getCapabilities).toHaveBeenCalled();
   });
 
-  test('GET /capabilities returns Pi package/extension capability contract', async () => {
-    const res = await request(buildApp()).get('/capabilities?platform=pi');
+  test('GET /capabilities returns OMP package/extension capability contract', async () => {
+    const res = await request(buildApp()).get('/capabilities?platform=omp');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.platform).toBe('pi');
+    expect(res.body.platform).toBe('omp');
     expect(res.body.capabilities).toEqual(expect.objectContaining({
-      platform: 'pi',
+      platform: 'omp',
       supportsPlugins: true,
       repositories: true,
       config: true
     }));
-    expect(services.pi.getCapabilities).toHaveBeenCalled();
+    expect(services.omp.getCapabilities).toHaveBeenCalled();
   });
 });
 

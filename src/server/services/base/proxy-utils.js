@@ -101,6 +101,7 @@ function normalizeGatewaySourceType(value, fallback = 'claude') {
   if (normalized === 'claude') return 'claude';
   if (normalized === 'codex') return 'codex';
   if (normalized === 'gemini') return 'gemini';
+  if (normalized === 'opencode') return 'opencode';
   if (normalized === 'openai_compatible') return 'openai_compatible';
   return fallback;
 }

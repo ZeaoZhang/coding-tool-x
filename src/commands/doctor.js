@@ -148,13 +148,7 @@ async function checkConfigFiles() {
  */
 async function checkPorts() {
   const config = loadConfig();
-  const ports = {
-    'Web UI': config.ports?.webUI || 19999,
-    'Claude Proxy': config.ports?.proxy || 20088,
-    'Codex Proxy': config.ports?.codexProxy || 20089,
-    'Gemini Proxy': config.ports?.geminiProxy || 20090,
-    'OpenCode Proxy': config.ports?.opencodeProxy || 20091
-  };
+  const ports = buildPortCheckMap(config);
 
   const conflicts = [];
 
@@ -179,6 +173,17 @@ async function checkPorts() {
       suggestion: '如果服务正在运行这是正常的；否则运行 ctx port 修改端口'
     };
   }
+}
+
+function buildPortCheckMap(config = {}) {
+  return {
+    'Web UI': config.ports?.webUI || 19999,
+    'Claude Proxy': config.ports?.proxy || 20088,
+    'Codex Proxy': config.ports?.codexProxy || 20089,
+    'Gemini Proxy': config.ports?.geminiProxy || 20090,
+    'OpenCode Proxy': config.ports?.opencodeProxy || 20091,
+    'OMP Proxy': config.ports?.ompProxy || 20092
+  };
 }
 
 /**
@@ -329,5 +334,9 @@ async function checkDiskSpace() {
 }
 
 module.exports = {
-  handleDoctor
+  handleDoctor,
+  _test: {
+    buildPortCheckMap,
+    checkPorts
+  }
 };

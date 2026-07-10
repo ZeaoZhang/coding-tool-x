@@ -14,7 +14,7 @@ const channelsService = require('./channels');
 const codexChannelsService = require('./codex-channels');
 const geminiChannelsService = require('./gemini-channels');
 const opencodeChannelsService = require('./opencode-channels');
-const piChannelsService = require('./pi-channels');
+const ompChannelsService = require('./omp-channels');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
@@ -55,18 +55,18 @@ const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
 const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const AGENT_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
-const COMMAND_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
-const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
-const PLUGIN_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const COMMAND_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const PLUGIN_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const CLAUDE_MARKETPLACES_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
 const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'plugins');
 const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
 const OPENCODE_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugins');
 const OPENCODE_LEGACY_PLUGINS_DIR = path.join(NATIVE_PATHS.opencode.config, 'plugin');
-const PI_SETTINGS_PATH = NATIVE_PATHS.pi?.settings || path.join(PATHS.base, 'pi-config.yml');
-const PI_EXTENSIONS_DIR = NATIVE_PATHS.pi?.extensions || path.join(PATHS.base, 'pi-extensions');
+const OMP_SETTINGS_PATH = NATIVE_PATHS.omp?.settings || path.join(PATHS.base, 'omp-config.yml');
+const OMP_EXTENSIONS_DIR = NATIVE_PATHS.omp?.extensions || path.join(PATHS.base, 'omp-extensions');
 
-function normalizePiResourceType(value = '') {
+function normalizeOmpResourceType(value = '') {
   const key = String(value || '').trim().replace(/[\s_-]+/g, '').toLowerCase();
   const map = {
     extension: 'extension',
@@ -90,10 +90,10 @@ function normalizePiResourceType(value = '') {
   return map[key] || String(value || '').trim();
 }
 
-function normalizePiResourceTypes(input = []) {
+function normalizeOmpResourceTypes(input = []) {
   const result = [];
   const add = (value) => {
-    const normalized = normalizePiResourceType(value);
+    const normalized = normalizeOmpResourceType(value);
     if (normalized && !result.includes(normalized)) result.push(normalized);
   };
   if (Array.isArray(input)) {
@@ -130,7 +130,7 @@ function getOpenCodeNotificationPluginPath() {
 function getNativeConfigSpecs() {
   const openCodeConfigPaths = getOpenCodeConfigPaths();
   const openCodeNotificationPluginPath = getOpenCodeNotificationPluginPath();
-  const piDir = NATIVE_PATHS.pi.dir || path.dirname(NATIVE_PATHS.pi.settings);
+  const ompDir = NATIVE_PATHS.omp.dir || path.dirname(NATIVE_PATHS.omp.settings);
   return {
     claude: {
       settings: { path: NATIVE_PATHS.claude.settings, format: 'json' }
@@ -151,18 +151,18 @@ function getNativeConfigSpecs() {
         ? { codingToolNotifyPlugin: { path: openCodeNotificationPluginPath, format: 'text' } }
         : {})
     },
-    pi: {
-      settings: { path: NATIVE_PATHS.pi.settings, format: 'yaml' },
-      auth: { path: NATIVE_PATHS.pi.auth, format: 'json', mode: 0o600 },
-      models: { path: NATIVE_PATHS.pi.models, format: 'yaml' },
-      commands: { path: NATIVE_PATHS.pi.commands || path.join(piDir, 'commands'), format: 'directory' },
-      prompts: { path: NATIVE_PATHS.pi.prompts, format: 'directory' },
-      skills: { path: NATIVE_PATHS.pi.skills, format: 'directory' },
-      extensions: { path: NATIVE_PATHS.pi.extensions, format: 'directory' },
-      themes: { path: NATIVE_PATHS.pi.themes || path.join(piDir, 'themes'), format: 'directory' },
-      packages: { path: NATIVE_PATHS.pi.packages || path.join(piDir, 'packages'), format: 'directory' },
-      npmPackages: { path: path.join(piDir, 'npm'), format: 'directory' },
-      gitPackages: { path: path.join(piDir, 'git'), format: 'directory' }
+    omp: {
+      settings: { path: NATIVE_PATHS.omp.settings, format: 'yaml' },
+      auth: { path: NATIVE_PATHS.omp.auth, format: 'json', mode: 0o600 },
+      models: { path: NATIVE_PATHS.omp.models, format: 'yaml' },
+      commands: { path: NATIVE_PATHS.omp.commands || path.join(ompDir, 'commands'), format: 'directory' },
+      prompts: { path: NATIVE_PATHS.omp.prompts, format: 'directory' },
+      skills: { path: NATIVE_PATHS.omp.skills, format: 'directory' },
+      extensions: { path: NATIVE_PATHS.omp.extensions, format: 'directory' },
+      themes: { path: NATIVE_PATHS.omp.themes || path.join(ompDir, 'themes'), format: 'directory' },
+      packages: { path: NATIVE_PATHS.omp.packages || path.join(ompDir, 'packages'), format: 'directory' },
+      npmPackages: { path: path.join(ompDir, 'npm'), format: 'directory' },
+      gitPackages: { path: path.join(ompDir, 'git'), format: 'directory' }
     }
   };
 }
@@ -1089,7 +1089,7 @@ function exportOpenCodePluginsByPlatform(service) {
           name: plugin.name,
           directory: plugin.directory || plugin.name,
           installSource: plugin.installSource || plugin.source || plugin.name,
-          resourceTypes: normalizePiResourceTypes(plugin.resourceTypes || plugin.resources),
+          resourceTypes: normalizeOmpResourceTypes(plugin.resourceTypes || plugin.resources),
           version: plugin.version || 'latest',
           description: plugin.description || '',
           enabled: plugin.enabled !== false,
@@ -1108,13 +1108,13 @@ function exportOpenCodePluginsByPlatform(service) {
   return { plugins, control };
 }
 
-function exportPiPluginsByPlatform(service) {
+function exportOmpPluginsByPlatform(service) {
   const plugins = (service.listPlugins().plugins || [])
     .map((plugin) => {
-      if (plugin.pluginType === 'package' || plugin.source === 'pi-settings') {
+      if (plugin.pluginType === 'package' || plugin.source === 'omp-settings') {
         return {
-          platform: 'pi',
-          type: 'pi-package',
+          platform: 'omp',
+          type: 'omp-package',
           pluginType: 'package',
           pluginKind: plugin.pluginKind || 'package',
           name: plugin.name,
@@ -1123,18 +1123,18 @@ function exportPiPluginsByPlatform(service) {
           description: plugin.description || '',
           enabled: plugin.enabled !== false,
           installed: plugin.installed !== false,
-          source: plugin.source || 'pi-settings'
+          source: plugin.source || 'omp-settings'
         };
       }
-      return buildManagedPluginExportItem(plugin, 'pi', PI_EXTENSIONS_DIR, {
-        type: 'pi-extension',
+      return buildManagedPluginExportItem(plugin, 'omp', OMP_EXTENSIONS_DIR, {
+        type: 'omp-extension',
         pluginType: plugin.pluginType || 'extension',
         pluginKind: plugin.pluginKind || 'extension',
-        manifestCandidates: ['pi.json', 'extension.json', 'plugin.json', 'package.json']
+        manifestCandidates: ['omp.json', 'extension.json', 'plugin.json', 'package.json']
       });
     })
     .filter(Boolean);
-  const control = exportPluginControlSnapshot('pi', service);
+  const control = exportPluginControlSnapshot('omp', service);
   return { plugins, control };
 }
 
@@ -1148,8 +1148,8 @@ function exportPluginsSnapshotByPlatform() {
         result[platform] = exportCodexPluginsByPlatform(service);
       } else if (platform === 'opencode') {
         result[platform] = exportOpenCodePluginsByPlatform(service);
-      } else if (platform === 'pi') {
-        result[platform] = exportPiPluginsByPlatform(service);
+      } else if (platform === 'omp') {
+        result[platform] = exportOmpPluginsByPlatform(service);
       } else {
         result[platform] = {
           plugins: service.listPlugins().plugins || [],
@@ -1515,22 +1515,22 @@ function writeOpenCodePluginConfig(packages = [], overwrite = true) {
   return writeJsonFileAbsolute(configPath, { ...existing, plugin: mergedPlugins }, true);
 }
 
-function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
+function writeOmpPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
   const nativeSettings = snapshot.control?.nativeSettings;
   if (nativeSettings?.content !== undefined) {
-    return writeNativeConfigAbsolute({ path: PI_SETTINGS_PATH, format: 'yaml' }, {
+    return writeNativeConfigAbsolute({ path: OMP_SETTINGS_PATH, format: 'yaml' }, {
       ...nativeSettings,
       format: 'yaml'
     }, overwrite);
   }
 
-  const settings = readYamlFileSafe(PI_SETTINGS_PATH) || {};
-  if (fs.existsSync(PI_SETTINGS_PATH) && !overwrite) {
+  const settings = readYamlFileSafe(OMP_SETTINGS_PATH) || {};
+  if (fs.existsSync(OMP_SETTINGS_PATH) && !overwrite) {
     return 'skipped';
   }
   const existingPackages = Array.isArray(settings.packages) ? settings.packages : [];
   const existingDisabled = Array.isArray(settings.disabledPackages) ? settings.disabledPackages : [];
-  const packagePlugins = plugins.filter(plugin => plugin.type === 'pi-package' || plugin.pluginType === 'package');
+  const packagePlugins = plugins.filter(plugin => plugin.type === 'omp-package' || plugin.pluginType === 'package');
   const packageIdentity = (item) => {
     if (typeof item === 'string') return item;
     if (!item || typeof item !== 'object') return '';
@@ -1540,7 +1540,7 @@ function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
     const name = plugin.name || plugin.directory || plugin.installSource || '';
     if (!name) return null;
     const installSource = plugin.installSource || plugin.packageSource || '';
-    const resourceTypes = normalizePiResourceTypes(plugin.resourceTypes || plugin.resources);
+    const resourceTypes = normalizeOmpResourceTypes(plugin.resourceTypes || plugin.resources);
     if (!installSource || installSource === name) {
       if (resourceTypes.length === 0 && !plugin.version && !plugin.description) return name;
     }
@@ -1573,7 +1573,7 @@ function writePiPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
     return 'skipped';
   }
 
-  return writeYamlFileAbsolute(PI_SETTINGS_PATH, {
+  return writeYamlFileAbsolute(OMP_SETTINGS_PATH, {
     ...settings,
     packages: mergePackageEntries(existingPackages, packages),
     disabledPackages: mergePackageEntries(existingDisabled, disabledPackages)
@@ -1662,8 +1662,8 @@ function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins 
         .map(plugin => plugin.name || plugin.directory)
         .filter(Boolean);
       applyImportStatus(results, writeOpenCodePluginConfig(packages, overwrite));
-    } else if (platform === 'pi' && (hasControl || plugins.length > 0)) {
-      applyImportStatus(results, writePiPluginSettings(plugins, snapshot, overwrite));
+    } else if (platform === 'omp' && (hasControl || plugins.length > 0)) {
+      applyImportStatus(results, writeOmpPluginSettings(plugins, snapshot, overwrite));
     }
 
     for (const plugin of plugins) {
@@ -1675,11 +1675,11 @@ function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins 
             continue;
           }
           applyImportStatus(results, importPluginToDirectory(platform, plugin, getOpenCodePluginsDir(), overwrite));
-        } else if (platform === 'pi') {
-          if (plugin.type === 'pi-package' || plugin.pluginType === 'package') {
+        } else if (platform === 'omp') {
+          if (plugin.type === 'omp-package' || plugin.pluginType === 'package') {
             continue;
           }
-          applyImportStatus(results, importPluginToDirectory(platform, plugin, PI_EXTENSIONS_DIR, overwrite));
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, OMP_EXTENSIONS_DIR, overwrite));
         } else if (platform === 'claude') {
           const isLegacy = plugin.type === 'legacy';
           applyImportStatus(results, importPluginToDirectory(
@@ -1750,8 +1750,8 @@ function getAllChannelsByType() {
   const codex = codexChannelsService.getChannels()?.channels || [];
   const gemini = geminiChannelsService.getChannels()?.channels || [];
   const opencode = opencodeChannelsService.getChannels()?.channels || [];
-  const pi = piChannelsService.getChannels()?.channels || [];
-  return { claude, codex, gemini, opencode, pi };
+  const omp = ompChannelsService.getChannels()?.channels || [];
+  return { claude, codex, gemini, opencode, omp };
 }
 
 /**
@@ -1963,7 +1963,7 @@ async function importConfigs(importData, options = {}) {
       codex: hasTypedChannels && Array.isArray(channelsByType.codex) ? channelsByType.codex : [],
       gemini: hasTypedChannels && Array.isArray(channelsByType.gemini) ? channelsByType.gemini : [],
       opencode: hasTypedChannels && Array.isArray(channelsByType.opencode) ? channelsByType.opencode : [],
-      pi: hasTypedChannels && Array.isArray(channelsByType.pi) ? channelsByType.pi : []
+      omp: hasTypedChannels && Array.isArray(channelsByType.omp) ? channelsByType.omp: []
     };
 
     // 导入配置模板
@@ -2060,16 +2060,16 @@ async function importConfigs(importData, options = {}) {
       (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
     ));
 
-    importTypedChannels('pi', piChannelsService, channel => {
+    importTypedChannels('omp', ompChannelsService, channel => {
       const { name, baseUrl, apiKey, ...extraConfig } = channel;
-      piChannelsService.createChannel(name, baseUrl, apiKey, extraConfig);
+      ompChannelsService.createChannel(name, baseUrl, apiKey, extraConfig);
     }, (existingChannels, channel) => existingChannels.find(c =>
       (channel.id && c.id === channel.id) ||
       (channel.providerKey && c.providerKey === channel.providerKey) ||
       (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
     ));
-    if ((importChannelsByType.pi || []).length > 0 && typeof piChannelsService.syncManagedProviderExtension === 'function') {
-      piChannelsService.syncManagedProviderExtension();
+    if ((importChannelsByType.omp || []).length > 0 && typeof ompChannelsService.syncManagedProviderExtension === 'function') {
+      ompChannelsService.syncManagedProviderExtension();
     }
 
     // 导入工作区配置
