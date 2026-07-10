@@ -7,14 +7,16 @@ let getProxyStatusMock;
 let getCodexProxyStatusMock;
 let getGeminiProxyStatusMock;
 let getOpenCodeProxyStatusMock;
+let getOmpProxyStatusMock;
 let getClaudeChannelsMock;
 let getCodexChannelsMock;
 let getGeminiChannelsMock;
 let getOpenCodeChannelsMock;
+let getOmpChannelsMock;
 
 beforeEach(() => {
   serviceExports = {
-    SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'opencode'],
+    SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'opencode', 'omp'],
     getAllToolSummaries: vi.fn(() => ({ claude: { credentials: [] } })),
     getToolSummary: vi.fn((tool) => ({ tool, credentials: [] })),
     importCredential: vi.fn((tool, payload) => ({ tool, id: 'cred-1', payload })),
@@ -32,10 +34,12 @@ beforeEach(() => {
   getCodexProxyStatusMock = vi.fn(() => ({ running: false }));
   getGeminiProxyStatusMock = vi.fn(() => ({ running: false }));
   getOpenCodeProxyStatusMock = vi.fn(() => ({ running: false }));
+  getOmpProxyStatusMock = vi.fn(() => ({ running: false, mode: 'models-yml-provider-config' }));
   getClaudeChannelsMock = vi.fn(() => [{ id: 'claude-1', enabled: true }]);
   getCodexChannelsMock = vi.fn(() => ({ channels: [{ id: 'codex-1', enabled: true }] }));
   getGeminiChannelsMock = vi.fn(() => ({ channels: [{ id: 'gemini-1', enabled: true }] }));
   getOpenCodeChannelsMock = vi.fn(() => ({ channels: [{ id: 'opencode-1', enabled: true }] }));
+  getOmpChannelsMock = vi.fn(() => ({ channels: [{ id: 'omp-1', enabled: true }] }));
 
   require.cache[require.resolve('../../../src/server/services/oauth-credentials-service')] = {
     id: require.resolve('../../../src/server/services/oauth-credentials-service'),
@@ -83,6 +87,14 @@ beforeEach(() => {
       getOpenCodeProxyStatus: getOpenCodeProxyStatusMock
     }
   };
+  require.cache[require.resolve('../../../src/server/omp-proxy-server')] = {
+    id: require.resolve('../../../src/server/omp-proxy-server'),
+    filename: require.resolve('../../../src/server/omp-proxy-server'),
+    loaded: true,
+    exports: {
+      getOmpProxyStatus: getOmpProxyStatusMock
+    }
+  };
   require.cache[require.resolve('../../../src/server/services/channels')] = {
     id: require.resolve('../../../src/server/services/channels'),
     filename: require.resolve('../../../src/server/services/channels'),
@@ -107,6 +119,12 @@ beforeEach(() => {
     loaded: true,
     exports: { getChannels: getOpenCodeChannelsMock }
   };
+  require.cache[require.resolve('../../../src/server/services/omp-channels')] = {
+    id: require.resolve('../../../src/server/services/omp-channels'),
+    filename: require.resolve('../../../src/server/services/omp-channels'),
+    loaded: true,
+    exports: { getChannels: getOmpChannelsMock }
+  };
 
   delete require.cache[require.resolve('../../../src/server/api/oauth-credentials')];
 });
@@ -120,10 +138,12 @@ afterEach(() => {
     '../../../src/server/codex-proxy-server',
     '../../../src/server/gemini-proxy-server',
     '../../../src/server/opencode-proxy-server',
+    '../../../src/server/omp-proxy-server',
     '../../../src/server/services/channels',
     '../../../src/server/services/codex-channels',
     '../../../src/server/services/gemini-channels',
-    '../../../src/server/services/opencode-channels'
+    '../../../src/server/services/opencode-channels',
+    '../../../src/server/services/omp-channels'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -229,5 +249,19 @@ describe('oauth-credentials api routes', () => {
     expect(serviceExports.disableStoredCredential).toHaveBeenCalledWith('claude', 'cred-1');
     expect(broadcastProxyStateMock).toHaveBeenCalledWith('claude', { running: true }, { id: 'claude-1', enabled: true }, [{ id: 'claude-1', enabled: true }]);
     expect(serviceExports.fetchCredentialUsage).toHaveBeenCalledWith('claude', 'cred-1');
+  });
+
+  test('apply route broadcasts OMP proxy state', async () => {
+    const app = buildApp();
+    const applyRes = await request(app).post('/omp/cred-1/apply', {});
+
+    expect(applyRes.status).toBe(200);
+    expect(applyRes.body.message).toMatch(/OMP 已应用 OAuth 凭证/);
+    expect(broadcastProxyStateMock).toHaveBeenCalledWith(
+      'omp',
+      { running: false, mode: 'models-yml-provider-config' },
+      { id: 'omp-1', enabled: true },
+      [{ id: 'omp-1', enabled: true }]
+    );
   });
 });

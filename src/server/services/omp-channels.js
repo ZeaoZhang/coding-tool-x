@@ -21,6 +21,11 @@ class OmpChannelService extends BaseChannelService {
     const normalized = super._applyDefaults(channel);
     normalized.providerKey = normalized.providerKey || normalized.provider || normalized.name || normalized.id;
     normalized.providerApi = normalized.providerApi || normalized.api || normalized.wireApi || 'openai-completions';
+    normalized.authMode = normalized.authMode === 'oauth' ? 'oauth' : 'api_key';
+    normalized.oauthProviderId = normalized.oauthProviderId || (normalized.authMode === 'oauth' ? normalized.providerKey : '');
+    if (normalized.authMode === 'oauth') {
+      normalized.apiKey = normalized.apiKey || '';
+    }
     normalized.model = normalized.model || null;
     normalized.models = Array.isArray(normalized.models) ? normalized.models : [];
     normalized.allowedModels = Array.isArray(normalized.allowedModels) ? normalized.allowedModels : [];
