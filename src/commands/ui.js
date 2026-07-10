@@ -19,6 +19,7 @@ async function handleUI() {
     console.log(chalk.cyan.bold('\n[NET] 启动 Coding-Tool Web UI...\n'));
     if (enableHost) {
       console.log(chalk.yellow('[WARN]  LAN 访问已启用 (--host)\n'));
+      console.log(chalk.yellow('[WARN]  LAN 模式默认允许远程写操作，可设置 CC_TOOL_ALLOW_REMOTE_WRITE=false 禁止\n'));
     }
     if (enableHttps) {
       console.log(chalk.yellow('[LOCK] 已启用本地 HTTPS 模式 (--https)\n'));

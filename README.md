@@ -59,7 +59,7 @@
 - 支持配置模板，将提示词、技能、命令、代理、MCP、插件组合成一套模板
 - 支持 Dashboard、Analytics、日志、统计导出、环境诊断
 - 支持面板访问密码
-- LAN 模式默认禁止远程写操作，可按需开启
+- LAN 模式默认允许远程写操作，可用环境变量关闭
 
 ### 通知
 
@@ -157,11 +157,11 @@ ctx ui --host
 LAN 模式说明:
 
 - 服务会监听 `0.0.0.0`
-- 默认只允许本机执行写操作
-- 如确需允许远程写操作，可显式设置:
+- 默认允许 LAN 远程写操作，便于从其他设备操作和修改
+- 如需禁止远程写操作，可显式设置:
 
 ```bash
-CC_TOOL_ALLOW_REMOTE_WRITE=true ctx ui --host
+CC_TOOL_ALLOW_REMOTE_WRITE=false ctx ui --host
 ```
 
 ### 单独控制平台代理
@@ -352,7 +352,7 @@ npm test
 
 ## 已知说明
 
-- `ctx ui --host` 开启 LAN 访问后，默认不会允许远程写操作，这是安全保护行为
+- `ctx ui --host` 开启 LAN 访问后，默认允许远程写操作；如需只读 LAN 模式，请设置 `CC_TOOL_ALLOW_REMOTE_WRITE=false`
 - OpenCode 部分能力依赖本机可访问的 OpenCode 配置目录和 `sqlite3`
 - 配置导出包可能包含 API Key、Webhook、OAuth 等敏感信息，请妥善保管
 
