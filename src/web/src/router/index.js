@@ -73,17 +73,17 @@ const routes = [
   },
   // OMP 渠道路由
   {
-    path: '/pi',
-    name: 'pi-projects',
+    path: '/omp',
+    name: 'omp-projects',
     component: ProjectList,
-    meta: { channel: 'pi' }
+    meta: { channel: 'omp' }
   },
   {
-    path: '/pi/sessions/:projectName',
-    name: 'pi-sessions',
+    path: '/omp/sessions/:projectName',
+    name: 'omp-sessions',
     component: SessionList,
     props: true,
-    meta: { channel: 'pi' }
+    meta: { channel: 'omp' }
   },
   // 工作区管理路由
   {

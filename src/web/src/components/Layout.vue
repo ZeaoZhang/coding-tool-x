@@ -111,8 +111,8 @@
         </div>
         <div
           class="nav-tab"
-          :class="{ active: currentChannel === 'pi' }"
-          @click="router.push({ name: 'pi-projects' })"
+          :class="{ active: currentChannel === 'omp' }"
+          @click="router.push({ name: 'omp-projects' })"
         >
           <n-icon :size="18" class="nav-icon">
             <PlanetOutline />
@@ -503,7 +503,7 @@ const {
   codexProxy,
   geminiProxy,
   opencodeProxy,
-  piProxy,
+  ompProxy,
   startProxy,
   stopProxy
 } = useGlobalState()
@@ -680,14 +680,14 @@ const effectiveProxyRunning = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.running
   if (currentChannel.value === 'gemini') return geminiProxy.value.running
   if (currentChannel.value === 'opencode') return opencodeProxy.value.running
-  if (currentChannel.value === 'pi') return piProxy.value.running
+  if (currentChannel.value === 'omp') return ompProxy.value.running
   return claudeProxy.value.running
 })
 const effectiveProxyLoading = computed(() => {
   if (currentChannel.value === 'codex') return codexProxy.value.loading
   if (currentChannel.value === 'gemini') return geminiProxy.value.loading
   if (currentChannel.value === 'opencode') return opencodeProxy.value.loading
-  if (currentChannel.value === 'pi') return piProxy.value.loading
+  if (currentChannel.value === 'omp') return ompProxy.value.loading
   return claudeProxy.value.loading
 })
 
@@ -695,7 +695,7 @@ function getCurrentProxyState(channelType = currentChannel.value) {
   if (channelType === 'codex') return codexProxy
   if (channelType === 'gemini') return geminiProxy
   if (channelType === 'opencode') return opencodeProxy
-  if (channelType === 'pi') return piProxy
+  if (channelType === 'omp') return ompProxy
   return claudeProxy
 }
 

@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PATHS, HOME_DIR } = require('../../config/paths');
-const { getPiCommand, getPiPaths, isPiInstalled, resolvePiRuntime } = require('./pi-config');
+const { getOmpCommand, getOmpPaths, isOmpInstalled, resolveOmpRuntime } = require('./omp-config');
 
-const PROJECT_ORDER_FILE = PATHS.piProjectOrder;
-const SESSION_ORDER_FILE = PATHS.piSessionOrder;
+const PROJECT_ORDER_FILE = PATHS.ompProjectOrder;
+const SESSION_ORDER_FILE = PATHS.ompSessionOrder;
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -52,7 +52,7 @@ function getDisplayName(cwd = '') {
   return path.basename(normalized) || normalized;
 }
 
-function parsePiSessionId(filePath = '') {
+function parseOmpSessionId(filePath = '') {
   const base = path.basename(filePath, '.jsonl');
   const match = base.match(/([0-9a-f]{8}-[0-9a-f-]{8,})$/i);
   if (match) return match[1];
@@ -138,7 +138,7 @@ function readJsonLines(filePath) {
   }
 }
 
-function convertPiEntry(entry = {}, index = 0) {
+function convertOmpEntry(entry = {}, index = 0) {
   if (!entry || entry.type !== 'message') {
     return null;
   }
@@ -174,12 +174,12 @@ function parseSessionFile(filePath) {
   const stat = fs.statSync(filePath);
   const entries = readJsonLines(filePath);
   const header = entries.find(entry => entry?.type === 'session') || {};
-  const messages = entries.map(convertPiEntry).filter(Boolean);
+  const messages = entries.map(convertOmpEntry).filter(Boolean);
   const modelChange = [...entries].reverse().find(entry => entry?.type === 'model_change');
   const firstUser = messages.find(message => message.type === 'user');
   const lastAssistant = [...messages].reverse().find(message => message.type === 'assistant') || {};
   const cwd = header.cwd || messages.find(message => message.cwd)?.cwd || path.dirname(filePath);
-  const sessionId = header.id || parsePiSessionId(filePath);
+  const sessionId = header.id || parseOmpSessionId(filePath);
   const usage = messages.reduce((acc, message) => {
     if (message.type !== 'assistant') return acc;
     const current = parseUsage(message.usage || {});
@@ -207,11 +207,11 @@ function parseSessionFile(filePath) {
     mtime: new Date(stat.mtimeMs).toISOString(),
     mtimeMs: stat.mtimeMs,
     timestamp: header.timestamp || null,
-    source: 'pi'
+    source: 'omp'
   };
 }
 
-function scanSessionFiles(rootDir = getPiPaths().sessions) {
+function scanSessionFiles(rootDir = getOmpPaths().sessions) {
   if (!fs.existsSync(rootDir)) {
     return [];
   }
@@ -273,7 +273,7 @@ function getProjects() {
       latestSession: null,
       mtime: session.mtime,
       mtimeMs: 0,
-      source: 'pi'
+      source: 'omp'
     };
     existing.sessionCount += 1;
     if ((session.mtimeMs || 0) > (existing.mtimeMs || 0)) {
@@ -324,7 +324,7 @@ function normalizeSession(session) {
     firstMessage: session.firstMessage || null,
     gitBranch: null,
     forkedFrom: null,
-    source: 'pi',
+    source: 'omp',
     provider: session.provider || '',
     model: session.model || '',
     size: session.size || 0,
@@ -345,7 +345,7 @@ function getSessionMessages(sessionId) {
   if (!session) {
     throw new Error('Session not found');
   }
-  return readJsonLines(session.filePath).map(convertPiEntry).filter(Boolean);
+  return readJsonLines(session.filePath).map(convertOmpEntry).filter(Boolean);
 }
 
 function getRecentSessions(limit = 5) {
@@ -359,7 +359,7 @@ function searchSessions(keyword, contextLength = 35, projectName = null) {
   return getAllSessions()
     .filter(session => !projectName || session.projectName === projectName)
     .map((session) => {
-      const messages = readJsonLines(session.filePath).map(convertPiEntry).filter(Boolean);
+      const messages = readJsonLines(session.filePath).map(convertOmpEntry).filter(Boolean);
       const matches = [];
       messages.forEach((message) => {
         const text = String(message.content || '');
@@ -412,7 +412,7 @@ function forkSession(sessionId) {
   const forkId = `fork-${Date.now()}`;
   const targetPath = path.join(parsed.dir, `${parsed.name}-${forkId}${parsed.ext}`);
   fs.copyFileSync(session.filePath, targetPath);
-  return { success: true, newSessionId: parsePiSessionId(targetPath), filePath: targetPath };
+  return { success: true, newSessionId: parseOmpSessionId(targetPath), filePath: targetPath };
 }
 
 function saveProjectOrder(order) {
@@ -446,19 +446,19 @@ function buildLaunchCommand(sessionId, cwd, options = {}) {
   } else {
     args.push('--session', shellQuote(sessionId));
   }
-  return `${getPiCommand()} ${args.join(' ')}`;
+  return `${getOmpCommand()} ${args.join(' ')}`;
 }
 
 function shellQuote(value) {
   return `"${String(value).replace(/"/g, '\\"')}"`;
 }
 
-function isPiCliInstalled() {
-  if (isPiInstalled()) return true;
-  const runtime = resolvePiRuntime();
+function isOmpCliInstalled() {
+  if (isOmpInstalled()) return true;
+  const runtime = resolveOmpRuntime();
   if (runtime.installed) return true;
   try {
-    execFileSync(getPiCommand(), ['--version'], { stdio: 'ignore', timeout: 3000 });
+    execFileSync(getOmpCommand(), ['--version'], { stdio: 'ignore', timeout: 3000 });
     return true;
   } catch {
     return false;
@@ -479,7 +479,7 @@ module.exports = {
   getSessionById,
   getSessionMessages,
   getSessionsByProject,
-  isPiInstalled: isPiCliInstalled,
+  isOmpInstalled: isOmpCliInstalled,
   normalizeSession,
   parseSessionFile,
   scanSessionFiles,

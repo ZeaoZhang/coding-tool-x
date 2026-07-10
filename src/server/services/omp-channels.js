@@ -5,14 +5,14 @@ const {
   removeManagedOmpProviders,
   isManagedOmpProvidersActive,
   getLastManagedOmpSyncResult
-} = require('./pi-settings-manager');
+} = require('./omp-settings-manager');
 
-class PiChannelService extends BaseChannelService {
+class OmpChannelService extends BaseChannelService {
   constructor() {
     super({
-      platform: 'pi',
-      channelsFilePath: PATHS.channels.pi,
-      defaultGatewaySource: 'codex',
+      platform: 'omp',
+      channelsFilePath: PATHS.channels.omp,
+      defaultGatewaySource: 'openai_compatible',
       isProxyRunning: () => isManagedOmpProvidersActive()
     });
   }
@@ -69,7 +69,7 @@ class PiChannelService extends BaseChannelService {
   }
 }
 
-const service = new PiChannelService();
+const service = new OmpChannelService();
 
 module.exports = {
   getChannels: () => service.getChannels(),

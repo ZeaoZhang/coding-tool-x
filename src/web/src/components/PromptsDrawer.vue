@@ -206,13 +206,13 @@ const showForm = ref(false)
 const editingPreset = ref(null)
 const activatingId = ref(null)
 const deactivating = ref(false)
-const promptApps = ['claude', 'codex', 'gemini', 'opencode', 'pi']
+const promptApps = ['claude', 'codex', 'gemini', 'opencode', 'omp']
 const appLabels = {
   claude: 'Claude',
   codex: 'Codex',
   gemini: 'Gemini',
   opencode: 'OpenCode',
-  pi: 'OMP'
+  omp: 'OMP'
 }
 
 const presetList = computed(() => {

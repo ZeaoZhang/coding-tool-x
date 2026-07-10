@@ -9,7 +9,7 @@ let channelsService;
 let codexChannelsService;
 let geminiChannelsService;
 let opencodeChannelsService;
-let piChannelsService;
+let ompChannelsService;
 let AgentsServiceStub;
 let CommandsServiceStub;
 let SkillServiceStub;
@@ -42,14 +42,14 @@ function stubModules() {
           codex: path.join(testDir, 'repos', 'plugins', 'codex.json'),
           gemini: path.join(testDir, 'repos', 'plugins', 'gemini.json'),
           opencode: path.join(testDir, 'repos', 'plugins', 'opencode.json'),
-          pi: path.join(testDir, 'repos', 'plugins', 'pi.json')
+          omp: path.join(testDir, 'repos', 'plugins', 'omp.json')
         },
         pluginMarketCache: {
           claude: path.join(testDir, 'cache', 'plugins', 'claude-market.json'),
           codex: path.join(testDir, 'cache', 'plugins', 'codex-market.json'),
           gemini: path.join(testDir, 'cache', 'plugins', 'gemini-market.json'),
           opencode: path.join(testDir, 'cache', 'plugins', 'opencode-market.json'),
-          pi: path.join(testDir, 'cache', 'plugins', 'pi-market.json')
+          omp: path.join(testDir, 'cache', 'plugins', 'omp-market.json')
         }
       },
       NATIVE_PATHS: {
@@ -57,7 +57,7 @@ function stubModules() {
         codex: { config: path.join(testDir, '.codex', 'config.toml'), auth: path.join(testDir, '.codex', 'auth.json') },
         gemini: { env: path.join(testDir, '.gemini', '.env') },
         opencode: { config: path.join(testDir, '.opencode') },
-        pi: {
+        omp: {
           dir: path.join(testDir, '.omp'),
           settings: path.join(testDir, '.omp', 'config.yml'),
           auth: path.join(testDir, '.omp', 'auth.json'),
@@ -106,8 +106,8 @@ function stubModules() {
     createChannel: vi.fn(),
     updateChannel: vi.fn()
   };
-  piChannelsService = {
-    getChannels: vi.fn(() => ({ channels: [{ id: 'pi-1', name: 'Pi', baseUrl: 'https://pi.example', providerKey: 'pi-managed', apiKey: 'pkey', enabled: true }] })),
+  ompChannelsService = {
+    getChannels: vi.fn(() => ({ channels: [{ id: 'omp-1', name: 'OMP', baseUrl: 'https://omp.example', providerKey: 'omp-managed', apiKey: 'pkey', enabled: true }] })),
     createChannel: vi.fn(),
     updateChannel: vi.fn(),
     syncManagedProviderExtension: vi.fn()
@@ -139,15 +139,15 @@ function stubModules() {
       this.userCommandsDir = path.join(testDir, 'commands-install', platform);
     }
     listCommands() {
-      if (this.platform === 'pi') {
+      if (this.platform === 'omp') {
         return {
           commands: [{
-            name: 'pi-command',
+            name: 'omp-command',
             namespace: 'review',
-            path: path.join('review', 'pi-command.md'),
+            path: path.join('review', 'omp-command.md'),
             description: '',
-            body: 'Review this with Pi',
-            fullContent: 'Review this with Pi'
+            body: 'Review this with OMP',
+            fullContent: 'Review this with OMP'
           }]
         };
       }
@@ -236,25 +236,25 @@ function stubModules() {
             source: 'opencode-local'
           }
         ],
-        pi: [
+        omp: [
           {
-            name: '@demo/pi-package',
-            directory: '@demo/pi-package',
+            name: '@demo/omp-package',
+            directory: '@demo/omp-package',
             pluginType: 'package',
             pluginKind: 'package',
             version: 'latest',
             enabled: false,
-            source: 'pi-settings'
+            source: 'omp-settings'
           },
           {
-            name: 'pi-extension',
-            directory: 'pi-extension',
+            name: 'omp-extension',
+            directory: 'omp-extension',
             pluginType: 'extension-directory',
             pluginKind: 'extension',
             version: 'local',
-            installPath: path.join(testDir, '.omp', 'extensions', 'pi-extension'),
+            installPath: path.join(testDir, '.omp', 'extensions', 'omp-extension'),
             enabled: true,
-            source: 'pi-extension'
+            source: 'omp-extension'
           }
         ]
       };
@@ -325,11 +325,11 @@ function stubModules() {
     loaded: true,
     exports: opencodeChannelsService
   };
-  require.cache[require.resolve('../../../src/server/services/pi-channels')] = {
-    id: require.resolve('../../../src/server/services/pi-channels'),
-    filename: require.resolve('../../../src/server/services/pi-channels'),
+  require.cache[require.resolve('../../../src/server/services/omp-channels')] = {
+    id: require.resolve('../../../src/server/services/omp-channels'),
+    filename: require.resolve('../../../src/server/services/omp-channels'),
     loaded: true,
-    exports: piChannelsService
+    exports: ompChannelsService
   };
   require.cache[require.resolve('../../../src/server/services/agents-service')] = {
     id: require.resolve('../../../src/server/services/agents-service'),
@@ -437,15 +437,15 @@ function stubModules() {
   };
 
   // create installed skill files
-  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
     const skillDir = path.join(testDir, 'skills-install', platform, `${platform}-skill`);
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: "${platform} skill"\n---\nbody`, 'utf8');
   }
 
-  const piPromptDir = path.join(testDir, 'commands-install', 'pi');
-  fs.mkdirSync(path.join(piPromptDir, 'review'), { recursive: true });
-  fs.writeFileSync(path.join(piPromptDir, 'review', 'pi-command.md'), 'Review this with Pi', 'utf8');
+  const ompPromptDir = path.join(testDir, 'commands-install', 'omp');
+  fs.mkdirSync(path.join(ompPromptDir, 'review'), { recursive: true });
+  fs.writeFileSync(path.join(ompPromptDir, 'review', 'omp-command.md'), 'Review this with OMP', 'utf8');
 
   fs.mkdirSync(path.join(testDir, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.claude', 'settings.json'), JSON.stringify({ hooks: {} }), 'utf8');
@@ -472,32 +472,32 @@ function stubModules() {
   fs.mkdirSync(openCodePluginDir, { recursive: true });
   fs.writeFileSync(path.join(openCodePluginDir, 'package.json'), JSON.stringify({ name: 'local-opencode', version: '1.0.0' }), 'utf8');
   fs.writeFileSync(path.join(testDir, '.opencode', 'opencode.json'), JSON.stringify({ plugin: ['@demo/opencode-plugin'] }), 'utf8');
-  const piExtensionDir = path.join(testDir, '.omp', 'extensions', 'pi-extension');
-  fs.mkdirSync(piExtensionDir, { recursive: true });
-  fs.writeFileSync(path.join(piExtensionDir, 'pi.json'), JSON.stringify({ name: 'pi-extension', version: 'local' }), 'utf8');
-  fs.writeFileSync(path.join(piExtensionDir, 'provider.ts'), 'export default {}', 'utf8');
+  const ompExtensionDir = path.join(testDir, '.omp', 'extensions', 'omp-extension');
+  fs.mkdirSync(ompExtensionDir, { recursive: true });
+  fs.writeFileSync(path.join(ompExtensionDir, 'omp.json'), JSON.stringify({ name: 'omp-extension', version: 'local' }), 'utf8');
+  fs.writeFileSync(path.join(ompExtensionDir, 'provider.ts'), 'export default {}', 'utf8');
   fs.mkdirSync(path.join(testDir, '.omp'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.omp', 'config.yml'), yaml.dump({
-    packages: ['@demo/pi-package'],
-    disabledPackages: ['@demo/pi-package']
+    packages: ['@demo/omp-package'],
+    disabledPackages: ['@demo/omp-package']
   }), 'utf8');
-  fs.writeFileSync(path.join(testDir, '.omp', 'auth.json'), JSON.stringify({ token: 'pi-token' }), 'utf8');
-  fs.writeFileSync(path.join(testDir, '.omp', 'models.yml'), yaml.dump({ providers: { 'ctx-pi': { models: [{ id: 'pi-fast' }] } } }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'auth.json'), JSON.stringify({ token: 'omp-token' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'models.yml'), yaml.dump({ providers: { 'ctx-omp': { models: [{ id: 'omp-fast' }] } } }), 'utf8');
   fs.mkdirSync(path.join(testDir, '.omp', 'prompts', 'review'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.omp', 'prompts', 'review', 'native-prompt.md'), 'Native Pi prompt', 'utf8');
-  fs.mkdirSync(path.join(testDir, '.omp', 'skills', 'native-pi-skill'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.omp', 'skills', 'native-pi-skill', 'SKILL.md'), 'Native Pi skill', 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'prompts', 'review', 'native-prompt.md'), 'Native OMP prompt', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'skills', 'native-omp-skill'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'skills', 'native-omp-skill', 'SKILL.md'), 'Native OMP skill', 'utf8');
   fs.mkdirSync(path.join(testDir, '.omp', 'themes'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.omp', 'themes', 'night.json'), JSON.stringify({ name: 'night' }), 'utf8');
   fs.mkdirSync(path.join(testDir, '.omp', 'packages', 'managed-package'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.omp', 'packages', 'managed-package', 'package.json'), JSON.stringify({ name: 'managed-package' }), 'utf8');
-  fs.mkdirSync(path.join(testDir, '.omp', 'npm', '@demo', 'pi-package', 'node_modules', 'dep'), { recursive: true });
-  fs.writeFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'pi-package', 'package.json'), JSON.stringify({ name: '@demo/pi-package' }), 'utf8');
-  fs.writeFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'pi-package', 'node_modules', 'dep', 'index.js'), 'module.exports = true', 'utf8');
+  fs.mkdirSync(path.join(testDir, '.omp', 'npm', '@demo', 'omp-package', 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'omp-package', 'package.json'), JSON.stringify({ name: '@demo/omp-package' }), 'utf8');
+  fs.writeFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'omp-package', 'node_modules', 'dep', 'index.js'), 'module.exports = true', 'utf8');
   fs.mkdirSync(path.join(testDir, '.omp', 'git', 'provider'), { recursive: true });
   fs.writeFileSync(path.join(testDir, '.omp', 'git', 'provider', 'package.json'), JSON.stringify({ name: 'provider' }), 'utf8');
   fs.mkdirSync(path.join(testDir, 'store'), { recursive: true });
-  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'pi']) {
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
     const repoPath = path.join(testDir, 'repos', 'plugins', `${platform}.json`);
     const cachePath = path.join(testDir, 'cache', 'plugins', `${platform}-market.json`);
     fs.mkdirSync(path.dirname(repoPath), { recursive: true });
@@ -527,7 +527,7 @@ afterEach(() => {
     '../../../src/server/services/codex-channels',
     '../../../src/server/services/gemini-channels',
     '../../../src/server/services/opencode-channels',
-    '../../../src/server/services/pi-channels',
+    '../../../src/server/services/omp-channels',
     '../../../src/server/services/agents-service',
     '../../../src/server/services/commands-service',
     '../../../src/server/services/skill-service',
@@ -561,10 +561,10 @@ describe('config-export-service export flows', () => {
     expect(result.success).toBe(true);
     expect(result.data.data.configTemplates).toEqual([{ id: 'custom', name: 'Custom', isBuiltin: false }]);
     expect(result.data.data.channelsByType.codex).toHaveLength(1);
-    expect(result.data.data.channelsByType.pi[0]).toMatchObject({
-      id: 'pi-1',
-      name: 'Pi',
-      providerKey: 'pi-managed'
+    expect(result.data.data.channelsByType.omp[0]).toMatchObject({
+      id: 'omp-1',
+      name: 'OMP',
+      providerKey: 'omp-managed'
     });
     expect(result.data.data.agentsByPlatform.gemini[0].fileName).toBe('gemini-agent');
     expect(result.data.data.commandsByPlatform.codex[0]).toMatchObject({
@@ -574,19 +574,19 @@ describe('config-export-service export flows', () => {
       body: 'Review this with Codex'
     });
     expect(result.data.data.commandsByPlatform.gemini[0].name).toBe('gemini-command');
-    expect(result.data.data.commandsByPlatform.pi[0]).toMatchObject({
-      platform: 'pi',
-      name: 'pi-command',
-      path: path.join('review', 'pi-command.md'),
-      body: 'Review this with Pi'
+    expect(result.data.data.commandsByPlatform.omp[0]).toMatchObject({
+      platform: 'omp',
+      name: 'omp-command',
+      path: path.join('review', 'omp-command.md'),
+      body: 'Review this with OMP'
     });
     expect(result.data.data.skillsByPlatform.gemini[0].directory).toBe('gemini-skill');
-    expect(result.data.data.skillsByPlatform.pi[0]).toMatchObject({
-      platform: 'pi',
-      directory: 'pi-skill',
-      name: 'pi skill'
+    expect(result.data.data.skillsByPlatform.omp[0]).toMatchObject({
+      platform: 'omp',
+      directory: 'omp-skill',
+      name: 'omp skill'
     });
-    expect(Buffer.from(result.data.data.skillsByPlatform.pi[0].files[0].content, 'base64').toString('utf8')).toContain('pi skill');
+    expect(Buffer.from(result.data.data.skillsByPlatform.omp[0].files[0].content, 'base64').toString('utf8')).toContain('omp skill');
     expect(result.data.data.pluginsByPlatform.codex.plugins[0]).toMatchObject({
       platform: 'codex',
       name: 'codex-plugin',
@@ -598,22 +598,22 @@ describe('config-export-service export flows', () => {
       '@demo/opencode-plugin',
       'local-opencode'
     ]);
-    expect(result.data.data.pluginsByPlatform.pi.plugins.map(plugin => plugin.name)).toEqual([
-      '@demo/pi-package',
-      'pi-extension'
+    expect(result.data.data.pluginsByPlatform.omp.plugins.map(plugin => plugin.name)).toEqual([
+      '@demo/omp-package',
+      'omp-extension'
     ]);
-    expect(result.data.data.pluginsByPlatform.pi.control.nativeSettings).toBeUndefined();
-    expect(result.data.data.nativeConfigs.pi.settings.content.packages).toEqual(['@demo/pi-package']);
-    expect(result.data.data.nativeConfigs.pi.settings.content.disabledPackages).toEqual(['@demo/pi-package']);
-    expect(result.data.data.nativeConfigs.pi.auth.content).toEqual({ token: 'pi-token' });
-    expect(result.data.data.nativeConfigs.pi.models.content.providers['ctx-pi'].models[0].id).toBe('pi-fast');
-    expect(result.data.data.nativeConfigs.pi.prompts.files.map(file => file.path)).toContain(path.join('review', 'native-prompt.md'));
-    expect(result.data.data.nativeConfigs.pi.skills.files.map(file => file.path)).toContain(path.join('native-pi-skill', 'SKILL.md'));
-    expect(result.data.data.nativeConfigs.pi.extensions.files.map(file => file.path)).toContain(path.join('pi-extension', 'provider.ts'));
-    expect(result.data.data.nativeConfigs.pi.themes.files.map(file => file.path)).toContain('night.json');
-    expect(result.data.data.nativeConfigs.pi.packages.files.map(file => file.path)).toContain(path.join('managed-package', 'package.json'));
-    expect(result.data.data.nativeConfigs.pi.npmPackages.files.map(file => file.path)).toContain(path.join('@demo', 'pi-package', 'node_modules', 'dep', 'index.js'));
-    expect(result.data.data.nativeConfigs.pi.gitPackages.files.map(file => file.path)).toContain(path.join('provider', 'package.json'));
+    expect(result.data.data.pluginsByPlatform.omp.control.nativeSettings).toBeUndefined();
+    expect(result.data.data.nativeConfigs.omp.settings.content.packages).toEqual(['@demo/omp-package']);
+    expect(result.data.data.nativeConfigs.omp.settings.content.disabledPackages).toEqual(['@demo/omp-package']);
+    expect(result.data.data.nativeConfigs.omp.auth.content).toEqual({ token: 'omp-token' });
+    expect(result.data.data.nativeConfigs.omp.models.content.providers['ctx-omp'].models[0].id).toBe('omp-fast');
+    expect(result.data.data.nativeConfigs.omp.prompts.files.map(file => file.path)).toContain(path.join('review', 'native-prompt.md'));
+    expect(result.data.data.nativeConfigs.omp.skills.files.map(file => file.path)).toContain(path.join('native-omp-skill', 'SKILL.md'));
+    expect(result.data.data.nativeConfigs.omp.extensions.files.map(file => file.path)).toContain(path.join('omp-extension', 'provider.ts'));
+    expect(result.data.data.nativeConfigs.omp.themes.files.map(file => file.path)).toContain('night.json');
+    expect(result.data.data.nativeConfigs.omp.packages.files.map(file => file.path)).toContain(path.join('managed-package', 'package.json'));
+    expect(result.data.data.nativeConfigs.omp.npmPackages.files.map(file => file.path)).toContain(path.join('@demo', 'omp-package', 'node_modules', 'dep', 'index.js'));
+    expect(result.data.data.nativeConfigs.omp.gitPackages.files.map(file => file.path)).toContain(path.join('provider', 'package.json'));
     expect(result.data.data.markdownFiles['AGENTS.md']).toBe('# Root agents');
     expect(result.data.data.oauthCredentials).toEqual({ version: 1 });
   });
@@ -642,7 +642,7 @@ describe('config-export-service import flows', () => {
 
   test('importConfigs writes prompts, oauth, markdown and app config, and imports channels/templates', async () => {
     codexChannelsService.getChannels.mockReturnValue({ channels: [] });
-    piChannelsService.getChannels.mockReturnValue({ channels: [] });
+    ompChannelsService.getChannels.mockReturnValue({ channels: [] });
     const service = require('../../../src/server/services/config-export-service');
     const importData = {
       version: '1.4.0',
@@ -651,7 +651,7 @@ describe('config-export-service import flows', () => {
         channelsByType: {
           claude: [{ id: 'claude-import', name: 'Claude Import', baseUrl: 'https://claude.import', apiKey: 'ckey' }],
           codex: [{ id: 'codex-import', name: 'Codex Import', providerKey: 'openai', baseUrl: 'https://codex.import', apiKey: 'okey' }],
-          pi: [{ id: 'pi-import', name: 'Pi Import', providerKey: 'pi-managed', baseUrl: 'https://pi.import', apiKey: 'pkey', enabled: true }]
+          omp: [{ id: 'omp-import', name: 'OMP Import', providerKey: 'omp-managed', baseUrl: 'https://omp.import', apiKey: 'pkey', enabled: true }]
         },
         markdownFiles: {
           'CLAUDE.md': '# Imported Claude',
@@ -671,21 +671,21 @@ describe('config-export-service import flows', () => {
             path: 'gemini-review.toml',
             fullContent: 'description = "Review with Gemini"\nprompt = "Review this"\n'
           }],
-          pi: [{
-            name: 'pi-review',
-            path: 'review/pi-review.md',
-            fullContent: 'Review this with Pi'
+          omp: [{
+            name: 'omp-review',
+            path: 'review/omp-review.md',
+            fullContent: 'Review this with OMP'
           }]
         },
         skillsByPlatform: {
-          pi: [{
-            platform: 'pi',
-            directory: 'pi-import-skill',
-            name: 'Pi Import Skill',
+          omp: [{
+            platform: 'omp',
+            directory: 'omp-import-skill',
+            name: 'OMP Import Skill',
             files: [{
               path: 'SKILL.md',
               encoding: 'base64',
-              content: Buffer.from('---\nname: "Pi Import Skill"\n---\nbody').toString('base64')
+              content: Buffer.from('---\nname: "OMP Import Skill"\n---\nbody').toString('base64')
             }]
           }]
         },
@@ -722,27 +722,27 @@ describe('config-export-service import flows', () => {
               enabled: true
             }]
           },
-          pi: {
+          omp: {
             plugins: [
               {
-                platform: 'pi',
-                type: 'pi-package',
+                platform: 'omp',
+                type: 'omp-package',
                 pluginType: 'package',
-                name: 'pi-import-package',
-                installSource: 'npm:pi-import-package',
+                name: 'omp-import-package',
+                installSource: 'npm:omp-import-package',
                 resourceTypes: ['extensions', 'skills'],
                 enabled: false
               },
               {
-                platform: 'pi',
-                type: 'pi-extension',
+                platform: 'omp',
+                type: 'omp-extension',
                 pluginType: 'extension-directory',
-                name: 'pi-import',
-                directory: 'pi-import',
+                name: 'omp-import',
+                directory: 'omp-import',
                 files: [{
-                  path: 'pi.json',
+                  path: 'omp.json',
                   encoding: 'base64',
-                  content: Buffer.from(JSON.stringify({ name: 'pi-import' })).toString('base64')
+                  content: Buffer.from(JSON.stringify({ name: 'omp-import' })).toString('base64')
                 }]
               }
             ],
@@ -750,27 +750,27 @@ describe('config-export-service import flows', () => {
               nativeSettings: {
                 format: 'yaml',
                 fileName: 'config.yml',
-                content: { packages: ['@demo/imported-pi'], disabledPackages: [] }
+                content: { packages: ['@demo/imported-omp'], disabledPackages: [] }
               }
             }
           }
         },
         nativeConfigs: {
-          pi: {
+          omp: {
             settings: {
               format: 'yaml',
               fileName: 'config.yml',
-              content: { packages: ['@demo/native-pi'], disabledPackages: [] }
+              content: { packages: ['@demo/native-omp'], disabledPackages: [] }
             },
             auth: {
               format: 'json',
               fileName: 'auth.json',
-              content: { token: 'imported-pi-token' }
+              content: { token: 'imported-omp-token' }
             },
             models: {
               format: 'yaml',
               fileName: 'models.yml',
-              content: { providers: { 'ctx-imported': { models: [{ id: 'imported-pi-model' }] } } }
+              content: { providers: { 'ctx-imported': { models: [{ id: 'imported-omp-model' }] } } }
             },
             prompts: {
               format: 'directory',
@@ -778,16 +778,16 @@ describe('config-export-service import flows', () => {
               files: [{
                 path: 'imported/prompt.md',
                 encoding: 'base64',
-                content: Buffer.from('Imported Pi prompt').toString('base64')
+                content: Buffer.from('Imported OMP prompt').toString('base64')
               }]
             },
             npmPackages: {
               format: 'directory',
               fileName: 'npm',
               files: [{
-                path: '@demo/native-pi/package.json',
+                path: '@demo/native-omp/package.json',
                 encoding: 'base64',
-                content: Buffer.from(JSON.stringify({ name: '@demo/native-pi' })).toString('base64')
+                content: Buffer.from(JSON.stringify({ name: '@demo/native-omp' })).toString('base64')
               }]
             },
             themes: {
@@ -838,30 +838,30 @@ describe('config-export-service import flows', () => {
     expect(configTemplatesService.createCustomTemplate).toHaveBeenCalled();
     expect(channelsService.createChannel).toHaveBeenCalled();
     expect(codexChannelsService.createChannel).toHaveBeenCalled();
-    expect(piChannelsService.createChannel).toHaveBeenCalledWith('Pi Import', 'https://pi.import', 'pkey', expect.objectContaining({
-      providerKey: 'pi-managed',
+    expect(ompChannelsService.createChannel).toHaveBeenCalledWith('OMP Import', 'https://omp.import', 'pkey', expect.objectContaining({
+      providerKey: 'omp-managed',
       enabled: true
     }));
-    expect(piChannelsService.syncManagedProviderExtension).toHaveBeenCalled();
+    expect(ompChannelsService.syncManagedProviderExtension).toHaveBeenCalled();
     expect(promptsService.activatePreset).toHaveBeenCalledWith('preset-1');
     expect(saveConfigMock).toHaveBeenCalledWith({ ports: { webUI: 20000 } });
     expect(mcpService.saveServer).toHaveBeenCalled();
     expect(fs.readFileSync(path.join(testDir, 'CLAUDE.md'), 'utf8')).toBe('# Imported Claude');
     expect(fs.readFileSync(path.join(testDir, 'agents-install', 'gemini', 'gemini-helper.md'), 'utf8')).toContain('Help with Gemini work');
     expect(fs.readFileSync(path.join(testDir, 'commands-install', 'gemini', 'gemini-review.toml'), 'utf8')).toContain('Review this');
-    expect(fs.readFileSync(path.join(testDir, 'commands-install', 'pi', 'review', 'pi-review.md'), 'utf8')).toBe('Review this with Pi');
-    expect(fs.readFileSync(path.join(testDir, 'skills-install', 'pi', 'pi-import-skill', 'SKILL.md'), 'utf8')).toContain('Pi Import Skill');
+    expect(fs.readFileSync(path.join(testDir, 'commands-install', 'omp', 'review', 'omp-review.md'), 'utf8')).toBe('Review this with OMP');
+    expect(fs.readFileSync(path.join(testDir, 'skills-install', 'omp', 'omp-import-skill', 'SKILL.md'), 'utf8')).toContain('OMP Import Skill');
     expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'ctx', 'codex-import', '1.0.0', '.codex-plugin', 'plugin.json'))).toBe(true);
     expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).toContain('codex-import@ctx');
     expect(JSON.parse(fs.readFileSync(path.join(testDir, '.opencode', 'opencode.json'), 'utf8')).plugin).toContain('@demo/imported-opencode');
-    expect(fs.existsSync(path.join(testDir, '.omp', 'extensions', 'pi-import', 'pi.json'))).toBe(true);
-    expect(yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'config.yml'), 'utf8')).packages).toEqual(['@demo/native-pi']);
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'auth.json'), 'utf8'))).toEqual({ token: 'imported-pi-token' });
+    expect(fs.existsSync(path.join(testDir, '.omp', 'extensions', 'omp-import', 'omp.json'))).toBe(true);
+    expect(yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'config.yml'), 'utf8')).packages).toEqual(['@demo/native-omp']);
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'auth.json'), 'utf8'))).toEqual({ token: 'imported-omp-token' });
     expect(yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'models.yml'), 'utf8'))).toEqual({
-      providers: { 'ctx-imported': { models: [{ id: 'imported-pi-model' }] } }
+      providers: { 'ctx-imported': { models: [{ id: 'imported-omp-model' }] } }
     });
-    expect(fs.readFileSync(path.join(testDir, '.omp', 'prompts', 'imported', 'prompt.md'), 'utf8')).toBe('Imported Pi prompt');
-    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'native-pi', 'package.json'), 'utf8')).name).toBe('@demo/native-pi');
+    expect(fs.readFileSync(path.join(testDir, '.omp', 'prompts', 'imported', 'prompt.md'), 'utf8')).toBe('Imported OMP prompt');
+    expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'npm', '@demo', 'native-omp', 'package.json'), 'utf8')).name).toBe('@demo/native-omp');
     expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'themes', 'imported-theme.json'), 'utf8')).name).toBe('imported-theme');
     expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'packages', 'imported-package', 'package.json'), 'utf8')).name).toBe('imported-package');
     expect(JSON.parse(fs.readFileSync(path.join(testDir, '.omp', 'git', 'native-git', 'package.json'), 'utf8')).name).toBe('native-git');

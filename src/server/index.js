@@ -23,7 +23,7 @@ const { startProxyServer } = require('./proxy-server');
 const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
-const { startPiProxyServer } = require('./pi-proxy-server');
+const { startOmpProxyServer } = require('./omp-proxy-server');
 const { createRemoteMutationGuard } = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
@@ -203,12 +203,12 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/opencode/statistics', require('./api/opencode-statistics'));
 
   // OMP API Routes
-  app.use('/api/pi/projects', require('./api/pi-projects')(config));
-  app.use('/api/pi/sessions', require('./api/pi-sessions')(config));
-  app.use('/api/pi/channels', require('./api/pi-channels')(config));
-  app.use('/api/pi/proxy', require('./api/pi-proxy'));
-  app.use('/api/pi/statistics', require('./api/pi-statistics'));
-  app.use('/api/pi/config', require('./api/pi-config'));
+  app.use('/api/omp/projects', require('./api/omp-projects')(config));
+  app.use('/api/omp/sessions', require('./api/omp-sessions')(config));
+  app.use('/api/omp/channels', require('./api/omp-channels')(config));
+  app.use('/api/omp/proxy', require('./api/omp-proxy'));
+  app.use('/api/omp/statistics', require('./api/omp-statistics'));
+  app.use('/api/omp/config', require('./api/omp-config'));
 
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
@@ -451,10 +451,10 @@ function autoRestoreProxies() {
   }
 
   // 检查 OMP 受管 provider 配置状态文件
-  const piActiveFile = PATHS.activeChannel.pi;
-  if (fs.existsSync(piActiveFile)) {
+  const ompActiveFile = PATHS.activeChannel.omp;
+  if (fs.existsSync(ompActiveFile)) {
     console.log(chalk.cyan('\n[SYNC] 检测到 OMP 受管渠道状态文件，正在自动恢复...'));
-    startPiProxyServer({ preserveStartTime: true })
+    startOmpProxyServer({ preserveStartTime: true })
       .then((result) => {
         if (result.success) {
           console.log(chalk.green(`[OK] OMP models.yml 受管 provider 已自动启用，端口: ${result.port}`));

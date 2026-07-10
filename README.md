@@ -88,7 +88,7 @@
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取依赖本机 `sqlite3`
 - OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
-- OMP 在内部继续使用兼容平台键 `pi`，用户界面显示为 OMP，启动命令使用 `omp`
+- OMP 平台键统一为 `omp`，不再保留 `omp` 平台键兼容
 - OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
 
 ## 安装
@@ -171,7 +171,7 @@ ctx claude start
 ctx codex start
 ctx gemini start
 ctx opencode start
-ctx pi start
+ctx omp start
 ```
 
 ## 常用命令
@@ -199,7 +199,7 @@ ctx pi start
 | `ctx codex start\|stop\|restart\|status` | Codex 代理管理 |
 | `ctx gemini start\|stop\|restart\|status` | Gemini 代理管理 |
 | `ctx opencode start\|stop\|restart\|status` | OpenCode 代理管理 |
-| `ctx pi start\|stop\|restart\|status` | OMP 代理管理（保留 `pi` 命令键兼容旧路由） |
+| `ctx omp start\|stop\|restart\|status` | OMP 受管 `models.yml` provider 配置管理 |
 
 ### 日志与统计
 
@@ -208,11 +208,13 @@ ctx pi start
 | `ctx logs` | 查看所有日志 |
 | `ctx logs ui` | 查看 UI 日志 |
 | `ctx logs claude` | 查看 Claude 代理日志 |
+| `ctx logs omp` | 查看 OMP 相关 UI/server 日志 |
 | `ctx logs --follow` | 实时追踪日志 |
 | `ctx logs --lines 100` | 查看最近 100 行 |
 | `ctx logs --clear` | 清空日志 |
 | `ctx stats` | 查看总体统计 |
 | `ctx stats claude` | 查看单个平台统计 |
+| `ctx stats omp` | 查看 OMP 统计（内部兼容键仍为 `omp`） |
 | `ctx stats export` | 导出统计数据 |
 | `ctx doctor` | 运行环境诊断 |
 
@@ -230,7 +232,7 @@ ctx pi start
 兼容说明:
 
 - `ctx proxy start|stop|status` 仍保留为旧入口
-- 新用法更推荐 `ctx claude ...`、`ctx codex ...`、`ctx gemini ...`、`ctx opencode ...`、`ctx pi ...`
+- 新用法更推荐 `ctx claude ...`、`ctx codex ...`、`ctx gemini ...`、`ctx opencode ...`、`ctx omp ...`
 
 ## Web UI 主要模块
 
@@ -312,7 +314,7 @@ ctx pi start
 - OpenCode:
   - 配置: `~/.config/opencode`
   - 数据: `~/.local/share/opencode`
-- OMP: `${PI_CODING_AGENT_DIR:-~/.omp/agent}`（`OMP_PROFILE` 会落到 `~/.omp/profiles/<name>/agent`，`PI_CODING_AGENT_DIR` 保留为兼容覆盖项）
+- OMP: `${OMP_CODING_AGENT_DIR:-~/.omp/agent}`（`OMP_PROFILE` 会落到 `~/.omp/profiles/<name>/agent`）
 
 ## 开发
 

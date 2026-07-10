@@ -2,8 +2,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const PI_SESSIONS_PATH = require.resolve('../../../src/server/services/pi-sessions');
-const PI_CONFIG_PATH = require.resolve('../../../src/server/services/pi-config');
+const OMP_SESSIONS_PATH = require.resolve('../../../src/server/services/omp-sessions');
+const OMP_CONFIG_PATH = require.resolve('../../../src/server/services/omp-config');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 
 let testDir;
@@ -19,15 +19,15 @@ function writeJsonl(filePath, entries) {
 }
 
 function loadModule() {
-  return require('../../../src/server/services/pi-sessions');
+  return require('../../../src/server/services/omp-sessions');
 }
 
 beforeEach(() => {
-  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-sessions-'));
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-sessions-'));
   sessionDir = path.join(testDir, '.omp', 'agent', 'sessions');
 
-  delete require.cache[PI_SESSIONS_PATH];
-  delete require.cache[PI_CONFIG_PATH];
+  delete require.cache[OMP_SESSIONS_PATH];
+  delete require.cache[OMP_CONFIG_PATH];
   require.cache[PATHS_PATH] = {
     id: PATHS_PATH,
     filename: PATHS_PATH,
@@ -35,23 +35,23 @@ beforeEach(() => {
     exports: {
       HOME_DIR: testDir,
       PATHS: {
-        piProjectOrder: path.join(testDir, 'pi-project-order.json'),
-        piSessionOrder: path.join(testDir, 'pi-session-order.json')
+        ompProjectOrder: path.join(testDir, 'omp-project-order.json'),
+        ompSessionOrder: path.join(testDir, 'omp-session-order.json')
       }
     }
   };
-  require.cache[PI_CONFIG_PATH] = {
-    id: PI_CONFIG_PATH,
-    filename: PI_CONFIG_PATH,
+  require.cache[OMP_CONFIG_PATH] = {
+    id: OMP_CONFIG_PATH,
+    filename: OMP_CONFIG_PATH,
     loaded: true,
     exports: {
-      getPiCommand: () => 'omp',
-      getPiPaths: () => ({
+      getOmpCommand: () => 'omp',
+      getOmpPaths: () => ({
         agentDir: path.join(testDir, '.omp', 'agent'),
         sessions: sessionDir
       }),
-      isPiInstalled: () => true,
-      resolvePiRuntime: () => ({
+      isOmpInstalled: () => true,
+      resolveOmpRuntime: () => ({
         runtime: 'omp',
         command: 'omp',
         installed: true
@@ -61,26 +61,26 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete require.cache[PI_SESSIONS_PATH];
-  delete require.cache[PI_CONFIG_PATH];
+  delete require.cache[OMP_SESSIONS_PATH];
+  delete require.cache[OMP_CONFIG_PATH];
   delete require.cache[PATHS_PATH];
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
-describe('Pi session parser', () => {
+describe('OMP session parser', () => {
   test('builds OMP launch commands by default', () => {
     const { buildLaunchCommand } = loadModule();
 
-    expect(buildLaunchCommand('pi-session-1', '/repo/demo', { rpc: true }))
-      .toBe('omp --mode rpc --session "pi-session-1"');
-    expect(buildLaunchCommand('pi-session-1', '/repo/demo', { fork: true }))
-      .toBe('omp --fork "pi-session-1"');
+    expect(buildLaunchCommand('omp-session-1', '/repo/demo', { rpc: true }))
+      .toBe('omp --mode rpc --session "omp-session-1"');
+    expect(buildLaunchCommand('omp-session-1', '/repo/demo', { fork: true }))
+      .toBe('omp --fork "omp-session-1"');
   });
 
   test('parses v3 JSONL header, roles, usage, and latest model change', () => {
     const sessionFile = path.join(sessionDir, 'session-1.jsonl');
     writeJsonl(sessionFile, [
-      { type: 'session', version: 3, id: 'pi-session-1', timestamp: '2026-05-20T00:00:00.000Z', cwd: '/repo/demo' },
+      { type: 'session', version: 3, id: 'omp-session-1', timestamp: '2026-05-20T00:00:00.000Z', cwd: '/repo/demo' },
       { type: 'message', id: 'u1', timestamp: '2026-05-20T00:00:01.000Z', message: { role: 'user', content: 'Build this' } },
       {
         type: 'message',
@@ -101,23 +101,23 @@ describe('Pi session parser', () => {
         }
       },
       { type: 'message', id: 'tool-1', message: { role: 'toolResult', content: 'tool output' } },
-      { type: 'model_change', provider: 'openai', modelId: 'gpt-pi' }
+      { type: 'model_change', provider: 'openai', modelId: 'gpt-omp' }
     ]);
 
     const { getProjects, getSessionsByProject, getSessionMessages, parseSessionFile } = loadModule();
     const parsed = parseSessionFile(sessionFile);
     const projects = getProjects();
     const sessions = getSessionsByProject(parsed.projectName);
-    const messages = getSessionMessages('pi-session-1');
+    const messages = getSessionMessages('omp-session-1');
 
     expect(parsed).toEqual(expect.objectContaining({
-      sessionId: 'pi-session-1',
+      sessionId: 'omp-session-1',
       cwd: '/repo/demo',
       projectName: '----repo--demo--',
       preview: 'Build this',
       messageCount: 3,
       provider: 'openai',
-      model: 'gpt-pi',
+      model: 'gpt-omp',
       usage: expect.objectContaining({
         input: 10,
         output: 20,
@@ -130,14 +130,14 @@ describe('Pi session parser', () => {
         name: '----repo--demo--',
         displayName: 'demo',
         sessionCount: 1,
-        latestSession: 'pi-session-1'
+        latestSession: 'omp-session-1'
       })
     ]);
     expect(sessions).toEqual([
       expect.objectContaining({
-        sessionId: 'pi-session-1',
+        sessionId: 'omp-session-1',
         provider: 'openai',
-        model: 'gpt-pi',
+        model: 'gpt-omp',
         tokens: expect.objectContaining({ total: 37 })
       })
     ]);
@@ -151,7 +151,7 @@ describe('Pi session parser', () => {
   test('tolerates malformed JSONL rows', () => {
     const sessionFile = path.join(sessionDir, 'session-2.jsonl');
     writeJsonl(sessionFile, [
-      { type: 'session', version: 3, id: 'pi-session-2', cwd: '/repo/broken' },
+      { type: 'session', version: 3, id: 'omp-session-2', cwd: '/repo/broken' },
       '{bad json',
       { type: 'message', id: 'u1', message: { role: 'user', content: 'Still parse' } }
     ]);
@@ -160,7 +160,7 @@ describe('Pi session parser', () => {
     const parsed = parseSessionFile(sessionFile);
 
     expect(parsed).toEqual(expect.objectContaining({
-      sessionId: 'pi-session-2',
+      sessionId: 'omp-session-2',
       preview: 'Still parse',
       messageCount: 1
     }));

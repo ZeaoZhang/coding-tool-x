@@ -6,14 +6,15 @@ const path = require('path');
 
 let testDir;
 let paths;
-let getPiStatusMock;
+let getOmpStatusMock;
 let readJsonFileMock;
 let readYamlFileMock;
-let readPiSettingsMock;
+let readOmpSettingsMock;
+let getOmpAuthProviderSnapshotMock;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/pi-config')];
-  const router = require('../../../src/server/api/pi-config');
+  delete require.cache[require.resolve('../../../src/server/api/omp-config')];
+  const router = require('../../../src/server/api/omp-config');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -59,7 +60,7 @@ function call(app, method, url) {
 }
 
 beforeEach(() => {
-  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-config-api-'));
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-config-api-'));
   paths = {
     agentDir: path.join(testDir, 'agent'),
     config: path.join(testDir, 'agent', 'config.yml'),
@@ -86,36 +87,61 @@ beforeEach(() => {
   fs.writeFileSync(path.join(paths.extensions, 'provider.ts'), 'export default {}', 'utf8');
   fs.writeFileSync(paths.auth, '{"token":"secret"}', 'utf8');
 
-  getPiStatusMock = vi.fn(() => ({
+  getOmpStatusMock = vi.fn(() => ({
     installed: true,
     agentDir: paths.agentDir,
     settingsPath: paths.settings,
     authPath: paths.auth
   }));
   readJsonFileMock = vi.fn((filePath, fallback) => {
-    if (filePath === paths.modelsJsonLegacy) return { models: ['legacy-pi-model'] };
+    if (filePath === paths.modelsJsonLegacy) return { models: ['legacy-omp-model'] };
     return fallback;
   });
   readYamlFileMock = vi.fn((filePath, fallback) => {
     if (filePath === paths.settings) return { theme: 'dark' };
-    if (filePath === paths.modelsYml) return { providers: { 'ctx-demo': { models: [{ id: 'pi-model' }] } } };
+    if (filePath === paths.modelsYml) return { providers: { 'ctx-demo': { models: [{ id: 'omp-model' }] } } };
     return fallback;
   });
-  readPiSettingsMock = vi.fn(() => ({
+  readOmpSettingsMock = vi.fn(() => ({
     packages: ['demo-package'],
     disabledPackages: ['old-package']
   }));
+  getOmpAuthProviderSnapshotMock = vi.fn(() => ({
+    available: true,
+    providers: [
+      {
+        id: 'openai-codex',
+        name: 'ChatGPT Plus/Pro (Codex Subscription)',
+        loggedIn: false,
+        accountCount: 0,
+        accounts: []
+      }
+    ],
+    supportedProviders: [
+      { id: 'openai-codex', name: 'ChatGPT Plus/Pro (Codex Subscription)', loginCapable: true }
+    ],
+    aliases: { codex: 'openai-codex' },
+    checkedAt: '2026-07-08T00:00:00.000Z'
+  }));
 
-  require.cache[require.resolve('../../../src/server/services/pi-config')] = {
-    id: require.resolve('../../../src/server/services/pi-config'),
-    filename: require.resolve('../../../src/server/services/pi-config'),
+  require.cache[require.resolve('../../../src/server/services/omp-config')] = {
+    id: require.resolve('../../../src/server/services/omp-config'),
+    filename: require.resolve('../../../src/server/services/omp-config'),
     loaded: true,
     exports: {
-      getPiPaths: vi.fn(() => paths),
-      getPiStatus: getPiStatusMock,
+      getOmpPaths: vi.fn(() => paths),
+      getOmpStatus: getOmpStatusMock,
       readJsonFile: readJsonFileMock,
       readYamlFile: readYamlFileMock,
-      readPiSettings: readPiSettingsMock
+      readOmpSettings: readOmpSettingsMock
+    }
+  };
+  require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
+    id: require.resolve('../../../src/server/services/omp-auth-providers'),
+    filename: require.resolve('../../../src/server/services/omp-auth-providers'),
+    loaded: true,
+    exports: {
+      getOmpAuthProviderSnapshot: getOmpAuthProviderSnapshotMock
     }
   };
 });
@@ -123,8 +149,9 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/api/pi-config',
-    '../../../src/server/services/pi-config'
+    '../../../src/server/api/omp-config',
+    '../../../src/server/services/omp-config',
+    '../../../src/server/services/omp-auth-providers'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -132,8 +159,8 @@ afterEach(() => {
   });
 });
 
-describe('pi-config api', () => {
-  test('GET / returns Pi resources and capability mapping', async () => {
+describe('omp-config api', () => {
+  test('GET / returns OMP resources and capability mapping', async () => {
     const res = await request(buildApp()).get('/');
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -163,7 +190,11 @@ describe('pi-config api', () => {
     }));
     expect(res.body.resources.packages).toEqual(['demo-package']);
     expect(res.body.resources.auth).toEqual({ exists: true, path: paths.auth });
-    expect(res.body.resources.models.providers['ctx-demo'].models[0].id).toBe('pi-model');
+    expect(res.body.resources.authProviders.providers[0]).toEqual(expect.objectContaining({
+      id: 'openai-codex',
+      loggedIn: false
+    }));
+    expect(res.body.resources.models.providers['ctx-demo'].models[0].id).toBe('omp-model');
     expect(res.body.resources.skills.map(item => item.name)).toContain('review-skill');
     expect(res.body.resources.prompts.map(item => item.name)).toEqual(['review.md']);
     expect(res.body.resources.commands.map(item => item.name)).toEqual(['review.md']);
@@ -175,14 +206,18 @@ describe('pi-config api', () => {
     const app = buildApp();
     const capabilities = await request(app).get('/capabilities');
     const resources = await request(app).get('/resources');
+    const authProviders = await request(app).get('/auth-providers?forceRefresh=true');
 
     expect(capabilities.status).toBe(200);
-    expect(capabilities.body.platform).toBe('pi');
+    expect(capabilities.body.platform).toBe('omp');
     expect(capabilities.body.capabilities.native.rpc).toBe(true);
     expect(resources.status).toBe(200);
     expect(resources.body.paths.agentDir).toBe(paths.agentDir);
     expect(resources.body.packages).toEqual(['demo-package']);
     expect(resources.body.prompts.map(item => item.name)).toEqual(['review.md']);
     expect(resources.body.commands.map(item => item.name)).toEqual(['review.md']);
+    expect(authProviders.status).toBe(200);
+    expect(authProviders.body.providers[0].id).toBe('openai-codex');
+    expect(getOmpAuthProviderSnapshotMock).toHaveBeenCalledWith({ forceRefresh: true });
   });
 });

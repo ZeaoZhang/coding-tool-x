@@ -22,7 +22,7 @@ const {
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CLAUDE_COMMANDS_DIR = NATIVE_PATHS.claude.commands
   || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'commands');
@@ -59,10 +59,10 @@ const PLATFORM_CONFIG = {
     repoType: 'gemini-commands',
     fileExtension: '.toml'
   },
-  pi: {
-    userCommandsDir: NATIVE_PATHS.pi.commands || path.join(NATIVE_PATHS.pi.dir, 'commands'),
+  omp: {
+    userCommandsDir: NATIVE_PATHS.omp.commands || path.join(NATIVE_PATHS.omp.dir, 'commands'),
     projectCommandsDir: (projectPath) => path.join(projectPath, '.omp', 'commands'),
-    repoType: 'pi-commands'
+    repoType: 'omp-commands'
   }
 };
 
@@ -379,7 +379,7 @@ class CommandsService {
     if (this.platform === 'gemini') {
       return generateGeminiCommandToml({ description, body });
     }
-    if (this.platform === 'pi') {
+    if (this.platform === 'omp') {
       return body || '';
     }
 

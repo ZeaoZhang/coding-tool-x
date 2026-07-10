@@ -99,7 +99,7 @@
         </n-collapse-item>
         <n-collapse-item title="Commands 列表" name="commands" v-if="template.commands?.length">
           <div class="list-items">
-            <div v-if="template.cliType === 'pi'" class="list-note">
+            <div v-if="template.cliType === 'omp'" class="list-note">
               将写入 .omp/commands，作为 OMP commands 使用。
             </div>
             <div v-for="(item, idx) in template.commands" :key="idx" class="list-item">
@@ -151,7 +151,7 @@ const AI_CONFIG_INFO = {
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
   opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' },
-  pi: { key: 'pi', name: 'OMP command templates', fileName: '.omp/commands', color: '#0f9f9a' }
+  omp: { key: 'omp', name: 'OMP command templates', fileName: '.omp/commands', color: '#0f9f9a' }
 }
 
 // 获取启用的 AI 配置列表（优先展示当前 CLI 对应配置）
@@ -167,9 +167,9 @@ const enabledAiConfigs = computed(() => {
     .filter(item => item.key)
 
   const cliType = props.template?.cliType
-  if (cliType === 'pi' && props.template?.commands?.length) {
+  if (cliType === 'omp' && props.template?.commands?.length) {
     return [{
-      ...AI_CONFIG_INFO.pi,
+      ...AI_CONFIG_INFO.omp,
       content: props.template.commands
         .map(command => `- ${command.namespace ? `${command.namespace}/` : ''}${command.name || command}`)
         .join('\n')
@@ -203,7 +203,7 @@ const CLI_TYPE_MAP = {
   codex: { label: 'Codex', color: '#10a37f', textColor: '#fff', borderColor: '#10a37f' },
   gemini: { label: 'Gemini', color: '#4285f4', textColor: '#fff', borderColor: '#4285f4' },
   opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' },
-  pi: { label: 'OMP', color: '#0f9f9a', textColor: '#fff', borderColor: '#0f9f9a' }
+  omp: { label: 'OMP', color: '#0f9f9a', textColor: '#fff', borderColor: '#0f9f9a' }
 }
 
 function cliTypeLabel(type) {

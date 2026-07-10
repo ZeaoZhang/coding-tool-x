@@ -2,10 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const yaml = require('js-yaml');
-const { HOME_DIR } = require('../../config/paths');
+const { HOME_DIR, PATHS = {} } = require('../../config/paths');
 
 const DEFAULT_OMP_COMMAND = 'omp';
-const LEGACY_PI_COMMAND = 'pi';
 
 function expandHome(input = '') {
   const value = String(input || '').trim();
@@ -22,10 +21,7 @@ function normalizeProfileName(profile = '') {
 }
 
 function getOmpProfile(env = process.env) {
-  if (env.OMP_PROFILE !== undefined) {
-    return normalizeProfileName(env.OMP_PROFILE);
-  }
-  return normalizeProfileName(env.PI_PROFILE);
+  return normalizeProfileName(env.OMP_PROFILE);
 }
 
 function isAbsolutePathLike(value = '') {
@@ -33,7 +29,7 @@ function isAbsolutePathLike(value = '') {
 }
 
 function getOmpConfigRoot(env = process.env) {
-  const configured = expandHome(env.PI_CONFIG_DIR || '');
+  const configured = expandHome(env.OMP_CONFIG_DIR || '');
   if (!configured) return path.join(HOME_DIR, '.omp');
   return isAbsolutePathLike(configured) ? configured : path.join(HOME_DIR, configured);
 }
@@ -46,14 +42,10 @@ function getDefaultOmpAgentDir(env = process.env) {
     : path.join(configRoot, 'agent');
 }
 
-function getLegacyPiAgentDir() {
-  return path.join(HOME_DIR, '.pi', 'agent');
-}
-
-function getFallbackPiAgentDir(runtime, env = process.env) {
-  const configured = expandHome(env.PI_CODING_AGENT_DIR || '');
+function getFallbackOmpAgentDir(runtime, env = process.env) {
+  const configured = expandHome(env.OMP_CODING_AGENT_DIR || '');
   if (configured) return configured;
-  return runtime?.runtime === 'pi' ? getLegacyPiAgentDir(env) : getDefaultOmpAgentDir(env);
+  return getDefaultOmpAgentDir(env);
 }
 
 function buildCommandEnv(env = process.env) {
@@ -63,7 +55,7 @@ function buildCommandEnv(env = process.env) {
   };
 }
 
-function runPiCommand(command, args = [], env = process.env, options = {}, stdio = ['ignore', 'pipe', 'pipe']) {
+function runOmpCommand(command, args = [], env = process.env, options = {}, stdio = ['ignore', 'pipe', 'pipe']) {
   const runner = options.commandRunner || execFileSync;
   return runner(command, args, {
     encoding: 'utf8',
@@ -75,7 +67,7 @@ function runPiCommand(command, args = [], env = process.env, options = {}, stdio
 
 function readOmpAgentDirFromCommand(command, env = process.env, options = {}) {
   try {
-    const output = runPiCommand(command, ['config', 'path'], env, options);
+    const output = runOmpCommand(command, ['config', 'path'], env, options);
     const agentDir = String(output || '').trim().split(/\r?\n/).find(Boolean);
     return agentDir ? path.resolve(expandHome(agentDir)) : '';
   } catch {
@@ -83,20 +75,20 @@ function readOmpAgentDirFromCommand(command, env = process.env, options = {}) {
   }
 }
 
-function getPiAgentDir(env = process.env, options = {}) {
-  const runtime = options.runtime || resolvePiRuntime(env, options);
+function getOmpAgentDir(env = process.env, options = {}) {
+  const runtime = options.runtime || resolveOmpRuntime(env, options);
   if (runtime.runtime === 'omp' && runtime.installed) {
     const commandAgentDir = readOmpAgentDirFromCommand(runtime.command, env, options);
     if (commandAgentDir) {
       return commandAgentDir;
     }
   }
-  return path.resolve(expandHome(getFallbackPiAgentDir(runtime, env)));
+  return path.resolve(expandHome(getFallbackOmpAgentDir(runtime, env)));
 }
 
-function getPiPaths(env = process.env, options = {}) {
-  const runtime = options.runtime || resolvePiRuntime(env, options);
-  const agentDir = getPiAgentDir(env, { ...options, runtime });
+function getOmpPaths(env = process.env, options = {}) {
+  const runtime = options.runtime || resolveOmpRuntime(env, options);
+  const agentDir = getOmpAgentDir(env, { ...options, runtime });
   return {
     agentDir,
     config: path.join(agentDir, 'config.yml'),
@@ -115,11 +107,12 @@ function getPiPaths(env = process.env, options = {}) {
     extensions: path.join(agentDir, 'extensions'),
     themes: path.join(agentDir, 'themes'),
     packages: path.join(agentDir, 'packages'),
-    managedProviderExtension: path.join(agentDir, 'extensions', 'coding-tool-x-provider.ts')
+    managedProviderExtension: path.join(agentDir, 'extensions', 'coding-tool-x-provider.ts'),
+    managedVisibilityState: path.join(PATHS.storage || path.join(HOME_DIR, '.cc-tool', 'storage'), 'omp-managed-visibility.json')
   };
 }
 
-function ensurePiDir(dirPath) {
+function ensureOmpDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
@@ -136,7 +129,7 @@ function readJsonFile(filePath, fallback = {}) {
 }
 
 function writeJsonFile(filePath, data) {
-  ensurePiDir(path.dirname(filePath));
+  ensureOmpDir(path.dirname(filePath));
   fs.writeFileSync(filePath, JSON.stringify(data || {}, null, 2), 'utf8');
 }
 
@@ -153,7 +146,7 @@ function readYamlFile(filePath, fallback = {}) {
 }
 
 function writeYamlFile(filePath, data) {
-  ensurePiDir(path.dirname(filePath));
+  ensureOmpDir(path.dirname(filePath));
   fs.writeFileSync(filePath, yaml.dump(data || {}, {
     lineWidth: 120,
     noRefs: true,
@@ -161,39 +154,38 @@ function writeYamlFile(filePath, data) {
   }), 'utf8');
 }
 
-function readPiSettings() {
-  const paths = getPiPaths();
+function readOmpSettings() {
+  const paths = getOmpPaths();
   return readYamlFile(paths.settings, readJsonFile(paths.settingsJsonLegacy, {}));
 }
 
-function writePiSettings(settings) {
-  writeYamlFile(getPiPaths().settings, settings || {});
+function writeOmpSettings(settings) {
+  writeYamlFile(getOmpPaths().settings, settings || {});
 }
 
-function getPiCommand(env = process.env) {
-  return String(env.OMP_COMMAND || env.PI_COMMAND || DEFAULT_OMP_COMMAND).trim() || DEFAULT_OMP_COMMAND;
+function getOmpCommand(env = process.env) {
+  return String(env.OMP_COMMAND || DEFAULT_OMP_COMMAND).trim() || DEFAULT_OMP_COMMAND;
 }
 
 function commandExists(command, env = process.env, options = {}) {
   try {
-    runPiCommand(command, ['--version'], env, options, 'ignore');
+    runOmpCommand(command, ['--version'], env, options, 'ignore');
     return true;
   } catch {
     return false;
   }
 }
 
-function resolvePiRuntime(env = process.env, options = {}) {
-  const configured = env.OMP_COMMAND || env.PI_COMMAND;
+function resolveOmpRuntime(env = process.env, options = {}) {
+  const configured = env.OMP_COMMAND;
   if (configured) {
-    const command = getPiCommand(env);
-    const source = env.OMP_COMMAND ? 'OMP_COMMAND' : 'PI_COMMAND';
+    const command = getOmpCommand(env);
     return {
       command,
-      runtime: command === LEGACY_PI_COMMAND ? 'pi' : 'omp',
+      runtime: 'omp',
       installed: commandExists(command, env, options),
       configured: true,
-      commandSource: source
+      commandSource: 'OMP_COMMAND'
     };
   }
 
@@ -201,16 +193,6 @@ function resolvePiRuntime(env = process.env, options = {}) {
     return {
       command: DEFAULT_OMP_COMMAND,
       runtime: 'omp',
-      installed: true,
-      configured: false,
-      commandSource: 'path'
-    };
-  }
-
-  if (commandExists(LEGACY_PI_COMMAND, env, options)) {
-    return {
-      command: LEGACY_PI_COMMAND,
-      runtime: 'pi',
       installed: true,
       configured: false,
       commandSource: 'path'
@@ -226,12 +208,12 @@ function resolvePiRuntime(env = process.env, options = {}) {
   };
 }
 
-function isPiInstalled(env = process.env, options = {}) {
-  const runtime = options.runtime || resolvePiRuntime(env, options);
+function isOmpInstalled(env = process.env, options = {}) {
+  const runtime = options.runtime || resolveOmpRuntime(env, options);
   if (runtime.installed) {
     return true;
   }
-  return fs.existsSync(getPiPaths(env, { ...options, runtime }).agentDir);
+  return fs.existsSync(getOmpPaths(env, { ...options, runtime }).agentDir);
 }
 
 function readTextFile(filePath, fallback = '') {
@@ -243,11 +225,11 @@ function readTextFile(filePath, fallback = '') {
   }
 }
 
-function getPiStatus(env = process.env, options = {}) {
-  const runtime = resolvePiRuntime(env, options);
-  const paths = getPiPaths(env, { ...options, runtime });
+function getOmpStatus(env = process.env, options = {}) {
+  const runtime = resolveOmpRuntime(env, options);
+  const paths = getOmpPaths(env, { ...options, runtime });
   return {
-    installed: isPiInstalled(env, { ...options, runtime }),
+    installed: isOmpInstalled(env, { ...options, runtime }),
     runtime: runtime.runtime,
     command: runtime.command,
     commandSource: runtime.commandSource,
@@ -269,19 +251,19 @@ function getPiStatus(env = process.env, options = {}) {
 
 module.exports = {
   expandHome,
-  getPiAgentDir,
-  getPiPaths,
-  ensurePiDir,
+  getOmpAgentDir,
+  getOmpPaths,
+  ensureOmpDir,
   readJsonFile,
   readYamlFile,
   readTextFile,
   writeJsonFile,
   writeYamlFile,
-  readPiSettings,
-  writePiSettings,
-  getPiCommand,
+  readOmpSettings,
+  writeOmpSettings,
+  getOmpCommand,
   getOmpProfile,
-  resolvePiRuntime,
-  isPiInstalled,
-  getPiStatus
+  resolveOmpRuntime,
+  isOmpInstalled,
+  getOmpStatus
 };

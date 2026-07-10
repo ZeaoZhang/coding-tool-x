@@ -6,8 +6,8 @@ const {
   updateChannel,
   deleteChannel,
   saveChannelOrder
-} = require('../services/pi-channels');
-const { isPiInstalled } = require('../services/pi-sessions');
+} = require('../services/omp-channels');
+const { isOmpInstalled } = require('../services/omp-sessions');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
@@ -20,6 +20,10 @@ const {
   fetchModelsFromProvider,
   probeModelAvailability
 } = require('../services/model-detector');
+const {
+  findAuthProviderForKey,
+  getOmpAuthProviderSnapshot
+} = require('../services/omp-auth-providers');
 
 function uniqueModels(models = []) {
   const seen = new Set();
@@ -39,9 +43,11 @@ function uniqueModels(models = []) {
 function resolveGatewaySourceType(channel) {
   const value = String(channel?.gatewaySourceType || '').trim().toLowerCase();
   if (value === 'claude') return 'claude';
+  if (value === 'codex') return 'codex';
   if (value === 'gemini') return 'gemini';
   if (value === 'opencode') return 'opencode';
-  return 'codex';
+  if (value === 'openai_compatible') return 'openai_compatible';
+  return 'openai_compatible';
 }
 
 function collectPreferredModels(channel = {}) {
@@ -55,16 +61,34 @@ function collectPreferredModels(channel = {}) {
   ]);
 }
 
+function attachAuthProvider(channel, snapshot) {
+  const authProvider = findAuthProviderForKey(channel.providerKey || channel.provider || channel.name, snapshot);
+  if (!authProvider) return channel;
+  return {
+    ...channel,
+    ompAuthProvider: {
+      id: authProvider.id,
+      name: authProvider.name,
+      loggedIn: authProvider.loggedIn,
+      accountCount: authProvider.accountCount,
+      accounts: authProvider.accounts || [],
+      checked: authProvider.checked,
+      error: authProvider.error || null
+    }
+  };
+}
+
 module.exports = () => {
   router.get('/', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.json({ channels: [], installed: false, error: 'OMP CLI not installed' });
       }
       const data = getChannels();
+      const authSnapshot = getOmpAuthProviderSnapshot({ accountCheck: false, includeStatus: false });
       const channels = (data.channels || []).map(ch => ({
-        ...ch,
-        health: getChannelHealthStatus(ch.id, 'pi')
+        ...attachAuthProvider(ch, authSnapshot),
+        health: getChannelHealthStatus(ch.id, 'omp')
       }));
       res.json({ channels, installed: true });
     } catch (err) {
@@ -75,13 +99,14 @@ module.exports = () => {
 
   router.get('/enabled', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.json({ channels: [], installed: false, error: 'OMP CLI not installed' });
       }
       const data = getChannels();
+      const authSnapshot = getOmpAuthProviderSnapshot({ accountCheck: false, includeStatus: false });
       const channels = (data.channels || [])
         .filter(ch => ch.enabled !== false)
-        .map(ch => ({ ...ch, health: getChannelHealthStatus(ch.id, 'pi') }));
+        .map(ch => ({ ...attachAuthProvider(ch, authSnapshot), health: getChannelHealthStatus(ch.id, 'omp') }));
       res.json({ channels, installed: true });
     } catch (err) {
       console.error('[OMP Channels API] Failed to get enabled channels:', err);
@@ -95,8 +120,10 @@ module.exports = () => {
       if (!baseUrl) {
         return res.status(400).json({ error: 'baseUrl is required' });
       }
-      const tempChannel = { baseUrl, apiKey: apiKey || '', gatewaySourceType: gatewaySourceType || 'codex' };
-      const listResult = await fetchModelsFromProvider(tempChannel, resolveGatewaySourceType(tempChannel), {
+      const tempChannel = { baseUrl, apiKey: apiKey || '', gatewaySourceType: gatewaySourceType || 'openai_compatible' };
+      const resolvedGatewaySourceType = resolveGatewaySourceType(tempChannel);
+      const modelListSourceType = resolvedGatewaySourceType === 'opencode' ? 'openai_compatible' : resolvedGatewaySourceType;
+      const listResult = await fetchModelsFromProvider(tempChannel, modelListSourceType, {
         useV1ModelsEndpoint: true,
         forceRefresh: true
       });
@@ -123,7 +150,8 @@ module.exports = () => {
       }
       const forceRefresh = req.query.forceRefresh === 'true';
       const gatewaySourceType = resolveGatewaySourceType(channel);
-      const listResult = await fetchModelsFromProvider(channel, gatewaySourceType, {
+      const modelListSourceType = gatewaySourceType === 'opencode' ? 'openai_compatible' : gatewaySourceType;
+      const listResult = await fetchModelsFromProvider(channel, modelListSourceType, {
         useV1ModelsEndpoint: true,
         forceRefresh
       });
@@ -171,6 +199,7 @@ module.exports = () => {
         model,
         gatewaySourceType,
         modelRedirects,
+        allowedModels,
         speedTestModel,
         providerKey,
         providerApi,
@@ -195,8 +224,9 @@ module.exports = () => {
         weight,
         maxConcurrency,
         model,
-        gatewaySourceType: gatewaySourceType || 'codex',
+        gatewaySourceType: gatewaySourceType || 'openai_compatible',
         modelRedirects: modelRedirects || [],
+        allowedModels: Array.isArray(allowedModels) ? allowedModels : [],
         speedTestModel: speedTestModel || null,
         presetId,
         websiteUrl: websiteUrl || '',
@@ -204,7 +234,7 @@ module.exports = () => {
         balanceUserId: balanceUserId || null
       });
       res.json(channel);
-      broadcastSchedulerState('pi', getSchedulerState('pi'));
+      broadcastSchedulerState('omp', getSchedulerState('omp'));
     } catch (err) {
       console.error('[OMP Channels API] Failed to create channel:', err);
       res.status(500).json({ error: err.message });
@@ -215,7 +245,7 @@ module.exports = () => {
     try {
       const channel = updateChannel(req.params.channelId, req.body || {});
       res.json(channel);
-      broadcastSchedulerState('pi', getSchedulerState('pi'));
+      broadcastSchedulerState('omp', getSchedulerState('omp'));
     } catch (err) {
       console.error('[OMP Channels API] Failed to update channel:', err);
       res.status(500).json({ error: err.message });
@@ -226,7 +256,7 @@ module.exports = () => {
     try {
       const result = await deleteChannel(req.params.channelId);
       res.json(result);
-      broadcastSchedulerState('pi', getSchedulerState('pi'));
+      broadcastSchedulerState('omp', getSchedulerState('omp'));
     } catch (err) {
       console.error('[OMP Channels API] Failed to delete channel:', err);
       res.status(500).json({ error: err.message });
@@ -241,7 +271,7 @@ module.exports = () => {
       }
       saveChannelOrder(order);
       res.json({ success: true });
-      broadcastSchedulerState('pi', getSchedulerState('pi'));
+      broadcastSchedulerState('omp', getSchedulerState('omp'));
     } catch (err) {
       console.error('[OMP Channels API] Failed to save order:', err);
       res.status(500).json({ error: err.message });
@@ -250,9 +280,9 @@ module.exports = () => {
 
   router.post('/:channelId/reset-health', (req, res) => {
     try {
-      resetChannelHealth(req.params.channelId, 'pi');
+      resetChannelHealth(req.params.channelId, 'omp');
       res.json({ success: true });
-      broadcastSchedulerState('pi', getSchedulerState('pi'));
+      broadcastSchedulerState('omp', getSchedulerState('omp'));
     } catch (err) {
       console.error('[OMP Channels API] Failed to reset health:', err);
       res.status(500).json({ error: err.message });
@@ -266,7 +296,7 @@ module.exports = () => {
         return res.status(404).json({ error: 'Channel not found' });
       }
       const result = await testChannelSpeed(channel, req.body?.timeout || 20000, resolveGatewaySourceType(channel), {
-        authSourceType: 'pi'
+        authSourceType: 'omp'
       });
       res.json(result);
     } catch (error) {
@@ -284,7 +314,7 @@ module.exports = () => {
         channels,
         safeConcurrency,
         channel => testChannelSpeed(channel, timeout, resolveGatewaySourceType(channel), {
-          authSourceType: 'pi'
+          authSourceType: 'omp'
         })
       );
       results.sort((a, b) => {

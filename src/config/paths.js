@@ -392,8 +392,8 @@ const PATHS = {
   forkRelations: path.join(CONFIG_DIR, 'fork-relations.json'),
   opencodeProjectOrder: path.join(CONFIG_DIR, 'opencode-project-order.json'),
   opencodeSessionOrder: path.join(CONFIG_DIR, 'opencode-session-order.json'),
-  piProjectOrder: path.join(CONFIG_DIR, 'pi-project-order.json'),
-  piSessionOrder: path.join(CONFIG_DIR, 'pi-session-order.json'),
+  ompProjectOrder: path.join(CONFIG_DIR, 'omp-project-order.json'),
+  ompSessionOrder: path.join(CONFIG_DIR, 'omp-session-order.json'),
 
   // 渠道配置
   channelsDir: CHANNELS_DIR,
@@ -402,7 +402,7 @@ const PATHS = {
     codex: path.join(CHANNELS_DIR, 'codex.json'),
     gemini: path.join(CHANNELS_DIR, 'gemini.json'),
     opencode: path.join(CHANNELS_DIR, 'opencode.json'),
-    pi: path.join(CHANNELS_DIR, 'pi.json')
+    omp: path.join(CHANNELS_DIR, 'omp.json')
   },
   activeChannelDir: ACTIVE_CHANNELS_DIR,
   activeChannel: {
@@ -410,7 +410,7 @@ const PATHS = {
     codex: path.join(ACTIVE_CHANNELS_DIR, 'codex.json'),
     gemini: path.join(ACTIVE_CHANNELS_DIR, 'gemini.json'),
     opencode: path.join(ACTIVE_CHANNELS_DIR, 'opencode.json'),
-    pi: path.join(ACTIVE_CHANNELS_DIR, 'pi.json')
+    omp: path.join(ACTIVE_CHANNELS_DIR, 'omp.json')
   },
 
   // 统计与日志快照
@@ -442,7 +442,7 @@ const PATHS = {
     codex: path.join(RUNTIME_DIR, 'codex-proxy.json'),
     gemini: path.join(RUNTIME_DIR, 'gemini-proxy.json'),
     opencode: path.join(RUNTIME_DIR, 'opencode-proxy.json'),
-    pi: path.join(RUNTIME_DIR, 'pi-proxy.json')
+    omp: path.join(RUNTIME_DIR, 'omp-proxy.json')
   },
 
   // 请求记录
@@ -451,7 +451,7 @@ const PATHS = {
     codex: path.join(REQUESTS_DIR, 'codex.jsonl'),
     gemini: path.join(REQUESTS_DIR, 'gemini.jsonl'),
     opencode: path.join(REQUESTS_DIR, 'opencode.jsonl'),
-    pi: path.join(REQUESTS_DIR, 'pi.jsonl')
+    omp: path.join(REQUESTS_DIR, 'omp.jsonl')
   },
   claudeRequestTemplate: path.join(REQUESTS_DIR, 'claude-request-template.json'),
 
@@ -464,35 +464,35 @@ const PATHS = {
     codex: path.join(LOCAL_SKILLS_DIR, 'codex'),
     gemini: path.join(LOCAL_SKILLS_DIR, 'gemini'),
     opencode: path.join(LOCAL_SKILLS_DIR, 'opencode'),
-    pi: path.join(LOCAL_SKILLS_DIR, 'pi')
+    omp: path.join(LOCAL_SKILLS_DIR, 'omp')
   },
   skillRepos: {
     claude: path.join(REPOS_SKILLS_DIR, 'claude.json'),
     codex: path.join(REPOS_SKILLS_DIR, 'codex.json'),
     gemini: path.join(REPOS_SKILLS_DIR, 'gemini.json'),
     opencode: path.join(REPOS_SKILLS_DIR, 'opencode.json'),
-    pi: path.join(REPOS_SKILLS_DIR, 'pi.json')
+    omp: path.join(REPOS_SKILLS_DIR, 'omp.json')
   },
   skillCaches: {
     claude: path.join(CACHE_SKILLS_DIR, 'claude.json'),
     codex: path.join(CACHE_SKILLS_DIR, 'codex.json'),
     gemini: path.join(CACHE_SKILLS_DIR, 'gemini.json'),
     opencode: path.join(CACHE_SKILLS_DIR, 'opencode.json'),
-    pi: path.join(CACHE_SKILLS_DIR, 'pi.json')
+    omp: path.join(CACHE_SKILLS_DIR, 'omp.json')
   },
   pluginRepos: {
     claude: path.join(REPOS_PLUGINS_DIR, 'claude.json'),
     codex: path.join(REPOS_PLUGINS_DIR, 'codex.json'),
     gemini: path.join(REPOS_PLUGINS_DIR, 'gemini.json'),
     opencode: path.join(REPOS_PLUGINS_DIR, 'opencode.json'),
-    pi: path.join(REPOS_PLUGINS_DIR, 'pi.json')
+    omp: path.join(REPOS_PLUGINS_DIR, 'omp.json')
   },
   pluginMarketCache: {
     claude: path.join(CACHE_PLUGINS_DIR, 'claude-market.json'),
     codex: path.join(CACHE_PLUGINS_DIR, 'codex-market.json'),
     gemini: path.join(CACHE_PLUGINS_DIR, 'gemini-market.json'),
     opencode: path.join(CACHE_PLUGINS_DIR, 'opencode-market.json'),
-    pi: path.join(CACHE_PLUGINS_DIR, 'pi-market.json')
+    omp: path.join(CACHE_PLUGINS_DIR, 'omp-market.json')
   },
 
   // 原生路径兼容
@@ -532,20 +532,20 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('fork-relations.json'), target: PATHS.forkRelations },
   { source: rootEntry('opencode-project-order.json'), target: PATHS.opencodeProjectOrder },
   { source: rootEntry('opencode-session-order.json'), target: PATHS.opencodeSessionOrder },
-  { source: rootEntry('pi-project-order.json'), target: PATHS.piProjectOrder },
-  { source: rootEntry('pi-session-order.json'), target: PATHS.piSessionOrder },
+  { source: rootEntry('omp-project-order.json'), target: PATHS.ompProjectOrder },
+  { source: rootEntry('omp-session-order.json'), target: PATHS.ompSessionOrder },
 
   // 渠道相关
   { source: rootEntry('channels.json'), target: PATHS.channels.claude },
   { source: rootEntry('codex-channels.json'), target: PATHS.channels.codex },
   { source: rootEntry('gemini-channels.json'), target: PATHS.channels.gemini },
   { source: rootEntry('opencode-channels.json'), target: PATHS.channels.opencode },
-  { source: rootEntry('pi-channels.json'), target: PATHS.channels.pi },
+  { source: rootEntry('omp-channels.json'), target: PATHS.channels.omp },
   { source: rootEntry('active-channel.json'), target: PATHS.activeChannel.claude },
   { source: rootEntry('codex-active-channel.json'), target: PATHS.activeChannel.codex },
   { source: rootEntry('gemini-active-channel.json'), target: PATHS.activeChannel.gemini },
   { source: rootEntry('opencode-active-channel.json'), target: PATHS.activeChannel.opencode },
-  { source: rootEntry('pi-active-channel.json'), target: PATHS.activeChannel.pi },
+  { source: rootEntry('omp-active-channel.json'), target: PATHS.activeChannel.omp },
 
   // 统计与日志
   { source: rootEntry('statistics.json'), target: PATHS.statistics.summary },
@@ -568,14 +568,14 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('codex-proxy-runtime.json'), target: PATHS.proxyRuntime.codex },
   { source: rootEntry('gemini-proxy-runtime.json'), target: PATHS.proxyRuntime.gemini },
   { source: rootEntry('opencode-proxy-runtime.json'), target: PATHS.proxyRuntime.opencode },
-  { source: rootEntry('pi-proxy-runtime.json'), target: PATHS.proxyRuntime.pi },
+  { source: rootEntry('omp-proxy-runtime.json'), target: PATHS.proxyRuntime.omp },
   { source: rootEntry('notify-hook.js'), target: PATHS.notifyHook },
   { source: rootEntry('claude-request-template.json'), target: PATHS.claudeRequestTemplate },
   { source: rootEntry('claude-requests.jsonl'), target: PATHS.requestSnapshots.claude },
   { source: rootEntry('codex-requests.jsonl'), target: PATHS.requestSnapshots.codex },
   { source: rootEntry('gemini-requests.jsonl'), target: PATHS.requestSnapshots.gemini },
   { source: rootEntry('opencode-requests.jsonl'), target: PATHS.requestSnapshots.opencode },
-  { source: rootEntry('pi-requests.jsonl'), target: PATHS.requestSnapshots.pi },
+  { source: rootEntry('omp-requests.jsonl'), target: PATHS.requestSnapshots.omp },
 
   // 备份
   { source: rootEntry('env-backups'), target: PATHS.envBackups },
@@ -585,29 +585,29 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('codex-skills'), target: PATHS.localSkills.codex },
   { source: rootEntry('gemini-skills'), target: PATHS.localSkills.gemini },
   { source: rootEntry('opencode-skills'), target: PATHS.localSkills.opencode },
-  { source: rootEntry('pi-skills'), target: PATHS.localSkills.pi },
+  { source: rootEntry('omp-skills'), target: PATHS.localSkills.omp },
   { source: rootEntry('skill-repos.json'), target: PATHS.skillRepos.claude },
   { source: rootEntry('codex-skill-repos.json'), target: PATHS.skillRepos.codex },
   { source: rootEntry('gemini-skill-repos.json'), target: PATHS.skillRepos.gemini },
   { source: rootEntry('opencode-skill-repos.json'), target: PATHS.skillRepos.opencode },
-  { source: rootEntry('pi-skill-repos.json'), target: PATHS.skillRepos.pi },
+  { source: rootEntry('omp-skill-repos.json'), target: PATHS.skillRepos.omp },
   { source: rootEntry('skills-cache.json'), target: PATHS.skillCaches.claude },
   { source: rootEntry('codex-skills-cache.json'), target: PATHS.skillCaches.codex },
   { source: rootEntry('gemini-skills-cache.json'), target: PATHS.skillCaches.gemini },
   { source: rootEntry('opencode-skills-cache.json'), target: PATHS.skillCaches.opencode },
-  { source: rootEntry('pi-skills-cache.json'), target: PATHS.skillCaches.pi },
+  { source: rootEntry('omp-skills-cache.json'), target: PATHS.skillCaches.omp },
 
   // 插件仓库缓存
   { source: rootEntry('plugin-repos.json'), target: PATHS.pluginRepos.claude },
   { source: rootEntry('codex-plugin-repos.json'), target: PATHS.pluginRepos.codex },
   { source: rootEntry('gemini-plugin-repos.json'), target: PATHS.pluginRepos.gemini },
   { source: rootEntry('opencode-plugin-repos.json'), target: PATHS.pluginRepos.opencode },
-  { source: rootEntry('pi-plugin-repos.json'), target: PATHS.pluginRepos.pi },
+  { source: rootEntry('omp-plugin-repos.json'), target: PATHS.pluginRepos.omp },
   { source: rootEntry('plugins-market-cache.json'), target: PATHS.pluginMarketCache.claude },
   { source: rootEntry('codex-plugins-market-cache.json'), target: PATHS.pluginMarketCache.codex },
   { source: rootEntry('gemini-plugins-market-cache.json'), target: PATHS.pluginMarketCache.gemini },
   { source: rootEntry('opencode-plugins-market-cache.json'), target: PATHS.pluginMarketCache.opencode },
-  { source: rootEntry('pi-plugins-market-cache.json'), target: PATHS.pluginMarketCache.pi },
+  { source: rootEntry('omp-plugins-market-cache.json'), target: PATHS.pluginMarketCache.omp },
 
   // 已废弃但需要保留的数据
   { source: rootEntry('oauth-tokens.json'), target: PATHS.legacy.oauthTokens }
@@ -803,18 +803,15 @@ function normalizeOmpProfileName(profile = '') {
 }
 
 function getOmpProfileName() {
-  if (process.env.OMP_PROFILE !== undefined) {
-    return normalizeOmpProfileName(process.env.OMP_PROFILE);
-  }
-  return normalizeOmpProfileName(process.env.PI_PROFILE);
+  return normalizeOmpProfileName(process.env.OMP_PROFILE);
 }
 
 function getOmpConfigRoot() {
-  return expandHomePath(resolveExistingEnvPath(process.env.PI_CONFIG_DIR) || path.join(HOME_DIR, '.omp'));
+  return expandHomePath(resolveExistingEnvPath(process.env.OMP_CONFIG_DIR) || path.join(HOME_DIR, '.omp'));
 }
 
-function getPiAgentDir() {
-  const configuredDir = resolveExistingEnvPath(process.env.PI_CODING_AGENT_DIR);
+function getOmpAgentDir() {
+  const configuredDir = resolveExistingEnvPath(process.env.OMP_CODING_AGENT_DIR);
   if (configuredDir) {
     return path.resolve(expandHomePath(configuredDir));
   }
@@ -876,25 +873,25 @@ const NATIVE_PATHS = {
     auth: path.join(getOpenCodeDataDir(), 'auth.json')
   },
 
-  // OMP 原生配置。外部仍使用 pi 渠道键，内部默认落到 OMP 配置目录。
-  pi: {
-    dir: getPiAgentDir(),
-    config: path.join(getPiAgentDir(), 'config.yml'),
-    settings: path.join(getPiAgentDir(), 'config.yml'),
-    settingsJsonLegacy: path.join(getPiAgentDir(), 'settings.json'),
-    auth: path.join(getPiAgentDir(), 'auth.json'),
-    models: path.join(getPiAgentDir(), 'models.yml'),
-    modelsYml: path.join(getPiAgentDir(), 'models.yml'),
-    modelsJsonLegacy: path.join(getPiAgentDir(), 'models.json'),
-    mcp: path.join(getPiAgentDir(), 'mcp.json'),
-    sessions: path.join(getPiAgentDir(), 'sessions'),
-    skills: path.join(getPiAgentDir(), 'skills'),
-    prompts: path.join(getPiAgentDir(), 'prompts'),
-    commands: path.join(getPiAgentDir(), 'commands'),
-    notes: path.join(getPiAgentDir(), 'notes'),
-    extensions: path.join(getPiAgentDir(), 'extensions'),
-    themes: path.join(getPiAgentDir(), 'themes'),
-    packages: path.join(getPiAgentDir(), 'packages')
+  // OMP 原生配置。
+  omp: {
+    dir: getOmpAgentDir(),
+    config: path.join(getOmpAgentDir(), 'config.yml'),
+    settings: path.join(getOmpAgentDir(), 'config.yml'),
+    settingsJsonLegacy: path.join(getOmpAgentDir(), 'settings.json'),
+    auth: path.join(getOmpAgentDir(), 'auth.json'),
+    models: path.join(getOmpAgentDir(), 'models.yml'),
+    modelsYml: path.join(getOmpAgentDir(), 'models.yml'),
+    modelsJsonLegacy: path.join(getOmpAgentDir(), 'models.json'),
+    mcp: path.join(getOmpAgentDir(), 'mcp.json'),
+    sessions: path.join(getOmpAgentDir(), 'sessions'),
+    skills: path.join(getOmpAgentDir(), 'skills'),
+    prompts: path.join(getOmpAgentDir(), 'prompts'),
+    commands: path.join(getOmpAgentDir(), 'commands'),
+    notes: path.join(getOmpAgentDir(), 'notes'),
+    extensions: path.join(getOmpAgentDir(), 'extensions'),
+    themes: path.join(getOmpAgentDir(), 'themes'),
+    packages: path.join(getOmpAgentDir(), 'packages')
   }
 };
 
@@ -915,5 +912,5 @@ module.exports = {
   getGeminiDir,
   getOpenCodeDataDir,
   getOpenCodeConfigDir,
-  getPiAgentDir
+  getOmpAgentDir
 };

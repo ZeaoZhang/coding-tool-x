@@ -4,6 +4,77 @@ const inquirer = require('inquirer');
 const { loadConfig, saveConfig } = require('../config/loader');
 const { HOME_DIR } = require('../config/paths');
 
+function normalizePort(value) {
+  return parseInt(value, 10);
+}
+
+function validatePort(input) {
+  const port = normalizePort(input);
+  if (isNaN(port) || port < 1024 || port > 65535) {
+    return '端口必须是 1024-65535 之间的数字';
+  }
+  return true;
+}
+
+function buildPortQuestions(config = {}) {
+  const ports = config.ports || {};
+  return [
+    {
+      type: 'input',
+      name: 'webUI',
+      message: 'Web UI 页面端口 (同时用于 WebSocket):',
+      default: ports.webUI || 19999,
+      validate: validatePort,
+    },
+    {
+      type: 'input',
+      name: 'proxy',
+      message: 'Claude 代理服务端口:',
+      default: ports.proxy || 20088,
+      validate: validatePort,
+    },
+    {
+      type: 'input',
+      name: 'codexProxy',
+      message: 'Codex 代理服务端口:',
+      default: ports.codexProxy || 20089,
+      validate: validatePort,
+    },
+    {
+      type: 'input',
+      name: 'geminiProxy',
+      message: 'Gemini 代理服务端口:',
+      default: ports.geminiProxy || 20090,
+      validate: validatePort,
+    },
+    {
+      type: 'input',
+      name: 'opencodeProxy',
+      message: 'OpenCode 代理服务端口:',
+      default: ports.opencodeProxy || 20091,
+      validate: validatePort,
+    },
+    {
+      type: 'input',
+      name: 'ompProxy',
+      message: 'OMP 代理服务端口:',
+      default: ports.ompProxy || 20092,
+      validate: validatePort,
+    },
+  ];
+}
+
+function buildPortsConfig(answers = {}) {
+  return {
+    webUI: normalizePort(answers.webUI),
+    proxy: normalizePort(answers.proxy),
+    codexProxy: normalizePort(answers.codexProxy),
+    geminiProxy: normalizePort(answers.geminiProxy),
+    opencodeProxy: normalizePort(answers.opencodeProxy),
+    ompProxy: normalizePort(answers.ompProxy),
+  };
+}
+
 /**
  * 配置端口
  */
@@ -19,95 +90,25 @@ async function handlePortConfig() {
   console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
+  const ports = config.ports || {};
 
   console.log(chalk.cyan('当前端口配置:'));
-  console.log(chalk.gray(`• Web UI 页面端口:     ${config.ports.webUI} (同时用于 WebSocket)`));
-  console.log(chalk.gray(`• Claude 代理端口:     ${config.ports.proxy}`));
-  console.log(chalk.gray(`• Codex 代理端口:      ${config.ports.codexProxy || 20089}`));
-  console.log(chalk.gray(`• Gemini 代理端口:     ${config.ports.geminiProxy || 20090}`));
-  console.log(chalk.gray(`• OpenCode 代理端口:   ${config.ports.opencodeProxy || 20091}\n`));
+  console.log(chalk.gray(`• Web UI 页面端口:     ${ports.webUI || 19999} (同时用于 WebSocket)`));
+  console.log(chalk.gray(`• Claude 代理端口:     ${ports.proxy || 20088}`));
+  console.log(chalk.gray(`• Codex 代理端口:      ${ports.codexProxy || 20089}`));
+  console.log(chalk.gray(`• Gemini 代理端口:     ${ports.geminiProxy || 20090}`));
+  console.log(chalk.gray(`• OpenCode 代理端口:   ${ports.opencodeProxy || 20091}`));
+  console.log(chalk.gray(`• OMP 代理端口:        ${ports.ompProxy || 20092}\n`));
 
   console.log(chalk.yellow('说明:'));
   console.log(chalk.gray('• 端口范围: 1024-65535'));
   console.log(chalk.gray('• 修改后需要重启相关服务才能生效'));
   console.log(chalk.gray('• 如果端口被占用，请修改为其他端口\n'));
 
-  const answers = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'webUI',
-      message: 'Web UI 页面端口 (同时用于 WebSocket):',
-      default: config.ports.webUI,
-      validate: (input) => {
-        const port = parseInt(input);
-        if (isNaN(port) || port < 1024 || port > 65535) {
-          return '端口必须是 1024-65535 之间的数字';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'proxy',
-      message: 'Claude 代理服务端口:',
-      default: config.ports.proxy,
-      validate: (input) => {
-        const port = parseInt(input);
-        if (isNaN(port) || port < 1024 || port > 65535) {
-          return '端口必须是 1024-65535 之间的数字';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'codexProxy',
-      message: 'Codex 代理服务端口:',
-      default: config.ports.codexProxy || 20089,
-      validate: (input) => {
-        const port = parseInt(input);
-        if (isNaN(port) || port < 1024 || port > 65535) {
-          return '端口必须是 1024-65535 之间的数字';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'geminiProxy',
-      message: 'Gemini 代理服务端口:',
-      default: config.ports.geminiProxy || 20090,
-      validate: (input) => {
-        const port = parseInt(input);
-        if (isNaN(port) || port < 1024 || port > 65535) {
-          return '端口必须是 1024-65535 之间的数字';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'opencodeProxy',
-      message: 'OpenCode 代理服务端口:',
-      default: config.ports.opencodeProxy || 20091,
-      validate: (input) => {
-        const port = parseInt(input);
-        if (isNaN(port) || port < 1024 || port > 65535) {
-          return '端口必须是 1024-65535 之间的数字';
-        }
-        return true;
-      },
-    },
-  ]);
+  const answers = await inquirer.prompt(buildPortQuestions(config));
 
   // 更新配置
-  config.ports = {
-    webUI: parseInt(answers.webUI),
-    proxy: parseInt(answers.proxy),
-    codexProxy: parseInt(answers.codexProxy),
-    geminiProxy: parseInt(answers.geminiProxy),
-    opencodeProxy: parseInt(answers.opencodeProxy),
-  };
+  config.ports = buildPortsConfig(answers);
 
   // 保存配置（保留其余字段）
   saveConfig({
@@ -132,4 +133,9 @@ async function handlePortConfig() {
 
 module.exports = {
   handlePortConfig,
+  _test: {
+    buildPortQuestions,
+    buildPortsConfig,
+    validatePort
+  }
 };

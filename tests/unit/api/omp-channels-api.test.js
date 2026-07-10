@@ -32,26 +32,29 @@ let sanitizeBatchConcurrency;
 let runWithConcurrencyLimit;
 let fetchModelsFromProvider;
 let probeModelAvailability;
-let isPiInstalled;
+let getOmpAuthProviderSnapshot;
+let findAuthProviderForKey;
+let isOmpInstalled;
 let routerFactory;
 
 beforeEach(() => {
   getChannels = vi.fn(() => ({
     channels: [
       {
-        id: 'pi-1',
-        name: 'Pi One',
-        baseUrl: 'https://pi.one/v1',
+        id: 'omp-1',
+        name: 'OMP One',
+        baseUrl: 'https://omp.one/v1',
         enabled: true,
         gatewaySourceType: 'codex',
+        providerKey: 'codex',
         providerApi: 'openai-completions',
         model: 'gpt-5',
         allowedModels: ['gpt-5-mini']
       },
       {
-        id: 'pi-2',
-        name: 'Pi Two',
-        baseUrl: 'https://pi.two/v1',
+        id: 'omp-2',
+        name: 'OMP Two',
+        baseUrl: 'https://omp.two/v1',
         enabled: false,
         gatewaySourceType: 'gemini',
         allowedModels: ['gemini-2.5-pro']
@@ -59,7 +62,7 @@ beforeEach(() => {
     ]
   }));
   createChannel = vi.fn((name, baseUrl, apiKey, options) => ({
-    id: 'pi-new',
+    id: 'omp-new',
     name,
     baseUrl,
     apiKey,
@@ -74,15 +77,15 @@ beforeEach(() => {
   broadcastSchedulerState = vi.fn();
   testChannelSpeed = vi.fn(async (channel, timeout, type) => ({
     channelId: channel.id,
-    success: channel.id !== 'pi-2',
-    latency: channel.id === 'pi-2' ? null : 88,
+    success: channel.id !== 'omp-2',
+    latency: channel.id === 'omp-2' ? null : 88,
     timeout,
     gatewaySourceType: type
   }));
   sanitizeBatchConcurrency = vi.fn((value) => value || 2);
   runWithConcurrencyLimit = vi.fn(async (items, _concurrency, worker) => Promise.all(items.map(worker)));
   fetchModelsFromProvider = vi.fn(async (channel) => {
-    if (channel.id === 'pi-1') {
+    if (channel.id === 'omp-1') {
       return { models: [], cached: false, lastChecked: '2026-01-01T00:00:00Z' };
     }
     return { models: ['gpt-5', 'gpt-5'], cached: false, lastChecked: '2026-01-02T00:00:00Z' };
@@ -92,11 +95,29 @@ beforeEach(() => {
     cached: false,
     lastChecked: '2026-01-03T00:00:00Z'
   }));
-  isPiInstalled = vi.fn(() => true);
+  getOmpAuthProviderSnapshot = vi.fn(() => ({
+    available: true,
+    providers: [
+      {
+        id: 'openai-codex',
+        name: 'ChatGPT Plus/Pro (Codex Subscription)',
+        loggedIn: true,
+        accountCount: 1,
+        accounts: [{ index: 1, identity: 'co***x@example.com' }],
+        checked: true
+      }
+    ],
+    aliases: { codex: 'openai-codex' }
+  }));
+  findAuthProviderForKey = vi.fn((providerKey, snapshot) => {
+    if (providerKey === 'codex') return snapshot.providers[0];
+    return null;
+  });
+  isOmpInstalled = vi.fn(() => true);
 
-  require.cache[require.resolve('../../../src/server/services/pi-channels')] = {
-    id: require.resolve('../../../src/server/services/pi-channels'),
-    filename: require.resolve('../../../src/server/services/pi-channels'),
+  require.cache[require.resolve('../../../src/server/services/omp-channels')] = {
+    id: require.resolve('../../../src/server/services/omp-channels'),
+    filename: require.resolve('../../../src/server/services/omp-channels'),
     loaded: true,
     exports: {
       getChannels,
@@ -106,11 +127,11 @@ beforeEach(() => {
       saveChannelOrder
     }
   };
-  require.cache[require.resolve('../../../src/server/services/pi-sessions')] = {
-    id: require.resolve('../../../src/server/services/pi-sessions'),
-    filename: require.resolve('../../../src/server/services/pi-sessions'),
+  require.cache[require.resolve('../../../src/server/services/omp-sessions')] = {
+    id: require.resolve('../../../src/server/services/omp-sessions'),
+    filename: require.resolve('../../../src/server/services/omp-sessions'),
     loaded: true,
-    exports: { isPiInstalled }
+    exports: { isOmpInstalled }
   };
   require.cache[require.resolve('../../../src/server/services/channel-scheduler')] = {
     id: require.resolve('../../../src/server/services/channel-scheduler'),
@@ -142,21 +163,28 @@ beforeEach(() => {
     loaded: true,
     exports: { fetchModelsFromProvider, probeModelAvailability }
   };
+  require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
+    id: require.resolve('../../../src/server/services/omp-auth-providers'),
+    filename: require.resolve('../../../src/server/services/omp-auth-providers'),
+    loaded: true,
+    exports: { getOmpAuthProviderSnapshot, findAuthProviderForKey }
+  };
 
-  delete require.cache[require.resolve('../../../src/server/api/pi-channels')];
-  routerFactory = require('../../../src/server/api/pi-channels');
+  delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
+  routerFactory = require('../../../src/server/api/omp-channels');
 });
 
 afterEach(() => {
   [
-    '../../../src/server/api/pi-channels',
-    '../../../src/server/services/pi-channels',
-    '../../../src/server/services/pi-sessions',
+    '../../../src/server/api/omp-channels',
+    '../../../src/server/services/omp-channels',
+    '../../../src/server/services/omp-sessions',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
     '../../../src/server/websocket-server',
     '../../../src/server/services/speed-test',
-    '../../../src/server/services/model-detector'
+    '../../../src/server/services/model-detector',
+    '../../../src/server/services/omp-auth-providers'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -164,7 +192,7 @@ afterEach(() => {
   });
 });
 
-describe('pi-channels api', () => {
+describe('omp-channels api', () => {
   test('lists all/enabled channels and reports install state with health', () => {
     let router = routerFactory({});
     let handler = findHandler(router, 'get', '/');
@@ -173,8 +201,14 @@ describe('pi-channels api', () => {
 
     expect(res._body.channels).toHaveLength(2);
     expect(res._body.channels[0]).toEqual(expect.objectContaining({
-      id: 'pi-1',
-      health: { id: 'pi-1', healthy: true }
+      id: 'omp-1',
+      providerKey: 'codex',
+      health: { id: 'omp-1', healthy: true }
+    }));
+    expect(res._body.channels[0].ompAuthProvider).toEqual(expect.objectContaining({
+      id: 'openai-codex',
+      loggedIn: true,
+      accountCount: 1
     }));
     expect(res._body.installed).toBe(true);
 
@@ -182,11 +216,11 @@ describe('pi-channels api', () => {
     res = makeRes();
     handler({}, res);
     expect(res._body.channels).toHaveLength(1);
-    expect(res._body.channels[0].id).toBe('pi-1');
+    expect(res._body.channels[0].id).toBe('omp-1');
 
-    isPiInstalled.mockReturnValue(false);
-    delete require.cache[require.resolve('../../../src/server/api/pi-channels')];
-    router = require('../../../src/server/api/pi-channels')({});
+    isOmpInstalled.mockReturnValue(false);
+    delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
+    router = require('../../../src/server/api/omp-channels')({});
     handler = findHandler(router, 'get', '/');
     res = makeRes();
     handler({}, res);
@@ -206,10 +240,10 @@ describe('pi-channels api', () => {
     expect(res._status).toBe(400);
 
     res = makeRes();
-    await handler({ body: { baseUrl: 'https://pi.new/v1', apiKey: 'secret', gatewaySourceType: 'opencode' } }, res);
+    await handler({ body: { baseUrl: 'https://omp.new/v1', apiKey: 'secret', gatewaySourceType: 'opencode' } }, res);
     expect(fetchModelsFromProvider).toHaveBeenCalledWith(
-      { baseUrl: 'https://pi.new/v1', apiKey: 'secret', gatewaySourceType: 'opencode' },
-      'opencode',
+      { baseUrl: 'https://omp.new/v1', apiKey: 'secret', gatewaySourceType: 'opencode' },
+      'openai_compatible',
       expect.objectContaining({ useV1ModelsEndpoint: true, forceRefresh: true })
     );
     expect(res._body).toEqual({
@@ -221,9 +255,9 @@ describe('pi-channels api', () => {
 
     handler = findHandler(router, 'get', '/:channelId/models');
     res = makeRes();
-    await handler({ params: { channelId: 'pi-1' }, query: {} }, res);
+    await handler({ params: { channelId: 'omp-1' }, query: {} }, res);
     expect(probeModelAvailability).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'pi-1' }),
+      expect.objectContaining({ id: 'omp-1' }),
       'codex',
       expect.objectContaining({
         stopOnFirstAvailable: false,
@@ -231,7 +265,7 @@ describe('pi-channels api', () => {
       })
     );
     expect(res._body).toEqual(expect.objectContaining({
-      channelId: 'pi-1',
+      channelId: 'omp-1',
       gatewaySourceType: 'codex',
       models: ['gpt-5', 'gpt-5-mini'],
       supported: true,
@@ -247,45 +281,47 @@ describe('pi-channels api', () => {
     let res = makeRes();
     handler({
       body: {
-        name: 'New Pi',
-        baseUrl: 'https://new.pi/v1',
+        name: 'New OMP',
+        baseUrl: 'https://new.omp/v1',
         apiKey: 'secret',
         wireApi: 'openai',
         providerApi: 'openai-responses',
-        providerKey: 'new-pi',
+        providerKey: 'new-omp',
         gatewaySourceType: 'claude',
         model: 'gpt-5',
+        allowedModels: ['gpt-5', 'gpt-5-mini'],
         balanceToken: 'balance-session',
         balanceUserId: 8899
       }
     }, res);
     expect(createChannel).toHaveBeenCalledWith(
-      'New Pi',
-      'https://new.pi/v1',
+      'New OMP',
+      'https://new.omp/v1',
       'secret',
       expect.objectContaining({
         wireApi: 'openai',
         providerApi: 'openai-responses',
-        providerKey: 'new-pi',
+        providerKey: 'new-omp',
         gatewaySourceType: 'claude',
         model: 'gpt-5',
+        allowedModels: ['gpt-5', 'gpt-5-mini'],
         balanceToken: 'balance-session',
         balanceUserId: 8899
       })
     );
-    expect(res._body).toEqual(expect.objectContaining({ id: 'pi-new' }));
-    expect(broadcastSchedulerState).toHaveBeenCalledWith('pi', { queue: 0 });
+    expect(res._body).toEqual(expect.objectContaining({ id: 'omp-new' }));
+    expect(broadcastSchedulerState).toHaveBeenCalledWith('omp', { queue: 0 });
 
     handler = findHandler(router, 'post', '/order');
     res = makeRes();
-    handler({ body: { order: ['pi-2', 'pi-1'] } }, res);
-    expect(saveChannelOrder).toHaveBeenCalledWith(['pi-2', 'pi-1']);
+    handler({ body: { order: ['omp-2', 'omp-1'] } }, res);
+    expect(saveChannelOrder).toHaveBeenCalledWith(['omp-2', 'omp-1']);
 
     handler = findHandler(router, 'post', '/:channelId/speed-test');
     res = makeRes();
-    await handler({ params: { channelId: 'pi-1' }, body: { timeout: 8000 } }, res);
+    await handler({ params: { channelId: 'omp-1' }, body: { timeout: 8000 } }, res);
     expect(res._body).toEqual(expect.objectContaining({
-      channelId: 'pi-1',
+      channelId: 'omp-1',
       timeout: 8000,
       gatewaySourceType: 'codex'
     }));
@@ -302,30 +338,30 @@ describe('pi-channels api', () => {
     });
     expect(testChannelSpeed).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ id: 'pi-1' }),
+      expect.objectContaining({ id: 'omp-1' }),
       8000,
       'codex',
-      { authSourceType: 'pi' }
+      { authSourceType: 'omp' }
     );
     expect(testChannelSpeed).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ id: 'pi-1' }),
+      expect.objectContaining({ id: 'omp-1' }),
       9000,
       'codex',
-      { authSourceType: 'pi' }
+      { authSourceType: 'omp' }
     );
     expect(testChannelSpeed).toHaveBeenNthCalledWith(
       3,
-      expect.objectContaining({ id: 'pi-2' }),
+      expect.objectContaining({ id: 'omp-2' }),
       9000,
       'gemini',
-      { authSourceType: 'pi' }
+      { authSourceType: 'omp' }
     );
 
     handler = findHandler(router, 'post', '/:channelId/reset-health');
     res = makeRes();
-    handler({ params: { channelId: 'pi-1' } }, res);
-    expect(resetChannelHealth).toHaveBeenCalledWith('pi-1', 'pi');
+    handler({ params: { channelId: 'omp-1' } }, res);
+    expect(resetChannelHealth).toHaveBeenCalledWith('omp-1', 'omp');
     expect(res._body.success).toBe(true);
   });
 });

@@ -70,27 +70,27 @@ describe('loadUIConfig', () => {
     expect(config).toHaveProperty('channelLocks');
   });
 
-  test('preserves Pi when it replaces one homepage column', () => {
+  test('preserves OMP when it replaces one homepage column', () => {
     fs.writeFileSync(testConfigFile, JSON.stringify({
-      homeCliColumns: ['claude', 'pi', 'gemini', 'opencode']
+      homeCliColumns: ['claude', 'omp', 'gemini', 'opencode']
     }), 'utf8');
     delete require.cache[UI_CONFIG_PATH];
     const mod = require('../../../src/server/services/ui-config');
     const config = mod.loadUIConfig();
 
-    expect(config.homeCliColumns).toEqual(['claude', 'pi', 'gemini', 'opencode']);
+    expect(config.homeCliColumns).toEqual(['claude', 'omp', 'gemini', 'opencode']);
     expect(config.dashboardChannelOrder).toEqual(config.homeCliColumns);
   });
 
   test('normalizes illegal and duplicate homepage columns back to four valid slots', () => {
     fs.writeFileSync(testConfigFile, JSON.stringify({
-      homeCliColumns: ['pi', 'pi', 'unknown', 'claude', 'codex']
+      homeCliColumns: ['omp', 'omp', 'unknown', 'claude', 'codex']
     }), 'utf8');
     delete require.cache[UI_CONFIG_PATH];
     const mod = require('../../../src/server/services/ui-config');
     const config = mod.loadUIConfig();
 
-    expect(config.homeCliColumns).toEqual(['pi', 'claude', 'codex', 'gemini']);
+    expect(config.homeCliColumns).toEqual(['omp', 'claude', 'codex', 'gemini']);
     expect(config.homeCliColumns).toHaveLength(4);
   });
 
@@ -100,7 +100,7 @@ describe('loadUIConfig', () => {
         { key: 'my-cli', name: 'My CLI', command: 'my-cli', enabled: true },
         { key: 'off-cli', name: 'Off CLI', command: 'off-cli', enabled: false }
       ],
-      homeCliColumns: ['my-cli', 'off-cli', 'pi', 'claude']
+      homeCliColumns: ['my-cli', 'off-cli', 'omp', 'claude']
     }), 'utf8');
     delete require.cache[UI_CONFIG_PATH];
     const mod = require('../../../src/server/services/ui-config');
@@ -110,7 +110,7 @@ describe('loadUIConfig', () => {
       expect.objectContaining({ key: 'my-cli', name: 'My CLI', command: 'my-cli' }),
       expect.objectContaining({ key: 'off-cli', enabled: false })
     ]);
-    expect(config.homeCliColumns).toEqual(['my-cli', 'pi', 'claude', 'codex']);
+    expect(config.homeCliColumns).toEqual(['my-cli', 'omp', 'claude', 'codex']);
   });
 
   test('returns defaults when file contains invalid JSON', () => {

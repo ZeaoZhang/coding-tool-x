@@ -281,3 +281,26 @@
   font-size: 12px;
   padding-bottom: 0;
 }
+
+.auth-provider-status {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+}
+
+.auth-provider-tags {
+  min-height: 24px;
+}
+
+.auth-provider-message {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--n-text-color-3);
+}
+
+.auth-provider-message.warning {
+  color: #c97a00;
+}

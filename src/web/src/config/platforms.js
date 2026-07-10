@@ -77,7 +77,7 @@ export const BUILT_IN_CLI_PLATFORMS = [
     supportsAgents: true
   },
   {
-    key: 'pi',
+    key: 'omp',
     title: 'OMP',
     label: 'OMP',
     command: 'omp',

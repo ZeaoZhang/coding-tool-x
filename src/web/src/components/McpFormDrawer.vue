@@ -116,7 +116,7 @@
                 <span class="platform-name">OpenCode</span>
               </label>
               <label class="platform-item">
-                <n-switch size="small" v-model:value="formData.apps.pi" />
+                <n-switch size="small" v-model:value="formData.apps.omp" />
                 <span class="platform-name">OMP</span>
               </label>
             </div>
@@ -327,7 +327,7 @@ const formData = reactive({
     codex: false,
     gemini: false,
     opencode: false,
-    pi: false
+    omp: false
   },
   server: {
     type: 'stdio',
@@ -426,7 +426,7 @@ function resetForm() {
   formData.description = ''
   formData.homepage = ''
   formData.docs = ''
-  formData.apps = { claude: true, codex: false, gemini: false, opencode: false, pi: false }
+  formData.apps = { claude: true, codex: false, gemini: false, opencode: false, omp: false }
   formData.server = {
     type: 'stdio',
     command: '',
@@ -451,7 +451,7 @@ function fillEditingData() {
   formData.description = server.description || ''
   formData.homepage = server.homepage || ''
   formData.docs = server.docs || ''
-  formData.apps = { claude: true, codex: false, gemini: false, opencode: false, pi: false, ...server.apps }
+  formData.apps = { claude: true, codex: false, gemini: false, opencode: false, omp: false, ...server.apps }
   tagsInput.value = (server.tags || []).join(', ')
 
   if (server.server) {

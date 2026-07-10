@@ -4,8 +4,8 @@ const {
   getProjects,
   saveProjectOrder,
   deleteProject,
-  isPiInstalled
-} = require('../services/pi-sessions');
+  isOmpInstalled
+} = require('../services/omp-sessions');
 
 function isNotFoundError(error) {
   return !!(error && error.message === 'Project not found');
@@ -14,7 +14,7 @@ function isNotFoundError(error) {
 module.exports = () => {
   router.get('/', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.json({
           projects: [],
           currentProject: null,
@@ -41,7 +41,7 @@ module.exports = () => {
 
   router.post('/order', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { order } = req.body || {};
@@ -58,7 +58,7 @@ module.exports = () => {
 
   router.delete('/:projectName', (req, res) => {
     try {
-      if (!isPiInstalled()) {
+      if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const result = deleteProject(req.params.projectName);

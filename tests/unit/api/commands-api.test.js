@@ -9,7 +9,7 @@ beforeEach(() => {
     codex: createMockService(),
     gemini: createMockService(),
     opencode: createMockService(),
-    pi: createMockService()
+    omp: createMockService()
   };
 
   const CommandsServiceStub = function(platform = 'claude') {
@@ -137,13 +137,13 @@ describe('commands api basic routes', () => {
     expect(services.claude.listCommands).not.toHaveBeenCalled();
   });
 
-  test('lists commands for Pi/OMP commands', async () => {
-    const res = await request(buildApp()).get('/?platform=pi&projectPath=/tmp/project');
+  test('lists commands for OMP/OMP commands', async () => {
+    const res = await request(buildApp()).get('/?platform=omp&projectPath=/tmp/project');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.platform).toBe('pi');
-    expect(services.pi.listCommands).toHaveBeenCalledWith('/tmp/project');
+    expect(res.body.platform).toBe('omp');
+    expect(services.omp.listCommands).toHaveBeenCalledWith('/tmp/project');
     expect(services.claude.listCommands).not.toHaveBeenCalled();
   });
 

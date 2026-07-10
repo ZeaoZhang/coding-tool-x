@@ -68,7 +68,7 @@ const BUILT_IN_CLI_PLATFORMS = [
     supportsAgents: true
   },
   {
-    key: 'pi',
+    key: 'omp',
     title: 'OMP',
     label: 'OMP',
     command: 'omp',
@@ -88,17 +88,21 @@ const BUILT_IN_CLI_PLATFORMS = [
 
 const DEFAULT_HOME_CLI_COLUMNS = ['claude', 'codex', 'gemini', 'opencode'];
 const MAX_HOME_CLI_COLUMNS = 4;
+function normalizePlatformKey(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
 
 function getBuiltInPlatformKeys() {
   return BUILT_IN_CLI_PLATFORMS.map(platform => platform.key);
 }
 
 function getPlatformDefinition(key) {
-  return BUILT_IN_CLI_PLATFORMS.find(platform => platform.key === key) || null;
+  const normalizedKey = normalizePlatformKey(key);
+  return BUILT_IN_CLI_PLATFORMS.find(platform => platform.key === normalizedKey) || null;
 }
 
 function normalizeCustomCliPlatform(input = {}) {
-  const rawKey = String(input.key || '').trim().toLowerCase();
+  const rawKey = normalizePlatformKey(input.key);
   const key = rawKey
     .replace(/[^a-z0-9_-]/g, '-')
     .replace(/-+/g, '-')
@@ -164,7 +168,7 @@ function normalizeHomeCliColumns(input = [], customCliPlatforms = []) {
 
   if (Array.isArray(input)) {
     input.forEach((value) => {
-      const key = String(value || '').trim().toLowerCase();
+      const key = normalizePlatformKey(value);
       if (!key || result.includes(key) || !allowed(key)) {
         return;
       }
@@ -190,6 +194,7 @@ module.exports = {
   MAX_HOME_CLI_COLUMNS,
   getBuiltInPlatformKeys,
   getPlatformDefinition,
+  normalizePlatformKey,
   normalizeCustomCliPlatform,
   normalizeCustomCliPlatforms,
   normalizeHomeCliColumns

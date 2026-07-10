@@ -15,28 +15,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
       codex: [],
       gemini: [],
       opencode: [],
-      pi: []
+      omp: []
     },
     proxyStatus: {
       claude: {},
       codex: {},
       gemini: {},
       opencode: {},
-      pi: {}
+      omp: {}
     },
     todayStats: {
       claude: emptyStats(),
       codex: emptyStats(),
       gemini: emptyStats(),
       opencode: emptyStats(),
-      pi: emptyStats()
+      omp: emptyStats()
     },
     counts: {
       claude: emptyCounts(),
       codex: emptyCounts(),
       gemini: emptyCounts(),
       opencode: emptyCounts(),
-      pi: emptyCounts()
+      omp: emptyCounts()
     }
   })
 
@@ -97,28 +97,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
             codex: data.channels?.codex || [],
             gemini: data.channels?.gemini || [],
             opencode: data.channels?.opencode || [],
-            pi: data.channels?.pi || []
+            omp: data.channels?.omp || []
           },
           proxyStatus: {
             claude: data.proxyStatus?.claude || {},
             codex: data.proxyStatus?.codex || {},
             gemini: data.proxyStatus?.gemini || {},
             opencode: data.proxyStatus?.opencode || {},
-            pi: data.proxyStatus?.pi || {}
+            omp: data.proxyStatus?.omp || {}
           },
           todayStats: {
             claude: formatStats(data.todayStats?.claude),
             codex: formatStats(data.todayStats?.codex),
             gemini: formatStats(data.todayStats?.gemini),
             opencode: formatStats(data.todayStats?.opencode),
-            pi: formatStats(data.todayStats?.pi)
+            omp: formatStats(data.todayStats?.omp)
           },
           counts: {
             claude: data.counts?.claude || emptyCounts(),
             codex: data.counts?.codex || emptyCounts(),
             gemini: data.counts?.gemini || emptyCounts(),
             opencode: data.counts?.opencode || emptyCounts(),
-            pi: data.counts?.pi || emptyCounts()
+            omp: data.counts?.omp || emptyCounts()
           }
         }
 
@@ -150,9 +150,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeChannels()
         if (response.success) dashboardData.value.channels.opencode = response.channels
-      } else if (channelType === 'pi') {
-        const response = await api.getPiChannels()
-        if (response.success) dashboardData.value.channels.pi = response.channels
+      } else if (channelType === 'omp') {
+        const response = await api.getOmpChannels()
+        if (response.success) dashboardData.value.channels.omp = response.channels
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} channels:`, err)
@@ -173,9 +173,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeProxyStatus()
         if (response.success) dashboardData.value.proxyStatus.opencode = response
-      } else if (channelType === 'pi') {
-        const response = await api.getPiProxyStatus()
-        if (response.success) dashboardData.value.proxyStatus.pi = response
+      } else if (channelType === 'omp') {
+        const response = await api.getOmpProxyStatus()
+        if (response.success) dashboardData.value.proxyStatus.omp = response
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} proxy status:`, err)
@@ -206,9 +206,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
       } else if (channelType === 'opencode') {
         const response = await api.getOpenCodeTodayStatistics()
         dashboardData.value.todayStats.opencode = parseStats(response)
-      } else if (channelType === 'pi') {
-        const response = await api.getPiTodayStatistics()
-        dashboardData.value.todayStats.pi = parseStats(response)
+      } else if (channelType === 'omp') {
+        const response = await api.getOmpTodayStatistics()
+        dashboardData.value.todayStats.omp = parseStats(response)
       }
     } catch (err) {
       console.error(`Failed to refresh ${channelType} stats:`, err)

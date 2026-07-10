@@ -16,7 +16,7 @@ beforeEach(() => {
     codex: createMockService(),
     gemini: createMockService(),
     opencode: createMockService(),
-    pi: createMockService()
+    omp: createMockService()
   };
 
   // Stub skill-service module before requiring the router
@@ -151,16 +151,16 @@ describe('GET /', () => {
     expect(res.body.success).toBe(false);
   });
 
-  test('routes Pi skills to the Pi service instance', async () => {
-    services.pi.listSkills.mockResolvedValue([{ name: 'pi-skill', installed: true }]);
+  test('routes OMP skills to the OMP service instance', async () => {
+    services.omp.listSkills.mockResolvedValue([{ name: 'omp-skill', installed: true }]);
     const app = buildApp();
-    const res = await request(app).get('/?platform=pi');
+    const res = await request(app).get('/?platform=omp');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.platform).toBe('pi');
+    expect(res.body.platform).toBe('omp');
     expect(res.body.installed).toBe(1);
-    expect(services.pi.listSkills).toHaveBeenCalled();
+    expect(services.omp.listSkills).toHaveBeenCalled();
     expect(services.claude.listSkills).not.toHaveBeenCalled();
   });
 });

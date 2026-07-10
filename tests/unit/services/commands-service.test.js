@@ -17,7 +17,7 @@ function stubModules() {
         codex: { config: path.join(testDir, '.codex', 'config.toml') },
         gemini: { dir: path.join(testDir, '.gemini') },
         opencode: { config: path.join(testDir, 'opencode-config') },
-        pi: {
+        omp: {
           dir: path.join(testDir, '.omp', 'agent'),
           commands: path.join(testDir, '.omp', 'agent', 'commands')
         }
@@ -302,10 +302,10 @@ describe('CommandsService local command management', () => {
     expect(service.getCommand('local', 'project', projectPath, 'team')).toBeNull();
   });
 
-  test('Pi commands use OMP markdown commands without Claude metadata', () => {
+  test('OMP commands use OMP markdown commands without Claude metadata', () => {
     const { CommandsService } = require('../../../src/server/services/commands-service');
-    const service = new CommandsService('pi');
-    const projectPath = path.join(testDir, 'project-pi');
+    const service = new CommandsService('omp');
+    const projectPath = path.join(testDir, 'project-omp');
 
     const created = service.createCommand({
       name: 'review',
@@ -313,7 +313,7 @@ describe('CommandsService local command management', () => {
       description: 'Review code',
       allowedTools: 'Read,Edit',
       argumentHint: 'file',
-      model: 'pi-model',
+      model: 'omp-model',
       body: 'Review this'
     });
     const projectCommand = service.createCommand({

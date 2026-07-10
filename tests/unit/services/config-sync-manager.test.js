@@ -59,7 +59,7 @@ beforeEach(() => {
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
         },
-        pi: {
+        omp: {
           dir: path.join(testDir, '.omp', 'agent'),
           skills: path.join(testDir, '.omp', 'agent', 'skills'),
           commands: path.join(testDir, '.omp', 'agent', 'commands'),
@@ -200,17 +200,17 @@ describe('ConfigSyncManager direct sync helpers', () => {
     expect(fs.existsSync(agentTarget)).toBe(false);
   });
 
-  test('syncToPi maps skills, commands, and plugins while skipping native agents', () => {
+  test('syncToOmp maps skills, commands, and plugins while skipping native agents', () => {
     writeFile(path.join(configsDir, 'skills', 'review-skill', 'SKILL.md'), '# Skill');
     writeFile(path.join(configsDir, 'commands', 'team', 'review.md'), 'Review this');
     writeFile(path.join(configsDir, 'plugins', 'demo-extension', 'index.ts'), 'export default {}');
     writeFile(path.join(configsDir, 'agents', 'reviewer.md'), '# Agent');
     const manager = new ConfigSyncManager();
 
-    const skillResult = manager.syncToPi('skills', 'review-skill');
-    const commandResult = manager.syncToPi('commands', 'team/review.md');
-    const pluginResult = manager.syncToPi('plugins', 'demo-extension');
-    const agentResult = manager.syncToPi('agents', 'reviewer.md');
+    const skillResult = manager.syncToOmp('skills', 'review-skill');
+    const commandResult = manager.syncToOmp('commands', 'team/review.md');
+    const pluginResult = manager.syncToOmp('plugins', 'demo-extension');
+    const agentResult = manager.syncToOmp('agents', 'reviewer.md');
 
     const skillTarget = path.join(testDir, '.omp', 'agent', 'skills', 'review-skill');
     const commandTarget = path.join(testDir, '.omp', 'agent', 'commands', 'team', 'review.md');
@@ -224,8 +224,8 @@ describe('ConfigSyncManager direct sync helpers', () => {
     expect(fs.readFileSync(commandTarget, 'utf8')).toBe('Review this');
     expect(fs.readFileSync(path.join(pluginTarget, 'index.ts'), 'utf8')).toBe('export default {}');
 
-    expect(manager.removeFromPi('commands', 'team/review.md')).toEqual({ success: true });
-    expect(manager.removeFromPi('plugins', 'demo-extension')).toEqual({ success: true });
+    expect(manager.removeFromOmp('commands', 'team/review.md')).toEqual({ success: true });
+    expect(manager.removeFromOmp('plugins', 'demo-extension')).toEqual({ success: true });
     expect(fs.existsSync(commandTarget)).toBe(false);
     expect(fs.existsSync(pluginTarget)).toBe(false);
   });
@@ -238,21 +238,21 @@ describe('ConfigSyncManager aggregation', () => {
     vi.spyOn(manager, 'syncToCodex').mockReturnValue({ success: true, warnings: ['converted'] });
     vi.spyOn(manager, 'syncToGemini').mockReturnValue({ success: false, error: 'missing source' });
     vi.spyOn(manager, 'syncToOpenCode').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'syncToPi').mockReturnValue({ success: true });
+    vi.spyOn(manager, 'syncToOmp').mockReturnValue({ success: true });
     vi.spyOn(manager, 'removeFromClaude').mockReturnValue({ success: true });
     vi.spyOn(manager, 'removeFromCodex').mockReturnValue({ success: true, message: 'Already removed' });
     vi.spyOn(manager, 'removeFromGemini').mockReturnValue({ success: true, skipped: true });
     vi.spyOn(manager, 'removeFromOpenCode').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'removeFromPi').mockReturnValue({ success: true, skipped: true });
+    vi.spyOn(manager, 'removeFromOmp').mockReturnValue({ success: true, skipped: true });
 
     const result = manager.syncAll('skills', {
       alpha: {
         enabled: true,
-        platforms: { claude: true, codex: true, gemini: true, opencode: true, pi: true }
+        platforms: { claude: true, codex: true, gemini: true, opencode: true, omp: true }
       },
       beta: {
         enabled: false,
-        platforms: { claude: true, codex: false, gemini: false, opencode: false, pi: false }
+        platforms: { claude: true, codex: false, gemini: false, opencode: false, omp: false }
       }
     });
 
@@ -260,7 +260,7 @@ describe('ConfigSyncManager aggregation', () => {
       { type: 'skills', name: 'alpha', platform: 'claude' },
       { type: 'skills', name: 'alpha', platform: 'codex' },
       { type: 'skills', name: 'alpha', platform: 'opencode' },
-      { type: 'skills', name: 'alpha', platform: 'pi' }
+      { type: 'skills', name: 'alpha', platform: 'omp' }
     ]);
     expect(result.removed).toEqual([
       { type: 'skills', name: 'beta', platform: 'claude' },

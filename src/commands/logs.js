@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { PATHS } = require('../config/paths');
+const { normalizePlatformKey } = require('../shared/platforms');
 
 const LOGS_DIR = PATHS.logs;
 
@@ -13,6 +14,32 @@ const LOG_FILES = {
   gemini: 'gemini-proxy.log',
   opencode: 'opencode-proxy.log'
 };
+const LOG_ALIASES = {
+  omp: 'ui'
+};
+const LOG_ALIAS_NOTES = {
+  omp: 'OMP 受管 provider 配置没有独立请求代理日志，相关活动记录在 UI/server 日志中。'
+};
+
+function getSupportedLogTypes() {
+  return [...Object.keys(LOG_FILES), 'omp'];
+}
+
+function resolveLogType(type) {
+  const normalized = normalizePlatformKey(type);
+  if (!normalized) {
+    return { requestedType: type, type: null, file: null, note: null };
+  }
+  const aliasTarget = LOG_ALIASES[normalized];
+  const resolvedType = aliasTarget || normalized;
+  return {
+    requestedType: type,
+    normalizedType: normalized,
+    type: resolvedType,
+    file: LOG_FILES[resolvedType] || null,
+    note: LOG_ALIAS_NOTES[normalized] || null
+  };
+}
 
 /**
  * 确保日志目录存在
@@ -44,11 +71,15 @@ async function handleLogs(type = null, options = {}) {
   }
 
   // 显示特定类型的日志
-  const logFile = LOG_FILES[type];
+  const resolved = resolveLogType(type);
+  const logFile = resolved.file;
   if (!logFile) {
     console.error(chalk.red(`\n[ERROR] 无效的日志类型: ${type}\n`));
-    console.log(chalk.gray('支持的类型: ui, claude, codex, gemini, opencode\n'));
+    console.log(chalk.gray(`支持的类型: ${getSupportedLogTypes().join(', ')}\n`));
     process.exit(1);
+  }
+  if (resolved.note) {
+    console.log(chalk.yellow(`\n[INFO] ${resolved.note}\n`));
   }
 
   const logPath = path.join(LOGS_DIR, logFile);
@@ -60,7 +91,7 @@ async function handleLogs(type = null, options = {}) {
     return;
   }
 
-  console.log(chalk.cyan(`\n[LOG] ${type.toUpperCase()} 日志 ${follow ? '(实时)' : `(最近 ${lines} 行)`}\n`));
+  console.log(chalk.cyan(`\n[LOG] ${String(type).toUpperCase()} 日志 ${follow ? '(实时)' : `(最近 ${lines} 行)`}\n`));
   console.log(chalk.gray(`=`.repeat(60)) + '\n');
 
   if (follow) {
@@ -116,7 +147,7 @@ function showAllLogs(lines, follow) {
   });
 
   console.log(chalk.gray(`\n=`.repeat(60)));
-  console.log(chalk.gray(`\n[TIP] 使用 `) + chalk.cyan(`ctx logs ${Object.keys(LOG_FILES).join('|')}`) + chalk.gray(` 查看特定类型日志\n`));
+  console.log(chalk.gray(`\n[TIP] 使用 `) + chalk.cyan(`ctx logs ${getSupportedLogTypes().join('|')}`) + chalk.gray(` 查看特定类型日志\n`));
 }
 
 /**
@@ -226,10 +257,17 @@ function clearLogs(type) {
     console.log(chalk.green(`\n[OK] 共清空 ${cleared} 个日志文件\n`));
   } else {
     // 清空特定类型日志
-    const logFile = LOG_FILES[type];
+    const resolved = resolveLogType(type);
+    const logFile = resolved.file;
     if (!logFile) {
       console.error(chalk.red(`\n[ERROR] 无效的日志类型: ${type}\n`));
+      console.log(chalk.gray(`支持的类型: ${getSupportedLogTypes().join(', ')}\n`));
       process.exit(1);
+    }
+    if (resolved.note) {
+      console.log(chalk.yellow(`\n[INFO] ${resolved.note}`));
+      console.log(chalk.gray('如需清空该日志，请使用 ctx logs ui --clear。\n'));
+      return;
     }
 
     const logPath = path.join(LOGS_DIR, logFile);
@@ -289,6 +327,8 @@ function getTypeColor(type) {
 module.exports = {
   handleLogs,
   _test: {
-    buildFollowProcessSpec
+    buildFollowProcessSpec,
+    getSupportedLogTypes,
+    resolveLogType
   }
 };

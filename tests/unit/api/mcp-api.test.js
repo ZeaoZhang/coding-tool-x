@@ -16,7 +16,7 @@ beforeEach(() => {
     toggleServerApp: vi.fn(async (id, app, enabled) => ({ id, apps: { [app]: enabled } })),
     getPresets: vi.fn(() => [{ id: 'fetch', name: 'Fetch' }]),
     importFromPlatform: vi.fn(async () => 2),
-    getStats: vi.fn(() => ({ total: 1, claude: 1, codex: 0, gemini: 0, opencode: 0, pi: 0 })),
+    getStats: vi.fn(() => ({ total: 1, claude: 1, codex: 0, gemini: 0, opencode: 0, omp: 0 })),
     testServer: vi.fn(async () => ({ success: true, message: 'ok' })),
     updateServerStatus: vi.fn(async () => ({ success: true })),
     updateServerOrder: vi.fn((serverIds) => ({ fetch: { order: serverIds.indexOf('fetch') } })),
@@ -201,11 +201,11 @@ describe('POST /servers/:id/toggle', () => {
   });
 
   test('accepts OMP platform toggles', async () => {
-    const res = await request(buildApp()).post('/servers/fetch/toggle', { app: 'pi', enabled: true });
+    const res = await request(buildApp()).post('/servers/fetch/toggle', { app: 'omp', enabled: true });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(mockService.toggleServerApp).toHaveBeenCalledWith('fetch', 'pi', true);
+    expect(mockService.toggleServerApp).toHaveBeenCalledWith('fetch', 'omp', true);
   });
 });
 
@@ -234,11 +234,11 @@ describe('GET /presets and POST /import/:platform', () => {
   });
 
   test('imports OMP platform configs', async () => {
-    const res = await request(buildApp()).post('/import/pi', {});
+    const res = await request(buildApp()).post('/import/omp', {});
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(mockService.importFromPlatform).toHaveBeenCalledWith('pi');
+    expect(mockService.importFromPlatform).toHaveBeenCalledWith('omp');
   });
 });
 
@@ -311,12 +311,12 @@ describe('GET /export and /export/download', () => {
   test('returns export payload for Gemini and OMP formats', async () => {
     const app = buildApp();
     const geminiRes = await request(app).get('/export?format=gemini');
-    const ompRes = await request(app).get('/export?format=pi');
+    const ompRes = await request(app).get('/export?format=omp');
 
     expect(geminiRes.status).toBe(200);
     expect(ompRes.status).toBe(200);
     expect(mockService.exportServers).toHaveBeenCalledWith('gemini');
-    expect(mockService.exportServers).toHaveBeenCalledWith('pi');
+    expect(mockService.exportServers).toHaveBeenCalledWith('omp');
   });
 
   test('download returns codex content with toml content-type', async () => {

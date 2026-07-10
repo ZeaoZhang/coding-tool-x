@@ -28,8 +28,8 @@ const OPENCODE_CONFIG_PATHS = {
   json: path.join(OPENCODE_CONFIG_DIR, 'opencode.json'),
   legacy: path.join(OPENCODE_CONFIG_DIR, 'config.json')
 };
-const PI_MCP_CONFIG_PATH = NATIVE_PATHS.pi?.mcp
-  || path.join(NATIVE_PATHS.pi?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'mcp.json');
+const OMP_MCP_CONFIG_PATH = NATIVE_PATHS.omp?.mcp
+  || path.join(NATIVE_PATHS.omp?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'mcp.json');
 
 // MCP 客户端连接池
 // serverId -> { client, timestamp }
@@ -38,8 +38,8 @@ const POOL_TTL = 5 * 60 * 1000; // 5 minutes
 const STREAMABLE_HTTP_TYPE = 'streamable_http';
 const MCP_SERVER_TYPES = ['stdio', STREAMABLE_HTTP_TYPE, 'sse'];
 const REMOTE_MCP_SERVER_TYPES = [STREAMABLE_HTTP_TYPE, 'sse'];
-const MCP_PLATFORM_KEYS = ['claude', 'codex', 'gemini', 'opencode', 'pi'];
-const OMP_MCP_SCHEMA_URL = 'https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json';
+const MCP_PLATFORM_KEYS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const OMP_MCP_SCHEMA_URL = 'https://raw.githubusercontent.com/can1357/oh-my-omp/main/packages/coding-agent/src/config/mcp-schema.json';
 const OMP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/;
 
 function normalizeServerSpec(spec = {}) {
@@ -538,7 +538,7 @@ const DEFAULT_SERVER_APPS = {
   codex: false,
   gemini: false,
   opencode: false,
-  pi: false
+  omp: false
 };
 
 function normalizeServerApps(apps = {}, fallbackApps = DEFAULT_SERVER_APPS) {
@@ -547,7 +547,7 @@ function normalizeServerApps(apps = {}, fallbackApps = DEFAULT_SERVER_APPS) {
     codex: apps.codex !== undefined ? !!apps.codex : !!fallbackApps.codex,
     gemini: apps.gemini !== undefined ? !!apps.gemini : !!fallbackApps.gemini,
     opencode: apps.opencode !== undefined ? !!apps.opencode : !!fallbackApps.opencode,
-    pi: apps.pi !== undefined ? !!apps.pi : !!fallbackApps.pi
+    omp: apps.omp !== undefined ? !!apps.omp: !!fallbackApps.omp
   };
 }
 
@@ -763,7 +763,7 @@ async function syncServerToPlatform(server, platform) {
       case 'opencode':
         syncToOpenCodeConfig(server);
         break;
-      case 'pi':
+      case 'omp':
         syncToOmpMcpConfig(server);
         break;
     }
@@ -792,7 +792,7 @@ async function removeServerFromPlatform(serverId, platform) {
       case 'opencode':
         removeFromOpenCodeConfig(serverId);
         break;
-      case 'pi':
+      case 'omp':
         removeFromOmpMcpConfig(serverId);
         break;
     }
@@ -954,7 +954,7 @@ function validateOmpServerName(serverId) {
 }
 
 function readOmpMcpConfig() {
-  const config = readJsonFile(PI_MCP_CONFIG_PATH, { mcpServers: {} });
+  const config = readJsonFile(OMP_MCP_CONFIG_PATH, { mcpServers: {} });
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     return { mcpServers: {} };
   }
@@ -1059,14 +1059,14 @@ function syncToOmpMcpConfig(server) {
   validateOmpServerName(server.id);
   const config = readOmpMcpConfig();
   config.mcpServers[server.id] = convertToOmpMcpFormat(server.server);
-  writeJsonFile(PI_MCP_CONFIG_PATH, config);
+  writeJsonFile(OMP_MCP_CONFIG_PATH, config);
 }
 
 function removeFromOmpMcpConfig(serverId) {
   const config = readOmpMcpConfig();
   if (config.mcpServers && config.mcpServers[serverId]) {
     delete config.mcpServers[serverId];
-    writeJsonFile(PI_MCP_CONFIG_PATH, config);
+    writeJsonFile(OMP_MCP_CONFIG_PATH, config);
   }
 }
 
@@ -1231,7 +1231,7 @@ async function importFromPlatform(platform) {
     case 'opencode':
       importedCount = importFromOpenCode(servers);
       break;
-    case 'pi':
+    case 'omp':
       importedCount = importFromOmp(servers);
       break;
     default:
@@ -1389,8 +1389,8 @@ function importFromOmp(servers) {
 
     if (servers[id]) {
       servers[id].apps = normalizeServerApps(servers[id].apps);
-      if (!servers[id].apps.pi) {
-        servers[id].apps.pi = true;
+      if (!servers[id].apps.omp) {
+        servers[id].apps.omp = true;
         count++;
       }
     } else {
@@ -1398,7 +1398,7 @@ function importFromOmp(servers) {
         id,
         name: id,
         server: convertedSpec,
-        apps: { claude: false, codex: false, gemini: false, opencode: false, pi: true },
+        apps: { claude: false, codex: false, gemini: false, opencode: false, omp: true },
         createdAt: Date.now(),
         updatedAt: Date.now()
       };
@@ -1471,7 +1471,7 @@ function getStats() {
     codex: serverList.filter(s => s.apps?.codex).length,
     gemini: serverList.filter(s => s.apps?.gemini).length,
     opencode: serverList.filter(s => s.apps?.opencode).length,
-    pi: serverList.filter(s => s.apps?.pi).length
+    omp: serverList.filter(s => s.apps?.omp).length
   };
 }
 
@@ -1923,7 +1923,7 @@ function updateServerOrder(serverIds) {
 
 /**
  * 导出所有 MCP 配置
- * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode' | 'gemini' | 'pi'
+ * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode' | 'gemini' | 'omp'
  */
 function exportServers(format = 'json') {
   const servers = getAllServers();
@@ -1937,7 +1937,7 @@ function exportServers(format = 'json') {
       return exportForOpenCode(servers);
     case 'gemini':
       return exportForGemini(servers);
-    case 'pi':
+    case 'omp':
       return exportForOmp(servers);
     case 'json':
     default:
@@ -2045,14 +2045,14 @@ function exportForOmp(servers) {
   const mcpServers = {};
 
   for (const [id, server] of Object.entries(servers)) {
-    if (server.apps?.pi) {
+    if (server.apps?.omp) {
       validateOmpServerName(id);
       mcpServers[id] = convertToOmpMcpFormat(server.server);
     }
   }
 
   return {
-    format: 'pi',
+    format: 'omp',
     content: JSON.stringify({ $schema: OMP_MCP_SCHEMA_URL, mcpServers }, null, 2),
     filename: 'omp-mcp-config.json'
   };

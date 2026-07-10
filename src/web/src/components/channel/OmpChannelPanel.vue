@@ -1,5 +1,5 @@
 <template>
-  <BaseChannelPanel ref="baseRef" type="pi" @open-website="url => emit('open-website', url)" />
+  <BaseChannelPanel ref="baseRef" type="omp" @open-website="url => emit('open-website', url)" />
 </template>
 
 <script setup>

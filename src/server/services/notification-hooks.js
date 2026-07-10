@@ -13,6 +13,7 @@ const geminiSettingsManager = require('./gemini-settings-manager');
 
 const MANAGED_HOOK_NAME = 'coding-tool-notify';
 const MANAGED_OPENCODE_PLUGIN_FILE = 'coding-tool-notify.js';
+const MANAGED_OMP_EXTENSION_FILE = 'coding-tool-notify.ts';
 const REMOTE_PROVIDER_TYPES = [
   'wechatBot',
   'qqBot',
@@ -371,6 +372,13 @@ function getOpenCodeManagedPluginPath() {
   return path.join(NATIVE_PATHS.opencode.config, 'plugins', MANAGED_OPENCODE_PLUGIN_FILE);
 }
 
+function getOmpManagedExtensionPath() {
+  const ompPaths = NATIVE_PATHS.omp || {};
+  const extensionsDir = ompPaths.extensions ||
+    path.join(ompPaths.dir || path.dirname(ompPaths.settings || PATHS.notifyHook), 'extensions');
+  return path.join(extensionsDir, MANAGED_OMP_EXTENSION_FILE);
+}
+
 function buildOpenCodePluginContent(type) {
   const mode = normalizeType(type);
   return `// Managed by Coding Tool. Do not edit manually.
@@ -407,6 +415,64 @@ export const CodingToolNotifyPlugin = async () => ({
     }
   }
 })
+`;
+}
+
+function buildOmpExtensionContent(type) {
+  const mode = normalizeType(type);
+  return `// Managed by Coding Tool. Do not edit manually.
+// mode:${mode}
+import { spawn } from 'node:child_process'
+
+const SCRIPT_PATH = ${JSON.stringify(PATHS.notifyHook)}
+const MODE = ${JSON.stringify(mode)}
+let lastFireAt = 0
+
+function shouldFire() {
+  const now = Date.now()
+  if (now - lastFireAt < 1000) {
+    return false
+  }
+  lastFireAt = now
+  return true
+}
+
+function fire(eventType) {
+  if (!shouldFire()) {
+    return
+  }
+
+  try {
+    const child = spawn('node', [
+      SCRIPT_PATH,
+      '--source=omp',
+      \`--mode=\${MODE}\`,
+      \`--cc-notify-type=\${MODE}\`,
+      \`--event-type=\${eventType}\`
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    })
+    child.unref()
+  } catch (error) {
+    // Ignore notification failures.
+  }
+}
+
+export default async function CodingToolNotifyExtension(omp) {
+  const register = (eventName) => {
+    if (typeof omp?.on !== 'function') {
+      return
+    }
+    omp.on(eventName, async () => {
+      fire(eventName)
+    })
+  }
+
+  register('agent_settled')
+  register('turn_end')
+}
 `;
 }
 
@@ -712,6 +778,10 @@ function resolveMessage(source, eventType, payload) {
     return 'OpenCode 响应已完成 | 等待交互'
   }
 
+  if (source === 'omp') {
+    return 'OMP 回合已完成 | 等待交互'
+  }
+
   return 'Claude Code 任务已完成 | 等待交互'
 }
 
@@ -886,12 +956,17 @@ function sendTelegramMessage(config = {}, ctx, send = postJson) {
   return send(url, payload, {}, agent ? { agent } : {})
 }
 
+function resolveDisplaySource(source) {
+  if (source === 'omp') return 'OMP'
+  return source
+}
+
 function buildNotificationContext(message, source, eventType) {
   const timestamp = new Date().toLocaleString('zh-CN')
   return {
     title: 'Coding Tool - 通知',
     message,
-    source,
+    source: resolveDisplaySource(source),
     eventType,
     timestamp,
     hostname: os.hostname()
@@ -1545,6 +1620,24 @@ function parseOpenCodeNotificationStatus(content = '') {
   };
 }
 
+function parseOmpNotificationStatus(content = '') {
+  if (!content) {
+    return {
+      enabled: false,
+      external: false,
+      type: 'notification',
+      method: 'Extension Events'
+    };
+  }
+
+  return {
+    enabled: true,
+    external: false,
+    type: parseManagedType(content) || 'notification',
+    method: 'Extension Events'
+  };
+}
+
 function getOpenCodeHookStatus() {
   const pluginPath = getOpenCodeManagedPluginPath();
   if (!fs.existsSync(pluginPath)) {
@@ -1552,6 +1645,15 @@ function getOpenCodeHookStatus() {
   }
 
   return parseOpenCodeNotificationStatus(fs.readFileSync(pluginPath, 'utf8'));
+}
+
+function getOmpHookStatus() {
+  const extensionPath = getOmpManagedExtensionPath();
+  if (!fs.existsSync(extensionPath)) {
+    return parseOmpNotificationStatus('');
+  }
+
+  return parseOmpNotificationStatus(fs.readFileSync(extensionPath, 'utf8'));
 }
 
 function saveOpenCodeHook(enabled, type) {
@@ -1608,6 +1710,20 @@ function saveOpenCodeHook(enabled, type) {
   }
 }
 
+function saveOmpHook(enabled, type) {
+  const extensionPath = getOmpManagedExtensionPath();
+
+  if (!enabled) {
+    if (fs.existsSync(extensionPath)) {
+      fs.unlinkSync(extensionPath);
+    }
+    return;
+  }
+
+  ensureParentDir(extensionPath);
+  fs.writeFileSync(extensionPath, buildOmpExtensionContent(type), 'utf8');
+}
+
 function getNotificationSettings() {
   const uiConfig = loadUIConfig();
   const remoteNotifications = getRemoteNotificationsConfig(uiConfig);
@@ -1623,7 +1739,8 @@ function getNotificationSettings() {
       claude: getClaudeHookStatus(),
       codex: getCodexHookStatus(),
       gemini: getGeminiHookStatus(),
-      opencode: getOpenCodeHookStatus()
+      opencode: getOpenCodeHookStatus(),
+      omp: getOmpHookStatus()
     }
   };
 }
@@ -1643,6 +1760,8 @@ function resolveBrowserNotificationTitle(source = 'claude') {
       return 'Gemini CLI';
     case 'opencode':
       return 'OpenCode';
+    case 'omp':
+      return 'OMP';
     default:
       return 'Claude Code';
   }
@@ -1656,6 +1775,8 @@ function resolveBrowserNotificationUrl(source = 'claude') {
       return '/gemini';
     case 'opencode':
       return '/opencode';
+    case 'omp':
+      return '/omp';
     default:
       return '/claude';
   }
@@ -1694,7 +1815,8 @@ function saveNotificationSettings(input = {}) {
     claude: normalizePlatformInput(input?.platforms?.claude),
     codex: normalizePlatformInput(input?.platforms?.codex),
     gemini: normalizePlatformInput(input?.platforms?.gemini),
-    opencode: normalizePlatformInput(input?.platforms?.opencode)
+    opencode: normalizePlatformInput(input?.platforms?.opencode),
+    omp: normalizePlatformInput(input?.platforms?.omp)
   };
 
   saveNotificationUiConfig(remoteNotifications, platforms.claude.enabled);
@@ -1708,6 +1830,7 @@ function saveNotificationSettings(input = {}) {
   saveCodexHook(platforms.codex.enabled, platforms.codex.type);
   saveGeminiHook(platforms.gemini.enabled, platforms.gemini.type);
   saveOpenCodeHook(platforms.opencode.enabled, platforms.opencode.type);
+  saveOmpHook(platforms.omp.enabled, platforms.omp.type);
 
   if (!hasManagedPlatform) {
     removeNotifyScript();
@@ -1834,7 +1957,8 @@ function buildLegacyClaudeSaveInput(input = {}, currentSettings = getNotificatio
         : { enabled: false, type: 'notification' },
       codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
       gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
-      opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
+      opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode),
+      omp: normalizeSavedPlatformStatus(currentSettings?.platforms?.omp)
     },
     remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
   };
@@ -1873,7 +1997,8 @@ function initDefaultHooks() {
             claude: { enabled: true, type: currentStatus.type || 'notification' },
             codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
             gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
-            opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
+            opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode),
+            omp: normalizeSavedPlatformStatus(currentSettings?.platforms?.omp)
           },
           remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
         });
@@ -1890,7 +2015,8 @@ function initDefaultHooks() {
         claude: { enabled: true, type: 'notification' },
         codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
         gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
-        opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode)
+        opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode),
+        omp: normalizeSavedPlatformStatus(currentSettings?.platforms?.omp)
       },
       remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
     });
@@ -2277,7 +2403,9 @@ module.exports = {
   initDefaultHooks,
   syncManagedNotificationAssets,
   getOpenCodeManagedPluginPath,
+  getOmpManagedExtensionPath,
   buildOpenCodePluginContent,
+  buildOmpExtensionContent,
   buildCodexNotifyCommand,
   writeNotifyScript,
   generateNotifyScript,
@@ -2292,9 +2420,11 @@ module.exports = {
     getCodexHookStatus,
     getGeminiHookStatus,
     getOpenCodeHookStatus,
+    getOmpHookStatus,
     parseCodexNotificationStatus,
     parseGeminiNotificationStatus,
     parseOpenCodeNotificationStatus,
+    parseOmpNotificationStatus,
     validateFeishuWebhookUrl,
     normalizeRemoteNotificationsConfig,
     validateRemoteProviderConfig,
@@ -2303,7 +2433,9 @@ module.exports = {
     buildStopHookCommand,
     buildClaudeCommand,
     buildOpenCodePluginContent,
+    buildOmpExtensionContent,
     getOpenCodeManagedPluginPath,
+    getOmpManagedExtensionPath,
     generateNotifyScript,
     generateSystemNotificationCommand,
     emitBrowserNotification,

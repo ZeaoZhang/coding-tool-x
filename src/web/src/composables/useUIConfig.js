@@ -22,21 +22,21 @@ const uiConfig = ref({
     codex: false,
     gemini: false,
     opencode: false,
-    pi: false
+    omp: false
   },
   channelCollapse: {
     claude: [],
     codex: [],
     gemini: [],
     opencode: [],
-    pi: []
+    omp: []
   },
   channelOrder: {
     claude: [],
     codex: [],
     gemini: [],
     opencode: [],
-    pi: []
+    omp: []
   },
   dashboardChannelOrder: DEFAULT_HOME_CLI_COLUMNS,
   homeCliColumns: DEFAULT_HOME_CLI_COLUMNS,

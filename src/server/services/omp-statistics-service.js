@@ -6,7 +6,7 @@ const {
 } = require('./statistics-service');
 const { normalizeUsageTokens, toNumber } = require('./proxy-log-helper');
 
-const TOOL_TYPE = 'pi';
+const TOOL_TYPE = 'omp';
 
 function initAggregateEntry(name = '') {
   return {
@@ -174,7 +174,7 @@ function addSessionUsage(entry, session) {
 
 function readSessionUsage() {
   try {
-    const { getAllSessions } = require('./pi-sessions');
+    const { getAllSessions } = require('./omp-sessions');
     const sessions = getAllSessions();
     return Array.isArray(sessions) ? sessions : [];
   } catch {

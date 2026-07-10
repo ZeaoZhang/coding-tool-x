@@ -93,7 +93,7 @@
         <CodexChannelPanel v-else-if="currentChannel === 'codex'" ref="codexPanelRef" @open-website="openWebsite" />
         <GeminiChannelPanel v-else-if="currentChannel === 'gemini'" ref="geminiPanelRef" @open-website="openWebsite" />
         <OpenCodeChannelPanel v-else-if="currentChannel === 'opencode'" ref="opencodePanelRef" @open-website="openWebsite" />
-        <PiChannelPanel v-else-if="currentChannel === 'pi'" ref="piPanelRef" @open-website="openWebsite" />
+        <OmpChannelPanel v-else-if="currentChannel === 'omp'" ref="ompPanelRef" @open-website="openWebsite" />
       </div>
     </div>
 
@@ -123,7 +123,7 @@ import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
-import PiChannelPanel from './channel/PiChannelPanel.vue'
+import OmpChannelPanel from './channel/OmpChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
 import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
@@ -159,11 +159,11 @@ const claudePanelRef = ref(null)
 const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
 const opencodePanelRef = ref(null)
-const piPanelRef = ref(null)
+const ompPanelRef = ref(null)
 const installedSkillsCount = ref(0)
 const oauthSummaries = ref({})
-const managedConfigChannels = ['claude', 'codex', 'gemini', 'opencode', 'pi']
-const pluginChannels = ['claude', 'codex', 'opencode', 'pi']
+const managedConfigChannels = ['claude', 'codex', 'gemini', 'opencode', 'omp']
+const pluginChannels = ['claude', 'codex', 'opencode', 'omp']
 const agentChannels = ['claude', 'codex', 'gemini', 'opencode']
 const managedConfigChannel = computed(() => managedConfigChannels.includes(currentChannel.value))
 const skillsChannel = managedConfigChannel
@@ -219,7 +219,7 @@ const channelRefs = {
   codex: codexPanelRef,
   gemini: geminiPanelRef,
   opencode: opencodePanelRef,
-  pi: piPanelRef
+  omp: ompPanelRef
 }
 
 const channelTitles = {
@@ -227,7 +227,7 @@ const channelTitles = {
   codex: 'Codex 渠道管理',
   gemini: 'Gemini 渠道管理',
   opencode: 'OpenCode 渠道管理',
-  pi: 'OMP 渠道管理'
+  omp: 'OMP 渠道管理'
 }
 
 const channelTitle = computed(() => channelTitles[currentChannel.value] || 'Claude 渠道管理')

@@ -98,7 +98,7 @@ export const useGlobalStore = defineStore('global', () => {
     defaultPort: 20091
   })
 
-  const piProxy = ref({
+  const ompProxy = ref({
     running: false,
     loading: false,
     activeChannel: null,
@@ -112,7 +112,7 @@ export const useGlobalStore = defineStore('global', () => {
   const codexChannels = ref([])
   const geminiChannels = ref([])
   const opencodeChannels = ref([])
-  const piChannels = ref([])
+  const ompChannels = ref([])
 
   function rebuildChannelSourceCache() {
     Object.keys(channelSourceByName).forEach((key) => {
@@ -130,8 +130,8 @@ export const useGlobalStore = defineStore('global', () => {
     opencodeChannels.value.forEach((ch) => {
       if (ch?.name) channelSourceByName[ch.name] = 'opencode'
     })
-    piChannels.value.forEach((ch) => {
-      if (ch?.name) channelSourceByName[ch.name] = 'pi'
+    ompChannels.value.forEach((ch) => {
+      if (ch?.name) channelSourceByName[ch.name] = 'omp'
     })
   }
 
@@ -141,7 +141,7 @@ export const useGlobalStore = defineStore('global', () => {
     codex: { channels: [], pending: 0 },
     gemini: { channels: [], pending: 0 },
     opencode: { channels: [], pending: 0 },
-    pi: { channels: [], pending: 0 }
+    omp: { channels: [], pending: 0 }
   })
 
   const logsBySource = reactive({
@@ -149,7 +149,7 @@ export const useGlobalStore = defineStore('global', () => {
     codex: [],
     gemini: [],
     opencode: [],
-    pi: []
+    omp: []
   })
   const wsConnected = ref(false)
   const logLimit = ref(100)
@@ -210,7 +210,7 @@ export const useGlobalStore = defineStore('global', () => {
     if (data.source) return data.source
 
     if (data.toolType === 'opencode') return 'opencode'
-    if (data.toolType === 'pi') return 'pi'
+    if (data.toolType === 'omp') return 'omp'
     if (data.toolType === 'codex') return 'codex'
     if (data.toolType === 'gemini') return 'gemini'
     if (data.toolType === 'claude' || data.toolType === 'claude-code') return 'claude'
@@ -221,7 +221,7 @@ export const useGlobalStore = defineStore('global', () => {
       if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) return 'codex'
       if (model.includes('gemini')) return 'gemini'
       if (model.includes('opencode') || model.includes('deepseek') || model.includes('qwen')) return 'opencode'
-      if (model.includes('pi')) return 'pi'
+      if (model.includes('omp')) return 'omp'
     }
 
     if (data.channel) {
@@ -230,7 +230,7 @@ export const useGlobalStore = defineStore('global', () => {
     }
 
     if (data.action?.includes('opencode')) return 'opencode'
-    if (data.action?.includes('pi')) return 'pi'
+    if (data.action?.includes('omp')) return 'omp'
     if (data.action?.includes('codex')) return 'codex'
     if (data.action?.includes('gemini')) return 'gemini'
     return 'claude'
@@ -389,10 +389,10 @@ export const useGlobalStore = defineStore('global', () => {
         opencodeChannels.value = mergeProxyChannels(opencodeChannels.value, channels)
         rebuildChannelSourceCache()
       }
-    } else if (source === 'pi') {
-      patchProxyState(piProxy, proxy, activeChannel)
+    } else if (source === 'omp') {
+      patchProxyState(ompProxy, proxy, activeChannel)
       if (channels) {
-        piChannels.value = mergeProxyChannels(piChannels.value, channels)
+        ompChannels.value = mergeProxyChannels(ompChannels.value, channels)
         rebuildChannelSourceCache()
       }
     }
@@ -440,12 +440,12 @@ export const useGlobalStore = defineStore('global', () => {
 
   async function initializeState() {
     try {
-      const [claudeRes, codexRes, geminiRes, opencodeRes, piRes] = await Promise.all([
+      const [claudeRes, codexRes, geminiRes, opencodeRes, ompRes] = await Promise.all([
         axios.get('/api/proxy/status').catch(() => ({})),
         axios.get('/api/codex/proxy/status').catch(() => ({})),
         axios.get('/api/gemini/proxy/status').catch(() => ({})),
         axios.get('/api/opencode/proxy/status').catch(() => ({})),
-        axios.get('/api/pi/proxy/status').catch(() => ({}))
+        axios.get('/api/omp/proxy/status').catch(() => ({}))
       ])
 
       if (claudeRes.data?.proxy) {
@@ -460,8 +460,8 @@ export const useGlobalStore = defineStore('global', () => {
       if (opencodeRes.data?.proxy) {
         patchProxyState(opencodeProxy, opencodeRes.data.proxy, opencodeRes.data.activeChannel)
       }
-      if (piRes.data?.proxy) {
-        patchProxyState(piProxy, piRes.data.proxy, piRes.data.activeChannel)
+      if (ompRes.data?.proxy) {
+        patchProxyState(ompProxy, ompRes.data.proxy, ompRes.data.activeChannel)
       }
     } catch (error) {
       console.error('Failed to initialize global state:', error)
@@ -470,24 +470,24 @@ export const useGlobalStore = defineStore('global', () => {
 
   async function loadChannels() {
     try {
-      const [claudeRes, codexRes, geminiRes, opencodeRes, piRes, claudePool, codexPool, geminiPool, opencodePool, piPool] = await Promise.all([
+      const [claudeRes, codexRes, geminiRes, opencodeRes, ompRes, claudePool, codexPool, geminiPool, opencodePool, ompPool] = await Promise.all([
         axios.get('/api/channels').catch(() => ({ data: { channels: [] } })),
         axios.get('/api/codex/channels').catch(() => ({ data: { channels: [] } })),
         axios.get('/api/gemini/channels').catch(() => ({ data: { channels: [] } })),
         axios.get('/api/opencode/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/pi/channels').catch(() => ({ data: { channels: [] } })),
+        axios.get('/api/omp/channels').catch(() => ({ data: { channels: [] } })),
         axios.get('/api/channels/pool/status?source=claude').catch(() => ({ data: null })),
         axios.get('/api/channels/pool/status?source=codex').catch(() => ({ data: null })),
         axios.get('/api/channels/pool/status?source=gemini').catch(() => ({ data: null })),
         axios.get('/api/channels/pool/status?source=opencode').catch(() => ({ data: null })),
-        axios.get('/api/channels/pool/status?source=pi').catch(() => ({ data: null }))
+        axios.get('/api/channels/pool/status?source=omp').catch(() => ({ data: null }))
       ])
 
       claudeChannels.value = claudeRes.data.channels || []
       codexChannels.value = codexRes.data.channels || []
       geminiChannels.value = geminiRes.data.channels || []
       opencodeChannels.value = opencodeRes.data.channels || []
-      piChannels.value = piRes.data.channels || []
+      ompChannels.value = ompRes.data.channels || []
       rebuildChannelSourceCache()
 
       if (claudePool.data?.scheduler) {
@@ -502,8 +502,8 @@ export const useGlobalStore = defineStore('global', () => {
       if (opencodePool.data?.scheduler) {
         schedulerState.opencode = opencodePool.data.scheduler
       }
-      if (piPool.data?.scheduler) {
-        schedulerState.pi = piPool.data.scheduler
+      if (ompPool.data?.scheduler) {
+        schedulerState.omp = ompPool.data.scheduler
       }
     } catch (error) {
       console.error('Failed to load channels:', error)
@@ -514,7 +514,7 @@ export const useGlobalStore = defineStore('global', () => {
     if (type === 'codex') return codexProxy
     if (type === 'gemini') return geminiProxy
     if (type === 'opencode') return opencodeProxy
-    if (type === 'pi') return piProxy
+    if (type === 'omp') return ompProxy
     return claudeProxy
   }
 
@@ -522,7 +522,7 @@ export const useGlobalStore = defineStore('global', () => {
     if (type === 'codex') return codexChannels
     if (type === 'gemini') return geminiChannels
     if (type === 'opencode') return opencodeChannels
-    if (type === 'pi') return piChannels
+    if (type === 'omp') return ompChannels
     return claudeChannels
   }
 
@@ -538,8 +538,8 @@ export const useGlobalStore = defineStore('global', () => {
       endpoint = '/api/gemini/proxy/start'
     } else if (type === 'opencode') {
       endpoint = '/api/opencode/proxy/start'
-    } else if (type === 'pi') {
-      endpoint = '/api/pi/proxy/start'
+    } else if (type === 'omp') {
+      endpoint = '/api/omp/proxy/start'
     } else {
       endpoint = '/api/proxy/start'
     }
@@ -562,8 +562,8 @@ export const useGlobalStore = defineStore('global', () => {
       endpoint = '/api/gemini/proxy/stop'
     } else if (type === 'opencode') {
       endpoint = '/api/opencode/proxy/stop'
-    } else if (type === 'pi') {
-      endpoint = '/api/pi/proxy/stop'
+    } else if (type === 'omp') {
+      endpoint = '/api/omp/proxy/stop'
     } else {
       endpoint = '/api/proxy/stop'
     }
@@ -652,12 +652,12 @@ export const useGlobalStore = defineStore('global', () => {
     codexProxy,
     geminiProxy,
     opencodeProxy,
-    piProxy,
+    ompProxy,
     claudeChannels,
     codexChannels,
     geminiChannels,
     opencodeChannels,
-    piChannels,
+    ompChannels,
     schedulerState,
     connectWebSocket,
     initializeState,

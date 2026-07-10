@@ -13,7 +13,7 @@ const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
 const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
 const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
 const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
-const { getEffectiveApiKey: getPiEffectiveApiKey } = require('./pi-channels');
+const { getEffectiveApiKey: getOmpEffectiveApiKey } = require('./omp-channels');
 const { loadClaudeRequestTemplate } = require('./request-logger');
 
 // 测试结果缓存
@@ -103,8 +103,8 @@ function resolveExplicitModel(channel, model) {
 
 function resolveEffectiveApiKey(channel, channelType) {
   switch (channelType) {
-    case 'pi':
-      return getPiEffectiveApiKey(channel);
+    case 'omp':
+      return getOmpEffectiveApiKey(channel);
     case 'codex':
       return getCodexEffectiveApiKey(channel);
     case 'gemini':
@@ -381,7 +381,7 @@ function extractJsonPayloads(responseData) {
  * @param {number} timeout - 超时时间（毫秒）
  * @param {string} channelType - 请求格式类型：'claude' | 'codex' | 'gemini' | 'opencode'
  * @param {Object} options - 可选行为
- * @param {string} options.authSourceType - API key 来源平台；OMP 使用 'pi'，请求格式仍由 channelType 决定
+ * @param {string} options.authSourceType - API key 来源平台；OMP 使用 'omp'，请求格式仍由 channelType 决定
  * @returns {Promise<Object>} 测试结果
  */
 async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType = 'claude', options = {}) {
@@ -439,7 +439,7 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
 
     // 直接测试 API 功能（发送测试消息）
     // 不再单独测试网络连通性，因为直接 GET base_url 可能返回 404
-    const apiResult = await testAPIFunctionality(
+    const aompResult = await testAPIFunctionality(
       testUrl,
       effectiveApiKey,
       sanitizedTimeout,
@@ -448,8 +448,8 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
       channel
     );
 
-    const success = apiResult.success;
-    const networkOk = apiResult.latency !== null; // 如果有延迟数据，说明网络是通的
+    const success = aompResult.success;
+    const networkOk = aompResult.latency !== null; // 如果有延迟数据，说明网络是通的
 
     // 缓存结果
     const finalResult = {
@@ -458,13 +458,13 @@ async function testChannelSpeed(channel, timeout = DEFAULT_TIMEOUT, channelType 
       success,
       networkOk,
       apiOk: success,
-      statusCode: apiResult.statusCode || null,
-      error: success ? null : (apiResult.error || '测试失败'),
-      latency: apiResult.latency ?? null, // 无论成功失败都保留延迟数据（保留 0ms）
+      statusCode: aompResult.statusCode || null,
+      error: success ? null : (aompResult.error || '测试失败'),
+      latency: aompResult.latency ?? null, // 无论成功失败都保留延迟数据（保留 0ms）
       testedAt: Date.now(),
-      testedModel: apiResult.testedModel,
-      availableModels: apiResult.availableModels,
-      modelDetectionMethod: apiResult.modelDetectionMethod
+      testedModel: aompResult.testedModel,
+      availableModels: aompResult.availableModels,
+      modelDetectionMethod: aompResult.modelDetectionMethod
     };
 
     testResultsCache.set(channel.id, finalResult);
@@ -661,11 +661,11 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
 
   if (channelType === 'claude') {
     // Anthropic Messages API - 模拟 Claude Code 请求格式
-    let apiPath = parsedUrl.pathname.replace(/\/$/, '');
-    if (!apiPath.endsWith('/messages')) {
-      apiPath = apiPath + (apiPath.endsWith('/v1') ? '/messages' : '/v1/messages');
+    let aompPath = parsedUrl.pathname.replace(/\/$/, '');
+    if (!aompPath.endsWith('/messages')) {
+      aompPath = aompPath + (aompPath.endsWith('/v1') ? '/messages' : '/v1/messages');
     }
-    apiPath += '?beta=true';
+    aompPath += '?beta=true';
 
     testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'claude-sonnet-4-20250514';
     const sessionId = typeof crypto.randomUUID === 'function'
@@ -686,20 +686,20 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       tools: toolsToUse
     };
     primaryRequestConfig = {
-      apiPath,
+      aompPath,
       requestBody: JSON.stringify(requestPayload),
       headers: buildClaudeRequestHeaders(apiKey, { hasTools: true }),
       isStreamingResponse: true
     };
     // Fallback: non-streaming for gateways that don't support SSE
     fallbackRequestConfig = {
-      apiPath,
+      aompPath,
       requestBody: JSON.stringify({ ...requestPayload, stream: false }),
       headers: buildClaudeRequestHeaders(apiKey, { hasTools: true }),
       isStreamingResponse: false
     };
   } else if (channelType === 'codex') {
-    const apiPath = buildCodexResponsesPath(parsedUrl);
+    const aompPath = buildCodexResponsesPath(parsedUrl);
     testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-5-codex';
     const codexSessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
@@ -712,7 +712,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     };
 
     primaryRequestConfig = {
-      apiPath,
+      aompPath,
       requestBody: JSON.stringify({ ...baseBody, stream: false }),
       headers: {
         'Authorization': `Bearer ${apiKey || ''}`,
@@ -729,7 +729,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     };
 
     fallbackRequestConfig = {
-      apiPath,
+      aompPath,
       requestBody: JSON.stringify({ ...baseBody, stream: true }),
       headers: {
         ...primaryRequestConfig.headers,
@@ -742,7 +742,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     const useCliFormat = shouldUseGeminiCliFormat(parsedUrl);
 
     const cliRequestConfig = {
-      apiPath: buildGeminiCliGeneratePath(parsedUrl),
+      aompPath: buildGeminiCliGeneratePath(parsedUrl),
       requestBody: JSON.stringify({
         project: '',
         model: testModel,
@@ -764,7 +764,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     };
 
     const nativeRequestConfig = {
-      apiPath: buildGeminiNativeGeneratePath(parsedUrl, testModel),
+      aompPath: buildGeminiNativeGeneratePath(parsedUrl, testModel),
       requestBody: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
         generationConfig: { maxOutputTokens: 1, temperature: 0 }
@@ -783,12 +783,12 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     fallbackRequestConfig = useCliFormat ? nativeRequestConfig : cliRequestConfig;
   } else {
     testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-4o-mini';
-    let apiPath = parsedUrl.pathname.replace(/\/$/, '');
-    if (!apiPath.endsWith('/chat/completions')) {
-      apiPath = apiPath + (apiPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
+    let aompPath = parsedUrl.pathname.replace(/\/$/, '');
+    if (!aompPath.endsWith('/chat/completions')) {
+      aompPath = aompPath + (aompPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
     }
     primaryRequestConfig = {
-      apiPath,
+      aompPath,
       requestBody: JSON.stringify({
         model: testModel,
         max_tokens: 1,
@@ -808,7 +808,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
     const options = {
       hostname: parsedUrl.hostname,
       port: parsedUrl.port || (isHttps ? 443 : 80),
-      path: requestConfig.apiPath,
+      path: requestConfig.aompPath,
       method: 'POST',
       timeout,
       headers: requestConfig.headers

@@ -26,7 +26,7 @@ function resolveChannelsByType(exportData) {
     codex: Array.isArray(typed.codex) ? typed.codex : [],
     gemini: Array.isArray(typed.gemini) ? typed.gemini : [],
     opencode: Array.isArray(typed.opencode) ? typed.opencode : [],
-    pi: Array.isArray(typed.pi) ? typed.pi : []
+    omp: Array.isArray(typed.omp) ? typed.omp: []
   };
 }
 
@@ -46,7 +46,7 @@ function buildPreviewSummary(data) {
     ...channelsByType.codex.map(c => ({ ...c, type: c.type || 'codex' })),
     ...channelsByType.gemini.map(c => ({ ...c, type: c.type || 'gemini' })),
     ...channelsByType.opencode.map(c => ({ ...c, type: c.type || 'opencode' })),
-    ...channelsByType.pi.map(c => ({ ...c, type: c.type || 'pi' }))
+    ...channelsByType.omp.map(c => ({ ...c, type: c.type || 'omp' }))
   ];
 
   return {

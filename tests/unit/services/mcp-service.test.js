@@ -33,7 +33,7 @@ function setupStubs() {
         codex: { config: path.join(testDir, 'codex-config.toml'), dir: testDir },
         gemini: { env: path.join(testDir, 'gemini', '.env') },
         opencode: { config: testDir },
-        pi: {
+        omp: {
           dir: path.join(testDir, 'omp-agent'),
           mcp: path.join(testDir, 'omp-agent', 'mcp.json')
         }
@@ -308,7 +308,7 @@ describe('mcp-service', () => {
         codex: false,
         gemini: false,
         opencode: false,
-        pi: false
+        omp: false
       });
       expect(service.getServer('srv-default').createdAt).toBeDefined();
     });
@@ -388,7 +388,7 @@ describe('mcp-service', () => {
         codex: 1,
         gemini: 1,
         opencode: 0,
-        pi: 0
+        omp: 0
       });
     });
 
@@ -484,7 +484,7 @@ describe('mcp-service', () => {
           url: 'https://example.com/mcp',
           headers: { Authorization: 'Bearer token' }
         },
-        apps: { claude: false, pi: true }
+        apps: { claude: false, omp: true }
       });
 
       const ompConfig = JSON.parse(fs.readFileSync(ompMcpPath, 'utf8'));
@@ -504,14 +504,14 @@ describe('mcp-service', () => {
         id: 'srv-omp-toggle',
         name: 'OMP Toggle',
         server: { type: 'stdio', command: 'uvx' },
-        apps: { claude: false, pi: true }
+        apps: { claude: false, omp: true }
       });
 
-      await service.toggleServerApp('srv-omp-toggle', 'pi', false);
+      await service.toggleServerApp('srv-omp-toggle', 'omp', false);
 
       const stored = service.getServer('srv-omp-toggle');
       const ompConfig = JSON.parse(fs.readFileSync(ompMcpPath, 'utf8'));
-      expect(stored.apps.pi).toBe(false);
+      expect(stored.apps.omp).toBe(false);
       expect(ompConfig.mcpServers['srv-omp-toggle']).toBeUndefined();
     });
 
@@ -528,11 +528,11 @@ describe('mcp-service', () => {
         }
       }), 'utf8');
 
-      const count = await service.importFromPlatform('pi');
+      const count = await service.importFromPlatform('omp');
       const imported = service.getServer('remote');
 
       expect(count).toBe(1);
-      expect(imported.apps.pi).toBe(true);
+      expect(imported.apps.omp).toBe(true);
       expect(imported.server).toEqual({
         type: 'streamable_http',
         url: 'https://example.com/mcp',
@@ -545,13 +545,13 @@ describe('mcp-service', () => {
         id: 'srv-omp-export',
         name: 'OMP Export',
         server: { type: 'streamable_http', url: 'https://example.com/mcp' },
-        apps: { claude: false, pi: true }
+        apps: { claude: false, omp: true }
       }, { syncPlatforms: false });
 
-      const exported = service.exportServers('pi');
+      const exported = service.exportServers('omp');
       const content = JSON.parse(exported.content);
 
-      expect(exported.format).toBe('pi');
+      expect(exported.format).toBe('omp');
       expect(exported.filename).toBe('omp-mcp-config.json');
       expect(content.mcpServers['srv-omp-export']).toEqual({
         type: 'http',

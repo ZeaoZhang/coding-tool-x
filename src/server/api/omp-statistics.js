@@ -4,7 +4,7 @@ const {
   getStatistics,
   getDailyStatistics,
   getTodayStatistics
-} = require('../services/pi-statistics-service');
+} = require('../services/omp-statistics-service');
 
 router.get('/summary', (req, res) => {
   try {
