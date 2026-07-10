@@ -24,7 +24,10 @@ const { startCodexProxyServer } = require('./codex-proxy-server');
 const { startGeminiProxyServer } = require('./gemini-proxy-server');
 const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
 const { startOmpProxyServer } = require('./omp-proxy-server');
-const { createRemoteMutationGuard } = require('./services/network-access');
+const {
+  createRemoteMutationGuard,
+  isRemoteMutationAllowedByEnv
+} = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
@@ -151,7 +154,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   const app = express();
   const useHttps = options.useHttps === true || process.argv.includes('--https');
   const lanMode = host === '0.0.0.0';
-  const allowRemoteMutation = process.env.CC_TOOL_ALLOW_REMOTE_WRITE === 'true';
+  const allowRemoteMutation = isRemoteMutationAllowedByEnv(process.env);
 
   // Middleware
   app.use(express.json({ limit: '100mb' }));
@@ -175,7 +178,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     app.use('/api', createRemoteMutationGuard({
       enabled: true,
       allowRemoteMutation,
-      message: '出于安全考虑，LAN 模式默认仅允许本机执行写操作。可设置 CC_TOOL_ALLOW_REMOTE_WRITE=true 覆盖。'
+      message: 'LAN 模式下远程写操作已被 CC_TOOL_ALLOW_REMOTE_WRITE=false 禁止。'
     }));
 
   }
@@ -325,8 +328,13 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     console.log(chalk.gray('   [TIP] 首次访问自签名证书时，浏览器可能会提示手动信任本地证书'));
   }
 
-  if (host === '0.0.0.0' && !allowRemoteMutation) {
-    console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作默认禁用'));
+  if (host === '0.0.0.0') {
+    if (allowRemoteMutation) {
+      console.log(chalk.yellow('   [WARN]  LAN 远程写操作已启用（默认行为）'));
+      console.log(chalk.gray('   如需禁止，请设置 CC_TOOL_ALLOW_REMOTE_WRITE=false'));
+    } else {
+      console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作被 CC_TOOL_ALLOW_REMOTE_WRITE=false 禁止'));
+    }
   }
   // 自动恢复代理状态
   autoRestoreProxies();

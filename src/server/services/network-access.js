@@ -72,6 +72,10 @@ function createRemoteMutationGuard(options = {}) {
   };
 }
 
+function isRemoteMutationAllowedByEnv(env = process.env) {
+  return String(env.CC_TOOL_ALLOW_REMOTE_WRITE || '').toLowerCase() !== 'false';
+}
+
 function createRemoteRouteGuard(options = {}) {
   const enabled = options.enabled === true;
   const allowRemoteAccess = options.allowRemoteAccess === true;
@@ -113,6 +117,7 @@ module.exports = {
   isLoopbackRequest,
   isSameOriginRequest,
   createRemoteMutationGuard,
+  isRemoteMutationAllowedByEnv,
   createRemoteRouteGuard,
   createSameOriginGuard
 };
