@@ -5,9 +5,18 @@ const { PATHS } = require('../../config/paths');
 const { resolveChannelWebsiteUrl } = require('../../config/channel-preset-websites');
 const {
   setChannelConfig,
-  clearManagedChannelConfig
+  clearManagedChannelConfig,
+  readConfig,
+  selectConfigPath
 } = require('./opencode-settings-manager');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
+const {
+  createSkippedResult,
+  isLocalProxyBaseUrl,
+  resolveApiKeyValue,
+  resolveExistingActiveChannel,
+  upsertSyncedChannels
+} = require('./channel-sync-utils');
 
 function clearChannelBalanceCache(channel) {
   try {
@@ -93,7 +102,7 @@ function loadChannels() {
           gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'codex'),
           allowedModels: ch.allowedModels || []
         };
-        normalized.providerKey = deriveProviderKey(normalized);
+        normalized.providerKey = ch.providerKey || deriveProviderKey(normalized);
         normalized.websiteUrl = resolveChannelWebsiteUrl('opencode', normalized);
         return normalized;
       });
@@ -111,6 +120,15 @@ function deriveProviderKey(channel) {
     return base;
   }
   return `opencode_${base}`;
+}
+
+function sanitizeOpenCodeProviderId(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    || 'channel';
 }
 
 function getOpenCodeProxyRunning() {
@@ -229,7 +247,7 @@ function updateChannel(channelId, updates) {
     ),
     updatedAt: Date.now()
   };
-  merged.providerKey = updates.providerKey || deriveProviderKey(merged);
+  merged.providerKey = updates.providerKey || oldChannel.providerKey || deriveProviderKey(merged);
   merged.websiteUrl = resolveChannelWebsiteUrl('opencode', merged);
   data.channels[index] = merged;
 
@@ -463,6 +481,155 @@ function disableAllChannels() {
   saveChannels(data);
 }
 
+function getCurrentOpenCodeProviderId(config = {}) {
+  const modelRef = String(config?.model || '').trim();
+  if (modelRef.includes('/')) {
+    return modelRef.split('/')[0].trim();
+  }
+  const providers = config?.provider && typeof config.provider === 'object'
+    ? Object.keys(config.provider).filter(Boolean)
+    : [];
+  return providers.length === 1 ? providers[0] : '';
+}
+
+function findOpenCodeExistingByProvider(channels = [], providerId = '', baseUrl = '') {
+  const normalizedProviderId = sanitizeOpenCodeProviderId(providerId);
+  const url = String(baseUrl || '').trim();
+  return channels.find(channel => {
+    const providerKeys = [
+      channel.providerKey,
+      sanitizeOpenCodeProviderId(channel.providerKey),
+      sanitizeOpenCodeProviderId(channel.name)
+    ].filter(Boolean);
+    return providerKeys.includes(providerId) || providerKeys.includes(normalizedProviderId);
+  }) || channels.find(channel => url && channel.baseUrl === url) || null;
+}
+
+function normalizeOpenCodeChannel(channel = {}) {
+  const normalized = {
+    ...channel,
+    enabled: channel.enabled !== false,
+    weight: channel.weight || 1,
+    maxConcurrency: channel.maxConcurrency || null,
+    balanceToken: channel.balanceToken || '',
+    balanceUserId: channel.balanceUserId || null,
+    modelRedirects: channel.modelRedirects || [],
+    speedTestModel: channel.speedTestModel || null,
+    wireApi: channel.wireApi || 'openai',
+    gatewaySourceType: normalizeGatewaySourceType(channel.gatewaySourceType, 'codex'),
+    allowedModels: Array.isArray(channel.allowedModels) ? channel.allowedModels : []
+  };
+  normalized.providerKey = normalized.providerKey || deriveProviderKey(normalized);
+  normalized.websiteUrl = resolveChannelWebsiteUrl('opencode', normalized);
+  return normalized;
+}
+
+function collectOpenCodeProviderModels(provider = {}) {
+  const models = provider?.models && typeof provider.models === 'object' && !Array.isArray(provider.models)
+    ? Object.keys(provider.models)
+    : [];
+  return models.map(model => String(model || '').trim()).filter(Boolean);
+}
+
+function buildOpenCodeSyncCandidate(config, channels) {
+  const providerId = getCurrentOpenCodeProviderId(config);
+  if (!providerId) {
+    return {
+      skip: true,
+      warning: 'OpenCode 原生配置未明确当前 provider，无法同步当前渠道。'
+    };
+  }
+
+  const provider = config?.provider?.[providerId] || null;
+  if (!provider || typeof provider !== 'object') {
+    return {
+      skip: true,
+      warning: `OpenCode 当前 provider "${providerId}" 未在配置中定义。`
+    };
+  }
+
+  const baseUrl = String(provider?.options?.baseURL || provider?.options?.baseUrl || provider?.baseUrl || provider?.baseURL || '').trim();
+  const rawApiKey = provider?.options?.apiKey || provider?.apiKey || provider?.key || '';
+  const existing = findOpenCodeExistingByProvider(channels, providerId, baseUrl);
+  const providerIsProxy = providerId === 'ctx-proxy'
+    || rawApiKey === 'PROXY_KEY'
+    || isLocalProxyBaseUrl(baseUrl);
+
+  if (providerIsProxy) {
+    const activeExisting = resolveExistingActiveChannel('opencode', channels)
+      || existing;
+    if (activeExisting) {
+      return {
+        skip: true,
+        channel: activeExisting,
+        warning: 'OpenCode 当前配置指向 ctx 代理；对应渠道已在列表中，未重复导入。'
+      };
+    }
+    return {
+      skip: true,
+      warning: 'OpenCode 当前配置指向 ctx 代理，但没有找到可匹配的现有渠道。'
+    };
+  }
+
+  const credential = resolveApiKeyValue(rawApiKey);
+  const apiKey = credential.value || getEffectiveApiKeyCandidates(existing || {})[0] || '';
+  if (!apiKey) {
+    return {
+      skip: true,
+      channel: existing || null,
+      warning: `OpenCode 当前 provider "${providerId}" 缺少可解析 API Key，无法同步导入。`
+    };
+  }
+
+  const modelRef = String(config?.model || '').trim();
+  const model = modelRef.startsWith(`${providerId}/`) ? modelRef.slice(providerId.length + 1) : '';
+  const allowedModels = collectOpenCodeProviderModels(provider);
+  return {
+    name: existing?.name || provider.name || providerId,
+    providerKey: providerId,
+    baseUrl,
+    apiKey,
+    wireApi: existing?.wireApi || 'openai',
+    model: model || existing?.model || allowedModels[0] || null,
+    allowedModels,
+    gatewaySourceType: existing?.gatewaySourceType || 'codex',
+    credentialSource: credential.value ? credential.source : 'existing-channel'
+  };
+}
+
+function syncCurrentOpenCodeChannel() {
+  if (typeof readConfig !== 'function' || typeof selectConfigPath !== 'function') {
+    return createSkippedResult('opencode', 'OpenCode 配置读取能力不可用，无法同步当前渠道。');
+  }
+
+  const data = loadChannels();
+  const channels = Array.isArray(data.channels) ? data.channels : [];
+  let config = {};
+  try {
+    const configPath = selectConfigPath();
+    config = readConfig(configPath);
+  } catch (error) {
+    return createSkippedResult('opencode', `OpenCode 配置读取失败：${error.message}`);
+  }
+
+  const candidate = buildOpenCodeSyncCandidate(config, channels);
+  if (candidate?.skip) {
+    return createSkippedResult('opencode', candidate.warning, candidate.channel);
+  }
+
+  return upsertSyncedChannels({
+    toolType: 'opencode',
+    loadChannels,
+    saveChannels,
+    applyDefaults: normalizeOpenCodeChannel,
+    candidates: [candidate],
+    matchers: [
+      (channel, current) => channel.providerKey && channel.providerKey === current.providerKey,
+      (channel, current) => channel.baseUrl === current.baseUrl && channel.apiKey === current.apiKey
+    ]
+  });
+}
+
 module.exports = {
   getChannels,
   createChannel,
@@ -474,5 +641,6 @@ module.exports = {
   applyChannelToSettings,
   getEffectiveApiKey,
   getEffectiveApiKeyCandidates,
-  disableAllChannels
+  disableAllChannels,
+  syncCurrentOpenCodeChannel
 };

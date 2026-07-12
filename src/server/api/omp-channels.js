@@ -5,7 +5,8 @@ const {
   createChannel,
   updateChannel,
   deleteChannel,
-  saveChannelOrder
+  saveChannelOrder,
+  syncCurrentOmpChannel
 } = require('../services/omp-channels');
 const { isOmpInstalled } = require('../services/omp-sessions');
 const { getSchedulerState } = require('../services/channel-scheduler');
@@ -167,6 +168,21 @@ module.exports = () => {
       res.json({ channels, installed: true });
     } catch (err) {
       console.error('[OMP Channels API] Failed to get enabled channels:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/sync-current', (req, res) => {
+    try {
+      if (!isOmpInstalled()) {
+        return res.status(404).json({ error: 'OMP CLI not installed' });
+      }
+
+      const result = syncCurrentOmpChannel();
+      res.json(result);
+      broadcastSchedulerState('omp', getSchedulerState('omp'));
+    } catch (err) {
+      console.error('[OMP Channels API] Failed to sync current channel:', err);
       res.status(500).json({ error: err.message });
     }
   });

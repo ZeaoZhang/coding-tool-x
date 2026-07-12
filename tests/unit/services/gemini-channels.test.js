@@ -319,3 +319,59 @@ describe('applyChannelToSettings', () => {
     expect(clearNativeOAuth).toHaveBeenCalledWith('gemini');
   });
 });
+
+describe('syncCurrentGeminiChannel', () => {
+  it('imports current .env API-key settings without initializing a proxy channel', () => {
+    fs.writeFileSync(path.join(geminiDir, '.env'), [
+      'GOOGLE_GEMINI_BASE_URL=https://gemini-current.example/v1beta',
+      'GEMINI_API_KEY=gemini-current-key',
+      'GEMINI_MODEL=gemini-current-model',
+      ''
+    ].join('\n'), 'utf8');
+
+    const result = service.syncCurrentGeminiChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+
+    expect(result.added).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      name: 'Gemini 当前配置',
+      baseUrl: 'https://gemini-current.example/v1beta',
+      apiKey: 'gemini-current-key',
+      model: 'gemini-current-model',
+      apiFormat: 'gemini_api'
+    }));
+  });
+
+  it('skips local ctx proxy .env settings and does not write a channel file', () => {
+    fs.writeFileSync(path.join(geminiDir, '.env'), [
+      'GOOGLE_GEMINI_BASE_URL=http://localhost:4568',
+      'GEMINI_API_KEY=PROXY_KEY',
+      ''
+    ].join('\n'), 'utf8');
+
+    const result = service.syncCurrentGeminiChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('ctx 代理');
+    expect(fs.existsSync(channelsFile)).toBe(false);
+  });
+
+  it('skips OAuth-only settings', () => {
+    fs.writeFileSync(path.join(geminiDir, 'settings.json'), JSON.stringify({
+      security: {
+        auth: {
+          selectedType: 'oauth-personal'
+        }
+      }
+    }, null, 2), 'utf8');
+
+    const result = service.syncCurrentGeminiChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('OAuth');
+    expect(fs.existsSync(channelsFile)).toBe(false);
+  });
+});

@@ -477,6 +477,7 @@ function buildFieldProps(field) {
 
 defineExpose({
   openAddDialog: actions.openAddDialog,
+  syncCurrentChannels: actions.handleSyncCurrentChannels,
   refresh: actions.loadChannels
 })
 </script>

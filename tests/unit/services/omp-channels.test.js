@@ -1,0 +1,317 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const PATHS_MODULE = require.resolve('../../../src/config/paths');
+const OMP_CONFIG_MODULE = require.resolve('../../../src/server/services/omp-config');
+const OMP_SETTINGS_MODULE = require.resolve('../../../src/server/services/omp-settings-manager');
+const OMP_CHANNELS_MODULE = require.resolve('../../../src/server/services/omp-channels');
+const CHANNEL_SYNC_MODULE = require.resolve('../../../src/server/services/channel-sync-utils');
+
+let testDir;
+let channelsPath;
+let ompAgentDir;
+let originalPathEnv;
+let modelsConfig;
+let settingsConfig;
+let service;
+
+function normalizeProviderId(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    || 'coding-tool-x';
+}
+
+function normalizeProviderApi(value = '') {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized === 'openai' || normalized === 'chat' || normalized === 'chat.completions') {
+    return 'openai-completions';
+  }
+  if (normalized === 'responses') {
+    return 'openai-responses';
+  }
+  return normalized;
+}
+
+function injectStubs() {
+  require.cache[PATHS_MODULE] = {
+    id: PATHS_MODULE,
+    filename: PATHS_MODULE,
+    loaded: true,
+    exports: {
+      PATHS: {
+        channels: {
+          omp: channelsPath
+        },
+        activeChannel: {
+          omp: path.join(testDir, 'active-omp.json')
+        }
+      },
+      ensureStorageDirMigrated: vi.fn()
+    }
+  };
+
+  require.cache[OMP_CONFIG_MODULE] = {
+    id: OMP_CONFIG_MODULE,
+    filename: OMP_CONFIG_MODULE,
+    loaded: true,
+    exports: {
+      getOmpPaths: vi.fn(() => ({
+        agentDir: ompAgentDir,
+        modelsYml: path.join(ompAgentDir, 'models.yml'),
+        settings: path.join(ompAgentDir, 'config.yml')
+      }))
+    }
+  };
+
+  require.cache[OMP_SETTINGS_MODULE] = {
+    id: OMP_SETTINGS_MODULE,
+    filename: OMP_SETTINGS_MODULE,
+    loaded: true,
+    exports: {
+      writeManagedOmpProviders: vi.fn(),
+      removeManagedOmpProviders: vi.fn(),
+      isManagedOmpProvidersActive: vi.fn(() => false),
+      getLastManagedOmpSyncResult: vi.fn(() => null),
+      readModelsConfig: vi.fn(() => modelsConfig),
+      readOmpSettingsConfig: vi.fn(() => settingsConfig),
+      normalizeProviderId,
+      normalizeProviderApi
+    }
+  };
+}
+
+beforeEach(() => {
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-ch-'));
+  channelsPath = path.join(testDir, 'channels', 'omp.json');
+  ompAgentDir = path.join(testDir, 'agent');
+  fs.mkdirSync(ompAgentDir, { recursive: true });
+  originalPathEnv = process.env.PATH;
+  modelsConfig = { providers: {} };
+  settingsConfig = {};
+
+  delete require.cache[OMP_CHANNELS_MODULE];
+  delete require.cache[CHANNEL_SYNC_MODULE];
+  delete require.cache[OMP_CONFIG_MODULE];
+  injectStubs();
+  service = require('../../../src/server/services/omp-channels');
+});
+
+afterEach(() => {
+  delete process.env.OMP_CURRENT_KEY;
+  process.env.PATH = originalPathEnv;
+  fs.rmSync(testDir, { recursive: true, force: true });
+  [
+    OMP_CHANNELS_MODULE,
+    CHANNEL_SYNC_MODULE,
+    OMP_CONFIG_MODULE,
+    OMP_SETTINGS_MODULE,
+    PATHS_MODULE
+  ].forEach((mod) => {
+    delete require.cache[mod];
+  });
+});
+
+describe('syncCurrentOmpChannel', () => {
+  it('imports the current provider selected by config.yml modelRoles.default', () => {
+    process.env.OMP_CURRENT_KEY = 'omp-current-key';
+    modelsConfig = {
+      providers: {
+        openai: {
+          baseUrl: 'https://omp-current.example/v1',
+          apiKey: 'OMP_CURRENT_KEY',
+          api: 'openai',
+          models: [
+            { id: 'gpt-4.1' },
+            'gpt-4.1-mini'
+          ]
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'openai/gpt-4.1'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.added).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      name: 'openai',
+      providerKey: 'openai',
+      baseUrl: 'https://omp-current.example/v1',
+      apiKey: 'omp-current-key',
+      providerApi: 'openai-completions',
+      model: 'gpt-4.1',
+      allowedModels: ['gpt-4.1']
+    }));
+  });
+
+  it('imports all providers referenced by enabledModels and modelRoles', () => {
+    modelsConfig = {
+      providers: {
+        deepseek: {
+          baseUrl: 'https://api.deepseek.com/v1',
+          apiKey: 'deepseek-key',
+          api: 'openai-completions',
+          models: ['deepseek-v4-flash', 'deepseek-v4-pro']
+        },
+        nvidia: {
+          baseUrl: 'https://integrate.api.nvidia.com/v1',
+          apiKey: 'nvidia-key',
+          api: 'openai-completions',
+          models: [
+            'meta/llama-3.1-8b-instruct',
+            'z-ai/glm-5.2',
+            'minimaxai/minimax-m3'
+          ]
+        },
+        shuaiapi: {
+          baseUrl: 'https://api.shuaiapi.com/v1',
+          apiKey: 'shuaiapi-key',
+          api: 'openai-completions',
+          models: ['gpt-5.5', 'gpt-5.6-sol']
+        },
+        openai: {
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'openai-key',
+          api: 'openai-responses',
+          models: ['gpt-5.1']
+        }
+      }
+    };
+    settingsConfig = {
+      enabledModels: [
+        'deepseek/deepseek-v4-pro',
+        'deepseek/deepseek-v4-flash',
+        'nvidia/z-ai/glm-5.2',
+        'nvidia/minimaxai/minimax-m3',
+        'shuaiapi/gpt-5.5'
+      ],
+      modelRoles: {
+        default: 'shuaiapi/gpt-5.5:high',
+        task: 'deepseek/deepseek-v4-pro'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+    const byProvider = Object.fromEntries(saved.channels.map(channel => [channel.providerKey, channel]));
+
+    expect(result.added).toBe(3);
+    expect(saved.channels).toHaveLength(3);
+    expect(byProvider.openai).toBeUndefined();
+    expect(byProvider.deepseek).toEqual(expect.objectContaining({
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'deepseek-key',
+      model: 'deepseek-v4-pro',
+      allowedModels: ['deepseek-v4-pro', 'deepseek-v4-flash']
+    }));
+    expect(byProvider.nvidia).toEqual(expect.objectContaining({
+      baseUrl: 'https://integrate.api.nvidia.com/v1',
+      apiKey: 'nvidia-key',
+      model: 'z-ai/glm-5.2',
+      allowedModels: ['z-ai/glm-5.2', 'minimaxai/minimax-m3']
+    }));
+    expect(byProvider.shuaiapi).toEqual(expect.objectContaining({
+      baseUrl: 'https://api.shuaiapi.com/v1',
+      apiKey: 'shuaiapi-key',
+      model: 'gpt-5.5',
+      allowedModels: ['gpt-5.5']
+    }));
+  });
+
+  it('does not duplicate an already imported ctx-managed provider', () => {
+    modelsConfig = {
+      providers: {
+        'ctx-openai': {
+          baseUrl: 'https://omp-current.example/v1',
+          apiKey: 'omp-current-key',
+          api: 'openai-completions',
+          models: ['gpt-4.1']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'ctx-openai/gpt-4.1'
+      }
+    };
+
+    service.syncCurrentOmpChannel();
+    const second = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(second.added).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+    expect(saved.channels[0].providerKey).toBe('openai');
+  });
+
+  it('falls back to OMP api_key credentials stored in agent.db', () => {
+    const dbPath = path.join(ompAgentDir, 'agent.db');
+    fs.writeFileSync(dbPath, '', 'utf8');
+    const binDir = path.join(testDir, 'bin');
+    fs.mkdirSync(binDir, { recursive: true });
+    const sqlitePath = path.join(binDir, 'sqlite3');
+    fs.writeFileSync(sqlitePath, [
+      '#!/bin/sh',
+      'printf \'[{"provider":"deepseek","credential_type":"api_key","data":"{\\\\\\"key\\\\\\":\\\\\\"db-deepseek-key\\\\\\"}"}]\''
+    ].join('\n'), 'utf8');
+    fs.chmodSync(sqlitePath, 0o755);
+    process.env.PATH = `${binDir}${path.delimiter}${originalPathEnv || ''}`;
+    modelsConfig = {
+      providers: {
+        deepseek: {
+          baseUrl: 'https://api.deepseek.com/v1',
+          api: 'openai-completions',
+          models: ['deepseek-v4-pro']
+        }
+      }
+    };
+    settingsConfig = {
+      enabledModels: ['deepseek/deepseek-v4-pro']
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.added).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'deepseek',
+      apiKey: 'db-deepseek-key',
+      credentialSource: 'omp-auth-db'
+    }));
+  });
+
+  it('skips providers without a resolvable API key', () => {
+    modelsConfig = {
+      providers: {
+        anthropic: {
+          baseUrl: 'https://api.anthropic.com',
+          api: 'anthropic',
+          models: ['claude-sonnet-4']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'anthropic/claude-sonnet-4'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('OAuth');
+    expect(fs.existsSync(channelsPath)).toBe(false);
+  });
+});

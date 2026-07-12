@@ -33,6 +33,7 @@ export default function useChannelManager(config) {
     channels: [],
     balances: {},
     loading: false,
+    syncing: false,
     toggling: {},
     collapsed: getLocalCollapse(config.storageKeys.localCollapse),
     showDialog: false,
@@ -309,6 +310,53 @@ export default function useChannelManager(config) {
     }
   }
 
+  function formatSyncResult(result = {}) {
+    const added = Number(result.added || 0)
+    const updated = Number(result.updated || 0)
+    const skipped = Number(result.skipped || 0)
+    if (added > 0 || updated > 0) {
+      const parts = []
+      if (added > 0) parts.push(`新增 ${added} 个`)
+      if (updated > 0) parts.push(`更新 ${updated} 个`)
+      return `${config.displayName} 同步完成：${parts.join('，')}`
+    }
+    if (skipped > 0) {
+      return `${config.displayName} 已在列表中，未重复导入`
+    }
+    return `${config.displayName} 无需同步`
+  }
+
+  async function handleSyncCurrentChannels() {
+    if (typeof config.api.syncCurrent !== 'function') {
+      message.warning(`${config.displayName} 暂不支持同步`)
+      return null
+    }
+    if (state.syncing) return null
+    state.syncing = true
+    try {
+      const result = await config.api.syncCurrent()
+      await loadChannels()
+      window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: config.type } }))
+      const warnings = Array.isArray(result?.warnings) ? result.warnings.filter(Boolean) : []
+      if (warnings.length > 0) {
+        message.warning(warnings.join('；'))
+      }
+      const added = Number(result?.added || 0)
+      const updated = Number(result?.updated || 0)
+      if (added > 0 || updated > 0) {
+        message.success(formatSyncResult(result))
+      } else {
+        message.info(formatSyncResult(result))
+      }
+      return result
+    } catch (error) {
+      message.error(resolveError(error, `${config.displayName} 同步失败`))
+      return null
+    } finally {
+      state.syncing = false
+    }
+  }
+
   async function handleToggleEnabled(channel, value) {
     if (!channel || state.toggling[channel.id]) return
     state.toggling[channel.id] = true
@@ -428,6 +476,7 @@ export default function useChannelManager(config) {
       handleSave,
       handleDelete,
       handleToggleEnabled,
+      handleSyncCurrentChannels,
       handleApplyToSettings,
       handleResetHealth,
       handleRefreshBalance

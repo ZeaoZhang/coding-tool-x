@@ -11,6 +11,7 @@ const baseRef = ref(null)
 
 defineExpose({
   openAddDialog: () => baseRef.value?.openAddDialog(),
+  syncCurrentChannels: () => baseRef.value?.syncCurrentChannels(),
   refresh: () => baseRef.value?.refresh()
 })
 </script>
