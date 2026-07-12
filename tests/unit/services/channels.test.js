@@ -4,6 +4,7 @@ const path = require('path');
 
 let testDir;
 let clearNativeOAuthMock;
+let readNativeOAuthMock;
 let channelsService;
 let isWindowsLikePlatformMock;
 
@@ -14,6 +15,7 @@ function readJson(filePath) {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channels-service-'));
   clearNativeOAuthMock = vi.fn();
+  readNativeOAuthMock = vi.fn(() => null);
   isWindowsLikePlatformMock = vi.fn(() => false);
 
   require.cache[require.resolve('../../../src/config/paths')] = {
@@ -51,7 +53,8 @@ beforeEach(() => {
     filename: require.resolve('../../../src/server/services/native-oauth-adapters'),
     loaded: true,
     exports: {
-      clearNativeOAuth: clearNativeOAuthMock
+      clearNativeOAuth: clearNativeOAuthMock,
+      readNativeOAuth: readNativeOAuthMock
     }
   };
 
@@ -318,5 +321,68 @@ describe('channels service Claude settings integration', () => {
     expect(() => channelsService.applyChannelToSettings(channel.id)).toThrow(
       'OpenAI 格式渠道需要通过 Claude 代理使用，请先启动代理。'
     );
+  });
+
+  test('syncCurrentClaudeChannel imports native API-key settings without writing native settings', () => {
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      env: {
+        ANTHROPIC_BASE_URL: 'https://anthropic-proxy.example',
+        ANTHROPIC_API_KEY: 'claude-current-key',
+        ANTHROPIC_MODEL: 'claude-current-model'
+      }
+    }, null, 2), 'utf8');
+
+    const result = channelsService.syncCurrentClaudeChannel();
+    const channels = channelsService.getAllChannels();
+
+    expect(result.added).toBe(1);
+    expect(channels).toHaveLength(1);
+    expect(channels[0]).toEqual(expect.objectContaining({
+      name: 'Claude 当前配置',
+      baseUrl: 'https://anthropic-proxy.example',
+      apiKey: 'claude-current-key',
+      modelConfig: expect.objectContaining({
+        model: 'claude-current-model'
+      })
+    }));
+    expect(readJson(settingsPath).env.ANTHROPIC_API_KEY).toBe('claude-current-key');
+  });
+
+  test('syncCurrentClaudeChannel skips OAuth-only settings', () => {
+    readNativeOAuthMock.mockReturnValue({ accessToken: 'oauth-token' });
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      env: {
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-token'
+      }
+    }, null, 2), 'utf8');
+
+    const result = channelsService.syncCurrentClaudeChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('OAuth');
+    expect(channelsService.getAllChannels()).toHaveLength(0);
+  });
+
+  test('syncCurrentClaudeChannel does not import ctx proxy placeholder settings', () => {
+    const settingsPath = path.join(testDir, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      env: {
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:3456',
+        ANTHROPIC_API_KEY: 'PROXY_KEY'
+      }
+    }, null, 2), 'utf8');
+
+    const result = channelsService.syncCurrentClaudeChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('ctx 代理');
+    expect(channelsService.getAllChannels()).toHaveLength(0);
   });
 });

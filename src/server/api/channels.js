@@ -9,7 +9,8 @@ const {
   deleteChannel,
   getCurrentSettings,
   getBestChannelForRestore,
-  updateClaudeSettingsWithModelConfig
+  updateClaudeSettingsWithModelConfig,
+  syncCurrentClaudeChannel
 } = require('../services/channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
@@ -87,6 +88,18 @@ router.get('/current', (req, res) => {
     res.json({ channel: currentChannel, settings });
   } catch (error) {
     console.error('Error fetching current settings:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/channels/sync-current - Sync current native/ctx channel into channel list
+router.post('/sync-current', (req, res) => {
+  try {
+    const result = syncCurrentClaudeChannel();
+    res.json(result);
+    broadcastSchedulerState('claude', getSchedulerState('claude'));
+  } catch (error) {
+    console.error('Error syncing current Claude channel:', error);
     res.status(500).json({ error: error.message });
   }
 });

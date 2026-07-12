@@ -6,6 +6,12 @@ const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { isWindowsLikePlatform } = require('../../utils/home-dir');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
+const {
+  createSkippedResult,
+  isLocalProxyBaseUrl,
+  resolveExistingActiveChannel,
+  upsertSyncedChannels
+} = require('./channel-sync-utils');
 
 // ── Claude 特有工具函数 ──
 
@@ -338,6 +344,118 @@ function getCurrentSettings() {
   };
 }
 
+function readClaudeNativeSettings() {
+  const settingsPath = getClaudeSettingsPath();
+  if (!fs.existsSync(settingsPath)) {
+    return {};
+  }
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Failed to read Claude settings.json: ${error.message}`);
+  }
+}
+
+function readClaudeNativeOAuth() {
+  try {
+    const adapters = require('./native-oauth-adapters');
+    return typeof adapters.readNativeOAuth === 'function'
+      ? adapters.readNativeOAuth('claude')
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildClaudeSyncCandidate(settings, channels) {
+  const env = settings?.env && typeof settings.env === 'object' ? settings.env : {};
+  const baseUrl = String(env.ANTHROPIC_BASE_URL || '').trim();
+
+  if (isLocalProxyBaseUrl(baseUrl)) {
+    const existing = resolveExistingActiveChannel('claude', channels);
+    if (existing) {
+      return {
+        skip: true,
+        channel: existing,
+        warning: 'Claude 当前配置指向 ctx 代理；对应渠道已在列表中，未重复导入。'
+      };
+    }
+    return {
+      skip: true,
+      warning: 'Claude 当前配置指向 ctx 代理，但没有找到可匹配的现有渠道。请先确认 ctx 渠道列表。'
+    };
+  }
+
+  const helperKey = extractApiKeyFromHelper(settings?.apiKeyHelper);
+  const apiKey = String(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || helperKey || '').trim();
+  const hasOAuth = Boolean(env.CLAUDE_CODE_OAUTH_TOKEN || readClaudeNativeOAuth());
+  const existingByBaseUrl = baseUrl
+    ? channels.find(ch => String(ch.baseUrl || '').trim() === baseUrl)
+    : null;
+
+  if (!apiKey) {
+    if (existingByBaseUrl) {
+      return {
+        skip: true,
+        channel: existingByBaseUrl,
+        warning: 'Claude 当前配置未暴露 API Key；已找到同 baseUrl 渠道，未重复导入。'
+      };
+    }
+    return {
+      skip: true,
+      warning: hasOAuth
+        ? 'Claude 当前配置是 OAuth/登录态，OAuth 渠道不支持同步导入。'
+        : 'Claude 当前配置缺少 API Key，无法同步导入。'
+    };
+  }
+
+  const modelConfig = {
+    model: env.ANTHROPIC_MODEL || '',
+    haikuModel: env.ANTHROPIC_DEFAULT_HAIKU_MODEL || '',
+    sonnetModel: env.ANTHROPIC_DEFAULT_SONNET_MODEL || '',
+    opusModel: env.ANTHROPIC_DEFAULT_OPUS_MODEL || ''
+  };
+  Object.keys(modelConfig).forEach((key) => {
+    if (!modelConfig[key]) delete modelConfig[key];
+  });
+
+  const finalBaseUrl = baseUrl || 'https://api.anthropic.com';
+  return {
+    name: existingByBaseUrl?.name || 'Claude 当前配置',
+    baseUrl: finalBaseUrl,
+    apiKey,
+    presetId: finalBaseUrl.includes('api.anthropic.com') ? 'official' : 'custom',
+    modelConfig,
+    proxyUrl: env.HTTPS_PROXY || env.HTTP_PROXY || '',
+    targetApi: 'responses',
+    gatewaySourceType: 'claude',
+    credentialSource: env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN ? 'config' : 'apiKeyHelper'
+  };
+}
+
+function syncCurrentClaudeChannel() {
+  const data = service.loadChannels();
+  const channels = Array.isArray(data.channels) ? data.channels : [];
+  const settings = readClaudeNativeSettings();
+  const candidate = buildClaudeSyncCandidate(settings, channels);
+
+  if (candidate?.skip) {
+    return createSkippedResult('claude', candidate.warning, candidate.channel);
+  }
+
+  return upsertSyncedChannels({
+    toolType: 'claude',
+    loadChannels: () => service.loadChannels(),
+    saveChannels: payload => service.saveChannels(payload),
+    applyDefaults: channel => service._applyDefaults(channel),
+    candidates: [candidate],
+    matchers: [
+      (channel, current) => channel.baseUrl === current.baseUrl && channel.apiKey === current.apiKey,
+      (channel, current) => channel.baseUrl === current.baseUrl && channel.targetApi === current.targetApi
+    ]
+  });
+}
+
 function getBestChannelForRestore() {
   const channels = getAllChannels();
   const enabled = channels.filter(ch => ch.enabled !== false);
@@ -394,4 +512,5 @@ module.exports = {
   getEffectiveApiKey,
   disableAllChannels,
   extractApiKeyFromHelper,
+  syncCurrentClaudeChannel,
 };

@@ -11,6 +11,11 @@ export async function getCurrentChannel() {
   return response.data
 }
 
+export async function syncCurrentClaudeChannel() {
+  const response = await client.post('/channels/sync-current')
+  return response.data
+}
+
 export async function createChannel(name, baseUrl, apiKey, websiteUrl, extra = {}) {
   const payload = {
     name,
@@ -74,6 +79,11 @@ export async function getEnabledCodexChannels() {
   return response.data
 }
 
+export async function syncCurrentCodexChannel() {
+  const response = await client.post('/codex/channels/sync-current')
+  return response.data
+}
+
 export async function createCodexChannel(name, providerKey, baseUrl, apiKey, websiteUrl, extra = {}) {
   const response = await client.post('/codex/channels', {
     name,
@@ -119,6 +129,11 @@ export async function getGeminiChannels() {
 
 export async function getEnabledGeminiChannels() {
   const response = await client.get('/gemini/channels/enabled')
+  return response.data
+}
+
+export async function syncCurrentGeminiChannel() {
+  const response = await client.post('/gemini/channels/sync-current')
   return response.data
 }
 
@@ -255,6 +270,11 @@ export async function getEnabledOpenCodeChannels() {
   }
 }
 
+export async function syncCurrentOpenCodeChannel() {
+  const response = await client.post('/opencode/channels/sync-current')
+  return response.data
+}
+
 export async function createOpenCodeChannel(name, baseUrl, apiKey, extra = {}) {
   const response = await client.post('/opencode/channels', {
     name,
@@ -347,6 +367,11 @@ export async function getEnabledOmpChannels() {
   return {
     channels: (data.channels || []).filter(ch => ch.enabled !== false)
   }
+}
+
+export async function syncCurrentOmpChannel() {
+  const response = await client.post('/omp/channels/sync-current')
+  return response.data
 }
 
 export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {

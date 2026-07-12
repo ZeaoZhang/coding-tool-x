@@ -6,7 +6,8 @@ const {
   updateChannel,
   deleteChannel,
   getEnabledChannels,
-  saveChannelOrder
+  saveChannelOrder,
+  syncCurrentGeminiChannel
 } = require('../services/gemini-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
@@ -49,6 +50,25 @@ module.exports = (config) => {
       res.json({ channels: channelsWithHealth });
     } catch (err) {
       console.error('[Gemini Channels API] Failed to get channels:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/gemini/channels/sync-current
+   * 将当前 Gemini 原生/ctx 配置同步到渠道列表
+   */
+  router.post('/sync-current', (req, res) => {
+    try {
+      if (!isGeminiInstalled()) {
+        return res.status(404).json({ error: 'Gemini CLI not installed' });
+      }
+
+      const result = syncCurrentGeminiChannel();
+      res.json(result);
+      broadcastSchedulerState('gemini', getSchedulerState('gemini'));
+    } catch (err) {
+      console.error('[Gemini Channels API] Failed to sync current channel:', err);
       res.status(500).json({ error: err.message });
     }
   });

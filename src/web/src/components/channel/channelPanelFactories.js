@@ -4,6 +4,7 @@ import {
   updateChannel as updateClaudeChannel,
   deleteChannel as deleteClaudeChannel,
   applyChannelToSettings,
+  syncCurrentClaudeChannel,
   resetChannelHealth,
   testClaudeChannelSpeed,
   testCodexChannelSpeed,
@@ -20,6 +21,7 @@ import {
   updateCodexChannel,
   deleteCodexChannel,
   applyCodexChannelToSettings,
+  syncCurrentCodexChannel,
   resetCodexChannelHealth,
   fetchCodexChannelModels
 } from '../../api/channels'
@@ -28,6 +30,7 @@ import {
   createGeminiChannel,
   updateGeminiChannel,
   deleteGeminiChannel,
+  syncCurrentGeminiChannel,
   resetGeminiChannelHealth,
   fetchGeminiChannelModels
 } from '../../api/channels'
@@ -36,6 +39,7 @@ import {
   createOpenCodeChannel,
   updateOpenCodeChannel,
   deleteOpenCodeChannel,
+  syncCurrentOpenCodeChannel,
   resetOpenCodeChannelHealth,
   fetchOpenCodeChannelModels,
   probeOpenCodeChannelModels,
@@ -46,6 +50,7 @@ import {
   createOmpChannel,
   updateOmpChannel,
   deleteOmpChannel,
+  syncCurrentOmpChannel,
   resetOmpChannelHealth,
   fetchOmpChannelModels,
   probeOmpChannelModels,
@@ -529,6 +534,7 @@ const channelPanelFactories = {
         const data = await fetchClaudeChannels()
         return data.channels || []
       },
+      syncCurrent: syncCurrentClaudeChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
         await createClaudeChannel(
@@ -799,6 +805,7 @@ const channelPanelFactories = {
         const data = await getCodexChannels()
         return data.channels || []
       },
+      syncCurrent: syncCurrentCodexChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
         await createCodexChannel(
@@ -1054,6 +1061,7 @@ const channelPanelFactories = {
         const data = await getGeminiChannels()
         return data.channels || []
       },
+      syncCurrent: syncCurrentGeminiChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
         await createGeminiChannel(
@@ -1356,6 +1364,7 @@ const channelPanelFactories = {
         const data = await getOpenCodeChannels()
         return data.channels || []
       },
+      syncCurrent: syncCurrentOpenCodeChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
         await createOpenCodeChannel(
@@ -1663,6 +1672,7 @@ const channelPanelFactories = {
         const data = await getOmpChannels()
         return data.channels || []
       },
+      syncCurrent: syncCurrentOmpChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
         await createOmpChannel(form.name, form.baseUrl, authPayload.apiKey, {

@@ -965,6 +965,8 @@ module.exports = {
   isManagedOmpProvidersActive,
   isManagedProviderExtensionActive: isManagedOmpProvidersActive,
   normalizeProviderId,
+  normalizeProviderApi,
+  readOmpSettingsConfig,
   readModelsConfig,
   removeManagedOmpProviders,
   removeManagedProviderExtension: removeManagedOmpProviders,

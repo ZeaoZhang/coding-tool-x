@@ -83,10 +83,22 @@
           <h3>{{ channelTitle }}</h3>
           <n-text depth="3" class="header-hint">启用渠道优先显示</n-text>
         </div>
-        <n-button type="primary" size="small" @click="handleAddClick">
-          <template #icon><n-icon><AddOutline /></n-icon></template>
-          添加
-        </n-button>
+        <div class="header-actions">
+          <n-button
+            secondary
+            size="small"
+            :loading="syncingCurrentChannel"
+            :disabled="syncingCurrentChannel"
+            @click="handleSyncCurrentClick"
+          >
+            <template #icon><n-icon><SyncOutline /></n-icon></template>
+            同步
+          </n-button>
+          <n-button type="primary" size="small" @click="handleAddClick">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            添加
+          </n-button>
+        </div>
       </div>
       <div class="channels-scroll-area">
         <ClaudeChannelPanel v-if="currentChannel === 'claude'" ref="claudePanelRef" @open-website="openWebsite" />
@@ -118,6 +130,7 @@ import {
   PersonOutline,
   CubeOutline,
   KeyOutline,
+  SyncOutline,
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
@@ -160,6 +173,7 @@ const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
 const opencodePanelRef = ref(null)
 const ompPanelRef = ref(null)
+const syncingCurrentChannel = ref(false)
 const installedSkillsCount = ref(0)
 const oauthSummaries = ref({})
 const managedConfigChannels = ['claude', 'codex', 'gemini', 'opencode', 'omp']
@@ -238,6 +252,17 @@ function openWebsite(url) {
 
 function handleAddClick() {
   channelRefs[currentChannel.value]?.value?.openAddDialog?.()
+}
+
+async function handleSyncCurrentClick() {
+  const panel = channelRefs[currentChannel.value]?.value
+  if (!panel?.syncCurrentChannels || syncingCurrentChannel.value) return
+  syncingCurrentChannel.value = true
+  try {
+    await panel.syncCurrentChannels()
+  } finally {
+    syncingCurrentChannel.value = false
+  }
 }
 
 function refreshChannelPanel(channel = currentChannel.value) {
@@ -438,6 +463,7 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-width: 0;
 }
 
 .header-title h3 {
@@ -449,6 +475,13 @@ onUnmounted(() => {
 
 .header-hint {
   font-size: 11px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .channels-scroll-area {
