@@ -350,6 +350,38 @@ export const useGlobalStore = defineStore('global', () => {
     })
   }
 
+  function normalizeDashboardChannels(payload) {
+    if (Array.isArray(payload)) return payload
+    if (Array.isArray(payload?.channels)) return payload.channels
+    return []
+  }
+
+  function setChannelsForSource(source, channels) {
+    const normalized = normalizeDashboardChannels(channels)
+    if (source === 'claude') claudeChannels.value = mergeProxyChannels(claudeChannels.value, normalized)
+    else if (source === 'codex') codexChannels.value = mergeProxyChannels(codexChannels.value, normalized)
+    else if (source === 'gemini') geminiChannels.value = mergeProxyChannels(geminiChannels.value, normalized)
+    else if (source === 'opencode') opencodeChannels.value = mergeProxyChannels(opencodeChannels.value, normalized)
+    else if (source === 'omp') ompChannels.value = mergeProxyChannels(ompChannels.value, normalized)
+  }
+
+  function hydrateFromDashboard(data = {}) {
+    const channelData = data.channels || {}
+    ;['claude', 'codex', 'gemini', 'opencode', 'omp'].forEach((source) => {
+      if (Object.prototype.hasOwnProperty.call(channelData, source)) {
+        setChannelsForSource(source, channelData[source])
+      }
+    })
+    rebuildChannelSourceCache()
+
+    const proxyStatus = data.proxyStatus || {}
+    ;['claude', 'codex', 'gemini', 'opencode', 'omp'].forEach((source) => {
+      const status = proxyStatus[source]
+      if (!status || typeof status !== 'object') return
+      patchProxyState(getProxyState(source), status, status.activeChannel)
+    })
+  }
+
   if (typeof window !== 'undefined' && !window[ADVANCED_CONFIG_FLAG]) {
     window.addEventListener('advanced-config-change', (event) => {
       if (event.detail?.maxLogs) {
@@ -666,6 +698,7 @@ export const useGlobalStore = defineStore('global', () => {
     getChannels,
     getSchedulerState,
     handleProxyStateUpdate,
+    hydrateFromDashboard,
     startProxy,
     stopProxy,
     getLogs,

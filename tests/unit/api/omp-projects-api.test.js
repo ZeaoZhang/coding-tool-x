@@ -1,7 +1,13 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 let ompSessionsService;
+const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
+const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
   delete require.cache[require.resolve('../../../src/server/api/omp-projects')];
@@ -59,6 +65,7 @@ function call(app, method, url, body) {
 }
 
 beforeEach(() => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-projects-api-test-'));
   ompSessionsService = {
     getProjects: vi.fn(() => [{ name: 'repo-omp' }]),
     saveProjectOrder: vi.fn(),
@@ -72,12 +79,27 @@ beforeEach(() => {
     loaded: true,
     exports: ompSessionsService
   };
+  require.cache[PATHS_PATH] = {
+    id: PATHS_PATH,
+    filename: PATHS_PATH,
+    loaded: true,
+    exports: {
+      PATHS: {
+        storage: tempDir,
+        cache: path.join(tempDir, 'cache'),
+        snapshotCache: path.join(tempDir, 'cache', 'snapshots')
+      }
+    }
+  };
 });
 
 afterEach(() => {
   [
     '../../../src/server/api/omp-projects',
-    '../../../src/server/services/omp-sessions'
+    '../../../src/server/services/omp-sessions',
+    '../../../src/config/paths',
+    '../../../src/server/services/snapshot-cache',
+    '../../../src/server/services/project-snapshots'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -90,20 +112,21 @@ describe('omp-projects api', () => {
     ompSessionsService.isOmpInstalled.mockReturnValue(false);
     const res = await request(buildApp()).get('/');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       projects: [],
       currentProject: null,
       error: 'OMP CLI not installed or not found'
     });
   });
 
-  test('GET / returns projects and currentProject', async () => {
-    const res = await request(buildApp()).get('/');
+  test('GET /?fresh=1 returns projects and currentProject', async () => {
+    const res = await request(buildApp()).get('/?fresh=1');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       projects: [{ name: 'repo-omp' }],
       currentProject: 'repo-omp'
     });
+    expect(res.body.meta).toMatchObject({ stale: false, refreshing: false });
   });
 
   test('POST /order validates body and DELETE proxies project removal', async () => {

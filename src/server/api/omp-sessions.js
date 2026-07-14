@@ -16,6 +16,14 @@ const {
 } = require('../services/omp-sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
+const {
+  defaultProjectInfo,
+  emptySessionList,
+  getSessionListSnapshot,
+  invalidateSessionSnapshots,
+  runSessionSnapshotWorker
+} = require('../services/session-snapshots');
+const { invalidateProjectSnapshots } = require('../services/project-snapshots');
 
 function isNotFoundError(error) {
   if (!error || !error.message) return false;
@@ -81,27 +89,22 @@ module.exports = () => {
     }
   });
 
-  router.get('/:projectName', (req, res) => {
+  router.get('/:projectName', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { projectName } = req.params;
-      const sessions = getSessionsByProject(projectName);
-      const aliases = loadAliases();
-      const project = getProjects().find(p => p.name === projectName);
-      const totalSize = sessions.reduce((sum, session) => sum + (session.size || 0), 0);
-      res.json({
-        sessions,
-        totalSize,
-        aliases,
-        projectInfo: {
-          name: projectName,
-          fullPath: project?.fullPath || project?.path || projectName,
-          path: project?.path || projectName,
-          displayName: project?.displayName || projectName
-        }
+      const force = req.query?.fresh === '1';
+      const snapshot = await getSessionListSnapshot('omp', projectName, {
+        fallbackValue: emptySessionList(projectName, {
+          aliases: loadAliases(),
+          projectInfo: defaultProjectInfo(projectName)
+        }),
+        force,
+        refresh: () => runSessionSnapshotWorker('omp', projectName, {}, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[OMP API] Failed to get sessions:', err);
       res.status(500).json({ error: err.message });
@@ -206,7 +209,10 @@ module.exports = () => {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      res.json(deleteSession(req.params.sessionId));
+      const result = deleteSession(req.params.sessionId);
+      invalidateSessionSnapshots('omp', req.params.projectName);
+      invalidateProjectSnapshots('omp');
+      res.json(result);
     } catch (err) {
       if (isNotFoundError(err)) {
         return res.status(404).json({ error: err.message });
@@ -244,6 +250,10 @@ module.exports = () => {
           failed.push({ sessionId, error: err.message });
         }
       });
+      if (deletedSessionIds.length > 0) {
+        invalidateSessionSnapshots('omp', req.params.projectName);
+        invalidateProjectSnapshots('omp');
+      }
       res.json({
         success: failed.length === 0,
         requestedCount: uniqueSessionIds.length,
@@ -262,7 +272,10 @@ module.exports = () => {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      res.json(forkSession(req.params.sessionId, req.body || {}));
+      const result = forkSession(req.params.sessionId, req.body || {});
+      invalidateSessionSnapshots('omp', req.params.projectName);
+      invalidateProjectSnapshots('omp');
+      res.json(result);
     } catch (err) {
       if (isNotFoundError(err)) {
         return res.status(404).json({ error: err.message });
@@ -282,6 +295,7 @@ module.exports = () => {
         return res.status(400).json({ error: 'order must be an array' });
       }
       saveSessionOrder(req.params.projectName, order);
+      invalidateSessionSnapshots('omp', req.params.projectName);
       res.json({ success: true });
     } catch (err) {
       console.error('[OMP API] Failed to save session order:', err);

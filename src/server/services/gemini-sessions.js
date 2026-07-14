@@ -615,7 +615,11 @@ function normalizeSession(geminiSession) {
  * @param {string} projectHash - 项目 hash
  * @returns {string|null} 项目路径
  */
-function getProjectPath(projectHash) {
+function getProjectPath(projectHash, options = {}) {
+  if (options.force) {
+    pathMappingCache = null;
+    pathMappingCacheTime = 0;
+  }
   const pathMapping = buildPathMapping();
   return pathMapping.get(projectHash) || null;
 }
@@ -624,7 +628,11 @@ function getProjectPath(projectHash) {
  * 聚合项目列表
  * @returns {Array} 项目对象数组
  */
-function getProjects() {
+function getProjects(options = {}) {
+  if (options.force) {
+    pathMappingCache = null;
+    pathMappingCacheTime = 0;
+  }
   const sessions = getAllSessions();
   const projectMap = new Map();
 
@@ -680,7 +688,11 @@ function getProjects() {
  * @param {string} projectHash - 项目 hash
  * @returns {Array} 会话对象数组
  */
-function getProjectSessions(projectHash) {
+function getProjectSessions(projectHash, options = {}) {
+  if (options.force) {
+    pathMappingCache = null;
+    pathMappingCacheTime = 0;
+  }
   const allSessions = getAllSessions();
   return allSessions
     .filter(session => session.projectHash === projectHash)

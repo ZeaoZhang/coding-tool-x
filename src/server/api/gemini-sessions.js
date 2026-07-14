@@ -13,6 +13,14 @@ const {
 } = require('../services/gemini-sessions');
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { loadAliases } = require('../services/alias');
+const {
+  defaultProjectInfo,
+  emptySessionList,
+  getSessionListSnapshot,
+  invalidateSessionSnapshots,
+  runSessionSnapshotWorker
+} = require('../services/session-snapshots');
+const { invalidateProjectSnapshots } = require('../services/project-snapshots');
 
 function normalizeForkOptions(body = {}) {
   const alias = typeof body.alias === 'string' ? body.alias.trim() : '';
@@ -90,39 +98,23 @@ module.exports = (config) => {
    * GET /api/gemini/sessions/:projectHash
    * 获取项目的所有会话
    */
-  router.get('/:projectHash', (req, res) => {
+  router.get('/:projectHash', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
       const { projectHash } = req.params;
-      const sessions = getProjectSessions(projectHash);
-
-      // 计算总大小
-      const totalSize = sessions.reduce((sum, session) => {
-        return sum + (session.size || 0);
-      }, 0);
-
-      // 获取别名
-      const aliases = loadAliases();
-
-      // 使用彩虹表解析真实路径
-      const realPath = getProjectPath(projectHash);
-      const path = require('path');
-      const displayName = realPath ? path.basename(realPath) : `Project ${projectHash.substring(0, 8)}`;
-
-      res.json({
-        sessions,
-        totalSize,
-        aliases,
-        projectInfo: {
-          name: projectHash,
-          fullPath: realPath || projectHash,
-          path: realPath || projectHash,
-          displayName
-        }
+      const force = req.query?.fresh === '1';
+      const snapshot = await getSessionListSnapshot('gemini', projectHash, {
+        fallbackValue: emptySessionList(projectHash, {
+          aliases: loadAliases(),
+          projectInfo: defaultProjectInfo(projectHash)
+        }),
+        force,
+        refresh: () => runSessionSnapshotWorker('gemini', projectHash, {}, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[Gemini API] Failed to get sessions:', err);
       res.status(500).json({ error: err.message });
@@ -328,6 +320,8 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const result = deleteSession(sessionId);
+      invalidateSessionSnapshots('gemini', req.params.projectHash);
+      invalidateProjectSnapshots('gemini');
 
       res.json(result);
     } catch (err) {
@@ -377,6 +371,11 @@ module.exports = (config) => {
         }
       });
 
+      if (deletedSessionIds.length > 0) {
+        invalidateSessionSnapshots('gemini', req.params.projectHash);
+        invalidateProjectSnapshots('gemini');
+      }
+
       res.json({
         success: failed.length === 0,
         requestedCount: uniqueSessionIds.length,
@@ -402,6 +401,8 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const result = forkSession(sessionId, normalizeForkOptions(req.body));
+      invalidateSessionSnapshots('gemini', req.params.projectHash);
+      invalidateProjectSnapshots('gemini');
 
       res.json(result);
     } catch (err) {
@@ -428,6 +429,7 @@ module.exports = (config) => {
       }
 
       saveSessionOrder(projectHash, order);
+      invalidateSessionSnapshots('gemini', projectHash);
 
       res.json({ success: true });
     } catch (err) {

@@ -11,6 +11,14 @@ const {
 } = require('../services/codex-sessions');
 const { isCodexInstalled } = require('../services/codex-config');
 const { loadAliases } = require('../services/alias');
+const {
+  defaultProjectInfo,
+  emptySessionList,
+  getSessionListSnapshot,
+  invalidateSessionSnapshots,
+  runSessionSnapshotWorker
+} = require('../services/session-snapshots');
+const { invalidateProjectSnapshots } = require('../services/project-snapshots');
 
 const DEBUG_CODEX_PERF = process.env.DEBUG_CODEX_PERF === '1';
 
@@ -151,7 +159,7 @@ module.exports = (config) => {
    * GET /api/codex/sessions/:projectName
    * 获取项目的所有会话
    */
-  router.get('/:projectName', (req, res) => {
+  router.get('/:projectName', async (req, res) => {
     const startMs = Date.now();
     try {
       if (!isCodexInstalled()) {
@@ -160,27 +168,18 @@ module.exports = (config) => {
       }
 
       const { projectName } = req.params;
-      const sessions = getSessionsByProject(projectName);
-
-      // 计算总大小
-      const totalSize = sessions.reduce((sum, session) => {
-        return sum + (session.size || 0);
-      }, 0);
-
-      // 获取别名
-      const aliases = loadAliases();
-      logPerf('GET /api/codex/sessions/:projectName', startMs, `project=${projectName}, sessions=${sessions.length}`);
-
-      res.json({
-        sessions,
-        totalSize,
-        aliases, // 返回所有别名
-        projectInfo: {
-          name: projectName,
-          fullPath: projectName,
-          displayName: projectName
-        }
+      const force = req.query?.fresh === '1';
+      const snapshot = await getSessionListSnapshot('codex', projectName, {
+        fallbackValue: emptySessionList(projectName, {
+          aliases: loadAliases(),
+          projectInfo: defaultProjectInfo(projectName)
+        }),
+        force,
+        refresh: () => runSessionSnapshotWorker('codex', projectName, {}, { force })
       });
+      logPerf('GET /api/codex/sessions/:projectName', startMs, `project=${projectName}, sessions=${snapshot.value.sessions.length}, stale=${snapshot.meta.stale}`);
+
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[Codex API] Failed to get sessions:', err);
       logPerf('GET /api/codex/sessions/:projectName', startMs, `error=${err.message}`);
@@ -453,6 +452,8 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const result = deleteSession(sessionId);
+      invalidateSessionSnapshots('codex', req.params.projectName);
+      invalidateProjectSnapshots('codex');
 
       res.json(result);
     } catch (err) {
@@ -502,6 +503,11 @@ module.exports = (config) => {
         }
       });
 
+      if (deletedSessionIds.length > 0) {
+        invalidateSessionSnapshots('codex', req.params.projectName);
+        invalidateProjectSnapshots('codex');
+      }
+
       res.json({
         success: failed.length === 0,
         requestedCount: uniqueSessionIds.length,
@@ -527,6 +533,8 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const result = forkSession(sessionId, normalizeForkOptions(req.body));
+      invalidateSessionSnapshots('codex', req.params.projectName);
+      invalidateProjectSnapshots('codex');
 
       res.json(result);
     } catch (err) {
@@ -553,6 +561,7 @@ module.exports = (config) => {
       }
 
       saveSessionOrder(projectName, order);
+      invalidateSessionSnapshots('codex', projectName);
 
       res.json({ success: true });
     } catch (err) {

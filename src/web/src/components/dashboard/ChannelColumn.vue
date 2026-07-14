@@ -455,13 +455,6 @@ import {
   updateOpenCodeChannel,
   updateOmpChannel
 } from '../../api/channels'
-import {
-  getClaudeTodayStatistics,
-  getCodexTodayStatistics,
-  getGeminiTodayStatistics,
-  getOpenCodeTodayStatistics,
-  getOmpTodayStatistics
-} from '../../api/statistics'
 
 const props = defineProps({
   channelType: {
@@ -764,7 +757,8 @@ const logsToDisplay = computed(() => {
   if (!supportsKnownRuntime()) {
     return []
   }
-  const stream = logStreams[props.channelType] || logStreams.claude
+  const stream = logStreams[props.channelType]
+  if (!stream) return []
   const list = stream.value || []
   return list.slice(0, maxLogs.value)
 })
@@ -806,45 +800,14 @@ const statusText = computed(() => {
   return channels.value.length > 0 ? `${enabledCount}个渠道已启用` : '无渠道'
 })
 
-// 渠道统计数据
-const channelStats = ref({})
+// 渠道统计数据来自 dashboard 聚合，避免每列单独请求今日统计。
+const channelStats = computed(() => {
+  return dashboardData.value?.todayStats?.[props.channelType]?.byChannel || {}
+})
 
 // 获取渠道的今日统计
 function getChannelTodayStats(channelId) {
   return channelStats.value[channelId] || { requests: 0, tokens: 0, cost: 0 }
-}
-
-// 加载渠道统计数据
-async function loadChannelStats() {
-  try {
-    let statsData
-    if (props.channelType === 'claude') {
-      statsData = await getClaudeTodayStatistics()
-    } else if (props.channelType === 'codex') {
-      statsData = await getCodexTodayStatistics()
-    } else if (props.channelType === 'gemini') {
-      statsData = await getGeminiTodayStatistics()
-    } else if (props.channelType === 'opencode') {
-      statsData = await getOpenCodeTodayStatistics()
-    } else if (props.channelType === 'omp') {
-      statsData = await getOmpTodayStatistics()
-    }
-
-    // 从 byChannel 提取各渠道统计
-    if (statsData && statsData.byChannel) {
-      const stats = {}
-      for (const [channelId, data] of Object.entries(statsData.byChannel)) {
-        stats[channelId] = {
-          requests: data.requests || 0,
-          tokens: data.tokens?.total || 0,
-          cost: data.cost || 0
-        }
-      }
-      channelStats.value = stats
-    }
-  } catch (err) {
-    console.error('Failed to load channel stats:', err)
-  }
 }
 
 // 格式化统计数字
@@ -883,14 +846,14 @@ function getLogTitle(log) {
   return lines.join('\n')
 }
 
-// 防抖调用渠道统计（避免频繁日志导致大量请求）
-function debouncedLoadChannelStats() {
+// 防抖刷新 dashboard 统计（避免频繁日志导致大量请求）
+function debouncedRefreshDashboardStats() {
   if (statsDebounceTimer) {
     clearTimeout(statsDebounceTimer)
   }
   // 5秒内的多次调用只执行最后一次
   statsDebounceTimer = setTimeout(() => {
-    loadChannelStats()
+    loadDashboard(true, { fresh: true }).then(() => loadStats()).catch(() => {})
   }, 5000)
 }
 
@@ -902,8 +865,8 @@ watch(logsToDisplay, (newLogs) => {
   }
   latestLogId = newestId
 
-  // 有新日志时使用防抖刷新渠道统计（避免大量请求）
-  debouncedLoadChannelStats()
+  // 有新日志时使用防抖刷新统一 dashboard 统计（避免大量请求）
+  debouncedRefreshDashboardStats()
 
   const isNearTop = logsContainer.value ? logsContainer.value.scrollTop < 20 : true
   if (isNearTop) {
@@ -935,6 +898,10 @@ watch(() => props.channelType, () => {
 watch(() => dashboardData.value?.counts?.[props.channelType], () => {
   syncCountsFromDashboard()
 })
+
+watch(() => dashboardData.value?.todayStats?.[props.channelType], () => {
+  loadStats()
+}, { deep: true })
 
 watch(statsIntervalSetting, () => {
   if (componentMounted) {
@@ -1129,8 +1096,7 @@ function setupStatsTimer() {
   const intervalSeconds = statsIntervalSetting.value || 30
   const delay = Math.max(intervalSeconds * 1000, 10000)
   statsIntervalId = setInterval(() => {
-    loadStats()
-    loadChannelStats()  // 同时刷新渠道统计
+    loadDashboard(true, { fresh: true }).then(() => loadStats()).catch(() => {})
   }, delay)
 }
 
@@ -1159,11 +1125,7 @@ function openAgentsManager(event) {
 }
 
 onMounted(async () => {
-  // 并行加载：loadDashboard（有缓存防重）和 loadChannelStats 同时发起
-  await Promise.all([
-    loadDashboard().then(() => loadStats()),
-    loadChannelStats()
-  ])
+  await loadDashboard().then(() => loadStats())
   // 渠道数据现在从 Pinia store 获取，由 store 自动管理
   loadShowLogs()
   loadLockState()

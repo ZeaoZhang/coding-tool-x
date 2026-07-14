@@ -3,10 +3,18 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const { getSessionsForProject, deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('../services/sessions');
+const { deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('../services/sessions');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 const { NATIVE_PATHS } = require('../../config/paths');
+const {
+  defaultProjectInfo,
+  emptySessionList,
+  getSessionListSnapshot,
+  invalidateSessionSnapshots,
+  runSessionSnapshotWorker
+} = require('../services/session-snapshots');
+const { invalidateProjectSnapshots } = require('../services/project-snapshots');
 const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
 
 function resolveClaudeSessionFile(projectName, sessionId, fullPath) {
@@ -158,22 +166,16 @@ module.exports = (config) => {
   router.get('/:projectName', async (req, res) => {
     try {
       const { projectName } = req.params;
-      const result = await getSessionsForProject(config, projectName);
-      const aliases = loadAliases();
-
-      // Parse project path info
-      const { fullPath, projectName: displayName } = parseRealProjectPath(projectName);
-
-      res.json({
-        sessions: result.sessions,
-        totalSize: result.totalSize,
-        aliases,
-        projectInfo: {
-          name: projectName,
-          displayName,
-          fullPath
-        }
+      const force = req.query?.fresh === '1';
+      const snapshot = await getSessionListSnapshot('claude', projectName, {
+        fallbackValue: emptySessionList(projectName, {
+          aliases: loadAliases(),
+          projectInfo: defaultProjectInfo(projectName)
+        }),
+        force,
+        refresh: () => runSessionSnapshotWorker('claude', projectName, config, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (error) {
       console.error('Error fetching sessions:', error);
       res.status(500).json({ error: error.message });
@@ -185,6 +187,8 @@ module.exports = (config) => {
     try {
       const { projectName, sessionId } = req.params;
       const result = deleteSession(config, projectName, sessionId);
+      invalidateSessionSnapshots('claude', projectName);
+      invalidateProjectSnapshots('claude');
       res.json(result);
     } catch (error) {
       console.error('Error deleting session:', error);
@@ -228,6 +232,11 @@ module.exports = (config) => {
         }
       });
 
+      if (deletedSessionIds.length > 0) {
+        invalidateSessionSnapshots('claude', projectName);
+        invalidateProjectSnapshots('claude');
+      }
+
       res.json({
         success: failed.length === 0,
         requestedCount: uniqueSessionIds.length,
@@ -246,6 +255,8 @@ module.exports = (config) => {
     try {
       const { projectName, sessionId } = req.params;
       const result = forkSession(config, projectName, sessionId, normalizeForkOptions(req.body));
+      invalidateSessionSnapshots('claude', projectName);
+      invalidateProjectSnapshots('claude');
       res.json(result);
     } catch (error) {
       console.error('Error forking session:', error);
@@ -330,6 +341,10 @@ module.exports = (config) => {
         timestamp: Date.now()
       });
 
+      const snapshotSource = toolType === 'codex' || toolType === 'gemini' ? toolType : 'claude';
+      invalidateSessionSnapshots(snapshotSource, projectName);
+      invalidateProjectSnapshots(snapshotSource);
+
       res.json({
         success: true,
         sessionId: newSessionId,
@@ -352,6 +367,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
       saveSessionOrder(projectName, order);
+      invalidateSessionSnapshots('claude', projectName);
       res.json({ success: true });
     } catch (error) {
       console.error('Error saving session order:', error);

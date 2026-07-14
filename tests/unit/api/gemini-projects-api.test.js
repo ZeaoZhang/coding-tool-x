@@ -1,8 +1,14 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 let geminiSessionsService;
 let isGeminiInstalledMock;
+const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
+const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
   delete require.cache[require.resolve('../../../src/server/api/gemini-projects')];
@@ -55,6 +61,7 @@ function call(app, method, url, body) {
 }
 
 beforeEach(() => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-projects-api-test-'));
   geminiSessionsService = {
     getProjects: vi.fn(() => [{ name: 'hash-a' }]),
     saveProjectOrder: vi.fn(),
@@ -74,13 +81,28 @@ beforeEach(() => {
     loaded: true,
     exports: { isGeminiInstalled: isGeminiInstalledMock }
   };
+  require.cache[PATHS_PATH] = {
+    id: PATHS_PATH,
+    filename: PATHS_PATH,
+    loaded: true,
+    exports: {
+      PATHS: {
+        storage: tempDir,
+        cache: path.join(tempDir, 'cache'),
+        snapshotCache: path.join(tempDir, 'cache', 'snapshots')
+      }
+    }
+  };
 });
 
 afterEach(() => {
   [
     '../../../src/server/api/gemini-projects',
     '../../../src/server/services/gemini-sessions',
-    '../../../src/server/services/gemini-config'
+    '../../../src/server/services/gemini-config',
+    '../../../src/config/paths',
+    '../../../src/server/services/snapshot-cache',
+    '../../../src/server/services/project-snapshots'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -95,12 +117,13 @@ describe('gemini-projects api', () => {
     expect(res.body.error).toContain('Gemini CLI not installed');
   });
 
-  test('GET / returns projects and currentProject', async () => {
-    const res = await request(buildApp()).get('/');
-    expect(res.body).toEqual({
+  test('GET /?fresh=1 returns projects and currentProject', async () => {
+    const res = await request(buildApp()).get('/?fresh=1');
+    expect(res.body).toMatchObject({
       projects: [{ name: 'hash-a' }],
       currentProject: 'hash-a'
     });
+    expect(res.body.meta).toMatchObject({ stale: false, refreshing: false });
   });
 
   test('POST /order validates input and DELETE delegates project removal', async () => {

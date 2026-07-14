@@ -432,6 +432,8 @@ const PATHS = {
   },
 
   // 运行时、缓存、备份
+  cache: CACHE_DIR,
+  snapshotCache: path.join(CACHE_DIR, 'snapshots'),
   sessionCache: path.join(CACHE_DIR, 'session-cache.json'),
   sessionHasCache: path.join(CACHE_DIR, 'session-has-cache.json'),
   channelModels: path.join(CACHE_DIR, 'channel-models.json'),

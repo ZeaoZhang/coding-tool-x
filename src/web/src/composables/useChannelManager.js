@@ -28,11 +28,14 @@ function resolveError(error, fallback) {
 export default function useChannelManager(config) {
   const globalStore = useGlobalStore()
   let healthRefreshTimer = null
+  let balanceLoadTimer = null
+  let balanceIdleCallbackId = null
 
   const state = reactive({
     channels: [],
     balances: {},
     loading: false,
+    balanceLoading: false,
     syncing: false,
     toggling: {},
     collapsed: getLocalCollapse(config.storageKeys.localCollapse),
@@ -71,10 +74,10 @@ export default function useChannelManager(config) {
       const list = await config.api.fetch()
       state.channels = Array.isArray(list) ? [...list] : []
       await applyChannelOrder()
-      await loadChannelBalances()
       // 应用实时健康状态
       updateChannelHealth()
       scheduleFrozenChannelRefresh()
+      scheduleChannelBalanceLoad()
     } catch (error) {
       message.error(resolveError(error, `${config.displayName} 渠道加载失败`))
     } finally {
@@ -83,6 +86,7 @@ export default function useChannelManager(config) {
   }
 
   async function loadChannelBalances() {
+    state.balanceLoading = true
     try {
       const configData = await fetchUIConfig()
       if (configData?.channelBalance?.showRemaining !== true) {
@@ -97,9 +101,48 @@ export default function useChannelManager(config) {
       const response = await getChannelBalances(config.type)
       state.balances = response?.enabled && response.balances ? response.balances : {}
     } catch (error) {
-      state.balances = {}
       console.error('Failed to load channel balances:', error)
+    } finally {
+      state.balanceLoading = false
     }
+  }
+
+  function clearBalanceLoadTimer() {
+    if (balanceLoadTimer) {
+      clearTimeout(balanceLoadTimer)
+      balanceLoadTimer = null
+    }
+    if (
+      balanceIdleCallbackId !== null
+      && typeof window !== 'undefined'
+      && typeof window.cancelIdleCallback === 'function'
+    ) {
+      window.cancelIdleCallback(balanceIdleCallbackId)
+    }
+    balanceIdleCallbackId = null
+  }
+
+  function scheduleChannelBalanceLoad() {
+    clearBalanceLoadTimer()
+    const run = () => {
+      if (balanceLoadTimer) {
+        clearTimeout(balanceLoadTimer)
+      }
+      balanceIdleCallbackId = null
+      balanceLoadTimer = null
+      loadChannelBalances()
+    }
+    if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+      balanceIdleCallbackId = window.requestIdleCallback(run, { timeout: 1000 })
+      balanceLoadTimer = setTimeout(() => {
+        if (typeof window.cancelIdleCallback === 'function') {
+          window.cancelIdleCallback(balanceIdleCallbackId)
+        }
+        run()
+      }, 1200)
+      return
+    }
+    balanceLoadTimer = setTimeout(run, 0)
   }
 
   function clearFrozenChannelRefreshTimer() {
@@ -458,6 +501,7 @@ export default function useChannelManager(config) {
   // 清理 watch
   onUnmounted(() => {
     clearFrozenChannelRefreshTimer()
+    clearBalanceLoadTimer()
     stopWatch()
     if (typeof window !== 'undefined') {
       window.removeEventListener('channel-balance-visibility-change', handleBalanceVisibilityChange)

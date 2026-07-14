@@ -35,6 +35,8 @@ describe('proxy-log-helper', () => {
       expect(normalizeToolSource('codex')).toBe('codex');
       expect(normalizeToolSource('gemini')).toBe('gemini');
       expect(normalizeToolSource('opencode')).toBe('opencode');
+      expect(normalizeToolSource('omp')).toBe('omp');
+      expect(normalizeToolSource('omp-agent')).toBe('omp');
     });
 
     it('should normalize claude-code to claude', () => {
@@ -52,6 +54,7 @@ describe('proxy-log-helper', () => {
       expect(normalizeToolSource('CLAUDE')).toBe('claude');
       expect(normalizeToolSource('Codex')).toBe('codex');
       expect(normalizeToolSource('GEMINI')).toBe('gemini');
+      expect(normalizeToolSource('OMP')).toBe('omp');
     });
   });
 
@@ -365,6 +368,32 @@ describe('proxy-log-helper', () => {
       });
 
       expect(broadcastLog).not.toHaveBeenCalled();
+    });
+
+    it('should keep OMP usage logs on the omp source', () => {
+      const broadcastLog = vi.fn();
+      const recordRequest = vi.fn();
+
+      publishUsageLog({
+        source: 'omp',
+        metadata: { id: 'omp-req-1', channel: '内网', channelId: 'omp-channel-1' },
+        model: 'gpt-4.1',
+        tokens: { input: 193, output: 386 },
+        broadcastLog,
+        recordRequest
+      });
+
+      expect(broadcastLog).toHaveBeenCalledWith(expect.objectContaining({
+        source: 'omp',
+        channel: '内网',
+        inputTokens: 193,
+        outputTokens: 386,
+        totalTokens: 579
+      }));
+      expect(recordRequest).toHaveBeenCalledWith(expect.objectContaining({
+        toolType: 'omp',
+        channel: '内网'
+      }));
     });
 
     it('should handle missing callback functions gracefully', () => {

@@ -1,7 +1,13 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 let opencodeSessionsService;
+const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
+const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
   delete require.cache[require.resolve('../../../src/server/api/opencode-projects')];
@@ -54,6 +60,7 @@ function call(app, method, url, body) {
 }
 
 beforeEach(() => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-projects-api-test-'));
   opencodeSessionsService = {
     getProjects: vi.fn(() => [{ name: 'repo-open' }]),
     saveProjectOrder: vi.fn(),
@@ -67,12 +74,27 @@ beforeEach(() => {
     loaded: true,
     exports: opencodeSessionsService
   };
+  require.cache[PATHS_PATH] = {
+    id: PATHS_PATH,
+    filename: PATHS_PATH,
+    loaded: true,
+    exports: {
+      PATHS: {
+        storage: tempDir,
+        cache: path.join(tempDir, 'cache'),
+        snapshotCache: path.join(tempDir, 'cache', 'snapshots')
+      }
+    }
+  };
 });
 
 afterEach(() => {
   [
     '../../../src/server/api/opencode-projects',
-    '../../../src/server/services/opencode-sessions'
+    '../../../src/server/services/opencode-sessions',
+    '../../../src/config/paths',
+    '../../../src/server/services/snapshot-cache',
+    '../../../src/server/services/project-snapshots'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -87,12 +109,13 @@ describe('opencode-projects api', () => {
     expect(res.body.error).toContain('OpenCode CLI not installed');
   });
 
-  test('GET / returns projects and currentProject', async () => {
-    const res = await request(buildApp()).get('/');
-    expect(res.body).toEqual({
+  test('GET /?fresh=1 returns projects and currentProject', async () => {
+    const res = await request(buildApp()).get('/?fresh=1');
+    expect(res.body).toMatchObject({
       projects: [{ name: 'repo-open' }],
       currentProject: 'repo-open'
     });
+    expect(res.body.meta).toMatchObject({ stale: false, refreshing: false });
   });
 
   test('POST /order validates array and DELETE returns 404 for not found errors', async () => {

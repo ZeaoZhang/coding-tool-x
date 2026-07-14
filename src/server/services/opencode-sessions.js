@@ -493,7 +493,7 @@ function getProjectDisplayName(project) {
 }
 
 // 获取所有项目
-function getProjects() {
+function getProjects(_options = {}) {
   const projects = getProjectRows().map((project) => ({
     name: project.id,
     displayName: getProjectDisplayName(project),
@@ -512,7 +512,7 @@ function getProjects() {
 }
 
 // 根据项目ID获取会话列表
-function getSessionsByProjectId(projectId) {
+function getSessionsByProjectId(projectId, _options = {}) {
   const sessions = getSessionRowsByProjectId(projectId).map(session => normalizeSession(session, projectId));
   const order = getSessionOrder(projectId);
 
@@ -536,8 +536,8 @@ function getSessionsByProjectId(projectId) {
 }
 
 // 根据项目名获取会话列表
-function getSessionsByProject(projectName) {
-  return getSessionsByProjectId(projectName);
+function getSessionsByProject(projectName, options = {}) {
+  return getSessionsByProjectId(projectName, options);
 }
 
 function getSessionLocation(sessionId) {
@@ -628,9 +628,12 @@ function getSessionMessages(sessionId) {
 }
 
 // 获取项目和会话数量统计
-function getProjectAndSessionCounts() {
+function getProjectAndSessionCounts(options = {}) {
   const now = Date.now();
-  if (countsCache.expiresAt > now) {
+  if (options.force) {
+    countsCache.expiresAt = 0;
+  }
+  if (!options.force && countsCache.expiresAt > now) {
     return countsCache.value;
   }
 

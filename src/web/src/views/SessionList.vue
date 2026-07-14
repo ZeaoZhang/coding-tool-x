@@ -464,9 +464,9 @@ async function ensureProjectNameResolved() {
   return props.projectName
 }
 
-async function loadSessions() {
+async function loadSessions(options = {}) {
   const projectName = await ensureProjectNameResolved()
-  await store.fetchSessions(projectName)
+  await store.fetchSessions(projectName, options)
 }
 
 // Sync with store
@@ -816,7 +816,7 @@ async function refreshDataWithScrollPreservation() {
   const scrollTop = contentEl.value?.scrollTop || 0
 
   // Fetch data
-  await loadSessions()
+  await loadSessions({ force: true, fresh: true })
 
   // Restore scroll position after DOM update
   await nextTick()

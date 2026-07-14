@@ -6,6 +6,11 @@ const path = require('path');
 const { URL } = require('url');
 const { PATHS } = require('../../config/paths');
 const { loadUIConfig } = require('./ui-config');
+const {
+  getSnapshot,
+  refreshSnapshot,
+  invalidateSnapshot
+} = require('./snapshot-cache');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 8000;
@@ -1489,6 +1494,14 @@ function buildCacheKey(source, channel) {
   ].join(':');
 }
 
+function buildBalanceSnapshotKey(source, channel) {
+  return `channel-balances:${buildCacheKey(source, channel)}`;
+}
+
+function makeFallbackBalanceSnapshot(currentTime = Date.now()) {
+  return makeHiddenSnapshot(null, { stale: true, updatedAt: nowIso(currentTime) });
+}
+
 async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
   const force = options.force === true;
   const currentTime = options.now || Date.now();
@@ -1588,6 +1601,7 @@ function clearChannelBalanceCache(source, channel) {
   let strategyChanged = false;
 
   balanceCache.delete(exactKey);
+  invalidateSnapshot(`channel-balances:${exactKey}`);
   for (const key of Array.from(balanceCache.keys())) {
     if (key.startsWith(prefix)) {
       balanceCache.delete(key);
@@ -1665,19 +1679,45 @@ async function mapWithConcurrency(items, limit, worker) {
 async function getChannelBalances(source, options = {}) {
   const normalizedSource = validateSource(source);
   if (!isBalanceDisplayEnabled()) {
-    return { enabled: false, source: normalizedSource, balances: {} };
+    return {
+      enabled: false,
+      source: normalizedSource,
+      balances: {},
+      refreshing: false,
+      updatedAt: null,
+      stale: false
+    };
   }
 
   const channels = getEnabledBalanceChannels(normalizedSource);
+  const currentTime = options.now || Date.now();
   const entries = await mapWithConcurrency(channels, 4, async (channel) => {
-    const snapshot = await refreshChannelBalanceSnapshot(normalizedSource, channel, options);
-    return [channel.id, snapshot];
+    const snapshot = await getSnapshot(buildBalanceSnapshotKey(normalizedSource, channel), {
+      ttlMs: CACHE_TTL_MS,
+      fallbackValue: makeFallbackBalanceSnapshot(currentTime),
+      refresh: () => refreshChannelBalanceSnapshot(normalizedSource, channel, { ...options, force: true, now: Date.now() })
+    });
+    const value = {
+      ...snapshot.value,
+      stale: Boolean(snapshot.value?.stale || snapshot.meta.stale)
+    };
+    return [channel.id, value, snapshot.meta];
   });
+
+  const metas = entries.map((entry) => entry[2]).filter(Boolean);
+  const updatedAt = metas
+    .map(meta => meta.generatedAt)
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
 
   return {
     enabled: true,
     source: normalizedSource,
-    balances: Object.fromEntries(entries.filter(([id]) => id))
+    balances: Object.fromEntries(entries.filter(([id]) => id).map(([id, snapshot]) => [id, snapshot])),
+    refreshing: metas.some(meta => meta.refreshing),
+    updatedAt,
+    stale: metas.some(meta => meta.stale)
   };
 }
 
@@ -1695,7 +1735,12 @@ async function refreshChannelBalance(source, channelId) {
     throw error;
   }
 
-  const balance = await refreshChannelBalanceSnapshot(normalizedSource, channel, { force: true });
+  const entry = await refreshSnapshot(
+    buildBalanceSnapshotKey(normalizedSource, channel),
+    () => refreshChannelBalanceSnapshot(normalizedSource, channel, { force: true }),
+    { bypassInflight: true }
+  );
+  const balance = entry.value;
   return {
     enabled: true,
     source: normalizedSource,
@@ -1707,6 +1752,7 @@ async function refreshChannelBalance(source, channelId) {
 function clearBalanceCache() {
   balanceCache.clear();
   balanceStrategyCache.clear();
+  invalidateSnapshot('channel-balances:');
   strategyCacheLoaded = false;
 }
 
@@ -1739,6 +1785,7 @@ module.exports = {
     build88CodeSubscriptionSnapshot,
     buildNewCliDashboardSnapshot,
     buildBalanceProbeStrategies,
+    buildBalanceSnapshotKey,
     getEnabledBalanceChannels,
     runBalanceStrategy,
     refreshChannelBalanceSnapshot,

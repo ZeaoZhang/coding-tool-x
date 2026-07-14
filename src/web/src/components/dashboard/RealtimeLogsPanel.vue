@@ -83,6 +83,8 @@ const { getLogs, clearLogsState, logLimit } = useGlobalState()
 const claudeLogs = getLogs('claude')
 const codexLogs = getLogs('codex')
 const geminiLogs = getLogs('gemini')
+const opencodeLogs = getLogs('opencode')
+const ompLogs = getLogs('omp')
 
 const autoScroll = ref(true)
 const logsContainer = ref(null)
@@ -91,7 +93,7 @@ function normalizeLog(log) {
   return {
     id: log.id,
     timestamp: log.timestamp || Date.now(),
-    channelType: log.source || 'claude',
+    channelType: log.source || 'unknown',
     channelName: log.channel || 'Unknown',
     method: 'REQUEST',
     path: log.model || 'N/A',
@@ -110,7 +112,9 @@ const logs = computed(() => {
   const merged = [
     ...claudeLogs.value.map(normalizeLog),
     ...codexLogs.value.map(normalizeLog),
-    ...geminiLogs.value.map(normalizeLog)
+    ...geminiLogs.value.map(normalizeLog),
+    ...opencodeLogs.value.map(normalizeLog),
+    ...ompLogs.value.map(normalizeLog)
   ]
   return merged
     .filter(log => log.type !== 'action')
