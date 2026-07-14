@@ -1,8 +1,10 @@
 import { client, getChannelPrefix } from './client'
 
-export async function getProjects(channel = 'claude') {
+export async function getProjects(channel = 'claude', options = {}) {
   const prefix = getChannelPrefix(channel)
-  const response = await client.get(`${prefix}/projects`)
+  const response = await client.get(`${prefix}/projects`, {
+    params: options.fresh ? { fresh: '1' } : undefined
+  })
   return response.data
 }
 

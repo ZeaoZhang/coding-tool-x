@@ -13,6 +13,7 @@ const GEMINI_CHANNELS_PATH = require.resolve('../../../src/server/services/gemin
 const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
 const OMP_CHANNELS_PATH = require.resolve('../../../src/server/services/omp-channels');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
 
 function loadServiceWithStubs({
   uiConfig = { channelBalance: { showRemaining: true } },
@@ -31,6 +32,7 @@ function loadServiceWithStubs({
   delete require.cache[OPENCODE_CHANNELS_PATH];
   delete require.cache[OMP_CHANNELS_PATH];
   delete require.cache[PATHS_PATH];
+  delete require.cache[SNAPSHOT_CACHE_PATH];
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-balance-test-'));
   const cacheDir = path.join(tempDir, 'cache');
@@ -118,6 +120,10 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function waitForBackgroundRefresh() {
+  return new Promise(resolve => setTimeout(resolve, 50));
+}
+
 describe('channel-balance service', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -129,6 +135,7 @@ describe('channel-balance service', () => {
     delete require.cache[OPENCODE_CHANNELS_PATH];
     delete require.cache[OMP_CHANNELS_PATH];
     delete require.cache[PATHS_PATH];
+    delete require.cache[SNAPSHOT_CACHE_PATH];
   });
 
   test('normalizes OpenAI-style API paths to provider roots', () => {
@@ -1327,7 +1334,10 @@ describe('channel-balance service', () => {
     await expect(service.getChannelBalances('claude')).resolves.toEqual({
       enabled: false,
       source: 'claude',
-      balances: {}
+      balances: {},
+      refreshing: false,
+      updatedAt: null,
+      stale: false
     });
   });
 
@@ -1344,11 +1354,14 @@ describe('channel-balance service', () => {
     await expect(service.getChannelBalances('omp')).resolves.toEqual({
       enabled: false,
       source: 'omp',
-      balances: {}
+      balances: {},
+      refreshing: false,
+      updatedAt: null,
+      stale: false
     });
   });
 
-  test('loads balances only for enabled channels', async () => {
+  test('returns cached balance snapshots immediately and refreshes enabled channels in the background', async () => {
     let enabledRequests = 0;
     let disabledRequests = 0;
     const enabledServer = await withJsonServer((req, res) => {
@@ -1378,15 +1391,28 @@ describe('channel-balance service', () => {
       const result = await service.getChannelBalances('codex');
 
       expect(result.enabled).toBe(true);
+      expect(result.refreshing).toBe(true);
+      expect(result.stale).toBe(true);
       expect(result.balances).toMatchObject({
+        'enabled-new-api': {
+          visible: false,
+          stale: true
+        }
+      });
+      expect(Object.keys(result.balances)).toEqual(['enabled-new-api']);
+      expect(service._test.getEnabledBalanceChannels('codex').map(channel => channel.id)).toEqual(['enabled-new-api']);
+      expect(enabledRequests).toBe(0);
+      expect(disabledRequests).toBe(0);
+
+      await waitForBackgroundRefresh();
+      const refreshed = await service.getChannelBalances('codex');
+      expect(refreshed.balances).toMatchObject({
         'enabled-new-api': {
           visible: true,
           platform: 'sub2api',
           remaining: 8.25
         }
       });
-      expect(Object.keys(result.balances)).toEqual(['enabled-new-api']);
-      expect(service._test.getEnabledBalanceChannels('codex').map(channel => channel.id)).toEqual(['enabled-new-api']);
       expect(enabledRequests).toBeGreaterThan(0);
       expect(disabledRequests).toBe(0);
     } finally {
@@ -1395,7 +1421,7 @@ describe('channel-balance service', () => {
     }
   });
 
-  test('loads balances from enabled OMP channels', async () => {
+  test('loads balances from enabled OMP channels after background refresh', async () => {
     const seenAuth = [];
     const enabledServer = await withJsonServer((req, res) => {
       seenAuth.push({
@@ -1440,15 +1466,25 @@ describe('channel-balance service', () => {
 
       expect(result.enabled).toBe(true);
       expect(result.source).toBe('omp');
+      expect(result.refreshing).toBe(true);
       expect(result.balances).toMatchObject({
+        'omp-enabled': {
+          visible: false,
+          stale: true
+        }
+      });
+      expect(Object.keys(result.balances)).toEqual(['omp-enabled']);
+      expect(service._test.getEnabledBalanceChannels('omp').map(channel => channel.id)).toEqual(['omp-enabled']);
+
+      await waitForBackgroundRefresh();
+      const refreshed = await service.getChannelBalances('omp');
+      expect(refreshed.balances).toMatchObject({
         'omp-enabled': {
           visible: true,
           platform: 'sub2api',
           remaining: 4.5
         }
       });
-      expect(Object.keys(result.balances)).toEqual(['omp-enabled']);
-      expect(service._test.getEnabledBalanceChannels('omp').map(channel => channel.id)).toEqual(['omp-enabled']);
       expect(seenAuth.some(item => item.auth === 'Bearer balance-token')).toBe(true);
     } finally {
       await enabledServer.close();

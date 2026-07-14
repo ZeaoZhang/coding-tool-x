@@ -1,9 +1,13 @@
 import { client, getChannelPrefix } from './client'
 import { copyTextToClipboard } from '../utils/clipboard'
 
-export async function getSessions(projectName, channel = 'claude') {
+export async function getSessions(projectName, channel = 'claude', options = {}) {
   const prefix = getChannelPrefix(channel)
-  const response = await client.get(`${prefix}/sessions/${projectName}`)
+  const params = {}
+  if (options.fresh) {
+    params.fresh = '1'
+  }
+  const response = await client.get(`${prefix}/sessions/${projectName}`, { params })
   return response.data
 }
 

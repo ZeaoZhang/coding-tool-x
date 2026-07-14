@@ -600,12 +600,14 @@ function scanSessionFileForMessagesAsync(filePath) {
 }
 
 // Get sessions for a project - async version
-async function getSessionsForProject(config, projectName) {
+async function getSessionsForProject(config, projectName, options = {}) {
   // Check cache first
   const cacheKey = `${CacheKeys.SESSIONS}${projectName}`;
-  const cached = globalCache.get(cacheKey);
-  if (cached) {
-    return cached;
+  if (!options.force) {
+    const cached = globalCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
   }
 
   const projectConfig = { ...config, currentProject: projectName };

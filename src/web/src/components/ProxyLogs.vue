@@ -37,7 +37,7 @@
           <div class="col col-token" :class="`col-token-${source}`">缓存</div>
           <div class="col col-token" :class="`col-token-${source}`">总计</div>
         </template>
-        <template v-else-if="source === 'opencode'">
+        <template v-else-if="source === 'opencode' || source === 'omp'">
           <div class="col col-token" :class="`col-token-${source}`">推理</div>
           <div class="col col-token" :class="`col-token-${source}`">缓存</div>
           <div class="col col-token" :class="`col-token-${source}`">总计</div>
@@ -100,7 +100,7 @@
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cached') }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'total') }}</div>
                   </template>
-                  <template v-else-if="source === 'opencode'">
+                  <template v-else-if="source === 'opencode' || source === 'omp'">
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'reasoning') }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cached') }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'total') }}</div>
@@ -142,7 +142,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import { TrashOutline, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
-import { getTodayStatistics, getClaudeTodayStatistics, getOpenCodeTodayStatistics } from '../api/statistics'
+import { getTodayStatistics, getClaudeTodayStatistics, getOpenCodeTodayStatistics, getOmpTodayStatistics } from '../api/statistics'
 import { clearProxyLogs } from '../api/proxy'
 import message from '../utils/message'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -151,7 +151,7 @@ import { useGlobalState } from '../composables/useGlobalState'
 const props = defineProps({
   source: {
     type: String,
-    default: 'claude' // 'claude' | 'codex' | 'gemini' | 'opencode'
+    default: 'claude' // 'claude' | 'codex' | 'gemini' | 'opencode' | 'omp'
   }
 })
 
@@ -160,11 +160,13 @@ const logStreams = {
   claude: getLogs('claude'),
   codex: getLogs('codex'),
   gemini: getLogs('gemini'),
-  opencode: getLogs('opencode')
+  opencode: getLogs('opencode'),
+  omp: getLogs('omp')
 }
 
 const filteredLogs = computed(() => {
-  const stream = logStreams[props.source] || logStreams.claude
+  const stream = logStreams[props.source]
+  if (!stream) return []
   const list = stream.value || []
   return list.slice(0, logLimit.value)
 })
@@ -199,6 +201,15 @@ async function loadTodayStats() {
   try {
     if (props.source === 'opencode') {
       const stats = await getOpenCodeTodayStatistics()
+      todayStats.value = {
+        requests: stats?.summary?.requests || 0,
+        tokens: stats?.summary?.tokens || 0
+      }
+      return
+    }
+
+    if (props.source === 'omp') {
+      const stats = await getOmpTodayStatistics()
       todayStats.value = {
         requests: stats?.summary?.requests || 0,
         tokens: stats?.summary?.tokens || 0
@@ -654,6 +665,29 @@ onUnmounted(() => {
   padding-right: 6px;
 }
 
+/* OMP 渠道列宽 (7列，需要压缩) */
+.col-channel-omp {
+  flex: 1 1 65px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.col-token-omp {
+  flex: 0 0 58px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-time-omp {
+  flex: 0 0 80px;
+  min-width: 80px;
+  font-family: monospace;
+  font-size: 11px;
+  justify-content: flex-end;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
 /* 通用样式（保留以防兼容性问题） */
 .col-channel {
   min-width: 0;
@@ -779,17 +813,20 @@ onUnmounted(() => {
   }
 
   .col-channel-codex,
-  .col-channel-opencode {
+  .col-channel-opencode,
+  .col-channel-omp {
     flex: 0 0 65px;
   }
 
   .col-token-codex,
-  .col-token-opencode {
+  .col-token-opencode,
+  .col-token-omp {
     flex: 0 0 48px;
   }
 
   .col-time-codex,
-  .col-time-opencode {
+  .col-time-opencode,
+  .col-time-omp {
     flex: 0 0 75px;
     min-width: 75px;
   }
@@ -845,7 +882,8 @@ onUnmounted(() => {
   .col-channel-claude,
   .col-channel-gemini,
   .col-channel-codex,
-  .col-channel-opencode {
+  .col-channel-opencode,
+  .col-channel-omp {
     flex: 0 0 60px;
   }
 
@@ -858,7 +896,8 @@ onUnmounted(() => {
   .col-token-claude,
   .col-token-gemini,
   .col-token-codex,
-  .col-token-opencode {
+  .col-token-opencode,
+  .col-token-omp {
     flex: 0 0 40px;
     font-size: 9px;
   }
@@ -866,7 +905,8 @@ onUnmounted(() => {
   .col-time-claude,
   .col-time-gemini,
   .col-time-codex,
-  .col-time-opencode {
+  .col-time-opencode,
+  .col-time-omp {
     flex: 0 0 65px;
     min-width: 65px;
     font-size: 9px;
@@ -933,7 +973,8 @@ onUnmounted(() => {
   .col-channel-claude,
   .col-channel-gemini,
   .col-channel-codex,
-  .col-channel-opencode {
+  .col-channel-opencode,
+  .col-channel-omp {
     flex: 0 0 50px;
   }
 
@@ -946,7 +987,8 @@ onUnmounted(() => {
   .col-token-claude,
   .col-token-gemini,
   .col-token-codex,
-  .col-token-opencode {
+  .col-token-opencode,
+  .col-token-omp {
     flex: 0 0 32px;
     font-size: 8px;
   }
@@ -954,7 +996,8 @@ onUnmounted(() => {
   .col-time-claude,
   .col-time-gemini,
   .col-time-codex,
-  .col-time-opencode {
+  .col-time-opencode,
+  .col-time-omp {
     flex: 0 0 55px;
     min-width: 55px;
     font-size: 8px;
@@ -1005,14 +1048,16 @@ onUnmounted(() => {
   .col-channel-claude,
   .col-channel-gemini,
   .col-channel-codex,
-  .col-channel-opencode {
+  .col-channel-opencode,
+  .col-channel-omp {
     flex: 0 0 45px;
   }
 
   .col-token-claude,
   .col-token-gemini,
   .col-token-codex,
-  .col-token-opencode {
+  .col-token-opencode,
+  .col-token-omp {
     flex: 0 0 28px;
     font-size: 7px;
   }
@@ -1020,7 +1065,8 @@ onUnmounted(() => {
   .col-time-claude,
   .col-time-gemini,
   .col-time-codex,
-  .col-time-opencode {
+  .col-time-opencode,
+  .col-time-omp {
     flex: 0 0 48px;
     min-width: 48px;
     font-size: 7px;

@@ -15,6 +15,14 @@ const {
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 const { HOME_DIR } = require('../../config/paths');
+const {
+  defaultProjectInfo,
+  emptySessionList,
+  getSessionListSnapshot,
+  invalidateSessionSnapshots,
+  runSessionSnapshotWorker
+} = require('../services/session-snapshots');
+const { invalidateProjectSnapshots } = require('../services/project-snapshots');
 
 function isNotFoundError(error) {
   if (!error || !error.message) {
@@ -117,34 +125,23 @@ module.exports = (config) => {
    * GET /api/opencode/sessions/:projectName
    * 获取项目的所有会话
    */
-  router.get('/:projectName', (req, res) => {
+  router.get('/:projectName', async (req, res) => {
     try {
       if (!isOpenCodeInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { projectName } = req.params;
-      const sessions = getSessionsByProject(projectName);
-      const aliases = loadAliases();
-      const projects = getProjects();
-      const project = projects.find(p => p.name === projectName);
-
-      // 计算总大小
-      const totalSize = sessions.reduce((sum, session) => {
-        return sum + (session.size || 0);
-      }, 0);
-
-      res.json({
-        sessions,
-        totalSize,
-        aliases,
-        projectInfo: {
-          name: projectName,
-          fullPath: project?.fullPath || projectName,
-          path: project?.path || projectName,
-          displayName: project?.displayName || projectName
-        }
+      const force = req.query?.fresh === '1';
+      const snapshot = await getSessionListSnapshot('opencode', projectName, {
+        fallbackValue: emptySessionList(projectName, {
+          aliases: loadAliases(),
+          projectInfo: defaultProjectInfo(projectName)
+        }),
+        force,
+        refresh: () => runSessionSnapshotWorker('opencode', projectName, {}, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[OpenCode API] Failed to get sessions:', err);
       res.status(500).json({ error: err.message });
@@ -294,6 +291,8 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const result = deleteSession(sessionId);
+      invalidateSessionSnapshots('opencode', req.params.projectName);
+      invalidateProjectSnapshots('opencode');
 
       res.json(result);
     } catch (err) {
@@ -347,6 +346,11 @@ module.exports = (config) => {
         }
       });
 
+      if (deletedSessionIds.length > 0) {
+        invalidateSessionSnapshots('opencode', req.params.projectName);
+        invalidateProjectSnapshots('opencode');
+      }
+
       res.json({
         success: failed.length === 0,
         requestedCount: uniqueSessionIds.length,
@@ -372,6 +376,8 @@ module.exports = (config) => {
 
       const { sessionId } = req.params;
       const result = forkSession(sessionId);
+      invalidateSessionSnapshots('opencode', req.params.projectName);
+      invalidateProjectSnapshots('opencode');
       res.json(result);
     } catch (err) {
       if (isNotFoundError(err)) {
@@ -401,6 +407,7 @@ module.exports = (config) => {
       }
 
       saveSessionOrder(projectName, order);
+      invalidateSessionSnapshots('opencode', projectName);
       res.json({ success: true });
     } catch (err) {
       console.error('[OpenCode API] Failed to save session order:', err);

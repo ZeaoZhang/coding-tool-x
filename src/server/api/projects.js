@@ -1,33 +1,25 @@
 const express = require('express');
 const router = express.Router();
-const { getProjectsWithStats, saveProjectOrder, getProjectOrder, deleteProject } = require('../services/sessions');
+const { saveProjectOrder, deleteProject } = require('../services/sessions');
+const {
+  emptyProjectList,
+  getProjectListSnapshot,
+  invalidateProjectSnapshots
+} = require('../services/project-snapshots');
+const { invalidateSessionSnapshots } = require('../services/session-snapshots');
+const { runDashboardSnapshotWorker } = require('../services/dashboard-snapshot-worker');
 
 module.exports = (config) => {
   // GET /api/projects - Get all projects with stats
   router.get('/', async (req, res) => {
     try {
-      const projects = await getProjectsWithStats(config);
-      const order = getProjectOrder(config);
-
-      // Sort projects by saved order
-      let sortedProjects = projects;
-      if (order && order.length > 0) {
-        const orderMap = new Map(order.map((name, idx) => [name, idx]));
-        sortedProjects = [...projects].sort((a, b) => {
-          const aIdx = orderMap.has(a.name) ? orderMap.get(a.name) : 999999;
-          const bIdx = orderMap.has(b.name) ? orderMap.get(b.name) : 999999;
-          if (aIdx === bIdx) {
-            // Both are new, sort by lastUsed
-            return (b.lastUsed || 0) - (a.lastUsed || 0);
-          }
-          return aIdx - bIdx;
-        });
-      }
-
-      res.json({
-        projects: sortedProjects,
-        currentProject: config.currentProject || (sortedProjects[0] ? sortedProjects[0].name : null)
+      const force = req.query?.fresh === '1';
+      const snapshot = await getProjectListSnapshot('claude', {
+        fallbackValue: emptyProjectList(config.currentProject || null),
+        force,
+        refresh: () => runDashboardSnapshotWorker('projects', 'claude', config, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (error) {
       console.error('Error fetching projects:', error);
       res.status(500).json({ error: error.message });
@@ -42,6 +34,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Order must be an array' });
       }
       saveProjectOrder(config, order);
+      invalidateProjectSnapshots('claude');
       res.json({ success: true });
     } catch (error) {
       console.error('Error saving project order:', error);
@@ -96,6 +89,7 @@ module.exports = (config) => {
         'utf8'
       );
 
+      invalidateProjectSnapshots('claude');
       res.json({
         success: true,
         projectName,
@@ -113,6 +107,8 @@ module.exports = (config) => {
     try {
       const { projectName } = req.params;
       deleteProject(config, projectName);
+      invalidateProjectSnapshots('claude');
+      invalidateSessionSnapshots('claude', projectName);
       res.json({ success: true });
     } catch (error) {
       console.error('Error deleting project:', error);

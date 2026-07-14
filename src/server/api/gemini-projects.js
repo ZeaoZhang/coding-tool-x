@@ -1,30 +1,39 @@
 const express = require('express');
 const router = express.Router();
-const { getProjects, saveProjectOrder, deleteProject } = require('../services/gemini-sessions');
+const { saveProjectOrder, deleteProject } = require('../services/gemini-sessions');
 const { isGeminiInstalled } = require('../services/gemini-config');
+const {
+  emptyProjectList,
+  getProjectListSnapshot,
+  invalidateProjectSnapshots
+} = require('../services/project-snapshots');
+const { invalidateSessionSnapshots } = require('../services/session-snapshots');
+const { runDashboardSnapshotWorker } = require('../services/dashboard-snapshot-worker');
 
 module.exports = (config) => {
   /**
    * GET /api/gemini/projects
    * 获取所有 Gemini 项目列表
    */
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     try {
       // 检查 Gemini 是否安装
       if (!isGeminiInstalled()) {
         return res.json({
           projects: [],
           currentProject: null,
-          error: 'Gemini CLI not installed or not found'
+          error: 'Gemini CLI not installed or not found',
+          meta: { generatedAt: new Date().toISOString(), stale: false, refreshing: false, fallback: true, error: null }
         });
       }
 
-      const projects = getProjects();
-
-      res.json({
-        projects,
-        currentProject: projects[0] ? projects[0].name : null
+      const force = req.query?.fresh === '1';
+      const snapshot = await getProjectListSnapshot('gemini', {
+        fallbackValue: emptyProjectList(null),
+        force,
+        refresh: () => runDashboardSnapshotWorker('projects', 'gemini', config, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[Gemini API] Failed to get projects:', err);
 
@@ -59,6 +68,7 @@ module.exports = (config) => {
       }
 
       saveProjectOrder(order);
+      invalidateProjectSnapshots('gemini');
 
       res.json({ success: true });
     } catch (err) {
@@ -79,6 +89,8 @@ module.exports = (config) => {
 
       const { projectHash } = req.params;
       const result = deleteProject(projectHash);
+      invalidateProjectSnapshots('gemini');
+      invalidateSessionSnapshots('gemini', projectHash);
 
       res.json(result);
     } catch (err) {

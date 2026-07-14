@@ -1,7 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { getProjects, saveProjectOrder, deleteProject } = require('../services/codex-sessions');
+const { saveProjectOrder, deleteProject } = require('../services/codex-sessions');
 const { isCodexInstalled } = require('../services/codex-config');
+const {
+  emptyProjectList,
+  getProjectListSnapshot,
+  invalidateProjectSnapshots
+} = require('../services/project-snapshots');
+const { invalidateSessionSnapshots } = require('../services/session-snapshots');
+const { runDashboardSnapshotWorker } = require('../services/dashboard-snapshot-worker');
 
 const DEBUG_CODEX_PERF = process.env.DEBUG_CODEX_PERF === '1';
 
@@ -17,7 +24,7 @@ module.exports = (config) => {
    * GET /api/codex/projects
    * 获取所有 Codex 项目列表
    */
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     const startMs = Date.now();
     try {
       // 检查 Codex 是否安装
@@ -26,17 +33,20 @@ module.exports = (config) => {
         return res.json({
           projects: [],
           currentProject: null,
-          error: 'Codex CLI not installed or not found'
+          error: 'Codex CLI not installed or not found',
+          meta: { generatedAt: new Date().toISOString(), stale: false, refreshing: false, fallback: true, error: null }
         });
       }
 
-      const projects = getProjects();
-      logPerf('GET /api/codex/projects', startMs, `projects=${projects.length}`);
-
-      res.json({
-        projects,
-        currentProject: projects[0] ? projects[0].name : null
+      const force = req.query?.fresh === '1';
+      const snapshot = await getProjectListSnapshot('codex', {
+        fallbackValue: emptyProjectList(null),
+        force,
+        refresh: () => runDashboardSnapshotWorker('projects', 'codex', config, { force })
       });
+      logPerf('GET /api/codex/projects', startMs, `projects=${snapshot.value.projects.length} stale=${snapshot.meta.stale}`);
+
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[Codex API] Failed to get projects:', err);
       logPerf('GET /api/codex/projects', startMs, `error=${err.message}`);
@@ -72,6 +82,7 @@ module.exports = (config) => {
       }
 
       saveProjectOrder(order);
+      invalidateProjectSnapshots('codex');
 
       res.json({ success: true });
     } catch (err) {
@@ -92,6 +103,8 @@ module.exports = (config) => {
 
       const { projectName } = req.params;
       const result = deleteProject(projectName);
+      invalidateProjectSnapshots('codex');
+      invalidateSessionSnapshots('codex', projectName);
 
       res.json(result);
     } catch (err) {

@@ -273,7 +273,7 @@ async function refreshDataWithScrollPreservation() {
   const scrollTop = contentEl.value?.scrollTop || 0
 
   // Fetch data
-  await store.fetchProjects()
+  await store.fetchProjects({ force: true, fresh: true })
 
   // Restore scroll position after DOM update
   await nextTick()

@@ -6,6 +6,8 @@ const { getOmpCommand, getOmpPaths, isOmpInstalled, resolveOmpRuntime } = requir
 
 const PROJECT_ORDER_FILE = PATHS.ompProjectOrder;
 const SESSION_ORDER_FILE = PATHS.ompSessionOrder;
+const OMP_INSTALL_CACHE_TTL_MS = 5 * 60 * 1000;
+let ompInstallCache = { expiresAt: 0, value: false };
 
 function ensureDir(dirPath) {
   if (!fs.existsSync(dirPath)) {
@@ -259,7 +261,7 @@ function loadSessionOrder() {
   return safeReadJson(SESSION_ORDER_FILE, {});
 }
 
-function getProjects() {
+function getProjects(_options = {}) {
   const sessions = getAllSessions();
   const projectMap = new Map();
   sessions.forEach((session) => {
@@ -299,7 +301,7 @@ function getProjects() {
   return projects;
 }
 
-function getSessionsByProject(projectName) {
+function getSessionsByProject(projectName, _options = {}) {
   const orderMap = loadSessionOrder();
   const order = Array.isArray(orderMap[projectName]) ? orderMap[projectName] : [];
   const sessions = getAllSessions().filter(session => session.projectName === projectName);
@@ -425,7 +427,7 @@ function saveSessionOrder(projectName, order) {
   safeWriteJson(SESSION_ORDER_FILE, data);
 }
 
-function getProjectAndSessionCounts() {
+function getProjectAndSessionCounts(_options = {}) {
   const sessions = getAllSessions();
   return {
     projectCount: new Set(sessions.map(session => session.projectName)).size,
@@ -454,15 +456,33 @@ function shellQuote(value) {
 }
 
 function isOmpCliInstalled() {
-  if (isOmpInstalled()) return true;
-  const runtime = resolveOmpRuntime();
-  if (runtime.installed) return true;
-  try {
-    execFileSync(getOmpCommand(), ['--version'], { stdio: 'ignore', timeout: 3000 });
-    return true;
-  } catch {
-    return false;
+  const now = Date.now();
+  if (ompInstallCache.expiresAt > now) {
+    return ompInstallCache.value;
   }
+
+  let installed = false;
+  if (isOmpInstalled()) {
+    installed = true;
+  } else {
+    const runtime = resolveOmpRuntime();
+    if (runtime.installed) {
+      installed = true;
+    } else {
+      try {
+        execFileSync(getOmpCommand(), ['--version'], { stdio: 'ignore', timeout: 3000 });
+        installed = true;
+      } catch {
+        installed = false;
+      }
+    }
+  }
+
+  ompInstallCache = {
+    value: installed,
+    expiresAt: now + OMP_INSTALL_CACHE_TTL_MS
+  };
+  return installed;
 }
 
 module.exports = {

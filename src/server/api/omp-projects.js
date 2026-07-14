@@ -1,32 +1,41 @@
 const express = require('express');
 const router = express.Router();
 const {
-  getProjects,
   saveProjectOrder,
   deleteProject,
   isOmpInstalled
 } = require('../services/omp-sessions');
+const {
+  emptyProjectList,
+  getProjectListSnapshot,
+  invalidateProjectSnapshots
+} = require('../services/project-snapshots');
+const { invalidateSessionSnapshots } = require('../services/session-snapshots');
+const { runDashboardSnapshotWorker } = require('../services/dashboard-snapshot-worker');
 
 function isNotFoundError(error) {
   return !!(error && error.message === 'Project not found');
 }
 
 module.exports = () => {
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.json({
           projects: [],
           currentProject: null,
-          error: 'OMP CLI not installed or not found'
+          error: 'OMP CLI not installed or not found',
+          meta: { generatedAt: new Date().toISOString(), stale: false, refreshing: false, fallback: true, error: null }
         });
       }
 
-      const projects = getProjects();
-      res.json({
-        projects,
-        currentProject: projects[0] ? projects[0].name : null
+      const force = req.query?.fresh === '1';
+      const snapshot = await getProjectListSnapshot('omp', {
+        fallbackValue: emptyProjectList(null),
+        force,
+        refresh: () => runDashboardSnapshotWorker('projects', 'omp', {}, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[OMP API] Failed to get projects:', err);
       if (err.code === 'ENOENT') {
@@ -49,6 +58,7 @@ module.exports = () => {
         return res.status(400).json({ error: 'order must be an array' });
       }
       saveProjectOrder(order);
+      invalidateProjectSnapshots('omp');
       res.json({ success: true });
     } catch (err) {
       console.error('[OMP API] Failed to save project order:', err);
@@ -62,6 +72,8 @@ module.exports = () => {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const result = deleteProject(req.params.projectName);
+      invalidateProjectSnapshots('omp');
+      invalidateSessionSnapshots('omp', req.params.projectName);
       res.json(result);
     } catch (err) {
       if (isNotFoundError(err)) {
