@@ -23,8 +23,12 @@ const {
 } = require('../services/model-detector');
 const {
   findAuthProviderForKey,
-  getOmpAuthProviderSnapshot
+  getCachedOmpAuthProviderSnapshot,
+  getOmpAuthProviderCacheMeta,
+  warmOmpAuthProviderSnapshot
 } = require('../services/omp-auth-providers');
+
+const CHANNEL_LIST_AUTH_OPTIONS = { accountCheck: false, includeStatus: false };
 
 function uniqueModels(models = []) {
   const seen = new Set();
@@ -136,19 +140,53 @@ function attachAuthProvider(channel, snapshot) {
   };
 }
 
+function getAuthSnapshotForChannelList() {
+  const snapshot = getCachedOmpAuthProviderSnapshot(CHANNEL_LIST_AUTH_OPTIONS);
+  const shouldWarm = !snapshot || snapshot.stale;
+  if (shouldWarm) {
+    warmOmpAuthProviderSnapshot(CHANNEL_LIST_AUTH_OPTIONS);
+  }
+  const meta = getOmpAuthProviderCacheMeta(CHANNEL_LIST_AUTH_OPTIONS);
+  return {
+    snapshot,
+    meta: {
+      ...meta,
+      stale: !snapshot || Boolean(snapshot.stale),
+      refreshing: shouldWarm || meta.refreshing,
+      fallback: !snapshot
+    }
+  };
+}
+
+function buildUnavailableAuthProviderMeta(error) {
+  return {
+    cached: false,
+    stale: false,
+    refreshing: false,
+    fallback: true,
+    checkedAt: new Date().toISOString(),
+    error: error || 'omp-not-available'
+  };
+}
+
 module.exports = () => {
   router.get('/', (req, res) => {
     try {
       if (!isOmpInstalled()) {
-        return res.json({ channels: [], installed: false, error: 'OMP CLI not installed' });
+        return res.json({
+          channels: [],
+          installed: false,
+          error: 'OMP CLI not installed',
+          authProviderMeta: buildUnavailableAuthProviderMeta('OMP CLI not installed')
+        });
       }
       const data = getChannels();
-      const authSnapshot = getOmpAuthProviderSnapshot({ accountCheck: false, includeStatus: false });
+      const { snapshot: authSnapshot, meta: authProviderMeta } = getAuthSnapshotForChannelList();
       const channels = (data.channels || []).map(ch => ({
         ...attachAuthProvider(ch, authSnapshot),
         health: getChannelHealthStatus(ch.id, 'omp')
       }));
-      res.json({ channels, installed: true });
+      res.json({ channels, installed: true, authProviderMeta });
     } catch (err) {
       console.error('[OMP Channels API] Failed to get channels:', err);
       res.status(500).json({ error: err.message });
@@ -158,14 +196,19 @@ module.exports = () => {
   router.get('/enabled', (req, res) => {
     try {
       if (!isOmpInstalled()) {
-        return res.json({ channels: [], installed: false, error: 'OMP CLI not installed' });
+        return res.json({
+          channels: [],
+          installed: false,
+          error: 'OMP CLI not installed',
+          authProviderMeta: buildUnavailableAuthProviderMeta('OMP CLI not installed')
+        });
       }
       const data = getChannels();
-      const authSnapshot = getOmpAuthProviderSnapshot({ accountCheck: false, includeStatus: false });
+      const { snapshot: authSnapshot, meta: authProviderMeta } = getAuthSnapshotForChannelList();
       const channels = (data.channels || [])
         .filter(ch => ch.enabled !== false)
         .map(ch => ({ ...attachAuthProvider(ch, authSnapshot), health: getChannelHealthStatus(ch.id, 'omp') }));
-      res.json({ channels, installed: true });
+      res.json({ channels, installed: true, authProviderMeta });
     } catch (err) {
       console.error('[OMP Channels API] Failed to get enabled channels:', err);
       res.status(500).json({ error: err.message });

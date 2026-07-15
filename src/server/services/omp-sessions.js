@@ -1,8 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { PATHS, HOME_DIR } = require('../../config/paths');
-const { getOmpCommand, getOmpPaths, isOmpInstalled, resolveOmpRuntime } = require('./omp-config');
+const { getOmpCommand, getOmpPaths, resolveOmpRuntime } = require('./omp-config');
 
 const PROJECT_ORDER_FILE = PATHS.ompProjectOrder;
 const SESSION_ORDER_FILE = PATHS.ompSessionOrder;
@@ -213,7 +212,20 @@ function parseSessionFile(filePath) {
   };
 }
 
-function scanSessionFiles(rootDir = getOmpPaths().sessions) {
+function getOmpSessionPaths() {
+  // Reading historical sessions normally only needs OMP's native directory
+  // convention. Avoid starting the CLI here: project/count snapshot workers
+  // invoke this path independently, which made Windows repeatedly open
+  // PowerShell shims. Keep the CLI lookup as a fallback for non-standard OMP
+  // locations that cannot be derived from the environment.
+  const nativePaths = getOmpPaths(process.env, { resolveRuntime: false });
+  if (fs.existsSync(nativePaths.agentDir) || fs.existsSync(nativePaths.sessions)) {
+    return nativePaths;
+  }
+  return getOmpPaths();
+}
+
+function scanSessionFiles(rootDir = getOmpSessionPaths().sessions) {
   if (!fs.existsSync(rootDir)) {
     return [];
   }
@@ -462,20 +474,12 @@ function isOmpCliInstalled() {
   }
 
   let installed = false;
-  if (isOmpInstalled()) {
+  const nativePaths = getOmpSessionPaths();
+  if (fs.existsSync(nativePaths.agentDir)) {
     installed = true;
   } else {
     const runtime = resolveOmpRuntime();
-    if (runtime.installed) {
-      installed = true;
-    } else {
-      try {
-        execFileSync(getOmpCommand(), ['--version'], { stdio: 'ignore', timeout: 3000 });
-        installed = true;
-      } catch {
-        installed = false;
-      }
-    }
+    installed = Boolean(runtime && runtime.installed);
   }
 
   ompInstallCache = {

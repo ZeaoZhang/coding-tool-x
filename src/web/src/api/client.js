@@ -1,8 +1,11 @@
 import axios from 'axios'
 
+export const API_TIMEOUT_MS = 30000
+export const SPEED_TEST_API_TIMEOUT_MS = 180000
+
 export const client = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: API_TIMEOUT_MS
 })
 
 // 响应拦截器：统一处理错误响应

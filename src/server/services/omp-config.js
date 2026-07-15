@@ -61,7 +61,10 @@ function runOmpCommand(command, args = [], env = process.env, options = {}, stdi
     encoding: 'utf8',
     env: buildCommandEnv(env),
     stdio,
-    timeout: options.timeout || 3000
+    timeout: options.timeout || 3000,
+    // On Windows, an npm/PowerShell command shim can otherwise create a visible
+    // console every time we probe OMP or resolve its configuration directory.
+    windowsHide: true
   });
 }
 
@@ -76,8 +79,8 @@ function readOmpAgentDirFromCommand(command, env = process.env, options = {}) {
 }
 
 function getOmpAgentDir(env = process.env, options = {}) {
-  const runtime = options.runtime || resolveOmpRuntime(env, options);
-  if (runtime.runtime === 'omp' && runtime.installed) {
+  const runtime = options.runtime || (options.resolveRuntime === false ? null : resolveOmpRuntime(env, options));
+  if (runtime?.runtime === 'omp' && runtime.installed) {
     const commandAgentDir = readOmpAgentDirFromCommand(runtime.command, env, options);
     if (commandAgentDir) {
       return commandAgentDir;
@@ -87,7 +90,7 @@ function getOmpAgentDir(env = process.env, options = {}) {
 }
 
 function getOmpPaths(env = process.env, options = {}) {
-  const runtime = options.runtime || resolveOmpRuntime(env, options);
+  const runtime = options.runtime || (options.resolveRuntime === false ? null : resolveOmpRuntime(env, options));
   const agentDir = getOmpAgentDir(env, { ...options, runtime });
   return {
     agentDir,

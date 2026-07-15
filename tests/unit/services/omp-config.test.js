@@ -103,6 +103,31 @@ describe('omp-config path resolution', () => {
     ]));
   });
 
+  test('hides Windows command windows while probing the OMP runtime', () => {
+    const { resolveOmpRuntime } = require('../../../src/server/services/omp-config');
+    const commandRunner = vi.fn(() => 'omp 1.0.0\n');
+
+    resolveOmpRuntime({}, { commandRunner });
+
+    expect(commandRunner).toHaveBeenCalledWith(
+      'omp',
+      ['--version'],
+      expect.objectContaining({ windowsHide: true })
+    );
+  });
+
+  test('can resolve OMP native paths without starting the CLI', () => {
+    const { getOmpPaths } = require('../../../src/server/services/omp-config');
+    const commandRunner = vi.fn(() => {
+      throw new Error('OMP CLI must not be started for native path lookup');
+    });
+    const env = { OMP_CODING_AGENT_DIR: path.join(path.sep, 'native', 'omp-agent') };
+
+    expect(getOmpPaths(env, { commandRunner, resolveRuntime: false }).agentDir)
+      .toBe(path.resolve(env.OMP_CODING_AGENT_DIR));
+    expect(commandRunner).not.toHaveBeenCalled();
+  });
+
   test('falls back to ~/.omp/agent when OMP command is unavailable', () => {
     const { getOmpAgentDir, resolveOmpRuntime } = require('../../../src/server/services/omp-config');
     const commandRunner = (command, args) => {

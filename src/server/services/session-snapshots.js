@@ -9,7 +9,9 @@ const {
 
 const SESSION_SNAPSHOT_TTL_MS = 60 * 1000;
 const SESSION_SNAPSHOT_DEFER_MS = process.env.NODE_ENV === 'test' ? 0 : 750;
-const SESSION_SNAPSHOT_WORKER_TIMEOUT_MS = 120 * 1000;
+const SESSION_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
+const SESSION_SNAPSHOT_WAIT_ON_MISS_MS = process.env.NODE_ENV === 'test' ? 0 : 2500;
+const SESSION_SNAPSHOT_WAIT_ON_FORCE_MS = process.env.NODE_ENV === 'test' ? 0 : 2500;
 
 function sessionListKey(source, projectName) {
   return `sessions:list:${source}:${projectName}`;
@@ -44,6 +46,7 @@ function runSessionSnapshotWorker(source, projectName, config = {}, options = {}
     const workerPath = path.join(__dirname, 'session-snapshot-worker.js');
     const child = fork(workerPath, [], {
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      windowsHide: true,
       env: {
         ...process.env,
         CC_TOOL_SESSION_SNAPSHOT_WORKER: '1'
@@ -113,6 +116,9 @@ async function getSessionListSnapshot(source, projectName, {
     refresh,
     force: process.env.NODE_ENV === 'test' ? true : force,
     backgroundOnMiss: process.env.NODE_ENV === 'test' ? false : !force,
+    staleWhileForce: true,
+    waitOnMissMs: SESSION_SNAPSHOT_WAIT_ON_MISS_MS,
+    waitOnForceMs: SESSION_SNAPSHOT_WAIT_ON_FORCE_MS,
     deferMs: SESSION_SNAPSHOT_DEFER_MS
   });
 }
@@ -128,6 +134,9 @@ function invalidateSessionSnapshots(source, projectName = null) {
 
 module.exports = {
   SESSION_SNAPSHOT_TTL_MS,
+  SESSION_SNAPSHOT_WAIT_ON_MISS_MS,
+  SESSION_SNAPSHOT_WAIT_ON_FORCE_MS,
+  SESSION_SNAPSHOT_WORKER_TIMEOUT_MS,
   defaultProjectInfo,
   emptySessionList,
   getSessionListSnapshot,

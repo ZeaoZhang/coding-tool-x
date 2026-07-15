@@ -1,9 +1,11 @@
-const { spawnSync } = require('child_process');
+const path = require('path');
+const { fork, spawnSync } = require('child_process');
 const ompConfig = require('./omp-config');
 
 const COMMAND_TIMEOUT_MS = 5000;
 const TOKEN_LIST_TIMEOUT_MS = 3000;
 const CACHE_TTL_MS = 15000;
+const WARMUP_WORKER_TIMEOUT_MS = COMMAND_TIMEOUT_MS + 1000;
 
 const LOGIN_PROVIDER_IDS = new Set([
   'openai-codex',
@@ -50,6 +52,20 @@ const PROVIDER_ALIASES = {
 };
 
 let snapshotCache = {};
+const warmupTimers = new Map();
+const warmupErrors = new Map();
+
+function getSnapshotCacheKey(options = {}) {
+  return options.accountCheck === false
+    ? (options.includeStatus === false ? 'metadata' : 'metadata-status')
+    : 'full';
+}
+
+function writeSnapshotCache(cacheKey, loadedAt, value) {
+  snapshotCache[cacheKey] = { loadedAt, value };
+  warmupErrors.delete(cacheKey);
+  return value;
+}
 
 function normalizeProviderId(value = '') {
   return String(value || '')
@@ -95,7 +111,8 @@ function runCommand(command, args = [], options = {}) {
       ...process.env,
       ...(options.env || {})
     },
-    timeout: options.timeout || COMMAND_TIMEOUT_MS
+    timeout: options.timeout || COMMAND_TIMEOUT_MS,
+    windowsHide: true
   });
   if (typeof result === 'string' || Buffer.isBuffer(result)) {
     return { status: 0, stdout: normalizeCommandOutput(result), stderr: '' };
@@ -205,9 +222,7 @@ function buildEmptySnapshot(runtime, reason) {
 
 function getOmpAuthProviderSnapshot(options = {}) {
   const now = Date.now();
-  const cacheKey = options.accountCheck === false
-    ? (options.includeStatus === false ? 'metadata' : 'metadata-status')
-    : 'full';
+  const cacheKey = getSnapshotCacheKey(options);
   const cached = snapshotCache[cacheKey];
   if (!options.forceRefresh && cached && now - cached.loadedAt < CACHE_TTL_MS) {
     return cached.value;
@@ -217,16 +232,14 @@ function getOmpAuthProviderSnapshot(options = {}) {
   const runtime = options.runtime || ompConfig.resolveOmpRuntime(env, options.runtimeOptions || {});
   if (!runtime || runtime.runtime !== 'omp' || !runtime.installed) {
     const value = buildEmptySnapshot(runtime || null, 'omp-not-available');
-    snapshotCache[cacheKey] = { loadedAt: now, value };
-    return value;
+    return writeSnapshotCache(cacheKey, now, value);
   }
 
   const command = runtime.command;
   const listResult = parseJsonCommand(command, ['auth-broker', 'list', '--json'], options);
   if (!listResult.ok || !Array.isArray(listResult.value)) {
     const value = buildEmptySnapshot(runtime, listResult.error || listResult.stderr || 'auth-provider-list-failed');
-    snapshotCache[cacheKey] = { loadedAt: now, value };
-    return value;
+    return writeSnapshotCache(cacheKey, now, value);
   }
 
   const supportedProviders = listResult.value
@@ -268,8 +281,113 @@ function getOmpAuthProviderSnapshot(options = {}) {
     aliases: { ...PROVIDER_ALIASES },
     checkedAt: new Date().toISOString()
   };
-  snapshotCache[cacheKey] = { loadedAt: now, value };
-  return value;
+  return writeSnapshotCache(cacheKey, now, value);
+}
+
+function getCachedOmpAuthProviderSnapshot(options = {}) {
+  const cacheKey = getSnapshotCacheKey(options);
+  const cached = snapshotCache[cacheKey];
+  if (!cached) return null;
+  return {
+    ...cached.value,
+    stale: Date.now() - cached.loadedAt >= CACHE_TTL_MS
+  };
+}
+
+function getOmpAuthProviderCacheMeta(options = {}) {
+  const cacheKey = getSnapshotCacheKey(options);
+  const cached = snapshotCache[cacheKey];
+  const stale = !cached || Date.now() - cached.loadedAt >= CACHE_TTL_MS;
+  const cachedReason = cached?.value?.available === false ? cached.value.reason || null : null;
+  return {
+    cached: Boolean(cached),
+    stale,
+    refreshing: warmupTimers.has(cacheKey),
+    fallback: !cached,
+    checkedAt: cached?.value?.checkedAt || null,
+    error: warmupErrors.get(cacheKey) || cachedReason || null
+  };
+}
+
+function warmOmpAuthProviderSnapshot(options = {}) {
+  const cacheKey = getSnapshotCacheKey(options);
+  if (warmupTimers.has(cacheKey)) return;
+
+  const finishWarmup = (task, error = null, value = null) => {
+    if (!warmupTimers.has(cacheKey)) return;
+    if (task.timeout) clearTimeout(task.timeout);
+    if (task.child) {
+      task.child.removeAllListeners();
+      if (!task.child.killed) task.child.kill();
+    }
+    warmupTimers.delete(cacheKey);
+    if (error) {
+      warmupErrors.set(cacheKey, sanitizeIdentity(error?.message || String(error || 'auth-provider-warmup-failed')));
+      return;
+    }
+    if (value) {
+      writeSnapshotCache(cacheKey, Date.now(), value);
+    }
+  };
+
+  // Tests and callers that supply a function-based command runner cannot cross
+  // the process boundary. Production channel-list warmups use the worker path.
+  if (process.env.NODE_ENV === 'test' || options.commandRunner) {
+    const task = { timeout: null, child: null };
+    const timer = setTimeout(() => {
+      try {
+        finishWarmup(task, null, getOmpAuthProviderSnapshot(options));
+      } catch (error) {
+        finishWarmup(task, error);
+      }
+    }, 0);
+    task.timeout = timer;
+    warmupTimers.set(cacheKey, task);
+    return;
+  }
+
+  const workerPath = path.join(__dirname, 'omp-auth-provider-worker.js');
+  const task = { timeout: null, child: null };
+  try {
+    const child = fork(workerPath, [], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      windowsHide: true,
+      env: {
+        ...process.env,
+        CC_TOOL_OMP_AUTH_PROVIDER_WORKER: '1'
+      }
+    });
+    task.child = child;
+    task.timeout = setTimeout(() => {
+      finishWarmup(task, new Error('auth-provider-warmup-timed-out'));
+    }, WARMUP_WORKER_TIMEOUT_MS);
+    warmupTimers.set(cacheKey, task);
+
+    child.on('message', (message) => {
+      if (message?.ok) {
+        finishWarmup(task, null, message.value);
+      } else {
+        finishWarmup(task, new Error(message?.error || 'auth-provider-warmup-failed'));
+      }
+    });
+    child.on('error', (error) => finishWarmup(task, error));
+    child.on('exit', (code, signal) => {
+      if (warmupTimers.get(cacheKey) === task) {
+        finishWarmup(task, new Error(`auth-provider-warmup-worker-exited-${code || signal || 'unknown'}`));
+      }
+    });
+    child.send({
+      accountCheck: options.accountCheck,
+      includeStatus: options.includeStatus,
+      forceRefresh: options.forceRefresh === true,
+      runtime: options.runtime,
+      runtimeOptions: options.runtimeOptions
+    });
+  } catch (error) {
+    // `fork` itself can fail before the task is registered. Preserve the
+    // failure for the non-blocking status endpoint instead of dropping it.
+    warmupErrors.set(cacheKey, sanitizeIdentity(error?.message || String(error || 'auth-provider-warmup-failed')));
+  }
 }
 
 function findAuthProviderForKey(providerKey, snapshot) {
@@ -280,6 +398,12 @@ function findAuthProviderForKey(providerKey, snapshot) {
 
 function clearOmpAuthProviderCache() {
   snapshotCache = {};
+  for (const task of warmupTimers.values()) {
+    if (task.timeout) clearTimeout(task.timeout);
+    if (task.child && !task.child.killed) task.child.kill();
+  }
+  warmupTimers.clear();
+  warmupErrors.clear();
 }
 
 module.exports = {
@@ -287,7 +411,10 @@ module.exports = {
   ACCOUNT_CHECK_PROVIDER_IDS,
   clearOmpAuthProviderCache,
   findAuthProviderForKey,
+  getCachedOmpAuthProviderSnapshot,
+  getOmpAuthProviderCacheMeta,
   getOmpAuthProviderSnapshot,
+  warmOmpAuthProviderSnapshot,
   normalizeProviderId,
   resolveProviderAlias,
   sanitizeIdentity

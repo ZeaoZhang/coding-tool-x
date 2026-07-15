@@ -32,7 +32,9 @@ let sanitizeBatchConcurrency;
 let runWithConcurrencyLimit;
 let fetchModelsFromProvider;
 let probeModelAvailability;
-let getOmpAuthProviderSnapshot;
+let getCachedOmpAuthProviderSnapshot;
+let getOmpAuthProviderCacheMeta;
+let warmOmpAuthProviderSnapshot;
 let findAuthProviderForKey;
 let isOmpInstalled;
 let routerFactory;
@@ -95,7 +97,7 @@ beforeEach(() => {
     cached: false,
     lastChecked: '2026-01-03T00:00:00Z'
   }));
-  getOmpAuthProviderSnapshot = vi.fn(() => ({
+  getCachedOmpAuthProviderSnapshot = vi.fn(() => ({
     available: true,
     providers: [
       {
@@ -109,8 +111,17 @@ beforeEach(() => {
     ],
     aliases: { codex: 'openai-codex' }
   }));
+  getOmpAuthProviderCacheMeta = vi.fn(() => ({
+    cached: true,
+    stale: false,
+    refreshing: false,
+    fallback: false,
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    error: null
+  }));
+  warmOmpAuthProviderSnapshot = vi.fn();
   findAuthProviderForKey = vi.fn((providerKey, snapshot) => {
-    if (providerKey === 'codex') return snapshot.providers[0];
+    if (providerKey === 'codex') return snapshot?.providers?.[0] || null;
     return null;
   });
   isOmpInstalled = vi.fn(() => true);
@@ -167,7 +178,12 @@ beforeEach(() => {
     id: require.resolve('../../../src/server/services/omp-auth-providers'),
     filename: require.resolve('../../../src/server/services/omp-auth-providers'),
     loaded: true,
-    exports: { getOmpAuthProviderSnapshot, findAuthProviderForKey }
+    exports: {
+      getCachedOmpAuthProviderSnapshot,
+      getOmpAuthProviderCacheMeta,
+      warmOmpAuthProviderSnapshot,
+      findAuthProviderForKey
+    }
   };
 
   delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
@@ -211,6 +227,12 @@ describe('omp-channels api', () => {
       accountCount: 1
     }));
     expect(res._body.installed).toBe(true);
+    expect(res._body.authProviderMeta).toEqual(expect.objectContaining({
+      cached: true,
+      stale: false,
+      refreshing: false,
+      fallback: false
+    }));
 
     handler = findHandler(router, 'get', '/enabled');
     res = makeRes();
@@ -227,8 +249,40 @@ describe('omp-channels api', () => {
     expect(res._body).toEqual({
       channels: [],
       installed: false,
-      error: 'OMP CLI not installed'
+      error: 'OMP CLI not installed',
+      authProviderMeta: expect.objectContaining({
+        fallback: true,
+        refreshing: false,
+        error: 'OMP CLI not installed'
+      })
     });
+  });
+
+  test('reports auth-provider cold cache refresh state without blocking channel list', () => {
+    getCachedOmpAuthProviderSnapshot.mockReturnValueOnce(null);
+    getOmpAuthProviderCacheMeta.mockReturnValueOnce({
+      cached: false,
+      stale: true,
+      refreshing: true,
+      fallback: true,
+      checkedAt: null,
+      error: null
+    });
+
+    const router = routerFactory({});
+    const handler = findHandler(router, 'get', '/');
+    const res = makeRes();
+    handler({}, res);
+
+    expect(res._body.channels).toHaveLength(2);
+    expect(res._body.channels[0].ompAuthProvider).toBeUndefined();
+    expect(res._body.authProviderMeta).toEqual(expect.objectContaining({
+      cached: false,
+      stale: true,
+      refreshing: true,
+      fallback: true
+    }));
+    expect(warmOmpAuthProviderSnapshot).toHaveBeenCalledWith({ accountCheck: false, includeStatus: false });
   });
 
   test('validates probing input and falls back to availability probing for channel models', async () => {
