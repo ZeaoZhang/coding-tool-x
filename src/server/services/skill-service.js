@@ -25,7 +25,7 @@ const {
   resolveInsideRoot
 } = require('./config-artifact-paths');
 
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
@@ -173,12 +173,16 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   claude: [],
   codex: [],
   gemini: [],
-  opencode: []
+  opencode: [],
+  omp: []
 };
+
+const CLAUDE_SKILLS_DIR = NATIVE_PATHS.claude.skills
+  || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'skills');
 
 const PLATFORM_CONFIG = {
   claude: {
-    installDir: path.join(HOME_DIR, '.claude', 'skills'),
+    installDir: CLAUDE_SKILLS_DIR,
     storageDir: PATHS.localSkills.claude,
     reposFile: PATHS.skillRepos.claude,
     cacheFile: PATHS.skillCaches.claude
@@ -200,6 +204,12 @@ const PLATFORM_CONFIG = {
     storageDir: PATHS.localSkills.opencode,
     reposFile: PATHS.skillRepos.opencode,
     cacheFile: PATHS.skillCaches.opencode
+  },
+  omp: {
+    installDir: NATIVE_PATHS.omp.skills,
+    storageDir: PATHS.localSkills.omp,
+    reposFile: PATHS.skillRepos.omp,
+    cacheFile: PATHS.skillCaches.omp
   }
 };
 

@@ -152,6 +152,16 @@ describe('model-detector helpers and cache management', () => {
     ]);
   });
 
+  test('falls back to built-in model priority when configured defaults are empty', () => {
+    configState.defaultModels = {};
+
+    expect(modelDetector.getModelPriority('openai_compatible')).toEqual(expect.arrayContaining([
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5-codex'
+    ]));
+  });
+
   test('detects official providers and falls back to openai-compatible for proxies', () => {
     expect(modelDetector.detectChannelType({ baseUrl: 'https://api.anthropic.com' })).toBe('claude');
     expect(modelDetector.detectChannelType({ baseUrl: 'https://code.newcli.com/claude/aws' })).toBe('openai_compatible');

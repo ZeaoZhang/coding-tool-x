@@ -32,7 +32,11 @@ function setupStubs() {
         claude: { settings: path.join(testDir, 'claude-settings.json') },
         codex: { config: path.join(testDir, 'codex-config.toml'), dir: testDir },
         gemini: { env: path.join(testDir, 'gemini', '.env') },
-        opencode: { config: testDir }
+        opencode: { config: testDir },
+        omp: {
+          dir: path.join(testDir, 'omp-agent'),
+          mcp: path.join(testDir, 'omp-agent', 'mcp.json')
+        }
       }
     }
   };
@@ -303,7 +307,8 @@ describe('mcp-service', () => {
         claude: true,
         codex: false,
         gemini: false,
-        opencode: false
+        opencode: false,
+        omp: false
       });
       expect(service.getServer('srv-default').createdAt).toBeDefined();
     });
@@ -382,7 +387,8 @@ describe('mcp-service', () => {
         claude: 1,
         codex: 1,
         gemini: 1,
-        opencode: 0
+        opencode: 0,
+        omp: 0
       });
     });
 
@@ -457,6 +463,100 @@ describe('mcp-service', () => {
       expect(claudeExport.content).toContain('"type": "streamable_http"');
       expect(codexExport.content).toContain('"type":"streamable_http"');
       expect(geminiExport.content).toContain('"type": "streamable_http"');
+    });
+
+    it('syncs enabled servers to OMP mcp.json and preserves unrelated OMP settings', async () => {
+      const ompMcpPath = path.join(testDir, 'omp-agent', 'mcp.json');
+      fs.mkdirSync(path.dirname(ompMcpPath), { recursive: true });
+      fs.writeFileSync(ompMcpPath, JSON.stringify({
+        $schema: 'existing-schema',
+        disabledServers: ['old-disabled'],
+        mcpServers: {
+          existing: { type: 'stdio', command: 'old' }
+        }
+      }), 'utf8');
+
+      await service.saveServer({
+        id: 'srv_omp',
+        name: 'OMP Server',
+        server: {
+          type: 'streamable_http',
+          url: 'https://example.com/mcp',
+          headers: { Authorization: 'Bearer token' }
+        },
+        apps: { claude: false, omp: true }
+      });
+
+      const ompConfig = JSON.parse(fs.readFileSync(ompMcpPath, 'utf8'));
+      expect(ompConfig.$schema).toBe('existing-schema');
+      expect(ompConfig.disabledServers).toEqual(['old-disabled']);
+      expect(ompConfig.mcpServers.existing).toEqual({ type: 'stdio', command: 'old' });
+      expect(ompConfig.mcpServers.srv_omp).toEqual({
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer token' }
+      });
+    });
+
+    it('toggleServerApp supports OMP and removes only the managed server entry', async () => {
+      const ompMcpPath = path.join(testDir, 'omp-agent', 'mcp.json');
+      await service.saveServer({
+        id: 'srv-omp-toggle',
+        name: 'OMP Toggle',
+        server: { type: 'stdio', command: 'uvx' },
+        apps: { claude: false, omp: true }
+      });
+
+      await service.toggleServerApp('srv-omp-toggle', 'omp', false);
+
+      const stored = service.getServer('srv-omp-toggle');
+      const ompConfig = JSON.parse(fs.readFileSync(ompMcpPath, 'utf8'));
+      expect(stored.apps.omp).toBe(false);
+      expect(ompConfig.mcpServers['srv-omp-toggle']).toBeUndefined();
+    });
+
+    it('imports OMP http servers as internal streamable_http servers', async () => {
+      const ompMcpPath = path.join(testDir, 'omp-agent', 'mcp.json');
+      fs.mkdirSync(path.dirname(ompMcpPath), { recursive: true });
+      fs.writeFileSync(ompMcpPath, JSON.stringify({
+        mcpServers: {
+          remote: {
+            type: 'http',
+            url: 'https://example.com/mcp',
+            headers: { 'X-Test': '1' }
+          }
+        }
+      }), 'utf8');
+
+      const count = await service.importFromPlatform('omp');
+      const imported = service.getServer('remote');
+
+      expect(count).toBe(1);
+      expect(imported.apps.omp).toBe(true);
+      expect(imported.server).toEqual({
+        type: 'streamable_http',
+        url: 'https://example.com/mcp',
+        headers: { 'X-Test': '1' }
+      });
+    });
+
+    it('exports OMP format with http transport mapping', async () => {
+      await service.saveServer({
+        id: 'srv-omp-export',
+        name: 'OMP Export',
+        server: { type: 'streamable_http', url: 'https://example.com/mcp' },
+        apps: { claude: false, omp: true }
+      }, { syncPlatforms: false });
+
+      const exported = service.exportServers('omp');
+      const content = JSON.parse(exported.content);
+
+      expect(exported.format).toBe('omp');
+      expect(exported.filename).toBe('omp-mcp-config.json');
+      expect(content.mcpServers['srv-omp-export']).toEqual({
+        type: 'http',
+        url: 'https://example.com/mcp'
+      });
     });
   });
 

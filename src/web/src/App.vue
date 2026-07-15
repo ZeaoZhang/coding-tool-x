@@ -32,46 +32,46 @@ const themeOverrides = computed(() => {
         fontFamilyMono: '"SF Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", monospace',
         borderRadius: '16px',
         borderRadiusSmall: '12px',
-        bodyColor: '#091217',
-        cardColor: '#111b20',
-        modalColor: '#111b20',
-        popoverColor: '#111b20',
-        tableColor: '#111b20',
-        inputColor: '#162329',
-        codeColor: '#0f1a1f',
-        tabColor: '#111b20',
-        actionColor: '#162329',
-        tableHeaderColor: '#162329',
+        bodyColor: '#0a1116',
+        cardColor: '#121b22',
+        modalColor: '#121b22',
+        popoverColor: '#121b22',
+        tableColor: '#121b22',
+        inputColor: '#16222a',
+        codeColor: '#0d171d',
+        tabColor: '#121b22',
+        actionColor: '#16222a',
+        tableHeaderColor: '#16222a',
         hoverColor: 'rgba(255, 255, 255, 0.08)',
         pressedColor: 'rgba(255, 255, 255, 0.12)',
-        borderColor: '#22343b',
-        dividerColor: '#22343b',
+        borderColor: '#263740',
+        dividerColor: '#263740',
       },
       Drawer: {
-        color: '#111b20',
-        headerColor: '#111b20',
-        footerColor: '#111b20',
+        color: '#121b22',
+        headerColor: '#121b22',
+        footerColor: '#121b22',
       },
       Modal: {
-        color: '#111b20',
+        color: '#121b22',
         boxShadow: '0 24px 64px rgba(0, 0, 0, 0.42)',
       },
       Card: {
-        color: '#111b20',
-        borderColor: '#22343b',
+        color: '#121b22',
+        borderColor: '#263740',
       },
       Popover: {
-        color: '#111b20',
+        color: '#121b22',
         textColor: '#edf5f4',
         boxShadow: '0 20px 48px rgba(0, 0, 0, 0.34)',
       },
       Tooltip: {
-        color: '#111b20',
+        color: '#121b22',
         textColor: '#edf5f4',
         boxShadow: '0 20px 48px rgba(0, 0, 0, 0.34)',
       },
       Dialog: {
-        color: '#111b20',
+        color: '#121b22',
       },
       Button: {
         borderRadiusMedium: '12px',
@@ -176,22 +176,24 @@ onMounted(() => {
   --gradient-card: linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 250, 248, 0.98) 100%);
 
   --primary-color: #18a058;
+  --primary-color-soft: rgba(24, 160, 88, 0.12);
+  --brand-title-color: #0d8f55;
 }
 
 [data-theme="dark"] {
-  --bg-primary: #091217;
-  --bg-secondary: #111b20;
-  --bg-tertiary: #0f1a1f;
-  --bg-elevated: #162329;
-  --bg-overlay: rgba(17, 27, 32, 0.94);
+  --bg-primary: #0a1116;
+  --bg-secondary: #101920;
+  --bg-tertiary: #16222a;
+  --bg-elevated: #1a2831;
+  --bg-overlay: rgba(10, 17, 22, 0.94);
 
-  --text-primary: #edf5f4;
-  --text-secondary: #a9bfbb;
-  --text-tertiary: #8fa5a1;
-  --text-quaternary: #718784;
+  --text-primary: #e7eef0;
+  --text-secondary: #a8bbc0;
+  --text-tertiary: #82969d;
+  --text-quaternary: #667b83;
 
-  --border-primary: #22343b;
-  --border-secondary: #2b424a;
+  --border-primary: #263740;
+  --border-secondary: #334852;
 
   --hover-bg: rgba(255, 255, 255, 0.08);
   --active-bg: rgba(255, 255, 255, 0.12);
@@ -201,11 +203,13 @@ onMounted(() => {
   --shadow-lg: 0 36px 76px rgba(0, 0, 0, 0.36);
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
 
-  --gradient-header: linear-gradient(135deg, #111b20 0%, #152229 52%, #12262b 100%);
-  --gradient-bg: linear-gradient(180deg, #091217 0%, #0d171c 100%);
-  --gradient-card: linear-gradient(145deg, rgba(17, 27, 32, 0.98) 0%, rgba(13, 22, 27, 0.98) 100%);
+  --gradient-header: linear-gradient(135deg, #0b1419 0%, #101b22 58%, #0d171d 100%);
+  --gradient-bg: linear-gradient(180deg, #0a1116 0%, #0d151b 56%, #091016 100%);
+  --gradient-card: linear-gradient(145deg, rgba(18, 27, 34, 0.98) 0%, rgba(12, 21, 27, 0.98) 100%);
 
   --primary-color: #18a058;
+  --primary-color-soft: rgba(24, 160, 88, 0.16);
+  --brand-title-color: #37d08c;
 }
 
 body {

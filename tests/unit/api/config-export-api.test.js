@@ -206,6 +206,30 @@ describe('config export api preview routes', () => {
     expect(res.body.data.items.plugins[0].name).toBe('demo-plugin');
   });
 
+  test('builds preview summary with OMP channels', async () => {
+    const res = await request(buildApp()).post('/preview', {
+      data: {
+        version: '1.0.0',
+        exportedAt: '2025-01-01T00:00:00.000Z',
+        data: {
+          channelsByType: {
+            omp: [{ id: 'omp-1', name: 'OMP Preview', providerKey: 'omp-managed' }]
+          },
+          nativeConfigs: {
+            omp: { settings: { content: { packages: ['@demo/omp-package'] } } }
+          }
+        }
+      }
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.counts.channels).toBe(1);
+    expect(res.body.data.items.channels).toEqual([
+      { id: 'omp-1', name: 'OMP Preview', type: 'omp' }
+    ]);
+  });
+
   test('builds preview summary from zip payload', async () => {
     const res = await request(buildApp()).post(
       '/preview-zip',

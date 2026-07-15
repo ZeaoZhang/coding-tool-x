@@ -99,6 +99,18 @@
             </template>
             OpenCode {{ registryInfo.platforms?.opencode ? '已启用' : '未启用' }}
           </n-tooltip>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <span
+                class="asset-platform-icon"
+                :class="{ active: registryInfo.platforms?.omp }"
+                @click.stop="emit('toggle-platform', command, 'omp', !registryInfo.platforms?.omp)"
+              >
+                <n-icon size="14"><PlanetOutline /></n-icon>
+              </span>
+            </template>
+            OMP {{ registryInfo.platforms?.omp ? '已启用' : '未启用' }}
+          </n-tooltip>
         </div>
       </template>
       <!-- 原有模式 -->
@@ -126,7 +138,7 @@
 
 <script setup>
 import { NButton, NTag, NIcon, NSwitch, NTooltip } from 'naive-ui'
-import { HammerOutline, CodeOutline, LogoApple, TerminalOutline, CodeSlashOutline, SparklesOutline } from '@vicons/ionicons5'
+import { HammerOutline, CodeOutline, LogoApple, TerminalOutline, CodeSlashOutline, SparklesOutline, PlanetOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
   command: {

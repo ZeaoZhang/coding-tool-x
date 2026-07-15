@@ -41,6 +41,12 @@ describe('loadUIConfig', () => {
     expect(config.theme).toBe('light');
   });
 
+  test('defaults homepage CLI columns to the four legacy platforms', () => {
+    const config = loadUIConfig();
+    expect(config.homeCliColumns).toEqual(['claude', 'codex', 'gemini', 'opencode']);
+    expect(config.dashboardChannelOrder).toEqual(['claude', 'codex', 'gemini', 'opencode']);
+  });
+
   test('returns all expected top-level default keys when file does not exist', () => {
     const config = loadUIConfig();
     expect(config).toHaveProperty('theme');
@@ -62,6 +68,49 @@ describe('loadUIConfig', () => {
     expect(config).toHaveProperty('panelVisibility');
     expect(config.channelBalance.showRemaining).toBe(false);
     expect(config).toHaveProperty('channelLocks');
+  });
+
+  test('preserves OMP when it replaces one homepage column', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      homeCliColumns: ['claude', 'omp', 'gemini', 'opencode']
+    }), 'utf8');
+    delete require.cache[UI_CONFIG_PATH];
+    const mod = require('../../../src/server/services/ui-config');
+    const config = mod.loadUIConfig();
+
+    expect(config.homeCliColumns).toEqual(['claude', 'omp', 'gemini', 'opencode']);
+    expect(config.dashboardChannelOrder).toEqual(config.homeCliColumns);
+  });
+
+  test('normalizes illegal and duplicate homepage columns back to four valid slots', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      homeCliColumns: ['omp', 'omp', 'unknown', 'claude', 'codex']
+    }), 'utf8');
+    delete require.cache[UI_CONFIG_PATH];
+    const mod = require('../../../src/server/services/ui-config');
+    const config = mod.loadUIConfig();
+
+    expect(config.homeCliColumns).toEqual(['omp', 'claude', 'codex', 'gemini']);
+    expect(config.homeCliColumns).toHaveLength(4);
+  });
+
+  test('allows enabled custom CLI platforms in homepage slots', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      customCliPlatforms: [
+        { key: 'my-cli', name: 'My CLI', command: 'my-cli', enabled: true },
+        { key: 'off-cli', name: 'Off CLI', command: 'off-cli', enabled: false }
+      ],
+      homeCliColumns: ['my-cli', 'off-cli', 'omp', 'claude']
+    }), 'utf8');
+    delete require.cache[UI_CONFIG_PATH];
+    const mod = require('../../../src/server/services/ui-config');
+    const config = mod.loadUIConfig();
+
+    expect(config.customCliPlatforms).toEqual([
+      expect.objectContaining({ key: 'my-cli', name: 'My CLI', command: 'my-cli' }),
+      expect.objectContaining({ key: 'off-cli', enabled: false })
+    ]);
+    expect(config.homeCliColumns).toEqual(['my-cli', 'omp', 'claude', 'codex']);
   });
 
   test('returns defaults when file contains invalid JSON', () => {

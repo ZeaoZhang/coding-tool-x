@@ -1,8 +1,11 @@
 import axios from 'axios'
 
+export const API_TIMEOUT_MS = 30000
+export const SPEED_TEST_API_TIMEOUT_MS = 180000
+
 export const client = axios.create({
   baseURL: '/api',
-  timeout: 30000
+  timeout: API_TIMEOUT_MS
 })
 
 // 响应拦截器：统一处理错误响应
@@ -27,5 +30,6 @@ export function getChannelPrefix(channel = 'claude') {
   if (channel === 'codex') return '/codex'
   if (channel === 'gemini') return '/gemini'
   if (channel === 'opencode') return '/opencode'
+  if (channel === 'omp') return '/omp'
   return ''
 }

@@ -5,7 +5,8 @@ const {
   createChannel,
   updateChannel,
   deleteChannel,
-  saveChannelOrder
+  saveChannelOrder,
+  syncCurrentOpenCodeChannel
 } = require('../services/opencode-channels');
 const { isOpenCodeInstalled } = require('../services/opencode-sessions');
 const { getSchedulerState } = require('../services/channel-scheduler');
@@ -127,6 +128,25 @@ module.exports = (config) => {
       res.json({ channels: channelsWithHealth, installed: true });
     } catch (err) {
       console.error('[OpenCode Channels API] Failed to get enabled channels:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * POST /api/opencode/channels/sync-current
+   * 将当前 OpenCode 原生/ctx 配置同步到渠道列表
+   */
+  router.post('/sync-current', (req, res) => {
+    try {
+      if (!isOpenCodeInstalled()) {
+        return res.status(404).json({ error: 'OpenCode CLI not installed' });
+      }
+
+      const result = syncCurrentOpenCodeChannel();
+      res.json(result);
+      broadcastSchedulerState('opencode', getSchedulerState('opencode'));
+    } catch (err) {
+      console.error('[OpenCode Channels API] Failed to sync current channel:', err);
       res.status(500).json({ error: err.message });
     }
   });

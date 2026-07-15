@@ -1,29 +1,55 @@
 const chalk = require('chalk');
 const http = require('http');
 const { loadConfig } = require('../config/loader');
+const { normalizePlatformKey } = require('../shared/platforms');
 
 const CHANNEL_CONFIG = {
   claude: {
     name: 'Claude',
     icon: '[*]',
-    apiPath: '/api/proxy'
+    aompPath: '/api/proxy'
   },
   codex: {
     name: 'Codex',
     icon: '[*]',
-    apiPath: '/api/codex/proxy'
+    aompPath: '/api/codex/proxy'
   },
   gemini: {
     name: 'Gemini',
     icon: '[*]',
-    apiPath: '/api/gemini/proxy'
+    aompPath: '/api/gemini/proxy'
   },
   opencode: {
     name: 'OpenCode',
     icon: '[*]',
-    apiPath: '/api/opencode/proxy'
+    aompPath: '/api/opencode/proxy'
+  },
+  omp: {
+    name: 'OMP',
+    icon: '[*]',
+    aompPath: '/api/omp/proxy',
+    serviceLabel: 'OMP 受管模型配置',
+    proxyLabel: '受管模型配置',
+    startAction: '启用',
+    stopAction: '停用',
+    restartAction: '重新同步',
+    startedMessage: 'OMP 受管模型配置已启用',
+    stoppedMessage: 'OMP 受管模型配置已停用',
+    runningText: '已启用',
+    stoppedText: '未启用',
+    portLabel: '状态端口',
+    addressLabel: '状态地址',
+    startTip: '启用受管模型配置'
   }
 };
+
+function getServiceLabel(channelInfo) {
+  return channelInfo.serviceLabel || `${channelInfo.name} 代理服务`;
+}
+
+function getProxyLabel(channelInfo) {
+  return channelInfo.proxyLabel || '代理';
+}
 
 /**
  * HTTP 请求辅助函数
@@ -96,14 +122,15 @@ async function checkUIService() {
  * 启动代理
  */
 async function handleProxyStart(channel) {
-  const channelInfo = CHANNEL_CONFIG[channel];
+  const normalizedChannel = normalizePlatformKey(channel);
+  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
   if (!channelInfo) {
     console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode\n'));
+    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
     process.exit(1);
   }
 
-  console.log(chalk.cyan(`\n[START] 启动 ${channelInfo.name} 代理服务...\n`));
+  console.log(chalk.cyan(`\n[START] ${channelInfo.startAction || '启动'} ${getServiceLabel(channelInfo)}...\n`));
 
   // 检查 UI 服务
   const uiRunning = await checkUIService();
@@ -115,12 +142,12 @@ async function handleProxyStart(channel) {
   }
 
   try {
-    const response = await httpRequest('POST', `${channelInfo.apiPath}/start`);
+    const response = await httpRequest('POST', `${channelInfo.aompPath}/start`);
 
     if (response.data.success) {
-      console.log(chalk.green(`[OK] ${channelInfo.name} 代理已启动\n`));
-      console.log(chalk.gray(`${channelInfo.icon} 代理端口: ${response.data.port}`));
-      console.log(chalk.gray(`[NET] 代理地址: http://localhost:${response.data.port}\n`));
+      console.log(chalk.green(`[OK] ${channelInfo.startedMessage || `${channelInfo.name} ${getProxyLabel(channelInfo)}已启动`}\n`));
+      console.log(chalk.gray(`${channelInfo.icon} ${channelInfo.portLabel || '代理端口'}: ${response.data.port}`));
+      console.log(chalk.gray(`[NET] ${channelInfo.addressLabel || '代理地址'}: http://localhost:${response.data.port}\n`));
     } else {
       console.error(chalk.red(`[ERROR] 启动失败: ${response.data.message}\n`));
       process.exit(1);
@@ -140,13 +167,15 @@ async function handleProxyStart(channel) {
  * 停止代理
  */
 async function handleProxyStop(channel) {
-  const channelInfo = CHANNEL_CONFIG[channel];
+  const normalizedChannel = normalizePlatformKey(channel);
+  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
   if (!channelInfo) {
     console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
+    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
     process.exit(1);
   }
 
-  console.log(chalk.cyan(`\n[STOP]  停止 ${channelInfo.name} 代理服务...\n`));
+  console.log(chalk.cyan(`\n[STOP]  ${channelInfo.stopAction || '停止'} ${getServiceLabel(channelInfo)}...\n`));
 
   const uiRunning = await checkUIService();
   if (!uiRunning) {
@@ -155,10 +184,10 @@ async function handleProxyStop(channel) {
   }
 
   try {
-    const response = await httpRequest('POST', `${channelInfo.apiPath}/stop`);
+    const response = await httpRequest('POST', `${channelInfo.aompPath}/stop`);
 
     if (response.data.success) {
-      console.log(chalk.green(`[OK] ${channelInfo.name} 代理已停止\n`));
+      console.log(chalk.green(`[OK] ${channelInfo.stoppedMessage || `${channelInfo.name} ${getProxyLabel(channelInfo)}已停止`}\n`));
     } else {
       console.error(chalk.red(`[ERROR] 停止失败: ${response.data.message}\n`));
       process.exit(1);
@@ -173,13 +202,15 @@ async function handleProxyStop(channel) {
  * 重启代理
  */
 async function handleProxyRestart(channel) {
-  const channelInfo = CHANNEL_CONFIG[channel];
+  const normalizedChannel = normalizePlatformKey(channel);
+  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
   if (!channelInfo) {
     console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
+    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
     process.exit(1);
   }
 
-  console.log(chalk.cyan(`\n[SYNC] 重启 ${channelInfo.name} 代理服务...\n`));
+  console.log(chalk.cyan(`\n[SYNC] ${channelInfo.restartAction || '重启'} ${getServiceLabel(channelInfo)}...\n`));
 
   await handleProxyStop(channel);
   await new Promise(resolve => setTimeout(resolve, 1000));
@@ -190,16 +221,18 @@ async function handleProxyRestart(channel) {
  * 查看代理状态
  */
 async function handleProxyStatus(channel) {
-  const channelInfo = CHANNEL_CONFIG[channel];
+  const normalizedChannel = normalizePlatformKey(channel);
+  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
   if (!channelInfo) {
     console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
+    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
     process.exit(1);
   }
 
   const uiRunning = await checkUIService();
   if (!uiRunning) {
     console.log(chalk.bold.cyan(`\n╔======================================╗`));
-    console.log(chalk.bold.cyan(`║      ${channelInfo.name} 代理服务状态           ║`));
+    console.log(chalk.bold.cyan(`║      ${getServiceLabel(channelInfo)}状态           ║`));
     console.log(chalk.bold.cyan(`╚======================================╝\n`));
     console.log(chalk.gray('  [ERROR] UI 服务未运行\n'));
     console.log(chalk.yellow('[TIP] 请先启动 UI 服务: ') + chalk.cyan('ctx start\n'));
@@ -207,27 +240,27 @@ async function handleProxyStatus(channel) {
   }
 
   try {
-    const response = await httpRequest('GET', `${channelInfo.apiPath}/status`);
+    const response = await httpRequest('GET', `${channelInfo.aompPath}/status`);
     const payload = response.data || {};
     const status = payload.proxy || payload;
 
     console.log(chalk.bold.cyan(`\n╔======================================╗`));
-    console.log(chalk.bold.cyan(`║      ${channelInfo.name} 代理服务状态           ║`));
+    console.log(chalk.bold.cyan(`║      ${getServiceLabel(channelInfo)}状态           ║`));
     console.log(chalk.bold.cyan(`╚======================================╝\n`));
 
     if (status.running) {
-      console.log(chalk.green('  [OK] 状态: 运行中'));
-      console.log(chalk.gray(`  ${channelInfo.icon} 端口: ${status.port}`));
-      console.log(chalk.gray(`  [NET] 地址: http://localhost:${status.port}`));
+      console.log(chalk.green(`  [OK] 状态: ${channelInfo.runningText || '运行中'}`));
+      console.log(chalk.gray(`  ${channelInfo.icon} ${channelInfo.portLabel || '端口'}: ${status.port}`));
+      console.log(chalk.gray(`  [NET] ${channelInfo.addressLabel || '地址'}: http://localhost:${status.port}`));
       if (status.runtime) {
         console.log(chalk.gray(`  [TIMER]  运行时长: ${formatRuntime(status.runtime)}`));
       }
     } else {
-      console.log(chalk.gray('  [ERROR] 状态: 未运行'));
+      console.log(chalk.gray(`  [ERROR] 状态: ${channelInfo.stoppedText || '未运行'}`));
     }
 
     console.log(chalk.bold('\n[TIP] 提示:'));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx ${channel} start`) + chalk.gray(` 启动代理`));
+    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx ${channel} start`) + chalk.gray(` ${channelInfo.startTip || '启动代理'}`));
     console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx logs ${channel}`) + chalk.gray(` 查看日志`));
     console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx stats ${channel}`) + chalk.gray(` 查看统计\n`));
   } catch (error) {

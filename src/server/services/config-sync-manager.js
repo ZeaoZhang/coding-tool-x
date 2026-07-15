@@ -6,6 +6,7 @@
  * - Codex CLI: ~/.codex/skills/, ~/.codex/prompts/
  * - Gemini CLI: ~/.gemini/{skills,commands,agents}/
  * - OpenCode CLI: ~/.config/opencode/{skills,commands,agents,plugins}/
+ * - OMP: ~/.omp/agent/{skills,commands,prompts,extensions}/
  *
  * Config types:
  * - skills: directory-based (each skill is a dir with SKILL.md)
@@ -25,10 +26,11 @@ const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../
 // Paths
 const HOME = HOME_DIR || os.homedir();
 const CC_TOOL_CONFIGS = PATHS.configs;
-const CLAUDE_CODE_DIR = path.join(HOME, '.claude');
+const CLAUDE_CODE_DIR = NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings) || path.join(HOME, '.claude');
 const CODEX_DIR = path.join(HOME, '.codex');
 const GEMINI_DIR = path.join(HOME, '.gemini');
 const OPENCODE_DIR = NATIVE_PATHS.opencode.config;
+const OMP_AGENT_DIR = NATIVE_PATHS.omp.dir;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 
 // Config type definitions
@@ -44,7 +46,9 @@ const CONFIG_TYPES = {
     geminiSupported: true,
     opencodeTarget: 'skills',
     opencodeLegacyTarget: 'skill',
-    opencodeSupported: true
+    opencodeSupported: true,
+    ompTarget: 'skills',
+    ompSupported: true
   },
   commands: {
     isDirectory: false,
@@ -58,7 +62,9 @@ const CONFIG_TYPES = {
     geminiSupported: true,
     opencodeTarget: 'commands',
     opencodeLegacyTarget: 'command',
-    opencodeSupported: true
+    opencodeSupported: true,
+    ompTarget: 'commands',
+    ompSupported: true
   },
   agents: {
     isDirectory: false,
@@ -69,7 +75,8 @@ const CONFIG_TYPES = {
     geminiSupported: true,
     opencodeTarget: 'agents',
     opencodeLegacyTarget: 'agent',
-    opencodeSupported: true
+    opencodeSupported: true,
+    ompSupported: false
   },
   plugins: {
     isDirectory: true,
@@ -78,7 +85,9 @@ const CONFIG_TYPES = {
     geminiSupported: false,
     opencodeTarget: 'plugins',
     opencodeLegacyTarget: 'plugin',
-    opencodeSupported: true
+    opencodeSupported: true,
+    ompTarget: 'extensions',
+    ompSupported: true
   }
 };
 
@@ -90,6 +99,7 @@ class ConfigSyncManager {
     this.codexDir = CODEX_DIR;
     this.geminiDir = GEMINI_DIR;
     this.opencodeDir = OPENCODE_DIR;
+    this.ompDir = OMP_AGENT_DIR;
     this.configTypes = CONFIG_TYPES;
   }
 
@@ -575,9 +585,89 @@ class ConfigSyncManager {
   }
 
   /**
+   * Sync a config item to OMP.
+   * OMP treats commands as slash-command files and plugins as extensions/packages.
+   */
+  syncToOmp(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    if (!config.ompSupported) {
+      console.log(`[ConfigSyncManager] ${type} not supported natively by OMP, skipping`);
+      return { success: true, skipped: true, reason: 'Not supported natively by OMP' };
+    }
+
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
+    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    if (!fs.existsSync(sourcePath)) {
+      console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
+      return { success: false, error: 'Source not found' };
+    }
+
+    const targetPath = path.join(this.ompDir, config.ompTarget, safeName);
+    try {
+      if (config.isDirectory) {
+        this._ensureDir(path.dirname(targetPath));
+        this._copyDirRecursive(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to OMP (directory)`);
+      } else {
+        this._ensureDir(path.dirname(targetPath));
+        this._copyFile(sourcePath, targetPath);
+        console.log(`[ConfigSyncManager] Synced ${type}/${name} to OMP (file)`);
+      }
+
+      return { success: true, target: targetPath };
+    } catch (err) {
+      console.error('[ConfigSyncManager] Sync to OMP failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  removeFromOmp(type, name) {
+    const config = this.configTypes[type];
+    if (!config) {
+      return { success: false, error: `Unknown config type: ${type}` };
+    }
+
+    const safeName = this._normalizeSafeRelativeName(name);
+    if (!safeName) {
+      return { success: false, error: 'Invalid config item name' };
+    }
+
+    if (!config.ompSupported) {
+      return { success: true, skipped: true, reason: 'Not supported natively by OMP' };
+    }
+
+    const targetPath = path.join(this.ompDir, config.ompTarget, safeName);
+    if (!fs.existsSync(targetPath)) {
+      return { success: true, message: 'Already removed' };
+    }
+
+    try {
+      if (config.isDirectory) {
+        this._removeRecursive(targetPath);
+      } else {
+        fs.unlinkSync(targetPath);
+        this._cleanupEmptyParents(path.dirname(targetPath), path.join(this.ompDir, config.ompTarget));
+      }
+      console.log(`[ConfigSyncManager] Removed ${type}/${name} from OMP`);
+      return { success: true };
+    } catch (err) {
+      console.error('[ConfigSyncManager] Remove from OMP failed:', err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
    * Batch sync based on registry data
    * @param {string} type - Config type
-   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode } } }
+   * @param {Object} registryItems - Registry items { name: { enabled, platforms: { claude, codex, gemini, opencode, omp } } }
    * @returns {Object} Results summary
    */
   syncAll(type, registryItems) {
@@ -662,6 +752,20 @@ class ConfigSyncManager {
             results.removed.push({ type, name, platform: 'opencode' });
           }
         }
+
+        if (platforms.omp) {
+          const result = this.syncToOmp(type, name);
+          if (result.success && !result.skipped) {
+            results.synced.push({ type, name, platform: 'omp' });
+          } else if (!result.success) {
+            results.errors.push({ type, name, platform: 'omp', error: result.error });
+          }
+        } else {
+          const result = this.removeFromOmp(type, name);
+          if (result.success && !result.message && !result.skipped) {
+            results.removed.push({ type, name, platform: 'omp' });
+          }
+        }
       } else {
         // Item disabled, remove from all platforms
         const claudeResult = this.removeFromClaude(type, name);
@@ -682,6 +786,11 @@ class ConfigSyncManager {
         const opencodeResult = this.removeFromOpenCode(type, name);
         if (opencodeResult.success && !opencodeResult.message && !opencodeResult.skipped) {
           results.removed.push({ type, name, platform: 'opencode' });
+        }
+
+        const ompResult = this.removeFromOmp(type, name);
+        if (ompResult.success && !ompResult.message && !ompResult.skipped) {
+          results.removed.push({ type, name, platform: 'omp' });
         }
       }
     }

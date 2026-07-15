@@ -6,6 +6,9 @@ const fs   = require('fs');
 
 const API_PATH = require.resolve('../../../src/server/api/projects');
 const SESSIONS_PATH = require.resolve('../../../src/server/services/sessions');
+const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
+const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +46,23 @@ let sessionsStub;
 function loadRouter(config = {}) {
   delete require.cache[API_PATH];
   delete require.cache[SESSIONS_PATH];
+  delete require.cache[PATHS_PATH];
+  delete require.cache[SNAPSHOT_CACHE_PATH];
+  delete require.cache[PROJECT_SNAPSHOTS_PATH];
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'projects-api-test-'));
+  require.cache[PATHS_PATH] = {
+    id: PATHS_PATH,
+    filename: PATHS_PATH,
+    loaded: true,
+    exports: {
+      PATHS: {
+        storage: tempDir,
+        cache: path.join(tempDir, 'cache'),
+        snapshotCache: path.join(tempDir, 'cache', 'snapshots')
+      }
+    }
+  };
 
   require.cache[SESSIONS_PATH] = {
     id: SESSIONS_PATH,
@@ -73,11 +93,30 @@ describe('projects API router', () => {
     vi.restoreAllMocks();
     delete require.cache[API_PATH];
     delete require.cache[SESSIONS_PATH];
+    delete require.cache[PATHS_PATH];
+    delete require.cache[SNAPSHOT_CACHE_PATH];
+    delete require.cache[PROJECT_SNAPSHOTS_PATH];
   });
 
   // ── GET / ─────────────────────────────────────────────────────────────────
 
-  it('GET / returns projects sorted by saved order', async () => {
+  it('GET / returns a placeholder immediately while refreshing on cold cache', async () => {
+    sessionsStub.getProjectsWithStats.mockResolvedValue([{ name: 'alpha', lastUsed: 200 }]);
+
+    const router = loadRouter(config);
+    const handler = findHandler(router, 'get', '/');
+    const req = mockReq();
+    const res = mockRes();
+
+    await handler(req, res);
+
+    expect(res._data.projects).toEqual([]);
+    expect(res._data.currentProject).toBe('alpha');
+    expect(res._data.meta).toMatchObject({ stale: true, refreshing: true, fallback: true });
+    expect(sessionsStub.getProjectsWithStats).not.toHaveBeenCalled();
+  });
+
+  it('GET /?fresh=1 returns projects sorted by saved order', async () => {
     const projects = [
       { name: 'beta',  lastUsed: 100 },
       { name: 'alpha', lastUsed: 200 },
@@ -87,7 +126,7 @@ describe('projects API router', () => {
 
     const router = loadRouter(config);
     const handler = findHandler(router, 'get', '/');
-    const req = mockReq();
+    const req = mockReq({ query: { fresh: '1' } });
     const res = mockRes();
 
     await handler(req, res);
@@ -98,7 +137,7 @@ describe('projects API router', () => {
     expect(data.currentProject).toBe('alpha');
   });
 
-  it('GET / places unordered projects after ordered ones, sorted by lastUsed', async () => {
+  it('GET /?fresh=1 places unordered projects after ordered ones, sorted by lastUsed', async () => {
     const projects = [
       { name: 'gamma', lastUsed: 300 },
       { name: 'delta', lastUsed: 100 },
@@ -109,7 +148,7 @@ describe('projects API router', () => {
 
     const router = loadRouter(config);
     const handler = findHandler(router, 'get', '/');
-    const req = mockReq();
+    const req = mockReq({ query: { fresh: '1' } });
     const res = mockRes();
 
     await handler(req, res);
@@ -121,14 +160,14 @@ describe('projects API router', () => {
     expect(names[2]).toBe('delta');
   });
 
-  it('GET / uses first project as currentProject when config.currentProject is unset', async () => {
+  it('GET /?fresh=1 uses first project as currentProject when config.currentProject is unset', async () => {
     const projects = [{ name: 'only', lastUsed: 0 }];
     sessionsStub.getProjectsWithStats.mockResolvedValue(projects);
     sessionsStub.getProjectOrder.mockReturnValue([]);
 
     const router = loadRouter({});
     const handler = findHandler(router, 'get', '/');
-    const req = mockReq();
+    const req = mockReq({ query: { fresh: '1' } });
     const res = mockRes();
 
     await handler(req, res);
@@ -136,12 +175,12 @@ describe('projects API router', () => {
     expect(res._data.currentProject).toBe('only');
   });
 
-  it('GET / returns 500 when getProjectsWithStats rejects', async () => {
+  it('GET /?fresh=1 returns 500 when getProjectsWithStats rejects without a cached snapshot', async () => {
     sessionsStub.getProjectsWithStats.mockRejectedValue(new Error('db error'));
 
     const router = loadRouter(config);
     const handler = findHandler(router, 'get', '/');
-    const req = mockReq();
+    const req = mockReq({ query: { fresh: '1' } });
     const res = mockRes();
 
     await handler(req, res);

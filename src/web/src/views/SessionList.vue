@@ -52,6 +52,26 @@
             </div>
           </div>
           <n-text depth="3" class="project-path">{{ displayProjectPath }}</n-text>
+          <div v-if="sessionStatusTags.length" class="status-tags" role="status" aria-live="polite">
+            <n-tag
+              v-for="tag in sessionStatusTags"
+              :key="tag.key"
+              size="small"
+              :type="tag.type"
+              :bordered="false"
+            >
+              {{ tag.text }}
+            </n-tag>
+            <n-button
+              v-if="store.sessionsRefreshing || store.sessionsMeta?.error || store.error"
+              text
+              size="tiny"
+              :loading="store.loading"
+              @click="refreshDataWithScrollPreservation"
+            >
+              立即刷新
+            </n-button>
+          </div>
         </div>
 
         <!-- Search Bar -->
@@ -78,7 +98,7 @@
     <!-- Scrollable Content -->
     <div class="content" ref="contentEl">
       <!-- Loading -->
-      <div v-if="store.loading" class="loading-container">
+      <div v-if="store.loading && store.sessions.length === 0 && !store.sessionsPending" class="loading-container">
         <n-spin size="large">
           <template #description>
             加载会话列表...
@@ -86,8 +106,16 @@
         </n-spin>
       </div>
 
+      <div v-else-if="store.sessionsPending" class="loading-container compact">
+        <n-spin size="small">
+          <template #description>
+            正在生成会话列表...
+          </template>
+        </n-spin>
+      </div>
+
       <!-- Error -->
-      <n-alert v-else-if="store.error" type="error" title="加载失败" style="margin-bottom: 16px;">
+      <n-alert v-else-if="store.error && store.sessions.length === 0" type="error" title="加载失败" style="margin-bottom: 16px;">
         {{ store.error }}
       </n-alert>
 
@@ -464,9 +492,9 @@ async function ensureProjectNameResolved() {
   return props.projectName
 }
 
-async function loadSessions() {
+async function loadSessions(options = {}) {
   const projectName = await ensureProjectNameResolved()
-  await store.fetchSessions(projectName)
+  await store.fetchSessions(projectName, options)
 }
 
 // Sync with store
@@ -491,6 +519,32 @@ const filteredSessions = computed(() => {
       (session.gitBranch && session.gitBranch.toLowerCase().includes(query))
     )
   })
+})
+
+const sessionStatusTags = computed(() => {
+  const tags = []
+  if (store.sessionsRefreshing) {
+    tags.push({
+      key: 'refreshing',
+      type: 'info',
+      text: store.sessions.length > 0 ? '后台刷新中' : '首次生成中'
+    })
+  }
+  if (store.sessionsUsingFallback && store.sessions.length > 0) {
+    tags.push({
+      key: 'fallback',
+      type: 'warning',
+      text: '正在显示缓存数据'
+    })
+  }
+  if (store.error) {
+    tags.push({
+      key: 'error',
+      type: 'error',
+      text: `刷新失败：${store.error}`
+    })
+  }
+  return tags
 })
 
 function goBack() {
@@ -816,7 +870,8 @@ async function refreshDataWithScrollPreservation() {
   const scrollTop = contentEl.value?.scrollTop || 0
 
   // Fetch data
-  await loadSessions()
+  const projectName = await ensureProjectNameResolved()
+  await store.retrySessions(projectName)
 
   // Restore scroll position after DOM update
   await nextTick()
@@ -932,6 +987,14 @@ onUnmounted(() => {
   margin-bottom: 2px;
 }
 
+.status-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -949,6 +1012,10 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
   min-height: 400px;
+}
+
+.loading-container.compact {
+  min-height: 180px;
 }
 
 /* Session Item */

@@ -11,13 +11,13 @@
           size="small"
           @update:value="handleProxyToggle"
         />
-        <n-tag v-if="(currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode') && installedSkillsCount > 0" type="success" size="small" :bordered="false">
+        <n-tag v-if="managedConfigChannel && installedSkillsCount > 0" type="success" size="small" :bordered="false">
           {{ installedSkillsCount }} 技能
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <!-- Skills: Claude / Codex / Gemini / OpenCode 支持 -->
-        <n-tooltip trigger="hover" v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode'">
+        <!-- Skills: Claude / Codex / Gemini / OpenCode / OMP 支持 -->
+        <n-tooltip trigger="hover" v-if="skillsChannel">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
               <template #icon><n-icon :size="18"><ExtensionPuzzleOutline /></n-icon></template>
@@ -26,7 +26,7 @@
           Skills 技能
         </n-tooltip>
         <!-- Claude / Codex / OpenCode 共享功能 -->
-        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'opencode'">
+        <template v-if="pluginChannel">
           <n-tooltip trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowPlugins">
@@ -36,8 +36,8 @@
             Plugins 插件
           </n-tooltip>
         </template>
-        <template v-if="currentChannel === 'claude' || currentChannel === 'codex' || currentChannel === 'gemini' || currentChannel === 'opencode'">
-          <n-tooltip trigger="hover">
+        <template v-if="commandsChannel || agentsChannel">
+          <n-tooltip v-if="commandsChannel" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
                 <template #icon><n-icon :size="18"><TerminalOutline /></n-icon></template>
@@ -45,7 +45,7 @@
             </template>
             Commands 命令
           </n-tooltip>
-          <n-tooltip trigger="hover">
+          <n-tooltip v-if="agentsChannel" trigger="hover">
             <template #trigger>
               <n-button text size="small" class="toolbar-btn" @click="handleShowAgents">
                 <template #icon><n-icon :size="18"><PersonOutline /></n-icon></template>
@@ -81,18 +81,31 @@
       <div class="panel-header">
         <div class="header-title">
           <h3>{{ channelTitle }}</h3>
-          <n-text depth="3" class="header-hint">拖拽调整顺序</n-text>
+          <n-text depth="3" class="header-hint">启用渠道优先显示</n-text>
         </div>
-        <n-button type="primary" size="small" @click="handleAddClick">
-          <template #icon><n-icon><AddOutline /></n-icon></template>
-          添加
-        </n-button>
+        <div class="header-actions">
+          <n-button
+            secondary
+            size="small"
+            :loading="syncingCurrentChannel"
+            :disabled="syncingCurrentChannel"
+            @click="handleSyncCurrentClick"
+          >
+            <template #icon><n-icon><SyncOutline /></n-icon></template>
+            同步
+          </n-button>
+          <n-button type="primary" size="small" @click="handleAddClick">
+            <template #icon><n-icon><AddOutline /></n-icon></template>
+            添加
+          </n-button>
+        </div>
       </div>
       <div class="channels-scroll-area">
         <ClaudeChannelPanel v-if="currentChannel === 'claude'" ref="claudePanelRef" @open-website="openWebsite" />
         <CodexChannelPanel v-else-if="currentChannel === 'codex'" ref="codexPanelRef" @open-website="openWebsite" />
         <GeminiChannelPanel v-else-if="currentChannel === 'gemini'" ref="geminiPanelRef" @open-website="openWebsite" />
         <OpenCodeChannelPanel v-else-if="currentChannel === 'opencode'" ref="opencodePanelRef" @open-website="openWebsite" />
+        <OmpChannelPanel v-else-if="currentChannel === 'omp'" ref="ompPanelRef" @open-website="openWebsite" />
       </div>
     </div>
 
@@ -117,11 +130,13 @@ import {
   PersonOutline,
   CubeOutline,
   KeyOutline,
+  SyncOutline,
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
+import OmpChannelPanel from './channel/OmpChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
 import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
@@ -157,8 +172,18 @@ const claudePanelRef = ref(null)
 const codexPanelRef = ref(null)
 const geminiPanelRef = ref(null)
 const opencodePanelRef = ref(null)
+const ompPanelRef = ref(null)
+const syncingCurrentChannel = ref(false)
 const installedSkillsCount = ref(0)
 const oauthSummaries = ref({})
+const managedConfigChannels = ['claude', 'codex', 'gemini', 'opencode', 'omp']
+const pluginChannels = ['claude', 'codex', 'opencode', 'omp']
+const agentChannels = ['claude', 'codex', 'gemini', 'opencode']
+const managedConfigChannel = computed(() => managedConfigChannels.includes(currentChannel.value))
+const skillsChannel = managedConfigChannel
+const commandsChannel = managedConfigChannel
+const pluginChannel = computed(() => pluginChannels.includes(currentChannel.value))
+const agentsChannel = computed(() => agentChannels.includes(currentChannel.value))
 
 // 当前渠道是否处于 OAuth 控制模式
 const isOAuthControlled = computed(() => {
@@ -189,7 +214,7 @@ function openOAuthCredentialsDrawer() {
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
-  if (!['claude', 'codex', 'gemini', 'opencode'].includes(currentChannel.value)) {
+  if (!managedConfigChannel.value) {
     installedSkillsCount.value = 0
     return
   }
@@ -207,14 +232,16 @@ const channelRefs = {
   claude: claudePanelRef,
   codex: codexPanelRef,
   gemini: geminiPanelRef,
-  opencode: opencodePanelRef
+  opencode: opencodePanelRef,
+  omp: ompPanelRef
 }
 
 const channelTitles = {
   claude: 'Claude 渠道管理',
   codex: 'Codex 渠道管理',
   gemini: 'Gemini 渠道管理',
-  opencode: 'OpenCode 渠道管理'
+  opencode: 'OpenCode 渠道管理',
+  omp: 'OMP 渠道管理'
 }
 
 const channelTitle = computed(() => channelTitles[currentChannel.value] || 'Claude 渠道管理')
@@ -225,6 +252,17 @@ function openWebsite(url) {
 
 function handleAddClick() {
   channelRefs[currentChannel.value]?.value?.openAddDialog?.()
+}
+
+async function handleSyncCurrentClick() {
+  const panel = channelRefs[currentChannel.value]?.value
+  if (!panel?.syncCurrentChannels || syncingCurrentChannel.value) return
+  syncingCurrentChannel.value = true
+  try {
+    await panel.syncCurrentChannels()
+  } finally {
+    syncingCurrentChannel.value = false
+  }
 }
 
 function refreshChannelPanel(channel = currentChannel.value) {
@@ -425,6 +463,7 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-width: 0;
 }
 
 .header-title h3 {
@@ -436,6 +475,13 @@ onUnmounted(() => {
 
 .header-hint {
   font-size: 11px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .channels-scroll-area {

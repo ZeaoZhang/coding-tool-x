@@ -79,6 +79,30 @@ function writeConfig(obj) {
 }
 
 const DEFAULT_CONFIG = require('../../../src/config/default');
+const DEFAULT_CONFIG_PATH = require.resolve('../../../src/config/default');
+
+describe('DEFAULT_CONFIG Claude paths', () => {
+  it('uses CLAUDE_CONFIG_DIR for the default projectsDir', () => {
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const customClaudeDir = path.join(testDir, 'custom-claude');
+
+    try {
+      process.env.CLAUDE_CONFIG_DIR = customClaudeDir;
+      delete require.cache[DEFAULT_CONFIG_PATH];
+      const isolatedDefaultConfig = require('../../../src/config/default');
+
+      expect(isolatedDefaultConfig.projectsDir).toBe(path.join(customClaudeDir, 'projects'));
+    } finally {
+      if (previousClaudeConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+      delete require.cache[DEFAULT_CONFIG_PATH];
+      require('../../../src/config/default');
+    }
+  });
+});
 
 // ─── expandHome ───────────────────────────────────────────────────────────────
 

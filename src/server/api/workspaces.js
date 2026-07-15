@@ -153,7 +153,7 @@ router.get('/check-git/*', (req, res) => {
 
 /**
  * GET /api/workspaces/available-projects
- * 获取所有渠道（Claude/Codex/Gemini）的项目并集
+ * 获取所有渠道（Claude/Codex/Gemini/OpenCode/OMP）的项目并集
  */
 router.get('/available-projects', async (req, res) => {
   try {
@@ -449,7 +449,7 @@ router.delete('/:id/projects/:projectName', (req, res) => {
 /**
  * POST /api/workspaces/:id/launch
  * 获取在工作区启动 CLI 工具的命令
- * Body: { tool: 'claude' | 'codex' | 'gemini', projectName?: string }
+ * Body: { tool: 'claude' | 'codex' | 'gemini' | 'opencode' | 'omp' | 'omp', projectName?: string }
  */
 router.post('/:id/launch', (req, res) => {
   try {

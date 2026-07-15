@@ -6,13 +6,19 @@ const path = require('path');
 const { URL } = require('url');
 const { PATHS } = require('../../config/paths');
 const { loadUIConfig } = require('./ui-config');
+const {
+  getSnapshot,
+  refreshSnapshot,
+  invalidateSnapshot
+} = require('./snapshot-cache');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const QUOTA_UNIT = 500000;
 const VELOERA_QUOTA_UNIT = 1000000;
-const VALID_SOURCES = new Set(['claude', 'codex', 'gemini', 'opencode']);
+const NEWCLI_QUOTA_UNIT = 1000000;
+const VALID_SOURCES = new Set(['claude', 'codex', 'gemini', 'opencode', 'omp']);
 const GATEWAY_PATH_SEGMENTS = new Set(['openai', 'anthropic', 'claude', 'gemini', 'codex']);
 const HUB_PLATFORMS = new Set(['new-api', 'one-api', 'one-hub', 'done-hub', 'veloera', 'anyrouter', 'aihubmix']);
 const UNSUPPORTED_BALANCE_PLATFORMS = new Set(['dashscope', 'modelscope']);
@@ -415,6 +421,7 @@ async function tryRequestJson(url, options) {
 function detectPlatformByUrlHint(...values) {
   const value = values.map(item => String(item || '')).join(' ').toLowerCase();
   if (value.includes('88code') || value.includes('88-code') || value.includes('rainapp.top')) return '88code';
+  if (value.includes('code.newcli.com') || value.includes('newcli') || value.includes('new-cli')) return 'newcli';
   if (value.includes('openrouter.ai') || value.includes('openrouter')) return 'openrouter';
   if (value.includes('aihubmix')) return 'aihubmix';
   if (value.includes('dashscope') || value.includes('dashscope.aliyuncs.com') || value.includes('compatible-mode')) return 'dashscope';
@@ -597,6 +604,77 @@ function buildSiliconFlowUserInfoSnapshot(payload) {
     remaining,
     used: totalBalance != null ? Math.max(0, totalBalance - remaining) : undefined,
     total: totalBalance ?? chargeBalance ?? remaining
+  });
+}
+
+function normalizeNewCliQuotaUnit(value) {
+  return normalizeQuotaUnit(value, NEWCLI_QUOTA_UNIT);
+}
+
+function extractNewCliSubscriptionItems(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+  const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
+  const subscription = data.subscription && typeof data.subscription === 'object' ? data.subscription : data;
+  const candidates = [
+    subscription.active,
+    subscription.subscriptions,
+    subscription.items,
+    data.subscriptions,
+    data.items,
+    Array.isArray(subscription) ? subscription : null,
+    Array.isArray(data) ? data : null
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+
+function shouldUseNewCliSubscription(item = {}) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.isActive === false) return false;
+  const status = String(item.status || item.subscriptionStatus || '').trim().toUpperCase();
+  return !status || status === 'ACTIVE' || status === '活跃中';
+}
+
+function buildNewCliDashboardSnapshot(payload) {
+  const items = extractNewCliSubscriptionItems(payload).filter(shouldUseNewCliSubscription);
+  if (!items.length) return makeHiddenSnapshot('newcli');
+
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : payload;
+  const unit = normalizeNewCliQuotaUnit(data?.quotaUnit || data?.quota_unit || data?.quota_per_unit || data?.quotaPerUnit);
+  let remainingRaw = 0;
+  let usedRaw = 0;
+  let totalRaw = 0;
+  let hasRemaining = false;
+  let hasTotal = false;
+
+  for (const item of items) {
+    const plan = item.plan && typeof item.plan === 'object' ? item.plan : {};
+    const remaining = readMoneyField(item, 'quotaRemaining', 'quota_remaining', 'remainingQuota', 'remaining_quota');
+    const used = readMoneyField(item, 'quotaUsed', 'quota_used', 'usedQuota', 'used_quota') || 0;
+    const limit = readMoneyField(item, 'quotaLimit', 'quota_limit')
+      ?? readMoneyField(plan, 'quotaLimit', 'quota_limit');
+
+    if (remaining != null) {
+      hasRemaining = true;
+      remainingRaw += Math.max(0, remaining);
+      usedRaw += Math.max(0, used);
+      if (limit != null) {
+        hasTotal = true;
+        totalRaw += Math.max(0, limit);
+      } else {
+        totalRaw += Math.max(0, remaining + used);
+      }
+    }
+  }
+
+  if (!hasRemaining) return makeHiddenSnapshot('newcli');
+
+  return makeVisibleSnapshot('newcli', {
+    remaining: remainingRaw / unit,
+    used: usedRaw / unit,
+    total: (hasTotal || usedRaw > 0) ? totalRaw / unit : undefined
   });
 }
 
@@ -789,6 +867,41 @@ function buildSiliconFlowApiBaseCandidates(baseUrl, channel = {}) {
     } catch {}
   }
   return candidates;
+}
+
+function buildNewCliWebBaseCandidates(baseUrl, channel = {}) {
+  const candidates = [];
+  const inputs = [
+    channel.balanceBaseUrl,
+    channel.websiteUrl,
+    channel.baseUrl,
+    baseUrl
+  ].filter(Boolean);
+
+  for (const input of inputs) {
+    try {
+      const parsed = new URL(input);
+      addUnique(candidates, parsed.origin);
+    } catch {}
+  }
+  return candidates;
+}
+
+function buildNewCliAuthHeaderCandidates(token) {
+  const raw = stripBearer(token).replace(/^cookie:\s*/i, '').trim();
+  if (!raw) return [];
+  if (raw.includes('=')) {
+    return [{
+      Accept: 'application/json',
+      Cookie: raw
+    }];
+  }
+  return [
+    buildAuthHeaders(raw),
+    { Accept: 'application/json', Cookie: `auth_token=${raw}` },
+    { Accept: 'application/json', Cookie: `session=${raw}` },
+    { Accept: 'application/json', Cookie: `__Secure-authjs.session-token=${raw}` }
+  ];
 }
 
 function hasGatewayPathSegment(value) {
@@ -1047,9 +1160,24 @@ function buildBalanceProbeStrategies(baseUrl, channel = {}, token = '') {
       add({ type: 'siliconflow-user-info', baseUrl, apiBase });
     }
   };
+  const addNewCliStrategies = () => {
+    for (const webBase of buildNewCliWebBaseCandidates(baseUrl, channel)) {
+      add({
+        type: 'newcli-dashboard',
+        baseUrl,
+        webBase,
+        requiresDedicatedToken: !hasDedicatedBalanceToken(channel)
+      });
+    }
+  };
 
   if (UNSUPPORTED_BALANCE_PLATFORMS.has(hintedPlatform)) {
     add({ type: 'unsupported-balance', platform: hintedPlatform, baseUrl });
+    return strategies;
+  }
+
+  if (hintedPlatform === 'newcli') {
+    addNewCliStrategies();
     return strategies;
   }
 
@@ -1224,6 +1352,21 @@ async function runSiliconFlowUserInfoStrategy(strategy, token) {
   return buildSiliconFlowUserInfoSnapshot(payload);
 }
 
+async function runNewCliDashboardStrategy(strategy, token, channel = {}) {
+  if (strategy.requiresDedicatedToken || !hasDedicatedBalanceToken(channel)) {
+    return makeHiddenSnapshot('newcli');
+  }
+
+  for (const headers of buildNewCliAuthHeaderCandidates(token)) {
+    const payload = await tryRequestJson(joinUrl(strategy.webBase || strategy.baseUrl, '/api/user/dashboard'), {
+      headers
+    });
+    const snapshot = buildNewCliDashboardSnapshot(payload);
+    if (snapshot.visible) return snapshot;
+  }
+  return makeHiddenSnapshot('newcli');
+}
+
 async function runBalanceStrategy(strategy, token, channel = {}) {
   if (!strategy || !strategy.type) {
     return { snapshot: makeHiddenSnapshot(), strategy };
@@ -1295,6 +1438,12 @@ async function runBalanceStrategy(strategy, token, channel = {}) {
       strategy
     };
   }
+  if (strategy.type === 'newcli-dashboard') {
+    return {
+      snapshot: await runNewCliDashboardStrategy(strategy, token, channel),
+      strategy
+    };
+  }
 
   return { snapshot: makeHiddenSnapshot(), strategy };
 }
@@ -1320,6 +1469,7 @@ async function probeBalanceFromBase(baseUrl, channel, token) {
         strategy.type?.startsWith('88code') ? '88code'
           : strategy.type?.startsWith('openrouter') ? 'openrouter'
           : strategy.type?.startsWith('siliconflow') ? 'siliconflow'
+          : strategy.type?.startsWith('newcli') ? 'newcli'
           : strategy.type?.startsWith('sub2api') ? 'sub2api'
             : strategy.platform || null
       );
@@ -1342,6 +1492,14 @@ function buildCacheKey(source, channel) {
     normalizeBaseUrl(channel.baseUrl || ''),
     tokenHash
   ].join(':');
+}
+
+function buildBalanceSnapshotKey(source, channel) {
+  return `channel-balances:${buildCacheKey(source, channel)}`;
+}
+
+function makeFallbackBalanceSnapshot(currentTime = Date.now()) {
+  return makeHiddenSnapshot(null, { stale: true, updatedAt: nowIso(currentTime) });
 }
 
 async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
@@ -1443,6 +1601,7 @@ function clearChannelBalanceCache(source, channel) {
   let strategyChanged = false;
 
   balanceCache.delete(exactKey);
+  invalidateSnapshot(`channel-balances:${exactKey}`);
   for (const key of Array.from(balanceCache.keys())) {
     if (key.startsWith(prefix)) {
       balanceCache.delete(key);
@@ -1476,6 +1635,9 @@ function getChannelsForSource(source) {
   }
   if (source === 'opencode') {
     return require('./opencode-channels').getChannels().channels || [];
+  }
+  if (source === 'omp') {
+    return require('./omp-channels').getChannels().channels || [];
   }
   return [];
 }
@@ -1517,19 +1679,45 @@ async function mapWithConcurrency(items, limit, worker) {
 async function getChannelBalances(source, options = {}) {
   const normalizedSource = validateSource(source);
   if (!isBalanceDisplayEnabled()) {
-    return { enabled: false, source: normalizedSource, balances: {} };
+    return {
+      enabled: false,
+      source: normalizedSource,
+      balances: {},
+      refreshing: false,
+      updatedAt: null,
+      stale: false
+    };
   }
 
   const channels = getEnabledBalanceChannels(normalizedSource);
+  const currentTime = options.now || Date.now();
   const entries = await mapWithConcurrency(channels, 4, async (channel) => {
-    const snapshot = await refreshChannelBalanceSnapshot(normalizedSource, channel, options);
-    return [channel.id, snapshot];
+    const snapshot = await getSnapshot(buildBalanceSnapshotKey(normalizedSource, channel), {
+      ttlMs: CACHE_TTL_MS,
+      fallbackValue: makeFallbackBalanceSnapshot(currentTime),
+      refresh: () => refreshChannelBalanceSnapshot(normalizedSource, channel, { ...options, force: true, now: Date.now() })
+    });
+    const value = {
+      ...snapshot.value,
+      stale: Boolean(snapshot.value?.stale || snapshot.meta.stale)
+    };
+    return [channel.id, value, snapshot.meta];
   });
+
+  const metas = entries.map((entry) => entry[2]).filter(Boolean);
+  const updatedAt = metas
+    .map(meta => meta.generatedAt)
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
 
   return {
     enabled: true,
     source: normalizedSource,
-    balances: Object.fromEntries(entries.filter(([id]) => id))
+    balances: Object.fromEntries(entries.filter(([id]) => id).map(([id, snapshot]) => [id, snapshot])),
+    refreshing: metas.some(meta => meta.refreshing),
+    updatedAt,
+    stale: metas.some(meta => meta.stale)
   };
 }
 
@@ -1547,7 +1735,12 @@ async function refreshChannelBalance(source, channelId) {
     throw error;
   }
 
-  const balance = await refreshChannelBalanceSnapshot(normalizedSource, channel, { force: true });
+  const entry = await refreshSnapshot(
+    buildBalanceSnapshotKey(normalizedSource, channel),
+    () => refreshChannelBalanceSnapshot(normalizedSource, channel, { force: true }),
+    { bypassInflight: true }
+  );
+  const balance = entry.value;
   return {
     enabled: true,
     source: normalizedSource,
@@ -1559,6 +1752,7 @@ async function refreshChannelBalance(source, channelId) {
 function clearBalanceCache() {
   balanceCache.clear();
   balanceStrategyCache.clear();
+  invalidateSnapshot('channel-balances:');
   strategyCacheLoaded = false;
 }
 
@@ -1586,9 +1780,12 @@ module.exports = {
     build88CodeApiBaseCandidates,
     buildOpenRouterApiBaseCandidates,
     buildSiliconFlowApiBaseCandidates,
+    buildNewCliWebBaseCandidates,
     build88CodeUsageSnapshot,
     build88CodeSubscriptionSnapshot,
+    buildNewCliDashboardSnapshot,
     buildBalanceProbeStrategies,
+    buildBalanceSnapshotKey,
     getEnabledBalanceChannels,
     runBalanceStrategy,
     refreshChannelBalanceSnapshot,

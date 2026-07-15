@@ -5,6 +5,7 @@ import {
   updateUIConfigKey,
   updateNestedUIConfig
 } from '../api/ui-config'
+import { DEFAULT_HOME_CLI_COLUMNS } from '../config/platforms'
 
 // UI 配置
 const uiConfig = ref({
@@ -19,18 +20,27 @@ const uiConfig = ref({
   channelLocks: {
     claude: false,
     codex: false,
-    gemini: false
+    gemini: false,
+    opencode: false,
+    omp: false
   },
   channelCollapse: {
     claude: [],
     codex: [],
-    gemini: []
+    gemini: [],
+    opencode: [],
+    omp: []
   },
   channelOrder: {
     claude: [],
     codex: [],
-    gemini: []
-  }
+    gemini: [],
+    opencode: [],
+    omp: []
+  },
+  dashboardChannelOrder: DEFAULT_HOME_CLI_COLUMNS,
+  homeCliColumns: DEFAULT_HOME_CLI_COLUMNS,
+  customCliPlatforms: []
 })
 
 let isLoaded = false

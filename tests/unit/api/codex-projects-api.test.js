@@ -1,8 +1,14 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 let codexSessionsService;
 let isCodexInstalledMock;
+const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
+const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
   delete require.cache[require.resolve('../../../src/server/api/codex-projects')];
@@ -60,6 +66,7 @@ function call(app, method, url, body) {
 }
 
 beforeEach(() => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-projects-api-test-'));
   codexSessionsService = {
     getProjects: vi.fn(() => [{ name: 'repo-a' }, { name: 'repo-b' }]),
     saveProjectOrder: vi.fn(),
@@ -81,13 +88,28 @@ beforeEach(() => {
       isCodexInstalled: isCodexInstalledMock
     }
   };
+  require.cache[PATHS_PATH] = {
+    id: PATHS_PATH,
+    filename: PATHS_PATH,
+    loaded: true,
+    exports: {
+      PATHS: {
+        storage: tempDir,
+        cache: path.join(tempDir, 'cache'),
+        snapshotCache: path.join(tempDir, 'cache', 'snapshots')
+      }
+    }
+  };
 });
 
 afterEach(() => {
   [
     '../../../src/server/api/codex-projects',
     '../../../src/server/services/codex-sessions',
-    '../../../src/server/services/codex-config'
+    '../../../src/server/services/codex-config',
+    '../../../src/config/paths',
+    '../../../src/server/services/snapshot-cache',
+    '../../../src/server/services/project-snapshots'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -102,21 +124,22 @@ describe('codex-projects api', () => {
     const res = await request(buildApp()).get('/');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       projects: [],
       currentProject: null,
       error: 'Codex CLI not installed or not found'
     });
   });
 
-  test('GET / returns projects and currentProject', async () => {
-    const res = await request(buildApp()).get('/');
+  test('GET /?fresh=1 returns projects and currentProject', async () => {
+    const res = await request(buildApp()).get('/?fresh=1');
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       projects: [{ name: 'repo-a' }, { name: 'repo-b' }],
       currentProject: 'repo-a'
     });
+    expect(res.body.meta).toMatchObject({ stale: false, refreshing: false });
   });
 
   test('POST /order validates body and DELETE proxies project removal', async () => {

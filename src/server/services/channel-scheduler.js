@@ -2,6 +2,7 @@ const { getAllChannels } = require('./channels');
 const { getChannels: getCodexChannels } = require('./codex-channels');
 const { getChannels: getGeminiChannels } = require('./gemini-channels');
 const { getChannels: getOpenCodeChannels } = require('./opencode-channels');
+const { getChannels: getOmpChannels } = require('./omp-channels');
 const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } = require('./channel-health');
 
 const channelProviders = {
@@ -16,6 +17,10 @@ const channelProviders = {
   },
   opencode: () => {
     const data = getOpenCodeChannels();
+    return Array.isArray(data?.channels) ? data.channels : [];
+  },
+  omp: () => {
+    const data = getOmpChannels();
     return Array.isArray(data?.channels) ? data.channels : [];
   }
 };
@@ -33,7 +38,8 @@ const schedulerStates = {
   claude: createState(),
   codex: createState(),
   gemini: createState(),
-  opencode: createState()
+  opencode: createState(),
+  omp: createState()
 };
 
 function getState(source = 'claude') {

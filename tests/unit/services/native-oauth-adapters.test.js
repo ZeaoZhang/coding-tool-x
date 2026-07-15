@@ -19,6 +19,8 @@ let getProxyStatusMock;
 let getCodexProxyStatusMock;
 let getGeminiProxyStatusMock;
 let getOpenCodeProxyStatusMock;
+let getOmpProxyStatusMock;
+let getOmpAuthProviderSnapshotMock;
 
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -107,6 +109,11 @@ beforeEach(() => {
   getCodexProxyStatusMock = vi.fn(() => ({ running: false }));
   getGeminiProxyStatusMock = vi.fn(() => ({ running: false }));
   getOpenCodeProxyStatusMock = vi.fn(() => ({ running: false }));
+  getOmpProxyStatusMock = vi.fn(() => ({ running: false }));
+  getOmpAuthProviderSnapshotMock = vi.fn(() => ({
+    available: true,
+    providers: []
+  }));
 
   require.cache[require.resolve('../../../src/config/paths')] = {
     id: require.resolve('../../../src/config/paths'),
@@ -233,6 +240,27 @@ beforeEach(() => {
     loaded: true,
     exports: { getOpenCodeProxyStatus: getOpenCodeProxyStatusMock }
   };
+  require.cache[require.resolve('../../../src/server/omp-proxy-server')] = {
+    id: require.resolve('../../../src/server/omp-proxy-server'),
+    filename: require.resolve('../../../src/server/omp-proxy-server'),
+    loaded: true,
+    exports: { getOmpProxyStatus: getOmpProxyStatusMock }
+  };
+  require.cache[require.resolve('../../../src/server/services/omp-settings-manager')] = {
+    id: require.resolve('../../../src/server/services/omp-settings-manager'),
+    filename: require.resolve('../../../src/server/services/omp-settings-manager'),
+    loaded: true,
+    exports: { isManagedOmpProvidersActive: vi.fn(() => false) }
+  };
+  require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
+    id: require.resolve('../../../src/server/services/omp-auth-providers'),
+    filename: require.resolve('../../../src/server/services/omp-auth-providers'),
+    loaded: true,
+    exports: {
+      getOmpAuthProviderSnapshot: getOmpAuthProviderSnapshotMock,
+      clearOmpAuthProviderCache: vi.fn()
+    }
+  };
 
   delete require.cache[require.resolve('../../../src/server/services/native-oauth-adapters')];
   nativeAdapters = require('../../../src/server/services/native-oauth-adapters');
@@ -253,7 +281,10 @@ afterEach(() => {
     '../../../src/server/proxy-server',
     '../../../src/server/codex-proxy-server',
     '../../../src/server/gemini-proxy-server',
-    '../../../src/server/opencode-proxy-server'
+    '../../../src/server/opencode-proxy-server',
+    '../../../src/server/omp-proxy-server',
+    '../../../src/server/services/omp-settings-manager',
+    '../../../src/server/services/omp-auth-providers'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -503,6 +534,37 @@ describe('native-oauth-adapters high level flows', () => {
         refresh: 'anthropic-refresh'
       }
     });
+  });
+
+  test('reads OMP OAuth accounts from auth-broker provider snapshot', () => {
+    getOmpAuthProviderSnapshotMock.mockReturnValue({
+      available: true,
+      providers: [
+        {
+          id: 'openai-codex',
+          loggedIn: true,
+          accountCount: 1,
+          accounts: [{ index: 1, identity: 'co***x@example.com' }]
+        }
+      ]
+    });
+
+    const credentials = nativeAdapters.readAllNativeOAuth('omp');
+    const state = nativeAdapters.inspectTool('omp');
+
+    expect(credentials).toEqual([
+      expect.objectContaining({
+        providerId: 'openai-codex',
+        accountId: '1',
+        accountEmail: 'co***x@example.com',
+        storage: 'auth-broker'
+      })
+    ]);
+    expect(state).toEqual(expect.objectContaining({
+      tool: 'omp',
+      mode: 'oauth',
+      oauthPresent: true
+    }));
   });
 
   test('clears OpenCode OAuth and retargets model to a remaining managed provider', () => {

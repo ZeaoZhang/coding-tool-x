@@ -27,12 +27,32 @@
             </template>
             {{ testing ? '测试中...' : '开始全部测试' }}
           </n-button>
+          <n-button v-if="testing" secondary type="warning" @click="cancelTests">
+            取消测试
+          </n-button>
           <n-select
             v-model:value="selectedChannel"
             :options="channelOptions"
+            :disabled="testing"
             placeholder="选择渠道类型"
             style="width: 140px;"
           />
+        </div>
+
+        <!-- 各 CLI 批次状态 -->
+        <div v-if="testRuns.length" class="test-run-list" aria-live="polite">
+          <div v-for="run in testRuns" :key="run.type" class="test-run-item">
+            <span class="channel-type-badge" :class="getChannelTypeClass(run.type)">
+              {{ getChannelTypeLabel(run.type) }}
+            </span>
+            <div class="test-run-status" :class="run.status">
+              <n-spin v-if="isRunActive(run)" :size="13" />
+              <n-icon v-else-if="run.status === 'failed' || run.status === 'timeout'" :size="14">
+                <AlertCircleOutline />
+              </n-icon>
+              <span>{{ getTestRunStatusText(run) }}</span>
+            </div>
+          </div>
         </div>
 
         <!-- 测试摘要 -->
@@ -70,8 +90,8 @@
                 <SpeedometerOutline />
               </n-icon>
             </div>
-            <p class="empty-title">暂无测试结果</p>
-            <p class="empty-desc">点击上方按钮开始测试渠道连接速度</p>
+            <p class="empty-title">{{ emptyResultTitle }}</p>
+            <p class="empty-desc">{{ emptyResultDescription }}</p>
           </div>
 
           <!-- 结果列表 -->
@@ -158,8 +178,8 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
-import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NTag, NSelect } from 'naive-ui'
+import { ref, computed, watch, onUnmounted } from 'vue'
+import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NSelect } from 'naive-ui'
 import { SpeedometerOutline, PlayOutline, TimeOutline, AlertCircleOutline } from '@vicons/ionicons5'
 import {
   testAllClaudeChannelsSpeed,
@@ -191,6 +211,25 @@ const results = ref([])
 const testSummary = ref(null)
 const selectedChannel = ref('all')
 const hasCachedResults = ref(false)
+const testRuns = ref([])
+const activeAbortController = ref(null)
+const showCancellationNotice = ref(true)
+
+const hasFailedTestRuns = computed(() => testRuns.value.some(run => (
+  run.status === 'failed' || run.status === 'timeout'
+)))
+
+const emptyResultTitle = computed(() => {
+  if (hasFailedTestRuns.value) return '部分测速未完成'
+  if (testRuns.value.length > 0) return '没有可测试的渠道'
+  return '暂无测试结果'
+})
+
+const emptyResultDescription = computed(() => {
+  if (hasFailedTestRuns.value) return '请查看上方各 CLI 的错误信息后重试'
+  if (testRuns.value.length > 0) return '所选 CLI 暂无可测速的渠道'
+  return '点击上方按钮开始测试渠道连接速度'
+})
 
 // localStorage 缓存 key
 const CACHE_KEY = 'speedTestResults'
@@ -239,8 +278,87 @@ function saveToCache() {
   }
 }
 
+function buildSummary(responseResults) {
+  const successfulResults = responseResults.filter(result => result.success)
+  const latencies = successfulResults
+    .map(result => result.latency)
+    .filter(latency => Number.isFinite(latency))
+
+  return {
+    total: responseResults.length,
+    success: successfulResults.length,
+    failed: responseResults.length - successfulResults.length,
+    avgLatency: latencies.length > 0
+      ? Math.round(latencies.reduce((sum, latency) => sum + latency, 0) / latencies.length)
+      : null
+  }
+}
+
+function normalizeSummary(summary, responseResults) {
+  const fallback = buildSummary(responseResults)
+  return {
+    total: Number.isFinite(summary?.total) ? summary.total : fallback.total,
+    success: Number.isFinite(summary?.success) ? summary.success : fallback.success,
+    failed: Number.isFinite(summary?.failed) ? summary.failed : fallback.failed,
+    avgLatency: Number.isFinite(summary?.avgLatency) ? summary.avgLatency : fallback.avgLatency
+  }
+}
+
+function updateTestRun(type, updates) {
+  const run = testRuns.value.find(item => item.type === type)
+  if (run) Object.assign(run, updates)
+}
+
+function isRequestCancelled(error) {
+  return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
+}
+
+function isRequestTimeout(error) {
+  return error?.code === 'ECONNABORTED'
+    || error?.code === 'ETIMEDOUT'
+    || error?.status === 408
+    || error?.status === 504
+    || /timeout|超时/i.test(error?.message || '')
+}
+
+function getRequestErrorMessage(error) {
+  if (isRequestTimeout(error)) return '请求超过 3 分钟仍未完成'
+  return error?.message || '请求失败，请稍后重试'
+}
+
+function isRunActive(run) {
+  return run.status === 'testing' || run.status === 'cancelling'
+}
+
+function getTestRunStatusText(run) {
+  switch (run.status) {
+    case 'pending': return '等待测试'
+    case 'testing': return '正在测试...'
+    case 'cancelling': return '正在取消...'
+    case 'completed':
+      return run.total > 0 ? `${run.success}/${run.total} 成功` : (run.message || '没有可测试的渠道')
+    case 'timeout': return `请求超时：${run.error}`
+    case 'failed': return `测试失败：${run.error}`
+    case 'cancelled': return '已取消'
+    default: return ''
+  }
+}
+
+function cancelTests({ notify = true } = {}) {
+  const controller = activeAbortController.value
+  if (!controller || controller.signal.aborted) return
+
+  showCancellationNotice.value = notify
+  const activeRun = testRuns.value.find(run => run.status === 'testing')
+  if (activeRun) activeRun.status = 'cancelling'
+  controller.abort()
+}
+
 // 运行所有测试
 async function runAllTests() {
+  const controller = new AbortController()
+  activeAbortController.value = controller
+  showCancellationNotice.value = true
   testing.value = true
   results.value = []
   testSummary.value = null
@@ -261,39 +379,78 @@ async function runAllTests() {
     testFunctions.push({ type: 'opencode', fn: testAllOpenCodeChannelsSpeed })
   }
 
+  testRuns.value = testFunctions.map(({ type }) => ({
+    type,
+    status: 'pending',
+    total: 0,
+    success: 0,
+    message: '',
+    error: ''
+  }))
+
   let allResults = []
   let totalSummary = { total: 0, success: 0, failed: 0, avgLatency: null }
   let totalLatency = 0
   let latencyCount = 0
+  let wasCancelled = false
 
   try {
     for (const { type, fn } of testFunctions) {
-      try {
-        const response = await fn(10000)
-        if (response.results) {
-          const typedResults = response.results.map(r => ({
-            ...r,
-            channelType: type,
-            channelName: `[${type.toUpperCase()}] ${r.channelName}`,
-            testedAt: Date.now()
-          }))
-          allResults = allResults.concat(typedResults)
-          results.value = [...allResults]
-
-          // 累加统计
-          if (response.summary) {
-            totalSummary.total += response.summary.total || 0
-            totalSummary.success += response.summary.success || 0
-            totalSummary.failed += response.summary.failed || 0
-            if (response.summary.avgLatency !== null && response.summary.avgLatency !== undefined && (response.summary.success || 0) > 0) {
-              totalLatency += response.summary.avgLatency * (response.summary.success || 0)
-              latencyCount += response.summary.success || 0
-            }
-          }
-        }
-      } catch (err) {
-        console.error(`Failed to test ${type} channels:`, err)
+      if (controller.signal.aborted) {
+        wasCancelled = true
+        updateTestRun(type, { status: 'cancelled' })
+        continue
       }
+
+      updateTestRun(type, { status: 'testing', error: '' })
+
+      try {
+        const response = await fn(10000, { signal: controller.signal })
+        const responseResults = Array.isArray(response?.results) ? response.results : []
+        const summary = normalizeSummary(response?.summary, responseResults)
+        const typedResults = responseResults.map(result => ({
+          ...result,
+          channelType: type,
+          channelName: `[${type.toUpperCase()}] ${result.channelName}`,
+          testedAt: Date.now()
+        }))
+
+        allResults = allResults.concat(typedResults)
+        results.value = [...allResults]
+
+        totalSummary.total += summary.total
+        totalSummary.success += summary.success
+        totalSummary.failed += summary.failed
+        if (summary.avgLatency !== null && summary.success > 0) {
+          totalLatency += summary.avgLatency * summary.success
+          latencyCount += summary.success
+        }
+
+        updateTestRun(type, {
+          status: 'completed',
+          total: summary.total,
+          success: summary.success,
+          message: response?.message || ''
+        })
+      } catch (err) {
+        if (controller.signal.aborted || isRequestCancelled(err)) {
+          wasCancelled = true
+          updateTestRun(type, { status: 'cancelled' })
+        } else {
+          const status = isRequestTimeout(err) ? 'timeout' : 'failed'
+          const error = getRequestErrorMessage(err)
+          updateTestRun(type, { status, error })
+          console.error(`Failed to test ${type} channels:`, err)
+        }
+      }
+
+      if (wasCancelled) break
+    }
+
+    if (wasCancelled) {
+      testRuns.value
+        .filter(run => run.status === 'pending')
+        .forEach(run => { run.status = 'cancelled' })
     }
 
     // 计算总平均延迟
@@ -313,10 +470,18 @@ async function runAllTests() {
 
     testSummary.value = totalSummary
 
-    // 保存到缓存
-    saveToCache()
+    const failedRuns = testRuns.value.filter(run => run.status === 'failed' || run.status === 'timeout')
 
-    if (totalSummary.total === 0) {
+    // 只缓存完整成功的批次，避免将部分失败结果伪装成完整缓存。
+    if (!wasCancelled && failedRuns.length === 0) saveToCache()
+
+    if (wasCancelled) {
+      if (showCancellationNotice.value) message.info('测速已取消，已保留完成批次的结果')
+    } else if (failedRuns.length === testFunctions.length) {
+      message.error('测速未完成，请查看各 CLI 的失败原因后重试')
+    } else if (failedRuns.length > 0) {
+      message.warning(`测速部分完成，${failedRuns.length} 个 CLI 批次失败`)
+    } else if (totalSummary.total === 0) {
       message.info('没有找到可测试的渠道')
     } else {
       message.success(`测试完成: ${totalSummary.success}/${totalSummary.total} 成功`)
@@ -325,6 +490,7 @@ async function runAllTests() {
     console.error('Speed test failed:', err)
     message.error('测试失败: ' + err.message)
   } finally {
+    if (activeAbortController.value === controller) activeAbortController.value = null
     testing.value = false
   }
 }
@@ -395,10 +561,15 @@ function getCleanChannelName(name) {
 // 抽屉打开时加载缓存
 watch(() => props.visible, (val) => {
   if (val) {
+    if (!testing.value) testRuns.value = []
     // 尝试从缓存加载
     loadFromCache()
+  } else {
+    cancelTests({ notify: false })
   }
 })
+
+onUnmounted(() => cancelTests({ notify: false }))
 </script>
 
 <style scoped>
@@ -436,6 +607,55 @@ watch(() => props.visible, (val) => {
 
 .test-btn {
   border-radius: 6px;
+}
+
+.test-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+}
+
+.test-run-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.test-run-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.test-run-status span {
+  word-break: break-word;
+}
+
+.test-run-status.testing,
+.test-run-status.cancelling {
+  color: #d97706;
+}
+
+.test-run-status.completed {
+  color: #18a058;
+}
+
+.test-run-status.failed,
+.test-run-status.timeout {
+  color: #f56c6c;
+}
+
+.test-run-status.cancelled {
+  color: var(--text-tertiary);
 }
 
 .test-summary {

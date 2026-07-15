@@ -5,6 +5,26 @@
         <div class="header-text">
           <n-h2 style="margin: 0;">我的项目</n-h2>
           <n-text depth="3">选择一个项目查看会话，拖拽可调整顺序</n-text>
+          <div v-if="projectStatusTags.length" class="status-tags" role="status" aria-live="polite">
+            <n-tag
+              v-for="tag in projectStatusTags"
+              :key="tag.key"
+              size="small"
+              :type="tag.type"
+              :bordered="false"
+            >
+              {{ tag.text }}
+            </n-tag>
+            <n-button
+              v-if="store.projectsRefreshing || store.projectsMeta?.error || store.error"
+              text
+              size="tiny"
+              :loading="store.loading"
+              @click="refreshDataWithScrollPreservation"
+            >
+              立即刷新
+            </n-button>
+          </div>
         </div>
         <n-space>
           <n-button type="primary" size="medium" @click="handleNewProjectCommand">
@@ -29,7 +49,7 @@
       <!-- Scrollable Content -->
       <div class="content" ref="contentEl">
         <!-- Loading -->
-        <div v-if="store.loading" class="loading-container">
+        <div v-if="store.loading && store.projects.length === 0 && !store.projectsPending" class="loading-container">
         <n-spin size="large">
           <template #description>
             加载项目列表...
@@ -37,14 +57,22 @@
         </n-spin>
       </div>
 
+      <div v-else-if="store.projectsPending" class="loading-container compact">
+        <n-spin size="small">
+          <template #description>
+            正在生成项目列表...
+          </template>
+        </n-spin>
+      </div>
+
       <!-- Error -->
-      <n-alert v-else-if="store.error" type="error" title="加载失败" style="margin-top: 20px;">
+      <n-alert v-else-if="store.error && store.projects.length === 0" type="error" title="加载失败" style="margin-top: 20px;">
         {{ store.error }}
       </n-alert>
 
       <!-- Projects Grid with Draggable (only when not searching) -->
       <draggable
-      v-else-if="!searchQuery"
+      v-else-if="!searchQuery && orderedProjects.length > 0"
       v-model="orderedProjects"
       item-key="name"
       class="projects-grid"
@@ -64,7 +92,7 @@
     </draggable>
 
       <!-- Projects Grid (static when searching) -->
-      <div v-else class="projects-grid">
+      <div v-else-if="searchQuery && filteredProjects.length > 0" class="projects-grid">
         <ProjectCard
           v-for="project in filteredProjects"
           :key="project.name"
@@ -76,8 +104,8 @@
 
       <!-- Empty State -->
       <n-empty
-        v-if="!store.loading && !store.error && store.projects.length === 0"
-        description="没有找到项目"
+        v-if="!store.loading && !store.error && !store.projectsPending && ((!searchQuery && store.projects.length === 0) || (searchQuery && filteredProjects.length === 0))"
+        :description="searchQuery ? '没有匹配的项目' : '没有找到项目'"
         style="margin-top: 60px;"
       >
         <template #icon>
@@ -207,6 +235,32 @@ const filteredProjects = computed(() => {
   })
 })
 
+const projectStatusTags = computed(() => {
+  const tags = []
+  if (store.projectsRefreshing) {
+    tags.push({
+      key: 'refreshing',
+      type: 'info',
+      text: store.projects.length > 0 ? '后台刷新中' : '首次生成中'
+    })
+  }
+  if (store.projectsUsingFallback && store.projects.length > 0) {
+    tags.push({
+      key: 'fallback',
+      type: 'warning',
+      text: '正在显示缓存数据'
+    })
+  }
+  if (store.error) {
+    tags.push({
+      key: 'error',
+      type: 'error',
+      text: `刷新失败：${store.error}`
+    })
+  }
+  return tags
+})
+
 // Sync with store
 watch(() => store.projects, (newProjects) => {
   orderedProjects.value = [...newProjects]
@@ -248,6 +302,7 @@ function getChannelBaseCommand(channel) {
   if (channel === 'codex') return 'codex'
   if (channel === 'gemini') return 'gemini'
   if (channel === 'opencode') return 'opencode'
+  if (channel === 'omp') return 'omp'
   return 'claude'
 }
 
@@ -272,7 +327,7 @@ async function refreshDataWithScrollPreservation() {
   const scrollTop = contentEl.value?.scrollTop || 0
 
   // Fetch data
-  await store.fetchProjects()
+  await store.retryProjects()
 
   // Restore scroll position after DOM update
   await nextTick()
@@ -408,6 +463,14 @@ onUnmounted(() => {
   flex: 1;
 }
 
+.status-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
 .header-text :deep(.n-h2) {
   font-size: 26px;
   font-weight: 700;
@@ -459,6 +522,10 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
   min-height: 400px;
+}
+
+.loading-container.compact {
+  min-height: 180px;
 }
 
 .projects-grid {

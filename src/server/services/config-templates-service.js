@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const yaml = require('js-yaml');
 const { PATHS } = require('../../config/paths');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
@@ -23,14 +24,16 @@ const AI_CONFIG_MAP = {
   claude: { fileName: 'CLAUDE.md', name: 'Claude' },
   codex: { fileName: 'AGENTS.md', name: 'Codex' },
   gemini: { fileName: 'GEMINI.md', name: 'Gemini' },
-  opencode: { fileName: '.opencode/AGENTS.md', name: 'OpenCode' }
+  opencode: { fileName: '.opencode/AGENTS.md', name: 'OpenCode' },
+  omp: { fileName: null, name: 'OMP command templates' }
 };
 
 const CLI_DEFAULT_AI_TYPE = {
   claude: 'claude',
   codex: 'codex',
   gemini: 'gemini',
-  opencode: 'opencode'
+  opencode: 'opencode',
+  omp: 'omp'
 };
 
 /**
@@ -111,7 +114,8 @@ function normalizeAiConfigs(aiConfigs = {}, claudeMd = null) {
     claude: { enabled: false, content: '' },
     codex: { enabled: false, content: '' },
     gemini: { enabled: false, content: '' },
-    opencode: { enabled: false, content: '' }
+    opencode: { enabled: false, content: '' },
+    omp: { enabled: false, content: '' }
   };
 
   for (const key of Object.keys(normalized)) {
@@ -369,36 +373,62 @@ function readCurrentConfig(targetDir) {
  * 返回用户级的 agents, commands, plugins + MCP 服务器列表
  */
 function getAvailableConfigs() {
-  const agentServices = [new AgentsService('claude')];
-  const commandServices = [new CommandsService('claude')];
+  const agentPlatforms = ['claude', 'codex', 'gemini', 'opencode'];
+  const commandPlatforms = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
   const agentMap = new Map();
   const commandMap = new Map();
+  const agentsByPlatform = {};
+  const commandsByPlatform = {};
 
-  for (const service of agentServices) {
+  for (const platform of agentPlatforms) {
+    const service = new AgentsService(platform);
     const { agents } = service.listAgents();
     for (const agent of agents || []) {
       if (agent.scope !== 'user') continue;
+      const normalizedAgent = {
+        fileName: agent.fileName,
+        name: agent.name,
+        description: agent.description,
+        tools: agent.tools,
+        model: agent.model,
+        permissionMode: agent.permissionMode,
+        skills: agent.skills,
+        systemPrompt: agent.systemPrompt
+      };
+      agentsByPlatform[platform] = agentsByPlatform[platform] || [];
+      agentsByPlatform[platform].push(normalizedAgent);
       const key = `${agent.fileName || agent.name}|${agent.model || ''}|${agent.description || ''}`;
       if (!agentMap.has(key)) {
-        agentMap.set(key, agent);
+        agentMap.set(key, normalizedAgent);
       }
     }
   }
 
-  for (const service of commandServices) {
+  for (const platform of commandPlatforms) {
+    const service = new CommandsService(platform);
     const { commands } = service.listCommands();
     for (const command of commands || []) {
       if (command.scope !== 'user') continue;
+      const normalizedCommand = {
+        name: command.name,
+        namespace: command.namespace,
+        description: command.description,
+        allowedTools: command.allowedTools,
+        argumentHint: command.argumentHint,
+        body: command.body
+      };
+      commandsByPlatform[platform] = commandsByPlatform[platform] || [];
+      commandsByPlatform[platform].push(normalizedCommand);
       const key = command.namespace ? `${command.namespace}/${command.name}` : command.name;
       if (!commandMap.has(key)) {
-        commandMap.set(key, command);
+        commandMap.set(key, normalizedCommand);
       }
     }
   }
 
   // 按平台分别获取 skills（每个平台有独立的安装目录）
   const skillsByPlatform = {};
-  for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
     const service = new SkillService(platform);
     skillsByPlatform[platform] = service.getInstalledSkills().map(skill => ({
       directory: skill.directory,
@@ -440,24 +470,10 @@ function getAvailableConfigs() {
 
   return {
     skillsByPlatform,
-    agents: Array.from(agentMap.values()).map(a => ({
-      fileName: a.fileName,
-      name: a.name,
-      description: a.description,
-      tools: a.tools,
-      model: a.model,
-      permissionMode: a.permissionMode,
-      skills: a.skills,
-      systemPrompt: a.systemPrompt
-    })),
-    commands: Array.from(commandMap.values()).map(c => ({
-      name: c.name,
-      namespace: c.namespace,
-      description: c.description,
-      allowedTools: c.allowedTools,
-      argumentHint: c.argumentHint,
-      body: c.body
-    })),
+    agents: Array.from(agentMap.values()),
+    agentsByPlatform,
+    commands: Array.from(commandMap.values()),
+    commandsByPlatform,
     plugins: installedPlugins.map(p => ({
       name: p.name,
       description: p.description || '',
@@ -503,6 +519,48 @@ function buildTemplateCommandFileName(commandName, format) {
   return `${commandName}.${format === 'gemini' ? 'toml' : 'md'}`;
 }
 
+function getCommandPreviewExtension(prefix) {
+  return prefix === '.gemini/commands' ? 'toml' : 'md';
+}
+
+function writeJsonFile(filePath, data) {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+function writeYamlFile(filePath, data) {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, yaml.dump(data || {}, {
+    lineWidth: 120,
+    noRefs: true,
+    sortKeys: false
+  }), 'utf-8');
+}
+
+function mergeOmpProjectPackages(targetDir, plugins = []) {
+  const packages = plugins.map(plugin => plugin.name).filter(Boolean);
+  if (packages.length === 0) {
+    return false;
+  }
+
+  const ompDir = path.join(targetDir, '.omp');
+  const settingsPath = path.join(ompDir, 'config.yml');
+  let settings = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const parsed = yaml.load(fs.readFileSync(settingsPath, 'utf-8'));
+      settings = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (err) {
+      settings = {};
+    }
+  }
+
+  const existingPackages = Array.isArray(settings.packages) ? settings.packages : [];
+  settings.packages = Array.from(new Set([...existingPackages, ...packages]));
+  writeYamlFile(settingsPath, settings);
+  return true;
+}
+
 /**
  * 转换为 OpenCode MCP 结构（local/remote）
  */
@@ -542,12 +600,36 @@ function convertToOpenCodeMcpSpec(spec = {}) {
   return result;
 }
 
+function convertToOmpMcpSpec(spec = {}) {
+  const type = spec.type || 'stdio';
+  const copyCommonFields = (target) => {
+    for (const key of ['timeout', 'auth', 'oauth']) {
+      if (spec[key] !== undefined) {
+        target[key] = spec[key];
+      }
+    }
+    return target;
+  };
+
+  if (type === 'streamable_http') {
+    const result = {
+      type: 'http',
+      url: spec.url || ''
+    };
+    if (spec.headers && typeof spec.headers === 'object') {
+      result.headers = spec.headers;
+    }
+    return copyCommonFields(result);
+  }
+  return copyCommonFields({ ...spec });
+}
+
 /**
  * 应用模板到项目目录（完整应用，写入实际文件）
  * @param {string} targetDir - 目标项目目录
  * @param {string} templateId - 模板 ID
  * @param {object} options - 可选配置
- * @param {string|string[]} options.aiConfigTypes - 选择的 AI 配置类型数组: ['claude', 'codex', 'gemini', 'opencode']
+ * @param {string|string[]} options.aiConfigTypes - 选择的 AI 配置类型数组: ['claude', 'codex', 'gemini', 'opencode', 'omp']
  * @param {string} options.aiConfigType - (兼容旧版) 单个 AI 配置类型
  */
 function applyTemplateToProject(targetDir, templateId, options = {}) {
@@ -572,8 +654,10 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
 
   for (const aiConfigType of aiConfigTypes) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
-    if (aiConfig?.enabled && aiConfig?.content) {
-      const configInfo = AI_CONFIG_MAP[aiConfigType];
+    const configInfo = AI_CONFIG_MAP[aiConfigType];
+    if (!configInfo?.fileName) {
+      pushSkipped(results.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件');
+    } else if (aiConfig?.enabled && aiConfig?.content) {
       const configPath = path.join(targetDir, configInfo.fileName);
       ensureDir(path.dirname(configPath));
       fs.writeFileSync(configPath, aiConfig.content, 'utf-8');
@@ -613,6 +697,9 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
       if (aiConfigTypes.includes('codex')) {
         pushSkipped(results.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录应用时已跳过');
       }
+      if (aiConfigTypes.includes('omp')) {
+        pushSkipped(results.skipped, 'agent', fileName, 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过');
+      }
       if (written) {
         results.agents.applied++;
       }
@@ -632,6 +719,9 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     }
     if (aiConfigTypes.includes('gemini')) {
       commandTargets.push({ baseDir: path.join(targetDir, '.gemini', 'commands'), prefix: '.gemini/commands', format: 'gemini' });
+    }
+    if (aiConfigTypes.includes('omp')) {
+      commandTargets.push({ baseDir: path.join(targetDir, '.omp', 'commands'), prefix: '.omp/commands', format: 'omp' });
     }
 
     for (const target of commandTargets) {
@@ -668,7 +758,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
 
   if (template.plugins?.length > 0) {
     results.plugins.items = template.plugins.map(p => p.name);
-    if (aiConfigTypes.includes('opencode')) {
+    if (aiConfigTypes.includes('opencode') || aiConfigTypes.includes('omp')) {
       results.plugins.applied = template.plugins.length;
     } else {
       for (const plugin of template.plugins) {
@@ -678,9 +768,13 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
   }
 
   const hasMcp = template.mcpServers?.length > 0;
+  const writesGenericMcpConfig = hasMcp && aiConfigTypes.some(type => type !== 'omp');
+  const writesOmpMcpConfig = hasMcp && aiConfigTypes.includes('omp');
   const hasPluginsForOpenCode = aiConfigTypes.includes('opencode') && template.plugins?.length > 0;
-  if (hasMcp || hasPluginsForOpenCode) {
+  const hasPluginsForOmp = aiConfigTypes.includes('omp') && template.plugins?.length > 0;
+  if (hasMcp || hasPluginsForOpenCode || hasPluginsForOmp) {
     const mcpConfig = { mcpServers: {} };
+    const ompMcpConfig = { mcpServers: {} };
     const opencodeConfig = { mcp: {}, plugin: [] };
     const allServers = mcpService.getAllServers();
     const presets = mcpService.getPresets();
@@ -696,17 +790,29 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
         }
       }
       if (serverSpec) {
-        mcpConfig.mcpServers[serverId] = serverSpec;
+        if (writesGenericMcpConfig) {
+          mcpConfig.mcpServers[serverId] = serverSpec;
+        }
+        if (writesOmpMcpConfig) {
+          ompMcpConfig.mcpServers[serverId] = convertToOmpMcpSpec(serverSpec);
+        }
         opencodeConfig.mcp[serverId] = convertToOpenCodeMcpSpec(serverSpec);
-        results.mcpServers.applied++;
+        if (writesGenericMcpConfig || writesOmpMcpConfig) {
+          results.mcpServers.applied++;
+        }
       } else {
         pushSkipped(results.skipped, 'mcpServer', serverId, '未找到对应 MCP 服务配置，已跳过');
       }
     }
 
-    if (Object.keys(mcpConfig.mcpServers).length > 0) {
+    if (writesGenericMcpConfig && Object.keys(mcpConfig.mcpServers).length > 0) {
       const mcpPath = path.join(targetDir, '.mcp.json');
-      fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+      writeJsonFile(mcpPath, mcpConfig);
+    }
+
+    if (writesOmpMcpConfig && Object.keys(ompMcpConfig.mcpServers).length > 0) {
+      const ompMcpPath = path.join(targetDir, '.omp', 'mcp.json');
+      writeJsonFile(ompMcpPath, ompMcpConfig);
     }
 
     if (hasPluginsForOpenCode) {
@@ -716,7 +822,11 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
       const opencodeDir = path.join(targetDir, '.opencode');
       ensureDir(opencodeDir);
       const opencodePath = path.join(opencodeDir, 'opencode.json');
-      fs.writeFileSync(opencodePath, JSON.stringify(opencodeConfig, null, 2), 'utf-8');
+      writeJsonFile(opencodePath, opencodeConfig);
+    }
+
+    if (hasPluginsForOmp) {
+      mergeOmpProjectPackages(targetDir, template.plugins || []);
     }
   }
 
@@ -748,7 +858,7 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
  * @param {string} targetDir - 目标项目目录
  * @param {string} templateId - 模板 ID
  * @param {object} options - 可选配置
- * @param {string|string[]} options.aiConfigTypes - 选择的 AI 配置类型数组: ['claude', 'codex', 'gemini', 'opencode']
+ * @param {string|string[]} options.aiConfigTypes - 选择的 AI 配置类型数组: ['claude', 'codex', 'gemini', 'opencode', 'omp']
  * @param {string} options.aiConfigType - (兼容旧版) 单个 AI 配置类型
  */
 function previewTemplateApplication(targetDir, templateId, options = {}) {
@@ -776,8 +886,10 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
 
   for (const aiConfigType of aiConfigTypes) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
-    if (aiConfig?.enabled && aiConfig?.content) {
-      const configInfo = AI_CONFIG_MAP[aiConfigType];
+    const configInfo = AI_CONFIG_MAP[aiConfigType];
+    if (!configInfo?.fileName) {
+      pushSkipped(preview.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件');
+    } else if (aiConfig?.enabled && aiConfig?.content) {
       const configPath = path.join(targetDir, configInfo.fileName);
       if (fs.existsSync(configPath)) {
         preview.willOverwrite.push(configInfo.fileName);
@@ -818,6 +930,9 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       if (aiConfigTypes.includes('codex')) {
         pushSkipped(preview.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录预览时已跳过');
       }
+      if (aiConfigTypes.includes('omp')) {
+        pushSkipped(preview.skipped, 'agent', fileName, 'OMP agents 需通过扩展或包提供，项目目录预览时已跳过');
+      }
       if (applicable) {
         preview.summary.agents++;
       }
@@ -830,12 +945,13 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     if (aiConfigTypes.includes('codex')) commandPrefixes.push('.codex/prompts');
     if (aiConfigTypes.includes('opencode')) commandPrefixes.push('.opencode/commands');
     if (aiConfigTypes.includes('gemini')) commandPrefixes.push('.gemini/commands');
+    if (aiConfigTypes.includes('omp')) commandPrefixes.push('.omp/commands');
 
     for (const command of template.commands) {
       const commandName = resolveItemName(command.name, null, 'command');
       let applicable = false;
       for (const prefix of commandPrefixes) {
-        const extension = prefix === '.gemini/commands' ? 'toml' : 'md';
+        const extension = getCommandPreviewExtension(prefix);
         const relativePath = command.namespace
           ? `${prefix}/${command.namespace}/${commandName}.${extension}`
           : `${prefix}/${commandName}.${extension}`;
@@ -853,6 +969,8 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     }
   }
 
+  const writesGenericMcpConfig = template.mcpServers?.length > 0 && aiConfigTypes.some(type => type !== 'omp');
+  const writesOmpMcpConfig = template.mcpServers?.length > 0 && aiConfigTypes.includes('omp');
   const allServers = mcpService.getAllServers();
   const presets = mcpService.getPresets();
   let resolvableMcpCount = 0;
@@ -865,18 +983,30 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       }
     }
     if (serverSpec) {
-      resolvableMcpCount++;
+      if (writesGenericMcpConfig || writesOmpMcpConfig) {
+        resolvableMcpCount++;
+      }
     } else {
       pushSkipped(preview.skipped, 'mcpServer', serverId, '未找到对应 MCP 服务配置，预览已跳过');
     }
   }
 
-  if (resolvableMcpCount > 0) {
+  if (writesGenericMcpConfig && resolvableMcpCount > 0) {
     const mcpPath = path.join(targetDir, '.mcp.json');
     if (fs.existsSync(mcpPath)) {
       preview.willOverwrite.push('.mcp.json');
     } else {
       preview.willCreate.push('.mcp.json');
+    }
+    preview.summary.mcpServers = resolvableMcpCount;
+  }
+
+  if (writesOmpMcpConfig && resolvableMcpCount > 0) {
+    const ompMcpPath = path.join(targetDir, '.omp/mcp.json');
+    if (fs.existsSync(ompMcpPath)) {
+      preview.willOverwrite.push('.omp/mcp.json');
+    } else {
+      preview.willCreate.push('.omp/mcp.json');
     }
     preview.summary.mcpServers = resolvableMcpCount;
   }
@@ -891,8 +1021,16 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
   }
 
   if (template.plugins?.length > 0) {
-    if (aiConfigTypes.includes('opencode')) {
+    if (aiConfigTypes.includes('opencode') || aiConfigTypes.includes('omp')) {
       preview.summary.plugins = template.plugins.length;
+      if (aiConfigTypes.includes('omp')) {
+        const ompSettingsPath = path.join(targetDir, '.omp/config.yml');
+        if (fs.existsSync(ompSettingsPath)) {
+          preview.willOverwrite.push('.omp/config.yml');
+        } else {
+          preview.willCreate.push('.omp/config.yml');
+        }
+      }
     } else {
       for (const plugin of template.plugins) {
         pushSkipped(preview.skipped, 'plugin', plugin.name, '当前未选择 OpenCode，已跳过插件写入预览');

@@ -20,7 +20,7 @@
             <ChevronDownOutline />
           </n-icon>
         </n-button>
-        <span class="channel-name">{{ channel.name }}</span>
+        <span class="channel-name" :title="channel.name">{{ channel.name }}</span>
         <template v-for="tag in headerTags" :key="tag.text">
           <n-tag size="tiny" :type="tag.type || 'default'" :bordered="false">
             {{ tag.text }}
@@ -244,6 +244,7 @@ async function runTest() {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-primary);
 }
@@ -251,15 +252,27 @@ async function runTest() {
 .channel-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex: 1;
+  gap: 6px;
+  flex: 1 1 auto;
   min-width: 0;
+  margin-right: 0;
 }
 
 .channel-name {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-title :deep(.n-tag) {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 0 5px;
 }
 
 .collapse-btn {
@@ -273,8 +286,35 @@ async function runTest() {
 .channel-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  gap: 4px;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.channel-actions :deep(.n-button) {
+  height: 22px;
+  min-width: 0;
+  font-size: 11px;
+  padding: 0 5px;
+}
+
+.channel-actions :deep(.n-button__content) {
+  gap: 2px;
+}
+
+.channel-actions :deep(.n-button__icon) {
+  margin: 0;
+}
+
+.apply-btn {
+  display: none;
+}
+
+.channel-card:hover .apply-btn {
+  display: inline-flex;
 }
 
 /* 测试结果样式 */
@@ -472,7 +512,7 @@ async function runTest() {
   }
 
   .channel-title {
-    font-size: 13px;
+    margin-right: 0;
   }
 
   .channel-actions {
@@ -524,6 +564,11 @@ async function runTest() {
 
   .channel-name {
     font-size: 12px;
+    min-width: 0;
+  }
+
+  .channel-title {
+    min-width: 0;
   }
 
   .channel-title :deep(.n-tag) {

@@ -25,7 +25,8 @@ function resolveChannelsByType(exportData) {
     claude: Array.isArray(typed.claude) ? typed.claude : (Array.isArray(raw.channels) ? raw.channels : []),
     codex: Array.isArray(typed.codex) ? typed.codex : [],
     gemini: Array.isArray(typed.gemini) ? typed.gemini : [],
-    opencode: Array.isArray(typed.opencode) ? typed.opencode : []
+    opencode: Array.isArray(typed.opencode) ? typed.opencode : [],
+    omp: Array.isArray(typed.omp) ? typed.omp: []
   };
 }
 
@@ -44,7 +45,8 @@ function buildPreviewSummary(data) {
     ...channelsByType.claude.map(c => ({ ...c, type: c.type || 'claude' })),
     ...channelsByType.codex.map(c => ({ ...c, type: c.type || 'codex' })),
     ...channelsByType.gemini.map(c => ({ ...c, type: c.type || 'gemini' })),
-    ...channelsByType.opencode.map(c => ({ ...c, type: c.type || 'opencode' }))
+    ...channelsByType.opencode.map(c => ({ ...c, type: c.type || 'opencode' })),
+    ...channelsByType.omp.map(c => ({ ...c, type: c.type || 'omp' }))
   ];
 
   return {

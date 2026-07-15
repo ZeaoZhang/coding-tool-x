@@ -5,6 +5,7 @@ specifiers:
   express: ^4.18.2
   http-proxy: ^1.18.1
   inquirer: ^8.2.7
+  js-yaml: ^4.1.1
   nodemon: ^3.0.2
   open: ^8.4.2
   ora: ^5.4.1
@@ -16,6 +17,7 @@ dependencies:
   express: 4.21.2
   http-proxy: 1.18.1
   inquirer: 8.2.7
+  js-yaml: 4.1.1
   open: 8.4.2
   ora: 5.4.1
   toml: 3.0.0
@@ -73,6 +75,10 @@ packages:
       normalize-path: 3.0.0
       picomatch: 2.3.1
     dev: true
+
+  /argparse/2.0.1:
+    resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+    dev: false
 
   /array-flatten/1.1.1:
     resolution: {integrity: sha512-PCVAQswWemu6UdxsDFFX/+gVeYqKAod3D3UVm91jHwynguOwAvYPhx8nNlM++NqRcK6CxxpUafjmhIdKiHibqg==}
@@ -637,6 +643,13 @@ packages:
     engines: {node: '>=8'}
     dependencies:
       is-docker: 2.2.1
+    dev: false
+
+  /js-yaml/4.1.1:
+    resolution: {integrity: sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==}
+    hasBin: true
+    dependencies:
+      argparse: 2.0.1
     dev: false
 
   /lodash/4.17.21:

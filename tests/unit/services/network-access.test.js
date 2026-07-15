@@ -4,6 +4,7 @@ const {
   isLoopbackRequest,
   isSameOriginRequest,
   createRemoteMutationGuard,
+  isRemoteMutationAllowedByEnv,
   createRemoteRouteGuard,
   createSameOriginGuard,
 } = require('../../../src/server/services/network-access');
@@ -196,6 +197,21 @@ describe('createRemoteMutationGuard', () => {
     const res = mockRes();
     guard(mockReq({ method: 'PUT', socket: { remoteAddress: '10.0.0.5' } }), res, next);
     expect(res.statusCode).toBe(403);
+  });
+});
+
+describe('isRemoteMutationAllowedByEnv', () => {
+  it('defaults to allowing remote mutation when env is unset', () => {
+    expect(isRemoteMutationAllowedByEnv({})).toBe(true);
+  });
+
+  it('allows remote mutation when env is true', () => {
+    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'true' })).toBe(true);
+  });
+
+  it('blocks remote mutation only when env is false', () => {
+    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'false' })).toBe(false);
+    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'FALSE' })).toBe(false);
   });
 });
 

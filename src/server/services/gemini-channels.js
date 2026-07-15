@@ -5,6 +5,13 @@ const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { resolveChannelWebsiteUrl } = require('../../config/channel-preset-websites');
 const { clearNativeOAuth } = require('./native-oauth-adapters');
 const { normalizeGatewaySourceType } = require('./base/proxy-utils');
+const {
+  createSkippedResult,
+  isLocalProxyBaseUrl,
+  resolveApiKeyValue,
+  resolveExistingActiveChannel,
+  upsertSyncedChannels
+} = require('./channel-sync-utils');
 
 const GEMINI_API_FORMATS = new Set(['gemini_api', 'vertex_ai_v1']);
 
@@ -516,6 +523,121 @@ function disableAllChannels() {
   saveChannels(data);
 }
 
+function readGeminiSettings() {
+  const settingsPath = NATIVE_PATHS.gemini.settings;
+  if (!settingsPath || !fs.existsSync(settingsPath)) {
+    return {};
+  }
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function normalizeGeminiChannel(channel = {}) {
+  const normalized = {
+    ...channel,
+    enabled: channel.enabled !== false,
+    weight: channel.weight || 1,
+    maxConcurrency: channel.maxConcurrency || null,
+    balanceToken: channel.balanceToken || '',
+    balanceUserId: channel.balanceUserId || null,
+    modelRedirects: channel.modelRedirects || [],
+    speedTestModel: channel.speedTestModel || null,
+    apiFormat: normalizeGeminiApiFormat(channel.apiFormat),
+    gatewaySourceType: normalizeGatewaySourceType(channel.gatewaySourceType, 'gemini')
+  };
+  normalized.websiteUrl = resolveChannelWebsiteUrl('gemini', normalized);
+  return normalized;
+}
+
+function loadStoredGeminiChannels() {
+  const filePath = getChannelsFilePath();
+  if (!fs.existsSync(filePath)) {
+    return { channels: [] };
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return {
+      ...data,
+      channels: Array.isArray(data?.channels)
+        ? data.channels.map(normalizeGeminiChannel)
+        : []
+    };
+  } catch (error) {
+    console.error('[Gemini Channels] Failed to parse channels file for sync:', error.message);
+    return { channels: [] };
+  }
+}
+
+function buildGeminiSyncCandidate(env, channels) {
+  const baseUrl = String(env.GOOGLE_GEMINI_BASE_URL || '').trim();
+  if (isLocalProxyBaseUrl(baseUrl)) {
+    const existing = resolveExistingActiveChannel('gemini', channels);
+    if (existing) {
+      return {
+        skip: true,
+        channel: existing,
+        warning: 'Gemini 当前配置指向 ctx 代理；对应渠道已在列表中，未重复导入。'
+      };
+    }
+    return {
+      skip: true,
+      warning: 'Gemini 当前配置指向 ctx 代理，但没有找到可匹配的现有渠道。'
+    };
+  }
+
+  const settings = readGeminiSettings();
+  const selectedAuthType = String(settings?.security?.auth?.selectedType || '').trim();
+  const existing = baseUrl
+    ? channels.find(channel => String(channel.baseUrl || '').trim() === baseUrl)
+    : null;
+  const credential = resolveApiKeyValue(env.GEMINI_API_KEY || '');
+  const apiKey = credential.value || existing?.apiKey || '';
+  if (!apiKey) {
+    return {
+      skip: true,
+      channel: existing || null,
+      warning: selectedAuthType.includes('oauth')
+        ? 'Gemini 当前配置是 OAuth/登录态，OAuth 渠道不支持同步导入。'
+        : 'Gemini 当前 .env 缺少 GEMINI_API_KEY，无法同步导入。'
+    };
+  }
+
+  return {
+    name: existing?.name || 'Gemini 当前配置',
+    baseUrl: baseUrl || 'https://generativelanguage.googleapis.com/v1beta',
+    apiKey,
+    model: env.GEMINI_MODEL || existing?.model || 'gemini-2.5-pro',
+    apiFormat: existing?.apiFormat || 'gemini_api',
+    gatewaySourceType: existing?.gatewaySourceType || 'gemini',
+    credentialSource: credential.value ? credential.source : 'existing-channel'
+  };
+}
+
+function syncCurrentGeminiChannel() {
+  const data = loadStoredGeminiChannels();
+  const channels = Array.isArray(data.channels) ? data.channels : [];
+  const env = readExistingGeminiEnv();
+  const candidate = buildGeminiSyncCandidate(env, channels);
+  if (candidate?.skip) {
+    return createSkippedResult('gemini', candidate.warning, candidate.channel);
+  }
+
+  return upsertSyncedChannels({
+    toolType: 'gemini',
+    loadChannels: loadStoredGeminiChannels,
+    saveChannels,
+    applyDefaults: normalizeGeminiChannel,
+    candidates: [candidate],
+    matchers: [
+      (channel, current) => channel.baseUrl === current.baseUrl && channel.apiKey === current.apiKey,
+      (channel, current) => channel.baseUrl === current.baseUrl && channel.model === current.model
+    ]
+  });
+}
+
 module.exports = {
   getChannels,
   createChannel,
@@ -529,6 +651,7 @@ module.exports = {
   getGeminiDir,
   applyChannelToSettings,
   disableAllChannels,
+  syncCurrentGeminiChannel,
   _test: {
     normalizeGeminiApiFormat
   }

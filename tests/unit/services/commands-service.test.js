@@ -16,7 +16,11 @@ function stubModules() {
         claude: { settings: path.join(testDir, 'claude-settings.json') },
         codex: { config: path.join(testDir, '.codex', 'config.toml') },
         gemini: { dir: path.join(testDir, '.gemini') },
-        opencode: { config: path.join(testDir, 'opencode-config') }
+        opencode: { config: path.join(testDir, 'opencode-config') },
+        omp: {
+          dir: path.join(testDir, '.omp', 'agent'),
+          commands: path.join(testDir, '.omp', 'agent', 'commands')
+        }
       }
     }
   };
@@ -296,6 +300,42 @@ describe('CommandsService local command management', () => {
     const deleted = service.deleteCommand('local', 'project', projectPath, 'team');
     expect(deleted.success).toBe(true);
     expect(service.getCommand('local', 'project', projectPath, 'team')).toBeNull();
+  });
+
+  test('OMP commands use OMP markdown commands without Claude metadata', () => {
+    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const service = new CommandsService('omp');
+    const projectPath = path.join(testDir, 'project-omp');
+
+    const created = service.createCommand({
+      name: 'review',
+      scope: 'user',
+      description: 'Review code',
+      allowedTools: 'Read,Edit',
+      argumentHint: 'file',
+      model: 'omp-model',
+      body: 'Review this'
+    });
+    const projectCommand = service.createCommand({
+      name: 'local',
+      scope: 'project',
+      projectPath,
+      namespace: 'team',
+      description: 'Local review',
+      body: 'Review locally'
+    });
+
+    expect(created.path).toBe('review.md');
+    expect(created.fullPath).toBe(path.join(testDir, '.omp', 'agent', 'commands', 'review.md'));
+    expect(created.description).toBe('');
+    expect(created.allowedTools).toBe('');
+    expect(created.argumentHint).toBe('');
+    expect(created.model).toBe('');
+    expect(created.body).toBe('Review this');
+    expect(fs.readFileSync(created.fullPath, 'utf8')).toBe('Review this');
+    expect(projectCommand.path).toBe(path.join('team', 'local.md'));
+    expect(projectCommand.fullPath).toBe(path.join(projectPath, '.omp', 'commands', 'team', 'local.md'));
+    expect(fs.readFileSync(projectCommand.fullPath, 'utf8')).toBe('Review locally');
   });
 });
 

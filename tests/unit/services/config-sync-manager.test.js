@@ -47,6 +47,7 @@ beforeEach(() => {
       },
       NATIVE_PATHS: {
         claude: {
+          dir: path.join(testDir, 'custom-claude'),
           settings: path.join(testDir, '.claude', 'settings.json')
         },
         codex: {
@@ -57,6 +58,13 @@ beforeEach(() => {
         },
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
+        },
+        omp: {
+          dir: path.join(testDir, '.omp', 'agent'),
+          skills: path.join(testDir, '.omp', 'agent', 'skills'),
+          commands: path.join(testDir, '.omp', 'agent', 'commands'),
+          prompts: path.join(testDir, '.omp', 'agent', 'prompts'),
+          extensions: path.join(testDir, '.omp', 'agent', 'extensions')
         }
       },
       HOME_DIR: testDir,
@@ -99,7 +107,7 @@ describe('ConfigSyncManager direct sync helpers', () => {
     const manager = new ConfigSyncManager();
 
     const syncResult = manager.syncToClaude('commands', 'nested/review.md');
-    const targetPath = path.join(testDir, '.claude', 'commands', 'nested', 'review.md');
+    const targetPath = path.join(testDir, 'custom-claude', 'commands', 'nested', 'review.md');
 
     expect(syncResult).toEqual({
       success: true,
@@ -191,6 +199,36 @@ describe('ConfigSyncManager direct sync helpers', () => {
     expect(fs.existsSync(commandTarget)).toBe(false);
     expect(fs.existsSync(agentTarget)).toBe(false);
   });
+
+  test('syncToOmp maps skills, commands, and plugins while skipping native agents', () => {
+    writeFile(path.join(configsDir, 'skills', 'review-skill', 'SKILL.md'), '# Skill');
+    writeFile(path.join(configsDir, 'commands', 'team', 'review.md'), 'Review this');
+    writeFile(path.join(configsDir, 'plugins', 'demo-extension', 'index.ts'), 'export default {}');
+    writeFile(path.join(configsDir, 'agents', 'reviewer.md'), '# Agent');
+    const manager = new ConfigSyncManager();
+
+    const skillResult = manager.syncToOmp('skills', 'review-skill');
+    const commandResult = manager.syncToOmp('commands', 'team/review.md');
+    const pluginResult = manager.syncToOmp('plugins', 'demo-extension');
+    const agentResult = manager.syncToOmp('agents', 'reviewer.md');
+
+    const skillTarget = path.join(testDir, '.omp', 'agent', 'skills', 'review-skill');
+    const commandTarget = path.join(testDir, '.omp', 'agent', 'commands', 'team', 'review.md');
+    const pluginTarget = path.join(testDir, '.omp', 'agent', 'extensions', 'demo-extension');
+
+    expect(skillResult).toEqual({ success: true, target: skillTarget });
+    expect(commandResult).toEqual({ success: true, target: commandTarget });
+    expect(pluginResult).toEqual({ success: true, target: pluginTarget });
+    expect(agentResult).toEqual({ success: true, skipped: true, reason: 'Not supported natively by OMP' });
+    expect(fs.readFileSync(path.join(skillTarget, 'SKILL.md'), 'utf8')).toBe('# Skill');
+    expect(fs.readFileSync(commandTarget, 'utf8')).toBe('Review this');
+    expect(fs.readFileSync(path.join(pluginTarget, 'index.ts'), 'utf8')).toBe('export default {}');
+
+    expect(manager.removeFromOmp('commands', 'team/review.md')).toEqual({ success: true });
+    expect(manager.removeFromOmp('plugins', 'demo-extension')).toEqual({ success: true });
+    expect(fs.existsSync(commandTarget)).toBe(false);
+    expect(fs.existsSync(pluginTarget)).toBe(false);
+  });
 });
 
 describe('ConfigSyncManager aggregation', () => {
@@ -200,26 +238,29 @@ describe('ConfigSyncManager aggregation', () => {
     vi.spyOn(manager, 'syncToCodex').mockReturnValue({ success: true, warnings: ['converted'] });
     vi.spyOn(manager, 'syncToGemini').mockReturnValue({ success: false, error: 'missing source' });
     vi.spyOn(manager, 'syncToOpenCode').mockReturnValue({ success: true });
+    vi.spyOn(manager, 'syncToOmp').mockReturnValue({ success: true });
     vi.spyOn(manager, 'removeFromClaude').mockReturnValue({ success: true });
     vi.spyOn(manager, 'removeFromCodex').mockReturnValue({ success: true, message: 'Already removed' });
     vi.spyOn(manager, 'removeFromGemini').mockReturnValue({ success: true, skipped: true });
     vi.spyOn(manager, 'removeFromOpenCode').mockReturnValue({ success: true });
+    vi.spyOn(manager, 'removeFromOmp').mockReturnValue({ success: true, skipped: true });
 
     const result = manager.syncAll('skills', {
       alpha: {
         enabled: true,
-        platforms: { claude: true, codex: true, gemini: true, opencode: true }
+        platforms: { claude: true, codex: true, gemini: true, opencode: true, omp: true }
       },
       beta: {
         enabled: false,
-        platforms: { claude: true, codex: false, gemini: false, opencode: false }
+        platforms: { claude: true, codex: false, gemini: false, opencode: false, omp: false }
       }
     });
 
     expect(result.synced).toEqual([
       { type: 'skills', name: 'alpha', platform: 'claude' },
       { type: 'skills', name: 'alpha', platform: 'codex' },
-      { type: 'skills', name: 'alpha', platform: 'opencode' }
+      { type: 'skills', name: 'alpha', platform: 'opencode' },
+      { type: 'skills', name: 'alpha', platform: 'omp' }
     ]);
     expect(result.removed).toEqual([
       { type: 'skills', name: 'beta', platform: 'claude' },

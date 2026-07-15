@@ -101,7 +101,8 @@ function runWebBuild(options = {}) {
     const child = spawn(npmCommand, ['run', 'build'], {
       cwd: sourceRoot,
       env,
-      stdio
+      stdio,
+      windowsHide: true
     });
 
     child.once('error', (error) => {

@@ -1,4 +1,5 @@
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 const { PATHS, NATIVE_PATHS, HOME_DIR } = require('../src/config/paths');
@@ -13,6 +14,7 @@ const logsCommand = require('../src/commands/logs');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
 const daemonCommand = require('../src/commands/daemon');
 const codexSettingsManager = require('../src/server/services/codex-settings-manager');
+const ompConfig = require('../src/server/services/omp-config');
 
 function run() {
   const hookTest = claudeHooks._test || {};
@@ -173,6 +175,44 @@ function run() {
   assert.deepStrictEqual(winExecOptions, { timeout: 30000, windowsHide: true }, 'Windows PM2 exec 选项不应强制 /bin/bash');
   const linuxExecOptions = pm2Test.getExecOptions(30000, 'linux');
   assert.deepStrictEqual(linuxExecOptions, { shell: '/bin/bash', timeout: 30000, windowsHide: true }, 'Linux PM2 exec 选项应包含 /bin/bash');
+
+  let ompCommandOptions = null;
+  const ompRuntime = ompConfig.resolveOmpRuntime({}, {
+    commandRunner: (_command, _args, options) => {
+      ompCommandOptions = options;
+      return 'omp 1.0.0\n';
+    }
+  });
+  assert.strictEqual(ompRuntime.installed, true, 'OMP runtime 探测应识别可用命令');
+  assert.strictEqual(ompCommandOptions.windowsHide, true, 'OMP 命令探测应隐藏 Windows PowerShell 窗口');
+
+  for (const workerLauncher of [
+    'src/server/services/session-snapshots.js',
+    'src/server/services/dashboard-snapshot-worker.js',
+    'src/server/services/omp-auth-providers.js'
+  ]) {
+    const source = fs.readFileSync(path.join(__dirname, '..', workerLauncher), 'utf8');
+    assert.match(
+      source,
+      /fork\([\s\S]*?\{[\s\S]*?windowsHide:\s*true/,
+      `${workerLauncher} 的 Node worker 必须隐藏 Windows 控制台窗口`
+    );
+  }
+
+  for (const backgroundLauncher of [
+    'src/server/services/web-build.js',
+    'src/server/services/https-cert.js'
+  ]) {
+    const source = fs.readFileSync(path.join(__dirname, '..', backgroundLauncher), 'utf8');
+    const processCallCount = (source.match(/\b(?:spawn|execFileSync)\s*\(/g) || []).length;
+    const hiddenWindowCount = (source.match(/windowsHide:\s*true/g) || []).length;
+    assert.ok(processCallCount > 0, `${backgroundLauncher} 应包含后台进程调用`);
+    assert.strictEqual(
+      hiddenWindowCount,
+      processCallCount,
+      `${backgroundLauncher} 的所有后台进程必须隐藏 Windows 控制台窗口`
+    );
+  }
 
   console.log('Windows 专项回归测试通过');
 }

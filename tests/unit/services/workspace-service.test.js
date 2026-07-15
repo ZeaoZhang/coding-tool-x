@@ -102,6 +102,7 @@ afterEach(() => {
     '../../../src/server/services/codex-sessions',
     '../../../src/server/services/gemini-sessions',
     '../../../src/server/services/opencode-sessions',
+    '../../../src/server/services/omp-sessions',
     '../../../src/server/services/codex-config',
     '../../../src/server/services/gemini-config',
     '../../../src/config/loader',
@@ -385,8 +386,10 @@ describe('workspace-service project management', () => {
     const gitProjectPath = createRepo('claude-project');
     const codexProjectPath = path.join(testDir, 'codex-project');
     const opencodeProjectPath = path.join(testDir, 'opencode-project');
+    const ompProjectPath = path.join(testDir, 'omp-project');
     fs.mkdirSync(codexProjectPath, { recursive: true });
     fs.mkdirSync(opencodeProjectPath, { recursive: true });
+    fs.mkdirSync(ompProjectPath, { recursive: true });
 
     const loaderPath = require.resolve('../../../src/config/loader');
     require.cache[loaderPath] = {
@@ -445,6 +448,19 @@ describe('workspace-service project management', () => {
       }
     };
 
+    const ompSessionsPath = require.resolve('../../../src/server/services/omp-sessions');
+    require.cache[ompSessionsPath] = {
+      id: ompSessionsPath,
+      filename: ompSessionsPath,
+      loaded: true,
+      exports: {
+        getProjects: vi.fn(() => [
+          { name: 'omp-project', fullPath: ompProjectPath, mtimeMs: 7000, sessionCount: 4 }
+        ]),
+        isOmpInstalled: vi.fn(() => true)
+      }
+    };
+
     const codexConfigPath = require.resolve('../../../src/server/services/codex-config');
     require.cache[codexConfigPath] = {
       id: codexConfigPath,
@@ -468,7 +484,7 @@ describe('workspace-service project management', () => {
     const service = loadWorkspaceService();
     const projects = await service.getAllAvailableProjects();
 
-    expect(projects.map((project) => project.channel)).toEqual(['opencode', 'codex', 'claude']);
+    expect(projects.map((project) => project.channel)).toEqual(['opencode', 'omp', 'codex', 'claude']);
     expect(projects).toContainEqual(expect.objectContaining({
       name: 'claude-project',
       channel: 'claude',
@@ -478,6 +494,11 @@ describe('workspace-service project management', () => {
       name: 'codex-project',
       channel: 'codex',
       sessionCount: 2
+    }));
+    expect(projects).toContainEqual(expect.objectContaining({
+      name: 'omp-project',
+      channel: 'omp',
+      sessionCount: 4
     }));
   });
 
@@ -502,6 +523,18 @@ describe('workspace-service project management', () => {
 
     expect(service.getLaunchCommand('ws-1', 'codex', 'app')).toEqual({
       command: 'codex',
+      cwd: projectPath,
+      workspaceName: 'Workspace Launch',
+      projectName: 'app'
+    });
+    expect(service.getLaunchCommand('ws-1', 'omp', 'app')).toEqual({
+      command: 'omp',
+      cwd: projectPath,
+      workspaceName: 'Workspace Launch',
+      projectName: 'app'
+    });
+    expect(service.getLaunchCommand('ws-1', 'omp', 'app')).toEqual({
+      command: 'omp',
       cwd: projectPath,
       workspaceName: 'Workspace Launch',
       projectName: 'app'

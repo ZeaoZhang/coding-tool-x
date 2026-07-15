@@ -141,13 +141,13 @@
                 <div class="card-apps">
                   <span class="apps-label">生效范围:</span>
                   <n-tag
-                    v-for="app in ['claude', 'codex', 'gemini', 'opencode']"
+                    v-for="app in promptApps"
                     :key="app"
                     :type="preset.apps?.[app] ? 'success' : 'default'"
                     size="tiny"
                     :bordered="false"
                   >
-                    {{ app }}
+                    {{ appLabels[app] }}
                   </n-tag>
                 </div>
 
@@ -206,6 +206,14 @@ const showForm = ref(false)
 const editingPreset = ref(null)
 const activatingId = ref(null)
 const deactivating = ref(false)
+const promptApps = ['claude', 'codex', 'gemini', 'opencode', 'omp']
+const appLabels = {
+  claude: 'Claude',
+  codex: 'Codex',
+  gemini: 'Gemini',
+  opencode: 'OpenCode',
+  omp: 'OMP'
+}
 
 const presetList = computed(() => {
   const list = Object.values(presets.value)
@@ -297,7 +305,7 @@ async function handleActivate(preset) {
 async function handleDeactivate() {
   dialog.warning({
     title: '移除提示词',
-    content: '确定要移除当前激活的提示词吗？这将删除各平台的提示词文件（CLAUDE.md、AGENTS.md、GEMINI.md、OpenCode AGENTS.md）。',
+    content: '确定要移除当前激活的提示词吗？这将删除各平台的提示词文件，并移除 coding-tool-x 管理的 OMP prompt template。',
     positiveText: '移除',
     negativeText: '取消',
     onPositiveClick: async () => {
