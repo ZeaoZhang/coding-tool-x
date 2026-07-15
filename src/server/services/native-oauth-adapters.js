@@ -1029,7 +1029,8 @@ function runOmpCommand(args = [], options = {}) {
       ...process.env,
       ...(options.env || {})
     },
-    timeout: options.timeout || 10000
+    timeout: options.timeout || 10000,
+    windowsHide: true
   });
   const status = result?.status === undefined || result?.status === null ? 0 : result.status;
   return {

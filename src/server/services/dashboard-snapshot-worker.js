@@ -2,7 +2,7 @@
 
 const { fork } = require('child_process');
 
-const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 120 * 1000;
+const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
 
 function sortClaudeProjects(projects, order = []) {
   if (!Array.isArray(order) || order.length === 0) {
@@ -130,6 +130,7 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
   return new Promise((resolve, reject) => {
     const child = fork(__filename, [], {
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      windowsHide: true,
       env: {
         ...process.env,
         CC_TOOL_DASHBOARD_SNAPSHOT_WORKER: '1'

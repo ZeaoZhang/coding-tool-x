@@ -8,6 +8,9 @@ const PATHS_PATH = require.resolve('../../../src/config/paths');
 
 let testDir;
 let sessionDir;
+let getOmpPathsMock;
+let isOmpInstalledMock;
+let resolveOmpRuntimeMock;
 
 function writeJsonl(filePath, entries) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -28,6 +31,16 @@ beforeEach(() => {
 
   delete require.cache[OMP_SESSIONS_PATH];
   delete require.cache[OMP_CONFIG_PATH];
+  getOmpPathsMock = vi.fn(() => ({
+    agentDir: path.join(testDir, '.omp', 'agent'),
+    sessions: sessionDir
+  }));
+  isOmpInstalledMock = vi.fn(() => true);
+  resolveOmpRuntimeMock = vi.fn(() => ({
+    runtime: 'omp',
+    command: 'omp',
+    installed: true
+  }));
   require.cache[PATHS_PATH] = {
     id: PATHS_PATH,
     filename: PATHS_PATH,
@@ -46,16 +59,9 @@ beforeEach(() => {
     loaded: true,
     exports: {
       getOmpCommand: () => 'omp',
-      getOmpPaths: () => ({
-        agentDir: path.join(testDir, '.omp', 'agent'),
-        sessions: sessionDir
-      }),
-      isOmpInstalled: () => true,
-      resolveOmpRuntime: () => ({
-        runtime: 'omp',
-        command: 'omp',
-        installed: true
-      })
+      getOmpPaths: getOmpPathsMock,
+      isOmpInstalled: isOmpInstalledMock,
+      resolveOmpRuntime: resolveOmpRuntimeMock
     }
   };
 });
@@ -68,6 +74,17 @@ afterEach(() => {
 });
 
 describe('OMP session parser', () => {
+  test('uses the native session directory without probing OMP', () => {
+    fs.mkdirSync(path.join(testDir, '.omp', 'agent'), { recursive: true });
+
+    const { isOmpInstalled } = loadModule();
+
+    expect(isOmpInstalled()).toBe(true);
+    expect(getOmpPathsMock).toHaveBeenCalledWith(process.env, { resolveRuntime: false });
+    expect(resolveOmpRuntimeMock).not.toHaveBeenCalled();
+    expect(isOmpInstalledMock).not.toHaveBeenCalled();
+  });
+
   test('builds OMP launch commands by default', () => {
     const { buildLaunchCommand } = loadModule();
 

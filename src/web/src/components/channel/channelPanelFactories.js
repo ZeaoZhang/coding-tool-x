@@ -1670,7 +1670,10 @@ const channelPanelFactories = {
     api: {
       fetch: async () => {
         const data = await getOmpChannels()
-        return data.channels || []
+        return {
+          channels: data.channels || [],
+          authProviderMeta: data.authProviderMeta || null
+        }
       },
       syncCurrent: syncCurrentOmpChannel,
       create: async (form) => {

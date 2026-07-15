@@ -110,4 +110,36 @@ describe('omp-auth-providers', () => {
     expect(snapshot.reason).toBe('omp-not-available');
     expect(snapshot.providers).toEqual([]);
   });
+
+  test('reports cache metadata while auth-provider warmup is pending', () => {
+    vi.useFakeTimers();
+    try {
+      const options = {
+        runtime: {
+          runtime: 'omp',
+          installed: false,
+          command: 'omp'
+        }
+      };
+
+      service.warmOmpAuthProviderSnapshot(options);
+      expect(service.getOmpAuthProviderCacheMeta(options)).toEqual(expect.objectContaining({
+        cached: false,
+        stale: true,
+        refreshing: true,
+        fallback: true
+      }));
+
+      vi.runOnlyPendingTimers();
+      expect(service.getOmpAuthProviderCacheMeta(options)).toEqual(expect.objectContaining({
+        cached: true,
+        stale: false,
+        refreshing: false,
+        fallback: false,
+        error: 'omp-not-available'
+      }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

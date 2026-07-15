@@ -1,4 +1,4 @@
-import { client } from './client'
+import { SPEED_TEST_API_TIMEOUT_MS, client } from './client'
 
 // Claude channels
 export async function getChannels() {
@@ -198,9 +198,12 @@ export async function fetchChannelModels(channelId, channelType = 'claude') {
 /**
  * 测试所有 Claude 渠道速度
  */
-export async function testAllClaudeChannelsSpeed(timeout = 20000) {
+export async function testAllClaudeChannelsSpeed(timeout = 20000, { signal } = {}) {
   // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
-  const response = await client.post('/channels/speed-test-all', { timeout }, { timeout: 120000 })
+  const response = await client.post('/channels/speed-test-all', { timeout }, {
+    timeout: SPEED_TEST_API_TIMEOUT_MS,
+    signal
+  })
   return response.data
 }
 
@@ -215,9 +218,12 @@ export async function testCodexChannelSpeed(channelId, timeout = 20000) {
 /**
  * 测试所有 Codex 渠道速度
  */
-export async function testAllCodexChannelsSpeed(timeout = 20000) {
+export async function testAllCodexChannelsSpeed(timeout = 20000, { signal } = {}) {
   // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
-  const response = await client.post('/codex/channels/speed-test-all', { timeout }, { timeout: 120000 })
+  const response = await client.post('/codex/channels/speed-test-all', { timeout }, {
+    timeout: SPEED_TEST_API_TIMEOUT_MS,
+    signal
+  })
   return response.data
 }
 
@@ -232,9 +238,12 @@ export async function testGeminiChannelSpeed(channelId, timeout = 20000) {
 /**
  * 测试所有 Gemini 渠道速度
  */
-export async function testAllGeminiChannelsSpeed(timeout = 20000) {
+export async function testAllGeminiChannelsSpeed(timeout = 20000, { signal } = {}) {
   // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
-  const response = await client.post('/gemini/channels/speed-test-all', { timeout }, { timeout: 120000 })
+  const response = await client.post('/gemini/channels/speed-test-all', { timeout }, {
+    timeout: SPEED_TEST_API_TIMEOUT_MS,
+    signal
+  })
   return response.data
 }
 
@@ -319,9 +328,12 @@ export async function testOpenCodeChannelSpeed(channelId, timeout = 20000) {
   return response.data
 }
 
-export async function testAllOpenCodeChannelsSpeed(timeout = 20000) {
+export async function testAllOpenCodeChannelsSpeed(timeout = 20000, { signal } = {}) {
   // 使用更长的 axios 超时时间，因为要等待所有渠道测试完成
-  const response = await client.post('/opencode/channels/speed-test-all', { timeout }, { timeout: 120000 })
+  const response = await client.post('/opencode/channels/speed-test-all', { timeout }, {
+    timeout: SPEED_TEST_API_TIMEOUT_MS,
+    signal
+  })
   return response.data
 }
 
@@ -365,6 +377,7 @@ export async function getOmpChannels() {
 export async function getEnabledOmpChannels() {
   const data = await getOmpChannels()
   return {
+    ...data,
     channels: (data.channels || []).filter(ch => ch.enabled !== false)
   }
 }
@@ -425,8 +438,11 @@ export async function testOmpChannelSpeed(channelId, timeout = 20000) {
   return response.data
 }
 
-export async function testAllOmpChannelsSpeed(timeout = 20000) {
-  const response = await client.post('/omp/channels/speed-test-all', { timeout }, { timeout: 120000 })
+export async function testAllOmpChannelsSpeed(timeout = 20000, { signal } = {}) {
+  const response = await client.post('/omp/channels/speed-test-all', { timeout }, {
+    timeout: SPEED_TEST_API_TIMEOUT_MS,
+    signal
+  })
   return response.data
 }
 

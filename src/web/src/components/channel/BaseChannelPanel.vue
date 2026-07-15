@@ -4,6 +4,34 @@
       <n-spin size="small" />
     </div>
     <div v-else>
+      <div v-if="channelStatusItems.length || state.balanceError" class="channel-status-strip" role="status" aria-live="polite">
+        <n-tag
+          v-for="item in channelStatusItems"
+          :key="item.key"
+          size="small"
+          :type="item.type"
+          :bordered="false"
+        >
+          {{ item.text }}
+        </n-tag>
+        <n-tag
+          v-if="state.balanceError"
+          size="small"
+          type="warning"
+          :bordered="false"
+        >
+          余额加载失败：{{ state.balanceError }}
+        </n-tag>
+        <n-button
+          v-if="state.balanceError"
+          text
+          size="tiny"
+          :loading="state.balanceLoading"
+          @click="actions.loadChannelBalances"
+        >
+          重试余额
+        </n-button>
+      </div>
       <div v-if="state.channels.length === 0" class="empty-state">
         <n-empty :description="config.emptyDescription">
           <template v-if="config.showEmptyAction" #extra>
@@ -63,6 +91,31 @@
               {{ section.title }}
               <span v-if="section.description" class="section-desc">{{ section.description }}</span>
             </div>
+            <div
+              v-if="sectionHasModelConsumers(section)"
+              class="model-catalog-control"
+            >
+              <n-button
+                text
+                type="primary"
+                size="tiny"
+                :loading="state.formData.modelsFetching"
+                @click="handleModelCatalogAction"
+              >
+                {{ modelCatalogActionText }}
+              </n-button>
+              <span
+                class="model-catalog-status"
+                :class="{
+                  'is-error': state.formData.modelsFetchError,
+                  'is-loading': state.formData.modelsFetching
+                }"
+                role="status"
+                aria-live="polite"
+              >
+                {{ modelCatalogStatusText }}
+              </span>
+            </div>
             <n-form-item
               v-for="field in section.fields"
               v-show="!field.showWhen || field.showWhen(state.formData)"
@@ -87,6 +140,7 @@
                 v-model="state.formData.modelRedirects"
                 :available-models="state.formData.availableModels"
                 :channel-type="config.type"
+                @focusin="handleModelDropdownFocus"
               />
               <!-- 登录 provider 识别状态 -->
               <div
@@ -140,18 +194,7 @@
                 clearable
                 @focus="handleModelDropdownFocus"
                 @update:value="(val) => state.formData.speedTestModel = val"
-              >
-                <template v-if="state.formData.modelsFetchError" #empty>
-                  <div style="padding: 8px; color: #d03050; font-size: 12px;">
-                    <div style="font-weight: 500; margin-bottom: 4px;">
-                      {{ state.formData.modelsFetchError }}
-                    </div>
-                    <div v-if="state.formData.modelsFetchErrorHint" style="color: #666; font-size: 11px; line-height: 1.4;">
-                      {{ state.formData.modelsFetchErrorHint }}
-                    </div>
-                  </div>
-                </template>
-              </n-auto-complete>
+              />
               <!-- 默认模型选择器 (支持手动输入) -->
               <n-auto-complete
                 v-else-if="field.type === 'select' && field.key === 'model'"
@@ -163,25 +206,16 @@
                 clearable
                 @focus="handleModelDropdownFocus"
                 @update:value="(val) => state.formData.model = val"
-              >
-                <template v-if="state.formData.modelsFetchError" #empty>
-                  <div style="padding: 8px; color: #d03050; font-size: 12px;">
-                    <div style="font-weight: 500; margin-bottom: 4px;">
-                      {{ state.formData.modelsFetchError }}
-                    </div>
-                    <div v-if="state.formData.modelsFetchErrorHint" style="color: #666; font-size: 11px; line-height: 1.4;">
-                      {{ state.formData.modelsFetchErrorHint }}
-                    </div>
-                  </div>
-                </template>
-              </n-auto-complete>
+              />
               <!-- 自动完成输入框 -->
               <n-auto-complete
                 v-else-if="field.type === 'autocomplete'"
                 :value="getNestedValue(state.formData, field.key)"
                 :options="getFilteredModelOptions(getNestedValue(state.formData, field.key))"
                 :placeholder="field.placeholder"
+                :loading="state.formData.modelsFetching"
                 :get-show="() => true"
+                @focus="handleModelDropdownFocus"
                 @update:value="(val) => setNestedValue(state.formData, field.key, val)"
               />
               <!-- Radio Group -->
@@ -221,7 +255,7 @@
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import {
   NButton,
   NIcon,
@@ -261,18 +295,104 @@ const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
 
-// 监听对话框打开，自动获取模型列表
-watch(() => state.showDialog, async (newVal) => {
-  if (newVal && config.fetchModelsForChannel) {
-    await handleFetchModels()
+// 模型列表属于远端探测，按需加载，避免打开弹窗时阻塞渠道管理。
+function stableSignatureValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableSignatureValue)
   }
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => {
+        acc[key] = stableSignatureValue(value[key])
+        return acc
+      }, {})
+  }
+  return value === undefined || value === null ? '' : String(value)
+}
+
+function buildModelFetchSignature() {
+  const form = state.formData || {}
+  const apiKey = String(form.apiKey || '')
+  return JSON.stringify(stableSignatureValue({
+    channelId: state.editingChannel?.id || null,
+    presetId: form.presetId || '',
+    providerKey: form.providerKey || '',
+    providerApi: form.providerApi || '',
+    wireApi: form.wireApi || '',
+    targetApi: form.targetApi || '',
+    gatewaySourceType: form.gatewaySourceType || '',
+    authMode: form.authMode || '',
+    oauthProviderId: form.oauthProviderId || '',
+    baseUrl: form.baseUrl || '',
+    apiKeyMarker: apiKey ? `${apiKey.length}:${apiKey.slice(-4)}` : ''
+  }))
+}
+
+function resetModelFetchState({ clearOptions = false } = {}) {
+  state.formData.modelsFetching = false
+  state.formData._modelsLoadedOnce = false
+  state.formData._modelsFetchSignature = null
+  state.formData.modelsFetchError = null
+  state.formData.modelsFetchErrorHint = null
+  if (clearOptions) {
+    state.formData.availableModels = []
+  }
+}
+
+async function handleModelDropdownFocus() {
+  if (!config.fetchModelsForChannel || state.formData.modelsFetching) return
+  const signature = buildModelFetchSignature()
+  const existingOptions = state.formData.availableModels || []
+  if (
+    existingOptions.length > 0
+    && state.formData._modelsLoadedOnce
+    && state.formData._modelsFetchSignature === signature
+  ) {
+    return
+  }
+  await handleFetchModels({ signature })
+}
+
+const modelCatalogActionText = computed(() => {
+  if (state.formData.modelsFetching) return '正在加载模型'
+  if (state.formData.modelsFetchError) return '重试加载模型'
+  if ((state.formData.availableModels || []).length > 0) return '刷新可选模型'
+  return '加载可选模型'
 })
 
-// 点击模型下拉时触发获取，强制刷新不使用缓存
-async function handleModelDropdownFocus() {
-  if (config.fetchModelsForChannel) {
-    await handleFetchModels({ forceRefresh: true })
+const modelCatalogStatusText = computed(() => {
+  if (state.formData.modelsFetching) {
+    return '正在读取模型列表，仍可继续填写表单。'
   }
+  if (state.formData.modelsFetchError) {
+    const hint = state.formData.modelsFetchErrorHint
+    return hint
+      ? `模型列表未能更新：${state.formData.modelsFetchError}。${hint}`
+      : `模型列表未能更新：${state.formData.modelsFetchError}。可重试或手动填写模型名称。`
+  }
+  const count = (state.formData.availableModels || []).length
+  if (count > 0) return `已加载 ${count} 个可选模型。`
+  return '可手动填写模型名称，或加载该渠道的可选模型。'
+})
+
+function isModelConsumer(field) {
+  if (['model-redirect', 'model-multi-select', 'autocomplete'].includes(field.type)) {
+    return true
+  }
+  return field.type === 'select' && ['model', 'speedTestModel'].includes(field.key)
+}
+
+function sectionHasModelConsumers(section) {
+  return section.fields?.some(isModelConsumer) && Boolean(config.fetchModelsForChannel)
+}
+
+async function handleModelCatalogAction() {
+  if (!config.fetchModelsForChannel || state.formData.modelsFetching) return
+  const signature = buildModelFetchSignature()
+  const shouldRefresh = state.formData._modelsLoadedOnce
+    && state.formData._modelsFetchSignature === signature
+  await handleFetchModels({ forceRefresh: shouldRefresh, signature })
 }
 
 // 预设选项
@@ -300,21 +420,40 @@ const presetOptions = computed(() => {
 })
 
 // 预设变化处理
-async function handlePresetChange(presetId) {
+function handlePresetChange(presetId) {
   if (config.onPresetChange) {
     const newForm = config.onPresetChange(presetId, state.formData)
     Object.assign(state.formData, newForm)
   } else {
     state.formData.presetId = presetId
   }
-  // 预设切换后重新获取模型列表（入口类型切换时需要更新可用模型）
-  await handleFetchModels()
+  resetModelFetchState({ clearOptions: true })
 }
 
 // 获取模型列表
-async function handleFetchModels({ forceRefresh = false } = {}) {
+async function handleFetchModels({ forceRefresh = false, signature = buildModelFetchSignature() } = {}) {
   if (config.fetchModelsForChannel) {
-    await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData, { forceRefresh })
+    state.formData.modelsFetching = true
+    state.formData.modelsFetchError = null
+    state.formData.modelsFetchErrorHint = null
+    try {
+      await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData, { forceRefresh })
+    } catch (error) {
+      if (buildModelFetchSignature() === signature) {
+        state.formData.modelsFetchError = error?.message || '获取模型列表失败'
+        state.formData.modelsFetchErrorHint = '可重试，或先手动填写模型名称'
+      }
+    } finally {
+      if (buildModelFetchSignature() === signature) {
+        state.formData.modelsFetching = false
+      }
+    }
+    if (buildModelFetchSignature() !== signature) {
+      resetModelFetchState({ clearOptions: true })
+      return
+    }
+    state.formData._modelsLoadedOnce = true
+    state.formData._modelsFetchSignature = signature
   }
 }
 
@@ -439,6 +578,45 @@ function buildMeta(channel) {
     concurrencyActive: inflight > 0
   }
 }
+
+const channelStatusItems = computed(() => {
+  const items = []
+  const authMeta = state.channelMeta?.authProvider
+  if (authMeta?.refreshing && authMeta?.fallback) {
+    items.push({
+      key: 'auth-loading',
+      type: 'info',
+      text: '登录状态加载中'
+    })
+  } else if (authMeta?.refreshing) {
+    items.push({
+      key: 'auth-refreshing',
+      type: 'info',
+      text: '登录状态刷新中'
+    })
+  } else if (authMeta?.stale) {
+    items.push({
+      key: 'auth-stale',
+      type: 'warning',
+      text: '登录状态使用缓存'
+    })
+  }
+  if (authMeta?.error && authMeta.error !== 'omp-not-available') {
+    items.push({
+      key: 'auth-error',
+      type: 'warning',
+      text: `登录状态检查异常：${authMeta.error}`
+    })
+  }
+  if (!authMeta && state.channelMeta?.refreshing) {
+    items.push({
+      key: 'meta-refreshing',
+      type: 'info',
+      text: '渠道信息刷新中'
+    })
+  }
+  return items
+})
 
 function resolveFieldComponent(field) {
   switch (field.type) {

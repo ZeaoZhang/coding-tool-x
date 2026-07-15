@@ -9,6 +9,7 @@ const DEFAULT_TTL_MS = 60 * 1000;
 const SNAPSHOT_VERSION = 1;
 const DEFAULT_BACKGROUND_DELAY_MS = process.env.NODE_ENV === 'test' ? 0 : 750;
 const DEFAULT_BACKGROUND_GAP_MS = process.env.NODE_ENV === 'test' ? 0 : 100;
+const WAIT_TIMEOUT = Symbol('snapshot-wait-timeout');
 
 const snapshots = new Map();
 const inflight = new Map();
@@ -196,6 +197,28 @@ function isExpired(entry, ttlMs, nowMs) {
   return nowMs - Number(entry.updatedAtMs || 0) >= ttlMs;
 }
 
+async function waitForRefresh(promise, waitMs) {
+  const timeoutMs = Number(waitMs) || 0;
+  if (timeoutMs <= 0) return { skipped: true };
+
+  let timer = null;
+  const result = await Promise.race([
+    promise
+      .then(entry => ({ entry }))
+      .catch(error => ({ error })),
+    new Promise(resolve => {
+      timer = setTimeout(() => resolve(WAIT_TIMEOUT), timeoutMs);
+    })
+  ]);
+  if (timer) {
+    clearTimeout(timer);
+  }
+  if (result === WAIT_TIMEOUT) {
+    return { timedOut: true };
+  }
+  return result;
+}
+
 function makeMeta(entry, {
   key,
   stale,
@@ -220,7 +243,9 @@ async function getSnapshot(key, {
   force = false,
   staleWhileForce = false,
   nowMs = Date.now(),
-  deferMs = DEFAULT_BACKGROUND_DELAY_MS
+  deferMs = DEFAULT_BACKGROUND_DELAY_MS,
+  waitOnMissMs = 0,
+  waitOnForceMs = 0
 } = {}) {
   if (typeof refresh !== 'function') {
     const entry = getEntry(key);
@@ -241,7 +266,26 @@ async function getSnapshot(key, {
   let refreshError = null;
 
   if (expired) {
-    if (!entry && backgroundOnMiss === false) {
+    const coldWaitMs = !entry
+      ? (force ? (waitOnForceMs || waitOnMissMs) : waitOnMissMs)
+      : 0;
+
+    if (!entry && Number(coldWaitMs) > 0) {
+      refreshPromise = refreshSnapshot(key, refresh, { bypassInflight: force });
+      const waitResult = await waitForRefresh(refreshPromise, coldWaitMs);
+      if (waitResult.entry) {
+        entry = waitResult.entry;
+        expired = false;
+        refreshPromise = null;
+      } else if (waitResult.error) {
+        refreshError = waitResult.error?.message || String(waitResult.error);
+        entry = getEntry(key);
+        if (entry) {
+          expired = isExpired(entry, ttlMs, nowMs);
+        }
+        refreshPromise = null;
+      }
+    } else if (!entry && backgroundOnMiss === false) {
       try {
         entry = await refreshSnapshot(key, refresh, { bypassInflight: force });
         expired = false;
@@ -251,7 +295,7 @@ async function getSnapshot(key, {
         if (!entry) throw error;
       }
     } else {
-      refreshPromise = refreshSnapshot(key, refresh, { defer: true, deferMs, bypassInflight: force });
+      refreshPromise = refreshSnapshot(key, refresh, { defer: !force, deferMs, bypassInflight: force });
     }
   }
 

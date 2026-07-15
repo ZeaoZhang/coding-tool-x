@@ -12,6 +12,36 @@
   min-height: 200px;
 }
 
+.channel-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.model-catalog-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin: -3px 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.model-catalog-status {
+  color: var(--n-text-color-3);
+}
+
+.model-catalog-status.is-loading {
+  color: var(--n-info-color, var(--n-text-color-3));
+}
+
+.model-catalog-status.is-error {
+  color: var(--n-error-color, #d03050);
+}
+
 .channels-list {
   display: flex;
   flex-direction: column;

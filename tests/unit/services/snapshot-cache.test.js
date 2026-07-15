@@ -66,6 +66,56 @@ describe('snapshot-cache service', () => {
     expect(second.meta.stale).toBe(false);
   });
 
+  test('waits briefly for a cold miss when requested', async () => {
+    const { service } = loadService();
+    const refresh = vi.fn(async () => {
+      await sleep(1);
+      return { count: 1 };
+    });
+
+    const result = await service.getSnapshot('cold-wait', {
+      ttlMs: 1000,
+      fallbackValue: { count: 0 },
+      refresh,
+      waitOnMissMs: 50
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(result.value).toEqual({ count: 1 });
+    expect(result.meta).toMatchObject({ stale: false, refreshing: false, fallback: false });
+  });
+
+  test('falls back when the cold miss wait budget is exceeded', async () => {
+    const { service } = loadService();
+    let resolveRefresh;
+    const refresh = vi.fn(() => new Promise(resolve => {
+      resolveRefresh = resolve;
+    }));
+
+    const first = await service.getSnapshot('cold-wait-timeout', {
+      ttlMs: 1000,
+      fallbackValue: { count: 0 },
+      refresh,
+      waitOnMissMs: 5
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(first.value).toEqual({ count: 0 });
+    expect(first.meta).toMatchObject({ stale: true, refreshing: true, fallback: true });
+
+    resolveRefresh({ count: 2 });
+    await sleep(10);
+
+    const second = await service.getSnapshot('cold-wait-timeout', {
+      ttlMs: 1000,
+      fallbackValue: { count: 0 },
+      refresh
+    });
+
+    expect(second.value).toEqual({ count: 2 });
+    expect(second.meta).toMatchObject({ stale: false, refreshing: false, fallback: false });
+  });
+
   test('uses TTL hits without refreshing', async () => {
     const { service } = loadService();
     const refresh = vi.fn(() => ({ value: 'fresh' }));

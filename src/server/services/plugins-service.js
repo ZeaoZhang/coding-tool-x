@@ -833,7 +833,8 @@ class PluginsService {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: 'pipe',
-      timeout: 120000
+      timeout: 120000,
+      windowsHide: true
     });
   }
 
