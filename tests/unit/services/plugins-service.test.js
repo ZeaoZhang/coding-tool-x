@@ -6,6 +6,8 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const childProcess = require('child_process');
+const yaml = require('js-yaml');
 
 let testDir;
 let listPluginsMock;
@@ -14,9 +16,29 @@ let updatePluginMock;
 let addPluginMock;
 let installPluginCoreMock;
 let uninstallPluginCoreMock;
+let execFileSyncSpy;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plugins-'));
+  execFileSyncSpy = vi.spyOn(childProcess, 'execFileSync').mockImplementation((cmd, args) => {
+    if (cmd !== 'omp') {
+      return Buffer.from('');
+    }
+    const ompSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
+    fs.mkdirSync(path.dirname(ompSettingsPath), { recursive: true });
+    const settings = fs.existsSync(ompSettingsPath)
+      ? (yaml.load(fs.readFileSync(ompSettingsPath, 'utf8')) || {})
+      : {};
+    settings.packages = Array.isArray(settings.packages) ? settings.packages : [];
+    if (args?.[0] === 'install' && args[1] && !settings.packages.includes(args[1])) {
+      settings.packages.push(args[1]);
+    }
+    if ((args?.[0] === 'remove' || args?.[0] === 'uninstall') && args[1]) {
+      settings.packages = settings.packages.filter(pkg => pkg !== args[1]);
+    }
+    fs.writeFileSync(ompSettingsPath, yaml.dump(settings), 'utf8');
+    return Buffer.from('');
+  });
 
   // Stub paths
   const p = require.resolve('../../../src/config/paths');
@@ -27,7 +49,18 @@ beforeEach(() => {
         claude: { settings: path.join(testDir, 'settings.json') },
         codex: { config: path.join(testDir, '.codex', 'config.toml') },
         gemini: { config: path.join(testDir, '.gemini', 'settings.json') },
-        opencode: { config: testDir }
+        opencode: { config: testDir },
+        omp: {
+          dir: path.join(testDir, '.omp', 'agent'),
+          settings: path.join(testDir, '.omp', 'agent', 'config.yml'),
+          settingsJsonLegacy: path.join(testDir, '.omp', 'agent', 'settings.json'),
+          extensions: path.join(testDir, '.omp', 'agent', 'extensions'),
+          skills: path.join(testDir, '.omp', 'agent', 'skills'),
+          prompts: path.join(testDir, '.omp', 'agent', 'prompts'),
+          commands: path.join(testDir, '.omp', 'agent', 'commands'),
+          themes: path.join(testDir, '.omp', 'agent', 'themes'),
+          packages: path.join(testDir, '.omp', 'agent', 'packages')
+        }
       },
       PATHS: {
         base: testDir,
@@ -36,13 +69,15 @@ beforeEach(() => {
           claude: path.join(testDir, 'plugin-repos.json'),
           codex: path.join(testDir, 'codex-plugin-repos.json'),
           gemini: path.join(testDir, 'gemini-plugin-repos.json'),
-          opencode: path.join(testDir, 'opencode-plugin-repos.json')
+          opencode: path.join(testDir, 'opencode-plugin-repos.json'),
+          omp: path.join(testDir, 'omp-plugin-repos.json')
         },
         pluginMarketCache: {
           claude: path.join(testDir, 'plugins-market-cache.json'),
           codex: path.join(testDir, 'codex-plugins-market-cache.json'),
           gemini: path.join(testDir, 'gemini-plugins-market-cache.json'),
-          opencode: path.join(testDir, 'opencode-plugins-market-cache.json')
+          opencode: path.join(testDir, 'opencode-plugins-market-cache.json'),
+          omp: path.join(testDir, 'omp-plugins-market-cache.json')
         }
       }
     }
@@ -98,6 +133,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
+  execFileSyncSpy.mockRestore();
   delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
   delete require.cache[require.resolve('../../../src/config/paths')];
   delete require.cache[require.resolve('../../../src/plugins/registry')];
@@ -270,6 +306,21 @@ describe('PluginsService', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('codex');
     expect(svc.platform).toBe('codex');
+  });
+
+  test('omp platform is accepted with package/extension capabilities', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+
+    expect(svc.platform).toBe('omp');
+    expect(svc.getCapabilities()).toEqual(expect.objectContaining({
+      platform: 'omp',
+      supportsPlugins: true,
+      repositories: true,
+      install: true,
+      uninstall: true,
+      pluginKindLabel: 'packages/extensions'
+    }));
   });
 
   test('future platform gemini is recognized without pretending plugin support exists', () => {
@@ -446,6 +497,66 @@ describe('PluginsService market cache and repository management', () => {
         repoUrl: 'https://github.com/acme/remote-plugins.git'
       })
     ]));
+  });
+
+  test('getMarketPlugins classifies Claude marketplace entries that bundle skills', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = path.join(testDir, 'mixed-skill-plugin-marketplace');
+
+    fs.mkdirSync(path.join(repoRoot, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins', 'skill-bundle', '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'plugins', 'skill-bundle', 'skills', 'nested-demo'), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, 'skills', 'plain-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, '.claude-plugin', 'marketplace.json'),
+      JSON.stringify({
+        name: 'mixed-market',
+        owner: { name: 'Anthropic' },
+        plugins: [
+          {
+            name: 'skill-bundle',
+            source: './plugins/skill-bundle',
+            description: 'A plugin that bundles skills',
+            strict: false,
+            skills: ['./plugins/skill-bundle/skills/nested-demo', './skills/plain-skill']
+          }
+        ]
+      }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'skill-bundle', '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'skill-bundle', version: '0.4.0', description: 'Manifest description' }),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'plugins', 'skill-bundle', 'skills', 'nested-demo', 'SKILL.md'),
+      '---\nname: Nested Demo\ndescription: Should not become a plugin row\n---\nBody',
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, 'skills', 'plain-skill', 'SKILL.md'),
+      '---\nname: Plain Skill\ndescription: Plain repository skill\n---\nBody',
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot });
+
+    const plugins = await svc.getMarketPlugins(true);
+
+    expect(plugins).toEqual([
+      expect.objectContaining({
+        name: 'skill-bundle',
+        directory: 'plugins/skill-bundle',
+        marketplace: 'mixed-market',
+        marketplaceFormat: 'claude-marketplace',
+        containsSkills: true,
+        pluginKind: 'skill-bundle',
+        strict: false,
+        skillPaths: ['plugins/skill-bundle/skills/nested-demo', 'skills/plain-skill']
+      })
+    ]);
+    expect(plugins.map(plugin => plugin.name)).not.toEqual(expect.arrayContaining(['Nested Demo', 'Plain Skill']));
   });
 
   test('addRepo derives owner and name from URL', () => {
@@ -677,6 +788,330 @@ describe('PluginsService OpenCode helpers', () => {
         pluginType: 'local'
       })
     ]);
+  });
+});
+
+describe('PluginsService OMP helpers', () => {
+  test('listPlugins merges OMP packages and local extensions', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const ompSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
+    const ompExtensionsDir = path.join(testDir, '.omp', 'agent', 'extensions');
+
+    fs.mkdirSync(path.dirname(ompSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      ompSettingsPath,
+      yaml.dump({ packages: ['omp-package'], disabledPackages: ['local-extension'] }),
+      'utf8'
+    );
+    fs.mkdirSync(path.join(ompExtensionsDir, 'local-extension'), { recursive: true });
+    fs.writeFileSync(
+      path.join(ompExtensionsDir, 'local-extension', 'omp.json'),
+      JSON.stringify({ name: 'local-extension', version: '0.1.0' }),
+      'utf8'
+    );
+
+    const result = svc.listPlugins();
+
+    expect(result.plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'omp-package',
+        source: 'omp-settings',
+        pluginKind: 'package',
+        enabled: true
+      }),
+      expect.objectContaining({
+        name: 'local-extension',
+        source: 'omp-extension',
+        pluginKind: 'extension',
+        enabled: false
+      })
+    ]));
+  });
+
+  test('listPlugins normalizes object-shaped OMP packages without object-string labels', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const ompSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
+
+    fs.mkdirSync(path.dirname(ompSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      ompSettingsPath,
+      yaml.dump({
+        packages: [
+          { name: '@demo/object-package', type: 'npm', version: '0.3.0', description: 'Object package' },
+          '@demo/string-package',
+          { name: '@demo/object-package', type: 'npm' }
+        ],
+        disabledPackages: [{ name: '@demo/object-package' }]
+      }),
+      'utf8'
+    );
+
+    const result = svc.listPlugins();
+
+    expect(result.plugins.map(plugin => plugin.name)).toEqual([
+      '@demo/object-package',
+      '@demo/string-package'
+    ]);
+    expect(result.plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: '@demo/object-package',
+        directory: '@demo/object-package',
+        version: '0.3.0',
+        description: 'Object package',
+        pluginKind: 'package',
+        enabled: false
+      }),
+      expect.objectContaining({
+        name: '@demo/string-package',
+        directory: '@demo/string-package',
+        pluginKind: 'package',
+        enabled: true
+      })
+    ]));
+    expect(result.plugins.map(plugin => plugin.name)).not.toContain('[object Object]');
+  });
+
+  test('object-shaped OMP packages preserve install source and resources through toggle/config/uninstall', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const ompSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
+
+    fs.mkdirSync(path.dirname(ompSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      ompSettingsPath,
+      yaml.dump({
+        packages: [{
+          name: 'omp-subagents',
+          source: 'npm:omp-subagents',
+          type: 'npm',
+          version: '1.2.3',
+          description: 'Subagents package',
+          resourceTypes: ['extensions', 'skills']
+        }],
+        disabledPackages: [{
+          name: 'omp-subagents',
+          source: 'npm:omp-subagents'
+        }]
+      }),
+      'utf8'
+    );
+
+    const listed = svc.listPlugins().plugins[0];
+    const enableResult = svc.togglePlugin('omp-subagents', true);
+    const configResult = svc.updatePluginConfig('omp-subagents', { mode: 'review' });
+    const uninstallResult = svc.uninstallPlugin('omp-subagents');
+    const settings = yaml.load(fs.readFileSync(ompSettingsPath, 'utf8'));
+
+    expect(listed).toEqual(expect.objectContaining({
+      name: 'omp-subagents',
+      installSource: 'npm:omp-subagents',
+      resourceTypes: ['extension', 'skill'],
+      pluginKind: 'package',
+      enabled: false
+    }));
+    expect(enableResult).toEqual(expect.objectContaining({ success: true, enabled: true }));
+    expect(configResult.success).toBe(true);
+    expect(execFileSyncSpy).toHaveBeenCalledWith('omp', ['remove', 'npm:omp-subagents'], expect.objectContaining({
+      stdio: 'pipe'
+    }));
+    expect(uninstallResult.success).toBe(true);
+    expect(settings.packages).toEqual([]);
+    expect(settings.disabledPackages).toEqual([]);
+    expect(settings.packageConfig['omp-subagents']).toEqual({ mode: 'review' });
+  });
+
+  test('package install uses omp install before toggle, config, and uninstall update OMP settings', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const ompSettingsPath = path.join(testDir, '.omp', 'agent', 'config.yml');
+
+    const installResult = await svc.installPlugin('acme/omp-provider');
+    const toggleResult = svc.togglePlugin('acme/omp-provider', false);
+    const configResult = svc.updatePluginConfig('acme/omp-provider', { model: 'omp-fast' });
+    const uninstallResult = svc.uninstallPlugin('acme/omp-provider');
+    const settings = yaml.load(fs.readFileSync(ompSettingsPath, 'utf8'));
+
+    expect(installResult).toEqual(expect.objectContaining({
+      success: true,
+      plugin: expect.objectContaining({ name: 'acme/omp-provider', pluginKind: 'package' })
+    }));
+    expect(execFileSyncSpy).toHaveBeenCalledWith('omp', ['install', 'acme/omp-provider'], expect.objectContaining({
+      stdio: 'pipe'
+    }));
+    expect(toggleResult).toEqual(expect.objectContaining({ success: true, enabled: false }));
+    expect(configResult.success).toBe(true);
+    expect(uninstallResult.success).toBe(true);
+    expect(settings.packages).toEqual([]);
+    expect(settings.disabledPackages).toEqual([]);
+    expect(settings.packageConfig['acme/omp-provider']).toEqual({ model: 'omp-fast' });
+  });
+
+  test('OMP package source classification installs npm, git, https, ssh, and local sources through omp install', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const localPackagePath = path.join(testDir, 'local-omp-package');
+    fs.mkdirSync(localPackagePath, { recursive: true });
+
+    const sources = [
+      'npm:@scope/pkg',
+      'git:github.com/acme/omp-tool',
+      'https://github.com/acme/omp-tool',
+      'ssh://git@github.com/acme/omp-tool.git',
+      'git@github.com:acme/omp-tool.git',
+      localPackagePath
+    ];
+
+    for (const source of sources) {
+      const result = await svc.installPlugin(source);
+      expect(result.success).toBe(true);
+    }
+
+    for (const source of sources) {
+      expect(execFileSyncSpy).toHaveBeenCalledWith('omp', ['install', source], expect.objectContaining({
+        stdio: 'pipe'
+      }));
+    }
+  });
+
+  test('package install reports registeredOnly when omp CLI is unavailable', async () => {
+    const { PluginsService } = loadModule();
+    execFileSyncSpy.mockImplementation(() => {
+      throw new Error('spawn omp ENOENT');
+    });
+    const svc = new PluginsService('omp');
+
+    const result = await svc.installPlugin('acme/offline-provider');
+    const settings = yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'agent', 'config.yml'), 'utf8'));
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      registeredOnly: true,
+      warning: expect.stringContaining('omp install')
+    }));
+    expect(result.plugin).toEqual(expect.objectContaining({
+      name: 'acme/offline-provider',
+      pluginKind: 'package'
+    }));
+    expect(settings.packages).toEqual(['acme/offline-provider']);
+  });
+
+  test('registeredOnly fallback records object package metadata when source and display name differ', async () => {
+    const { PluginsService } = loadModule();
+    execFileSyncSpy.mockImplementation(() => {
+      throw new Error('spawn omp ENOENT');
+    });
+    const svc = new PluginsService('omp');
+
+    const result = await svc.installPlugin('npm:omp-subagents', {
+      pluginKind: 'package',
+      name: 'omp-subagents',
+      resourceTypes: ['extensions', 'skills']
+    });
+    const settings = yaml.load(fs.readFileSync(path.join(testDir, '.omp', 'agent', 'config.yml'), 'utf8'));
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      registeredOnly: true,
+      plugin: expect.objectContaining({
+        name: 'omp-subagents',
+        installSource: 'npm:omp-subagents',
+        resourceTypes: ['extension', 'skill']
+      })
+    }));
+    expect(settings.packages).toEqual([expect.objectContaining({
+      name: 'omp-subagents',
+      source: 'npm:omp-subagents',
+      resourceTypes: ['extension', 'skill']
+    })]);
+  });
+
+  test('local OMP repository install is listed as an extension', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const repoRoot = path.join(testDir, 'omp-local-repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'omp.json'),
+      JSON.stringify({ name: 'local-omp-extension', version: '0.4.0', description: 'Local OMP extension' }),
+      'utf8'
+    );
+
+    const installResult = await svc.installPlugin('', {
+      provider: 'local',
+      localPath: repoRoot
+    });
+
+    expect(installResult.success).toBe(true);
+    expect(svc.listPlugins().plugins).toEqual([
+      expect.objectContaining({
+        name: 'local-omp-extension',
+        directory: 'local-omp-extension',
+        source: 'omp-extension',
+        pluginKind: 'extension'
+      })
+    ]);
+  });
+
+  test('OMP package catalogs expose installable package sources and resource metadata', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const repoRoot = path.join(testDir, 'omp-package-catalog');
+
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'omp-packages.json'),
+      JSON.stringify({
+        name: 'community-omp-packages',
+        packages: [
+          {
+            name: 'omp-subagents',
+            source: 'npm:omp-subagents',
+            version: '0.8.0',
+            description: 'Subagent support',
+            resources: ['extensions', 'skills']
+          },
+          {
+            name: 'omp-search',
+            installSource: 'git:github.com/justhil/omp-search',
+            resourceTypes: ['extension', 'promptTemplates']
+          },
+          {
+            name: 'omp-subagents',
+            source: 'git:github.com/mirror/omp-subagents',
+            resourceTypes: ['extensions']
+          }
+        ]
+      }),
+      'utf8'
+    );
+    svc.addRepo({ provider: 'local', localPath: repoRoot, marketplace: 'omp-community' });
+
+    const plugins = await svc.getMarketPlugins(true);
+
+    expect(plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'omp-subagents',
+        installSource: 'npm:omp-subagents',
+        marketplace: 'omp-community',
+        marketplaceFormat: 'omp-package-catalog',
+        pluginKind: 'package',
+        pluginType: 'package',
+        resourceTypes: ['extension', 'skill']
+      }),
+      expect.objectContaining({
+        name: 'omp-search',
+        installSource: 'git:github.com/justhil/omp-search',
+        marketplaceFormat: 'omp-package-catalog',
+        resourceTypes: ['extension', 'promptTemplate']
+      }),
+      expect.objectContaining({
+        name: 'omp-subagents',
+        installSource: 'git:github.com/mirror/omp-subagents'
+      })
+    ]));
+    expect(plugins.filter(plugin => plugin.name === 'omp-subagents')).toHaveLength(2);
   });
 });
 

@@ -19,7 +19,7 @@ const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homed
 const MCP_SERVERS_FILE = PATHS.mcpServers;
 
 // 各平台配置文件路径
-const CLAUDE_CONFIG_PATH = path.join(HOME_DIR, '.claude.json');
+const CLAUDE_CONFIG_PATH = NATIVE_PATHS.claude.mcp || path.join(HOME_DIR, '.claude.json');
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 const GEMINI_CONFIG_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
@@ -28,6 +28,8 @@ const OPENCODE_CONFIG_PATHS = {
   json: path.join(OPENCODE_CONFIG_DIR, 'opencode.json'),
   legacy: path.join(OPENCODE_CONFIG_DIR, 'config.json')
 };
+const OMP_MCP_CONFIG_PATH = NATIVE_PATHS.omp?.mcp
+  || path.join(NATIVE_PATHS.omp?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'mcp.json');
 
 // MCP 客户端连接池
 // serverId -> { client, timestamp }
@@ -36,6 +38,9 @@ const POOL_TTL = 5 * 60 * 1000; // 5 minutes
 const STREAMABLE_HTTP_TYPE = 'streamable_http';
 const MCP_SERVER_TYPES = ['stdio', STREAMABLE_HTTP_TYPE, 'sse'];
 const REMOTE_MCP_SERVER_TYPES = [STREAMABLE_HTTP_TYPE, 'sse'];
+const MCP_PLATFORM_KEYS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const OMP_MCP_SCHEMA_URL = 'https://raw.githubusercontent.com/can1357/oh-my-omp/main/packages/coding-agent/src/config/mcp-schema.json';
+const OMP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/;
 
 function normalizeServerSpec(spec = {}) {
   if (!spec || typeof spec !== 'object') {
@@ -532,7 +537,8 @@ const DEFAULT_SERVER_APPS = {
   claude: true,
   codex: false,
   gemini: false,
-  opencode: false
+  opencode: false,
+  omp: false
 };
 
 function normalizeServerApps(apps = {}, fallbackApps = DEFAULT_SERVER_APPS) {
@@ -540,7 +546,8 @@ function normalizeServerApps(apps = {}, fallbackApps = DEFAULT_SERVER_APPS) {
     claude: apps.claude !== undefined ? !!apps.claude : !!fallbackApps.claude,
     codex: apps.codex !== undefined ? !!apps.codex : !!fallbackApps.codex,
     gemini: apps.gemini !== undefined ? !!apps.gemini : !!fallbackApps.gemini,
-    opencode: apps.opencode !== undefined ? !!apps.opencode : !!fallbackApps.opencode
+    opencode: apps.opencode !== undefined ? !!apps.opencode : !!fallbackApps.opencode,
+    omp: apps.omp !== undefined ? !!apps.omp: !!fallbackApps.omp
   };
 }
 
@@ -648,7 +655,7 @@ async function toggleServerApp(serverId, app, enabled) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
   }
 
-  if (!['claude', 'codex', 'gemini', 'opencode'].includes(app)) {
+  if (!MCP_PLATFORM_KEYS.includes(app)) {
     throw new Error(`无效的平台: ${app}`);
   }
 
@@ -720,28 +727,12 @@ async function syncServerToAllPlatforms(server, previousApps = null) {
     return previous[platform] && !apps[platform];
   };
 
-  if (apps.claude) {
-    await syncServerToPlatform(server, 'claude');
-  } else if (shouldRemoveFromPlatform('claude')) {
-    await removeServerFromPlatform(server.id, 'claude');
-  }
-
-  if (apps.codex) {
-    await syncServerToPlatform(server, 'codex');
-  } else if (shouldRemoveFromPlatform('codex')) {
-    await removeServerFromPlatform(server.id, 'codex');
-  }
-
-  if (apps.gemini) {
-    await syncServerToPlatform(server, 'gemini');
-  } else if (shouldRemoveFromPlatform('gemini')) {
-    await removeServerFromPlatform(server.id, 'gemini');
-  }
-
-  if (apps.opencode) {
-    await syncServerToPlatform(server, 'opencode');
-  } else if (shouldRemoveFromPlatform('opencode')) {
-    await removeServerFromPlatform(server.id, 'opencode');
+  for (const platform of MCP_PLATFORM_KEYS) {
+    if (apps[platform]) {
+      await syncServerToPlatform(server, platform);
+    } else if (shouldRemoveFromPlatform(platform)) {
+      await removeServerFromPlatform(server.id, platform);
+    }
   }
 }
 
@@ -749,10 +740,9 @@ async function syncServerToAllPlatforms(server, previousApps = null) {
  * 从所有平台移除服务器
  */
 async function removeServerFromAllPlatforms(serverId) {
-  await removeServerFromPlatform(serverId, 'claude');
-  await removeServerFromPlatform(serverId, 'codex');
-  await removeServerFromPlatform(serverId, 'gemini');
-  await removeServerFromPlatform(serverId, 'opencode');
+  for (const platform of MCP_PLATFORM_KEYS) {
+    await removeServerFromPlatform(serverId, platform);
+  }
 }
 
 /**
@@ -772,6 +762,9 @@ async function syncServerToPlatform(server, platform) {
         break;
       case 'opencode':
         syncToOpenCodeConfig(server);
+        break;
+      case 'omp':
+        syncToOmpMcpConfig(server);
         break;
     }
     console.log(`[MCP] Synced "${server.id}" to ${platform}`);
@@ -798,6 +791,9 @@ async function removeServerFromPlatform(serverId, platform) {
         break;
       case 'opencode':
         removeFromOpenCodeConfig(serverId);
+        break;
+      case 'omp':
+        removeFromOmpMcpConfig(serverId);
         break;
     }
     console.log(`[MCP] Removed "${serverId}" from ${platform}`);
@@ -944,6 +940,133 @@ function removeFromGeminiConfig(serverId) {
   if (config.mcpServers && config.mcpServers[serverId]) {
     delete config.mcpServers[serverId];
     writeJsonFile(GEMINI_CONFIG_PATH, config);
+  }
+}
+
+// ============================================================================
+// OMP 配置同步
+// ============================================================================
+
+function validateOmpServerName(serverId) {
+  if (!OMP_SERVER_NAME_PATTERN.test(serverId)) {
+    throw new Error(`OMP MCP 服务器 ID "${serverId}" 无效。OMP 仅支持 1-100 个字母、数字、下划线、点或连字符。`);
+  }
+}
+
+function readOmpMcpConfig() {
+  const config = readJsonFile(OMP_MCP_CONFIG_PATH, { mcpServers: {} });
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return { mcpServers: {} };
+  }
+  if (!config.mcpServers || typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers)) {
+    config.mcpServers = {};
+  }
+  return config;
+}
+
+function copyCommonMcpFields(source, target) {
+  for (const key of ['timeout', 'auth', 'oauth']) {
+    if (source[key] !== undefined) {
+      target[key] = source[key];
+    }
+  }
+  return target;
+}
+
+function convertToOmpMcpFormat(spec = {}) {
+  const sourceType = spec.type || 'stdio';
+  let result;
+
+  if (sourceType === 'stdio') {
+    result = {
+      type: 'stdio',
+      command: spec.command || ''
+    };
+    if (Array.isArray(spec.args) && spec.args.length > 0) {
+      result.args = spec.args;
+    }
+    if (spec.env && Object.keys(spec.env).length > 0) {
+      result.env = spec.env;
+    }
+    if (spec.cwd) {
+      result.cwd = spec.cwd;
+    }
+  } else if (sourceType === STREAMABLE_HTTP_TYPE) {
+    result = {
+      type: 'http',
+      url: spec.url || ''
+    };
+    if (spec.headers && Object.keys(spec.headers).length > 0) {
+      result.headers = spec.headers;
+    }
+  } else if (sourceType === 'sse') {
+    result = {
+      type: 'sse',
+      url: spec.url || ''
+    };
+    if (spec.headers && Object.keys(spec.headers).length > 0) {
+      result.headers = spec.headers;
+    }
+  } else {
+    result = extractServerSpec(spec);
+  }
+
+  return copyCommonMcpFields(spec, result);
+}
+
+function convertFromOmpMcpFormat(spec = {}) {
+  const sourceType = spec.type || 'stdio';
+  let result;
+
+  if (sourceType === 'stdio') {
+    result = {
+      type: 'stdio',
+      command: spec.command || ''
+    };
+    if (spec.args) {
+      result.args = spec.args;
+    }
+    if (spec.env) {
+      result.env = spec.env;
+    }
+    if (spec.cwd) {
+      result.cwd = spec.cwd;
+    }
+  } else if (sourceType === 'http') {
+    result = {
+      type: STREAMABLE_HTTP_TYPE,
+      url: spec.url || ''
+    };
+    if (spec.headers) {
+      result.headers = spec.headers;
+    }
+  } else if (sourceType === 'sse') {
+    result = {
+      type: 'sse',
+      url: spec.url || ''
+    };
+    if (spec.headers) {
+      result.headers = spec.headers;
+    }
+  } else {
+    result = convertFromCodexFormat(spec);
+  }
+
+  return copyCommonMcpFields(spec, result);
+}
+
+function syncToOmpMcpConfig(server) {
+  validateOmpServerName(server.id);
+  const config = readOmpMcpConfig();
+  config.mcpServers[server.id] = convertToOmpMcpFormat(server.server);
+  writeJsonFile(OMP_MCP_CONFIG_PATH, config);
+}
+
+function removeFromOmpMcpConfig(serverId) {
+  const config = readOmpMcpConfig();
+  if (config.mcpServers && config.mcpServers[serverId]) {
+    delete config.mcpServers[serverId];
+    writeJsonFile(OMP_MCP_CONFIG_PATH, config);
   }
 }
 
@@ -1108,6 +1231,9 @@ async function importFromPlatform(platform) {
     case 'opencode':
       importedCount = importFromOpenCode(servers);
       break;
+    case 'omp':
+      importedCount = importFromOmp(servers);
+      break;
     default:
       throw new Error(`无效的平台: ${platform}`);
   }
@@ -1251,6 +1377,39 @@ function importFromOpenCode(servers) {
 }
 
 /**
+ * 从 OMP 导入
+ */
+function importFromOmp(servers) {
+  const config = readOmpMcpConfig();
+  const mcpServers = config.mcpServers || {};
+  let count = 0;
+
+  for (const [id, spec] of Object.entries(mcpServers)) {
+    const convertedSpec = convertFromOmpMcpFormat(spec || {});
+
+    if (servers[id]) {
+      servers[id].apps = normalizeServerApps(servers[id].apps);
+      if (!servers[id].apps.omp) {
+        servers[id].apps.omp = true;
+        count++;
+      }
+    } else {
+      servers[id] = {
+        id,
+        name: id,
+        server: convertedSpec,
+        apps: { claude: false, codex: false, gemini: false, opencode: false, omp: true },
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      count++;
+    }
+  }
+
+  return count;
+}
+
+/**
  * 从 Codex 格式转换
  */
 function convertFromCodexFormat(spec) {
@@ -1311,7 +1470,8 @@ function getStats() {
     claude: serverList.filter(s => s.apps?.claude).length,
     codex: serverList.filter(s => s.apps?.codex).length,
     gemini: serverList.filter(s => s.apps?.gemini).length,
-    opencode: serverList.filter(s => s.apps?.opencode).length
+    opencode: serverList.filter(s => s.apps?.opencode).length,
+    omp: serverList.filter(s => s.apps?.omp).length
   };
 }
 
@@ -1763,7 +1923,7 @@ function updateServerOrder(serverIds) {
 
 /**
  * 导出所有 MCP 配置
- * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode' | 'gemini'
+ * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode' | 'gemini' | 'omp'
  */
 function exportServers(format = 'json') {
   const servers = getAllServers();
@@ -1777,6 +1937,8 @@ function exportServers(format = 'json') {
       return exportForOpenCode(servers);
     case 'gemini':
       return exportForGemini(servers);
+    case 'omp':
+      return exportForOmp(servers);
     case 'json':
     default:
       return exportAsJson(servers);
@@ -1876,6 +2038,26 @@ function exportForGemini(servers) {
   };
 }
 
+/**
+ * 导出为 OMP 格式
+ */
+function exportForOmp(servers) {
+  const mcpServers = {};
+
+  for (const [id, server] of Object.entries(servers)) {
+    if (server.apps?.omp) {
+      validateOmpServerName(id);
+      mcpServers[id] = convertToOmpMcpFormat(server.server);
+    }
+  }
+
+  return {
+    format: 'omp',
+    content: JSON.stringify({ $schema: OMP_MCP_SCHEMA_URL, mcpServers }, null, 2),
+    filename: 'omp-mcp-config.json'
+  };
+}
+
 module.exports = {
   getAllServers,
   getServer,
@@ -1895,6 +2077,8 @@ module.exports = {
   exportServers,
   _test: {
     extractMcpHint,
-    buildMcpFailureResult
+    buildMcpFailureResult,
+    convertToOmpMcpFormat,
+    convertFromOmpMcpFormat
   }
 };

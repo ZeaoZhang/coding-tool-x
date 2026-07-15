@@ -14,6 +14,7 @@ const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
 const { handleUpdate } = require('./commands/update');
 const { ensureStorageDirMigrated } = require('./config/paths');
+const { normalizePlatformKey } = require('./shared/platforms');
 const PluginManager = require('./plugins/plugin-manager');
 const eventBus = require('./plugins/event-bus');
 const { hasHostFlag } = require('./utils/cli-flags');
@@ -53,15 +54,16 @@ function showHelp() {
   console.log(chalk.yellow('[UI] UI 管理:'));
   console.log('  ctx ui                  前台启动 Web UI（仅本地访问）');
   console.log('  ctx ui --https          前台启动 Web UI（本地 HTTPS）');
-  console.log('  ctx ui --host           前台启动 Web UI（允许 LAN 访问）');
+  console.log('  ctx ui --host           前台启动 Web UI（允许 LAN 访问，默认允许远程写操作）');
   console.log('  ctx ui --hosts          前台启动 Web UI（同 --host）');
   console.log('  ctx --hosts             前台启动 Web UI（同 ctx ui --host）');
   console.log('  ctx ui start            后台启动 Web UI');
   console.log('  ctx ui start --https    后台启动 Web UI（本地 HTTPS）');
-  console.log('  ctx ui start --host     后台启动 Web UI（允许 LAN 访问）');
+  console.log('  ctx ui start --host     后台启动 Web UI（允许 LAN 访问，默认允许远程写操作）');
   console.log('  ctx ui start --hosts    后台启动 Web UI（同 --host）');
   console.log('  ctx ui stop             停止 Web UI');
   console.log('  ctx ui restart          重启 Web UI\n');
+  console.log(chalk.gray('  提示: 如需禁止 LAN 远程写操作，可设置 CC_TOOL_ALLOW_REMOTE_WRITE=false\n'));
 
   console.log(chalk.yellow('[PROXY] 代理管理:'));
   console.log('  ctx claude start        启动 Claude 代理');
@@ -70,12 +72,14 @@ function showHelp() {
   console.log('  ctx codex start         启动 Codex 代理');
   console.log('  ctx gemini start        启动 Gemini 代理');
   console.log('  ctx opencode start      启动 OpenCode 代理');
-  console.log(chalk.gray('  (codex/gemini/opencode 命令与 claude 类似)\n'));
+  console.log('  ctx omp start           启用 OMP 受管模型配置');
+  console.log(chalk.gray('  (codex/gemini/opencode/omp 命令与 claude 类似)\n'));
 
   console.log(chalk.yellow('[LOG] 日志管理:'));
   console.log('  ctx logs                查看所有日志');
   console.log('  ctx logs ui             查看 UI 日志');
   console.log('  ctx logs claude         查看 Claude 日志');
+  console.log('  ctx logs omp            查看 OMP 相关 UI/server 日志');
   console.log('  ctx logs --lines 100    查看最近 100 行');
   console.log('  ctx logs --follow       实时跟踪日志');
   console.log('  ctx logs --clear        清空日志\n');
@@ -83,6 +87,7 @@ function showHelp() {
   console.log(chalk.yellow('[STATS] 统计信息:'));
   console.log('  ctx stats               查看总体统计');
   console.log('  ctx stats claude        查看 Claude 统计');
+  console.log('  ctx stats omp           查看 OMP 统计');
   console.log('  ctx stats --today       查看今日统计');
   console.log('  ctx stats export        导出统计数据\n');
 
@@ -148,6 +153,13 @@ async function main() {
   // 处理命令行参数
   const args = process.argv.slice(2);
 
+  // LAN 快捷入口，等同于 ctx ui --host/--hosts
+  if (hasHostFlag(process.argv) && !args.some((arg) => arg && !arg.startsWith('-'))) {
+    const { handleUI } = require('./commands/ui');
+    await handleUI();
+    return;
+  }
+
   // --version 或 -v - 显示版本号
   if (args[0] === '--version' || args[0] === '-v') {
     console.log(getVersion());
@@ -157,13 +169,6 @@ async function main() {
   // --help 或 -h - 显示帮助信息
   if (args[0] === '--help' || args[0] === '-h') {
     showHelp();
-    return;
-  }
-
-  // LAN 快捷入口，等同于 ctx ui --host/--hosts
-  if (hasHostFlag(process.argv) && !args.some((arg) => arg && !arg.startsWith('-'))) {
-    const { handleUI } = require('./commands/ui');
-    await handleUI();
     return;
   }
 
@@ -271,10 +276,11 @@ async function main() {
     return;
   }
 
-  // claude/codex/gemini/opencode 代理管理命令
-  const channels = ['claude', 'codex', 'gemini', 'opencode'];
-  if (channels.includes(args[0])) {
-    const channel = args[0];
+  // claude/codex/gemini/opencode/omp 代理管理命令
+  const channels = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+  const normalizedChannel = normalizePlatformKey(args[0]);
+  if (channels.includes(normalizedChannel)) {
+    const channel = String(args[0] || '').trim().toLowerCase();
     const action = args[1] || 'status';
 
     switch (action) {

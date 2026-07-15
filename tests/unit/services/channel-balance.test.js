@@ -11,7 +11,9 @@ const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
 const CODEX_CHANNELS_PATH = require.resolve('../../../src/server/services/codex-channels');
 const GEMINI_CHANNELS_PATH = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
+const OMP_CHANNELS_PATH = require.resolve('../../../src/server/services/omp-channels');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
 
 function loadServiceWithStubs({
   uiConfig = { channelBalance: { showRemaining: true } },
@@ -19,6 +21,7 @@ function loadServiceWithStubs({
   codexChannelsStub,
   geminiChannelsStub,
   opencodeChannelsStub,
+  ompChannelsStub,
   strategyCachePath
 } = {}) {
   delete require.cache[SERVICE_PATH];
@@ -27,7 +30,9 @@ function loadServiceWithStubs({
   delete require.cache[CODEX_CHANNELS_PATH];
   delete require.cache[GEMINI_CHANNELS_PATH];
   delete require.cache[OPENCODE_CHANNELS_PATH];
+  delete require.cache[OMP_CHANNELS_PATH];
   delete require.cache[PATHS_PATH];
+  delete require.cache[SNAPSHOT_CACHE_PATH];
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-balance-test-'));
   const cacheDir = path.join(tempDir, 'cache');
@@ -87,6 +92,14 @@ function loadServiceWithStubs({
       exports: opencodeChannelsStub
     };
   }
+  if (ompChannelsStub) {
+    require.cache[OMP_CHANNELS_PATH] = {
+      id: OMP_CHANNELS_PATH,
+      filename: OMP_CHANNELS_PATH,
+      loaded: true,
+      exports: ompChannelsStub
+    };
+  }
 
   return require(SERVICE_PATH);
 }
@@ -107,6 +120,10 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function waitForBackgroundRefresh() {
+  return new Promise(resolve => setTimeout(resolve, 50));
+}
+
 describe('channel-balance service', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -116,7 +133,9 @@ describe('channel-balance service', () => {
     delete require.cache[CODEX_CHANNELS_PATH];
     delete require.cache[GEMINI_CHANNELS_PATH];
     delete require.cache[OPENCODE_CHANNELS_PATH];
+    delete require.cache[OMP_CHANNELS_PATH];
     delete require.cache[PATHS_PATH];
+    delete require.cache[SNAPSHOT_CACHE_PATH];
   });
 
   test('normalizes OpenAI-style API paths to provider roots', () => {
@@ -149,6 +168,15 @@ describe('channel-balance service', () => {
     })).toEqual([
       'https://www.88code.ai/api',
       'https://www.88code.ai/openai/api'
+    ]);
+  });
+
+  test('derives NewCLI website roots from gateway paths', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.detectPlatformByUrlHint('https://code.newcli.com/claude/aws')).toBe('newcli');
+    expect(service._test.buildNewCliWebBaseCandidates('https://code.newcli.com/claude/aws', {})).toEqual([
+      'https://code.newcli.com'
     ]);
   });
 
@@ -409,6 +437,39 @@ describe('channel-balance service', () => {
     });
   });
 
+  test('parses NewCLI dashboard subscriptions into visible balance snapshots', () => {
+    const service = loadServiceWithStubs();
+
+    expect(service._test.buildNewCliDashboardSnapshot({
+      success: true,
+      data: {
+        subscription: {
+          active: [
+            {
+              status: 'ACTIVE',
+              quotaRemaining: 2500000,
+              quotaUsed: 500000,
+              plan: { quotaLimit: 3000000 }
+            },
+            {
+              status: 'EXPIRED',
+              quotaRemaining: 1000000,
+              quotaUsed: 0,
+              plan: { quotaLimit: 1000000 }
+            }
+          ]
+        }
+      }
+    })).toMatchObject({
+      visible: true,
+      platform: 'newcli',
+      remaining: 2.5,
+      used: 0.5,
+      total: 3,
+      label: '余额 $2.50'
+    });
+  });
+
   test('falls back to 88code subscription data when usage payload is not usable', async () => {
     const service = loadServiceWithStubs();
     service._test.clearBalanceCache();
@@ -507,6 +568,84 @@ describe('channel-balance service', () => {
         platform: '88code'
       });
       expect(snapshot).not.toHaveProperty('label');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('fetches NewCLI balance from the website dashboard with dedicated cookie credentials', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push({ url: req.url, cookie: req.headers.cookie, authorization: req.headers.authorization });
+      if (req.url === '/api/user/dashboard' && req.headers.cookie === 'auth_token=session-value') {
+        return sendJson(res, 200, {
+          success: true,
+          data: {
+            subscription: {
+              active: [
+                {
+                  status: 'ACTIVE',
+                  quotaRemaining: 4200000,
+                  quotaUsed: 800000,
+                  plan: { quotaLimit: 5000000 }
+                }
+              ]
+            }
+          }
+        });
+      }
+      return sendJson(res, 401, { message: '请先登录' });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('claude', {
+        id: 'newcli',
+        name: 'NewCLI',
+        baseUrl: `${server.baseUrl}/claude/aws`,
+        apiKey: 'sk-ant-model',
+        balanceToken: 'auth_token=session-value'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: true,
+        platform: 'newcli',
+        remaining: 4.2,
+        used: 0.8,
+        total: 5,
+        label: '余额 $4.20'
+      });
+      expect(seen).toEqual([
+        { url: '/api/user/dashboard', cookie: 'auth_token=session-value', authorization: undefined }
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('keeps NewCLI model API keys hidden without probing website login endpoints', async () => {
+    const service = loadServiceWithStubs();
+    service._test.clearBalanceCache();
+    const seen = [];
+    const server = await withJsonServer((req, res) => {
+      seen.push(req.url);
+      return sendJson(res, 500, { error: `unexpected probe ${req.url}` });
+    });
+
+    try {
+      const snapshot = await service._test.refreshChannelBalanceSnapshot('claude', {
+        id: 'newcli-model-key',
+        name: 'NewCLI',
+        baseUrl: `${server.baseUrl}/claude/aws`,
+        apiKey: 'sk-ant-model'
+      });
+
+      expect(snapshot).toMatchObject({
+        visible: false,
+        platform: 'newcli'
+      });
+      expect(seen).toEqual([]);
     } finally {
       await server.close();
     }
@@ -1195,11 +1334,34 @@ describe('channel-balance service', () => {
     await expect(service.getChannelBalances('claude')).resolves.toEqual({
       enabled: false,
       source: 'claude',
-      balances: {}
+      balances: {},
+      refreshing: false,
+      updatedAt: null,
+      stale: false
     });
   });
 
-  test('loads balances only for enabled channels', async () => {
+  test('accepts OMP as a valid source when balance display is disabled', async () => {
+    const service = loadServiceWithStubs({
+      uiConfig: { channelBalance: { showRemaining: false } },
+      ompChannelsStub: {
+        getChannels: vi.fn(() => {
+          throw new Error('should not read OMP channels');
+        })
+      }
+    });
+
+    await expect(service.getChannelBalances('omp')).resolves.toEqual({
+      enabled: false,
+      source: 'omp',
+      balances: {},
+      refreshing: false,
+      updatedAt: null,
+      stale: false
+    });
+  });
+
+  test('returns cached balance snapshots immediately and refreshes enabled channels in the background', async () => {
     let enabledRequests = 0;
     let disabledRequests = 0;
     const enabledServer = await withJsonServer((req, res) => {
@@ -1229,17 +1391,101 @@ describe('channel-balance service', () => {
       const result = await service.getChannelBalances('codex');
 
       expect(result.enabled).toBe(true);
+      expect(result.refreshing).toBe(true);
+      expect(result.stale).toBe(true);
       expect(result.balances).toMatchObject({
+        'enabled-new-api': {
+          visible: false,
+          stale: true
+        }
+      });
+      expect(Object.keys(result.balances)).toEqual(['enabled-new-api']);
+      expect(service._test.getEnabledBalanceChannels('codex').map(channel => channel.id)).toEqual(['enabled-new-api']);
+      expect(enabledRequests).toBe(0);
+      expect(disabledRequests).toBe(0);
+
+      await waitForBackgroundRefresh();
+      const refreshed = await service.getChannelBalances('codex');
+      expect(refreshed.balances).toMatchObject({
         'enabled-new-api': {
           visible: true,
           platform: 'sub2api',
           remaining: 8.25
         }
       });
-      expect(Object.keys(result.balances)).toEqual(['enabled-new-api']);
-      expect(service._test.getEnabledBalanceChannels('codex').map(channel => channel.id)).toEqual(['enabled-new-api']);
       expect(enabledRequests).toBeGreaterThan(0);
       expect(disabledRequests).toBe(0);
+    } finally {
+      await enabledServer.close();
+      await disabledServer.close();
+    }
+  });
+
+  test('loads balances from enabled OMP channels after background refresh', async () => {
+    const seenAuth = [];
+    const enabledServer = await withJsonServer((req, res) => {
+      seenAuth.push({
+        url: req.url,
+        auth: req.headers.authorization,
+        userId: req.headers['new-api-user']
+      });
+      if (req.url === '/v1/usage') {
+        return sendJson(res, 200, { mode: 'unrestricted', remaining: 4.5, isValid: true });
+      }
+      return sendJson(res, 404, { error: 'missing' });
+    });
+    const disabledServer = await withJsonServer((_req, res) => {
+      return sendJson(res, 500, { error: 'disabled OMP channel should not be requested' });
+    });
+
+    try {
+      const service = loadServiceWithStubs({
+        ompChannelsStub: {
+          getChannels: vi.fn(() => ({
+            channels: [
+              {
+                id: 'omp-enabled',
+                enabled: true,
+                baseUrl: `${enabledServer.baseUrl}/v1`,
+                apiKey: 'sk-api-key',
+                balanceToken: 'balance-token',
+                balanceUserId: 8899
+              },
+              {
+                id: 'omp-disabled',
+                enabled: false,
+                baseUrl: `${disabledServer.baseUrl}/v1`,
+                apiKey: 'sk-disabled'
+              }
+            ]
+          }))
+        }
+      });
+
+      const result = await service.getChannelBalances('omp');
+
+      expect(result.enabled).toBe(true);
+      expect(result.source).toBe('omp');
+      expect(result.refreshing).toBe(true);
+      expect(result.balances).toMatchObject({
+        'omp-enabled': {
+          visible: false,
+          stale: true
+        }
+      });
+      expect(Object.keys(result.balances)).toEqual(['omp-enabled']);
+      expect(service._test.getEnabledBalanceChannels('omp').map(channel => channel.id)).toEqual(['omp-enabled']);
+
+      await waitForBackgroundRefresh();
+      const refreshed = await service.getChannelBalances('omp');
+      expect(refreshed.balances).toMatchObject({
+        'omp-enabled': {
+          visible: true,
+          platform: 'sub2api',
+          remaining: 4.5
+        }
+      });
+      expect(seenAuth.some(item => item.auth === 'Bearer balance-token')).toBe(true);
     } finally {
       await enabledServer.close();
       await disabledServer.close();

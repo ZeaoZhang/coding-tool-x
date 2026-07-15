@@ -7,9 +7,38 @@
 const express = require('express');
 
 let mockService;
+let services;
 
 beforeEach(() => {
-  mockService = {
+  mockService = createMockService();
+  services = {
+    claude: mockService,
+    codex: createMockService(),
+    gemini: createMockService(),
+    opencode: createMockService(),
+    omp: createMockService()
+  };
+
+  // Stub skill-service module before requiring the router
+  // Must use a real constructor function (not arrow) so `new SkillService()` works
+  const SkillServiceStub = function(platform = 'claude') {
+    return services[platform] || services.claude;
+  };
+  const skillServicePath = require.resolve('../../../src/server/services/skill-service');
+  require.cache[skillServicePath] = {
+    id: skillServicePath,
+    filename: skillServicePath,
+    loaded: true,
+    exports: {
+      SkillService: SkillServiceStub
+    }
+  };
+
+  delete require.cache[require.resolve('../../../src/server/api/skills')];
+});
+
+function createMockService() {
+  return {
     listSkills: vi.fn(async () => [{ name: 'test-skill', installed: false }]),
     getSkillDetail: vi.fn(async () => ({ name: 'test', content: '# Test' })),
     getInstalledSkills: vi.fn(() => []),
@@ -32,22 +61,7 @@ beforeEach(() => {
     installLocalSkill: vi.fn(() => ({ success: true })),
     createCustomSkill: vi.fn(() => ({ success: true }))
   };
-
-  // Stub skill-service module before requiring the router
-  // Must use a real constructor function (not arrow) so `new SkillService()` works
-  const SkillServiceStub = function() { return mockService; };
-  const skillServicePath = require.resolve('../../../src/server/services/skill-service');
-  require.cache[skillServicePath] = {
-    id: skillServicePath,
-    filename: skillServicePath,
-    loaded: true,
-    exports: {
-      SkillService: SkillServiceStub
-    }
-  };
-
-  delete require.cache[require.resolve('../../../src/server/api/skills')];
-});
+}
 
 afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/api/skills')];
@@ -135,6 +149,19 @@ describe('GET /', () => {
     const res = await request(app).get('/');
     expect(res.status).toBe(500);
     expect(res.body.success).toBe(false);
+  });
+
+  test('routes OMP skills to the OMP service instance', async () => {
+    services.omp.listSkills.mockResolvedValue([{ name: 'omp-skill', installed: true }]);
+    const app = buildApp();
+    const res = await request(app).get('/?platform=omp');
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.platform).toBe('omp');
+    expect(res.body.installed).toBe(1);
+    expect(services.omp.listSkills).toHaveBeenCalled();
+    expect(services.claude.listSkills).not.toHaveBeenCalled();
   });
 });
 
@@ -332,7 +359,7 @@ describe('GET /detail/*', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('codex');
-    expect(mockService.getSkillDetail).toHaveBeenCalledWith(
+    expect(services.codex.getSkillDetail).toHaveBeenCalledWith(
       'my-skill',
       expect.objectContaining({
         owner: 'openai',
@@ -357,7 +384,7 @@ describe('POST /install-local', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('opencode');
-    expect(mockService.installLocalSkill).toHaveBeenCalledWith('local-skill');
+    expect(services.opencode.installLocalSkill).toHaveBeenCalledWith('local-skill');
   });
 
   test('returns 400 when directory is missing', async () => {
@@ -507,7 +534,7 @@ describe('skills file routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('gemini');
-    expect(mockService.getSkillFiles).toHaveBeenCalledWith('my-skill');
+    expect(services.gemini.getSkillFiles).toHaveBeenCalledWith('my-skill');
   });
 
   test('GET /:directory/file/* returns file content', async () => {

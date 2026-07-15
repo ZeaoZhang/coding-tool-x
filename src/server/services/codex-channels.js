@@ -8,6 +8,13 @@ const { getCodexDir } = require('./codex-config');
 const { isProxyConfig, readConfig } = require('./codex-settings-manager');
 const { syncCodexUserEnvironment } = require('./codex-env-manager');
 const BaseChannelService = require('./base/base-channel-service');
+const {
+  createSkippedResult,
+  isLocalProxyBaseUrl,
+  resolveApiKeyValue,
+  resolveExistingActiveChannel,
+  upsertSyncedChannels
+} = require('./channel-sync-utils');
 
 const CODEX_MANAGED_ENV_KEY = 'CC_PROXY_KEY';
 const CODEX_PROXY_ENV_VALUE = 'PROXY_KEY';
@@ -269,6 +276,123 @@ function applyChannelToSettings(id) { return service.applyChannelToSettings(id);
 function getEffectiveApiKey(channel) { return service.getEffectiveApiKey(channel); }
 function disableAllChannels() { return service.disableAllChannels(); }
 
+function findCodexExistingChannel(channels = [], providerKey = '', baseUrl = '') {
+  const key = String(providerKey || '').trim();
+  const url = String(baseUrl || '').trim();
+  return channels.find(channel => key && channel.providerKey === key)
+    || channels.find(channel => url && channel.baseUrl === url)
+    || null;
+}
+
+function buildDefaultCodexProvider(providerKey = '') {
+  if (providerKey !== 'openai') return null;
+  return {
+    name: 'OpenAI',
+    base_url: 'https://api.openai.com/v1',
+    env_key: 'OPENAI_API_KEY',
+    wire_api: 'responses'
+  };
+}
+
+function buildCodexSyncCandidate(config, channels) {
+  const configuredProvider = String(config?.model_provider || '').trim();
+  const currentProvider = configuredProvider || (process.env.OPENAI_API_KEY ? 'openai' : '');
+  if (!currentProvider) {
+    return {
+      skip: true,
+      warning: 'Codex config.toml 未配置 model_provider，且未找到 OPENAI_API_KEY，无法同步当前渠道。'
+    };
+  }
+
+  const provider = config?.model_providers?.[currentProvider]
+    || buildDefaultCodexProvider(currentProvider)
+    || null;
+  const baseUrl = String(provider?.base_url || provider?.baseUrl || '').trim();
+  if (currentProvider === 'cc-proxy' || isLocalProxyBaseUrl(baseUrl)) {
+    const existing = resolveExistingActiveChannel('codex', channels);
+    if (existing) {
+      return {
+        skip: true,
+        channel: existing,
+        warning: 'Codex 当前配置指向 ctx 代理；对应渠道已在列表中，未重复导入。'
+      };
+    }
+    return {
+      skip: true,
+      warning: 'Codex 当前配置指向 ctx 代理，但没有找到可匹配的现有渠道。'
+    };
+  }
+
+  if (!provider || typeof provider !== 'object') {
+    return {
+      skip: true,
+      warning: `Codex 当前 provider "${currentProvider}" 未在 model_providers 中定义。`
+    };
+  }
+
+  const existing = findCodexExistingChannel(channels, currentProvider, baseUrl);
+  const directKey = provider.api_key || provider.apiKey || provider.key || '';
+  let credential = resolveApiKeyValue(directKey);
+  if (!credential.value && provider.env_key) {
+    credential = resolveApiKeyValue(String(provider.env_key || ''));
+  }
+  const apiKey = credential.value || existing?.apiKey || '';
+  if (!apiKey) {
+    return {
+      skip: true,
+      channel: existing || null,
+      warning: provider.requires_openai_auth
+        ? 'Codex 当前 provider 使用 OAuth/OpenAI 登录态，OAuth 渠道不支持同步导入。'
+        : `Codex 当前 provider "${currentProvider}" 缺少可解析 API Key，无法同步导入。`
+    };
+  }
+
+  return {
+    name: existing?.name || provider.name || currentProvider,
+    providerKey: currentProvider,
+    baseUrl,
+    apiKey,
+    wireApi: provider.wire_api || provider.wireApi || 'responses',
+    envKey: CODEX_MANAGED_ENV_KEY,
+    requiresOpenaiAuth: false,
+    queryParams: provider.query_params || provider.queryParams || {},
+    gatewaySourceType: existing?.gatewaySourceType || 'codex',
+    credentialSource: credential.value ? credential.source : 'existing-channel'
+  };
+}
+
+function syncCurrentCodexChannel() {
+  const data = service.loadChannels();
+  const channels = Array.isArray(data.channels) ? data.channels : [];
+  let config = {};
+  try {
+    config = readConfig();
+  } catch (error) {
+    if (/ENOENT|no such file|config\.toml not found/i.test(String(error?.message || ''))) {
+      config = {};
+    } else {
+      return createSkippedResult('codex', `Codex config.toml 读取失败：${error.message}`);
+    }
+  }
+
+  const candidate = buildCodexSyncCandidate(config, channels);
+  if (candidate?.skip) {
+    return createSkippedResult('codex', candidate.warning, candidate.channel);
+  }
+
+  return upsertSyncedChannels({
+    toolType: 'codex',
+    loadChannels: () => service.loadChannels(),
+    saveChannels: payload => service.saveChannels(payload),
+    applyDefaults: channel => service._applyDefaults(channel),
+    candidates: [candidate],
+    matchers: [
+      (channel, current) => channel.providerKey && channel.providerKey === current.providerKey,
+      (channel, current) => channel.baseUrl === current.baseUrl && channel.apiKey === current.apiKey
+    ]
+  });
+}
+
 // 服务启动时自动同步环境变量
 try {
   const data = service.loadChannels();
@@ -292,6 +416,7 @@ module.exports = {
   applyChannelToSettings,
   getEffectiveApiKey,
   disableAllChannels,
+  syncCurrentCodexChannel,
   _test: {
     buildManagedCodexEnvMap,
     CODEX_MANAGED_ENV_KEY,

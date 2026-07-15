@@ -42,7 +42,7 @@ function resolveOpenSslCommand() {
 
   for (const command of commands) {
     try {
-      execFileSync(command, ['version'], { stdio: 'ignore' });
+      execFileSync(command, ['version'], { stdio: 'ignore', windowsHide: true });
       return command;
     } catch {
       // Try next candidate.
@@ -96,7 +96,8 @@ function generatePemCertificateWithOpenSsl(command) {
     '-config',
     configPath
   ], {
-    stdio: 'ignore'
+    stdio: 'ignore',
+    windowsHide: true
   });
 
   writeMeta({

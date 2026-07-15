@@ -11,7 +11,11 @@ const PROXY_START_LOG_PATTERNS = {
   ],
   codex: [/Codex proxy server started on http:\/\/127\.0\.0\.1:\d+/],
   gemini: [/Gemini proxy server started on http:\/\/127\.0\.0\.1:\d+/],
-  opencode: [/OpenCode proxy server started on http:\/\/127\.0\.0\.1:\d+/]
+  opencode: [/OpenCode proxy server started on http:\/\/127\.0\.0\.1:\d+/],
+  omp: [
+    /OMP models\.yml provider config enabled, port: \d+/,
+    /OMP models\.yml 受管 provider 已自动启用，端口: \d+/
+  ]
 };
 
 function getRuntimeFilePath(proxyType) {

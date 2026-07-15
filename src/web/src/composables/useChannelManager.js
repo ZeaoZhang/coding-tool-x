@@ -4,6 +4,10 @@ import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { getChannelBalances, refreshChannelBalance } from '../api/channels'
 import { useGlobalStore } from '../stores/global'
 
+const BALANCE_LOAD_DELAY_MS = 5000
+const UI_CONFIG_TTL = 60000
+const CHANNEL_META_REFRESH_DELAYS_MS = [1500, 3000, 5000, 8000]
+
 function getLocalCollapse(storageKey) {
   try {
     const stored = localStorage.getItem(storageKey)
@@ -25,14 +29,54 @@ function resolveError(error, fallback) {
   return fallback || error.message || '操作失败'
 }
 
+function isDocumentVisible() {
+  return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeChannelFetchResult(result) {
+  if (Array.isArray(result)) {
+    return { channels: result, meta: null }
+  }
+  if (!isPlainObject(result)) {
+    return { channels: [], meta: null }
+  }
+  const authProvider = isPlainObject(result.authProviderMeta) ? result.authProviderMeta : null
+  const meta = isPlainObject(result.meta) ? { ...result.meta } : {}
+  if (authProvider) {
+    meta.authProvider = authProvider
+  }
+  return {
+    channels: Array.isArray(result.channels) ? result.channels : [],
+    meta: Object.keys(meta).length > 0 ? meta : null
+  }
+}
+
+function shouldRefreshChannelMeta(meta) {
+  return Boolean(meta?.refreshing || meta?.authProvider?.refreshing)
+}
+
 export default function useChannelManager(config) {
   const globalStore = useGlobalStore()
   let healthRefreshTimer = null
+  let balanceLoadTimer = null
+  let balanceIdleCallbackId = null
+  let balanceLoadPromise = null
+  let uiConfigPromise = null
+  let channelMetaRefreshTimer = null
+  let channelMetaRefreshAttempt = 0
 
   const state = reactive({
     channels: [],
+    channelMeta: null,
     balances: {},
     loading: false,
+    balanceLoading: false,
+    balanceError: null,
+    syncing: false,
     toggling: {},
     collapsed: getLocalCollapse(config.storageKeys.localCollapse),
     showDialog: false,
@@ -64,41 +108,140 @@ export default function useChannelManager(config) {
     updateChannelHealth
   )
 
-  async function loadChannels() {
-    state.loading = true
+  function getGlobalChannels() {
+    if (typeof globalStore.getChannels !== 'function') return []
+    const channelRef = globalStore.getChannels(config.type)
+    return Array.isArray(channelRef?.value) ? channelRef.value : []
+  }
+
+  function seedChannelsFromGlobalStore() {
+    const cached = getGlobalChannels()
+    if (!cached.length || state.channels.length) return
+    state.channels = [...cached]
+    applyChannelOrder()
+    updateChannelHealth()
+    scheduleFrozenChannelRefresh()
+  }
+
+  function clearChannelMetaRefreshTimer() {
+    if (!channelMetaRefreshTimer) return
+    clearTimeout(channelMetaRefreshTimer)
+    channelMetaRefreshTimer = null
+  }
+
+  function scheduleChannelMetaRefresh(meta) {
+    clearChannelMetaRefreshTimer()
+    if (!shouldRefreshChannelMeta(meta)) {
+      channelMetaRefreshAttempt = 0
+      return
+    }
+    if (channelMetaRefreshAttempt >= CHANNEL_META_REFRESH_DELAYS_MS.length) {
+      return
+    }
+    const delay = CHANNEL_META_REFRESH_DELAYS_MS[channelMetaRefreshAttempt]
+    channelMetaRefreshAttempt += 1
+    channelMetaRefreshTimer = setTimeout(() => {
+      channelMetaRefreshTimer = null
+      loadChannels({ silent: true, skipBalance: true }).catch(() => {})
+    }, delay)
+  }
+
+  async function loadChannels({ silent = false, skipBalance = false } = {}) {
+    if (!silent) {
+      channelMetaRefreshAttempt = 0
+    }
+    seedChannelsFromGlobalStore()
+    state.loading = !silent && state.channels.length === 0
     try {
-      const list = await config.api.fetch()
-      state.channels = Array.isArray(list) ? [...list] : []
+      const result = await config.api.fetch()
+      const normalized = normalizeChannelFetchResult(result)
+      state.channels = [...normalized.channels]
+      state.channelMeta = normalized.meta
       await applyChannelOrder()
-      await loadChannelBalances()
       // 应用实时健康状态
       updateChannelHealth()
       scheduleFrozenChannelRefresh()
+      scheduleChannelMetaRefresh(state.channelMeta)
+      if (!skipBalance) {
+        scheduleChannelBalanceLoad()
+      }
     } catch (error) {
-      message.error(resolveError(error, `${config.displayName} 渠道加载失败`))
+      if (state.channels.length === 0) {
+        message.error(resolveError(error, `${config.displayName} 渠道加载失败`))
+      } else {
+        console.error(`${config.displayName} channel refresh failed:`, error)
+      }
     } finally {
       state.loading = false
     }
   }
 
   async function loadChannelBalances() {
-    try {
-      const configData = await fetchUIConfig()
-      if (configData?.channelBalance?.showRemaining !== true) {
-        state.showChannelBalance = false
-        state.formData._showChannelBalance = false
-        state.balances = {}
+    if (balanceLoadPromise) {
+      return balanceLoadPromise
+    }
+    state.balanceLoading = true
+    state.balanceError = null
+    balanceLoadPromise = (async () => {
+      try {
+        const configData = await fetchUIConfig()
+        if (configData?.channelBalance?.showRemaining !== true) {
+          state.showChannelBalance = false
+          state.formData._showChannelBalance = false
+          state.balances = {}
+          return null
+        }
+
+        state.showChannelBalance = true
+        state.formData._showChannelBalance = true
+        const response = await getChannelBalances(config.type)
+        state.balances = response?.enabled && response.balances ? response.balances : {}
+        return response
+      } catch (error) {
+        state.balanceError = resolveError(error, `${config.displayName} 余额加载失败`)
+        console.error('Failed to load channel balances:', error)
+        return null
+      } finally {
+        state.balanceLoading = false
+        balanceLoadPromise = null
+      }
+    })()
+    return balanceLoadPromise
+  }
+
+  function clearBalanceLoadTimer() {
+    if (balanceLoadTimer) {
+      clearTimeout(balanceLoadTimer)
+      balanceLoadTimer = null
+    }
+    if (
+      balanceIdleCallbackId !== null
+      && typeof window !== 'undefined'
+      && typeof window.cancelIdleCallback === 'function'
+    ) {
+      window.cancelIdleCallback(balanceIdleCallbackId)
+    }
+    balanceIdleCallbackId = null
+  }
+
+  function scheduleChannelBalanceLoad() {
+    clearBalanceLoadTimer()
+    if (!isDocumentVisible()) return
+    const run = () => {
+      if (balanceLoadTimer) {
+        clearTimeout(balanceLoadTimer)
+      }
+      balanceIdleCallbackId = null
+      balanceLoadTimer = null
+      loadChannelBalances()
+    }
+    balanceLoadTimer = setTimeout(() => {
+      if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+        balanceIdleCallbackId = window.requestIdleCallback(run, { timeout: 1500 })
         return
       }
-
-      state.showChannelBalance = true
-      state.formData._showChannelBalance = true
-      const response = await getChannelBalances(config.type)
-      state.balances = response?.enabled && response.balances ? response.balances : {}
-    } catch (error) {
-      state.balances = {}
-      console.error('Failed to load channel balances:', error)
-    }
+      run()
+    }, BALANCE_LOAD_DELAY_MS)
   }
 
   function clearFrozenChannelRefreshTimer() {
@@ -128,29 +271,37 @@ export default function useChannelManager(config) {
 
   let lastUIConfig = null
   let lastUIConfigTime = 0
-  const UI_CONFIG_TTL = 60000
 
   async function fetchUIConfig() {
     const now = Date.now()
     if (lastUIConfig && now - lastUIConfigTime < UI_CONFIG_TTL) {
       return lastUIConfig
     }
-    try {
-      const response = await getUIConfig()
-      if (response.success && response.config) {
-        lastUIConfig = response.config
-        lastUIConfigTime = now
-        return lastUIConfig
-      }
-    } catch (error) {
-      console.error('Failed to fetch UI config:', error)
+    if (uiConfigPromise) {
+      return uiConfigPromise
     }
-    return null
+    uiConfigPromise = (async () => {
+      try {
+        const response = await getUIConfig()
+        if (response.success && response.config) {
+          lastUIConfig = response.config
+          lastUIConfigTime = Date.now()
+          return lastUIConfig
+        }
+      } catch (error) {
+        console.error('Failed to fetch UI config:', error)
+      } finally {
+        uiConfigPromise = null
+      }
+      return null
+    })()
+    return uiConfigPromise
   }
 
   function invalidateUIConfigCache() {
     lastUIConfig = null
     lastUIConfigTime = 0
+    uiConfigPromise = null
   }
 
   async function applyChannelOrder() {
@@ -309,6 +460,53 @@ export default function useChannelManager(config) {
     }
   }
 
+  function formatSyncResult(result = {}) {
+    const added = Number(result.added || 0)
+    const updated = Number(result.updated || 0)
+    const skipped = Number(result.skipped || 0)
+    if (added > 0 || updated > 0) {
+      const parts = []
+      if (added > 0) parts.push(`新增 ${added} 个`)
+      if (updated > 0) parts.push(`更新 ${updated} 个`)
+      return `${config.displayName} 同步完成：${parts.join('，')}`
+    }
+    if (skipped > 0) {
+      return `${config.displayName} 已在列表中，未重复导入`
+    }
+    return `${config.displayName} 无需同步`
+  }
+
+  async function handleSyncCurrentChannels() {
+    if (typeof config.api.syncCurrent !== 'function') {
+      message.warning(`${config.displayName} 暂不支持同步`)
+      return null
+    }
+    if (state.syncing) return null
+    state.syncing = true
+    try {
+      const result = await config.api.syncCurrent()
+      await loadChannels()
+      window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: config.type } }))
+      const warnings = Array.isArray(result?.warnings) ? result.warnings.filter(Boolean) : []
+      if (warnings.length > 0) {
+        message.warning(warnings.join('；'))
+      }
+      const added = Number(result?.added || 0)
+      const updated = Number(result?.updated || 0)
+      if (added > 0 || updated > 0) {
+        message.success(formatSyncResult(result))
+      } else {
+        message.info(formatSyncResult(result))
+      }
+      return result
+    } catch (error) {
+      message.error(resolveError(error, `${config.displayName} 同步失败`))
+      return null
+    } finally {
+      state.syncing = false
+    }
+  }
+
   async function handleToggleEnabled(channel, value) {
     if (!channel || state.toggling[channel.id]) return
     state.toggling[channel.id] = true
@@ -316,7 +514,11 @@ export default function useChannelManager(config) {
       const enabled = typeof value === 'boolean' ? value : channel.enabled === false
       await config.api.toggle(channel, enabled)
       message.success(`${config.displayName} 渠道已${enabled ? '启用' : '禁用'}`)
-      if (!enabled) {
+      if (enabled) {
+        delete state.collapsed[channel.id]
+        setLocalCollapse(config.storageKeys.localCollapse, state.collapsed)
+        saveCollapseSettings()
+      } else {
         state.collapsed[channel.id] = true
         setLocalCollapse(config.storageKeys.localCollapse, state.collapsed)
         saveCollapseSettings()
@@ -385,8 +587,10 @@ export default function useChannelManager(config) {
       const response = await refreshChannelBalance(config.type, channel.id)
       if (response?.enabled && response.balance) {
         state.balances[channel.id] = response.balance
+        state.balanceError = null
       }
     } catch (error) {
+      state.balanceError = resolveError(error, `${channel.name || config.displayName} 余额刷新失败`)
       console.error('Failed to refresh channel balance:', error)
     }
   }
@@ -397,18 +601,34 @@ export default function useChannelManager(config) {
     state.formData._showChannelBalance = state.showChannelBalance
   }
 
+  function handleDocumentVisibilityChange() {
+    if (isDocumentVisible()) {
+      scheduleChannelBalanceLoad()
+    }
+  }
+
   if (typeof window !== 'undefined') {
     window.addEventListener('channel-balance-visibility-change', handleBalanceVisibilityChange)
   }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleDocumentVisibilityChange)
+  }
 
-  Promise.all([loadChannels(), loadCollapseSettings()])
+  seedChannelsFromGlobalStore()
+  loadChannels().catch(() => {})
+  loadCollapseSettings().catch(() => {})
 
   // 清理 watch
   onUnmounted(() => {
     clearFrozenChannelRefreshTimer()
+    clearBalanceLoadTimer()
+    clearChannelMetaRefreshTimer()
     stopWatch()
     if (typeof window !== 'undefined') {
       window.removeEventListener('channel-balance-visibility-change', handleBalanceVisibilityChange)
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleDocumentVisibilityChange)
     }
   })
 
@@ -417,6 +637,7 @@ export default function useChannelManager(config) {
     validation,
     actions: {
       loadChannels,
+      loadChannelBalances,
       openAddDialog,
       closeDialog,
       toggleCollapse,
@@ -424,6 +645,7 @@ export default function useChannelManager(config) {
       handleSave,
       handleDelete,
       handleToggleEnabled,
+      handleSyncCurrentChannels,
       handleApplyToSettings,
       handleResetHealth,
       handleRefreshBalance

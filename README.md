@@ -1,21 +1,21 @@
 # coding-tool-x
 
-> 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode 的统一增强控制台  
+> 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP 的统一增强控制台
 > Web UI + CLI + 多平台代理 + 配置托管 + 工作区编排 + 分析面板
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D14.0.0-43853d?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
-![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode-1f6feb?style=flat-square)
+![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20OMP-1f6feb?style=flat-square)
 
 ![Home Preview](docs/home.png)
 
 `coding-tool-x` 把多个 Coding CLI 的常用管理能力收拢到一套界面里: 会话查看、渠道代理、配置同步、工作区组织、MCP / Skills / Commands / Agents / Plugins 管理、OAuth 凭证托管、通知设置、统计分析和配置导入导出。
 
-如果你同时在用 Claude Code、Codex CLI、Gemini CLI、OpenCode，这个项目的目标就是把这些分散在不同目录、不同配置文件、不同命令里的日常操作，尽量放回一个统一入口。
+如果你同时在用 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP，这个项目的目标就是把这些分散在不同目录、不同配置文件、不同命令里的日常操作，尽量放回一个统一入口。
 
 ## 适合做什么
 
-- 统一查看四个平台的项目和会话
+- 统一查看五个平台的项目和会话
 - 管理多渠道代理、测速、模型探测和健康状态
 - 集中托管 Prompts、Skills、Agents、Commands、MCP、Plugins 等常用配置项
 - 为多项目创建工作区，必要时自动创建 Git worktree
@@ -26,7 +26,7 @@
 
 ### 会话与项目
 
-- 支持 Claude、Codex、Gemini、OpenCode 四个平台的项目与会话列表
+- 支持 Claude、Codex、Gemini、OpenCode、OMP 五个平台的项目与会话列表
 - 支持项目排序、项目搜索、会话排序、会话搜索
 - 支持最近会话、收藏、别名、聊天记录查看
 - 支持新建会话、删除会话、复制启动命令
@@ -35,8 +35,8 @@
 
 ### 多渠道代理
 
-- 四个平台均支持独立代理端口和独立渠道配置
-- 支持渠道增删改查、启用 / 停用、排序、权重、并发限制
+- 五个平台均支持独立代理端口和独立渠道配置
+- 支持渠道增删改查、启用 / 停用、权重、并发限制
 - 支持速度测试、模型可用性探测、健康检查与故障冻结
 - 支持模型重定向和默认测速模型配置
 - Web UI 与 CLI 都可查看代理状态和日志
@@ -45,10 +45,11 @@
 
 - 集中存储在 `~/.cc-tool`
 - 保留并同步各平台原生配置目录，而不是替代原生用法
-- 支持 Prompts 预设管理，并同步到各平台对应提示文件
+- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP 同步为原生 prompt templates
 - 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
-- 支持 MCP 服务器配置、预设、连通性测试和多平台写入
-- 支持 OAuth 凭证池管理与回写原生配置
+- OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
+- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP 写入原生 `mcp.json`
+- 支持 Claude、Codex、Gemini、OpenCode 的 OAuth 凭证池管理与回写原生配置；OMP auth 通过原生配置导入导出保留
 - 支持 ZIP / JSON 配置导入导出
 
 ### 工作区与运维
@@ -58,34 +59,37 @@
 - 支持配置模板，将提示词、技能、命令、代理、MCP、插件组合成一套模板
 - 支持 Dashboard、Analytics、日志、统计导出、环境诊断
 - 支持面板访问密码
-- LAN 模式默认允许面板的远程写操作
+- LAN 模式默认允许远程写操作，可用环境变量关闭
 
 ### 通知
 
-- 支持 Claude、Codex、Gemini、OpenCode 的任务完成通知托管
+- 支持 Claude、Codex、Gemini、OpenCode、OMP 的任务完成通知托管
 - 支持系统通知、浏览器通知和弹窗模式
 - 支持飞书机器人 Webhook 通知
 
 ## 能力矩阵
 
-| 能力 | Claude | Codex | Gemini | OpenCode |
-| --- | --- | --- | --- | --- |
-| 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 |
-| 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 |
-| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 |
-| Skills 管理 | 支持 | 支持 | 支持 | 支持 |
-| Commands 管理 | 支持 | - | - | 支持 |
-| Agents 管理 | 支持 | 支持 | - | 支持 |
-| Plugins 管理 | 支持 | - | - | 支持 |
-| OAuth 凭证托管 | 支持 | 支持 | 支持 | 支持 |
-| 通知托管 | 支持 | 支持 | 支持 | 支持 |
-| 请求 / 会话统计 | 支持 | 支持 | 支持 | 支持 |
+| 能力 | Claude | Codex | Gemini | OpenCode | OMP |
+| --- | --- | --- | --- | --- | --- |
+| 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
+| 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持，含余额显示与批量测速 |
+| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 写入 OMP prompt templates |
+| Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
+| Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
+| Agents 管理 | 支持 | 用户级 | 支持 | 支持 | 不提供直接原生管理 |
+| Plugins 管理 | 支持 | 支持 | - | 支持 | 映射为 packages / extensions |
+| MCP 管理 | 支持 | 支持 | 支持 | 支持 | 写入 OMP `mcp.json` |
+| OAuth 凭证托管 | 支持 | 支持 | 支持 | 支持 | 原生 auth 导入导出，不提供 OAuth 抽屉托管 |
+| 通知托管 | 支持 | 支持 | 支持 | 支持 | 支持 |
+| 请求 / 会话统计 | 支持 | 支持 | 支持 | 支持 | 共享统计优先，空时回退到 OMP session usage |
 
 补充说明:
 
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取依赖本机 `sqlite3`
-- Commands 的直接 CRUD 当前面向 Claude / OpenCode
+- OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
+- OMP 平台键统一为 `omp`，不再保留 `omp` 平台键兼容
+- OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
 
 ## 安装
 
@@ -148,15 +152,17 @@ ctx ui --https
 
 ```bash
 ctx ui --host
-# 或
-ctx --hosts
 ```
 
 LAN 模式说明:
 
 - 服务会监听 `0.0.0.0`
-- 局域网内可访问 Web UI，并默认允许面板写入配置
-- `ctx ui --hosts` 是同等别名
+- 默认允许 LAN 远程写操作，便于从其他设备操作和修改
+- 如需禁止远程写操作，可显式设置:
+
+```bash
+CC_TOOL_ALLOW_REMOTE_WRITE=false ctx ui --host
+```
 
 ### 单独控制平台代理
 
@@ -165,6 +171,7 @@ ctx claude start
 ctx codex start
 ctx gemini start
 ctx opencode start
+ctx omp start
 ```
 
 ## 常用命令
@@ -192,6 +199,7 @@ ctx opencode start
 | `ctx codex start\|stop\|restart\|status` | Codex 代理管理 |
 | `ctx gemini start\|stop\|restart\|status` | Gemini 代理管理 |
 | `ctx opencode start\|stop\|restart\|status` | OpenCode 代理管理 |
+| `ctx omp start\|stop\|restart\|status` | OMP 受管 `models.yml` provider 配置管理 |
 
 ### 日志与统计
 
@@ -200,11 +208,13 @@ ctx opencode start
 | `ctx logs` | 查看所有日志 |
 | `ctx logs ui` | 查看 UI 日志 |
 | `ctx logs claude` | 查看 Claude 代理日志 |
+| `ctx logs omp` | 查看 OMP 相关 UI/server 日志 |
 | `ctx logs --follow` | 实时追踪日志 |
 | `ctx logs --lines 100` | 查看最近 100 行 |
 | `ctx logs --clear` | 清空日志 |
 | `ctx stats` | 查看总体统计 |
 | `ctx stats claude` | 查看单个平台统计 |
+| `ctx stats omp` | 查看 OMP 统计（内部兼容键仍为 `omp`） |
 | `ctx stats export` | 导出统计数据 |
 | `ctx doctor` | 运行环境诊断 |
 
@@ -222,14 +232,14 @@ ctx opencode start
 兼容说明:
 
 - `ctx proxy start|stop|status` 仍保留为旧入口
-- 新用法更推荐 `ctx claude ...`、`ctx codex ...`、`ctx gemini ...`、`ctx opencode ...`
+- 新用法更推荐 `ctx claude ...`、`ctx codex ...`、`ctx gemini ...`、`ctx opencode ...`、`ctx omp ...`
 
 ## Web UI 主要模块
 
 ### Home / Dashboard
 
-- 四个平台并列状态卡
-- 支持拖拽调整平台顺序
+- 五个平台可配置状态卡，默认保持四列展示
+- 新启动的平台默认前置展示
 - 展示代理状态、今日请求、Token、费用、项目数、会话数
 
 ### 项目与会话
@@ -272,6 +282,7 @@ ctx opencode start
 | Codex Proxy | `20089` |
 | Gemini Proxy | `20090` |
 | OpenCode Proxy | `20091` |
+| OMP Proxy | `20092` |
 
 可通过 `ctx port` 修改。
 
@@ -303,6 +314,7 @@ ctx opencode start
 - OpenCode:
   - 配置: `~/.config/opencode`
   - 数据: `~/.local/share/opencode`
+- OMP: `${OMP_CODING_AGENT_DIR:-~/.omp/agent}`（`OMP_PROFILE` 会落到 `~/.omp/profiles/<name>/agent`）
 
 ## 开发
 
@@ -340,7 +352,7 @@ npm test
 
 ## 已知说明
 
-- `ctx ui --host` / `ctx ui --hosts` 开启 LAN 访问后，局域网内默认可执行面板写操作，请只在可信网络中使用
+- `ctx ui --host` 开启 LAN 访问后，默认允许远程写操作；如需只读 LAN 模式，请设置 `CC_TOOL_ALLOW_REMOTE_WRITE=false`
 - OpenCode 部分能力依赖本机可访问的 OpenCode 配置目录和 `sqlite3`
 - 配置导出包可能包含 API Key、Webhook、OAuth 等敏感信息，请妥善保管
 

@@ -17,33 +17,32 @@ const REGISTRY_FILE = PATHS.configRegistry;
 const CONFIGS_DIR = PATHS.configs;
 
 // Claude Code native directories
-const CLAUDE_HOME_DIR = path.dirname(NATIVE_PATHS.claude.settings);
+const CLAUDE_HOME_DIR = NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings);
 const CLAUDE_DIRS = {
-  skills: path.join(CLAUDE_HOME_DIR, 'skills'),
-  commands: path.join(CLAUDE_HOME_DIR, 'commands'),
-  agents: path.join(CLAUDE_HOME_DIR, 'agents'),
-  plugins: path.join(CLAUDE_HOME_DIR, 'plugins')
+  skills: NATIVE_PATHS.claude.skills || path.join(CLAUDE_HOME_DIR, 'skills'),
+  commands: NATIVE_PATHS.claude.commands || path.join(CLAUDE_HOME_DIR, 'commands'),
+  agents: NATIVE_PATHS.claude.agents || path.join(CLAUDE_HOME_DIR, 'agents'),
+  plugins: NATIVE_PATHS.claude.plugins || path.join(CLAUDE_HOME_DIR, 'plugins')
 };
 
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 
 const PLATFORM_SUPPORT = {
-  skills: { claude: true, codex: true, gemini: true, opencode: true },
-  commands: { claude: true, codex: true, gemini: true, opencode: true },
-  agents: { claude: true, codex: true, gemini: true, opencode: true },
-  plugins: { claude: true, codex: false, gemini: false, opencode: true }
+  skills: { claude: true, codex: true, gemini: true, opencode: true, omp: true },
+  commands: { claude: true, codex: true, gemini: true, opencode: true, omp: true },
+  agents: { claude: true, codex: true, gemini: true, opencode: true, omp: false },
+  plugins: { claude: true, codex: false, gemini: false, opencode: true, omp: true }
 };
 
 function normalizePlatforms(type, platforms = {}) {
   const support = PLATFORM_SUPPORT[type] || {};
-  const normalized = {
-    claude: !!platforms.claude,
-    codex: !!platforms.codex,
-    gemini: !!platforms.gemini,
-    opencode: !!platforms.opencode
-  };
+  const normalized = {};
+
+  for (const platform of SUPPORTED_PLATFORMS) {
+    normalized[platform] = !!platforms?.[platform];
+  }
 
   for (const platform of SUPPORTED_PLATFORMS) {
     if (support[platform] === false) {
@@ -585,7 +584,8 @@ class ConfigRegistryService {
         claude: 0,
         codex: 0,
         gemini: 0,
-        opencode: 0
+        opencode: 0,
+        omp: 0
       }
     };
 
@@ -598,7 +598,8 @@ class ConfigRegistryService {
         claude: items.filter(i => i.platforms?.claude).length,
         codex: items.filter(i => i.platforms?.codex).length,
         gemini: items.filter(i => i.platforms?.gemini).length,
-        opencode: items.filter(i => i.platforms?.opencode).length
+        opencode: items.filter(i => i.platforms?.opencode).length,
+        omp: items.filter(i => i.platforms?.omp).length
       };
 
       stats.byType[type] = typeStats;
@@ -607,6 +608,7 @@ class ConfigRegistryService {
       stats.byPlatform.codex += typeStats.codex;
       stats.byPlatform.gemini += typeStats.gemini;
       stats.byPlatform.opencode += typeStats.opencode;
+      stats.byPlatform.omp += typeStats.omp;
     }
 
     return stats;

@@ -27,7 +27,8 @@ vi.mock('../../../src/config/paths', () => ({
   NATIVE_PATHS: {
     claude: { settings: '/tmp/test-claude-settings.json' },
     codex: { config: '/tmp/test-codex-config.toml' },
-    opencode: { config: '/tmp/test-opencode-config' }
+    opencode: { config: '/tmp/test-opencode-config' },
+    omp: { extensions: '/tmp/test-omp-extensions' }
   }
 }));
 
@@ -50,6 +51,7 @@ const {
   parseCodexNotificationStatus,
   parseGeminiNotificationStatus,
   parseOpenCodeNotificationStatus,
+  parseOmpNotificationStatus,
   validateFeishuWebhookUrl,
   buildCodexNotifyCommand,
   buildClaudeCommand,
@@ -57,6 +59,8 @@ const {
   generateNotifyScript,
   generateSystemNotificationCommand,
   buildOpenCodePluginContent,
+  buildOmpExtensionContent,
+  getOmpManagedExtensionPath,
   emitBrowserNotification,
   normalizeRemoteNotificationsConfig,
   validateRemoteProviderConfig,
@@ -360,6 +364,34 @@ describe('parseOpenCodeNotificationStatus', () => {
 });
 
 // ---------------------------------------------------------------------------
+// parseOmpNotificationStatus
+// ---------------------------------------------------------------------------
+describe('parseOmpNotificationStatus', () => {
+  test('returns disabled defaults for empty string', () => {
+    expect(parseOmpNotificationStatus('')).toEqual({
+      enabled: false,
+      external: false,
+      type: 'notification',
+      method: 'Extension Events'
+    });
+  });
+
+  test('returns enabled=true for non-empty content', () => {
+    const result = parseOmpNotificationStatus('some extension content');
+    expect(result.enabled).toBe(true);
+    expect(result.external).toBe(false);
+    expect(result.method).toBe('Extension Events');
+  });
+
+  test('parses type from content with mode embedded', () => {
+    const content = 'const MODE = "dialog"\n// some other content';
+    const result = parseOmpNotificationStatus(content);
+    expect(result.enabled).toBe(true);
+    expect(result.type).toBe('dialog');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // validateFeishuWebhookUrl
 // ---------------------------------------------------------------------------
 describe('validateFeishuWebhookUrl', () => {
@@ -573,6 +605,14 @@ describe('generateNotifyScript', () => {
     expect(script).toContain('CONFIG_FILE');
   });
 
+  test('embeds OMP message and display source in generated script', () => {
+    const script = generateNotifyScript();
+    expect(script).toContain("source === 'omp'");
+    expect(script).toContain('OMP 回合已完成 | 等待交互');
+    expect(script).toContain('function resolveDisplaySource');
+    expect(script).toContain("return 'OMP'");
+  });
+
   test('embeds enabled remote providers in generated script', () => {
     const script = generateNotifyScript({
       providers: [
@@ -639,6 +679,35 @@ describe('buildOpenCodePluginContent', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// buildOmpExtensionContent
+// ---------------------------------------------------------------------------
+describe('buildOmpExtensionContent', () => {
+  test('uses the managed OMP extension path', () => {
+    const extensionPath = getOmpManagedExtensionPath().replace(/\\/g, '/');
+    expect(extensionPath).toContain('/extensions/');
+    expect(extensionPath).toMatch(/\/coding-tool-notify\.ts$/);
+  });
+
+  test('embeds notification mode and OMP event handlers in extension content', () => {
+    const content = buildOmpExtensionContent('notification');
+    expect(typeof content).toBe('string');
+    expect(content).toContain('CodingToolNotifyExtension');
+    expect(content).toContain('notify-hook.js');
+    expect(content).toContain('--source=omp');
+    expect(content).toContain('const MODE = "notification"');
+    expect(content).toContain('agent_settled');
+    expect(content).toContain('turn_end');
+    expect(content).toContain('shouldFire');
+  });
+
+  test('embeds browser mode in extension content', () => {
+    const content = buildOmpExtensionContent('browser');
+    expect(content).toContain('const MODE = "browser"');
+    expect(content).toContain('CodingToolNotifyExtension');
+  });
+});
+
 describe('emitBrowserNotification', () => {
   beforeEach(() => {
     mockBroadcastBrowserNotification.mockClear();
@@ -656,6 +725,21 @@ describe('emitBrowserNotification', () => {
       type: 'browser-notification',
       source: 'codex',
       message: 'Codex CLI 回合已完成 | 等待交互'
+    }));
+  });
+
+  test('broadcasts OMP websocket payload with derived title and route', () => {
+    const payload = emitBrowserNotification({
+      source: 'omp',
+      message: 'OMP 回合已完成 | 等待交互'
+    });
+
+    expect(payload.title).toBe('OMP');
+    expect(payload.url).toBe('/omp');
+    expect(mockBroadcastBrowserNotification).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'browser-notification',
+      source: 'omp',
+      message: 'OMP 回合已完成 | 等待交互'
     }));
   });
 

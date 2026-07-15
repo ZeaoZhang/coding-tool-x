@@ -40,7 +40,7 @@
           <span class="stats-text">
             共 {{ serverCount }} 个服务器
             <template v-if="serverCount > 0">
-              · Claude: {{ stats.claude }} · Codex: {{ stats.codex }} · Gemini: {{ stats.gemini }} · OpenCode: {{ stats.opencode }}
+              · Claude: {{ stats.claude }} · Codex: {{ stats.codex }} · Gemini: {{ stats.gemini }} · OpenCode: {{ stats.opencode }} · OMP: {{ stats.omp }}
             </template>
           </span>
           <n-dropdown trigger="click" :options="syncOptions" @select="handleSync">
@@ -172,6 +172,14 @@
                       @update:value="(v) => toggleApp(server.id, 'opencode', v)"
                     />
                     <span class="app-label">OpenCode</span>
+                  </label>
+                  <label class="app-toggle" @click.stop>
+                    <n-switch
+                      size="small"
+                      :value="server.apps?.omp"
+                      @update:value="(v) => toggleApp(server.id, 'omp', v)"
+                    />
+                    <span class="app-label">OMP</span>
                   </label>
                 </div>
               </div>
@@ -408,7 +416,8 @@ const stats = computed(() => {
     claude: list.filter(s => s.apps?.claude).length,
     codex: list.filter(s => s.apps?.codex).length,
     gemini: list.filter(s => s.apps?.gemini).length,
-    opencode: list.filter(s => s.apps?.opencode).length
+    opencode: list.filter(s => s.apps?.opencode).length,
+    omp: list.filter(s => s.apps?.omp).length
   }
 })
 
@@ -426,7 +435,8 @@ const syncOptions = [
   { label: '同步 Claude 已有配置', key: 'claude' },
   { label: '同步 Codex 已有配置', key: 'codex' },
   { label: '同步 Gemini 已有配置', key: 'gemini' },
-  { label: '同步 OpenCode 已有配置', key: 'opencode' }
+  { label: '同步 OpenCode 已有配置', key: 'opencode' },
+  { label: '同步 OMP 已有配置', key: 'omp' }
 ]
 
 const exportOptions = [
@@ -434,7 +444,8 @@ const exportOptions = [
   { label: '导出为 Claude 格式', key: 'claude' },
   { label: '导出为 Codex 格式 (TOML)', key: 'codex' },
   { label: '导出为 OpenCode 格式', key: 'opencode' },
-  { label: '导出为 Gemini 格式', key: 'gemini' }
+  { label: '导出为 Gemini 格式', key: 'gemini' },
+  { label: '导出为 OMP 格式', key: 'omp' }
 ]
 
 // 获取状态文本
@@ -732,7 +743,7 @@ function handleParse() {
       const server = {
         id: id,
         name: id,
-        apps: { claude: true, codex: false, gemini: false, opencode: false },
+        apps: { claude: true, codex: false, gemini: false, opencode: false, omp: false },
         server: {
           type: config.type || 'stdio'
         }

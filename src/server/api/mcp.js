@@ -5,6 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const mcpService = require('../services/mcp-service');
+const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'omp'];
 
 /**
  * GET /api/mcp/servers
@@ -177,7 +179,7 @@ router.post('/import/:platform', async (req, res) => {
   try {
     const { platform } = req.params;
 
-    if (!['claude', 'codex', 'gemini', 'opencode'].includes(platform)) {
+    if (!MCP_PLATFORMS.includes(platform)) {
       return res.status(400).json({
         success: false,
         error: `无效的平台: ${platform}`
@@ -285,7 +287,7 @@ router.get('/export', (req, res) => {
   try {
     const format = req.query.format || 'json';
 
-    if (!['json', 'claude', 'codex', 'opencode'].includes(format)) {
+    if (!MCP_EXPORT_FORMATS.includes(format)) {
       return res.status(400).json({
         success: false,
         error: `无效的导出格式: ${format}`
@@ -314,7 +316,7 @@ router.get('/export/download', (req, res) => {
   try {
     const format = req.query.format || 'json';
 
-    if (!['json', 'claude', 'codex', 'opencode'].includes(format)) {
+    if (!MCP_EXPORT_FORMATS.includes(format)) {
       return res.status(400).json({
         success: false,
         error: `无效的导出格式: ${format}`

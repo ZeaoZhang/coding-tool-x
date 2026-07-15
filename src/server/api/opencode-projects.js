@@ -1,11 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const {
-  getProjects,
   saveProjectOrder,
   deleteProject,
   isOpenCodeInstalled
 } = require('../services/opencode-sessions');
+const {
+  emptyProjectList,
+  getProjectListSnapshot,
+  invalidateProjectSnapshots
+} = require('../services/project-snapshots');
+const { invalidateSessionSnapshots } = require('../services/session-snapshots');
+const { runDashboardSnapshotWorker } = require('../services/dashboard-snapshot-worker');
 
 function isNotFoundError(error) {
   return !!(error && error.message === 'Project not found');
@@ -16,22 +22,24 @@ module.exports = (config) => {
    * GET /api/opencode/projects
    * 获取所有 OpenCode 项目列表
    */
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     try {
       if (!isOpenCodeInstalled()) {
         return res.json({
           projects: [],
           currentProject: null,
-          error: 'OpenCode CLI not installed or not found'
+          error: 'OpenCode CLI not installed or not found',
+          meta: { generatedAt: new Date().toISOString(), stale: false, refreshing: false, fallback: true, error: null }
         });
       }
 
-      const projects = getProjects();
-
-      res.json({
-        projects,
-        currentProject: projects[0] ? projects[0].name : null
+      const force = req.query?.fresh === '1';
+      const snapshot = await getProjectListSnapshot('opencode', {
+        fallbackValue: emptyProjectList(null),
+        force,
+        refresh: () => runDashboardSnapshotWorker('projects', 'opencode', config, { force })
       });
+      res.json({ ...snapshot.value, meta: snapshot.meta });
     } catch (err) {
       console.error('[OpenCode API] Failed to get projects:', err);
 
@@ -65,6 +73,7 @@ module.exports = (config) => {
       }
 
       saveProjectOrder(order);
+      invalidateProjectSnapshots('opencode');
       res.json({ success: true });
     } catch (err) {
       console.error('[OpenCode API] Failed to save project order:', err);
@@ -84,6 +93,8 @@ module.exports = (config) => {
 
       const { projectName } = req.params;
       const result = deleteProject(projectName);
+      invalidateProjectSnapshots('opencode');
+      invalidateSessionSnapshots('opencode', projectName);
       res.json(result);
     } catch (err) {
       if (isNotFoundError(err)) {

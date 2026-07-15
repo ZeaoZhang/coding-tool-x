@@ -94,6 +94,7 @@ import { NDrawer, NDrawerContent, NIcon, NTag, NTabs, NTabPane } from 'naive-ui'
 import { DocumentTextOutline, HammerOutline, TerminalOutline } from '@vicons/ionicons5'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import AssetPathField from './AssetPathField.vue'
+import { getPlatformConfig } from '../config/platforms'
 
 const { drawerWidth } = useResponsiveDrawer(600)
 
@@ -126,13 +127,8 @@ const bodyContentStyle = {
 }
 
 const platformLabel = computed(() => {
-  const map = {
-    claude: 'Claude Code',
-    codex: 'Codex CLI',
-    gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
-  }
-  return map[props.platform] || ''
+  const platform = getPlatformConfig(props.platform)
+  return platform.label || platform.title || ''
 })
 
 const commandPath = computed(() => props.command?.fullPath || props.command?.path || '')

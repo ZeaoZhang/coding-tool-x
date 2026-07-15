@@ -28,6 +28,8 @@ let clearNativeOAuth;
 let clearChannelBalanceCache;
 let setChannelConfig;
 let clearManagedChannelConfig;
+let readConfig;
+let selectConfigPath;
 let getOpenCodeProxyStatus;
 let service;
 
@@ -36,6 +38,8 @@ function injectStubs() {
   clearChannelBalanceCache = vi.fn();
   setChannelConfig       = vi.fn();
   clearManagedChannelConfig = vi.fn();
+  readConfig             = vi.fn(() => ({}));
+  selectConfigPath       = vi.fn(() => path.join(testDir, 'opencode.json'));
   getOpenCodeProxyStatus = vi.fn(() => ({ running: false }));
 
   require.cache[PATHS_MODULE] = {
@@ -67,7 +71,8 @@ function injectStubs() {
     exports: {
       setChannelConfig,
       clearManagedChannelConfig,
-      selectConfigPath: vi.fn(() => '/tmp/test')
+      readConfig,
+      selectConfigPath
     }
   };
 
@@ -498,5 +503,89 @@ describe('applyChannelToSettings', () => {
       id: ch2.id,
       apiKey: 'fallback-key'
     }));
+  });
+});
+
+describe('syncCurrentOpenCodeChannel', () => {
+  it('imports the current provider selected by top-level model', () => {
+    readConfig.mockReturnValue({
+      model: 'current-provider/gpt-4.1',
+      provider: {
+        'current-provider': {
+          name: 'Current Provider',
+          options: {
+            baseURL: 'https://opencode-current.example/v1',
+            apiKey: 'opencode-current-key'
+          },
+          models: {
+            'gpt-4.1': {},
+            'gpt-4.1-mini': {}
+          }
+        }
+      }
+    });
+
+    const result = service.syncCurrentOpenCodeChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+
+    expect(result.added).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      name: 'Current Provider',
+      providerKey: 'current-provider',
+      baseUrl: 'https://opencode-current.example/v1',
+      apiKey: 'opencode-current-key',
+      model: 'gpt-4.1',
+      allowedModels: ['gpt-4.1', 'gpt-4.1-mini']
+    }));
+  });
+
+  it('does not duplicate an already imported provider', () => {
+    readConfig.mockReturnValue({
+      model: 'current-provider/gpt-4.1',
+      provider: {
+        'current-provider': {
+          options: {
+            baseURL: 'https://opencode-current.example/v1',
+            apiKey: 'opencode-current-key'
+          },
+          models: {
+            'gpt-4.1': {}
+          }
+        }
+      }
+    });
+
+    service.syncCurrentOpenCodeChannel();
+    const second = service.syncCurrentOpenCodeChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+
+    expect(second.added).toBe(0);
+    expect(second.skipped).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+  });
+
+  it('skips ctx-proxy provider without importing proxy credentials', () => {
+    readConfig.mockReturnValue({
+      model: 'ctx-proxy/gpt-4.1',
+      provider: {
+        'ctx-proxy': {
+          options: {
+            baseURL: 'http://127.0.0.1:4569/v1',
+            apiKey: 'PROXY_KEY'
+          },
+          models: {
+            'gpt-4.1': {}
+          }
+        }
+      }
+    });
+
+    const result = service.syncCurrentOpenCodeChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('ctx 代理');
+    expect(fs.existsSync(channelsFile)).toBe(false);
   });
 });

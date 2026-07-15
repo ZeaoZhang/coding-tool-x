@@ -1,6 +1,6 @@
 {
   "name": "coding-tool-x",
-  "version": "3.6.12",
+  "version": "3.7.6",
   "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
@@ -45,6 +45,7 @@
     "src/config/",
     "src/plugins/",
     "src/server/",
+    "src/shared/",
     "src/ui/",
     "src/utils/",
     "src/index.js",
@@ -64,6 +65,7 @@
     "http-proxy": "^1.18.1",
     "https-proxy-agent": "^7.0.6",
     "inquirer": "^8.2.7",
+    "js-yaml": "^4.1.1",
     "open": "^8.4.2",
     "ora": "^5.4.1",
     "pm2": "^6.0.14",

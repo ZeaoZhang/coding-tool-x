@@ -15,6 +15,13 @@ const PROJECTS_CACHE_TTL = 30 * 1000
 const SESSIONS_CACHE_TTL = 20 * 1000
 const projectsCache = new Map()
 const sessionsCache = new Map()
+const projectRefreshTimers = new Map()
+const sessionRefreshTimers = new Map()
+const PROJECT_REFRESH_DELAYS_MS = [1500, 3500, 7000, 12000]
+const SESSION_REFRESH_DELAYS_MS = [2500, 5000, 10000, 15000]
+const SNAPSHOT_REFRESH_MAX_WAIT_MS = 185000
+const projectRefreshStartedAt = new Map()
+const sessionRefreshStartedAt = new Map()
 
 function getProjectCacheKey(channel) {
   return channel
@@ -78,10 +85,42 @@ function invalidateSessionsCache(channel, projectName) {
     .forEach(key => sessionsCache.delete(key))
 }
 
+function clearRefreshTimer(timerMap, key) {
+  const timer = timerMap.get(key)
+  if (!timer) return
+  clearTimeout(timer)
+  timerMap.delete(key)
+}
+
+function clearRefreshCycle(timerMap, startedAtMap, key) {
+  clearRefreshTimer(timerMap, key)
+  startedAtMap.delete(key)
+}
+
+function scheduleRefreshTimer(timerMap, startedAtMap, key, delays, attempt, callback, onTimeout) {
+  clearRefreshTimer(timerMap, key)
+  const startedAt = startedAtMap.get(key) || Date.now()
+  startedAtMap.set(key, startedAt)
+  const remainingMs = SNAPSHOT_REFRESH_MAX_WAIT_MS - (Date.now() - startedAt)
+  if (remainingMs <= 0) {
+    startedAtMap.delete(key)
+    onTimeout?.()
+    return
+  }
+  const delay = Math.min(delays[Math.min(attempt, delays.length - 1)], remainingMs)
+  const timer = setTimeout(() => {
+    timerMap.delete(key)
+    callback()
+  }, delay)
+  timerMap.set(key, timer)
+}
+
 export const useSessionsStore = defineStore('sessions', () => {
   const projects = ref([])
   const currentProject = ref(null)
   const currentProjectInfo = ref(null)
+  const projectsMeta = ref(null)
+  const sessionsMeta = ref(null)
   const sessions = ref([])
   const aliases = ref({})
   const totalSize = ref(0)
@@ -96,6 +135,20 @@ export const useSessionsStore = defineStore('sessions', () => {
       alias: aliases.value[session.sessionId] || null
     }))
   })
+  const projectsRefreshing = computed(() => Boolean(projectsMeta.value?.refreshing))
+  const sessionsRefreshing = computed(() => Boolean(sessionsMeta.value?.refreshing))
+  const projectsUsingFallback = computed(() => Boolean(projectsMeta.value?.fallback || projectsMeta.value?.stale))
+  const sessionsUsingFallback = computed(() => Boolean(sessionsMeta.value?.fallback || sessionsMeta.value?.stale))
+  const projectsPending = computed(() => Boolean(
+    projectsMeta.value?.refreshing
+    && projectsMeta.value?.fallback
+    && projects.value.length === 0
+  ))
+  const sessionsPending = computed(() => Boolean(
+    sessionsMeta.value?.refreshing
+    && sessionsMeta.value?.fallback
+    && sessions.value.length === 0
+  ))
 
   function syncSessionsCache() {
     if (!currentProject.value) return
@@ -104,17 +157,93 @@ export const useSessionsStore = defineStore('sessions', () => {
       sessions: sessions.value,
       aliases: aliases.value,
       totalSize: totalSize.value,
-      projectInfo: currentProjectInfo.value
+      projectInfo: currentProjectInfo.value,
+      meta: sessionsMeta.value
     })
   }
 
   // Actions
   function setChannel(channel) {
+    if (currentChannel.value === channel) return
+    const previousChannel = currentChannel.value
+    clearProjectRefreshTimer(previousChannel)
+    projectRefreshStartedAt.delete(previousChannel)
+    Array.from(sessionRefreshTimers.keys())
+      .filter(key => key.startsWith(`${previousChannel}:`))
+      .forEach(key => clearRefreshCycle(sessionRefreshTimers, sessionRefreshStartedAt, key))
     currentChannel.value = channel
+    const cached = getCachedProjects(channel)
+    if (cached) {
+      projects.value = cached.projects || []
+      currentProject.value = cached.currentProject || (cached.projects?.[0]?.name || null)
+      projectsMeta.value = cached.meta || null
+    } else {
+      projects.value = []
+      currentProject.value = null
+      projectsMeta.value = null
+    }
+    sessions.value = []
+    aliases.value = {}
+    totalSize.value = 0
+    currentProjectInfo.value = null
+    sessionsMeta.value = null
+    error.value = null
   }
 
-  async function fetchProjects({ force = false } = {}) {
-    loading.value = true
+  function clearProjectRefreshTimer(channel) {
+    clearRefreshTimer(projectRefreshTimers, channel)
+  }
+
+  function clearProjectRefreshCycle(channel) {
+    clearRefreshCycle(projectRefreshTimers, projectRefreshStartedAt, channel)
+  }
+
+  function scheduleProjectRefresh(channel, attempt = 0) {
+    scheduleRefreshTimer(projectRefreshTimers, projectRefreshStartedAt, channel, PROJECT_REFRESH_DELAYS_MS, attempt, () => {
+      if (currentChannel.value === channel) {
+        fetchProjects({ force: true, silent: true, pollAttempt: attempt + 1 }).catch(() => {})
+      }
+    }, () => {
+      if (currentChannel.value !== channel) return
+      projectsMeta.value = {
+        ...(projectsMeta.value || {}),
+        refreshing: false,
+        stale: true,
+        error: projectsMeta.value?.error || '项目列表生成超时，请重试'
+      }
+      error.value = projectsMeta.value.error
+    })
+  }
+
+  function clearSessionRefreshTimer(channel, projectName) {
+    const key = getSessionCacheKey(channel, projectName)
+    clearRefreshTimer(sessionRefreshTimers, key)
+  }
+
+  function clearSessionRefreshCycle(channel, projectName) {
+    clearRefreshCycle(sessionRefreshTimers, sessionRefreshStartedAt, getSessionCacheKey(channel, projectName))
+  }
+
+  function scheduleSessionRefresh(channel, projectName, attempt = 0) {
+    const key = getSessionCacheKey(channel, projectName)
+    scheduleRefreshTimer(sessionRefreshTimers, sessionRefreshStartedAt, key, SESSION_REFRESH_DELAYS_MS, attempt, () => {
+      if (currentChannel.value === channel && currentProject.value === projectName) {
+        fetchSessions(projectName, { force: true, silent: true, pollAttempt: attempt + 1 }).catch(() => {})
+      }
+    }, () => {
+      if (currentChannel.value !== channel || currentProject.value !== projectName) return
+      sessionsMeta.value = {
+        ...(sessionsMeta.value || {}),
+        refreshing: false,
+        stale: true,
+        error: sessionsMeta.value?.error || '会话列表生成超时，请重试'
+      }
+      error.value = sessionsMeta.value.error
+    })
+  }
+
+  async function fetchProjects({ force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
+    if (!silent) loading.value = true
     error.value = null
     try {
       if (!force) {
@@ -122,59 +251,111 @@ export const useSessionsStore = defineStore('sessions', () => {
         if (cached) {
           projects.value = cached.projects || []
           currentProject.value = cached.currentProject || (cached.projects?.[0]?.name || null)
-          loading.value = false
+          projectsMeta.value = cached.meta || null
+          if (!silent) loading.value = false
           return
         }
       }
 
-      const data = await getProjects(currentChannel.value)
-      projects.value = data.projects
-      currentProject.value = data.currentProject
-      setCachedProjects(currentChannel.value, {
-        projects: data.projects,
-        currentProject: data.currentProject
-      })
-      invalidateSessionsCache(currentChannel.value)
+      const channel = currentChannel.value
+      const data = await getProjects(channel, { fresh })
+      if (currentChannel.value !== channel) return
+      const nextProjects = Array.isArray(data.projects) ? data.projects : []
+      const shouldApplyProjects = nextProjects.length > 0 || projects.value.length === 0 || data.meta?.fallback !== true
+      projectsMeta.value = data.meta || null
+      if (data.meta?.error) {
+        error.value = data.meta.error
+      }
+
+      if (shouldApplyProjects) {
+        projects.value = nextProjects
+        currentProject.value = data.currentProject || (nextProjects[0]?.name || null)
+        if (data.meta?.fallback !== true) {
+          setCachedProjects(channel, {
+            projects: nextProjects,
+            currentProject: currentProject.value,
+            meta: data.meta || null
+          })
+          invalidateSessionsCache(channel)
+        }
+      }
+
+      if (data.meta?.refreshing) {
+        scheduleProjectRefresh(channel, pollAttempt)
+      } else {
+        clearProjectRefreshCycle(channel)
+      }
     } catch (err) {
       error.value = err.message
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 
-  async function fetchSessions(projectName, { force = false } = {}) {
-    loading.value = true
+  async function fetchSessions(projectName, { force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
+    if (!silent) loading.value = true
     error.value = null
     try {
+      const channel = currentChannel.value
+      if (currentProject.value !== projectName && !getCachedSessions(channel, projectName)) {
+        sessions.value = []
+        aliases.value = {}
+        totalSize.value = 0
+        currentProjectInfo.value = null
+        sessionsMeta.value = null
+      }
+
       if (!force) {
-        const cached = getCachedSessions(currentChannel.value, projectName)
+        const cached = getCachedSessions(channel, projectName)
         if (cached) {
           sessions.value = cached.sessions || []
           aliases.value = cached.aliases || {}
           totalSize.value = cached.totalSize || 0
           currentProject.value = projectName
           currentProjectInfo.value = cached.projectInfo || null
-          loading.value = false
+          sessionsMeta.value = cached.meta || null
+          if (!silent) loading.value = false
           return
         }
       }
 
-      const data = await getSessions(projectName, currentChannel.value)
-      sessions.value = data.sessions
-      aliases.value = data.aliases
-      totalSize.value = data.totalSize || 0
       currentProject.value = projectName
-      currentProjectInfo.value = data.projectInfo
-      setCachedSessions(currentChannel.value, projectName, {
-        sessions: data.sessions,
-        aliases: data.aliases,
-        totalSize: data.totalSize,
-        projectInfo: data.projectInfo
-      })
+      const data = await getSessions(projectName, channel, { fresh })
+      if (currentChannel.value !== channel || currentProject.value !== projectName) return
+      const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
+      const shouldApplySessions = nextSessions.length > 0 || sessions.value.length === 0 || data.meta?.fallback !== true
+      sessionsMeta.value = data.meta || null
+      if (data.meta?.error) {
+        error.value = data.meta.error
+      }
+      currentProject.value = projectName
+
+      if (shouldApplySessions) {
+        sessions.value = nextSessions
+        aliases.value = data.aliases || {}
+        totalSize.value = data.totalSize || 0
+        currentProjectInfo.value = data.projectInfo || null
+
+        if (data.meta?.fallback !== true) {
+          setCachedSessions(channel, projectName, {
+            sessions: nextSessions,
+            aliases: data.aliases || {},
+            totalSize: data.totalSize || 0,
+            projectInfo: data.projectInfo || null,
+            meta: data.meta || null
+          })
+        }
+      }
+
+      if (data.meta?.refreshing) {
+        scheduleSessionRefresh(channel, projectName, pollAttempt)
+      } else {
+        clearSessionRefreshCycle(channel, projectName)
+      }
     } catch (err) {
       error.value = err.message
     } finally {
-      loading.value = false
+      if (!silent) loading.value = false
     }
   }
 
@@ -263,12 +444,29 @@ export const useSessionsStore = defineStore('sessions', () => {
   async function forkSession(sessionId, options = {}) {
     try {
       const data = await forkSessionApi(currentProject.value, sessionId, currentChannel.value, options)
-      await fetchSessions(currentProject.value, { force: true })
+      await fetchSessions(currentProject.value, { force: true, fresh: true })
       return data.newSessionId
     } catch (err) {
       error.value = err.message
       throw err
     }
+  }
+
+  async function retryProjects() {
+    clearProjectRefreshCycle(currentChannel.value)
+    return fetchProjects({
+      force: true,
+      fresh: Boolean(projectsMeta.value?.error)
+    })
+  }
+
+  async function retrySessions(projectName = currentProject.value) {
+    if (!projectName) return
+    clearSessionRefreshCycle(currentChannel.value, projectName)
+    return fetchSessions(projectName, {
+      force: true,
+      fresh: Boolean(sessionsMeta.value?.error)
+    })
   }
 
   async function saveProjectOrder(order) {
@@ -283,7 +481,8 @@ export const useSessionsStore = defineStore('sessions', () => {
       projects.value = [...orderedProjects, ...remaining]
       setCachedProjects(currentChannel.value, {
         projects: projects.value,
-        currentProject: currentProject.value
+        currentProject: currentProject.value,
+        meta: projectsMeta.value
       })
     } catch (err) {
       error.value = err.message
@@ -320,7 +519,8 @@ export const useSessionsStore = defineStore('sessions', () => {
         sessions: sessions.value,
         aliases: aliases.value,
         totalSize: totalSize.value,
-        projectInfo: currentProjectInfo.value
+        projectInfo: currentProjectInfo.value,
+        meta: sessionsMeta.value
       })
     } catch (err) {
       error.value = err.message
@@ -332,6 +532,8 @@ export const useSessionsStore = defineStore('sessions', () => {
     projects,
     currentProject,
     currentProjectInfo,
+    projectsMeta,
+    sessionsMeta,
     sessions,
     aliases,
     totalSize,
@@ -339,9 +541,17 @@ export const useSessionsStore = defineStore('sessions', () => {
     error,
     currentChannel,
     sessionsWithAlias,
+    projectsRefreshing,
+    sessionsRefreshing,
+    projectsUsingFallback,
+    sessionsUsingFallback,
+    projectsPending,
+    sessionsPending,
     setChannel,
     fetchProjects,
     fetchSessions,
+    retryProjects,
+    retrySessions,
     setAlias,
     deleteAlias,
     deleteSession,

@@ -9,7 +9,7 @@ const { CommandsService } = require('../services/commands-service');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const commandServices = new Map();
 
 function resolvePlatform(rawPlatform) {

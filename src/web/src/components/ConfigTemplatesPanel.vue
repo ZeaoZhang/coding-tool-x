@@ -121,7 +121,8 @@ const cliTypeFilterOptions = [
   { label: 'Claude Code', value: 'claude' },
   { label: 'Codex', value: 'codex' },
   { label: 'Gemini', value: 'gemini' },
-  { label: 'OpenCode', value: 'opencode' }
+  { label: 'OpenCode', value: 'opencode' },
+  { label: 'OMP', value: 'omp' }
 ]
 
 const deletingId = ref(null)

@@ -58,6 +58,15 @@ function broadcastToolProxyState(tool) {
     const channels = getChannels().channels || [];
     const activeChannel = channels.find(ch => ch.enabled !== false) || null;
     broadcastProxyState('opencode', getOpenCodeProxyStatus(), activeChannel, channels);
+    return;
+  }
+
+  if (tool === 'omp') {
+    const { getOmpProxyStatus } = require('../omp-proxy-server');
+    const { getChannels } = require('../services/omp-channels');
+    const channels = getChannels().channels || [];
+    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
+    broadcastProxyState('omp', getOmpProxyStatus(), activeChannel, channels);
   }
 }
 
@@ -120,7 +129,9 @@ router.post('/:tool/:credentialId/apply', async (req, res) => {
     broadcastToolProxyState(tool);
     const message = tool === 'opencode'
       ? 'opencode 已应用 OAuth 凭证，并保留现有 API providers'
-      : `${tool} 已切换到 OAuth 凭证控制`;
+      : tool === 'omp'
+        ? 'OMP 已应用 OAuth 凭证，并保留现有 OMP provider 渠道'
+        : `${tool} 已切换到 OAuth 凭证控制`;
     res.json({
       tool,
       ...result,
@@ -142,7 +153,9 @@ router.post('/:tool/:credentialId/disable-native', (req, res) => {
       ...result,
       message: tool === 'opencode'
         ? 'opencode OAuth provider 已关闭'
-        : `${tool} 本机 OAuth 已关闭`
+        : tool === 'omp'
+          ? 'OMP OAuth provider 已关闭'
+          : `${tool} 本机 OAuth 已关闭`
     });
   } catch (error) {
     res.status(error.statusCode || 500).json({ error: error.message });

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
@@ -13,7 +14,7 @@ const { syncCodexUserEnvironment } = require('./codex-env-manager');
 const nativeKeychain = require('./native-keychain');
 const { maskToken, decodeJwtPayload, removeFileIfExists, sha256 } = require('./oauth-utils');
 
-const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'opencode'];
+const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const GEMINI_MAIN_ACCOUNT_KEY = 'main-account';
 const GEMINI_KEYCHAIN_SERVICE = 'gemini-cli-oauth';
 const CODEX_KEYCHAIN_SERVICE = 'Codex Auth';
@@ -1006,6 +1007,203 @@ function inspectOpenCodeState() {
   };
 }
 
+function resolveOmpRuntime() {
+  try {
+    const ompConfig = require('./omp-config');
+    const runtime = ompConfig.resolveOmpRuntime(process.env, {});
+    return runtime && runtime.runtime === 'omp' && runtime.installed ? runtime : null;
+  } catch {
+    return null;
+  }
+}
+
+function runOmpCommand(args = [], options = {}) {
+  const runtime = options.runtime || resolveOmpRuntime();
+  if (!runtime) {
+    return { ok: false, status: 127, stdout: '', stderr: 'OMP CLI not installed' };
+  }
+
+  const result = spawnSync(runtime.command, args, {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...(options.env || {})
+    },
+    timeout: options.timeout || 10000,
+    windowsHide: true
+  });
+  const status = result?.status === undefined || result?.status === null ? 0 : result.status;
+  return {
+    ok: !result?.error && status === 0,
+    status,
+    stdout: String(result?.stdout || ''),
+    stderr: String(result?.stderr || ''),
+    error: result?.error || null,
+    command: runtime.command
+  };
+}
+
+function getOmpAuthSnapshot(options = {}) {
+  try {
+    const { getOmpAuthProviderSnapshot } = require('./omp-auth-providers');
+    return getOmpAuthProviderSnapshot({
+      accountCheck: true,
+      includeStatus: false,
+      ...options
+    });
+  } catch {
+    return null;
+  }
+}
+
+function readAllOmpNativeOAuth() {
+  const snapshot = getOmpAuthSnapshot({ forceRefresh: true });
+  if (!snapshot?.available || !Array.isArray(snapshot.providers)) {
+    return [];
+  }
+
+  return snapshot.providers
+    .filter(provider => provider?.loggedIn || Number(provider?.accountCount || 0) > 0)
+    .flatMap((provider) => {
+      const accounts = Array.isArray(provider.accounts) && provider.accounts.length > 0
+        ? provider.accounts
+        : [{ index: 1, identity: '' }];
+      return accounts.map((account) => ({
+        providerId: provider.id,
+        accountId: String(account.index || '').trim(),
+        accountEmail: String(account.identity || '').trim(),
+        storage: 'auth-broker',
+        primaryToken: ''
+      }));
+    });
+}
+
+function readOmpNativeOAuth() {
+  return readAllOmpNativeOAuth()[0] || null;
+}
+
+function clearOmpOAuth() {
+  const credentials = readAllOmpNativeOAuth();
+  const providerIds = [...new Set(credentials.map(item => item.providerId).filter(Boolean))];
+  providerIds.forEach((providerId) => {
+    runOmpCommand(['auth-broker', 'logout', providerId], { timeout: 10000 });
+  });
+  try {
+    require('./omp-auth-providers').clearOmpAuthProviderCache();
+  } catch {
+    // cache invalidation is best-effort
+  }
+}
+
+function disableOmpOAuthCredential(credential = {}) {
+  const providerId = String(credential.providerId || '').trim();
+  if (!providerId) {
+    clearOmpOAuth();
+    return;
+  }
+  runOmpCommand(['auth-broker', 'logout', providerId], { timeout: 10000 });
+  try {
+    require('./omp-auth-providers').clearOmpAuthProviderCache();
+  } catch {
+    // cache invalidation is best-effort
+  }
+}
+
+function buildOmpImportPayload(credential = {}) {
+  if (credential.importPayload && typeof credential.importPayload === 'object') {
+    return credential.importPayload;
+  }
+
+  const access = String(credential.accessToken || credential.primaryToken || '').trim();
+  if (!access) {
+    return null;
+  }
+
+  return {
+    provider: credential.providerId,
+    credential_type: credential.credentialType || 'oauth',
+    identity_key: credential.identityKey || credential.accountId || credential.accountEmail || undefined,
+    data: {
+      access,
+      refresh: credential.refreshToken || '',
+      expires: credential.expiresAt || null,
+      accountId: credential.accountId || undefined,
+      accountEmail: credential.accountEmail || undefined
+    }
+  };
+}
+
+function hasOmpNativeCredential(providerId) {
+  return readAllOmpNativeOAuth().some((entry) => (
+    !providerId || entry.providerId === providerId
+  ));
+}
+
+function applyOmpOAuth(credential = {}) {
+  const providerId = String(credential.providerId || '').trim();
+  if (!providerId) {
+    throw new Error('OMP OAuth credential requires providerId');
+  }
+
+  const payload = buildOmpImportPayload(credential);
+  if (!payload) {
+    if (hasOmpNativeCredential(providerId)) {
+      return { storage: 'auth-broker-existing' };
+    }
+    throw new Error('OMP OAuth credential requires an import payload or access token');
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-omp-oauth-'));
+  const tempPath = path.join(tempDir, `${providerId}.json`);
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
+    ensureFileMode(tempPath);
+    const result = runOmpCommand(['auth-broker', 'import', tempPath, '--provider', providerId], { timeout: 15000 });
+    if (!result.ok) {
+      const detail = result.stderr.trim() || result.stdout.trim() || result.error?.message || `exit code ${result.status}`;
+      throw new Error(`OMP auth-broker import failed: ${detail}`);
+    }
+    try {
+      require('./omp-auth-providers').clearOmpAuthProviderCache();
+    } catch {
+      // cache invalidation is best-effort
+    }
+    return { storage: 'auth-broker' };
+  } finally {
+    try {
+      removeFileIfExists(tempPath);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup failures
+    }
+  }
+}
+
+function inspectOmpState() {
+  const { getOmpProxyStatus } = require('../omp-proxy-server');
+  const { isManagedOmpProvidersActive } = require('./omp-settings-manager');
+  const proxyStatus = getOmpProxyStatus();
+  const nativeCredentials = readAllOmpNativeOAuth();
+
+  let channelConfigured = false;
+  try {
+    channelConfigured = Boolean(isManagedOmpProvidersActive());
+  } catch {
+    channelConfigured = false;
+  }
+
+  return {
+    tool: 'omp',
+    mode: proxyStatus.running || channelConfigured
+      ? 'proxy'
+      : (nativeCredentials.length > 0 ? 'oauth' : 'idle'),
+    proxyRunning: Boolean(proxyStatus.running || channelConfigured),
+    oauthPresent: nativeCredentials.length > 0,
+    channelConfigured,
+    nativeCredential: nativeCredentials[0] ? buildNativeSummary(nativeCredentials[0]) : null
+  };
+}
+
 function inspectTool(tool) {
   switch (tool) {
     case 'claude':
@@ -1016,6 +1214,8 @@ function inspectTool(tool) {
       return inspectGeminiState();
     case 'opencode':
       return inspectOpenCodeState();
+    case 'omp':
+      return inspectOmpState();
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -1031,6 +1231,8 @@ function readNativeOAuth(tool) {
       return readGeminiNativeOAuth();
     case 'opencode':
       return readOpenCodeNativeOAuth();
+    case 'omp':
+      return readOmpNativeOAuth();
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -1052,6 +1254,8 @@ function readAllNativeOAuth(tool) {
     }
     case 'opencode':
       return readAllOpenCodeNativeOAuth();
+    case 'omp':
+      return readAllOmpNativeOAuth();
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -1070,6 +1274,9 @@ function clearNativeOAuth(tool) {
       return;
     case 'opencode':
       clearOpenCodeOAuth();
+      return;
+    case 'omp':
+      clearOmpOAuth();
       return;
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
@@ -1090,6 +1297,9 @@ function disableNativeOAuthCredential(tool, credential = {}) {
     case 'opencode':
       disableOpenCodeOAuthCredential(credential);
       return;
+    case 'omp':
+      disableOmpOAuthCredential(credential);
+      return;
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -1105,6 +1315,8 @@ function applyOAuthCredential(tool, credential) {
       return applyGeminiOAuth(credential);
     case 'opencode':
       return applyOpenCodeOAuth(credential);
+    case 'omp':
+      return applyOmpOAuth(credential);
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }

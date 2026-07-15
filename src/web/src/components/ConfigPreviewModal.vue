@@ -34,7 +34,7 @@
           <template v-if="hasAiConfigs">
             <div class="stat-item" v-for="ai in enabledAiConfigs" :key="ai.key">
               <n-icon size="20" :color="ai.color"><DocumentTextOutline /></n-icon>
-              <span>{{ ai.fileName }}</span>
+              <span>{{ ai.fileName || ai.name }}</span>
             </div>
           </template>
           <div class="stat-item" v-else-if="template.claudeMd?.enabled">
@@ -66,7 +66,7 @@
         <n-collapse-item
           v-for="ai in enabledAiConfigs"
           :key="ai.key"
-          :title="`${ai.name} 配置 (${ai.fileName})`"
+          :title="`${ai.name} 配置 (${ai.fileName || ai.name})`"
           :name="ai.key"
         >
           <div class="markdown-content">
@@ -99,6 +99,9 @@
         </n-collapse-item>
         <n-collapse-item title="Commands 列表" name="commands" v-if="template.commands?.length">
           <div class="list-items">
+            <div v-if="template.cliType === 'omp'" class="list-note">
+              将写入 .omp/commands，作为 OMP commands 使用。
+            </div>
             <div v-for="(item, idx) in template.commands" :key="idx" class="list-item">
               {{ item.name || item }}
             </div>
@@ -147,13 +150,13 @@ const AI_CONFIG_INFO = {
   claude: { key: 'claude', name: 'Claude', fileName: 'CLAUDE.md', color: '#cc785c' },
   codex: { key: 'codex', name: 'Codex', fileName: 'AGENTS.md', color: '#10a37f' },
   gemini: { key: 'gemini', name: 'Gemini', fileName: 'GEMINI.md', color: '#4285f4' },
-  opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' }
+  opencode: { key: 'opencode', name: 'OpenCode', fileName: '.opencode/AGENTS.md', color: '#ff6b35' },
+  omp: { key: 'omp', name: 'OMP command templates', fileName: '.omp/commands', color: '#0f9f9a' }
 }
 
 // 获取启用的 AI 配置列表（优先展示当前 CLI 对应配置）
 const enabledAiConfigs = computed(() => {
-  const aiConfigs = props.template?.aiConfigs
-  if (!aiConfigs) return []
+  const aiConfigs = props.template?.aiConfigs || {}
 
   const allEnabled = Object.entries(aiConfigs)
     .filter(([, cfg]) => cfg?.enabled && cfg?.content)
@@ -164,6 +167,14 @@ const enabledAiConfigs = computed(() => {
     .filter(item => item.key)
 
   const cliType = props.template?.cliType
+  if (cliType === 'omp' && props.template?.commands?.length) {
+    return [{
+      ...AI_CONFIG_INFO.omp,
+      content: props.template.commands
+        .map(command => `- ${command.namespace ? `${command.namespace}/` : ''}${command.name || command}`)
+        .join('\n')
+    }]
+  }
   if (cliType && cliType !== 'all') {
     const preferred = aiConfigs[cliType]
     if (preferred?.enabled && preferred?.content && AI_CONFIG_INFO[cliType]) {
@@ -191,7 +202,8 @@ const CLI_TYPE_MAP = {
   claude: { label: 'Claude', color: '#cc785c', textColor: '#fff', borderColor: '#cc785c' },
   codex: { label: 'Codex', color: '#10a37f', textColor: '#fff', borderColor: '#10a37f' },
   gemini: { label: 'Gemini', color: '#4285f4', textColor: '#fff', borderColor: '#4285f4' },
-  opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' }
+  opencode: { label: 'OpenCode', color: '#ff6b35', textColor: '#fff', borderColor: '#ff6b35' },
+  omp: { label: 'OMP', color: '#0f9f9a', textColor: '#fff', borderColor: '#0f9f9a' }
 }
 
 function cliTypeLabel(type) {
@@ -276,6 +288,11 @@ function handleApply() {
   border-radius: 4px;
   font-size: 13px;
   color: var(--text-primary);
+}
+.list-note {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
 }
 .list-item .item-desc {
   color: var(--text-tertiary);

@@ -3,10 +3,12 @@ const os = require('os');
 const path = require('path');
 
 let testDir;
+let globalClaudeDir;
 let ConfigSyncService;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-sync-'));
+  globalClaudeDir = path.join(testDir, 'custom-claude');
 
   const pathsModulePath = require.resolve('../../../src/config/paths');
   require.cache[pathsModulePath] = {
@@ -14,7 +16,13 @@ beforeEach(() => {
     filename: pathsModulePath,
     loaded: true,
     exports: {
-      HOME_DIR: testDir
+      HOME_DIR: testDir,
+      NATIVE_PATHS: {
+        claude: {
+          dir: globalClaudeDir,
+          settings: path.join(globalClaudeDir, 'settings.json')
+        }
+      }
     }
   };
 
@@ -35,12 +43,14 @@ function writeFile(filePath, content) {
 
 describe('ConfigSyncService scanning and stats', () => {
   test('scans global skills, agents and commands with metadata', () => {
-    writeFile(path.join(testDir, '.claude', 'skills', 'review-skill', 'SKILL.md'), '---\nname: "Review Skill"\ndescription: "Helpful"\n---\nBody');
-    writeFile(path.join(testDir, '.claude', 'skills', 'review-skill', 'docs', 'guide.md'), '# Guide');
-    writeFile(path.join(testDir, '.claude', 'agents', 'helper.md'), '---\nname: "Helper"\ndescription: "Agent"\n---\nbody');
-    writeFile(path.join(testDir, '.claude', 'commands', 'review.md'), '---\nname: "Review"\ndescription: "Command"\n---\nbody');
+    writeFile(path.join(globalClaudeDir, 'skills', 'review-skill', 'SKILL.md'), '---\nname: "Review Skill"\ndescription: "Helpful"\n---\nBody');
+    writeFile(path.join(globalClaudeDir, 'skills', 'review-skill', 'docs', 'guide.md'), '# Guide');
+    writeFile(path.join(globalClaudeDir, 'agents', 'helper.md'), '---\nname: "Helper"\ndescription: "Agent"\n---\nbody');
+    writeFile(path.join(globalClaudeDir, 'commands', 'review.md'), '---\nname: "Review"\ndescription: "Command"\n---\nbody');
 
     const service = new ConfigSyncService();
+    expect(service.globalConfigDir).toBe(globalClaudeDir);
+
     const result = service.getAvailableConfigs('global');
 
     expect(result.skills[0]).toMatchObject({
@@ -60,8 +70,8 @@ describe('ConfigSyncService scanning and stats', () => {
 
   test('getStats counts global and workspace configs', () => {
     const projectPath = path.join(testDir, 'project');
-    writeFile(path.join(testDir, '.claude', 'agents', 'helper.md'), '---\nname: "Helper"\n---\nbody');
-    writeFile(path.join(testDir, '.claude', 'commands', 'review.md'), '---\nname: "Review"\n---\nbody');
+    writeFile(path.join(globalClaudeDir, 'agents', 'helper.md'), '---\nname: "Helper"\n---\nbody');
+    writeFile(path.join(globalClaudeDir, 'commands', 'review.md'), '---\nname: "Review"\n---\nbody');
     writeFile(path.join(projectPath, '.claude', 'agents', 'local.md'), '---\nname: "Local"\n---\nbody');
 
     const service = new ConfigSyncService();
@@ -118,8 +128,8 @@ describe('ConfigSyncService preview and execution', () => {
 
   test('executeSync copies directories and files and skips existing targets by default', () => {
     const projectPath = path.join(testDir, 'project');
-    writeFile(path.join(testDir, '.claude', 'skills', 'review-skill', 'SKILL.md'), '---\nname: "Review Skill"\n---\nbody');
-    writeFile(path.join(testDir, '.claude', 'agents', 'helper.md'), 'helper');
+    writeFile(path.join(globalClaudeDir, 'skills', 'review-skill', 'SKILL.md'), '---\nname: "Review Skill"\n---\nbody');
+    writeFile(path.join(globalClaudeDir, 'agents', 'helper.md'), 'helper');
     writeFile(path.join(projectPath, '.claude', 'agents', 'helper.md'), 'existing');
 
     const service = new ConfigSyncService();
@@ -145,7 +155,7 @@ describe('ConfigSyncService preview and execution', () => {
 
   test('executeSync overwrites existing file when overwrite is true', () => {
     const projectPath = path.join(testDir, 'project');
-    writeFile(path.join(testDir, '.claude', 'commands', 'review.md'), 'new-body');
+    writeFile(path.join(globalClaudeDir, 'commands', 'review.md'), 'new-body');
     writeFile(path.join(projectPath, '.claude', 'commands', 'review.md'), 'old-body');
 
     const service = new ConfigSyncService();

@@ -71,6 +71,20 @@ const routes = [
     props: true,
     meta: { channel: 'opencode' }
   },
+  // OMP 渠道路由
+  {
+    path: '/omp',
+    name: 'omp-projects',
+    component: ProjectList,
+    meta: { channel: 'omp' }
+  },
+  {
+    path: '/omp/sessions/:projectName',
+    name: 'omp-sessions',
+    component: SessionList,
+    props: true,
+    meta: { channel: 'omp' }
+  },
   // 工作区管理路由
   {
     path: '/workspaces',

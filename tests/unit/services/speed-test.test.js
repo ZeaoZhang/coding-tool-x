@@ -1,6 +1,7 @@
 'use strict';
 
 const Module = require('module');
+const http = require('http');
 const path = require('path');
 
 // ─── Stub heavy dependencies into require.cache before loading speed-test ────
@@ -41,15 +42,30 @@ stubModule(
   { getEffectiveApiKey: () => null }
 );
 stubModule(
+  path.join(PROJECT_ROOT, 'src/server/services/omp-channels.js'),
+  { getEffectiveApiKey: (channel) => channel?.apiKey || null }
+);
+stubModule(
   path.join(PROJECT_ROOT, 'src/server/services/request-logger.js'),
   { loadClaudeRequestTemplate: () => null }
 );
 
 const {
+  testChannelSpeed,
   getLatencyLevel,
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit,
 } = require('../../../src/server/services/speed-test');
+
+async function withJsonServer(handler) {
+  const server = http.createServer(handler);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve) => server.close(resolve))
+  };
+}
 
 // ─── getLatencyLevel ──────────────────────────────────────────────────────────
 describe('getLatencyLevel', () => {
@@ -179,5 +195,39 @@ describe('runWithConcurrencyLimit', () => {
     const items = ['a', 'b', 'c'];
     const result = await runWithConcurrencyLimit(items, 1, async (item) => item.toUpperCase());
     expect(result).toEqual(['A', 'B', 'C']);
+  });
+});
+
+describe('testChannelSpeed', () => {
+  test('uses OMP channel credentials while keeping the configured request format', async () => {
+    let seenAuth = null;
+    let seenPath = null;
+    const server = await withJsonServer((req, res) => {
+      seenAuth = req.headers.authorization;
+      seenPath = req.url;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'ok' }));
+    });
+
+    try {
+      const result = await testChannelSpeed(
+        {
+          id: 'omp-1',
+          name: 'OMP One',
+          baseUrl: `${server.baseUrl}/v1`,
+          apiKey: 'omp-secret',
+          model: 'gpt-5'
+        },
+        5000,
+        'codex',
+        { authSourceType: 'omp' }
+      );
+
+      expect(result.success).toBe(true);
+      expect(seenAuth).toBe('Bearer omp-secret');
+      expect(seenPath).toBe('/v1/responses');
+    } finally {
+      await server.close();
+    }
   });
 });

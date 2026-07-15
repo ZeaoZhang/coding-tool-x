@@ -182,18 +182,24 @@ function inferSource(log) {
   if (log.toolType) {
     if (log.toolType.includes('codex')) return 'codex';
     if (log.toolType.includes('gemini')) return 'gemini';
+    if (log.toolType.includes('opencode')) return 'opencode';
+    if (log.toolType.includes('omp')) return 'omp';
   }
   if (typeof log.model === 'string') {
     const model = log.model.toLowerCase();
     if (model.includes('gemini')) return 'gemini';
+    if (model.includes('opencode')) return 'opencode';
+    if (model.includes('omp')) return 'omp';
     if (model.includes('gpt') || model.includes('o1') || model.includes('o3')) return 'codex';
     if (model.includes('claude')) return 'claude';
   }
   if (typeof log.action === 'string') {
     if (log.action.includes('codex')) return 'codex';
     if (log.action.includes('gemini')) return 'gemini';
+    if (log.action.includes('opencode')) return 'opencode';
+    if (log.action.includes('omp')) return 'omp';
   }
-  if (log.channelType === 'codex' || log.channelType === 'gemini') {
+  if (log.channelType === 'codex' || log.channelType === 'gemini' || log.channelType === 'opencode' || log.channelType === 'omp') {
     return log.channelType;
   }
   return 'claude';

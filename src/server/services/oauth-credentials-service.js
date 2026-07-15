@@ -240,6 +240,70 @@ function parseOpenCodeImport(rawText) {
   };
 }
 
+function pickOmpCredentialEntry(parsed) {
+  if (Array.isArray(parsed)) {
+    return parsed.find(item => item && typeof item === 'object') || null;
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+  if (parsed.provider || parsed.providerId || parsed.provider_id || parsed.providerKey || parsed.credential_type || parsed.data) {
+    return parsed;
+  }
+  const entry = Object.entries(parsed).find(([, value]) => value && typeof value === 'object');
+  return entry ? { provider: entry[0], ...entry[1] } : parsed;
+}
+
+function parseOmpImport(rawText) {
+  const parsed = tryParseJson(rawText);
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('OMP OAuth 仅支持 JSON 导入。');
+  }
+
+  const entry = pickOmpCredentialEntry(parsed);
+  if (!entry || typeof entry !== 'object') {
+    throw new Error('OMP OAuth 导入缺少 provider。');
+  }
+
+  const data = entry.data && typeof entry.data === 'object' ? entry.data : entry;
+  const providerId = safeString(
+    entry.providerId
+    || entry.provider_id
+    || entry.providerKey
+    || entry.provider
+    || data.providerId
+    || data.provider
+  );
+  if (!providerId) {
+    throw new Error('OMP OAuth 导入缺少 providerId。');
+  }
+
+  const accessToken = safeString(
+    data.accessToken
+    || data.access_token
+    || data.access
+    || data.token
+    || data.authToken
+  );
+  const credentialType = safeString(entry.credentialType || entry.credential_type || data.type || 'oauth') || 'oauth';
+  if (credentialType === 'oauth' && !accessToken && !entry.data) {
+    throw new Error('OMP OAuth 导入缺少 access/accessToken。');
+  }
+
+  return {
+    providerId,
+    credentialType,
+    accessToken,
+    refreshToken: safeString(data.refreshToken || data.refresh_token || data.refresh),
+    expiresAt: safeNumber(data.expiresAt || data.expiry_date || data.expiryDate || data.expires),
+    accountId: safeString(data.accountId || data.account_id || entry.accountId || entry.account_id),
+    accountEmail: safeString(data.accountEmail || data.email || entry.accountEmail || entry.email),
+    identityKey: safeString(entry.identityKey || entry.identity_key || data.identityKey || data.identity_key),
+    importPayload: parsed,
+    primaryToken: accessToken
+  };
+}
+
 function parseCredentialInput(tool, rawText) {
   switch (tool) {
     case 'claude':
@@ -250,6 +314,8 @@ function parseCredentialInput(tool, rawText) {
       return parseGeminiImport(rawText);
     case 'opencode':
       return parseOpenCodeImport(rawText);
+    case 'omp':
+      return parseOmpImport(rawText);
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -261,7 +327,7 @@ function buildCredentialName(tool, metadata, providedName = '') {
     return explicit;
   }
 
-  if (tool === 'opencode' && safeString(metadata.providerId)) {
+  if ((tool === 'opencode' || tool === 'omp') && safeString(metadata.providerId)) {
     const accountLabel = safeString(metadata.accountId || metadata.accountEmail);
     return accountLabel
       ? `${tool} - ${metadata.providerId} - ${accountLabel}`
@@ -386,6 +452,19 @@ function extractSecrets(tool, metadata) {
         enterpriseUrl: metadata.enterpriseUrl || '',
         primaryToken: metadata.primaryToken || metadata.accessToken || ''
       };
+    case 'omp':
+      return {
+        providerId: metadata.providerId || '',
+        credentialType: metadata.credentialType || 'oauth',
+        accessToken: metadata.accessToken || '',
+        refreshToken: metadata.refreshToken || '',
+        expiresAt: metadata.expiresAt || null,
+        accountId: metadata.accountId || '',
+        accountEmail: metadata.accountEmail || '',
+        identityKey: metadata.identityKey || '',
+        importPayload: metadata.importPayload || null,
+        primaryToken: metadata.primaryToken || metadata.accessToken || ''
+      };
     default:
       return { primaryToken: metadata.primaryToken || metadata.accessToken || '' };
   }
@@ -395,7 +474,7 @@ function stableFingerprintValue(tool, metadata) {
   // 优先使用稳定标识符，避免 access token 轮换导致重复记录
   const stableId = metadata.accountEmail
     || metadata.accountId
-    || (tool === 'opencode' ? metadata.providerId : '')
+    || ((tool === 'opencode' || tool === 'omp') ? metadata.providerId : '')
     || metadata.refreshToken
     || metadata.primaryToken
     || metadata.accessToken
@@ -559,6 +638,11 @@ function cleanupManagedArtifacts(tool) {
 
   if (tool === 'opencode') {
     opencodeSettingsManager.deleteBackup?.();
+    return;
+  }
+
+  if (tool === 'omp') {
+    return;
   }
 }
 
@@ -597,6 +681,14 @@ async function stopProxyIfRunning(tool) {
       }
       return false;
     }
+    case 'omp': {
+      const { stopOmpProxyServer, getOmpProxyStatus } = require('../omp-proxy-server');
+      if (getOmpProxyStatus().running) {
+        await stopOmpProxyServer();
+        return true;
+      }
+      return false;
+    }
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -625,6 +717,11 @@ function disableAllChannelsForTool(tool) {
         disableAllChannels();
         break;
       }
+      case 'omp': {
+        const { disableAllChannels } = require('./omp-channels');
+        disableAllChannels();
+        break;
+      }
     }
   } catch (err) {
     console.warn(`[OAuth] Failed to disable channels for ${tool}:`, err.message);
@@ -635,7 +732,7 @@ async function applyStoredCredential(tool, credentialId) {
   const entry = findStoredCredential(tool, credentialId);
   const proxyStopped = await stopProxyIfRunning(tool);
   cleanupManagedArtifacts(tool);
-  if (tool !== 'opencode') {
+  if (tool !== 'opencode' && tool !== 'omp') {
     disableAllChannelsForTool(tool);
   }
   applyOAuthCredential(tool, entry.secrets);
@@ -810,6 +907,16 @@ async function fetchCredentialUsage(tool, credentialId) {
       return await fetchGeminiUsage(accessToken);
     case 'opencode': {
       const providerId = entry.providerId || 'openai';
+      if (providerId.includes('claude') || providerId.includes('anthropic')) {
+        return await fetchClaudeUsage(accessToken);
+      } else if (providerId.includes('gemini') || providerId.includes('google')) {
+        return await fetchGeminiUsage(accessToken);
+      } else {
+        return await fetchCodexUsage(accessToken);
+      }
+    }
+    case 'omp': {
+      const providerId = entry.providerId || secrets.providerId || '';
       if (providerId.includes('claude') || providerId.includes('anthropic')) {
         return await fetchClaudeUsage(accessToken);
       } else if (providerId.includes('gemini') || providerId.includes('google')) {

@@ -9,6 +9,7 @@ function normalizeToolSource(source = '') {
   if (normalized === 'codex') return 'codex';
   if (normalized === 'gemini') return 'gemini';
   if (normalized === 'opencode') return 'opencode';
+  if (normalized === 'omp' || normalized === 'omp-agent') return 'omp';
   return 'claude';
 }
 

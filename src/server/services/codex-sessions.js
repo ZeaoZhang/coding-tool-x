@@ -227,10 +227,14 @@ function normalizeSession(codexSession) {
  * 聚合项目列表
  * @returns {Array} 项目对象数组
  */
-function getProjects() {
-  const cached = globalCache.get(CODEX_PROJECTS_CACHE_KEY);
-  if (cached) {
-    return cached;
+function getProjects(options = {}) {
+  if (options.force) {
+    invalidateCodexSessionCaches();
+  } else {
+    const cached = globalCache.get(CODEX_PROJECTS_CACHE_KEY);
+    if (cached) {
+      return cached;
+    }
   }
 
   const sessions = getAllSessions();
@@ -302,11 +306,15 @@ function getProjects() {
  * @param {string} projectName - 项目名称
  * @returns {Array} 归一化的会话数组
  */
-function getSessionsByProject(projectName) {
+function getSessionsByProject(projectName, options = {}) {
   const cacheKey = getCodexSessionsCacheKey(projectName);
-  const cached = globalCache.get(cacheKey);
-  if (cached) {
-    return cached;
+  if (options.force) {
+    invalidateCodexSessionCaches({ projectName });
+  } else {
+    const cached = globalCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
   }
 
   const sessions = getAllSessions();
@@ -975,9 +983,14 @@ function calculateProjectAndSessionCounts() {
 /**
  * 获取 Codex 项目与会话数量（用于仪表盘轻量统计）
  */
-function getProjectAndSessionCounts() {
+function getProjectAndSessionCounts(options = {}) {
   const now = Date.now();
-  if (countsCache.expiresAt > now) {
+  if (options.force) {
+    countsCache.expiresAt = 0;
+    scanFilesCache.expiresAt = 0;
+    sessionFileIndexCache.expiresAt = 0;
+  }
+  if (!options.force && countsCache.expiresAt > now) {
     return countsCache.value;
   }
 

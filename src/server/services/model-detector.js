@@ -95,6 +95,13 @@ function getModelPriority(channelType, options = {}) {
     console.warn(`[ModelDetector] Failed to load default models config: ${error.message}`);
   }
 
+  for (const toolType of candidateTypes) {
+    const models = MODEL_PRIORITY[toolType];
+    if (Array.isArray(models) && models.length > 0) {
+      return normalizeModelCandidates(models);
+    }
+  }
+
   return [];
 }
 
@@ -779,6 +786,12 @@ function buildChannelCacheSignature(channel, payload = {}) {
   return crypto.createHash('sha1').update(raw).digest('hex');
 }
 
+function getChannelCacheKey(channel, signature) {
+  const id = String(channel?.id || '').trim();
+  if (id) return id;
+  return `temporary:${signature}`;
+}
+
 function isSignatureCacheValid(cacheEntry, signatureKey, expectedSignature) {
   if (!cacheEntry || !signatureKey || !expectedSignature) return false;
   return cacheEntry[signatureKey] === expectedSignature;
@@ -846,7 +859,6 @@ async function probeModelAvailability(channel, channelType, options = {}) {
   const toolType = options.toolType;
   const stopOnFirstAvailable = !!options.stopOnFirstAvailable;
   const cache = loadModelCache();
-  const cacheKey = channel.id;
   const preferredModels = normalizeModelCandidates(options.preferredModels);
   const probeSignature = buildChannelCacheSignature(channel, {
     type: 'probe',
@@ -855,6 +867,7 @@ async function probeModelAvailability(channel, channelType, options = {}) {
     stopOnFirstAvailable,
     preferredModels
   });
+  const cacheKey = getChannelCacheKey(channel, probeSignature);
 
   // Return cached result if channel and probe options are unchanged
   if (!forceRefresh && isSignatureCacheValid(cache[cacheKey], 'probeSignature', probeSignature)) {
@@ -1007,11 +1020,11 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
   }
 
   const cache = loadModelCache();
-  const cacheKey = channel.id;
   const listSignature = buildChannelCacheSignature(channel, {
     type: 'model-list',
     channelType: String(channelType || '').trim().toLowerCase()
   });
+  const cacheKey = getChannelCacheKey(channel, listSignature);
 
   // Check cache first, and only reuse when channel/list context is unchanged
   if (!forceRefresh

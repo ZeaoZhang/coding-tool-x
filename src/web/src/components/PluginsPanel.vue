@@ -134,6 +134,7 @@ import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
+import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -166,24 +167,26 @@ const capabilities = ref({
   import: true,
   syncRepos: true
 })
+const managedPluginPlatforms = BUILT_IN_CLI_PLATFORMS
+  .filter(platform => platform.supportsPlugins !== false)
+  .map(platform => platform.key)
 
 const currentPlatform = computed(() => {
-  if (props.platform && ['claude', 'codex', 'gemini', 'opencode'].includes(props.platform)) {
+  if (props.platform && managedPluginPlatforms.includes(props.platform)) {
     return props.platform
   }
+  const queryPlatform = Array.isArray(route.query.platform)
+    ? route.query.platform[0]
+    : route.query.platform
+  if (managedPluginPlatforms.includes(queryPlatform)) return queryPlatform
   const channel = route.meta.channel
-  if (channel === 'codex' || channel === 'gemini' || channel === 'opencode') return channel
+  if (managedPluginPlatforms.includes(channel)) return channel
   return 'claude'
 })
 
 const currentPlatformLabel = computed(() => {
-  const map = {
-    claude: 'Claude Code',
-    codex: 'Codex CLI',
-    gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
-  }
-  return map[currentPlatform.value] || 'Claude Code'
+  const platform = getPlatformConfig(currentPlatform.value)
+  return platform.label || platform.title || 'Claude Code'
 })
 
 const filterOptions = [
@@ -233,11 +236,11 @@ async function loadCapabilities(platform) {
     // 旧服务端降级：保留 Claude/OpenCode 可用，Codex 不再前端硬编码只读
   }
   capabilities.value = {
-    supportsPlugins: currentPlatform.value !== 'gemini',
-    repositories: currentPlatform.value !== 'gemini',
-    market: currentPlatform.value !== 'gemini',
-    install: currentPlatform.value !== 'gemini',
-    uninstall: currentPlatform.value !== 'gemini',
+    supportsPlugins: managedPluginPlatforms.includes(currentPlatform.value),
+    repositories: managedPluginPlatforms.includes(currentPlatform.value),
+    market: managedPluginPlatforms.includes(currentPlatform.value),
+    install: managedPluginPlatforms.includes(currentPlatform.value),
+    uninstall: managedPluginPlatforms.includes(currentPlatform.value),
     import: currentPlatform.value === 'claude',
     syncRepos: currentPlatform.value === 'claude'
   }
@@ -289,6 +292,10 @@ async function loadData(force = false) {
           marketplace: p.marketplace || marketInfo.marketplace || '',
           installSource: p.installSource || marketInfo.installSource || '',
           readmeUrl: p.readmeUrl || marketInfo.readmeUrl || '',
+          containsSkills: Boolean(p.containsSkills || marketInfo.containsSkills),
+          skillPaths: Array.isArray(p.skillPaths) ? p.skillPaths : (Array.isArray(marketInfo.skillPaths) ? marketInfo.skillPaths : []),
+          pluginKind: p.pluginKind || marketInfo.pluginKind || ((p.containsSkills || marketInfo.containsSkills) ? 'skill-bundle' : 'plugin'),
+          strict: Object.prototype.hasOwnProperty.call(p, 'strict') ? p.strict : marketInfo.strict,
           directory: p.directory || marketInfo.directory || p.installPath || ''
         }
       })
