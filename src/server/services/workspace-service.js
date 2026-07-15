@@ -220,30 +220,14 @@ function createGitWorktree({ sourcePath, worktreePath, branch, baseBranch, branc
   }
 
   try {
-    runGitCommand(['worktree', 'add', worktreePath, targetBranch], {
+    // Existing branches may already be checked out in another worktree.
+    // `-f` makes that explicit instead of relying on a version-dependent retry.
+    runGitCommand(['worktree', 'add', '-f', worktreePath, targetBranch], {
       cwd: sourcePath
     });
     return { branch: targetBranch, path: worktreePath };
   } catch (error) {
-    const message = getGitErrorMessage(error);
-    if (/already (checked out|used by worktree)/i.test(message)) {
-      try {
-        runGitCommand(['worktree', 'add', '--force', worktreePath, targetBranch], {
-          cwd: sourcePath
-        });
-        return { branch: targetBranch, path: worktreePath };
-      } catch (forceError) {
-        throw new Error(
-          `无法${actionLabel}：分支 '${targetBranch}' 已在其他工作树中检出。\n` +
-          `仓库路径: ${sourcePath}\n` +
-          `错误详情: ${getGitErrorMessage(forceError)}\n\n` +
-          `解决方案：\n` +
-          `1. 指定不同的分支名\n` +
-          `2. 或者禁用 worktree 模式（设置 createWorktree: false）`
-        );
-      }
-    }
-    throw new Error(`创建 worktree 失败: ${message}`);
+    throw new Error(`创建 worktree 失败: ${getGitErrorMessage(error)}`);
   }
 }
 

@@ -12,14 +12,6 @@
   min-height: 200px;
 }
 
-.channel-status-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
 .model-catalog-control {
   display: flex;
   align-items: center;

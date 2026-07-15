@@ -24,8 +24,7 @@ const {
 const {
   findAuthProviderForKey,
   getCachedOmpAuthProviderSnapshot,
-  getOmpAuthProviderCacheMeta,
-  warmOmpAuthProviderSnapshot
+  getOmpAuthProviderCacheMeta
 } = require('../services/omp-auth-providers');
 
 const CHANNEL_LIST_AUTH_OPTIONS = { accountCheck: false, includeStatus: false };
@@ -142,17 +141,12 @@ function attachAuthProvider(channel, snapshot) {
 
 function getAuthSnapshotForChannelList() {
   const snapshot = getCachedOmpAuthProviderSnapshot(CHANNEL_LIST_AUTH_OPTIONS);
-  const shouldWarm = !snapshot || snapshot.stale;
-  if (shouldWarm) {
-    warmOmpAuthProviderSnapshot(CHANNEL_LIST_AUTH_OPTIONS);
-  }
   const meta = getOmpAuthProviderCacheMeta(CHANNEL_LIST_AUTH_OPTIONS);
   return {
     snapshot,
     meta: {
       ...meta,
       stale: !snapshot || Boolean(snapshot.stale),
-      refreshing: shouldWarm || meta.refreshing,
       fallback: !snapshot
     }
   };

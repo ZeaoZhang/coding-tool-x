@@ -128,6 +128,21 @@ describe('omp-config path resolution', () => {
     expect(commandRunner).not.toHaveBeenCalled();
   });
 
+  test('can report native OMP status without starting the CLI', () => {
+    const { getOmpStatus } = require('../../../src/server/services/omp-config');
+    const commandRunner = vi.fn(() => {
+      throw new Error('OMP CLI must not be started for native status');
+    });
+    const env = { OMP_CODING_AGENT_DIR: path.join(path.sep, 'native', 'omp-agent') };
+
+    expect(getOmpStatus(env, { commandRunner, resolveRuntime: false })).toEqual(expect.objectContaining({
+      installed: false,
+      commandSource: 'not-probed',
+      agentDir: path.resolve(env.OMP_CODING_AGENT_DIR)
+    }));
+    expect(commandRunner).not.toHaveBeenCalled();
+  });
+
   test('falls back to ~/.omp/agent when OMP command is unavailable', () => {
     const { getOmpAgentDir, resolveOmpRuntime } = require('../../../src/server/services/omp-config');
     const commandRunner = (command, args) => {

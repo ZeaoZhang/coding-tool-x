@@ -175,7 +175,7 @@ describe('workspace-service workspace lifecycle', () => {
     expect(templateService.applyTemplate).toHaveBeenCalledWith(path.join(testDir, 'team-space'), 'starter');
     expect(execFileSyncSpy).toHaveBeenCalledWith(
       'git',
-      ['worktree', 'add', path.join(testDir, 'team-space', 'app'), 'feature/current'],
+      ['worktree', 'add', '-f', path.join(testDir, 'team-space', 'app'), 'feature/current'],
       expect.objectContaining({ cwd: repoPath, encoding: 'utf8' })
     );
     expect(service.loadWorkspaces().workspaces).toHaveLength(1);
@@ -223,17 +223,12 @@ describe('workspace-service workspace lifecycle', () => {
     ]);
   });
 
-  test('createWorkspace forces existing branch checkout instead of creating a duplicate branch', () => {
+  test('createWorkspace passes -f when checking out an existing branch', () => {
     const repoPath = createRepo('repo-existing-busy');
     const addCalls = [];
     execFileSyncSpy.mockImplementation((command, args) => {
       if (command === 'git' && args[0] === 'worktree' && args[1] === 'add') {
         addCalls.push([...args]);
-        if (!args.includes('--force')) {
-          throw Object.assign(new Error("fatal: 'main' is already used by worktree"), {
-            stderr: Buffer.from("fatal: 'main' is already used by worktree")
-          });
-        }
       }
       return '';
     });
@@ -256,8 +251,7 @@ describe('workspace-service workspace lifecycle', () => {
     ]);
 
     expect(addCalls).toEqual([
-      ['worktree', 'add', path.join(testDir, 'existing-space', 'app'), 'main'],
-      ['worktree', 'add', '--force', path.join(testDir, 'existing-space', 'app'), 'main']
+      ['worktree', 'add', '-f', path.join(testDir, 'existing-space', 'app'), 'main']
     ]);
   });
 
@@ -337,7 +331,7 @@ describe('workspace-service project management', () => {
     unlinkSpy.mockRestore();
   });
 
-  test('addProjectToWorkspace forces existing branch checkout instead of creating a duplicate branch', () => {
+  test('addProjectToWorkspace passes -f when checking out an existing branch', () => {
     const repoPath = createRepo('repo-add-existing-busy');
     const workspacePath = path.join(testDir, 'workspace-add-existing');
     fs.mkdirSync(workspacePath, { recursive: true });
@@ -354,11 +348,6 @@ describe('workspace-service project management', () => {
     execFileSyncSpy.mockImplementation((command, args) => {
       if (command === 'git' && args[0] === 'worktree' && args[1] === 'add') {
         addCalls.push([...args]);
-        if (!args.includes('--force')) {
-          throw Object.assign(new Error("fatal: 'feature/live' is already used by worktree"), {
-            stderr: Buffer.from("fatal: 'feature/live' is already used by worktree")
-          });
-        }
       }
       return '';
     });
@@ -377,8 +366,7 @@ describe('workspace-service project management', () => {
     ]);
 
     expect(addCalls).toEqual([
-      ['worktree', 'add', path.join(workspacePath, 'app'), 'feature/live'],
-      ['worktree', 'add', '--force', path.join(workspacePath, 'app'), 'feature/live']
+      ['worktree', 'add', '-f', path.join(workspacePath, 'app'), 'feature/live']
     ]);
   });
 

@@ -9,7 +9,6 @@ let paths;
 let getOmpStatusMock;
 let readJsonFileMock;
 let readYamlFileMock;
-let readOmpSettingsMock;
 let getOmpAuthProviderSnapshotMock;
 
 function buildApp() {
@@ -98,14 +97,10 @@ beforeEach(() => {
     return fallback;
   });
   readYamlFileMock = vi.fn((filePath, fallback) => {
-    if (filePath === paths.settings) return { theme: 'dark' };
+    if (filePath === paths.settings) return { theme: 'dark', packages: ['demo-package'], disabledPackages: ['old-package'] };
     if (filePath === paths.modelsYml) return { providers: { 'ctx-demo': { models: [{ id: 'omp-model' }] } } };
     return fallback;
   });
-  readOmpSettingsMock = vi.fn(() => ({
-    packages: ['demo-package'],
-    disabledPackages: ['old-package']
-  }));
   getOmpAuthProviderSnapshotMock = vi.fn(() => ({
     available: true,
     providers: [
@@ -132,8 +127,7 @@ beforeEach(() => {
       getOmpPaths: vi.fn(() => paths),
       getOmpStatus: getOmpStatusMock,
       readJsonFile: readJsonFileMock,
-      readYamlFile: readYamlFileMock,
-      readOmpSettings: readOmpSettingsMock
+      readYamlFile: readYamlFileMock
     }
   };
   require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
@@ -190,10 +184,7 @@ describe('omp-config api', () => {
     }));
     expect(res.body.resources.packages).toEqual(['demo-package']);
     expect(res.body.resources.auth).toEqual({ exists: true, path: paths.auth });
-    expect(res.body.resources.authProviders.providers[0]).toEqual(expect.objectContaining({
-      id: 'openai-codex',
-      loggedIn: false
-    }));
+    expect(res.body.resources.authProviders).toBeUndefined();
     expect(res.body.resources.models.providers['ctx-demo'].models[0].id).toBe('omp-model');
     expect(res.body.resources.skills.map(item => item.name)).toContain('review-skill');
     expect(res.body.resources.prompts.map(item => item.name)).toEqual(['review.md']);
