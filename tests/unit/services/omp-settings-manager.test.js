@@ -124,11 +124,12 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       providerKey: 'demo',
       baseUrl: 'https://demo.example/v1',
       model: 'gpt-demo'
-    }], { modelsRunner });
+    }], { modelsRunner, validateWithCli: true });
 
     expect(modelsRunner).toHaveBeenCalledWith('omp', ['models', '--json'], expect.objectContaining({
       encoding: 'utf8',
-      timeout: 5000
+      timeout: 5000,
+      windowsHide: true
     }));
     expect(manager.getLastManagedOmpSyncResult()).toEqual(expect.objectContaining({
       path: paths.modelsYml,
@@ -187,7 +188,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       apiKey: 'secret',
       providerApi: 'openai-completions',
       model: 'deepseek-v4-flash'
-    }], { runtime, catalogRunner, modelsRunner });
+    }], { runtime, catalogRunner, modelsRunner, catalogFromCli: true, validateWithCli: true });
 
     const config = yaml.load(fs.readFileSync(target, 'utf8'));
     expect(config.providers['ctx-deepseek'].models[0]).toEqual(expect.objectContaining({
@@ -259,6 +260,9 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     ], {
       catalogRunner,
       modelsRunner,
+      catalogFromCli: true,
+      discoverDisabledProviders: true,
+      validateWithCli: true,
       now: new Date('2026-07-09T01:02:03.004Z')
     });
 
@@ -391,7 +395,34 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       providerKey: 'demo',
       baseUrl: 'https://demo.example/v1',
       model: 'gpt-demo'
-    }], { modelsRunner })).toThrow('OMP models.yml validation failed: schema failed');
+    }], { modelsRunner, validateWithCli: true })).toThrow('OMP models.yml validation failed: schema failed');
+  });
+
+  test('syncs channel files without starting the OMP CLI by default', () => {
+    const resolveOmpRuntime = vi.fn(() => {
+      throw new Error('OMP CLI must not be probed during channel sync');
+    });
+    require.cache[OMP_CONFIG_PATH].exports.resolveOmpRuntime = resolveOmpRuntime;
+    const modelsRunner = vi.fn();
+    const catalogRunner = vi.fn();
+    const manager = require('../../../src/server/services/omp-settings-manager');
+
+    manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      providerKey: 'demo',
+      baseUrl: 'https://demo.example/v1',
+      model: 'gpt-demo'
+    }], { modelsRunner, catalogRunner });
+
+    expect(resolveOmpRuntime).not.toHaveBeenCalled();
+    expect(modelsRunner).not.toHaveBeenCalled();
+    expect(catalogRunner).not.toHaveBeenCalled();
+    expect(yaml.load(fs.readFileSync(paths.modelsYml, 'utf8')).providers['ctx-demo']).toBeDefined();
+    expect(manager.getLastManagedOmpSyncResult().validation).toEqual({
+      skipped: true,
+      reason: 'cli-validation-disabled',
+      warnings: []
+    });
   });
 
   test('removes only managed ctx providers and deletes legacy extension', () => {

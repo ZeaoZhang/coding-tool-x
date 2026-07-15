@@ -34,7 +34,6 @@ let fetchModelsFromProvider;
 let probeModelAvailability;
 let getCachedOmpAuthProviderSnapshot;
 let getOmpAuthProviderCacheMeta;
-let warmOmpAuthProviderSnapshot;
 let findAuthProviderForKey;
 let isOmpInstalled;
 let routerFactory;
@@ -119,7 +118,6 @@ beforeEach(() => {
     checkedAt: '2026-01-01T00:00:00.000Z',
     error: null
   }));
-  warmOmpAuthProviderSnapshot = vi.fn();
   findAuthProviderForKey = vi.fn((providerKey, snapshot) => {
     if (providerKey === 'codex') return snapshot?.providers?.[0] || null;
     return null;
@@ -181,7 +179,6 @@ beforeEach(() => {
     exports: {
       getCachedOmpAuthProviderSnapshot,
       getOmpAuthProviderCacheMeta,
-      warmOmpAuthProviderSnapshot,
       findAuthProviderForKey
     }
   };
@@ -258,7 +255,7 @@ describe('omp-channels api', () => {
     });
   });
 
-  test('reports auth-provider cold cache refresh state without blocking channel list', () => {
+  test('reports auth-provider cold cache state without starting an auth refresh', () => {
     getCachedOmpAuthProviderSnapshot.mockReturnValueOnce(null);
     getOmpAuthProviderCacheMeta.mockReturnValueOnce({
       cached: false,
@@ -282,7 +279,6 @@ describe('omp-channels api', () => {
       refreshing: true,
       fallback: true
     }));
-    expect(warmOmpAuthProviderSnapshot).toHaveBeenCalledWith({ accountCheck: false, includeStatus: false });
   });
 
   test('validates probing input and falls back to availability probing for channel models', async () => {

@@ -52,26 +52,6 @@
             </div>
           </div>
           <n-text depth="3" class="project-path">{{ displayProjectPath }}</n-text>
-          <div v-if="sessionStatusTags.length" class="status-tags" role="status" aria-live="polite">
-            <n-tag
-              v-for="tag in sessionStatusTags"
-              :key="tag.key"
-              size="small"
-              :type="tag.type"
-              :bordered="false"
-            >
-              {{ tag.text }}
-            </n-tag>
-            <n-button
-              v-if="store.sessionsRefreshing || store.sessionsMeta?.error || store.error"
-              text
-              size="tiny"
-              :loading="store.loading"
-              @click="refreshDataWithScrollPreservation"
-            >
-              立即刷新
-            </n-button>
-          </div>
         </div>
 
         <!-- Search Bar -->
@@ -521,32 +501,6 @@ const filteredSessions = computed(() => {
   })
 })
 
-const sessionStatusTags = computed(() => {
-  const tags = []
-  if (store.sessionsRefreshing) {
-    tags.push({
-      key: 'refreshing',
-      type: 'info',
-      text: store.sessions.length > 0 ? '后台刷新中' : '首次生成中'
-    })
-  }
-  if (store.sessionsUsingFallback && store.sessions.length > 0) {
-    tags.push({
-      key: 'fallback',
-      type: 'warning',
-      text: '正在显示缓存数据'
-    })
-  }
-  if (store.error) {
-    tags.push({
-      key: 'error',
-      type: 'error',
-      text: `刷新失败：${store.error}`
-    })
-  }
-  return tags
-})
-
 function goBack() {
   const channel = route.meta.channel || 'claude'
   router.push({ name: `${channel}-projects` })
@@ -864,35 +818,40 @@ function truncateText(text, maxLength = 80) {
   return text
 }
 
-// 保存和恢复滚动位置
-async function refreshDataWithScrollPreservation() {
-  // Save scroll position
-  const scrollTop = contentEl.value?.scrollTop || 0
+const ACTIVATION_REFRESH_COOLDOWN_MS = 30 * 1000
+let lastActivationRefreshAt = 0
+let activationRefreshInFlight = false
 
-  // Fetch data
-  const projectName = await ensureProjectNameResolved()
-  await store.retrySessions(projectName)
+async function refreshSessionsAfterActivation() {
+  if (document.visibilityState !== 'visible' || activationRefreshInFlight) return
 
-  // Restore scroll position after DOM update
-  await nextTick()
-  if (contentEl.value) {
-    contentEl.value.scrollTop = scrollTop
+  const now = Date.now()
+  if (now - lastActivationRefreshAt < ACTIVATION_REFRESH_COOLDOWN_MS) return
+
+  activationRefreshInFlight = true
+  lastActivationRefreshAt = now
+  try {
+    const scrollTop = contentEl.value?.scrollTop || 0
+    const projectName = await ensureProjectNameResolved()
+    await store.fetchSessions(projectName, { force: true, silent: true, fresh: true })
+    await nextTick()
+    if (contentEl.value) {
+      contentEl.value.scrollTop = scrollTop
+    }
+  } finally {
+    activationRefreshInFlight = false
   }
 }
 
-// 【暂时移除】页面可见性变化时刷新数据
-// 原因：每次切换回来就刷新，体验不好
-// function handleVisibilityChange() {
-//   if (document.visibilityState === 'visible') {
-//     refreshDataWithScrollPreservation()
-//   }
-// }
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    refreshSessionsAfterActivation().catch(() => {})
+  }
+}
 
-// 【暂时移除】窗口获得焦点时刷新数据
-// 原因：每次切换回来就刷新，体验不好
-// function handleWindowFocus() {
-//   refreshDataWithScrollPreservation()
-// }
+function handleWindowFocus() {
+  refreshSessionsAfterActivation().catch(() => {})
+}
 
 // 监听 channel 变化
 watch([currentChannel, () => props.projectName], ([newChannel]) => {
@@ -902,15 +861,13 @@ watch([currentChannel, () => props.projectName], ([newChannel]) => {
 }, { immediate: true })
 
 onMounted(() => {
-  // 【暂时移除】添加事件监听 - 每次切换回来就刷新，体验不好
-  // document.addEventListener('visibilitychange', handleVisibilityChange)
-  // window.addEventListener('focus', handleWindowFocus)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('focus', handleWindowFocus)
 })
 
 onUnmounted(() => {
-  // 【暂时移除】清理事件监听
-  // document.removeEventListener('visibilitychange', handleVisibilityChange)
-  // window.removeEventListener('focus', handleWindowFocus)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('focus', handleWindowFocus)
 })
 </script>
 
@@ -985,14 +942,6 @@ onUnmounted(() => {
   display: block;
   color: #666;
   margin-bottom: 2px;
-}
-
-.status-tags {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 6px;
 }
 
 .header-actions {

@@ -20,8 +20,11 @@ const THINKING_MODES = new Set([
 
 let lastManagedOmpSyncResult = null;
 
-function getOmpPaths(...args) {
-  return ompConfig.getOmpPaths(...args);
+function getOmpPaths(env = process.env, options = {}) {
+  // Channel CRUD only needs the native OMP file layout. Do not start OMP just
+  // to discover a path: OMP_CONFIG_DIR, OMP_PROFILE and OMP_CODING_AGENT_DIR
+  // are sufficient to derive it, and a blocked CLI must not block a save.
+  return ompConfig.getOmpPaths(env, { ...options, resolveRuntime: false });
 }
 
 function ensureOmpDir(...args) {
@@ -257,7 +260,8 @@ function readOmpCatalogModels(command, providerId, options = {}) {
       ...process.env,
       ...(options.env || {})
     },
-    timeout: options.catalogTimeout || 5000
+    timeout: options.catalogTimeout || 5000,
+    windowsHide: true
   });
   const status = result?.status === undefined || result?.status === null ? 0 : result.status;
   if (result?.error || status !== 0) return [];
@@ -270,6 +274,9 @@ function readOmpCatalogModels(command, providerId, options = {}) {
 }
 
 function buildCatalogIndex(channel = {}, options = {}) {
+  if (options.catalogFromCli !== true) {
+    return new Map();
+  }
   const runtime = options.runtime
     || (typeof ompConfig.resolveOmpRuntime === 'function'
       ? ompConfig.resolveOmpRuntime(options.env || process.env, options.runtimeOptions || {})
@@ -499,7 +506,8 @@ function runModelsJson(command, env, options = {}) {
       ...process.env,
       ...env
     },
-    timeout: options.timeout || 5000
+    timeout: options.timeout || 5000,
+    windowsHide: true
   });
   if (typeof result === 'string' || Buffer.isBuffer(result)) {
     return { status: 0, stdout: result, stderr: '' };
@@ -515,7 +523,8 @@ function collectVisibleProviderIds(command, env, options = {}) {
       ...process.env,
       ...env
     },
-    timeout: options.visibilityTimeout || options.timeout || 5000
+    timeout: options.visibilityTimeout || options.timeout || 5000,
+    windowsHide: true
   });
   const status = result?.status === undefined || result?.status === null ? 0 : result.status;
   if (result?.error || status !== 0) return [];
@@ -658,15 +667,17 @@ function collectManagedVisibility(channels = [], modelsConfig = { providers: {} 
       }
     });
 
-  const env = options.env || process.env;
-  const runtime = options.runtime
-    || (typeof ompConfig.resolveOmpRuntime === 'function'
-      ? ompConfig.resolveOmpRuntime(env, options.runtimeOptions || {})
-      : null);
-  if (runtime && runtime.runtime === 'omp' && runtime.installed && options.discoverDisabledProviders !== false) {
-    collectVisibleProviderIds(runtime.command, env, options)
-      .filter(providerId => providerId && !isManagedProviderId(providerId))
-      .forEach(providerId => pushUnique(managedDisabledProviders, providerId));
+  if (options.discoverDisabledProviders === true) {
+    const env = options.env || process.env;
+    const runtime = options.runtime
+      || (typeof ompConfig.resolveOmpRuntime === 'function'
+        ? ompConfig.resolveOmpRuntime(env, options.runtimeOptions || {})
+        : null);
+    if (runtime && runtime.runtime === 'omp' && runtime.installed) {
+      collectVisibleProviderIds(runtime.command, env, options)
+        .filter(providerId => providerId && !isManagedProviderId(providerId))
+        .forEach(providerId => pushUnique(managedDisabledProviders, providerId));
+    }
   }
 
   return {
@@ -874,7 +885,9 @@ function writeManagedOmpProviders(channels = [], options = {}) {
   const backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
   writeModelsConfig(config, paths.modelsYml);
   const visibility = syncManagedOmpVisibility(channels, config, options);
-  const validation = validateOmpModelsConfig(options);
+  const validation = options.validateWithCli === true
+    ? validateOmpModelsConfig(options)
+    : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
   const warnings = [
     ...(visibility.warnings || []),
     ...(validation.warnings || [])
@@ -916,7 +929,9 @@ function removeManagedOmpProviders(options = {}) {
   if (before !== after) {
     backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
     writeModelsConfig(config, paths.modelsYml);
-    validation = validateOmpModelsConfig(options);
+    validation = options.validateWithCli === true
+      ? validateOmpModelsConfig(options)
+      : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
   }
   recordManagedOmpSyncResult({
     path: paths.modelsYml,

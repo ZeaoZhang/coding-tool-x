@@ -5,26 +5,6 @@
         <div class="header-text">
           <n-h2 style="margin: 0;">我的项目</n-h2>
           <n-text depth="3">选择一个项目查看会话，拖拽可调整顺序</n-text>
-          <div v-if="projectStatusTags.length" class="status-tags" role="status" aria-live="polite">
-            <n-tag
-              v-for="tag in projectStatusTags"
-              :key="tag.key"
-              size="small"
-              :type="tag.type"
-              :bordered="false"
-            >
-              {{ tag.text }}
-            </n-tag>
-            <n-button
-              v-if="store.projectsRefreshing || store.projectsMeta?.error || store.error"
-              text
-              size="tiny"
-              :loading="store.loading"
-              @click="refreshDataWithScrollPreservation"
-            >
-              立即刷新
-            </n-button>
-          </div>
         </div>
         <n-space>
           <n-button type="primary" size="medium" @click="handleNewProjectCommand">
@@ -235,32 +215,6 @@ const filteredProjects = computed(() => {
   })
 })
 
-const projectStatusTags = computed(() => {
-  const tags = []
-  if (store.projectsRefreshing) {
-    tags.push({
-      key: 'refreshing',
-      type: 'info',
-      text: store.projects.length > 0 ? '后台刷新中' : '首次生成中'
-    })
-  }
-  if (store.projectsUsingFallback && store.projects.length > 0) {
-    tags.push({
-      key: 'fallback',
-      type: 'warning',
-      text: '正在显示缓存数据'
-    })
-  }
-  if (store.error) {
-    tags.push({
-      key: 'error',
-      type: 'error',
-      text: `刷新失败：${store.error}`
-    })
-  }
-  return tags
-})
-
 // Sync with store
 watch(() => store.projects, (newProjects) => {
   orderedProjects.value = [...newProjects]
@@ -320,35 +274,6 @@ async function handleNewProjectCommand() {
     message.error('复制失败: ' + err.message)
   }
 }
-
-// 保存和恢复滚动位置
-async function refreshDataWithScrollPreservation() {
-  // Save scroll position
-  const scrollTop = contentEl.value?.scrollTop || 0
-
-  // Fetch data
-  await store.retryProjects()
-
-  // Restore scroll position after DOM update
-  await nextTick()
-  if (contentEl.value) {
-    contentEl.value.scrollTop = scrollTop
-  }
-}
-
-// 【暂时移除】页面可见性变化时刷新数据
-// 原因：每次切换回来就刷新，体验不好
-// function handleVisibilityChange() {
-//   if (document.visibilityState === 'visible') {
-//     refreshDataWithScrollPreservation()
-//   }
-// }
-
-// 【暂时移除】窗口获得焦点时刷新数据
-// 原因：每次切换回来就刷新，体验不好
-// function handleWindowFocus() {
-//   refreshDataWithScrollPreservation()
-// }
 
 // 全局搜索相关函数
 async function handleGlobalSearch() {
@@ -461,14 +386,6 @@ onUnmounted(() => {
 
 .header-text {
   flex: 1;
-}
-
-.status-tags {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 8px;
 }
 
 .header-text :deep(.n-h2) {

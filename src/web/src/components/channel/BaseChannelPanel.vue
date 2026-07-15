@@ -4,34 +4,6 @@
       <n-spin size="small" />
     </div>
     <div v-else>
-      <div v-if="channelStatusItems.length || state.balanceError" class="channel-status-strip" role="status" aria-live="polite">
-        <n-tag
-          v-for="item in channelStatusItems"
-          :key="item.key"
-          size="small"
-          :type="item.type"
-          :bordered="false"
-        >
-          {{ item.text }}
-        </n-tag>
-        <n-tag
-          v-if="state.balanceError"
-          size="small"
-          type="warning"
-          :bordered="false"
-        >
-          余额加载失败：{{ state.balanceError }}
-        </n-tag>
-        <n-button
-          v-if="state.balanceError"
-          text
-          size="tiny"
-          :loading="state.balanceLoading"
-          @click="actions.loadChannelBalances"
-        >
-          重试余额
-        </n-button>
-      </div>
       <div v-if="state.channels.length === 0" class="empty-state">
         <n-empty :description="config.emptyDescription">
           <template v-if="config.showEmptyAction" #extra>
@@ -578,45 +550,6 @@ function buildMeta(channel) {
     concurrencyActive: inflight > 0
   }
 }
-
-const channelStatusItems = computed(() => {
-  const items = []
-  const authMeta = state.channelMeta?.authProvider
-  if (authMeta?.refreshing && authMeta?.fallback) {
-    items.push({
-      key: 'auth-loading',
-      type: 'info',
-      text: '登录状态加载中'
-    })
-  } else if (authMeta?.refreshing) {
-    items.push({
-      key: 'auth-refreshing',
-      type: 'info',
-      text: '登录状态刷新中'
-    })
-  } else if (authMeta?.stale) {
-    items.push({
-      key: 'auth-stale',
-      type: 'warning',
-      text: '登录状态使用缓存'
-    })
-  }
-  if (authMeta?.error && authMeta.error !== 'omp-not-available') {
-    items.push({
-      key: 'auth-error',
-      type: 'warning',
-      text: `登录状态检查异常：${authMeta.error}`
-    })
-  }
-  if (!authMeta && state.channelMeta?.refreshing) {
-    items.push({
-      key: 'meta-refreshing',
-      type: 'info',
-      text: '渠道信息刷新中'
-    })
-  }
-  return items
-})
 
 function resolveFieldComponent(field) {
   switch (field.type) {

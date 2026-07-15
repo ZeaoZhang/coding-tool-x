@@ -229,6 +229,28 @@ function readTextFile(filePath, fallback = '') {
 }
 
 function getOmpStatus(env = process.env, options = {}) {
+  if (options.resolveRuntime === false) {
+    const paths = getOmpPaths(env, options);
+    return {
+      installed: fs.existsSync(paths.agentDir),
+      runtime: 'omp',
+      command: getOmpCommand(env),
+      commandSource: 'not-probed',
+      agentDir: paths.agentDir,
+      settingsPath: paths.settings,
+      authPath: paths.auth,
+      modelsPath: paths.modelsYml,
+      modelsYmlPath: paths.modelsYml,
+      modelsJsonLegacyPath: paths.modelsJsonLegacy,
+      sessionsDir: paths.sessions,
+      skillsDir: paths.skills,
+      promptsDir: paths.prompts,
+      commandsDir: paths.commands,
+      extensionsDir: paths.extensions,
+      themesDir: paths.themes,
+      packagesDir: paths.packages
+    };
+  }
   const runtime = resolveOmpRuntime(env, options);
   const paths = getOmpPaths(env, { ...options, runtime });
   return {

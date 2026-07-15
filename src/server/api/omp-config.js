@@ -6,8 +6,7 @@ const {
   getOmpPaths,
   getOmpStatus,
   readJsonFile,
-  readYamlFile,
-  readOmpSettings
+  readYamlFile
 } = require('../services/omp-config');
 const {
   getOmpAuthProviderSnapshot
@@ -89,13 +88,12 @@ function buildCapabilities() {
 
 router.get('/', (req, res) => {
   try {
-    const paths = getOmpPaths();
-    const settings = readOmpSettings();
+    const paths = getOmpPaths(process.env, { resolveRuntime: false });
+    const settings = readYamlFile(paths.settings, readJsonFile(paths.settingsJsonLegacy, {}));
     const resources = {
       config: readYamlFile(paths.config, {}),
       settings: readYamlFile(paths.settings, {}),
       auth: fs.existsSync(paths.auth) ? { exists: true, path: paths.auth } : { exists: false, path: paths.auth },
-      authProviders: getOmpAuthProviderSnapshot({ accountCheck: false }),
       models: readYamlFile(paths.modelsYml, {}),
       legacyModels: readJsonFile(paths.modelsJsonLegacy, {}),
       packages: normalizeArray(settings.packages),
@@ -110,7 +108,7 @@ router.get('/', (req, res) => {
 
     res.json({
       success: true,
-      status: getOmpStatus(),
+      status: getOmpStatus(process.env, { resolveRuntime: false }),
       capabilities: buildCapabilities(),
       resources
     });
@@ -143,8 +141,8 @@ router.get('/auth-providers', (req, res) => {
 
 router.get('/resources', (req, res) => {
   try {
-    const paths = getOmpPaths();
-    const settings = readOmpSettings();
+    const paths = getOmpPaths(process.env, { resolveRuntime: false });
+    const settings = readYamlFile(paths.settings, readJsonFile(paths.settingsJsonLegacy, {}));
     res.json({
       success: true,
       paths,

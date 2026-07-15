@@ -52,6 +52,21 @@ afterEach(() => {
 });
 
 describe('sessions store background refresh', () => {
+  test('bypasses the session cache when an activation refresh requests fresh data', async () => {
+    mocks.getSessions.mockResolvedValue({
+      sessions: [],
+      aliases: {},
+      totalSize: 0,
+      projectInfo: null,
+      meta: { refreshing: false, fallback: false, stale: false, error: null }
+    });
+    const store = useSessionsStore();
+
+    await store.fetchSessions('project-a', { force: true, silent: true, fresh: true });
+
+    expect(mocks.getSessions).toHaveBeenCalledWith('project-a', 'claude', { fresh: true });
+  });
+
   test('keeps polling a pending project snapshot until the long-task deadline', async () => {
     mocks.getProjects.mockResolvedValue({
       projects: [],
