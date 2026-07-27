@@ -3,22 +3,25 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 const ompConfig = require('./omp-config');
+const { MODEL_METADATA, MODEL_ALIASES } = require('../../config/model-metadata');
+const {
+  MODEL_METADATA_MODES,
+  isPlainObject,
+  normalizeProviderConfig,
+  resolveModelDefinition,
+  serializeModelSelector,
+  splitModelSelector
+} = require('./model-definition-schema');
 
 const MANAGED_PROVIDER_PREFIX = 'ctx-';
 const MODELS_BACKUP_MARKER = '.ctx-backup-';
 const VISIBILITY_STATE_VERSION = 1;
 const MANAGED_VISIBILITY_STATE_FILE = 'coding-tool-x-omp-managed-visibility.json';
 const NO_MANAGED_MODELS_SELECTOR = `${MANAGED_PROVIDER_PREFIX}coding-tool-x/__no_models_configured__`;
-const THINKING_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-const THINKING_MODES = new Set([
-  'effort',
-  'budget',
-  'google-level',
-  'anthropic-adaptive',
-  'anthropic-budget-effort'
-]);
-
 let lastManagedOmpSyncResult = null;
+const OMP_CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const OMP_CATALOG_FAILURE_CACHE_TTL_MS = 30 * 1000;
+const ompCatalogCache = new Map();
 
 function getOmpPaths(env = process.env, options = {}) {
   // Channel CRUD only needs the native OMP file layout. Do not start OMP just
@@ -61,93 +64,21 @@ function normalizeProviderApi(value = '') {
   return normalized;
 }
 
-function defaultCost() {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-}
-
-function normalizeCost(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return defaultCost();
-  }
-  const numberOrZero = (item) => {
-    const number = Number(item);
-    return Number.isFinite(number) ? number : 0;
-  };
-  return {
-    input: numberOrZero(value.input),
-    output: numberOrZero(value.output),
-    cacheRead: numberOrZero(value.cacheRead ?? value.cache_read),
-    cacheWrite: numberOrZero(value.cacheWrite ?? value.cache_write)
-  };
-}
-
-function normalizePositiveNumber(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number) && number > 0 ? number : fallback;
-}
-
-function normalizeModelInput(value) {
-  if (!Array.isArray(value)) return ['text', 'image'];
-  const filtered = value.filter(item => item === 'text' || item === 'image');
-  return filtered.length > 0 ? filtered : ['text', 'image'];
-}
-
-function normalizeThinkingEfforts(value) {
-  if (!Array.isArray(value)) return undefined;
-  const seen = new Set();
-  const filtered = value
-    .map(item => String(item || '').trim())
-    .filter(item => THINKING_EFFORT_LEVELS.includes(item))
-    .filter((item) => {
-      if (seen.has(item)) return false;
-      seen.add(item);
-      return true;
-    });
-  return filtered.length > 0 ? filtered : undefined;
-}
-
-function normalizeThinking(value) {
-  if (Array.isArray(value)) {
-    const efforts = normalizeThinkingEfforts(value);
-    return efforts ? { mode: 'effort', efforts } : undefined;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (THINKING_EFFORT_LEVELS.includes(trimmed)) {
-      return { mode: 'effort', efforts: [trimmed] };
-    }
-    return undefined;
-  }
-  if (value && typeof value === 'object') {
-    const mode = String(value.mode || '').trim();
-    if (!THINKING_MODES.has(mode)) return undefined;
-    const efforts = normalizeThinkingEfforts(value.efforts || value.levels);
-    const minLevel = String(value.minLevel || '').trim();
-    const maxLevel = String(value.maxLevel || '').trim();
-    const defaultLevel = String(value.defaultLevel || '').trim();
-    const hasRange = THINKING_EFFORT_LEVELS.includes(minLevel) && THINKING_EFFORT_LEVELS.includes(maxLevel);
-    if (!efforts && !hasRange) return undefined;
-    return compactObject({
-      mode,
-      efforts,
-      defaultLevel: THINKING_EFFORT_LEVELS.includes(defaultLevel) ? defaultLevel : undefined,
-      minLevel: efforts ? undefined : minLevel,
-      maxLevel: efforts ? undefined : maxLevel,
-      effortMap: value.effortMap && typeof value.effortMap === 'object' && !Array.isArray(value.effortMap)
-        ? value.effortMap
-        : undefined,
-      supportsDisplay: typeof value.supportsDisplay === 'boolean' ? value.supportsDisplay : undefined
-    });
-  }
-  return undefined;
-}
-
 function compactObject(value = {}) {
   const next = { ...value };
   Object.keys(next).forEach((key) => {
     if (next[key] === undefined) delete next[key];
   });
   return next;
+}
+
+function resolveBuiltinOmpMetadata(modelId) {
+  const id = String(modelId || '').trim().toLowerCase();
+  if (!id) return null;
+  const exactKey = Object.keys(MODEL_METADATA).find(key => key.toLowerCase() === id);
+  if (exactKey) return MODEL_METADATA[exactKey];
+  const aliasKey = Object.keys(MODEL_ALIASES).find(key => key.toLowerCase() === id);
+  return aliasKey ? (MODEL_METADATA[MODEL_ALIASES[aliasKey]] || null) : null;
 }
 
 function uniqueStrings(values = []) {
@@ -185,46 +116,33 @@ function getOwnProperty(object, key) {
     : false;
 }
 
-function mergeDefined(base = {}, override = {}) {
-  const next = { ...base };
-  Object.entries(override || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
-      next[key] = value;
-    }
-  });
-  return next;
-}
-
-function buildModelEntry(model = {}, fallbackId = '') {
-  const id = String(model.id || model.name || fallbackId || '').trim();
-  if (!id) return null;
-  return compactObject({
-    id,
-    name: model.name || id,
-    api: model.api ? normalizeProviderApi(model.api) : undefined,
-    reasoning: model.reasoning === true,
-    thinking: normalizeThinking(model.thinking),
-    input: normalizeModelInput(model.input),
-    cost: normalizeCost(model.cost),
-    contextWindow: normalizePositiveNumber(model.contextWindow || model.context_window, 128000),
-    maxTokens: normalizePositiveNumber(model.maxTokens || model.max_tokens, 4096),
-    headers: model.headers && typeof model.headers === 'object' && !Array.isArray(model.headers)
-      ? model.headers
-      : undefined,
-    compat: model.compat && typeof model.compat === 'object' && !Array.isArray(model.compat)
-      ? model.compat
-      : undefined
-  });
-}
-
 function normalizeModels(channel = {}, options = {}) {
   const models = [];
   const catalogIndex = options.catalogIndex instanceof Map ? options.catalogIndex : new Map();
+  const defaultMode = MODEL_METADATA_MODES.includes(channel.modelMetadataMode)
+    ? channel.modelMetadataMode
+    : 'auto';
   const add = (value) => {
-    const id = String(value || '').trim();
-    if (!id || models.some(model => model.id === id)) return;
-    const catalogModel = catalogIndex.get(id.toLowerCase()) || {};
-    const entry = buildModelEntry({ ...catalogModel, id }, id);
+    const raw = typeof value === 'string' ? { id: value } : value;
+    if (!raw || typeof raw !== 'object') return;
+    const selector = splitModelSelector(raw.id || raw.name || '');
+    const id = selector.modelId;
+    if (!id || models.some(model => model.id.toLowerCase() === id.toLowerCase())) return;
+    const definition = {
+      ...raw,
+      id,
+      metadataMode: MODEL_METADATA_MODES.includes(raw.metadataMode) ? raw.metadataMode : defaultMode
+    };
+    const resolved = resolveModelDefinition(definition, {
+      // OMP provider limits are provider-specific. Use exact built-in metadata
+      // only; prefix and generic-family fallbacks could silently invent limits.
+      builtin: resolveBuiltinOmpMetadata(id) || {},
+      catalog: catalogIndex.get(id.toLowerCase()) || {}
+    });
+    if (Array.isArray(options.warnings)) {
+      options.warnings.push(...resolved.warnings.map(message => `${id}: ${message}`));
+    }
+    const entry = resolved.spec;
     if (entry) models.push(entry);
   };
 
@@ -235,11 +153,7 @@ function normalizeModels(channel = {}, options = {}) {
         return;
       }
       if (!model || typeof model !== 'object') return;
-      const id = String(model.id || model.name || '').trim();
-      if (!id || models.some(item => item.id === id)) return;
-      const catalogModel = catalogIndex.get(id.toLowerCase()) || {};
-      const entry = buildModelEntry(mergeDefined(catalogModel, model), id);
-      if (entry) models.push(entry);
+      add(model);
     });
   }
 
@@ -248,13 +162,27 @@ function normalizeModels(channel = {}, options = {}) {
   if (Array.isArray(channel.allowedModels)) {
     channel.allowedModels.forEach(add);
   }
+  if (Array.isArray(channel.modelBindings)) {
+    channel.modelBindings.forEach((binding) => add(binding?.modelId || binding?.id || binding));
+  }
 
   return models.map(compactObject);
 }
 
 function readOmpCatalogModels(command, providerId, options = {}) {
+  const requestedModelIds = uniqueStrings(options.requestedModelIds);
+  const requested = new Set(requestedModelIds.map(modelId => modelId.toLowerCase()));
+  const useFullCatalog = requested.size > 0;
+  const cacheKey = `${command}\u0000${useFullCatalog ? `requested:${providerId}:${[...requested].sort().join(',')}` : providerId}`;
+  const cached = ompCatalogCache.get(cacheKey);
+  const now = Date.now();
+  const cacheTtl = cached?.failed ? OMP_CATALOG_FAILURE_CACHE_TTL_MS : OMP_CATALOG_CACHE_TTL_MS;
+  if (options.forceCatalogRefresh !== true && cached && now - cached.cachedAt < cacheTtl) {
+    return cached.models.map(model => ({ ...model }));
+  }
   const runner = options.catalogRunner || options.modelsRunner || spawnSync;
-  const result = runner(command, ['models', providerId, '--json'], {
+  const args = useFullCatalog ? ['models', '--json'] : ['models', providerId, '--json'];
+  const result = runner(command, args, {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -264,24 +192,48 @@ function readOmpCatalogModels(command, providerId, options = {}) {
     windowsHide: true
   });
   const status = result?.status === undefined || result?.status === null ? 0 : result.status;
-  if (result?.error || status !== 0) return [];
+  if (result?.error || status !== 0) {
+    ompCatalogCache.set(cacheKey, { cachedAt: now, models: [], failed: true });
+    return [];
+  }
   try {
     const parsed = JSON.parse(normalizeCommandOutput(result?.stdout).trim() || '{}');
-    return Array.isArray(parsed.models) ? parsed.models : [];
+    const rawModels = Array.isArray(parsed.models) ? parsed.models : [];
+    let models = rawModels;
+    if (useFullCatalog) {
+      const providerCandidates = new Set([providerId, `${MANAGED_PROVIDER_PREFIX}${providerId}`]);
+      const selected = new Map();
+      for (const model of rawModels) {
+        const id = String(model?.id || '').trim().toLowerCase();
+        if (!requested.has(id)) continue;
+        const provider = normalizeProviderId(model?.provider || '');
+        const previous = selected.get(id);
+        if (!previous || (providerCandidates.has(provider) && !providerCandidates.has(normalizeProviderId(previous.provider || '')))) {
+          selected.set(id, model);
+        }
+      }
+      models = [...selected.values()];
+    }
+    ompCatalogCache.set(cacheKey, { cachedAt: now, models, failed: false });
+    return models.map(model => ({ ...model }));
   } catch {
+    ompCatalogCache.set(cacheKey, { cachedAt: now, models: [], failed: true });
     return [];
   }
 }
 
+
+function getOmpCatalogModels(providerId, options = {}) {
+  const normalizedProviderId = normalizeProviderId(providerId);
+  if (!normalizedProviderId) return [];
+  // Catalog sync is an explicit user action. Assume OMP is installed and call
+  // it directly instead of paying for a separate `omp --version` probe.
+  const command = options.command || options.runtime?.command || options.env?.OMP_COMMAND || process.env.OMP_COMMAND || 'omp';
+  return readOmpCatalogModels(command, normalizedProviderId, options);
+}
+
 function buildCatalogIndex(channel = {}, options = {}) {
   if (options.catalogFromCli !== true) {
-    return new Map();
-  }
-  const runtime = options.runtime
-    || (typeof ompConfig.resolveOmpRuntime === 'function'
-      ? ompConfig.resolveOmpRuntime(options.env || process.env, options.runtimeOptions || {})
-      : null);
-  if (!runtime || runtime.runtime !== 'omp' || !runtime.installed) {
     return new Map();
   }
 
@@ -292,7 +244,7 @@ function buildCatalogIndex(channel = {}, options = {}) {
   if (!providerId) return new Map();
 
   const index = new Map();
-  readOmpCatalogModels(runtime.command, providerId, options).forEach((model) => {
+  getOmpCatalogModels(providerId, options).forEach((model) => {
     const id = String(model?.id || model?.name || '').trim();
     if (id) {
       index.set(id.toLowerCase(), model);
@@ -305,19 +257,36 @@ function buildProviderEntry(channel = {}, options = {}) {
   const catalogIndex = options.catalogIndex instanceof Map
     ? options.catalogIndex
     : buildCatalogIndex(channel, options);
-  const entry = {
-    baseUrl: String(channel.baseUrl || '').trim(),
-    api: normalizeProviderApi(channel.providerApi || channel.api || channel.wireApi),
-    models: normalizeModels(channel, { catalogIndex })
-  };
+  const providerConfig = isPlainObject(channel.providerConfig) ? channel.providerConfig : {};
+  const providerSource = { ...providerConfig };
+  for (const key of [
+    'headers',
+    'compat',
+    'remoteCompaction',
+    'modelOverrides',
+    'authHeader',
+    'auth',
+    'discovery',
+    'disableStrictTools',
+    'transport'
+  ]) {
+    if (channel[key] !== undefined) providerSource[key] = channel[key];
+  }
+  const normalizedProvider = normalizeProviderConfig(providerSource);
+  if (Array.isArray(options.warnings)) {
+    const providerName = channel.providerKey || channel.provider || channel.name || channel.id || 'provider';
+    options.warnings.push(...normalizedProvider.warnings.map(message => `${providerName}: ${message}`));
+  }
+  const entry = compactObject({
+    ...normalizedProvider.config,
+    baseUrl: String(channel.baseUrl || providerConfig.baseUrl || '').trim(),
+    api: normalizeProviderApi(channel.providerApi || channel.api || channel.wireApi || providerConfig.api),
+    models: normalizeModels(channel, { catalogIndex, warnings: options.warnings })
+  });
 
-  const apiKey = String(channel.apiKey || '').trim();
+  const apiKey = String(channel.apiKey || providerConfig.apiKey || '').trim();
   if (apiKey) {
     entry.apiKey = apiKey;
-  }
-
-  if (channel.headers && typeof channel.headers === 'object' && !Array.isArray(channel.headers)) {
-    entry.headers = channel.headers;
   }
 
   return entry;
@@ -644,6 +613,7 @@ function collectManagedVisibility(channels = [], modelsConfig = { providers: {} 
   const managedDisabledProviders = [];
   const warnings = [];
   const providers = modelsConfig.providers || {};
+  let managedDefaultModel = null;
 
   (channels || [])
     .filter(channel => channel && channel.enabled !== false && channel.baseUrl)
@@ -657,6 +627,20 @@ function collectManagedVisibility(channels = [], modelsConfig = { providers: {} 
           pushUnique(managedEnabledModels, `${managedProviderId}/${modelId}`);
         }
       });
+
+      const defaultSelection = splitModelSelector(channel.model || '');
+      if (!managedDefaultModel && defaultSelection.modelId) {
+        const hasDefaultModel = models.some((model) => {
+          const modelId = String(model?.id || model?.name || '').trim();
+          return modelId.toLowerCase() === defaultSelection.modelId.toLowerCase();
+        });
+        if (hasDefaultModel) {
+          managedDefaultModel = `${managedProviderId}/${serializeModelSelector(
+            defaultSelection.modelId,
+            defaultSelection.thinkingLevel
+          )}`;
+        }
+      }
 
       const originalProviderId = getOriginalProviderId(channel);
       if (originalProviderId && !isManagedProviderId(originalProviderId)) {
@@ -686,7 +670,7 @@ function collectManagedVisibility(channels = [], modelsConfig = { providers: {} 
       ? managedEnabledModels
       : [NO_MANAGED_MODELS_SELECTOR],
     managedDisabledProviders,
-    managedDefaultModel: managedEnabledModels[0] || null,
+    managedDefaultModel: managedDefaultModel || managedEnabledModels[0] || null,
     warnings
   };
 }
@@ -881,7 +865,11 @@ function removeManagedOmpVisibility(options = {}) {
 
 function writeManagedOmpProviders(channels = [], options = {}) {
   const paths = getOmpPaths();
-  const config = buildManagedModelsConfig(channels, readModelsConfig(paths.modelsYml), options);
+  const buildWarnings = [];
+  const config = buildManagedModelsConfig(channels, readModelsConfig(paths.modelsYml), {
+    ...options,
+    warnings: buildWarnings
+  });
   const backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
   writeModelsConfig(config, paths.modelsYml);
   const visibility = syncManagedOmpVisibility(channels, config, options);
@@ -889,6 +877,7 @@ function writeManagedOmpProviders(channels = [], options = {}) {
     ? validateOmpModelsConfig(options)
     : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
   const warnings = [
+    ...buildWarnings,
     ...(visibility.warnings || []),
     ...(validation.warnings || [])
   ];
@@ -975,12 +964,14 @@ module.exports = {
   buildManagedExtensionSource,
   buildManagedModelsConfig,
   buildProviderEntry,
+  getOmpCatalogModels,
   getManagedProviderId,
   getLastManagedOmpSyncResult,
   isManagedOmpProvidersActive,
   isManagedProviderExtensionActive: isManagedOmpProvidersActive,
   normalizeProviderId,
   normalizeProviderApi,
+  normalizeModels,
   readOmpSettingsConfig,
   readModelsConfig,
   removeManagedOmpProviders,

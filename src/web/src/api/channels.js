@@ -408,7 +408,11 @@ export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
     presetId: extra.presetId || null,
     websiteUrl: extra.websiteUrl || '',
     balanceToken: extra.balanceToken || '',
-    balanceUserId: extra.balanceUserId || null
+    balanceUserId: extra.balanceUserId || null,
+    models: Array.isArray(extra.models) ? extra.models : [],
+    modelMetadataMode: extra.modelMetadataMode || 'auto',
+    modelBindings: Array.isArray(extra.modelBindings) ? extra.modelBindings : [],
+    providerConfig: extra.providerConfig || {}
   })
   return response.data
 }
@@ -453,8 +457,17 @@ export async function fetchOmpChannelModels(channelId, { forceRefresh = false } 
   return response.data
 }
 
-export async function probeOmpChannelModels(config) {
-  const response = await client.post('/omp/channels/probe-models', config)
+export async function probeOmpChannelModels(config, { forceRefresh = false } = {}) {
+  const response = await client.post('/omp/channels/probe-models', { ...config, forceRefresh })
+  return response.data
+}
+
+export async function fetchOmpCatalogMetadata(providerKey, channelModels = {}, { forceRefresh = false } = {}) {
+  const response = await client.post('/omp/channels/catalog-metadata', {
+    providerKey,
+    forceRefresh,
+    ...channelModels
+  })
   return response.data
 }
 

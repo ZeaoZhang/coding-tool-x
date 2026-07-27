@@ -26,8 +26,36 @@ const {
   getCachedOmpAuthProviderSnapshot,
   getOmpAuthProviderCacheMeta
 } = require('../services/omp-auth-providers');
+const {
+  MODEL_SCHEMA_VERSION,
+  MODEL_METADATA_MODES,
+  getPublicModelFieldSchema,
+  normalizeCatalogModelList,
+  redactSensitiveFields,
+  validateModelDefinitions,
+  validateProviderConfig
+} = require('../services/model-definition-schema');
+const { getOmpCatalogModels } = require('../services/omp-settings-manager');
 
 const CHANNEL_LIST_AUTH_OPTIONS = { accountCheck: false, includeStatus: false };
+
+function validateOmpModelPayload(payload = {}) {
+  if (payload.modelMetadataMode !== undefined && !MODEL_METADATA_MODES.includes(payload.modelMetadataMode)) {
+    return `modelMetadataMode must be one of: ${MODEL_METADATA_MODES.join(', ')}`;
+  }
+  if (payload.models !== undefined) {
+    const validation = validateModelDefinitions(payload.models);
+    if (!validation.valid) return validation.error;
+  }
+  if (payload.modelBindings !== undefined && !Array.isArray(payload.modelBindings)) {
+    return 'modelBindings must be an array';
+  }
+  if (payload.providerConfig !== undefined) {
+    const validation = validateProviderConfig(payload.providerConfig);
+    if (!validation.valid) return validation.error;
+  }
+  return null;
+}
 
 function uniqueModels(models = []) {
   const seen = new Set();
@@ -76,6 +104,8 @@ async function discoverOmpModels(channel, gatewaySourceType, { forceRefresh = fa
       models: preferredModels,
       supported: preferredModels.length > 0,
       cached: false,
+      stale: false,
+      retryAfter: null,
       fallbackUsed: true,
       fetchedAt: new Date().toISOString(),
       error: preferredModels.length > 0 ? null : 'OAuth 渠道未配置 API Key，无法直接调用远端模型列表接口',
@@ -90,11 +120,27 @@ async function discoverOmpModels(channel, gatewaySourceType, { forceRefresh = fa
   });
   const listedModels = Array.isArray(listResult.models) ? uniqueModels(listResult.models) : [];
 
+  if (listResult.backoff || listResult.stale) {
+    return {
+      models: listedModels,
+      supported: listedModels.length > 0,
+      cached: !!listResult.cached,
+      stale: true,
+      retryAfter: listResult.retryAfter || null,
+      fallbackUsed: false,
+      fetchedAt: listResult.lastChecked || new Date().toISOString(),
+      error: listResult.error || (listedModels.length > 0 ? null : '模型目录缓存已过期'),
+      errorHint: listResult.errorHint || '可点击“刷新可选模型”更新，或手动填写模型名称。'
+    };
+  }
+
   if (listedModels.length > 0) {
     return {
       models: listedModels,
       supported: true,
       cached: !!listResult.cached,
+      stale: false,
+      retryAfter: null,
       fallbackUsed: false,
       fetchedAt: listResult.lastChecked || new Date().toISOString(),
       error: null,
@@ -113,6 +159,8 @@ async function discoverOmpModels(channel, gatewaySourceType, { forceRefresh = fa
     models: probedModels,
     supported: probedModels.length > 0,
     cached: !!probe.cached || !!listResult.cached,
+    stale: false,
+    retryAfter: null,
     fallbackUsed: probedModels.length > 0,
     fetchedAt: probe.lastChecked || listResult.lastChecked || new Date().toISOString(),
     error: probedModels.length > 0 ? null : (listResult.error || '无法获取可用模型'),
@@ -235,7 +283,8 @@ module.exports = () => {
         model,
         speedTestModel,
         allowedModels,
-        modelRedirects
+        modelRedirects,
+        forceRefresh
       } = req.body || {};
       if (!baseUrl) {
         return res.status(400).json({ error: 'baseUrl is required' });
@@ -253,11 +302,14 @@ module.exports = () => {
         modelRedirects: Array.isArray(modelRedirects) ? modelRedirects : []
       };
       const resolvedGatewaySourceType = resolveGatewaySourceType(tempChannel);
-      const result = await discoverOmpModels(tempChannel, resolvedGatewaySourceType, { forceRefresh: true });
+      const result = await discoverOmpModels(tempChannel, resolvedGatewaySourceType, { forceRefresh: forceRefresh === true });
       res.json({
         models: result.models,
         supported: result.supported,
         fallbackUsed: result.fallbackUsed,
+        cached: result.cached,
+        stale: result.stale,
+        retryAfter: result.retryAfter,
         error: result.error,
         errorHint: result.errorHint
       });
@@ -285,6 +337,8 @@ module.exports = () => {
         models: result.models,
         supported: result.supported,
         cached: result.cached,
+        stale: result.stale,
+        retryAfter: result.retryAfter,
         fallbackUsed: result.fallbackUsed,
         fetchedAt: result.fetchedAt,
         error: result.error,
@@ -293,6 +347,44 @@ module.exports = () => {
     } catch (error) {
       console.error('[OMP Channels API] Error fetching models:', error);
       res.status(500).json({ error: 'Failed to fetch model list', channelId: req.params.channelId });
+    }
+  });
+
+  router.post('/catalog-metadata', (req, res) => {
+    try {
+      const providerKey = String(req.body?.providerKey || '').trim();
+      if (!providerKey) {
+        return res.status(400).json({ error: 'providerKey is required' });
+      }
+      const requestedModelIds = uniqueModels([
+        req.body?.model,
+        req.body?.speedTestModel,
+        ...(Array.isArray(req.body?.allowedModels) ? req.body.allowedModels : []),
+        ...(Array.isArray(req.body?.models)
+          ? req.body.models.map(model => typeof model === 'string' ? model : (model?.id || model?.name))
+          : [])
+      ]);
+      const rawModels = getOmpCatalogModels(providerKey, {
+        forceCatalogRefresh: req.body?.forceRefresh === true,
+        catalogTimeout: 5000,
+        requestedModelIds
+      });
+      const normalizedCatalog = normalizeCatalogModelList(rawModels);
+      const models = normalizedCatalog.models.map(model => redactSensitiveFields(model));
+      const warnings = normalizedCatalog.warnings.slice();
+      if (models.length === 0) {
+        warnings.push('OMP catalog did not return model metadata; existing manual definitions were left unchanged.');
+      }
+      res.json({
+        schemaVersion: MODEL_SCHEMA_VERSION,
+        fieldSchema: getPublicModelFieldSchema(),
+        providerKey,
+        models,
+        warnings
+      });
+    } catch (error) {
+      console.error('[OMP Channels API] Error reading OMP catalog metadata:', error);
+      res.status(502).json({ error: 'Failed to read OMP model metadata' });
     }
   });
 
@@ -318,8 +410,17 @@ module.exports = () => {
         presetId,
         websiteUrl,
         balanceToken,
-        balanceUserId
+        balanceUserId,
+        models,
+        modelMetadataMode,
+        modelBindings,
+        providerConfig
       } = req.body || {};
+
+      const modelPayloadError = validateOmpModelPayload(req.body || {});
+      if (modelPayloadError) {
+        return res.status(400).json({ error: modelPayloadError });
+      }
 
       if (!name || !baseUrl) {
         return res.status(400).json({ error: 'Missing required fields: name and baseUrl' });
@@ -346,7 +447,11 @@ module.exports = () => {
         presetId,
         websiteUrl: websiteUrl || '',
         balanceToken: balanceToken || '',
-        balanceUserId: balanceUserId || null
+        balanceUserId: balanceUserId || null,
+        models: Array.isArray(models) ? models : [],
+        modelMetadataMode: modelMetadataMode || 'auto',
+        modelBindings: Array.isArray(modelBindings) ? modelBindings : [],
+        providerConfig: providerConfig || {}
       });
       res.json(channel);
       broadcastSchedulerState('omp', getSchedulerState('omp'));
@@ -358,6 +463,10 @@ module.exports = () => {
 
   router.put('/:channelId', (req, res) => {
     try {
+      const modelPayloadError = validateOmpModelPayload(req.body || {});
+      if (modelPayloadError) {
+        return res.status(400).json({ error: modelPayloadError });
+      }
       const channel = updateChannel(req.params.channelId, req.body || {});
       res.json(channel);
       broadcastSchedulerState('omp', getSchedulerState('omp'));

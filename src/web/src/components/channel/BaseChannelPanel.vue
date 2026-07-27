@@ -202,6 +202,29 @@
                   </n-radio>
                 </n-space>
               </n-radio-group>
+              <!-- OMP 完整模型定义编辑器 -->
+              <div v-else-if="field.type === 'model-definitions'" class="model-definitions-editor">
+                <div class="model-definitions-toolbar">
+                  <n-button
+                    size="tiny"
+                    secondary
+                    :loading="state.formData.modelMetadataFetching"
+                    @click="handleModelMetadataSync"
+                  >
+                    自动获取 Metadata
+                  </n-button>
+                  <span class="model-catalog-status" role="status" aria-live="polite">
+                    {{ state.formData.modelMetadataStatus || '仅在点击时调用 OMP；普通保存不会启动 OMP 命令。' }}
+                  </span>
+                </div>
+                <n-input
+                  :value="state.formData.modelDefinitionsJson"
+                  type="textarea"
+                  :autosize="{ minRows: 8, maxRows: 20 }"
+                  :placeholder="field.placeholder"
+                  @update:value="(val) => state.formData.modelDefinitionsJson = val"
+                />
+              </div>
               <!-- 其他字段 -->
               <component
                 v-else
@@ -307,6 +330,7 @@ function resetModelFetchState({ clearOptions = false } = {}) {
   state.formData._modelsFetchSignature = null
   state.formData.modelsFetchError = null
   state.formData.modelsFetchErrorHint = null
+  state.formData.modelsFetchMeta = null
   if (clearOptions) {
     state.formData.availableModels = []
   }
@@ -339,9 +363,23 @@ const modelCatalogStatusText = computed(() => {
   }
   if (state.formData.modelsFetchError) {
     const hint = state.formData.modelsFetchErrorHint
-    return hint
+    const retryText = state.formData.modelsFetchMeta?.stale && state.formData.modelsFetchMeta?.retryAfter
+      ? `当前使用缓存目录，${new Date(state.formData.modelsFetchMeta.retryAfter).toLocaleString()} 后可自动重试，也可手动刷新。`
+      : ''
+    const message = hint
       ? `模型列表未能更新：${state.formData.modelsFetchError}。${hint}`
       : `模型列表未能更新：${state.formData.modelsFetchError}。可重试或手动填写模型名称。`
+    return `${message}${retryText ? ` ${retryText}` : ''}`
+  }
+  const meta = state.formData.modelsFetchMeta
+  if (meta?.stale && meta?.retryAfter) {
+    return `正在使用缓存的模型目录；${new Date(meta.retryAfter).toLocaleString()} 后可自动重试，也可手动刷新。`
+  }
+  if (meta?.stale) {
+    return '正在使用已过期的模型目录；可点击“刷新可选模型”更新。'
+  }
+  if (meta?.cached) {
+    return '已从本地缓存加载可选模型。'
   }
   const count = (state.formData.availableModels || []).length
   if (count > 0) return `已加载 ${count} 个可选模型。`
@@ -365,6 +403,19 @@ async function handleModelCatalogAction() {
   const shouldRefresh = state.formData._modelsLoadedOnce
     && state.formData._modelsFetchSignature === signature
   await handleFetchModels({ forceRefresh: shouldRefresh, signature })
+}
+
+async function handleModelMetadataSync() {
+  if (typeof config.fetchModelMetadataForChannel !== 'function' || state.formData.modelMetadataFetching) return
+  state.formData.modelMetadataFetching = true
+  state.formData.modelMetadataStatus = '正在读取 OMP metadata…'
+  try {
+    await config.fetchModelMetadataForChannel(state.formData)
+  } catch (error) {
+    state.formData.modelMetadataStatus = error?.response?.data?.error || error?.message || '读取 OMP metadata 失败'
+  } finally {
+    state.formData.modelMetadataFetching = false
+  }
 }
 
 // 预设选项
@@ -408,6 +459,7 @@ async function handleFetchModels({ forceRefresh = false, signature = buildModelF
     state.formData.modelsFetching = true
     state.formData.modelsFetchError = null
     state.formData.modelsFetchErrorHint = null
+    state.formData.modelsFetchMeta = null
     try {
       await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData, { forceRefresh })
     } catch (error) {
@@ -555,6 +607,7 @@ function resolveFieldComponent(field) {
   switch (field.type) {
     case 'password':
     case 'text':
+    case 'textarea':
       return NInput
     case 'number':
       return NInputNumber
@@ -572,6 +625,10 @@ function buildFieldProps(field) {
   if (field.type === 'password') {
     base.type = 'password'
     base['show-password-on'] = 'click'
+  }
+  if (field.type === 'textarea') {
+    base.type = 'textarea'
+    base.autosize = field.autosize || { minRows: 5, maxRows: 16 }
   }
   if (field.type === 'number') {
     base.min = field.min ?? 1
@@ -594,3 +651,15 @@ defineExpose({
 </script>
 
 <style src="./channel-panel-common.css"></style>
+<style scoped>
+.model-definitions-editor {
+  width: 100%;
+}
+
+.model-definitions-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+</style>

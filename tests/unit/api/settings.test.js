@@ -112,6 +112,10 @@ describe('settings API router', () => {
     expect(data).toHaveProperty('builtinModelIds');
     expect(data).toHaveProperty('lastUpdated', '2025-01-01');
     expect(data).toHaveProperty('defaultSpeedTestModels');
+    expect(data).toHaveProperty('schemaVersion', 2);
+    expect(data).toHaveProperty('fieldSchema');
+    expect(data).toHaveProperty('resolvedModels');
+    expect(data).toHaveProperty('provenance');
     expect(data.builtinModelIds).toContain('claude-3-opus');
   });
 
@@ -171,6 +175,37 @@ describe('settings API router', () => {
 
     expect(loaderStub.saveConfig).toHaveBeenCalled();
     expect(res._data).toMatchObject({ success: true });
+  });
+
+  it('POST /model-settings persists versioned complete model definitions', () => {
+    const router = loadRouter();
+    const handler = findHandler(router, 'post', '/model-settings');
+    const req = mockReq({
+      body: {
+        definitions: {
+          'future-model': {
+            id: 'future-model',
+            metadataMode: 'manual',
+            reasoning: true,
+            thinking: { mode: 'effort', efforts: ['low', 'high'] },
+            contextWindow: 500000,
+            maxTokens: 64000,
+            compat: { supportsDeveloperRole: true }
+          }
+        }
+      }
+    });
+    const res = mockRes();
+
+    handler(req, res);
+
+    const savedConfig = loaderStub.saveConfig.mock.calls[0][0];
+    expect(savedConfig.modelMetadataSchemaVersion).toBe(2);
+    expect(savedConfig.modelDefinitions['future-model']).toEqual(expect.objectContaining({
+      id: 'future-model',
+      contextWindow: 500000
+    }));
+    expect(res._data).toEqual(expect.objectContaining({ success: true, schemaVersion: 2 }));
   });
 
   it('POST /model-settings does not force projectsDir into saved config', () => {

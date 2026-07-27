@@ -233,6 +233,9 @@ const MODEL_ALIASES = {
 };
 
 const TEST_TIMEOUT_MS = 10000; // 10 seconds per model test
+const MODEL_LIST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const MODEL_LIST_FAILURE_TTL_MS = 5 * 60 * 1000;
+const MODEL_LIST_AUTH_FAILURE_TTL_MS = 60 * 60 * 1000;
 const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,interleaved-thinking-2025-05-14';
 
 const MODEL_UNAVAILABLE_HINTS = [
@@ -797,6 +800,84 @@ function isSignatureCacheValid(cacheEntry, signatureKey, expectedSignature) {
   return cacheEntry[signatureKey] === expectedSignature;
 }
 
+function getCacheAgeMs(timestamp, now = Date.now()) {
+  const checkedAt = Date.parse(timestamp || '');
+  return Number.isFinite(checkedAt) ? Math.max(0, now - checkedAt) : Infinity;
+}
+
+function isCacheFresh(timestamp, ttlMs, now = Date.now()) {
+  return getCacheAgeMs(timestamp, now) < ttlMs;
+}
+
+function getModelListFailureTtl(statusCode) {
+  return [401, 403, 404, 429].includes(Number(statusCode))
+    ? MODEL_LIST_AUTH_FAILURE_TTL_MS
+    : MODEL_LIST_FAILURE_TTL_MS;
+}
+
+function buildCachedModelListResult(entry, listSignature, forceRefresh) {
+  if (forceRefresh || !isSignatureCacheValid(entry, 'listSignature', listSignature)) {
+    return null;
+  }
+
+  const failure = entry.modelListFailure;
+  if (failure && Date.parse(failure.retryAfter || '') > Date.now()) {
+    return {
+      models: Array.isArray(entry.fetchedModels) ? entry.fetchedModels : [],
+      supported: true,
+      cached: true,
+      stale: true,
+      backoff: true,
+      fallbackUsed: false,
+      error: failure.error || '模型列表暂时不可用',
+      errorHint: failure.errorHint || '请稍后重试，或手动填写模型名称',
+      statusCode: failure.statusCode,
+      lastChecked: entry.lastChecked || failure.failedAt || null,
+      retryAfter: failure.retryAfter
+    };
+  }
+
+  if (!Array.isArray(entry.fetchedModels)) {
+    return null;
+  }
+
+  const stale = !isCacheFresh(entry.lastChecked, MODEL_LIST_CACHE_TTL_MS);
+  const result = {
+    models: entry.fetchedModels,
+    supported: true,
+    cached: true,
+    fallbackUsed: false,
+    error: null,
+    lastChecked: entry.lastChecked || null
+  };
+  if (stale) {
+    result.stale = true;
+    result.errorHint = '模型目录缓存已过期；可点击“刷新可选模型”更新。';
+  }
+  return result;
+}
+
+function saveModelListFailure(cache, cacheKey, listSignature, result = {}) {
+  const now = new Date();
+  const ttlMs = getModelListFailureTtl(result.statusCode);
+  const previous = cache[cacheKey] || {};
+  const failure = {
+    error: result.error || '模型列表暂时不可用',
+    errorHint: result.errorHint || '请稍后重试，或手动填写模型名称',
+    statusCode: result.statusCode || null,
+    failedAt: now.toISOString(),
+    retryAfter: new Date(now.getTime() + ttlMs).toISOString()
+  };
+  cache[cacheKey] = {
+    ...previous,
+    fetchedModels: Array.isArray(previous.fetchedModels) ? previous.fetchedModels : [],
+    listSignature,
+    modelListFailure: failure
+  };
+  saveModelCache(cache);
+  return failure;
+}
+
 /**
  * Test if a specific model is available for a channel
  * @param {Object} channel - Channel configuration
@@ -869,8 +950,10 @@ async function probeModelAvailability(channel, channelType, options = {}) {
   });
   const cacheKey = getChannelCacheKey(channel, probeSignature);
 
-  // Return cached result if channel and probe options are unchanged
-  if (!forceRefresh && isSignatureCacheValid(cache[cacheKey], 'probeSignature', probeSignature)) {
+  // Return cached result only while the matching probe result is still fresh.
+  if (!forceRefresh
+    && isSignatureCacheValid(cache[cacheKey], 'probeSignature', probeSignature)
+    && isCacheFresh(cache[cacheKey].lastChecked, MODEL_LIST_CACHE_TTL_MS)) {
     return {
       availableModels: cache[cacheKey].availableModels || [],
       preferredTestModel: cache[cacheKey].preferredTestModel || null,
@@ -1026,21 +1109,17 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
   });
   const cacheKey = getChannelCacheKey(channel, listSignature);
 
-  // Check cache first, and only reuse when channel/list context is unchanged
-  if (!forceRefresh
-    && isSignatureCacheValid(cache[cacheKey], 'listSignature', listSignature)
-    && Array.isArray(cache[cacheKey].fetchedModels)) {
-    return {
-      models: cache[cacheKey].fetchedModels || [],
-      supported: true,
-      cached: true,
-      fallbackUsed: false,
-      error: null,
-      lastChecked: cache[cacheKey].lastChecked
-    };
-  }
+  // Reuse a fresh catalog immediately. Expired catalogs are also returned as
+  // stale data so opening the editor never blocks on the provider; the user
+  // can explicitly request a refresh.
+  const cachedResult = buildCachedModelListResult(cache[cacheKey], listSignature, forceRefresh);
+  if (cachedResult) return cachedResult;
 
   return new Promise((resolve) => {
+    const resolveFailure = (result) => {
+      saveModelListFailure(cache, cacheKey, listSignature, result);
+      resolve(result);
+    };
     try {
       const baseUrl = channel.baseUrl.trim().replace(/\/+$/, '');
       const endpoint = capability.modelListEndpoint; // e.g. '/v1/models'
@@ -1095,7 +1174,8 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
                   availableModels: cache[cacheKey]?.availableModels || [],
                   preferredTestModel: cache[cacheKey]?.preferredTestModel || null,
                   probeSignature: cache[cacheKey]?.probeSignature || null,
-                  listSignature
+                  listSignature,
+                  modelListFailure: null
                 };
 
                 cache[cacheKey] = cacheEntry;
@@ -1113,7 +1193,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
                 });
               } catch (parseError) {
                 console.error(`[ModelDetector] Failed to parse models response: ${parseError.message}`);
-                resolve({
+                resolveFailure({
                   models: [],
                   supported: true,
                   cached: false,
@@ -1133,7 +1213,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
               errorMessage = 'Cloudflare 防护拦截，无法自动获取模型列表';
               errorHint = '该 API 端点受 Cloudflare 保护，请手动填写模型名称';
               console.warn(`[ModelDetector] Cloudflare protection detected for ${channel.name}, no fallback models injected`);
-              resolve({
+              resolveFailure({
                 models: [],
                 supported: false,
                 cached: false,
@@ -1146,7 +1226,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
               errorMessage = 'API 密钥认证失败';
               errorHint = '请检查 API 密钥是否正确配置';
               console.error(`[ModelDetector] Authentication failed for ${channel.name}: ${res.statusCode} - ${errorMessage}`);
-              resolve({
+              resolveFailure({
                 models: [],
                 supported: true,
                 cached: false,
@@ -1159,7 +1239,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
               errorMessage = '访问被拒绝';
               errorHint = '请检查 API 密钥权限或联系服务提供商';
               console.error(`[ModelDetector] Access denied for ${channel.name}: ${res.statusCode} - ${errorMessage}`);
-              resolve({
+              resolveFailure({
                 models: [],
                 supported: true,
                 cached: false,
@@ -1171,7 +1251,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
             }
             } else if (res.statusCode === 404) {
               console.warn(`[ModelDetector] Model list endpoint not found for ${channel.name}`);
-              resolve({
+              resolveFailure({
                 models: [],
                 supported: false,
                 cached: false,
@@ -1182,7 +1262,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
               });
             } else if (res.statusCode === 429) {
               console.warn(`[ModelDetector] Rate limited for ${channel.name}`);
-              resolve({
+              resolveFailure({
                 models: [],
                 supported: true,
                 cached: false,
@@ -1206,7 +1286,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
           })
           .catch((error) => {
             console.error(`[ModelDetector] Failed to read models response: ${error.message}`);
-            resolve({
+            resolveFailure({
               models: [],
               supported: true,
               cached: false,
@@ -1218,7 +1298,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
 
       req.on('error', (error) => {
         console.error(`[ModelDetector] Network error fetching models from ${channel.name}: ${error.message}`);
-        resolve({
+        resolveFailure({
           models: [],
           supported: true,
           cached: false,
@@ -1230,7 +1310,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
       req.on('timeout', () => {
         req.destroy();
         console.error(`[ModelDetector] Timeout fetching models from ${channel.name}`);
-        resolve({
+        resolveFailure({
           models: [],
           supported: true,
           cached: false,
@@ -1243,7 +1323,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
 
     } catch (error) {
       console.error(`[ModelDetector] Error in fetchModelsFromProvider: ${error.message}`);
-      resolve({
+      resolveFailure({
         models: [],
         supported: true,
         cached: false,
