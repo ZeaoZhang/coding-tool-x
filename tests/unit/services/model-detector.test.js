@@ -226,12 +226,13 @@ describe('model-detector helpers and cache management', () => {
     };
 
     fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    const lastChecked = new Date().toISOString();
     fs.writeFileSync(cachePath, JSON.stringify({
       'cached-channel': {
         fetchedModels: ['gpt-5', 'gpt-4o'],
         availableModels: ['gpt-5'],
         preferredTestModel: 'gpt-5',
-        lastChecked: '2026-03-17T12:00:00.000Z',
+        lastChecked,
         listSignature: buildListSignature(channel, 'codex')
       }
     }, null, 2), 'utf8');
@@ -244,8 +245,86 @@ describe('model-detector helpers and cache management', () => {
       cached: true,
       fallbackUsed: false,
       error: null,
-      lastChecked: '2026-03-17T12:00:00.000Z'
+      lastChecked
     });
+  });
+
+  test('returns expired model catalogs as stale data without a network request', async () => {
+    const channel = { id: 'stale-channel', name: 'Stale Demo', baseUrl: 'https://api.openai.com/v1', apiKey: 'secret' };
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, JSON.stringify({
+      'stale-channel': {
+        fetchedModels: ['gpt-5'],
+        lastChecked: new Date(Date.now() - 24 * 60 * 60 * 1000 - 1).toISOString(),
+        listSignature: buildListSignature(channel, 'codex')
+      }
+    }, null, 2), 'utf8');
+    const spy = vi.spyOn(https, 'request');
+
+    await expect(modelDetector.fetchModelsFromProvider(channel, 'codex')).resolves.toEqual(expect.objectContaining({
+      models: ['gpt-5'], cached: true, stale: true
+    }));
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test('backs off after a 403 while retaining the previous model catalog', async () => {
+    const channel = { id: 'backoff-channel', name: 'Backoff Demo', baseUrl: 'https://api.openai.com/v1', apiKey: 'secret' };
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, JSON.stringify({
+      'backoff-channel': {
+        fetchedModels: ['gpt-5'],
+        lastChecked: new Date().toISOString(),
+        listSignature: buildListSignature(channel, 'codex')
+      }
+    }, null, 2), 'utf8');
+    const { calls } = mockHttpsRequestSequence([{ statusCode: 403, body: JSON.stringify({ error: {} }) }]);
+
+    await modelDetector.fetchModelsFromProvider(channel, 'codex', { forceRefresh: true });
+    const persisted = JSON.parse(fs.readFileSync(cachePath, 'utf8'))['backoff-channel'];
+    expect(persisted.fetchedModels).toEqual(['gpt-5']);
+    expect(persisted.modelListFailure).toEqual(expect.objectContaining({ statusCode: 403, retryAfter: expect.any(String) }));
+
+    await expect(modelDetector.fetchModelsFromProvider(channel, 'codex')).resolves.toEqual(expect.objectContaining({
+      models: ['gpt-5'], cached: true, stale: true, backoff: true, statusCode: 403
+    }));
+    expect(calls).toHaveLength(1);
+  });
+
+  test('force refresh bypasses model-list backoff and clears it after success', async () => {
+    const channel = { id: 'force-channel', name: 'Force Demo', baseUrl: 'https://api.openai.com/v1', apiKey: 'secret' };
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, JSON.stringify({
+      'force-channel': {
+        fetchedModels: ['old-model'],
+        lastChecked: new Date().toISOString(),
+        listSignature: buildListSignature(channel, 'codex'),
+        modelListFailure: { error: '访问被拒绝', retryAfter: new Date(Date.now() + 60 * 60 * 1000).toISOString() }
+      }
+    }, null, 2), 'utf8');
+    const { calls } = mockHttpsRequestSequence([{ statusCode: 200, body: JSON.stringify({ data: [{ id: 'gpt-5' }] }) }]);
+
+    await expect(modelDetector.fetchModelsFromProvider(channel, 'codex', { forceRefresh: true })).resolves.toEqual(expect.objectContaining({
+      models: ['gpt-5'], cached: false
+    }));
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(fs.readFileSync(cachePath, 'utf8'))['force-channel'].modelListFailure).toBeNull();
+  });
+
+  test('invalidates the cached model catalog when channel credentials change', async () => {
+    const original = { id: 'signature-channel', name: 'Signature Demo', baseUrl: 'https://api.openai.com/v1', apiKey: 'old-secret' };
+    const changed = { ...original, apiKey: 'new-secret' };
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, JSON.stringify({
+      'signature-channel': {
+        fetchedModels: ['old-model'],
+        lastChecked: new Date().toISOString(),
+        listSignature: buildListSignature(original, 'codex')
+      }
+    }, null, 2), 'utf8');
+    const { calls } = mockHttpsRequestSequence([{ statusCode: 200, body: JSON.stringify({ data: [{ id: 'new-model' }] }) }]);
+
+    await expect(modelDetector.fetchModelsFromProvider(changed, 'codex')).resolves.toEqual(expect.objectContaining({ models: ['new-model'] }));
+    expect(calls).toHaveLength(1);
   });
 
   test('returns explicit Cloudflare guidance when /v1/models is blocked by protection', async () => {

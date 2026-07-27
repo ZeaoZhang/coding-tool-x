@@ -299,12 +299,15 @@ describe('omp-channels api', () => {
         gatewaySourceType: 'opencode'
       }),
       'openai_compatible',
-      expect.objectContaining({ useV1ModelsEndpoint: true, forceRefresh: true })
+      expect.objectContaining({ useV1ModelsEndpoint: true, forceRefresh: false })
     );
     expect(res._body).toEqual({
       models: ['gpt-5'],
       supported: true,
       fallbackUsed: false,
+      cached: false,
+      stale: false,
+      retryAfter: null,
       error: null,
       errorHint: null
     });
@@ -334,13 +337,16 @@ describe('omp-channels api', () => {
       expect.objectContaining({
         stopOnFirstAvailable: false,
         preferredModels: ['manual-model'],
-        forceRefresh: true
+        forceRefresh: false
       })
     );
     expect(res._body).toEqual({
       models: ['gpt-5', 'gpt-5-mini'],
       supported: true,
       fallbackUsed: true,
+      cached: false,
+      stale: false,
+      retryAfter: null,
       error: null,
       errorHint: '模型列表接口不可用，已自动切换为模型探测结果'
     });
@@ -360,6 +366,9 @@ describe('omp-channels api', () => {
       models: ['gpt-5', 'gpt-5-mini'],
       supported: true,
       fallbackUsed: true,
+      cached: false,
+      stale: false,
+      retryAfter: null,
       error: null,
       errorHint: '请手动填写默认模型、测速模型或可用模型；运行时由 OMP 的登录凭证提供访问权限'
     });
@@ -386,6 +395,134 @@ describe('omp-channels api', () => {
     }));
   });
 
+  test('returns cached OMP catalogs during backoff without probing models', async () => {
+    fetchModelsFromProvider.mockResolvedValueOnce({
+      models: ['gpt-5'],
+      cached: true,
+      stale: true,
+      backoff: true,
+      retryAfter: '2026-07-16T12:00:00.000Z',
+      lastChecked: '2026-07-16T11:00:00.000Z',
+      error: '访问被拒绝',
+      errorHint: '请稍后重试'
+    });
+    const router = routerFactory({});
+    const handler = findHandler(router, 'get', '/:channelId/models');
+    const res = makeRes();
+
+    await handler({ params: { channelId: 'omp-1' }, query: {} }, res);
+
+    expect(probeModelAvailability).not.toHaveBeenCalled();
+    expect(res._body).toEqual(expect.objectContaining({
+      models: ['gpt-5'], cached: true, stale: true,
+      retryAfter: '2026-07-16T12:00:00.000Z', error: '访问被拒绝'
+    }));
+  });
+
+  test('only forces temporary OMP model discovery when requested by the client', async () => {
+    const router = routerFactory({});
+    const handler = findHandler(router, 'post', '/probe-models');
+    const res = makeRes();
+
+    await handler({
+      body: {
+        baseUrl: 'https://omp.new/v1',
+        apiKey: 'secret',
+        forceRefresh: true
+      }
+    }, res);
+
+    expect(fetchModelsFromProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://omp.new/v1' }),
+      'openai_compatible',
+      expect.objectContaining({ forceRefresh: true })
+    );
+  });
+
+  test('web API sends unsaved channel model selections to metadata lookup', async () => {
+    vi.resetModules();
+    vi.doMock('../../../src/web/src/api/client.js', () => ({
+      SPEED_TEST_API_TIMEOUT_MS: 180000,
+      client: {
+        post: vi.fn(async () => ({ data: { models: [] } }))
+      }
+    }));
+    const { client } = await import('../../../src/web/src/api/client.js');
+    const { fetchOmpCatalogMetadata } = await import('../../../src/web/src/api/channels.js');
+
+    await fetchOmpCatalogMetadata('unregistered-provider', {
+      model: 'gpt-5.6-sol',
+      speedTestModel: 'gpt-5.6-luna',
+      allowedModels: ['gpt-5.6-terra'],
+      models: [{ id: 'gpt-5.6-sol', contextWindow: 1050000 }]
+    });
+
+    expect(client.post).toHaveBeenCalledWith('/omp/channels/catalog-metadata', {
+      providerKey: 'unregistered-provider',
+      forceRefresh: false,
+      model: 'gpt-5.6-sol',
+      speedTestModel: 'gpt-5.6-luna',
+      allowedModels: ['gpt-5.6-terra'],
+      models: [{ id: 'gpt-5.6-sol', contextWindow: 1050000 }]
+    });
+    vi.doUnmock('../../../src/web/src/api/client.js');
+  });
+
+  test('uses form model ids when OMP has not registered the provider yet', () => {
+    const getOmpCatalogModels = vi.fn(() => [{ id: 'gpt-5.6-sol', contextWindow: 1050000 }]);
+    const settingsManagerPath = require.resolve('../../../src/server/services/omp-settings-manager');
+    require.cache[settingsManagerPath].exports.getOmpCatalogModels = getOmpCatalogModels;
+    delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
+    const router = require('../../../src/server/api/omp-channels')({});
+    const handler = findHandler(router, 'post', '/catalog-metadata');
+    const res = makeRes();
+
+    handler({ body: {
+      providerKey: 'unregistered-provider',
+      model: 'gpt-5.6-sol',
+      allowedModels: ['gpt-5.6-terra'],
+      models: [{ id: 'gpt-5.6-luna' }]
+    } }, res);
+
+    expect(getOmpCatalogModels).toHaveBeenCalledWith('unregistered-provider', expect.objectContaining({
+      requestedModelIds: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
+    }));
+    expect(res._body.models).toEqual([
+      expect.objectContaining({ id: 'gpt-5.6-sol', contextWindow: 1050000 })
+    ]);
+  });
+
+  test('keeps OMP channel CRUD independent from model discovery', () => {
+    const router = routerFactory({});
+    const createHandler = findHandler(router, 'post', '/');
+    const updateHandler = findHandler(router, 'put', '/:channelId');
+
+    createHandler({ body: { name: 'New', baseUrl: 'https://new.omp/v1', apiKey: 'secret' } }, makeRes());
+    updateHandler({ params: { channelId: 'omp-1' }, body: { name: 'Updated' } }, makeRes());
+
+    expect(fetchModelsFromProvider).not.toHaveBeenCalled();
+    expect(probeModelAvailability).not.toHaveBeenCalled();
+  });
+
+  test('rejects invalid model definitions without mutating the channel', () => {
+    const router = routerFactory({});
+    const createHandler = findHandler(router, 'post', '/');
+    const res = makeRes();
+
+    createHandler({
+      body: {
+        name: 'Invalid',
+        baseUrl: 'https://invalid.example/v1',
+        apiKey: 'secret',
+        models: [{ id: 'duplicate' }, { id: 'DUPLICATE' }]
+      }
+    }, res);
+
+    expect(res._status).toBe(400);
+    expect(res._body.error).toContain('duplicate model id');
+    expect(createChannel).not.toHaveBeenCalled();
+  });
+
   test('creates channels, saves order, tests speeds, and resets health', async () => {
     const router = routerFactory({});
 
@@ -402,6 +539,9 @@ describe('omp-channels api', () => {
         gatewaySourceType: 'claude',
         model: 'gpt-5',
         allowedModels: ['gpt-5', 'gpt-5-mini'],
+        modelMetadataMode: 'manual',
+        models: [{ id: 'gpt-5', contextWindow: 272000, maxTokens: 128000 }],
+        providerConfig: { discovery: 'openai-models-list' },
         balanceToken: 'balance-session',
         balanceUserId: 8899
       }
@@ -417,6 +557,9 @@ describe('omp-channels api', () => {
         gatewaySourceType: 'claude',
         model: 'gpt-5',
         allowedModels: ['gpt-5', 'gpt-5-mini'],
+        modelMetadataMode: 'manual',
+        models: [{ id: 'gpt-5', contextWindow: 272000, maxTokens: 128000 }],
+        providerConfig: { discovery: 'openai-models-list' },
         balanceToken: 'balance-session',
         balanceUserId: 8899
       })

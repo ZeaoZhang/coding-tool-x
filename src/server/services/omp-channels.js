@@ -21,7 +21,7 @@ const {
   upsertSyncedChannels
 } = require('./channel-sync-utils');
 
-const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh)$/;
+const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh|off)$/;
 
 class OmpChannelService extends BaseChannelService {
   constructor() {
@@ -44,6 +44,14 @@ class OmpChannelService extends BaseChannelService {
     }
     normalized.model = normalized.model || null;
     normalized.models = Array.isArray(normalized.models) ? normalized.models : [];
+    normalized.modelMetadataMode = ['auto', 'hybrid', 'manual'].includes(normalized.modelMetadataMode)
+      ? normalized.modelMetadataMode
+      : 'auto';
+    normalized.modelBindings = Array.isArray(normalized.modelBindings) ? normalized.modelBindings : [];
+    normalized.providerConfig = normalized.providerConfig && typeof normalized.providerConfig === 'object'
+      && !Array.isArray(normalized.providerConfig)
+      ? normalized.providerConfig
+      : {};
     normalized.allowedModels = Array.isArray(normalized.allowedModels) ? normalized.allowedModels : [];
     normalized.speedTestModel = normalized.speedTestModel || null;
     normalized.modelRedirects = Array.isArray(normalized.modelRedirects) ? normalized.modelRedirects : [];

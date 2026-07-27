@@ -54,6 +54,7 @@ import {
   resetOmpChannelHealth,
   fetchOmpChannelModels,
   probeOmpChannelModels,
+  fetchOmpCatalogMetadata,
   testOmpChannelSpeed
 } from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
@@ -109,6 +110,56 @@ function validateProviderKey(value) {
     return 'Provider Key 不能使用保留值 openai，请改成 openai-official 之类的自定义标识'
   }
   return ''
+}
+
+function formatJson(value, fallback) {
+  try {
+    return JSON.stringify(value ?? fallback, null, 2)
+  } catch {
+    return JSON.stringify(fallback, null, 2)
+  }
+}
+
+function parseJsonField(value, label, fallback) {
+  const raw = String(value || '').trim()
+  if (!raw) return fallback
+  try {
+    return JSON.parse(raw)
+  } catch (error) {
+    throw new Error(`${label}不是合法 JSON：${error.message}`)
+  }
+}
+
+function parseModelDefinitions(value) {
+  const parsed = parseJsonField(value, '模型定义', [])
+  if (!Array.isArray(parsed)) throw new Error('模型定义必须是 JSON 数组')
+  return parsed
+}
+
+function validateModelDefinitionsJson(value) {
+  try {
+    const parsed = parseModelDefinitions(value)
+    const seen = new Set()
+    for (const model of parsed) {
+      if (!model || typeof model !== 'object' || Array.isArray(model)) return '每个模型定义必须是对象'
+      const id = String(model.id || '').trim()
+      if (!id) return '每个模型定义都必须包含 id'
+      const key = id.toLowerCase()
+      if (seen.has(key)) return `模型 ID 重复：${id}`
+      seen.add(key)
+    }
+  } catch (error) {
+    return error.message
+  }
+  return ''
+}
+
+function parseProviderConfig(value) {
+  const parsed = parseJsonField(value, 'Provider 高级配置', {})
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Provider 高级配置必须是 JSON 对象')
+  }
+  return parsed
 }
 
 function buildAuthPayload(form) {
@@ -1534,6 +1585,21 @@ const channelPanelFactories = {
         ]
       },
       {
+        title: '模型 Metadata',
+        description: '自动获取后可直接修改；保存时以当前内容覆盖自动结果',
+        collapsible: true,
+        fields: [
+          {
+            key: 'modelDefinitionsJson',
+            label: '模型定义',
+            type: 'model-definitions',
+            fullWidth: true,
+            placeholder: '[\n  { "id": "gpt-5.5", "reasoning": true, "contextWindow": 1050000 }\n]',
+            validate: validateModelDefinitionsJson
+          }
+        ]
+      },
+      {
         title: '模型重定向',
         description: '仅在 coding-tool-x 托管 OMP models.yml provider 启用时用于模型选择提示',
         collapsible: true,
@@ -1566,13 +1632,19 @@ const channelPanelFactories = {
       speedTestModel: '',
       modelRedirects: [],
       allowedModels: [],
+      modelMetadataMode: 'hybrid',
+      modelDefinitionsJson: '[]',
+      providerConfigJson: '{}',
+      modelMetadataFetching: false,
+      modelMetadataStatus: '',
       maxConcurrency: null,
       weight: 1,
       enabled: true,
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null
+      modelsFetchErrorHint: null,
+      modelsFetchMeta: null
     }),
     mapChannelToForm: (channel) => ({
       presetId: channel.presetId || 'custom',
@@ -1590,13 +1662,19 @@ const channelPanelFactories = {
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       allowedModels: channel.allowedModels || [],
+      modelMetadataMode: 'hybrid',
+      modelDefinitionsJson: formatJson(channel.models || [], []),
+      providerConfigJson: formatJson(channel.providerConfig || {}, {}),
+      modelMetadataFetching: false,
+      modelMetadataStatus: '',
       maxConcurrency: channel.maxConcurrency ?? null,
       weight: channel.weight || 1,
       enabled: channel.enabled !== false,
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null
+      modelsFetchErrorHint: null,
+      modelsFetchMeta: null
     }),
     onPresetChange: (presetId, form) => {
       const preset = getOpenCodePresetById(presetId)
@@ -1636,8 +1714,14 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
             modelRedirects: Array.isArray(form.modelRedirects) ? form.modelRedirects : []
-          })
+          }, { forceRefresh })
           form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+          form.modelsFetchMeta = {
+            cached: !!result.cached,
+            stale: !!result.stale,
+            retryAfter: result.retryAfter || null,
+            fetchedAt: result.fetchedAt || null
+          }
           if (result.error) {
             form.modelsFetchError = result.error
             form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
@@ -1654,6 +1738,12 @@ const channelPanelFactories = {
       try {
         const result = await fetchOmpChannelModels(channelId, { forceRefresh })
         form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+        form.modelsFetchMeta = {
+          cached: !!result.cached,
+          stale: !!result.stale,
+          retryAfter: result.retryAfter || null,
+          fetchedAt: result.fetchedAt || null
+        }
         if (result.error) {
           form.modelsFetchError = result.error
           form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
@@ -1665,6 +1755,27 @@ const channelPanelFactories = {
       } finally {
         form.modelsFetching = false
       }
+    },
+    fetchModelMetadataForChannel: async (form) => {
+      const providerKey = String(form.providerKey || '').trim()
+      if (!providerKey) throw new Error('请先填写 Provider Key')
+      const result = await fetchOmpCatalogMetadata(providerKey, {
+        model: form.model || null,
+        speedTestModel: form.speedTestModel || null,
+        allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
+        models: parseModelDefinitions(form.modelDefinitionsJson)
+      })
+      const existing = parseModelDefinitions(form.modelDefinitionsJson)
+      const byId = new Map((result.models || []).map(model => [String(model.id || '').toLowerCase(), model]))
+      for (const model of existing) {
+        const key = String(model.id || '').toLowerCase()
+        const catalogModel = byId.get(key) || {}
+        byId.set(key, { ...catalogModel, ...model })
+      }
+      form.modelDefinitionsJson = formatJson([...byId.values()].filter(model => model.id), [])
+      form.modelMetadataMode = 'hybrid'
+      const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0
+      form.modelMetadataStatus = `已读取 ${result.models?.length || 0} 个模型${warningCount ? `，${warningCount} 条兼容提示` : ''}`
     },
     testFn: testOmpChannelSpeed,
     api: {
@@ -1695,7 +1806,10 @@ const channelPanelFactories = {
           websiteUrl: form.websiteUrl || '',
           allowedModels: form.allowedModels || [],
           balanceToken: authPayload.balanceToken,
-          balanceUserId: authPayload.balanceUserId
+          balanceUserId: authPayload.balanceUserId,
+          models: parseModelDefinitions(form.modelDefinitionsJson),
+          modelMetadataMode: 'hybrid',
+          providerConfig: parseProviderConfig(form.providerConfigJson)
         })
       },
       update: async (channel, form) => {
@@ -1720,7 +1834,10 @@ const channelPanelFactories = {
           presetId: form.presetId || null,
           allowedModels: form.allowedModels || [],
           balanceToken: authPayload.balanceToken,
-          balanceUserId: authPayload.balanceUserId
+          balanceUserId: authPayload.balanceUserId,
+          models: parseModelDefinitions(form.modelDefinitionsJson),
+          modelMetadataMode: 'hybrid',
+          providerConfig: parseProviderConfig(form.providerConfigJson)
         })
       },
       toggle: async (channel, enabled) => updateOmpChannel(channel.id, { enabled }),

@@ -204,6 +204,56 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     expect(catalogRunner).toHaveBeenCalledWith('omp', ['models', 'deepseek', '--json'], expect.any(Object));
   });
 
+  test('caches explicit OMP catalog reads and always hides the Windows process', () => {
+    const catalogRunner = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({ models: [{ id: 'cached-model' }] }),
+      stderr: ''
+    }));
+    const manager = require('../../../src/server/services/omp-settings-manager');
+
+    expect(manager.getOmpCatalogModels('demo', { catalogRunner })).toEqual([{ id: 'cached-model' }]);
+    expect(manager.getOmpCatalogModels('demo', { catalogRunner })).toEqual([{ id: 'cached-model' }]);
+    expect(catalogRunner).toHaveBeenCalledTimes(1);
+    expect(catalogRunner).toHaveBeenCalledWith('omp', ['models', 'demo', '--json'], expect.objectContaining({
+      timeout: 5000,
+      windowsHide: true
+    }));
+  });
+
+  test('uses one catalog process to resolve requested model ids for an unregistered provider', () => {
+    const catalogRunner = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        models: [
+          { provider: 'ctx-other', id: 'gpt-5.6-sol', contextWindow: 128000, maxTokens: 32768 },
+          { provider: 'openai', id: 'gpt-5.6-sol', contextWindow: 1050000, maxTokens: 128000 },
+          { provider: 'ctx-unregistered-provider', id: 'gpt-5.6-sol', contextWindow: 2000000, maxTokens: 256000 },
+          { provider: 'openai', id: 'unrequested-model' }
+        ]
+      }),
+      stderr: ''
+    }));
+    const manager = require('../../../src/server/services/omp-settings-manager');
+
+    expect(manager.getOmpCatalogModels('unregistered-provider', {
+      requestedModelIds: ['gpt-5.6-sol'],
+      catalogRunner
+    })).toEqual([
+      expect.objectContaining({
+        provider: 'ctx-unregistered-provider',
+        id: 'gpt-5.6-sol',
+        contextWindow: 2000000,
+        maxTokens: 256000
+      })
+    ]);
+    expect(catalogRunner).toHaveBeenCalledTimes(1);
+    expect(catalogRunner).toHaveBeenCalledWith('omp', ['models', '--json'], expect.objectContaining({
+      timeout: 5000,
+      windowsHide: true
+    }));
+  });
+
   test('syncs OMP config.yml visibility to only managed ctx model selectors', () => {
     fs.writeFileSync(paths.settings, yaml.dump({
       theme: 'dark',
@@ -423,6 +473,106 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       reason: 'cli-validation-disabled',
       warnings: []
     });
+  });
+
+  test('does not invent metadata for an unknown user-added model', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    const target = manager.writeManagedOmpProviders([{
+      id: 'channel-future',
+      providerKey: 'future-provider',
+      baseUrl: 'https://future.example/v1',
+      model: 'future-model'
+    }]);
+
+    const model = yaml.load(fs.readFileSync(target, 'utf8')).providers['ctx-future-provider'].models[0];
+    expect(model).toEqual({ id: 'future-model' });
+    expect(model).not.toHaveProperty('reasoning');
+    expect(model).not.toHaveProperty('contextWindow');
+    expect(model).not.toHaveProperty('maxTokens');
+    expect(model).not.toHaveProperty('cost');
+    expect(manager.normalizeModels({ model: 'claude-future-unlisted' })).toEqual([
+      { id: 'claude-future-unlisted' }
+    ]);
+  });
+
+  test('writes the base model once and keeps thinking effort in the default selector', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    const target = manager.writeManagedOmpProviders([{
+      id: 'channel-gpt',
+      providerKey: 'openai-official',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.5:high',
+      allowedModels: ['gpt-5.5']
+    }]);
+
+    const config = yaml.load(fs.readFileSync(target, 'utf8'));
+    const models = config.providers['ctx-openai-official'].models;
+    expect(models).toHaveLength(1);
+    expect(models[0]).toEqual(expect.objectContaining({
+      id: 'gpt-5.5',
+      reasoning: true,
+      contextWindow: 1050000,
+      maxTokens: 128000,
+      thinking: {
+        mode: 'effort',
+        efforts: ['low', 'medium', 'high', 'xhigh'],
+        defaultLevel: 'medium'
+      }
+    }));
+    expect(manager.getLastManagedOmpSyncResult().managedEnabledModels).toEqual([
+      'ctx-openai-official/gpt-5.5'
+    ]);
+    expect(manager.getLastManagedOmpSyncResult().managedDefaultModel).toBe(
+      'ctx-openai-official/gpt-5.5:high'
+    );
+  });
+
+  test('round-trips complete model and provider-level OMP parameters', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    const target = manager.writeManagedOmpProviders([{
+      id: 'channel-custom',
+      providerKey: 'custom',
+      baseUrl: 'https://custom.example/v1',
+      model: 'future-model',
+      modelMetadataMode: 'manual',
+      models: [{
+        id: 'future-model',
+        api: 'openai-responses',
+        reasoning: true,
+        thinking: { mode: 'effort', efforts: ['low', 'high'] },
+        input: ['text'],
+        supportsTools: true,
+        cost: { input: 1, output: 2 },
+        contextWindow: 500000,
+        maxTokens: 64000,
+        omitMaxOutputTokens: false,
+        compat: { supportsDeveloperRole: true, maxTokensField: 'max_completion_tokens' },
+        remoteCompaction: { enabled: true, endpoint: '/compact' }
+      }],
+      providerConfig: {
+        compat: { supportsStrictMode: true },
+        discovery: 'openai-models-list',
+        modelOverrides: { 'future-model': { maxTokens: 32000 } },
+        disableStrictTools: false,
+        transport: 'pi-native'
+      }
+    }]);
+
+    const provider = yaml.load(fs.readFileSync(target, 'utf8')).providers['ctx-custom'];
+    expect(provider).toEqual(expect.objectContaining({
+      discovery: 'openai-models-list',
+      modelOverrides: { 'future-model': { maxTokens: 32000 } },
+      disableStrictTools: false,
+      transport: 'pi-native'
+    }));
+    expect(provider.models[0]).toEqual(expect.objectContaining({
+      id: 'future-model',
+      reasoning: true,
+      supportsTools: true,
+      contextWindow: 500000,
+      maxTokens: 64000,
+      omitMaxOutputTokens: false
+    }));
   });
 
   test('removes only managed ctx providers and deletes legacy extension', () => {
