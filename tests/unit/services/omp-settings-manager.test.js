@@ -74,6 +74,99 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     expect(config.providers['ctx-demo'].models.map(model => model.id)).toEqual(['gpt-demo', 'gpt-demo-mini']);
   });
 
+  test('preserves private models.yml permissions across atomic rewrites', () => {
+    fs.writeFileSync(paths.modelsYml, yaml.dump({
+      providers: {
+        openai: {
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'real-user-secret',
+          api: 'openai-responses'
+        }
+      }
+    }), { mode: 0o600 });
+    fs.chmodSync(paths.modelsYml, 0o600);
+
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      providerKey: 'openai',
+      providerApi: 'openai-responses',
+      baseUrl: 'https://upstream.example/v1',
+      apiKey: 'upstream-secret',
+      model: 'gpt-5'
+    }], {
+      gateway: {
+        host: '127.0.0.1',
+        port: 20092,
+        secret: 'permission-test-secret'
+      }
+    });
+
+    expect(fs.statSync(paths.modelsYml).mode & 0o777).toBe(0o600);
+  });
+
+  test('writes gateway-local providers without exposing upstream credentials', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      name: 'Demo Provider',
+      providerKey: 'demo',
+      providerApi: 'openai-responses',
+      routingGroup: 'primary',
+      baseUrl: 'https://upstream.example/v1?api-version=2026-01-01',
+      apiKey: 'upstream-secret',
+      headers: {
+        'x-upstream-secret': 'private-header'
+      },
+      providerConfig: {
+        headers: {
+          'x-provider-secret': 'private-provider-header'
+        },
+        compat: {
+          supportsStore: false
+        }
+      },
+      models: [{
+        id: 'gpt-demo',
+        baseUrl: 'https://model-override.example/v1',
+        headers: { authorization: 'model-secret' },
+        supportsTools: true
+      }],
+      model: 'gpt-demo'
+    }], {
+      gateway: {
+        host: '127.0.0.1',
+        port: 20092,
+        secret: 'test-gateway-secret'
+      }
+    });
+
+    const raw = fs.readFileSync(paths.modelsYml, 'utf8');
+    const config = yaml.load(raw);
+    const provider = config.providers['ctx-demo'];
+
+    expect(provider.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:20092\/omp\/[a-f0-9]{24}$/);
+    expect(provider.baseUrl).not.toContain('upstream.example');
+    expect(provider.baseUrl).not.toContain('api-version');
+    expect(provider.apiKey).toMatch(/^ctx_[a-f0-9]{40}$/);
+    expect(provider.api).toBe('openai-responses');
+    expect(provider.compat).toEqual({ supportsStore: false });
+    expect(provider.headers).toBeUndefined();
+    expect(provider.models).toEqual([
+      expect.objectContaining({
+        id: 'gpt-demo',
+        supportsTools: true
+      })
+    ]);
+    expect(provider.models[0].baseUrl).toBeUndefined();
+    expect(provider.models[0].headers).toBeUndefined();
+    expect(raw).not.toContain('upstream-secret');
+    expect(raw).not.toContain('private-header');
+    expect(raw).not.toContain('private-provider-header');
+    expect(raw).not.toContain('model-secret');
+    expect(raw).not.toContain('upstream.example');
+  });
+
   test('creates a single ctx backup before the first managed models.yml write', () => {
     const originalConfig = {
       providers: {
@@ -333,7 +426,14 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       enabledModels: ['openai/gpt-5'],
       disabledProviders: ['ollama'],
       modelRolesHadDefault: true,
-      modelRolesDefault: 'openai/gpt-5'
+      modelRolesDefault: 'openai/gpt-5',
+      modelRolesHadValue: true,
+      modelRoles: {
+        default: 'openai/gpt-5',
+        plan: 'anthropic/claude-sonnet-4-5'
+      },
+      retryFallbackChainsHadValue: false,
+      retryFallbackChains: null
     });
     expect(state.managedDisabledProviders).toEqual(['deepseek', 'nvidia']);
     expect(manager.getLastManagedOmpSyncResult()).toEqual(expect.objectContaining({
@@ -346,6 +446,69 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       ],
       managedDisabledProviders: ['deepseek', 'nvidia']
     }));
+  });
+
+  test('rewrites and exactly restores OMP model roles and fallback chains', () => {
+    const originalSettings = {
+      theme: 'dark',
+      enabledModels: ['deepseek/deepseek-v4', 'anthropic/claude-sonnet'],
+      modelRoles: {
+        default: 'deepseek/deepseek-v4:high',
+        plan: 'anthropic/claude-sonnet:xhigh'
+      },
+      retry: {
+        maxAttempts: 4,
+        fallbackChains: {
+          default: [
+            'deepseek/deepseek-v4:high',
+            'anthropic/claude-sonnet'
+          ],
+          review: 'anthropic/claude-sonnet:low'
+        }
+      }
+    };
+    fs.writeFileSync(paths.settings, yaml.dump(originalSettings), 'utf8');
+    const manager = require('../../../src/server/services/omp-settings-manager');
+
+    manager.writeManagedOmpProviders([
+      {
+        id: 'deepseek-a',
+        providerKey: 'deepseek',
+        baseUrl: 'https://deepseek.example/v1',
+        model: 'deepseek-v4'
+      },
+      {
+        id: 'anthropic-a',
+        providerKey: 'anthropic',
+        providerApi: 'anthropic-messages',
+        baseUrl: 'https://anthropic.example',
+        model: 'claude-sonnet'
+      }
+    ]);
+
+    expect(yaml.load(fs.readFileSync(paths.settings, 'utf8'))).toEqual({
+      theme: 'dark',
+      enabledModels: ['ctx-deepseek/deepseek-v4', 'ctx-anthropic/claude-sonnet'],
+      disabledProviders: ['deepseek', 'anthropic'],
+      modelRoles: {
+        default: 'ctx-deepseek/deepseek-v4:high',
+        plan: 'ctx-anthropic/claude-sonnet:xhigh'
+      },
+      retry: {
+        maxAttempts: 4,
+        fallbackChains: {
+          default: [
+            'ctx-deepseek/deepseek-v4:high',
+            'ctx-anthropic/claude-sonnet'
+          ],
+          review: 'ctx-anthropic/claude-sonnet:low'
+        }
+      }
+    });
+
+    manager.removeManagedOmpProviders();
+
+    expect(yaml.load(fs.readFileSync(paths.settings, 'utf8'))).toEqual(originalSettings);
   });
 
   test('restores original OMP config.yml visibility when managed providers are removed', () => {
@@ -427,6 +590,20 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('throws a clear error when OMP models.yml validation fails', () => {
+    const originalModels = {
+      providers: {
+        openai: {
+          baseUrl: 'https://api.openai.com/v1',
+          api: 'openai-responses'
+        }
+      }
+    };
+    const originalSettings = {
+      modelRoles: { default: 'openai/gpt-5' },
+      retry: { maxAttempts: 3 }
+    };
+    fs.writeFileSync(paths.modelsYml, yaml.dump(originalModels), 'utf8');
+    fs.writeFileSync(paths.settings, yaml.dump(originalSettings), 'utf8');
     require.cache[OMP_CONFIG_PATH].exports.resolveOmpRuntime = vi.fn(() => ({
       runtime: 'omp',
       command: 'omp',
@@ -446,6 +623,9 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       baseUrl: 'https://demo.example/v1',
       model: 'gpt-demo'
     }], { modelsRunner, validateWithCli: true })).toThrow('OMP models.yml validation failed: schema failed');
+    expect(yaml.load(fs.readFileSync(paths.modelsYml, 'utf8'))).toEqual(originalModels);
+    expect(yaml.load(fs.readFileSync(paths.settings, 'utf8'))).toEqual(originalSettings);
+    expect(fs.existsSync(paths.managedVisibilityState)).toBe(false);
   });
 
   test('syncs channel files without starting the OMP CLI by default', () => {
@@ -595,5 +775,81 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     });
     expect(fs.existsSync(paths.managedProviderExtension)).toBe(false);
     expect(manager.isManagedOmpProvidersActive()).toBe(false);
+  });
+
+  test('removes stale ctx model roles when visibility state is missing', () => {
+    fs.writeFileSync(paths.modelsYml, yaml.dump({
+      providers: {
+        openai: { api: 'openai-responses' },
+        'ctx-old': { api: 'openai-completions', models: [{ id: 'old' }] }
+      }
+    }), 'utf8');
+    fs.writeFileSync(paths.settings, yaml.dump({
+      enabledModels: ['ctx-old/old', 'openai/gpt-5'],
+      modelRoles: {
+        default: 'ctx-old/old:high',
+        plan: 'ctx-old/old:xhigh',
+        slow: 'openai/gpt-5'
+      },
+      retry: {
+        maxAttempts: 3,
+        fallbackChains: {
+          default: ['ctx-old/old:high', 'openai/gpt-5'],
+          review: 'ctx-old/old:xhigh'
+        }
+      }
+    }), 'utf8');
+
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    manager.removeManagedOmpProviders();
+
+    expect(yaml.load(fs.readFileSync(paths.settings, 'utf8'))).toEqual({
+      enabledModels: ['openai/gpt-5'],
+      modelRoles: {
+        slow: 'openai/gpt-5'
+      },
+      retry: {
+        maxAttempts: 3,
+        fallbackChains: {
+          default: ['openai/gpt-5']
+        }
+      }
+    });
+    expect(manager.getLastManagedOmpSyncResult().warnings).toEqual([
+      'Removed stale coding-tool-x managed OMP enabledModels entries without a visibility state file.',
+      'Removed stale coding-tool-x managed OMP modelRoles entries without a visibility state file.',
+      'Removed stale coding-tool-x managed OMP retry.fallbackChains entries without a visibility state file.'
+    ]);
+  });
+
+  test('rolls back models, settings and visibility state when cleanup validation fails', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    manager.writeManagedOmpProviders([{
+      id: 'channel-1',
+      providerKey: 'demo',
+      baseUrl: 'https://demo.example/v1',
+      model: 'gpt-demo'
+    }]);
+    const beforeModels = fs.readFileSync(paths.modelsYml);
+    const beforeSettings = fs.readFileSync(paths.settings);
+    const beforeState = fs.readFileSync(paths.managedVisibilityState);
+    require.cache[OMP_CONFIG_PATH].exports.resolveOmpRuntime = vi.fn(() => ({
+      runtime: 'omp',
+      command: 'omp',
+      installed: true
+    }));
+
+    expect(() => manager.removeManagedOmpProviders({
+      validateWithCli: true,
+      modelsRunner: vi.fn(() => ({
+        status: 1,
+        stdout: '',
+        stderr: 'cleanup schema failed'
+      }))
+    })).toThrow('OMP models.yml validation failed: cleanup schema failed');
+
+    expect(fs.readFileSync(paths.modelsYml)).toEqual(beforeModels);
+    expect(fs.readFileSync(paths.settings)).toEqual(beforeSettings);
+    expect(fs.readFileSync(paths.managedVisibilityState)).toEqual(beforeState);
   });
 });

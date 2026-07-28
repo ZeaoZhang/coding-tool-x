@@ -205,9 +205,10 @@ async function handleStartProxy(cliType, services) {
 
   console.log(chalk.cyan('动态切换功能说明:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.gray('• 开启后会把已启用的 OMP 渠道写入受管 models.yml provider 配置'));
-    console.log(chalk.gray(`• 可以通过 Web UI 或"渠道管理"功能调整启用的 ${toolName} provider`));
-    console.log(chalk.gray(`• 状态端口: http://127.0.0.1:${defaultPort}\n`));
+    console.log(chalk.gray('• 开启后会启动 OMP 专用本地网关，并把受管 provider 指向该网关'));
+    console.log(chalk.gray(`• 可以通过 Web UI 或"渠道管理"功能调整启用的 ${toolName} 路由组`));
+    console.log(chalk.gray('• 同路由组内由 coding-tool-x 动态选择渠道，跨模型 fallback 仍由 OMP 处理'));
+    console.log(chalk.gray(`• OMP 网关地址: http://127.0.0.1:${defaultPort}\n`));
   } else {
     console.log(chalk.gray('• 开启后会在本地启动一个代理服务'));
     console.log(chalk.gray(`• 可以在不重启 ${toolName} 的情况下动态管理渠道`));
@@ -217,7 +218,7 @@ async function handleStartProxy(cliType, services) {
 
   console.log(chalk.yellow('[WARN]  重要提示:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.yellow('• 启用后会写入 Coding-Tool 管理的 OMP models.yml provider 配置'));
+    console.log(chalk.yellow('• 启用后会写入指向本地网关的 OMP models.yml provider 配置'));
     console.log(chalk.yellow('• 关闭会移除受管 provider，不会清理 OMP 原生 auth.json\n'));
   } else {
     console.log(chalk.yellow('• 开启期间请勿关闭 CLI 终端窗口'));
@@ -253,9 +254,7 @@ async function handleStartProxy(cliType, services) {
 
     if (services.managedProviderConfig) {
       console.log(chalk.green('[OK] OMP models.yml 受管 provider 已启用'));
-      if (proxyResult.port) {
-        console.log(chalk.gray(`状态端口: http://127.0.0.1:${proxyResult.port}`));
-      }
+      console.log(chalk.gray('OMP 新增会话用量日志观察已启用'));
       (proxyResult.warnings || []).forEach((warning) => {
         console.log(chalk.yellow(`[WARN]  ${warning}`));
       });
@@ -325,7 +324,7 @@ async function handleStopProxy(cliType, services) {
   if (services.managedProviderConfig) {
     console.log(chalk.gray(`• 受管配置: ${chalk.green('已启用')}`));
     console.log(chalk.gray(`• 配置模式: ${proxyStatus.mode || 'models-yml-provider-config'}`));
-    console.log(chalk.gray(`• 状态端口: http://127.0.0.1:${proxyStatus.port || proxyStatus.defaultPort}\n`));
+    console.log(chalk.gray(`• 会话日志观察: ${proxyStatus.sessionLogObserver?.running ? chalk.green('运行中') : chalk.yellow('未运行')}\n`));
   } else {
     console.log(chalk.gray(`• 代理服务: ${chalk.green('运行中')}`));
     console.log(chalk.gray(`• 代理端口: ${proxyStatus.port}`));

@@ -3,6 +3,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
 const ompConfig = require('./omp-config');
+const { prepareManagedOmpChannels } = require('./omp-gateway-routing');
 const { MODEL_METADATA, MODEL_ALIASES } = require('../../config/model-metadata');
 const {
   MODEL_METADATA_MODES,
@@ -15,7 +16,7 @@ const {
 
 const MANAGED_PROVIDER_PREFIX = 'ctx-';
 const MODELS_BACKUP_MARKER = '.ctx-backup-';
-const VISIBILITY_STATE_VERSION = 1;
+const VISIBILITY_STATE_VERSION = 2;
 const MANAGED_VISIBILITY_STATE_FILE = 'coding-tool-x-omp-managed-visibility.json';
 const NO_MANAGED_MODELS_SELECTOR = `${MANAGED_PROVIDER_PREFIX}coding-tool-x/__no_models_configured__`;
 let lastManagedOmpSyncResult = null;
@@ -45,6 +46,12 @@ function normalizeProviderId(value = '') {
 }
 
 function getManagedProviderId(channel = {}) {
+  const explicitId = normalizeProviderId(channel.managedProviderId || '');
+  if (channel.managedProviderId) {
+    return explicitId.startsWith(MANAGED_PROVIDER_PREFIX)
+      ? explicitId
+      : `${MANAGED_PROVIDER_PREFIX}${explicitId}`;
+  }
   const baseId = normalizeProviderId(channel.providerKey || channel.provider || channel.name || channel.id);
   return baseId.startsWith(MANAGED_PROVIDER_PREFIX) ? baseId : `${MANAGED_PROVIDER_PREFIX}${baseId}`;
 }
@@ -114,6 +121,49 @@ function getOwnProperty(object, key) {
   return object && typeof object === 'object' && !Array.isArray(object)
     ? Object.prototype.hasOwnProperty.call(object, key)
     : false;
+}
+
+function cloneJson(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function captureFileSnapshots(filePaths = []) {
+  return filePaths.map((filePath) => ({
+    filePath,
+    existed: Boolean(filePath && fs.existsSync(filePath)),
+    content: filePath && fs.existsSync(filePath) ? fs.readFileSync(filePath) : null
+  }));
+}
+
+function restoreFileSnapshots(snapshots = []) {
+  snapshots.forEach((snapshot) => {
+    if (!snapshot.filePath) return;
+    if (snapshot.existed) {
+      ensureOmpDir(path.dirname(snapshot.filePath));
+      writeFileAtomic(snapshot.filePath, snapshot.content);
+    } else if (fs.existsSync(snapshot.filePath)) {
+      fs.unlinkSync(snapshot.filePath);
+    }
+  });
+}
+
+function writeFileAtomic(filePath, content) {
+  ensureOmpDir(path.dirname(filePath));
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const mode = fs.existsSync(filePath)
+    ? fs.statSync(filePath).mode & 0o777
+    : 0o600;
+  try {
+    fs.writeFileSync(temporaryPath, content, { mode });
+    fs.chmodSync(temporaryPath, mode);
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) {
+      fs.unlinkSync(temporaryPath);
+    }
+    throw error;
+  }
 }
 
 function normalizeModels(channel = {}, options = {}) {
@@ -277,12 +327,31 @@ function buildProviderEntry(channel = {}, options = {}) {
     const providerName = channel.providerKey || channel.provider || channel.name || channel.id || 'provider';
     options.warnings.push(...normalizedProvider.warnings.map(message => `${providerName}: ${message}`));
   }
+  let models = normalizeModels(channel, { catalogIndex, warnings: options.warnings });
+  if (channel._ompGatewayRoute) {
+    models = models.map((model) => {
+      const sanitized = { ...model };
+      delete sanitized.baseUrl;
+      delete sanitized.headers;
+      return sanitized;
+    });
+  }
   const entry = compactObject({
     ...normalizedProvider.config,
     baseUrl: String(channel.baseUrl || providerConfig.baseUrl || '').trim(),
     api: normalizeProviderApi(channel.providerApi || channel.api || channel.wireApi || providerConfig.api),
-    models: normalizeModels(channel, { catalogIndex, warnings: options.warnings })
+    models
   });
+
+  if (channel._ompGatewayRoute) {
+    delete entry.headers;
+    delete entry.apiKey;
+    if (channel.authMode === 'none') {
+      entry.auth = 'none';
+    } else {
+      delete entry.auth;
+    }
+  }
 
   const apiKey = String(channel.apiKey || providerConfig.apiKey || '').trim();
   if (apiKey) {
@@ -321,7 +390,7 @@ function writeModelsConfig(config, filePath = getOmpPaths().modelsYml) {
     noRefs: true,
     sortKeys: false
   });
-  fs.writeFileSync(filePath, doc, 'utf8');
+  writeFileAtomic(filePath, doc);
 }
 
 function getOmpSettingsPath(paths = getOmpPaths()) {
@@ -359,7 +428,7 @@ function writeOmpSettingsConfig(config, filePath = getOmpSettingsPath()) {
     noRefs: true,
     sortKeys: false
   });
-  fs.writeFileSync(filePath, doc, 'utf8');
+  writeFileAtomic(filePath, doc);
 }
 
 function getModelsBackupPrefix(filePath) {
@@ -420,7 +489,7 @@ function readManagedVisibilityState(paths = getOmpPaths()) {
 function writeManagedVisibilityState(state, paths = getOmpPaths()) {
   const filePath = getManagedVisibilityStatePath(paths);
   ensureOmpDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  writeFileAtomic(filePath, `${JSON.stringify(state, null, 2)}\n`);
   return filePath;
 }
 
@@ -602,6 +671,9 @@ function buildManagedModelsConfig(channels = [], baseConfig = readModelsConfig()
 }
 
 function getOriginalProviderId(channel = {}) {
+  if (channel.originalProviderId) {
+    return normalizeProviderId(channel.originalProviderId);
+  }
   const providerId = normalizeProviderId(channel.providerKey || channel.provider || channel.name || channel.id);
   return isManagedProviderId(providerId)
     ? providerId.slice(MANAGED_PROVIDER_PREFIX.length)
@@ -679,11 +751,18 @@ function captureOriginalVisibility(settings = {}) {
   const modelRoles = settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)
     ? settings.modelRoles
     : {};
+  const fallbackChains = settings.retry && typeof settings.retry === 'object' && !Array.isArray(settings.retry)
+    ? settings.retry.fallbackChains
+    : undefined;
   return {
     enabledModels: getOwnProperty(settings, 'enabledModels') ? uniqueStrings(settings.enabledModels) : null,
     disabledProviders: getOwnProperty(settings, 'disabledProviders') ? uniqueStrings(settings.disabledProviders) : null,
     modelRolesHadDefault: getOwnProperty(modelRoles, 'default'),
-    modelRolesDefault: getOwnProperty(modelRoles, 'default') ? String(modelRoles.default || '') : null
+    modelRolesDefault: getOwnProperty(modelRoles, 'default') ? String(modelRoles.default || '') : null,
+    modelRolesHadValue: getOwnProperty(settings, 'modelRoles'),
+    modelRoles: getOwnProperty(settings, 'modelRoles') ? cloneJson(modelRoles) : null,
+    retryFallbackChainsHadValue: fallbackChains !== undefined,
+    retryFallbackChains: fallbackChains !== undefined ? cloneJson(fallbackChains) : null
   };
 }
 
@@ -701,20 +780,84 @@ function collectUserDisabledProviders(settings = {}, previousState = null) {
   return uniqueStrings([...originalDisabled, ...userAddedDuringManagedMode]);
 }
 
-function applyManagedModelRole(settings, visibility, previousState = null) {
-  const roles = settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)
-    ? { ...settings.modelRoles }
-    : {};
-  const currentDefault = String(roles.default || '').trim();
-  const previousManagedDefault = String(previousState?.managedDefaultModel || '').trim();
-  if (!visibility.managedDefaultModel) {
-    return roles;
+function buildProviderMappings(channels = []) {
+  const originalToManaged = {};
+  const managedToOriginal = {};
+  channels.forEach((channel) => {
+    const original = getOriginalProviderId(channel);
+    const managed = getManagedProviderId(channel);
+    if (!original || !managed) return;
+    if (!originalToManaged[original]) {
+      originalToManaged[original] = managed;
+    }
+    managedToOriginal[managed] = original;
+  });
+  return { originalToManaged, managedToOriginal };
+}
+
+function rewriteModelSelector(value, providerMap = {}) {
+  if (typeof value !== 'string') return value;
+  const index = value.indexOf('/');
+  if (index <= 0) return value;
+  const providerId = value.slice(0, index);
+  const replacement = providerMap[providerId];
+  return replacement ? `${replacement}${value.slice(index)}` : value;
+}
+
+function rewriteSelectorTree(value, providerMap = {}) {
+  if (typeof value === 'string') return rewriteModelSelector(value, providerMap);
+  if (Array.isArray(value)) return value.map(item => rewriteSelectorTree(item, providerMap));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, rewriteSelectorTree(item, providerMap)])
+    );
   }
-  const defaultIsManaged = visibility.managedEnabledModels.includes(currentDefault);
-  if (!currentDefault || !defaultIsManaged || currentDefault === previousManagedDefault) {
+  return value;
+}
+
+function removeManagedSelectorTree(value) {
+  if (typeof value === 'string') {
+    const providerId = String(value).split('/')[0];
+    return isManagedProviderId(providerId) ? undefined : value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map(removeManagedSelectorTree)
+      .filter(item => item !== undefined);
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .map(([key, item]) => [key, removeManagedSelectorTree(item)])
+        .filter(([, item]) => item !== undefined)
+    );
+  }
+  return value;
+}
+
+function applyManagedModelRoles(settings, visibility, mappings, previousState = null) {
+  const originalRoles = previousState?.active && previousState.original?.modelRolesHadValue
+    ? previousState.original.modelRoles
+    : settings.modelRoles;
+  const roles = originalRoles && typeof originalRoles === 'object' && !Array.isArray(originalRoles)
+    ? rewriteSelectorTree(cloneJson(originalRoles), mappings.originalToManaged)
+    : {};
+  const originalDefault = String(originalRoles?.default || '');
+  const mappedDefault = rewriteModelSelector(originalDefault, mappings.originalToManaged);
+  const defaultWasMapped = originalDefault && mappedDefault !== originalDefault;
+  const defaultIsManaged = isManagedProviderId(String(roles.default || '').split('/')[0]);
+  if (visibility.managedDefaultModel && (!roles.default || (!defaultWasMapped && !defaultIsManaged))) {
     roles.default = visibility.managedDefaultModel;
   }
   return roles;
+}
+
+function applyManagedFallbackChains(settings, mappings, previousState = null) {
+  const source = previousState?.active && previousState.original?.retryFallbackChainsHadValue
+    ? previousState.original.retryFallbackChains
+    : settings.retry?.fallbackChains;
+  if (source === undefined) return undefined;
+  return rewriteSelectorTree(cloneJson(source), mappings.originalToManaged);
 }
 
 function syncManagedOmpVisibility(channels = [], modelsConfig = { providers: {} }, options = {}) {
@@ -724,6 +867,7 @@ function syncManagedOmpVisibility(channels = [], modelsConfig = { providers: {} 
   const settings = readOmpSettingsConfig(settingsPath);
   const previousState = readManagedVisibilityState(paths);
   const visibility = collectManagedVisibility(channels, modelsConfig, options);
+  const mappings = buildProviderMappings(channels);
   const original = previousState?.active && previousState.original
     ? previousState.original
     : captureOriginalVisibility(settings);
@@ -735,7 +879,13 @@ function syncManagedOmpVisibility(channels = [], modelsConfig = { providers: {} 
     ...collectUserDisabledProviders(settings, previousState),
     ...visibility.managedDisabledProviders
   ]);
-  settings.modelRoles = applyManagedModelRole(settings, visibility, previousState);
+  settings.modelRoles = applyManagedModelRoles(settings, visibility, mappings, previousState);
+  const fallbackChains = applyManagedFallbackChains(settings, mappings, previousState);
+  if (fallbackChains !== undefined) {
+    settings.retry = settings.retry && typeof settings.retry === 'object' && !Array.isArray(settings.retry)
+      ? { ...settings.retry, fallbackChains }
+      : { fallbackChains };
+  }
 
   const after = JSON.stringify(settings);
   if (before !== after) {
@@ -750,7 +900,12 @@ function syncManagedOmpVisibility(channels = [], modelsConfig = { providers: {} 
     managedEnabledModelsForSettings: visibility.managedEnabledModelsForSettings,
     managedDisabledProviders: visibility.managedDisabledProviders,
     managedDefaultModel: visibility.managedDefaultModel,
+    providerMappings: mappings,
     original,
+    applied: {
+      modelRoles: cloneJson(settings.modelRoles),
+      retryFallbackChains: cloneJson(settings.retry?.fallbackChains)
+    },
     updatedAt: new Date().toISOString()
   };
   writeManagedVisibilityState(state, paths);
@@ -819,7 +974,39 @@ function removeManagedOmpVisibility(options = {}) {
       warnings.push('OMP disabledProviders was changed while coding-tool-x managed visibility was active; removed only managed provider entries.');
     }
 
-    if (settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)) {
+    if (state.version >= 2 && state.original) {
+      const currentRoles = settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)
+        ? settings.modelRoles
+        : undefined;
+      if (JSON.stringify(currentRoles) === JSON.stringify(state.applied?.modelRoles)) {
+        if (state.original.modelRolesHadValue) {
+          settings.modelRoles = cloneJson(state.original.modelRoles);
+        } else {
+          delete settings.modelRoles;
+        }
+      } else if (currentRoles) {
+        settings.modelRoles = rewriteSelectorTree(currentRoles, state.providerMappings?.managedToOriginal || {});
+        warnings.push('OMP modelRoles was changed while coding-tool-x managed visibility was active; restored managed provider references only.');
+      }
+
+      const currentFallback = settings.retry?.fallbackChains;
+      if (JSON.stringify(currentFallback) === JSON.stringify(state.applied?.retryFallbackChains)) {
+        if (state.original.retryFallbackChainsHadValue) {
+          settings.retry = settings.retry && typeof settings.retry === 'object' && !Array.isArray(settings.retry)
+            ? { ...settings.retry, fallbackChains: cloneJson(state.original.retryFallbackChains) }
+            : { fallbackChains: cloneJson(state.original.retryFallbackChains) };
+        } else if (settings.retry && typeof settings.retry === 'object' && !Array.isArray(settings.retry)) {
+          delete settings.retry.fallbackChains;
+          if (Object.keys(settings.retry).length === 0) delete settings.retry;
+        }
+      } else if (currentFallback !== undefined) {
+        settings.retry.fallbackChains = rewriteSelectorTree(
+          currentFallback,
+          state.providerMappings?.managedToOriginal || {}
+        );
+        warnings.push('OMP retry.fallbackChains was changed while coding-tool-x managed visibility was active; restored managed provider references only.');
+      }
+    } else if (settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)) {
       const roles = { ...settings.modelRoles };
       if (roles.default === state.managedDefaultModel) {
         if (state.original?.modelRolesHadDefault) {
@@ -845,6 +1032,39 @@ function removeManagedOmpVisibility(options = {}) {
       }
       warnings.push('Removed stale coding-tool-x managed OMP enabledModels entries without a visibility state file.');
     }
+
+    if (settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)) {
+      const roles = Object.fromEntries(
+        Object.entries(settings.modelRoles).filter(([, model]) => {
+          const providerId = String(model || '').split('/')[0];
+          return !isManagedProviderId(providerId);
+        })
+      );
+      if (Object.keys(roles).length !== Object.keys(settings.modelRoles).length) {
+        settingsBackupPath = settingsBackupPath || createModelsBackupIfNeeded(settingsPath, options);
+        if (Object.keys(roles).length > 0) {
+          settings.modelRoles = roles;
+        } else {
+          delete settings.modelRoles;
+        }
+        warnings.push('Removed stale coding-tool-x managed OMP modelRoles entries without a visibility state file.');
+      }
+    }
+
+    const currentFallback = settings.retry?.fallbackChains;
+    if (currentFallback !== undefined) {
+      const fallbackChains = removeManagedSelectorTree(currentFallback);
+      if (JSON.stringify(fallbackChains) !== JSON.stringify(currentFallback)) {
+        settingsBackupPath = settingsBackupPath || createModelsBackupIfNeeded(settingsPath, options);
+        if (fallbackChains && typeof fallbackChains === 'object' && Object.keys(fallbackChains).length > 0) {
+          settings.retry.fallbackChains = fallbackChains;
+        } else {
+          delete settings.retry.fallbackChains;
+          if (Object.keys(settings.retry).length === 0) delete settings.retry;
+        }
+        warnings.push('Removed stale coding-tool-x managed OMP retry.fallbackChains entries without a visibility state file.');
+      }
+    }
   }
 
   const after = JSON.stringify(settings);
@@ -865,81 +1085,110 @@ function removeManagedOmpVisibility(options = {}) {
 
 function writeManagedOmpProviders(channels = [], options = {}) {
   const paths = getOmpPaths();
+  const settingsPath = getOmpSettingsPath(paths);
+  const statePath = getManagedVisibilityStatePath(paths);
+  const snapshots = captureFileSnapshots([paths.modelsYml, settingsPath, statePath]);
   const buildWarnings = [];
-  const config = buildManagedModelsConfig(channels, readModelsConfig(paths.modelsYml), {
-    ...options,
-    warnings: buildWarnings
+  const orderedChannels = options.activeChannelId
+    ? [
+      ...channels.filter(channel => channel?.id === options.activeChannelId),
+      ...channels.filter(channel => channel?.id !== options.activeChannelId)
+    ]
+    : channels;
+  const prepared = options.gateway
+    ? prepareManagedOmpChannels(orderedChannels, options.gateway)
+    : { managedChannels: orderedChannels, unsupportedChannels: [] };
+  const effectiveChannels = prepared.managedChannels;
+  prepared.unsupportedChannels.forEach((channel) => {
+    buildWarnings.push(`OMP channel "${channel.name || channel.id}" was not managed: ${channel.reason}.`);
   });
-  const backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
-  writeModelsConfig(config, paths.modelsYml);
-  const visibility = syncManagedOmpVisibility(channels, config, options);
-  const validation = options.validateWithCli === true
-    ? validateOmpModelsConfig(options)
-    : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
-  const warnings = [
-    ...buildWarnings,
-    ...(visibility.warnings || []),
-    ...(validation.warnings || [])
-  ];
-  recordManagedOmpSyncResult({
-    path: paths.modelsYml,
-    modelsPath: paths.modelsYml,
-    settingsPath: visibility.settingsPath,
-    statePath: visibility.statePath,
-    backupPath,
-    modelsBackupPath: backupPath,
-    settingsBackupPath: visibility.settingsBackupPath,
-    changed: true,
-    visibilityChanged: visibility.changed,
-    managedEnabledModels: visibility.managedEnabledModels,
-    managedEnabledModelsForSettings: visibility.managedEnabledModelsForSettings,
-    managedDisabledProviders: visibility.managedDisabledProviders,
-    managedDefaultModel: visibility.managedDefaultModel,
-    validation,
-    warnings
-  });
-  removeLegacyManagedExtension(paths);
-  return paths.modelsYml;
+  try {
+    const config = buildManagedModelsConfig(effectiveChannels, readModelsConfig(paths.modelsYml), {
+      ...options,
+      warnings: buildWarnings
+    });
+    const backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
+    writeModelsConfig(config, paths.modelsYml);
+    const visibility = syncManagedOmpVisibility(effectiveChannels, config, options);
+    const validation = options.validateWithCli === true
+      ? validateOmpModelsConfig(options)
+      : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
+    const warnings = [
+      ...buildWarnings,
+      ...(visibility.warnings || []),
+      ...(validation.warnings || [])
+    ];
+    recordManagedOmpSyncResult({
+      path: paths.modelsYml,
+      modelsPath: paths.modelsYml,
+      settingsPath: visibility.settingsPath,
+      statePath: visibility.statePath,
+      backupPath,
+      modelsBackupPath: backupPath,
+      settingsBackupPath: visibility.settingsBackupPath,
+      changed: true,
+      visibilityChanged: visibility.changed,
+      managedEnabledModels: visibility.managedEnabledModels,
+      managedEnabledModelsForSettings: visibility.managedEnabledModelsForSettings,
+      managedDisabledProviders: visibility.managedDisabledProviders,
+      managedDefaultModel: visibility.managedDefaultModel,
+      validation,
+      warnings
+    });
+    removeLegacyManagedExtension(paths);
+    return paths.modelsYml;
+  } catch (error) {
+    restoreFileSnapshots(snapshots);
+    throw error;
+  }
 }
 
 function removeManagedOmpProviders(options = {}) {
   const paths = getOmpPaths();
-  const config = readModelsConfig(paths.modelsYml);
-  const visibility = removeManagedOmpVisibility(options);
-  const before = Object.keys(config.providers || {}).length;
-  pruneManagedProviders(config.providers);
-  const after = Object.keys(config.providers || {}).length;
-  let backupPath = null;
-  let validation = {
-    skipped: true,
-    reason: before === after ? 'no-managed-providers' : 'not-run',
-    warnings: []
-  };
-  if (before !== after) {
-    backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
-    writeModelsConfig(config, paths.modelsYml);
-    validation = options.validateWithCli === true
-      ? validateOmpModelsConfig(options)
-      : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
+  const settingsPath = getOmpSettingsPath(paths);
+  const statePath = getManagedVisibilityStatePath(paths);
+  const snapshots = captureFileSnapshots([paths.modelsYml, settingsPath, statePath]);
+  try {
+    const config = readModelsConfig(paths.modelsYml);
+    const visibility = removeManagedOmpVisibility(options);
+    const before = Object.keys(config.providers || {}).length;
+    pruneManagedProviders(config.providers);
+    const after = Object.keys(config.providers || {}).length;
+    let backupPath = null;
+    let validation = {
+      skipped: true,
+      reason: before === after ? 'no-managed-providers' : 'not-run',
+      warnings: []
+    };
+    if (before !== after) {
+      backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
+      writeModelsConfig(config, paths.modelsYml);
+      validation = options.validateWithCli === true
+        ? validateOmpModelsConfig(options)
+        : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };
+    }
+    recordManagedOmpSyncResult({
+      path: paths.modelsYml,
+      modelsPath: paths.modelsYml,
+      settingsPath: visibility.settingsPath,
+      statePath: visibility.statePath,
+      backupPath,
+      modelsBackupPath: backupPath,
+      settingsBackupPath: visibility.settingsBackupPath,
+      changed: before !== after,
+      visibilityChanged: visibility.changed,
+      stateRemoved: visibility.stateRemoved,
+      validation,
+      warnings: [
+        ...(visibility.warnings || []),
+        ...(validation.warnings || [])
+      ]
+    });
+    removeLegacyManagedExtension(paths);
+  } catch (error) {
+    restoreFileSnapshots(snapshots);
+    throw error;
   }
-  recordManagedOmpSyncResult({
-    path: paths.modelsYml,
-    modelsPath: paths.modelsYml,
-    settingsPath: visibility.settingsPath,
-    statePath: visibility.statePath,
-    backupPath,
-    modelsBackupPath: backupPath,
-    settingsBackupPath: visibility.settingsBackupPath,
-    changed: before !== after,
-    visibilityChanged: visibility.changed,
-    stateRemoved: visibility.stateRemoved,
-    validation,
-    warnings: [
-      ...(visibility.warnings || []),
-      ...(validation.warnings || [])
-    ]
-  });
-  removeLegacyManagedExtension(paths);
 }
 
 function isManagedOmpProvidersActive() {

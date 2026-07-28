@@ -1,13 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { PATHS } = require('../../config/paths');
+const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const BaseChannelService = require('./base/base-channel-service');
 const ompConfig = require('./omp-config');
 const {
   writeManagedOmpProviders,
   removeManagedOmpProviders,
-  isManagedOmpProvidersActive,
   getLastManagedOmpSyncResult,
   readModelsConfig,
   readOmpSettingsConfig,
@@ -23,13 +22,82 @@ const {
 
 const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh|off)$/;
 
+function loadManagedOmpModeState() {
+  ensureStorageDirMigrated();
+  try {
+    if (!fs.existsSync(PATHS.activeChannel.omp)) return null;
+    const data = JSON.parse(fs.readFileSync(PATHS.activeChannel.omp, 'utf8'));
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+function loadManagedOmpActiveChannelId() {
+  return loadManagedOmpModeState()?.activeChannelId || null;
+}
+
+function isManagedOmpModeEnabled() {
+  ensureStorageDirMigrated();
+  return fs.existsSync(PATHS.activeChannel.omp);
+}
+
+function writeManagedOmpModeState(filePath, state) {
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(state, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600
+    });
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    throw error;
+  }
+}
+
+function enableManagedOmpMode(activeChannelId = null, gateway = null) {
+  ensureStorageDirMigrated();
+  const filePath = PATHS.activeChannel.omp;
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const nextActiveChannelId = activeChannelId || loadManagedOmpActiveChannelId();
+  const previousState = loadManagedOmpModeState();
+  const nextGateway = gateway || previousState?.gateway || null;
+  const state = {
+    version: 2,
+    activeChannelId: nextActiveChannelId || null
+  };
+  if (nextGateway) {
+    state.gateway = {
+      host: String(nextGateway.host || '127.0.0.1'),
+      port: Number(nextGateway.port),
+      secret: String(nextGateway.secret || ''),
+      supportedOAuthChannelIds: Array.isArray(nextGateway.supportedOAuthChannelIds)
+        ? [...nextGateway.supportedOAuthChannelIds]
+        : []
+    };
+  }
+  writeManagedOmpModeState(filePath, state);
+  return nextActiveChannelId || null;
+}
+
+function disableManagedOmpMode() {
+  ensureStorageDirMigrated();
+  if (fs.existsSync(PATHS.activeChannel.omp)) {
+    fs.unlinkSync(PATHS.activeChannel.omp);
+  }
+}
+
 class OmpChannelService extends BaseChannelService {
   constructor() {
     super({
       platform: 'omp',
       channelsFilePath: PATHS.channels.omp,
       defaultGatewaySource: 'openai_compatible',
-      isProxyRunning: () => isManagedOmpProvidersActive()
+      isProxyRunning: () => isManagedOmpModeEnabled()
     });
   }
 
@@ -37,10 +105,16 @@ class OmpChannelService extends BaseChannelService {
     const normalized = super._applyDefaults(channel);
     normalized.providerKey = normalized.providerKey || normalized.provider || normalized.name || normalized.id;
     normalized.providerApi = normalized.providerApi || normalized.api || normalized.wireApi || 'openai-completions';
-    normalized.authMode = normalized.authMode === 'oauth' ? 'oauth' : 'api_key';
+    normalized.authMode = ['api_key', 'oauth', 'none'].includes(normalized.authMode)
+      ? normalized.authMode
+      : 'api_key';
+    normalized.routingGroup = String(normalized.routingGroup || '').trim();
     normalized.oauthProviderId = normalized.oauthProviderId || (normalized.authMode === 'oauth' ? normalized.providerKey : '');
     if (normalized.authMode === 'oauth') {
       normalized.apiKey = normalized.apiKey || '';
+    } else if (normalized.authMode === 'none') {
+      normalized.apiKey = '';
+      normalized.oauthProviderId = '';
     }
     normalized.model = normalized.model || null;
     normalized.models = Array.isArray(normalized.models) ? normalized.models : [];
@@ -59,28 +133,46 @@ class OmpChannelService extends BaseChannelService {
   }
 
   _applyToNativeSettings(channel) {
-    writeManagedOmpProviders([channel]);
+    if (isManagedOmpModeEnabled()) {
+      const state = loadManagedOmpModeState();
+      enableManagedOmpMode(channel.id, state?.gateway || null);
+      writeManagedOmpProviders([channel], state?.gateway ? {
+        gateway: state.gateway,
+        activeChannelId: channel.id
+      } : {});
+    }
   }
 
   _onAfterCreate(_channel, allChannels) {
-    this.syncManagedOmpProviders(allChannels);
+    this.syncManagedOmpProvidersIfEnabled(allChannels);
   }
 
   _onAfterUpdate(_oldChannel, _newChannel, allChannels) {
-    this.syncManagedOmpProviders(allChannels);
+    this.syncManagedOmpProvidersIfEnabled(allChannels);
   }
 
   _onAfterDelete(_channel, allChannels) {
-    this.syncManagedOmpProviders(allChannels);
+    this.syncManagedOmpProvidersIfEnabled(allChannels);
   }
 
-  syncManagedOmpProviders(channels = this.getChannels().channels) {
+  syncManagedOmpProvidersIfEnabled(channels = this.getChannels().channels) {
+    if (!isManagedOmpModeEnabled()) {
+      return getLastManagedOmpSyncResult();
+    }
+    const state = loadManagedOmpModeState();
+    return this.syncManagedOmpProviders(channels, state?.gateway ? {
+      gateway: state.gateway,
+      activeChannelId: state.activeChannelId
+    } : {});
+  }
+
+  syncManagedOmpProviders(channels = this.getChannels().channels, options = {}) {
     const enabledChannels = (channels || []).filter(channel => channel.enabled !== false);
     if (enabledChannels.length === 0) {
       removeManagedOmpProviders();
       return getLastManagedOmpSyncResult();
     }
-    writeManagedOmpProviders(enabledChannels);
+    writeManagedOmpProviders(enabledChannels, options);
     return getLastManagedOmpSyncResult();
   }
 
@@ -90,7 +182,7 @@ class OmpChannelService extends BaseChannelService {
   }
 
   syncManagedProviderExtension(channels = this.getChannels().channels) {
-    return this.syncManagedOmpProviders(channels);
+    return this.syncManagedOmpProvidersIfEnabled(channels);
   }
 
   disableManagedProviderExtension() {
@@ -396,9 +488,14 @@ module.exports = {
   applyChannelToSettings: (id) => service.applyChannelToSettings(id),
   disableAllChannels: () => service.disableAllChannels(),
   getEffectiveApiKey: (channel) => channel?.apiKey || null,
-  syncManagedOmpProviders: (channels) => service.syncManagedOmpProviders(channels),
+  syncManagedOmpProviders: (channels, options) => service.syncManagedOmpProviders(channels, options),
   disableManagedOmpProviders: () => service.disableManagedOmpProviders(),
   syncManagedProviderExtension: (channels) => service.syncManagedProviderExtension(channels),
   disableManagedProviderExtension: () => service.disableManagedProviderExtension(),
+  isManagedOmpModeEnabled,
+  enableManagedOmpMode,
+  disableManagedOmpMode,
+  loadManagedOmpModeState,
+  loadManagedOmpActiveChannelId,
   syncCurrentOmpChannel
 };

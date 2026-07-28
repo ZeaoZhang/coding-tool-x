@@ -101,10 +101,35 @@ function refreshChannels(source = 'claude') {
   });
 }
 
-function getAvailableChannels(source = 'claude') {
+function matchesAllocationRequest(channel, options = {}) {
+  const candidateIds = Array.isArray(options.candidateIds)
+    ? new Set(options.candidateIds.filter(Boolean))
+    : null;
+  const excludedIds = new Set(
+    Array.isArray(options.excludeChannelIds) ? options.excludeChannelIds.filter(Boolean) : []
+  );
+  if (candidateIds && !candidateIds.has(channel.id)) return false;
+  if (excludedIds.has(channel.id)) return false;
+  if (options.routingGroup && String(channel.routingGroup || channel.id) !== String(options.routingGroup)) {
+    return false;
+  }
+  if (options.providerKey && String(channel.providerKey || channel.provider || '') !== String(options.providerKey)) {
+    return false;
+  }
+  if (
+    options.providerApi
+    && String(channel.providerApi || channel.api || channel.wireApi || 'openai-completions') !== String(options.providerApi)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function getAvailableChannels(source = 'claude', options = {}) {
   refreshChannels(source);
   const state = getState(source);
   return state.channels.filter(ch => {
+    if (!matchesAllocationRequest(ch, options)) return false;
     if (!isChannelAvailable(ch.id, source)) {
       return false;
     }
@@ -132,7 +157,7 @@ function tryAllocate(source = 'claude', options = {}) {
   const state = getState(source);
   const sessionId = options.sessionId;
   const enableSessionBinding = options.enableSessionBinding !== false; // 默认开启
-  const available = getAvailableChannels(source);
+  const available = getAvailableChannels(source, options);
   if (!available.length) {
     return null;
   }
@@ -169,6 +194,7 @@ function drainQueue(source = 'claude') {
     if (channel) {
       clearTimeout(entry.timer);
       state.queue.splice(i, 1);
+      entry.cleanup?.();
       entry.resolve(channel);
       return drainQueue(source);
     }
@@ -178,6 +204,9 @@ function drainQueue(source = 'claude') {
 function allocateChannel(options = {}) {
   const source = options.source || 'claude';
   const state = getState(source);
+  if (options.signal?.aborted) {
+    return Promise.reject(Object.assign(new Error('Channel allocation aborted'), { name: 'AbortError' }));
+  }
   const channel = tryAllocate(source, options);
   if (channel) {
     return Promise.resolve(channel);
@@ -186,16 +215,31 @@ function allocateChannel(options = {}) {
   if (!state.channels.length) {
     return Promise.reject(new Error('暂无可用渠道，请先添加并启用至少一个渠道'));
   }
+  if (!state.channels.some(ch => matchesAllocationRequest(ch, options))) {
+    return Promise.reject(new Error('没有匹配当前请求的可用渠道'));
+  }
 
   // 检查是否所有渠道都被冻结
   const allFrozen = state.channels.every(ch => !isChannelAvailable(ch.id, source));
 
   return new Promise((resolve, reject) => {
+    let entry;
+    const cleanup = () => {
+      options.signal?.removeEventListener('abort', onAbort);
+    };
+    const removeEntry = () => {
+      const index = state.queue.indexOf(entry);
+      if (index !== -1) state.queue.splice(index, 1);
+    };
+    const onAbort = () => {
+      clearTimeout(timer);
+      removeEntry();
+      cleanup();
+      reject(Object.assign(new Error('Channel allocation aborted'), { name: 'AbortError' }));
+    };
     const timer = setTimeout(() => {
-      const index = state.queue.findIndex(item => item.timer === timer);
-      if (index !== -1) {
-        state.queue.splice(index, 1);
-      }
+      removeEntry();
+      cleanup();
       // 根据实际情况返回更准确的错误信息
       if (allFrozen) {
         reject(new Error('所有渠道均已被冻结，请等待健康检查恢复或手动重置'));
@@ -204,13 +248,19 @@ function allocateChannel(options = {}) {
       }
     }, WAIT_TIMEOUT_MS);
 
-    state.queue.push({
+    entry = {
       source,
       options,
       resolve,
       reject,
-      timer
-    });
+      timer,
+      cleanup
+    };
+    state.queue.push(entry);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    if (options.signal?.aborted) {
+      onAbort();
+    }
   });
 }
 

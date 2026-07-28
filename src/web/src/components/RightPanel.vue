@@ -3,7 +3,7 @@
     <!-- 顶部工具栏：渠道独有功能 -->
     <div class="toolbar-section">
       <div class="toolbar-left">
-        <n-text depth="3" class="toolbar-label">动态切换</n-text>
+        <n-text depth="3" class="toolbar-label">{{ proxyToggleLabel }}</n-text>
         <n-switch
           :value="proxyRunning"
           :loading="proxyLoading"
@@ -184,6 +184,7 @@ const skillsChannel = managedConfigChannel
 const commandsChannel = managedConfigChannel
 const pluginChannel = computed(() => pluginChannels.includes(currentChannel.value))
 const agentsChannel = computed(() => agentChannels.includes(currentChannel.value))
+const proxyToggleLabel = computed(() => currentChannel.value === 'omp' ? '受管配置' : '动态切换')
 
 // 当前渠道是否处于 OAuth 控制模式
 const isOAuthControlled = computed(() => {

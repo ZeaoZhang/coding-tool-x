@@ -523,6 +523,35 @@ describe('omp-channels api', () => {
     expect(createChannel).not.toHaveBeenCalled();
   });
 
+  test('creates keyless channels with an explicit OMP routing group', () => {
+    const router = routerFactory({});
+    const createHandler = findHandler(router, 'post', '/');
+    const res = makeRes();
+
+    createHandler({
+      body: {
+        name: 'Local OMP',
+        baseUrl: 'http://127.0.0.1:11434/v1',
+        providerKey: 'ollama',
+        providerApi: 'openai-completions',
+        authMode: 'none',
+        routingGroup: 'local'
+      }
+    }, res);
+
+    expect(res._status).toBe(200);
+    expect(createChannel).toHaveBeenCalledWith(
+      'Local OMP',
+      'http://127.0.0.1:11434/v1',
+      undefined,
+      expect.objectContaining({
+        authMode: 'none',
+        oauthProviderId: '',
+        routingGroup: 'local'
+      })
+    );
+  });
+
   test('creates channels, saves order, tests speeds, and resets health', async () => {
     const router = routerFactory({});
 

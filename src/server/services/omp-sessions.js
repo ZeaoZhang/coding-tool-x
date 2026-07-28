@@ -212,6 +212,42 @@ function parseSessionFile(filePath) {
   };
 }
 
+function parseSessionUsageEvents(filePath) {
+  const entries = readJsonLines(filePath);
+  const header = entries.find(entry => entry?.type === 'session') || {};
+  const sessionId = header.id || parseOmpSessionId(filePath);
+  let activeProvider = '';
+  let activeModel = '';
+  const events = [];
+
+  entries.forEach((entry, index) => {
+    if (entry?.type === 'model_change') {
+      activeProvider = entry.provider || activeProvider;
+      activeModel = entry.modelId || entry.model || activeModel;
+      return;
+    }
+    if (entry?.type !== 'message') return;
+
+    const message = entry.message || {};
+    const role = message.role || entry.role;
+    if (role !== 'assistant') return;
+
+    const eventId = entry.id || message.id || `assistant-${index}`;
+    events.push({
+      key: `${filePath}:${eventId}`,
+      id: `${sessionId}:${eventId}`,
+      sessionId,
+      filePath,
+      provider: entry.provider || message.provider || activeProvider || '',
+      model: entry.model || message.model || activeModel || '',
+      timestamp: entry.timestamp || message.timestamp || header.timestamp || null,
+      usage: parseUsage(entry.usage || message.usage || {})
+    });
+  });
+
+  return events;
+}
+
 function getOmpSessionPaths() {
   // Reading historical sessions normally only needs OMP's native directory
   // convention. Avoid starting the CLI here: project/count snapshot workers
@@ -262,6 +298,47 @@ function getAllSessions() {
     })
     .filter(Boolean)
     .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+}
+
+function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions) {
+  return scanSessionFiles(rootDir).flatMap((filePath) => {
+    try {
+      return parseSessionUsageEvents(filePath);
+    } catch (error) {
+      console.warn('[OMP Sessions] Failed to parse usage events:', filePath, error.message);
+      return [];
+    }
+  });
+}
+
+function createOmpUsageEventCursor(rootDir = null) {
+  let signatures = new Map();
+
+  return {
+    read() {
+      const files = scanSessionFiles(rootDir || getOmpSessionPaths().sessions);
+      const nextSignatures = new Map();
+      const events = [];
+
+      files.forEach((filePath) => {
+        try {
+          const stat = fs.statSync(filePath);
+          const signature = `${stat.size}:${stat.mtimeMs}`;
+          nextSignatures.set(filePath, signature);
+          if (signatures.get(filePath) === signature) return;
+          events.push(...parseSessionUsageEvents(filePath));
+        } catch (error) {
+          console.warn('[OMP Sessions] Failed to read changed usage events:', filePath, error.message);
+        }
+      });
+
+      signatures = nextSignatures;
+      return events;
+    },
+    reset() {
+      signatures = new Map();
+    }
+  };
 }
 
 function loadProjectOrder() {
@@ -491,12 +568,14 @@ function isOmpCliInstalled() {
 
 module.exports = {
   buildLaunchCommand,
+  createOmpUsageEventCursor,
   decodeProjectName,
   deleteProject,
   deleteSession,
   encodeProjectName,
   forkSession,
   getAllSessions,
+  getOmpUsageEvents,
   getProjectAndSessionCounts,
   getProjects,
   getRecentSessions,
@@ -506,6 +585,7 @@ module.exports = {
   isOmpInstalled: isOmpCliInstalled,
   normalizeSession,
   parseSessionFile,
+  parseSessionUsageEvents,
   scanSessionFiles,
   searchSessions,
   saveProjectOrder,

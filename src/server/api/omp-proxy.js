@@ -1,6 +1,4 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const router = express.Router();
 const {
   startOmpProxyServer,
@@ -10,10 +8,10 @@ const {
 const {
   getChannels,
   getEnabledChannels,
-  markChannelAsRecentlyUsed
+  markChannelAsRecentlyUsed,
+  loadManagedOmpActiveChannelId
 } = require('../services/omp-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
-const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 
 function sanitizeChannel(channel) {
   if (!channel) return null;
@@ -21,7 +19,10 @@ function sanitizeChannel(channel) {
     id: channel.id,
     name: channel.name,
     baseUrl: channel.baseUrl,
-    websiteUrl: channel.websiteUrl
+    websiteUrl: channel.websiteUrl,
+    providerKey: channel.providerKey,
+    providerApi: channel.providerApi,
+    routingGroup: channel.routingGroup || ''
   };
 }
 
@@ -33,34 +34,6 @@ function selectLatestEnabledChannel(channels) {
     const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
     return currentTs > latestTs ? current : latest;
   }, enabledChannels[0]);
-}
-
-function saveActiveChannelId(channelId) {
-  ensureStorageDirMigrated();
-  const filePath = PATHS.activeChannel.omp;
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(filePath, JSON.stringify({ activeChannelId: channelId }, null, 2), 'utf8');
-}
-
-function loadActiveChannelId() {
-  ensureStorageDirMigrated();
-  try {
-    if (!fs.existsSync(PATHS.activeChannel.omp)) return null;
-    const data = JSON.parse(fs.readFileSync(PATHS.activeChannel.omp, 'utf8'));
-    return data.activeChannelId || null;
-  } catch {
-    return null;
-  }
-}
-
-function removeActiveChannelFile() {
-  ensureStorageDirMigrated();
-  if (fs.existsSync(PATHS.activeChannel.omp)) {
-    fs.unlinkSync(PATHS.activeChannel.omp);
-  }
 }
 
 function resolveActiveChannel(channels, activeChannelId = null) {
@@ -80,12 +53,12 @@ router.get('/status', (req, res) => {
     const proxy = getOmpProxyStatus();
     const { channels } = getChannels();
     const enabledChannels = channels.filter(ch => ch.enabled !== false);
-    const activeChannel = resolveActiveChannel(channels, loadActiveChannelId());
+    const activeChannel = resolveActiveChannel(channels, loadManagedOmpActiveChannelId());
     res.json({
       proxy,
       config: {
-        mode: 'models-yml-provider-config',
-        nativeProxyProtocol: false
+        mode: 'http-gateway',
+        nativeProxyProtocol: true
       },
       activeChannel: sanitizeChannel(activeChannel),
       enabledChannelsCount: enabledChannels.length,
@@ -107,11 +80,10 @@ router.post('/start', async (req, res) => {
 
     let currentChannel = selectLatestEnabledChannel(enabledChannels) || enabledChannels[0];
     currentChannel = markChannelAsRecentlyUsed(currentChannel.id);
-    saveActiveChannelId(currentChannel.id);
 
-    const proxyResult = await startOmpProxyServer();
+    const proxyResult = await startOmpProxyServer({ activeChannelId: currentChannel.id });
     if (!proxyResult.success) {
-      return res.status(500).json({ error: 'Failed to enable OMP models.yml provider config' });
+      return res.status(500).json({ error: 'Failed to start OMP gateway' });
     }
 
     const { broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
@@ -125,10 +97,10 @@ router.post('/start', async (req, res) => {
       success: true,
       port: proxyResult.port,
       activeChannel: sanitizeChannel(activeChannel),
-      mode: 'models-yml-provider-config',
+      mode: 'http-gateway',
       sync: proxyResult.sync || null,
       warnings: proxyResult.warnings || [],
-      message: `OMP models.yml provider config enabled, active channel: ${activeChannel.name}`
+      message: `OMP gateway and managed providers enabled, active channel: ${activeChannel.name}`
     });
   } catch (error) {
     console.error('[OMP Proxy] Start failed:', error);
@@ -139,7 +111,6 @@ router.post('/start', async (req, res) => {
 router.post('/stop', async (req, res) => {
   try {
     const result = await stopOmpProxyServer();
-    removeActiveChannelFile();
     const { broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
     const { channels } = getChannels();
     broadcastProxyState('omp', getOmpProxyStatus(), null, channels);
