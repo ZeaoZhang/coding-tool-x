@@ -87,6 +87,16 @@ async function handleUI() {
         // 忽略错误
       }
 
+      // OMP 动态网关持有 models.yml 事务，退出前必须先恢复原生配置。
+      try {
+        const { getOmpProxyStatus, stopOmpProxyServer } = require('../server/omp-proxy-server');
+        if (getOmpProxyStatus().running) {
+          await stopOmpProxyServer({ forceAfterMs: 1500 });
+        }
+      } catch (err) {
+        console.error(chalk.yellow(`[WARN] OMP 动态网关退出清理失败: ${err.message}`));
+      }
+
       console.log(chalk.green('[OK] Web UI 已停止\n'));
       process.exit(0);
     });
@@ -99,7 +109,7 @@ async function handleUI() {
 
   } catch (error) {
     console.error(chalk.red('启动服务器失败:'), error.message);
-    process.exit(1);
+    throw error;
   }
 }
 

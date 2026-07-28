@@ -397,6 +397,7 @@ export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
     providerKey: extra.providerKey || '',
     authMode: extra.authMode || 'api_key',
     oauthProviderId: extra.oauthProviderId || '',
+    routingGroup: extra.routingGroup || '',
     gatewaySourceType: extra.gatewaySourceType || 'openai_compatible',
     enabled: extra.enabled !== false,
     weight: extra.weight || 1,

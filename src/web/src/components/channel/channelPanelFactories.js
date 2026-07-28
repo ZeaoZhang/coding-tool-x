@@ -164,10 +164,11 @@ function parseProviderConfig(value) {
 
 function buildAuthPayload(form) {
   const shouldKeepManualBalanceCredential = form._showChannelBalance !== true || shouldShowManualBalanceCredential(form)
+  const authMode = ['api_key', 'oauth', 'none'].includes(form.authMode) ? form.authMode : 'api_key'
   return {
-    apiKey: form.apiKey || '',
-    authMode: form.authMode === 'oauth' ? 'oauth' : 'api_key',
-    oauthProviderId: form.oauthProviderId || form.providerKey || '',
+    apiKey: authMode === 'none' ? '' : (form.apiKey || ''),
+    authMode,
+    oauthProviderId: authMode === 'oauth' ? (form.oauthProviderId || form.providerKey || '') : '',
     balanceToken: shouldKeepManualBalanceCredential ? (form.balanceToken || '') : '',
     balanceUserId: shouldKeepManualBalanceCredential ? (form.balanceUserId || null) : null
   }
@@ -1543,12 +1544,29 @@ const channelPanelFactories = {
             validate: (value) => validateHttpUrl('Base URL', value, { required: true })
           },
           {
+            key: 'authMode',
+            label: '认证方式',
+            type: 'radio-group',
+            options: [
+              { label: 'API Key', value: 'api_key' },
+              { label: 'OMP OAuth', value: 'oauth' },
+              { label: '无需认证', value: 'none' }
+            ]
+          },
+          {
             key: 'apiKey',
             label: 'API Key',
             type: 'password',
-            required: true,
             placeholder: 'sk-...',
-            validate: (value) => validateRequired('API Key', value)
+            showWhen: (form) => form.authMode !== 'none',
+            validate: (value, form) => form.authMode === 'api_key' ? validateRequired('API Key', value) : ''
+          },
+          {
+            key: 'routingGroup',
+            label: '路由组',
+            type: 'text',
+            placeholder: '相同路由组的兼容渠道可动态切换',
+            description: '留空时按渠道 ID 隔离'
           },
           buildBalanceCredentialField(),
           buildBalanceUserIdField(),
@@ -1624,6 +1642,9 @@ const channelPanelFactories = {
       wireApi: 'openai',
       providerApi: 'openai-completions',
       apiKey: '',
+      authMode: 'api_key',
+      oauthProviderId: '',
+      routingGroup: '',
       balanceToken: '',
       balanceUserId: null,
       websiteUrl: 'https://openrouter.ai',
@@ -1654,6 +1675,9 @@ const channelPanelFactories = {
       wireApi: channel.wireApi || 'openai',
       providerApi: channel.providerApi || channel.api || 'openai-completions',
       apiKey: channel.apiKey || '',
+      authMode: ['api_key', 'oauth', 'none'].includes(channel.authMode) ? channel.authMode : 'api_key',
+      oauthProviderId: channel.oauthProviderId || '',
+      routingGroup: channel.routingGroup || '',
       balanceToken: channel.balanceToken || '',
       balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
@@ -1708,8 +1732,8 @@ const channelPanelFactories = {
             baseUrl: form.baseUrl,
             apiKey: form.apiKey || '',
             gatewaySourceType: form.gatewaySourceType || 'openai_compatible',
-            authMode: 'api_key',
-            oauthProviderId: '',
+            authMode: form.authMode || 'api_key',
+            oauthProviderId: form.oauthProviderId || '',
             model: form.model || null,
             speedTestModel: form.speedTestModel || null,
             allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
@@ -1793,8 +1817,9 @@ const channelPanelFactories = {
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
           providerKey: form.providerKey,
-          authMode: 'api_key',
-          oauthProviderId: '',
+          authMode: authPayload.authMode,
+          oauthProviderId: authPayload.oauthProviderId,
+          routingGroup: form.routingGroup || '',
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
           enabled: form.enabled,
@@ -1821,8 +1846,9 @@ const channelPanelFactories = {
           apiKey: authPayload.apiKey,
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
-          authMode: 'api_key',
-          oauthProviderId: '',
+          authMode: authPayload.authMode,
+          oauthProviderId: authPayload.oauthProviderId,
+          routingGroup: form.routingGroup || '',
           websiteUrl: form.websiteUrl,
           model: form.model || null,
           gatewaySourceType: form.gatewaySourceType || 'openai_compatible',
@@ -1858,6 +1884,8 @@ const channelPanelFactories = {
       const rows = [
         { label: 'Provider', value: channel.providerKey || channel.provider || '(未设置)', mono: true },
         { label: 'API', value: channel.providerApi || channel.api || 'openai-completions', mono: true },
+        { label: 'Auth', value: channel.authMode || 'api_key', mono: true },
+        { label: 'Routing Group', value: channel.routingGroup || '(独立)', mono: true },
         { label: 'Model', value: channel.model || '(默认)', mono: true },
         { label: 'Allowed', value: formatAllowedModels(channel), mono: true }
       ]

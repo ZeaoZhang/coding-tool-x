@@ -21,7 +21,7 @@ const DEFAULT_CONFIG = {
     codexProxy: 20089,  // Codex 代理服务端口
     geminiProxy: 20090, // Gemini 代理服务端口
     opencodeProxy: 20091, // OpenCode 代理服务端口
-    ompProxy: 20092       // OMP 托管 provider 状态端口占位
+    ompProxy: 20092       // OMP 专用动态网关端口
   },
   maxLogs: 100,
   statsInterval: 30,

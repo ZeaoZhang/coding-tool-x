@@ -34,9 +34,7 @@ function getVersion() {
 }
 
 function finishCli(code = 0) {
-  eventBus.emitSync('cli:shutdown', {});
-  PluginManager.shutdownPlugins();
-  process.exit(code);
+  return shutdownProcess(code);
 }
 
 // 显示帮助信息
@@ -128,20 +126,49 @@ function showHelp() {
   console.log(chalk.gray('  问题: https://github.com/ZeaoZhang/coding-tool/issues\n'));
 }
 
+let processShutdownPromise = null;
+
+async function stopOwnedOmpGatewayBeforeExit() {
+  try {
+    const {
+      getOmpProxyStatus,
+      stopOmpProxyServer
+    } = require('./server/omp-proxy-server');
+    if (getOmpProxyStatus().running) {
+      await stopOmpProxyServer({ forceAfterMs: 1500 });
+    }
+  } catch (error) {
+    console.error(chalk.yellow(`[WARN]  OMP 动态网关退出清理失败: ${error.message}`));
+  }
+}
+
+function shutdownProcess(code = 0, error = null) {
+  if (processShutdownPromise) return processShutdownPromise;
+  processShutdownPromise = (async () => {
+    await stopOwnedOmpGatewayBeforeExit();
+    eventBus.emitSync('cli:shutdown', {});
+    PluginManager.shutdownPlugins();
+    if (error) {
+      console.error(error);
+    }
+    process.exit(code);
+  })();
+  return processShutdownPromise;
+}
+
 // 全局错误处理
 process.on('uncaughtException', (err) => {
   // 忽略终端相关的错误（通常在 Ctrl+C 时发生）
-  if (err.code === 'EIO' || err.code === 'ENOTTY' || err.code === 'EPIPE') {
-    process.exit(0);
-  }
-  throw err;
+  const terminalError = err.code === 'EIO' || err.code === 'ENOTTY' || err.code === 'EPIPE';
+  void shutdownProcess(terminalError ? 0 : 1, terminalError ? null : err);
 });
 
-// 处理 SIGINT 信号（Ctrl+C）
-process.on('SIGINT', async () => {
-  eventBus.emitSync('cli:shutdown', {});
-  PluginManager.shutdownPlugins();
-  process.exit(0);
+// 处理进程退出信号，OMP 必须先排空并恢复原生配置。
+process.on('SIGINT', () => {
+  void shutdownProcess(0);
+});
+process.on('SIGTERM', () => {
+  void shutdownProcess(0);
 });
 
 /**
@@ -416,7 +443,7 @@ async function main() {
     eventBus.emitSync('cli:command:after', { command: args[0], args: args.slice(1), result });
     if (!result.success) {
       console.error(chalk.red(result.error));
-      process.exit(1);
+      return shutdownProcess(1);
     }
     return;
   }
@@ -712,6 +739,5 @@ async function main() {
 
 // 启动应用
 main().catch((error) => {
-  console.error('程序出错:', error);
-  process.exit(1);
+  void shutdownProcess(1, error);
 });

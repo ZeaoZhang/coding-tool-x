@@ -787,7 +787,11 @@ async function handleProxyToggle(newValue) {
 
     // 处理结果
     if (result.success !== false) {
-      message.success(newValue ? '代理已启动' : '代理已停止')
+      if (channelType === 'omp') {
+        message.success(newValue ? 'OMP 受管配置与会话日志观察已启用' : 'OMP 受管配置与会话日志观察已关闭')
+      } else {
+        message.success(newValue ? '代理已启动' : '代理已停止')
+      }
       // 自动展示/隐藏日志面板
       if (newValue) {
         showLogs.value = true

@@ -294,7 +294,7 @@ module.exports = () => {
         baseUrl,
         apiKey: apiKey || '',
         gatewaySourceType: gatewaySourceType || 'openai_compatible',
-        authMode: authMode === 'oauth' ? 'oauth' : 'api_key',
+        authMode: ['api_key', 'oauth', 'none'].includes(authMode) ? authMode : 'api_key',
         oauthProviderId: oauthProviderId || '',
         model: model || null,
         speedTestModel: speedTestModel || null,
@@ -407,6 +407,7 @@ module.exports = () => {
         providerApi,
         authMode,
         oauthProviderId,
+        routingGroup,
         presetId,
         websiteUrl,
         balanceToken,
@@ -425,8 +426,8 @@ module.exports = () => {
       if (!name || !baseUrl) {
         return res.status(400).json({ error: 'Missing required fields: name and baseUrl' });
       }
-      const normalizedAuthMode = authMode === 'oauth' ? 'oauth' : 'api_key';
-      if (!apiKey && normalizedAuthMode !== 'oauth') {
+      const normalizedAuthMode = ['api_key', 'oauth', 'none'].includes(authMode) ? authMode : 'api_key';
+      if (!apiKey && normalizedAuthMode === 'api_key') {
         return res.status(400).json({ error: 'API Key is required' });
       }
 
@@ -435,7 +436,8 @@ module.exports = () => {
         providerApi: providerApi || wireApi || 'openai-completions',
         providerKey,
         authMode: normalizedAuthMode,
-        oauthProviderId: oauthProviderId || providerKey || '',
+        oauthProviderId: normalizedAuthMode === 'oauth' ? (oauthProviderId || providerKey || '') : '',
+        routingGroup: String(routingGroup || '').trim(),
         enabled,
         weight,
         maxConcurrency,

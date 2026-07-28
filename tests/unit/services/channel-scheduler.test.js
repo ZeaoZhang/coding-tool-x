@@ -16,6 +16,7 @@ const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
 const CODEX_PATH    = require.resolve('../../../src/server/services/codex-channels');
 const GEMINI_PATH   = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_PATH = require.resolve('../../../src/server/services/opencode-channels');
+const OMP_PATH      = require.resolve('../../../src/server/services/omp-channels');
 const HEALTH_PATH   = require.resolve('../../../src/server/services/channel-health');
 const SCHEDULER_PATH = require.resolve('../../../src/server/services/channel-scheduler');
 
@@ -24,6 +25,7 @@ let getAllChannels;
 let getCodexChannels;
 let getGeminiChannels;
 let getOpenCodeChannels;
+let getOmpChannels;
 let isChannelAvailable;
 let getChannelHealthStatus;
 let setOnChannelFrozen;
@@ -43,6 +45,7 @@ function injectStubs() {
   getCodexChannels   = vi.fn(() => ({ channels: [] }));
   getGeminiChannels  = vi.fn(() => ({ channels: [] }));
   getOpenCodeChannels = vi.fn(() => ({ channels: [] }));
+  getOmpChannels      = vi.fn(() => ({ channels: [] }));
   isChannelAvailable    = vi.fn(() => true);
   getChannelHealthStatus = vi.fn(() => ({ available: true }));
   setOnChannelFrozen    = vi.fn();
@@ -52,6 +55,7 @@ function injectStubs() {
   require.cache[CODEX_PATH]     = { id: CODEX_PATH,     filename: CODEX_PATH,     loaded: true, exports: { getChannels: getCodexChannels } };
   require.cache[GEMINI_PATH]    = { id: GEMINI_PATH,    filename: GEMINI_PATH,    loaded: true, exports: { getChannels: getGeminiChannels } };
   require.cache[OPENCODE_PATH]  = { id: OPENCODE_PATH,  filename: OPENCODE_PATH,  loaded: true, exports: { getChannels: getOpenCodeChannels } };
+  require.cache[OMP_PATH]       = { id: OMP_PATH,       filename: OMP_PATH,       loaded: true, exports: { getChannels: getOmpChannels } };
   require.cache[HEALTH_PATH]    = { id: HEALTH_PATH,    filename: HEALTH_PATH,    loaded: true, exports: { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } };
 }
 
@@ -118,6 +122,79 @@ describe('allocateChannel - with available channels', () => {
     ]);
     const state = getSchedulerState('claude');
     state.channels.forEach(ch => expect(ch.weight).toBe(1));
+  });
+
+  it('filters OMP allocations to the requested routing group and candidate ids', async () => {
+    getOmpChannels.mockReturnValue({
+      channels: [
+        makeChannel('wrong-group', {
+          routingGroup: 'secondary',
+          providerKey: 'openai',
+          providerApi: 'openai-responses'
+        }),
+        makeChannel('excluded', {
+          routingGroup: 'primary',
+          providerKey: 'openai',
+          providerApi: 'openai-responses'
+        }),
+        makeChannel('selected', {
+          routingGroup: 'primary',
+          providerKey: 'openai',
+          providerApi: 'openai-responses'
+        })
+      ]
+    });
+
+    const result = await allocateChannel({
+      source: 'omp',
+      enableSessionBinding: false,
+      candidateIds: ['excluded', 'selected'],
+      excludeChannelIds: ['excluded'],
+      routingGroup: 'primary',
+      providerKey: 'openai',
+      providerApi: 'openai-responses'
+    });
+
+    expect(result.id).toBe('selected');
+  });
+
+  it('rejects immediately when every requested candidate is excluded', async () => {
+    getOmpChannels.mockReturnValue({
+      channels: [makeChannel('only', {
+        routingGroup: 'primary',
+        providerKey: 'openai',
+        providerApi: 'openai-responses'
+      })]
+    });
+
+    const allocation = allocateChannel({
+      source: 'omp',
+      candidateIds: ['only'],
+      excludeChannelIds: ['only'],
+      routingGroup: 'primary',
+      providerKey: 'openai',
+      providerApi: 'openai-responses'
+    });
+
+    await expect(allocation).rejects.toThrow('没有匹配当前请求的可用渠道');
+  });
+
+  it('removes a queued allocation when its abort signal fires', async () => {
+    getOmpChannels.mockReturnValue({
+      channels: [makeChannel('only', { maxConcurrency: 1 })]
+    });
+    const lease = await allocateChannel({ source: 'omp', enableSessionBinding: false });
+    const controller = new AbortController();
+    const queued = allocateChannel({
+      source: 'omp',
+      enableSessionBinding: false,
+      signal: controller.signal
+    });
+
+    controller.abort();
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' });
+    releaseChannel(lease.id, 'omp');
+    expect(getSchedulerState('omp').pending).toBe(0);
   });
 });
 

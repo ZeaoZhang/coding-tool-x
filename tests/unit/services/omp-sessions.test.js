@@ -182,4 +182,95 @@ describe('OMP session parser', () => {
       messageCount: 1
     }));
   });
+
+  test('extracts stable assistant usage events with the provider and model active at that message', () => {
+    const sessionFile = path.join(sessionDir, 'session-usage.jsonl');
+    writeJsonl(sessionFile, [
+      { type: 'session', version: 3, id: 'omp-session-usage', cwd: '/repo/usage' },
+      { type: 'model_change', provider: 'ctx-first', modelId: 'gpt-first' },
+      {
+        type: 'message',
+        id: 'a1',
+        timestamp: '2026-07-27T03:00:00.000Z',
+        message: {
+          role: 'assistant',
+          content: 'first',
+          usage: { input: 10, output: 20, totalTokens: 30 }
+        }
+      },
+      { type: 'model_change', provider: 'ctx-second', modelId: 'gpt-second' },
+      {
+        type: 'message',
+        id: 'a2',
+        timestamp: '2026-07-27T03:01:00.000Z',
+        message: {
+          role: 'assistant',
+          content: 'second',
+          provider: 'message-provider',
+          model: 'message-model',
+          usage: { inputTokens: 3, outputTokens: 4, reasoningTokens: 2, cost: { total: 0.5 } }
+        }
+      },
+      {
+        type: 'message',
+        id: 'tool-1',
+        message: { role: 'toolResult', content: 'not a model response' }
+      }
+    ]);
+
+    const { getOmpUsageEvents } = loadModule();
+
+    expect(getOmpUsageEvents()).toEqual([
+      expect.objectContaining({
+        key: `${sessionFile}:a1`,
+        id: 'omp-session-usage:a1',
+        provider: 'ctx-first',
+        model: 'gpt-first',
+        usage: expect.objectContaining({ input: 10, output: 20, total: 30 })
+      }),
+      expect.objectContaining({
+        key: `${sessionFile}:a2`,
+        id: 'omp-session-usage:a2',
+        provider: 'message-provider',
+        model: 'message-model',
+        usage: expect.objectContaining({
+          input: 3,
+          output: 4,
+          reasoning: 2,
+          total: 9,
+          cost: 0.5
+        })
+      })
+    ]);
+  });
+
+  test('usage event cursor only reparses session files that changed', () => {
+    const sessionFile = path.join(sessionDir, 'session-cursor.jsonl');
+    const firstEntries = [
+      { type: 'session', version: 3, id: 'omp-session-cursor', cwd: '/repo/cursor' },
+      {
+        type: 'message',
+        id: 'a1',
+        message: { role: 'assistant', model: 'gpt-one', usage: { input: 1, output: 1 } }
+      }
+    ];
+    writeJsonl(sessionFile, firstEntries);
+    const { createOmpUsageEventCursor } = loadModule();
+    const cursor = createOmpUsageEventCursor(sessionDir);
+
+    expect(cursor.read()).toHaveLength(1);
+    expect(cursor.read()).toEqual([]);
+
+    writeJsonl(sessionFile, [
+      ...firstEntries,
+      {
+        type: 'message',
+        id: 'a2',
+        message: { role: 'assistant', model: 'gpt-two', usage: { input: 2, output: 2 } }
+      }
+    ]);
+
+    expect(cursor.read()).toHaveLength(2);
+    expect(cursor.read()).toEqual([]);
+  });
 });

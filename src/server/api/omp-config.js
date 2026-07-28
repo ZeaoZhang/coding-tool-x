@@ -81,7 +81,7 @@ function buildCapabilities() {
     },
     notes: [
       'The omp channel is backed by OMP and uses omp as its platform key.',
-      'Provider channels are enabled by merging managed ctx-* providers into OMP models.yml.'
+      'Dynamic mode exposes managed ctx-* providers through the loopback OMP HTTP gateway; disabling it restores native OMP configuration.'
     ]
   };
 }

@@ -465,13 +465,13 @@ function autoRestoreProxies() {
     startOmpProxyServer({ preserveStartTime: true })
       .then((result) => {
         if (result.success) {
-          console.log(chalk.green(`[OK] OMP models.yml 受管 provider 已自动启用，端口: ${result.port}`));
+          console.log(chalk.green(`[OK] OMP 动态网关已自动恢复: http://127.0.0.1:${result.port}`));
         } else {
-          console.error(chalk.red(`[ERROR] OMP models.yml 受管 provider 恢复失败: ${result.error || 'Unknown error'}`));
+          console.error(chalk.red(`[ERROR] OMP 动态网关恢复失败: ${result.error || 'Unknown error'}`));
         }
       })
       .catch((err) => {
-        console.error(chalk.red(`[ERROR] OMP models.yml 受管 provider 恢复失败: ${err.message}`));
+        console.error(chalk.red(`[ERROR] OMP 动态网关恢复失败: ${err.message}`));
       });
   }
 }

@@ -15,6 +15,9 @@ let originalPathEnv;
 let modelsConfig;
 let settingsConfig;
 let service;
+let writeManagedOmpProviders;
+let removeManagedOmpProviders;
+let isManagedOmpProvidersActive;
 
 function normalizeProviderId(value = '') {
   return String(value || '')
@@ -73,9 +76,9 @@ function injectStubs() {
     filename: OMP_SETTINGS_MODULE,
     loaded: true,
     exports: {
-      writeManagedOmpProviders: vi.fn(),
-      removeManagedOmpProviders: vi.fn(),
-      isManagedOmpProvidersActive: vi.fn(() => false),
+      writeManagedOmpProviders,
+      removeManagedOmpProviders,
+      isManagedOmpProvidersActive,
       getLastManagedOmpSyncResult: vi.fn(() => null),
       readModelsConfig: vi.fn(() => modelsConfig),
       readOmpSettingsConfig: vi.fn(() => settingsConfig),
@@ -93,6 +96,9 @@ beforeEach(() => {
   originalPathEnv = process.env.PATH;
   modelsConfig = { providers: {} };
   settingsConfig = {};
+  writeManagedOmpProviders = vi.fn();
+  removeManagedOmpProviders = vi.fn();
+  isManagedOmpProvidersActive = vi.fn(() => false);
 
   delete require.cache[OMP_CHANNELS_MODULE];
   delete require.cache[CHANNEL_SYNC_MODULE];
@@ -113,6 +119,114 @@ afterEach(() => {
     PATHS_MODULE
   ].forEach((mod) => {
     delete require.cache[mod];
+  });
+});
+
+function seedChannels(channels) {
+  fs.mkdirSync(path.dirname(channelsPath), { recursive: true });
+  fs.writeFileSync(channelsPath, JSON.stringify({ channels }, null, 2), 'utf8');
+}
+
+function makeChannel(id, overrides = {}) {
+  return {
+    id,
+    name: id,
+    providerKey: id,
+    baseUrl: `https://${id}.example/v1`,
+    apiKey: `${id}-key`,
+    model: `${id}-model`,
+    enabled: true,
+    createdAt: 1,
+    updatedAt: 1,
+    ...overrides
+  };
+}
+
+describe('managed provider activation lifecycle', () => {
+  it('persists managed mode intent independently from ctx provider files', () => {
+    expect(service.isManagedOmpModeEnabled()).toBe(false);
+
+    service.enableManagedOmpMode('channel-a', {
+      host: '127.0.0.1',
+      port: 20092,
+      secret: 'gateway-secret'
+    });
+
+    expect(service.isManagedOmpModeEnabled()).toBe(true);
+    expect(service.loadManagedOmpActiveChannelId()).toBe('channel-a');
+    expect(service.loadManagedOmpModeState()).toEqual({
+      version: 2,
+      activeChannelId: 'channel-a',
+      gateway: {
+        host: '127.0.0.1',
+        port: 20092,
+        secret: 'gateway-secret',
+        supportedOAuthChannelIds: []
+      }
+    });
+
+    service.disableManagedOmpMode();
+
+    expect(service.isManagedOmpModeEnabled()).toBe(false);
+    expect(service.loadManagedOmpActiveChannelId()).toBe(null);
+  });
+
+  test.each([
+    ['create', () => service.createChannel('created', 'https://created.example/v1', 'created-key', {
+      providerKey: 'created',
+      model: 'created-model',
+      enabled: true
+    })],
+    ['update', () => service.updateChannel('channel-a', { name: 'updated' })],
+    ['delete', () => service.deleteChannel('channel-a')]
+  ])('does not recreate ctx providers after managed mode is stopped via %s', (_operation, mutate) => {
+    seedChannels([
+      makeChannel('channel-a'),
+      makeChannel('channel-b')
+    ]);
+
+    mutate();
+
+    expect(writeManagedOmpProviders).not.toHaveBeenCalled();
+    expect(removeManagedOmpProviders).not.toHaveBeenCalled();
+  });
+
+  it('keeps managed providers synchronized while managed mode is enabled', () => {
+    seedChannels([makeChannel('channel-a')]);
+    const markerPath = path.join(testDir, 'active-omp.json');
+    fs.writeFileSync(markerPath, JSON.stringify({
+      version: 2,
+      activeChannelId: 'channel-a',
+      gateway: {
+        host: '127.0.0.1',
+        port: 20092,
+        secret: 'gateway-secret'
+      }
+    }), 'utf8');
+
+    service.updateChannel('channel-a', { name: 'updated' });
+
+    expect(writeManagedOmpProviders).toHaveBeenCalledTimes(1);
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 'channel-a', name: 'updated' })],
+      {
+        gateway: {
+          host: '127.0.0.1',
+          port: 20092,
+          secret: 'gateway-secret'
+        },
+        activeChannelId: 'channel-a'
+      }
+    );
+  });
+
+  it('does not resync imported channels while managed mode is disabled', () => {
+    seedChannels([makeChannel('channel-a')]);
+
+    service.syncManagedProviderExtension();
+
+    expect(writeManagedOmpProviders).not.toHaveBeenCalled();
+    expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
 });
 

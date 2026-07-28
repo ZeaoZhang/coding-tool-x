@@ -99,7 +99,7 @@
           <n-icon :size="16">
             <PowerOutline />
           </n-icon>
-          <h3 class="card-title">代理控制</h3>
+          <h3 class="card-title">{{ channelType === 'omp' ? '受管配置' : '代理控制' }}</h3>
           <span v-if="proxyState.running && runtimeDisplay" class="runtime-badge">
             {{ runtimeDisplay }}
           </span>
@@ -118,7 +118,7 @@
               <n-text :type="proxyState.running ? 'success' : 'default'" style="font-size: 12px;">
                 {{ proxyState.running ? '运行中' : '已停止' }}
               </n-text>
-              <span class="proxy-port">端口: {{ proxyState.port }}</span>
+              <span v-if="channelType !== 'omp'" class="proxy-port">端口: {{ proxyState.port }}</span>
             </div>
             <n-popover trigger="click" placement="bottom" :width="320" class="channel-popover">
               <template #trigger>
@@ -334,7 +334,9 @@
                 <RadioOutline />
               </n-icon>
               <n-text depth="3" style="font-size: 12px; font-weight: 500;">暂无实时日志</n-text>
-              <n-text depth="3" style="font-size: 11px; margin-top: 4px;">开启代理后将显示请求记录</n-text>
+              <n-text depth="3" style="font-size: 11px; margin-top: 4px;">
+                {{ channelType === 'omp' ? '启用受管配置后将观察新增 OMP 会话用量' : '开启代理后将显示请求记录' }}
+              </n-text>
             </div>
 
             <div
@@ -795,6 +797,9 @@ function getChannelInflight(channelId) {
 const statusText = computed(() => {
   const enabledCount = channels.value.filter(ch => ch.enabled !== false).length
   if (proxyState.value.running) {
+    if (props.channelType === 'omp') {
+      return `${enabledCount}个受管渠道已同步`
+    }
     return `${enabledCount}个渠道调度中`
   }
   return channels.value.length > 0 ? `${enabledCount}个渠道已启用` : '无渠道'
@@ -944,7 +949,11 @@ async function handleProxyToggle(value) {
     }
 
     if (result.success !== false) {
-      message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
+      if (props.channelType === 'omp') {
+        message.success(value ? 'OMP 受管配置与会话日志观察已启用' : 'OMP 受管配置与会话日志观察已关闭')
+      } else {
+        message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
+      }
     } else {
       message.error(result.error || '操作失败')
       // 回滚状态
