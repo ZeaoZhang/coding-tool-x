@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { defineComponent, h, nextTick, ref } from 'vue'
+import { defineComponent, h, nextTick, reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import SkillsPanel from '../SkillsPanel.vue'
 import OmpSkillSettingsModal from '../OmpSkillSettingsModal.vue'
+import SkillManager from '../../views/SkillManager.vue'
 
 const { api, message } = vi.hoisted(() => ({
   api: {
@@ -21,7 +22,8 @@ const { api, message } = vi.hoisted(() => ({
 
 vi.mock('../../api/skills', () => api)
 vi.mock('../../api/config-registry', () => ({ importFromClaude: vi.fn() }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ meta: { channel: 'claude' } }) }))
+const route = reactive({ meta: { channel: 'claude' }, query: {} })
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('../SkillCard.vue', () => ({ default: { name: 'SkillCard', template: '<div />' } }))
 vi.mock('../SkillRepoManager.vue', () => ({ default: { name: 'SkillRepoManager', template: '<div />' } }))
 vi.mock('../SkillCreateModal.vue', () => ({ default: { name: 'SkillCreateModal', template: '<div />' } }))
@@ -121,6 +123,7 @@ vi.mock('naive-ui', async () => {
   return {
     NAlert: shell('NAlert'),
     NButton,
+    NCard: shell('NCard'),
     NEmpty: shell('NEmpty'),
     NIcon: shell('NIcon'),
     NInput,
@@ -288,6 +291,53 @@ describe('SkillsPanel OMP settings entry', () => {
     await flushPromises()
 
     expect(findSettingsButton(wrapper).exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('SkillManager standalone platform query', () => {
+  beforeEach(() => {
+    route.query = {}
+  })
+
+  test.each([
+    ['omp', true],
+    ['claude', false],
+    [undefined, false],
+    ['unknown', false]
+  ])('query platform %s controls the OMP settings entry', async (platform, showsSettings) => {
+    route.query = platform === undefined ? {} : { platform }
+    const wrapper = mount(SkillManager, {
+      global: { stubs: irrelevantStubs }
+    })
+    await flushPromises()
+
+    const settingsButton = findSettingsButton(wrapper)
+    expect(settingsButton.exists()).toBe(showsSettings)
+
+    if (showsSettings) {
+      await settingsButton.trigger('click')
+      expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(true)
+    }
+    wrapper.unmount()
+  })
+
+  test('reactive query changes update the panel and close the OMP settings modal', async () => {
+    route.query = { platform: 'omp' }
+    const wrapper = mount(SkillManager, {
+      global: { stubs: irrelevantStubs }
+    })
+    await flushPromises()
+
+    await findSettingsButton(wrapper).trigger('click')
+    expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(true)
+
+    route.query = { platform: 'claude' }
+    await nextTick()
+
+    expect(findSettingsButton(wrapper).exists()).toBe(false)
+    expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(false)
+    expect(api.getSkills).toHaveBeenLastCalledWith(false, 'claude', {})
     wrapper.unmount()
   })
 })
