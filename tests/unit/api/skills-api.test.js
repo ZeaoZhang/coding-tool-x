@@ -11,6 +11,8 @@ const path = require('path');
 
 let mockService;
 let services;
+let readOmpSkillSettings;
+let updateOmpSkillSettings;
 
 beforeEach(() => {
   mockService = createMockService();
@@ -34,6 +36,30 @@ beforeEach(() => {
     loaded: true,
     exports: {
       SkillService: SkillServiceStub
+    }
+  };
+
+  readOmpSkillSettings = vi.fn(() => ({
+    enableCodexUser: true,
+    enableClaudeUser: true,
+    enablePiUser: true,
+    enablePiProject: true
+  }));
+  updateOmpSkillSettings = vi.fn(patch => ({
+    enableCodexUser: true,
+    enableClaudeUser: true,
+    enablePiUser: true,
+    enablePiProject: true,
+    ...patch
+  }));
+  const ompSkillSettingsServicePath = require.resolve('../../../src/server/services/omp-skill-settings-service');
+  require.cache[ompSkillSettingsServicePath] = {
+    id: ompSkillSettingsServicePath,
+    filename: ompSkillSettingsServicePath,
+    loaded: true,
+    exports: {
+      readOmpSkillSettings,
+      updateOmpSkillSettings
     }
   };
 
@@ -69,6 +95,7 @@ function createMockService() {
 afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/api/skills')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
+  delete require.cache[require.resolve('../../../src/server/services/omp-skill-settings-service')];
 });
 
 function buildApp() {
@@ -217,6 +244,85 @@ describe('GET /', () => {
     } finally {
       fs.rmSync(unknownDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OMP skill settings
+// ---------------------------------------------------------------------------
+describe('OMP skill settings', () => {
+  test('GET /omp-settings returns all OMP settings', async () => {
+    const settings = {
+      enableCodexUser: false,
+      enableClaudeUser: true,
+      enablePiUser: false,
+      enablePiProject: true
+    };
+    readOmpSkillSettings.mockReturnValue(settings);
+    const app = buildApp();
+
+    const res = await request(app).get('/omp-settings');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, settings });
+    expect(readOmpSkillSettings).toHaveBeenCalledOnce();
+  });
+
+  test('PUT /omp-settings passes a partial update to the OMP settings service', async () => {
+    const patch = { enablePiProject: false };
+    const settings = {
+      enableCodexUser: true,
+      enableClaudeUser: true,
+      enablePiUser: true,
+      enablePiProject: false
+    };
+    updateOmpSkillSettings.mockReturnValue(settings);
+    const app = buildApp();
+
+    const res = await request(app).put('/omp-settings', patch);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, settings });
+    expect(updateOmpSkillSettings).toHaveBeenCalledWith(patch);
+  });
+
+  test('PUT /omp-settings maps unknown fields rejected by the service to 400', async () => {
+    updateOmpSkillSettings.mockImplementation(() => {
+      throw new Error('Invalid OMP skill setting: unknownSetting');
+    });
+    const app = buildApp();
+
+    const res = await request(app).put('/omp-settings', { unknownSetting: true });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      success: false,
+      message: 'Invalid OMP skill setting: unknownSetting'
+    });
+  });
+
+  test('GET /omp-settings preserves the API error format on service failure', async () => {
+    readOmpSkillSettings.mockImplementation(() => {
+      throw new Error('read failed');
+    });
+    const app = buildApp();
+
+    const res = await request(app).get('/omp-settings');
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ success: false, message: 'read failed' });
+  });
+
+  test('PUT /omp-settings preserves the API error format on service failure', async () => {
+    updateOmpSkillSettings.mockImplementation(() => {
+      throw new Error('write failed');
+    });
+    const app = buildApp();
+
+    const res = await request(app).put('/omp-settings', { enablePiUser: false });
+
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ success: false, message: 'write failed' });
   });
 });
 

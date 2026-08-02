@@ -8,6 +8,10 @@ const { maskToken } = require('../services/oauth-utils');
 const { sendApiError } = require('./validation-errors');
 const { resolveManagedPlatform } = require('../services/platform-resolution');
 const { validateKnownProjectCwd } = require('../services/project-path-validation');
+const {
+  readOmpSkillSettings,
+  updateOmpSkillSettings
+} = require('../services/omp-skill-settings-service');
 
 const router = express.Router();
 const skillServices = new Map();
@@ -93,6 +97,34 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[Skills API] List skills error:', err);
+    sendApiError(res, err);
+  }
+});
+
+/**
+ * 获取 OMP 技能设置
+ * GET /api/skills/omp-settings
+ */
+router.get('/omp-settings', (req, res) => {
+  try {
+    const settings = readOmpSkillSettings();
+    res.json({ success: true, settings });
+  } catch (err) {
+    console.error('[Skills API] Get OMP skill settings error:', err);
+    sendApiError(res, err);
+  }
+});
+
+/**
+ * 更新 OMP 技能设置
+ * PUT /api/skills/omp-settings
+ */
+router.put('/omp-settings', (req, res) => {
+  try {
+    const settings = updateOmpSkillSettings(req.body);
+    res.json({ success: true, settings });
+  } catch (err) {
+    console.error('[Skills API] Update OMP skill settings error:', err);
     sendApiError(res, err);
   }
 });
