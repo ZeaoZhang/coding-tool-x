@@ -286,7 +286,6 @@ describe('SkillsPanel OMP settings entry', () => {
     await settingsButton.trigger('click')
     expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(true)
 
-    wrapper.unmount()
   })
 
   test('closes the real settings modal when switching away from OMP', async () => {
@@ -306,7 +305,6 @@ describe('SkillsPanel OMP settings entry', () => {
 
     expect(modal.props('visible')).toBe(false)
     expect(findSettingsButton(wrapper).exists()).toBe(false)
-    wrapper.unmount()
   })
 
   test.each([
@@ -324,7 +322,6 @@ describe('SkillsPanel OMP settings entry', () => {
       global: { stubs: irrelevantStubs }
     })
     expect(findSettingsButton(wrapper).exists()).toBe(false)
-    wrapper.unmount()
   })
 })
 
@@ -357,7 +354,6 @@ describe('SkillManager standalone platform query', () => {
       await settingsButton.trigger('click')
       expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(true)
     }
-    wrapper.unmount()
   })
 
   test('reactive query changes update the panel and close the OMP settings modal', async () => {
@@ -374,7 +370,6 @@ describe('SkillManager standalone platform query', () => {
     expect(findSettingsButton(wrapper).exists()).toBe(false)
     expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(false)
     expect(api.getSkills).toHaveBeenLastCalledWith(false, 'claude', {})
-    wrapper.unmount()
   })
 })
 describe('SkillsPanel skill refresh validation', () => {
@@ -575,7 +570,6 @@ describe('OmpSkillSettingsModal save behavior', () => {
     const button = findSettingsButton(wrapper)
     expect(button.attributes('tabindex')).not.toBe('-1')
     expect(button.element.disabled).toBe(false)
-    expect(button.element.tabIndex).toBeGreaterThanOrEqual(0)
     expect(button.element.tabIndex).toBeGreaterThanOrEqual(0)
   })
 
