@@ -11,6 +11,19 @@ function isPlainObject(value) {
   const prototype = Object.getPrototypeOf(value)
   return prototype === Object.prototype || prototype === null
 }
+export function validateOmpSkillListResponse(result) {
+  if (!isPlainObject(result)) {
+    throw new Error('技能列表响应必须是普通对象')
+  }
+  if (result.success !== true) {
+    throw new Error(typeof result.message === 'string' && result.message ? result.message : '技能列表响应未明确标记成功')
+  }
+  if (!Array.isArray(result.skills)) {
+    throw new Error('技能列表响应 skills 必须是数组')
+  }
+
+  return result.skills
+}
 
 export function validateOmpSkillSettingsResponse(result) {
   if (!isPlainObject(result) || result.success !== true) {
@@ -40,13 +53,12 @@ export function supportsOmpSkillSettings(platform) {
   return platform === 'omp'
 }
 
-export async function submitOmpSkillSettings(settings, updateSettings, onSuccess) {
+export async function submitOmpSkillSettings(settings, updateSettings) {
   const result = await updateSettings(settings)
-  onSuccess(result)
-  return result
+  return validateOmpSkillSettingsSaveResult(result, settings)
 }
 
 export async function completeOmpSkillSettingsSave(closeSettings, refreshSkills) {
   closeSettings()
-  await refreshSkills(true)
+  return refreshSkills(true, { notifyError: false })
 }

@@ -159,19 +159,15 @@ async function handleSave() {
   let accepted = false
   saving.value = true
   try {
-    await submitOmpSkillSettings(submittedSettings, updateOmpSkillSettings, result => {
-      if (requestId !== saveRequestId || operationToken !== props.operationToken || !props.visible) return
+    const savedSettings = await submitOmpSkillSettings(submittedSettings, updateOmpSkillSettings)
+    if (requestId !== saveRequestId || operationToken !== props.operationToken || !props.visible) return
 
-      const savedSettings = validateOmpSkillSettingsSaveResult(result, submittedSettings)
-      accepted = true
-      emit('saved', savedSettings, operationToken)
-    })
-    if (accepted) message.success('技能扫描设置已保存')
+    emit('saved', savedSettings, operationToken)
   } catch (error) {
     if (requestId !== saveRequestId || operationToken !== props.operationToken || !props.visible) return
     message.error(`保存技能扫描设置失败: ${errorMessage(error)}`)
   } finally {
-    if (requestId === saveRequestId) saving.value = false
+    if (requestId === saveRequestId && operationToken === props.operationToken && props.visible) saving.value = false
   }
 }
 

@@ -27,7 +27,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="openOmpSettings" class="action-btn">
+        <n-button v-if="showOmpSettings" text aria-label="OMP 技能设置" @click="openOmpSettings" class="action-btn">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
@@ -53,7 +53,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="openOmpSettings" class="action-btn">
+        <n-button v-if="showOmpSettings" text aria-label="OMP 技能设置" @click="openOmpSettings" class="action-btn">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
@@ -141,7 +141,7 @@ import SkillCreateModal from './SkillCreateModal.vue'
 import SkillDetailDrawer from './SkillDetailDrawer.vue'
 import OmpSkillSettingsModal from './OmpSkillSettingsModal.vue'
 import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
-import { completeOmpSkillSettingsSave, supportsOmpSkillSettings } from '../utils/omp-skill-settings'
+import { completeOmpSkillSettingsSave, supportsOmpSkillSettings, validateOmpSkillListResponse } from '../utils/omp-skill-settings'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -214,7 +214,7 @@ const emptyText = computed(() => {
   return '暂无可用技能，请配置仓库源'
 })
 
-async function loadData(force = false) {
+async function loadData(force = false, { notifyError = true } = {}) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
   loading.value = true
@@ -222,12 +222,17 @@ async function loadData(force = false) {
     const skillsRes = await getSkills(force, platform, {
       ...(props.projectPath ? { cwd: props.projectPath } : {})
     })
-    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
-    if (skillsRes.success) skills.value = skillsRes.skills || []
+    const loadedSkills = validateOmpSkillListResponse(skillsRes)
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
+
+    skills.value = loadedSkills
+    return true
   } catch (err) {
-    message.error('加载技能失败: ' + err.message)
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
+    if (notifyError) message.error('加载技能失败: ' + (err?.message || String(err)))
+    return false
   } finally {
-    if (requestId === loadRequestId.value) {
+    if (requestId === loadRequestId.value && platform === currentPlatform.value) {
       loading.value = false
     }
   }
@@ -320,9 +325,15 @@ async function handleOmpSettingsSaved(_settings, operationToken) {
     operationToken !== ompSettingsEpoch.value
   ) return
 
-  await completeOmpSkillSettingsSave(() => {
-    showOmpSettingsModal.value = false
-  }, loadData)
+  const platform = currentPlatform.value
+  showOmpSettingsModal.value = false
+  const refreshed = await completeOmpSkillSettingsSave(() => {}, loadData)
+  if (platform !== currentPlatform.value || operationToken !== ompSettingsEpoch.value) return
+  if (refreshed) {
+    message.success('技能扫描设置已保存')
+  } else {
+    message.error('设置已保存，但技能列表刷新失败')
+  }
 }
 
 function handleCardClick(skill) {
