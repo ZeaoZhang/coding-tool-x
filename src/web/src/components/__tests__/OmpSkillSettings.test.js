@@ -301,17 +301,23 @@ describe('SkillManager standalone platform query', () => {
   })
 
   test.each([
-    ['omp', true],
-    ['claude', false],
-    [undefined, false],
-    ['unknown', false]
-  ])('query platform %s controls the OMP settings entry', async (platform, showsSettings) => {
+    ['omp', 'omp', true],
+    ['claude', 'claude', false],
+    [['omp'], 'omp', true],
+    [['omp', 'claude'], 'omp', true],
+    [['unknown', 'omp'], 'claude', false],
+    [null, 'claude', false],
+    [[], 'claude', false],
+    [undefined, 'claude', false],
+    ['unknown', 'claude', false]
+  ])('query platform %s resolves to %s and controls the OMP settings entry', async (platform, resolvedPlatform, showsSettings) => {
     route.query = platform === undefined ? {} : { platform }
     const wrapper = mount(SkillManager, {
       global: { stubs: irrelevantStubs }
     })
     await flushPromises()
 
+    expect(api.getSkills).toHaveBeenLastCalledWith(false, resolvedPlatform, {})
     const settingsButton = findSettingsButton(wrapper)
     expect(settingsButton.exists()).toBe(showsSettings)
 

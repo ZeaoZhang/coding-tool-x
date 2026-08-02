@@ -17,7 +17,12 @@ const route = useRoute()
 const skillPlatforms = BUILT_IN_CLI_PLATFORMS
   .filter(platform => platform.supportsSkills !== false)
   .map(platform => platform.key)
-const platform = computed(() => skillPlatforms.includes(route.query.platform) ? route.query.platform : '')
+const platform = computed(() => {
+  const queryPlatform = Array.isArray(route.query.platform)
+    ? route.query.platform[0]
+    : route.query.platform
+  return skillPlatforms.includes(queryPlatform) ? queryPlatform : ''
+})
 </script>
 
 <style scoped>
