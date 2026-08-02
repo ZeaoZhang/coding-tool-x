@@ -1,7 +1,7 @@
-const fs = require('fs');
-const path = require('path');
-const yaml = require('js-yaml');
-const { getOmpPaths, ensureOmpDir } = require('./omp-config');
+const {
+  readOmpSettingsStrict,
+  writeOmpSettingsAtomic
+} = require('./omp-config');
 
 const OMP_SKILL_SETTING_DEFAULTS = Object.freeze({
   enableCodexUser: true,
@@ -11,11 +11,6 @@ const OMP_SKILL_SETTING_DEFAULTS = Object.freeze({
 });
 const OMP_SKILL_SETTING_KEYS = Object.freeze(Object.keys(OMP_SKILL_SETTING_DEFAULTS));
 const OMP_SKILL_SETTING_KEY_SET = new Set(OMP_SKILL_SETTING_KEYS);
-const YAML_DUMP_OPTIONS = Object.freeze({
-  lineWidth: 120,
-  noRefs: true,
-  sortKeys: false
-});
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -26,59 +21,33 @@ function isPlainObject(value) {
 }
 
 function selectOmpSkillSettings(skills) {
-  const source = isPlainObject(skills) ? skills : {};
+  const source = skills || {};
   const selected = {};
   for (const key of OMP_SKILL_SETTING_KEYS) {
-    selected[key] = typeof source[key] === 'boolean'
+    selected[key] = Object.prototype.hasOwnProperty.call(source, key)
       ? source[key]
       : OMP_SKILL_SETTING_DEFAULTS[key];
   }
   return selected;
 }
 
-function readOmpConfig() {
-  const filePath = getOmpPaths().settings;
-  if (!fs.existsSync(filePath)) {
+function validatePersistedOmpSkillSettings(config) {
+  if (!Object.prototype.hasOwnProperty.call(config, 'skills')) {
     return {};
   }
-
-  const config = yaml.load(fs.readFileSync(filePath, 'utf8'));
-  if (!isPlainObject(config)) {
-    throw new Error('Invalid OMP config');
+  if (!isPlainObject(config.skills)) {
+    throw new Error('Invalid OMP config skills');
   }
-  return config;
-}
 
-function writeOmpConfig(config) {
-  const filePath = getOmpPaths().settings;
-  const directory = path.dirname(filePath);
-  ensureOmpDir(directory);
-  const mode = fs.existsSync(filePath)
-    ? fs.statSync(filePath).mode & 0o777
-    : 0o600;
-  const temporaryPath = path.join(
-    directory,
-    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
-
-  try {
-    fs.writeFileSync(temporaryPath, yaml.dump(config, YAML_DUMP_OPTIONS), {
-      encoding: 'utf8',
-      flag: 'wx',
-      mode
-    });
-    fs.chmodSync(temporaryPath, mode);
-    fs.renameSync(temporaryPath, filePath);
-  } catch (error) {
-    try {
-      if (fs.existsSync(temporaryPath)) {
-        fs.unlinkSync(temporaryPath);
-      }
-    } catch (_cleanupError) {
-      // Preserve the original write, chmod, or rename failure.
+  for (const key of OMP_SKILL_SETTING_KEYS) {
+    if (
+      Object.prototype.hasOwnProperty.call(config.skills, key) &&
+      typeof config.skills[key] !== 'boolean'
+    ) {
+      throw new Error(`Invalid OMP skill setting value for ${key}: expected boolean`);
     }
-    throw error;
   }
+  return config.skills;
 }
 
 function validateOmpSkillSettingsPatch(patch) {
@@ -97,23 +66,18 @@ function validateOmpSkillSettingsPatch(patch) {
 }
 
 function readOmpSkillSettings() {
-  const config = readOmpConfig();
-  return selectOmpSkillSettings(config.skills);
+  const config = readOmpSettingsStrict();
+  return selectOmpSkillSettings(validatePersistedOmpSkillSettings(config));
 }
 
 function updateOmpSkillSettings(patch) {
   validateOmpSkillSettingsPatch(patch);
 
-  const config = readOmpConfig();
+  const config = readOmpSettingsStrict();
+  const existingSkills = validatePersistedOmpSkillSettings(config);
   if (Object.keys(patch).length === 0) {
-    return selectOmpSkillSettings(config.skills);
+    return selectOmpSkillSettings(existingSkills);
   }
-
-  const hasSkills = Object.prototype.hasOwnProperty.call(config, 'skills');
-  if (hasSkills && !isPlainObject(config.skills)) {
-    throw new Error('Invalid OMP config skills');
-  }
-  const existingSkills = hasSkills ? config.skills : {};
 
   const nextConfig = {
     ...config,
@@ -123,7 +87,7 @@ function updateOmpSkillSettings(patch) {
     }
   };
 
-  writeOmpConfig(nextConfig);
+  writeOmpSettingsAtomic(nextConfig);
   return selectOmpSkillSettings(nextConfig.skills);
 }
 

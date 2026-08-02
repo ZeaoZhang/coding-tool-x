@@ -5,6 +5,11 @@ const yaml = require('js-yaml');
 const { HOME_DIR, PATHS = {} } = require('../../config/paths');
 
 const DEFAULT_OMP_COMMAND = 'omp';
+const YAML_DUMP_OPTIONS = Object.freeze({
+  lineWidth: 120,
+  noRefs: true,
+  sortKeys: false
+});
 
 function expandHome(input = '') {
   const value = String(input || '').trim();
@@ -123,6 +128,14 @@ function ensureOmpDir(dirPath) {
   }
 }
 
+function isPlainObject(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function readJsonFile(filePath, fallback = {}) {
   try {
     if (!fs.existsSync(filePath)) return fallback;
@@ -152,11 +165,7 @@ function readYamlFile(filePath, fallback = {}) {
 
 function writeYamlFile(filePath, data) {
   ensureOmpDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, yaml.dump(data || {}, {
-    lineWidth: 120,
-    noRefs: true,
-    sortKeys: false
-  }), 'utf8');
+  fs.writeFileSync(filePath, yaml.dump(data || {}, YAML_DUMP_OPTIONS), 'utf8');
 }
 
 function readOmpSettings() {
@@ -166,6 +175,58 @@ function readOmpSettings() {
 
 function writeOmpSettings(settings) {
   writeYamlFile(getOmpPaths().settings, settings || {});
+}
+
+function readOmpSettingsStrict() {
+  const filePath = getOmpPaths().settings;
+  let source;
+  try {
+    source = fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return {};
+    throw error;
+  }
+
+  const settings = yaml.load(source);
+  if (!isPlainObject(settings)) {
+    throw new Error('Invalid OMP config');
+  }
+  return settings;
+}
+
+function writeOmpSettingsAtomic(settings) {
+  const filePath = getOmpPaths().settings;
+  const directory = path.dirname(filePath);
+  ensureOmpDir(directory);
+  let mode = 0o600;
+  try {
+    mode = fs.statSync(filePath).mode & 0o777;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  const temporaryPath = path.join(
+    directory,
+    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+
+  try {
+    fs.writeFileSync(temporaryPath, yaml.dump(settings, YAML_DUMP_OPTIONS), {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode
+    });
+    fs.chmodSync(temporaryPath, mode);
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    try {
+      if (fs.existsSync(temporaryPath)) {
+        fs.unlinkSync(temporaryPath);
+      }
+    } catch {
+      // Preserve the original write, chmod, or rename failure.
+    }
+    throw error;
+  }
 }
 
 function getOmpCommand(env = process.env) {
@@ -288,6 +349,8 @@ module.exports = {
   writeYamlFile,
   readOmpSettings,
   writeOmpSettings,
+  readOmpSettingsStrict,
+  writeOmpSettingsAtomic,
   getOmpCommand,
   getOmpProfile,
   resolveOmpRuntime,
