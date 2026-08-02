@@ -53,6 +53,12 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { NAlert, NButton, NModal, NSpin, NSwitch, useMessage } from 'naive-ui'
 import { getOmpSkillSettings, updateOmpSkillSettings } from '../api/skills'
+import {
+  OMP_SKILL_SETTINGS_KEYS,
+  submitOmpSkillSettings,
+  validateOmpSkillSettingsResponse,
+  validateOmpSkillSettingsSaveResult
+} from '../utils/omp-skill-settings'
 
 const props = defineProps({
   visible: Boolean
@@ -63,12 +69,7 @@ const message = useMessage()
 const loading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
-const SETTINGS_KEYS = [
-  'enableCodexUser',
-  'enableClaudeUser',
-  'enablePiUser',
-  'enablePiProject'
-]
+const SETTINGS_KEYS = OMP_SKILL_SETTINGS_KEYS
 const form = reactive(Object.fromEntries(SETTINGS_KEYS.map(key => [key, true])))
 let loadRequestId = 0
 
@@ -102,29 +103,6 @@ const visible = computed({
   }
 })
 
-function isPlainObject(value) {
-  if (value === null || typeof value !== 'object') return false
-
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
-}
-
-function normalizeSettings(settings) {
-  if (!isPlainObject(settings) || !SETTINGS_KEYS.every(key => typeof settings[key] === 'boolean')) {
-    throw new Error('响应 settings 必须包含四个布尔字段')
-  }
-
-  return Object.fromEntries(SETTINGS_KEYS.map(key => [key, settings[key]]))
-}
-
-function validateSettingsResponse(result) {
-  if (!isPlainObject(result) || result.success !== true) {
-    throw new Error('响应未明确标记成功')
-  }
-
-  return normalizeSettings(result.settings)
-}
-
 function errorMessage(error) {
   try {
     if (error instanceof Error) return error.message
@@ -156,7 +134,7 @@ async function loadSettings() {
 
   try {
     const result = await getOmpSkillSettings()
-    const settings = validateSettingsResponse(result)
+    const settings = validateOmpSkillSettingsResponse(result)
     if (requestId !== loadRequestId || !props.visible) return
 
     Object.assign(form, settings)
@@ -176,14 +154,11 @@ async function handleSave() {
   saving.value = true
   try {
     const submittedSettings = Object.fromEntries(SETTINGS_KEYS.map(key => [key, form[key]]))
-    const result = await updateOmpSkillSettings(submittedSettings)
-    const savedSettings = validateSettingsResponse(result)
-    if (!SETTINGS_KEYS.every(key => savedSettings[key] === submittedSettings[key])) {
-      throw new Error('响应 settings 与提交值不一致')
-    }
-
+    await submitOmpSkillSettings(submittedSettings, updateOmpSkillSettings, result => {
+      const savedSettings = validateOmpSkillSettingsSaveResult(result, submittedSettings)
+      emit('saved', savedSettings)
+    })
     message.success('技能扫描设置已保存')
-    emit('saved', savedSettings)
   } catch (error) {
     message.error(`保存技能扫描设置失败: ${errorMessage(error)}`)
   } finally {
