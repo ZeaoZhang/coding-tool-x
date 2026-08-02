@@ -61,49 +61,47 @@ describe('OMP skill settings web integration', () => {
         finishRefresh = resolve;
       });
     });
-
     let completed = false;
-    const completion = completeOmpSkillSettingsSave(closeSettings, refreshSkills).then(() => {
+
+    let completedResult;
+    const completion = completeOmpSkillSettingsSave(closeSettings, refreshSkills).then(result => {
       completed = true;
+      completedResult = result;
     });
 
     expect(events).toEqual(['closed', 'refreshing']);
     expect(closeSettings).toHaveBeenCalledTimes(1);
     expect(refreshSkills).toHaveBeenCalledTimes(1);
-    expect(refreshSkills).toHaveBeenCalledWith(true);
+    expect(refreshSkills).toHaveBeenCalledWith(true, { notifyError: false });
     expect(completed).toBe(false);
 
-    finishRefresh();
+    finishRefresh(true);
     await completion;
     expect(completed).toBe(true);
+    expect(completedResult).toBe(true);
   });
 
-  test('does not emit saved or trigger parent completion when the settings update rejects', async () => {
+  test('propagates settings update rejection without invoking a callback', async () => {
     const { submitOmpSkillSettings } = await import(
       '../../../src/web/src/utils/omp-skill-settings.js'
     );
     const error = new Error('write failed');
-    const settings = { enablePiUser: false };
+    const settings = {
+      enableCodexUser: true,
+      enableClaudeUser: false,
+      enablePiUser: true,
+      enablePiProject: false
+    };
     const updateSettings = vi.fn().mockRejectedValue(error);
-    const saved = vi.fn();
-    const closeSettings = vi.fn();
-    const refreshSkills = vi.fn();
-    const onSuccess = vi.fn(result => {
-      saved(result.settings);
-      closeSettings();
-      refreshSkills(true);
-    });
 
-    await expect(submitOmpSkillSettings(settings, updateSettings, onSuccess)).rejects.toBe(error);
+    await expect(submitOmpSkillSettings(settings, updateSettings)).rejects.toBe(error);
 
-    expect(saved).not.toHaveBeenCalled();
-    expect(closeSettings).not.toHaveBeenCalled();
-    expect(refreshSkills).not.toHaveBeenCalled();
-    expect(onSuccess).not.toHaveBeenCalled();
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(settings);
   });
 
-  test('does not notify or refresh when the modal save validator throws', async () => {
-    const { submitOmpSkillSettings, validateOmpSkillSettingsSaveResult } = await import(
+  test('rejects validator mismatch directly without invoking a success callback', async () => {
+    const { submitOmpSkillSettings } = await import(
       '../../../src/web/src/utils/omp-skill-settings.js'
     );
     const settings = {
@@ -113,42 +111,34 @@ describe('OMP skill settings web integration', () => {
       enablePiProject: false
     };
     const result = { success: true, settings: { ...settings, enablePiProject: true } };
-    const notifySaved = vi.fn();
-    const refreshSkills = vi.fn();
-    const onSuccess = vi.fn(response => {
-      validateOmpSkillSettingsSaveResult(response, settings);
-      notifySaved();
-      refreshSkills(true);
-    });
+    const updateSettings = vi.fn().mockResolvedValue(result);
 
-    await expect(
-      submitOmpSkillSettings(settings, vi.fn().mockResolvedValue(result), onSuccess)
-    ).rejects.toThrow('响应 settings 与提交值不一致');
+    await expect(submitOmpSkillSettings(settings, updateSettings)).rejects.toThrow(
+      '响应 settings 与提交值不一致'
+    );
 
-    expect(onSuccess).toHaveBeenCalledTimes(1);
-    expect(notifySaved).not.toHaveBeenCalled();
-    expect(refreshSkills).not.toHaveBeenCalled();
+    expect(updateSettings).toHaveBeenCalledTimes(1);
   });
 
-  test('calls the success callback synchronously once and returns without awaiting it', async () => {
+  test('returns validated settings after one successful update without a callback', async () => {
     const { submitOmpSkillSettings } = await import(
       '../../../src/web/src/utils/omp-skill-settings.js'
     );
-    const settings = { enablePiProject: false };
-    const result = { success: true, settings };
+    const settings = {
+      enableCodexUser: true,
+      enableClaudeUser: false,
+      enablePiUser: true,
+      enablePiProject: false
+    };
+    const result = { success: true, settings: { ...settings } };
     const updateSettings = vi.fn().mockResolvedValue(result);
-    const pendingCallbackResult = new Promise(() => {});
-    const onSuccess = vi.fn(() => pendingCallbackResult);
-    const notifySaved = vi.fn();
 
-    const savedResult = await submitOmpSkillSettings(settings, updateSettings, onSuccess);
-    notifySaved();
+    const savedSettings = await submitOmpSkillSettings(settings, updateSettings);
 
+    expect(updateSettings).toHaveBeenCalledTimes(1);
     expect(updateSettings).toHaveBeenCalledWith(settings);
-    expect(onSuccess).toHaveBeenCalledTimes(1);
-    expect(onSuccess).toHaveBeenCalledWith(result);
-    expect(savedResult).toBe(result);
-    expect(notifySaved).toHaveBeenCalledTimes(1);
+    expect(savedSettings).toEqual(settings);
+    expect(savedSettings).not.toBe(result.settings);
   });
 
   test('propagates a settings write failure', async () => {
