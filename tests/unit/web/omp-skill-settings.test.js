@@ -60,21 +60,43 @@ describe('OMP skill settings web integration', () => {
     expect(refreshSkills).toHaveBeenCalledWith(true);
   });
 
-  test('propagates a settings write failure without touching an existing list', async () => {
-    const existingSkills = [{ key: 'kept' }];
-    client.put.mockRejectedValueOnce(new Error('write failed'));
-    const { updateOmpSkillSettings } = await import('../../../src/web/src/api/skills.js');
+  test('runs the save callback with the update result after a successful settings save', async () => {
+    const { runOmpSkillSettingsSave } = await import(
+      '../../../src/web/src/utils/omp-skill-settings.js'
+    );
+    const settings = { enablePiUser: false };
+    const updateResult = { success: true, settings };
+    const updateSettings = vi.fn().mockResolvedValue(updateResult);
+    const onSaved = vi.fn().mockResolvedValue(undefined);
 
-    await expect(updateOmpSkillSettings({ enablePiUser: false })).rejects.toThrow('write failed');
-    expect(existingSkills).toEqual([{ key: 'kept' }]);
+    await expect(runOmpSkillSettingsSave(settings, updateSettings, onSaved)).resolves.toBe(
+      updateResult
+    );
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(updateSettings).toHaveBeenCalledWith(settings);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(onSaved).toHaveBeenCalledWith(updateResult);
   });
 
-  test('propagates a settings read failure without touching an existing list', async () => {
-    const existingSkills = [{ key: 'kept' }];
+  test('propagates a settings write failure without running the save callback', async () => {
+    const { runOmpSkillSettingsSave } = await import(
+      '../../../src/web/src/utils/omp-skill-settings.js'
+    );
+    const error = new Error('write failed');
+    const updateSettings = vi.fn().mockRejectedValue(error);
+    const onSaved = vi.fn();
+
+    await expect(
+      runOmpSkillSettingsSave({ enablePiUser: false }, updateSettings, onSaved)
+    ).rejects.toBe(error);
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  test('propagates a settings read failure', async () => {
     client.get.mockRejectedValueOnce(new Error('read failed'));
     const { getOmpSkillSettings } = await import('../../../src/web/src/api/skills.js');
 
     await expect(getOmpSkillSettings()).rejects.toThrow('read failed');
-    expect(existingSkills).toEqual([{ key: 'kept' }]);
   });
 });
