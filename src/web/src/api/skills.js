@@ -21,6 +21,23 @@ export async function getSkills(forceRefresh = false, platform = 'claude', optio
 }
 
 /**
+ * 获取 OMP 技能扫描设置
+ */
+export async function getOmpSkillSettings() {
+  const response = await client.get('/skills/omp-settings')
+  return response.data
+}
+
+/**
+ * 更新 OMP 技能扫描设置
+ * @param {object} settings - OMP 技能扫描设置
+ */
+export async function updateOmpSkillSettings(settings) {
+  const response = await client.put('/skills/omp-settings', settings)
+  return response.data
+}
+
+/**
  * 获取已安装的技能
  */
 export async function getInstalledSkills(platform = 'claude') {
