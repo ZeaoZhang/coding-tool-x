@@ -49,6 +49,7 @@ vi.mock('naive-ui', async () => {
     setup(props, { attrs, emit, slots }) {
       return () => h('button', {
         ...attrs,
+        loading: props.loading,
         disabled: props.disabled || props.loading,
         onClick: event => emit('click', event)
       }, [slots.icon?.(), slots.default?.()])
@@ -57,7 +58,7 @@ vi.mock('naive-ui', async () => {
 
   const NModal = defineComponent({
     name: 'NModal',
-    props: { show: Boolean },
+    props: { show: Boolean, closable: Boolean, maskClosable: Boolean, closeOnEsc: Boolean },
     emits: ['update:show'],
     setup(props, { slots }) {
       return () => props.show
@@ -316,8 +317,9 @@ describe('OmpSkillSettingsModal save behavior', () => {
       enablePiProject: false
     })
     expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(message.error).toHaveBeenCalledWith('保存技能扫描设置失败: write failed')
     expect(message.error).toHaveBeenCalledTimes(1)
-    expect(message.success).not.toHaveBeenCalled()
+    expect(message.success).toHaveBeenCalledTimes(0)
     expect(wrapper.emitted('update:visible')).toBeUndefined()
     expect(wrapper.find('[data-testid="modal-shell"]').exists()).toBe(true)
     expect(wrapper.props('visible')).toBe(true)
@@ -327,40 +329,23 @@ describe('OmpSkillSettingsModal save behavior', () => {
   })
 
   test.each([
-    ['success is false', submitted => ({ success: false, settings: submitted })],
-    ['one of four fields is invalid', submitted => ({
-      success: true,
-      settings: { ...submitted, enablePiProject: 'false' }
-    })],
-    ['echo differs from submitted settings', submitted => ({
-      success: true,
-      settings: { ...submitted, enablePiProject: !submitted.enablePiProject }
-    })]
-  ])('does not emit saved when PUT resolves but %s', async (_, responseFor) => {
+    ['success is false', submitted => ({ success: false, settings: submitted }), '响应未明确标记成功'],
+    ['one of four fields is invalid', submitted => ({ success: true, settings: { ...submitted, enablePiProject: 'false' } }), '响应 settings 必须包含四个布尔字段'],
+    ['echo differs from submitted settings', submitted => ({ success: true, settings: { ...submitted, enablePiProject: !submitted.enablePiProject } }), '响应 settings 与提交值不一致']
+  ])('reports the complete validation error when PUT resolves with %s', async (_, responseFor, errorText) => {
     api.updateOmpSkillSettings.mockImplementation(submitted => Promise.resolve(responseFor(submitted)))
     const wrapper = await mountSettingsModal()
 
-    const switches = wrapper.findAll('[role="switch"]')
-    await switches[0].trigger('click')
-    await switches[3].trigger('click')
+    await wrapper.findAll('[role="switch"]')[0].trigger('click')
+    await wrapper.findAll('[role="switch"]')[3].trigger('click')
     await findButton(wrapper, '保存').trigger('click')
     await flushPromises()
 
     expect(api.updateOmpSkillSettings).toHaveBeenCalledTimes(1)
-    expect(api.updateOmpSkillSettings).toHaveBeenCalledWith({
-      ...validSettings,
-      enableCodexUser: true,
-      enablePiProject: false
-    })
     expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(message.error).toHaveBeenCalledWith(`保存技能扫描设置失败: ${errorText}`)
     expect(message.error).toHaveBeenCalledTimes(1)
-    expect(message.success).not.toHaveBeenCalled()
-    expect(wrapper.emitted('update:visible')).toBeUndefined()
-    expect(wrapper.find('[data-testid="modal-shell"]').exists()).toBe(true)
-    expect(wrapper.props('visible')).toBe(true)
-    expect(switches.map(toggle => toggle.attributes('aria-checked'))).toEqual([
-      'true', 'true', 'false', 'false'
-    ])
+    expect(message.success).toHaveBeenCalledTimes(0)
   })
 
   test('emits saved exactly once after a successful PUT', async () => {
@@ -380,6 +365,45 @@ describe('OmpSkillSettingsModal save behavior', () => {
     ]])
     expect(message.success).toHaveBeenCalledTimes(1)
     expect(message.error).not.toHaveBeenCalled()
+  })
+  test('locks modal controls during a pending PUT and restores them afterward', async () => {
+    const pendingSave = deferred()
+    api.updateOmpSkillSettings.mockReturnValue(pendingSave.promise)
+    const wrapper = await mountSettingsModal()
+    const saveButton = findButton(wrapper, '保存')
+
+    await saveButton.trigger('click')
+    await nextTick()
+
+    expect(wrapper.findComponent({ name: 'NModal' }).props()).toMatchObject({
+      closable: false,
+      maskClosable: false,
+      closeOnEsc: false
+    })
+    expect(wrapper.findAll('[role="switch"]').every(toggle => toggle.attributes('disabled') !== undefined)).toBe(true)
+    expect(findButton(wrapper, '取消').attributes('disabled')).toBeDefined()
+    expect(saveButton.attributes('loading')).toBeDefined()
+    expect(saveButton.attributes('disabled')).toBeDefined()
+
+    await saveButton.trigger('click')
+    expect(api.updateOmpSkillSettings).toHaveBeenCalledTimes(1)
+
+    pendingSave.resolve({ success: true, settings: { ...validSettings } })
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.findComponent({ name: 'NModal' }).props()).toMatchObject({
+      closable: true,
+      maskClosable: true,
+      closeOnEsc: true
+    })
+    expect(wrapper.findAll('[role="switch"]').every(toggle => toggle.attributes('disabled') === undefined)).toBe(true)
+    expect(findButton(wrapper, '取消').attributes('disabled')).toBeUndefined()
+    expect(saveButton.attributes('loading')).toBe('false')
+    expect(saveButton.attributes('disabled')).toBeUndefined()
+    expect(message.success).toHaveBeenCalledWith('技能扫描设置已保存')
+    expect(message.success).toHaveBeenCalledTimes(1)
+    expect(message.error).toHaveBeenCalledTimes(0)
   })
 
   test('keeps a reopened modal intact when the earlier PUT resolves', async () => {
@@ -407,8 +431,9 @@ describe('OmpSkillSettingsModal save behavior', () => {
     expect(findButton(modal, '保存').attributes('disabled')).toBeUndefined()
     expect(modal.emitted('saved')).toBeUndefined()
     expect(wrapper.vm.refreshCount).toBe(0)
-    expect(message.success).not.toHaveBeenCalled()
-    expect(message.error).not.toHaveBeenCalled()
+    expect(message.success).toHaveBeenCalledTimes(0)
+    expect(message.error).toHaveBeenCalledTimes(0)
+
     wrapper.unmount()
   })
 
@@ -438,8 +463,8 @@ describe('OmpSkillSettingsModal save behavior', () => {
     expect(modal.emitted('saved')).toBeUndefined()
     expect(wrapper.vm.refreshCount).toBe(0)
     expect(message.success).not.toHaveBeenCalled()
-    expect(message.error).not.toHaveBeenCalled()
-    wrapper.unmount()
+    expect(message.success).toHaveBeenCalledTimes(0)
+    expect(message.error).toHaveBeenCalledTimes(0)
   })
 })
 
