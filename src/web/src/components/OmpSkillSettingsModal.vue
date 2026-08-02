@@ -1,0 +1,212 @@
+<template>
+  <n-modal
+    v-model:show="visible"
+    preset="card"
+    title="技能扫描设置"
+    :bordered="false"
+    :closable="!saving"
+    :mask-closable="!saving"
+    :close-on-esc="!saving"
+    style="width: 420px; max-width: 92vw;"
+  >
+    <n-spin :show="loading">
+      <n-alert v-if="loadError" type="error" :show-icon="true">
+        {{ loadError }}
+      </n-alert>
+
+      <div v-else class="scan-settings">
+        <div class="section-title">扫描来源</div>
+        <div v-for="item in settingItems" :key="item.key" class="setting-row">
+          <div class="setting-copy">
+            <div class="setting-label">{{ item.label }}</div>
+            <div class="setting-description">{{ item.description }}</div>
+          </div>
+          <n-switch v-model:value="form[item.key]" :disabled="loading || saving" />
+        </div>
+      </div>
+    </n-spin>
+
+    <template #footer>
+      <div class="modal-actions">
+        <n-button :disabled="saving" @click="visible = false">取消</n-button>
+        <n-button
+          type="primary"
+          :loading="saving"
+          :disabled="loading || saving || !!loadError"
+          @click="handleSave"
+        >
+          保存
+        </n-button>
+      </div>
+    </template>
+  </n-modal>
+</template>
+
+<script setup>
+import { computed, reactive, ref, watch } from 'vue'
+import { NAlert, NButton, NModal, NSpin, NSwitch, useMessage } from 'naive-ui'
+import { getOmpSkillSettings, updateOmpSkillSettings } from '../api/skills'
+import { runOmpSkillSettingsSave } from '../utils/omp-skill-settings'
+
+const props = defineProps({
+  visible: Boolean
+})
+
+const emit = defineEmits(['update:visible', 'saved'])
+const message = useMessage()
+const loading = ref(false)
+const saving = ref(false)
+const loadError = ref('')
+const form = reactive({
+  enableCodexUser: true,
+  enableClaudeUser: true,
+  enablePiUser: true,
+  enablePiProject: true
+})
+let loadRequestId = 0
+
+const settingItems = [
+  {
+    key: 'enableCodexUser',
+    label: 'Codex 用户',
+    description: '扫描 Codex 用户技能目录'
+  },
+  {
+    key: 'enableClaudeUser',
+    label: 'Claude 用户与插件',
+    description: '扫描 Claude 用户目录和插件技能'
+  },
+  {
+    key: 'enablePiUser',
+    label: 'OMP 用户与插件',
+    description: '扫描 OMP 用户目录和插件技能'
+  },
+  {
+    key: 'enablePiProject',
+    label: '当前项目 .omp/skills',
+    description: '扫描当前项目的 OMP 技能目录'
+  }
+]
+
+const visible = computed({
+  get: () => props.visible,
+  set: value => {
+    if (!saving.value) emit('update:visible', value)
+  }
+})
+
+function isSettingsObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function loadSettings() {
+  const requestId = ++loadRequestId
+  loading.value = true
+  loadError.value = ''
+
+  try {
+    const result = await getOmpSkillSettings()
+    if (!isSettingsObject(result?.settings)) {
+      throw new Error('响应缺少 settings 对象')
+    }
+    if (requestId !== loadRequestId || !props.visible) return
+
+    const settings = result.settings
+    form.enableCodexUser = settings.enableCodexUser
+    form.enableClaudeUser = settings.enableClaudeUser
+    form.enablePiUser = settings.enablePiUser
+    form.enablePiProject = settings.enablePiProject
+  } catch (error) {
+    if (requestId !== loadRequestId || !props.visible) return
+
+    loadError.value = `加载技能扫描设置失败: ${error.message}`
+    message.error(loadError.value)
+  } finally {
+    if (requestId === loadRequestId) loading.value = false
+  }
+}
+
+async function handleSave() {
+  if (loading.value || saving.value || loadError.value) return
+
+  let saved = false
+  saving.value = true
+  try {
+    await runOmpSkillSettingsSave(
+      { ...form },
+      updateOmpSkillSettings,
+      () => emit('saved')
+    )
+    saved = true
+    message.success('技能扫描设置已保存')
+  } catch (error) {
+    message.error(`保存技能扫描设置失败: ${error.message}`)
+  } finally {
+    saving.value = false
+    if (saved) emit('update:visible', false)
+  }
+}
+
+watch(
+  () => props.visible,
+  value => {
+    if (value) {
+      loadSettings()
+    } else {
+      loadRequestId += 1
+      loading.value = false
+      loadError.value = ''
+    }
+  },
+  { immediate: true }
+)
+</script>
+
+<style scoped>
+.scan-settings {
+  display: flex;
+  flex-direction: column;
+}
+
+.section-title {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.setting-row:last-child {
+  border-bottom: 0;
+}
+
+.setting-copy {
+  min-width: 0;
+}
+
+.setting-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.setting-description {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+</style>
