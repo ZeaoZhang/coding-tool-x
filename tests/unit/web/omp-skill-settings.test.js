@@ -48,49 +48,42 @@ describe('OMP skill settings web integration', () => {
     expect(supportsOmpSkillSettings(platform)).toBe(expected);
   });
 
-  test('refreshes the skill list once after a successful settings save', async () => {
-    const { refreshAfterOmpSkillSettingsSave } = await import(
+  test('closes settings before awaiting one forced skill refresh', async () => {
+    const { completeOmpSkillSettingsSave } = await import(
       '../../../src/web/src/utils/omp-skill-settings.js'
     );
-    const refreshSkills = vi.fn().mockResolvedValue(undefined);
+    const events = [];
+    let finishRefresh;
+    const closeSettings = vi.fn(() => events.push('closed'));
+    const refreshSkills = vi.fn(() => {
+      events.push('refreshing');
+      return new Promise(resolve => {
+        finishRefresh = resolve;
+      });
+    });
 
-    await refreshAfterOmpSkillSettingsSave(refreshSkills);
+    let completed = false;
+    const completion = completeOmpSkillSettingsSave(closeSettings, refreshSkills).then(() => {
+      completed = true;
+    });
 
+    expect(events).toEqual(['closed', 'refreshing']);
+    expect(closeSettings).toHaveBeenCalledTimes(1);
     expect(refreshSkills).toHaveBeenCalledTimes(1);
     expect(refreshSkills).toHaveBeenCalledWith(true);
+    expect(completed).toBe(false);
+
+    finishRefresh();
+    await completion;
+    expect(completed).toBe(true);
   });
 
-  test('runs the save callback with the update result after a successful settings save', async () => {
-    const { runOmpSkillSettingsSave } = await import(
-      '../../../src/web/src/utils/omp-skill-settings.js'
-    );
-    const settings = { enablePiUser: false };
-    const updateResult = { success: true, settings };
-    const updateSettings = vi.fn().mockResolvedValue(updateResult);
-    const onSaved = vi.fn().mockResolvedValue(undefined);
-
-    await expect(runOmpSkillSettingsSave(settings, updateSettings, onSaved)).resolves.toBe(
-      updateResult
-    );
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(updateSettings).toHaveBeenCalledWith(settings);
-    expect(onSaved).toHaveBeenCalledTimes(1);
-    expect(onSaved).toHaveBeenCalledWith(updateResult);
-  });
-
-  test('propagates a settings write failure without running the save callback', async () => {
-    const { runOmpSkillSettingsSave } = await import(
-      '../../../src/web/src/utils/omp-skill-settings.js'
-    );
+  test('propagates a settings write failure', async () => {
     const error = new Error('write failed');
-    const updateSettings = vi.fn().mockRejectedValue(error);
-    const onSaved = vi.fn();
+    client.put.mockRejectedValueOnce(error);
+    const { updateOmpSkillSettings } = await import('../../../src/web/src/api/skills.js');
 
-    await expect(
-      runOmpSkillSettingsSave({ enablePiUser: false }, updateSettings, onSaved)
-    ).rejects.toBe(error);
-    expect(updateSettings).toHaveBeenCalledTimes(1);
-    expect(onSaved).not.toHaveBeenCalled();
+    await expect(updateOmpSkillSettings({ enablePiUser: false })).rejects.toBe(error);
   });
 
   test('propagates a settings read failure', async () => {

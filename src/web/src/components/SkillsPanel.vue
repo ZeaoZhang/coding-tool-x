@@ -27,6 +27,10 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
+        <n-button v-if="showOmpSettings" text :focusable="false" @click="showOmpSettingsModal = true" class="action-btn">
+          <template #icon><n-icon><SettingsOutline /></n-icon></template>
+          设置
+        </n-button>
         <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
@@ -48,6 +52,10 @@
         <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
+        </n-button>
+        <n-button v-if="showOmpSettings" text :focusable="false" @click="showOmpSettingsModal = true" class="action-btn">
+          <template #icon><n-icon><SettingsOutline /></n-icon></template>
+          设置
         </n-button>
         <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
@@ -116,6 +124,7 @@
     <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData(true)" />
     <SkillCreateModal v-model:visible="showCreateModal" :platform="currentPlatform" @created="loadData" />
     <SkillDetailDrawer v-model:visible="showDetailDrawer" :skill="selectedSkill" :platform="currentPlatform" @updated="loadData" />
+    <OmpSkillSettingsModal v-model:visible="showOmpSettingsModal" @saved="handleOmpSettingsSaved" />
   </div>
 </template>
 
@@ -123,14 +132,16 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
-import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
+import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline, SettingsOutline } from '@vicons/ionicons5'
 import { getSkills, installSkill, uninstallSkill, installLocalSkill } from '../api/skills'
 import { importFromClaude } from '../api/config-registry'
 import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
 import SkillCreateModal from './SkillCreateModal.vue'
 import SkillDetailDrawer from './SkillDetailDrawer.vue'
+import OmpSkillSettingsModal from './OmpSkillSettingsModal.vue'
 import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
+import { completeOmpSkillSettingsSave, supportsOmpSkillSettings } from '../utils/omp-skill-settings'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -151,6 +162,7 @@ const filterStatus = ref('all')
 const showRepoManager = ref(false)
 const showCreateModal = ref(false)
 const showDetailDrawer = ref(false)
+const showOmpSettingsModal = ref(false)
 const selectedSkill = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
@@ -168,6 +180,7 @@ const currentPlatform = computed(() => {
   if (managedSkillPlatforms.includes(channel)) return channel
   return 'claude'
 })
+const showOmpSettings = computed(() => supportsOmpSkillSettings(currentPlatform.value))
 
 const currentPlatformLabel = computed(() => {
   const platform = getPlatformConfig(currentPlatform.value)
@@ -292,6 +305,11 @@ async function handleUninstall(skill) {
   finally { delete uninstallingKeys.value[skill.key] }
 }
 
+async function handleOmpSettingsSaved() {
+  await completeOmpSkillSettingsSave(() => {
+    showOmpSettingsModal.value = false
+  }, loadData)
+}
 
 function handleCardClick(skill) {
   selectedSkill.value = skill
@@ -309,7 +327,8 @@ watch(() => props.drawerVisible, (val) => {
   if (val) loadData()
 })
 
-watch(() => currentPlatform.value, () => {
+watch(() => currentPlatform.value, platform => {
+  if (!supportsOmpSkillSettings(platform)) showOmpSettingsModal.value = false
   loadData()
 })
 </script>
