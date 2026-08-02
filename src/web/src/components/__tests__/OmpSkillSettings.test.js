@@ -330,7 +330,8 @@ describe('OmpSkillSettingsModal save behavior', () => {
     await flushPromises()
 
     expect(wrapper.emitted('saved')).toEqual([[
-      { ...validSettings, enablePiProject: false }
+      { ...validSettings, enablePiProject: false },
+      0
     ]])
   })
 })
@@ -362,5 +363,97 @@ describe('SkillsPanel successful settings flow', () => {
     expect(api.getSkills).toHaveBeenCalledTimes(1)
     expect(api.getSkills).toHaveBeenCalledWith(true, 'omp', {})
     expect(modal.props('visible')).toBe(false)
+  })
+
+  test('ignores a pending OMP save after the panel switches to Claude', async () => {
+    api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+    let resolveUpdate
+    api.updateOmpSkillSettings.mockImplementation(submitted => new Promise(resolve => {
+      resolveUpdate = () => resolve({ success: true, settings: { ...submitted } })
+    }))
+    const wrapper = mount(SkillsPanel, {
+      props: { platform: 'omp' },
+      global: { stubs: irrelevantStubs }
+    })
+    await flushPromises()
+    api.getSkills.mockClear()
+
+    await findButton(wrapper, '设置').trigger('click')
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    await findButton(modal, '保存').trigger('click')
+    await nextTick()
+    expect(api.updateOmpSkillSettings).toHaveBeenCalledTimes(1)
+
+    await wrapper.setProps({ platform: 'claude' })
+    await flushPromises()
+    expect(modal.props('visible')).toBe(false)
+    expect(api.getSkills).toHaveBeenCalledTimes(1)
+    expect(api.getSkills).toHaveBeenLastCalledWith(false, 'claude', {})
+
+    resolveUpdate()
+    await flushPromises()
+    await nextTick()
+
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(message.success).not.toHaveBeenCalled()
+    expect(message.error).not.toHaveBeenCalled()
+    expect(api.getSkills).toHaveBeenCalledTimes(1)
+    expect(modal.props('visible')).toBe(false)
+    wrapper.unmount()
+  })
+
+  test('ignores a saved event from an earlier modal opening', async () => {
+    api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+    const wrapper = mount(SkillsPanel, {
+      props: { platform: 'omp' },
+      global: { stubs: irrelevantStubs }
+    })
+    await flushPromises()
+    api.getSkills.mockClear()
+
+    await findButton(wrapper, '设置').trigger('click')
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    const staleToken = modal.props('operationToken')
+    modal.vm.$emit('update:visible', false)
+    await nextTick()
+    await findButton(wrapper, '设置').trigger('click')
+    await flushPromises()
+    expect(modal.props('operationToken')).not.toBe(staleToken)
+
+    modal.vm.$emit('saved', { ...validSettings }, staleToken)
+    await flushPromises()
+
+    expect(api.getSkills).not.toHaveBeenCalled()
+    expect(modal.props('visible')).toBe(true)
+    wrapper.unmount()
+  })
+
+  test('ignores a saved event when the current platform is not OMP', async () => {
+    api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+    const wrapper = mount(SkillsPanel, {
+      props: { platform: 'omp' },
+      global: { stubs: irrelevantStubs }
+    })
+    await flushPromises()
+    await findButton(wrapper, '设置').trigger('click')
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+
+    await wrapper.setProps({ platform: 'claude' })
+    await flushPromises()
+    api.getSkills.mockClear()
+    modal.vm.$emit('update:visible', true)
+    await nextTick()
+    const currentToken = modal.props('operationToken')
+    expect(modal.props('visible')).toBe(true)
+
+    modal.vm.$emit('saved', { ...validSettings }, currentToken)
+    await flushPromises()
+
+    expect(api.getSkills).not.toHaveBeenCalled()
+    expect(modal.props('visible')).toBe(true)
+    wrapper.unmount()
   })
 })
