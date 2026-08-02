@@ -22,6 +22,24 @@ const {
 
 const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh|off)$/;
 
+function clearOmpChannelBalanceCache(channel) {
+  try {
+    require('./channel-balance').clearChannelBalanceCache('omp', channel);
+  } catch (_) {
+    // Balance cache invalidation is an optimization; channel activation must still succeed.
+  }
+}
+
+function selectLatestEnabledChannel(channels = []) {
+  const enabledChannels = (channels || []).filter(channel => channel?.enabled !== false);
+  if (enabledChannels.length === 0) return null;
+  return enabledChannels.reduce((latest, current) => {
+    const latestTs = Number(latest?.updatedAt || latest?.createdAt || 0);
+    const currentTs = Number(current?.updatedAt || current?.createdAt || 0);
+    return currentTs > latestTs ? current : latest;
+  }, enabledChannels[0]);
+}
+
 function loadManagedOmpModeState() {
   ensureStorageDirMigrated();
   try {
@@ -140,30 +158,33 @@ class OmpChannelService extends BaseChannelService {
         gateway: state.gateway,
         activeChannelId: channel.id
       } : {});
+      return;
     }
+    writeManagedOmpProviders([channel], {});
   }
 
   _onAfterCreate(_channel, allChannels) {
-    this.syncManagedOmpProvidersIfEnabled(allChannels);
+    this.syncOmpProvidersForCurrentMode(allChannels);
   }
 
   _onAfterUpdate(_oldChannel, _newChannel, allChannels) {
-    this.syncManagedOmpProvidersIfEnabled(allChannels);
+    this.syncOmpProvidersForCurrentMode(allChannels);
   }
 
   _onAfterDelete(_channel, allChannels) {
-    this.syncManagedOmpProvidersIfEnabled(allChannels);
+    this.syncOmpProvidersForCurrentMode(allChannels);
   }
 
-  syncManagedOmpProvidersIfEnabled(channels = this.getChannels().channels) {
-    if (!isManagedOmpModeEnabled()) {
-      return getLastManagedOmpSyncResult();
+  syncOmpProvidersForCurrentMode(channels = this.getChannels().channels) {
+    if (isManagedOmpModeEnabled()) {
+      const state = loadManagedOmpModeState();
+      return this.syncManagedOmpProviders(channels, state?.gateway ? {
+        gateway: state.gateway,
+        activeChannelId: state.activeChannelId
+      } : {});
     }
-    const state = loadManagedOmpModeState();
-    return this.syncManagedOmpProviders(channels, state?.gateway ? {
-      gateway: state.gateway,
-      activeChannelId: state.activeChannelId
-    } : {});
+    const activeChannel = selectLatestEnabledChannel(channels);
+    return this.syncManagedOmpProviders(activeChannel ? [activeChannel] : [], {});
   }
 
   syncManagedOmpProviders(channels = this.getChannels().channels, options = {}) {
@@ -181,8 +202,45 @@ class OmpChannelService extends BaseChannelService {
     return getLastManagedOmpSyncResult();
   }
 
+  activateStaticOmpChannel(channelId) {
+    const data = this.loadChannels();
+    const channel = data.channels.find(item => item.id === channelId);
+    if (!channel) {
+      throw new Error('Channel not found');
+    }
+
+    const previousData = JSON.parse(JSON.stringify(data));
+    const wasEnabled = channel.enabled !== false;
+    data.channels.forEach(item => {
+      item.enabled = item.id === channelId;
+    });
+
+    try {
+      this.saveChannels(data);
+      const sync = this.syncManagedOmpProviders([channel], {});
+      if (!wasEnabled) {
+        clearOmpChannelBalanceCache(channel);
+      }
+      return { channel, sync };
+    } catch (error) {
+      try {
+        this.saveChannels(previousData);
+      } catch (rollbackError) {
+        error.rollbackError = rollbackError;
+      }
+      throw error;
+    }
+  }
+
+  applyChannelToSettings(channelId) {
+    if (isManagedOmpModeEnabled()) {
+      return super.applyChannelToSettings(channelId);
+    }
+    return this.activateStaticOmpChannel(channelId).channel;
+  }
+
   syncManagedProviderExtension(channels = this.getChannels().channels) {
-    return this.syncManagedOmpProvidersIfEnabled(channels);
+    return this.syncOmpProvidersForCurrentMode(channels);
   }
 
   disableManagedProviderExtension() {
@@ -486,6 +544,7 @@ module.exports = {
   getEnabledChannels: () => service.getEnabledChannels(),
   saveChannelOrder: (order) => service.saveChannelOrder(order),
   applyChannelToSettings: (id) => service.applyChannelToSettings(id),
+  activateStaticOmpChannel: (id) => service.activateStaticOmpChannel(id),
   disableAllChannels: () => service.disableAllChannels(),
   getEffectiveApiKey: (channel) => channel?.apiKey || null,
   syncManagedOmpProviders: (channels, options) => service.syncManagedOmpProviders(channels, options),

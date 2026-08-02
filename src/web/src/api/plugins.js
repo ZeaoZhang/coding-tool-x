@@ -9,8 +9,18 @@ import { client } from './client'
 /**
  * 获取插件列表
  */
-export async function getPlugins(platform = 'claude') {
-  const response = await client.get('/plugins', { params: { platform } })
+function withPluginContext(payload = {}, options = {}) {
+  return {
+    ...payload,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.scope ? { scope: options.scope } : {})
+  }
+}
+
+export async function getPlugins(platform = 'claude', options = {}) {
+  const response = await client.get('/plugins', {
+    params: withPluginContext({ platform }, options)
+  })
   return response.data
 }
 
@@ -25,8 +35,10 @@ export async function getPluginCapabilities(platform = 'claude') {
 /**
  * 获取市场插件列表
  */
-export async function getMarketPlugins(platform = 'claude', forceRefresh = false) {
-  const response = await client.get('/plugins/market', { params: { platform, refresh: forceRefresh ? '1' : '' } })
+export async function getMarketPlugins(platform = 'claude', forceRefresh = false, options = {}) {
+  const response = await client.get('/plugins/market', {
+    params: withPluginContext({ platform, refresh: forceRefresh ? '1' : '' }, options)
+  })
   return response.data
 }
 
@@ -34,8 +46,10 @@ export async function getMarketPlugins(platform = 'claude', forceRefresh = false
  * 获取单个插件详情
  * @param {string} name - 插件名称
  */
-export async function getPlugin(name, platform = 'claude') {
-  const response = await client.get(`/plugins/${encodeURIComponent(name)}`, { params: { platform } })
+export async function getPlugin(pluginId, platform = 'claude', options = {}) {
+  const response = await client.get(`/plugins/${encodeURIComponent(pluginId)}`, {
+    params: withPluginContext({ platform, pluginId }, options)
+  })
   return response.data
 }
 
@@ -45,9 +59,21 @@ export async function getPlugin(name, platform = 'claude') {
  * @param {object} repo - 仓库信息 { owner, name, branch }
  * @param {string} source - 直接安装源（npm 包名或 GitHub tree URL）
  */
-export async function installPlugin(directory, repo, platform = 'claude', source = '') {
-  const body = { platform }
-  if (source) body.source = source
+export async function installPlugin(directory, repo, platform = 'claude', source = '', options = {}, metadata = {}) {
+  const body = withPluginContext({ platform }, options)
+  if (source) {
+    body.source = source
+    Object.assign(body, {
+      pluginId: metadata.pluginId || source,
+      name: metadata.name,
+      pluginKind: metadata.pluginKind,
+      marketplace: metadata.marketplace,
+      installSource: metadata.installSource,
+      version: metadata.version,
+      description: metadata.description,
+      resourceTypes: metadata.resourceTypes
+    })
+  }
   else {
     body.directory = directory
     body.repo = repo
@@ -60,8 +86,10 @@ export async function installPlugin(directory, repo, platform = 'claude', source
  * 卸载插件
  * @param {string} name - 插件名称
  */
-export async function uninstallPlugin(name, platform = 'claude') {
-  const response = await client.delete(`/plugins/${encodeURIComponent(name)}`, { params: { platform } })
+export async function uninstallPlugin(pluginId, platform = 'claude', options = {}) {
+  const response = await client.delete(`/plugins/${encodeURIComponent(pluginId)}`, {
+    params: withPluginContext({ platform, pluginId }, options)
+  })
   return response.data
 }
 
@@ -70,8 +98,12 @@ export async function uninstallPlugin(name, platform = 'claude') {
  * @param {string} name - 插件名称
  * @param {boolean} enabled - 是否启用
  */
-export async function togglePlugin(name, enabled, platform = 'claude') {
-  const response = await client.put(`/plugins/${encodeURIComponent(name)}/toggle`, { enabled, platform })
+export async function togglePlugin(pluginId, enabled, platform = 'claude', options = {}) {
+  const response = await client.put(`/plugins/${encodeURIComponent(pluginId)}/toggle`, withPluginContext({
+    pluginId,
+    enabled,
+    platform
+  }, options))
   return response.data
 }
 
@@ -80,8 +112,12 @@ export async function togglePlugin(name, enabled, platform = 'claude') {
  * @param {string} name - 插件名称
  * @param {object} config - 配置对象
  */
-export async function updatePluginConfig(name, config, platform = 'claude') {
-  const response = await client.put(`/plugins/${encodeURIComponent(name)}/config`, { config, platform })
+export async function updatePluginConfig(pluginId, config, platform = 'claude', options = {}) {
+  const response = await client.put(`/plugins/${encodeURIComponent(pluginId)}/config`, withPluginContext({
+    pluginId,
+    config,
+    platform
+  }, options))
   return response.data
 }
 
@@ -90,8 +126,10 @@ export async function updatePluginConfig(name, config, platform = 'claude') {
 /**
  * 获取插件仓库列表
  */
-export async function getPluginRepos(platform = 'claude') {
-  const response = await client.get('/plugins/repos', { params: { platform } })
+export async function getPluginRepos(platform = 'claude', options = {}) {
+  const response = await client.get('/plugins/repos', {
+    params: withPluginContext({ platform }, options)
+  })
   return response.data
 }
 
@@ -99,8 +137,8 @@ export async function getPluginRepos(platform = 'claude') {
  * 添加插件仓库
  * @param {object} repo - { url, name, description }
  */
-export async function addPluginRepo(repo, platform = 'claude') {
-  const response = await client.post('/plugins/repos', { ...repo, platform })
+export async function addPluginRepo(repo, platform = 'claude', options = {}) {
+  const response = await client.post('/plugins/repos', withPluginContext({ ...repo, platform }, options))
   return response.data
 }
 
@@ -108,14 +146,14 @@ export async function addPluginRepo(repo, platform = 'claude') {
  * 删除插件仓库
  * @param {object} repo - 仓库对象
  */
-export async function removePluginRepo(repo, platform = 'claude') {
+export async function removePluginRepo(repo, platform = 'claude', options = {}) {
   const response = await client.delete('/plugins/repos', {
-    params: {
+    params: withPluginContext({
       platform,
       id: repo.id || '',
       owner: repo.owner || '',
       name: repo.name || ''
-    }
+    }, options)
   })
   return response.data
 }
@@ -156,8 +194,8 @@ export async function updatePluginRepoAuth(repo, auth = {}, platform = 'claude')
 /**
  * 同步仓库到 Claude Code marketplace
  */
-export async function syncPluginRepos(platform = 'claude') {
-  const response = await client.post('/plugins/repos/sync', { platform })
+export async function syncPluginRepos(platform = 'claude', options = {}) {
+  const response = await client.post('/plugins/repos/sync', withPluginContext({ platform }, options))
   return response.data
 }
 

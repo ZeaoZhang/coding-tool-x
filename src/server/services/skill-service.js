@@ -19,20 +19,19 @@ const {
 } = require('./format-converter');
 const { maskToken } = require('./oauth-utils');
 const { NATIVE_PATHS, HOME_DIR, PATHS } = require('../../config/paths');
+const { getOmpPaths } = require('./omp-config');
+const { discoverOmpSkills } = require('./omp-skill-discovery');
+const { migratePiStorage } = require('./pi-omp-migration');
+const { resolveManagedPlatform } = require('./platform-resolution');
 const {
   normalizeSafeRelativePath,
   pathHasProtectedSegment,
   resolveInsideRoot
 } = require('./config-artifact-paths');
 
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
-
-function normalizePlatform(platform) {
-  return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
-}
 
 function cloneRepos(repos = []) {
   return repos.map(repo => ({ ...repo }));
@@ -206,6 +205,8 @@ const PLATFORM_CONFIG = {
     cacheFile: PATHS.skillCaches.opencode
   },
   omp: {
+    // Resolved dynamically through getOmpPaths(); this value is only a
+    // compatibility fallback for callers inspecting PLATFORM_CONFIG.
     installDir: NATIVE_PATHS.omp.skills,
     storageDir: PATHS.localSkills.omp,
     reposFile: PATHS.skillRepos.omp,
@@ -218,11 +219,19 @@ const CACHE_TTL = 5 * 60 * 1000;
 
 class SkillService {
   constructor(platform = 'claude') {
-    this.platform = normalizePlatform(platform);
+    this.platform = resolveManagedPlatform(platform).platform;
+    if (this.platform === 'omp') {
+      const migration = migratePiStorage(PATHS);
+      for (const warning of migration.warnings) {
+        console.warn(`[SkillService] ${warning}`);
+      }
+    }
     this.configDir = PATHS.config;
 
     const platformConfig = PLATFORM_CONFIG[this.platform];
-    this.installDir = platformConfig.installDir;
+    this.installDir = this.platform === 'omp'
+      ? getOmpPaths().skills
+      : platformConfig.installDir;
     this.storageDir = platformConfig.storageDir;
     this.reposConfigPath = platformConfig.reposFile;
     this.cachePath = platformConfig.cacheFile;
@@ -233,6 +242,15 @@ class SkillService {
 
     // 确保目录存在
     this.ensureDirs();
+  }
+
+  refreshOmpPaths() {
+    if (this.platform !== 'omp') return;
+    const nextInstallDir = getOmpPaths().skills;
+    if (this.installDir !== nextInstallDir) {
+      this.installDir = nextInstallDir;
+      this.clearCache();
+    }
   }
 
   ensureDirs() {
@@ -270,13 +288,19 @@ class SkillService {
     }
   }
 
-  prepareSkills(skills = []) {
+  prepareSkills(skills = [], options = {}) {
+    this.refreshOmpPaths();
     const preparedSkills = Array.isArray(skills)
       ? skills.map(skill => ({ ...skill }))
       : [];
 
+    if (this.platform === 'omp') {
+      preparedSkills.unshift(...discoverOmpSkills(this, options));
+    }
     this.mergeLocalSkills(preparedSkills);
-    this.mergeInstalledSkills(preparedSkills);
+    if (this.platform !== 'omp') {
+      this.mergeInstalledSkills(preparedSkills);
+    }
     this.deduplicateSkills(preparedSkills);
     preparedSkills.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
     this.updateInstallStatus(preparedSkills);
@@ -559,7 +583,10 @@ class SkillService {
   /**
    * 获取所有技能列表（带缓存）
    */
-  async listSkills(forceRefresh = false) {
+  async listSkills(forceRefresh = false, options = {}) {
+    if (this.platform === 'omp') {
+      return this.listOmpSkills(options);
+    }
     // 强制刷新时仅清空内存缓存，保留磁盘缓存作为回退来源
     if (forceRefresh) {
       this.clearCache();
@@ -646,6 +673,27 @@ class SkillService {
     return preparedSkills;
   }
 
+  async listOmpSkills(options = {}) {
+    this.refreshOmpPaths();
+    const skills = [];
+    const repos = this.loadRepos().filter(repo => repo.enabled);
+    const results = await Promise.allSettled(repos.map(repo => this.fetchRepoSkills(repo)));
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        skills.push(...result.value);
+      } else {
+        console.warn(
+          `[SkillService] Fetch OMP repo ${repos[index]?.label || repos[index]?.id || ''} failed:`,
+          result.reason?.message
+        );
+      }
+    });
+    const prepared = this.prepareSkills(skills, options);
+    this.skillsCache = prepared;
+    this.cacheTime = Date.now();
+    return prepared;
+  }
+
   /**
    * 从文件加载缓存
    */
@@ -682,7 +730,11 @@ class SkillService {
    */
   updateInstallStatus(skills) {
     for (const skill of skills) {
-      skill.installed = this.isInstalled(skill.directory);
+      if (skill.sourceProvider || skill.sourcePath || skill.readonly) {
+        skill.installed = skill.installed !== false;
+      } else {
+        skill.installed = this.isInstalled(skill.directory);
+      }
     }
   }
 
@@ -1360,6 +1412,7 @@ class SkillService {
   }
 
   resolveInstallPath(directory, label = 'skill directory') {
+    this.refreshOmpPaths();
     const safeDirectory = this.normalizeSkillDirectory(directory, label);
     return {
       safeDirectory,
@@ -1424,12 +1477,6 @@ class SkillService {
         ? path.basename(currentDir)
         : path.relative(baseDir, currentDir);
 
-      // 检查是否已在列表中（比较目录名，去掉前缀路径）
-      const normalizedDirectory = normalizeRepoPath(directory).toLowerCase();
-      const existing = skills.find(s => {
-        return normalizeRepoPath(s.directory).toLowerCase() === normalizedDirectory;
-      });
-
       const protectedSkill = this.isProtectedSkillDirectory(directory);
       const skillSource = protectedSkill ? 'system-installed' : (options.source || 'local');
 
@@ -1443,48 +1490,38 @@ class SkillService {
         }
       }
 
-      if (existing) {
-        existing.installed = isInstalled;
-        if (protectedSkill) {
-          existing.source = 'system-installed';
-          existing.protected = true;
-          existing.isLocal = false;
-          existing.key = `system:${this.platform}:${directory}`;
-        } else if (options.source === 'native-installed') {
-          existing.source = existing.source || 'native-installed';
-        } else {
-          existing.isLocal = true;
-        }
-      } else {
-        // 添加 cc-tool 托管的技能
-        try {
-          const content = fs.readFileSync(skillMdPath, 'utf-8');
-          const metadata = this.parseSkillMd(content);
+      try {
+        const content = fs.readFileSync(skillMdPath, 'utf-8');
+        const metadata = this.parseSkillMd(content);
 
-          const skill = {
-            key: `local:${directory}`,
-            name: metadata.name || directory,
-            description: metadata.description || '',
-            directory,
-            installed: isInstalled,
-            isLocal: skillSource === 'local',
-            source: skillSource,
-            protected: protectedSkill,
-            readmeUrl: null,
-            repoOwner: null,
-            repoName: null,
-            repoBranch: null,
-            license: metadata.license
-          };
-          if (protectedSkill) {
-            skill.key = `system:${this.platform}:${directory}`;
-          } else if (options.source === 'native-installed') {
-            skill.key = `native:${this.platform}:${directory}`;
-          }
-          skills.push(skill);
-        } catch (err) {
-          console.warn(`[SkillService] Parse local skill ${directory} error:`, err.message);
+        const skill = {
+          key: `local:${directory}`,
+          name: metadata.name || directory,
+          description: metadata.description || '',
+          directory,
+          installed: isInstalled,
+          isLocal: skillSource === 'local',
+          source: skillSource,
+          protected: protectedSkill,
+          readonly: false,
+          sourceProvider: options.source === 'native-installed' ? 'native' : 'cc-tool',
+          sourceScope: 'user',
+          sourcePath: skillMdPath,
+          shadowedSources: [],
+          readmeUrl: null,
+          repoOwner: null,
+          repoName: null,
+          repoBranch: null,
+          license: metadata.license
+        };
+        if (protectedSkill) {
+          skill.key = `system:${this.platform}:${directory}`;
+        } else if (options.source === 'native-installed') {
+          skill.key = `native:${this.platform}:${directory}`;
         }
+        skills.push(skill);
+      } catch (err) {
+        console.warn(`[SkillService] Parse local skill ${directory} error:`, err.message);
       }
 
       return; // 找到 SKILL.md 后不再递归
@@ -1507,28 +1544,71 @@ class SkillService {
    * 去重技能列表
    */
   deduplicateSkills(skills) {
-    const seen = new Map();
+    const deduplicated = [];
+    const identityMap = new Map();
+    const realPathMap = new Map();
+    const managedOverlayTargets = new Map();
 
-    for (let i = skills.length - 1; i >= 0; i--) {
-      const skill = skills[i];
-      const key = [
-        normalizeRepoPath(skill.directory).toLowerCase(),
-        skill.repoId || '',
-        skill.installed ? 'installed' : 'remote'
-      ].join('::');
-
-      if (seen.has(key)) {
-        const existingIndex = seen.get(key);
-        if (skill.installed && !skills[existingIndex].installed) {
-          skills.splice(existingIndex, 1);
-          seen.set(key, i - 1);
-        } else {
-          skills.splice(i, 1);
+    for (const skill of skills) {
+      const normalizedDirectory = normalizeRepoPath(skill.directory).toLowerCase();
+      const identity = this.platform === 'omp'
+        ? `name:${String(skill.name || skill.directory).toLowerCase()}`
+        : [
+          normalizedDirectory,
+          skill.repoId || ''
+        ].join('::');
+      const realPath = skill.realPath || (() => {
+        try {
+          return skill.sourcePath ? fs.realpathSync(skill.sourcePath) : '';
+        } catch {
+          return skill.sourcePath || '';
         }
-      } else {
-        seen.set(key, i);
+      })();
+      const isManagedOverlay = !skill.repoId && (
+        skill.sourceProvider === 'cc-tool'
+        || skill.sourceProvider === 'native'
+        || ['local', 'native-installed', 'system-installed'].includes(skill.source)
+      );
+      const existingIndex = identityMap.get(identity)
+        ?? (realPath ? realPathMap.get(realPath) : undefined)
+        ?? (isManagedOverlay ? managedOverlayTargets.get(normalizedDirectory) : undefined);
+
+      if (existingIndex == null) {
+        identityMap.set(identity, deduplicated.length);
+        if (realPath) realPathMap.set(realPath, deduplicated.length);
+        if (skill.repoId && !managedOverlayTargets.has(normalizedDirectory)) {
+          managedOverlayTargets.set(normalizedDirectory, deduplicated.length);
+        }
+        deduplicated.push(skill);
+        continue;
+      }
+
+      const existing = deduplicated[existingIndex];
+      const shadow = skill.sourceProvider || skill.sourcePath
+        ? {
+          sourceProvider: skill.sourceProvider || skill.source || 'unknown',
+          sourceScope: skill.sourceScope || 'user',
+          sourcePath: skill.sourcePath || ''
+        }
+        : null;
+      if (shadow) {
+        existing.shadowedSources = [...(existing.shadowedSources || []), shadow];
+      }
+
+      const shouldPreferIncoming = Boolean(skill.installed && !existing.installed);
+      if (shouldPreferIncoming) {
+        deduplicated[existingIndex] = {
+          ...existing,
+          ...skill,
+          installed: true,
+          shadowedSources: existing.shadowedSources || []
+        };
+      } else if (skill.installed) {
+        existing.installed = true;
       }
     }
+
+    skills.splice(0, skills.length, ...deduplicated);
   }
 
   /**
@@ -2030,8 +2110,16 @@ ${content}
   /**
    * 卸载技能
    */
-  uninstallSkill(directory) {
-    const { safeDirectory, path: dest } = this.resolveInstallPath(directory);
+  uninstallSkill(directory, options = {}) {
+    const safeDirectory = this.normalizeSkillDirectory(directory);
+    const projectInstallDir = this.platform === 'omp' && options.scope === 'project' && options.cwd
+      ? path.join(path.resolve(options.cwd), '.omp', 'skills')
+      : null;
+    const dest = projectInstallDir
+      ? resolveInsideRoot(projectInstallDir, safeDirectory, 'skill directory', {
+          allowHiddenSegments: true
+        })
+      : this.resolveInstallPath(safeDirectory).path;
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能卸载 Codex 系统技能');
     }
@@ -2226,6 +2314,10 @@ ${content}
    * 获取已安装技能列表
    */
   getInstalledSkills() {
+    this.refreshOmpPaths();
+    if (this.platform === 'omp') {
+      return this.prepareSkills([]);
+    }
     const skills = [];
     this.scanLocalDir(this.installDir, this.installDir, skills, {
       includeHiddenDirs: this.platform === 'codex',

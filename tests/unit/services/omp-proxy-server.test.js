@@ -7,6 +7,7 @@ const http = require('http');
 
 let syncManagedOmpProviders;
 let disableManagedOmpProviders;
+let activateStaticOmpChannel;
 let isManagedOmpModeEnabled;
 let enableManagedOmpMode;
 let disableManagedOmpMode;
@@ -49,6 +50,10 @@ function injectStub(modulePath, exports) {
 beforeEach(() => {
   syncManagedOmpProviders = vi.fn(() => ({ warnings: [] }));
   disableManagedOmpProviders = vi.fn(() => ({ warnings: [] }));
+  activateStaticOmpChannel = vi.fn(() => ({
+    channel: { id: 'channel-a', name: 'OMP A' },
+    sync: { warnings: [] }
+  }));
   isManagedOmpModeEnabled = vi.fn(() => false);
   enableManagedOmpMode = vi.fn();
   disableManagedOmpMode = vi.fn();
@@ -83,6 +88,7 @@ beforeEach(() => {
   injectStub(OMP_CHANNELS_MODULE, {
     syncManagedOmpProviders,
     disableManagedOmpProviders,
+    activateStaticOmpChannel,
     getEnabledChannels,
     isManagedOmpModeEnabled,
     enableManagedOmpMode,
@@ -145,15 +151,24 @@ it('enables persistent managed mode before synchronizing providers', async () =>
   });
 });
 
-it('removes persistent managed mode after providers are disabled', async () => {
+it('hands off to one direct current provider before stopping the gateway', async () => {
+  loadManagedOmpModeState.mockReturnValue({
+    activeChannelId: 'channel-a',
+    gateway: {
+      host: '127.0.0.1',
+      port: 20092,
+      secret: 'gateway-secret'
+    }
+  });
   const proxy = require('../../../src/server/omp-proxy-server');
   await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
 
   const result = await proxy.stopOmpProxyServer();
 
-  expect(disableManagedOmpProviders).toHaveBeenCalledTimes(1);
-  expect(disableManagedOmpProviders.mock.invocationCallOrder[0])
+  expect(activateStaticOmpChannel).toHaveBeenCalledWith('channel-a');
+  expect(activateStaticOmpChannel.mock.invocationCallOrder[0])
     .toBeLessThan(disableManagedOmpMode.mock.invocationCallOrder[0]);
+  expect(disableManagedOmpProviders).not.toHaveBeenCalled();
   expect(disableManagedOmpMode).toHaveBeenCalledTimes(1);
   expect(clearProxyStartTime).toHaveBeenCalledWith('omp');
   expect(stopOmpSessionLogObserver).toHaveBeenCalledTimes(1);
@@ -216,15 +231,23 @@ it('restores the previous active channel when resynchronization fails', async ()
   expect(disableManagedOmpMode).not.toHaveBeenCalled();
 });
 
-it('keeps managed mode active and resumes log observation when cleanup fails', async () => {
-  disableManagedOmpProviders.mockImplementation(() => {
-    throw new Error('cleanup failed');
+it('keeps managed mode active and resumes log observation when static handoff fails', async () => {
+  loadManagedOmpModeState.mockReturnValue({
+    activeChannelId: 'channel-a',
+    gateway: {
+      host: '127.0.0.1',
+      port: 20092,
+      secret: 'gateway-secret'
+    }
+  });
+  activateStaticOmpChannel.mockImplementation(() => {
+    throw new Error('handoff failed');
   });
   const proxy = require('../../../src/server/omp-proxy-server');
   await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
   startOmpSessionLogObserver.mockClear();
 
-  await expect(proxy.stopOmpProxyServer()).rejects.toThrow('cleanup failed');
+  await expect(proxy.stopOmpProxyServer()).rejects.toThrow('handoff failed');
 
   expect(stopOmpSessionLogObserver).toHaveBeenCalledTimes(1);
   expect(startOmpSessionLogObserver).toHaveBeenCalledTimes(1);

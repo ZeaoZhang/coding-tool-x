@@ -10,6 +10,7 @@
           <div class="asset-tags">
             <n-tag v-if="skill.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
             <n-tag v-if="skill.protected" type="default" size="tiny" :bordered="false">受保护</n-tag>
+            <n-tag v-if="skill.readonly" type="default" size="tiny" :bordered="false">只读</n-tag>
             <n-tag v-if="getSkillSourceTag(skill)" type="info" size="tiny" :bordered="false">{{ getSkillSourceTag(skill) }}</n-tag>
           </div>
         </div>
@@ -30,9 +31,9 @@
         >{{ getSkillSourceLinkLabel(skill) }}</a>
       </div>
     </div>
-    <div class="asset-card-actions" @click.stop>
+    <div v-if="!skill.readonly" class="asset-card-actions" @click.stop>
       <n-button
-        v-if="skill.installed && !skill.protected"
+        v-if="skill.installed && !skill.protected && !skill.readonly"
         size="small"
         tertiary
         type="error"

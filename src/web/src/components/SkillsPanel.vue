@@ -136,7 +136,8 @@ const props = defineProps({
   inDrawer: { type: Boolean, default: false },
   hideBack: { type: Boolean, default: false },
   drawerVisible: { type: Boolean, default: false },
-  platform: { type: String, default: '' }
+  platform: { type: String, default: '' },
+  projectPath: { type: String, default: '' }
 })
 
 defineEmits(['back', 'updated'])
@@ -204,7 +205,9 @@ async function loadData(force = false) {
   const platform = currentPlatform.value
   loading.value = true
   try {
-    const skillsRes = await getSkills(force, platform)
+    const skillsRes = await getSkills(force, platform, {
+      ...(props.projectPath ? { cwd: props.projectPath } : {})
+    })
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
     if (skillsRes.success) skills.value = skillsRes.skills || []
   } catch (err) {
@@ -273,10 +276,13 @@ async function handleInstall(skill) {
 }
 
 async function handleUninstall(skill) {
-  if (skill.protected) return
+  if (skill.protected || skill.readonly) return
   uninstallingKeys.value[skill.key] = true
   try {
-    const res = await uninstallSkill(skill.directory, currentPlatform.value)
+    const res = await uninstallSkill(skill.directory, currentPlatform.value, {
+      ...(props.projectPath ? { cwd: props.projectPath } : {}),
+      ...(skill.sourceScope ? { scope: skill.sourceScope } : {})
+    })
     if (res.success) {
       message.success(`技能 "${skill.name}" 已卸载`)
       const s = skills.value.find(x => x.key === skill.key)

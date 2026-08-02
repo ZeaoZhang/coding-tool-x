@@ -12,14 +12,18 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const yaml = require('js-yaml');
 const AdmZip = require('adm-zip');
 const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('../../plugins/registry');
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
-const { getOmpCommand } = require('./omp-config');
+const { OmpNativePluginAdapter } = require('./omp-native-plugin-adapter');
+const {
+  importLegacyPluginRepos,
+  migratePiStorage
+} = require('./pi-omp-migration');
+const { resolveManagedPlatform } = require('./platform-resolution');
 const { maskToken } = require('./oauth-utils');
 const {
   assertInsideAllowedRoots,
@@ -48,7 +52,6 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   opencode: [],
   omp: []
 };
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const PLATFORM_CAPABILITIES = {
   claude: {
     platform: 'claude',
@@ -109,8 +112,11 @@ const PLATFORM_CAPABILITIES = {
     toggle: true,
     config: true,
     import: false,
-    syncRepos: false,
-    pluginKindLabel: 'packages/extensions'
+    syncRepos: true,
+    pluginKindLabel: 'plugins/extensions',
+    repositoryMode: 'native-marketplace',
+    repositoryToggle: false,
+    repositoryAuth: false
   }
 };
 
@@ -194,58 +200,6 @@ function splitPluginMarketplaceKey(key = '') {
   };
 }
 
-function normalizeOmpPackageEntry(item = null) {
-  if (typeof item === 'string') {
-    const name = item.trim();
-    return name ? {
-      name,
-      source: name,
-      directory: name,
-      installSource: name,
-      resourceTypes: []
-    } : null;
-  }
-  if (!item || typeof item !== 'object') return null;
-
-  const rawName = item.name || item.package || item.id || item.source || item.path || '';
-  const name = String(rawName || '').trim();
-  if (!name) return null;
-
-  const directory = String(item.directory || item.path || name).trim() || name;
-  const installSource = String(item.installSource || item.source || item.url || item.packageSource || name).trim() || name;
-  return {
-    ...item,
-    name,
-    source: item.source || installSource,
-    directory,
-    installSource,
-    resourceTypes: normalizeOmpResourceTypes(item.resourceTypes || item.resources || item.provides || item.capabilities)
-  };
-}
-
-function getOmpPackageIdentity(item = null) {
-  const normalized = normalizeOmpPackageEntry(item);
-  return normalized?.name || '';
-}
-
-function ompPackageSettingValue(item = null) {
-  const normalized = normalizeOmpPackageEntry(item);
-  if (!normalized) return null;
-  if (typeof item === 'string') return normalized.name;
-
-  const next = { ...item };
-  next.name = normalized.name;
-  next.directory = normalized.directory;
-  next.source = normalized.installSource;
-  const resourceTypes = normalizeOmpResourceTypes(next.resourceTypes || next.resources || normalized.resourceTypes);
-  if (resourceTypes.length > 0) {
-    next.resourceTypes = resourceTypes;
-  } else {
-    delete next.resourceTypes;
-  }
-  return next;
-}
-
 function normalizeOmpResourceType(value = '') {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
@@ -302,17 +256,6 @@ function normalizeOmpResourceTypes(input = []) {
   }
 
   return values;
-}
-
-function isOmpPackageInstallSource(value = '') {
-  const source = String(value || '').trim();
-  if (!source) return false;
-  if (isLikelyLocalPath(source)) return true;
-  if (/^(npm|git):/i.test(source)) return true;
-  if (/^https?:\/\//i.test(source)) return true;
-  if (/^ssh:\/\//i.test(source)) return true;
-  if (/^git@[^:]+:.+/i.test(source)) return true;
-  return !source.startsWith('-');
 }
 
 function normalizeMarketplaceSkillPaths(skills = []) {
@@ -493,7 +436,12 @@ function stripJsonComments(input = '') {
 
 class PluginsService {
   constructor(platform = 'claude') {
-    this.platform = SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
+    this.platform = resolveManagedPlatform(platform).platform;
+    this._ompMigrationWarnings = [];
+    if (this.platform === 'omp') {
+      const migration = migratePiStorage(PATHS);
+      this._ompMigrationWarnings.push(...migration.warnings);
+    }
     this.configDir = PATHS.config || path.join((PATHS.base || process.env.HOME || os.homedir()), 'config');
     this.ccToolConfigDir = path.dirname(PATHS.pluginRepos.claude);
     this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
@@ -501,10 +449,17 @@ class PluginsService {
     this.codexPluginsCacheDir = CODEX_PLUGINS_CACHE_DIR;
     this.marketCachePath = PATHS.pluginMarketCache[this.platform] || PATHS.pluginMarketCache.claude;
     this._marketCache = null;
+    this.ompNativeAdapter = this.platform === 'omp'
+      ? new OmpNativePluginAdapter()
+      : null;
   }
 
   getCapabilities() {
     return { ...(PLATFORM_CAPABILITIES[this.platform] || PLATFORM_CAPABILITIES.claude) };
+  }
+
+  getMigrationWarnings() {
+    return [...this._ompMigrationWarnings];
   }
 
   _pluginsSupported() {
@@ -746,195 +701,6 @@ class PluginsService {
     if (fs.existsSync(json)) return json;
     if (fs.existsSync(config)) return config;
     return json;
-  }
-
-  _readOmpSettings() {
-    const filePath = NATIVE_PATHS.omp.settings;
-    if (!fs.existsSync(filePath)) {
-      const legacyPath = NATIVE_PATHS.omp.settingsJsonLegacy;
-      if (legacyPath && fs.existsSync(legacyPath)) {
-        try {
-          const raw = fs.readFileSync(legacyPath, 'utf8');
-          return raw.trim() ? JSON.parse(raw) : {};
-        } catch (err) {
-          console.error('[PluginsService] Failed to read legacy OMP settings:', err.message);
-        }
-      }
-      return {};
-    }
-
-    try {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      const parsed = raw.trim() ? yaml.load(raw) : {};
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch (err) {
-      console.error('[PluginsService] Failed to read OMP settings:', err.message);
-      return {};
-    }
-  }
-
-  _writeOmpSettings(settings = {}) {
-    this._ensureDir(path.dirname(NATIVE_PATHS.omp.settings));
-    fs.writeFileSync(NATIVE_PATHS.omp.settings, yaml.dump(settings, {
-      lineWidth: 120,
-      noRefs: true,
-      sortKeys: false
-    }), 'utf8');
-  }
-
-  _listOmpPackages() {
-    const settings = this._readOmpSettings();
-    return Array.isArray(settings.packages)
-      ? settings.packages.map(normalizeOmpPackageEntry).filter(Boolean)
-      : [];
-  }
-
-  _setOmpPackages(packages = []) {
-    const settings = this._readOmpSettings();
-    const seen = new Set();
-    settings.packages = packages
-      .map(item => ompPackageSettingValue(item))
-      .filter((item) => {
-        const name = getOmpPackageIdentity(item);
-        if (!name || seen.has(name)) return false;
-        seen.add(name);
-        return true;
-      });
-    this._writeOmpSettings(settings);
-  }
-
-  _listOmpDisabledPackageEntries() {
-    const settings = this._readOmpSettings();
-    return Array.isArray(settings.disabledPackages)
-      ? settings.disabledPackages.map(normalizeOmpPackageEntry).filter(Boolean)
-      : [];
-  }
-
-  _listOmpDisabledPackages() {
-    return this._listOmpDisabledPackageEntries().map(item => item.name).filter(Boolean);
-  }
-
-  _setOmpDisabledPackages(packages = []) {
-    const settings = this._readOmpSettings();
-    const seen = new Set();
-    settings.disabledPackages = packages
-      .map(item => ompPackageSettingValue(item))
-      .filter((item) => {
-        const name = getOmpPackageIdentity(item);
-        if (!name || seen.has(name)) return false;
-        seen.add(name);
-        return true;
-      });
-    this._writeOmpSettings(settings);
-  }
-
-  _runOmpPackageCommand(args = []) {
-    execFileSync(getOmpCommand(), args, {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: 'pipe',
-      timeout: 120000,
-      windowsHide: true
-    });
-  }
-
-  _registerOmpPackageReference(packageName, metadata = {}) {
-    const packages = this._listOmpPackages();
-    const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
-    const displayName = String(metadata.name || packageName || installSource).trim();
-    if (!packages.some(pkg => pkg.name === displayName || pkg.installSource === installSource)) {
-      const resourceTypes = normalizeOmpResourceTypes(metadata.resourceTypes || metadata.resources);
-      const entry = installSource && installSource !== displayName
-        ? {
-            name: displayName,
-            source: installSource,
-            ...(metadata.version ? { version: metadata.version } : {}),
-            ...(metadata.description ? { description: metadata.description } : {}),
-            ...(resourceTypes.length > 0 ? { resourceTypes } : {})
-          }
-        : displayName;
-      packages.push(entry);
-      this._setOmpPackages(packages);
-    }
-  }
-
-  _buildOmpPackagePlugin(packageName, metadata = {}) {
-    const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
-    const name = String(metadata.name || packageName || installSource).trim();
-    const resourceTypes = normalizeOmpResourceTypes(metadata.resourceTypes || metadata.resources);
-    return {
-      name,
-      directory: name,
-      installSource: installSource || name,
-      version: metadata.version || 'latest',
-      description: metadata.description || '',
-      pluginKind: 'package',
-      pluginType: 'package',
-      ...(resourceTypes.length > 0 ? { resourceTypes } : {})
-    };
-  }
-
-  _installOmpPackage(packageName, metadata = {}) {
-    const installSource = String(metadata.installSource || metadata.source || packageName || '').trim();
-    const plugin = this._buildOmpPackagePlugin(packageName, { ...metadata, installSource });
-    try {
-      this._runOmpPackageCommand(['install', installSource || packageName]);
-      return {
-        success: true,
-        plugin
-      };
-    } catch (err) {
-      this._registerOmpPackageReference(packageName, { ...metadata, installSource, name: plugin.name });
-      return {
-        success: true,
-        registeredOnly: true,
-        warning: `Failed to run "${getOmpCommand()} install"; saved the package reference so OMP can resolve it later. ${err.message}`,
-        plugin
-      };
-    }
-  }
-
-  _removeOmpPackage(packageName) {
-    try {
-      this._runOmpPackageCommand(['remove', packageName]);
-      return true;
-    } catch (err) {
-      return false;
-    }
-  }
-
-  _listOmpLocalExtensions() {
-    const plugins = [];
-    const extensionsDir = NATIVE_PATHS.omp.extensions;
-    if (!fs.existsSync(extensionsDir)) return plugins;
-
-    try {
-      const disabled = new Set(this._listOmpDisabledPackages());
-      const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name.startsWith('.')) continue;
-        const fullPath = path.join(extensionsDir, entry.name);
-        const ext = path.extname(entry.name).toLowerCase();
-        if (!entry.isDirectory() && !['.js', '.mjs', '.cjs', '.ts'].includes(ext)) continue;
-        const name = entry.isDirectory() ? entry.name : entry.name.slice(0, -ext.length);
-        plugins.push({
-          name,
-          directory: entry.name,
-          installPath: fullPath,
-          source: 'omp-extension',
-          version: 'local',
-          description: '',
-          installed: true,
-          enabled: !disabled.has(name) && !disabled.has(entry.name),
-          pluginType: entry.isDirectory() ? 'extension-directory' : 'extension-file',
-          pluginKind: 'extension'
-        });
-      }
-    } catch (err) {
-      console.error('[PluginsService] Failed to list OMP extensions:', err.message);
-    }
-
-    return plugins;
   }
 
   _readOpenCodeConfig() {
@@ -1415,7 +1181,7 @@ class PluginsService {
    * Reads from Claude Code's native installed_plugins.json
    * @returns {Object} { plugins: Array }
    */
-  listPlugins() {
+  listPlugins(options = {}) {
     if (!this._pluginsSupported()) {
       return { plugins: [] };
     }
@@ -1454,38 +1220,7 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      const disabledEntries = this._listOmpDisabledPackageEntries();
-      const disabled = new Set(disabledEntries.flatMap(item => [item.name, item.installSource].filter(Boolean)));
-      const plugins = [];
-      const seen = new Set();
-
-      for (const pkg of this._listOmpPackages()) {
-        const seenKey = pkg.installSource || pkg.name;
-        if (seen.has(seenKey)) continue;
-        seen.add(seenKey);
-        plugins.push({
-          ...pkg,
-          name: pkg.name,
-          directory: pkg.directory || pkg.name,
-          installSource: pkg.installSource || pkg.source || pkg.name,
-          resourceTypes: normalizeOmpResourceTypes(pkg.resourceTypes || pkg.resources),
-          source: 'omp-settings',
-          version: pkg.version || 'latest',
-          description: pkg.description || '',
-          installed: true,
-          enabled: !disabled.has(pkg.name) && !disabled.has(pkg.installSource),
-          pluginType: 'package',
-          pluginKind: 'package'
-        });
-      }
-
-      for (const extension of this._listOmpLocalExtensions()) {
-        if (seen.has(extension.name)) continue;
-        seen.add(extension.name);
-        plugins.push(extension);
-      }
-
-      return { plugins };
+      return this.ompNativeAdapter.listPlugins(options);
     }
 
     const plugins = [];
@@ -1604,7 +1339,7 @@ class PluginsService {
    * @param {string} name - Plugin name
    * @returns {Object|null} Plugin details or null
    */
-  getPlugin(name) {
+  getPlugin(name, options = {}) {
     if (this._isCodex()) {
       const plugin = this.listPlugins().plugins.find(p => p.name === name || `${p.name}@${p.marketplace}` === name);
       if (!plugin) return null;
@@ -1628,7 +1363,9 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      const plugin = this.listPlugins().plugins.find(p => p.name === name || p.directory === name);
+      const plugin = this.listPlugins(options).plugins.find(p =>
+        p.pluginId === name || p.id === name || p.name === name
+      );
       if (!plugin) return null;
       return plugin;
     }
@@ -1667,7 +1404,7 @@ class PluginsService {
    * @param {Object} repoInfo - Optional repo info { owner, name, branch, directory }
    * @returns {Promise<Object>} Installation result
    */
-  async installPlugin(source, repoInfo = null) {
+  async installPlugin(source, repoInfo = null, options = {}) {
     if (this._isCodex()) {
       if (hasRepoInstallInfo(repoInfo)) {
         return this._installFromRepoDirectory(repoInfo);
@@ -1697,48 +1434,15 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      const packageMetadata = repoInfo && typeof repoInfo === 'object'
-        ? {
-            name: repoInfo.name || repoInfo.packageName || repoInfo.displayName,
-            version: repoInfo.version,
-            description: repoInfo.description,
-            resourceTypes: repoInfo.resourceTypes || repoInfo.resources,
-            installSource: repoInfo.installSource || repoInfo.source
-          }
-        : {};
-      const explicitPackageSource = String(source || packageMetadata.installSource || '').trim();
-
-      if (
-        repoInfo?.pluginKind === 'package' ||
-        repoInfo?.pluginType === 'package' ||
-        (explicitPackageSource && isOmpPackageInstallSource(explicitPackageSource) && !hasRepoInstallInfo(repoInfo))
-      ) {
-        return this._installOmpPackage(explicitPackageSource, packageMetadata);
-      }
-
-      if (hasRepoInstallInfo(repoInfo)) {
-        return this._installFromRepoDirectory(repoInfo, { installRoot: NATIVE_PATHS.omp.extensions });
-      }
-
-      const parsedSource = this.parseRepoTreeSource(source);
-      if (parsedSource) {
-        return this._installOmpPackage(source);
-      }
-
-      const parsedRepo = this._repoFromGitUrl(source, 'main');
-      if (parsedRepo) {
-        return this._installOmpPackage(source);
-      }
-
-      const packageName = String(source || '').trim();
-      if (packageName && isOmpPackageInstallSource(packageName)) {
-        return this._installOmpPackage(packageName);
-      }
-
-      return {
-        success: false,
-        error: 'OMP plugin install expects package name, repository metadata, a GitHub/GitLab tree URL, or a Git repository URL'
-      };
+      const metadata = repoInfo && typeof repoInfo === 'object' ? repoInfo : {};
+      const target = String(
+        source
+        || metadata.pluginId
+        || metadata.installTarget
+        || metadata.installSource
+        || ''
+      ).trim();
+      return this.ompNativeAdapter.installPlugin(target, metadata, options);
     }
 
     if (this._isOpenCode()) {
@@ -1979,7 +1683,7 @@ class PluginsService {
         } catch (e) {
           console.error('[PluginsService] Failed to update native installed_plugins.json:', e.message);
         }
-      } else if (!this._isOpenCode() && !this._isOmp()) {
+      } else if (!this._isOpenCode()) {
         const installTimestamp = new Date().toISOString();
         const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
         const repoSourceMeta = {
@@ -2009,21 +1713,6 @@ class PluginsService {
         }
 
         this.writeRepoSourceMeta(pluginDir, repoSourceMeta);
-      } else if (this._isOmp()) {
-        const sourceUrl = this.buildRepoBrowserUrl(normalizedRepo, directory) || buildRepoUrl(normalizedRepo);
-        this.writeRepoSourceMeta(pluginDir, {
-          repoId: normalizedRepo.id,
-          repoProvider: normalizedRepo.provider,
-          repoOwner: normalizedRepo.owner || '',
-          repoName: normalizedRepo.name || '',
-          repoBranch: normalizedRepo.branch,
-          repoDirectory: directory,
-          repoHost: normalizedRepo.host || '',
-          repoProjectPath: normalizedRepo.projectPath || '',
-          repoLocalPath: normalizedRepo.localPath || '',
-          repoUrl: normalizedRepo.repoUrl || buildRepoUrl(normalizedRepo),
-          source: sourceUrl
-        });
       }
 
       return {
@@ -2048,9 +1737,6 @@ class PluginsService {
     }
     if (this._isOpenCode()) {
       return ['package.json', 'plugin.json'];
-    }
-    if (this._isOmp()) {
-      return ['omp.json', 'extension.json', 'plugin.json', 'package.json'];
     }
     return ['.claude-plugin/plugin.json', 'plugin.json', 'package.json'];
   }
@@ -2140,7 +1826,7 @@ class PluginsService {
    * @param {string} name - Plugin name
    * @returns {Object} Uninstallation result
    */
-  uninstallPlugin(name) {
+  uninstallPlugin(name, options = {}) {
     if (this._isCodex()) {
       const plugins = this.listPlugins().plugins;
       const target = plugins.find(plugin => plugin.name === name || `${plugin.name}@${plugin.marketplace}` === name);
@@ -2184,68 +1870,7 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      const targetName = String(name || '').trim();
-      let safeName = '';
-      try {
-        safeName = normalizePluginPathName(targetName, 'plugin name');
-      } catch {
-        safeName = '';
-      }
-      const packages = this._listOmpPackages();
-      let removed = false;
-      const packageToRemove = packages.find(pkg =>
-        pkg.name === targetName ||
-        pkg.name === safeName ||
-        pkg.installSource === targetName ||
-        pkg.installSource === safeName
-      );
-      if (packageToRemove) {
-        this._removeOmpPackage(packageToRemove.installSource || packageToRemove.name);
-      }
-      const nextPackages = packages.filter(pkg =>
-        pkg.name !== safeName &&
-        pkg.name !== targetName &&
-        pkg.installSource !== safeName &&
-        pkg.installSource !== targetName
-      );
-      if (nextPackages.length !== packages.length) {
-        this._setOmpPackages(nextPackages);
-        const disabledEntries = this._listOmpDisabledPackageEntries().filter(pkg =>
-          pkg.name !== safeName &&
-          pkg.name !== targetName &&
-          pkg.installSource !== safeName &&
-          pkg.installSource !== targetName &&
-          pkg.name !== packageToRemove?.name &&
-          pkg.installSource !== packageToRemove?.installSource
-        );
-        this._setOmpDisabledPackages(disabledEntries);
-        removed = true;
-      }
-
-      const extensionsDir = NATIVE_PATHS.omp.extensions;
-      if (safeName && fs.existsSync(extensionsDir)) {
-        const directPath = resolveInsideRoot(extensionsDir, safeName, 'OMP extension path');
-        if (fs.existsSync(directPath)) {
-          fs.rmSync(directPath, { recursive: true, force: true });
-          removed = true;
-        } else {
-          const entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
-          for (const entry of entries) {
-            const baseName = entry.name.replace(path.extname(entry.name), '');
-            if (entry.name === safeName || baseName === safeName) {
-              const entryPath = resolveInsideRoot(extensionsDir, entry.name, 'OMP extension path');
-              fs.rmSync(entryPath, { recursive: true, force: true });
-              removed = true;
-              break;
-            }
-          }
-        }
-      }
-
-      return {
-        success: true,
-        message: removed ? 'Plugin removed successfully' : 'Plugin not found'
-      };
+      return this.ompNativeAdapter.uninstallPlugin(name, options);
     }
 
     if (this._isOpenCode()) {
@@ -2361,7 +1986,7 @@ class PluginsService {
    * @param {boolean} enabled - Enable or disable
    * @returns {Object} Updated plugin info
    */
-  togglePlugin(name, enabled) {
+  togglePlugin(name, enabled, options = {}) {
     if (this._isCodex()) {
       const plugins = this.listPlugins().plugins;
       const target = plugins.find(plugin => plugin.name === name || `${plugin.name}@${plugin.marketplace}` === name);
@@ -2381,26 +2006,7 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      const targetName = String(name || '').trim();
-      const packages = this._listOmpPackages();
-      const targetPackage = packages.find(pkg => pkg.name === targetName || pkg.installSource === targetName);
-      const disabledEntries = this._listOmpDisabledPackageEntries();
-      const disabled = new Set(disabledEntries.flatMap(item => [item.name, item.installSource].filter(Boolean)));
-      if (enabled) {
-        disabled.delete(targetName);
-        if (targetPackage) {
-          disabled.delete(targetPackage.name);
-          disabled.delete(targetPackage.installSource);
-        }
-      } else {
-        disabled.add(targetPackage || targetName);
-      }
-      this._setOmpDisabledPackages(Array.from(disabled));
-      return {
-        name: targetName,
-        enabled,
-        success: true
-      };
+      return this.ompNativeAdapter.togglePlugin(name, enabled, options);
     }
 
     if (this._isOpenCode()) {
@@ -2487,7 +2093,7 @@ class PluginsService {
    * @param {Object} config - Configuration object
    * @returns {Object} Result
    */
-  updatePluginConfig(name, config) {
+  updatePluginConfig(name, config, options = {}) {
     if (this._isCodex()) {
       throw new Error('Codex cached plugins do not support config updates');
     }
@@ -2497,16 +2103,7 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      const settings = this._readOmpSettings();
-      settings.packageConfig = settings.packageConfig && typeof settings.packageConfig === 'object' && !Array.isArray(settings.packageConfig)
-        ? settings.packageConfig
-        : {};
-      settings.packageConfig[name] = config;
-      this._writeOmpSettings(settings);
-      return {
-        success: true,
-        message: `Configuration updated for plugin "${name}"`
-      };
+      return this.ompNativeAdapter.updatePluginConfig(name, config, options);
     }
 
     if (this._isOpenCode()) {
@@ -2591,9 +2188,14 @@ class PluginsService {
    * Reads from both our config and Claude Code's native marketplace config
    * @returns {Array} Repos list
    */
-  getRepos() {
+  getRepos(options = {}) {
     if (!this.getCapabilities().repositories) {
       return [];
+    }
+    if (this._isOmp()) {
+      const migration = importLegacyPluginRepos(this.ompNativeAdapter, PATHS, options);
+      this._ompMigrationWarnings = migration.warnings;
+      return this.ompNativeAdapter.listMarketplaces(options);
     }
 
     const repos = [];
@@ -2667,7 +2269,12 @@ class PluginsService {
    * @param {Object} repo - Repository info { url, owner, name, branch, enabled }
    * @returns {Array} Updated repos list
    */
-  addRepo(repo) {
+  addRepo(repo, options = {}) {
+    if (this._isOmp()) {
+      const source = repo.source || repo.sourceUri || repo.repoUrl || repo.url
+        || repo.localPath || [repo.owner, repo.name].filter(Boolean).join('/');
+      return this.ompNativeAdapter.addMarketplace(source, options);
+    }
     const config = this.loadReposConfig();
     const normalizedRepo = this.normalizeRepoConfig({
       ...repo,
@@ -2693,7 +2300,10 @@ class PluginsService {
    * @param {string} name - Repository name
    * @returns {Array} Updated repos list
    */
-  removeRepo(owner, name, repoId = '') {
+  removeRepo(owner, name, repoId = '', options = {}) {
+    if (this._isOmp()) {
+      return this.ompNativeAdapter.removeMarketplace(repoId || name, options);
+    }
     const config = this.loadReposConfig();
     config.repos = config.repos.filter(r => {
       if (repoId) {
@@ -2713,7 +2323,10 @@ class PluginsService {
    * @param {boolean} enabled - Enable or disable
    * @returns {Array} Updated repos list
    */
-  toggleRepo(owner, name, enabled, repoId = '') {
+  toggleRepo(owner, name, enabled, repoId = '', options = {}) {
+    if (this._isOmp()) {
+      throw new Error('OMP native marketplaces do not support repository toggles');
+    }
     const config = this.loadReposConfig();
     const repo = config.repos.find(r => {
       if (repoId) return r.id === repoId;
@@ -2729,6 +2342,9 @@ class PluginsService {
   }
 
   updateRepoAuth(owner, name, token = '', clearToken = false, repoId = '') {
+    if (this._isOmp()) {
+      throw new Error('OMP native marketplaces do not support per-repository authentication');
+    }
     const config = this.loadReposConfig();
     const repo = config.repos.find(r => {
       if (repoId) return r.id === repoId;
@@ -3178,7 +2794,11 @@ class PluginsService {
    * Sync repositories to Claude Code marketplace
    * @returns {Promise<Object>} Sync results
    */
-  async syncRepos() {
+  async syncRepos(options = {}) {
+    if (this._isOmp()) {
+      const repos = this.ompNativeAdapter.updateMarketplaces('', options);
+      return { success: true, repos, results: [] };
+    }
     if (!this.getCapabilities().syncRepos) {
       return { success: true, results: [] };
     }
@@ -3213,8 +2833,8 @@ class PluginsService {
    * Sync plugins from Claude Code
    * @returns {Promise<Object>} Updated plugins list
    */
-  async syncPlugins() {
-    return this.listPlugins();
+  async syncPlugins(options = {}) {
+    return this.listPlugins(options);
   }
 
   /**
@@ -3599,103 +3219,19 @@ class PluginsService {
     return results;
   }
 
-  _normalizeOmpCatalogEntries(catalog = null) {
-    if (Array.isArray(catalog)) return catalog;
-    if (!catalog || typeof catalog !== 'object') return [];
-    for (const key of ['packages', 'plugins', 'extensions']) {
-      if (Array.isArray(catalog[key])) return catalog[key];
-    }
-    return [];
-  }
-
-  _normalizeOmpCatalogPackage(repo, entry = {}, catalog = {}, defaults = {}) {
-    if (!entry || typeof entry !== 'object') return null;
-    const installSource = String(
-      entry.installSource ||
-      entry.source ||
-      entry.package ||
-      entry.url ||
-      entry.repo ||
-      entry.repository ||
-      entry.name ||
-      ''
-    ).trim();
-    const name = String(entry.name || entry.id || entry.package || installSource || '').trim();
-    if (!name || !installSource) return null;
-
-    const resourceTypes = normalizeOmpResourceTypes(
-      entry.resourceTypes ||
-      entry.resources ||
-      entry.provides ||
-      entry.omp?.resources ||
-      defaults.resourceTypes
-    );
-    return this.buildMarketPluginItem(repo, {
-      name,
-      displayName: entry.displayName || entry.title || '',
-      description: entry.description || '',
-      author: entry.author || catalog.author || repo.owner,
-      version: entry.version || 'latest',
-      category: entry.category || 'general',
-      directory: entry.directory || name,
-      marketplace: entry.marketplace || repo.marketplace || catalog.name || defaults.marketplace || '',
-      installSource,
-      marketplaceFormat: defaults.marketplaceFormat || 'omp-package-catalog',
-      pluginKind: 'package',
-      pluginType: 'package',
-      resourceTypes,
-      resources: entry.resources || entry.provides || null,
-      repoUrl: entry.repoUrl || entry.repositoryUrl || entry.repository || repo.repoUrl || buildRepoUrl(repo)
-    });
-  }
-
-  async _fetchOmpPackageCatalogPlugins(repo, fileMap, readJson) {
-    if (!this._isOmp()) return [];
-    const catalogFiles = ['omp-packages.json', '.omp/packages.json', 'packages.json'];
-    for (const catalogPath of catalogFiles) {
-      if (!fileMap.has(catalogPath)) continue;
-      const catalog = await readJson(catalogPath);
-      const entries = this._normalizeOmpCatalogEntries(catalog);
-      const plugins = entries
-        .map(entry => this._normalizeOmpCatalogPackage(repo, entry, catalog, {
-          marketplaceFormat: 'omp-package-catalog'
-        }))
-        .filter(Boolean);
-      if (plugins.length > 0) return plugins;
-    }
-
-    const manifestPath = fileMap.has('omp.json') ? 'omp.json' : (fileMap.has('package.json') ? 'package.json' : '');
-    if (!manifestPath) return [];
-    const manifest = await readJson(manifestPath);
-    const ompMeta = manifest.omp && typeof manifest.omp === 'object' ? manifest.omp: {};
-    const installSource = ompMeta.installSource || manifest.installSource || manifest.name;
-    const resourceTypes = normalizeOmpResourceTypes(
-      ompMeta.resourceTypes ||
-      ompMeta.resources ||
-      manifest.resourceTypes ||
-      manifest.resources
-    );
-    if (!installSource || resourceTypes.length === 0) return [];
-    const plugin = this._normalizeOmpCatalogPackage(repo, {
-      name: manifest.name || repo.name,
-      installSource,
-      version: manifest.version,
-      description: manifest.description,
-      author: manifest.author,
-      resourceTypes
-    }, { name: repo.marketplace || repo.name }, {
-      marketplaceFormat: manifestPath === 'omp.json' ? 'omp-manifest' : 'omp-package-manifest'
-    });
-    return plugin ? [plugin] : [];
-  }
-
   /**
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
    */
-  async getMarketPlugins(forceRefresh = false) {
+  async getMarketPlugins(forceRefresh = false, options = {}) {
     if (!this.getCapabilities().market) {
       return [];
+    }
+    if (this._isOmp()) {
+      if (forceRefresh) {
+        this.ompNativeAdapter.updateMarketplaces('', options);
+      }
+      return this.ompNativeAdapter.discover(options);
     }
 
     if (forceRefresh) {
@@ -3765,15 +3301,6 @@ class PluginsService {
           }
         }
 
-        // OMP package catalog format; legacy catalog filenames may still include omp.
-        if (this._isOmp()) {
-          const ompPackagePlugins = await this._fetchOmpPackageCatalogPlugins(repo, fileMap, readJson);
-          if (ompPackagePlugins.length > 0) {
-            marketPlugins.push(...ompPackagePlugins);
-            continue;
-          }
-        }
-
         const nestedManifestFiles = files.filter(file => {
           if (this._isCodex()) {
             return file.path === '.codex-plugin/plugin.json' || file.path.endsWith('/.codex-plugin/plugin.json');
@@ -3819,9 +3346,7 @@ class PluginsService {
 
         for (const dir of pluginDirs) {
           try {
-            const manifest = this._isOmp()
-              ? await this._readManifestFromRepo(repo, dir, ['omp.json', 'extension.json', 'plugin.json', 'package.json'])
-              : await readJson(`${dir}/plugin.json`);
+            const manifest = await readJson(`${dir}/plugin.json`);
             if (!manifest) {
               throw new Error(`File not found: ${dir}/plugin.json`);
             }
@@ -3832,7 +3357,6 @@ class PluginsService {
               author: manifest.author || repo.owner,
               version: manifest.version || '1.0.0',
               directory: dir,
-              pluginKind: this._isOmp() ? 'extension' : undefined,
               commands: manifest.commands || [],
               hooks: manifest.hooks || []
             }));

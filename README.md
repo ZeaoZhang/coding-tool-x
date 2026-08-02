@@ -199,7 +199,7 @@ ctx omp start
 | `ctx codex start\|stop\|restart\|status` | Codex 代理管理 |
 | `ctx gemini start\|stop\|restart\|status` | Gemini 代理管理 |
 | `ctx opencode start\|stop\|restart\|status` | OpenCode 代理管理 |
-| `ctx omp start\|stop\|restart\|status` | OMP 受管 `models.yml` provider 配置管理 |
+| `ctx omp start\|stop\|restart\|status` | OMP 动态切换与单渠道直连管理 |
 
 ### 日志与统计
 

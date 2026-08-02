@@ -219,7 +219,7 @@ async function handleStartProxy(cliType, services) {
   console.log(chalk.yellow('[WARN]  重要提示:'));
   if (services.managedProviderConfig) {
     console.log(chalk.yellow('• 启用后会写入指向本地网关的 OMP models.yml provider 配置'));
-    console.log(chalk.yellow('• 关闭会移除受管 provider，不会清理 OMP 原生 auth.json\n'));
+    console.log(chalk.yellow('• 关闭后会保留当前渠道的直连 provider，不会清理 OMP 原生 auth.json\n'));
   } else {
     console.log(chalk.yellow('• 开启期间请勿关闭 CLI 终端窗口'));
     console.log(chalk.yellow('• 如果异常关闭导致代理失效，请运行: ctx reset'));
@@ -274,7 +274,7 @@ async function handleStartProxy(cliType, services) {
       }
     }
 
-    console.log(chalk.cyan(services.managedProviderConfig ? '\n[TIP] OMP 受管 provider 已启用！' : '\n[TIP] 动态切换已启用！'));
+    console.log(chalk.cyan(services.managedProviderConfig ? '\n[TIP] OMP 动态切换已启用！' : '\n[TIP] 动态切换已启用！'));
     if (services.managedProviderConfig) {
       console.log(chalk.gray('   现在可以通过"渠道管理"功能调整已启用的 OMP provider，并重新同步 models.yml\n'));
     } else {
@@ -322,7 +322,7 @@ async function handleStopProxy(cliType, services) {
 
   console.log(chalk.cyan('当前状态:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.gray(`• 受管配置: ${chalk.green('已启用')}`));
+    console.log(chalk.gray(`• 动态切换: ${chalk.green('已启用')}`));
     console.log(chalk.gray(`• 配置模式: ${proxyStatus.mode || 'models-yml-provider-config'}`));
     console.log(chalk.gray(`• 会话日志观察: ${proxyStatus.sessionLogObserver?.running ? chalk.green('运行中') : chalk.yellow('未运行')}\n`));
   } else {
@@ -333,8 +333,8 @@ async function handleStopProxy(cliType, services) {
 
   console.log(chalk.yellow('关闭后:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.gray('• OMP 受管 models.yml provider 配置将被移除'));
-    console.log(chalk.gray(`• 之后调整 ${toolName} provider 需要重新启用受管配置\n`));
+    console.log(chalk.gray('• OMP 将保留当前渠道的单一、直连 models.yml provider'));
+    console.log(chalk.gray(`• 之后调整 ${toolName} provider 或模型会立即同步到 OMP\n`));
   } else {
     console.log(chalk.gray('• 代理服务将被停止'));
     console.log(chalk.gray('• 配置将恢复为当前激活渠道的单渠道模式'));
@@ -357,13 +357,13 @@ async function handleStopProxy(cliType, services) {
 
   try {
     console.log(chalk.cyan(services.managedProviderConfig
-      ? '\n[STOP]  正在移除 OMP models.yml 受管 provider...\n'
+      ? '\n[STOP]  正在切换 OMP 到单渠道直连模式...\n'
       : '\n[STOP]  正在停止代理服务...\n'));
 
     // 停止代理服务器
     await services.stopProxyServer();
     console.log(chalk.green(services.managedProviderConfig
-      ? '[OK] OMP models.yml 受管 provider 已移除'
+      ? '[OK] OMP 已切换到单渠道直连模式'
       : '[OK] 代理服务已停止'));
 
     // 恢复配置文件
@@ -382,9 +382,9 @@ async function handleStopProxy(cliType, services) {
       console.log(chalk.green('[OK] 已清理代理接管状态'));
     }
 
-    console.log(chalk.cyan(services.managedProviderConfig ? '\n[TIP] OMP 受管 provider 已关闭' : '\n[TIP] 动态切换已关闭'));
+    console.log(chalk.cyan(services.managedProviderConfig ? '\n[TIP] OMP 动态切换已关闭' : '\n[TIP] 动态切换已关闭'));
     if (services.managedProviderConfig) {
-      console.log(chalk.gray('   如需恢复受管 provider 配置，请再次运行 ctx omp start\n'));
+      console.log(chalk.gray('   当前渠道保持直连；后续渠道和模型修改会立即同步到 OMP\n'));
     } else {
       console.log(chalk.gray(`   现在调整渠道需要重启 ${toolName} 才能生效\n`));
     }

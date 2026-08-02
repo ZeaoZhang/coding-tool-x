@@ -9,9 +9,13 @@ import { client } from './client'
  * @param {boolean} forceRefresh - 是否强制刷新缓存
  * @param {string} platform - 平台: claude | codex | opencode
  */
-export async function getSkills(forceRefresh = false, platform = 'claude') {
+export async function getSkills(forceRefresh = false, platform = 'claude', options = {}) {
   const response = await client.get('/skills', {
-    params: { refresh: forceRefresh ? '1' : '', platform }
+    params: {
+      refresh: forceRefresh ? '1' : '',
+      platform,
+      ...(options.cwd ? { cwd: options.cwd } : {})
+    }
   })
   return response.data
 }
@@ -64,8 +68,13 @@ export async function installSkill(directory, repo, fullDirectory = null, platfo
  * 卸载技能
  * @param {string} directory - 技能目录
  */
-export async function uninstallSkill(directory, platform = 'claude') {
-  const response = await client.post('/skills/uninstall', { directory, platform })
+export async function uninstallSkill(directory, platform = 'claude', options = {}) {
+  const response = await client.post('/skills/uninstall', {
+    directory,
+    platform,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.scope ? { scope: options.scope } : {})
+  })
   return response.data
 }
 

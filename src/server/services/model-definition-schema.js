@@ -390,7 +390,8 @@ function normalizeCatalogModelList(value) {
   const warnings = [];
   for (const rawModel of Array.isArray(value) ? value : []) {
     const rawId = String(rawModel?.id || rawModel?.name || '').trim();
-    const normalized = normalizeModelSpec(rawModel, rawId);
+    const { provider: _provider, selector: _selector, ...modelFields } = isPlainObject(rawModel) ? rawModel : {};
+    const normalized = normalizeModelSpec(modelFields, rawId);
     if (!normalized.spec?.id) continue;
     warnings.push(...normalized.warnings.map(message => `${normalized.spec.id}: ${message}`));
     const key = normalized.spec.id.toLowerCase();

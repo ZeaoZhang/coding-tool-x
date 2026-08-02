@@ -45,6 +45,19 @@ describe('omp-config path resolution', () => {
     }));
   });
 
+  test('prefers PI_CODING_AGENT_DIR over the legacy OMP_CODING_AGENT_DIR fallback', () => {
+    const { getOmpAgentDir, getOmpPaths } = require('../../../src/server/services/omp-config');
+    const env = {
+      PI_CODING_AGENT_DIR: path.join(path.sep, 'canonical', 'omp-agent'),
+      OMP_CODING_AGENT_DIR: path.join(path.sep, 'legacy', 'omp-agent')
+    };
+    const options = { commandRunner: commandNotFound };
+
+    expect(getOmpAgentDir(env, options)).toBe(path.resolve(env.PI_CODING_AGENT_DIR));
+    expect(getOmpPaths(env, options).skills)
+      .toBe(path.join(path.resolve(env.PI_CODING_AGENT_DIR), 'skills'));
+  });
+
   test('defaults to HOME_DIR/.omp/agent', () => {
     const { getOmpAgentDir } = require('../../../src/server/services/omp-config');
 
@@ -162,6 +175,8 @@ describe('omp-config path resolution', () => {
 
 describe('config paths OMP native paths', () => {
   const originalOmpAgentDir = process.env.OMP_CODING_AGENT_DIR;
+  const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const originalOmpCommand = process.env.OMP_COMMAND;
 
   afterEach(() => {
     if (originalOmpAgentDir === undefined) {
@@ -169,11 +184,23 @@ describe('config paths OMP native paths', () => {
     } else {
       process.env.OMP_CODING_AGENT_DIR = originalOmpAgentDir;
     }
+    if (originalPiAgentDir === undefined) {
+      delete process.env.PI_CODING_AGENT_DIR;
+    } else {
+      process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
+    }
+    if (originalOmpCommand === undefined) {
+      delete process.env.OMP_COMMAND;
+    } else {
+      process.env.OMP_COMMAND = originalOmpCommand;
+    }
     delete require.cache[PATHS_PATH];
   });
 
   test('expands OMP_CODING_AGENT_DIR for NATIVE_PATHS.omp', () => {
+    delete process.env.PI_CODING_AGENT_DIR;
     process.env.OMP_CODING_AGENT_DIR = '~/custom-omp-agent';
+    process.env.OMP_COMMAND = `missing-omp-paths-test-${process.pid}`;
     delete require.cache[PATHS_PATH];
 
     const { NATIVE_PATHS, getOmpAgentDir } = require('../../../src/config/paths');
@@ -190,5 +217,23 @@ describe('config paths OMP native paths', () => {
       extensions: path.join(expectedDir, 'extensions'),
       packages: path.join(expectedDir, 'packages')
     }));
+  });
+
+  test('getOmpAgentDir prefers omp config path over environment fallbacks', () => {
+    process.env.OMP_COMMAND = `missing-omp-paths-test-${process.pid}`;
+    delete require.cache[PATHS_PATH];
+    const { getOmpAgentDir } = require('../../../src/config/paths');
+    const cliPath = path.join(path.sep, 'cli', 'omp-agent');
+    const commandRunner = vi.fn(() => `${cliPath}\n`);
+
+    expect(getOmpAgentDir({
+      OMP_COMMAND: 'custom-omp',
+      PI_CODING_AGENT_DIR: path.join(path.sep, 'fallback', 'omp-agent')
+    }, { commandRunner })).toBe(cliPath);
+    expect(commandRunner).toHaveBeenCalledWith(
+      'custom-omp',
+      ['config', 'path'],
+      expect.objectContaining({ windowsHide: true })
+    );
   });
 });

@@ -171,23 +171,27 @@ describe('managed provider activation lifecycle', () => {
     expect(service.loadManagedOmpActiveChannelId()).toBe(null);
   });
 
-  test.each([
-    ['create', () => service.createChannel('created', 'https://created.example/v1', 'created-key', {
-      providerKey: 'created',
-      model: 'created-model',
-      enabled: true
-    })],
-    ['update', () => service.updateChannel('channel-a', { name: 'updated' })],
-    ['delete', () => service.deleteChannel('channel-a')]
-  ])('does not recreate ctx providers after managed mode is stopped via %s', (_operation, mutate) => {
+  it('keeps the active direct provider synchronized while managed mode is disabled', () => {
     seedChannels([
-      makeChannel('channel-a'),
-      makeChannel('channel-b')
+      makeChannel('channel-a', {
+        models: [{ id: 'old-model' }]
+      }),
+      makeChannel('channel-b', { enabled: false })
     ]);
 
-    mutate();
+    service.updateChannel('channel-a', {
+      model: 'new-model',
+      models: [{ id: 'new-model' }]
+    });
 
-    expect(writeManagedOmpProviders).not.toHaveBeenCalled();
+    expect(writeManagedOmpProviders).toHaveBeenCalledTimes(1);
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'channel-a',
+        model: 'new-model',
+        models: [{ id: 'new-model' }]
+      })
+    ], {});
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
 
@@ -220,12 +224,33 @@ describe('managed provider activation lifecycle', () => {
     );
   });
 
-  it('does not resync imported channels while managed mode is disabled', () => {
+  it('restores channel enablement when static provider activation fails', () => {
+    seedChannels([
+      makeChannel('channel-a', { enabled: false }),
+      makeChannel('channel-b', { enabled: true })
+    ]);
+    writeManagedOmpProviders.mockImplementationOnce(() => {
+      throw new Error('static sync failed');
+    });
+
+    expect(() => service.activateStaticOmpChannel('channel-a'))
+      .toThrow('static sync failed');
+
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+    expect(saved.channels).toEqual([
+      expect.objectContaining({ id: 'channel-a', enabled: false }),
+      expect.objectContaining({ id: 'channel-b', enabled: true })
+    ]);
+  });
+
+  it('synchronizes the single enabled imported channel directly while managed mode is disabled', () => {
     seedChannels([makeChannel('channel-a')]);
 
     service.syncManagedProviderExtension();
 
-    expect(writeManagedOmpProviders).not.toHaveBeenCalled();
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'channel-a' })
+    ], {});
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
 });

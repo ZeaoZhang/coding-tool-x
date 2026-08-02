@@ -4,6 +4,7 @@ const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRunt
 const {
   syncManagedOmpProviders,
   disableManagedOmpProviders,
+  activateStaticOmpChannel,
   getEnabledChannels,
   isManagedOmpModeEnabled,
   enableManagedOmpMode,
@@ -115,10 +116,22 @@ async function stopOmpProxyServerUnlocked(options = {}) {
       warnings: lastSyncResult?.warnings || []
     };
   }
+  const state = loadManagedOmpModeState?.() || {
+    activeChannelId: loadManagedOmpActiveChannelId()
+  };
+  const enabledChannels = getEnabledChannels();
+  const activeChannel = enabledChannels.find(channel => channel.id === state.activeChannelId)
+    || enabledChannels[0]
+    || null;
   gateway.beginDraining();
   stopOmpSessionLogObserver();
   try {
-    lastSyncResult = disableManagedOmpProviders();
+    if (activeChannel) {
+      const handoff = activateStaticOmpChannel(activeChannel.id);
+      lastSyncResult = handoff?.sync || lastSyncResult;
+    } else {
+      lastSyncResult = disableManagedOmpProviders();
+    }
   } catch (error) {
     startOmpSessionLogObserver();
     gateway.cancelDraining();
