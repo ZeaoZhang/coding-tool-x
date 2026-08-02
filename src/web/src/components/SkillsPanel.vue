@@ -27,7 +27,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button v-if="showOmpSettings" text :focusable="false" @click="showOmpSettingsModal = true" class="action-btn">
+        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="showOmpSettingsModal = true" class="action-btn">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
@@ -53,7 +53,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button v-if="showOmpSettings" text :focusable="false" @click="showOmpSettingsModal = true" class="action-btn">
+        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="showOmpSettingsModal = true" class="action-btn">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
