@@ -1,4 +1,7 @@
-const { readOmpSettings, writeOmpSettings } = require('./omp-config');
+const fs = require('fs');
+const path = require('path');
+const yaml = require('js-yaml');
+const { getOmpPaths, ensureOmpDir } = require('./omp-config');
 
 const OMP_SKILL_SETTING_DEFAULTS = Object.freeze({
   enableCodexUser: true,
@@ -8,6 +11,11 @@ const OMP_SKILL_SETTING_DEFAULTS = Object.freeze({
 });
 const OMP_SKILL_SETTING_KEYS = Object.freeze(Object.keys(OMP_SKILL_SETTING_DEFAULTS));
 const OMP_SKILL_SETTING_KEY_SET = new Set(OMP_SKILL_SETTING_KEYS);
+const YAML_DUMP_OPTIONS = Object.freeze({
+  lineWidth: 120,
+  noRefs: true,
+  sortKeys: false
+});
 
 function isPlainObject(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -19,17 +27,54 @@ function isPlainObject(value) {
 
 function selectOmpSkillSettings(skills) {
   const source = isPlainObject(skills) ? skills : {};
-  return Object.fromEntries(OMP_SKILL_SETTING_KEYS.map((key) => [
-    key,
-    typeof source[key] === 'boolean'
+  const selected = {};
+  for (const key of OMP_SKILL_SETTING_KEYS) {
+    selected[key] = typeof source[key] === 'boolean'
       ? source[key]
-      : OMP_SKILL_SETTING_DEFAULTS[key]
-  ]));
+      : OMP_SKILL_SETTING_DEFAULTS[key];
+  }
+  return selected;
 }
 
-function readOmpSkillSettings() {
-  const config = readOmpSettings();
-  return selectOmpSkillSettings(isPlainObject(config) ? config.skills : undefined);
+function readOmpConfig() {
+  const filePath = getOmpPaths().settings;
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const config = yaml.load(fs.readFileSync(filePath, 'utf8'));
+  if (!isPlainObject(config)) {
+    throw new Error('Invalid OMP config');
+  }
+  return config;
+}
+
+function writeOmpConfig(config) {
+  const filePath = getOmpPaths().settings;
+  const directory = path.dirname(filePath);
+  ensureOmpDir(directory);
+  const mode = fs.existsSync(filePath)
+    ? fs.statSync(filePath).mode & 0o777
+    : 0o600;
+  const temporaryPath = path.join(
+    directory,
+    `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+
+  try {
+    fs.writeFileSync(temporaryPath, yaml.dump(config, YAML_DUMP_OPTIONS), {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode
+    });
+    fs.chmodSync(temporaryPath, mode);
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) {
+      fs.unlinkSync(temporaryPath);
+    }
+    throw error;
+  }
 }
 
 function validateOmpSkillSettingsPatch(patch) {
@@ -45,16 +90,22 @@ function validateOmpSkillSettingsPatch(patch) {
       throw new Error(`Invalid OMP skill setting value for ${key}: expected boolean`);
     }
   }
+}
 
-  return patch;
+function readOmpSkillSettings() {
+  const config = readOmpConfig();
+  return selectOmpSkillSettings(config.skills);
 }
 
 function updateOmpSkillSettings(patch) {
   validateOmpSkillSettingsPatch(patch);
 
-  const storedConfig = readOmpSettings();
-  const config = isPlainObject(storedConfig) ? storedConfig : {};
+  const config = readOmpConfig();
   const existingSkills = isPlainObject(config.skills) ? config.skills : {};
+  if (Object.keys(patch).length === 0) {
+    return selectOmpSkillSettings(existingSkills);
+  }
+
   const nextConfig = {
     ...config,
     skills: {
@@ -63,14 +114,11 @@ function updateOmpSkillSettings(patch) {
     }
   };
 
-  writeOmpSettings(nextConfig);
+  writeOmpConfig(nextConfig);
   return selectOmpSkillSettings(nextConfig.skills);
 }
 
 module.exports = {
-  OMP_SKILL_SETTING_DEFAULTS,
-  OMP_SKILL_SETTING_KEYS,
   readOmpSkillSettings,
-  updateOmpSkillSettings,
-  validateOmpSkillSettingsPatch
+  updateOmpSkillSettings
 };
