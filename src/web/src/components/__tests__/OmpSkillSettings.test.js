@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import SkillsPanel from '../SkillsPanel.vue'
 import OmpSkillSettingsModal from '../OmpSkillSettingsModal.vue'
@@ -159,6 +159,47 @@ async function mountSettingsModal() {
   await flushPromises()
   return wrapper
 }
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function mountControlledSettingsModal() {
+  api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+  const Host = defineComponent({
+    setup(_, { expose }) {
+      const visible = ref(true)
+      const operationToken = ref(0)
+      const refreshCount = ref(0)
+
+      expose({
+        close: () => { visible.value = false },
+        open: () => {
+          operationToken.value += 1
+          visible.value = true
+        },
+        refreshCount
+      })
+
+      return () => h(OmpSkillSettingsModal, {
+        visible: visible.value,
+        operationToken: operationToken.value,
+        'onUpdate:visible': value => { visible.value = value },
+        onSaved: () => {
+          visible.value = false
+          refreshCount.value += 1
+        }
+      })
+    }
+  })
+
+  return mount(Host)
+}
 
 beforeAll(() => {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation(query => ({
@@ -275,6 +316,8 @@ describe('OmpSkillSettingsModal save behavior', () => {
       enablePiProject: false
     })
     expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(message.error).toHaveBeenCalledTimes(1)
+    expect(message.success).not.toHaveBeenCalled()
     expect(wrapper.emitted('update:visible')).toBeUndefined()
     expect(wrapper.find('[data-testid="modal-shell"]').exists()).toBe(true)
     expect(wrapper.props('visible')).toBe(true)
@@ -310,6 +353,8 @@ describe('OmpSkillSettingsModal save behavior', () => {
       enablePiProject: false
     })
     expect(wrapper.emitted('saved')).toBeUndefined()
+    expect(message.error).toHaveBeenCalledTimes(1)
+    expect(message.success).not.toHaveBeenCalled()
     expect(wrapper.emitted('update:visible')).toBeUndefined()
     expect(wrapper.find('[data-testid="modal-shell"]').exists()).toBe(true)
     expect(wrapper.props('visible')).toBe(true)
@@ -333,6 +378,68 @@ describe('OmpSkillSettingsModal save behavior', () => {
       { ...validSettings, enablePiProject: false },
       0
     ]])
+    expect(message.success).toHaveBeenCalledTimes(1)
+    expect(message.error).not.toHaveBeenCalled()
+  })
+
+  test('keeps a reopened modal intact when the earlier PUT resolves', async () => {
+    const oldSave = deferred()
+    api.updateOmpSkillSettings.mockReturnValueOnce(oldSave.promise)
+    const wrapper = mountControlledSettingsModal()
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    await modal.findAll('[role="switch"]')[0].trigger('click')
+    await findButton(modal, '保存').trigger('click')
+    await nextTick()
+
+    wrapper.vm.close()
+    await nextTick()
+    wrapper.vm.open()
+    await flushPromises()
+    await modal.findAll('[role="switch"]')[1].trigger('click')
+
+    oldSave.resolve({ success: true, settings: { ...validSettings } })
+    await flushPromises()
+    await nextTick()
+
+    expect(modal.props('visible')).toBe(true)
+    expect(modal.findAll('[role="switch"]')[1].attributes('aria-checked')).toBe('false')
+    expect(findButton(modal, '保存').attributes('disabled')).toBeUndefined()
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(wrapper.vm.refreshCount).toBe(0)
+    expect(message.success).not.toHaveBeenCalled()
+    expect(message.error).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  test('keeps a reopened modal intact when the earlier PUT rejects', async () => {
+    const oldSave = deferred()
+    api.updateOmpSkillSettings.mockReturnValueOnce(oldSave.promise)
+    const wrapper = mountControlledSettingsModal()
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    await modal.findAll('[role="switch"]')[0].trigger('click')
+    await findButton(modal, '保存').trigger('click')
+    await nextTick()
+
+    wrapper.vm.close()
+    await nextTick()
+    wrapper.vm.open()
+    await flushPromises()
+    await modal.findAll('[role="switch"]')[1].trigger('click')
+
+    oldSave.reject(new Error('stale write failed'))
+    await flushPromises()
+    await nextTick()
+
+    expect(modal.props('visible')).toBe(true)
+    expect(modal.findAll('[role="switch"]')[1].attributes('aria-checked')).toBe('false')
+    expect(findButton(modal, '保存').attributes('disabled')).toBeUndefined()
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(wrapper.vm.refreshCount).toBe(0)
+    expect(message.success).not.toHaveBeenCalled()
+    expect(message.error).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 })
 
