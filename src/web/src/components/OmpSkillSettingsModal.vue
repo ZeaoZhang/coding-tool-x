@@ -12,16 +12,23 @@
     <n-spin :show="loading">
       <n-alert v-if="loadError" type="error" :show-icon="true">
         {{ loadError }}
+        <template #action>
+          <n-button size="small" :disabled="loading || saving" @click="loadSettings">重试</n-button>
+        </template>
       </n-alert>
 
       <div v-else class="scan-settings">
         <div class="section-title">扫描来源</div>
         <div v-for="item in settingItems" :key="item.key" class="setting-row">
           <div class="setting-copy">
-            <div class="setting-label">{{ item.label }}</div>
+            <div :id="`${item.key}-label`" class="setting-label">{{ item.label }}</div>
             <div class="setting-description">{{ item.description }}</div>
           </div>
-          <n-switch v-model:value="form[item.key]" :disabled="loading || saving" />
+          <n-switch
+            v-model:value="form[item.key]"
+            :disabled="loading || saving"
+            :aria-labelledby="`${item.key}-label`"
+          />
         </div>
       </div>
     </n-spin>
@@ -46,7 +53,6 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { NAlert, NButton, NModal, NSpin, NSwitch, useMessage } from 'naive-ui'
 import { getOmpSkillSettings, updateOmpSkillSettings } from '../api/skills'
-import { runOmpSkillSettingsSave } from '../utils/omp-skill-settings'
 
 const props = defineProps({
   visible: Boolean
@@ -57,12 +63,13 @@ const message = useMessage()
 const loading = ref(false)
 const saving = ref(false)
 const loadError = ref('')
-const form = reactive({
-  enableCodexUser: true,
-  enableClaudeUser: true,
-  enablePiUser: true,
-  enablePiProject: true
-})
+const SETTINGS_KEYS = [
+  'enableCodexUser',
+  'enableClaudeUser',
+  'enablePiUser',
+  'enablePiProject'
+]
+const form = reactive(Object.fromEntries(SETTINGS_KEYS.map(key => [key, true])))
 let loadRequestId = 0
 
 const settingItems = [
@@ -95,8 +102,51 @@ const visible = computed({
   }
 })
 
-function isSettingsObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+function isPlainObject(value) {
+  if (value === null || typeof value !== 'object') return false
+
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function normalizeSettings(settings) {
+  if (!isPlainObject(settings) || !SETTINGS_KEYS.every(key => typeof settings[key] === 'boolean')) {
+    throw new Error('响应 settings 必须包含四个布尔字段')
+  }
+
+  return Object.fromEntries(SETTINGS_KEYS.map(key => [key, settings[key]]))
+}
+
+function validateSettingsResponse(result) {
+  if (!isPlainObject(result) || result.success !== true) {
+    throw new Error('响应未明确标记成功')
+  }
+
+  return normalizeSettings(result.settings)
+}
+
+function errorMessage(error) {
+  try {
+    if (error instanceof Error) return error.message
+    if (typeof error === 'string') return error
+    if (error === null || error === undefined) return '未知错误'
+    if (typeof error === 'object' && typeof error.message === 'string') return error.message
+  } catch {
+    // Fall through to safe serialization for unusual thrown values such as proxies.
+  }
+
+  try {
+    const serialized = JSON.stringify(error)
+    if (typeof serialized === 'string') return serialized
+  } catch {
+    // Fall through to string coercion.
+  }
+
+  try {
+    return String(error)
+  } catch {
+    return '未知错误'
+  }
 }
 
 async function loadSettings() {
@@ -106,20 +156,14 @@ async function loadSettings() {
 
   try {
     const result = await getOmpSkillSettings()
-    if (!isSettingsObject(result?.settings)) {
-      throw new Error('响应缺少 settings 对象')
-    }
+    const settings = validateSettingsResponse(result)
     if (requestId !== loadRequestId || !props.visible) return
 
-    const settings = result.settings
-    form.enableCodexUser = settings.enableCodexUser
-    form.enableClaudeUser = settings.enableClaudeUser
-    form.enablePiUser = settings.enablePiUser
-    form.enablePiProject = settings.enablePiProject
+    Object.assign(form, settings)
   } catch (error) {
     if (requestId !== loadRequestId || !props.visible) return
 
-    loadError.value = `加载技能扫描设置失败: ${error.message}`
+    loadError.value = `加载技能扫描设置失败: ${errorMessage(error)}`
     message.error(loadError.value)
   } finally {
     if (requestId === loadRequestId) loading.value = false
@@ -129,21 +173,21 @@ async function loadSettings() {
 async function handleSave() {
   if (loading.value || saving.value || loadError.value) return
 
-  let saved = false
   saving.value = true
   try {
-    await runOmpSkillSettingsSave(
-      { ...form },
-      updateOmpSkillSettings,
-      () => emit('saved')
-    )
-    saved = true
+    const submittedSettings = Object.fromEntries(SETTINGS_KEYS.map(key => [key, form[key]]))
+    const result = await updateOmpSkillSettings(submittedSettings)
+    const savedSettings = validateSettingsResponse(result)
+    if (!SETTINGS_KEYS.every(key => savedSettings[key] === submittedSettings[key])) {
+      throw new Error('响应 settings 与提交值不一致')
+    }
+
     message.success('技能扫描设置已保存')
+    emit('saved', savedSettings)
   } catch (error) {
-    message.error(`保存技能扫描设置失败: ${error.message}`)
+    message.error(`保存技能扫描设置失败: ${errorMessage(error)}`)
   } finally {
     saving.value = false
-    if (saved) emit('update:visible', false)
   }
 }
 
