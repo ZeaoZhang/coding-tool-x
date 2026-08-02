@@ -61,7 +61,8 @@ import {
 } from '../utils/omp-skill-settings'
 
 const props = defineProps({
-  visible: Boolean
+  visible: Boolean,
+  operationToken: { type: Number, default: 0 }
 })
 
 const emit = defineEmits(['update:visible', 'saved'])
@@ -72,6 +73,7 @@ const loadError = ref('')
 const SETTINGS_KEYS = OMP_SKILL_SETTINGS_KEYS
 const form = reactive(Object.fromEntries(SETTINGS_KEYS.map(key => [key, true])))
 let loadRequestId = 0
+let saveRequestId = 0
 
 const settingItems = [
   {
@@ -151,18 +153,25 @@ async function loadSettings() {
 async function handleSave() {
   if (loading.value || saving.value || loadError.value) return
 
+  const requestId = ++saveRequestId
+  const operationToken = props.operationToken
+  const submittedSettings = Object.fromEntries(SETTINGS_KEYS.map(key => [key, form[key]]))
+  let accepted = false
   saving.value = true
   try {
-    const submittedSettings = Object.fromEntries(SETTINGS_KEYS.map(key => [key, form[key]]))
     await submitOmpSkillSettings(submittedSettings, updateOmpSkillSettings, result => {
+      if (requestId !== saveRequestId || operationToken !== props.operationToken || !props.visible) return
+
       const savedSettings = validateOmpSkillSettingsSaveResult(result, submittedSettings)
-      emit('saved', savedSettings)
+      accepted = true
+      emit('saved', savedSettings, operationToken)
     })
-    message.success('技能扫描设置已保存')
+    if (accepted) message.success('技能扫描设置已保存')
   } catch (error) {
+    if (requestId !== saveRequestId || operationToken !== props.operationToken || !props.visible) return
     message.error(`保存技能扫描设置失败: ${errorMessage(error)}`)
   } finally {
-    saving.value = false
+    if (requestId === saveRequestId) saving.value = false
   }
 }
 
@@ -173,6 +182,8 @@ watch(
       loadSettings()
     } else {
       loadRequestId += 1
+      saveRequestId += 1
+      saving.value = false
       loading.value = false
       loadError.value = ''
     }

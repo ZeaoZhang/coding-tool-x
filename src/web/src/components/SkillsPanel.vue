@@ -27,7 +27,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="showOmpSettingsModal = true" class="action-btn">
+        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="openOmpSettings" class="action-btn">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
@@ -53,7 +53,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="showOmpSettingsModal = true" class="action-btn">
+        <n-button v-if="showOmpSettings" text :focusable="false" aria-label="OMP 技能设置" @click="openOmpSettings" class="action-btn">
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
@@ -124,7 +124,7 @@
     <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData(true)" />
     <SkillCreateModal v-model:visible="showCreateModal" :platform="currentPlatform" @created="loadData" />
     <SkillDetailDrawer v-model:visible="showDetailDrawer" :skill="selectedSkill" :platform="currentPlatform" @updated="loadData" />
-    <OmpSkillSettingsModal v-model:visible="showOmpSettingsModal" @saved="handleOmpSettingsSaved" />
+    <OmpSkillSettingsModal v-model:visible="showOmpSettingsModal" :operation-token="ompSettingsEpoch" @saved="handleOmpSettingsSaved" />
   </div>
 </template>
 
@@ -163,6 +163,7 @@ const showRepoManager = ref(false)
 const showCreateModal = ref(false)
 const showDetailDrawer = ref(false)
 const showOmpSettingsModal = ref(false)
+const ompSettingsEpoch = ref(0)
 const selectedSkill = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
@@ -305,7 +306,20 @@ async function handleUninstall(skill) {
   finally { delete uninstallingKeys.value[skill.key] }
 }
 
-async function handleOmpSettingsSaved() {
+function openOmpSettings() {
+  if (!showOmpSettings.value) return
+
+  ompSettingsEpoch.value += 1
+  showOmpSettingsModal.value = true
+}
+
+async function handleOmpSettingsSaved(_settings, operationToken) {
+  if (
+    currentPlatform.value !== 'omp' ||
+    !showOmpSettingsModal.value ||
+    operationToken !== ompSettingsEpoch.value
+  ) return
+
   await completeOmpSkillSettingsSave(() => {
     showOmpSettingsModal.value = false
   }, loadData)
@@ -328,6 +342,7 @@ watch(() => props.drawerVisible, (val) => {
 })
 
 watch(() => currentPlatform.value, platform => {
+  ompSettingsEpoch.value += 1
   if (!supportsOmpSkillSettings(platform)) showOmpSettingsModal.value = false
   loadData()
 })
