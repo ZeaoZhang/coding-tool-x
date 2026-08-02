@@ -155,6 +155,45 @@ test.each(['null\n', '[]\n', 'enabled\n'])(
   }
 );
 
+test.each([
+  ['string', 'skills: enabled\n'],
+  ['array', 'skills:\n  - enabled\n'],
+  ['null', 'skills: null\n']
+])('rejects %s skills before a non-empty update without writing', (_type, source) => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const original = Buffer.from(source);
+  fs.writeFileSync(configPath, original);
+  const writeSpy = vi.spyOn(fs, 'writeFileSync');
+  const { updateOmpSkillSettings } = loadService();
+
+  expect(() => updateOmpSkillSettings({ enablePiUser: false })).toThrow('Invalid OMP config skills');
+  expect(writeSpy).not.toHaveBeenCalled();
+  expect(fs.readFileSync(configPath)).toEqual(original);
+  expect(fs.readdirSync(path.dirname(configPath))).toEqual(['config.yml']);
+});
+
+test.each([
+  ['string', 'skills: enabled\n'],
+  ['array', 'skills:\n  - enabled\n'],
+  ['null', 'skills: null\n']
+])('projects defaults from %s skills for an empty patch without writing', (_type, source) => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const original = Buffer.from(source);
+  fs.writeFileSync(configPath, original);
+  const writeSpy = vi.spyOn(fs, 'writeFileSync');
+  const { updateOmpSkillSettings } = loadService();
+
+  expect(updateOmpSkillSettings({})).toEqual({
+    enableCodexUser: true,
+    enableClaudeUser: true,
+    enablePiUser: true,
+    enablePiProject: true
+  });
+  expect(writeSpy).not.toHaveBeenCalled();
+  expect(fs.readFileSync(configPath)).toEqual(original);
+  expect(fs.readdirSync(path.dirname(configPath))).toEqual(['config.yml']);
+});
+
 test('keeps the original bytes and removes the temp file when rename fails', () => {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   const original = Buffer.from('providers:\n  demo: {}\nskills:\n  enabled: false\n');
@@ -168,6 +207,34 @@ test('keeps the original bytes and removes the temp file when rename fails', () 
   expect(() => updateOmpSkillSettings({ enablePiUser: false })).toThrow(renameError);
   expect(fs.readFileSync(configPath)).toEqual(original);
   expect(fs.readdirSync(path.dirname(configPath))).toEqual(['config.yml']);
+});
+
+test('preserves the rename error when temporary file cleanup also fails', () => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const original = Buffer.from('skills:\n  enablePiUser: true\n');
+  fs.writeFileSync(configPath, original);
+  const renameError = new Error('rename failed');
+  const cleanupError = new Error('cleanup failed');
+  vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+    throw renameError;
+  });
+  const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+    throw cleanupError;
+  });
+  const { updateOmpSkillSettings } = loadService();
+
+  try {
+    expect(() => updateOmpSkillSettings({ enablePiUser: false })).toThrow(renameError);
+    expect(fs.readFileSync(configPath)).toEqual(original);
+    expect(fs.readdirSync(path.dirname(configPath))).toHaveLength(2);
+  } finally {
+    unlinkSpy.mockRestore();
+    for (const entry of fs.readdirSync(path.dirname(configPath))) {
+      if (entry !== path.basename(configPath)) {
+        fs.unlinkSync(path.join(path.dirname(configPath), entry));
+      }
+    }
+  }
 });
 
 test('returns the projection for an empty patch without changing bytes or mtime', () => {

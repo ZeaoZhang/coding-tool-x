@@ -70,8 +70,12 @@ function writeOmpConfig(config) {
     fs.chmodSync(temporaryPath, mode);
     fs.renameSync(temporaryPath, filePath);
   } catch (error) {
-    if (fs.existsSync(temporaryPath)) {
-      fs.unlinkSync(temporaryPath);
+    try {
+      if (fs.existsSync(temporaryPath)) {
+        fs.unlinkSync(temporaryPath);
+      }
+    } catch (_cleanupError) {
+      // Preserve the original write, chmod, or rename failure.
     }
     throw error;
   }
@@ -101,10 +105,15 @@ function updateOmpSkillSettings(patch) {
   validateOmpSkillSettingsPatch(patch);
 
   const config = readOmpConfig();
-  const existingSkills = isPlainObject(config.skills) ? config.skills : {};
   if (Object.keys(patch).length === 0) {
-    return selectOmpSkillSettings(existingSkills);
+    return selectOmpSkillSettings(config.skills);
   }
+
+  const hasSkills = Object.prototype.hasOwnProperty.call(config, 'skills');
+  if (hasSkills && !isPlainObject(config.skills)) {
+    throw new Error('Invalid OMP config skills');
+  }
+  const existingSkills = hasSkills ? config.skills : {};
 
   const nextConfig = {
     ...config,
