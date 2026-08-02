@@ -409,11 +409,11 @@ describe('SkillsPanel skill refresh validation', () => {
 })
 
 describe('OmpSkillSettingsModal load failures', () => {
-  test('renders the exact GET rejection, disables save, and retries cleanly after close and reopen', async () => {
-    const nextLoad = deferred()
+  test('retries a rejected GET from the real retry button without saving or refreshing', async () => {
+    const retryLoad = deferred()
     api.getOmpSkillSettings
       .mockRejectedValueOnce(new Error('read failed'))
-      .mockReturnValueOnce(nextLoad.promise)
+      .mockReturnValueOnce(retryLoad.promise)
     const wrapper = mountControlledSettingsModal({ installDefaultGet: false })
     await flushPromises()
     const modal = wrapper.findComponent(OmpSkillSettingsModal)
@@ -425,22 +425,16 @@ describe('OmpSkillSettingsModal load failures', () => {
     expect(alert.exists()).toBe(true)
     expect(alert.text()).toBe(`${errorText} 重试`)
     expect(findButton(modal, '保存').attributes('disabled')).toBeDefined()
-    expect(api.updateOmpSkillSettings).not.toHaveBeenCalled()
-    expect(modal.emitted('saved')).toBeUndefined()
-    expect(wrapper.vm.refreshCount).toBe(0)
 
-    wrapper.vm.close()
-    await nextTick()
-    wrapper.vm.open()
+    await findButton(modal, '重试').trigger('click')
     await nextTick()
 
     expect(api.getOmpSkillSettings).toHaveBeenCalledTimes(2)
-    expect(modal.findAll('[role="switch"]').map(toggle => toggle.attributes('aria-checked'))).toEqual([
-      'true', 'true', 'true', 'true'
-    ])
+    const retryButtonWhileLoading = findButton(modal, '重试')
+    expect(retryButtonWhileLoading?.attributes('disabled') !== undefined || retryButtonWhileLoading === undefined).toBe(true)
     expect(findButton(modal, '保存').attributes('disabled')).toBeDefined()
 
-    nextLoad.resolve({ success: true, settings: { ...validSettings } })
+    retryLoad.resolve({ success: true, settings: { ...validSettings } })
     await flushPromises()
 
     expect(modal.findComponent({ name: 'NAlert' }).exists()).toBe(false)
@@ -449,6 +443,7 @@ describe('OmpSkillSettingsModal load failures', () => {
     ])
     expect(findButton(modal, '保存').attributes('disabled')).toBeUndefined()
     expect(message.error).toHaveBeenCalledTimes(1)
+    expect(api.updateOmpSkillSettings).not.toHaveBeenCalled()
     expect(modal.emitted('saved')).toBeUndefined()
     expect(wrapper.vm.refreshCount).toBe(0)
   })
