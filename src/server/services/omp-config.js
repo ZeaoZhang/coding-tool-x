@@ -43,7 +43,9 @@ function getDefaultOmpAgentDir(env = process.env) {
 }
 
 function getFallbackOmpAgentDir(runtime, env = process.env) {
-  const configured = expandHome(env.OMP_CODING_AGENT_DIR || '');
+  const configured = expandHome(
+    env.PI_CODING_AGENT_DIR || env.OMP_CODING_AGENT_DIR || ''
+  );
   if (configured) return configured;
   return getDefaultOmpAgentDir(env);
 }

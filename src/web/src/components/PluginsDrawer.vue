@@ -17,6 +17,7 @@
         :in-drawer="true"
         :drawer-visible="visible"
         :platform="props.platform"
+        :project-path="props.projectPath"
       />
     </n-drawer-content>
   </n-drawer>
@@ -30,7 +31,8 @@ import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({
   visible: Boolean,
-  platform: { type: String, default: '' }
+  platform: { type: String, default: '' },
+  projectPath: { type: String, default: '' }
 })
 
 const emit = defineEmits(['update:visible'])

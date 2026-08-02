@@ -1544,22 +1544,12 @@ const channelPanelFactories = {
             validate: (value) => validateHttpUrl('Base URL', value, { required: true })
           },
           {
-            key: 'authMode',
-            label: '认证方式',
-            type: 'radio-group',
-            options: [
-              { label: 'API Key', value: 'api_key' },
-              { label: 'OMP OAuth', value: 'oauth' },
-              { label: '无需认证', value: 'none' }
-            ]
-          },
-          {
             key: 'apiKey',
             label: 'API Key',
             type: 'password',
+            required: true,
             placeholder: 'sk-...',
-            showWhen: (form) => form.authMode !== 'none',
-            validate: (value, form) => form.authMode === 'api_key' ? validateRequired('API Key', value) : ''
+            validate: (value) => validateRequired('API Key', value)
           },
           {
             key: 'routingGroup',
@@ -1642,8 +1632,6 @@ const channelPanelFactories = {
       wireApi: 'openai',
       providerApi: 'openai-completions',
       apiKey: '',
-      authMode: 'api_key',
-      oauthProviderId: '',
       routingGroup: '',
       balanceToken: '',
       balanceUserId: null,
@@ -1675,8 +1663,6 @@ const channelPanelFactories = {
       wireApi: channel.wireApi || 'openai',
       providerApi: channel.providerApi || channel.api || 'openai-completions',
       apiKey: channel.apiKey || '',
-      authMode: ['api_key', 'oauth', 'none'].includes(channel.authMode) ? channel.authMode : 'api_key',
-      oauthProviderId: channel.oauthProviderId || '',
       routingGroup: channel.routingGroup || '',
       balanceToken: channel.balanceToken || '',
       balanceUserId: channel.balanceUserId ?? null,
@@ -1732,8 +1718,8 @@ const channelPanelFactories = {
             baseUrl: form.baseUrl,
             apiKey: form.apiKey || '',
             gatewaySourceType: form.gatewaySourceType || 'openai_compatible',
-            authMode: form.authMode || 'api_key',
-            oauthProviderId: form.oauthProviderId || '',
+            authMode: 'api_key',
+            oauthProviderId: '',
             model: form.model || null,
             speedTestModel: form.speedTestModel || null,
             allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
@@ -1817,8 +1803,8 @@ const channelPanelFactories = {
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
           providerKey: form.providerKey,
-          authMode: authPayload.authMode,
-          oauthProviderId: authPayload.oauthProviderId,
+          authMode: 'api_key',
+          oauthProviderId: '',
           routingGroup: form.routingGroup || '',
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
@@ -1846,8 +1832,8 @@ const channelPanelFactories = {
           apiKey: authPayload.apiKey,
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
-          authMode: authPayload.authMode,
-          oauthProviderId: authPayload.oauthProviderId,
+          authMode: 'api_key',
+          oauthProviderId: '',
           routingGroup: form.routingGroup || '',
           websiteUrl: form.websiteUrl,
           model: form.model || null,

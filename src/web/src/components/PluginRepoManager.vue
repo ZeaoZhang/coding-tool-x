@@ -2,7 +2,7 @@
   <n-modal
     v-model:show="visible"
     preset="card"
-    title="插件仓库管理"
+    :title="isNativeMarketplace ? 'OMP Marketplace 管理' : '插件仓库管理'"
     :bordered="false"
     :closable="true"
     style="width: 480px; max-width: 90vw;"
@@ -11,7 +11,7 @@
     <template #header-extra>
       <n-button type="primary" size="small" :loading="syncing" :focusable="false" @click="handleSync">
         <template #icon><n-icon><SyncOutline /></n-icon></template>
-        同步
+        {{ isNativeMarketplace ? '刷新' : '同步' }}
       </n-button>
     </template>
     <div class="repo-manager">
@@ -25,6 +25,7 @@
           >
             <div class="repo-main">
               <n-switch
+                v-if="capabilities.repositoryToggle !== false"
                 :value="repo.enabled"
                 size="small"
                 @update:value="(val) => handleToggle(repo, val)"
@@ -33,7 +34,7 @@
                 <div class="repo-name-row">
                   <div class="repo-name">{{ getRepoLabel(repo) }}</div>
                   <n-tag
-                    v-if="supportsRepoAuth(repo)"
+                    v-if="capabilities.repositoryAuth !== false && supportsRepoAuth(repo)"
                     size="tiny"
                     :type="repo.hasToken ? 'success' : 'default'"
                     :bordered="false"
@@ -42,14 +43,14 @@
                   </n-tag>
                 </div>
                 <div class="repo-branch">{{ getRepoSubtitle(repo) }}</div>
-                <div v-if="supportsRepoAuth(repo)" class="repo-auth-hint">
+                <div v-if="capabilities.repositoryAuth !== false && supportsRepoAuth(repo)" class="repo-auth-hint">
                   {{ getRepoAuthSummary(repo) }}
                 </div>
               </div>
             </div>
             <div class="repo-actions">
               <n-button
-                v-if="supportsRepoAuth(repo)"
+                v-if="capabilities.repositoryAuth !== false && supportsRepoAuth(repo)"
                 text
                 type="primary"
                 size="tiny"
@@ -78,16 +79,17 @@
 
       <!-- 添加仓库 -->
       <div class="add-repo">
-        <div class="add-title">添加仓库</div>
+        <div class="add-title">{{ isNativeMarketplace ? '添加 Marketplace source' : '添加仓库' }}</div>
         <div class="add-form">
           <n-input
             v-model:value="newRepo.input"
-            placeholder="GitHub/GitLab 仓库地址，或本地路径"
+            :placeholder="isNativeMarketplace ? 'Marketplace source（owner/repo、URL 或本地路径）' : 'GitHub/GitLab 仓库地址，或本地路径'"
             size="small"
             class="repo-input"
             @keyup.enter="handleAdd"
           />
           <n-input
+            v-if="!isNativeMarketplace"
             v-model:value="newRepo.branch"
             placeholder="分支"
             size="small"
@@ -105,14 +107,18 @@
           </n-button>
         </div>
         <div class="add-hint">
-          支持 `owner/repo`、GitHub/GitLab URL 或 SSH、以及本地路径
+          {{ isNativeMarketplace
+            ? 'source 将原样传递给 omp plugin marketplace add'
+            : '支持 `owner/repo`、GitHub/GitLab URL 或 SSH、以及本地路径' }}
         </div>
       </div>
 
       <!-- 提示信息 -->
       <div class="tips">
         <n-alert type="info" :bordered="false" size="small">
-          支持 GitHub、GitLab 和本地仓库路径；远程仓库可按仓库单独配置 Token。
+          {{ isNativeMarketplace
+            ? 'OMP Marketplace 由原生 CLI 管理；不支持单独启停、branch 或仓库 Token。'
+            : '支持 GitHub、GitLab 和本地仓库路径；远程仓库可按仓库单独配置 Token。' }}
         </n-alert>
       </div>
 
@@ -225,7 +231,9 @@ const props = defineProps({
   platform: {
     type: String,
     default: 'claude'
-  }
+  },
+  projectPath: { type: String, default: '' },
+  capabilities: { type: Object, default: () => ({}) }
 })
 
 const emit = defineEmits(['update:visible', 'updated'])
@@ -251,6 +259,11 @@ const newRepo = ref({
   branch: 'main'
 })
 
+const isNativeMarketplace = computed(() => props.capabilities.repositoryMode === 'native-marketplace')
+const requestOptions = computed(() => ({
+  ...(props.projectPath ? { cwd: props.projectPath } : {})
+}))
+
 const authModalTitle = computed(() => {
   if (!selectedAuthRepo.value) return '仓库认证'
   return `${selectedAuthRepo.value.provider === 'gitlab' ? 'GitLab' : 'GitHub'} 仓库认证`
@@ -269,12 +282,16 @@ const recommendedRepos = computed(() => {
   if (props.platform === 'codex') {
     return []
   }
+  if (props.platform === 'omp') {
+    return []
+  }
   return [
     { owner: 'anthropics', name: 'claude-plugins-official', url: 'https://github.com/anthropics/claude-plugins-official', description: '官方插件库', branch: 'main' }
   ]
 })
 
 const canAdd = computed(() => {
+  if (isNativeMarketplace.value) return Boolean(newRepo.value.input.trim())
   return !!parseRepoInput(newRepo.value.input.trim())
 })
 
@@ -292,12 +309,16 @@ function buildRepoIdentity(repo) {
 }
 
 function getRepoLabel(repo) {
+  if (repo.provider === 'omp-marketplace') return repo.label || repo.name || repo.id
   if (repo.provider === 'local') return repo.localPath || repo.name || '本地仓库'
   if (repo.provider === 'gitlab') return repo.projectPath || [repo.owner, repo.name].filter(Boolean).join('/')
   return [repo.owner, repo.name].filter(Boolean).join('/')
 }
 
 function getRepoSubtitle(repo) {
+  if (repo.provider === 'omp-marketplace') {
+    return repo.sourceUri || repo.source || ''
+  }
   const parts = []
   if (repo.provider === 'local') {
     parts.push('本地仓库')
@@ -352,7 +373,7 @@ function openAuthModal(repo) {
 async function loadRepos() {
   loadingRepos.value = true
   try {
-    const result = await getPluginRepos(props.platform)
+    const result = await getPluginRepos(props.platform, requestOptions.value)
     if (result.success) {
       repos.value = result.repos || []
     }
@@ -366,8 +387,11 @@ async function loadRepos() {
 async function handleSync() {
   syncing.value = true
   try {
-    const result = await syncPluginRepos(props.platform)
+    const result = await syncPluginRepos(props.platform, requestOptions.value)
     if (result.success) {
+      if (Array.isArray(result.repos)) {
+        repos.value = result.repos
+      }
       message.success('仓库同步成功')
       emit('updated')
     }
@@ -381,7 +405,9 @@ async function handleSync() {
 async function handleAdd() {
   if (!canAdd.value) return
 
-  const parsedRepo = parseRepoInput(newRepo.value.input.trim())
+  const parsedRepo = isNativeMarketplace.value
+    ? { source: newRepo.value.input.trim() }
+    : parseRepoInput(newRepo.value.input.trim())
 
   adding.value = true
   try {
@@ -389,7 +415,7 @@ async function handleAdd() {
       ...parsedRepo,
       branch: newRepo.value.branch || 'main',
       enabled: true
-    }, props.platform)
+    }, props.platform, requestOptions.value)
 
     if (result.success) {
       repos.value = result.repos
@@ -407,7 +433,7 @@ async function handleAdd() {
 
 async function handleRemove(repo) {
   try {
-    const result = await removePluginRepo(repo, props.platform)
+    const result = await removePluginRepo(repo, props.platform, requestOptions.value)
     if (result.success) {
       repos.value = result.repos
       message.success('仓库已删除')

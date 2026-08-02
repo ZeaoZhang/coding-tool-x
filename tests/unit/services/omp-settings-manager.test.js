@@ -39,13 +39,23 @@ afterEach(() => {
 });
 
 describe('omp-settings-manager OMP models.yml sync', () => {
-  test('writes managed ctx providers while preserving user providers', () => {
+  test('replaces stale gateway providers with one direct provider while preserving user providers', () => {
     fs.writeFileSync(paths.modelsYml, yaml.dump({
       providers: {
         openai: {
           baseUrl: 'https://api.openai.com/v1',
           apiKey: 'OPENAI_API_KEY',
           api: 'openai-responses'
+        },
+        'ctx-stale-a': {
+          baseUrl: 'http://127.0.0.1:20092/omp/stale-a',
+          api: 'openai-responses',
+          models: [{ id: 'stale-model-a' }]
+        },
+        'ctx-stale-b': {
+          baseUrl: 'http://127.0.0.1:20092/omp/stale-b',
+          api: 'openai-responses',
+          models: [{ id: 'stale-model-b' }]
         }
       }
     }), 'utf8');
@@ -71,7 +81,11 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       apiKey: 'secret',
       api: 'openai-completions'
     }));
+    expect(Object.keys(config.providers).filter(providerId => providerId.startsWith('ctx-')))
+      .toEqual(['ctx-demo']);
     expect(config.providers['ctx-demo'].models.map(model => model.id)).toEqual(['gpt-demo', 'gpt-demo-mini']);
+    const settings = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
+    expect(settings.enabledModels).toEqual(['ctx-demo/gpt-demo', 'ctx-demo/gpt-demo-mini']);
   });
 
   test('preserves private models.yml permissions across atomic rewrites', () => {
@@ -345,6 +359,24 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       timeout: 5000,
       windowsHide: true
     }));
+  });
+
+  test('resolves thinking-suffixed model selections against catalog base ids', () => {
+    const catalogRunner = vi.fn(() => ({
+      status: 0,
+      stdout: JSON.stringify({
+        models: [{ provider: 'ctx-openai_shuai', id: 'gpt-5.6-terra', contextWindow: 1050000, maxTokens: 128000 }]
+      }),
+      stderr: ''
+    }));
+    const manager = require('../../../src/server/services/omp-settings-manager');
+
+    expect(manager.getOmpCatalogModels('openai_shuai', {
+      requestedModelIds: ['gpt-5.6-terra:high'],
+      catalogRunner
+    })).toEqual([
+      expect.objectContaining({ id: 'gpt-5.6-terra', contextWindow: 1050000, maxTokens: 128000 })
+    ]);
   });
 
   test('syncs OMP config.yml visibility to only managed ctx model selectors', () => {

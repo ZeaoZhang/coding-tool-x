@@ -191,4 +191,23 @@ describe('model-definition-schema', () => {
       maxTokens: 128000
     }]);
   });
+
+  test('accepts OMP catalog provenance without compatibility warnings', () => {
+    const result = normalizeCatalogModelList([{
+      provider: 'ctx-openai_shuai',
+      id: 'gpt-5.6-terra',
+      selector: 'ctx-openai_shuai/gpt-5.6-terra',
+      reasoning: true,
+      contextWindow: 1050000,
+      maxTokens: 128000
+    }]);
+
+    expect(result.models).toEqual([{
+      id: 'gpt-5.6-terra',
+      reasoning: true,
+      contextWindow: 1050000,
+      maxTokens: 128000
+    }]);
+    expect(result.warnings).toEqual([]);
+  });
 });

@@ -28,18 +28,18 @@ const CHANNEL_CONFIG = {
     name: 'OMP',
     icon: '[*]',
     aompPath: '/api/omp/proxy',
-    serviceLabel: 'OMP 受管模型配置',
-    proxyLabel: '受管模型配置',
-    startAction: '启用',
-    stopAction: '停用',
-    restartAction: '重新同步',
-    startedMessage: 'OMP 受管模型配置已启用',
-    stoppedMessage: 'OMP 受管模型配置已停用',
-    runningText: '已启用',
-    stoppedText: '未启用',
-    portLabel: '状态端口',
-    addressLabel: '状态地址',
-    startTip: '启用受管模型配置'
+    serviceLabel: 'OMP 动态切换',
+    proxyLabel: '动态切换',
+    startAction: '启动',
+    stopAction: '停止',
+    restartAction: '重启',
+    startedMessage: 'OMP 动态切换已启用',
+    stoppedMessage: 'OMP 已切换为单渠道直连模式',
+    runningText: '运行中',
+    stoppedText: '单渠道直连',
+    portLabel: '网关端口',
+    addressLabel: '网关地址',
+    startTip: '启动动态切换'
   }
 };
 

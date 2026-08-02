@@ -26,7 +26,7 @@ function isGitHubSkill(skill = {}) {
 }
 
 export function canInstallSkill(skill = {}) {
-  if (skill?.protected) return false;
+  if (skill?.protected || skill?.readonly) return false;
   return Boolean(
     skill?.installSource
     || skill?.isLocal
@@ -38,6 +38,21 @@ export function canInstallSkill(skill = {}) {
 
 export function getSkillSourceTag(skill = {}) {
   if (skill?.protected || skill?.source === 'system-installed') return '系统';
+  if (skill?.sourceProvider) {
+    const providerLabels = {
+      native: 'OMP 原生',
+      'omp-plugins': 'OMP 插件',
+      claude: 'Claude',
+      'claude-plugins': 'Claude 插件',
+      agents: 'Agents',
+      codex: 'Codex',
+      opencode: 'OpenCode',
+      custom: '自定义',
+      'cc-tool': '本地技能'
+    };
+    const label = providerLabels[skill.sourceProvider] || skill.sourceProvider;
+    return `${label} · ${skill.sourceScope === 'project' ? '项目' : '全局'}`;
+  }
   if (skill?.source === 'native-installed') return '原生';
   if (isLocalRepoSkill(skill)) return '本地仓库';
   if (isManagedLocalSkill(skill)) return '本地技能';

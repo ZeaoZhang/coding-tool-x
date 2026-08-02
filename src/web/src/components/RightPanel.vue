@@ -184,7 +184,7 @@ const skillsChannel = managedConfigChannel
 const commandsChannel = managedConfigChannel
 const pluginChannel = computed(() => pluginChannels.includes(currentChannel.value))
 const agentsChannel = computed(() => agentChannels.includes(currentChannel.value))
-const proxyToggleLabel = computed(() => currentChannel.value === 'omp' ? '受管配置' : '动态切换')
+const proxyToggleLabel = computed(() => '动态切换')
 
 // 当前渠道是否处于 OAuth 控制模式
 const isOAuthControlled = computed(() => {

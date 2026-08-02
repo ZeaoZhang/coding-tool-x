@@ -220,7 +220,9 @@ function normalizeModels(channel = {}, options = {}) {
 }
 
 function readOmpCatalogModels(command, providerId, options = {}) {
-  const requestedModelIds = uniqueStrings(options.requestedModelIds);
+  const requestedModelIds = uniqueStrings(options.requestedModelIds)
+    .map(modelId => splitModelSelector(modelId).modelId)
+    .filter(Boolean);
   const requested = new Set(requestedModelIds.map(modelId => modelId.toLowerCase()));
   const useFullCatalog = requested.size > 0;
   const cacheKey = `${command}\u0000${useFullCatalog ? `requested:${providerId}:${[...requested].sort().join(',')}` : providerId}`;

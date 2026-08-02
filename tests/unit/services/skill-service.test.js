@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 
 let testDir;
+let ompRuntimeDir;
 
 function stubPaths() {
   const p = require.resolve('../../../src/config/paths');
@@ -17,7 +18,8 @@ function stubPaths() {
         claude: {
           dir: path.join(testDir, 'native-claude'),
           settings: path.join(testDir, 'native-claude', 'settings.json'),
-          skills: path.join(testDir, 'claude-skills')
+          skills: path.join(testDir, 'claude-skills'),
+          plugins: path.join(testDir, 'native-claude', 'plugins')
         },
         codex:     { dir: path.join(testDir, 'native-codex'),    skills: path.join(testDir, 'codex-skills') },
         gemini:    { dir: path.join(testDir, 'native-gemini'),   skills: path.join(testDir, 'gemini-skills') },
@@ -66,7 +68,7 @@ function stubFormatConverter() {
         const descriptionMatch = String(c || '').match(/^description:\s*(.+)$/m);
         return {
           name: nameMatch ? nameMatch[1].replace(/^["']|["']$/g, '') : 'test',
-          description: descriptionMatch ? descriptionMatch[1].replace(/^["']|["']$/g, '') : 'desc',
+          description: descriptionMatch ? descriptionMatch[1].replace(/^["']|["']$/g, '') : null,
           body: c,
           format: options.platform === 'codex' ? 'codex' : 'claude'
         };
@@ -75,10 +77,32 @@ function stubFormatConverter() {
   };
 }
 
+function stubOmpConfig() {
+  ompRuntimeDir = path.join(testDir, 'runtime-omp');
+  const modulePath = require.resolve('../../../src/server/services/omp-config');
+  require.cache[modulePath] = {
+    id: modulePath,
+    filename: modulePath,
+    loaded: true,
+    exports: {
+      getOmpCommand: vi.fn(() => 'missing-omp-test-command'),
+      getOmpPaths: vi.fn(() => ({
+        agentDir: ompRuntimeDir,
+        settings: path.join(ompRuntimeDir, 'config.yml'),
+        settingsJsonLegacy: path.join(ompRuntimeDir, 'settings.json'),
+        skills: path.join(ompRuntimeDir, 'skills')
+      })),
+      readOmpSettings: vi.fn(() => ({ skills: { enabled: true } }))
+    }
+  };
+}
+
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-svc-'));
   stubPaths();
   stubFormatConverter();
+  stubOmpConfig();
+  delete require.cache[require.resolve('../../../src/server/services/omp-skill-discovery')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
 });
 
@@ -86,6 +110,8 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
   delete require.cache[require.resolve('../../../src/config/paths')];
+  delete require.cache[require.resolve('../../../src/server/services/omp-config')];
+  delete require.cache[require.resolve('../../../src/server/services/omp-skill-discovery')];
   try {
     delete require.cache[require.resolve('../../../src/server/services/format-converter')];
   } catch (_) {}
@@ -160,6 +186,8 @@ describe('SkillService constructor', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('omp');
     expect(svc.platform).toBe('omp');
+    expect(svc.installDir).toBe(path.join(ompRuntimeDir, 'skills'));
+    expect(svc.installDir).not.toBe(path.join(testDir, 'native-omp', 'skills'));
   });
 
   it('sets platform to opencode when passed opencode', () => {
@@ -168,16 +196,20 @@ describe('SkillService constructor', () => {
     expect(svc.platform).toBe('opencode');
   });
 
-  it('falls back to claude for an invalid platform string', () => {
+  it('rejects an invalid platform string instead of falling back to Claude', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
-    const svc = new SkillService('invalid-platform');
-    expect(svc.platform).toBe('claude');
+    expect(() => new SkillService('invalid-platform')).toThrow(/Invalid platform/);
   });
 
   it('falls back to claude for empty string platform', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('');
     expect(svc.platform).toBe('claude');
+  });
+
+  it('maps the deprecated pi platform to omp', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    expect(new SkillService(' PI ').platform).toBe('omp');
   });
 });
 
@@ -298,6 +330,40 @@ describe('SkillService repo auth', () => {
 });
 
 describe('SkillService.getInstalledSkills', () => {
+  it('OMP discovery deduplicates different names that resolve to the same SKILL.md realpath', () => {
+    const { deduplicateDiscoveredSkills } = require('../../../src/server/services/omp-skill-discovery');
+    const skills = deduplicateDiscoveredSkills([
+      {
+        name: 'primary-name',
+        realPath: '/same/SKILL.md',
+        sourceProvider: 'native',
+        sourceScope: 'user',
+        sourcePath: '/native/SKILL.md',
+        shadowedSources: []
+      },
+      {
+        name: 'alias-name',
+        realPath: '/same/SKILL.md',
+        sourceProvider: 'custom',
+        sourceScope: 'user',
+        sourcePath: '/custom/SKILL.md',
+        shadowedSources: []
+      }
+    ]);
+
+    expect(skills).toEqual([
+      expect.objectContaining({
+        name: 'primary-name',
+        shadowedSources: [
+          expect.objectContaining({
+            sourceProvider: 'custom',
+            sourcePath: '/custom/SKILL.md'
+          })
+        ]
+      })
+    ]);
+  });
+
   it('returns an array (empty when install dir has no skill files)', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
@@ -323,6 +389,216 @@ describe('SkillService.getInstalledSkills', () => {
       directory: 'native-only',
       installed: true,
       source: 'native-installed'
+    }));
+  });
+
+  it('OMP discovers one-level native skills, requires description, and ignores nested skills', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    const skillsRoot = path.join(ompRuntimeDir, 'skills');
+    fs.mkdirSync(path.join(skillsRoot, 'valid'), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillsRoot, 'valid', 'SKILL.md'),
+      '---\nname: valid\ndescription: Native skill\n---\nBody'
+    );
+    fs.mkdirSync(path.join(skillsRoot, 'missing-description'), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillsRoot, 'missing-description', 'SKILL.md'),
+      '---\nname: missing-description\n---\nBody'
+    );
+    fs.mkdirSync(path.join(skillsRoot, 'group', 'nested'), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillsRoot, 'group', 'nested', 'SKILL.md'),
+      '---\nname: nested\ndescription: Nested skill\n---\nBody'
+    );
+
+    const skills = await svc.listSkills(true);
+
+    expect(skills.map(skill => skill.name)).toEqual(['valid']);
+    expect(skills[0]).toEqual(expect.objectContaining({
+      sourceProvider: 'native',
+      sourceScope: 'user',
+      sourcePath: path.join(skillsRoot, 'valid', 'SKILL.md'),
+      installed: true,
+      readonly: false,
+      shadowedSources: []
+    }));
+  });
+
+  it('OMP keeps the highest-priority provider by name and reports shadowed sources', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    const nativeRoot = path.join(ompRuntimeDir, 'skills', 'shared');
+    const claudeRoot = path.join(testDir, 'claude-skills', 'shared');
+    fs.mkdirSync(nativeRoot, { recursive: true });
+    fs.mkdirSync(claudeRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(nativeRoot, 'SKILL.md'),
+      '---\nname: shared\ndescription: Native wins\n---\nBody'
+    );
+    fs.writeFileSync(
+      path.join(claudeRoot, 'SKILL.md'),
+      '---\nname: shared\n---\nExternal body'
+    );
+
+    const skills = await svc.listSkills(true);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0].sourceProvider).toBe('native');
+    expect(skills[0].shadowedSources).toEqual([
+      expect.objectContaining({ sourceProvider: 'claude', sourceScope: 'user' })
+    ]);
+  });
+
+  it('OMP resolves its native path again for every scan instead of retaining a profile path', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    const nextRuntimeDir = path.join(testDir, 'runtime-omp-next-profile');
+    const nextSkillDir = path.join(nextRuntimeDir, 'skills', 'dynamic');
+    fs.mkdirSync(nextSkillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nextSkillDir, 'SKILL.md'),
+      '---\nname: dynamic\ndescription: Dynamic profile skill\n---\nBody'
+    );
+
+    ompRuntimeDir = nextRuntimeDir;
+    const skills = await svc.listSkills(true);
+
+    expect(svc.installDir).toBe(path.join(nextRuntimeDir, 'skills'));
+    expect(skills).toContainEqual(expect.objectContaining({
+      name: 'dynamic',
+      sourcePath: path.join(nextSkillDir, 'SKILL.md')
+    }));
+  });
+
+  it('OMP honors provider toggles plus include and ignore skill settings', async () => {
+    const ompConfig = require('../../../src/server/services/omp-config');
+    const claudeRoot = path.join(testDir, 'claude-skills');
+    for (const name of ['included', 'ignored', 'not-included']) {
+      const skillDir = path.join(claudeRoot, name);
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillDir, 'SKILL.md'),
+        `---\nname: ${name}\n---\nBody`
+      );
+    }
+    ompConfig.readOmpSettings.mockReturnValue({
+      skills: {
+        enabled: true,
+        enableClaudeUser: true,
+        includeSkills: ['included', 'ignored'],
+        ignoredSkills: ['ignored']
+      }
+    });
+
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    expect((await svc.listSkills(true)).map(skill => skill.name)).toEqual(['included']);
+
+    ompConfig.readOmpSettings.mockReturnValue({
+      skills: { enabled: true, enableClaudeUser: false }
+    });
+    expect(await svc.listSkills(true)).toEqual([]);
+  });
+
+  it('OMP external provider skills are installed and readonly without description', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    const claudeSkill = path.join(testDir, 'claude-skills', 'external');
+    fs.mkdirSync(claudeSkill, { recursive: true });
+    fs.writeFileSync(path.join(claudeSkill, 'SKILL.md'), '---\nname: external\n---\nBody');
+
+    const skills = await svc.listSkills(true);
+
+    expect(skills).toContainEqual(expect.objectContaining({
+      name: 'external',
+      sourceProvider: 'claude',
+      installed: true,
+      readonly: true
+    }));
+  });
+
+  it('OMP discovers skills bundled by installed Claude plugins', async () => {
+    const pluginRoot = path.join(testDir, 'claude-plugin-cache', 'demo-plugin');
+    const skillRoot = path.join(pluginRoot, 'skills', 'plugin-skill');
+    const installedFile = path.join(testDir, 'native-claude', 'plugins', 'installed_plugins.json');
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.mkdirSync(path.dirname(installedFile), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillRoot, 'SKILL.md'),
+      '---\nname: plugin-skill\n---\nPlugin skill without a description',
+      'utf8'
+    );
+    fs.writeFileSync(installedFile, JSON.stringify({
+      plugins: {
+        'demo-plugin@community': [{
+          installPath: pluginRoot,
+          scope: 'user'
+        }]
+      }
+    }), 'utf8');
+
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const skills = await new SkillService('omp').listSkills(true);
+
+    expect(skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'plugin-skill',
+        sourceProvider: 'claude-plugins',
+        sourceScope: 'user',
+        installed: true,
+        readonly: true
+      })
+    ]));
+  });
+
+  it('OMP global discovery excludes project-scoped provider skills until cwd is supplied', async () => {
+    const pluginRoot = path.join(testDir, 'claude-plugin-cache', 'project-plugin');
+    const skillRoot = path.join(pluginRoot, 'skills', 'project-provider-skill');
+    const installedFile = path.join(testDir, 'native-claude', 'plugins', 'installed_plugins.json');
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.mkdirSync(path.dirname(installedFile), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillRoot, 'SKILL.md'),
+      '---\nname: project-provider-skill\n---\nProject plugin skill',
+      'utf8'
+    );
+    fs.writeFileSync(installedFile, JSON.stringify({
+      plugins: {
+        'project-plugin@community': [{
+          installPath: pluginRoot,
+          scope: 'project'
+        }]
+      }
+    }), 'utf8');
+
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+
+    expect((await svc.listSkills(true)).map(skill => skill.name))
+      .not.toContain('project-provider-skill');
+    expect((await svc.listSkills(true, { cwd: testDir })).map(skill => skill.name))
+      .toContain('project-provider-skill');
+  });
+
+  it('OMP includes one-level project-native skills only when cwd is supplied', async () => {
+    const projectSkill = path.join(testDir, '.omp', 'skills', 'project-native');
+    fs.mkdirSync(projectSkill, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectSkill, 'SKILL.md'),
+      '---\nname: project-native\ndescription: Project native skill\n---\nBody',
+      'utf8'
+    );
+
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+
+    expect((await svc.listSkills(true)).map(skill => skill.name)).not.toContain('project-native');
+    expect(await svc.listSkills(true, { cwd: testDir })).toContainEqual(expect.objectContaining({
+      name: 'project-native',
+      sourceProvider: 'native',
+      sourceScope: 'project',
+      readonly: false
     }));
   });
 

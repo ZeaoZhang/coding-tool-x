@@ -5,6 +5,9 @@
  */
 
 const express = require('express');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 let mockService;
 let services;
@@ -162,6 +165,58 @@ describe('GET /', () => {
     expect(res.body.installed).toBe(1);
     expect(services.omp.listSkills).toHaveBeenCalled();
     expect(services.claude.listSkills).not.toHaveBeenCalled();
+  });
+
+  test('normalizes platform case and whitespace', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/?platform=%20OMP%20');
+
+    expect(res.status).toBe(200);
+    expect(res.body.platform).toBe('omp');
+    expect(services.omp.listSkills).toHaveBeenCalled();
+    expect(services.claude.listSkills).not.toHaveBeenCalled();
+  });
+
+  test('maps deprecated pi to omp and returns a warning', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/?platform=pi');
+
+    expect(res.status).toBe(200);
+    expect(res.body.platform).toBe('omp');
+    expect(res.body.warnings).toEqual([expect.stringMatching(/deprecated/i)]);
+    expect(services.omp.listSkills).toHaveBeenCalled();
+  });
+
+  test.each(['omx', 'unknown'])('rejects unsupported platform %s', async platform => {
+    const app = buildApp();
+    const res = await request(app).get(`/?platform=${platform}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(services.claude.listSkills).not.toHaveBeenCalled();
+  });
+
+  test('passes a validated project cwd to OMP skill discovery', async () => {
+    const app = buildApp();
+    const cwd = fs.realpathSync(process.cwd());
+    const res = await request(app).get(`/?platform=omp&cwd=${encodeURIComponent(cwd)}`);
+
+    expect(res.status).toBe(200);
+    expect(services.omp.listSkills).toHaveBeenCalledWith(false, { cwd });
+  });
+
+  test('rejects an existing cwd that is not a known project or workspace', async () => {
+    const unknownDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unknown-skill-cwd-'));
+    try {
+      const app = buildApp();
+      const res = await request(app).get(`/?platform=omp&cwd=${encodeURIComponent(unknownDir)}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/known project or workspace/i);
+      expect(services.omp.listSkills).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(unknownDir, { recursive: true, force: true });
+    }
   });
 });
 

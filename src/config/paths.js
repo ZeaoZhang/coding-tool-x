@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execFileSync } = require('child_process');
 const { resolvePreferredHomeDir, isWindowsLikePlatform } = require('../utils/home-dir');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
@@ -804,25 +805,47 @@ function normalizeOmpProfileName(profile = '') {
   return value && value !== 'default' ? value : '';
 }
 
-function getOmpProfileName() {
-  return normalizeOmpProfileName(process.env.OMP_PROFILE);
-}
+function getOmpAgentDir(env = process.env, options = {}) {
+  if (options.resolveRuntime !== false) {
+    const command = String(env.OMP_COMMAND || 'omp').trim() || 'omp';
+    const commandRunner = options.commandRunner || execFileSync;
+    try {
+      const output = commandRunner(command, ['config', 'path'], {
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: options.timeout || 3000,
+        windowsHide: true
+      });
+      const configuredByCli = String(output || '').trim().split(/\r?\n/).find(Boolean);
+      if (configuredByCli) {
+        return path.resolve(expandHomePath(configuredByCli));
+      }
+    } catch {
+      // Fall through to environment/profile compatibility paths.
+    }
+  }
 
-function getOmpConfigRoot() {
-  return expandHomePath(resolveExistingEnvPath(process.env.OMP_CONFIG_DIR) || path.join(HOME_DIR, '.omp'));
-}
-
-function getOmpAgentDir() {
-  const configuredDir = resolveExistingEnvPath(process.env.OMP_CODING_AGENT_DIR);
+  // OMP 17.x kept the historical PI_CODING_AGENT_DIR variable as the
+  // canonical relocation knob. OMP_CODING_AGENT_DIR was used by older
+  // cc-tool releases, so retain it as a lower-priority compatibility alias.
+  const configuredDir = resolveExistingEnvPath(
+    env.PI_CODING_AGENT_DIR || env.OMP_CODING_AGENT_DIR
+  );
   if (configuredDir) {
     return path.resolve(expandHomePath(configuredDir));
   }
-  const profile = getOmpProfileName();
+  const profile = normalizeOmpProfileName(env.OMP_PROFILE);
+  const configRoot = expandHomePath(
+    resolveExistingEnvPath(env.OMP_CONFIG_DIR) || path.join(HOME_DIR, '.omp')
+  );
   const agentDir = profile
-    ? path.join(getOmpConfigRoot(), 'profiles', profile, 'agent')
-    : path.join(getOmpConfigRoot(), 'agent');
+    ? path.join(configRoot, 'profiles', profile, 'agent')
+    : path.join(configRoot, 'agent');
   return path.resolve(agentDir);
 }
+
+const OMP_AGENT_DIR = getOmpAgentDir();
 
 // 工具特定的原生配置路径（不改变）
 const NATIVE_PATHS = {
@@ -877,23 +900,23 @@ const NATIVE_PATHS = {
 
   // OMP 原生配置。
   omp: {
-    dir: getOmpAgentDir(),
-    config: path.join(getOmpAgentDir(), 'config.yml'),
-    settings: path.join(getOmpAgentDir(), 'config.yml'),
-    settingsJsonLegacy: path.join(getOmpAgentDir(), 'settings.json'),
-    auth: path.join(getOmpAgentDir(), 'auth.json'),
-    models: path.join(getOmpAgentDir(), 'models.yml'),
-    modelsYml: path.join(getOmpAgentDir(), 'models.yml'),
-    modelsJsonLegacy: path.join(getOmpAgentDir(), 'models.json'),
-    mcp: path.join(getOmpAgentDir(), 'mcp.json'),
-    sessions: path.join(getOmpAgentDir(), 'sessions'),
-    skills: path.join(getOmpAgentDir(), 'skills'),
-    prompts: path.join(getOmpAgentDir(), 'prompts'),
-    commands: path.join(getOmpAgentDir(), 'commands'),
-    notes: path.join(getOmpAgentDir(), 'notes'),
-    extensions: path.join(getOmpAgentDir(), 'extensions'),
-    themes: path.join(getOmpAgentDir(), 'themes'),
-    packages: path.join(getOmpAgentDir(), 'packages')
+    dir: OMP_AGENT_DIR,
+    config: path.join(OMP_AGENT_DIR, 'config.yml'),
+    settings: path.join(OMP_AGENT_DIR, 'config.yml'),
+    settingsJsonLegacy: path.join(OMP_AGENT_DIR, 'settings.json'),
+    auth: path.join(OMP_AGENT_DIR, 'auth.json'),
+    models: path.join(OMP_AGENT_DIR, 'models.yml'),
+    modelsYml: path.join(OMP_AGENT_DIR, 'models.yml'),
+    modelsJsonLegacy: path.join(OMP_AGENT_DIR, 'models.json'),
+    mcp: path.join(OMP_AGENT_DIR, 'mcp.json'),
+    sessions: path.join(OMP_AGENT_DIR, 'sessions'),
+    skills: path.join(OMP_AGENT_DIR, 'skills'),
+    prompts: path.join(OMP_AGENT_DIR, 'prompts'),
+    commands: path.join(OMP_AGENT_DIR, 'commands'),
+    notes: path.join(OMP_AGENT_DIR, 'notes'),
+    extensions: path.join(OMP_AGENT_DIR, 'extensions'),
+    themes: path.join(OMP_AGENT_DIR, 'themes'),
+    packages: path.join(OMP_AGENT_DIR, 'packages')
   }
 };
 

@@ -9,7 +9,11 @@
           </div>
           <div class="asset-tags">
             <n-tag v-if="plugin.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
-            <n-tag v-if="readonly" type="default" size="tiny" :bordered="false">缓存</n-tag>
+            <n-tag v-if="readonly" type="default" size="tiny" :bordered="false">只读</n-tag>
+            <n-tag v-if="plugin.scope" type="info" size="tiny" :bordered="false">
+              {{ plugin.scope === 'project' ? '项目' : '全局' }}
+            </n-tag>
+            <n-tag v-if="plugin.pluginKind === 'extension'" type="default" size="tiny" :bordered="false">扩展</n-tag>
             <n-tag v-if="plugin.pluginKind === 'skill-bundle'" type="warning" size="tiny" :bordered="false">技能包插件</n-tag>
             <n-tag v-if="plugin.repoProvider === 'gitlab'" type="info" size="tiny" :bordered="false">GitLab</n-tag>
             <n-tag v-else-if="plugin.repoProvider === 'local'" type="info" size="tiny" :bordered="false">本地</n-tag>

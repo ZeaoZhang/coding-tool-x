@@ -6,13 +6,14 @@ const express = require('express');
 const { SkillService } = require('../services/skill-service');
 const { maskToken } = require('../services/oauth-utils');
 const { sendApiError } = require('./validation-errors');
+const { resolveManagedPlatform } = require('../services/platform-resolution');
+const { validateKnownProjectCwd } = require('../services/project-path-validation');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const skillServices = new Map();
 
 function resolvePlatform(rawPlatform) {
-  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+  return resolveManagedPlatform(rawPlatform);
 }
 
 function getPlatform(req) {
@@ -20,11 +21,16 @@ function getPlatform(req) {
 }
 
 function getSkillService(req) {
-  const platform = getPlatform(req);
+  const resolution = getPlatform(req);
+  const platform = resolution.platform;
   if (!skillServices.has(platform)) {
     skillServices.set(platform, new SkillService(platform));
   }
-  return { platform, service: skillServices.get(platform) };
+  return {
+    platform,
+    service: skillServices.get(platform),
+    warning: resolution.warning
+  };
 }
 
 function extractRepoPayload(source = {}) {
@@ -69,19 +75,21 @@ function sanitizeRepos(service, repos = []) {
  */
 router.get('/', async (req, res) => {
   try {
-    const { platform, service } = getSkillService(req);
+    const { platform, service, warning } = getSkillService(req);
     const forceRefresh = req.query.refresh === '1';
+    const cwd = await validateKnownProjectCwd(req.query.cwd);
     if (forceRefresh) {
       console.log(`[Skills API] Refreshing skills for ${platform}...`);
     }
-    const skills = await service.listSkills(forceRefresh);
+    const skills = await service.listSkills(forceRefresh, { cwd });
     console.log(`[Skills API] ${platform}: ${skills.length} skills loaded (refresh=${forceRefresh})`);
     res.json({
       success: true,
       platform,
       skills,
       total: skills.length,
-      installed: skills.filter(s => s.installed).length
+      installed: skills.filter(s => s.installed).length,
+      ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
     console.error('[Skills API] List skills error:', err);
@@ -257,10 +265,10 @@ router.post('/create', (req, res) => {
  * POST /api/skills/uninstall
  * Body: { directory }
  */
-router.post('/uninstall', (req, res) => {
+router.post('/uninstall', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
-    const { directory } = req.body;
+    const { directory, scope } = req.body;
 
     if (!directory) {
       return res.status(400).json({
@@ -269,7 +277,20 @@ router.post('/uninstall', (req, res) => {
       });
     }
 
-    const result = service.uninstallSkill(directory);
+    const cwd = await validateKnownProjectCwd(req.body.cwd);
+    if (scope && scope !== 'user' && scope !== 'project') {
+      throw new Error('Invalid scope: expected "user" or "project"');
+    }
+    if (scope === 'project' && !cwd) {
+      throw new Error('Project scope requires a valid cwd');
+    }
+    const options = {
+      ...(cwd ? { cwd } : {}),
+      ...(scope ? { scope } : {})
+    };
+    const result = platform === 'omp' && Object.keys(options).length > 0
+      ? service.uninstallSkill(directory, options)
+      : service.uninstallSkill(directory);
 
     res.json({
       success: true,

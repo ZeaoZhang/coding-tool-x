@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const http = require('http');
 
 let services;
@@ -29,7 +30,10 @@ beforeEach(() => {
         toggle: true,
         config: true,
         import: false,
-        syncRepos: false
+        syncRepos: true,
+        repositoryMode: 'native-marketplace',
+        repositoryToggle: false,
+        repositoryAuth: false
       }
     })
   };
@@ -181,6 +185,42 @@ describe('GET / and GET /market', () => {
     expect(services.claude.listPlugins).not.toHaveBeenCalled();
   });
 
+  test('passes a validated cwd and project scope to OMP plugin listing', async () => {
+    const cwd = fs.realpathSync(process.cwd());
+    const res = await request(buildApp()).get(
+      `/?platform=omp&scope=project&cwd=${encodeURIComponent(cwd)}`
+    );
+
+    expect(res.status).toBe(200);
+    expect(services.omp.listPlugins).toHaveBeenCalledWith({
+      cwd,
+      scope: 'project'
+    });
+  });
+
+  test('rejects project scope without a project cwd', async () => {
+    const res = await request(buildApp()).get('/?platform=omp&scope=project');
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/requires a valid cwd/i);
+    expect(services.omp.listPlugins).not.toHaveBeenCalled();
+  });
+
+  test('maps deprecated pi to OMP with warning and rejects omx or unknown values', async () => {
+    const pi = await request(buildApp()).get('/?platform=%20PI%20');
+
+    expect(pi.status).toBe(200);
+    expect(pi.body.platform).toBe('omp');
+    expect(pi.body.warnings).toEqual([expect.stringMatching(/deprecated/i)]);
+    expect(services.omp.listPlugins).toHaveBeenCalled();
+
+    for (const platform of ['omx', 'unknown']) {
+      const invalid = await request(buildApp()).get(`/?platform=${platform}`);
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.success).toBe(false);
+    }
+  });
+
   test('passes refresh flag to market lookup', async () => {
     const res = await request(buildApp()).get('/market?platform=claude&refresh=1');
 
@@ -213,13 +253,37 @@ describe('GET / and GET /market', () => {
       platform: 'omp',
       supportsPlugins: true,
       repositories: true,
-      config: true
+      config: true,
+      repositoryMode: 'native-marketplace',
+      repositoryToggle: false,
+      repositoryAuth: false
     }));
     expect(services.omp.getCapabilities).toHaveBeenCalled();
   });
 });
 
 describe('POST /install', () => {
+  test('OMP install forwards full pluginId, native metadata, and scope', async () => {
+    const res = await request(buildApp()).post('/install', {
+      platform: 'omp',
+      pluginId: 'review@team-market',
+      name: 'review',
+      pluginKind: 'marketplace',
+      scope: 'user'
+    });
+
+    expect(res.status).toBe(200);
+    expect(services.omp.installPlugin).toHaveBeenCalledWith(
+      'review@team-market',
+      expect.objectContaining({
+        pluginId: 'review@team-market',
+        name: 'review',
+        pluginKind: 'marketplace'
+      }),
+      { scope: 'user' }
+    );
+    expect(services.claude.installPlugin).not.toHaveBeenCalled();
+  });
   test('installs from source url', async () => {
     const res = await request(buildApp()).post('/install', {
       platform: 'opencode',
@@ -472,6 +536,23 @@ describe('single plugin routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(services.claude.togglePlugin).toHaveBeenCalledWith('demo-plugin', false);
+  });
+
+  test('OMP mutations use body pluginId and preserve scope', async () => {
+    const res = await request(buildApp()).put('/review/toggle', {
+      platform: 'omp',
+      pluginId: 'review@team-market',
+      scope: 'user',
+      enabled: false
+    });
+
+    expect(res.status).toBe(200);
+    expect(services.omp.togglePlugin).toHaveBeenCalledWith(
+      'review@team-market',
+      false,
+      { scope: 'user' }
+    );
+    expect(services.claude.togglePlugin).not.toHaveBeenCalled();
   });
 
   test('PUT /:name/config validates config object', async () => {

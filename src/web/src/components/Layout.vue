@@ -279,10 +279,10 @@
     <OAuthCredentialsDrawer v-model:visible="showOAuthCredentialsDrawer" />
 
     <!-- Skills/Commands/Agents Drawers -->
-    <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" />
+    <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" :project-path="skillsDrawerProjectPath" />
     <CommandsDrawer v-model:visible="showCommandsDrawer" :platform="commandsDrawerPlatform" />
     <AgentsDrawer v-model:visible="showAgentsDrawer" :platform="agentsDrawerPlatform" />
-    <PluginsDrawer v-model:visible="showPluginsDrawer" :platform="pluginsDrawerPlatform" />
+    <PluginsDrawer v-model:visible="showPluginsDrawer" :platform="pluginsDrawerPlatform" :project-path="pluginsDrawerProjectPath" />
 
     <!-- Help Modal -->
     <n-modal v-model:show="showHelpModal" preset="card" :title="`${APP_NAME} 使用帮助`" style="width: 800px; max-width: 90vw;">
@@ -559,12 +559,14 @@ const showConfigExportDrawer = ref(false)
 const showOAuthCredentialsDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const skillsDrawerPlatform = ref('')
+const skillsDrawerProjectPath = ref('')
 const showCommandsDrawer = ref(false)
 const commandsDrawerPlatform = ref('')
 const showAgentsDrawer = ref(false)
 const agentsDrawerPlatform = ref('')
 const showPluginsDrawer = ref(false)
 const pluginsDrawerPlatform = ref('')
+const pluginsDrawerProjectPath = ref('')
 
 // Chat history drawer state
 const showChatHistory = ref(false)
@@ -788,7 +790,7 @@ async function handleProxyToggle(newValue) {
     // 处理结果
     if (result.success !== false) {
       if (channelType === 'omp') {
-        message.success(newValue ? 'OMP 受管配置与会话日志观察已启用' : 'OMP 受管配置与会话日志观察已关闭')
+        message.success(newValue ? 'OMP 动态切换与会话日志观察已启用' : 'OMP 已切换为单渠道直连模式')
       } else {
         message.success(newValue ? '代理已启动' : '代理已停止')
       }
@@ -847,6 +849,7 @@ onUnmounted(() => {
 
 function openSkillsDrawer(event) {
   skillsDrawerPlatform.value = event?.detail?.platform || ''
+  skillsDrawerProjectPath.value = event?.detail?.cwd || event?.detail?.projectPath || ''
   showSkillsDrawer.value = true
 }
 
@@ -866,6 +869,7 @@ function openAgentsDrawer(event) {
 
 function openPluginsDrawer(event) {
   pluginsDrawerPlatform.value = event?.detail?.platform || ''
+  pluginsDrawerProjectPath.value = event?.detail?.cwd || event?.detail?.projectPath || ''
   showPluginsDrawer.value = true
 }
 

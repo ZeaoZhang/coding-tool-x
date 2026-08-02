@@ -8,13 +8,14 @@ const express = require('express');
 const { PluginsService } = require('../services/plugins-service');
 const { maskToken } = require('../services/oauth-utils');
 const { sendApiError } = require('./validation-errors');
+const { resolveManagedPlatform } = require('../services/platform-resolution');
+const { validateKnownProjectCwd } = require('../services/project-path-validation');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const pluginServices = new Map();
 
 function resolvePlatform(rawPlatform) {
-  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+  return resolveManagedPlatform(rawPlatform);
 }
 
 function getPlatform(req) {
@@ -22,11 +23,31 @@ function getPlatform(req) {
 }
 
 function getPluginsService(req) {
-  const platform = getPlatform(req);
+  const resolution = getPlatform(req);
+  const platform = resolution.platform;
   if (!pluginServices.has(platform)) {
     pluginServices.set(platform, new PluginsService(platform));
   }
-  return { platform, service: pluginServices.get(platform) };
+  return {
+    platform,
+    service: pluginServices.get(platform),
+    warning: resolution.warning
+  };
+}
+
+async function getRequestOptions(req) {
+  const scope = String(req.query?.scope || req.body?.scope || '').trim();
+  if (scope && scope !== 'user' && scope !== 'project') {
+    throw new Error('Invalid scope: expected "user" or "project"');
+  }
+  const cwd = await validateKnownProjectCwd(req.query?.cwd || req.body?.cwd);
+  if (scope === 'project' && !cwd) {
+    throw new Error('Project scope requires a valid cwd');
+  }
+  return {
+    ...(cwd ? { cwd } : {}),
+    ...(scope ? { scope } : {})
+  };
 }
 
 function extractRepoPayload(source = {}) {
@@ -43,7 +64,8 @@ function extractRepoPayload(source = {}) {
     localPath: repo.localPath || source.localPath || '',
     repoUrl: repo.repoUrl || repo.url || source.repoUrl || source.url || '',
     token: repo.token || source.token || '',
-    marketplace: repo.marketplace || source.marketplace || ''
+    marketplace: repo.marketplace || source.marketplace || '',
+    source: repo.source || repo.sourceUri || source.source || source.sourceUri || ''
   };
 }
 
@@ -63,6 +85,10 @@ function sanitizeRepos(service, repos = []) {
     return service.getReposForClient(repos);
   }
   return (Array.isArray(repos) ? repos : []).map(sanitizeRepo);
+}
+
+function hasRequestOptions(options = {}) {
+  return Object.keys(options).length > 0;
 }
 
 /**
@@ -91,15 +117,19 @@ router.get('/capabilities', (req, res) => {
  * 获取插件列表
  * GET /api/plugins
  */
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const { platform, service } = getPluginsService(req);
-    const result = service.listPlugins();
+    const { platform, service, warning } = getPluginsService(req);
+    const options = await getRequestOptions(req);
+    const result = platform === 'omp' || hasRequestOptions(options)
+      ? service.listPlugins(options)
+      : service.listPlugins();
 
     res.json({
       success: true,
       platform,
-      ...result
+      ...result,
+      ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
     console.error('[Plugins API] List plugins error:', err);
@@ -113,18 +143,22 @@ router.get('/', (req, res) => {
  */
 router.get('/market', async (req, res) => {
   try {
-    const { platform, service } = getPluginsService(req);
+    const { platform, service, warning } = getPluginsService(req);
+    const options = await getRequestOptions(req);
     const forceRefresh = req.query.refresh === '1';
     if (forceRefresh) {
       console.log(`[Plugins API] Refreshing market plugins for ${platform}...`);
     }
-    const plugins = await service.getMarketPlugins(forceRefresh);
+    const plugins = platform === 'omp' || hasRequestOptions(options)
+      ? await service.getMarketPlugins(forceRefresh, options)
+      : await service.getMarketPlugins(forceRefresh);
     console.log(`[Plugins API] ${platform}: ${plugins.length} market plugins loaded (refresh=${forceRefresh})`);
 
     res.json({
       success: true,
       platform,
-      plugins
+      plugins,
+      ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
     console.error('[Plugins API] Get market plugins error:', err);
@@ -139,14 +173,15 @@ router.get('/market', async (req, res) => {
  */
 router.post('/install', async (req, res) => {
   try {
-    const { platform, service } = getPluginsService(req);
-    const { directory, repo, gitUrl, source } = req.body;
+    const { platform, service, warning } = getPluginsService(req);
+    const options = await getRequestOptions(req);
+    const { directory, repo, gitUrl, source, pluginId } = req.body;
     const hasDirectoryField = Object.prototype.hasOwnProperty.call(req.body, 'directory');
 
     // Support both new format (directory + repo) and legacy format (gitUrl)
     let installUrl;
-    if (source) {
-      installUrl = source;
+    if (pluginId || source) {
+      installUrl = pluginId || source;
     } else if (repo && hasDirectoryField) {
       installUrl = '';
     } else if (gitUrl) {
@@ -158,15 +193,25 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const result = await service.installPlugin(
-      installUrl,
-      repo && hasDirectoryField
-        ? {
-            ...extractRepoPayload({ repo }),
-            directory: directory || ''
-          }
-        : null
-    );
+    const repoMetadata = repo && hasDirectoryField
+      ? {
+          ...extractRepoPayload({ repo }),
+          directory: directory || ''
+        }
+      : platform === 'omp' ? {
+          ...(req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {}),
+          name: req.body.name || req.body.metadata?.name,
+          pluginId: pluginId || req.body.metadata?.pluginId,
+          pluginKind: req.body.pluginKind || req.body.metadata?.pluginKind,
+          marketplace: req.body.marketplace || req.body.metadata?.marketplace,
+          installSource: req.body.installSource || req.body.metadata?.installSource,
+          version: req.body.version || req.body.metadata?.version,
+          description: req.body.description || req.body.metadata?.description,
+          resourceTypes: req.body.resourceTypes || req.body.metadata?.resourceTypes
+        } : null;
+    const result = platform === 'omp' || hasRequestOptions(options)
+      ? await service.installPlugin(installUrl, repoMetadata, options)
+      : await service.installPlugin(installUrl, repoMetadata);
 
     if (!result.success) {
       return res.status(400).json({
@@ -179,7 +224,8 @@ router.post('/install', async (req, res) => {
       success: true,
       platform,
       plugin: result.plugin,
-      message: `Plugin "${result.plugin.name}" installed successfully`
+      message: `Plugin "${result.plugin.name}" installed successfully`,
+      ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
     console.error('[Plugins API] Install plugin error:', err);
@@ -193,14 +239,23 @@ router.post('/install', async (req, res) => {
  * 获取插件仓库列表
  * GET /api/plugins/repos
  */
-router.get('/repos', (req, res) => {
+router.get('/repos', async (req, res) => {
   try {
-    const { platform, service } = getPluginsService(req);
-    const repos = service.getRepos();
+    const { platform, service, warning } = getPluginsService(req);
+    const options = await getRequestOptions(req);
+    const repos = platform === 'omp' || hasRequestOptions(options)
+      ? service.getRepos(options)
+      : service.getRepos();
     res.json({
       success: true,
       platform,
-      repos: sanitizeRepos(service, repos)
+      repos: sanitizeRepos(service, repos),
+      ...((warning || service.getMigrationWarnings?.().length) ? {
+        warnings: [
+          ...(warning ? [warning] : []),
+          ...(service.getMigrationWarnings?.() || [])
+        ]
+      } : {})
     });
   } catch (err) {
     console.error('[Plugins API] Get repos error:', err);
@@ -213,20 +268,23 @@ router.get('/repos', (req, res) => {
  * POST /api/plugins/repos
  * Body: { url, name, description }
  */
-router.post('/repos', (req, res) => {
+router.post('/repos', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
+    const options = await getRequestOptions(req);
     const repo = extractRepoPayload(req.body);
     repo.enabled = req.body.enabled !== false;
 
-    if (!repo.localPath && !repo.projectPath && (!repo.owner || !repo.name) && !repo.repoUrl) {
+    if (!repo.source && !repo.localPath && !repo.projectPath && (!repo.owner || !repo.name) && !repo.repoUrl) {
       return res.status(400).json({
         success: false,
         message: 'Missing repo info'
       });
     }
 
-    const repos = service.addRepo(repo);
+    const repos = platform === 'omp' || hasRequestOptions(options)
+      ? service.addRepo(repo, options)
+      : service.addRepo(repo);
 
     res.json({
       success: true,
@@ -240,11 +298,14 @@ router.post('/repos', (req, res) => {
   }
 });
 
-router.delete('/repos', (req, res) => {
+router.delete('/repos', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
+    const options = await getRequestOptions(req);
     const { id = '', owner = '', name = '' } = req.query;
-    const repos = service.removeRepo(owner, name, id);
+    const repos = platform === 'omp' || hasRequestOptions(options)
+      ? service.removeRepo(owner, name, id, options)
+      : service.removeRepo(owner, name, id);
 
     res.json({
       success: true,
@@ -376,7 +437,8 @@ router.put('/repos/auth', (req, res) => {
 router.post('/repos/sync', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const result = await service.syncRepos();
+    const options = await getRequestOptions(req);
+    const result = await service.syncRepos(options);
 
     res.json({
       success: true,
@@ -397,7 +459,8 @@ router.post('/repos/sync', async (req, res) => {
 router.post('/sync', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const result = await service.syncPlugins();
+    const options = await getRequestOptions(req);
+    const result = await service.syncPlugins(options);
 
     res.json({
       success: true,
@@ -472,12 +535,13 @@ router.get('/:name/readme', async (req, res) => {
  * 获取单个插件详情
  * GET /api/plugins/:name
  */
-router.get('/:name', (req, res) => {
+router.get('/:name', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
+    const options = await getRequestOptions(req);
 
-    const plugin = service.getPlugin(name);
+    const plugin = service.getPlugin(req.query.pluginId || name, options);
 
     if (!plugin) {
       return res.status(404).json({
@@ -501,12 +565,14 @@ router.get('/:name', (req, res) => {
  * 卸载插件
  * DELETE /api/plugins/:name
  */
-router.delete('/:name', (req, res) => {
+router.delete('/:name', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
+    const options = await getRequestOptions(req);
+    const pluginId = req.query.pluginId || name;
 
-    const result = service.uninstallPlugin(name);
+    const result = service.uninstallPlugin(pluginId, options);
 
     if (!result.success) {
       return res.status(400).json({
@@ -531,11 +597,12 @@ router.delete('/:name', (req, res) => {
  * PUT /api/plugins/:name/toggle
  * Body: { enabled }
  */
-router.put('/:name/toggle', (req, res) => {
+router.put('/:name/toggle', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
-    const { enabled } = req.body;
+    const { enabled, pluginId = name } = req.body;
+    const options = await getRequestOptions(req);
 
     if (typeof enabled !== 'boolean') {
       return res.status(400).json({
@@ -544,7 +611,9 @@ router.put('/:name/toggle', (req, res) => {
       });
     }
 
-    const plugin = service.togglePlugin(name, enabled);
+    const plugin = platform === 'omp' || hasRequestOptions(options)
+      ? service.togglePlugin(pluginId, enabled, options)
+      : service.togglePlugin(pluginId, enabled);
 
     res.json({
       success: true,
@@ -563,11 +632,12 @@ router.put('/:name/toggle', (req, res) => {
  * PUT /api/plugins/:name/config
  * Body: { config }
  */
-router.put('/:name/config', (req, res) => {
+router.put('/:name/config', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
-    const { config } = req.body;
+    const { config, pluginId = name } = req.body;
+    const options = await getRequestOptions(req);
 
     if (!config || typeof config !== 'object') {
       return res.status(400).json({
@@ -576,7 +646,9 @@ router.put('/:name/config', (req, res) => {
       });
     }
 
-    const result = service.updatePluginConfig(name, config);
+    const result = platform === 'omp' || hasRequestOptions(options)
+      ? service.updatePluginConfig(pluginId, config, options)
+      : service.updatePluginConfig(pluginId, config);
 
     res.json({
       success: true,

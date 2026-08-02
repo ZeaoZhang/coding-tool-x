@@ -114,7 +114,14 @@
     </div>
 
     <!-- 弹窗组件 -->
-    <PluginRepoManager v-if="capabilities.repositories" v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
+    <PluginRepoManager
+      v-if="capabilities.repositories"
+      v-model:visible="showRepoManager"
+      :platform="currentPlatform"
+      :project-path="props.projectPath"
+      :capabilities="capabilities"
+      @updated="loadData"
+    />
     <PluginDetailDrawer
       v-model:visible="detailDrawerVisible"
       :plugin="selectedPlugin"
@@ -140,7 +147,8 @@ const props = defineProps({
   inDrawer: { type: Boolean, default: false },
   hideBack: { type: Boolean, default: false },
   drawerVisible: { type: Boolean, default: false },
-  platform: { type: String, default: '' }
+  platform: { type: String, default: '' },
+  projectPath: { type: String, default: '' }
 })
 
 defineEmits(['back', 'updated'])
@@ -196,6 +204,15 @@ const filterOptions = [
 ]
 
 const installedCount = computed(() => plugins.value.filter(p => p.installed).length)
+
+function requestContext(plugin = null) {
+  return {
+    ...(props.projectPath ? { cwd: props.projectPath } : {}),
+    ...(plugin?.scope
+      ? { scope: plugin.scope }
+      : { scope: props.projectPath ? 'project' : 'user' })
+  }
+}
 
 const filteredPlugins = computed(() => {
   let result = plugins.value
@@ -259,26 +276,29 @@ async function loadData(force = false) {
     }
 
     if (force && capabilities.value.syncRepos) {
-      await syncPluginRepos(platform).catch(() => {})
+      await syncPluginRepos(platform, requestContext()).catch(() => {})
     }
 
-    const installedRes = await getPlugins(platform)
+    const installedRes = await getPlugins(platform, {
+      ...(props.projectPath ? { cwd: props.projectPath } : {})
+    })
     const installedList = installedRes.success ? installedRes.plugins : []
     let marketList = []
 
     const mergePluginLists = (installed, market) => {
-      const marketByName = {}
+      const marketById = {}
       for (const mp of market) {
-        marketByName[mp.name] = mp
+        marketById[mp.pluginId || mp.id || mp.name] = mp
       }
 
       const installedPlugins = installed.map(p => {
-        const marketInfo = marketByName[p.name] || {}
+        const identity = p.pluginId || p.id || p.name
+        const marketInfo = marketById[identity] || {}
         return {
           ...marketInfo,
           ...p,
           installed: true,
-          key: `installed-${p.name}`,
+          key: p.key || `installed-${identity}-${p.scope || 'user'}`,
           description: p.description || marketInfo.description || '',
           repoProvider: p.repoProvider || marketInfo.repoProvider || '',
           repoHost: p.repoHost || marketInfo.repoHost || '',
@@ -300,13 +320,13 @@ async function loadData(force = false) {
         }
       })
 
-      const installedNames = new Set(installed.map(p => p.name))
+      const installedIds = new Set(installed.map(p => p.pluginId || p.id || p.name))
       const uninstalledPlugins = market
-        .filter(p => !installedNames.has(p.name))
+        .filter(p => !installedIds.has(p.pluginId || p.id || p.name))
         .map(p => ({
           ...p,
           installed: false,
-          key: `market-${p.repoId || p.repoProjectPath || p.repoLocalPath || p.repoOwner || 'repo'}-${p.directory || p.name}`
+          key: p.key || `market-${p.pluginId || p.id || p.name}`
         }))
 
       return [...installedPlugins, ...uninstalledPlugins]
@@ -315,7 +335,9 @@ async function loadData(force = false) {
     plugins.value = mergePluginLists(installedList, marketList)
 
     if (capabilities.value.market) {
-      getMarketPlugins(platform, force)
+      getMarketPlugins(platform, force, {
+        ...(props.projectPath ? { cwd: props.projectPath } : {})
+      })
         .catch(() => ({ success: true, plugins: [] }))
         .then((marketRes) => {
           if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
@@ -358,7 +380,14 @@ async function handleInstall(plugin) {
   installingKeys.value[plugin.key] = true
   try {
     const res = plugin.installSource
-      ? await installPlugin('', null, currentPlatform.value, plugin.installSource)
+      ? await installPlugin(
+        '',
+        null,
+        currentPlatform.value,
+        plugin.pluginId || plugin.installSource,
+        requestContext(plugin),
+        plugin
+      )
       : await installPlugin(
         plugin.directory,
         {
@@ -373,13 +402,20 @@ async function handleInstall(plugin) {
           repoUrl: plugin.repoUrl,
           marketplace: plugin.marketplace
         },
-        currentPlatform.value
+        currentPlatform.value,
+        '',
+        requestContext(plugin),
+        plugin
       )
     if (res.success) {
       message.success(`插件 "${plugin.name}" 安装成功`)
       const idx = plugins.value.findIndex(p => p.key === plugin.key)
       if (idx !== -1) {
-        plugins.value[idx] = { ...plugins.value[idx], installed: true, key: `installed-${plugin.name}` }
+        plugins.value[idx] = {
+          ...plugins.value[idx],
+          installed: true,
+          key: `installed-${plugin.pluginId || plugin.id || plugin.name}-${plugin.scope || requestContext(plugin).scope}`
+        }
       }
     } else { message.error(res.message || '安装失败') }
   } catch (err) { message.error('安装失败: ' + err.message) }
@@ -390,12 +426,20 @@ async function handleUninstall(plugin) {
   if (!capabilities.value.uninstall || plugin.readonly) return
   uninstallingKeys.value[plugin.key] = true
   try {
-    const res = await uninstallPlugin(plugin.name, currentPlatform.value)
+    const res = await uninstallPlugin(
+      plugin.pluginId || plugin.id || plugin.name,
+      currentPlatform.value,
+      requestContext(plugin)
+    )
     if (res.success) {
       message.success(`插件 "${plugin.name}" 已卸载`)
       const idx = plugins.value.findIndex(p => p.key === plugin.key)
       if (idx !== -1) {
-        plugins.value[idx] = { ...plugins.value[idx], installed: false, key: `market-${plugin.repoId || plugin.repoProjectPath || plugin.repoLocalPath || plugin.repoOwner || 'repo'}-${plugin.directory || plugin.name}` }
+        plugins.value[idx] = {
+          ...plugins.value[idx],
+          installed: false,
+          key: `market-${plugin.pluginId || plugin.id || plugin.name}`
+        }
       }
     } else { message.error(res.message || res.error || '卸载失败') }
   } catch (err) { message.error('卸载失败: ' + err.message) }
