@@ -60,6 +60,25 @@ test('returns only managed fields and preserves persisted booleans', () => {
   });
 });
 
+test('defaults invalid persisted managed values to true while preserving booleans', () => {
+  persisted = {
+    skills: {
+      enableCodexUser: 'false',
+      enableClaudeUser: null,
+      enablePiUser: 0,
+      enablePiProject: false
+    }
+  };
+  const { readOmpSkillSettings } = require(SERVICE_MODULE);
+
+  expect(readOmpSkillSettings()).toEqual({
+    enableCodexUser: true,
+    enableClaudeUser: true,
+    enablePiUser: true,
+    enablePiProject: false
+  });
+});
+
 test('partially updates one scan source', () => {
   persisted = { skills: { enableCodexUser: false } };
   const { updateOmpSkillSettings } = require(SERVICE_MODULE);
