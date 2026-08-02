@@ -1,5 +1,7 @@
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
+const yaml = require('js-yaml');
 
 const OMP_CONFIG_PATH = require.resolve('../../../src/server/services/omp-config');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
@@ -235,5 +237,155 @@ describe('config paths OMP native paths', () => {
       ['config', 'path'],
       expect.objectContaining({ windowsHide: true })
     );
+  });
+});
+
+describe('strict OMP settings persistence', () => {
+  const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const originalOmpAgentDir = process.env.OMP_CODING_AGENT_DIR;
+  const originalOmpCommand = process.env.OMP_COMMAND;
+  let testDir;
+  let agentDir;
+  let configPath;
+
+  beforeEach(() => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-config-strict-'));
+    agentDir = path.join(testDir, 'agent');
+    configPath = path.join(agentDir, 'config.yml');
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    delete process.env.OMP_CODING_AGENT_DIR;
+    process.env.OMP_COMMAND = `missing-omp-config-test-${process.pid}`;
+    delete require.cache[OMP_CONFIG_PATH];
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete require.cache[OMP_CONFIG_PATH];
+    fs.rmSync(testDir, { recursive: true, force: true });
+    if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
+    if (originalOmpAgentDir === undefined) delete process.env.OMP_CODING_AGENT_DIR;
+    else process.env.OMP_CODING_AGENT_DIR = originalOmpAgentDir;
+    if (originalOmpCommand === undefined) delete process.env.OMP_COMMAND;
+    else process.env.OMP_COMMAND = originalOmpCommand;
+  });
+
+  test('returns an empty object when config.yml is absent without reading legacy settings', () => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ legacy: true }));
+    const { readOmpSettings, readOmpSettingsStrict } = require('../../../src/server/services/omp-config');
+
+    expect(readOmpSettingsStrict()).toEqual({});
+    expect(readOmpSettings()).toEqual({ legacy: true });
+  });
+
+  test.each([
+    ['damaged YAML', 'skills:\n  [broken\n'],
+    ['null root', 'null\n'],
+    ['array root', '[]\n'],
+    ['scalar root', 'enabled\n'],
+    ['empty document', '']
+  ])('rejects %s instead of applying the legacy fallback', (_label, source) => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(configPath, source, 'utf8');
+    fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ legacy: true }));
+    const { readOmpSettings, readOmpSettingsStrict } = require('../../../src/server/services/omp-config');
+
+    expect(() => readOmpSettingsStrict()).toThrow();
+    expect(readOmpSettings()).toEqual({ legacy: true });
+  });
+
+  test('propagates the original config.yml read error', () => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(configPath, 'skills: {}\n', 'utf8');
+    const readError = new Error('read denied');
+    const originalReadFileSync = fs.readFileSync;
+    vi.spyOn(fs, 'readFileSync').mockImplementation((filePath, ...args) => {
+      if (path.resolve(filePath) === path.resolve(configPath)) throw readError;
+      return originalReadFileSync(filePath, ...args);
+    });
+    const { readOmpSettingsStrict } = require('../../../src/server/services/omp-config');
+
+    expect(() => readOmpSettingsStrict()).toThrow(readError);
+  });
+
+  test('atomically writes YAML with exclusive temporary creation and preserves mode', () => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(configPath, 'skills:\n  enablePiUser: true\n', { mode: 0o640 });
+    const writeSpy = vi.spyOn(fs, 'writeFileSync');
+    const chmodSpy = vi.spyOn(fs, 'chmodSync');
+    const renameSpy = vi.spyOn(fs, 'renameSync');
+    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+
+    writeOmpSettingsAtomic({ skills: { enablePiUser: false } });
+
+    const temporaryWrite = writeSpy.mock.calls.find(([filePath]) => filePath !== configPath);
+    expect(temporaryWrite[2]).toMatchObject({ encoding: 'utf8', flag: 'wx', mode: 0o640 });
+    expect(chmodSpy).toHaveBeenCalledWith(temporaryWrite[0], 0o640);
+    expect(renameSpy).toHaveBeenCalledWith(temporaryWrite[0], configPath);
+    expect(yaml.load(fs.readFileSync(configPath, 'utf8'))).toEqual({
+      skills: { enablePiUser: false }
+    });
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o640);
+    expect(fs.readdirSync(agentDir)).toEqual(['config.yml']);
+  });
+
+  test('creates config.yml with mode 0600', () => {
+    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+
+    writeOmpSettingsAtomic({ skills: { enablePiUser: false } });
+
+    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(yaml.load(fs.readFileSync(configPath, 'utf8'))).toEqual({
+      skills: { enablePiUser: false }
+    });
+  });
+
+  test('keeps original bytes, cleans the temporary file, and rethrows a rename error', () => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    const original = Buffer.from('skills:\n  enablePiUser: true\n');
+    fs.writeFileSync(configPath, original);
+    const renameError = new Error('rename failed');
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw renameError;
+    });
+    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+
+    expect(() => writeOmpSettingsAtomic({ skills: { enablePiUser: false } })).toThrow(renameError);
+    expect(fs.readFileSync(configPath)).toEqual(original);
+    expect(fs.readdirSync(agentDir)).toEqual(['config.yml']);
+  });
+
+  test('preserves the rename error when best-effort cleanup also fails', () => {
+    fs.mkdirSync(agentDir, { recursive: true });
+    const original = Buffer.from('skills:\n  enablePiUser: true\n');
+    fs.writeFileSync(configPath, original);
+    const renameError = new Error('rename failed');
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw renameError;
+    });
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+      throw new Error('cleanup failed');
+    });
+    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+
+    try {
+      expect(() => writeOmpSettingsAtomic({ skills: { enablePiUser: false } })).toThrow(renameError);
+      expect(fs.readFileSync(configPath)).toEqual(original);
+      expect(fs.readdirSync(agentDir)).toHaveLength(2);
+    } finally {
+      unlinkSpy.mockRestore();
+      for (const entry of fs.readdirSync(agentDir)) {
+        if (entry !== path.basename(configPath)) fs.unlinkSync(path.join(agentDir, entry));
+      }
+    }
+  });
+
+  test('keeps legacy readOmpSettings and writeOmpSettings behavior', () => {
+    const { readOmpSettings, writeOmpSettings } = require('../../../src/server/services/omp-config');
+
+    writeOmpSettings({ skills: { enabled: true } });
+
+    expect(readOmpSettings()).toEqual({ skills: { enabled: true } });
   });
 });

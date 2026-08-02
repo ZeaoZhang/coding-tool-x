@@ -205,8 +205,10 @@ async function mountSettingsModal() {
 }
 
 
-function mountControlledSettingsModal() {
-  api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+function mountControlledSettingsModal({ installDefaultGet = true } = {}) {
+  if (installDefaultGet) {
+    api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+  }
   const Host = defineComponent({
     setup(_, { expose }) {
       const visible = ref(true)
@@ -403,6 +405,98 @@ describe('SkillsPanel skill refresh validation', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('新技能')
     expect(message.error).not.toHaveBeenCalled()
+  })
+})
+
+describe('OmpSkillSettingsModal load failures', () => {
+  test('renders the exact GET rejection, disables save, and retries cleanly after close and reopen', async () => {
+    const nextLoad = deferred()
+    api.getOmpSkillSettings
+      .mockRejectedValueOnce(new Error('read failed'))
+      .mockReturnValueOnce(nextLoad.promise)
+    const wrapper = mountControlledSettingsModal({ installDefaultGet: false })
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    const errorText = '加载技能扫描设置失败: read failed'
+
+    expect(message.error).toHaveBeenCalledTimes(1)
+    expect(message.error).toHaveBeenCalledWith(errorText)
+    const alert = modal.findComponent({ name: 'NAlert' })
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toBe(`${errorText} 重试`)
+    expect(findButton(modal, '保存').attributes('disabled')).toBeDefined()
+    expect(api.updateOmpSkillSettings).not.toHaveBeenCalled()
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(wrapper.vm.refreshCount).toBe(0)
+
+    wrapper.vm.close()
+    await nextTick()
+    wrapper.vm.open()
+    await nextTick()
+
+    expect(api.getOmpSkillSettings).toHaveBeenCalledTimes(2)
+    expect(modal.findAll('[role="switch"]').map(toggle => toggle.attributes('aria-checked'))).toEqual([
+      'true', 'true', 'true', 'true'
+    ])
+    expect(findButton(modal, '保存').attributes('disabled')).toBeDefined()
+
+    nextLoad.resolve({ success: true, settings: { ...validSettings } })
+    await flushPromises()
+
+    expect(modal.findComponent({ name: 'NAlert' }).exists()).toBe(false)
+    expect(modal.findAll('[role="switch"]').map(toggle => toggle.attributes('aria-checked'))).toEqual([
+      'false', 'true', 'false', 'true'
+    ])
+    expect(findButton(modal, '保存').attributes('disabled')).toBeUndefined()
+    expect(message.error).toHaveBeenCalledTimes(1)
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(wrapper.vm.refreshCount).toBe(0)
+  })
+
+  test('treats a malformed GET as a load error without partially applying its fields', async () => {
+    const nextLoad = deferred()
+    api.getOmpSkillSettings
+      .mockResolvedValueOnce({
+        success: true,
+        settings: {
+          enableCodexUser: false,
+          enableClaudeUser: false,
+          enablePiUser: 'false',
+          enablePiProject: false
+        }
+      })
+      .mockReturnValueOnce(nextLoad.promise)
+    const wrapper = mountControlledSettingsModal({ installDefaultGet: false })
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    const errorText = '加载技能扫描设置失败: 响应 settings 必须包含四个布尔字段'
+
+    expect(message.error).toHaveBeenCalledTimes(1)
+    expect(message.error).toHaveBeenCalledWith(errorText)
+    expect(modal.findComponent({ name: 'NAlert' }).text()).toBe(`${errorText} 重试`)
+    expect(findButton(modal, '保存').attributes('disabled')).toBeDefined()
+    expect(api.updateOmpSkillSettings).not.toHaveBeenCalled()
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(wrapper.vm.refreshCount).toBe(0)
+
+    wrapper.vm.close()
+    await nextTick()
+    wrapper.vm.open()
+    await nextTick()
+
+    expect(modal.findAll('[role="switch"]').map(toggle => toggle.attributes('aria-checked'))).toEqual([
+      'true', 'true', 'true', 'true'
+    ])
+
+    nextLoad.resolve({ success: true, settings: { ...validSettings } })
+    await flushPromises()
+
+    expect(modal.findAll('[role="switch"]').map(toggle => toggle.attributes('aria-checked'))).toEqual([
+      'false', 'true', 'false', 'true'
+    ])
+    expect(findButton(modal, '保存').attributes('disabled')).toBeUndefined()
+    expect(modal.emitted('saved')).toBeUndefined()
+    expect(wrapper.vm.refreshCount).toBe(0)
   })
 })
 
