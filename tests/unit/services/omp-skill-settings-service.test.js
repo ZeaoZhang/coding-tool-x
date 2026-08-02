@@ -1,4 +1,7 @@
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const yaml = require('js-yaml');
 
 const CONFIG_MODULE = require.resolve('../../../src/server/services/omp-config');
 const SERVICE_MODULE = path.resolve(
@@ -6,33 +9,54 @@ const SERVICE_MODULE = path.resolve(
   '../../../src/server/services/omp-skill-settings-service.js'
 );
 
-let persisted;
-let readOmpSettings;
-let writeOmpSettings;
+let testDir;
+let configPath;
+
+function loadService() {
+  delete require.cache[SERVICE_MODULE];
+  return require(SERVICE_MODULE);
+}
+
+function writeConfig(config, options) {
+  fs.writeFileSync(configPath, yaml.dump(config), options);
+}
+
+function readConfig() {
+  return yaml.load(fs.readFileSync(configPath, 'utf8'));
+}
 
 beforeEach(() => {
-  persisted = {};
-  readOmpSettings = vi.fn(() => structuredClone(persisted));
-  writeOmpSettings = vi.fn((next) => {
-    persisted = structuredClone(next);
-  });
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-skill-settings-'));
+  configPath = path.join(testDir, 'agent', 'config.yml');
 
   require.cache[CONFIG_MODULE] = {
     id: CONFIG_MODULE,
     filename: CONFIG_MODULE,
     loaded: true,
-    exports: { readOmpSettings, writeOmpSettings }
+    exports: {
+      getOmpPaths: vi.fn(() => ({ settings: configPath })),
+      ensureOmpDir: vi.fn((dirPath) => fs.mkdirSync(dirPath, { recursive: true }))
+    }
   };
   delete require.cache[SERVICE_MODULE];
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete require.cache[SERVICE_MODULE];
   delete require.cache[CONFIG_MODULE];
+  fs.rmSync(testDir, { recursive: true, force: true });
 });
 
-test('returns true defaults for every managed scan source', () => {
-  const { readOmpSkillSettings } = require(SERVICE_MODULE);
+test('exports only the read and update service functions', () => {
+  expect(Object.keys(loadService()).sort()).toEqual([
+    'readOmpSkillSettings',
+    'updateOmpSkillSettings'
+  ]);
+});
+
+test('returns true defaults when config.yml does not exist', () => {
+  const { readOmpSkillSettings } = loadService();
 
   expect(readOmpSkillSettings()).toEqual({
     enableCodexUser: true,
@@ -42,46 +66,39 @@ test('returns true defaults for every managed scan source', () => {
   });
 });
 
-test('returns only managed fields and preserves persisted booleans', () => {
-  persisted = {
+test('returns only managed fields and defaults invalid managed values', () => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  writeConfig({
     skills: {
       enabled: false,
       enableCodexUser: false,
+      enableClaudeUser: null,
+      enablePiUser: 0,
+      enablePiProject: false,
       customDirectories: ['/opt/skills']
     }
-  };
-  const { readOmpSkillSettings } = require(SERVICE_MODULE);
+  });
+  const { readOmpSkillSettings } = loadService();
 
   expect(readOmpSkillSettings()).toEqual({
     enableCodexUser: false,
-    enableClaudeUser: true,
-    enablePiUser: true,
-    enablePiProject: true
-  });
-});
-
-test('defaults invalid persisted managed values to true while preserving booleans', () => {
-  persisted = {
-    skills: {
-      enableCodexUser: 'false',
-      enableClaudeUser: null,
-      enablePiUser: 0,
-      enablePiProject: false
-    }
-  };
-  const { readOmpSkillSettings } = require(SERVICE_MODULE);
-
-  expect(readOmpSkillSettings()).toEqual({
-    enableCodexUser: true,
     enableClaudeUser: true,
     enablePiUser: true,
     enablePiProject: false
   });
 });
 
-test('partially updates one scan source', () => {
-  persisted = { skills: { enableCodexUser: false } };
-  const { updateOmpSkillSettings } = require(SERVICE_MODULE);
+test('partially updates valid YAML and preserves unrelated OMP config', () => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  writeConfig({
+    providers: { demo: { apiKey: 'secret' } },
+    skills: {
+      enabled: false,
+      customDirectories: ['/opt/skills'],
+      enableCodexUser: false
+    }
+  }, { mode: 0o640 });
+  const { readOmpSkillSettings, updateOmpSkillSettings } = loadService();
 
   expect(updateOmpSkillSettings({ enablePiProject: false })).toEqual({
     enableCodexUser: false,
@@ -89,29 +106,89 @@ test('partially updates one scan source', () => {
     enablePiUser: true,
     enablePiProject: false
   });
-});
-
-test('preserves unrelated top-level and skills fields', () => {
-  persisted = {
-    theme: 'night',
+  expect(readOmpSkillSettings()).toEqual({
+    enableCodexUser: false,
+    enableClaudeUser: true,
+    enablePiUser: true,
+    enablePiProject: false
+  });
+  expect(readConfig()).toEqual({
+    providers: { demo: { apiKey: 'secret' } },
     skills: {
       enabled: false,
       customDirectories: ['/opt/skills'],
-      enableClaudeUser: true
-    }
-  };
-  const { updateOmpSkillSettings } = require(SERVICE_MODULE);
-
-  updateOmpSkillSettings({ enableClaudeUser: false });
-
-  expect(persisted).toEqual({
-    theme: 'night',
-    skills: {
-      enabled: false,
-      customDirectories: ['/opt/skills'],
-      enableClaudeUser: false
+      enableCodexUser: false,
+      enablePiProject: false
     }
   });
+  expect(fs.statSync(configPath).mode & 0o777).toBe(0o640);
+});
+
+test('creates a new config.yml with mode 0600', () => {
+  const { updateOmpSkillSettings } = loadService();
+
+  updateOmpSkillSettings({ enablePiUser: false });
+
+  expect(readConfig()).toEqual({ skills: { enablePiUser: false } });
+  expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+});
+
+test('rejects a damaged YAML update without changing the original bytes', () => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const damaged = Buffer.from('skills:\n  [broken\n');
+  fs.writeFileSync(configPath, damaged);
+  const { updateOmpSkillSettings } = loadService();
+
+  expect(() => updateOmpSkillSettings({ enablePiUser: false })).toThrow();
+  expect(fs.readFileSync(configPath)).toEqual(damaged);
+});
+
+test.each(['null\n', '[]\n', 'enabled\n'])(
+  'rejects non-object YAML config %j',
+  (source) => {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, source, 'utf8');
+    const { readOmpSkillSettings, updateOmpSkillSettings } = loadService();
+
+    expect(() => readOmpSkillSettings()).toThrow('Invalid OMP config');
+    expect(() => updateOmpSkillSettings({ enablePiUser: false })).toThrow('Invalid OMP config');
+  }
+);
+
+test('keeps the original bytes and removes the temp file when rename fails', () => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const original = Buffer.from('providers:\n  demo: {}\nskills:\n  enabled: false\n');
+  fs.writeFileSync(configPath, original);
+  const renameError = new Error('rename failed');
+  vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+    throw renameError;
+  });
+  const { updateOmpSkillSettings } = loadService();
+
+  expect(() => updateOmpSkillSettings({ enablePiUser: false })).toThrow(renameError);
+  expect(fs.readFileSync(configPath)).toEqual(original);
+  expect(fs.readdirSync(path.dirname(configPath))).toEqual(['config.yml']);
+});
+
+test('returns the projection for an empty patch without changing bytes or mtime', () => {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const original = Buffer.from('providers:\n  demo: {}\nskills:\n  enablePiUser: false\n');
+  fs.writeFileSync(configPath, original);
+  const timestamp = new Date('2020-01-02T03:04:05.000Z');
+  fs.utimesSync(configPath, timestamp, timestamp);
+  const before = fs.statSync(configPath);
+  const writeSpy = vi.spyOn(fs, 'writeFileSync');
+  const { updateOmpSkillSettings } = loadService();
+
+  expect(updateOmpSkillSettings({})).toEqual({
+    enableCodexUser: true,
+    enableClaudeUser: true,
+    enablePiUser: false,
+    enablePiProject: true
+  });
+  expect(writeSpy).not.toHaveBeenCalled();
+  expect(fs.readFileSync(configPath)).toEqual(original);
+  expect(fs.statSync(configPath).mtimeMs).toBe(before.mtimeMs);
 });
 
 test.each([
@@ -121,30 +198,10 @@ test.each([
   [null, /expected an object/],
   [[], /expected an object/]
 ])('rejects invalid patch without writing it', (patch, message) => {
-  persisted = { skills: { enabled: true } };
-  const before = structuredClone(persisted);
-  const { updateOmpSkillSettings } = require(SERVICE_MODULE);
+  const { updateOmpSkillSettings } = loadService();
+  const writeSpy = vi.spyOn(fs, 'writeFileSync');
 
   expect(() => updateOmpSkillSettings(patch)).toThrow(message);
-  expect(writeOmpSettings).not.toHaveBeenCalled();
-  expect(persisted).toEqual(before);
-});
-
-test('accepts an empty patch without destroying existing config', () => {
-  persisted = {
-    providers: { demo: {} },
-    skills: { enablePiUser: false }
-  };
-  const { updateOmpSkillSettings } = require(SERVICE_MODULE);
-
-  expect(updateOmpSkillSettings({})).toEqual({
-    enableCodexUser: true,
-    enableClaudeUser: true,
-    enablePiUser: false,
-    enablePiProject: true
-  });
-  expect(persisted).toEqual({
-    providers: { demo: {} },
-    skills: { enablePiUser: false }
-  });
+  expect(writeSpy).not.toHaveBeenCalled();
+  expect(fs.existsSync(configPath)).toBe(false);
 });
