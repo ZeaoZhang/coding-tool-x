@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import SkillsPanel from '../SkillsPanel.vue'
 import OmpSkillSettingsModal from '../OmpSkillSettingsModal.vue'
@@ -203,6 +204,28 @@ describe('SkillsPanel OMP settings entry', () => {
     await settingsButton.trigger('click')
     expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(true)
 
+    wrapper.unmount()
+  })
+
+  test('closes the real settings modal when switching away from OMP', async () => {
+    api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
+    const wrapper = mount(SkillsPanel, {
+      props: { platform: 'omp' },
+      global: { stubs: irrelevantStubs }
+    })
+    await flushPromises()
+
+    await findSettingsButton(wrapper).trigger('click')
+    await flushPromises()
+    const modal = wrapper.findComponent(OmpSkillSettingsModal)
+    expect(modal.props('visible')).toBe(true)
+
+    await wrapper.setProps({ platform: 'claude' })
+    await flushPromises()
+    await nextTick()
+
+    expect(modal.props('visible')).toBe(false)
+    expect(findSettingsButton(wrapper).exists()).toBe(false)
     wrapper.unmount()
   })
 
