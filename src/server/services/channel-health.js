@@ -143,6 +143,11 @@ function recordFailure(channelId, source = 'claude', error) {
   health.consecutiveSuccesses = 0;
   health.lastCheckTime = now;
 
+  // omp 动态切换按请求即时回退其他渠道，失败渠道无需冻结（冻结会将其排除在后续分配之外）
+  if (source === 'omp') {
+    return;
+  }
+
   // 如果当前是健康状态或检测中状态，检查是否需要冻结
   if (health.status === 'healthy' || health.status === 'checking') {
     if (health.consecutiveFailures >= healthConfig.failureThreshold) {

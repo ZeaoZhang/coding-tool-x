@@ -138,6 +138,52 @@ describe('channel-health', () => {
     });
   });
 
+  describe('omp source', () => {
+    it('should never freeze omp channel even after many consecutive failures', () => {
+      const callback = vi.fn();
+      channelHealth.setOnChannelFrozen(callback);
+      channelHealth.setChannelListProvider(() => [
+        { id: 'ch1', enabled: true },
+        { id: 'ch2', enabled: true }
+      ]);
+
+      const threshold = channelHealth.healthConfig.failureThreshold;
+      for (let i = 0; i < threshold * 3; i++) {
+        channelHealth.recordFailure('ch1', 'omp');
+      }
+
+      const status = channelHealth.getChannelHealthStatus('ch1', 'omp');
+      expect(status.status).toBe('healthy');
+      expect(status.freezeRemaining).toBe(0);
+      expect(channelHealth.isChannelAvailable('ch1', 'omp')).toBe(true);
+      expect(callback).not.toHaveBeenCalled();
+
+      channelHealth.setOnChannelFrozen(null);
+    });
+
+    it('should still count failures for omp channel', () => {
+      const threshold = channelHealth.healthConfig.failureThreshold;
+      for (let i = 0; i < threshold; i++) {
+        channelHealth.recordFailure('ch1', 'omp');
+      }
+
+      const status = channelHealth.getChannelHealthStatus('ch1', 'omp');
+      expect(status.totalFailures).toBe(threshold);
+      expect(status.consecutiveFailures).toBe(threshold);
+    });
+
+    it('should reset omp consecutiveFailures on success', () => {
+      channelHealth.recordFailure('ch1', 'omp');
+      channelHealth.recordFailure('ch1', 'omp');
+      channelHealth.recordSuccess('ch1', 'omp');
+
+      const status = channelHealth.getChannelHealthStatus('ch1', 'omp');
+      expect(status.consecutiveFailures).toBe(0);
+      expect(status.consecutiveSuccesses).toBe(1);
+      expect(status.status).toBe('healthy');
+    });
+  });
+
   describe('freeze behavior', () => {
     function freezeChannel(channelId, source) {
       const threshold = channelHealth.healthConfig.failureThreshold;

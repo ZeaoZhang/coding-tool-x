@@ -4,6 +4,11 @@
 
 该项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [Unreleased]
+
+### Fixed
+- **OMP 渠道失败不再冻结** - OMP 动态切换开启后，失败渠道不再进入冻结状态。OMP 网关按请求即时回退其他渠道，冻结会导致短暂故障的渠道在恢复前被排除在后续分配之外
+
 ## [3.6.7] - 2026-05-16
 
 ### Added
