@@ -11,6 +11,7 @@ const {
   getProjectPath,
   getAllSessions
 } = require('../services/gemini-sessions');
+const { getSessionStatus, getSessionOutline, getMessagePage } = require('../services/session-history-index');
 const { isGeminiInstalled } = require('../services/gemini-config');
 const { loadAliases } = require('../services/alias');
 const {
@@ -45,7 +46,7 @@ module.exports = (config) => {
    * GET /api/gemini/sessions/search/global?keyword=xxx
    * 全局搜索
    */
-  router.get('/search/global', (req, res) => {
+  router.get('/search/global', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
@@ -57,7 +58,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = searchSessions(keyword);
+      const results = await searchSessions(keyword);
 
       res.json({
         keyword,
@@ -75,14 +76,14 @@ module.exports = (config) => {
    * GET /api/gemini/sessions/recent/list?limit=10
    * 获取最近会话
    */
-  router.get('/recent/list', (req, res) => {
+  router.get('/recent/list', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
       const limit = parseInt(req.query.limit) || 5;
-      const sessions = getRecentSessions(limit);
+      const sessions = await getRecentSessions(limit);
 
       res.json({
         sessions,
@@ -125,7 +126,7 @@ module.exports = (config) => {
    * GET /api/gemini/sessions/:projectHash/search
    * 搜索项目内会话内容
    */
-  router.get('/:projectHash/search', (req, res) => {
+  router.get('/:projectHash/search', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
@@ -141,7 +142,7 @@ module.exports = (config) => {
       const contextLength = context ? parseInt(context) : 35;
 
       // 搜索所有会话，然后过滤该项目的会话
-      const allResults = searchSessions(keyword, contextLength);
+      const allResults = await searchSessions(keyword, contextLength);
       const results = allResults.filter(r => r.projectHash === projectHash);
 
       res.json({
@@ -155,14 +156,26 @@ module.exports = (config) => {
     }
   });
 
-  router.get('/:projectHash/:sessionId/status', (req, res) => {
+  router.get('/:projectHash/:sessionId/status', async (req, res) => {
+    // Try session-history-index first for fast lookup
+    try {
+      const idxStatus = await getSessionStatus('gemini', req.params.sessionId, { consistency: 'stale-ok' });
+      if (idxStatus) {
+        return res.json({
+          sessionId: idxStatus.sessionId,
+          lastModified: new Date(idxStatus.lastModified).toISOString(),
+          size: idxStatus.size
+        });
+      }
+    } catch (_) { /* fall through to direct lookup */ }
+
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -178,14 +191,25 @@ module.exports = (config) => {
     }
   });
 
-  router.get('/:projectHash/:sessionId/outline', (req, res) => {
+  router.get('/:projectHash/:sessionId/outline', async (req, res) => {
+    // Try session-history-index first for fast lookup
+    try {
+      const idxOutline = await getSessionOutline('gemini', req.params.sessionId, { consistency: 'stale-ok' });
+      if (idxOutline) {
+        return res.json({
+          sessionId: idxOutline.sessionId,
+          items: idxOutline.items
+        });
+      }
+    } catch (_) { /* fall through to direct read */ }
+
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -218,7 +242,21 @@ module.exports = (config) => {
    * GET /api/gemini/sessions/:projectHash/:sessionId/messages
    * 获取会话的消息列表
    */
-  router.get('/:projectHash/:sessionId/messages', (req, res) => {
+  router.get('/:projectHash/:sessionId/messages', async (req, res) => {
+    const startMs = Date.now();
+    // Try session-history-index first for fast lookup
+    try {
+      const { page = 1, limit = 20, order = 'desc' } = req.query;
+      const pageNum = parseInt(page) || 1;
+      const limitNum = parseInt(limit) || 20;
+      const idxPage = await getMessagePage('gemini', req.params.sessionId, {
+        page: pageNum, limit: limitNum, order
+      });
+      if (idxPage) {
+        return res.json(idxPage);
+      }
+    } catch (_) { /* fall through to direct file read */ }
+
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
@@ -227,7 +265,7 @@ module.exports = (config) => {
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
@@ -442,7 +480,7 @@ module.exports = (config) => {
    * POST /api/gemini/sessions/:projectHash/:sessionId/launch
    * 获取会话启动命令（用于复制）
    */
-  router.post('/:projectHash/:sessionId/launch', (req, res) => {
+  router.post('/:projectHash/:sessionId/launch', async (req, res) => {
     try {
       if (!isGeminiInstalled()) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
@@ -451,7 +489,7 @@ module.exports = (config) => {
       const { projectHash, sessionId } = req.params;
 
       // 获取会话详情
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });

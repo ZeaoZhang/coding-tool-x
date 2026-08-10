@@ -32,9 +32,9 @@ async function buildClaudePayload(projectName, config, options = {}) {
   };
 }
 
-function buildCodexPayload(projectName, options = {}) {
+async function buildCodexPayload(projectName, options = {}) {
   const { getSessionsByProject } = require('./codex-sessions');
-  const sessions = getSessionsByProject(projectName, { force: options.force === true });
+  const sessions = await getSessionsByProject(projectName, { force: options.force === true });
 
   return {
     sessions,
@@ -49,9 +49,9 @@ function buildCodexPayload(projectName, options = {}) {
   };
 }
 
-function buildGeminiPayload(projectHash, options = {}) {
+async function buildGeminiPayload(projectHash, options = {}) {
   const { getProjectSessions, getProjectPath } = require('./gemini-sessions');
-  const sessions = getProjectSessions(projectHash, { force: options.force === true });
+  const sessions = await getProjectSessions(projectHash, { force: options.force === true });
   const realPath = getProjectPath(projectHash, { force: options.force === true });
   const displayName = realPath ? path.basename(realPath) : `Project ${projectHash.substring(0, 8)}`;
 
@@ -88,13 +88,13 @@ function buildOpenCodePayload(projectName, options = {}) {
   };
 }
 
-function buildOmpPayload(projectName, options = {}) {
+async function buildOmpPayload(projectName, options = {}) {
   const { getProjects, getSessionsByProject } = require('./omp-sessions');
-  const sessions = getSessionsByProject(projectName, { force: options.force === true });
+  const sessions = await getSessionsByProject(projectName, { force: options.force === true });
   const firstDirectory = sessions.find(session => session.directory)?.directory;
   let project = null;
   try {
-    project = getProjects({ force: options.force === true }).find(p => p.name === projectName) || null;
+    project = (await getProjects({ force: options.force === true })).find(p => p.name === projectName) || null;
   } catch {
     project = null;
   }

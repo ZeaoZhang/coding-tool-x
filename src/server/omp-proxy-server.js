@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const { loadConfig } = require('../config/loader');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('./services/proxy-runtime');
 const {
@@ -10,7 +9,8 @@ const {
   enableManagedOmpMode,
   disableManagedOmpMode,
   loadManagedOmpActiveChannelId,
-  loadManagedOmpModeState
+  loadManagedOmpModeState,
+  getOrCreateOmpGatewaySecret
 } = require('./services/omp-channels');
 const {
   startOmpSessionLogObserver,
@@ -52,7 +52,7 @@ async function startOmpProxyServerUnlocked(options = {}) {
     activeChannelId: loadManagedOmpActiveChannelId()
   };
   const channels = getEnabledChannels();
-  const secret = crypto.randomBytes(32).toString('hex');
+  const secret = getOrCreateOmpGatewaySecret();
   const desiredPort = options.port ?? config.ports?.ompProxy ?? 20092;
   const gatewayStatus = await gateway.start({
     host: '127.0.0.1',

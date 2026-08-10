@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { HOME_DIR } = require('../../config/paths');
 const { getGeminiDir } = require('./gemini-config');
 const { resolveModelPricing } = require('../utils/pricing');
+const { listProjects: idxListProjects, listSessions: idxListSessions, getSessionStatus: idxGetSessionStatus, getRecentSessions: idxGetRecent, searchSessions: idxSearch } = require('./session-history-index');
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 const SESSION_FILE_RE = /^session-(.*)-([a-f0-9]+)\.(json|jsonl)$/;
@@ -628,59 +629,20 @@ function getProjectPath(projectHash, options = {}) {
  * 聚合项目列表
  * @returns {Array} 项目对象数组
  */
-function getProjects(options = {}) {
-  if (options.force) {
-    pathMappingCache = null;
-    pathMappingCacheTime = 0;
-  }
-  const sessions = getAllSessions();
-  const projectMap = new Map();
-
-  sessions.forEach(session => {
-    const projectHash = session.projectHash;
-
-    if (!projectMap.has(projectHash)) {
-      const projectPath = session.projectRoot || getProjectPath(projectHash);
-
-      // 如果找到了真实路径，使用目录名作为显示名称
-      let displayName;
-      if (projectPath) {
-        displayName = path.basename(projectPath);
-        // 如果是 home 目录，显示 ~
-        if (projectPath === HOME_DIR) {
-          displayName = '~';
-        }
-      } else {
-        // 未找到路径，使用 hash 前 8 位
-        displayName = `Project ${projectHash.substring(0, 8)}`;
-      }
-
-      projectMap.set(projectHash, {
-        name: projectHash,
-        displayName,
-        path: projectPath,
-        fullPath: projectPath,
-        storageName: session.storageName,
-        sessionCount: 0,
-        lastUpdated: session.lastUpdated,
-        source: 'gemini'
-      });
-    }
-
-    const project = projectMap.get(projectHash);
-    project.sessionCount++;
-
-    // 更新最后活动时间
-    if (new Date(session.lastUpdated) > new Date(project.lastUpdated)) {
-      project.lastUpdated = session.lastUpdated;
-    }
+async function getProjects(options = {}) {
+  const projects = await idxListProjects('gemini', options);
+  const paths = buildPathMapping();
+  return projects.map(project => {
+    const fullPath = project.fullPath || paths.get(project.name) || null;
+    return {
+      ...project,
+      displayName: fullPath ? path.basename(fullPath) : project.displayName,
+      path: fullPath,
+      fullPath,
+      storageName: fullPath ? path.basename(fullPath) : project.name,
+      lastUpdated: new Date(project.lastUsed).toISOString()
+    };
   });
-
-  // 转换为数组并排序（按最后活动时间）
-  const projects = Array.from(projectMap.values());
-  projects.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
-
-  return projects;
 }
 
 /**
@@ -688,15 +650,25 @@ function getProjects(options = {}) {
  * @param {string} projectHash - 项目 hash
  * @returns {Array} 会话对象数组
  */
-function getProjectSessions(projectHash, options = {}) {
-  if (options.force) {
-    pathMappingCache = null;
-    pathMappingCacheTime = 0;
-  }
-  const allSessions = getAllSessions();
-  return allSessions
-    .filter(session => session.projectHash === projectHash)
-    .map(normalizeSession);
+async function getProjectSessions(projectHash, options = {}) {
+  const indexed = await idxListSessions('gemini', projectHash, options);
+  return indexed.map(session => ({
+    sessionId: session.sessionId,
+    mtime: new Date(session.mtime).toISOString(),
+    size: session.size,
+    filePath: session.filePath,
+    gitBranch: null,
+    firstMessage: session.firstMessage,
+    forkedFrom: session.extra?.forkedFrom || null,
+    source: 'gemini',
+    tokens: session.tokens?.total ?? session.tokens ?? 0,
+    cost: session.extra?.cost || 0,
+    model: session.model || 'gemini-2.5-pro',
+    projectHash: session.projectName,
+    projectName: session.projectName,
+    storageName: session.extra?.storageName || session.projectName,
+    projectRoot: session.projectFullPath || null
+  }));
 }
 
 /**
@@ -704,15 +676,9 @@ function getProjectSessions(projectHash, options = {}) {
  * @param {string} sessionId - 会话 ID
  * @returns {Object|null} 完整会话数据
  */
-function getSession(sessionId) {
-  const allSessions = getAllSessions();
-  const session = allSessions.find(s => s.sessionId === sessionId);
-
-  if (!session) {
-    return null;
-  }
-
-  return readSessionFull(session.filePath);
+async function getSession(sessionId) {
+  const status = await idxGetSessionStatus('gemini', sessionId);
+  return status ? readSessionFull(status.filePath) : null;
 }
 
 /**
@@ -773,11 +739,13 @@ function saveProjectOrder(order) {
  * @param {number} limit - 限制数量
  * @returns {Array} 会话对象数组
  */
-function getRecentSessions(limit = 5) {
-  const allSessions = getAllSessions();
-  return allSessions
-    .slice(0, limit)
-    .map(normalizeSession);
+async function getRecentSessions(limit = 5) {
+  const sessions = await idxGetRecent('gemini', limit);
+  return sessions.map(session => ({
+    ...session,
+    mtime: new Date(session.mtime).toISOString(),
+    projectHash: session.projectName
+  }));
 }
 
 /**
@@ -785,26 +753,16 @@ function getRecentSessions(limit = 5) {
  * @param {string} sessionId - 会话 ID
  * @returns {Object|null} 完整会话数据
  */
-function getSessionById(sessionId) {
-  const allSessions = getAllSessions();
-  const sessionMeta = allSessions.find(s => s.sessionId === sessionId);
-
-  if (!sessionMeta) {
-    return null;
-  }
-
-  const fullSession = readSessionFull(sessionMeta.filePath);
-
-  if (!fullSession) {
-    return null;
-  }
-
-  // 合并元数据
+async function getSessionById(sessionId) {
+  const status = await idxGetSessionStatus('gemini', sessionId);
+  if (!status) return null;
+  const fullSession = readSessionFull(status.filePath);
+  if (!fullSession) return null;
   return {
     ...fullSession,
-    filePath: sessionMeta.filePath,
-    size: sessionMeta.size,
-    mtime: sessionMeta.mtime,
+    filePath: status.filePath,
+    size: status.size,
+    mtime: new Date(status.lastModified).toISOString(),
     source: 'gemini'
   };
 }
@@ -815,70 +773,22 @@ function getSessionById(sessionId) {
  * @param {number} contextLength - 上下文长度（可选）
  * @returns {Array} 搜索结果数组
  */
-function searchSessions(keyword, contextLength = 35) {
-  const allSessions = getAllSessions();
-  const results = [];
-
-  allSessions.forEach(sessionMeta => {
-    const fullSession = readSessionFull(sessionMeta.filePath);
-
-    if (!fullSession || !fullSession.messages) {
-      return;
-    }
-
-    const matches = [];
-
-    fullSession.messages.forEach((msg, index) => {
-      let content = '';
-
-      // 提取消息内容
-      if (msg.type === 'user' || msg.type === 'assistant' || msg.type === 'gemini') {
-        content = extractContentText(msg.content);
-      }
-
-      // 搜索关键词
-      const lowerContent = content.toLowerCase();
-      const lowerKeyword = keyword.toLowerCase();
-
-      if (lowerContent.includes(lowerKeyword)) {
-        const keywordIndex = lowerContent.indexOf(lowerKeyword);
-
-        // 提取上下文
-        const start = Math.max(0, keywordIndex - contextLength);
-        const end = Math.min(content.length, keywordIndex + keyword.length + contextLength);
-
-        let context = content.substring(start, end);
-
-        // 添加省略号
-        if (start > 0) context = '...' + context;
-        if (end < content.length) context = context + '...';
-
-        matches.push({
-          messageIndex: index,
-          role: msg.type,
-          context,
-          timestamp: msg.timestamp
-        });
-      }
-    });
-
-    if (matches.length > 0) {
-      results.push({
-        sessionId: sessionMeta.sessionId,
-        projectHash: sessionMeta.projectHash,
-        firstMessage: sessionMeta.firstMessage,
-        lastUpdated: sessionMeta.lastUpdated,
-        matches,
-        matchCount: matches.length,
-        source: 'gemini'
-      });
-    }
-  });
-
-  // 按匹配数量排序
-  results.sort((a, b) => b.matchCount - a.matchCount);
-
-  return results;
+async function searchSessions(keyword, contextLength = 35) {
+  const results = await idxSearch('gemini', keyword, { contextLength });
+  return results.map(result => ({
+    sessionId: result.sessionId,
+    projectHash: result.projectName,
+    firstMessage: result.firstMessage,
+    lastUpdated: result.updatedAt || null,
+    matches: result.matches.map(match => ({
+      messageIndex: match.ordinal,
+      role: match.type === 'gemini' ? 'gemini' : match.role,
+      context: match.context,
+      timestamp: match.timestamp
+    })),
+    matchCount: result.matchCount,
+    source: 'gemini'
+  }));
 }
 
 /**

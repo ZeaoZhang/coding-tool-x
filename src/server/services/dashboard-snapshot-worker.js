@@ -32,12 +32,12 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     }
     case 'codex': {
       const { getProjects } = require('./codex-sessions');
-      const projects = getProjects({ force: options.force === true });
+      const projects = await getProjects({ force: options.force === true });
       return { projects, currentProject: projects[0] ? projects[0].name : null };
     }
     case 'gemini': {
       const { getProjects } = require('./gemini-sessions');
-      const projects = getProjects({ force: options.force === true });
+      const projects = await getProjects({ force: options.force === true });
       return { projects, currentProject: projects[0] ? projects[0].name : null };
     }
     case 'opencode': {
@@ -47,7 +47,7 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     }
     case 'omp': {
       const { getProjects } = require('./omp-sessions');
-      const projects = getProjects({ force: options.force === true });
+      const projects = await getProjects({ force: options.force === true });
       return { projects, currentProject: projects[0] ? projects[0].name : null };
     }
     default:
@@ -55,10 +55,10 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
   }
 }
 
-function buildCountsPayload(source, config = {}, options = {}) {
+async function buildCountsPayload(source, config = {}, options = {}) {
   switch (source) {
     case 'claude':
-      return require('./sessions').getProjectAndSessionCounts(config, { force: options.force === true });
+      return require('./sessions').getProjectAndSessionCounts(config);
     case 'codex':
       return require('./codex-sessions').getProjectAndSessionCounts({ force: options.force === true });
     case 'gemini':

@@ -781,7 +781,7 @@ async function getAllAvailableProjects() {
 
   try {
     if (isCodexInstalled()) {
-      const codexProjects = codexSessionsService.getProjects();
+      const codexProjects = await codexSessionsService.getProjects();
       const list = Array.isArray(codexProjects) ? codexProjects : [];
       list.forEach(project => addProject('codex', project));
     }
@@ -791,7 +791,7 @@ async function getAllAvailableProjects() {
 
   try {
     if (isGeminiInstalled()) {
-      const geminiProjects = geminiSessionsService.getProjects();
+      const geminiProjects = await geminiSessionsService.getProjects();
       const list = Array.isArray(geminiProjects) ? geminiProjects : [];
       list.forEach(project => addProject('gemini', project));
     }
@@ -810,7 +810,7 @@ async function getAllAvailableProjects() {
   }
 
   try {
-    const ompProjects = ompSessionsService.getProjects();
+    const ompProjects = await ompSessionsService.getProjects();
     const list = Array.isArray(ompProjects) ? ompProjects : [];
     if (list.length > 0 || ompSessionsService.isOmpInstalled()) {
       list.forEach(project => addProject('omp', project));

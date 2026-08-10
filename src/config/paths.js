@@ -439,6 +439,7 @@ const PATHS = {
   sessionHasCache: path.join(CACHE_DIR, 'session-has-cache.json'),
   channelModels: path.join(CACHE_DIR, 'channel-models.json'),
   channelBalanceStrategies: path.join(CACHE_DIR, 'channel-balance-strategies.json'),
+  sessionHistoryIndex: path.join(CACHE_DIR, 'session-history.sqlite'),
   envBackups: path.join(BACKUPS_DIR, 'env'),
   proxyRuntime: {
     claude: path.join(RUNTIME_DIR, 'claude-proxy.json'),
@@ -447,6 +448,7 @@ const PATHS = {
     opencode: path.join(RUNTIME_DIR, 'opencode-proxy.json'),
     omp: path.join(RUNTIME_DIR, 'omp-proxy.json')
   },
+  ompGatewaySecret: path.join(RUNTIME_DIR, 'omp-gateway-secret'),
 
   // 请求记录
   requestSnapshots: {

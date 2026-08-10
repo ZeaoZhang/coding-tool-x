@@ -128,6 +128,33 @@ beforeEach(() => {
     loaded: true,
     exports: { broadcastLog: broadcastLogMock }
   };
+  require.cache[require.resolve('../../../src/server/services/session-history-index')] = {
+    id: require.resolve('../../../src/server/services/session-history-index'),
+    filename: require.resolve('../../../src/server/services/session-history-index'),
+    loaded: true,
+    exports: {
+      getSessionStatus: vi.fn((source, sessionId) => {
+        if (sessionId === 'missing') return Promise.resolve(null);
+        return Promise.resolve({ sessionId, lastModified: Date.now(), size: 128, filePath: path.join(testDir, 'session.jsonl') });
+      }),
+      getSessionOutline: vi.fn((source, sessionId) => Promise.resolve({
+        sessionId,
+        items: [{ userMessageNumber: 1, preview: 'Hello', timestamp: Date.now() }]
+      })),
+      getMessagePage: vi.fn((source, sessionId, opts = {}) => {
+        const limit = opts.limit || 20;
+        const page = opts.page || 1;
+        return Promise.resolve({
+          messages: [
+            { role: 'assistant', content: 'World', model: 'gpt-5' },
+            { role: 'user', content: 'Hello' }
+          ],
+          metadata: { cwd: '/workspace/codex-project', provider: 'codex', model: 'gpt-5' },
+          pagination: { page, limit, total: 2, hasMore: false }
+        });
+      })
+    }
+  };
 });
 
 afterEach(() => {
@@ -135,6 +162,7 @@ afterEach(() => {
   [
     '../../../src/server/api/codex-sessions',
     '../../../src/server/services/codex-sessions',
+    '../../../src/server/services/session-history-index',
     '../../../src/server/services/codex-config',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server'

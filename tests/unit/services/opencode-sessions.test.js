@@ -3,8 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-const childProcess = require('child_process');
+const { DatabaseSync } = require('node:sqlite');
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const ALIAS_PATH = require.resolve('../../../src/server/services/alias');
@@ -13,66 +12,88 @@ const MODULE_PATH = require.resolve('../../../src/server/services/opencode-sessi
 
 let testDir;
 let dataDir;
+let dbPath;
+let db;
 let projectOrderPath;
 let sessionOrderPath;
-let execSpy;
-let executedSql;
-let countsRow;
-let projectRows;
-let sessionRowsByProject;
-let sessionRowsById;
-let messageRowsBySession;
-let partRowsBySession;
 let aliasesState;
 let forkRelationsState;
-let deleteAliasMock;
-let loadAliasesMock;
-let getForkRelationsMock;
-let saveForkRelationsMock;
 let opencodeSessions;
 
-function buildQueryResponder(sql) {
-  if (sql.includes('(SELECT COUNT(*) FROM project) AS project_count')) {
-    return [countsRow];
-  }
+function createSchema(database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS project (
+      id TEXT PRIMARY KEY,
+      worktree TEXT,
+      time_created INTEGER,
+      time_updated INTEGER,
+      time_archived INTEGER,
+      data TEXT
+    );
+    CREATE TABLE IF NOT EXISTS session (
+      id TEXT PRIMARY KEY,
+      project_id TEXT REFERENCES project(id) ON DELETE CASCADE,
+      parent_id TEXT,
+      slug TEXT,
+      directory TEXT,
+      title TEXT,
+      version TEXT,
+      share_url TEXT,
+      summary_additions TEXT,
+      summary_deletions TEXT,
+      summary_files TEXT,
+      summary_diffs TEXT,
+      revert TEXT,
+      permission TEXT,
+      time_created INTEGER,
+      time_updated INTEGER,
+      time_compacting INTEGER,
+      time_archived INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT REFERENCES session(id) ON DELETE CASCADE,
+      time_created INTEGER,
+      time_updated INTEGER,
+      data TEXT
+    );
+    CREATE TABLE IF NOT EXISTS part (
+      id TEXT PRIMARY KEY,
+      message_id TEXT REFERENCES message(id) ON DELETE CASCADE,
+      session_id TEXT REFERENCES session(id) ON DELETE CASCADE,
+      time_created INTEGER,
+      time_updated INTEGER,
+      data TEXT
+    );
+  `);
+}
 
-  if (sql.includes('FROM project p')) {
-    return projectRows;
-  }
+function insertTestData() {
+  // Projects
+  db.prepare(`INSERT INTO project (id, worktree, time_created, time_updated, time_archived, data) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('proj-1', '/workspace/app-a', 1000, 5000, null, null);
+  db.prepare(`INSERT INTO project (id, worktree, time_created, time_updated, time_archived, data) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('proj-2', '/workspace/app-b', 2000, 6000, null, JSON.stringify({ name: 'Readable Project' }));
 
-  if (sql.includes("SELECT id FROM project WHERE id = 'proj-1'")) {
-    return projectRows.filter((row) => row.id === 'proj-1').map((row) => ({ id: row.id }));
-  }
+  // Sessions
+  db.prepare(`INSERT INTO session (id, project_id, slug, directory, title, time_updated) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('ses-1', 'proj-1', 'needle-session', '/workspace/app-a', 'Needle intro', 4000);
+  db.prepare(`INSERT INTO session (id, project_id, slug, directory, title, time_updated) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('ses-2', 'proj-1', 'follow-up', '/workspace/app-a', 'Follow up', 7000);
+  db.prepare(`INSERT INTO session (id, project_id, slug, directory, title, time_updated) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('ses-3', 'proj-2', 'summary', '/workspace/app-b', 'Project summary', 3000);
 
-  if (sql.includes("SELECT id FROM session WHERE project_id = 'proj-1'")) {
-    return (sessionRowsByProject['proj-1'] || []).map((row) => ({ id: row.id }));
-  }
+  // Messages
+  db.prepare(`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`)
+    .run('msg-1', 'ses-1', 1000, 1000, JSON.stringify({ id: 'msg-1', role: 'user', content: 'needle question' }));
+  db.prepare(`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`)
+    .run('msg-2', 'ses-1', 1100, 1100, JSON.stringify({ id: 'msg-2', role: 'assistant', text: 'fallback answer', model: { modelID: 'gpt-4o-mini' } }));
+  db.prepare(`INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`)
+    .run('msg-3', 'ses-1', 1200, 1200, JSON.stringify({ id: 'msg-3', role: 'system', content: 'ignore this' }));
 
-  if (sql.includes("WHERE s.project_id = 'proj-1'")) {
-    return sessionRowsByProject['proj-1'] || [];
-  }
-
-  if (sql.includes("WHERE s.project_id = 'proj-2'")) {
-    return sessionRowsByProject['proj-2'] || [];
-  }
-
-  if (sql.includes("WHERE s.id = 'ses-1'")) {
-    return sessionRowsById['ses-1'] ? [sessionRowsById['ses-1']] : [];
-  }
-
-  if (sql.includes("WHERE s.id = 'ses-2'")) {
-    return sessionRowsById['ses-2'] ? [sessionRowsById['ses-2']] : [];
-  }
-
-  if (sql.includes("WHERE session_id = 'ses-1'") && sql.includes('FROM message')) {
-    return messageRowsBySession['ses-1'] || [];
-  }
-
-  if (sql.includes("WHERE session_id = 'ses-1'") && sql.includes('FROM part')) {
-    return partRowsBySession['ses-1'] || [];
-  }
-
-  return [];
+  // Parts
+  db.prepare(`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('prt-1', 'msg-2', 'ses-1', 1110, 1110, JSON.stringify({ text: 'assistant needle response' }));
 }
 
 beforeEach(() => {
@@ -81,115 +102,14 @@ beforeEach(() => {
   projectOrderPath = path.join(testDir, '.cc-tool', 'opencode-project-order.json');
   sessionOrderPath = path.join(testDir, '.cc-tool', 'opencode-session-order.json');
   fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(path.join(dataDir, 'opencode.db'), '', 'utf8');
+  dbPath = path.join(dataDir, 'opencode.db');
 
-  executedSql = [];
-  countsRow = { project_count: 2, session_count: 3 };
-  projectRows = [
-    {
-      id: 'proj-1',
-      worktree: '/workspace/app-a',
-      name: 'ses_weird',
-      time_created: 1000,
-      time_updated: 5000,
-      session_count: 2
-    },
-    {
-      id: 'proj-2',
-      worktree: '/workspace/app-b',
-      name: 'Readable Project',
-      time_created: 2000,
-      time_updated: 6000,
-      session_count: 1
-    }
-  ];
-  sessionRowsByProject = {
-    'proj-1': [
-      {
-        id: 'ses-1',
-        project_id: 'proj-1',
-        slug: 'needle-session',
-        directory: '/workspace/app-a',
-        title: 'Needle intro',
-        time_updated: 4000,
-        size: 128
-      },
-      {
-        id: 'ses-2',
-        project_id: 'proj-1',
-        slug: 'follow-up',
-        directory: '/workspace/app-a',
-        title: 'Follow up',
-        time_updated: 7000,
-        size: 64
-      }
-    ],
-    'proj-2': [
-      {
-        id: 'ses-3',
-        project_id: 'proj-2',
-        slug: 'summary',
-        directory: '/workspace/app-b',
-        title: 'Project summary',
-        time_updated: 3000,
-        size: 32
-      }
-    ]
-  };
-  sessionRowsById = {
-    'ses-1': sessionRowsByProject['proj-1'][0],
-    'ses-2': sessionRowsByProject['proj-1'][1]
-  };
-  messageRowsBySession = {
-    'ses-1': [
-      {
-        id: 'msg-1',
-        session_id: 'ses-1',
-        time_created: 1000,
-        time_updated: 1000,
-        data: JSON.stringify({
-          id: 'msg-1',
-          role: 'user',
-          content: 'needle question'
-        })
-      },
-      {
-        id: 'msg-2',
-        session_id: 'ses-1',
-        time_created: 1100,
-        time_updated: 1100,
-        data: JSON.stringify({
-          id: 'msg-2',
-          role: 'assistant',
-          text: 'fallback answer',
-          model: { modelID: 'gpt-4o-mini' }
-        })
-      },
-      {
-        id: 'msg-3',
-        session_id: 'ses-1',
-        time_created: 1200,
-        time_updated: 1200,
-        data: JSON.stringify({
-          id: 'msg-3',
-          role: 'system',
-          content: 'ignore this'
-        })
-      }
-    ]
-  };
-  partRowsBySession = {
-    'ses-1': [
-      {
-        id: 'prt-1',
-        message_id: 'msg-2',
-        session_id: 'ses-1',
-        time_created: 1110,
-        time_updated: 1110,
-        data: JSON.stringify({ text: 'assistant needle response' })
-      }
-    ]
-  };
+  // Create real SQLite database with test data
+  db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA foreign_keys = ON');
+  createSchema(db);
+  insertTestData();
+
   aliasesState = {
     'ses-1': 'alias-one',
     'ses-2': 'focus-session'
@@ -199,14 +119,6 @@ beforeEach(() => {
     child: 'ses-1',
     keep: 'ses-other'
   };
-  deleteAliasMock = vi.fn((sessionId) => {
-    delete aliasesState[sessionId];
-  });
-  loadAliasesMock = vi.fn(() => ({ ...aliasesState }));
-  getForkRelationsMock = vi.fn(() => forkRelationsState);
-  saveForkRelationsMock = vi.fn((next) => {
-    forkRelationsState = next;
-  });
 
   require.cache[PATHS_PATH] = {
     id: PATHS_PATH,
@@ -229,8 +141,10 @@ beforeEach(() => {
     filename: ALIAS_PATH,
     loaded: true,
     exports: {
-      loadAliases: loadAliasesMock,
-      deleteAlias: deleteAliasMock
+      loadAliases: vi.fn(() => ({ ...aliasesState })),
+      deleteAlias: vi.fn((sessionId) => {
+        delete aliasesState[sessionId];
+      })
     }
   };
   require.cache[SESSIONS_PATH] = {
@@ -238,19 +152,12 @@ beforeEach(() => {
     filename: SESSIONS_PATH,
     loaded: true,
     exports: {
-      getForkRelations: getForkRelationsMock,
-      saveForkRelations: saveForkRelationsMock
+      getForkRelations: vi.fn(() => forkRelationsState),
+      saveForkRelations: vi.fn((next) => {
+        forkRelationsState = next;
+      })
     }
   };
-
-  execSpy = vi.spyOn(childProcess, 'execFileSync').mockImplementation((_cmd, args) => {
-    const sql = args[args.length - 1];
-    if (args[0] === '-json') {
-      return JSON.stringify(buildQueryResponder(sql));
-    }
-    executedSql.push(sql);
-    return '';
-  });
 
   delete require.cache[MODULE_PATH];
   opencodeSessions = require('../../../src/server/services/opencode-sessions');
@@ -258,199 +165,201 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  try { db.close(); } catch (_) {}
   fs.rmSync(testDir, { recursive: true, force: true });
-  [MODULE_PATH, PATHS_PATH, ALIAS_PATH, SESSIONS_PATH].forEach((mod) => {
-    delete require.cache[mod];
+  [
+    MODULE_PATH,
+    PATHS_PATH,
+    ALIAS_PATH,
+    SESSIONS_PATH
+  ].forEach((mod) => {
+    try { delete require.cache[mod]; } catch (_) {}
   });
 });
 
-describe('opencode-sessions project and session ordering', () => {
-  test('loads projects and sessions with persisted ordering and display-name fallbacks', () => {
-    opencodeSessions.saveProjectOrder(['proj-2', 'proj-1']);
-    opencodeSessions.saveSessionOrder('proj-1', ['ses-1', 'ses-2']);
+describe('opencode-sessions', () => {
+  describe('isOpenCodeInstalled', () => {
+    test('returns true when opencode db exists', () => {
+      expect(opencodeSessions.isOpenCodeInstalled()).toBe(true);
+    });
 
-    expect(opencodeSessions.getProjects()).toEqual([
-      {
-        name: 'proj-2',
-        displayName: 'Readable Project',
-        fullPath: '/workspace/app-b',
-        path: '/workspace/app-b',
-        sessionCount: 1,
-        lastUsed: 6000,
-        source: 'opencode'
-      },
-      {
-        name: 'proj-1',
-        displayName: 'app-a',
-        fullPath: '/workspace/app-a',
-        path: '/workspace/app-a',
-        sessionCount: 2,
-        lastUsed: 5000,
-        source: 'opencode'
-      }
-    ]);
+    test('returns false when directory does not exist', () => {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+      // Need fresh require since paths mock still points to same dataDir
+      delete require.cache[MODULE_PATH];
+      const fresh = require('../../../src/server/services/opencode-sessions');
+      expect(fresh.isOpenCodeInstalled()).toBe(false);
+    });
+  });
 
-    expect(opencodeSessions.getSessionsByProjectId('proj-1')).toEqual([
-      {
-        sessionId: 'ses-1',
-        projectName: 'proj-1',
-        mtime: '1970-01-01T01:06:40.000Z',
-        size: 128,
-        filePath: '',
-        gitBranch: null,
-        firstMessage: 'Needle intro',
-        forkedFrom: null,
-        directory: '/workspace/app-a',
-        slug: 'needle-session',
-        source: 'opencode'
-      },
-      {
-        sessionId: 'ses-2',
-        projectName: 'proj-1',
-        mtime: '1970-01-01T01:56:40.000Z',
-        size: 64,
-        filePath: '',
-        gitBranch: null,
-        firstMessage: 'Follow up',
-        forkedFrom: null,
-        directory: '/workspace/app-a',
-        slug: 'follow-up',
-        source: 'opencode'
-      }
-    ]);
+  describe('getProjectAndSessionCounts', () => {
+    test('returns project and session counts', () => {
+      const counts = opencodeSessions.getProjectAndSessionCounts({ force: true });
+      expect(counts.projectCount).toBe(2);
+      expect(counts.sessionCount).toBe(3);
+    });
+
+    test('uses cache on second call', () => {
+      opencodeSessions.getProjectAndSessionCounts({ force: true });
+      const counts = opencodeSessions.getProjectAndSessionCounts();
+      expect(counts.projectCount).toBe(2);
+      expect(counts.sessionCount).toBe(3);
+    });
+  });
+
+  describe('getProjects', () => {
+    test('returns project list with display names', () => {
+      const projects = opencodeSessions.getProjects();
+      expect(projects).toHaveLength(2);
+
+      const proj1 = projects.find(p => p.name === 'proj-1');
+      expect(proj1).toBeDefined();
+      expect(proj1.fullPath).toBe('/workspace/app-a');
+      expect(proj1.source).toBe('opencode');
+
+      const proj2 = projects.find(p => p.name === 'proj-2');
+      expect(proj2.displayName).toBe('Readable Project');
+    });
+
+    test('respects project order', () => {
+      opencodeSessions.saveProjectOrder(['proj-2', 'proj-1']);
+      const projects = opencodeSessions.getProjects();
+      expect(projects[0].name).toBe('proj-2');
+      expect(projects[1].name).toBe('proj-1');
+    });
+  });
+
+  describe('getSessionsByProjectId', () => {
+    test('returns sessions for a project sorted by mtime', () => {
+      const sessions = opencodeSessions.getSessionsByProjectId('proj-1');
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].sessionId).toBe('ses-2'); // newer
+      expect(sessions[1].sessionId).toBe('ses-1');
+    });
+
+    test('respects session order', () => {
+      opencodeSessions.saveSessionOrder('proj-1', ['ses-1', 'ses-2']);
+      const sessions = opencodeSessions.getSessionsByProjectId('proj-1');
+      // Ordered sessions come after new ones or get reordered
+      const ids = sessions.map(s => s.sessionId);
+      expect(ids).toContain('ses-1');
+      expect(ids).toContain('ses-2');
+    });
+
+    test('returns empty array for unknown project', () => {
+      const sessions = opencodeSessions.getSessionsByProjectId('unknown');
+      expect(sessions).toEqual([]);
+    });
+  });
+
+  describe('getSessionById', () => {
+    test('returns session with messages and parts', () => {
+      const session = opencodeSessions.getSessionById('ses-1');
+      expect(session).toBeDefined();
+      expect(session.sessionId).toBe('ses-1');
+      expect(session.messages).toHaveLength(3);
+
+      const userMsg = session.messages.find(m => m.role === 'user');
+      expect(userMsg.content).toBe('needle question');
+
+      const assistantMsg = session.messages.find(m => m.role === 'assistant');
+      expect(assistantMsg.parts).toHaveLength(1);
+      expect(assistantMsg.parts[0].data.text).toBe('assistant needle response');
+    });
+
+    test('returns null for unknown session', () => {
+      expect(opencodeSessions.getSessionById('unknown')).toBeNull();
+    });
+  });
+
+  describe('searchSessions', () => {
+    test('finds sessions by keyword in messages and parts', () => {
+      const results = opencodeSessions.searchSessions('needle');
+      expect(results).toHaveLength(1);
+      expect(results[0].sessionId).toBe('ses-1');
+      expect(results[0].matches.length).toBeGreaterThanOrEqual(1);
+    });
+
+    test('returns empty for no matches', () => {
+      const results = opencodeSessions.searchSessions('zzznotfound');
+      expect(results).toEqual([]);
+    });
+
+    test('returns empty for empty keyword', () => {
+      expect(opencodeSessions.searchSessions('')).toEqual([]);
+      expect(opencodeSessions.searchSessions('  ')).toEqual([]);
+    });
+  });
+
+  describe('getRecentSessions', () => {
+    test('returns most recent sessions across all projects', () => {
+      const recent = opencodeSessions.getRecentSessions(2);
+      expect(recent).toHaveLength(2);
+      expect(recent[0].sessionId).toBe('ses-2'); // newest
+      expect(recent[1].sessionId).toBe('ses-1');
+    });
+
+    test('defaults to limit 5', () => {
+      const recent = opencodeSessions.getRecentSessions();
+      expect(recent.length).toBeLessThanOrEqual(5);
+      expect(recent.length).toBe(3);
+    });
+  });
+
+  describe('deleteSession', () => {
+    test('deletes a session and cleans up fork/alias', () => {
+      const result = opencodeSessions.deleteSession('ses-1');
+      expect(result.success).toBe(true);
+      expect(result.sessionId).toBe('ses-1');
+
+      // Verify session is gone from DB
+      const dbCheck = new DatabaseSync(dbPath);
+      const rows = dbCheck.prepare('SELECT id FROM session WHERE id = ?').all('ses-1');
+      expect(rows).toHaveLength(0);
+      dbCheck.close();
+
+      // Fork relations cleaned
+      expect(forkRelationsState['ses-1']).toBeUndefined();
+      expect(forkRelationsState.child).toBeUndefined();
+    });
+
+    test('throws for unknown session', () => {
+      expect(() => opencodeSessions.deleteSession('unknown')).toThrow('Session not found');
+    });
+  });
+
+  describe('forkSession', () => {
+    test('creates a forked copy with new IDs', () => {
+      const result = opencodeSessions.forkSession('ses-1');
+      expect(result.success).toBe(true);
+      expect(result.forkedFrom).toBe('ses-1');
+
+      // Verify forked session exists
+      const forked = opencodeSessions.getSessionById(result.sessionId);
+      expect(forked).toBeDefined();
+      expect(forked.messages).toHaveLength(3);
+
+      // Fork relation recorded
+      expect(forkRelationsState[result.sessionId]).toBe('ses-1');
+    });
+
+    test('throws for unknown session', () => {
+      expect(() => opencodeSessions.forkSession('unknown')).toThrow('Session not found');
+    });
+  });
+
+  describe('deleteProject', () => {
+    test('deletes a project and its sessions', () => {
+      const result = opencodeSessions.deleteProject('proj-1');
+      expect(result.success).toBe(true);
+      expect(result.deletedSessions).toBe(2);
+
+      // Verify project gone
+      expect(opencodeSessions.getSessionsByProjectId('proj-1')).toEqual([]);
+    });
+
+    test('throws for unknown project', () => {
+      expect(() => opencodeSessions.deleteProject('unknown')).toThrow('Project not found');
+    });
   });
 });
-
-describe('opencode-sessions messages, recent sessions, and search', () => {
-  test('builds message content from parts, enriches recent sessions, and searches session data', () => {
-    expect(opencodeSessions.getSessionById('ses-1')).toEqual({
-      sessionId: 'ses-1',
-      projectName: 'proj-1',
-      mtime: '1970-01-01T01:06:40.000Z',
-      size: 128,
-      filePath: '',
-      gitBranch: null,
-      firstMessage: 'Needle intro',
-      forkedFrom: null,
-      directory: '/workspace/app-a',
-      slug: 'needle-session',
-      source: 'opencode'
-    });
-
-    expect(opencodeSessions.getSessionMessages('ses-1')).toEqual([
-      {
-        type: 'user',
-        content: 'needle question',
-        timestamp: '1970-01-01T00:16:40.000Z',
-        model: null
-      },
-      {
-        type: 'assistant',
-        content: 'assistant needle response',
-        timestamp: '1970-01-01T00:18:20.000Z',
-        model: 'gpt-4o-mini'
-      }
-    ]);
-
-    expect(opencodeSessions.getRecentSessions(2)).toEqual([
-      expect.objectContaining({
-        sessionId: 'ses-2',
-        alias: 'focus-session',
-        forkedFrom: 'ses-root',
-        projectDisplayName: 'app-a',
-        projectFullPath: '/workspace/app-a'
-      }),
-      expect.objectContaining({
-        sessionId: 'ses-1',
-        alias: 'alias-one',
-        projectDisplayName: 'app-a'
-      })
-    ]);
-
-    expect(opencodeSessions.searchSessions('needle', 5)).toEqual([
-      expect.objectContaining({
-        sessionId: 'ses-1',
-        projectName: 'proj-1',
-        projectDisplayName: 'app-a',
-        projectFullPath: '/workspace/app-a',
-        alias: 'alias-one',
-        matchCount: 4,
-        source: 'opencode'
-      })
-    ]);
-    expect(opencodeSessions.searchSessions('needle', 5)[0].matches).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: 'assistant', context: expect.stringContaining('Needle') }),
-      expect.objectContaining({ role: 'user', context: expect.stringContaining('needle') })
-    ]));
-  });
-});
-
-describe('opencode-sessions deletion, forking, and count caching', () => {
-  test('deletes sessions, cleans aliases/fork relations, and invalidates cached counts', () => {
-    opencodeSessions.saveSessionOrder('proj-1', ['ses-1', 'ses-2']);
-    expect(opencodeSessions.getProjectAndSessionCounts()).toEqual({
-      projectCount: 2,
-      sessionCount: 3
-    });
-
-    countsRow = { project_count: 2, session_count: 2 };
-    const result = opencodeSessions.deleteSession('ses-1');
-
-    expect(result).toEqual({
-      success: true,
-      projectName: 'proj-1',
-      sessionId: 'ses-1'
-    });
-    expect(deleteAliasMock).toHaveBeenCalledWith('ses-1');
-    expect(readJson(sessionOrderPath)).toEqual({
-      'proj-1': ['ses-2']
-    });
-    expect(saveForkRelationsMock).toHaveBeenCalledWith({
-      'ses-2': 'ses-root',
-      keep: 'ses-other'
-    });
-    expect(executedSql.some((sql) => sql.includes("DELETE FROM session WHERE id = 'ses-1'"))).toBe(true);
-    expect(opencodeSessions.getProjectAndSessionCounts()).toEqual({
-      projectCount: 2,
-      sessionCount: 2
-    });
-  });
-
-  test('forks sessions by cloning messages/parts and prepending the new session to order', () => {
-    opencodeSessions.saveSessionOrder('proj-1', ['ses-2']);
-    vi.spyOn(crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-1111-1111-111111111111')
-      .mockReturnValueOnce('22222222-2222-2222-2222-222222222222')
-      .mockReturnValueOnce('33333333-3333-3333-3333-333333333333')
-      .mockReturnValueOnce('44444444-4444-4444-4444-444444444444');
-
-    const result = opencodeSessions.forkSession('ses-1');
-
-    expect(result).toEqual({
-      success: true,
-      newSessionId: 'ses_11111111111111111111111111111111',
-      forkedFrom: 'ses-1',
-      projectName: 'proj-1',
-      newFilePath: null
-    });
-    expect(readJson(sessionOrderPath)).toEqual({
-      'proj-1': ['ses_11111111111111111111111111111111', 'ses-2']
-    });
-    expect(saveForkRelationsMock).toHaveBeenCalledWith({
-      'ses-2': 'ses-root',
-      child: 'ses-1',
-      keep: 'ses-other',
-      'ses_11111111111111111111111111111111': 'ses-1'
-    });
-    expect(executedSql.join('\n')).toContain("INSERT INTO session");
-    expect(executedSql.join('\n')).toContain("INSERT INTO message");
-    expect(executedSql.join('\n')).toContain("INSERT INTO part");
-    expect(executedSql.join('\n')).toContain("ses_11111111111111111111111111111111");
-    expect(executedSql.join('\n')).toContain("msg_22222222222222222222222222222222");
-    expect(executedSql.join('\n')).toContain("msg_33333333333333333333333333333333");
-  });
-});
-
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-}

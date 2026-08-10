@@ -5,6 +5,7 @@ const path = require('path');
 const OMP_SESSIONS_PATH = require.resolve('../../../src/server/services/omp-sessions');
 const OMP_CONFIG_PATH = require.resolve('../../../src/server/services/omp-config');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
+const SESSION_INDEX_PATH = require.resolve('../../../src/server/services/session-history-index');
 
 let testDir;
 let sessionDir;
@@ -48,8 +49,15 @@ beforeEach(() => {
     exports: {
       HOME_DIR: testDir,
       PATHS: {
+        base: testDir,
+        sessionHistoryIndex: path.join(testDir, 'session-history.sqlite'),
         ompProjectOrder: path.join(testDir, 'omp-project-order.json'),
         ompSessionOrder: path.join(testDir, 'omp-session-order.json')
+      },
+      NATIVE_PATHS: {
+        claude: { projects: path.join(testDir, '.claude', 'projects') },
+        codex: { config: path.join(testDir, '.codex', 'config.toml') },
+        gemini: { env: path.join(testDir, '.gemini', '.env') }
       }
     }
   };
@@ -67,8 +75,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (require.cache[SESSION_INDEX_PATH]) require(SESSION_INDEX_PATH).closeSessionHistoryIndex();
   delete require.cache[OMP_SESSIONS_PATH];
   delete require.cache[OMP_CONFIG_PATH];
+  delete require.cache[SESSION_INDEX_PATH];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/omp')];
   delete require.cache[PATHS_PATH];
   fs.rmSync(testDir, { recursive: true, force: true });
 });
@@ -94,7 +106,7 @@ describe('OMP session parser', () => {
       .toBe('omp --fork "omp-session-1"');
   });
 
-  test('parses v3 JSONL header, roles, usage, and latest model change', () => {
+  test('parses v3 JSONL header, roles, usage, and latest model change', async () => {
     const sessionFile = path.join(sessionDir, 'session-1.jsonl');
     writeJsonl(sessionFile, [
       { type: 'session', version: 3, id: 'omp-session-1', timestamp: '2026-05-20T00:00:00.000Z', cwd: '/repo/demo' },
@@ -123,9 +135,9 @@ describe('OMP session parser', () => {
 
     const { getProjects, getSessionsByProject, getSessionMessages, parseSessionFile } = loadModule();
     const parsed = parseSessionFile(sessionFile);
-    const projects = getProjects();
-    const sessions = getSessionsByProject(parsed.projectName);
-    const messages = getSessionMessages('omp-session-1');
+    const projects = await getProjects();
+    const sessions = await getSessionsByProject(parsed.projectName);
+    const messages = await getSessionMessages('omp-session-1');
 
     expect(parsed).toEqual(expect.objectContaining({
       sessionId: 'omp-session-1',

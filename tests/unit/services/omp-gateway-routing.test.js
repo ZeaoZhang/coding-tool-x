@@ -42,6 +42,24 @@ describe('OMP gateway routing', () => {
     expect(managed.apiKey).not.toBe('upstream-secret');
     expect(managed.headers).toBeUndefined();
   });
+  it('keeps managed base URL and API key stable for the same channel', () => {
+    const channel = {
+      id: 'stable-channel',
+      providerKey: 'openai',
+      providerApi: 'openai-responses',
+      baseUrl: 'https://api.example/v1',
+      apiKey: 'upstream-secret',
+      enabled: true,
+      model: 'gpt-5'
+    };
+
+    const first = prepareManagedOmpChannels([channel], gateway('stable-secret')).managedChannels[0];
+    const second = prepareManagedOmpChannels([channel], gateway('stable-secret')).managedChannels[0];
+
+    expect(second.baseUrl).toBe(first.baseUrl);
+    expect(second.apiKey).toBe(first.apiKey);
+  });
+
 
   it('keeps custom-group managed provider IDs stable across gateway restarts', () => {
     const channels = [

@@ -3,6 +3,7 @@ const path = require('path');
 const { getCodexDir } = require('./codex-config');
 const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL } = require('./codex-parser');
 const { globalCache, CacheKeys } = require('./enhanced-cache');
+const { listProjects: idxListProjects, listSessions: idxListSessions, getSessionStatus: idxGetSessionStatus, getRecentSessions: idxGetRecent, searchSessions: idxSearch } = require('./session-history-index');
 
 const COUNTS_CACHE_TTL_MS = 30 * 1000;
 const SCAN_FILES_CACHE_TTL_MS = 15 * 1000;
@@ -227,78 +228,15 @@ function normalizeSession(codexSession) {
  * 聚合项目列表
  * @returns {Array} 项目对象数组
  */
-function getProjects(options = {}) {
-  if (options.force) {
-    invalidateCodexSessionCaches();
-  } else {
-    const cached = globalCache.get(CODEX_PROJECTS_CACHE_KEY);
-    if (cached) {
-      return cached;
-    }
-  }
-
-  const sessions = getAllSessions();
-  const projectMap = new Map();
-
-  sessions.forEach(session => {
-    const meta = session.meta;
-
-    // 优先使用 Git 仓库名，否则使用 cwd 的最后一级目录
-    const projectName = extractCodexProjectNameFromMeta(meta);
-    const projectPath = (typeof meta.cwd === 'string' && meta.cwd.trim()) ? meta.cwd.trim() : projectName;
-    if (!projectName) return;
-
-    if (!projectMap.has(projectName)) {
-      projectMap.set(projectName, {
-        name: projectName,
-        displayName: projectName,
-        fullPath: projectPath,
-        path: projectPath,
-        gitRepo: meta.git?.repositoryUrl,
-        branch: meta.git?.branch,
-        sessionCount: 0,
-        lastUsed: null,
-        source: 'codex'
-      });
-    }
-
-    const project = projectMap.get(projectName);
-    project.sessionCount++;
-
-    // 更新最后活动时间
-    const sessionTime = session.mtimeMs || new Date(session.meta.timestamp || 0).getTime() || 0;
-    if (!project.lastUsed || sessionTime > project.lastUsed) {
-      project.lastUsed = sessionTime;
-    }
-  });
-
-  // 获取保存的排序
+async function getProjects(options = {}) {
+  const projects = await idxListProjects('codex', options);
   const savedOrder = getProjectOrder();
-  const projects = Array.from(projectMap.values());
+  if (savedOrder.length === 0) return projects;
 
-  // 应用保存的排序
-  if (savedOrder.length > 0) {
-    const ordered = [];
-    const projectsMap = new Map(projects.map(p => [p.name, p]));
-
-    // 按保存的顺序添加项目
-    for (const projectName of savedOrder) {
-      if (projectsMap.has(projectName)) {
-        ordered.push(projectsMap.get(projectName));
-        projectsMap.delete(projectName);
-      }
-    }
-
-    // 添加剩余的新项目（不在保存顺序中的）
-    ordered.push(...projectsMap.values());
-    globalCache.set(CODEX_PROJECTS_CACHE_KEY, ordered, PROJECTS_CACHE_TTL_MS);
-    return ordered;
-  }
-
-  // 默认按最后活动时间排序
-  const sorted = projects.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0));
-  globalCache.set(CODEX_PROJECTS_CACHE_KEY, sorted, PROJECTS_CACHE_TTL_MS);
-  return sorted;
+  const byName = new Map(projects.map(project => [project.name, project]));
+  const ordered = savedOrder.flatMap(name => byName.has(name) ? [byName.get(name)] : []);
+  savedOrder.forEach(name => byName.delete(name));
+  return [...ordered, ...byName.values()];
 }
 
 /**
@@ -306,71 +244,23 @@ function getProjects(options = {}) {
  * @param {string} projectName - 项目名称
  * @returns {Array} 归一化的会话数组
  */
-function getSessionsByProject(projectName, options = {}) {
-  const cacheKey = getCodexSessionsCacheKey(projectName);
-  if (options.force) {
-    invalidateCodexSessionCaches({ projectName });
-  } else {
-    const cached = globalCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-  }
-
-  const sessions = getAllSessions();
-
-  // 获取 fork 关系
-  const { getForkRelations } = require('./sessions');
-  const forkRelations = getForkRelations();
-
-  // 获取保存的排序
+async function getSessionsByProject(projectName, options = {}) {
+  const indexed = await idxListSessions('codex', projectName, options);
+  const forkRelations = require('./sessions').getForkRelations();
+  const aliases = require('./alias').loadAliases();
+  const sessions = indexed.map(session => ({
+    ...session,
+    mtime: new Date(session.mtime).toISOString(),
+    forkedFrom: forkRelations[session.sessionId] || null,
+    alias: aliases[session.sessionId] || null
+  }));
   const savedOrder = getSessionOrder(projectName);
+  if (savedOrder.length === 0) return sessions;
 
-  // 过滤并归一化会话
-  const filteredSessions = sessions
-    .filter(session => {
-      const sessionProjectName = extractCodexProjectNameFromMeta(session.meta);
-      return sessionProjectName === projectName;
-    })
-    .map(session => {
-      const normalized = normalizeSession(session);
-      // 添加 fork 关系
-      normalized.forkedFrom = forkRelations[normalized.sessionId] || null;
-      return normalized;
-    });
-
-  // 应用保存的排序
-  let orderedSessions = filteredSessions;
-  if (savedOrder.length > 0) {
-    const orderedFromSaved = [];
-    const sessionMap = new Map(filteredSessions.map(s => [s.sessionId, s]));
-
-    for (const sessionId of savedOrder) {
-      const session = sessionMap.get(sessionId);
-      if (session) {
-        orderedFromSaved.push(session);
-        sessionMap.delete(sessionId);
-      }
-    }
-
-    const newSessions = [...sessionMap.values()];
-    newSessions.sort((a, b) => {
-      return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
-    });
-
-    // 新会话在前，旧会话在后（按保存顺序）
-    orderedSessions = [...newSessions, ...orderedFromSaved];
-  } else {
-    // 默认按时间倒序
-    orderedSessions.sort((a, b) => {
-      return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
-    });
-  }
-
-  globalCache.set(cacheKey, orderedSessions, PROJECT_SESSIONS_CACHE_TTL_MS);
-  codexSessionCacheKeys.add(cacheKey);
-
-  return orderedSessions;
+  const byId = new Map(sessions.map(session => [session.sessionId, session]));
+  const ordered = savedOrder.flatMap(id => byId.has(id) ? [byId.get(id)] : []);
+  savedOrder.forEach(id => byId.delete(id));
+  return [...byId.values(), ...ordered];
 }
 
 /**
@@ -378,23 +268,12 @@ function getSessionsByProject(projectName, options = {}) {
  * @param {string} sessionId - 会话 ID
  * @returns {Object|null} 归一化的会话对象
  */
-function getSessionById(sessionId) {
-  const file = findSessionFileById(sessionId);
-
-  if (!file) {
-    return null;
-  }
-
-  const session = parseSession(file.filePath);
-  if (!session) {
-    return null;
-  }
-
-  return {
-    ...normalizeSession(session),
-    messages: session.messages, // 包含完整消息
-    filePath: file.filePath
-  };
+async function getSessionById(sessionId) {
+  const status = await idxGetSessionStatus('codex', sessionId);
+  if (!status) return null;
+  const session = parseSession(status.filePath);
+  if (!session) return null;
+  return { ...normalizeSession(session), messages: session.messages, filePath: status.filePath };
 }
 
 /**
@@ -402,56 +281,8 @@ function getSessionById(sessionId) {
  * @param {string} keyword - 搜索关键词
  * @returns {Array} 搜索结果
  */
-function searchSessions(keyword) {
-  const files = scanSessionFiles();
-  const results = [];
-
-  files.forEach(file => {
-    // 使用完整解析获取消息内容
-    const session = parseSession(file.filePath);
-
-    if (!session || !session.messages || !Array.isArray(session.messages)) {
-      return;
-    }
-
-    session.messages.forEach((message, index) => {
-      if (message.role !== 'user' && message.role !== 'assistant') {
-        return;
-      }
-
-      const content = (message.content || '').toLowerCase();
-      const keywordLower = keyword.toLowerCase();
-
-      if (content.includes(keywordLower)) {
-        // 提取上下文
-        const startIndex = Math.max(0, content.indexOf(keywordLower) - 50);
-        const endIndex = Math.min(content.length, content.indexOf(keywordLower) + keyword.length + 50);
-        const context = content.substring(startIndex, endIndex);
-
-        // 确定项目名
-        let projectName;
-        if (session.meta?.git?.repositoryUrl) {
-          projectName = session.meta.git.repositoryUrl.split('/').pop().replace('.git', '');
-        } else if (session.meta?.cwd) {
-          projectName = path.basename(session.meta.cwd);
-        } else {
-          projectName = 'Unknown';
-        }
-
-        results.push({
-          sessionId: file.sessionId,
-          projectName,
-          messageIndex: index,
-          role: message.role,
-          context: (startIndex > 0 ? '...' : '') + context + (endIndex < content.length ? '...' : ''),
-          timestamp: message.timestamp,
-          source: 'codex'
-        });
-      }
-    });
-  });
-
-  return results;
+async function searchSessions(keyword) {
+  return idxSearch('codex', keyword);
 }
 
 /**
@@ -545,39 +376,16 @@ function deleteProject(projectName) {
  * @param {number} limit - 返回数量限制，默认 5
  * @returns {Array} 最近会话数组
  */
-function getRecentSessions(limit = 5) {
-  const sessions = getAllSessions();
-
-  // 获取 fork 关系和别名
-  const { getForkRelations } = require('./sessions');
-  const { loadAliases } = require('./alias');
-  const forkRelations = getForkRelations();
-  const aliases = loadAliases();
-
-  // 归一化所有会话
-  const allNormalizedSessions = sessions.map(session => {
-    const normalized = normalizeSession(session);
-
-    // 添加项目信息
-    const projectName = extractCodexProjectNameFromMeta(session.meta) || 'Unknown';
-    const projectPath = (typeof session.meta.cwd === 'string' && session.meta.cwd.trim())
-      ? session.meta.cwd
-      : projectName;
-
-    return {
-      ...normalized,
-      forkedFrom: forkRelations[normalized.sessionId] || null,
-      alias: aliases[normalized.sessionId] || null,
-      projectName: projectName,
-      projectDisplayName: projectName,
-      projectFullPath: projectPath
-    };
-  });
-
-  // 按 mtime 倒序排序，取前 N 个
-  return allNormalizedSessions
-    .sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())
-    .slice(0, limit);
+async function getRecentSessions(limit = 5) {
+  const indexed = await idxGetRecent('codex', limit);
+  const forkRelations = require('./sessions').getForkRelations();
+  const aliases = require('./alias').loadAliases();
+  return indexed.map(session => ({
+    ...session,
+    mtime: new Date(session.mtime).toISOString(),
+    forkedFrom: forkRelations[session.sessionId] || null,
+    alias: aliases[session.sessionId] || null
+  }));
 }
 
 /**

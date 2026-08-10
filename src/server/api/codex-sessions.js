@@ -79,7 +79,7 @@ module.exports = (config) => {
    * GET /api/codex/sessions/search/global?keyword=xxx
    * 全局搜索
    */
-  router.get('/search/global', (req, res) => {
+  router.get('/search/global', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
@@ -91,7 +91,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = searchSessions(keyword);
+      const results = await searchSessions(keyword);
 
       // 按会话分组，统计每个会话的匹配数
       const sessionMap = new Map();
@@ -132,14 +132,14 @@ module.exports = (config) => {
    * GET /api/codex/sessions/recent/list?limit=10
    * 获取最近会话
    */
-  router.get('/recent/list', (req, res) => {
+  router.get('/recent/list', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
       const limit = parseInt(req.query.limit) || 5;
-      const sessions = getRecentSessions(limit);
+      const sessions = await getRecentSessions(limit);
 
       res.json({
         sessions,
@@ -191,7 +191,7 @@ module.exports = (config) => {
    * GET /api/codex/sessions/:projectName/search
    * 项目级搜索
    */
-  router.get('/:projectName/search', (req, res) => {
+  router.get('/:projectName/search', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
@@ -205,7 +205,7 @@ module.exports = (config) => {
       }
 
       // 使用全局搜索，然后过滤项目
-      const allResults = searchSessions(keyword);
+      const allResults = await searchSessions(keyword);
       const filteredResults = allResults.filter(r => r.projectName === projectName);
 
       // 按会话分组
@@ -242,14 +242,14 @@ module.exports = (config) => {
     }
   });
 
-  router.get('/:projectName/:sessionId/status', (req, res) => {
+  router.get('/:projectName/:sessionId/status', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
       if (!session || !session.filePath) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -267,14 +267,14 @@ module.exports = (config) => {
     }
   });
 
-  router.get('/:projectName/:sessionId/outline', (req, res) => {
+  router.get('/:projectName/:sessionId/outline', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -307,7 +307,7 @@ module.exports = (config) => {
    * GET /api/codex/sessions/:projectName/:sessionId/messages
    * 获取会话的消息列表
    */
-  router.get('/:projectName/:sessionId/messages', (req, res) => {
+  router.get('/:projectName/:sessionId/messages', async (req, res) => {
     const startMs = Date.now();
     try {
       if (!isCodexInstalled()) {
@@ -318,7 +318,7 @@ module.exports = (config) => {
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
 
       if (!session) {
         logPerf('GET /api/codex/sessions/:projectName/:sessionId/messages', startMs, `session=${sessionId}, not found`);
@@ -574,7 +574,7 @@ module.exports = (config) => {
    * POST /api/codex/sessions/:projectName/:sessionId/launch
    * 获取会话启动命令（用于复制）
    */
-  router.post('/:projectName/:sessionId/launch', (req, res) => {
+  router.post('/:projectName/:sessionId/launch', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
@@ -584,7 +584,7 @@ module.exports = (config) => {
       const fs = require('fs');
 
       // 获取会话详情
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });

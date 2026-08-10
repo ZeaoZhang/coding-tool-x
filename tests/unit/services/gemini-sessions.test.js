@@ -51,6 +51,12 @@ beforeEach(() => {
     loaded: true,
     exports: {
       HOME_DIR: homeDir,
+      PATHS: { base: testDir, sessionHistoryIndex: path.join(testDir, 'session-history.sqlite') },
+      NATIVE_PATHS: {
+        claude: { projects: path.join(testDir, '.claude', 'projects') },
+        codex: { config: path.join(testDir, '.codex', 'config.toml') },
+        gemini: { env: path.join(geminiDir, '.env') }
+      },
       ensureStorageDirMigrated: vi.fn()
     }
   };
@@ -64,15 +70,23 @@ beforeEach(() => {
     }
   };
 
+  delete require.cache[require.resolve('../../../src/server/services/session-history-index')];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/gemini')];
   delete require.cache[require.resolve('../../../src/server/services/gemini-sessions')];
   geminiSessions = require('../../../src/server/services/gemini-sessions');
 });
 
 afterEach(() => {
+  const indexPath = require.resolve('../../../src/server/services/session-history-index');
+  if (require.cache[indexPath]) require(indexPath).closeSessionHistoryIndex();
   vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/services/gemini-sessions',
+    '../../../src/server/services/session-history-index',
+    '../../../src/server/services/session-history-adapters',
+    '../../../src/server/services/session-history-adapters/gemini',
     '../../../src/config/paths',
     '../../../src/server/services/gemini-config'
   ].forEach((mod) => {
@@ -83,7 +97,7 @@ afterEach(() => {
 });
 
 describe('gemini-sessions project discovery and querying', () => {
-  test('resolves project paths from hashes and builds project summaries', () => {
+  test('resolves project paths from hashes and builds project summaries', async () => {
     const projectPath = path.join(homeDir, 'workspace', 'demo-app');
     fs.mkdirSync(projectPath, { recursive: true });
     const resolvedHash = hashPath(projectPath);
@@ -106,7 +120,7 @@ describe('gemini-sessions project discovery and querying', () => {
 
     expect(geminiSessions.getProjectPath(resolvedHash)).toBe(projectPath);
     expect(geminiSessions.getProjectPath(unresolvedHash)).toBeNull();
-    expect(geminiSessions.getProjects()).toEqual([
+    expect(await geminiSessions.getProjects()).toEqual([
       expect.objectContaining({
         name: unresolvedHash,
         displayName: `Project ${unresolvedHash.substring(0, 8)}`,
@@ -128,7 +142,7 @@ describe('gemini-sessions project discovery and querying', () => {
     ]);
   });
 
-  test('discovers current Gemini slug directories and parses JSONL session streams', () => {
+  test('discovers current Gemini slug directories and parses JSONL session streams', async () => {
     const projectPath = path.join(homeDir, 'workspace', 'slug-app');
     fs.mkdirSync(projectPath, { recursive: true });
     const projectHash = hashPath(projectPath);
@@ -177,7 +191,7 @@ describe('gemini-sessions project discovery and querying', () => {
 
     expect(geminiSessions.getProjectAndSessionCounts()).toEqual({ projectCount: 1, sessionCount: 1 });
     expect(geminiSessions.getProjectPath(projectHash)).toBe(projectPath);
-    expect(geminiSessions.getProjects()).toEqual([
+    expect(await geminiSessions.getProjects()).toEqual([
       expect.objectContaining({
         name: projectHash,
         displayName: 'slug-app',
@@ -189,7 +203,7 @@ describe('gemini-sessions project discovery and querying', () => {
         source: 'gemini'
       })
     ]);
-    expect(geminiSessions.getProjectSessions(projectHash)).toEqual([
+    expect(await geminiSessions.getProjectSessions(projectHash)).toEqual([
       expect.objectContaining({
         sessionId: 'jsonl-session',
         filePath: jsonlPath,
@@ -203,11 +217,11 @@ describe('gemini-sessions project discovery and querying', () => {
         source: 'gemini'
       })
     ]);
-    expect(geminiSessions.getSessionById('jsonl-session').messages).toEqual([
+    expect((await geminiSessions.getSessionById('jsonl-session')).messages).toEqual([
       expect.objectContaining({ type: 'user', content: 'Find JSONL needle' }),
       expect.objectContaining({ type: 'gemini', content: 'JSONL Needle answer', toolCalls: [{ name: 'read_file' }] })
     ]);
-    expect(geminiSessions.searchSessions('needle')).toEqual([
+    expect(await geminiSessions.searchSessions('needle')).toEqual([
       expect.objectContaining({
         sessionId: 'jsonl-session',
         projectHash,
@@ -220,7 +234,7 @@ describe('gemini-sessions project discovery and querying', () => {
     ]);
   });
 
-  test('reads, normalizes, searches, and returns recent Gemini sessions', () => {
+  test('reads, normalizes, searches, and returns recent Gemini sessions', async () => {
     const projectPath = path.join(homeDir, 'workspace', 'notes-app');
     fs.mkdirSync(projectPath, { recursive: true });
     const projectHash = hashPath(projectPath);
@@ -259,7 +273,7 @@ describe('gemini-sessions project discovery and querying', () => {
       ]
     });
 
-    const allSessions = geminiSessions.getAllSessions();
+    const allSessions = await geminiSessions.getAllSessions();
     expect(allSessions.map((session) => session.sessionId)).toEqual(['newer-session', 'older-session']);
     expect(allSessions[1]).toEqual(expect.objectContaining({
       filePath: olderPath,
@@ -270,7 +284,7 @@ describe('gemini-sessions project discovery and querying', () => {
     }));
     expect(allSessions[1].cost).toBeCloseTo(0.000225, 8);
 
-    expect(geminiSessions.getProjectSessions(projectHash)).toEqual([
+    expect(await geminiSessions.getProjectSessions(projectHash)).toEqual([
       {
         sessionId: 'newer-session',
         mtime: expect.any(String),
@@ -306,22 +320,22 @@ describe('gemini-sessions project discovery and querying', () => {
         projectRoot: null
       }
     ]);
-    expect(geminiSessions.getRecentSessions(1)).toEqual([
+    expect(await geminiSessions.getRecentSessions(1)).toEqual([
       expect.objectContaining({
         sessionId: 'newer-session',
         projectHash
       })
     ]);
-    expect(geminiSessions.getSessionById('older-session')).toEqual(expect.objectContaining({
+    expect(await geminiSessions.getSessionById('older-session')).toEqual(expect.objectContaining({
       sessionId: 'older-session',
       filePath: olderPath,
       source: 'gemini'
     }));
-    expect(geminiSessions.getSession('older-session')).toEqual(expect.objectContaining({
+    expect(await geminiSessions.getSession('older-session')).toEqual(expect.objectContaining({
       sessionId: 'older-session',
       projectHash
     }));
-    expect(geminiSessions.searchSessions('needle', 5)).toEqual([
+    expect(await geminiSessions.searchSessions('needle', 5)).toEqual([
       {
         sessionId: 'older-session',
         projectHash,

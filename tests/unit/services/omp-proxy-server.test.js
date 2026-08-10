@@ -18,6 +18,7 @@ let clearProxyStartTime;
 let startOmpSessionLogObserver;
 let stopOmpSessionLogObserver;
 let getEnabledChannels;
+let getOrCreateOmpGatewaySecret;
 
 function requestHealth(port) {
   return new Promise((resolve, reject) => {
@@ -48,6 +49,7 @@ function injectStub(modulePath, exports) {
 }
 
 beforeEach(() => {
+  getOrCreateOmpGatewaySecret = vi.fn(() => 'stable-gateway-secret');
   syncManagedOmpProviders = vi.fn(() => ({ warnings: [] }));
   disableManagedOmpProviders = vi.fn(() => ({ warnings: [] }));
   activateStaticOmpChannel = vi.fn(() => ({
@@ -94,7 +96,8 @@ beforeEach(() => {
     enableManagedOmpMode,
     disableManagedOmpMode,
     loadManagedOmpActiveChannelId,
-    loadManagedOmpModeState
+    loadManagedOmpModeState,
+    getOrCreateOmpGatewaySecret
   });
   injectStub(OMP_LOG_OBSERVER_MODULE, {
     startOmpSessionLogObserver,
@@ -149,6 +152,20 @@ it('enables persistent managed mode before synchronizing providers', async () =>
     statusCode: 200,
     body: expect.objectContaining({ ok: true, service: 'omp-gateway' })
   });
+});
+it('reuses the persisted gateway secret when managed mode restarts', async () => {
+  const proxy = require('../../../src/server/omp-proxy-server');
+
+  const first = await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
+  await proxy.stopOmpProxyServer();
+  const second = await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
+
+  const gatewayOptions = enableManagedOmpMode.mock.calls
+    .map(([, gateway]) => gateway)
+    .filter(Boolean);
+  expect(getOrCreateOmpGatewaySecret).toHaveBeenCalledTimes(2);
+  expect(gatewayOptions[0].secret).toBe('stable-gateway-secret');
+  expect(gatewayOptions[1].secret).toBe('stable-gateway-secret');
 });
 
 it('hands off to one direct current provider before stopping the gateway', async () => {

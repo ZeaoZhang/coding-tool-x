@@ -470,13 +470,13 @@ async function convertSession(sourceType, targetType, sessionId, options = {}) {
     }
     sourceFilePath = sourceSession.filePath;
   } else if (sourceType === 'codex') {
-    sourceSession = getCodexSessionById(sessionId);
+    sourceSession = await getCodexSessionById(sessionId);
     if (!sourceSession) {
       throw new Error('Source session not found');
     }
     sourceFilePath = sourceSession.filePath;
   } else if (sourceType === 'gemini') {
-    sourceSession = getGeminiSessionById(sessionId);
+    sourceSession = await getGeminiSessionById(sessionId);
     if (!sourceSession) {
       throw new Error('Source session not found');
     }
@@ -536,13 +536,13 @@ async function previewConversion(sourceType, sessionId) {
     }
     sourceFilePath = sourceSession.filePath;
   } else if (sourceType === 'codex') {
-    const sourceSession = getCodexSessionById(sessionId);
+    const sourceSession = await getCodexSessionById(sessionId);
     if (!sourceSession) {
       throw new Error('Source session not found');
     }
     sourceFilePath = sourceSession.filePath;
   } else if (sourceType === 'gemini') {
-    const sourceSession = getGeminiSessionById(sessionId);
+    const sourceSession = await getGeminiSessionById(sessionId);
     if (!sourceSession) {
       throw new Error('Source session not found');
     }

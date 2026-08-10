@@ -3,7 +3,7 @@
 > 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP 的统一增强控制台
 > Web UI + CLI + 多平台代理 + 配置托管 + 工作区编排 + 分析面板
 
-![Node.js](https://img.shields.io/badge/Node.js-%3E%3D14.0.0-43853d?style=flat-square)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.13.0-43853d?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
 ![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20OMP-1f6feb?style=flat-square)
 
@@ -86,7 +86,7 @@
 补充说明:
 
 - Codex Agents 目前仅支持用户级代理
-- OpenCode 会话读取依赖本机 `sqlite3`
+- OpenCode 会话读取使用内置 `node:sqlite`，不再依赖本机 sqlite3 可执行文件
 - OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
 - OMP 平台键统一为 `omp`，不再保留 `omp` 平台键兼容
 - OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
@@ -115,11 +115,9 @@ npm run build:web
 npm link
 ```
 
-## 环境要求
-
-- Node.js `>= 14.0.0`
+- Node.js `>= 22.13.0`
 - 建议至少运行过一次目标 CLI，以便生成原生配置目录
-- 如需读取 OpenCode 会话，请确保系统里有可用的 `sqlite3`
+- OpenCode 会话使用内置 `node:sqlite`，不再需要系统 sqlite3
 
 ## 快速开始
 
