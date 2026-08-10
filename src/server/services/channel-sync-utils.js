@@ -289,7 +289,7 @@ function upsertSyncedChannels({
       result.warnings.push(`${toolType}: missing baseUrl, skipped current channel sync`);
       continue;
     }
-    if (!normalizeString(candidate.apiKey)) {
+    if (!normalizeString(candidate.apiKey) && candidate.authMode !== 'none') {
       result.skipped += 1;
       result.warnings.push(`${toolType}: missing API key or OAuth-only config, skipped current channel sync`);
       continue;

@@ -66,12 +66,12 @@ module.exports = () => {
     }
   });
 
-  router.delete('/:projectName', (req, res) => {
+  router.delete('/:projectName', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      const result = deleteProject(req.params.projectName);
+      const result = await deleteProject(req.params.projectName);
       invalidateProjectSnapshots('omp');
       invalidateSessionSnapshots('omp', req.params.projectName);
       res.json(result);

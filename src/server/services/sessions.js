@@ -2,15 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { getAllSessions, parseSessionInfoFast } = require('../../utils/session');
-const { loadAliases } = require('./alias');
-const {
-  getCachedProjects,
-  setCachedProjects,
-  invalidateProjectsCache,
-  checkHasMessagesCache,
-  rememberHasMessages
-} = require('./session-cache');
+const { loadAliases, setAlias } = require('./alias');
 const { globalCache, CacheKeys } = require('./enhanced-cache');
+const { listProjects: idxListProjects, listSessions: idxListSessions, getRecentSessions: idxGetRecent, searchSessions: idxSearch } = require('./session-history-index');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 
 const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
@@ -22,78 +16,37 @@ function resolveProjectsDir(config = {}) {
 }
 
 function withResolvedProjectsDir(config = {}) {
-  return {
-    ...config,
-    projectsDir: resolveProjectsDir(config)
-  };
+  return { ...config, projectsDir: resolveProjectsDir(config) };
 }
 
-// Base directory for cc-tool data
-function getCcToolDir() {
-  return PATHS.base;
-}
+function getCcToolDir() { return PATHS.base; }
+function getOrderFilePath() { return PATHS.projectOrder; }
+function getForkRelationsFilePath() { return PATHS.forkRelations; }
+function getSessionOrderFilePath() { return PATHS.sessionOrder; }
 
-// Get path for storing project order
-function getOrderFilePath() {
-  return PATHS.projectOrder;
-}
-
-// Get path for storing fork relations
-function getForkRelationsFilePath() {
-  return PATHS.forkRelations;
-}
-
-// Get path for storing session order
-function getSessionOrderFilePath() {
-  return PATHS.sessionOrder;
-}
-
-// Get saved project order
 function getProjectOrder(config) {
   const orderFile = getOrderFilePath();
-  try {
-    if (fs.existsSync(orderFile)) {
-      const data = fs.readFileSync(orderFile, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (err) {
-    // Ignore errors
-  }
+  try { if (fs.existsSync(orderFile)) return JSON.parse(fs.readFileSync(orderFile, 'utf8')); } catch (_) {}
   return [];
 }
 
-// Save project order
 function saveProjectOrder(config, order) {
   const orderFile = getOrderFilePath();
   const dir = path.dirname(orderFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(orderFile, JSON.stringify(order, null, 2), 'utf8');
-  invalidateProjectsCache(config);
 }
 
-// Get fork relations
 function getForkRelations() {
   const relationsFile = getForkRelationsFilePath();
-  try {
-    if (fs.existsSync(relationsFile)) {
-      const data = fs.readFileSync(relationsFile, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (err) {
-    // Ignore errors
-  }
+  try { if (fs.existsSync(relationsFile)) return JSON.parse(fs.readFileSync(relationsFile, 'utf8')); } catch (_) {}
   return {};
 }
 
-// Save fork relations
 function saveForkRelations(relations) {
   const relationsFile = getForkRelationsFilePath();
   const dir = path.dirname(relationsFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(relationsFile, JSON.stringify(relations, null, 2), 'utf8');
 }
 
@@ -103,34 +56,20 @@ function invalidateSessionResultCache(projectName) {
 }
 
 function getClaudeForkMessageText(content) {
-  if (typeof content === 'string') {
-    return content === 'Warmup' ? '' : content;
-  }
-
-  if (!Array.isArray(content)) {
-    return '';
-  }
-
+  if (typeof content === 'string') return content === 'Warmup' ? '' : content;
+  if (!Array.isArray(content)) return '';
   const parts = [];
   for (const item of content) {
-    if (item?.type === 'text' && item.text) {
-      parts.push(item.text);
-    } else if (item?.type === 'image') {
-      parts.push('[图片]');
-    }
+    if (item?.type === 'text' && item.text) parts.push(item.text);
+    else if (item?.type === 'image') parts.push('[图片]');
   }
-
   return parts.join('\n\n').trim();
 }
 
 function splitTextPreserveEol(content) {
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
   const hasTrailingEol = content.endsWith('\r\n') || content.endsWith('\n');
-  return {
-    lines: content.split(/\r?\n/),
-    eol,
-    hasTrailingEol
-  };
+  return { lines: content.split(/\r?\n/), eol, hasTrailingEol };
 }
 
 function joinTextPreserveEol(lines, eol, hasTrailingEol) {
@@ -139,134 +78,73 @@ function joinTextPreserveEol(lines, eol, hasTrailingEol) {
 }
 
 function sliceClaudeSessionContentByUserMessage(content, afterUserMessageNumber) {
-  if (!Number.isInteger(afterUserMessageNumber) || afterUserMessageNumber <= 0) {
-    return content;
-  }
-
+  if (!Number.isInteger(afterUserMessageNumber) || afterUserMessageNumber <= 0) return content;
   const { lines, eol, hasTrailingEol } = splitTextPreserveEol(content);
   const keptLines = [];
   let matchedUserMessages = 0;
   let targetUserReached = false;
-
   for (const line of lines) {
-    if (!line.trim()) {
-      keptLines.push(line);
-      continue;
-    }
-
+    if (!line.trim()) { keptLines.push(line); continue; }
     let json;
-    try {
-      json = JSON.parse(line);
-    } catch (err) {
-      keptLines.push(line);
-      continue;
-    }
-
-    if (json.type !== 'user') {
-      keptLines.push(line);
-      continue;
-    }
-
+    try { json = JSON.parse(line); } catch (_) { keptLines.push(line); continue; }
+    if (json.type !== 'user') { keptLines.push(line); continue; }
     const userText = getClaudeForkMessageText(json.message?.content);
-    if (!userText) {
-      keptLines.push(line);
-      continue;
-    }
-
-    if (targetUserReached) {
-      return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
-    }
-
+    if (!userText) { keptLines.push(line); continue; }
+    if (targetUserReached) return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
     matchedUserMessages += 1;
     keptLines.push(line);
-    if (matchedUserMessages >= afterUserMessageNumber) {
-      targetUserReached = true;
-    }
+    if (matchedUserMessages >= afterUserMessageNumber) targetUserReached = true;
   }
-
-  if (targetUserReached) {
-    return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
-  }
-
+  if (targetUserReached) return joinTextPreserveEol(keptLines, eol, hasTrailingEol);
   throw new Error(`afterUserMessageNumber ${afterUserMessageNumber} exceeds available user messages (${matchedUserMessages})`);
 }
 
-// Get all projects with stats (async version)
+// ===== Read-side: all project/list/session/recent/search delegate to session-history-index =====
+
 async function getProjects(config) {
-  const projectsDir = resolveProjectsDir(config);
-
-  if (!fs.existsSync(projectsDir)) {
-    return [];
-  }
-
-  const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
-  return entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name);
+  const indexed = await idxListProjects('claude');
+  return indexed.map(p => p.name);
 }
 
-// Parse real project path from encoded name
-// macOS/Linux: "-Users-lilithgames-work-project" -> "/Users/lilithgames/work/project"
-// Windows: "C--Users-admin-Desktop-project" -> "C:\Users\admin\Desktop\project"
+async function getProjectsWithStats(config, options = {}) {
+  return idxListProjects('claude');
+}
+
+// ===== Path resolution helpers (kept for mutation/conversion paths) =====
+
 function parseRealProjectPath(encodedName) {
   const isWindows = process.platform === 'win32';
   const fallbackFromSessions = tryResolvePathFromSessions(encodedName);
-
-  // Detect Windows drive letter (e.g., "C--Users-admin")
   const windowsDriveMatch = encodedName.match(/^([A-Z])--(.+)$/);
 
   if (isWindows && windowsDriveMatch) {
-    // Windows path with drive letter
     const driveLetter = windowsDriveMatch[1];
     const restPath = windowsDriveMatch[2];
-
-    // Split by '-' to get segments
     const segments = restPath.split('-').filter(s => s);
-
-    // Build path from left to right, checking existence
     let realSegments = [];
     let accumulated = '';
     let currentPath = '';
 
     for (let i = 0; i < segments.length; i++) {
-      if (accumulated) {
-        accumulated += '-' + segments[i];
-      } else {
-        accumulated = segments[i];
-      }
-
+      if (accumulated) accumulated += '-' + segments[i];
+      else accumulated = segments[i];
       const testPath = driveLetter + ':\\' + realSegments.concat(accumulated).join('\\');
-
-      // Check if this path exists
       let found = fs.existsSync(testPath);
       let finalAccumulated = accumulated;
-
-      // If not found with dash, try with underscore
       if (!found && accumulated.includes('-')) {
         const withUnderscore = accumulated.replace(/-/g, '_');
         const testPathUnderscore = driveLetter + ':\\' + realSegments.concat(withUnderscore).join('\\');
-        if (fs.existsSync(testPathUnderscore)) {
-          finalAccumulated = withUnderscore;
-          found = true;
-        }
+        if (fs.existsSync(testPathUnderscore)) { finalAccumulated = withUnderscore; found = true; }
       }
-
-      if (found) {
-        realSegments.push(finalAccumulated);
-        accumulated = '';
-        currentPath = driveLetter + ':\\' + realSegments.join('\\');
-      }
+      if (found) { realSegments.push(finalAccumulated); accumulated = ''; currentPath = driveLetter + ':\\' + realSegments.join('\\'); }
     }
 
-    // If there's remaining accumulated segment, try underscore variant
     if (accumulated) {
       let finalAccumulated = accumulated;
       if (accumulated.includes('-')) {
         const withUnderscore = accumulated.replace(/-/g, '_');
         const testPath = driveLetter + ':\\' + realSegments.concat(withUnderscore).join('\\');
-        if (fs.existsSync(testPath)) {
-          finalAccumulated = withUnderscore;
-        }
+        if (fs.existsSync(testPath)) finalAccumulated = withUnderscore;
       }
       realSegments.push(finalAccumulated);
       currentPath = driveLetter + ':\\' + realSegments.join('\\');
@@ -276,94 +154,60 @@ function parseRealProjectPath(encodedName) {
       fullPath: validateProjectPath(currentPath) || fallbackFromSessions?.fullPath || (driveLetter + ':\\' + restPath.replace(/-/g, '\\')),
       projectName: fallbackFromSessions?.projectName || realSegments[realSegments.length - 1] || encodedName
     };
-  } else {
-    // Unix-like path (macOS/Linux) or fallback
-    const pathStr = encodedName.replace(/^-/, '/').replace(/-/g, '/');
-    const segments = pathStr.split('/').filter(s => s);
-
-    // Build path from left to right, checking existence
-    let currentPath = '';
-    const realSegments = [];
-    let accumulated = '';
-
-    for (let i = 0; i < segments.length; i++) {
-      if (accumulated) {
-        accumulated += '-' + segments[i];
-      } else {
-        accumulated = segments[i];
-      }
-
-      const testPath = '/' + realSegments.concat(accumulated).join('/');
-
-      // Check if this path exists
-      let found = fs.existsSync(testPath);
-      let finalAccumulated = accumulated;
-
-      // If not found with dash, try with underscore
-      if (!found && accumulated.includes('-')) {
-        const withUnderscore = accumulated.replace(/-/g, '_');
-        const testPathUnderscore = '/' + realSegments.concat(withUnderscore).join('/');
-        if (fs.existsSync(testPathUnderscore)) {
-          finalAccumulated = withUnderscore;
-          found = true;
-        }
-      }
-
-      if (found) {
-        realSegments.push(finalAccumulated);
-        accumulated = '';
-        currentPath = '/' + realSegments.join('/');
-      }
-    }
-
-    // If there's remaining accumulated segment, try underscore variant
-    if (accumulated) {
-      let finalAccumulated = accumulated;
-      if (accumulated.includes('-')) {
-        const withUnderscore = accumulated.replace(/-/g, '_');
-        const testPath = '/' + realSegments.concat(withUnderscore).join('/');
-        if (fs.existsSync(testPath)) {
-          finalAccumulated = withUnderscore;
-        }
-      }
-      realSegments.push(finalAccumulated);
-      currentPath = '/' + realSegments.join('/');
-    }
-
-    return {
-      fullPath: validateProjectPath(currentPath) || fallbackFromSessions?.fullPath || pathStr,
-      projectName: fallbackFromSessions?.projectName || realSegments[realSegments.length - 1] || encodedName
-    };
   }
+
+  const pathStr = encodedName.replace(/^-/, '/').replace(/-/g, '/');
+  const segments = pathStr.split('/').filter(s => s);
+  let currentPath = '';
+  const realSegments = [];
+  let accumulated = '';
+
+  for (let i = 0; i < segments.length; i++) {
+    if (accumulated) accumulated += '-' + segments[i];
+    else accumulated = segments[i];
+    const testPath = '/' + realSegments.concat(accumulated).join('/');
+    let found = fs.existsSync(testPath);
+    let finalAccumulated = accumulated;
+    if (!found && accumulated.includes('-')) {
+      const withUnderscore = accumulated.replace(/-/g, '_');
+      const testPathUnderscore = '/' + realSegments.concat(withUnderscore).join('/');
+      if (fs.existsSync(testPathUnderscore)) { finalAccumulated = withUnderscore; found = true; }
+    }
+    if (found) { realSegments.push(finalAccumulated); accumulated = ''; currentPath = '/' + realSegments.join('/'); }
+  }
+
+  if (accumulated) {
+    let finalAccumulated = accumulated;
+    if (accumulated.includes('-')) {
+      const withUnderscore = accumulated.replace(/-/g, '_');
+      const testPath = '/' + realSegments.concat(withUnderscore).join('/');
+      if (fs.existsSync(testPath)) finalAccumulated = withUnderscore;
+    }
+    realSegments.push(finalAccumulated);
+    currentPath = '/' + realSegments.join('/');
+  }
+
+  return {
+    fullPath: validateProjectPath(currentPath) || fallbackFromSessions?.fullPath || pathStr,
+    projectName: fallbackFromSessions?.projectName || realSegments[realSegments.length - 1] || encodedName
+  };
 }
 
 function validateProjectPath(candidatePath) {
-  if (candidatePath && fs.existsSync(candidatePath)) {
-    return candidatePath;
-  }
-  return null;
+  return (candidatePath && fs.existsSync(candidatePath)) ? candidatePath : null;
 }
 
 function tryResolvePathFromSessions(encodedName) {
   try {
     const projectDir = path.join(CLAUDE_PROJECTS_DIR, encodedName);
-    if (!fs.existsSync(projectDir)) {
-      return null;
-    }
+    if (!fs.existsSync(projectDir)) return null;
     const files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
     for (const file of files) {
       const sessionFile = path.join(projectDir, file);
       const cwd = extractCwdFromSessionHeader(sessionFile);
-      if (cwd && fs.existsSync(cwd)) {
-        return {
-          fullPath: cwd,
-          projectName: path.basename(cwd)
-        };
-      }
+      if (cwd && fs.existsSync(cwd)) return { fullPath: cwd, projectName: path.basename(cwd) };
     }
-  } catch (err) {
-    // ignore fallback errors
-  }
+  } catch (_) {}
   return null;
 }
 
@@ -374,637 +218,186 @@ function extractCwdFromSessionHeader(sessionFile) {
     const bytesRead = fs.readSync(fd, buffer, 0, 4096, 0);
     fs.closeSync(fd);
     const content = buffer.slice(0, bytesRead).toString('utf8');
-    const lines = content.split('\n');
-    for (const line of lines) {
+    for (const line of content.split('\n')) {
       if (!line.trim()) continue;
-      try {
-        const json = JSON.parse(line);
-        if (json.cwd && typeof json.cwd === 'string') {
-          return json.cwd;
-        }
-      } catch (e) {
-        // ignore
-      }
+      try { const json = JSON.parse(line); if (json.cwd && typeof json.cwd === 'string') return json.cwd; } catch (_) {}
     }
-  } catch (err) {
-    // ignore
-  }
+  } catch (_) {}
   return null;
 }
 
-// Get projects with detailed stats (with caching) - async version
-async function getProjectsWithStats(config, options = {}) {
-  const resolvedConfig = withResolvedProjectsDir(config);
-  if (!options.force) {
-    // Check enhanced cache first
-    const cacheKey = `${CacheKeys.PROJECTS}${resolvedConfig.projectsDir}`;
-    const enhancedCached = globalCache.get(cacheKey);
-    if (enhancedCached) {
-      return enhancedCached;
-    }
+// ===== Counts: delegates to index =====
 
-    // Check old cache
-    const cached = getCachedProjects(resolvedConfig);
-    if (cached) {
-      globalCache.set(cacheKey, cached, 300000); // 5分钟
-      return cached;
-    }
-  }
-
+async function getProjectAndSessionCounts(config) {
   try {
-    const data = await buildProjectsWithStats(resolvedConfig);
-    if (!Array.isArray(data)) {
-      console.warn(`[getProjectsWithStats] Unexpected non-array result for ${resolvedConfig.projectsDir}, returning empty array.`);
-      return [];
-    }
-    setCachedProjects(resolvedConfig, data);
-    globalCache.set(`${CacheKeys.PROJECTS}${resolvedConfig.projectsDir}`, data, 300000);
-    return data;
-  } catch (err) {
-    console.error(`[getProjectsWithStats] Failed to build projects for ${resolvedConfig.projectsDir}:`, err);
-    return [];
-  }
-}
-
-async function buildProjectsWithStats(config) {
-  const projectsDir = resolveProjectsDir(config);
-
-  if (!fs.existsSync(projectsDir)) {
-    return [];
-  }
-
-  const entries = await fs.promises.readdir(projectsDir, { withFileTypes: true });
-
-  // Process all projects concurrently
-  const projectPromises = entries
-    .filter(entry => entry.isDirectory())
-    .map(async (entry) => {
-      const projectName = entry.name;
-      const projectPath = path.join(projectsDir, projectName);
-
-      // Parse real project path
-      const { fullPath, projectName: displayName } = parseRealProjectPath(projectName);
-
-      // Get session files (only count sessions with actual messages)
-      let sessionCount = 0;
-      let lastUsed = null;
-
-      try {
-        const files = await fs.promises.readdir(projectPath);
-        const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
-
-        // Filter: only count sessions that have actual messages (in parallel)
-        const sessionChecks = await Promise.all(
-          jsonlFiles.map(async (f) => {
-            const filePath = path.join(projectPath, f);
-            const hasMessages = await hasActualMessages(filePath);
-            return hasMessages ? f : null;
-          })
-        );
-
-        const sessionFilesWithMessages = sessionChecks.filter(f => f !== null);
-        sessionCount = sessionFilesWithMessages.length;
-
-        // Find most recent session (only from sessions with messages)
-        if (sessionFilesWithMessages.length > 0) {
-          const statPromises = sessionFilesWithMessages.map(async (f) => {
-            const filePath = path.join(projectPath, f);
-            const stat = await fs.promises.stat(filePath);
-            return stat.mtime.getTime();
-          });
-          const stats = await Promise.all(statPromises);
-          lastUsed = Math.max(...stats);
-        }
-      } catch (err) {
-        // Ignore errors
-      }
-
-      return {
-        name: projectName, // Keep encoded name for API operations
-        displayName, // Project name for display
-        fullPath, // Real full path for display
-        sessionCount,
-        lastUsed
-      };
-    });
-
-  const projects = await Promise.all(projectPromises);
-  return projects.sort((a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)); // Sort by last used
-}
-
-// 获取 Claude 项目/会话数量（轻量统计）
-function getProjectAndSessionCounts(config) {
-  const projectsDir = resolveProjectsDir(config);
-  if (!fs.existsSync(projectsDir)) {
+    const projects = await idxListProjects('claude');
+    let sessionCount = 0;
+    for (const p of projects) sessionCount += p.sessionCount || 0;
+    return { projectCount: projects.length, sessionCount };
+  } catch (_) {
     return { projectCount: 0, sessionCount: 0 };
   }
-
-  let projectCount = 0;
-  let sessionCount = 0;
-
-  const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
-  entries.forEach((entry) => {
-    if (!entry.isDirectory()) {
-      return;
-    }
-    projectCount += 1;
-    const projectPath = path.join(projectsDir, entry.name);
-    try {
-      const files = fs.readdirSync(projectPath);
-      sessionCount += files.filter(file => file.endsWith('.jsonl') && !file.startsWith('agent-')).length;
-    } catch (err) {
-      // 忽略单个项目的读取错误
-    }
-  });
-
-  return { projectCount, sessionCount };
 }
 
-// Check if a session file has actual messages (async with enhanced caching)
-async function hasActualMessages(filePath) {
-  try {
-    const stats = await fs.promises.stat(filePath);
+// ===== Sessions for project: index + saved order + fork relations =====
 
-    // Check enhanced cache first
-    const cacheKey = `${CacheKeys.HAS_MESSAGES}${filePath}:${stats.mtime.getTime()}`;
-    const cached = globalCache.get(cacheKey);
-    if (typeof cached === 'boolean') {
-      return cached;
-    }
-
-    // Check old cache mechanism
-    const oldCached = checkHasMessagesCache(filePath, stats);
-    if (typeof oldCached === 'boolean') {
-      globalCache.set(cacheKey, oldCached, 600000); // 10分钟
-      return oldCached;
-    }
-
-    const result = await scanSessionFileForMessagesAsync(filePath);
-    globalCache.set(cacheKey, result, 600000);
-    rememberHasMessages(filePath, stats, result);
-    return result;
-  } catch (err) {
-    return false;
-  }
-}
-
-function scanSessionFileForMessages(filePath) {
-  let fd = null;
-  try {
-    fd = fs.openSync(filePath, 'r');
-    const bufferSize = 64 * 1024;
-    const buffer = Buffer.alloc(bufferSize);
-    const pattern = /"type"\s*:\s*"(user|assistant|summary)"/;
-    let leftover = '';
-    let bytesRead;
-
-    while ((bytesRead = fs.readSync(fd, buffer, 0, bufferSize, null)) > 0) {
-      const chunk = buffer.toString('utf8', 0, bytesRead);
-      const combined = leftover + chunk;
-      if (pattern.test(combined)) {
-        fs.closeSync(fd);
-        return true;
-      }
-      leftover = combined.slice(-64);
-    }
-
-    fs.closeSync(fd);
-    return false;
-  } catch (err) {
-    if (fd) {
-      try {
-        fs.closeSync(fd);
-      } catch (e) {
-        // ignore
-      }
-    }
-    return false;
-  }
-}
-
-// Async version using streams for better performance
-function scanSessionFileForMessagesAsync(filePath) {
-  return new Promise((resolve) => {
-    const stream = fs.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 64 * 1024 });
-    const pattern = /"type"\s*:\s*"(user|assistant|summary)"/;
-    let found = false;
-    let leftover = '';
-
-    stream.on('data', (chunk) => {
-      if (found) return;
-      const combined = leftover + chunk;
-      if (pattern.test(combined)) {
-        found = true;
-        stream.destroy();
-        resolve(true);
-      }
-      leftover = combined.slice(-64);
-    });
-
-    stream.on('end', () => {
-      if (!found) resolve(false);
-    });
-
-    stream.on('error', () => {
-      resolve(false);
-    });
-  });
-}
-
-// Get sessions for a project - async version
 async function getSessionsForProject(config, projectName, options = {}) {
-  // Check cache first
-  const cacheKey = `${CacheKeys.SESSIONS}${projectName}`;
-  if (!options.force) {
-    const cached = globalCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-  }
-
-  const projectConfig = { ...config, currentProject: projectName };
-  const sessions = getAllSessions(projectConfig);
+  const indexed = await idxListSessions('claude', projectName);
   const forkRelations = getForkRelations();
   const savedOrder = getSessionOrder(projectName);
 
-  // Parse session info and calculate total size, filter out sessions with no messages (in parallel)
-  let totalSize = 0;
+  let sessions = indexed.map(s => ({
+    sessionId: s.sessionId,
+    mtime: s.mtime,
+    size: s.size,
+    filePath: s.filePath,
+    gitBranch: s.gitBranch || null,
+    firstMessage: s.firstMessage || null,
+    forkedFrom: forkRelations[s.sessionId] || null
+  }));
 
-  const sessionChecks = await Promise.all(
-    sessions.map(async (session) => {
-      const hasMessages = await hasActualMessages(session.filePath);
-      return hasMessages ? session : null;
-    })
-  );
-
-  const validSessions = sessionChecks.filter(s => s !== null);
-
-  const sessionsWithInfo = validSessions.map(session => {
-    const info = parseSessionInfoFast(session.filePath);
-    totalSize += session.size || 0;
-    return {
-      sessionId: session.sessionId,
-      mtime: session.mtime,
-      size: session.size,
-      filePath: session.filePath,
-      gitBranch: info.gitBranch || null,
-      firstMessage: info.firstMessage || null,
-      forkedFrom: forkRelations[session.sessionId] || null
-    };
-  });
-
-  // Apply saved order if exists
-  let orderedSessions = sessionsWithInfo;
   if (savedOrder.length > 0) {
+    const sm = new Map(sessions.map(s => [s.sessionId, s]));
     const ordered = [];
-    const sessionMap = new Map(sessionsWithInfo.map(s => [s.sessionId, s]));
-
-    // Add sessions in saved order
-    for (const sessionId of savedOrder) {
-      if (sessionMap.has(sessionId)) {
-        ordered.push(sessionMap.get(sessionId));
-        sessionMap.delete(sessionId);
-      }
+    for (const sid of savedOrder) {
+      if (sm.has(sid)) { ordered.push(sm.get(sid)); sm.delete(sid); }
     }
-
-    // Add remaining sessions (new ones not in saved order)
-    ordered.push(...sessionMap.values());
-    orderedSessions = ordered;
+    ordered.push(...sm.values());
+    sessions = ordered;
   }
 
-  const result = {
-    sessions: orderedSessions,
-    totalSize
-  };
-
-  // Cache for 2 minutes
-  globalCache.set(cacheKey, result, 120000);
-  return result;
+  const totalSize = sessions.reduce((sum, s) => sum + (s.size || 0), 0);
+  return { sessions, totalSize };
 }
 
-// Delete a session
+// ===== Mutations (sync) =====
+
 function deleteSession(config, projectName, sessionId) {
   const resolvedConfig = withResolvedProjectsDir(config);
   const projectDir = path.join(resolvedConfig.projectsDir, projectName);
-  const sessionFile = path.join(projectDir, sessionId + '.jsonl');
-
-  if (!fs.existsSync(sessionFile)) {
-    throw new Error('Session not found');
-  }
-
-  fs.unlinkSync(sessionFile);
-  invalidateProjectsCache(resolvedConfig);
+  const filePath = path.join(projectDir, sessionId + '.jsonl');
+  if (!fs.existsSync(filePath)) throw new Error('Session not found');
+  fs.unlinkSync(filePath);
   invalidateSessionResultCache(projectName);
   return { success: true };
 }
 
-// Fork a session
 function forkSession(config, projectName, sessionId, options = {}) {
   const resolvedConfig = withResolvedProjectsDir(config);
   const projectDir = path.join(resolvedConfig.projectsDir, projectName);
-  const sessionFile = path.join(projectDir, sessionId + '.jsonl');
-
-  if (!fs.existsSync(sessionFile)) {
-    throw new Error('Session not found');
+  const sourcePath = path.join(projectDir, sessionId + '.jsonl');
+  if (!fs.existsSync(sourcePath)) throw new Error('Session not found');
+  const forkId = crypto.randomUUID();
+  const targetPath = path.join(projectDir, forkId + '.jsonl');
+  let content;
+  if (options.afterUserMessageNumber && Number.isInteger(options.afterUserMessageNumber) && options.afterUserMessageNumber > 0) {
+    content = sliceClaudeSessionContentByUserMessage(fs.readFileSync(sourcePath, 'utf8'), options.afterUserMessageNumber);
+  } else {
+    content = fs.readFileSync(sourcePath, 'utf8');
   }
-
-  // Read the original session
-  const originalContent = fs.readFileSync(sessionFile, 'utf8');
-  const content = sliceClaudeSessionContentByUserMessage(
-    originalContent,
-    options.afterUserMessageNumber
-  );
-
-  // Generate new session ID (UUID v4)
-  const newSessionId = crypto.randomUUID();
-  const newSessionFile = path.join(projectDir, newSessionId + '.jsonl');
-
-  // Write to new file
-  fs.writeFileSync(newSessionFile, content, 'utf8');
-
-  // Save fork relation
+  fs.writeFileSync(targetPath, content, 'utf8');
   const forkRelations = getForkRelations();
-  forkRelations[newSessionId] = sessionId;
+  forkRelations[forkId] = sessionId;
   saveForkRelations(forkRelations);
-  if (options.alias) {
-    const { setAlias } = require('./alias');
-    setAlias(newSessionId, options.alias);
-  }
-  invalidateProjectsCache(resolvedConfig);
+  if (options.alias) setAlias(forkId, options.alias);
   invalidateSessionResultCache(projectName);
-
   return {
-    newSessionId,
+    newSessionId: forkId,
     forkedFrom: sessionId,
     alias: options.alias || null,
     afterUserMessageNumber: options.afterUserMessageNumber || null
   };
 }
 
-// Get session order for a project
 function getSessionOrder(projectName) {
   const orderFile = getSessionOrderFilePath();
   try {
     if (fs.existsSync(orderFile)) {
-      const data = fs.readFileSync(orderFile, 'utf8');
-      const allOrders = JSON.parse(data);
-      return allOrders[projectName] || [];
+      const data = JSON.parse(fs.readFileSync(orderFile, 'utf8'));
+      return data[projectName] || [];
     }
-  } catch (err) {
-    // Ignore errors
-  }
+  } catch (_) {}
   return [];
 }
 
-// Save session order for a project
 function saveSessionOrder(projectName, order) {
   const orderFile = getSessionOrderFilePath();
   const dir = path.dirname(orderFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  // Read existing orders
-  let allOrders = {};
-  try {
-    if (fs.existsSync(orderFile)) {
-      const data = fs.readFileSync(orderFile, 'utf8');
-      allOrders = JSON.parse(data);
-    }
-  } catch (err) {
-    // Ignore errors
-  }
-
-  // Update order for this project
-  allOrders[projectName] = order;
-  fs.writeFileSync(orderFile, JSON.stringify(allOrders, null, 2), 'utf8');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  let data = {};
+  try { if (fs.existsSync(orderFile)) data = JSON.parse(fs.readFileSync(orderFile, 'utf8')); } catch (_) {}
+  data[projectName] = order;
+  fs.writeFileSync(orderFile, JSON.stringify(data, null, 2), 'utf8');
 }
 
-// Delete a project (remove the entire project directory)
 function deleteProject(config, projectName) {
   const resolvedConfig = withResolvedProjectsDir(config);
   const projectDir = path.join(resolvedConfig.projectsDir, projectName);
-
-  if (!fs.existsSync(projectDir)) {
-    throw new Error('Project not found');
-  }
-
-  // Recursively delete the directory
+  if (!fs.existsSync(projectDir)) throw new Error('Project not found');
   fs.rmSync(projectDir, { recursive: true, force: true });
-
-  // Remove from order file if exists
   const order = getProjectOrder(resolvedConfig);
   const newOrder = order.filter(name => name !== projectName);
-  if (newOrder.length !== order.length) {
-    saveProjectOrder(resolvedConfig, newOrder);
-  }
-
-  invalidateProjectsCache(resolvedConfig);
+  if (newOrder.length !== order.length) saveProjectOrder(resolvedConfig, newOrder);
   return { success: true };
 }
 
-// Search sessions for keyword
-function searchSessions(config, projectName, keyword, contextLength = 15) {
-  const resolvedConfig = withResolvedProjectsDir(config);
-  const projectDir = path.join(resolvedConfig.projectsDir, projectName);
+// ===== Search: delegates to index =====
 
-  if (!fs.existsSync(projectDir)) {
-    return [];
-  }
-
-  const results = [];
-  const files = fs.readdirSync(projectDir);
-  const jsonlFiles = files.filter(f => f.endsWith('.jsonl') && !f.startsWith('agent-'));
+async function searchSessions(config, projectName, keyword, contextLength = 15) {
+  const results = await idxSearch('claude', keyword, { projectName, contextLength });
   const aliases = loadAliases();
-
-  for (const file of jsonlFiles) {
-    const sessionId = file.replace('.jsonl', '');
-    const filePath = path.join(projectDir, file);
-
-    // Skip sessions with no actual messages
-    if (!hasActualMessages(filePath)) {
-      continue;
-    }
-
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const lines = content.split('\n');
-      const matches = [];
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        try {
-          const json = JSON.parse(line);
-
-          // Search in message content
-          if (json.message && json.message.content) {
-            const text = json.message.content;
-            const lowerText = text.toLowerCase();
-            const lowerKeyword = keyword.toLowerCase();
-            let index = 0;
-
-            while ((index = lowerText.indexOf(lowerKeyword, index)) !== -1) {
-              // Extract context
-              const start = Math.max(0, index - contextLength);
-              const end = Math.min(text.length, index + keyword.length + contextLength);
-              const context = text.substring(start, end);
-
-              matches.push({
-                role: json.message.role || 'unknown',
-                context: (start > 0 ? '...' : '') + context + (end < text.length ? '...' : ''),
-                position: index
-              });
-
-              index += keyword.length;
-            }
-          }
-        } catch (e) {
-          // Skip invalid JSON lines
-        }
-      }
-
-      if (matches.length > 0) {
-        results.push({
-          sessionId,
-          alias: aliases[sessionId] || null,
-          matchCount: matches.length,
-          matches: matches.slice(0, 5) // Limit to 5 matches per session
-        });
-      }
-    } catch (e) {
-      // Skip files that can't be read
-    }
-  }
-
-  // Sort by match count
-  results.sort((a, b) => b.matchCount - a.matchCount);
-
-  return results;
+  return results.map(r => ({
+    sessionId: r.sessionId,
+    alias: aliases[r.sessionId] || null,
+    matchCount: r.matchCount,
+    matches: r.matches
+  }));
 }
 
-// Get recent sessions across all projects
 async function getRecentSessions(config, limit = 5) {
-  const projects = await getProjects(config);
-  const allSessions = [];
-  const forkRelations = getForkRelations();
+  const indexed = await idxGetRecent('claude', limit);
   const aliases = loadAliases();
-
-  // Collect all sessions from all projects
-  projects.forEach(projectName => {
-    const projectConfig = { ...config, currentProject: projectName };
-    const sessions = getAllSessions(projectConfig);
-    const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
-
-    sessions.forEach(session => {
-      // Skip sessions with no actual messages
-      if (!hasActualMessages(session.filePath)) {
-        return;
-      }
-
-      const info = parseSessionInfoFast(session.filePath);
-      allSessions.push({
-        sessionId: session.sessionId,
-        projectName: projectName,
-        projectDisplayName: displayName,
-        projectFullPath: fullPath,
-        mtime: session.mtime,
-        size: session.size,
-        filePath: session.filePath,
-        gitBranch: info.gitBranch || null,
-        firstMessage: info.firstMessage || null,
-        forkedFrom: forkRelations[session.sessionId] || null,
-        alias: aliases[session.sessionId] || null
-      });
-    });
-  });
-
-  // Sort by mtime descending (most recent first)
-  allSessions.sort((a, b) => b.mtime - a.mtime);
-
-  // Return top N sessions
-  return allSessions.slice(0, limit);
+  const forkRelations = getForkRelations();
+  return indexed.map(s => ({
+    sessionId: s.sessionId,
+    projectName: s.projectName,
+    projectDisplayName: s.projectDisplayName,
+    projectFullPath: s.projectFullPath,
+    mtime: s.mtime,
+    size: s.size,
+    filePath: s.filePath,
+    gitBranch: s.gitBranch || null,
+    firstMessage: s.firstMessage || null,
+    forkedFrom: forkRelations[s.sessionId] || null,
+    alias: aliases[s.sessionId] || null
+  }));
 }
 
-// Search sessions across all projects
 async function searchSessionsAcrossProjects(config, keyword, contextLength = 35) {
   const allResults = [];
 
   try {
-    // Search in Claude projects
-    const claudeProjects = await getProjects(config);
-    claudeProjects.forEach(projectName => {
-      const projectResults = searchSessions(config, projectName, keyword, contextLength);
-      const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
-
-      // Add project info to each result
-      projectResults.forEach(result => {
-        allResults.push({
-          ...result,
-          projectName: projectName,
-          projectDisplayName: displayName,
-          projectFullPath: fullPath,
-          channel: 'claude'
-        });
-      });
-    });
-  } catch (error) {
-    console.error('Error searching Claude projects:', error);
-  }
+    const claudeResults = await idxSearch('claude', keyword, { contextLength });
+    for (const r of claudeResults) allResults.push({ ...r, channel: 'claude' });
+  } catch (_) {}
 
   try {
-    // Search in Codex projects
-    const codexProjectsDir = CODEX_PROJECTS_DIR;
-    if (fs.existsSync(codexProjectsDir)) {
-      const codexConfig = { ...config, projectsDir: codexProjectsDir };
-      const codexProjects = await getProjects(codexConfig);
-      codexProjects.forEach(projectName => {
-        const projectResults = searchSessions(codexConfig, projectName, keyword, contextLength);
-        const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
-
-        projectResults.forEach(result => {
-          allResults.push({
-            ...result,
-            projectName: projectName,
-            projectDisplayName: displayName,
-            projectFullPath: fullPath,
-            channel: 'codex'
-          });
-        });
-      });
+    if (fs.existsSync(CODEX_PROJECTS_DIR)) {
+      const { searchSessions: codexSearch } = require('./codex-sessions');
+      const codexResults = await codexSearch(keyword);
+      for (const r of codexResults) allResults.push({ ...r, channel: 'codex' });
     }
-  } catch (error) {
-    console.error('Error searching Codex projects:', error);
-  }
+  } catch (_) {}
 
   try {
-    // Search in Gemini projects
-    const geminiProjectsDir = GEMINI_PROJECTS_DIR;
-    if (fs.existsSync(geminiProjectsDir)) {
-      const geminiConfig = { ...config, projectsDir: geminiProjectsDir };
-      const geminiProjects = await getProjects(geminiConfig);
-      geminiProjects.forEach(projectName => {
-        const projectResults = searchSessions(geminiConfig, projectName, keyword, contextLength);
-        const { projectName: displayName, fullPath } = parseRealProjectPath(projectName);
-
-        projectResults.forEach(result => {
-          allResults.push({
-            ...result,
-            projectName: projectName,
-            projectDisplayName: displayName,
-            projectFullPath: fullPath,
-            channel: 'gemini'
-          });
-        });
-      });
+    if (fs.existsSync(GEMINI_PROJECTS_DIR)) {
+      const { searchSessions: geminiSearch } = require('./gemini-sessions');
+      const geminiResults = await geminiSearch(keyword, contextLength);
+      for (const r of geminiResults) allResults.push({ ...r, channel: 'gemini' });
     }
-  } catch (error) {
-    console.error('Error searching Gemini projects:', error);
-  }
+  } catch (_) {}
 
-  // Sort by match count
-  allResults.sort((a, b) => b.matchCount - a.matchCount);
-
+  allResults.sort((a, b) => (b.matchCount || 0) - (a.matchCount || 0));
   return allResults;
 }
 
@@ -1025,6 +418,5 @@ module.exports = {
   searchSessionsAcrossProjects,
   getForkRelations,
   saveForkRelations,
-  hasActualMessages,
   getProjectAndSessionCounts
 };

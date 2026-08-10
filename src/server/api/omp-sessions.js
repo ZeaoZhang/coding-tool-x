@@ -14,6 +14,7 @@ const {
   isOmpInstalled,
   HOME_DIR
 } = require('../services/omp-sessions');
+const { getSessionStatus, getSessionOutline, getMessagePage } = require('../services/session-history-index');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 const {
@@ -35,7 +36,7 @@ function quoteForShell(value) {
 }
 
 module.exports = () => {
-  router.get('/search/global', (req, res) => {
+  router.get('/search/global', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
@@ -46,7 +47,7 @@ module.exports = () => {
       if (!keyword) {
         return res.status(400).json({ error: 'Keyword is required' });
       }
-      const sessions = searchSessions(keyword, contextLength);
+      const sessions = await searchSessions(keyword, contextLength);
       const totalMatches = sessions.reduce((sum, session) => sum + (session.matchCount || 0), 0);
       res.json({ keyword, totalMatches, sessions, source: 'omp' });
     } catch (err) {
@@ -55,20 +56,20 @@ module.exports = () => {
     }
   });
 
-  router.get('/recent/list', (req, res) => {
+  router.get('/recent/list', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const limit = parseInt(req.query.limit, 10) || 5;
-      res.json({ sessions: getRecentSessions(limit), source: 'omp' });
+      res.json({ sessions: await getRecentSessions(limit), source: 'omp' });
     } catch (err) {
       console.error('[OMP API] Failed to get recent sessions:', err);
       res.status(500).json({ error: err.message });
     }
   });
 
-  router.get('/:projectName/search', (req, res) => {
+  router.get('/:projectName/search', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
@@ -80,7 +81,7 @@ module.exports = () => {
       if (!keyword) {
         return res.status(400).json({ error: 'Keyword is required' });
       }
-      const sessions = searchSessions(keyword, contextLength, projectName);
+      const sessions = await searchSessions(keyword, contextLength, projectName);
       const totalMatches = sessions.reduce((sum, session) => sum + (session.matchCount || 0), 0);
       res.json({ keyword, totalMatches, sessions });
     } catch (err) {
@@ -111,12 +112,24 @@ module.exports = () => {
     }
   });
 
-  router.get('/:projectName/:sessionId/status', (req, res) => {
+  router.get('/:projectName/:sessionId/status', async (req, res) => {
+    // Try session-history-index first for fast lookup
+    try {
+      const idxStatus = await getSessionStatus('omp', req.params.sessionId, { consistency: 'stale-ok' });
+      if (idxStatus) {
+        return res.json({
+          sessionId: idxStatus.sessionId,
+          lastModified: new Date(idxStatus.lastModified).toISOString(),
+          size: idxStatus.size
+        });
+      }
+    } catch (_) { /* fall through to direct lookup */ }
+
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      const session = getSessionById(req.params.sessionId);
+      const session = await getSessionById(req.params.sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -131,12 +144,23 @@ module.exports = () => {
     }
   });
 
-  router.get('/:projectName/:sessionId/outline', (req, res) => {
+  router.get('/:projectName/:sessionId/outline', async (req, res) => {
+    // Try session-history-index first for fast lookup
+    try {
+      const idxOutline = await getSessionOutline('omp', req.params.sessionId, { consistency: 'stale-ok' });
+      if (idxOutline) {
+        return res.json({
+          sessionId: idxOutline.sessionId,
+          items: idxOutline.items
+        });
+      }
+    } catch (_) { /* fall through to direct read */ }
+
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      const session = getSessionById(req.params.sessionId);
+      const session = await getSessionById(req.params.sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -160,14 +184,28 @@ module.exports = () => {
     }
   });
 
-  router.get('/:projectName/:sessionId/messages', (req, res) => {
+  router.get('/:projectName/:sessionId/messages', async (req, res) => {
+    const startMs = Date.now();
+    // Try session-history-index first for fast lookup
+    try {
+      const { page = 1, limit = 20, order = 'desc' } = req.query;
+      const pageNum = parseInt(page) || 1;
+      const limitNum = parseInt(limit) || 20;
+      const idxPage = await getMessagePage('omp', req.params.sessionId, {
+        page: pageNum, limit: limitNum, order
+      });
+      if (idxPage) {
+        return res.json(idxPage);
+      }
+    } catch (_) { /* fall through to direct file read */ }
+
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -204,12 +242,12 @@ module.exports = () => {
     }
   });
 
-  router.delete('/:projectName/:sessionId', (req, res) => {
+  router.delete('/:projectName/:sessionId', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      const result = deleteSession(req.params.sessionId);
+      const result = await deleteSession(req.params.sessionId);
       invalidateSessionSnapshots('omp', req.params.projectName);
       invalidateProjectSnapshots('omp');
       res.json(result);
@@ -222,7 +260,7 @@ module.exports = () => {
     }
   });
 
-  router.post('/:projectName/batch-delete', (req, res) => {
+  router.post('/:projectName/batch-delete', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
@@ -242,14 +280,14 @@ module.exports = () => {
       }
       const deletedSessionIds = [];
       const failed = [];
-      uniqueSessionIds.forEach((sessionId) => {
+      for (const sessionId of uniqueSessionIds) {
         try {
-          deleteSession(sessionId);
+          await deleteSession(sessionId);
           deletedSessionIds.push(sessionId);
         } catch (err) {
           failed.push({ sessionId, error: err.message });
         }
-      });
+      }
       if (deletedSessionIds.length > 0) {
         invalidateSessionSnapshots('omp', req.params.projectName);
         invalidateProjectSnapshots('omp');
@@ -267,12 +305,12 @@ module.exports = () => {
     }
   });
 
-  router.post('/:projectName/:sessionId/fork', (req, res) => {
+  router.post('/:projectName/:sessionId/fork', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      const result = forkSession(req.params.sessionId, req.body || {});
+      const result = await forkSession(req.params.sessionId, req.body || {});
       invalidateSessionSnapshots('omp', req.params.projectName);
       invalidateProjectSnapshots('omp');
       res.json(result);
@@ -303,17 +341,17 @@ module.exports = () => {
     }
   });
 
-  router.post('/:projectName/:sessionId/launch', (req, res) => {
+  router.post('/:projectName/:sessionId/launch', async (req, res) => {
     try {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { projectName, sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = await getSessionById(sessionId);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
-      const project = getProjects().find(p => p.name === projectName);
+      const project = (await getProjects()).find(p => p.name === projectName);
       const cwd = session.directory || project?.fullPath || HOME_DIR;
       const command = buildLaunchCommand(sessionId, cwd, req.body || {});
       const copyCommand = `cd ${quoteForShell(cwd)} && ${command}`;

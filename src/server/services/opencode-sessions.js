@@ -1,12 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { DatabaseSync } = require('node:sqlite');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 
 /**
  * OpenCode 会话服务
- * 读取 OpenCode SQLite 会话数据
+ * 读取 OpenCode SQLite 会话数据（node:sqlite / DatabaseSync）
  */
 
 const PROJECT_ORDER_FILE = PATHS.opencodeProjectOrder;
@@ -146,79 +146,48 @@ function toIsoTime(input) {
   }
 }
 
-function sqlQuote(value) {
-  if (value === null || value === undefined) {
-    return 'NULL';
-  }
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? String(Math.trunc(value)) : 'NULL';
-  }
-  if (typeof value === 'boolean') {
-    return value ? '1' : '0';
-  }
-  return `'${String(value).replace(/'/g, "''")}'`;
+// ---------------------------------------------------------------------------
+// Database helpers (node:sqlite / DatabaseSync)
+// ---------------------------------------------------------------------------
+
+function _openCodeDb() {
+  if (!isOpenCodeInstalled()) return null;
+  const db = new DatabaseSync(OPENCODE_DB_PATH, { readOnly: false, timeout: 5000 });
+  db.exec('PRAGMA foreign_keys = ON');
+  return db;
 }
 
-function runSqliteQuery(sql) {
-  if (!isOpenCodeInstalled()) {
-    return [];
-  }
-
+function _query(sql, ...params) {
+  const db = _openCodeDb();
+  if (!db) return [];
   try {
-    const output = execFileSync('sqlite3', ['-json', OPENCODE_DB_PATH, sql], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      maxBuffer: 10 * 1024 * 1024,
-      windowsHide: true
-    }).trim();
-
-    if (!output) {
-      return [];
-    }
-
-    const parsed = JSON.parse(output);
-    return Array.isArray(parsed) ? parsed : [];
+    return db.prepare(sql).all(...params);
   } catch (err) {
     console.error('[OpenCode Sessions] SQLite query failed:', err.message);
     return [];
   }
 }
 
-function runSqliteExec(sql) {
-  if (!isOpenCodeInstalled()) {
-    throw new Error('OpenCode CLI not installed');
-  }
-
-  execFileSync('sqlite3', [OPENCODE_DB_PATH, sql], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 10 * 1024 * 1024,
-    windowsHide: true
-  });
+function _exec(sql, ...params) {
+  const db = _openCodeDb();
+  if (!db) throw new Error('OpenCode CLI not installed');
+  db.prepare(sql).run(...params);
 }
 
 function buildContext(text, keyword, contextLength = 35) {
   if (!text || !keyword) {
     return null;
   }
-
-  const parsedContextLength = Number(contextLength);
-  const safeContextLength = Number.isFinite(parsedContextLength) && parsedContextLength >= 0
-    ? parsedContextLength
-    : 35;
-
-  const lowerText = String(text).toLowerCase();
-  const lowerKeyword = String(keyword).toLowerCase();
-  const index = lowerText.indexOf(lowerKeyword);
-  if (index === -1) {
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(keyword.toLowerCase());
+  if (idx === -1) {
     return null;
   }
-
-  const start = Math.max(0, index - safeContextLength);
-  const end = Math.min(lowerText.length, index + lowerKeyword.length + safeContextLength);
-  let context = String(text).slice(start, end);
-  if (start > 0) context = `...${context}`;
-  if (end < String(text).length) context = `${context}...`;
+  const start = Math.max(0, idx - contextLength);
+  const end = Math.min(text.length, idx + keyword.length + contextLength);
+  let context = text.slice(start, end);
+  if (start > 0) context = '...' + context;
+  if (end < text.length) context = context + '...';
   return context;
 }
 
@@ -227,122 +196,95 @@ function isOpenCodeInstalled() {
   return fs.existsSync(OPENCODE_DB_PATH);
 }
 
-// 获取 OpenCode 数据目录
-function getOpenCodeDataDir() {
-  return NATIVE_PATHS.opencode.data;
+function invalidateProjectAndSessionCountsCache() {
+  countsCache = { expiresAt: 0, value: EMPTY_COUNTS };
 }
 
-// 兼容导出：保留旧路径函数
-function getSessionsDir() {
-  return path.join(getOpenCodeDataDir(), 'storage', 'session');
-}
-
-// 兼容导出：保留旧路径函数
-function getProjectsDir() {
-  return path.join(getOpenCodeDataDir(), 'storage', 'project');
-}
+// ---------------------------------------------------------------------------
+// Project / session order (file-based)
+// ---------------------------------------------------------------------------
 
 function getProjectOrder() {
-  const order = readJsonSafe(PROJECT_ORDER_FILE, []);
-  return Array.isArray(order) ? order : [];
+  return readJsonSafe(PROJECT_ORDER_FILE, []).order || [];
 }
 
 function saveProjectOrder(order) {
-  if (!Array.isArray(order)) {
-    throw new Error('order must be an array');
-  }
-  writeJsonSafe(PROJECT_ORDER_FILE, order);
-  return { success: true };
-}
-
-function getSessionOrderMap() {
-  const map = readJsonSafe(SESSION_ORDER_FILE, {});
-  return map && typeof map === 'object' ? map : {};
-}
-
-function saveSessionOrderMap(map) {
-  writeJsonSafe(SESSION_ORDER_FILE, map);
-}
-
-function getSessionOrder(projectId) {
-  const map = getSessionOrderMap();
-  const order = map[projectId];
-  return Array.isArray(order) ? order : [];
-}
-
-function saveSessionOrder(projectId, order) {
-  if (!projectId) {
-    throw new Error('projectId is required');
-  }
-  if (!Array.isArray(order)) {
-    throw new Error('order must be an array');
-  }
-
-  const map = getSessionOrderMap();
-  map[projectId] = order;
-  saveSessionOrderMap(map);
-  return { success: true };
-}
-
-function removeSessionFromOrder(projectId, sessionId) {
-  const map = getSessionOrderMap();
-  if (!Array.isArray(map[projectId])) {
-    return;
-  }
-  map[projectId] = map[projectId].filter(id => id !== sessionId);
-  saveSessionOrderMap(map);
+  writeJsonSafe(PROJECT_ORDER_FILE, { order: Array.isArray(order) ? order : [] });
 }
 
 function removeProjectFromOrder(projectId) {
-  const currentOrder = getProjectOrder().filter(name => name !== projectId);
-  saveProjectOrder(currentOrder);
+  const current = getProjectOrder();
+  saveProjectOrder(current.filter(id => id !== projectId));
+}
 
-  const map = getSessionOrderMap();
-  if (map[projectId] !== undefined) {
-    delete map[projectId];
-    saveSessionOrderMap(map);
+function getSessionOrder(projectId) {
+  const all = readJsonSafe(SESSION_ORDER_FILE, {}).order || {};
+  return all[projectId] || [];
+}
+
+function saveSessionOrder(projectId, order) {
+  const all = readJsonSafe(SESSION_ORDER_FILE, {}).order || {};
+  all[projectId] = Array.isArray(order) ? order : [];
+  writeJsonSafe(SESSION_ORDER_FILE, { order: all });
+}
+
+function removeSessionFromOrder(projectId, sessionId) {
+  const current = getSessionOrder(projectId);
+  saveSessionOrder(projectId, current.filter(id => id !== sessionId));
+}
+
+// ---------------------------------------------------------------------------
+// Metadata helpers
+// ---------------------------------------------------------------------------
+
+function getProjectDisplayName(project) {
+  if (!project) return 'Unknown';
+  const worktree = project.worktree || '';
+  if (worktree) {
+    const parsed = parseJsonMaybe(project.data);
+    if (parsed && typeof parsed.name === 'string' && parsed.name.trim()) {
+      return parsed.name.trim();
+    }
+    return path.basename(worktree);
   }
+  return project.id || 'Unknown';
 }
 
-function invalidateProjectAndSessionCountsCache() {
-  countsCache.expiresAt = 0;
+function getSessionLocation(sessionId) {
+  const row = getSessionRowById(sessionId);
+  if (!row) return null;
+  return { projectId: row.project_id, directory: row.directory, sessionData: row };
 }
+
+// ---------------------------------------------------------------------------
+// Database query functions (parameterized)
+// ---------------------------------------------------------------------------
 
 function queryProjectAndSessionCounts() {
-  const rows = runSqliteQuery(`
+  const rows = _query(`
     SELECT
       (SELECT COUNT(*) FROM project) AS project_count,
       (SELECT COUNT(*) FROM session WHERE time_archived IS NULL) AS session_count
   `);
-
-  const row = rows[0] || {};
-  return {
-    projectCount: Number(row.project_count) || 0,
-    sessionCount: Number(row.session_count) || 0
-  };
+  return rows.length > 0 ? rows[0] : { project_count: 0, session_count: 0 };
 }
 
 function getProjectRows() {
-  return runSqliteQuery(`
+  return _query(`
     SELECT
       p.id,
       p.worktree,
-      p.name,
       p.time_created,
       p.time_updated,
-      COALESCE(s.session_count, 0) AS session_count
+      p.time_archived,
+      p.data
     FROM project p
-    LEFT JOIN (
-      SELECT project_id, COUNT(*) AS session_count
-      FROM session
-      WHERE time_archived IS NULL
-      GROUP BY project_id
-    ) s ON s.project_id = p.id
+    ORDER BY p.time_updated DESC
   `);
 }
 
 function getSessionRowsByProjectId(projectId) {
-  return runSqliteQuery(`
+  return _query(`
     SELECT
       s.id,
       s.project_id,
@@ -361,28 +303,16 @@ function getSessionRowsByProjectId(projectId) {
       s.time_created,
       s.time_updated,
       s.time_compacting,
-      s.time_archived,
-      (
-        COALESCE((
-          SELECT SUM(length(CAST(COALESCE(m.data, '') AS BLOB)))
-          FROM message m
-          WHERE m.session_id = s.id
-        ), 0) +
-        COALESCE((
-          SELECT SUM(length(CAST(COALESCE(p.data, '') AS BLOB)))
-          FROM part p
-          WHERE p.session_id = s.id
-        ), 0)
-      ) AS size
+      s.time_archived
     FROM session s
-    WHERE s.project_id = ${sqlQuote(projectId)}
+    WHERE s.project_id = ?
       AND s.time_archived IS NULL
     ORDER BY s.time_updated DESC
-  `);
+  `, projectId);
 }
 
 function getSessionRowById(sessionId) {
-  const rows = runSqliteQuery(`
+  const rows = _query(`
     SELECT
       s.id,
       s.project_id,
@@ -401,29 +331,16 @@ function getSessionRowById(sessionId) {
       s.time_created,
       s.time_updated,
       s.time_compacting,
-      s.time_archived,
-      (
-        COALESCE((
-          SELECT SUM(length(CAST(COALESCE(m.data, '') AS BLOB)))
-          FROM message m
-          WHERE m.session_id = s.id
-        ), 0) +
-        COALESCE((
-          SELECT SUM(length(CAST(COALESCE(p.data, '') AS BLOB)))
-          FROM part p
-          WHERE p.session_id = s.id
-        ), 0)
-      ) AS size
+      s.time_archived
     FROM session s
-    WHERE s.id = ${sqlQuote(sessionId)}
+    WHERE s.id = ?
     LIMIT 1
-  `);
-
-  return rows[0] || null;
+  `, sessionId);
+  return rows.length > 0 ? rows[0] : null;
 }
 
 function getMessageRowsBySessionId(sessionId) {
-  return runSqliteQuery(`
+  return _query(`
     SELECT
       id,
       session_id,
@@ -431,13 +348,13 @@ function getMessageRowsBySessionId(sessionId) {
       time_updated,
       data
     FROM message
-    WHERE session_id = ${sqlQuote(sessionId)}
+    WHERE session_id = ?
     ORDER BY time_created ASC
-  `);
+  `, sessionId);
 }
 
 function getPartRowsBySessionId(sessionId) {
-  return runSqliteQuery(`
+  return _query(`
     SELECT
       id,
       message_id,
@@ -446,72 +363,49 @@ function getPartRowsBySessionId(sessionId) {
       time_updated,
       data
     FROM part
-    WHERE session_id = ${sqlQuote(sessionId)}
+    WHERE session_id = ?
     ORDER BY time_created ASC
-  `);
+  `, sessionId);
 }
 
-function normalizeSession(session, projectId = null) {
-  const size = Number(session?.size);
+function normalizeSession(session, projectId) {
   return {
     sessionId: session.id,
-    projectName: projectId || session.project_id,
     mtime: toIsoTime(session.time_updated) || new Date().toISOString(),
-    size: Number.isFinite(size) && size > 0 ? size : 0,
-    filePath: '',
+    size: 0, // SQLite doesn't track file size natively
+    filePath: `opencode://${projectId}/${session.id}`,
     gitBranch: null,
-    firstMessage: session.title || session.slug || null,
-    forkedFrom: null,
-    directory: session.directory,
-    slug: session.slug,
-    source: 'opencode'
+    firstMessage: session.title || null,
+    forkedFrom: session.parent_id || null,
+    source: 'opencode',
+    directory: session.directory || null,
+    slug: session.slug || null,
+    model: null,
+    provider: null,
+    projectName: projectId,
+    projectFullPath: null
   };
 }
 
-function isSessionLikeName(name) {
-  return /^ses_[a-z0-9_-]+$/i.test(name);
-}
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
-function getProjectDisplayName(project) {
-  const rawName = typeof project?.name === 'string' ? project.name.trim() : '';
-  const rawId = typeof project?.id === 'string' ? project.id.trim() : '';
-  const worktree = typeof project?.worktree === 'string' ? project.worktree.trim() : '';
-
-  // OpenCode 的 project.name 可能为空或异常写成会话ID，优先回退为目录名。
-  if (rawName && rawName !== rawId && !isSessionLikeName(rawName)) {
-    return rawName;
-  }
-
-  if (worktree) {
-    const dirName = path.basename(worktree);
-    if (dirName && dirName !== path.sep && dirName !== '.' && dirName !== '..') {
-      return dirName;
-    }
-  }
-
-  return rawName || rawId;
-}
-
-// 获取所有项目
 function getProjects(_options = {}) {
   const projects = getProjectRows().map((project) => ({
     name: project.id,
     displayName: getProjectDisplayName(project),
     fullPath: project.worktree || '/',
     path: project.worktree || '/',
-    sessionCount: Number(project.session_count) || 0,
-    lastUsed: Number(project.time_updated) || Number(project.time_created) || 0,
+    sessionCount: 0,
+    lastUsed: toIsoTime(project.time_updated),
     source: 'opencode'
   }));
 
-  return sortByOrder(
-    projects,
-    getProjectOrder(),
-    (a, b) => (b.lastUsed || 0) - (a.lastUsed || 0)
-  );
+  const order = getProjectOrder();
+  return sortByOrder(projects, order, (a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''));
 }
 
-// 根据项目ID获取会话列表
 function getSessionsByProjectId(projectId, _options = {}) {
   const sessions = getSessionRowsByProjectId(projectId).map(session => normalizeSession(session, projectId));
   const order = getSessionOrder(projectId);
@@ -520,45 +414,108 @@ function getSessionsByProjectId(projectId, _options = {}) {
     (a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime()
   );
 
-  if (order.length === 0) {
-    return fallbackSorted;
-  }
+  return sortByOrder(fallbackSorted, order, (a, b) =>
+    new Date(b.mtime).getTime() - new Date(a.mtime).getTime()
+  );
+}
 
-  const orderMap = new Map(order.map((id, idx) => [id, idx]));
-  return [...fallbackSorted].sort((a, b) => {
-    const aIndex = orderMap.has(a.sessionId) ? orderMap.get(a.sessionId) : Number.MAX_SAFE_INTEGER;
-    const bIndex = orderMap.has(b.sessionId) ? orderMap.get(b.sessionId) : Number.MAX_SAFE_INTEGER;
-    if (aIndex === bIndex) {
-      return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
+function searchSessions(keyword) {
+  if (!keyword || !keyword.trim()) return [];
+  const lowerKeyword = keyword.toLowerCase();
+
+  const allSessions = [];
+  const projects = getProjectRows();
+  for (const project of projects) {
+    const sessions = getSessionRowsByProjectId(project.id);
+    for (const session of sessions) {
+      const messages = getMessageRowsBySessionId(session.id);
+      const parts = getPartRowsBySessionId(session.id);
+
+      const matchedMessages = [];
+      const partsByMessageId = new Map();
+      for (const part of parts) {
+        const existing = partsByMessageId.get(part.message_id) || [];
+        existing.push(part);
+        partsByMessageId.set(part.message_id, existing);
+      }
+
+      for (let i = 0; i < messages.length; i++) {
+        const message = messages[i];
+        const data = parseJsonMaybe(message.data, null);
+        let text = '';
+
+        if (data && data.role === 'user') {
+          text = extractTextFromMessageData(data);
+        } else {
+          const messageParts = partsByMessageId.get(message.id) || [];
+          for (const part of messageParts) {
+            const partData = parseJsonMaybe(part.data, null);
+            text += (text ? '\n' : '') + extractTextFromPartData(partData);
+          }
+        }
+
+        if (text.toLowerCase().includes(lowerKeyword)) {
+          matchedMessages.push({
+            messageIndex: i,
+            role: data ? (data.role || 'unknown') : 'unknown',
+            context: buildContext(text, keyword),
+            timestamp: toIsoTime(message.time_created)
+          });
+        }
+      }
+
+      if (matchedMessages.length > 0) {
+        allSessions.push({
+          sessionId: session.id,
+          projectName: project.id,
+          projectDisplayName: getProjectDisplayName(project),
+          firstMessage: session.title || null,
+          matches: matchedMessages,
+          matchCount: matchedMessages.length,
+          source: 'opencode'
+        });
+      }
     }
-    return aIndex - bIndex;
-  });
-}
-
-// 根据项目名获取会话列表
-function getSessionsByProject(projectName, options = {}) {
-  return getSessionsByProjectId(projectName, options);
-}
-
-function getSessionLocation(sessionId) {
-  const session = getSessionRowById(sessionId);
-  if (!session) {
-    return null;
   }
-  return {
-    projectId: session.project_id,
-    sessionData: session
-  };
+
+  return allSessions.sort((a, b) => b.matchCount - a.matchCount);
 }
 
-// 根据会话ID获取会话详情
+function getRecentSessions(limit = 5) {
+  const allSessions = [];
+
+  const projects = getProjectRows();
+  for (const project of projects) {
+    const sessions = getSessionRowsByProjectId(project.id);
+    for (const session of sessions) {
+      allSessions.push({
+        ...normalizeSession(session, project.id),
+        projectDisplayName: getProjectDisplayName(project),
+        projectFullPath: project.worktree || null
+      });
+    }
+  }
+
+  return allSessions
+    .sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())
+    .slice(0, limit);
+}
+
 function getSessionById(sessionId) {
   const location = getSessionLocation(sessionId);
-  if (!location) {
-    return null;
-  }
+  if (!location) return null;
 
-  return normalizeSession(location.sessionData, location.projectId);
+  const messages = buildSessionMessages(sessionId);
+  return {
+    sessionId,
+    mtime: toIsoTime(location.sessionData.time_updated) || new Date().toISOString(),
+    size: 0,
+    filePath: `opencode://${location.projectId}/${sessionId}`,
+    source: 'opencode',
+    directory: location.directory || null,
+    projectName: location.projectId,
+    messages
+  };
 }
 
 function buildSessionMessages(sessionId) {
@@ -567,114 +524,41 @@ function buildSessionMessages(sessionId) {
 
   const partsByMessageId = new Map();
   for (const part of parts) {
-    if (!partsByMessageId.has(part.message_id)) {
-      partsByMessageId.set(part.message_id, []);
-    }
-    partsByMessageId.get(part.message_id).push(part);
+    const existing = partsByMessageId.get(part.message_id) || [];
+    existing.push(part);
+    partsByMessageId.set(part.message_id, existing);
   }
 
-  const converted = [];
+  return messages.map((message) => {
+    const data = parseJsonMaybe(message.data, null);
+    const messageParts = partsByMessageId.get(message.id) || [];
 
-  for (const row of messages) {
-    const messageData = parseJsonMaybe(row.data, {});
-    const role = messageData?.role;
-    if (role !== 'user' && role !== 'assistant') {
-      continue;
+    let content = '';
+    if (data && data.role === 'user') {
+      content = extractTextFromMessageData(data);
+    } else if (messageParts.length > 0) {
+      content = messageParts
+        .map(part => {
+          const partData = parseJsonMaybe(part.data, null);
+          return extractTextFromPartData(partData);
+        })
+        .filter(Boolean)
+        .join('\n');
     }
 
-    const messageParts = partsByMessageId.get(row.id) || [];
-    const partTexts = [];
-    for (const part of messageParts) {
-      const partData = parseJsonMaybe(part.data, null);
-      const text = extractTextFromPartData(partData);
-      if (text) {
-        partTexts.push(text);
-      }
-    }
-
-    const fallbackText = extractTextFromMessageData(messageData);
-    const content = partTexts.join('\n').trim() || fallbackText || '[空消息]';
-
-    const timestamp = toIsoTime(
-      messageData?.time?.created || row.time_created || row.time_updated
-    );
-
-    converted.push({
-      type: role,
-      role,
+    return {
+      id: message.id,
+      role: data ? (data.role || 'unknown') : 'unknown',
+      type: data ? (data.role || 'unknown') : 'unknown',
       content,
-      timestamp,
-      model: role === 'assistant'
-        ? (messageData?.model?.modelID || messageData?.modelID || messageData?.model || 'opencode')
-        : null
-    });
-  }
-
-  return converted;
-}
-
-function getSessionMessages(sessionId) {
-  const location = getSessionLocation(sessionId);
-  if (!location) {
-    throw new Error('Session not found');
-  }
-
-  return buildSessionMessages(sessionId).map(({ type, content, timestamp, model }) => ({
-    type,
-    content,
-    timestamp,
-    model
-  }));
-}
-
-// 获取项目和会话数量统计
-function getProjectAndSessionCounts(options = {}) {
-  const now = Date.now();
-  if (options.force) {
-    countsCache.expiresAt = 0;
-  }
-  if (!options.force && countsCache.expiresAt > now) {
-    return countsCache.value;
-  }
-
-  try {
-    const counts = queryProjectAndSessionCounts();
-    countsCache = {
-      value: counts,
-      expiresAt: now + COUNTS_CACHE_TTL_MS
+      timestamp: toIsoTime(message.time_created),
+      model: data ? (data.model || null) : null,
+      parts: messageParts.map(part => ({
+        id: part.id,
+        data: parseJsonMaybe(part.data, null)
+      }))
     };
-    return counts;
-  } catch (err) {
-    console.error('[OpenCode Sessions] Failed to get counts:', err);
-    return countsCache.value || EMPTY_COUNTS;
-  }
-}
-
-function getRecentSessions(limit = 5) {
-  const projects = getProjects();
-  const { loadAliases } = require('./alias');
-  const { getForkRelations } = require('./sessions');
-  const aliases = loadAliases();
-  const forkRelations = getForkRelations();
-  const allSessions = [];
-
-  for (const project of projects) {
-    const sessions = getSessionsByProjectId(project.name);
-    sessions.forEach(session => {
-      allSessions.push({
-        ...session,
-        alias: aliases[session.sessionId] || null,
-        forkedFrom: forkRelations[session.sessionId] || null,
-        projectName: project.name,
-        projectDisplayName: project.displayName,
-        projectFullPath: project.fullPath
-      });
-    });
-  }
-
-  return allSessions
-    .sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())
-    .slice(0, limit);
+  });
 }
 
 // 删除会话
@@ -684,10 +568,10 @@ function deleteSession(sessionId) {
     throw new Error('Session not found');
   }
 
-  runSqliteExec(`
-    PRAGMA foreign_keys = ON;
-    DELETE FROM session WHERE id = ${sqlQuote(sessionId)};
-  `);
+  _exec(
+    `DELETE FROM session WHERE id = ?`,
+    sessionId
+  );
 
   try {
     const { deleteAlias } = require('./alias');
@@ -727,93 +611,93 @@ function forkSession(sessionId) {
   const parts = getPartRowsBySessionId(sessionId);
   const now = Date.now();
   const newSessionId = `ses_${crypto.randomUUID().replace(/-/g, '')}`;
+  const db = _openCodeDb();
+  if (!db) throw new Error('OpenCode CLI not installed');
 
   const messageIdMap = new Map();
   for (const message of messages) {
     messageIdMap.set(message.id, `msg_${crypto.randomUUID().replace(/-/g, '')}`);
   }
 
-  const statements = [];
-  statements.push('PRAGMA foreign_keys = ON;');
-  statements.push('BEGIN IMMEDIATE;');
+  db.exec('BEGIN IMMEDIATE');
 
-  statements.push(`
-    INSERT INTO session (
-      id, project_id, parent_id, slug, directory, title, version, share_url,
-      summary_additions, summary_deletions, summary_files, summary_diffs,
-      revert, permission, time_created, time_updated, time_compacting, time_archived
-    ) VALUES (
-      ${sqlQuote(newSessionId)},
-      ${sqlQuote(source.project_id)},
-      ${sqlQuote(source.parent_id)},
-      ${sqlQuote(source.slug)},
-      ${sqlQuote(source.directory)},
-      ${sqlQuote(source.title)},
-      ${sqlQuote(source.version)},
-      ${sqlQuote(source.share_url)},
-      ${sqlQuote(source.summary_additions)},
-      ${sqlQuote(source.summary_deletions)},
-      ${sqlQuote(source.summary_files)},
-      ${sqlQuote(source.summary_diffs)},
-      ${sqlQuote(source.revert)},
-      ${sqlQuote(source.permission)},
-      ${sqlQuote(now)},
-      ${sqlQuote(now)},
-      ${sqlQuote(source.time_compacting)},
-      NULL
+  try {
+    db.prepare(`
+      INSERT INTO session (
+        id, project_id, parent_id, slug, directory, title, version, share_url,
+        summary_additions, summary_deletions, summary_files, summary_diffs,
+        revert, permission, time_created, time_updated, time_compacting, time_archived
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      newSessionId,
+      source.project_id,
+      source.parent_id,
+      source.slug,
+      source.directory,
+      source.title,
+      source.version,
+      source.share_url,
+      source.summary_additions,
+      source.summary_deletions,
+      source.summary_files,
+      source.summary_diffs,
+      source.revert,
+      source.permission,
+      now,
+      now,
+      source.time_compacting
     );
-  `);
 
-  for (const message of messages) {
-    const newMessageId = messageIdMap.get(message.id);
-    const messageData = parseJsonMaybe(message.data, null);
+    const insertMessageStmt = db.prepare(
+      `INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)`
+    );
+    for (const message of messages) {
+      const newMessageId = messageIdMap.get(message.id);
+      const messageData = parseJsonMaybe(message.data, null);
 
-    let serializedData = message.data;
-    if (messageData && typeof messageData === 'object') {
-      if (typeof messageData.parentID === 'string' && messageIdMap.has(messageData.parentID)) {
-        messageData.parentID = messageIdMap.get(messageData.parentID);
+      let serializedData = message.data;
+      if (messageData && typeof messageData === 'object') {
+        if (typeof messageData.parentID === 'string' && messageIdMap.has(messageData.parentID)) {
+          messageData.parentID = messageIdMap.get(messageData.parentID);
+        }
+        if (typeof messageData.id === 'string') {
+          messageData.id = newMessageId;
+        }
+        serializedData = JSON.stringify(messageData);
       }
-      if (typeof messageData.id === 'string') {
-        messageData.id = newMessageId;
-      }
-      serializedData = JSON.stringify(messageData);
+
+      insertMessageStmt.run(
+        newMessageId,
+        newSessionId,
+        message.time_created,
+        message.time_updated,
+        serializedData
+      );
     }
 
-    statements.push(`
-      INSERT INTO message (id, session_id, time_created, time_updated, data)
-      VALUES (
-        ${sqlQuote(newMessageId)},
-        ${sqlQuote(newSessionId)},
-        ${sqlQuote(message.time_created)},
-        ${sqlQuote(message.time_updated)},
-        ${sqlQuote(serializedData)}
-      );
-    `);
-  }
+    const insertPartStmt = db.prepare(
+      `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`
+    );
+    for (const part of parts) {
+      const newPartId = `prt_${crypto.randomUUID().replace(/-/g, '')}`;
+      const targetMessageId = messageIdMap.get(part.message_id);
+      if (!targetMessageId) continue;
 
-  for (const part of parts) {
-    const newPartId = `prt_${crypto.randomUUID().replace(/-/g, '')}`;
-    const targetMessageId = messageIdMap.get(part.message_id);
-    if (!targetMessageId) {
-      continue;
+      insertPartStmt.run(
+        newPartId,
+        targetMessageId,
+        newSessionId,
+        part.time_created,
+        part.time_updated,
+        part.data
+      );
     }
 
-    statements.push(`
-      INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
-      VALUES (
-        ${sqlQuote(newPartId)},
-        ${sqlQuote(targetMessageId)},
-        ${sqlQuote(newSessionId)},
-        ${sqlQuote(part.time_created)},
-        ${sqlQuote(part.time_updated)},
-        ${sqlQuote(part.data)}
-      );
-    `);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw new Error('Failed to fork session: ' + err.message);
   }
-
-  statements.push('COMMIT;');
-
-  runSqliteExec(statements.join('\n'));
 
   try {
     const { getForkRelations, saveForkRelations } = require('./sessions');
@@ -821,165 +705,74 @@ function forkSession(sessionId) {
     relations[newSessionId] = sessionId;
     saveForkRelations(relations);
   } catch (err) {
-    // ignore fork relation save errors
+    // ignore
   }
 
-  const existingOrder = getSessionOrder(location.projectId);
-  saveSessionOrder(location.projectId, [newSessionId, ...existingOrder.filter(id => id !== newSessionId)]);
-
   invalidateProjectAndSessionCountsCache();
-  return {
-    success: true,
-    newSessionId,
-    forkedFrom: sessionId,
-    projectName: location.projectId,
-    newFilePath: null
-  };
+  return { success: true, sessionId: newSessionId, forkedFrom: sessionId };
 }
 
 function deleteProject(projectId) {
-  const projectRows = runSqliteQuery(`
-    SELECT id FROM project WHERE id = ${sqlQuote(projectId)} LIMIT 1
-  `);
+  const projectRows = _query(
+    `SELECT id FROM project WHERE id = ? LIMIT 1`,
+    projectId
+  );
 
   if (projectRows.length === 0) {
     throw new Error('Project not found');
   }
 
-  const sessionRows = runSqliteQuery(`
-    SELECT id FROM session WHERE project_id = ${sqlQuote(projectId)}
-  `);
+  const sessionRows = _query(
+    `SELECT id FROM session WHERE project_id = ?`,
+    projectId
+  );
 
   const deletedSessionIds = sessionRows.map(row => row.id);
 
-  for (const sessionId of deletedSessionIds) {
-    try {
-      const { deleteAlias } = require('./alias');
-      deleteAlias(sessionId);
-    } catch (err) {
-      // ignore alias cleanup errors
-    }
-  }
+  try {
+    const { deleteAlias } = require('./alias');
+    deletedSessionIds.forEach(id => {
+      try { deleteAlias(id); } catch (_) {}
+    });
+  } catch (_) {}
 
-  runSqliteExec(`
-    PRAGMA foreign_keys = ON;
-    DELETE FROM project WHERE id = ${sqlQuote(projectId)};
-  `);
+  _exec(`DELETE FROM project WHERE id = ?`, projectId);
 
   removeProjectFromOrder(projectId);
-
-  try {
-    const { getForkRelations, saveForkRelations } = require('./sessions');
-    const deletedSet = new Set(deletedSessionIds);
-    const relations = getForkRelations();
-    Object.keys(relations).forEach((key) => {
-      if (deletedSet.has(key) || deletedSet.has(relations[key])) {
-        delete relations[key];
-      }
-    });
-    saveForkRelations(relations);
-  } catch (err) {
-    // ignore relation cleanup errors
-  }
-
   invalidateProjectAndSessionCountsCache();
-  return {
-    success: true,
-    projectName: projectId,
-    deletedCount: deletedSessionIds.length
-  };
+  return { success: true, projectId, deletedSessions: deletedSessionIds.length };
 }
 
-// 搜索会话
-function searchSessions(keyword, contextLength = 35, projectFilter = null) {
-  if (!keyword || !String(keyword).trim()) {
-    return [];
+function getProjectAndSessionCounts(options = {}) {
+  if (options.force) {
+    invalidateProjectAndSessionCountsCache();
+  } else if (countsCache.expiresAt > Date.now()) {
+    return countsCache.value;
   }
 
-  const searchKeyword = String(keyword).trim();
-  const projects = getProjects();
-  const { loadAliases } = require('./alias');
-  const aliases = loadAliases();
-  const results = [];
+  const row = queryProjectAndSessionCounts();
+  const result = {
+    projectCount: Number(row.project_count) || 0,
+    sessionCount: Number(row.session_count) || 0
+  };
 
-  for (const project of projects) {
-    if (projectFilter && project.name !== projectFilter) {
-      continue;
-    }
-
-    const sessions = getSessionsByProjectId(project.name);
-    for (const session of sessions) {
-      const matches = [];
-
-      const quickChecks = [
-        session.sessionId,
-        session.firstMessage,
-        session.slug,
-        session.directory
-      ];
-
-      for (const text of quickChecks) {
-        const context = buildContext(text, searchKeyword, contextLength);
-        if (context) {
-          matches.push({
-            role: 'assistant',
-            context,
-            timestamp: session.mtime
-          });
-        }
-      }
-
-      const sessionMessages = buildSessionMessages(session.sessionId);
-      for (const message of sessionMessages) {
-        const context = buildContext(message.content, searchKeyword, contextLength);
-        if (!context) {
-          continue;
-        }
-
-        matches.push({
-          role: message.role,
-          context,
-          timestamp: message.timestamp
-        });
-      }
-
-      if (matches.length > 0) {
-        results.push({
-          sessionId: session.sessionId,
-          projectName: project.name,
-          projectDisplayName: project.displayName,
-          projectFullPath: project.fullPath,
-          alias: aliases[session.sessionId] || null,
-          matchCount: matches.length,
-          matches: matches.slice(0, 5),
-          source: 'opencode'
-        });
-      }
-    }
-  }
-
-  return results.sort((a, b) => b.matchCount - a.matchCount);
+  countsCache = { expiresAt: Date.now() + COUNTS_CACHE_TTL_MS, value: result };
+  return result;
 }
 
 module.exports = {
   isOpenCodeInstalled,
-  getOpenCodeDataDir,
-  getSessionsDir,
-  getProjectsDir,
   getProjects,
-  getProjectOrder,
-  saveProjectOrder,
-  getSessionsByProject,
   getSessionsByProjectId,
   getSessionById,
-  getSessionMessages,
+  searchSessions,
   getRecentSessions,
-  normalizeSession,
-  getProjectAndSessionCounts,
   deleteSession,
-  deleteProject,
   forkSession,
-  getSessionOrder,
+  deleteProject,
+  saveProjectOrder,
   saveSessionOrder,
-  searchSessions
+  getProjectAndSessionCounts,
+  _query,  // exposed for testing
+  _openCodeDb // exposed for testing
 };

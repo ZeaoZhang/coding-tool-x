@@ -107,12 +107,45 @@ beforeEach(() => {
     loaded: true,
     exports: { broadcastLog: broadcastLogMock }
   };
+  require.cache[require.resolve('../../../src/server/services/session-history-index')] = {
+    id: require.resolve('../../../src/server/services/session-history-index'),
+    filename: require.resolve('../../../src/server/services/session-history-index'),
+    loaded: true,
+    exports: {
+      getSessionStatus: vi.fn((source, sessionId) => {
+        if (sessionId === 'missing') return Promise.resolve(null);
+        return Promise.resolve({
+          sessionId,
+          lastModified: Date.now(),
+          size: 42,
+          filePath: `/tmp/${sessionId}.jsonl`
+        });
+      }),
+      getSessionOutline: vi.fn((source, sessionId) => Promise.resolve({
+        sessionId,
+        items: [{ userMessageNumber: 1, preview: 'Question', timestamp: Date.now() }]
+      })),
+      getMessagePage: vi.fn((source, sessionId, opts = {}) => {
+        const limit = opts.limit || 20;
+        const page = opts.page || 1;
+        return Promise.resolve({
+          messages: [
+            { type: 'assistant', role: 'assistant', content: 'Answer' },
+            { type: 'user', role: 'user', content: 'Question', userMessageNumber: 1 }
+          ],
+          metadata: { cwd: '/workspace/repo-omp', provider: 'omp-provider', model: 'omp-model' },
+          pagination: { page, limit, total: 2, hasMore: false }
+        });
+      })
+    }
+  };
 });
 
 afterEach(() => {
   [
     '../../../src/server/api/omp-sessions',
     '../../../src/server/services/omp-sessions',
+    '../../../src/server/services/session-history-index',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server'
   ].forEach((mod) => {

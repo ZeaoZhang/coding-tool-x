@@ -1,6 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, HOME_DIR } = require('../../config/paths');
+const {
+  listProjects: idxListProjects,
+  listSessions: idxListSessions,
+  getRecentSessions: idxGetRecent,
+  searchSessions: idxSearch,
+  getSessionStatus: idxGetSessionStatus,
+} = require('./session-history-index');
 const { getOmpCommand, getOmpPaths, resolveOmpRuntime } = require('./omp-config');
 
 const PROJECT_ORDER_FILE = PATHS.ompProjectOrder;
@@ -286,18 +293,16 @@ function scanSessionFiles(rootDir = getOmpSessionPaths().sessions) {
   return files;
 }
 
-function getAllSessions() {
-  return scanSessionFiles()
-    .map((filePath) => {
-      try {
-        return parseSessionFile(filePath);
-      } catch (error) {
-        console.warn('[OMP Sessions] Failed to parse session:', filePath, error.message);
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+async function getAllSessions(options = {}) {
+  const projects = await idxListProjects('omp', options);
+  const groups = await Promise.all(projects.map(project => idxListSessions('omp', project.name, options)));
+  return groups.flat().map(session => normalizeSession({
+    ...session,
+    mtime: new Date(session.mtime).toISOString(),
+    mtimeMs: session.mtime,
+    directory: session.projectFullPath,
+    usage: session.tokens
+  }));
 }
 
 function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions) {
@@ -350,32 +355,20 @@ function loadSessionOrder() {
   return safeReadJson(SESSION_ORDER_FILE, {});
 }
 
-function getProjects(_options = {}) {
-  const sessions = getAllSessions();
-  const projectMap = new Map();
-  sessions.forEach((session) => {
-    const key = session.projectName;
-    const existing = projectMap.get(key) || {
-      name: key,
-      path: session.cwd,
-      fullPath: session.cwd,
-      displayName: getDisplayName(session.cwd),
-      sessionCount: 0,
-      latestSession: null,
-      mtime: session.mtime,
-      mtimeMs: 0,
-      source: 'omp'
-    };
-    existing.sessionCount += 1;
-    if ((session.mtimeMs || 0) > (existing.mtimeMs || 0)) {
-      existing.latestSession = session.sessionId;
-      existing.mtime = session.mtime;
-      existing.mtimeMs = session.mtimeMs;
-    }
-    projectMap.set(key, existing);
-  });
+async function getProjects(_options = {}) {
+  const idxProjects = await idxListProjects('omp');
+  const projects = idxProjects.map(p => ({
+    name: p.name,
+    path: p.fullPath || p.path || '',
+    fullPath: p.fullPath || '',
+    displayName: p.displayName || p.name,
+    sessionCount: p.sessionCount || 0,
+    latestSession: p.latestSession || null,
+    mtime: p.lastUsed || null,
+    mtimeMs: p.lastUsed ? new Date(p.lastUsed).getTime() : 0,
+    source: 'omp'
+  }));
 
-  const projects = Array.from(projectMap.values());
   const order = loadProjectOrder();
   projects.sort((a, b) => {
     const ai = order.indexOf(a.name);
@@ -390,10 +383,26 @@ function getProjects(_options = {}) {
   return projects;
 }
 
-function getSessionsByProject(projectName, _options = {}) {
+async function getSessionsByProject(projectName, _options = {}) {
+  const idxSessions = await idxListSessions('omp', projectName);
+  const sessions = idxSessions.map(s => ({
+    sessionId: s.sessionId,
+    filePath: s.filePath,
+    firstMessage: s.firstMessage,
+    gitBranch: s.gitBranch,
+    provider: s.provider,
+    model: s.model,
+    size: s.size,
+    mtime: new Date(s.mtime).toISOString(),
+    mtimeMs: s.mtime,
+    directory: s.projectFullPath,
+    cwd: s.projectFullPath,
+    messageCount: s.messageCount,
+    usage: s.tokens
+  }));
+
   const orderMap = loadSessionOrder();
   const order = Array.isArray(orderMap[projectName]) ? orderMap[projectName] : [];
-  const sessions = getAllSessions().filter(session => session.projectName === projectName);
   sessions.sort((a, b) => {
     const ai = order.indexOf(a.sessionId);
     const bi = order.indexOf(b.sessionId);
@@ -427,83 +436,71 @@ function normalizeSession(session) {
   };
 }
 
-function getSessionById(sessionId) {
-  return getAllSessions().find(session => session.sessionId === sessionId || path.basename(session.filePath, '.jsonl') === sessionId) || null;
+async function getSessionById(sessionId) {
+  const status = await idxGetSessionStatus('omp', sessionId);
+  if (!status) return null;
+  return {
+    sessionId: status.sessionId,
+    filePath: status.filePath,
+    size: status.size,
+    mtime: new Date(status.lastModified).toISOString(),
+    mtimeMs: status.lastModified,
+    source: 'omp',
+    firstMessage: null,
+    gitBranch: null,
+    forkedFrom: null,
+    provider: '',
+    model: '',
+    directory: null,
+    messageCount: 0,
+    tokens: { input: 0, output: 0, cached: 0, reasoning: 0, total: 0 }
+  };
 }
-
-function getSessionMessages(sessionId) {
-  const session = getSessionById(sessionId);
+async function getSessionMessages(sessionId) {
+  const session = await getSessionById(sessionId);
   if (!session) {
     throw new Error('Session not found');
   }
   return readJsonLines(session.filePath).map(convertOmpEntry).filter(Boolean);
 }
 
-function getRecentSessions(limit = 5) {
-  return getAllSessions().slice(0, limit).map(normalizeSession);
+async function getRecentSessions(limit = 5) {
+  const indexed = await idxGetRecent('omp', limit);
+  return indexed.map(session => normalizeSession({
+    ...session,
+    mtime: new Date(session.mtime).toISOString(),
+    mtimeMs: session.mtime,
+    directory: session.projectFullPath,
+    usage: session.tokens
+  }));
 }
 
-function searchSessions(keyword, contextLength = 35, projectName = null) {
-  const needle = String(keyword || '').toLowerCase();
-  if (!needle) return [];
-
-  return getAllSessions()
-    .filter(session => !projectName || session.projectName === projectName)
-    .map((session) => {
-      const messages = readJsonLines(session.filePath).map(convertOmpEntry).filter(Boolean);
-      const matches = [];
-      messages.forEach((message) => {
-        const text = String(message.content || '');
-        const index = text.toLowerCase().indexOf(needle);
-        if (index === -1) return;
-        const start = Math.max(0, index - contextLength);
-        const end = Math.min(text.length, index + needle.length + contextLength);
-        matches.push({
-          role: message.role || message.type,
-          context: text.slice(start, end),
-          timestamp: message.timestamp || null
-        });
-      });
-      if (matches.length === 0) return null;
-      return {
-        ...normalizeSession(session),
-        projectName: session.projectName,
-        projectDisplayName: getDisplayName(session.cwd),
-        matchCount: matches.length,
-        matches
-      };
-    })
-    .filter(Boolean);
+async function searchSessions(keyword, contextLength = 35, projectName = null) {
+  return idxSearch('omp', keyword, { contextLength, projectName });
 }
 
-function deleteSession(sessionId) {
-  const session = getSessionById(sessionId);
-  if (!session) {
-    throw new Error('Session not found');
-  }
+async function deleteSession(sessionId) {
+  const session = await getSessionById(sessionId);
+  if (!session) throw new Error('Session not found');
   fs.unlinkSync(session.filePath);
   return { success: true };
 }
 
-function deleteProject(projectName) {
-  const sessions = getAllSessions().filter(session => session.projectName === projectName);
-  if (sessions.length === 0) {
-    throw new Error('Project not found');
-  }
+async function deleteProject(projectName) {
+  const sessions = await getSessionsByProject(projectName);
+  if (sessions.length === 0) throw new Error('Project not found');
   sessions.forEach(session => fs.unlinkSync(session.filePath));
   return { success: true, deletedSessions: sessions.length };
 }
 
-function forkSession(sessionId) {
-  const session = getSessionById(sessionId);
-  if (!session) {
-    throw new Error('Session not found');
-  }
-  const parsed = path.parse(session.filePath);
-  const forkId = `fork-${Date.now()}`;
-  const targetPath = path.join(parsed.dir, `${parsed.name}-${forkId}${parsed.ext}`);
-  fs.copyFileSync(session.filePath, targetPath);
-  return { success: true, newSessionId: parseOmpSessionId(targetPath), filePath: targetPath };
+async function forkSession(sessionId) {
+  const session = await getSessionById(sessionId);
+  if (!session) throw new Error('Session not found');
+  const newSessionId = crypto.randomUUID();
+  const newFile = path.join(path.dirname(session.filePath), `${newSessionId}.jsonl`);
+  const content = fs.readFileSync(session.filePath, 'utf8');
+  fs.writeFileSync(newFile, content, 'utf8');
+  return { success: true, sessionId: newSessionId, filePath: newFile, forkedFrom: sessionId };
 }
 
 function saveProjectOrder(order) {
@@ -516,11 +513,11 @@ function saveSessionOrder(projectName, order) {
   safeWriteJson(SESSION_ORDER_FILE, data);
 }
 
-function getProjectAndSessionCounts(_options = {}) {
-  const sessions = getAllSessions();
+async function getProjectAndSessionCounts(options = {}) {
+  const projects = await idxListProjects('omp', options);
   return {
-    projectCount: new Set(sessions.map(session => session.projectName)).size,
-    sessionCount: sessions.length
+    projectCount: projects.length,
+    sessionCount: projects.reduce((sum, project) => sum + (project.sessionCount || 0), 0)
   };
 }
 

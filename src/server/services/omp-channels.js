@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -15,6 +16,7 @@ const {
 } = require('./omp-settings-manager');
 const {
   createSkippedResult,
+  isLocalProxyBaseUrl,
   resolveApiKeyValue,
   resolveExistingActiveChannel,
   upsertSyncedChannels
@@ -72,6 +74,54 @@ function writeManagedOmpModeState(filePath, state) {
     if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
     throw error;
   }
+}
+
+function getOmpGatewaySecretPath() {
+  return PATHS.ompGatewaySecret
+    || path.join(path.dirname(PATHS.activeChannel.omp), 'omp-gateway-secret');
+}
+
+function writeOmpGatewaySecret(filePath, secret) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    fs.writeFileSync(temporaryPath, `${secret}\n`, { encoding: 'utf8', mode: 0o600 });
+    fs.chmodSync(temporaryPath, 0o600);
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+    throw error;
+  }
+}
+
+function getOrCreateOmpGatewaySecret() {
+  ensureStorageDirMigrated();
+  const filePath = getOmpGatewaySecretPath();
+  const previousStateSecret = loadManagedOmpModeState()?.gateway?.secret;
+  const fileExists = fs.existsSync(filePath);
+
+  if (fileExists) {
+    try {
+      const stored = fs.readFileSync(filePath, 'utf8').trim();
+      if (stored) return stored;
+    } catch (error) {
+      if (previousStateSecret) {
+        writeOmpGatewaySecret(filePath, previousStateSecret);
+        return previousStateSecret;
+      }
+      throw new Error(`Failed to read persisted OMP gateway secret: ${error.message}`);
+    }
+    if (!previousStateSecret) {
+      throw new Error('Persisted OMP gateway secret is empty');
+    }
+    writeOmpGatewaySecret(filePath, previousStateSecret);
+    return previousStateSecret;
+  }
+
+  const secret = String(previousStateSecret || crypto.randomBytes(32).toString('hex'));
+  writeOmpGatewaySecret(filePath, secret);
+  return secret;
 }
 
 function enableManagedOmpMode(activeChannelId = null, gateway = null) {
@@ -267,6 +317,24 @@ function getOriginalOmpProviderId(providerId = '') {
   return normalized.startsWith('ctx-') ? normalized.slice(4) : normalized;
 }
 
+function isManagedOmpProviderId(providerId = '') {
+  return String(providerId || '').trim().startsWith('ctx-');
+}
+
+function isGeneratedOmpApiKey(value = '') {
+  return /^ctx_[a-f0-9]{40}$/i.test(String(value || '').trim());
+}
+
+function isGeneratedOmpBaseUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!isLocalProxyBaseUrl(raw)) return false;
+  try {
+    return /^\/omp\/[a-f0-9]{24}(?:\/|$)/i.test(new URL(raw).pathname);
+  } catch {
+    return false;
+  }
+}
+
 function normalizeOmpModelId(value = '') {
   return String(value || '').trim().replace(OMP_THINKING_SUFFIX_RE, '');
 }
@@ -353,6 +421,28 @@ function collectOmpSyncSelections(modelsConfig = {}, settings = {}) {
   }
 
   return [...selections.values()];
+}
+
+function findOmpOriginalProvider(providers = {}, providerId = '') {
+  const normalizedProviderId = normalizeProviderId(getOriginalOmpProviderId(providerId));
+  const candidates = Object.entries(providers)
+    .filter(([key]) => !isManagedOmpProviderId(key))
+    .map(([id, provider]) => ({
+      id,
+      provider,
+      normalizedId: normalizeProviderId(id)
+    }));
+  const exactMatches = candidates.filter(item => item.normalizedId === normalizedProviderId);
+  if (exactMatches.length === 1) return exactMatches[0];
+  if (exactMatches.length > 1) return null;
+
+  const prefixMatches = candidates
+    .filter(item => normalizedProviderId.startsWith(`${item.normalizedId}-`))
+    .sort((left, right) => right.normalizedId.length - left.normalizedId.length);
+  if (prefixMatches.length === 0) return null;
+  const longestLength = prefixMatches[0].normalizedId.length;
+  const longestMatches = prefixMatches.filter(item => item.normalizedId.length === longestLength);
+  return longestMatches.length === 1 ? longestMatches[0] : null;
 }
 
 function findOmpExistingChannel(channels = [], providerId = '', baseUrl = '') {
@@ -444,9 +534,18 @@ function readOmpApiKeyCredential(providerId = '') {
   return { value: '', source: '', envName: '' };
 }
 
+function resolveOmpAuthMode(provider = {}, sourceProvider = {}, existing = null) {
+  const rawAuth = String(sourceProvider.auth || provider.auth || '').trim().toLowerCase();
+  if (rawAuth === 'none') return 'none';
+  if (existing?.authMode === 'none') return 'none';
+  if (existing?.authMode === 'oauth') return 'oauth';
+  return 'api_key';
+}
+
 function buildOmpSyncCandidate(modelsConfig, selection, channels) {
+  const providers = getOmpProviders(modelsConfig);
   const providerId = selection?.providerId || '';
-  const provider = modelsConfig?.providers?.[providerId] || null;
+  const provider = providers[providerId] || null;
   if (!provider || typeof provider !== 'object') {
     return {
       skip: true,
@@ -454,14 +553,42 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
     };
   }
 
-  const baseUrl = String(provider.baseUrl || provider.base_url || '').trim();
-  const originalProviderId = getOriginalOmpProviderId(providerId);
-  const existing = findOmpExistingChannel(channels, providerId, baseUrl);
-  let credential = resolveApiKeyValue(provider.apiKey || provider.api_key || '');
+  const managedProvider = isManagedOmpProviderId(providerId);
+  const originalProviderEntry = managedProvider
+    ? findOmpOriginalProvider(providers, providerId)
+    : null;
+  const sourceProvider = originalProviderEntry?.provider || (managedProvider ? {} : provider);
+  const originalProviderId = originalProviderEntry?.id || getOriginalOmpProviderId(providerId);
+  const providerBaseUrl = String(sourceProvider.baseUrl || sourceProvider.base_url || '').trim();
+  const managedBaseUrl = String(provider.baseUrl || provider.base_url || '').trim();
+  const existing = findOmpExistingChannel(
+    channels,
+    originalProviderId || providerId,
+    managedProvider ? '' : managedBaseUrl
+  );
+  const baseUrl = managedProvider && (
+    !providerBaseUrl || isGeneratedOmpBaseUrl(providerBaseUrl)
+  )
+    ? existing?.baseUrl || ''
+    : providerBaseUrl || existing?.baseUrl || managedBaseUrl;
+  const authMode = resolveOmpAuthMode(provider, sourceProvider, existing);
+
+  let credential = resolveApiKeyValue(sourceProvider.apiKey || sourceProvider.api_key || '');
   if (!credential.value) {
-    credential = readOmpApiKeyCredential(providerId);
+    credential = readOmpApiKeyCredential(originalProviderId || providerId);
   }
-  const apiKey = credential.value || existing?.apiKey || '';
+  const existingCredential = resolveApiKeyValue(existing?.apiKey || '');
+  const apiKey = credential.value && !isGeneratedOmpApiKey(credential.value)
+    ? credential.value
+    : existingCredential.value && !isGeneratedOmpApiKey(existingCredential.value)
+      ? existingCredential.value
+      : '';
+  if (!credential.value || isGeneratedOmpApiKey(credential.value)) {
+    credential = existingCredential.value && !isGeneratedOmpApiKey(existingCredential.value)
+      ? { ...existingCredential, source: 'existing-channel' }
+      : credential;
+  }
+
   const providerModelIds = collectOmpModelIds(provider);
   const selectedModelIds = Array.isArray(selection?.modelIds) ? selection.modelIds : [];
   const allowedModels = selectedModelIds.length > 0 ? selectedModelIds : providerModelIds;
@@ -470,11 +597,11 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
     || existing?.model
     || allowedModels[0]
     || null;
-  if (!apiKey) {
+  if (!baseUrl || (authMode !== 'none' && !apiKey)) {
     return {
       skip: true,
       channel: existing || null,
-      warning: `OMP 当前 provider "${providerId}" 缺少可解析 API Key，OAuth/登录态渠道不支持同步导入。`
+      warning: `OMP 当前 provider "${providerId}" 缺少可解析的上游 Base URL 或 API Key，OAuth/登录态渠道不支持同步导入。`
     };
   }
 
@@ -482,11 +609,11 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
     name: existing?.name || originalProviderId || providerId,
     providerKey: originalProviderId || providerId,
     baseUrl,
-    apiKey,
-    providerApi: normalizeProviderApi(provider.api),
-    wireApi: provider.api || 'openai-completions',
-    authMode: 'api_key',
-    oauthProviderId: '',
+    apiKey: authMode === 'none' ? '' : apiKey,
+    providerApi: normalizeProviderApi(sourceProvider.api || provider.api),
+    wireApi: sourceProvider.api || provider.api || 'openai-completions',
+    authMode,
+    oauthProviderId: authMode === 'oauth' ? (existing?.oauthProviderId || originalProviderId || providerId) : '',
     model: preferredModel,
     allowedModels,
     models: filterOmpProviderModels(provider.models, allowedModels),
@@ -552,6 +679,7 @@ module.exports = {
   syncManagedProviderExtension: (channels) => service.syncManagedProviderExtension(channels),
   disableManagedProviderExtension: () => service.disableManagedProviderExtension(),
   isManagedOmpModeEnabled,
+  getOrCreateOmpGatewaySecret,
   enableManagedOmpMode,
   disableManagedOmpMode,
   loadManagedOmpModeState,

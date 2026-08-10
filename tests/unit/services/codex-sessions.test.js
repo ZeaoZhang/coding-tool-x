@@ -262,24 +262,24 @@ describe('codex-sessions', () => {
   // -------------------------------------------------------------------------
 
   describe('getProjects', () => {
-    it('returns empty array when sessions dir does not exist', () => {
+    it('returns empty array when sessions dir does not exist', async () => {
       const { getProjects } = require(MODULE_PATH);
-      const result = getProjects();
+      const result = await getProjects();
       expect(Array.isArray(result)).toBe(true);
       expect(result).toHaveLength(0);
     });
 
-    it('returns an array when session files are present', () => {
+    it('returns an array when session files are present', async () => {
       createRolloutFile('my-project', 'rollout-2024-01-01T00-00-00-abcdef.jsonl');
 
       const { getProjects } = require(MODULE_PATH);
-      const result = getProjects();
+      const result = await getProjects();
       expect(Array.isArray(result)).toBe(true);
     });
 
-    it('each returned project has the expected shape fields', () => {
+    it('each returned project has the expected shape fields', async () => {
       const { getProjects } = require(MODULE_PATH);
-      const result = getProjects();
+      const result = await getProjects();
       result.forEach(p => {
         expect(p).toHaveProperty('name');
         expect(p).toHaveProperty('sessionCount');

@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
 const { deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('../services/sessions');
+const { getSessionStatus, getSessionOutline, getMessagePage } = require('../services/session-history-index');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 const { NATIVE_PATHS } = require('../../config/paths');
@@ -376,7 +377,7 @@ module.exports = (config) => {
   });
 
   // GET /api/sessions/:projectName/search - Search sessions content
-  router.get('/:projectName/search', (req, res) => {
+  router.get('/:projectName/search', async (req, res) => {
     try {
       const { projectName } = req.params;
       const { keyword, context } = req.query;
@@ -386,7 +387,7 @@ module.exports = (config) => {
       }
 
       const contextLength = context ? parseInt(context) : 15;
-      const results = searchSessions(config, projectName, keyword, contextLength);
+      const results = await searchSessions(config, projectName, keyword, contextLength);
 
       res.json({
         keyword,
@@ -402,6 +403,19 @@ module.exports = (config) => {
   // GET /api/sessions/:projectName/:sessionId/status - Lightweight status for live sync
   router.get('/:projectName/:sessionId/status', async (req, res) => {
     try {
+
+      // Try session-history-index first for fast lookup
+      try {
+        const idxStatus = await getSessionStatus('claude', req.params.sessionId, { consistency: 'stale-ok' });
+        if (idxStatus) {
+          return res.json({
+            sessionId: idxStatus.sessionId,
+            lastModified: new Date(idxStatus.lastModified).toISOString(),
+            size: idxStatus.size
+          });
+        }
+      } catch (_) { /* fall through to direct stat */ }
+
       const { projectName, sessionId } = req.params;
       const { fullPath } = parseRealProjectPath(projectName);
       const { sessionFile, triedPaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
@@ -428,6 +442,18 @@ module.exports = (config) => {
   // GET /api/sessions/:projectName/:sessionId/outline - Lightweight user outline for TOC and forking
   router.get('/:projectName/:sessionId/outline', async (req, res) => {
     try {
+
+      // Try session-history-index first for fast lookup
+      try {
+        const idxOutline = await getSessionOutline('claude', req.params.sessionId, { consistency: 'stale-ok' });
+        if (idxOutline) {
+          return res.json({
+            sessionId: idxOutline.sessionId,
+            items: idxOutline.items
+          });
+        }
+      } catch (_) { /* fall through to direct read */ }
+
       const { projectName, sessionId } = req.params;
       const { fullPath } = parseRealProjectPath(projectName);
       const { sessionFile, triedPaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
@@ -453,6 +479,22 @@ module.exports = (config) => {
   // GET /api/sessions/:projectName/:sessionId/messages - Get session messages with pagination
   router.get('/:projectName/:sessionId/messages', async (req, res) => {
     try {
+
+      // Try session-history-index first for fast lookup
+      try {
+        const { page = 1, limit = 20, order = 'desc' } = req.query;
+        const pageNum = parseInt(page) || 1;
+        const limitNum = parseInt(limit) || 20;
+        const idxPage = await getMessagePage('claude', req.params.sessionId, {
+          page: pageNum,
+          limit: limitNum,
+          order
+        });
+        if (idxPage) {
+          return res.json(idxPage);
+        }
+      } catch (_) { /* fall through to direct file read */ }
+
       const { projectName, sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 

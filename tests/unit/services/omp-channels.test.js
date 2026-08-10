@@ -7,10 +7,13 @@ const OMP_CONFIG_MODULE = require.resolve('../../../src/server/services/omp-conf
 const OMP_SETTINGS_MODULE = require.resolve('../../../src/server/services/omp-settings-manager');
 const OMP_CHANNELS_MODULE = require.resolve('../../../src/server/services/omp-channels');
 const CHANNEL_SYNC_MODULE = require.resolve('../../../src/server/services/channel-sync-utils');
+const GENERATED_ROUTE = 'http://127.0.0.1:20092/omp/aaaaaaaaaaaaaaaaaaaaaaaa';
+const GENERATED_KEY = `ctx_${'b'.repeat(40)}`;
 
 let testDir;
 let channelsPath;
 let ompAgentDir;
+let gatewaySecretPath;
 let originalPathEnv;
 let modelsConfig;
 let settingsConfig;
@@ -52,7 +55,8 @@ function injectStubs() {
         },
         activeChannel: {
           omp: path.join(testDir, 'active-omp.json')
-        }
+        },
+        ompGatewaySecret: gatewaySecretPath
       },
       ensureStorageDirMigrated: vi.fn()
     }
@@ -91,6 +95,7 @@ function injectStubs() {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-ch-'));
   channelsPath = path.join(testDir, 'channels', 'omp.json');
+  gatewaySecretPath = path.join(testDir, 'runtime', 'omp-gateway-secret');
   ompAgentDir = path.join(testDir, 'agent');
   fs.mkdirSync(ompAgentDir, { recursive: true });
   originalPathEnv = process.env.PATH;
@@ -253,6 +258,24 @@ describe('managed provider activation lifecycle', () => {
     ], {});
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
+  it('keeps the persisted gateway secret after managed mode is disabled', () => {
+    const first = service.getOrCreateOmpGatewaySecret();
+    service.enableManagedOmpMode('channel-a', {
+      host: '127.0.0.1',
+      port: 20092,
+      secret: first
+    });
+    service.disableManagedOmpMode();
+
+    expect(fs.readFileSync(gatewaySecretPath, 'utf8').trim()).toBe(first);
+    expect(fs.statSync(gatewaySecretPath).mode & 0o777).toBe(0o600);
+
+    delete require.cache[OMP_CHANNELS_MODULE];
+    injectStubs();
+    const reloadedService = require('../../../src/server/services/omp-channels');
+    expect(reloadedService.getOrCreateOmpGatewaySecret()).toBe(first);
+  });
+
 });
 
 describe('syncCurrentOmpChannel', () => {
@@ -367,12 +390,92 @@ describe('syncCurrentOmpChannel', () => {
     }));
   });
 
-  it('does not duplicate an already imported ctx-managed provider', () => {
+  it('preserves upstream credentials when syncing a managed provider', () => {
+    seedChannels([makeChannel('channel-openai', {
+      name: 'OpenAI upstream',
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'real-openai-key',
+      model: 'old-model'
+    })]);
+    modelsConfig = {
+      providers: {
+        openai: {
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'real-openai-key',
+          api: 'openai-responses',
+          models: ['gpt-4.1']
+        },
+        'ctx-openai': {
+          baseUrl: GENERATED_ROUTE,
+          apiKey: GENERATED_KEY,
+          api: 'openai-responses',
+          models: ['gpt-4.1']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'ctx-openai/gpt-4.1'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.updated).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'real-openai-key',
+      model: 'gpt-4.1'
+    }));
+  });
+
+  it('preserves existing credentials when only a generated managed provider remains', () => {
+    seedChannels([makeChannel('channel-openai', {
+      name: 'OpenAI upstream',
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'real-openai-key',
+      model: 'old-model'
+    })]);
     modelsConfig = {
       providers: {
         'ctx-openai': {
-          baseUrl: 'https://omp-current.example/v1',
-          apiKey: 'omp-current-key',
+          baseUrl: GENERATED_ROUTE,
+          apiKey: GENERATED_KEY,
+          api: 'openai-responses',
+          models: ['gpt-4.1']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'ctx-openai/gpt-4.1'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.updated).toBe(1);
+    expect(saved.channels).toHaveLength(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'real-openai-key',
+      model: 'gpt-4.1'
+    }));
+  });
+
+  it('skips a generated managed provider without an existing upstream channel', () => {
+    modelsConfig = {
+      providers: {
+        'ctx-openai': {
+          baseUrl: GENERATED_ROUTE,
+          apiKey: GENERATED_KEY,
           api: 'openai-completions',
           models: ['gpt-4.1']
         }
@@ -384,14 +487,84 @@ describe('syncCurrentOmpChannel', () => {
       }
     };
 
-    service.syncCurrentOmpChannel();
-    const second = service.syncCurrentOmpChannel();
+    const result = service.syncCurrentOmpChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.updated).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('Base URL 或 API Key');
+    expect(fs.existsSync(channelsPath)).toBe(false);
+  });
+
+  it('does not borrow unrelated prefix-matched provider credentials for generated providers', () => {
+    seedChannels([makeChannel('channel-openai', {
+      name: 'OpenAI upstream',
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'real-openai-key',
+      model: 'old-model'
+    })]);
+    modelsConfig = {
+      providers: {
+        'openai-compatible': {
+          baseUrl: 'https://wrong.example/v1',
+          apiKey: 'wrong-key',
+          api: 'openai-responses',
+          models: ['gpt-4.1']
+        },
+        'ctx-openai': {
+          baseUrl: GENERATED_ROUTE,
+          apiKey: GENERATED_KEY,
+          api: 'openai-responses',
+          models: ['gpt-4.1']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'ctx-openai/gpt-4.1'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
     const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
 
-    expect(second.added).toBe(0);
-    expect(second.skipped).toBe(1);
-    expect(saved.channels).toHaveLength(1);
-    expect(saved.channels[0].providerKey).toBe('openai');
+    expect(result.updated).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'real-openai-key'
+    }));
+  });
+
+  it('preserves no-auth providers when syncing current OMP config', () => {
+    modelsConfig = {
+      providers: {
+        local: {
+          baseUrl: 'http://127.0.0.1:11434/v1',
+          auth: 'none',
+          api: 'openai-completions',
+          models: ['llama-local']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'local/llama-local'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.added).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'local',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      authMode: 'none',
+      apiKey: '',
+      model: 'llama-local'
+    }));
   });
 
   it('falls back to OMP api_key credentials stored in agent.db', () => {

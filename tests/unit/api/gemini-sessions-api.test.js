@@ -102,12 +102,40 @@ beforeEach(() => {
     loaded: true,
     exports: { loadAliases: loadAliasesMock }
   };
+  require.cache[require.resolve('../../../src/server/services/session-history-index')] = {
+    id: require.resolve('../../../src/server/services/session-history-index'),
+    filename: require.resolve('../../../src/server/services/session-history-index'),
+    loaded: true,
+    exports: {
+      getSessionStatus: vi.fn((source, sessionId) => {
+        if (sessionId === 'missing') return Promise.resolve(null);
+        return Promise.resolve({ sessionId, lastModified: Date.now(), size: 12, filePath: '/tmp/session.json' });
+      }),
+      getSessionOutline: vi.fn((source, sessionId) => Promise.resolve({
+        sessionId,
+        items: [{ userMessageNumber: 1, preview: 'Question', timestamp: Date.now() }]
+      })),
+      getMessagePage: vi.fn((source, sessionId, opts = {}) => {
+        const limit = opts.limit || 20;
+        const page = opts.page || 1;
+        return Promise.resolve({
+          messages: [
+            { type: 'assistant', content: '**[思考过程]**\n**[思考: Plan]**\nThink first\n\n---\n\nAnswer', model: 'gemini-2.0' },
+            { type: 'user', content: 'Question', userMessageNumber: 1 }
+          ],
+          metadata: { cwd: '/workspace/hash-a', provider: 'gemini', model: 'gemini-2.0' },
+          pagination: { page, limit, total: 2, hasMore: false }
+        });
+      })
+    }
+  };
 });
 
 afterEach(() => {
   [
     '../../../src/server/api/gemini-sessions',
     '../../../src/server/services/gemini-sessions',
+    '../../../src/server/services/session-history-index',
     '../../../src/server/services/gemini-config',
     '../../../src/server/services/alias'
   ].forEach((mod) => {

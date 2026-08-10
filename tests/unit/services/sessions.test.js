@@ -18,6 +18,7 @@ const ALIAS_PATH         = require.resolve('../../../src/server/services/alias')
 const SESSION_CACHE_PATH = require.resolve('../../../src/server/services/session-cache');
 const ENHANCED_CACHE_PATH = require.resolve('../../../src/server/services/enhanced-cache');
 const SESSIONS_PATH      = require.resolve('../../../src/server/services/sessions');
+const SESSION_INDEX_PATH = require.resolve('../../../src/server/services/session-history-index');
 const GLOBAL_CACHE_DELETE = vi.fn();
 const SET_ALIAS_MOCK = vi.fn();
 
@@ -46,6 +47,7 @@ beforeEach(() => {
         projectOrder: orderFile,
         forkRelations: forkFile,
         sessionOrder:  sessionOrderFile,
+        sessionHistoryIndex: path.join(testDir, 'session-history.sqlite'),
       },
       NATIVE_PATHS: {
         claude: { projects: projectsDir },
@@ -87,15 +89,21 @@ beforeEach(() => {
     },
   };
 
-  // Force fresh require of sessions module with new stubs
+  // Force fresh requires with new path stubs
   GLOBAL_CACHE_DELETE.mockReset();
   SET_ALIAS_MOCK.mockReset();
+  delete require.cache[SESSION_INDEX_PATH];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/claude')];
   delete require.cache[SESSIONS_PATH];
 });
 
 afterEach(() => {
+  if (require.cache[SESSION_INDEX_PATH]) require(SESSION_INDEX_PATH).closeSessionHistoryIndex();
   delete require.cache[SESSIONS_PATH];
-  // Clean up tmpdir
+  delete require.cache[SESSION_INDEX_PATH];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/claude')];
   try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
 });
 
@@ -196,6 +204,8 @@ describe('getProjects', () => {
   test('returns subdirectory names', async () => {
     fs.mkdirSync(path.join(projectsDir, 'proj-one'));
     fs.mkdirSync(path.join(projectsDir, 'proj-two'));
+    fs.writeFileSync(path.join(projectsDir, 'proj-one', 'one.jsonl'), JSON.stringify({ type: 'user', sessionId: 'one', message: { content: 'one' } }) + '\n');
+    fs.writeFileSync(path.join(projectsDir, 'proj-two', 'two.jsonl'), JSON.stringify({ type: 'user', sessionId: 'two', message: { content: 'two' } }) + '\n');
     // A file should not be included
     fs.writeFileSync(path.join(projectsDir, 'not-a-dir.txt'), '', 'utf8');
 
@@ -206,6 +216,7 @@ describe('getProjects', () => {
 
   test('uses Claude native projects dir when config.projectsDir is absent', async () => {
     fs.mkdirSync(path.join(projectsDir, 'native-proj'));
+    fs.writeFileSync(path.join(projectsDir, 'native-proj', 'native.jsonl'), JSON.stringify({ type: 'user', sessionId: 'native', message: { content: 'native' } }) + '\n');
 
     const { getProjects } = require('../../../src/server/services/sessions');
     const result = await getProjects({});
