@@ -388,22 +388,31 @@ export async function syncCurrentOmpChannel() {
 }
 
 export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
+  const gatewaySourceType = extra.gatewaySourceType || 'openai_compatible';
+  let providerApi = extra.providerApi;
+  if (!providerApi) {
+    if (gatewaySourceType === 'claude') {
+      providerApi = 'anthropic-messages';
+    } else if (gatewaySourceType === 'gemini') {
+      providerApi = 'google-generative-ai';
+    } else if (gatewaySourceType === 'codex') {
+      providerApi = 'responses';
+    } else {
+      providerApi = extra.wireApi || 'openai-completions';
+    }
+  }
   const response = await client.post('/omp/channels', {
     name,
     baseUrl,
     apiKey,
     wireApi: extra.wireApi || 'openai',
-    providerApi: extra.providerApi || extra.wireApi || 'openai-completions',
+    providerApi,
     providerKey: extra.providerKey || '',
     authMode: extra.authMode || 'api_key',
     oauthProviderId: extra.oauthProviderId || '',
     routingGroup: extra.routingGroup || '',
-    gatewaySourceType: extra.gatewaySourceType || 'openai_compatible',
+    gatewaySourceType,
     enabled: extra.enabled !== false,
-    weight: extra.weight || 1,
-    maxConcurrency: extra.maxConcurrency || null,
-    model: extra.model || null,
-    modelRedirects: extra.modelRedirects || [],
     allowedModels: extra.allowedModels || [],
     speedTestModel: extra.speedTestModel || null,
     presetId: extra.presetId || null,

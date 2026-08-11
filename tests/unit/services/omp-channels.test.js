@@ -32,9 +32,30 @@ function normalizeProviderId(value = '') {
     || 'coding-tool-x';
 }
 
-function normalizeProviderApi(value = '') {
+function normalizeProviderApi(value = '', options = {}) {
   const normalized = String(value || '').trim();
-  if (!normalized || normalized === 'openai' || normalized === 'chat' || normalized === 'chat.completions') {
+  const gatewaySourceType = String(options.gatewaySourceType || '').trim().toLowerCase();
+
+  const isGeneric = !normalized
+    || normalized === 'openai'
+    || normalized === 'chat'
+    || normalized === 'chat.completions'
+    || normalized === 'openai-completions';
+
+  if (gatewaySourceType === 'codex' && (
+    isGeneric
+    || normalized === 'responses'
+    || normalized === 'openai-responses'
+  )) {
+    return 'openai-codex-responses';
+  }
+  if (gatewaySourceType === 'claude' && isGeneric) {
+    return 'anthropic-messages';
+  }
+  if (gatewaySourceType === 'gemini' && isGeneric) {
+    return 'google-generative-ai';
+  }
+  if (isGeneric) {
     return 'openai-completions';
   }
   if (normalized === 'responses') {
@@ -198,6 +219,24 @@ describe('managed provider activation lifecycle', () => {
       })
     ], {});
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
+  });
+
+  it('normalizes saved Codex channels to the Codex Responses provider API', () => {
+    const channel = service.createChannel('Codex Edge', 'https://api.ai-edge.xyz/v1', 'edge-key', {
+      providerKey: 'edge',
+      gatewaySourceType: 'codex',
+      providerApi: 'openai-completions',
+      model: 'gpt-5.5'
+    });
+
+    expect(channel.providerApi).toBe('openai-codex-responses');
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: channel.id,
+        providerApi: 'openai-codex-responses',
+        gatewaySourceType: 'codex'
+      })
+    ], {});
   });
 
   it('keeps managed providers synchronized while managed mode is enabled', () => {
@@ -625,5 +664,145 @@ describe('syncCurrentOmpChannel', () => {
     expect(result.skipped).toBe(1);
     expect(result.warnings[0]).toContain('OAuth');
     expect(fs.existsSync(channelsPath)).toBe(false);
+  });
+
+  it('normalizes Claude-source channels to anthropic-messages', () => {
+    modelsConfig = {
+      providers: {
+        claude: {
+          baseUrl: 'https://api.anthropic.com/v1',
+          apiKey: 'claude-key',
+          api: 'openai',
+          models: ['claude-sonnet-4']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'claude/claude-sonnet-4'
+      }
+    };
+    seedChannels([makeChannel('channel-claude', {
+      name: 'Claude upstream',
+      providerKey: 'claude',
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'claude-key',
+      gatewaySourceType: 'claude',
+      model: 'claude-sonnet-4'
+    })]);
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.updated).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'claude',
+      providerApi: 'anthropic-messages',
+      wireApi: 'anthropic-messages',
+      gatewaySourceType: 'claude'
+    }));
+  });
+
+  it('normalizes Gemini-source channels to google-generative-ai', () => {
+    modelsConfig = {
+      providers: {
+        gemini: {
+          baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+          apiKey: 'gemini-key',
+          api: 'openai-completions',
+          models: ['gemini-2.5-pro']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'gemini/gemini-2.5-pro'
+      }
+    };
+    seedChannels([makeChannel('channel-gemini', {
+      name: 'Gemini upstream',
+      providerKey: 'gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      apiKey: 'gemini-key',
+      gatewaySourceType: 'gemini',
+      model: 'gemini-2.5-pro'
+    })]);
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.updated).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'gemini',
+      providerApi: 'google-generative-ai',
+      wireApi: 'google-generative-ai',
+      gatewaySourceType: 'gemini'
+    }));
+  });
+
+  it('preserves explicit google-gemini-cli provider API', () => {
+    modelsConfig = {
+      providers: {
+        'gemini-cli': {
+          baseUrl: 'https://cloudcodeassist.googleapis.com/v1',
+          apiKey: 'gemini-cli-key',
+          api: 'google-gemini-cli',
+          models: ['gemini-2.5-pro']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'gemini-cli/gemini-2.5-pro'
+      }
+    };
+    seedChannels([makeChannel('channel-gemini-cli', {
+      name: 'Gemini CLI upstream',
+      providerKey: 'gemini-cli',
+      baseUrl: 'https://cloudcodeassist.googleapis.com/v1',
+      apiKey: 'gemini-cli-key',
+      gatewaySourceType: 'gemini',
+      model: 'gemini-2.5-pro'
+    })]);
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.updated).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'gemini-cli',
+      providerApi: 'google-gemini-cli',
+      wireApi: 'google-gemini-cli',
+      gatewaySourceType: 'gemini'
+    }));
+  });
+
+  it('infers source type from canonical provider API', () => {
+    modelsConfig = {
+      providers: {
+        'my-claude': {
+          baseUrl: 'https://my-claude.example/v1',
+          apiKey: 'my-claude-key',
+          api: 'anthropic-messages',
+          models: ['claude-sonnet-4']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'my-claude/claude-sonnet-4'
+      }
+    };
+
+    const result = service.syncCurrentOmpChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+
+    expect(result.added).toBe(1);
+    expect(saved.channels[0]).toEqual(expect.objectContaining({
+      providerKey: 'my-claude',
+      providerApi: 'anthropic-messages',
+      wireApi: 'anthropic-messages',
+      gatewaySourceType: 'claude'
+    }));
   });
 });

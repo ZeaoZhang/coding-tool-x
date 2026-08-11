@@ -67,6 +67,14 @@ async function withJsonServer(handler) {
   };
 }
 
+async function readRequestBody(req) {
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk.toString('utf8');
+  }
+  return body;
+}
+
 // ─── getLatencyLevel ──────────────────────────────────────────────────────────
 describe('getLatencyLevel', () => {
   test('null → "unknown"', () => {
@@ -226,6 +234,137 @@ describe('testChannelSpeed', () => {
       expect(result.success).toBe(true);
       expect(seenAuth).toBe('Bearer omp-secret');
       expect(seenPath).toBe('/v1/responses');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('sends Claude official speed test through shared streaming messages wire', async () => {
+    let seen = null;
+    const server = await withJsonServer(async (req, res) => {
+      seen = { url: req.url, headers: req.headers, body: await readRequestBody(req) };
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('event: message_start\ndata: {"type":"message_start"}\n\n');
+    });
+
+    try {
+      const result = await testChannelSpeed({
+        id: 'claude-speed',
+        name: 'Claude Speed',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'claude-secret',
+        model: 'claude-sonnet-4-20250514'
+      }, 5000, 'claude', { authSourceType: 'omp' });
+
+      expect(result.success).toBe(true);
+      expect(seen.url).toBe('/v1/messages?beta=true');
+      expect(seen.headers['x-api-key']).toBeUndefined();
+      expect(seen.headers.authorization).toBe('Bearer claude-secret');
+      expect(seen.headers['anthropic-version']).toBe('2023-06-01');
+      expect(seen.headers['anthropic-beta']).toContain('claude-code-20250219');
+      expect(seen.headers['user-agent']).toBe('claude-cli/2.1.59 (external, cli)');
+      expect(JSON.parse(seen.body)).toEqual(expect.objectContaining({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 10,
+        stream: true,
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi', cache_control: { type: 'ephemeral' } }] }]
+      }));
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('sends public Gemini speed test through shared generateContent wire', async () => {
+    let seen = null;
+    const server = await withJsonServer(async (req, res) => {
+      seen = { url: req.url, headers: req.headers, body: await readRequestBody(req) };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }));
+    });
+
+    try {
+      const result = await testChannelSpeed({
+        id: 'gemini-public-speed',
+        name: 'Gemini Public Speed',
+        baseUrl: server.baseUrl,
+        providerApi: 'google-generative-ai',
+        apiKey: 'gemini-secret',
+        model: 'gemini-2.5-pro'
+      }, 5000, 'gemini', { authSourceType: 'omp' });
+
+      expect(result.success).toBe(true);
+      expect(seen.url).toBe('/v1beta/models/gemini-2.5-pro:generateContent?key=gemini-secret');
+      expect(seen.headers['x-goog-api-key']).toBe('gemini-secret');
+      expect(seen.headers.authorization).toBeUndefined();
+      expect(seen.headers['user-agent']).toBe('google-genai-sdk/0.8.0');
+      expect(JSON.parse(seen.body)).toEqual({
+        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+        generationConfig: { maxOutputTokens: 1, temperature: 0 }
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('sends explicit CLI Gemini speed test through shared Cloud Code Assist envelope', async () => {
+    let seen = null;
+    const server = await withJsonServer(async (req, res) => {
+      seen = { url: req.url, headers: req.headers, body: await readRequestBody(req) };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: 'ok' }] } }] } }));
+    });
+
+    try {
+      const result = await testChannelSpeed({
+        id: 'gemini-cli-speed',
+        name: 'Gemini CLI Speed',
+        baseUrl: server.baseUrl,
+        providerApi: 'google-gemini-cli',
+        apiKey: 'cli-secret',
+        model: 'gemini-2.5-pro'
+      }, 5000, 'gemini', { authSourceType: 'omp' });
+
+      expect(result.success).toBe(true);
+      expect(seen.url).toBe('/v1internal:generateContent');
+      expect(seen.headers.authorization).toBe('Bearer cli-secret');
+      expect(seen.headers['x-goog-api-key']).toBe('cli-secret');
+      expect(seen.headers['user-agent']).toBe('google-api-nodejs-client/9.15.1');
+      expect(seen.headers['x-goog-api-client']).toBe('gl-node/22.17.0');
+      expect(seen.headers['client-metadata']).toBe('ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI');
+      expect(JSON.parse(seen.body)).toEqual({
+        project: '',
+        model: 'gemini-2.5-pro',
+        request: {
+          contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+          generationConfig: { maxOutputTokens: 1, temperature: 0 }
+        }
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('does not retry explicit public Gemini speed tests as CLI on route failure', async () => {
+    const seenUrls = [];
+    const server = await withJsonServer(async (req, res) => {
+      seenUrls.push(req.url);
+      await readRequestBody(req);
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: 'not found' } }));
+    });
+
+    try {
+      const result = await testChannelSpeed({
+        id: 'gemini-public-no-fallback',
+        name: 'Gemini Public No Fallback',
+        baseUrl: server.baseUrl,
+        providerApi: 'google-generative-ai',
+        apiKey: 'gemini-secret',
+        model: 'gemini-2.5-pro'
+      }, 5000, 'gemini', { authSourceType: 'omp' });
+
+      expect(result.success).toBe(false);
+      expect(seenUrls).toEqual(['/v1beta/models/gemini-2.5-pro:generateContent?key=gemini-secret']);
     } finally {
       await server.close();
     }

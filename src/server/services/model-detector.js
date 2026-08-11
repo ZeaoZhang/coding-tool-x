@@ -11,6 +11,13 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { loadConfig } = require('../../config/loader');
+const { createCodexRequest, buildCodexTargetUrl } = require('./codex-wire');
+const { createClaudeRequest, buildClaudeTargetUrl } = require('./claude-wire');
+const {
+  createGeminiRequest,
+  buildGeminiTargetUrl,
+  shouldUseGeminiCliFormat
+} = require('./gemini-wire');
 const { PATHS } = require('../../config/paths');
 
 // 内置模型优先级（当配置缺失时兜底）
@@ -236,7 +243,6 @@ const TEST_TIMEOUT_MS = 10000; // 10 seconds per model test
 const MODEL_LIST_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const MODEL_LIST_FAILURE_TTL_MS = 5 * 60 * 1000;
 const MODEL_LIST_AUTH_FAILURE_TTL_MS = 60 * 60 * 1000;
-const CLAUDE_CODE_BETA_HEADER = 'claude-code-20250219,interleaved-thinking-2025-05-14';
 
 const MODEL_UNAVAILABLE_HINTS = [
   'not found',
@@ -347,170 +353,82 @@ function buildOpenAiCompatibleUrl(baseUrl, endpoint) {
   return `${trimmed}${normalizedEndpoint}`;
 }
 
-function buildClaudeMessagesUrl(baseUrl, options = {}) {
-  const withBeta = options.withBeta !== false;
-  const parsed = new URL(String(baseUrl || '').trim());
-  let pathname = parsed.pathname.replace(/\/+$/, '');
 
-  if (!pathname || pathname === '/') {
-    pathname = '/v1/messages';
-  } else if (pathname.endsWith('/messages')) {
-    // noop
-  } else if (pathname.endsWith('/v1')) {
-    pathname = `${pathname}/messages`;
-  } else {
-    pathname = `${pathname}/v1/messages`;
-  }
-
-  parsed.pathname = pathname;
-  if (withBeta) {
-    parsed.searchParams.set('beta', 'true');
-  }
-  return parsed.toString();
+function resolveExplicitGeminiUseCli(channel) {
+  const providerApi = String(channel?.providerApi || channel?.wireApi || '').trim().toLowerCase();
+  if (providerApi === 'google-gemini-cli') return true;
+  if (providerApi === 'google-generative-ai' || providerApi === 'google-vertex') return false;
+  return shouldUseGeminiCliFormat(channel?.baseUrl || '');
 }
 
-function buildGeminiGenerateContentUrl(baseUrl, model, apiKey = '') {
-  const modelName = String(model || '').trim();
-  if (!modelName) {
-    throw new Error('Model is required for Gemini probe');
-  }
-
-  const parsed = new URL(String(baseUrl || '').trim());
-  let pathname = parsed.pathname.replace(/\/+$/, '');
-  const modelsIndex = pathname.indexOf('/models');
-  if (modelsIndex >= 0) {
-    pathname = pathname.slice(0, modelsIndex);
-  }
-
-  let apiBasePath;
-  if (!pathname || pathname === '/') {
-    apiBasePath = '/v1beta';
-  } else if (pathname.endsWith('/v1beta') || pathname.endsWith('/v1')) {
-    apiBasePath = pathname;
-  } else {
-    apiBasePath = `${pathname}/v1beta`;
-  }
-
-  parsed.pathname = `${apiBasePath}/models/${encodeURIComponent(modelName)}:generateContent`;
-  if (apiKey) {
-    parsed.searchParams.set('key', apiKey);
-  }
-  return parsed.toString();
-}
-
-function buildClaudeProbePayload(model, options = {}) {
-  const includeSystem = options.includeSystem === true;
-  const systemAsArray = options.systemAsArray === true;
-  const includeMetadata = options.includeMetadata === true;
-  const sessionId = Math.random().toString(36).substring(2, 15);
-
-  const payload = {
+function createClaudeProbeAttempts(channel, model) {
+  const apiKey = channel.apiKey || '';
+  const minimalPayload = {
     model,
     max_tokens: 1,
     stream: false,
     messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }]
   };
-
-  if (includeSystem) {
-    const systemPrompt = "You are Claude Code, Anthropic's official CLI for Claude.";
-    payload.system = systemAsArray
-      ? [{ type: 'text', text: systemPrompt }]
-      : systemPrompt;
-  }
-
-  if (includeMetadata) {
-    payload.metadata = {
-      user_id: `user_0000000000000000000000000000000000000000000000000000000000000000_account__session_${sessionId}`
-    };
-  }
-
-  return JSON.stringify(payload);
-}
-
-function createClaudeProbeAttempts(channel, model) {
-  const apiKey = channel.apiKey || '';
-  const commonHeaders = {
-    ...buildRequestHeaders('claude', channel),
-    'Content-Type': 'application/json',
-    'x-api-key': apiKey,
-    'Authorization': `Bearer ${apiKey}`,
-    'anthropic-version': '2023-06-01',
-    'anthropic-beta': CLAUDE_CODE_BETA_HEADER,
-    'Accept-Encoding': 'gzip, deflate, br',
-    'User-Agent': 'claude-cli/2.0.53 (external, cli)'
-  };
-
-  const legacyBody = buildClaudeProbePayload(model, {
-    includeSystem: true,
-    systemAsArray: true,
-    includeMetadata: true
+  const converted = createClaudeRequest('/v1/messages', minimalPayload, {
+    apiKey,
+    baseUrl: channel.baseUrl,
+    fallbackModel: model,
+    stream: false
   });
 
   return [
     {
-      label: 'claude-code-legacy-beta',
-      url: buildClaudeMessagesUrl(channel.baseUrl, { withBeta: true }),
-      body: legacyBody,
-      headers: {
-        ...commonHeaders,
-        'anthropic-dangerous-direct-browser-access': 'true',
-        'x-app': 'cli',
-        'x-stainless-lang': 'js',
-        'x-stainless-runtime': 'node'
-      }
+      label: 'claude-messages',
+      url: buildClaudeTargetUrl(channel.baseUrl),
+      body: JSON.stringify(converted.body),
+      headers: converted.headers
     }
   ];
 }
-
 function createCodexProbeAttempts(channel, model) {
   const apiKey = channel.apiKey || '';
-  const commonHeaders = {
-    ...buildRequestHeaders('codex', channel),
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`,
-    'User-Agent': 'codex_cli_rs/0.65.0'
-  };
-
-  const responsesBody = JSON.stringify({
+  const sessionId = crypto.randomUUID();
+  const converted = createCodexRequest({
     model,
     instructions: 'You are Codex.',
     input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
-    max_output_tokens: 1,
-    stream: false,
-    store: false
+    prompt_cache_key: sessionId
+  }, {
+    apiKey,
+    sessionId
   });
 
   return [
     {
       label: 'codex-responses',
-      url: buildOpenAiCompatibleUrl(channel.baseUrl, '/v1/responses'),
-      body: responsesBody,
-      headers: {
-        ...commonHeaders,
-        'openai-beta': 'responses=experimental'
-      }
+      url: buildCodexTargetUrl(channel.baseUrl),
+      body: JSON.stringify(converted.body),
+      headers: converted.headers
     }
   ];
 }
 
 function createGeminiProbeAttempt(channel, model) {
   const apiKey = channel.apiKey || '';
-  const body = JSON.stringify({
-    contents: [{ role: 'user', parts: [{ text: 'test' }] }],
-    generationConfig: { maxOutputTokens: 1, temperature: 0 }
+  const useCli = resolveExplicitGeminiUseCli(channel);
+  const minimalPayload = {
+    model,
+    max_output_tokens: 1,
+    temperature: 0,
+    input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }]
+  };
+  const converted = createGeminiRequest('/v1/responses', minimalPayload, {
+    apiKey,
+    fallbackModel: model,
+    stream: false,
+    useCli
   });
 
   return {
-    label: 'gemini-generate-content',
-    url: buildGeminiGenerateContentUrl(channel.baseUrl, model, apiKey),
-    body,
-    headers: {
-      ...buildRequestHeaders('gemini', channel),
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'x-goog-api-key': apiKey,
-      'User-Agent': 'google-genai-sdk/0.8.0'
-    }
+    label: useCli ? 'gemini-cli-generate-content' : 'gemini-generate-content',
+    url: buildGeminiTargetUrl(channel.baseUrl, converted.model, apiKey, { stream: false, useCli }),
+    body: JSON.stringify(converted.body),
+    headers: converted.headers
   };
 }
 

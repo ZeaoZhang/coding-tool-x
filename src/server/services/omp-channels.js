@@ -172,7 +172,10 @@ class OmpChannelService extends BaseChannelService {
   _applyDefaults(channel) {
     const normalized = super._applyDefaults(channel);
     normalized.providerKey = normalized.providerKey || normalized.provider || normalized.name || normalized.id;
-    normalized.providerApi = normalized.providerApi || normalized.api || normalized.wireApi || 'openai-completions';
+    normalized.providerApi = normalizeProviderApi(
+      normalized.providerApi || normalized.api || normalized.wireApi || 'openai-completions',
+      { gatewaySourceType: normalized.gatewaySourceType }
+    );
     normalized.authMode = ['api_key', 'oauth', 'none'].includes(normalized.authMode)
       ? normalized.authMode
       : 'api_key';
@@ -605,19 +608,35 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
     };
   }
 
+  const rawProviderApi = sourceProvider.api || provider.api || 'openai-completions';
+  const apiVal = String(rawProviderApi).trim();
+  let gatewaySourceType;
+  if (existing?.gatewaySourceType) {
+    gatewaySourceType = existing.gatewaySourceType;
+  } else if (apiVal === 'anthropic-messages') {
+    gatewaySourceType = 'claude';
+  } else if (apiVal === 'google-generative-ai' || apiVal === 'google-gemini-cli' || apiVal === 'google-vertex') {
+    gatewaySourceType = 'gemini';
+  } else if (apiVal === 'openai-codex-responses') {
+    gatewaySourceType = 'codex';
+  } else {
+    gatewaySourceType = 'openai_compatible';
+  }
+  const providerApi = normalizeProviderApi(rawProviderApi, { gatewaySourceType });
+
   return {
     name: existing?.name || originalProviderId || providerId,
     providerKey: originalProviderId || providerId,
     baseUrl,
     apiKey: authMode === 'none' ? '' : apiKey,
-    providerApi: normalizeProviderApi(sourceProvider.api || provider.api),
-    wireApi: sourceProvider.api || provider.api || 'openai-completions',
+    providerApi,
+    wireApi: providerApi,
     authMode,
     oauthProviderId: authMode === 'oauth' ? (existing?.oauthProviderId || originalProviderId || providerId) : '',
     model: preferredModel,
     allowedModels,
     models: filterOmpProviderModels(provider.models, allowedModels),
-    gatewaySourceType: existing?.gatewaySourceType || 'openai_compatible',
+    gatewaySourceType,
     credentialSource: credential.value ? credential.source : 'existing-channel'
   };
 }

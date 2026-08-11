@@ -87,6 +87,109 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     const settings = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
     expect(settings.enabledModels).toEqual(['ctx-demo/gpt-demo', 'ctx-demo/gpt-demo-mini']);
   });
+  test('writes Codex-source providers with the Codex Responses API while preserving generic Responses', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    const target = manager.writeManagedOmpProviders([
+      {
+        id: 'edge-codex',
+        providerKey: 'edge-codex',
+        baseUrl: 'https://edge.example/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'codex',
+        providerApi: 'responses',
+        model: 'gpt-5.5'
+      },
+      {
+        id: 'legacy-codex',
+        providerKey: 'legacy-codex',
+        baseUrl: 'https://legacy.example/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'codex',
+        providerApi: 'openai-completions',
+        model: 'gpt-5.5'
+      },
+      {
+        id: 'generic-openai',
+        providerKey: 'generic-openai',
+        baseUrl: 'https://generic.example/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'openai_compatible',
+        providerApi: 'openai-responses',
+        model: 'gpt-4.1'
+      },
+      {
+        id: 'bare-responses',
+        providerKey: 'bare-responses',
+        baseUrl: 'https://bare.example/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'openai_compatible',
+        providerApi: 'responses',
+        model: 'gpt-4.1'
+      }
+    ]);
+    const config = yaml.load(fs.readFileSync(target, 'utf8'));
+    expect(config.providers['ctx-edge-codex'].api).toBe('openai-codex-responses');
+    expect(config.providers['ctx-legacy-codex'].api).toBe('openai-codex-responses');
+    expect(config.providers['ctx-generic-openai'].api).toBe('openai-responses');
+    expect(config.providers['ctx-bare-responses'].api).toBe('openai-responses');
+  });
+
+  test('writes Claude-source providers with anthropic-messages and Gemini-source with google-generative-ai', () => {
+    const manager = require('../../../src/server/services/omp-settings-manager');
+    const target = manager.writeManagedOmpProviders([
+      {
+        id: 'claude-official',
+        providerKey: 'claude-official',
+        baseUrl: 'https://api.anthropic.com/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'claude',
+        providerApi: 'openai-completions',
+        model: 'claude-sonnet-4'
+      },
+      {
+        id: 'claude-empty',
+        providerKey: 'claude-empty',
+        baseUrl: 'https://claude-proxy.example/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'claude',
+        providerApi: '',
+        model: 'claude-sonnet-4'
+      },
+      {
+        id: 'gemini-public',
+        providerKey: 'gemini-public',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+        apiKey: 'secret',
+        gatewaySourceType: 'gemini',
+        providerApi: 'openai',
+        model: 'gemini-2.5-pro'
+      },
+      {
+        id: 'gemini-cli-explicit',
+        providerKey: 'gemini-cli-explicit',
+        baseUrl: 'https://cloudcodeassist.googleapis.com/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'gemini',
+        providerApi: 'google-gemini-cli',
+        model: 'gemini-2.5-pro'
+      },
+      {
+        id: 'generic-openai',
+        providerKey: 'generic-openai',
+        baseUrl: 'https://generic.example/v1',
+        apiKey: 'secret',
+        gatewaySourceType: 'openai_compatible',
+        providerApi: 'openai',
+        model: 'gpt-4.1'
+      }
+    ]);
+    const config = yaml.load(fs.readFileSync(target, 'utf8'));
+    expect(config.providers['ctx-claude-official'].api).toBe('anthropic-messages');
+    expect(config.providers['ctx-claude-empty'].api).toBe('anthropic-messages');
+    expect(config.providers['ctx-gemini-public'].api).toBe('google-generative-ai');
+    expect(config.providers['ctx-gemini-cli-explicit'].api).toBe('google-gemini-cli');
+    expect(config.providers['ctx-generic-openai'].api).toBe('openai-completions');
+  });
 
   test('preserves private models.yml permissions across atomic rewrites', () => {
     fs.writeFileSync(paths.modelsYml, yaml.dump({
