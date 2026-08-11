@@ -60,9 +60,30 @@ function isManagedProviderId(providerId = '') {
   return String(providerId || '').startsWith(MANAGED_PROVIDER_PREFIX);
 }
 
-function normalizeProviderApi(value = '') {
+function normalizeProviderApi(value = '', options = {}) {
   const normalized = String(value || '').trim();
-  if (!normalized || normalized === 'openai' || normalized === 'chat' || normalized === 'chat.completions') {
+  const gatewaySourceType = String(options.gatewaySourceType || '').trim().toLowerCase();
+
+  const isGeneric = !normalized
+    || normalized === 'openai'
+    || normalized === 'chat'
+    || normalized === 'chat.completions'
+    || normalized === 'openai-completions';
+
+  if (gatewaySourceType === 'codex' && (
+    isGeneric
+    || normalized === 'responses'
+    || normalized === 'openai-responses'
+  )) {
+    return 'openai-codex-responses';
+  }
+  if (gatewaySourceType === 'claude' && isGeneric) {
+    return 'anthropic-messages';
+  }
+  if (gatewaySourceType === 'gemini' && isGeneric) {
+    return 'google-generative-ai';
+  }
+  if (isGeneric) {
     return 'openai-completions';
   }
   if (normalized === 'responses') {
@@ -341,7 +362,9 @@ function buildProviderEntry(channel = {}, options = {}) {
   const entry = compactObject({
     ...normalizedProvider.config,
     baseUrl: String(channel.baseUrl || providerConfig.baseUrl || '').trim(),
-    api: normalizeProviderApi(channel.providerApi || channel.api || channel.wireApi || providerConfig.api),
+    api: normalizeProviderApi(channel.providerApi || channel.api || channel.wireApi || providerConfig.api, {
+      gatewaySourceType: channel.gatewaySourceType
+    }),
     models
   });
 

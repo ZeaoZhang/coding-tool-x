@@ -49,10 +49,15 @@ function buildListSignature(channel, channelType) {
 function mockHttpsRequestSequence(sequence) {
   const calls = [];
   const spy = vi.spyOn(https, 'request').mockImplementation((options, callback) => {
+    const call = { ...options, body: '' };
+    calls.push(call);
+
     const req = new EventEmitter();
     const next = sequence.shift();
 
-    req.write = vi.fn();
+    req.write = vi.fn((chunk) => {
+      call.body += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+    });
     req.destroy = vi.fn();
     req.end = vi.fn(() => {
       if (!next) {
@@ -85,7 +90,6 @@ function mockHttpsRequestSequence(sequence) {
       });
     });
 
-    calls.push(options);
     return req;
   });
 
@@ -513,11 +517,123 @@ describe('model-detector helpers and cache management', () => {
     expect(calls).toHaveLength(3);
     expect(calls[0]).toMatchObject({
       method: 'POST',
-      path: '/v1/responses'
+      path: '/v1/responses',
+      headers: expect.objectContaining({
+        originator: 'codex_exec',
+        'session-id': expect.any(String),
+        'thread-id': expect.any(String),
+        'x-codex-window-id': expect.any(String),
+        'x-codex-turn-metadata': expect.any(String)
+      })
     });
     expect(JSON.parse(fs.readFileSync(cachePath, 'utf8'))['probe-channel']).toEqual(expect.objectContaining({
       availableModels: ['gpt-4o'],
       preferredTestModel: 'gpt-4o'
     }));
+  });
+
+  test('probes Claude official and custom endpoints through shared wire auth branches', async () => {
+    const { calls } = mockHttpsRequestSequence([
+      { statusCode: 200, body: JSON.stringify({ id: 'ok' }) },
+      { statusCode: 200, body: JSON.stringify({ id: 'ok' }) }
+    ]);
+
+    await expect(modelDetector.testModelAvailability({
+      id: 'claude-official',
+      name: 'Claude Official',
+      baseUrl: 'https://api.anthropic.com/v1',
+      apiKey: 'official-secret'
+    }, 'claude', 'claude-sonnet-4-20250514')).resolves.toBe(true);
+
+    await expect(modelDetector.testModelAvailability({
+      id: 'claude-custom',
+      name: 'Claude Custom',
+      baseUrl: 'https://claude-proxy.example/custom',
+      apiKey: 'custom-secret'
+    }, 'claude', 'claude-sonnet-4-20250514')).resolves.toBe(true);
+
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/v1/messages?beta=true' });
+    expect(calls[0].headers).toEqual(expect.objectContaining({
+      'x-api-key': 'official-secret',
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'x-app': 'cli',
+      'user-agent': 'claude-cli/2.1.59 (external, cli)'
+    }));
+    expect(calls[0].headers.authorization).toBeUndefined();
+    expect(calls[0].headers['anthropic-beta']).toContain('claude-code-20250219');
+    expect(JSON.parse(calls[0].body)).toEqual(expect.objectContaining({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1,
+      stream: false,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'ping', cache_control: { type: 'ephemeral' } }] }]
+    }));
+
+    expect(calls[1]).toMatchObject({ method: 'POST', path: '/custom/v1/messages?beta=true' });
+    expect(calls[1].headers).toEqual(expect.objectContaining({
+      authorization: 'Bearer custom-secret',
+      'anthropic-version': '2023-06-01',
+      'user-agent': 'claude-cli/2.1.59 (external, cli)'
+    }));
+    expect(calls[1].headers['x-api-key']).toBeUndefined();
+  });
+
+  test('probes public Gemini through shared generateContent wire', async () => {
+    const { calls } = mockHttpsRequestSequence([
+      { statusCode: 200, body: JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }) }
+    ]);
+
+    await expect(modelDetector.testModelAvailability({
+      id: 'gemini-public',
+      name: 'Gemini Public',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      providerApi: 'google-generative-ai',
+      apiKey: 'gemini-secret'
+    }, 'gemini', 'gemini-2.5-pro')).resolves.toBe(true);
+
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      path: '/v1beta/models/gemini-2.5-pro:generateContent?key=gemini-secret'
+    });
+    expect(calls[0].headers).toEqual(expect.objectContaining({
+      'x-goog-api-key': 'gemini-secret',
+      'user-agent': 'google-genai-sdk/0.8.0'
+    }));
+    expect(calls[0].headers.authorization).toBeUndefined();
+    expect(JSON.parse(calls[0].body)).toEqual({
+      contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+      generationConfig: { maxOutputTokens: 1, temperature: 0 }
+    });
+  });
+
+  test('probes CLI Gemini through shared Cloud Code Assist envelope', async () => {
+    const { calls } = mockHttpsRequestSequence([
+      { statusCode: 200, body: JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: 'ok' }] } }] } }) }
+    ]);
+
+    await expect(modelDetector.testModelAvailability({
+      id: 'gemini-cli',
+      name: 'Gemini CLI',
+      baseUrl: 'https://cloudcode-pa.googleapis.com',
+      providerApi: 'google-gemini-cli',
+      apiKey: 'cli-secret'
+    }, 'gemini', 'gemini-2.5-pro')).resolves.toBe(true);
+
+    expect(calls[0]).toMatchObject({ method: 'POST', path: '/v1internal:generateContent' });
+    expect(calls[0].headers).toEqual(expect.objectContaining({
+      authorization: 'Bearer cli-secret',
+      'x-goog-api-key': 'cli-secret',
+      'user-agent': 'google-api-nodejs-client/9.15.1',
+      'x-goog-api-client': 'gl-node/22.17.0',
+      'client-metadata': 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI'
+    }));
+    expect(JSON.parse(calls[0].body)).toEqual({
+      project: '',
+      model: 'gemini-2.5-pro',
+      request: {
+        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+        generationConfig: { maxOutputTokens: 1, temperature: 0 }
+      }
+    });
   });
 });

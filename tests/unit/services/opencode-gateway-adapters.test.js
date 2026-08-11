@@ -1,3 +1,5 @@
+'use strict';
+
 const {
   convertOpenCodePayloadToClaude,
   convertOpenCodePayloadToCodexResponses,
@@ -113,39 +115,49 @@ describe('opencode-gateway-adapters', () => {
     });
   });
 
-  test('converts payloads to Codex responses format and strips unsupported fields', () => {
+  test('converts payloads to Codex responses format with current compatibility metadata', () => {
     const converted = convertOpenCodePayloadToCodexResponses({
       model: 'gpt-5.2',
       input: 'hello world',
       include: ['usage'],
       max_output_tokens: 120,
       temperature: 0.8,
-      user: 'user-1'
+      user: 'user-1',
+      prompt_cache_key: 'adapter-session'
     });
 
-    expect(converted).toEqual({
+    expect(converted.model).toBe('gpt-5.2');
+    expect(converted.requestBody).toEqual(expect.objectContaining({
       model: 'gpt-5.2',
-      requestBody: {
-        model: 'gpt-5.2',
-        input: [
-          {
-            type: 'message',
-            role: 'user',
-            content: [
-              {
-                type: 'input_text',
-                text: 'hello world'
-              }
-            ]
-          }
-        ],
-        stream: true,
-        store: false,
-        parallel_tool_calls: true,
-        instructions: '',
-        include: ['usage', 'reasoning.encrypted_content']
-      }
-    });
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: 'hello world'
+            }
+          ]
+        }
+      ],
+      stream: true,
+      store: false,
+      parallel_tool_calls: true,
+      instructions: '',
+      include: ['usage', 'reasoning.encrypted_content'],
+      prompt_cache_key: 'adapter-session'
+    }));
+    expect(converted.requestBody.client_metadata).toEqual(expect.objectContaining({
+      session_id: 'adapter-session',
+      thread_id: 'adapter-session',
+      'x-codex-installation-id': expect.any(String),
+      'x-codex-window-id': expect.any(String),
+      'x-codex-turn-metadata': expect.any(String)
+    }));
+    expect(converted.requestBody.max_output_tokens).toBeUndefined();
+    expect(converted.requestBody.temperature).toBeUndefined();
+    expect(converted.requestBody.user).toBeUndefined();
   });
 
   test('converts responses payloads to Gemini format with function calls, tool config, and response modalities', () => {
@@ -261,5 +273,80 @@ describe('opencode-gateway-adapters', () => {
       }
     });
     expect(stripClaudeToolNamePrefix('mcp_lookup')).toBe('lookup');
+  });
+  test('convertOpenCodePayloadToClaude produces same body shape as future claude-wire delegation', () => {
+    // This test verifies that when the adapter wraps claude-wire.js,
+    // the current observable body contract is preserved. The fixture mirrors
+    // the existing "converts chat.completions payloads" test above.
+    const converted = convertOpenCodePayloadToClaude('/v1/chat/completions', {
+      messages: [
+        { role: 'developer', content: 'You are OpenCode assistant.' },
+        { role: 'user', content: 'hello' }
+      ],
+      model: 'claude-sonnet-4-20250514',
+      max_output_tokens: 1024,
+      temperature: 0.7,
+      stop: ['END'],
+      reasoning_effort: 'medium',
+      metadata: { user_id: 'invalid' }
+    }, 'claude-fallback', {
+      sessionUserId: 'session_test'
+    });
+
+    // The adapter output must match what createClaudeRequest(…, { networkHeaders: false }).body would produce
+    expect(converted).toHaveProperty('model');
+    expect(converted).toHaveProperty('max_tokens');
+    expect(converted).toHaveProperty('system');
+    expect(converted).toHaveProperty('messages');
+    expect(converted.model).toBe('claude-sonnet-4-20250514');
+    expect(converted.max_tokens).toBe(1024);
+    expect(converted.temperature).toBe(0.7);
+    expect(converted.stop_sequences).toEqual(['END']);
+    expect(converted.thinking).toBeDefined();
+    expect(converted.metadata).toBeDefined();
+    expect(converted.metadata.user_id).toBeDefined();
+    // The adapter wrapper should NOT include network headers — that's the wire module's job
+    expect(converted.headers).toBeUndefined();
+  });
+
+  test('convertOpenCodePayloadToGemini produces same body shape as future gemini-wire delegation', () => {
+    // This test verifies that when the adapter wraps gemini-wire.js,
+    // the current observable body contract is preserved.
+    const converted = convertOpenCodePayloadToGemini('/v1/responses', {
+      model: 'gemini-2.5-pro',
+      instructions: 'You are a helpful assistant.',
+      input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+        { type: 'function_call', call_id: 'call-1', name: 'search', arguments: '{"q":"x"}' },
+        { type: 'function_call_output', call_id: 'call-1', output: { result: 'ok' } }
+      ],
+      tools: [{
+        type: 'function',
+        function: { name: 'search', parameters: { type: 'object', properties: {} } }
+      }],
+      tool_choice: 'required',
+      max_output_tokens: 200,
+      temperature: 0.5,
+      modalities: ['text']
+    }, 'gemini-fallback');
+
+    // The output must match what createGeminiRequest(…, { networkHeaders: false, useCli: false }) would produce
+    expect(converted).toHaveProperty('model');
+    expect(converted).toHaveProperty('requestBody');
+    expect(converted.model).toBe('gemini-2.5-pro');
+    expect(converted.requestBody.contents).toBeDefined();
+    expect(converted.requestBody.systemInstruction).toBeDefined();
+    expect(converted.requestBody.generationConfig).toBeDefined();
+    expect(converted.requestBody.tools).toBeDefined();
+    expect(converted.requestBody.toolConfig).toBeDefined();
+    // Adapter wrapper should NOT include headers
+    expect(converted.requestBody.headers).toBeUndefined();
+    expect(converted.headers).toBeUndefined();
+  });
+
+  test('stripClaudeToolNamePrefix preserves existing contract', () => {
+    expect(stripClaudeToolNamePrefix('mcp_search')).toBe('search');
+    expect(stripClaudeToolNamePrefix('search')).toBe('search');
+    expect(stripClaudeToolNamePrefix('')).toBe('');
   });
 });

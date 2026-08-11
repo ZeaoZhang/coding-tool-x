@@ -26,8 +26,16 @@ const {
   resolveTargetUrl,
   ensureOpenAiStreamUsage
 } = require('./services/base/proxy-utils');
-const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('./services/base/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('./services/server-shutdown');
+const { buildCodexTargetUrl, createCodexRequest } = require('./services/codex-wire');
+const {
+  parseSSEUsage,
+  parseNonStreamingUsage,
+  mergeUsageIntoTokenData,
+  createTokenData
+} = require('./services/base/response-usage-parser');
+const { createClaudeRequest, buildClaudeTargetUrl, buildClaudeCountTokensTargetUrl, buildClaudeCountTokensHeaders } = require('./services/claude-wire');
+const { createGeminiRequest, buildGeminiTargetUrl, shouldUseGeminiCliFormat } = require('./services/gemini-wire');
 
 let proxyServer = null;
 let proxyApp = null;
@@ -58,45 +66,13 @@ const PRICING = {
 };
 
 const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
-const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.59 (external, cli)';
-const CLAUDE_MESSAGES_BETA_FLAGS = Object.freeze([
-  'claude-code-20250219',
-  'interleaved-thinking-2025-05-14',
-  'prompt-caching-scope-2026-01-05',
-  'effort-2025-11-24'
-]);
-const CLAUDE_ADVANCED_TOOL_USE_BETA = 'advanced-tool-use-2025-11-20';
-const CLAUDE_COUNT_TOKENS_BETA_FLAGS = Object.freeze([
-  'claude-code-20250219',
-  'token-counting-2024-11-01'
-]);
-const DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude.";
-const DEFAULT_CLAUDE_CODE_TOOL_NAMES = Object.freeze([
-  'Task',
-  'Bash',
-  'Glob',
-  'Grep',
-  'Read',
-  'Edit',
-  'Write',
-  'ToolSearch'
-]);
-const CODEX_CLI_VERSION = '0.101.0';
-const CODEX_CLI_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464';
-const GEMINI_CLI_USER_AGENT = 'google-api-nodejs-client/9.15.1';
-const GEMINI_CLI_API_CLIENT = 'gl-node/22.17.0';
-const GEMINI_CLI_CLIENT_METADATA = 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI';
 const CLAUDE_SESSION_USER_ID_TTL_MS = 60 * 60 * 1000;
 const CLAUDE_SESSION_USER_ID_CACHE_MAX = 2000;
 const claudeSessionUserIdCache = new Map();
 const CLAUDE_USER_ID_ACCOUNT_RE = /^user_([0-9a-f]{64})_account__session_[a-z0-9._-]+$/i;
 const CLAUDE_USER_ID_FULL_RE = /^user_[0-9a-f]{64}_account__session_[a-z0-9._-]+$/i;
-const CLAUDE_TEMPLATE_SYSTEM_MIN_CHARS = 1000;
-const CLAUDE_TEMPLATE_CACHE_TTL_MS = 30 * 1000;
 let cachedClaudeAccountId = '';
 let cachedClaudeUserId = '';
-let cachedClaudeRequestTemplate = null;
-let cachedClaudeRequestTemplateAt = 0;
 
 // detectModelTier, redirectModel, resolveTargetUrl imported from services/base/proxy-utils
 const resolveOpenCodeTarget = resolveTargetUrl;
@@ -196,7 +172,7 @@ function resolveClaudePreferredUserId() {
     return cachedClaudeUserId;
   }
 
-  const requestTemplate = resolveClaudeRequestTemplate();
+  const requestTemplate = loadClaudeRequestTemplate();
   if (requestTemplate && CLAUDE_USER_ID_FULL_RE.test(requestTemplate.userId || '')) {
     cachedClaudeUserId = requestTemplate.userId;
     return cachedClaudeUserId;
@@ -336,135 +312,6 @@ function normalizeGatewaySourceType(channel) {
   return 'codex';
 }
 
-function mapStainlessOs() {
-  switch (process.platform) {
-    case 'darwin':
-      return 'MacOS';
-    case 'win32':
-      return 'Windows';
-    case 'linux':
-      return 'Linux';
-    default:
-      return `other::${process.platform}`;
-  }
-}
-
-function mapStainlessArch() {
-  switch (process.arch) {
-    case 'x64':
-      return 'x64';
-    case 'arm64':
-      return 'arm64';
-    case 'ia32':
-      return 'x86';
-    default:
-      return `other::${process.arch}`;
-  }
-}
-
-function buildClaudeBetaHeader(options = {}) {
-  const requestType = options.requestType === 'count_tokens' ? 'count_tokens' : 'messages';
-  const hasTools = !!options.hasTools;
-  const betaFlags = requestType === 'count_tokens'
-    ? [...CLAUDE_COUNT_TOKENS_BETA_FLAGS]
-    : [...CLAUDE_MESSAGES_BETA_FLAGS];
-
-  if (requestType === 'messages' && hasTools) {
-    betaFlags.push(CLAUDE_ADVANCED_TOOL_USE_BETA);
-  }
-
-  return betaFlags.join(',');
-}
-
-
-function hasExpectedClaudeToolSet(tools = []) {
-  if (!Array.isArray(tools) || tools.length < DEFAULT_CLAUDE_CODE_TOOL_NAMES.length) {
-    return false;
-  }
-  const names = new Set();
-  tools.forEach((tool) => {
-    if (tool && typeof tool === 'object' && typeof tool.name === 'string') {
-      names.add(tool.name);
-    }
-  });
-  return DEFAULT_CLAUDE_CODE_TOOL_NAMES.every(name => names.has(name));
-}
-
-function extractClaudeSystemCharCount(system = []) {
-  if (!Array.isArray(system)) return 0;
-  return system.reduce((sum, block) => {
-    if (!block || typeof block !== 'object') return sum;
-    const text = typeof block.text === 'string' ? block.text : '';
-    return sum + text.length;
-  }, 0);
-}
-
-function cloneJson(value) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return value;
-  }
-}
-
-function resolveClaudeRequestTemplate() {
-  const now = Date.now();
-  if (cachedClaudeRequestTemplate && now - cachedClaudeRequestTemplateAt < CLAUDE_TEMPLATE_CACHE_TTL_MS) {
-    return cachedClaudeRequestTemplate;
-  }
-  cachedClaudeRequestTemplate = loadClaudeRequestTemplate();
-  cachedClaudeRequestTemplateAt = now;
-  return cachedClaudeRequestTemplate;
-}
-
-function buildClaudeSystemBlocks(systemText = '', templateSystem = []) {
-  const blocks = Array.isArray(templateSystem) && templateSystem.length > 0
-    ? cloneJson(templateSystem)
-    : [];
-
-  const normalizedSystem = String(systemText || '').trim();
-  if (normalizedSystem) {
-    blocks.push({
-      type: 'text',
-      text: normalizedSystem
-    });
-  }
-
-  if (blocks.length === 0) {
-    blocks.push({
-      type: 'text',
-      text: DEFAULT_CLAUDE_CODE_SYSTEM_PROMPT
-    });
-  }
-
-  return blocks;
-}
-
-function buildClaudeRequestHeaders(apiKey, options = {}) {
-  return {
-    'x-api-key': apiKey,
-    authorization: `Bearer ${apiKey}`,
-    'anthropic-version': '2023-06-01',
-    'anthropic-beta': buildClaudeBetaHeader(options),
-    'anthropic-dangerous-direct-browser-access': 'true',
-    'x-app': 'cli',
-    'x-stainless-retry-count': '0',
-    'x-stainless-timeout': '600',
-    'x-stainless-runtime-version': process.version,
-    'x-stainless-package-version': '0.74.0',
-    'x-stainless-runtime': 'node',
-    'x-stainless-lang': 'js',
-    'x-stainless-arch': mapStainlessArch(),
-    'x-stainless-os': mapStainlessOs(),
-    'content-type': 'application/json',
-    accept: 'application/json',
-    'accept-encoding': 'gzip, deflate',
-    'accept-language': '*',
-    'sec-fetch-mode': 'cors',
-    connection: 'keep-alive',
-    'user-agent': CLAUDE_CODE_USER_AGENT
-  };
-}
 
 function getRequestPathname(urlPath = '') {
   try {
@@ -524,283 +371,12 @@ function isConverterPresetChannel(channel) {
   return presetId === 'entry_claude' || presetId === 'entry_codex' || presetId === 'entry_gemini';
 }
 
-function extractTextFragments(value, fragments) {
-  if (value === null || value === undefined) return;
-  if (typeof value === 'string') {
-    if (value.trim()) fragments.push(value);
-    return;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') {
-    fragments.push(String(value));
-    return;
-  }
-  if (Array.isArray(value)) {
-    value.forEach(item => extractTextFragments(item, fragments));
-    return;
-  }
-  if (typeof value !== 'object') return;
-
-  if (typeof value.text === 'string') {
-    extractTextFragments(value.text, fragments);
-    return;
-  }
-  if (typeof value.input_text === 'string') {
-    extractTextFragments(value.input_text, fragments);
-    return;
-  }
-  if (typeof value.output_text === 'string') {
-    extractTextFragments(value.output_text, fragments);
-    return;
-  }
-  if (value.content !== undefined) {
-    extractTextFragments(value.content, fragments);
-    return;
-  }
-  if (Array.isArray(value.parts)) {
-    extractTextFragments(value.parts, fragments);
-  }
-}
-
-function extractText(value) {
-  const fragments = [];
-  extractTextFragments(value, fragments);
-  return fragments.join('\n').trim();
-}
-
-function normalizeOpenAiRole(role) {
-  const value = String(role || '').trim().toLowerCase();
-  if (value === 'assistant' || value === 'model') return 'assistant';
-  if (value === 'system') return 'system';
-  return 'user';
-}
-
-function normalizeOpenAiToolsToClaude(tools = []) {
-  if (!Array.isArray(tools)) return [];
-
-  const normalized = [];
-  for (const tool of tools) {
-    if (!tool || typeof tool !== 'object') continue;
-
-    if (tool.type === 'function' && tool.function && typeof tool.function === 'object') {
-      const fn = tool.function;
-      if (!fn.name) continue;
-      normalized.push({
-        name: fn.name,
-        description: fn.description || '',
-        input_schema: fn.parameters || { type: 'object', properties: {} }
-      });
-      continue;
-    }
-
-    if (tool.type === 'function' && tool.name) {
-      normalized.push({
-        name: tool.name,
-        description: tool.description || '',
-        input_schema: tool.parameters || { type: 'object', properties: {} }
-      });
-    }
-  }
-
-  return normalized;
-}
-
-function normalizeToolChoiceToClaude(toolChoice) {
-  if (!toolChoice) return undefined;
-
-  if (typeof toolChoice === 'string') {
-    if (toolChoice === 'auto') return { type: 'auto' };
-    if (toolChoice === 'required') return { type: 'any' };
-    return undefined;
-  }
-
-  if (typeof toolChoice === 'object') {
-    if (toolChoice.type === 'function' && toolChoice.function?.name) {
-      return { type: 'tool', name: toolChoice.function.name };
-    }
-    if (toolChoice.type === 'function' && toolChoice.name) {
-      return { type: 'tool', name: toolChoice.name };
-    }
-    if (toolChoice.type === 'auto') return { type: 'auto' };
-    if (toolChoice.type === 'required') return { type: 'any' };
-  }
-
-  return undefined;
-}
 
 function generateToolCallId() {
   return `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function parseToolArguments(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return {};
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
 
-function normalizeToolResultContent(value) {
-  if (typeof value === 'string') return value;
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function buildAssistantToolUseMessageFromFunctionCall(item) {
-  const functionPayload = (item?.function && typeof item.function === 'object')
-    ? item.function
-    : item;
-  const name = functionPayload?.name || item?.name;
-  if (!name) return null;
-
-  const callId = functionPayload?.call_id || item?.call_id || functionPayload?.id || item?.id || generateToolCallId();
-  const argumentsSource = functionPayload?.arguments ?? item?.arguments ?? functionPayload?.input ?? item?.input;
-  const input = parseToolArguments(argumentsSource);
-
-  return {
-    role: 'assistant',
-    content: [
-      {
-        type: 'tool_use',
-        id: callId,
-        name,
-        input
-      }
-    ]
-  };
-}
-
-function buildUserToolResultMessage(item) {
-  const callId = item?.call_id || item?.tool_call_id || item?.id || generateToolCallId();
-  const outputSource = item?.output ?? item?.content ?? '';
-  const content = normalizeToolResultContent(outputSource);
-
-  return {
-    role: 'user',
-    content: [
-      {
-        type: 'tool_result',
-        tool_use_id: callId,
-        content
-      }
-    ]
-  };
-}
-
-function normalizeOpenCodeMessages(pathname, payload = {}) {
-  const systemParts = [];
-  const messages = [];
-
-  if (isResponsesPath(pathname) && typeof payload.instructions === 'string' && payload.instructions.trim()) {
-    systemParts.push(payload.instructions.trim());
-  }
-
-  const appendMessage = (role, content) => {
-    const normalizedRole = normalizeOpenAiRole(role);
-    const text = extractText(content);
-    if (!text) return;
-    if (normalizedRole === 'system') {
-      systemParts.push(text);
-      return;
-    }
-    messages.push({
-      role: normalizedRole === 'assistant' ? 'assistant' : 'user',
-      content: [{ type: 'text', text }]
-    });
-  };
-
-  if (isResponsesPath(pathname)) {
-    if (typeof payload.input === 'string') {
-      appendMessage('user', payload.input);
-    } else if (Array.isArray(payload.input)) {
-      payload.input.forEach(item => {
-        if (!item || typeof item !== 'object') return;
-        if (item.type === 'function_call') {
-          const assistantToolUse = buildAssistantToolUseMessageFromFunctionCall(item);
-          if (assistantToolUse) {
-            messages.push(assistantToolUse);
-          }
-          return;
-        }
-        if (item.type === 'function_call_output') {
-          messages.push(buildUserToolResultMessage(item));
-          return;
-        }
-        if (item.type === 'message' || item.role) {
-          appendMessage(item.role, item.content);
-        }
-      });
-    }
-  }
-
-  if (isChatCompletionsPath(pathname) && Array.isArray(payload.messages)) {
-    payload.messages.forEach(message => {
-      if (!message || typeof message !== 'object') return;
-      if (message.role === 'tool') {
-        messages.push(buildUserToolResultMessage(message));
-        return;
-      }
-      if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
-        const assistantContent = [];
-        const text = extractText(message.content);
-        if (text) {
-          assistantContent.push({ type: 'text', text });
-        }
-
-        message.tool_calls.forEach(toolCall => {
-          if (!toolCall || typeof toolCall !== 'object') return;
-          const functionPayload = (toolCall.function && typeof toolCall.function === 'object')
-            ? toolCall.function
-            : toolCall;
-          const name = functionPayload.name || toolCall.name;
-          if (!name) return;
-          assistantContent.push({
-            type: 'tool_use',
-            id: toolCall.id || functionPayload.call_id || generateToolCallId(),
-            name,
-            input: parseToolArguments(functionPayload.arguments ?? functionPayload.input)
-          });
-        });
-
-        if (assistantContent.length > 0) {
-          messages.push({
-            role: 'assistant',
-            content: assistantContent
-          });
-        }
-        return;
-      }
-      appendMessage(message.role, message.content);
-    });
-  }
-
-  if (messages.length === 0) {
-    messages.push({
-      role: 'user',
-      content: [{ type: 'text', text: 'Hello' }]
-    });
-  }
-
-  return {
-    system: systemParts.join('\n\n').trim(),
-    messages
-  };
-}
 
 function buildClaudeCodeUserId(sessionIdSeed = '') {
   const preferredUserId = resolveClaudePreferredUserId();
@@ -812,548 +388,8 @@ function buildClaudeCodeUserId(sessionIdSeed = '') {
   return `user_${accountId}_account__session_${sessionId}`;
 }
 
-function normalizeClaudeMetadata(metadata, fallbackUserId = '') {
-  const normalized = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
-    ? { ...metadata }
-    : {};
-  const userId = normalizeSessionKeyValue(normalized.user_id);
-  const fallback = normalizeSessionKeyValue(fallbackUserId);
 
-  if (CLAUDE_USER_ID_FULL_RE.test(userId)) {
-    normalized.user_id = userId;
-    return normalized;
-  }
-  if (CLAUDE_USER_ID_FULL_RE.test(fallback)) {
-    normalized.user_id = fallback;
-    return normalized;
-  }
 
-  normalized.user_id = buildClaudeCodeUserId(fallback);
-  return normalized;
-}
-
-function convertOpenCodePayloadToClaude(pathname, payload = {}, fallbackModel = '', options = {}) {
-  const normalized = normalizeOpenCodeMessages(pathname, payload);
-  const maxTokens = Number(payload.max_output_tokens ?? payload.max_tokens);
-
-  const converted = {
-    model: payload.model || fallbackModel || 'claude-sonnet-4-20250514',
-    max_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.round(maxTokens) : 4096,
-    stream: false,
-    messages: normalized.messages
-  };
-
-  const template = resolveClaudeRequestTemplate();
-
-  converted.system = buildClaudeSystemBlocks(normalized.system, template.system);
-
-  const tools = normalizeOpenAiToolsToClaude(payload.tools || []);
-  converted.tools = tools.length > 0 ? tools : template.tools;
-
-  const toolChoice = normalizeToolChoiceToClaude(payload.tool_choice);
-  if (toolChoice) {
-    converted.tool_choice = toolChoice;
-  }
-
-  converted.temperature = Number.isFinite(Number(payload.temperature)) ? Number(payload.temperature) : 1;
-  if (Number.isFinite(Number(payload.top_p))) {
-    converted.top_p = Number(payload.top_p);
-  }
-  if (Number.isFinite(Number(payload.top_k))) {
-    converted.top_k = Number(payload.top_k);
-  }
-
-  // 某些 Claude relay 会校验 metadata.user_id 以识别 Claude Code 请求
-  converted.metadata = normalizeClaudeMetadata(payload.metadata, options.sessionUserId || template.userId || '');
-
-  return converted;
-}
-
-function normalizeOpenAiToolsToGemini(tools = []) {
-  if (!Array.isArray(tools)) return [];
-
-  const functionDeclarations = [];
-  for (const tool of tools) {
-    if (!tool || typeof tool !== 'object') continue;
-
-    if (tool.type === 'function' && tool.function && typeof tool.function === 'object') {
-      const fn = tool.function;
-      if (!fn.name) continue;
-      functionDeclarations.push({
-        name: fn.name,
-        description: fn.description || '',
-        parameters: fn.parameters || { type: 'object', properties: {} }
-      });
-      continue;
-    }
-
-    if (tool.type === 'function' && tool.name) {
-      functionDeclarations.push({
-        name: tool.name,
-        description: tool.description || '',
-        parameters: tool.parameters || { type: 'object', properties: {} }
-      });
-    }
-  }
-
-  if (functionDeclarations.length === 0) return [];
-  return [{ functionDeclarations }];
-}
-
-function normalizeToolChoiceToGemini(toolChoice) {
-  if (!toolChoice) return undefined;
-
-  if (typeof toolChoice === 'string') {
-    if (toolChoice === 'auto') {
-      return { functionCallingConfig: { mode: 'AUTO' } };
-    }
-    if (toolChoice === 'required') {
-      return { functionCallingConfig: { mode: 'ANY' } };
-    }
-    if (toolChoice === 'none') {
-      return { functionCallingConfig: { mode: 'NONE' } };
-    }
-    return undefined;
-  }
-
-  if (typeof toolChoice === 'object') {
-    const functionName = toolChoice.function?.name || toolChoice.name;
-    if (toolChoice.type === 'function' && functionName) {
-      return {
-        functionCallingConfig: {
-          mode: 'ANY',
-          allowedFunctionNames: [functionName]
-        }
-      };
-    }
-    if (toolChoice.type === 'auto') {
-      return { functionCallingConfig: { mode: 'AUTO' } };
-    }
-    if (toolChoice.type === 'required') {
-      return { functionCallingConfig: { mode: 'ANY' } };
-    }
-    if (toolChoice.type === 'none') {
-      return { functionCallingConfig: { mode: 'NONE' } };
-    }
-  }
-
-  return undefined;
-}
-
-function normalizeStopSequences(stopValue) {
-  if (!stopValue) return undefined;
-  if (typeof stopValue === 'string' && stopValue.trim()) {
-    return [stopValue];
-  }
-  if (Array.isArray(stopValue)) {
-    const sequences = stopValue
-      .filter(item => typeof item === 'string')
-      .map(item => item.trim())
-      .filter(Boolean);
-    return sequences.length > 0 ? sequences : undefined;
-  }
-  return undefined;
-}
-
-function normalizeGeminiFunctionResponsePayload(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) return { content: '' };
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch {
-      return { content: value };
-    }
-    return { content: value };
-  }
-  return { content: normalizeToolResultContent(value) };
-}
-
-function buildGeminiContents(messages = []) {
-  const contents = [];
-  const toolNameById = new Map();
-
-  for (const message of messages) {
-    if (!message || typeof message !== 'object') continue;
-    const role = message.role === 'assistant' ? 'model' : 'user';
-    const contentBlocks = Array.isArray(message.content) ? message.content : [message.content];
-    const parts = [];
-
-    for (const block of contentBlocks) {
-      if (!block || typeof block !== 'object') {
-        const text = extractText(block);
-        if (text) {
-          parts.push({ text });
-        }
-        continue;
-      }
-
-      if (block.type === 'tool_use' && block.name) {
-        const callId = String(block.id || generateToolCallId());
-        const args = (block.input && typeof block.input === 'object' && !Array.isArray(block.input))
-          ? block.input
-          : {};
-        toolNameById.set(callId, block.name);
-        parts.push({
-          functionCall: {
-            name: block.name,
-            args
-          }
-        });
-        continue;
-      }
-
-      if (block.type === 'tool_result') {
-        const toolUseId = String(block.tool_use_id || block.id || '');
-        const toolName = block.name || toolNameById.get(toolUseId);
-        if (!toolName) {
-          const text = normalizeToolResultContent(block.content);
-          if (text) {
-            parts.push({ text });
-          }
-          continue;
-        }
-
-        parts.push({
-          functionResponse: {
-            name: toolName,
-            response: normalizeGeminiFunctionResponsePayload(block.content)
-          }
-        });
-        continue;
-      }
-
-      const text = extractText(block);
-      if (text) {
-        parts.push({ text });
-      }
-    }
-
-    if (parts.length === 0) continue;
-    contents.push({ role, parts });
-  }
-  return contents;
-}
-
-function cloneJsonCompatible(value) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return value;
-  }
-}
-
-function normalizeCodexResponsesInput(inputValue) {
-  if (typeof inputValue === 'string') {
-    return [
-      {
-        type: 'message',
-        role: 'user',
-        content: [
-          {
-            type: 'input_text',
-            text: inputValue
-          }
-        ]
-      }
-    ];
-  }
-
-  if (!Array.isArray(inputValue)) return undefined;
-  return inputValue.map(item => {
-    if (!item || typeof item !== 'object') return item;
-    const clonedItem = cloneJsonCompatible(item);
-    if (String(clonedItem?.role || '').trim().toLowerCase() === 'system') {
-      clonedItem.role = 'developer';
-    }
-    return clonedItem;
-  });
-}
-
-function convertOpenCodePayloadToCodexResponses(payload = {}, fallbackModel = '') {
-  const requestBody = cloneJsonCompatible((payload && typeof payload === 'object') ? payload : {});
-  if (requestBody.model === undefined && fallbackModel) {
-    requestBody.model = fallbackModel;
-  }
-
-  const normalizedInput = normalizeCodexResponsesInput(requestBody.input);
-  if (normalizedInput !== undefined) {
-    requestBody.input = normalizedInput;
-  }
-
-  requestBody.stream = true;
-  requestBody.store = false;
-  if (requestBody.parallel_tool_calls === undefined) {
-    requestBody.parallel_tool_calls = true;
-  }
-  if (typeof requestBody.instructions !== 'string') {
-    requestBody.instructions = '';
-  }
-
-  const include = Array.isArray(requestBody.include)
-    ? requestBody.include.filter(item => typeof item === 'string' && item.trim())
-    : [];
-  if (!include.includes('reasoning.encrypted_content')) {
-    include.push('reasoning.encrypted_content');
-  }
-  requestBody.include = include;
-
-  delete requestBody.max_output_tokens;
-  delete requestBody.max_completion_tokens;
-  delete requestBody.temperature;
-  delete requestBody.top_p;
-  delete requestBody.service_tier;
-  delete requestBody.user;
-  delete requestBody.previous_response_id;
-  delete requestBody.prompt_cache_retention;
-  delete requestBody.safety_identifier;
-
-  return {
-    requestBody,
-    model: requestBody.model || fallbackModel || ''
-  };
-}
-
-function convertOpenCodePayloadToGemini(pathname, payload = {}, fallbackModel = '') {
-  const normalized = normalizeOpenCodeMessages(pathname, payload);
-  const maxTokens = Number(payload.max_output_tokens ?? payload.max_tokens);
-  const stopSequences = normalizeStopSequences(payload.stop);
-  const tools = normalizeOpenAiToolsToGemini(payload.tools || []);
-  const toolConfig = normalizeToolChoiceToGemini(payload.tool_choice);
-
-  const requestBody = {
-    contents: buildGeminiContents(normalized.messages)
-  };
-
-  if (normalized.system) {
-    requestBody.systemInstruction = {
-      parts: [{ text: normalized.system }]
-    };
-  }
-
-  const generationConfig = {};
-  if (Number.isFinite(maxTokens) && maxTokens > 0) {
-    generationConfig.maxOutputTokens = Math.round(maxTokens);
-  }
-  if (Number.isFinite(Number(payload.temperature))) {
-    generationConfig.temperature = Number(payload.temperature);
-  }
-  if (Number.isFinite(Number(payload.top_p))) {
-    generationConfig.topP = Number(payload.top_p);
-  }
-  if (Number.isFinite(Number(payload.top_k))) {
-    generationConfig.topK = Number(payload.top_k);
-  }
-  if (stopSequences) {
-    generationConfig.stopSequences = stopSequences;
-  }
-  if (Object.keys(generationConfig).length > 0) {
-    requestBody.generationConfig = generationConfig;
-  }
-
-  if (tools.length > 0) {
-    requestBody.tools = tools;
-  }
-  if (toolConfig) {
-    requestBody.toolConfig = toolConfig;
-  }
-
-  return {
-    model: payload.model || fallbackModel || '',
-    requestBody
-  };
-}
-
-function buildClaudeTargetUrl(baseUrl = '') {
-  let targetUrl;
-  try {
-    targetUrl = new URL(String(baseUrl || '').trim() || 'https://api.anthropic.com');
-  } catch {
-    targetUrl = new URL('https://api.anthropic.com');
-  }
-
-  let pathname = targetUrl.pathname.replace(/\/+$/, '');
-  if (!pathname || pathname === '/') {
-    pathname = '/v1/messages';
-  } else if (pathname.endsWith('/messages')) {
-    // noop
-  } else if (pathname.endsWith('/v1')) {
-    pathname = `${pathname}/messages`;
-  } else {
-    pathname = `${pathname}/v1/messages`;
-  }
-
-  targetUrl.pathname = pathname;
-  targetUrl.searchParams.set('beta', 'true');
-  return targetUrl.toString();
-}
-
-function buildClaudeCountTokensTargetUrl(baseUrl = '') {
-  let targetUrl;
-  try {
-    targetUrl = new URL(String(baseUrl || '').trim() || 'https://api.anthropic.com');
-  } catch {
-    targetUrl = new URL('https://api.anthropic.com');
-  }
-
-  let pathname = targetUrl.pathname.replace(/\/+$/, '');
-  if (!pathname || pathname === '/') {
-    pathname = '/v1/messages/count_tokens';
-  } else if (pathname.endsWith('/messages/count_tokens')) {
-    // noop
-  } else if (pathname.endsWith('/messages')) {
-    pathname = `${pathname}/count_tokens`;
-  } else if (pathname.endsWith('/v1')) {
-    pathname = `${pathname}/messages/count_tokens`;
-  } else {
-    pathname = `${pathname}/v1/messages/count_tokens`;
-  }
-
-  targetUrl.pathname = pathname;
-  targetUrl.searchParams.set('beta', 'true');
-  return targetUrl.toString();
-}
-
-function shouldUseGeminiCliFormat(baseUrl = '') {
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(String(baseUrl || '').trim() || 'https://generativelanguage.googleapis.com');
-  } catch {
-    return false;
-  }
-
-  const host = String(parsedUrl.hostname || '').toLowerCase();
-  const pathname = parsedUrl.pathname.replace(/\/+$/, '');
-
-  if (pathname.includes('/v1internal') || pathname.endsWith(':generateContent') || pathname.endsWith(':streamGenerateContent')) {
-    return true;
-  }
-  if (pathname.includes('/v1beta') || pathname.includes('/models/')) {
-    return false;
-  }
-  if (host.includes('cloudcode-pa.googleapis.com')) {
-    return true;
-  }
-  if (!pathname || pathname === '/') {
-    return !host.includes('generativelanguage.googleapis.com') && !host.includes('aiplatform.googleapis.com');
-  }
-  return false;
-}
-
-function buildGeminiCliTargetPath(parsedUrl, stream = false) {
-  let pathname = parsedUrl.pathname.replace(/\/+$/, '');
-  const method = stream ? 'streamGenerateContent' : 'generateContent';
-
-  if (!pathname || pathname === '/') {
-    return `/v1internal:${method}`;
-  }
-  if (pathname.endsWith(':streamGenerateContent')) {
-    return stream
-      ? pathname
-      : pathname.replace(/:streamGenerateContent$/, ':generateContent');
-  }
-  if (pathname.endsWith(':generateContent')) {
-    return stream
-      ? pathname.replace(/:generateContent$/, ':streamGenerateContent')
-      : pathname;
-  }
-  if (pathname.endsWith('/v1internal')) {
-    return `${pathname}:${method}`;
-  }
-  return `${pathname}/v1internal:${method}`;
-}
-
-function buildGeminiCliTargetUrl(baseUrl = '', options = {}) {
-  const stream = !!options.stream;
-
-  let targetUrl;
-  try {
-    targetUrl = new URL(String(baseUrl || '').trim() || 'https://cloudcode-pa.googleapis.com');
-  } catch {
-    targetUrl = new URL('https://cloudcode-pa.googleapis.com');
-  }
-
-  targetUrl.pathname = buildGeminiCliTargetPath(targetUrl, stream);
-  if (stream) {
-    targetUrl.searchParams.set('alt', 'sse');
-  }
-  return targetUrl.toString();
-}
-
-function buildGeminiNativeTargetUrl(baseUrl = '', model = '', apiKey = '', options = {}) {
-  const modelName = String(model || '').trim();
-  if (!modelName) return '';
-  const stream = !!options.stream;
-
-  let targetUrl;
-  try {
-    targetUrl = new URL(String(baseUrl || '').trim() || 'https://generativelanguage.googleapis.com');
-  } catch {
-    targetUrl = new URL('https://generativelanguage.googleapis.com');
-  }
-
-  let pathname = targetUrl.pathname.replace(/\/+$/, '');
-  const modelsIndex = pathname.indexOf('/models');
-  if (modelsIndex >= 0) {
-    pathname = pathname.slice(0, modelsIndex);
-  }
-
-  let apiBasePath;
-  if (!pathname || pathname === '/') {
-    apiBasePath = '/v1beta';
-  } else if (pathname.endsWith('/v1beta') || pathname.endsWith('/v1')) {
-    apiBasePath = pathname;
-  } else {
-    apiBasePath = `${pathname}/v1beta`;
-  }
-
-  const method = stream ? 'streamGenerateContent' : 'generateContent';
-  targetUrl.pathname = `${apiBasePath}/models/${encodeURIComponent(modelName)}:${method}`;
-  if (apiKey) {
-    targetUrl.searchParams.set('key', apiKey);
-  }
-  if (stream) {
-    targetUrl.searchParams.set('alt', 'sse');
-  }
-
-  return targetUrl.toString();
-}
-
-function buildGeminiTargetUrl(baseUrl = '', model = '', apiKey = '', options = {}) {
-  if (options.useCli) {
-    return buildGeminiCliTargetUrl(baseUrl, options);
-  }
-  return buildGeminiNativeTargetUrl(baseUrl, model, apiKey, options);
-}
-
-function buildCodexTargetUrl(baseUrl = '') {
-  let targetUrl;
-  try {
-    targetUrl = new URL(String(baseUrl || '').trim());
-  } catch {
-    return '';
-  }
-
-  let pathname = targetUrl.pathname.replace(/\/+$/, '');
-  if (!pathname || pathname === '/') {
-    pathname = '/responses';
-  } else if (pathname.endsWith('/responses') || pathname.endsWith('/v1/responses')) {
-    // noop
-  } else if (pathname.endsWith('/v1')) {
-    pathname = `${pathname}/responses`;
-  } else {
-    pathname = `${pathname}/responses`;
-  }
-
-  targetUrl.pathname = pathname;
-  return targetUrl.toString();
-}
 
 function createDecodedStream(res) {
   const encoding = String(res.headers['content-encoding'] || '').toLowerCase();
@@ -1472,9 +508,11 @@ function buildClaudeCountTokensPayload(claudePayload = {}) {
 
 async function preflightClaudeCountTokens(baseUrl, apiKey, claudePayload, options = {}) {
   const countTokensPayload = buildClaudeCountTokensPayload(claudePayload);
-  const countTokensHeaders = buildClaudeRequestHeaders(apiKey, {
-    requestType: 'count_tokens',
-    hasTools: options.hasTools
+  const countTokensHeaders = buildClaudeCountTokensHeaders(apiKey, {
+    baseUrl,
+    hasTools: !!options.hasTools,
+    headers: options.headers,
+    providerConfig: options.providerConfig
   });
   try {
     await postJson(buildClaudeCountTokensTargetUrl(baseUrl), countTokensHeaders, countTokensPayload, 30000);
@@ -2916,18 +1954,23 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
     : sessionKey;
   const preferredUserId = normalizeSessionKeyValue(originalPayload?.metadata?.user_id);
   const sessionUserId = resolveClaudeUserIdBySession(scopedSessionKey, preferredUserId);
-  const claudePayload = convertOpenCodePayloadToClaude(pathname, originalPayload, channel.model, {
-    sessionUserId
+  const converted = createClaudeRequest(pathname, originalPayload, {
+    apiKey: effectiveKey,
+    baseUrl: channel.baseUrl,
+    fallbackModel: channel.model,
+    stream: streamResponses,
+    sessionUserId,
+    providerConfig: channel.providerConfig
   });
-  claudePayload.stream = streamResponses;
+  const claudePayload = converted.body;
+  const headers = converted.headers;
   const hasTools = Array.isArray(claudePayload.tools) && claudePayload.tools.length > 0;
 
-  const headers = buildClaudeRequestHeaders(effectiveKey, {
-    requestType: 'messages',
-    hasTools
+  await preflightClaudeCountTokens(channel.baseUrl, effectiveKey, claudePayload, {
+    hasTools,
+    headers: channel.providerConfig?.headers,
+    providerConfig: channel.providerConfig
   });
-
-  await preflightClaudeCountTokens(channel.baseUrl, effectiveKey, claudePayload, { hasTools });
 
   if (streamResponses) {
     let streamUpstream;
@@ -3107,7 +2150,12 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
   const startTime = Date.now();
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
-  const converted = convertOpenCodePayloadToCodexResponses(originalPayload, channel.model);
+  const sessionId = extractSessionIdFromRequest(req, originalPayload);
+  const converted = createCodexRequest(originalPayload, {
+    apiKey: effectiveKey,
+    fallbackModel: channel.model,
+    sessionId
+  });
   const targetModel = converted.model;
 
   if (!targetModel) {
@@ -3133,29 +2181,9 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
     });
   }
 
-  const codexSessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 15)}`;
-  const promptCacheKey = (typeof converted.requestBody.prompt_cache_key === 'string' && converted.requestBody.prompt_cache_key.trim())
-    ? converted.requestBody.prompt_cache_key.trim()
-    : codexSessionId;
-  converted.requestBody.prompt_cache_key = promptCacheKey;
-
-  const headers = {
-    authorization: `Bearer ${effectiveKey}`,
-    'openai-beta': 'responses=experimental',
-    accept: 'text/event-stream',
-    'accept-encoding': 'gzip, deflate, br',
-    connection: 'Keep-Alive',
-    'content-type': 'application/json',
-    Version: CODEX_CLI_VERSION,
-    Session_id: promptCacheKey,
-    Conversation_id: promptCacheKey,
-    Originator: 'codex_cli_rs',
-    'user-agent': CODEX_CLI_USER_AGENT
-  };
-
   let streamUpstream;
   try {
-    streamUpstream = await postJsonStream(targetUrl, headers, converted.requestBody, 120000);
+    streamUpstream = await postJsonStream(targetUrl, converted.headers, converted.body, 120000);
   } catch (error) {
     return reportOpenCodeGatewayFailure({
       req,
@@ -3168,6 +2196,7 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
       stage: 'codex_gateway_network'
     });
   }
+
 
   const statusCode = Number(streamUpstream.statusCode) || 500;
   if (statusCode < 200 || statusCode >= 300) {
@@ -3926,9 +2955,26 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const streamResponses = wantsStream && isResponsesPath(pathname);
-  const converted = convertOpenCodePayloadToGemini(pathname, originalPayload, channel.model);
+  // Resolve useCli by canonical providerApi precedence:
+  // explicit google-gemini-cli → true; google-generative-ai/google-vertex → false;
+  // missing/non-canonical → URL-based detection
+  const explicitApi = String(channel?.providerApi || '').trim().toLowerCase();
+  const useGeminiCli = explicitApi === 'google-gemini-cli'
+    ? true
+    : (explicitApi === 'google-generative-ai' || explicitApi === 'google-vertex'
+      ? false
+      : shouldUseGeminiCliFormat(channel.baseUrl));
+
+  const converted = createGeminiRequest(pathname, originalPayload, {
+    apiKey: effectiveKey,
+    fallbackModel: channel.model,
+    stream: streamResponses,
+    useCli: useGeminiCli,
+    providerConfig: channel.providerConfig
+  });
   const targetModel = converted.model;
-  const useGeminiCli = shouldUseGeminiCliFormat(channel.baseUrl);
+  const geminiPayload = converted.body;
+  const headers = converted.headers;
 
   if (!targetModel) {
     return reportOpenCodeGatewayFailure({
@@ -3955,34 +3001,6 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
       stage: 'build_target_url'
     });
   }
-
-  const geminiPayload = useGeminiCli
-    ? {
-      project: '',
-      model: targetModel,
-      request: converted.requestBody
-    }
-    : converted.requestBody;
-
-  const headers = useGeminiCli
-    ? {
-      'x-goog-api-key': effectiveKey,
-      'authorization': `Bearer ${effectiveKey}`,
-      'content-type': 'application/json',
-      'accept': streamResponses ? 'text/event-stream' : 'application/json',
-      'accept-encoding': 'gzip, deflate, br',
-      'user-agent': GEMINI_CLI_USER_AGENT,
-      'x-goog-api-client': GEMINI_CLI_API_CLIENT,
-      'client-metadata': GEMINI_CLI_CLIENT_METADATA
-    }
-    : {
-      'x-goog-api-key': effectiveKey,
-      'authorization': `Bearer ${effectiveKey}`,
-      'content-type': 'application/json',
-      'accept': streamResponses ? 'text/event-stream' : 'application/json',
-      'accept-encoding': 'gzip, deflate, br',
-      'user-agent': 'google-genai-sdk/0.8.0'
-    };
 
   if (streamResponses) {
     let streamUpstream;

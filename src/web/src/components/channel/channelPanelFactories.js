@@ -1698,7 +1698,7 @@ const channelPanelFactories = {
       newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
       newForm.wireApi = preset.wireApi || 'openai'
-      newForm.providerApi = 'openai-completions'
+      newForm.providerApi = preset.providerApi || 'openai-completions'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'openai_compatible'
       return applyPresetAuth(newForm)
     },

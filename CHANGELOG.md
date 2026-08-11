@@ -7,6 +7,8 @@
 ## [Unreleased]
 
 ### Fixed
+- **Claude / Gemini 原生 wire 兼容** - OpenCode Claude / Gemini 代理、模型探测和测速统一使用 Anthropic Messages 与 Google Generative AI（含 Gemini CLI）原生请求格式、认证头与目标 URL；OMP managed provider 写入 `anthropic-messages` / `google-generative-ai` 标识，避免代理、adapter 与探测各自维护不一致的请求格式
+- **Codex-only 服务兼容** - OpenCode Codex 代理、OMP Codex provider 写入、模型探测和测速统一使用当前 Codex official-client 请求指纹，避免 Codex-only 上游拒绝非官方客户端请求
 - **OMP 渠道失败不再冻结** - OMP 动态切换开启后，失败渠道不再进入冻结状态。OMP 网关按请求即时回退其他渠道，冻结会导致短暂故障的渠道在恢复前被排除在后续分配之外
 - **OMP 动态切换凭据稳定** - 同步当前 OMP 渠道时不再把动态切换生成的本地网关 `base_url` 和 capability API Key 覆盖真实渠道配置；同一渠道的受管 provider 生成值现在复用持久化网关密钥保持稳定
 

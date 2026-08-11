@@ -6,7 +6,6 @@
 
 const https = require('https');
 const http = require('http');
-const crypto = require('crypto');
 const { URL } = require('url');
 const { probeModelAvailability } = require('./model-detector');
 const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
@@ -14,7 +13,13 @@ const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channel
 const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
 const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
 const { getEffectiveApiKey: getOmpEffectiveApiKey } = require('./omp-channels');
-const { loadClaudeRequestTemplate } = require('./request-logger');
+const { createCodexRequest } = require('./codex-wire');
+const { createClaudeRequest, buildClaudeTargetUrl } = require('./claude-wire');
+const {
+  createGeminiRequest,
+  buildGeminiTargetUrl,
+  shouldUseGeminiCliFormat
+} = require('./gemini-wire');
 
 // 测试结果缓存
 const testResultsCache = new Map();
@@ -23,19 +28,7 @@ const testResultsCache = new Map();
 const DEFAULT_TIMEOUT = 15000;
 const MIN_TIMEOUT = 5000;
 const MAX_TIMEOUT = 60000;
-const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.59 (external, cli)';
-const CLAUDE_MESSAGES_BETA_FLAGS = Object.freeze([
-  'claude-code-20250219',
-  'interleaved-thinking-2025-05-14',
-  'prompt-caching-scope-2026-01-05',
-  'effort-2025-11-24'
-]);
-const CLAUDE_ADVANCED_TOOL_USE_BETA = 'advanced-tool-use-2025-11-20';
 const ROUTE_OR_METHOD_MISMATCH_STATUS = new Set([404, 405, 501]);
-const CLAUDE_USER_ID_ACCOUNT_RE = /^user_([0-9a-f]{64})_account__session_[a-z0-9._-]+$/i;
-const CLAUDE_USER_ID_FULL_RE = /^user_[0-9a-f]{64}_account__session_[a-z0-9._-]+$/i;
-let cachedClaudeAccountId = '';
-let cachedClaudeUserId = '';
 
 /**
  * 规范化超时时间
@@ -117,200 +110,23 @@ function resolveEffectiveApiKey(channel, channelType) {
   }
 }
 
-function mapStainlessOs() {
-  switch (process.platform) {
-    case 'darwin':
-      return 'MacOS';
-    case 'win32':
-      return 'Windows';
-    case 'linux':
-      return 'Linux';
-    default:
-      return `other::${process.platform}`;
-  }
-}
-
-function mapStainlessArch() {
-  switch (process.arch) {
-    case 'x64':
-      return 'x64';
-    case 'arm64':
-      return 'arm64';
-    case 'ia32':
-      return 'x86';
-    default:
-      return `other::${process.arch}`;
-  }
-}
-
-function buildClaudeBetaHeader(options = {}) {
-  const hasTools = !!options.hasTools;
-  const betaFlags = [...CLAUDE_MESSAGES_BETA_FLAGS];
-  if (hasTools) {
-    betaFlags.push(CLAUDE_ADVANCED_TOOL_USE_BETA);
-  }
-  return betaFlags.join(',');
-}
-
-function buildClaudeRequestHeaders(apiKey, options = {}) {
-  return {
-    'x-api-key': apiKey || '',
-    authorization: `Bearer ${apiKey || ''}`,
-    'anthropic-version': '2023-06-01',
-    'anthropic-beta': buildClaudeBetaHeader(options),
-    'anthropic-dangerous-direct-browser-access': 'true',
-    'x-app': 'cli',
-    'x-stainless-retry-count': '0',
-    'x-stainless-timeout': '600',
-    'x-stainless-runtime-version': process.version,
-    'x-stainless-package-version': '0.74.0',
-    'x-stainless-lang': 'js',
-    'x-stainless-runtime': 'node',
-    'x-stainless-arch': mapStainlessArch(),
-    'x-stainless-os': mapStainlessOs(),
-    accept: 'application/json',
-    'accept-encoding': 'gzip, deflate',
-    'accept-language': '*',
-    'sec-fetch-mode': 'cors',
-    connection: 'keep-alive',
-    'content-type': 'application/json',
-    'user-agent': CLAUDE_CODE_USER_AGENT
-  };
-}
-
-function resolveClaudeAccountIdFromUserId(userId = '') {
-  const value = normalizeNonEmptyString(userId);
-  if (!value) return '';
-  const matched = value.match(CLAUDE_USER_ID_ACCOUNT_RE);
-  return matched ? matched[1].toLowerCase() : '';
-}
-
-function resolveClaudeAccountIdFromLogs() {
+function buildRequestPathFromTargetUrl(targetUrl) {
+  if (!targetUrl) return '';
   try {
-    const template = loadClaudeRequestTemplate();
-    const userId = template?.userId || '';
-    const accountId = resolveClaudeAccountIdFromUserId(userId);
-    return (accountId && accountId !== '0'.repeat(64)) ? accountId : '';
+    const parsed = new URL(targetUrl);
+    return parsed.pathname + parsed.search;
   } catch {
     return '';
   }
 }
 
-function resolveClaudeUserIdFromLogs() {
-  try {
-    const template = loadClaudeRequestTemplate();
-    const userId = normalizeNonEmptyString(template?.userId || '');
-    if (!userId || !CLAUDE_USER_ID_FULL_RE.test(userId)) return '';
-    const accountId = resolveClaudeAccountIdFromUserId(userId);
-    if (!accountId || accountId === '0'.repeat(64)) return '';
-    return userId;
-  } catch {
-    return '';
+function resolveGeminiWireMode(channel, baseUrl) {
+  const providerApi = String(channel?.providerApi || channel?.wireApi || '').trim().toLowerCase();
+  if (providerApi === 'google-gemini-cli') return { useCli: true, allowFallback: false };
+  if (providerApi === 'google-generative-ai' || providerApi === 'google-vertex') {
+    return { useCli: false, allowFallback: false };
   }
-}
-
-function resolveClaudeRequestTemplate() {
-  return loadClaudeRequestTemplate();
-}
-
-function resolveClaudePreferredUserId() {
-  if (cachedClaudeUserId) {
-    return cachedClaudeUserId;
-  }
-
-  const envUserId = normalizeNonEmptyString(
-    process.env.OPENCODE_CLAUDE_USER_ID || process.env.CLAUDE_CODE_USER_ID
-  );
-
-  if (envUserId && CLAUDE_USER_ID_FULL_RE.test(envUserId)) {
-    cachedClaudeUserId = envUserId;
-    return cachedClaudeUserId;
-  }
-
-  const fromLogs = resolveClaudeUserIdFromLogs();
-  if (fromLogs) {
-    cachedClaudeUserId = fromLogs;
-    return cachedClaudeUserId;
-  }
-
-  return '';
-}
-
-function resolveClaudeAccountId() {
-  if (cachedClaudeAccountId) {
-    return cachedClaudeAccountId;
-  }
-
-  const envAccountId = String(
-    process.env.OPENCODE_CLAUDE_ACCOUNT_ID || process.env.CLAUDE_CODE_ACCOUNT_ID || ''
-  ).trim().toLowerCase();
-
-  if (/^[0-9a-f]{64}$/.test(envAccountId)) {
-    cachedClaudeAccountId = envAccountId;
-    return cachedClaudeAccountId;
-  }
-
-  const fromLogs = resolveClaudeAccountIdFromLogs();
-  if (fromLogs) {
-    cachedClaudeAccountId = fromLogs;
-    return cachedClaudeAccountId;
-  }
-
-  cachedClaudeAccountId = '0'.repeat(64);
-  return cachedClaudeAccountId;
-}
-
-function buildClaudeCodeUserId() {
-  const preferredUserId = resolveClaudePreferredUserId();
-  if (preferredUserId) {
-    return preferredUserId;
-  }
-
-  const accountId = resolveClaudeAccountId();
-  const sessionId = typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  return `user_${accountId}_account__session_${sessionId}`;
-}
-
-
-function buildGeminiNativeGeneratePath(parsedUrl, model) {
-  let pathname = parsedUrl.pathname.replace(/\/+$/, '');
-  const modelsIndex = pathname.indexOf('/models');
-  if (modelsIndex >= 0) {
-    pathname = pathname.slice(0, modelsIndex);
-  }
-
-  let apiBasePath;
-  if (!pathname || pathname === '/') {
-    apiBasePath = '/v1beta';
-  } else if (pathname.endsWith('/v1beta') || pathname.endsWith('/v1')) {
-    apiBasePath = pathname;
-  } else {
-    apiBasePath = `${pathname}/v1beta`;
-  }
-
-  return `${apiBasePath}/models/${encodeURIComponent(model)}:generateContent`;
-}
-
-function buildGeminiCliGeneratePath(parsedUrl) {
-  let pathname = parsedUrl.pathname.replace(/\/+$/, '');
-  if (!pathname || pathname === '/') {
-    return '/v1internal:generateContent';
-  }
-  if (pathname.endsWith(':streamGenerateContent')) {
-    return pathname.replace(/:streamGenerateContent$/, ':generateContent');
-  }
-  if (pathname.endsWith(':generateContent')) {
-    return pathname;
-  }
-  if (pathname.endsWith('/v1internal')) {
-    return `${pathname}:generateContent`;
-  }
-  if (pathname.endsWith('/v1')) {
-    return '/v1internal:generateContent';
-  }
-  return `${pathname}/v1internal:generateContent`;
+  return { useCli: shouldUseGeminiCliFormat(baseUrl), allowFallback: true };
 }
 
 function buildCodexResponsesPath(parsedUrl) {
@@ -327,24 +143,6 @@ function buildCodexResponsesPath(parsedUrl) {
   return `${pathname}/responses`;
 }
 
-function shouldUseGeminiCliFormat(parsedUrl) {
-  const host = String(parsedUrl.hostname || '').toLowerCase();
-  const pathname = parsedUrl.pathname.replace(/\/+$/, '');
-
-  if (pathname.includes('/v1internal') || pathname.endsWith(':generateContent') || pathname.endsWith(':streamGenerateContent')) {
-    return true;
-  }
-  if (pathname.includes('/v1beta') || pathname.includes('/models/')) {
-    return false;
-  }
-  if (host.includes('cloudcode-pa.googleapis.com')) {
-    return true;
-  }
-  if (!pathname || pathname === '/') {
-    return !host.includes('generativelanguage.googleapis.com') && !host.includes('aiplatform.googleapis.com');
-  }
-  return false;
-}
 
 function extractJsonPayloads(responseData) {
   const payloads = [];
@@ -660,127 +458,111 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
   }
 
   if (channelType === 'claude') {
-    // Anthropic Messages API - 模拟 Claude Code 请求格式
-    let aompPath = parsedUrl.pathname.replace(/\/$/, '');
-    if (!aompPath.endsWith('/messages')) {
-      aompPath = aompPath + (aompPath.endsWith('/v1') ? '/messages' : '/v1/messages');
-    }
-    aompPath += '?beta=true';
-
     testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'claude-sonnet-4-20250514';
-    const sessionId = typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-    const userId = buildClaudeCodeUserId() || `user_${'0'.repeat(64)}_account__session_${sessionId}`;
-    const template = resolveClaudeRequestTemplate();
-    const systemBlocks = template.system;
-    const toolsToUse = template.tools;
     const requestPayload = {
       model: testModel,
       max_tokens: 10,
       temperature: 1,
-      stream: true,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
-      system: systemBlocks,
-      metadata: { user_id: userId },
-      tools: toolsToUse
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }]
     };
+    const primaryConverted = createClaudeRequest('/v1/messages', requestPayload, {
+      apiKey,
+      baseUrl,
+      fallbackModel: testModel,
+      stream: true
+    });
+    const fallbackConverted = createClaudeRequest('/v1/messages', requestPayload, {
+      apiKey,
+      baseUrl,
+      fallbackModel: testModel,
+      stream: false
+    });
+    const aompPath = buildRequestPathFromTargetUrl(buildClaudeTargetUrl(baseUrl));
     primaryRequestConfig = {
       aompPath,
-      requestBody: JSON.stringify(requestPayload),
-      headers: buildClaudeRequestHeaders(apiKey, { hasTools: true }),
+      requestBody: JSON.stringify(primaryConverted.body),
+      headers: primaryConverted.headers,
       isStreamingResponse: true
     };
-    // Fallback: non-streaming for gateways that don't support SSE
     fallbackRequestConfig = {
       aompPath,
-      requestBody: JSON.stringify({ ...requestPayload, stream: false }),
-      headers: buildClaudeRequestHeaders(apiKey, { hasTools: true }),
+      requestBody: JSON.stringify(fallbackConverted.body),
+      headers: fallbackConverted.headers,
       isStreamingResponse: false
     };
   } else if (channelType === 'codex') {
     const aompPath = buildCodexResponsesPath(parsedUrl);
-    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-5-codex';
+    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-5.5';
     const codexSessionId = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-
-    const baseBody = {
+    const converted = createCodexRequest({
       model: testModel,
       instructions: 'You are Codex.',
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }],
-      store: false,
-      prompt_cache_key: codexSessionId
-    };
+      prompt_cache_key: codexSessionId,
+      stream: false,
+      store: false
+    }, {
+      apiKey,
+      sessionId: codexSessionId
+    });
 
     primaryRequestConfig = {
       aompPath,
-      requestBody: JSON.stringify({ ...baseBody, stream: false }),
-      headers: {
-        'Authorization': `Bearer ${apiKey || ''}`,
-        'Accept': 'application/json',
-        'Connection': 'Keep-Alive',
-        'Version': '0.101.0',
-        'Session_id': codexSessionId,
-        'Originator': 'codex_cli_rs',
-        'Content-Type': 'application/json',
-        'User-Agent': 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464',
-        'openai-beta': 'responses=experimental'
-      },
-      isStreamingResponse: false
-    };
-
-    fallbackRequestConfig = {
-      aompPath,
-      requestBody: JSON.stringify({ ...baseBody, stream: true }),
-      headers: {
-        ...primaryRequestConfig.headers,
-        'Accept': 'text/event-stream'
-      },
+      requestBody: JSON.stringify(converted.body),
+      headers: converted.headers,
       isStreamingResponse: true
     };
+    fallbackRequestConfig = primaryRequestConfig;
   } else if (channelType === 'gemini') {
     testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gemini-2.5-pro';
-    const useCliFormat = shouldUseGeminiCliFormat(parsedUrl);
+    const minimalPayload = {
+      model: testModel,
+      max_output_tokens: 1,
+      temperature: 0,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'ping' }] }]
+    };
+    const wireMode = resolveGeminiWireMode(channel, baseUrl);
+    const createGeminiRequestConfig = (useCli) => {
+      const converted = createGeminiRequest('/v1/responses', minimalPayload, {
+        apiKey,
+        fallbackModel: testModel,
+        stream: false,
+        useCli
+      });
+      return {
+        aompPath: buildRequestPathFromTargetUrl(
+          buildGeminiTargetUrl(baseUrl, converted.model, apiKey, { stream: false, useCli })
+        ),
+        requestBody: JSON.stringify(converted.body),
+        headers: converted.headers,
+        isStreamingResponse: false
+      };
+    };
 
-    const cliRequestConfig = {
-      aompPath: buildGeminiCliGeneratePath(parsedUrl),
+    primaryRequestConfig = createGeminiRequestConfig(wireMode.useCli);
+    fallbackRequestConfig = wireMode.allowFallback
+      ? createGeminiRequestConfig(!wireMode.useCli)
+      : null;
+  } else if (channelType === 'openai_compatible' || channelType === 'opencode') {
+    testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-4o-mini';
+    let aompPath = parsedUrl.pathname.replace(/\/$/, '');
+    if (!aompPath.endsWith('/chat/completions')) {
+      aompPath = aompPath + (aompPath.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions');
+    }
+    primaryRequestConfig = {
+      aompPath,
       requestBody: JSON.stringify({
-        project: '',
         model: testModel,
-        request: {
-          contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-          generationConfig: { maxOutputTokens: 1, temperature: 0 }
-        }
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'Hi' }]
       }),
       headers: {
         'Authorization': `Bearer ${apiKey || ''}`,
-        'x-goog-api-key': apiKey || '',
-        'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'User-Agent': 'google-api-nodejs-client/9.15.1',
-        'X-Goog-Api-Client': 'gl-node/22.17.0',
-        'Client-Metadata': 'ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI'
+        'User-Agent': 'Coding-Tool-SpeedTest/1.0'
       },
       isStreamingResponse: false
     };
-
-    const nativeRequestConfig = {
-      aompPath: buildGeminiNativeGeneratePath(parsedUrl, testModel),
-      requestBody: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
-        generationConfig: { maxOutputTokens: 1, temperature: 0 }
-      }),
-      headers: {
-        'Authorization': `Bearer ${apiKey || ''}`,
-        'x-goog-api-key': apiKey || '',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'google-genai-sdk/0.8.0'
-      },
-      isStreamingResponse: false
-    };
-
-    primaryRequestConfig = useCliFormat ? cliRequestConfig : nativeRequestConfig;
-    fallbackRequestConfig = useCliFormat ? nativeRequestConfig : cliRequestConfig;
   } else {
     testModel = modelProbe?.preferredTestModel || normalizeNonEmptyString(model) || 'gpt-4o-mini';
     let aompPath = parsedUrl.pathname.replace(/\/$/, '');
