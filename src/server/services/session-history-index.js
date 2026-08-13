@@ -10,7 +10,7 @@ const path = require('path');
 // ---------------------------------------------------------------------------
 
 /** @type {number} Maximum time a source inventory is considered fresh */
-const INDEX_INVENTORY_TTL_MS = 5000;
+const INDEX_INVENTORY_TTL_MS = 30000;
 
 /** @type {number} Max wait for stale-ok on a cold source */
 const COLD_STALE_WAIT_MS = 2500;
