@@ -186,35 +186,78 @@ function run() {
   assert.strictEqual(ompRuntime.installed, true, 'OMP runtime 探测应识别可用命令');
   assert.strictEqual(ompCommandOptions.windowsHide, true, 'OMP 命令探测应隐藏 Windows PowerShell 窗口');
 
-  for (const workerLauncher of [
-    'src/server/services/session-snapshots.js',
-    'src/server/services/dashboard-snapshot-worker.js',
-    'src/server/services/omp-auth-providers.js'
-  ]) {
+  const workerLaunchers = [
+    [
+      'src/server/services/session-snapshots.js',
+      /fork\(workerPath,\s*\[\],\s*\{[\s\S]*?windowsHide:\s*true/
+    ],
+    [
+      'src/server/services/dashboard-snapshot-worker.js',
+      /fork\(__filename,\s*\[\],\s*\{[\s\S]*?windowsHide:\s*true/
+    ],
+    [
+      'src/server/services/omp-auth-providers.js',
+      /fork\(workerPath,\s*\[\],\s*\{[\s\S]*?windowsHide:\s*true/
+    ]
+  ];
+  for (const [workerLauncher, pattern] of workerLaunchers) {
     const source = fs.readFileSync(path.join(__dirname, '..', workerLauncher), 'utf8');
-    assert.match(
-      source,
-      /fork\([\s\S]*?\{[\s\S]*?windowsHide:\s*true/,
-      `${workerLauncher} 的 Node worker 必须隐藏 Windows 控制台窗口`
-    );
+    assert.match(source, pattern, `${workerLauncher} 的 Node worker 必须隐藏 Windows 控制台窗口`);
   }
 
-  for (const backgroundLauncher of [
-    'src/server/services/web-build.js',
-    'src/server/services/https-cert.js'
-  ]) {
-    const source = fs.readFileSync(path.join(__dirname, '..', backgroundLauncher), 'utf8');
-    const processCallCount = (source.match(/\b(?:spawn|execFileSync)\s*\(/g) || []).length;
-    const hiddenWindowCount = (source.match(/windowsHide:\s*true/g) || []).length;
-    assert.ok(processCallCount > 0, `${backgroundLauncher} 应包含后台进程调用`);
-    assert.strictEqual(
-      hiddenWindowCount,
-      processCallCount,
-      `${backgroundLauncher} 的所有后台进程必须隐藏 Windows 控制台窗口`
-    );
-  }
+  const webBuildSource = fs.readFileSync(path.join(__dirname, '..', 'src/server/services/web-build.js'), 'utf8');
+  assert.match(
+    webBuildSource,
+    /spawn\(npmCommand,\s*\['run',\s*'build'\],\s*\{[\s\S]*?windowsHide:\s*true\s*\}/,
+    'web build 的 npm 子进程必须隐藏 Windows 控制台窗口'
+  );
+
+  const httpsCertSource = fs.readFileSync(path.join(__dirname, '..', 'src/server/services/https-cert.js'), 'utf8');
+  assert.match(
+    httpsCertSource,
+    /execFileSync\(command,\s*\['version'\],\s*\{\s*stdio:\s*'ignore',\s*windowsHide:\s*true\s*\}\)/,
+    'HTTPS openssl 探测必须隐藏 Windows 控制台窗口'
+  );
+  assert.match(
+    httpsCertSource,
+    /execFileSync\(command,\s*\[[\s\S]*?'req',[\s\S]*?\],\s*\{[\s\S]*?windowsHide:\s*true\s*\}\)/,
+    'HTTPS openssl 证书生成必须隐藏 Windows 控制台窗口'
+  );
+  assert.match(
+    httpsCertSource,
+    /execFileSync\('powershell',\s*\[[\s\S]*?'-Command',[\s\S]*?\],\s*\{[\s\S]*?windowsHide:\s*true\s*\}\)/,
+    'HTTPS PowerShell 证书生成必须隐藏 Windows 控制台窗口'
+  );
+
+  const historyWorkerSource = fs.readFileSync(
+    path.join(__dirname, '..', 'src/server/services/session-history-worker.js'),
+    'utf8'
+  );
+  assert.match(historyWorkerSource, /fork\(workerPath,\s*\[\],\s*\{[\s\S]*?windowsHide:\s*true/, 'session-history worker 必须隐藏 Windows 控制台窗口');
+
+  const pluginsServiceSource = fs.readFileSync(path.join(__dirname, '..', 'src/server/services/plugins-service.js'), 'utf8');
+  assert.match(
+    pluginsServiceSource,
+    /execSync\(`claude plugin marketplace add \$\{repoRef\}`,\s*\{[\s\S]*?windowsHide:\s*true\s*\}\)/,
+    '插件 marketplace 同步必须隐藏 Windows 控制台窗口'
+  );
+
+  const updateSource = fs.readFileSync(path.join(__dirname, '..', 'src/commands/update.js'), 'utf8');
+  assert.match(
+    updateSource,
+    /execFileAsync\(\s*npmCommand,\s*\[[\s\S]*?\],\s*\{\s*timeout:\s*15000,\s*windowsHide:\s*true\s*\}\s*\)/,
+    'npm 版本探测必须隐藏 Windows 控制台窗口'
+  );
+
+  const resumeSource = fs.readFileSync(path.join(__dirname, '..', 'src/commands/resume.js'), 'utf8');
+  assert.match(
+    resumeSource,
+    /execSync\(command,\s*\{[\s\S]*?stdio:\s*'inherit',[\s\S]*?windowsHide:\s*true[\s\S]*?\}\)/,
+    '交互式恢复必须继承当前终端并显式设置 windowsHide'
+  );
 
   console.log('Windows 专项回归测试通过');
 }
 
 run();
+

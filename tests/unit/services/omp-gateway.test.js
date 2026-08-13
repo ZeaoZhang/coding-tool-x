@@ -151,6 +151,60 @@ describe('OMP gateway data plane', () => {
     }
   });
 
+  it('maps managed Codex Responses requests to an OpenAI-compatible v1 endpoint', async () => {
+    let receivedPath = null;
+    const upstream = http.createServer((req, res) => {
+      receivedPath = req.url;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    const upstreamPort = await listen(upstream);
+    const channel = {
+      id: 'codex-channel',
+      name: 'Codex Edge',
+      providerKey: 'codex-edge',
+      providerApi: 'openai-codex-responses',
+      routingGroup: 'codex',
+      baseUrl: `http://127.0.0.1:${upstreamPort}/v1?api-version=2026-01-01`,
+      apiKey: 'upstream-key',
+      enabled: true,
+      models: [{ id: 'gpt-5.5' }],
+      model: 'gpt-5.5'
+    };
+    const secret = 'codex-path-secret';
+    const gateway = createOmpGateway({
+      getChannels: () => [channel],
+      allocateChannel: vi.fn(async () => channel),
+      releaseChannel: vi.fn(),
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn()
+    });
+
+    try {
+      const status = await gateway.start({ port: 0, secret });
+      const route = prepareManagedOmpChannels([channel], {
+        host: '127.0.0.1',
+        port: status.port,
+        secret
+      }).routes[0];
+      const response = await request({
+        port: status.port,
+        path: `/omp/${route.token}/codex/responses?foo=bar&api_key=must-not-forward`,
+        headers: {
+          authorization: `Bearer ${route.capability}`,
+          'content-type': 'application/json'
+        },
+        body: Buffer.from('{"model":"gpt-5.5"}')
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(receivedPath).toBe('/v1/responses?api-version=2026-01-01&foo=bar');
+    } finally {
+      await gateway.stop();
+      await close(upstream);
+    }
+  });
+
   it('fails closed when the local gateway capability is missing or incorrect', async () => {
     let upstreamRequests = 0;
     const upstream = http.createServer((_req, res) => {

@@ -15,7 +15,7 @@ async function getLatestVersion(packageName) {
   const { stdout } = await execFileAsync(
     npmCommand,
     ['view', packageName, 'version', '--json'],
-    { timeout: 15000 }
+    { timeout: 15000, windowsHide: true }
   );
   const parsed = JSON.parse(stdout.trim());
   if (typeof parsed === 'string') return parsed;

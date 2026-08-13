@@ -1243,6 +1243,7 @@ module.exports = {
   getLastManagedOmpSyncResult,
   isManagedOmpProvidersActive,
   isManagedProviderExtensionActive: isManagedOmpProvidersActive,
+  isManagedProviderId,
   normalizeProviderId,
   normalizeProviderApi,
   normalizeModels,

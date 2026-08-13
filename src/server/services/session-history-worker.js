@@ -20,7 +20,8 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
         CC_TOOL_SESSION_HISTORY_CHILD: '1'
       },
       silent: true,
-      stdio: ['pipe', 'pipe', 'pipe', 'ipc']
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+      windowsHide: true
     });
 
     let settled = false;

@@ -58,6 +58,34 @@ function buildUpstreamRequestPath(baseUrl, requestUrl) {
   return `${pathname.startsWith('/') ? pathname : `/${pathname}`}${query ? `?${query}` : ''}`;
 }
 
+function rewriteCodexResponsesRequestPath(baseUrl, requestUrl, providerApi = '') {
+  if (providerApi !== 'openai-codex-responses') return buildUpstreamRequestPath(baseUrl, requestUrl);
+
+  const base = new URL(baseUrl);
+  const request = new URL(requestUrl, 'http://127.0.0.1');
+  const requestedPath = request.pathname.replace(/\/+$/, '') || '/';
+  if (!requestedPath.endsWith('/codex/responses')) {
+    return buildUpstreamRequestPath(baseUrl, requestUrl);
+  }
+
+  const basePath = base.pathname === '/' ? '' : base.pathname.replace(/\/+$/, '');
+  let pathname;
+  if (!basePath) {
+    pathname = '/codex/responses';
+  } else if (basePath.endsWith('/responses')) {
+    pathname = basePath;
+  } else if (basePath.endsWith('/v1') || basePath.endsWith('/codex')) {
+    pathname = `${basePath}/responses`;
+  } else {
+    pathname = `${basePath}/codex/responses`;
+  }
+
+  const search = new URLSearchParams(base.searchParams);
+  request.searchParams.forEach((value, name) => search.set(name, value));
+  const query = search.toString();
+  return `${pathname.startsWith('/') ? pathname : `/${pathname}`}${query ? `?${query}` : ''}`;
+}
+
 function rewriteCredential(headers, requestUrl, route, channel, options = {}) {
   const next = { ...headers };
   delete next.host;
@@ -428,7 +456,7 @@ function createOmpGateway(options = {}) {
         return;
       }
 
-      const upstreamPath = buildUpstreamRequestPath(channel.baseUrl, route.upstreamPath);
+      const upstreamPath = rewriteCodexResponsesRequestPath(channel.baseUrl, route.upstreamPath, route.providerApi);
       const rewritten = rewriteCredential(req.headers, upstreamPath, route, channel);
       const transport = upstream.protocol === 'https:' ? https : http;
       let upstreamResponse = null;
