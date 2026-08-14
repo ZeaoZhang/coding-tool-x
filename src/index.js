@@ -135,7 +135,8 @@ async function stopOwnedOmpGatewayBeforeExit() {
       stopOmpProxyServer
     } = require('./server/omp-proxy-server');
     if (getOmpProxyStatus().running) {
-      await stopOmpProxyServer({ forceAfterMs: 1500 });
+      const preserveManagedMode = process.argv.includes('--daemon');
+      await stopOmpProxyServer({ forceAfterMs: 1500, preserveManagedMode });
     }
   } catch (error) {
     console.error(chalk.yellow(`[WARN]  OMP 动态网关退出清理失败: ${error.message}`));
@@ -741,3 +742,9 @@ async function main() {
 main().catch((error) => {
   void shutdownProcess(1, error);
 });
+
+module.exports = {
+  _test: {
+    stopOwnedOmpGatewayBeforeExit
+  }
+};

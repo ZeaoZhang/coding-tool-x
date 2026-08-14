@@ -199,6 +199,29 @@ it('hands off to one direct current provider before stopping the gateway', async
     port: null
   }));
 });
+it('preserves managed mode when the owning service process shuts down', async () => {
+  loadManagedOmpModeState.mockReturnValue({
+    activeChannelId: 'channel-a',
+    gateway: {
+      host: '127.0.0.1',
+      port: 20092,
+      secret: 'gateway-secret'
+    }
+  });
+  const proxy = require('../../../src/server/omp-proxy-server');
+  await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
+  activateStaticOmpChannel.mockClear();
+  disableManagedOmpProviders.mockClear();
+  disableManagedOmpMode.mockClear();
+
+  await proxy.stopOmpProxyServer({ preserveManagedMode: true });
+
+  expect(activateStaticOmpChannel).not.toHaveBeenCalled();
+  expect(disableManagedOmpProviders).not.toHaveBeenCalled();
+  expect(disableManagedOmpMode).not.toHaveBeenCalled();
+  expect(stopOmpSessionLogObserver).toHaveBeenCalledTimes(1);
+  expect(clearProxyStartTime).toHaveBeenCalledWith('omp');
+});
 
 it('rolls back newly enabled managed mode when provider synchronization fails', async () => {
   syncManagedOmpProviders.mockImplementation(() => {

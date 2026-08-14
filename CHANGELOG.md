@@ -6,6 +6,9 @@
 
 ## [Unreleased]
 
+### Security
+- **依赖安全升级** - adm-zip 升至 0.6.0（GHSA-xcpc-8h2w-3j85）、js-yaml 升至 4.3.1（GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj）、pm2 升至 7.0.3（GHSA-x5gf-qvw8-r2rm），overrides 同步更新 basic-ftp / qs / systeminformation / js-yaml；`npm audit` 报告归零
+
 ### Fixed
 - **Claude / Gemini 原生 wire 兼容** - OpenCode Claude / Gemini 代理、模型探测和测速统一使用 Anthropic Messages 与 Google Generative AI（含 Gemini CLI）原生请求格式、认证头与目标 URL；OMP managed provider 写入 `anthropic-messages` / `google-generative-ai` 标识，避免代理、adapter 与探测各自维护不一致的请求格式
 - **OMP Codex Responses 路径兼容** - managed gateway 将 OMP 原生 `openai-codex-responses` 的 `/codex/responses` 请求映射到 OpenAI-compatible 渠道的 `/v1/responses`，避免 Codex-only 服务返回 HTTP 404

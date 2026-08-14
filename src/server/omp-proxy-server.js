@@ -107,6 +107,7 @@ function startOmpProxyServer(options = {}) {
 
 async function stopOmpProxyServerUnlocked(options = {}) {
   const clearStartTime = options.clearStartTime !== false;
+  const preserveManagedMode = options.preserveManagedMode === true;
   const stoppedPort = currentPort;
   if (!gateway.status().listening && !isManagedOmpModeEnabled()) {
     return {
@@ -126,18 +127,20 @@ async function stopOmpProxyServerUnlocked(options = {}) {
   gateway.beginDraining();
   stopOmpSessionLogObserver();
   try {
-    if (activeChannel) {
-      const handoff = activateStaticOmpChannel(activeChannel.id);
-      lastSyncResult = handoff?.sync || lastSyncResult;
-    } else {
-      lastSyncResult = disableManagedOmpProviders();
+    if (!preserveManagedMode) {
+      if (activeChannel) {
+        const handoff = activateStaticOmpChannel(activeChannel.id);
+        lastSyncResult = handoff?.sync || lastSyncResult;
+      } else {
+        lastSyncResult = disableManagedOmpProviders();
+      }
+      disableManagedOmpMode();
     }
   } catch (error) {
     startOmpSessionLogObserver();
     gateway.cancelDraining();
     throw error;
   }
-  disableManagedOmpMode();
   await gateway.stop({ forceAfterMs: options.forceAfterMs });
   currentPort = null;
   lastRoutingResult = { routes: [], unsupportedChannels: [] };
