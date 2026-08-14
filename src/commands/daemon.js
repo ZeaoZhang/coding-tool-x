@@ -410,6 +410,7 @@ function buildStartOptions(port, enableHost, enableHttps) {
     args: pmArgs,
     interpreter: 'node',
     autorestart: true,
+    kill_timeout: 5000,
     max_memory_restart: '500M',
     env: {
       NODE_ENV: 'production',
@@ -617,18 +618,8 @@ async function handleStop() {
  */
 async function handleRestart() {
   try {
-    await connectPM2();
-
-    const existing = await getCCToolProcess();
-    if (!existing) {
-      console.log(chalk.yellow('\n[WARN]  服务未在运行，请使用 ') + chalk.cyan('ctx start') + chalk.yellow(' 启动\n'));
-      disconnectPM2();
-      return;
-    }
-
-    await restartPM2Process(PM2_APP_NAME);
-    console.log(chalk.green('\n[OK] Coding-Tool 服务已重启\n'));
-    await finalizePM2Session({ persist: true });
+    await handleStop();
+    await handleStart();
   } catch (error) {
     console.error(chalk.red('重启失败:'), error.message);
     disconnectPM2();

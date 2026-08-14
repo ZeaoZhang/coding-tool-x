@@ -31,6 +31,7 @@ beforeEach(() => {
     disconnect: vi.fn(),
     list: vi.fn((cb) => cb(null, processList)),
     stop: vi.fn((name, cb) => cb(null)),
+    start: vi.fn((options, cb) => cb(null)),
     delete: vi.fn((name, cb) => cb(null)),
     dump: vi.fn((force, cb) => {
       const callback = typeof force === 'function' ? force : cb;
@@ -173,9 +174,37 @@ describe('daemon handleStop', () => {
   });
 });
 
+describe('daemon restart flow', () => {
+  test('restarts by stopping the existing service before starting again', async () => {
+    processList = [{ name: 'cc-tool', pid: 1234, pm2_env: { status: 'online' } }];
+    pm2Mock.stop.mockImplementation((name, cb) => {
+      processList = [];
+      cb(null);
+    });
+    pm2Mock.start.mockImplementation((options, cb) => {
+      processList = [{ name: 'cc-tool', pid: 5678, pm2_env: { status: 'online' } }];
+      cb(null);
+    });
+    findProcessByPort.mockImplementation((port) => (port === 19999 ? ['5678'] : []));
+
+    await daemon.handleRestart();
+
+    expect(pm2Mock.stop).toHaveBeenCalledWith('cc-tool', expect.any(Function));
+    expect(pm2Mock.delete).toHaveBeenCalledWith('cc-tool', expect.any(Function));
+    expect(pm2Mock.start).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'cc-tool',
+      kill_timeout: 5000
+    }), expect.any(Function));
+    expect(pm2Mock.disconnect).toHaveBeenCalled();
+  });
+});
+
 describe('daemon stop helpers', () => {
   test('maps LAN host mode to a canonical --host daemon arg', () => {
     expect(daemon._test.buildStartOptions(19999, true, false).args).toContain('--host');
+  });
+  test('allows PM2 enough time for graceful gateway shutdown', () => {
+    expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(5000);
   });
 
   test('should only send stop to active pm2 states', () => {
