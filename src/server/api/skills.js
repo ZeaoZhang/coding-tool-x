@@ -45,7 +45,7 @@ function extractRepoPayload(source = {}) {
     host: repo.host || source.host || '',
     owner: repo.owner || source.owner || '',
     name: repo.name || source.name || '',
-    branch: repo.branch || source.branch || 'main',
+    branch: repo.branch || source.branch || '',
     directory: repo.directory || source.directory || '',
     projectPath: repo.projectPath || source.projectPath || '',
     localPath: repo.localPath || source.localPath || '',
