@@ -469,6 +469,514 @@ local uploaded content
     }
   }
 
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const cachedSkills = [
+        { name: 'omp-cached-skill', directory: 'omp-cached-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'example',
+          name: 'omp-skills',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+      let prepareCalls = 0;
+      service.prepareSkills = skills => {
+        prepareCalls++;
+        return skills.map(skill => ({ ...skill }));
+      };
+
+      let remoteCalls = 0;
+      service.fetchRepoSkills = async () => {
+        remoteCalls++;
+        throw new Error('network unavailable');
+      };
+
+      const listedSkills = await service.listSkills();
+      const cachedSkillsAgain = await service.listSkills();
+      const otherCwdSkills = await service.listSkills(false, { cwd: path.join(tempRoot, 'project-b') });
+      assert.deepStrictEqual(otherCwdSkills, listedSkills, '不同项目上下文应复用远程缓存但重新准备列表');
+
+      assert.deepStrictEqual(listedSkills.map(skill => skill.directory), ['omp-cached-skill'], 'OMP 普通请求应优先返回磁盘缓存');
+      assert.deepStrictEqual(cachedSkillsAgain, listedSkills, 'OMP 缓存命中结果应保持一致');
+      assert.strictEqual(remoteCalls, 0, 'OMP 缓存命中时不应请求远程仓库');
+      assert.strictEqual(prepareCalls, 2, '不同项目上下文不应复用同一份准备缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const cachedSkills = [
+        { name: 'omp-stale-skill', directory: 'omp-stale-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'example',
+          name: 'omp-skills',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      service.fetchRepoSkills = async () => {
+        throw new Error('network unavailable');
+      };
+
+      const listedSkills = await service.listSkills(true);
+      assert.deepStrictEqual(listedSkills.map(skill => skill.directory), ['omp-stale-skill'], 'OMP 强制刷新失败时应回退到旧缓存');
+      const diskCache = JSON.parse(fs.readFileSync(service.cachePath, 'utf-8'));
+      assert.deepStrictEqual(diskCache.skills.map(skill => skill.directory), ['omp-stale-skill'], 'OMP 刷新失败不应覆盖磁盘缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'example',
+          name: 'omp-skills',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      let resolveRemote;
+      const remoteResult = new Promise(resolve => {
+        resolveRemote = resolve;
+      });
+      let remoteCalls = 0;
+      service.fetchRepoSkills = async () => {
+        remoteCalls++;
+        return remoteResult;
+      };
+
+      const firstRequest = service.listSkills(true);
+      const secondRequest = service.listSkills(true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(remoteCalls, 1, '并发 OMP 刷新应共享同一个远程请求');
+      resolveRemote([{ name: 'shared-remote-skill', directory: 'shared-remote-skill', installed: false }]);
+      const [firstSkills, secondSkills] = await Promise.all([firstRequest, secondRequest]);
+      assert.deepStrictEqual(firstSkills, secondSkills, '共享远程请求的并发结果应一致');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'example',
+          name: 'omp-skills',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+      service.ompRemoteRefreshTimeoutMs = 10;
+      service.prepareSkills = skills => [
+        ...skills,
+        { name: 'omp-local-skill', directory: 'omp-local-skill', installed: true }
+      ];
+      let remoteCalls = 0;
+      service.fetchRepoSkills = () => {
+        remoteCalls++;
+        return new Promise(() => {});
+      };
+
+      const started = Date.now();
+      const listedSkills = await service.listSkills(true);
+      const elapsed = Date.now() - started;
+      assert(elapsed < 1500, `OMP 远程超时时应快速返回，实际耗时 ${elapsed}ms`);
+      assert.deepStrictEqual(listedSkills.map(skill => skill.directory), ['omp-local-skill'], 'OMP 冷启动断网应返回本地 fallback');
+
+      const secondStarted = Date.now();
+      const secondSkills = await service.listSkills();
+      const secondElapsed = Date.now() - secondStarted;
+      assert(secondElapsed < 500, `OMP 断网 fallback 后普通请求应快速返回，实际耗时 ${secondElapsed}ms`);
+      assert.deepStrictEqual(secondSkills, listedSkills, 'OMP 断网 fallback 后普通请求结果应保持一致');
+      assert.strictEqual(remoteCalls, 1, 'OMP 断网 fallback 后普通请求不应重复请求远程仓库');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'example',
+          name: 'omp-skills',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+      service.ompRemoteRefreshTimeoutMs = 10;
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      let resolveRemote;
+      service.fetchRepoSkills = () => new Promise(resolve => {
+        resolveRemote = resolve;
+      });
+
+      const firstSkills = await service.listSkills(true);
+      const pendingRefresh = service.ompRemoteRefreshPromise;
+      assert.deepStrictEqual(firstSkills, [], '远程超时时首次结果应使用空远程 fallback');
+      resolveRemote([{ name: 'eventual-skill', directory: 'eventual-skill', installed: false }]);
+      await pendingRefresh;
+
+      const secondSkills = await service.listSkills();
+      assert.deepStrictEqual(
+        secondSkills.map(skill => skill.directory),
+        ['eventual-skill'],
+        '后台远程刷新成功后普通请求应重新准备最新技能'
+      );
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const cachedSkills = [
+        { name: 'stale-skill', directory: 'stale-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      const freshRepo = service.normalizeRepoConfig({
+        provider: 'github',
+        owner: 'fresh-owner',
+        name: 'fresh-repo',
+        branch: 'main',
+        enabled: true
+      });
+      const offlineRepo = service.normalizeRepoConfig({
+        provider: 'local',
+        owner: 'offline-owner',
+        name: 'offline-repo',
+        branch: 'main',
+        localPath: path.join(tempRoot, 'missing-local'),
+        enabled: true
+      });
+      service.saveRepos([freshRepo, offlineRepo]);
+      service.ompRemoteRefreshTimeoutMs = 10;
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      let resolveFresh;
+      service.fetchRepoSkills = async repo => {
+        if (repo.owner === 'fresh-owner') {
+          return new Promise(resolve => {
+            resolveFresh = resolve;
+          });
+        }
+        throw new Error('network unavailable');
+      };
+
+      const firstSkills = await service.listSkills(true);
+      const pendingRefresh = service.ompRemoteRefreshPromise;
+      assert.deepStrictEqual(firstSkills.map(skill => skill.directory), ['stale-skill'], '部分远程刷新超时时应先返回旧缓存');
+      resolveFresh([{ name: 'fresh-skill', directory: 'fresh-skill', installed: false }]);
+      await pendingRefresh;
+
+      const secondSkills = await service.listSkills();
+      assert.deepStrictEqual(
+        secondSkills.map(skill => skill.directory),
+        ['fresh-skill', 'stale-skill'],
+        '后台部分刷新成功后普通请求应展示新结果并保留旧缓存'
+      );
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const cachedSkills = [
+        { name: 'invalidated-skill', directory: 'invalidated-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      service.saveRepos([
+        service.normalizeRepoConfig({
+          provider: 'github',
+          owner: 'example',
+          name: 'omp-skills',
+          branch: 'main',
+          enabled: true
+        })
+      ]);
+      service.ompRemoteRefreshTimeoutMs = 10;
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      let refreshMode = 'pending';
+      let remoteCalls = 0;
+      service.fetchRepoSkills = () => {
+        remoteCalls++;
+        return refreshMode === 'pending'
+          ? new Promise(() => {})
+          : Promise.resolve([]);
+      };
+
+      const firstRequest = service.listSkills(true);
+      await new Promise(resolve => setImmediate(resolve));
+      service.clearCache({ removeFile: true });
+      await firstRequest;
+      refreshMode = 'resolved';
+      const nextSkills = await service.listSkills();
+      assert.deepStrictEqual(nextSkills, [], '失效刷新超时后不应返回旧的项目缓存');
+      assert.strictEqual(remoteCalls, 2, '失效刷新超时后普通请求应使用新缓存世代');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      let prepareCalls = 0;
+      service.prepareSkills = skills => {
+        prepareCalls++;
+        if (prepareCalls === 1) {
+          service.ompRemoteRefreshGeneration++;
+        }
+        return skills;
+      };
+
+      const prepared = service.prepareAndCacheOmpSkills([
+        { name: 'stale-path-skill', directory: 'stale-path-skill', installed: false }
+      ]);
+      assert.deepStrictEqual(prepared, [], '路径失效时应返回未缓存的当前本地准备结果');
+      assert.strictEqual(service.ompPreparedSkillsCache, null, '路径失效时不应提交旧的准备缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const skills = [
+        { name: 'remote-a', directory: 'remote-a', installed: false },
+        { name: 'remote-b', directory: 'remote-b', installed: false }
+      ];
+      let refreshCalls = 0;
+      service.refreshOmpPaths = () => {
+        refreshCalls++;
+      };
+
+      service.updateInstallStatus(skills);
+      assert.strictEqual(refreshCalls, 1, 'OMP 更新安装状态时应只解析一次动态安装路径');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const skills = [
+        { name: 'remote-a', directory: 'remote-a', installed: false },
+        { name: 'remote-b', directory: 'remote-b', installed: false }
+      ];
+      let refreshCalls = 0;
+      service.refreshOmpPaths = () => {
+        refreshCalls++;
+      };
+
+      service.updateInstallStatus(skills, { pathsRefreshed: true });
+      assert.strictEqual(refreshCalls, 0, 'OMP 已完成列表级路径解析后不应重复解析动态安装路径');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const previousToken = process.env.GITHUB_TOKEN;
+      const previousGhToken = process.env.GH_TOKEN;
+      delete process.env.GITHUB_TOKEN;
+      delete process.env.GH_TOKEN;
+      try {
+        service.getTokenFromConfigFile = () => null;
+        service.getTokenFromCommand = () => null;
+        let credentialCalls = 0;
+        service.getTokenFromGitCredential = () => {
+          credentialCalls++;
+          return null;
+        };
+
+        service.getGitHubToken('https://github.example.com');
+        service.getGitHubToken('https://github.example.com');
+        assert.strictEqual(credentialCalls, 1, 'GitHub 全局凭证解析应按 host 缓存，避免每个 Blob 重复执行 git credential');
+        process.env.GITHUB_TOKEN = 'env-token';
+        assert.strictEqual(service.getGitHubToken('https://github.example.com'), 'env-token', '环境变量 Token 应覆盖已缓存的 git credential 结果');
+      } finally {
+        if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+        else process.env.GITHUB_TOKEN = previousToken;
+        if (previousGhToken === undefined) delete process.env.GH_TOKEN;
+        else process.env.GH_TOKEN = previousGhToken;
+      }
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService();
+    try {
+      let receivedRepo = null;
+      service.fetchGitHubApi = async (_url, repo) => {
+        receivedRepo = repo;
+        return { content: Buffer.from('skill-content', 'utf-8').toString('base64') };
+      };
+      const repo = service.normalizeRepoConfig({
+        provider: 'github',
+        owner: 'example',
+        name: 'omp-skills',
+        branch: 'main'
+      });
+
+      const content = await service.fetchGitHubBlobContent('sha', repo);
+      assert.strictEqual(content, 'skill-content', 'GitHub Blob 内容应正确解码');
+      assert.strictEqual(receivedRepo, repo, 'GitHub Blob 请求应传递仓库上下文以复用仓库凭证');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const repo = service.normalizeRepoConfig({
+        provider: 'github',
+        owner: 'example',
+        name: 'omp-skills',
+        branch: 'main',
+        enabled: true
+      });
+      service.saveRepos([repo]);
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      const resolvers = [];
+      let remoteCalls = 0;
+      service.fetchRepoSkills = () => {
+        remoteCalls++;
+        return new Promise(resolve => resolvers.push(resolve));
+      };
+
+      const firstRequest = service.listSkills(true);
+      await new Promise(resolve => setImmediate(resolve));
+      service.clearCache({ removeFile: true });
+      service.saveRepos([repo]);
+      const secondRequest = service.listSkills(true);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(remoteCalls, 2, '仓库配置变更后不应复用旧的 OMP 远程刷新');
+
+      resolvers[1]([{ name: 'new-skill', directory: 'new-skill', installed: false }]);
+      const secondSkills = await secondRequest;
+      resolvers[0]([{ name: 'old-skill', directory: 'old-skill', installed: false }]);
+      await firstRequest;
+      const afterRaceSkills = await service.listSkills();
+      assert.deepStrictEqual(
+        afterRaceSkills.map(skill => skill.directory),
+        ['new-skill'],
+        '失效刷新完成后普通请求不应返回旧的准备缓存'
+      );
+      assert.deepStrictEqual(secondSkills.map(skill => skill.directory), ['new-skill'], '新仓库刷新应返回新技能');
+      assert.deepStrictEqual(
+        service.ompRemoteSkillsCache.map(skill => skill.directory),
+        ['new-skill'],
+        '旧刷新结果不应覆盖新仓库的内存缓存'
+      );
+      const diskCache = JSON.parse(fs.readFileSync(service.cachePath, 'utf-8'));
+      assert.deepStrictEqual(diskCache.skills.map(skill => skill.directory), ['new-skill'], '旧刷新结果不应覆盖仓库变更后的缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const cachedSkills = [
+        { name: 'stale-skill', directory: 'stale-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      const repoA = service.normalizeRepoConfig({
+        provider: 'github',
+        owner: 'fresh-owner',
+        name: 'fresh-repo',
+        branch: 'main',
+        enabled: true
+      });
+      const repoB = service.normalizeRepoConfig({
+        provider: 'github',
+        owner: 'offline-owner',
+        name: 'offline-repo',
+        branch: 'main',
+        enabled: true
+      });
+      service.saveRepos([repoA, repoB]);
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      service.fetchRepoSkills = async repo => {
+        if (repo.owner === 'fresh-owner') {
+          return [{ name: 'fresh-skill', directory: 'fresh-skill', installed: false }];
+        }
+        throw new Error('network unavailable');
+      };
+
+      const listedSkills = await service.listSkills(true);
+      assert.deepStrictEqual(
+        listedSkills.map(skill => skill.directory),
+        ['fresh-skill', 'stale-skill'],
+        '部分远程仓库失败时应保留成功结果并合并旧缓存'
+      );
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
+  {
+    const { service, tempRoot } = createTempSkillService('omp');
+    try {
+      const cachedSkills = [
+        { name: 'stale-skill', directory: 'stale-skill', installed: false }
+      ];
+      fs.writeFileSync(service.cachePath, JSON.stringify({ time: Date.now(), skills: cachedSkills }), 'utf-8');
+      const localRepo = service.normalizeRepoConfig({
+        provider: 'local',
+        localPath: path.join(tempRoot, 'missing-local'),
+        enabled: true
+      });
+      service.saveRepos([localRepo]);
+      service.prepareSkills = skills => skills.map(skill => ({ ...skill }));
+      service.fetchRepoSkills = async () => {
+        throw new Error('local repository unavailable');
+      };
+
+      const listedSkills = await service.listSkills(true);
+      assert.deepStrictEqual(listedSkills.map(skill => skill.directory), ['stale-skill'], '本地仓库失败时应保留旧缓存');
+      const diskCache = JSON.parse(fs.readFileSync(service.cachePath, 'utf-8'));
+      assert.deepStrictEqual(diskCache.skills.map(skill => skill.directory), ['stale-skill'], '本地仓库失败时不应覆盖远程缓存');
+    } finally {
+      cleanupTemp(tempRoot);
+    }
+  }
+
   console.log('skills provider 测试通过');
 }
 

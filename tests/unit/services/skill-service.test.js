@@ -674,6 +674,52 @@ describe('SkillService.getSkillDetail', () => {
       fullPath: path.join(skillDir, 'SKILL.md')
     }));
   });
+
+  it('reads omp skills discovered from non-native providers (agents global) via cache', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    const skillDir = path.join(testDir, 'agents-global', 'agent-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: Agent Skill\ndescription: From agents\n---\nAgent body',
+      'utf-8'
+    );
+
+    // 与 discoverOmpSkills 产出的 agents provider 条目一致（不在 native 安装目录）
+    svc.skillsCache = [{
+      name: 'agent-skill',
+      description: 'From agents',
+      directory: 'agent-skill',
+      installed: true,
+      isLocal: false,
+      source: 'provider-installed',
+      sourceProvider: 'agents',
+      sourceScope: 'user',
+      sourcePath: path.join(skillDir, 'SKILL.md'),
+      realPath: path.join(skillDir, 'SKILL.md'),
+      readonly: true,
+      shadowedSources: [],
+      protected: false,
+      readmeUrl: null,
+      repoOwner: null,
+      repoName: null,
+      repoBranch: null,
+      license: null
+    }];
+
+    const detail = await svc.getSkillDetail('agent-skill', null, '');
+
+    expect(detail).toEqual(expect.objectContaining({
+      directory: 'agent-skill',
+      installed: true,
+      readonly: true,
+      sourceProvider: 'agents',
+      sourceScope: 'user',
+      content: 'Agent body',
+      fullPath: path.join(skillDir, 'SKILL.md')
+    }));
+  });
 });
 
 describe('SkillService file operations', () => {

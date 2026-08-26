@@ -216,6 +216,7 @@ const PLATFORM_CONFIG = {
 
 // 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
+const OMP_REMOTE_REFRESH_TIMEOUT_MS = 3000;
 
 class SkillService {
   constructor(platform = 'claude') {
@@ -239,6 +240,14 @@ class SkillService {
     // 内存缓存
     this.skillsCache = null;
     this.cacheTime = 0;
+    this.ompRemoteSkillsCache = null;
+    this.ompRemoteRefreshPromise = null;
+    this.ompRemoteRefreshTimeoutMs = OMP_REMOTE_REFRESH_TIMEOUT_MS;
+    this.ompRemoteRefreshGeneration = 0;
+    this.ompPreparedSkillsCache = null;
+    this.ompPreparedSkillsCacheKey = null;
+
+    this.githubTokenCache = new Map();
 
     // 确保目录存在
     this.ensureDirs();
@@ -249,7 +258,7 @@ class SkillService {
     const nextInstallDir = getOmpPaths().skills;
     if (this.installDir !== nextInstallDir) {
       this.installDir = nextInstallDir;
-      this.clearCache();
+      this.clearCache({ invalidateRemoteRefresh: true });
     }
   }
 
@@ -273,9 +282,18 @@ class SkillService {
     }
   }
 
-  clearCache({ removeFile = false } = {}) {
+  clearCache({ removeFile = false, invalidateRemoteRefresh = removeFile } = {}) {
     this.skillsCache = null;
+    this.ompPreparedSkillsCache = null;
+    this.ompPreparedSkillsCacheKey = null;
     this.cacheTime = 0;
+    this.ompRemoteSkillsCache = null;
+    this.githubTokenCache.clear();
+
+    if (invalidateRemoteRefresh) {
+      this.ompRemoteRefreshGeneration++;
+      this.ompRemoteRefreshPromise = null;
+    }
 
     if (removeFile) {
       try {
@@ -303,7 +321,7 @@ class SkillService {
     }
     this.deduplicateSkills(preparedSkills);
     preparedSkills.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-    this.updateInstallStatus(preparedSkills);
+    this.updateInstallStatus(preparedSkills, { pathsRefreshed: this.platform === 'omp' });
 
     return preparedSkills;
   }
@@ -585,7 +603,7 @@ class SkillService {
    */
   async listSkills(forceRefresh = false, options = {}) {
     if (this.platform === 'omp') {
-      return this.listOmpSkills(options);
+      return this.listOmpSkills(forceRefresh, options);
     }
     // 强制刷新时仅清空内存缓存，保留磁盘缓存作为回退来源
     if (forceRefresh) {
@@ -673,25 +691,160 @@ class SkillService {
     return preparedSkills;
   }
 
-  async listOmpSkills(options = {}) {
-    this.refreshOmpPaths();
-    const skills = [];
-    const repos = this.loadRepos().filter(repo => repo.enabled);
-    const results = await Promise.allSettled(repos.map(repo => this.fetchRepoSkills(repo)));
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        skills.push(...result.value);
-      } else {
-        console.warn(
-          `[SkillService] Fetch OMP repo ${repos[index]?.label || repos[index]?.id || ''} failed:`,
-          result.reason?.message
-        );
-      }
+  async listOmpSkills(forceRefresh = false, options = {}) {
+    if (forceRefresh) {
+      this.clearCache();
+    }
+    const requestGeneration = this.ompRemoteRefreshGeneration;
+    const preparedCacheKey = options.cwd ? path.resolve(options.cwd) : '';
+    if (
+      !forceRefresh &&
+      this.ompPreparedSkillsCacheKey === preparedCacheKey &&
+      Array.isArray(this.ompPreparedSkillsCache)
+    ) {
+      return this.ompPreparedSkillsCache;
+    }
+
+    const fileCache = this.loadCacheFromFile();
+    const cachedRemoteSkills = Array.isArray(this.ompRemoteSkillsCache)
+      ? this.ompRemoteSkillsCache
+      : fileCache;
+
+    if (!forceRefresh && Array.isArray(cachedRemoteSkills)) {
+      return this.prepareAndCacheOmpSkills(cachedRemoteSkills, options, requestGeneration);
+    }
+
+    const timeoutToken = Symbol('omp-refresh-timeout');
+    const refreshPromise = this.startOmpRemoteRefresh();
+    const timeoutMs = Math.max(0, Number(this.ompRemoteRefreshTimeoutMs) || OMP_REMOTE_REFRESH_TIMEOUT_MS);
+    let timeoutId;
+    const timeoutPromise = new Promise(resolve => {
+      timeoutId = setTimeout(() => resolve(timeoutToken), timeoutMs);
     });
-    const prepared = this.prepareSkills(skills, options);
+
+    let remoteResult;
+    try {
+      remoteResult = await Promise.race([refreshPromise, timeoutPromise]);
+    } catch (err) {
+      console.warn('[SkillService] OMP remote refresh failed:', err.message);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    const hasCachedRemoteSkills = Array.isArray(cachedRemoteSkills);
+    const hasRemoteResult = Boolean(remoteResult && remoteResult !== timeoutToken);
+    const refreshIsCurrent = requestGeneration === this.ompRemoteRefreshGeneration
+      && (!hasRemoteResult || remoteResult.refreshGeneration === this.ompRemoteRefreshGeneration);
+    const failureCount = remoteResult?.failureCount ?? 1;
+    let remoteSkills;
+
+    if (!refreshIsCurrent) {
+      remoteSkills = [];
+    } else if (hasRemoteResult && failureCount === 0) {
+      remoteSkills = remoteResult.skills;
+    } else if (hasRemoteResult && remoteResult.skills.length > 0) {
+      remoteSkills = hasCachedRemoteSkills
+        ? [...remoteResult.skills, ...cachedRemoteSkills]
+        : remoteResult.skills;
+    } else {
+      remoteSkills = hasCachedRemoteSkills ? cachedRemoteSkills : [];
+    }
+
+    if (
+      refreshIsCurrent && (
+        !hasCachedRemoteSkills ||
+        (hasRemoteResult && failureCount > 0 && remoteResult.skills.length > 0)
+      )
+    ) {
+      this.ompRemoteSkillsCache = remoteSkills;
+    }
+
+    if (!refreshIsCurrent) {
+      return this.prepareSkills([], options);
+    }
+    return this.prepareAndCacheOmpSkills(remoteSkills, options, requestGeneration);
+  }
+
+  prepareAndCacheOmpSkills(
+    remoteSkills,
+    options = {},
+    expectedGeneration = this.ompRemoteRefreshGeneration
+  ) {
+    if (expectedGeneration !== this.ompRemoteRefreshGeneration) {
+      return this.prepareSkills([], options);
+    }
+
+    const prepared = this.prepareSkills(remoteSkills, options);
+    if (expectedGeneration !== this.ompRemoteRefreshGeneration) {
+      return this.prepareSkills([], options);
+    }
+
     this.skillsCache = prepared;
     this.cacheTime = Date.now();
+    this.ompPreparedSkillsCache = prepared;
+    this.ompPreparedSkillsCacheKey = options.cwd ? path.resolve(options.cwd) : '';
     return prepared;
+  }
+
+  startOmpRemoteRefresh() {
+    if (this.ompRemoteRefreshPromise) {
+      return this.ompRemoteRefreshPromise;
+    }
+
+    const refreshPromise = (async () => {
+      const skills = [];
+      const refreshGeneration = this.ompRemoteRefreshGeneration;
+
+      const repos = this.loadRepos().filter(repo => repo.enabled);
+      const results = await Promise.allSettled(repos.map(repo => this.fetchRepoSkills(repo)));
+      let failureCount = 0;
+      let remoteFailureCount = 0;
+
+      results.forEach((result, index) => {
+        const repo = repos[index];
+        if (result.status === 'fulfilled') {
+          skills.push(...result.value);
+          return;
+        }
+        failureCount++;
+        if (repo.provider !== 'local') {
+          remoteFailureCount++;
+        }
+        console.warn(
+          `[SkillService] Fetch OMP repo ${repo?.label || repo?.id || ''} failed:`,
+          result.reason?.message
+        );
+      });
+
+      if (
+        refreshGeneration === this.ompRemoteRefreshGeneration &&
+        (failureCount === 0 || skills.length > 0)
+      ) {
+        const cachedRemoteSkills = this.ompRemoteSkillsCache
+          || this.loadCacheFromFile()
+          || [];
+        const publishedSkills = failureCount === 0
+          ? skills
+          : [...skills, ...cachedRemoteSkills];
+        this.ompRemoteSkillsCache = publishedSkills;
+        this.ompPreparedSkillsCache = null;
+        this.ompPreparedSkillsCacheKey = null;
+        if (failureCount === 0) {
+          this.saveCacheToFile(skills);
+        }
+      }
+
+      return { skills, failureCount, remoteFailureCount, refreshGeneration };
+
+    })();
+
+    const trackedPromise = refreshPromise.finally(() => {
+      if (this.ompRemoteRefreshPromise === trackedPromise) {
+        this.ompRemoteRefreshPromise = null;
+      }
+    });
+    this.ompRemoteRefreshPromise = trackedPromise;
+    return trackedPromise;
   }
 
   /**
@@ -728,12 +881,16 @@ class SkillService {
   /**
    * 更新技能的安装状态
    */
-  updateInstallStatus(skills) {
+  updateInstallStatus(skills, { pathsRefreshed = false } = {}) {
+    if (this.platform === 'omp' && !pathsRefreshed) {
+      this.refreshOmpPaths();
+    }
+
     for (const skill of skills) {
       if (skill.sourceProvider || skill.sourcePath || skill.readonly) {
         skill.installed = skill.installed !== false;
       } else {
-        skill.installed = this.isInstalled(skill.directory);
+        skill.installed = this.isInstalled(skill.directory, { refresh: false });
       }
     }
   }
@@ -991,7 +1148,7 @@ class SkillService {
    */
   async fetchGitHubBlobContent(sha, repo) {
     const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/git/blobs/${sha}`;
-    const data = await this.fetchGitHubApi(url);
+    const data = await this.fetchGitHubApi(url, repo);
     if (!data || typeof data.content !== 'string') {
       throw new Error('Invalid GitHub blob response');
     }
@@ -1060,8 +1217,9 @@ class SkillService {
     const host = typeof repoOrHost === 'string'
       ? repoOrHost
       : (repoOrHost?.host || DEFAULT_GITHUB_HOST);
+    const hostname = extractHostname(host);
+    const cacheKey = `${this.ompRemoteRefreshGeneration}:${hostname || String(host || DEFAULT_GITHUB_HOST).toLowerCase()}`;
 
-    // 优先从环境变量获取
     if (process.env.GITHUB_TOKEN) {
       return process.env.GITHUB_TOKEN;
     }
@@ -1071,7 +1229,6 @@ class SkillService {
       return configToken;
     }
 
-    const hostname = extractHostname(host);
     if (hostname) {
       const ghHostToken = this.getTokenFromCommand('gh', ['auth', 'token', '--hostname', hostname]);
       if (ghHostToken) {
@@ -1084,7 +1241,15 @@ class SkillService {
       return ghToken;
     }
 
-    return this.getTokenFromGitCredential(host);
+    if (this.platform === 'omp' && this.githubTokenCache.has(cacheKey)) {
+      return this.githubTokenCache.get(cacheKey);
+    }
+
+    const credentialToken = this.getTokenFromGitCredential(host);
+    if (this.platform === 'omp') {
+      this.githubTokenCache.set(cacheKey, credentialToken || null);
+    }
+    return credentialToken || null;
   }
 
   getGitLabToken(repoOrHost = DEFAULT_GITLAB_HOST) {
@@ -1411,14 +1576,17 @@ class SkillService {
     return normalizeSkillRelativePath(directory, label);
   }
 
-  resolveInstallPath(directory, label = 'skill directory') {
-    this.refreshOmpPaths();
+  resolveInstallPath(directory, label = 'skill directory', { refresh = true } = {}) {
+    if (refresh) {
+      this.refreshOmpPaths();
+    }
     const safeDirectory = this.normalizeSkillDirectory(directory, label);
     return {
       safeDirectory,
       path: resolveInsideRoot(this.installDir, safeDirectory, label, { allowHiddenSegments: true })
     };
   }
+
 
   resolveStoragePath(directory, label = 'skill directory') {
     const safeDirectory = this.normalizeSkillDirectory(directory, label);
@@ -1435,14 +1603,15 @@ class SkillService {
   /**
    * 检查技能是否已安装
    */
-  isInstalled(directory) {
+  isInstalled(directory, options = {}) {
     try {
-      const { path: skillPath } = this.resolveInstallPath(directory);
+      const { path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
       return fs.existsSync(path.join(skillPath, 'SKILL.md'));
     } catch {
       return false;
     }
   }
+
 
   /**
    * 合并本地 cc-tool 托管的技能（扫描 storageDir，根据 installDir 判断安装状态）
@@ -2193,6 +2362,7 @@ ${content}
       };
     };
 
+    let lastRemoteError = null;
     const tryLoadRemoteDetailFromRepo = async (repo, extraCandidateDirs = []) => {
       try {
         if (repo.provider === 'local') {
@@ -2254,10 +2424,49 @@ ${content}
         const fullDirectory = normalizeRepoPath(skillFile.path.replace(/(^|\/)SKILL\.md$/, ''));
         return parseRemoteSkillContent(content, repo, fullDirectory);
       } catch (err) {
+        lastRemoteError = err.message;
         console.warn('[SkillService] Fetch remote skill detail error:', err.message);
         return null;
       }
     };
+
+    // OMP 平台：列表可来自多个发现源（agents/claude/codex/opencode/插件/自定义目录），
+    // 原生安装目录未命中时，从列表缓存或重新发现结果中取真实文件路径直接读取，
+    // 避免本地技能被误判为远端仓库而报「技能不存在」
+    if (this.platform === 'omp') {
+      const findLocalSkillOnDisk = (source) => (source || []).find(s =>
+        normalizeRepoPath(s.directory) === normalizeRepoPath(safeDirectory) &&
+        !(s.repoOwner || s.repoProjectPath || s.repoLocalPath) &&
+        (s.sourcePath || s.realPath)
+      );
+      const cachedLocalSkill = findLocalSkillOnDisk(this.skillsCache)
+        || findLocalSkillOnDisk(discoverOmpSkills(this, {}));
+      if (cachedLocalSkill) {
+        const skillFile = cachedLocalSkill.realPath || cachedLocalSkill.sourcePath;
+        if (skillFile && fs.existsSync(skillFile)) {
+          const content = fs.readFileSync(skillFile, 'utf-8');
+          const metadata = this.parseSkillMd(content);
+          const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
+          const body = bodyMatch ? bodyMatch[1].trim() : content;
+          return {
+            directory: safeDirectory,
+            name: metadata.name || cachedLocalSkill.name || safeDirectory,
+            description: metadata.description || '',
+            content: body,
+            fullContent: content,
+            installed: true,
+            path: path.dirname(skillFile),
+            fullPath: skillFile,
+            installPath: path.dirname(skillFile),
+            source: cachedLocalSkill.source || 'provider-installed',
+            sourceProvider: cachedLocalSkill.sourceProvider,
+            sourceScope: cachedLocalSkill.sourceScope,
+            protected: !!cachedLocalSkill.protected,
+            readonly: cachedLocalSkill.readonly !== false
+          };
+        }
+      }
+    }
 
     if (repoHint) {
       try {
@@ -2307,6 +2516,9 @@ ${content}
       if (detail) return detail;
     }
 
+    if (lastRemoteError) {
+      throw new Error(`技能不存在或无法获取（远端仓库获取失败: ${lastRemoteError}）`);
+    }
     throw new Error('技能不存在或无法获取');
   }
 
