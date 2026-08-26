@@ -29,6 +29,7 @@ build/
 # Temporary files
 tmp/
 temp/
+.worktrees/
 *.tmp
 
 # AI files
