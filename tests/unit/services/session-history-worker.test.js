@@ -1,5 +1,7 @@
 const childProcess = require('child_process');
-const worker = require('../../../src/server/services/session-history-worker.js');
+const workerPath = require.resolve('../../../src/server/services/session-history-worker.js');
+const sessionHistoryIndexPath = require.resolve('../../../src/server/services/session-history-index.js');
+const worker = require(workerPath);
 
 
 afterEach(() => {
@@ -190,4 +192,72 @@ describe('session-history-worker error IPC helpers', () => {
       vi.restoreAllMocks();
     }
   });
-});
+  it('loads the session history index module before module.exports is assigned during worker boot', async () => {
+    const originalWorkerCacheEntry = require.cache[workerPath];
+    const originalSessionHistoryIndexCacheEntry = require.cache[sessionHistoryIndexPath];
+    const originalEnv = {
+      CC_TOOL_SESSION_HISTORY_WORKER: process.env.CC_TOOL_SESSION_HISTORY_WORKER,
+      CC_TOOL_SESSION_HISTORY_SOURCE: process.env.CC_TOOL_SESSION_HISTORY_SOURCE,
+      CC_TOOL_SESSION_HISTORY_DB: process.env.CC_TOOL_SESSION_HISTORY_DB,
+      CC_TOOL_SESSION_HISTORY_FORCE: process.env.CC_TOOL_SESSION_HISTORY_FORCE,
+      CC_TOOL_SESSION_HISTORY_CHILD: process.env.CC_TOOL_SESSION_HISTORY_CHILD
+    };
+    const ensureSourceIndexed = vi.fn(() => Promise.resolve());
+    const createSessionHistoryIndex = vi.fn(() => ({ ensureSourceIndexed }));
+    const send = vi.fn((_message, callback) => callback());
+    const exit = vi.fn();
+    const originalSend = process.send;
+    const originalExit = process.exit;
+
+    try {
+      require.cache[sessionHistoryIndexPath] = {
+        id: sessionHistoryIndexPath,
+        filename: sessionHistoryIndexPath,
+        loaded: true,
+        exports: { createSessionHistoryIndex }
+      };
+
+      process.send = send;
+      process.exit = exit;
+      process.env.CC_TOOL_SESSION_HISTORY_WORKER = '1';
+      process.env.CC_TOOL_SESSION_HISTORY_SOURCE = 'demo-cli';
+      process.env.CC_TOOL_SESSION_HISTORY_DB = '/tmp/history.sqlite';
+      process.env.CC_TOOL_SESSION_HISTORY_FORCE = '1';
+      process.env.CC_TOOL_SESSION_HISTORY_CHILD = '1';
+
+      delete require.cache[workerPath];
+      expect(() => require(workerPath)).not.toThrow();
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(createSessionHistoryIndex).toHaveBeenCalledWith({ dbPath: '/tmp/history.sqlite' });
+      expect(ensureSourceIndexed).toHaveBeenCalledWith('demo-cli', { consistency: 'complete', force: true });
+      expect(send).toHaveBeenCalledWith({ type: 'done' }, expect.any(Function));
+      expect(exit).toHaveBeenCalledWith(0);
+    } finally {
+      process.send = originalSend;
+      process.exit = originalExit;
+
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+
+      if (originalSessionHistoryIndexCacheEntry) {
+        require.cache[sessionHistoryIndexPath] = originalSessionHistoryIndexCacheEntry;
+      } else {
+        delete require.cache[sessionHistoryIndexPath];
+      }
+
+      if (originalWorkerCacheEntry) {
+        require.cache[workerPath] = originalWorkerCacheEntry;
+      } else {
+        delete require.cache[workerPath];
+      }
+    }
+  });
+ });
