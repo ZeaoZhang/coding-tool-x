@@ -515,6 +515,60 @@ describe('dashboard-snapshot-worker', () => {
     }
   });
 
+  it('reconstructs structured worker errors from child IPC', async () => {
+    const originalNodeEnv = process.env.NODE_ENV;
+    const cp = require('child_process');
+    const handlers = {};
+    const child = {
+      killed: false,
+      stderr: { on: vi.fn() },
+      removeAllListeners: vi.fn(),
+      kill: vi.fn(() => {
+        child.killed = true;
+      }),
+      on: vi.fn((event, handler) => {
+        handlers[event] = handler;
+        return child;
+      }),
+      send: vi.fn()
+    };
+    const forkSpy = vi.spyOn(cp, 'fork').mockReturnValue(child);
+    process.env.NODE_ENV = 'production';
+
+    try {
+      const promise = worker.runDashboardSnapshotWorker('projects', 'demo-cli', {}, { force: true });
+      handlers.message({
+        ok: false,
+        error: {
+          message: 'Dashboard snapshot projects list failed on demo-cli: adapter exploded',
+          platform: 'demo-cli',
+          capability: 'projects',
+          operation: 'list',
+          cause: {
+            name: 'AdapterError',
+            message: 'adapter exploded',
+            code: 'E_ADAPTER'
+          }
+        }
+      });
+      const error = await promise.then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain('adapter exploded');
+      expect(error.platform).toBe('demo-cli');
+      expect(error.capability).toBe('projects');
+      expect(error.operation).toBe('list');
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.cause.name).toBe('AdapterError');
+      expect(error.cause.message).toBe('adapter exploded');
+      expect(error.cause.code).toBe('E_ADAPTER');
+      expect(child.kill).toHaveBeenCalled();
+      expect(child.removeAllListeners).toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+      forkSpy.mockRestore();
+    }
+  });
+
   it('rejects serialization errors from child.send and cleans up the worker', async () => {
     const originalNodeEnv = process.env.NODE_ENV;
     const cp = require('child_process');

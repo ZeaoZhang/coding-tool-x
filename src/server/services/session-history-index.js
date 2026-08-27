@@ -148,9 +148,31 @@ function _ftsQuote(s) {
   return '"' + String(s).replace(/"/g, '""') + '"';
 }
 
+function _isTypedSessionsResult(result) {
+  return !!result && typeof result === 'object'
+    && (result.status === 'failed' || result.status === 'unsupported')
+    && typeof result.platform === 'string'
+    && typeof result.capability === 'string'
+    && typeof result.operation === 'string';
+}
+
 function _typedSessionsFailure(source, error, operation = 'resolve-driver') {
   const result = {
     status: 'failed',
+    platform: source,
+    capability: 'sessions',
+    operation,
+    error: error && error.message ? error.message : String(error)
+  };
+  if (error) {
+    Object.defineProperty(result, 'cause', { value: error, enumerable: false });
+  }
+  return result;
+}
+
+function _typedSessionsUnsupported(source, error, operation = 'resolve-driver') {
+  const result = {
+    status: 'unsupported',
     platform: source,
     capability: 'sessions',
     operation,
@@ -169,6 +191,9 @@ function _getRuntimeSessionsDriver(runtime, source) {
 
   try {
     const driver = runtime.getDriver(source, 'sessions');
+    if (_isTypedSessionsResult(driver)) {
+      return driver;
+    }
     if (!driver || typeof driver !== 'object') {
       return null;
     }
@@ -350,10 +375,7 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   function _isTypedFailureResult(result) {
-    return !!result && typeof result === 'object' && result.status === 'failed'
-      && typeof result.platform === 'string'
-      && typeof result.capability === 'string'
-      && typeof result.operation === 'string';
+    return _isTypedSessionsResult(result);
   }
 
   function _typedFailureToError(result) {
@@ -394,7 +416,7 @@ function createSessionHistoryIndex(opts = {}) {
         } else if (BUILTIN_SESSION_SOURCES.has(source) && adapters[source]) {
           adapter = adapters[source];
         } else {
-          throw _typedFailureToError(_typedSessionsFailure(source, new Error(`unsupported sessions source: ${source}`)));
+          throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
         }
       }
 
@@ -402,7 +424,7 @@ function createSessionHistoryIndex(opts = {}) {
         if (explicitAdapters) {
           return;
         }
-        throw _typedFailureToError(_typedSessionsFailure(source, new Error(`unsupported sessions source: ${source}`)));
+        throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
       }
 
       if (!force) {
@@ -453,12 +475,19 @@ function createSessionHistoryIndex(opts = {}) {
       for (const d of toParse) {
         try {
           const preStat = { size: d.size, mtimeMs: d.mtimeMs };
-          const { session, messages } = await adapter.parse(d);
+          const parseResult = await adapter.parse(d);
+          if (_isTypedFailureResult(parseResult)) {
+            throw _typedFailureToError(parseResult);
+          }
+          const { session, messages } = parseResult;
 
           try {
             const postStat = fs.statSync(d.filePath);
             if (postStat.size !== preStat.size || postStat.mtimeMs !== preStat.mtimeMs) {
               const retry = await adapter.parse(d);
+              if (_isTypedFailureResult(retry)) {
+                throw _typedFailureToError(retry);
+              }
               const retryStat = fs.statSync(d.filePath);
               if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
                 const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
@@ -469,17 +498,23 @@ function createSessionHistoryIndex(opts = {}) {
               continue;
             }
           } catch (_statErr) {
+            if (_statErr && _isTypedFailureResult(_statErr.failure)) {
+              throw _statErr;
+            }
             continue;
           }
 
           _upsertSession(db, source, d, session, messages);
         } catch (err) {
+          if (err && _isTypedFailureResult(err.failure)) {
+            throw err;
+          }
           errorMsg = errorMsg ? `${errorMsg}; ${d.filePath}: ${err.message}` : `${d.filePath}: ${err.message}`;
         }
       }
 
       stateToRecord = {
-        lastInventoryMs: errorMsg ? null : Date.now(),
+        lastInventoryMs: Date.now(),
         lastError: errorMsg
       };
     } catch (err) {

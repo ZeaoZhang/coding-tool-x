@@ -769,6 +769,40 @@ describe('session-history-index runtime selection', () => {
     }
   });
 
+  it('returns unsupported custom session sources when no runtime sessions driver or adapter is available', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-unsupported-explicit-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => null)
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const error = await index.ensureSourceIndexed('demo-cli', { consistency: 'complete' })
+        .then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.failure).toMatchObject({
+        status: 'unsupported',
+        platform: 'demo-cli',
+        capability: 'sessions',
+        operation: 'resolve-driver'
+      });
+      expect(error.failure.error).toContain('unsupported');
+
+      const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('demo-cli');
+      expect(row).toBeTruthy();
+      expect(row.last_inventory_ms).toBeNull();
+      expect(row.last_error).toContain('unsupported');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
   it('rejects unsupported custom session sources without a runtime driver or adapter', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-unsupported-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
@@ -786,7 +820,7 @@ describe('session-history-index runtime selection', () => {
         .then(() => null, (err) => err);
       expect(error).toBeInstanceOf(Error);
       expect(error.failure).toMatchObject({
-        status: 'failed',
+        status: 'unsupported',
         platform: 'demo-cli',
         capability: 'sessions',
         operation: 'resolve-driver'
@@ -1088,6 +1122,108 @@ describe('session-history-index runtime selection', () => {
       expect(row.last_error).toContain('sessions');
       expect(row.last_error).toContain('inventory');
       expect(row.last_error).toContain('missing');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  it('keeps last_inventory_ms fresh after ordinary parse failures during a completed inventory pass', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-parse-failure-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const goodPath = path.join(rootDir, 'good.jsonl');
+    const badPath = path.join(rootDir, 'bad.jsonl');
+    fs.writeFileSync(goodPath, '{"type":"metadata"}\n', 'utf8');
+    fs.writeFileSync(badPath, '{"type":"metadata"}\n', 'utf8');
+    const goodStat = fs.statSync(goodPath);
+    const badStat = fs.statSync(badPath);
+    const inventory = vi.fn(async () => ([
+      { filePath: goodPath, size: goodStat.size, mtimeMs: goodStat.mtimeMs, sessionId: 'good', projectHint: 'good-project' },
+      { filePath: badPath, size: badStat.size, mtimeMs: badStat.mtimeMs, sessionId: 'bad', projectHint: 'bad-project' }
+    ]));
+    const parse = vi.fn(async (descriptor) => {
+      if (descriptor.filePath === badPath) {
+        throw new Error('parse failure');
+      }
+      return {
+        session: makeSessionFixture('good', 'good-project'),
+        messages: makeMessageFixtures(2)
+      };
+    });
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => ({ inventory, parse }))
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+      expect(inventory).toHaveBeenCalledTimes(1);
+      const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('claude');
+      expect(row).toBeTruthy();
+      expect(row.last_inventory_ms).not.toBeNull();
+      expect(row.last_error).toContain('parse failure');
+      expect(row.last_error).toContain(badPath);
+      expect(await index.getSessionStatus('claude', 'good')).not.toBeNull();
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  it('rejects typed runtime parse failures with platform context before destructuring payloads', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-parse-typed-failure-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'typed-failure.jsonl');
+    fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const parseFailure = {
+      status: 'failed',
+      platform: 'demo-cli',
+      capability: 'sessions',
+      operation: 'parse',
+      error: 'descriptor parse failed'
+    };
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => ({
+          inventory: vi.fn(async () => [{
+            filePath,
+            size: stat.size,
+            mtimeMs: stat.mtimeMs,
+            sessionId: 'typed-failure',
+            projectHint: 'typed-project'
+          }]),
+          parse: vi.fn(async () => parseFailure)
+        }))
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const error = await index.ensureSourceIndexed('demo-cli', { force: true, consistency: 'complete' })
+        .then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.platform).toBe('demo-cli');
+      expect(error.capability).toBe('sessions');
+      expect(error.operation).toBe('parse');
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.cause.message).toContain('descriptor parse failed');
+      expect(error.failure).toMatchObject(parseFailure);
+
+      const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('demo-cli');
+      expect(row.last_inventory_ms).toBeNull();
+      expect(row.last_error).toContain('parse');
+      expect(row.last_error).toContain('descriptor parse failed');
+      const sessionRow = index._getDb().prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ?').get('demo-cli');
+      expect(sessionRow.count).toBe(0);
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
