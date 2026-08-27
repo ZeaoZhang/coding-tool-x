@@ -17,3 +17,44 @@ test('resolves built-ins and rejects a user override', () => {
   expect(registry.resolve('demo-cli').label).toBe('Demo');
   expect(registry.diagnostics()).toEqual([]);
 });
+
+test('public definitions expose support flags without internal driver configuration', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [{
+      key: 'demo-cli',
+      label: 'Demo',
+      title: 'Demo CLI',
+      command: 'demo',
+      iconToken: 'terminal',
+      color: '#123456',
+      defaultVisible: true,
+      apiBasePath: '/api/demo',
+      logFile: 'demo.log',
+      portKey: 'demoProxy',
+      defaultPort: 18080,
+      pathResolverId: 'declarative',
+      paths: { home: '/tmp/demo' },
+      capabilities: {
+        sessions: 'generic-jsonl',
+        proxy: 'unsupported',
+        resourceSync: 'generic-filesystem'
+      }
+    }],
+    userFile: { platforms: [] }
+  });
+
+  expect(registry.getPublicDefinition('demo-cli')).toEqual({
+    key: 'demo-cli',
+    label: 'Demo',
+    title: 'Demo CLI',
+    command: 'demo',
+    iconToken: 'terminal',
+    color: '#123456',
+    defaultVisible: true,
+    capabilities: {
+      sessions: true,
+      proxy: false,
+      resourceSync: true
+    }
+  });
+});

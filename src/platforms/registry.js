@@ -82,8 +82,20 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
     getPublicDefinition(key) {
       const platform = resolve(key);
       if (!platform) return null;
-      const { paths, sessionMapping, resourceMappings, ...publicDefinition } = platform;
-      return clone(publicDefinition);
+      const capabilities = {};
+      for (const [capability, driverId] of Object.entries(platform.capabilities || {})) {
+        capabilities[capability] = driverId !== 'unsupported';
+      }
+      return clone({
+        key: platform.key,
+        label: platform.label,
+        title: platform.title,
+        command: platform.command,
+        iconToken: platform.iconToken,
+        color: platform.color,
+        defaultVisible: platform.defaultVisible,
+        capabilities
+      });
     },
     diagnostics() {
       return clone(diagnostics);
