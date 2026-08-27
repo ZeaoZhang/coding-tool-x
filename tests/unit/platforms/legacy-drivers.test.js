@@ -240,15 +240,17 @@ describe('legacy drivers', () => {
     expect(getTodayStatistics).toHaveBeenCalledTimes(2);
   });
 
-  test('uses real require cache stubs for config paths, codex channels, and proxy drivers', () => {
+  test('uses real require cache stubs for config paths, codex channels, omp channels, and proxy drivers', () => {
     const script = `
       const assert = require('assert');
       const pathsPath = require.resolve('./src/config/paths');
       const codexChannelsPath = require.resolve('./src/server/services/codex-channels');
+      const ompChannelsPath = require.resolve('./src/server/services/omp-channels');
       const ompProxyPath = require.resolve('./src/server/omp-proxy-server');
       const codexProxyPath = require.resolve('./src/server/codex-proxy-server');
       const originals = new Map();
       const unsupportedResult = { status: 'unsupported', platform: 'codex', capability: 'channels', operation: 'list' };
+      const ompChannelsResult = { channels: [{ id: 'omp-channel' }] };
       const calls = [];
       const startOmpProxyServer = options => { calls.push(['omp-start', options]); return { op: 'omp-start', options }; };
       const stopOmpProxyServer = options => { calls.push(['omp-stop', options]); return { op: 'omp-stop', options }; };
@@ -262,6 +264,7 @@ describe('legacy drivers', () => {
       try {
         stub(pathsPath, { PATHS: { activeChannel: { codex: '/tmp/codex-active.json' } } });
         stub(codexChannelsPath, { getChannels: () => unsupportedResult });
+        stub(ompChannelsPath, { getChannels: () => ompChannelsResult });
         stub(ompProxyPath, {
           getOmpProxyStatus: () => ({ running: true, port: 20092 }),
           startOmpProxyServer,
@@ -275,6 +278,9 @@ describe('legacy drivers', () => {
         const { createLegacyDriver } = require('./src/platforms/drivers/legacy');
         assert.strictEqual(require('./src/config/paths').PATHS.activeChannel.codex, '/tmp/codex-active.json');
         assert.strictEqual(createLegacyDriver({ platform: 'codex', capability: 'channels' }).list(), unsupportedResult);
+        assert.deepStrictEqual(createLegacyDriver({ platform: 'omp', capability: 'channels' }).list(), ompChannelsResult.channels);
+        assert.deepStrictEqual(require.cache[ompChannelsPath].exports.getChannels(), ompChannelsResult);
+        assert.strictEqual(require.cache[ompChannelsPath].loaded, true);
         const ompDriver = createLegacyDriver({ platform: 'omp', capability: 'proxy' });
         const ompStartOptions = { preserveManagedMode: true, forceAfterMs: 25 };
         const ompStopOptions = { drain: true, restoration: { activeChannelId: 'channel-1' } };
