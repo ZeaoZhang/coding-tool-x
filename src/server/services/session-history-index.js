@@ -367,10 +367,16 @@ function createSessionHistoryIndex(opts = {}) {
     return error;
   }
 
+  function _recordSourceState(db, source, lastInventoryMs, lastError) {
+    db.prepare(
+      'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+    ).run(source, lastInventoryMs, lastError);
+  }
+
   async function _runInventory(source, { force = false } = {}) {
     const db = _getDb();
     let errorMsg = null;
-    let shouldRecord = true;
+    let stateToRecord = null;
 
     try {
       let adapter = null;
@@ -410,7 +416,9 @@ function createSessionHistoryIndex(opts = {}) {
       if (_isTypedFailureResult(descriptors)) {
         throw _typedFailureToError(descriptors);
       }
-      if (!Array.isArray(descriptors)) return;
+      if (!Array.isArray(descriptors)) {
+        return;
+      }
 
       const seen = new Map();
       for (const d of descriptors) {
@@ -466,25 +474,25 @@ function createSessionHistoryIndex(opts = {}) {
 
           _upsertSession(db, source, d, session, messages);
         } catch (err) {
-          const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
-          if (!existing) {
-            errorMsg = (errorMsg ? errorMsg + '; ' : '') + `${d.filePath}: ${err.message}`;
-          }
+          errorMsg = errorMsg ? `${errorMsg}; ${d.filePath}: ${err.message}` : `${d.filePath}: ${err.message}`;
         }
       }
 
-      db.prepare(
-        'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
-      ).run(source, Date.now(), errorMsg);
+      stateToRecord = {
+        lastInventoryMs: errorMsg ? null : Date.now(),
+        lastError: errorMsg
+      };
     } catch (err) {
       errorMsg = err && err.message ? err.message : String(err);
+      stateToRecord = {
+        lastInventoryMs: null,
+        lastError: errorMsg
+      };
       throw err;
     } finally {
-      if (shouldRecord && errorMsg !== null) {
+      if (stateToRecord) {
         try {
-          db.prepare(
-            'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
-          ).run(source, Date.now(), errorMsg);
+          _recordSourceState(db, source, stateToRecord.lastInventoryMs, stateToRecord.lastError);
         } catch (_err) {}
       }
     }
