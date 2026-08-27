@@ -54,6 +54,64 @@ test('runtime passes resolved paths and flat dependencies into a generic driver'
   ]);
 });
 
+test('runtime passes resolved resource mappings and flat fs dependency into a generic filesystem driver', async () => {
+  const calls = [];
+  const fsImpl = {
+    readdir: async root => { calls.push(['readdir', root]); return ['tool.md']; },
+    stat: async filePath => ({ isDirectory: () => false, isFile: () => true, size: 7, mtimeMs: 11 }),
+    mkdir: async target => calls.push(['mkdir', target]),
+    copyFile: async (source, target) => calls.push(['copyFile', source, target])
+  };
+  const manifest = {
+    key: 'demo-cli',
+    paths: { home: '/tmp/demo' },
+    resourceMappings: { commands: '{home}/commands' }
+  };
+  const registry = {
+    getCapability: () => 'generic-filesystem',
+    resolve: () => manifest,
+    resolvePaths: () => ({ home: '/tmp/demo' })
+  };
+  const driverRegistry = require('../../../src/platforms/driver-registry').createDriverRegistry({
+    drivers: { 'generic-filesystem': require('../../../src/platforms/drivers/generic-filesystem').createGenericFilesystemDriver }
+  });
+  const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies: { fsImpl } });
+  const driver = runtime.getDriver('demo-cli', 'resourceSync');
+
+  await expect(driver.list('commands')).resolves.toEqual([
+    expect.objectContaining({ target: '/tmp/demo/commands/tool.md' })
+  ]);
+  await expect(driver.sync('commands', 'tools/run.md', '/tmp/source.md')).resolves.toEqual({
+    status: 'ok', target: '/tmp/demo/commands/tools/run.md'
+  });
+  expect(calls).toEqual([
+    ['readdir', '/tmp/demo/commands'],
+    ['mkdir', '/tmp/demo/commands/tools'],
+    ['copyFile', '/tmp/source.md', '/tmp/demo/commands/tools/run.md']
+  ]);
+});
+
+test('runtime preserves environment-resolved OpenAI base URLs for generic channels', () => {
+  const { resolveManifestPaths } = require('../../../src/platforms/path-resolver');
+  const fetchImpl = vi.fn();
+  const manifest = { key: 'demo-cli', paths: { home: '/tmp/demo', baseUrl: '$API_BASE' } };
+  const registry = {
+    getCapability: () => 'generic-openai-compatible',
+    resolve: () => manifest,
+    resolvePaths: (_platform, options) => resolveManifestPaths(manifest, options)
+  };
+  const driverRegistry = require('../../../src/platforms/driver-registry').createDriverRegistry({
+    drivers: { 'generic-openai-compatible': require('../../../src/platforms/drivers/generic-openai-compatible').createGenericOpenAICompatibleDriver }
+  });
+  const runtime = createPlatformRuntime({
+    registry,
+    driverRegistry,
+    dependencies: { fetchImpl, pathResolverOptions: { env: { API_BASE: 'https://api.example.test/v1///' } } }
+  });
+
+  expect(runtime.getDriver('demo-cli', 'channels').normalizeEndpoint('/models')).toBe('https://api.example.test/v1/models');
+});
+
 test('keeps OpenAI-compatible base URLs as URLs during manifest path resolution', () => {
   const { resolveManifestPaths } = require('../../../src/platforms/path-resolver');
 

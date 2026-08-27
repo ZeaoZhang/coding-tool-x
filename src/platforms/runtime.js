@@ -1,6 +1,8 @@
 'use strict';
 
+const path = require('path');
 const { createPlatformRegistry } = require('./registry');
+const { resolveTemplate } = require('./path-resolver');
 
 let platformRegistry;
 let platformRuntime;
@@ -13,6 +15,29 @@ function getDefaultDriverRegistry() {
     if (error.code !== 'MODULE_NOT_FOUND' || !error.message.includes("'./driver-registry'")) throw error;
     throw new Error('Platform driver registry is not available; create(id, context) cannot be resolved');
   }
+}
+
+function isUrl(value) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value));
+}
+
+function resolveResourceMappings(resourceMappings = {}, resolvedPaths = {}, pathOptions = {}) {
+  const home = resolvedPaths.home || process.cwd();
+  const resolved = { env: { ...process.env, ...(pathOptions.env || {}) }, home };
+  return Object.fromEntries(Object.entries(resourceMappings).map(([type, value]) => {
+    const raw = resolveTemplate(value, resolved);
+    const target = isUrl(raw) || path.isAbsolute(raw) ? raw : path.join(home, raw);
+    return [type, isUrl(target) ? target : path.normalize(target)];
+  }));
+}
+
+function buildResolvedManifest(rawManifest, resolvedPaths, pathOptions = {}) {
+  if (!rawManifest) return null;
+  const paths = resolvedPaths || rawManifest.paths;
+  const resourceMappings = rawManifest.resourceMappings
+    ? resolveResourceMappings(rawManifest.resourceMappings, paths || {}, pathOptions)
+    : rawManifest.resourceMappings;
+  return { ...rawManifest, paths, resourceMappings };
 }
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
   const resolvedRegistry = registry || createPlatformRegistry();
@@ -27,7 +52,7 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       const resolvedPaths = rawManifest && typeof resolvedRegistry.resolvePaths === 'function'
         ? resolvedRegistry.resolvePaths(platform, pathOptions)
         : null;
-      const manifest = rawManifest ? { ...rawManifest, paths: resolvedPaths || rawManifest.paths } : null;
+      const manifest = buildResolvedManifest(rawManifest, resolvedPaths, pathOptions);
       return driverRegistry.create(driverId, {
         ...dependencies,
         platform,
