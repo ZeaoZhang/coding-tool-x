@@ -16,6 +16,33 @@ test('accepts a valid generic platform manifest', () => {
   expect(result.errors).toEqual([]);
 });
 
+test('accepts sessionGlob but still rejects unknown manifest fields', () => {
+  const withGlob = validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    paths: { sessions: '{home}/sessions' },
+    sessionGlob: 'session-*.jsonl',
+    capabilities: { sessions: 'generic-jsonl' }
+  });
+
+  expect(withGlob.valid).toBe(true);
+  expect(withGlob.errors).toEqual([]);
+
+  const withUnknown = validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    paths: { sessions: '{home}/sessions' },
+    sessionGlob: 'session-*.jsonl',
+    arbitraryGlobRunner: true,
+    capabilities: { sessions: 'generic-jsonl' }
+  });
+
+  expect(withUnknown.valid).toBe(false);
+  expect(normalizeManifestError(withUnknown.errors)).toContain('arbitraryGlobRunner');
+});
+
 test('rejects executable module paths and unknown drivers', () => {
   const result = validateManifest({
     key: 'bad-cli',

@@ -46,6 +46,7 @@ const schema = {
     paths: { type: 'object', additionalProperties: { type: 'string' } },
     pathResolverId: { enum: [...PATH_RESOLVER_IDS] },
     sessionMapping: { type: 'object', additionalProperties: { type: 'string' } },
+    sessionGlob: { type: 'string', minLength: 1 },
     resourceMappings: { type: 'object', additionalProperties: { type: 'string' } },
     capabilities: {
       type: 'object',
