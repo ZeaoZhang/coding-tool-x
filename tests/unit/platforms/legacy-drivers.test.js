@@ -201,6 +201,20 @@ describe('legacy drivers', () => {
     expect(fallbackGetProjects).toHaveBeenCalledWith(options.config);
   });
 
+  test('exposes Claude project order through the projects driver with config-bound arguments', () => {
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const options = { config: { profile: 'claude-profile' }, force: true };
+    const getProjectOrder = vi.fn((...args) => ({ op: 'order', args }));
+    const driver = createLegacyDriver({
+      platform: 'claude',
+      capability: 'projects',
+      requireImpl: makeRequire({ '../../server/services/sessions': { getProjectOrder } })
+    });
+
+    expect(driver.getProjectOrder(options)).toEqual({ op: 'order', args: [options.config] });
+    expect(getProjectOrder).toHaveBeenCalledWith(options.config);
+  });
+
   test('exposes normalized statistics operations and unsupported reset when absent', () => {
     const getStatistics = vi.fn(() => ({ total: 7 }));
     const getDailyStatistics = vi.fn(date => ({ daily: date }));

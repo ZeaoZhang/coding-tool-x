@@ -65,6 +65,47 @@ describe('dashboard-snapshot-worker', () => {
     }));
   });
 
+  it('sorts default runtime Claude projects from persisted order and derives current project from that order', async () => {
+    const getProjects = vi.fn(async () => [
+      { name: 'zeta-project', lastUsed: 30 },
+      { name: 'alpha-project', lastUsed: 20 },
+      { name: 'beta-project', lastUsed: 10 }
+    ]);
+    const getProjectOrder = vi.fn(() => ['beta-project', 'zeta-project']);
+    vi.spyOn(runtimeModule, 'getPlatformRuntime').mockReturnValue({
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects, getProjectOrder };
+      })
+    });
+
+    const config = { currentProject: 'alpha-project' };
+    const result = await worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config,
+      options: { force: false }
+    });
+
+    expect(result).toEqual({
+      projects: [
+        { name: 'beta-project', lastUsed: 10 },
+        { name: 'zeta-project', lastUsed: 30 },
+        { name: 'alpha-project', lastUsed: 20 }
+      ],
+      currentProject: 'beta-project'
+    });
+    expect(getProjects).toHaveBeenCalledWith(expect.objectContaining({
+      force: false,
+      config
+    }));
+    expect(getProjectOrder).toHaveBeenCalledWith(expect.objectContaining({
+      force: false,
+      config
+    }));
+  });
+
   it('uses canonical runtime capabilities while accepting legacy and generic getters', async () => {
     const runtime = {
       getDriver: vi.fn((platform, capability) => {

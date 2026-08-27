@@ -38,6 +38,20 @@ function _getProjectsGetter(driver) {
   return null;
 }
 
+function _getProjectOrderGetter(driver) {
+  if (!driver || typeof driver.getProjectOrder !== 'function') return null;
+  return driver.getProjectOrder.bind(driver);
+}
+
+async function _getClaudeProjectOrder(driver, config, options) {
+  const getter = _getProjectOrderGetter(driver);
+  if (getter) {
+    return getter({ force: options.force === true, config });
+  }
+  return config.projectOrder || config.order || [];
+}
+
+
 function _getCountsGetter(driver) {
   if (!driver) return null;
   if (typeof driver.getProjectAndSessionCounts === 'function') return driver.getProjectAndSessionCounts.bind(driver);
@@ -99,7 +113,12 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
   const driver = _getRuntimeDriver(runtime, source, 'projects');
   const getter = _getProjectsGetter(driver);
   if (getter) {
-    const projects = await getter({ force: options.force === true, config });
+    const driverOptions = { force: options.force === true, config };
+    const projects = await getter(driverOptions);
+    if (source === 'claude') {
+      const order = await _getClaudeProjectOrder(driver, config, options);
+      return _normalizeProjectPayload(source, projects, { projectOrder: order });
+    }
     return _normalizeProjectPayload(source, projects, config);
   }
 

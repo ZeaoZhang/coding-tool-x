@@ -295,6 +295,14 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
     return invokeProjectOperation('getProjects', [normalizedOptions], 'listProjects');
   };
 
+  if (platform === 'claude') {
+    driver.getProjectOrder = options => invokeProjectOperation(
+      'getProjectOrder',
+      [getClaudeConfig(options)],
+      'getProjectOrder'
+    );
+  }
+
   driver.getProjectAndSessionCounts = options => {
     const normalizedOptions = options || {};
     return invokeProjectOperation(
