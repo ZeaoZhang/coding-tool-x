@@ -165,7 +165,7 @@ function _getRuntimeSessionsDriver(runtime, source) {
   }
 }
 
-function _normalizeRuntimeParseResult(result) {
+function _normalizeRuntimeParseResult(result, descriptor = {}) {
   if (!result || typeof result !== 'object') {
     return result;
   }
@@ -184,7 +184,7 @@ function _normalizeRuntimeParseResult(result) {
         provider: result.provider || null,
         model: result.model || null,
         startedAt: result.startedAt || null,
-        updatedAt: result.updatedAt || null,
+        updatedAt: result.updatedAt || descriptor.mtimeMs || null,
         usageJson: result.usageJson || null,
         extraJson: result.extraJson || null
       },
@@ -198,7 +198,7 @@ function _adaptRuntimeSessionsDriver(driver) {
   if (!driver) return null;
   return {
     inventory: (...args) => driver.inventory(...args),
-    parse: async (...args) => _normalizeRuntimeParseResult(await driver.parse(...args))
+    parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(await driver.parse(descriptor, ...args), descriptor)
   };
 }
 

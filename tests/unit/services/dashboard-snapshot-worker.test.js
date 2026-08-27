@@ -65,7 +65,7 @@ describe('dashboard-snapshot-worker', () => {
     }));
   });
 
-  it('sorts default runtime Claude projects from persisted order and derives current project from that order', async () => {
+  it('sorts default runtime Claude projects from persisted order and preserves configured current project', async () => {
     const getProjects = vi.fn(async () => [
       { name: 'zeta-project', lastUsed: 30 },
       { name: 'alpha-project', lastUsed: 20 },
@@ -94,7 +94,7 @@ describe('dashboard-snapshot-worker', () => {
         { name: 'zeta-project', lastUsed: 30 },
         { name: 'alpha-project', lastUsed: 20 }
       ],
-      currentProject: 'beta-project'
+      currentProject: 'alpha-project'
     });
     expect(getProjects).toHaveBeenCalledWith(expect.objectContaining({
       force: false,
