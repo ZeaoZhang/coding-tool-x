@@ -23,11 +23,14 @@ function sortClaudeProjects(projects, order = []) {
 
 
 function _isTypedPayload(value) {
-  return !!value && typeof value === 'object' && typeof value.status === 'string' && value.status !== 'ok';
+  return !!value && typeof value === 'object' && (
+    (typeof value.status === 'string' && value.status !== 'ok') ||
+    typeof value.type === 'string'
+  );
 }
 
-function _unsupportedProjectsPayload(source) {
-  return { status: 'unsupported', platform: source, capability: 'projects' };
+function _unsupportedPayload(source, capability) {
+  return { status: 'unsupported', platform: source, capability };
 }
 
 function _getRuntimeDriver(runtime, source, capability) {
@@ -158,7 +161,7 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
   }
 
   if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
-    return _unsupportedProjectsPayload(source);
+    return _unsupportedPayload(source, 'projects');
   }
 
   switch (source) {
@@ -217,7 +220,7 @@ async function buildCountsPayload(source, config = {}, options = {}) {
   }
 
   if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
-    return _unsupportedProjectsPayload(source);
+    return _unsupportedPayload(source, 'counts');
   }
 
   switch (source) {
@@ -244,6 +247,14 @@ async function buildTodayStatsPayload(source, config = {}, options = {}) {
     return getter({ force: options.force === true, config });
   }
 
+  if (_isTypedPayload(driver)) {
+    return driver;
+  }
+
+  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
+    return _unsupportedPayload(source, 'statistics');
+  }
+
   switch (source) {
     case 'claude':
       return require('./claude-statistics-service').getTodayStatistics();
@@ -267,6 +278,14 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   if (getter) {
     const value = await getter({ force: options.force === true, config });
     return _normalizeChannelsPayload(source, value);
+  }
+
+  if (_isTypedPayload(driver)) {
+    return driver;
+  }
+
+  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
+    return _unsupportedPayload(source, 'channels');
   }
 
   switch (source) {
@@ -312,9 +331,10 @@ function _getSerializableWorkerOptions(options = {}) {
 
 function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
   const workerOptions = _getSerializableWorkerOptions(options);
+  const runtime = options.runtime;
 
   if (process.env.NODE_ENV === 'test') {
-    return Promise.resolve(buildPayload({ kind, source, config, options: workerOptions }));
+    return Promise.resolve(buildPayload({ kind, source, config, options: workerOptions, runtime }));
   }
 
   return new Promise((resolve, reject) => {
