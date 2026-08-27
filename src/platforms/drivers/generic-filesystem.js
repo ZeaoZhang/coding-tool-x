@@ -58,6 +58,11 @@ async function assertNoSymlinkComponents(fsImpl, target) {
       throw error;
     }
   }
+  const finalStat = await fsImpl.lstat(resolved).catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (finalStat && finalStat.isSymbolicLink()) throw new Error(`Resource path contains symlink: ${target}`);
 }
 
 async function assertSafeRoot(fsImpl, root, { allowMissingRoot = false } = {}) {
