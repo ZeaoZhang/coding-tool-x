@@ -132,6 +132,7 @@ function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } 
         await fsImpl.mkdir(path.dirname(target), { recursive: true });
         await assertSafeRoot(fsImpl, root);
         await assertContainedTarget(fsImpl, root, path.dirname(target));
+        await assertContainedTarget(fsImpl, root, target, { allowMissingTarget: true });
         if (sourceStat.isDirectory()) {
           await fsImpl.cp(sourceRoot, target, { recursive: true });
         } else {
