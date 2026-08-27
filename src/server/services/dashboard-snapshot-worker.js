@@ -35,14 +35,98 @@ function _isTypedFailurePayload(value) {
     && typeof value.operation === 'string';
 }
 
+function _serializeCause(cause) {
+  if (!cause) {
+    return null;
+  }
+  const serialized = {
+    name: typeof cause.name === 'string' ? cause.name : 'Error',
+    message: cause && cause.message ? String(cause.message) : String(cause)
+  };
+  if (cause.code != null) {
+    serialized.code = cause.code;
+  }
+  return serialized;
+}
+
+function _serializeError(error) {
+  if (!error || typeof error !== 'object') {
+    return { message: String(error || 'Dashboard snapshot refresh failed') };
+  }
+  const serialized = {
+    message: error.message ? String(error.message) : String(error),
+    platform: error.platform,
+    capability: error.capability,
+    operation: error.operation
+  };
+  const cause = _serializeCause(error.cause);
+  if (cause) {
+    serialized.cause = cause;
+  }
+  return serialized;
+}
+
+function _deserializeCause(cause) {
+  if (!cause) {
+    return null;
+  }
+  if (cause instanceof Error) {
+    return cause;
+  }
+  const error = new Error(cause.message ? String(cause.message) : String(cause));
+  if (cause.name) {
+    error.name = String(cause.name);
+  }
+  if (cause.code != null) {
+    error.code = cause.code;
+  }
+  return error;
+}
+
+function _deserializeError(payload, fallbackMessage) {
+  if (payload instanceof Error) {
+    return payload;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return new Error(payload ? String(payload) : fallbackMessage);
+  }
+  const error = new Error(payload.message ? String(payload.message) : fallbackMessage);
+  if (payload.platform) error.platform = payload.platform;
+  if (payload.capability) error.capability = payload.capability;
+  if (payload.operation) error.operation = payload.operation;
+  const cause = _deserializeCause(payload.cause);
+  if (cause) {
+    error.cause = cause;
+  }
+  return error;
+}
+
+function _serializeWorkerValue(value) {
+  if (!_isTypedFailurePayload(value)) {
+    return value;
+  }
+  const serialized = { ...value };
+  const cause = value.cause || (value.error instanceof Error ? value.error : null);
+  const serializedCause = _serializeCause(cause);
+  if (serializedCause) {
+    serialized.cause = serializedCause;
+  }
+  if (value.error instanceof Error) {
+    serialized.error = value.error.message;
+  }
+  return serialized;
+}
+
 function _typedFailurePayloadToError(payload) {
   const cause = payload.cause instanceof Error
     ? payload.cause
-    : payload.cause != null
-      ? new Error(String(payload.cause))
-      : payload.error instanceof Error
-        ? payload.error
-        : new Error(String(payload.error || 'dashboard snapshot failed'));
+    : payload.cause && typeof payload.cause === 'object'
+      ? _deserializeCause(payload.cause)
+      : payload.cause != null
+        ? new Error(String(payload.cause))
+        : payload.error instanceof Error
+          ? payload.error
+          : new Error(String(payload.error || 'dashboard snapshot failed'));
   const error = new Error(`Dashboard snapshot ${payload.capability} ${payload.operation} failed on ${payload.platform}: ${cause.message}`);
   error.platform = payload.platform;
   error.capability = payload.capability;
@@ -341,7 +425,7 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
         }
         finish(null, message.value);
       } else {
-        finish(new Error(message.error || `Dashboard snapshot refresh failed for ${kind}/${source}`));
+        finish(_deserializeError(message.error, `Dashboard snapshot refresh failed for ${kind}/${source}`));
       }
     });
 
@@ -365,12 +449,12 @@ function attachWorkerHandler() {
     try {
       const value = await buildPayload(message || {});
       if (process.send) {
-        process.send({ ok: true, value }, () => process.exit(0));
+        process.send({ ok: true, value: _serializeWorkerValue(value) }, () => process.exit(0));
         return;
       }
     } catch (error) {
       if (process.send) {
-        process.send({ ok: false, error: error?.message || String(error) }, () => process.exit(1));
+        process.send({ ok: false, error: _serializeError(error) }, () => process.exit(1));
         return;
       }
     }
@@ -386,6 +470,9 @@ module.exports = {
   buildPayload,
   runDashboardSnapshotWorker,
   _test: {
-    getSerializableWorkerOptions: _getSerializableWorkerOptions
+    getSerializableWorkerOptions: _getSerializableWorkerOptions,
+    serializeError: _serializeError,
+    deserializeError: _deserializeError,
+    serializeWorkerValue: _serializeWorkerValue
   }
 };
