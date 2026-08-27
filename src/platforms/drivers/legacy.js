@@ -113,57 +113,47 @@ const PROXY_EXPORTS = Object.freeze({
 
 const SESSION_EXPORTS = Object.freeze({
   claude: Object.freeze({
-    listProjects: 'getProjects',
     listSessions: 'getSessionsForProject',
     recent: 'getRecentSessions',
     search: 'searchSessions',
     delete: 'deleteSession',
     fork: 'forkSession',
-    counts: 'getProjectAndSessionCounts',
     status: 'getSessionStatus',
     messages: 'getSessionMessages'
   }),
   codex: Object.freeze({
-    listProjects: 'getProjects',
     listSessions: 'getSessionsByProject',
     recent: 'getRecentSessions',
     search: 'searchSessions',
     delete: 'deleteSession',
     fork: 'forkSession',
-    counts: 'getProjectAndSessionCounts',
     status: 'getSessionStatus',
     messages: 'getSessionMessages'
   }),
   gemini: Object.freeze({
-    listProjects: 'getProjects',
     listSessions: 'getProjectSessions',
     recent: 'getRecentSessions',
     search: 'searchSessions',
     delete: 'deleteSession',
     fork: 'forkSession',
-    counts: 'getProjectAndSessionCounts',
     status: 'getSessionStatus',
     messages: 'getSessionMessages'
   }),
   opencode: Object.freeze({
-    listProjects: 'getProjects',
     listSessions: 'getSessionsByProjectId',
     recent: 'getRecentSessions',
     search: 'searchSessions',
     delete: 'deleteSession',
     fork: 'forkSession',
-    counts: 'getProjectAndSessionCounts',
     status: 'getSessionStatus',
     messages: 'getSessionMessages'
   }),
   omp: Object.freeze({
-    listProjects: 'getProjects',
     listSessions: 'getSessionsByProject',
     recent: 'getRecentSessions',
     search: 'searchSessions',
     delete: 'deleteSession',
     fork: 'forkSession',
-    counts: 'getProjectAndSessionCounts',
     status: 'getSessionStatus',
     messages: 'getSessionMessages'
   })
