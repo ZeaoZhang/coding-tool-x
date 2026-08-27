@@ -705,6 +705,7 @@ describe('session-history-index runtime selection', () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0]).toMatchObject({
         sessionId: 'hinted',
+        extra: expect.objectContaining({ projectHint: 'descriptor-project', mtimeMs: stat.mtimeMs }),
         projectName: 'descriptor-project',
         projectDisplayName: 'descriptor-project',
         firstMessage: 'hello',
@@ -755,12 +756,67 @@ describe('session-history-index runtime selection', () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0].sessionId).toBe('generic');
       expect(sessions[0].firstMessage).toBe('hello');
+      expect(sessions[0].extra).toMatchObject({ projectHint: 'generic-project', mtimeMs: stat.mtimeMs });
       expect(sessions[0].updatedAt).toBe(stat.mtimeMs);
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
     }
   });
+
+  it('preserves descriptor project hints and mtimes for wrapped runtime payloads', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-wrapped-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'wrapped.jsonl');
+    fs.writeFileSync(filePath, '{"role":"user","content":"hello"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          return {
+            inventory: vi.fn(async () => [{
+              filePath,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              sessionId: 'wrapped',
+              projectHint: 'descriptor-project'
+            }]),
+            parse: vi.fn(async () => ({
+              session: {
+                sessionId: 'wrapped',
+                firstMessage: 'hello',
+                messages: makeMessageFixtures(1, { userPrefix: 'Wrapped user' })
+              },
+              messages: makeMessageFixtures(1, { userPrefix: 'Wrapped user' })
+            }))
+          };
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+      const sessions = await index.listSessions('claude', 'descriptor-project');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        sessionId: 'wrapped',
+        extra: expect.objectContaining({ projectHint: 'descriptor-project', mtimeMs: stat.mtimeMs }),
+        projectName: 'descriptor-project',
+        projectDisplayName: 'descriptor-project',
+        firstMessage: 'hello',
+        updatedAt: stat.mtimeMs
+      });
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
   it('uses the runtime driver in-process instead of the worker runner when runtime is supplied', async () => {
     const prevNodeEnv = process.env.NODE_ENV;
     const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
@@ -898,20 +954,28 @@ describe('session-history-index runtime selection', () => {
     }
   });
 
-  it('keeps an explicit adapterRegistry ahead of runtime sessions drivers', async () => {
+  it('keeps an explicit adapterRegistry ahead of runtime sessions drivers and worker runners', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-explicit-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
     const explicitInventory = vi.fn(async () => []);
     const explicitParse = vi.fn(async () => ({ session: null, messages: [] }));
     const runtimeInventory = vi.fn(async () => []);
     const runtimeParse = vi.fn(async () => ({ session: null, messages: [] }));
+    const workerRunner = vi.fn(async () => {
+      throw new Error('worker runner should not be used when adapterRegistry is supplied');
+    });
     const index = createSessionHistoryIndex({
       dbPath,
       adapterRegistry: { claude: { inventory: explicitInventory, parse: explicitParse } },
       runtime: {
         getDriver: vi.fn(() => ({ inventory: runtimeInventory, parse: runtimeParse }))
       },
-      workerRunner: vi.fn(async () => {}),
+      workerRunner,
       ftsEnabledOverride: false
     });
 
@@ -920,10 +984,14 @@ describe('session-history-index runtime selection', () => {
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+      process.env.NODE_ENV = prevNodeEnv;
+      if (prevChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = prevChild;
     }
 
     expect(explicitInventory).toHaveBeenCalledTimes(1);
     expect(explicitParse).not.toHaveBeenCalled();
+    expect(workerRunner).not.toHaveBeenCalled();
     expect(runtimeInventory).not.toHaveBeenCalled();
     expect(runtimeParse).not.toHaveBeenCalled();
   });

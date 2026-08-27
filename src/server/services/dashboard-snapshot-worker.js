@@ -51,7 +51,6 @@ async function _getClaudeProjectOrder(driver, config, options) {
   return config.projectOrder || config.order || [];
 }
 
-
 function _getCountsGetter(driver) {
   if (!driver) return null;
   if (typeof driver.getProjectAndSessionCounts === 'function') return driver.getProjectAndSessionCounts.bind(driver);
@@ -81,7 +80,7 @@ function _normalizeProjectPayload(source, projects, config = {}) {
 
     return {
       projects: ordered,
-      currentProject: config.currentProject || (ordered[0] ? ordered[0].name : null)
+      currentProject: config.currentProject ?? (ordered[0] ? ordered[0].name : null)
     };
   }
 
@@ -89,13 +88,10 @@ function _normalizeProjectPayload(source, projects, config = {}) {
     const ordered = source === 'claude'
       ? sortClaudeProjects(projects.projects, config.projectOrder || config.order || [])
       : projects.projects;
-    const hasExplicitCurrentProject = Object.prototype.hasOwnProperty.call(projects, 'currentProject');
 
     return {
       projects: ordered,
-      currentProject: hasExplicitCurrentProject
-        ? projects.currentProject
-        : (config.currentProject || (ordered[0] ? ordered[0].name : null))
+      currentProject: projects.currentProject ?? config.currentProject ?? (ordered[0] ? ordered[0].name : null)
     };
   }
 
@@ -307,7 +303,6 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
         resolve(value);
       }
     };
-
 
     timeout = setTimeout(() => {
       finish(new Error(`Dashboard snapshot refresh timed out for ${kind}/${source}`));

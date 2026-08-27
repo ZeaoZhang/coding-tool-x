@@ -37,6 +37,29 @@ describe('dashboard-snapshot-worker', () => {
     }));
   });
 
+  it('uses canonical default runtime capabilities for counts and channels', async () => {
+    const getProjectAndSessionCounts = vi.fn(async () => ({ projectCount: 2, sessionCount: 3 }));
+    const getChannels = vi.fn(async () => [{ id: 'open-channel' }]);
+    vi.spyOn(runtimeModule, 'getPlatformRuntime').mockReturnValue({
+      getDriver: vi.fn((platform, capability) => {
+        if (platform === 'codex') {
+          expect(capability).toBe('projects');
+          return { getProjectAndSessionCounts };
+        }
+        if (platform === 'opencode') {
+          expect(capability).toBe('channels');
+          return { getChannels };
+        }
+        throw new Error(`unexpected platform ${platform}`);
+      })
+    });
+
+    await expect(worker.buildPayload({ kind: 'counts', source: 'codex', config: {}, options: { force: false } }))
+      .resolves.toEqual({ projectCount: 2, sessionCount: 3 });
+    await expect(worker.buildPayload({ kind: 'channels', source: 'opencode', config: {}, options: { force: false } }))
+      .resolves.toEqual({ channels: [{ id: 'open-channel' }] });
+  });
+
   it('builds a project payload through an injected platform driver', async () => {
     const getProjects = vi.fn(async () => [{ name: 'demo-project', lastUsed: 10 }]);
     const runtime = {
@@ -181,6 +204,40 @@ describe('dashboard-snapshot-worker', () => {
         { name: 'alpha-project', lastUsed: 20 }
       ],
       currentProject: 'payload-project'
+    });
+  });
+
+  it('preserves config currentProject when a wrapped payload omits its own currentProject', async () => {
+    const getProjects = vi.fn(async () => ({
+      projects: [
+        { name: 'zeta-project', lastUsed: 30 },
+        { name: 'alpha-project', lastUsed: 20 },
+        { name: 'beta-project', lastUsed: 10 }
+      ]
+    }));
+    const getProjectOrder = vi.fn(() => ['beta-project', 'zeta-project']);
+    vi.spyOn(runtimeModule, 'getPlatformRuntime').mockReturnValue({
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects, getProjectOrder };
+      })
+    });
+
+    const result = await worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config: { currentProject: 'config-project' },
+      options: { force: false }
+    });
+
+    expect(result).toEqual({
+      projects: [
+        { name: 'beta-project', lastUsed: 10 },
+        { name: 'zeta-project', lastUsed: 30 },
+        { name: 'alpha-project', lastUsed: 20 }
+      ],
+      currentProject: 'config-project'
     });
   });
 

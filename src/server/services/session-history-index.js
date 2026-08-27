@@ -168,16 +168,38 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
   if (!result || typeof result !== 'object') {
     return result;
   }
+
   if (result.session && Array.isArray(result.messages)) {
-    return result;
+    const sessionExtra = result.session.extraJson ? JSON.parse(result.session.extraJson) : {};
+    const extraJson = JSON.stringify({
+      ...sessionExtra,
+      projectHint: result.session.projectHint || descriptor.projectHint || null,
+      mtimeMs: descriptor.mtimeMs ?? sessionExtra.mtimeMs ?? null
+    });
+    return {
+      ...result,
+      session: {
+        ...result.session,
+        projectHint: result.session.projectHint || descriptor.projectHint || '',
+        projectName: result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
+        projectDisplayName: result.session.projectDisplayName || result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
+        projectFullPath: result.session.projectFullPath || result.session.projectPath || '',
+        updatedAt: result.session.updatedAt || descriptor.mtimeMs || null,
+        extraJson
+      }
+    };
   }
+
   if (result.sessionId) {
-    const projectName = result.projectName || result.projectHint || descriptor.projectHint || '';
-    const projectDisplayName = result.projectDisplayName || result.projectName || result.projectHint || descriptor.projectHint || '';
+    const projectHint = result.projectHint || descriptor.projectHint || '';
+    const projectName = result.projectName || projectHint || '';
+    const projectDisplayName = result.projectDisplayName || result.projectName || projectHint || '';
+    const resultExtra = result.extraJson ? JSON.parse(result.extraJson) : {};
 
     return {
       session: {
         sessionId: result.sessionId,
+        projectHint,
         projectName,
         projectDisplayName,
         projectFullPath: result.projectFullPath || result.projectPath || '',
@@ -188,11 +210,16 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
         startedAt: result.startedAt || null,
         updatedAt: result.updatedAt || descriptor.mtimeMs || null,
         usageJson: result.usageJson || null,
-        extraJson: result.extraJson || null
+        extraJson: JSON.stringify({
+          ...resultExtra,
+          projectHint: projectHint || null,
+          mtimeMs: descriptor.mtimeMs ?? resultExtra.mtimeMs ?? null
+        })
       },
       messages: Array.isArray(result.messages) ? result.messages : []
     };
   }
+
   return result;
 }
 
@@ -269,8 +296,8 @@ function createSessionHistoryIndex(opts = {}) {
   async function ensureSourceIndexed(source, options = {}) {
     const consistency = options.consistency || 'stale-ok';
     const force = options.force === true;
-
     const key = `ensure:${source}`;
+
     if (_inflight.has(key)) {
       if (consistency === 'complete') {
         return _inflight.get(key);
@@ -282,7 +309,7 @@ function createSessionHistoryIndex(opts = {}) {
       return result;
     }
 
-    const useWorker = shouldUseWorker && !runtime;
+    const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
     const promise = useWorker
       ? workerRunner(source, dbPath, { force })
       : _runInventory(source, { force });
@@ -562,6 +589,7 @@ function createSessionHistoryIndex(opts = {}) {
       extra: r.extra_json ? JSON.parse(r.extra_json) : {},
       source: r.source,
       projectName: r.project_name,
+      projectHint: r.project_name,
       projectDisplayName: r.project_display_name,
       projectFullPath: r.project_full_path,
       startedAt: r.started_at,
