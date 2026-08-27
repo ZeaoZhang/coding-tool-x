@@ -35,7 +35,7 @@ function _serializeCause(cause) {
 
 function _serializeWorkerError(error) {
   if (!error || typeof error !== 'object') {
-    return { message: String(error || 'Inventory worker failed') };
+    return { message: _safeErrorText(error, 'Inventory worker failed') };
   }
   const serialized = {
     message: _safeErrorText(error.message ? error.message : error, 'Inventory worker failed')
@@ -59,12 +59,13 @@ function _deserializeCause(cause) {
   if (cause instanceof Error) {
     return cause;
   }
-  const error = new Error(cause.message ? String(cause.message) : String(cause));
+  const error = new Error(_safeErrorText(cause.message ? cause.message : cause, 'Error'));
   if (cause.name) {
-    error.name = String(cause.name);
+    error.name = _safeErrorText(cause.name, 'Error');
   }
-  if (cause.code != null) {
-    error.code = cause.code;
+  const code = _safeCode(cause.code);
+  if (code !== undefined) {
+    error.code = code;
   }
   return error;
 }
@@ -74,13 +75,14 @@ function _deserializeWorkerError(payload, fallbackMessage = 'Inventory worker fa
     return payload;
   }
   if (!payload || typeof payload !== 'object') {
-    return new Error(payload ? String(payload) : fallbackMessage);
+    return new Error(_safeErrorText(payload, fallbackMessage));
   }
-  const error = new Error(payload.message ? String(payload.message) : fallbackMessage);
-  if (typeof payload.platform === 'string') error.platform = payload.platform;
-  if (typeof payload.capability === 'string') error.capability = payload.capability;
-  if (typeof payload.operation === 'string') error.operation = payload.operation;
-  if (payload.code != null) error.code = payload.code;
+  const error = new Error(_safeErrorText(payload.message ? payload.message : fallbackMessage, fallbackMessage));
+  if (typeof payload.platform === 'string') error.platform = _safeErrorText(payload.platform);
+  if (typeof payload.capability === 'string') error.capability = _safeErrorText(payload.capability);
+  if (typeof payload.operation === 'string') error.operation = _safeErrorText(payload.operation);
+  const code = _safeCode(payload.code);
+  if (code !== undefined) error.code = code;
   const cause = _deserializeCause(payload.cause);
   if (cause) {
     error.cause = cause;

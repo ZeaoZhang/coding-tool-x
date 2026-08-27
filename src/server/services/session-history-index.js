@@ -21,6 +21,10 @@ const COLD_STALE_WAIT_MS = 2500;
 const WORKER_TIMEOUT_MS = 180000;
 
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
+function _isUsableRuntime(runtime) {
+  return !!runtime && typeof runtime === 'object' && typeof runtime.getDriver === 'function';
+}
+
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -291,7 +295,7 @@ function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
   const explicitAdapters = opts.adapterRegistry || null;
   const adapters = explicitAdapters || require('./session-history-adapters');
-  const runtimeProvided = !explicitAdapters && !!opts.runtime && typeof opts.runtime === 'object';
+  const runtimeProvided = !explicitAdapters && _isUsableRuntime(opts.runtime);
   const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : platformRuntime.getPlatformRuntime());
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;
   const ftsEnabled = opts.ftsEnabledOverride !== undefined

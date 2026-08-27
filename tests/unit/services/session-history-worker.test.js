@@ -45,6 +45,46 @@ describe('session-history-worker error IPC helpers', () => {
     expect(restored.cause.code).toBe('E_ADAPTER');
   });
 
+  it('bounds serialized error text and omits non-JSON-safe code values', () => {
+    const longMessage = 'x'.repeat(5000);
+    const cause = new Error(longMessage);
+    cause.code = 1n;
+    const error = new Error(longMessage);
+    error.platform = 'demo-cli';
+    error.capability = 'sessions';
+    error.operation = 'inventory';
+    error.code = { unsafe: true };
+    error.cause = cause;
+
+    const serialized = worker._test.serializeWorkerError(error);
+
+    expect(serialized.message.length).toBeLessThanOrEqual(4097);
+    expect(serialized.cause.message.length).toBeLessThanOrEqual(4097);
+    expect(serialized).not.toHaveProperty('code');
+    expect(serialized.cause).not.toHaveProperty('code');
+    expect(() => JSON.stringify(serialized)).not.toThrow();
+  });
+
+  it('sanitizes untrusted IPC payloads when reconstructing structured errors', () => {
+    const restored = worker._test.deserializeWorkerError({
+      message: 'x'.repeat(5000),
+      platform: 'demo-cli',
+      capability: 'sessions',
+      operation: 'inventory',
+      code: { unsafe: true },
+      cause: {
+        name: 'AdapterError',
+        message: 'y'.repeat(5000),
+        code: () => 'E_UNSAFE'
+      }
+    });
+
+    expect(restored.message.length).toBeLessThanOrEqual(4097);
+    expect(restored.code).toBeUndefined();
+    expect(restored.cause.message.length).toBeLessThanOrEqual(4097);
+    expect(restored.cause.code).toBeUndefined();
+  });
+
   it('reconstructs structured errors received from child IPC', async () => {
     const handlers = {};
     const child = {

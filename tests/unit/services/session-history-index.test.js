@@ -768,6 +768,36 @@ describe('session-history-index runtime selection', () => {
     expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
     expect(getPlatformRuntime).toHaveBeenCalledTimes(1);
   });
+  it('treats an unusable runtime object as omitted so production indexing uses the worker path', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-empty-object-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {},
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('demo-cli', { consistency: 'complete', force: true });
+    } finally {
+      index.closeSessionHistoryIndex();
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = originalChild;
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    expect(workerRunner).toHaveBeenCalledWith('demo-cli', dbPath, { force: true });
+  });
+
 
   it('rejects when runtime sessions driver resolution throws instead of falling back to the built-in adapter', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-resolve-'));
