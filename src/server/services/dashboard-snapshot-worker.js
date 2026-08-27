@@ -72,6 +72,13 @@ function _getChannelsGetter(driver) {
   return null;
 }
 
+function _isPlainSuccessProjectPayload(value) {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  return !('status' in value) && !('type' in value) && !('error' in value);
+}
+
 function _normalizeProjectPayload(source, projects, config = {}) {
   if (Array.isArray(projects)) {
     const ordered = source === 'claude'
@@ -84,12 +91,13 @@ function _normalizeProjectPayload(source, projects, config = {}) {
     };
   }
 
-  if (projects && typeof projects === 'object' && Array.isArray(projects.projects)) {
+  if (_isPlainSuccessProjectPayload(projects) && Array.isArray(projects.projects)) {
     const ordered = source === 'claude'
       ? sortClaudeProjects(projects.projects, config.projectOrder || config.order || [])
       : projects.projects;
 
     return {
+      ...projects,
       projects: ordered,
       currentProject: projects.currentProject ?? config.currentProject ?? (ordered[0] ? ordered[0].name : null)
     };

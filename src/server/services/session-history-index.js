@@ -184,17 +184,18 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
         projectName: result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
         projectDisplayName: result.session.projectDisplayName || result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
         projectFullPath: result.session.projectFullPath || result.session.projectPath || '',
-        updatedAt: result.session.updatedAt || descriptor.mtimeMs || null,
+        updatedAt: descriptor.mtimeMs ?? result.session.updatedAt ?? null,
         extraJson
       }
     };
   }
 
   if (result.sessionId) {
-    const projectHint = result.projectHint || descriptor.projectHint || '';
+    const projectHint = result.projectHint || result.projectName || descriptor.projectHint || '';
     const projectName = result.projectName || projectHint || '';
     const projectDisplayName = result.projectDisplayName || result.projectName || projectHint || '';
     const resultExtra = result.extraJson ? JSON.parse(result.extraJson) : {};
+    const descriptorMtime = descriptor.mtimeMs ?? null;
 
     return {
       session: {
@@ -208,7 +209,7 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
         provider: result.provider || null,
         model: result.model || null,
         startedAt: result.startedAt || null,
-        updatedAt: result.updatedAt || descriptor.mtimeMs || null,
+        updatedAt: descriptorMtime ?? result.updatedAt ?? null,
         usageJson: result.usageJson || null,
         extraJson: JSON.stringify({
           ...resultExtra,

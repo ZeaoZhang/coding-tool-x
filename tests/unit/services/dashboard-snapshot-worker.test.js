@@ -241,6 +241,20 @@ describe('dashboard-snapshot-worker', () => {
     });
   });
 
+  it('returns unsupported project wrappers unchanged instead of empty success payloads', async () => {
+    const unsupported = { type: 'unsupported', projects: [], error: 'unsupported-driver' };
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects: vi.fn(async () => unsupported) };
+      })
+    };
+
+    await expect(worker.buildPayload({ kind: 'projects', source: 'claude', config: {}, options: {}, runtime }))
+      .resolves.toBe(unsupported);
+  });
+
   it('returns unrecognized project payload values unchanged', async () => {
     const unsupported = { type: 'failed', error: 'boom' };
     const runtime = {
