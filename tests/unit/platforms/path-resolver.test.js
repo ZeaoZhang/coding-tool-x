@@ -26,6 +26,24 @@ test('uses the injected OMP command runner for special native paths', () => {
   expect(paths.home).toBe('/tmp/omp-agent');
 });
 
+test('OMP injected command runner does not load native PATHS configuration', () => {
+  const originalLoad = Module._load;
+  Module._load = (request, parent, isMain) => request === '../config/paths'
+    ? (() => { throw new Error('config paths loaded'); })()
+    : originalLoad(request, parent, isMain);
+  delete require.cache[PATH_RESOLVER_PATH];
+  try {
+    const { resolveManifestPaths: resolveWithoutNativeConfig } = require('../../../src/platforms/path-resolver');
+    expect(resolveWithoutNativeConfig({ key: 'omp', pathResolverId: 'omp' }, {
+      env: { OMP_COMMAND: 'omp' },
+      commandRunner: () => '/tmp/omp-agent\n'
+    }).home).toBe('/tmp/omp-agent');
+  } finally {
+    delete require.cache[PATH_RESOLVER_PATH];
+    Module._load = originalLoad;
+  }
+});
+
 test('rejects an empty required home path', () => {
   expect(() => resolveManifestPaths({
     key: 'demo-cli',
