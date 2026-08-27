@@ -166,7 +166,7 @@ function attachWorkerHandler() {
     return;
   }
 
-  const { createSessionHistoryIndex } = module.exports._test;
+  const { createSessionHistoryIndex } = require('./session-history-index');
   const index = createSessionHistoryIndex({ dbPath });
 
   index.ensureSourceIndexed(source, { consistency: 'complete', force })
