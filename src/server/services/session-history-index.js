@@ -1,7 +1,6 @@
 'use strict';
 
 const { openDatabase, closeDatabase } = require('./sqlite-connection');
-const { getPlatformRuntime } = require('../../platforms/runtime');
 
 const { PATHS } = require('../../config/paths');
 const fs = require('fs');
@@ -222,7 +221,8 @@ function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
   const explicitAdapters = opts.adapterRegistry || null;
   const adapters = explicitAdapters || require('./session-history-adapters');
-  const runtime = explicitAdapters ? null : (opts.runtime || getPlatformRuntime());
+  const runtimeProvided = explicitAdapters ? false : Object.prototype.hasOwnProperty.call(opts, 'runtime');
+  const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : null);
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;
   const ftsEnabled = opts.ftsEnabledOverride !== undefined
     ? opts.ftsEnabledOverride
@@ -282,7 +282,8 @@ function createSessionHistoryIndex(opts = {}) {
       return result;
     }
 
-    const promise = shouldUseWorker
+    const useWorker = shouldUseWorker && !runtime;
+    const promise = useWorker
       ? workerRunner(source, dbPath, { force })
       : _runInventory(source, { force });
     _inflight.set(key, promise);
@@ -303,13 +304,30 @@ function createSessionHistoryIndex(opts = {}) {
     await promise;
   }
 
+  function _isTypedFailureResult(result) {
+    return !!result && typeof result === 'object' && result.status === 'failed'
+      && typeof result.platform === 'string'
+      && typeof result.capability === 'string'
+      && typeof result.operation === 'string';
+  }
+
+  function _typedFailureToError(result) {
+    const cause = result.error instanceof Error ? result.error : new Error(String(result.error || 'inventory failed'));
+    const error = new Error(`Runtime ${result.capability} ${result.operation} failed on ${result.platform}: ${cause.message}`);
+    error.platform = result.platform;
+    error.capability = result.capability;
+    error.operation = result.operation;
+    error.cause = cause;
+    error.failure = result;
+    return error;
+  }
+
   async function _runInventory(source, { force = false } = {}) {
     const db = _getDb();
     const adapter = explicitAdapters ? adapters[source] : (_adaptRuntimeSessionsDriver(_getRuntimeSessionsDriver(runtime, source)) || adapters[source]);
     if (!adapter || !adapter.inventory) {
       return;
     }
-
 
     if (!force) {
       const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
@@ -318,75 +336,95 @@ function createSessionHistoryIndex(opts = {}) {
       }
     }
 
-    const descriptors = await adapter.inventory();
-    if (!Array.isArray(descriptors)) return;
-
-    const seen = new Map();
-    for (const d of descriptors) {
-      const prev = seen.get(d.sessionId);
-      if (!prev || d.mtimeMs > prev.mtimeMs || (d.mtimeMs === prev.mtimeMs && d.filePath < prev.filePath)) {
-        seen.set(d.sessionId, d);
-      }
-    }
-
-    const indexedFiles = new Map();
-    const indexedRows = db.prepare('SELECT file_path, size, mtime_ms FROM session_file WHERE source = ?').all(source);
-    for (const r of indexedRows) {
-      indexedFiles.set(r.file_path, r);
-    }
-
-    const toParse = [];
-    const activePaths = new Set();
-    for (const d of seen.values()) {
-      activePaths.add(d.filePath);
-      const idx = indexedFiles.get(d.filePath);
-      if (!idx || idx.size !== d.size || idx.mtime_ms !== d.mtimeMs) {
-        toParse.push(d);
-      }
-    }
-
-    for (const filePath of indexedFiles.keys()) {
-      if (!activePaths.has(filePath)) {
-        db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, filePath);
-      }
-    }
-
     let errorMsg = null;
-    for (const d of toParse) {
-      try {
-        const preStat = { size: d.size, mtimeMs: d.mtimeMs };
-        const { session, messages } = await adapter.parse(d);
+    let shouldRecord = false;
 
+    try {
+      const descriptors = await adapter.inventory();
+      shouldRecord = true;
+      if (_isTypedFailureResult(descriptors)) {
+        throw _typedFailureToError(descriptors);
+      }
+      if (!Array.isArray(descriptors)) return;
+
+      const seen = new Map();
+      for (const d of descriptors) {
+        const prev = seen.get(d.sessionId);
+        if (!prev || d.mtimeMs > prev.mtimeMs || (d.mtimeMs === prev.mtimeMs && d.filePath < prev.filePath)) {
+          seen.set(d.sessionId, d);
+        }
+      }
+
+      const indexedFiles = new Map();
+      const indexedRows = db.prepare('SELECT file_path, size, mtime_ms FROM session_file WHERE source = ?').all(source);
+      for (const r of indexedRows) {
+        indexedFiles.set(r.file_path, r);
+      }
+
+      const toParse = [];
+      const activePaths = new Set();
+      for (const d of seen.values()) {
+        activePaths.add(d.filePath);
+        const idx = indexedFiles.get(d.filePath);
+        if (!idx || idx.size !== d.size || idx.mtime_ms !== d.mtimeMs) {
+          toParse.push(d);
+        }
+      }
+
+      for (const filePath of indexedFiles.keys()) {
+        if (!activePaths.has(filePath)) {
+          db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, filePath);
+        }
+      }
+
+      for (const d of toParse) {
         try {
-          const postStat = fs.statSync(d.filePath);
-          if (postStat.size !== preStat.size || postStat.mtimeMs !== preStat.mtimeMs) {
-            const retry = await adapter.parse(d);
-            const retryStat = fs.statSync(d.filePath);
-            if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
-              const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
-              if (existing) continue;
+          const preStat = { size: d.size, mtimeMs: d.mtimeMs };
+          const { session, messages } = await adapter.parse(d);
+
+          try {
+            const postStat = fs.statSync(d.filePath);
+            if (postStat.size !== preStat.size || postStat.mtimeMs !== preStat.mtimeMs) {
+              const retry = await adapter.parse(d);
+              const retryStat = fs.statSync(d.filePath);
+              if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
+                const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
+                if (existing) continue;
+                continue;
+              }
+              _upsertSession(db, source, d, retry.session, retry.messages);
               continue;
             }
-            _upsertSession(db, source, d, retry.session, retry.messages);
+          } catch (_statErr) {
             continue;
           }
-        } catch (_statErr) {
-          continue;
-        }
 
-        _upsertSession(db, source, d, session, messages);
-      } catch (err) {
-        const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
-        if (!existing) {
-          errorMsg = (errorMsg ? errorMsg + '; ' : '') + `${d.filePath}: ${err.message}`;
+          _upsertSession(db, source, d, session, messages);
+        } catch (err) {
+          const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
+          if (!existing) {
+            errorMsg = (errorMsg ? errorMsg + '; ' : '') + `${d.filePath}: ${err.message}`;
+          }
         }
       }
-    }
 
-    db.prepare(
-      'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
-    ).run(source, Date.now(), errorMsg);
+      db.prepare(
+        'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+      ).run(source, Date.now(), errorMsg);
+    } catch (err) {
+      errorMsg = err && err.message ? err.message : String(err);
+      throw err;
+    } finally {
+      if (shouldRecord && errorMsg !== null) {
+        try {
+          db.prepare(
+            'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+          ).run(source, Date.now(), errorMsg);
+        } catch (_err) {}
+      }
+    }
   }
+
 
   function _upsertSession(db, source, descriptor, session, messages) {
     try {

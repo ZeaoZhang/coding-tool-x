@@ -761,6 +761,142 @@ describe('session-history-index runtime selection', () => {
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
     }
   });
+  it('uses the runtime driver in-process instead of the worker runner when runtime is supplied', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-worker-bypass-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'runtime-bypass.jsonl');
+    fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const workerRunner = vi.fn(async () => {
+      throw new Error('worker runner should not be used when runtime is supplied');
+    });
+    const runtimeInventory = vi.fn(async () => [{
+      filePath,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      sessionId: 'runtime-bypass',
+      projectHint: 'runtime-bypass-project'
+    }]);
+    const runtimeParse = vi.fn(async () => ({
+      session: makeSessionFixture('runtime-bypass', 'runtime-bypass-project'),
+      messages: makeMessageFixtures(2)
+    }));
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          return { inventory: runtimeInventory, parse: runtimeParse };
+        })
+      },
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+      const sessions = await index.listSessions('claude', 'runtime-bypass-project');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].sessionId).toBe('runtime-bypass');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+      process.env.NODE_ENV = prevNodeEnv;
+      if (prevChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = prevChild;
+    }
+
+    expect(workerRunner).not.toHaveBeenCalled();
+    expect(runtimeInventory).toHaveBeenCalledTimes(1);
+    expect(runtimeParse).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes serializable force options to the worker runner when runtime is absent', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-worker-force-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const index = createSessionHistoryIndex({
+      dbPath,
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+      process.env.NODE_ENV = prevNodeEnv;
+      if (prevChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = prevChild;
+    }
+
+    expect(workerRunner).toHaveBeenCalledTimes(1);
+    expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
+  });
+
+  it('records typed runtime inventory failures instead of treating them as a successful empty index', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-failure-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'runtime-failure.jsonl');
+    fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
+    fs.statSync(filePath);
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => ({
+          inventory: vi.fn(async () => ({
+            status: 'failed',
+            platform: 'test-platform',
+            capability: 'sessions',
+            operation: 'inventory',
+            error: 'missing'
+          })),
+          parse: vi.fn(async () => ({
+            session: makeSessionFixture('runtime-failure', 'runtime-failure-project'),
+            messages: makeMessageFixtures(2)
+          }))
+        }))
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const error = await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' })
+        .then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.platform).toBe('test-platform');
+      expect(error.capability).toBe('sessions');
+      expect(error.operation).toBe('inventory');
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.cause.message).toContain('missing');
+      expect(await index.listSessions('claude', 'runtime-failure-project')).toHaveLength(0);
+      expect(await index.getSessionStatus('claude', 'runtime-failure')).toBeNull();
+
+      const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('claude');
+      expect(row).toBeTruthy();
+      expect(row.last_inventory_ms).not.toBeNull();
+      expect(row.last_error).toContain('test-platform');
+      expect(row.last_error).toContain('sessions');
+      expect(row.last_error).toContain('inventory');
+      expect(row.last_error).toContain('missing');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
 
   it('keeps an explicit adapterRegistry ahead of runtime sessions drivers', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-explicit-'));
