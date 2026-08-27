@@ -92,6 +92,8 @@ describe('legacy drivers', () => {
     });
     const claudeDriver = createLegacyDriver({ platform: 'claude', capability: 'sessions', requireImpl: claudeRequireImpl });
 
+    expect(claudeDriver.listProjects).toBeUndefined();
+    expect(claudeDriver.counts).toBeUndefined();
     expect(claudeDriver.listSessions('project', options)).toEqual({
       op: 'sessions',
       args: [config, 'project', options]
@@ -118,7 +120,6 @@ describe('legacy drivers', () => {
     expect(claudeSearch).toHaveBeenCalledWith(config, 'project', 'needle', 21);
     expect(claudeDelete).toHaveBeenCalledWith(config, 'project', 'session-id');
     expect(claudeFork).toHaveBeenCalledWith(config, 'project', 'session-id', options);
-
     const cases = [
       ['codex', '../../server/services/codex-sessions', 'getSessionsByProject'],
       ['gemini', '../../server/services/gemini-sessions', 'getProjectSessions'],
@@ -137,12 +138,13 @@ describe('legacy drivers', () => {
       const requireImpl = makeRequire({ [modulePath]: exports });
       const driver = createLegacyDriver({ platform, capability: 'sessions', requireImpl });
 
+      expect(driver.listProjects).toBeUndefined();
+      expect(driver.counts).toBeUndefined();
       expect(driver.listSessions('project', { limit: 2 })).toEqual({ platform, op: 'sessions', args: ['project', { limit: 2 }] });
       expect(driver.recent(3)).toEqual({ platform, op: 'recent', args: [3] });
       expect(driver.search('needle')).toEqual({ platform, op: 'search', args: ['needle'] });
       expect(driver.delete('session-id')).toEqual({ platform, op: 'delete', args: ['session-id'] });
       expect(driver.fork('session-id')).toEqual({ platform, op: 'fork', args: ['session-id'] });
-      expect(driver.counts({ force: true })).toEqual({ platform, op: 'counts', args: [{ force: true }] });
       expect(driver.status('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'status' });
       expect(driver.messages('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'messages' });
     }
