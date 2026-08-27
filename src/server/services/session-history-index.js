@@ -20,6 +20,8 @@ const COLD_STALE_WAIT_MS = 2500;
 /** @type {number} Hard timeout for worker processes */
 const WORKER_TIMEOUT_MS = 180000;
 
+const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
+
 // ---------------------------------------------------------------------------
 // Schema
 // ---------------------------------------------------------------------------
@@ -146,6 +148,20 @@ function _ftsQuote(s) {
   return '"' + String(s).replace(/"/g, '""') + '"';
 }
 
+function _typedSessionsFailure(source, error, operation = 'resolve-driver') {
+  const result = {
+    status: 'failed',
+    platform: source,
+    capability: 'sessions',
+    operation,
+    error: error && error.message ? error.message : String(error)
+  };
+  if (error) {
+    Object.defineProperty(result, 'cause', { value: error, enumerable: false });
+  }
+  return result;
+}
+
 function _getRuntimeSessionsDriver(runtime, source) {
   if (!runtime || typeof runtime.getDriver !== 'function') {
     return null;
@@ -160,8 +176,8 @@ function _getRuntimeSessionsDriver(runtime, source) {
       return null;
     }
     return driver;
-  } catch (_) {
-    return null;
+  } catch (error) {
+    return _typedSessionsFailure(source, error);
   }
 }
 
@@ -341,7 +357,7 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   function _typedFailureToError(result) {
-    const cause = result.error instanceof Error ? result.error : new Error(String(result.error || 'inventory failed'));
+    const cause = result.cause || (result.error instanceof Error ? result.error : new Error(String(result.error || 'inventory failed')));
     const error = new Error(`Runtime ${result.capability} ${result.operation} failed on ${result.platform}: ${cause.message}`);
     error.platform = result.platform;
     error.capability = result.capability;
@@ -353,24 +369,44 @@ function createSessionHistoryIndex(opts = {}) {
 
   async function _runInventory(source, { force = false } = {}) {
     const db = _getDb();
-    const adapter = explicitAdapters ? adapters[source] : (_adaptRuntimeSessionsDriver(_getRuntimeSessionsDriver(runtime, source)) || adapters[source]);
-    if (!adapter || !adapter.inventory) {
-      return;
-    }
-
-    if (!force) {
-      const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
-      if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
-        return;
-      }
-    }
-
     let errorMsg = null;
-    let shouldRecord = false;
+    let shouldRecord = true;
 
     try {
+      let adapter = null;
+
+      if (explicitAdapters) {
+        adapter = adapters[source];
+      } else {
+        const runtimeDriver = _getRuntimeSessionsDriver(runtime, source);
+        if (_isTypedFailureResult(runtimeDriver)) {
+          throw _typedFailureToError(runtimeDriver);
+        }
+
+        if (runtimeDriver) {
+          adapter = _adaptRuntimeSessionsDriver(runtimeDriver);
+        } else if (BUILTIN_SESSION_SOURCES.has(source) && adapters[source]) {
+          adapter = adapters[source];
+        } else {
+          throw _typedFailureToError(_typedSessionsFailure(source, new Error(`unsupported sessions source: ${source}`)));
+        }
+      }
+
+      if (!adapter || typeof adapter.inventory !== 'function' || typeof adapter.parse !== 'function') {
+        if (explicitAdapters) {
+          return;
+        }
+        throw _typedFailureToError(_typedSessionsFailure(source, new Error(`unsupported sessions source: ${source}`)));
+      }
+
+      if (!force) {
+        const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
+        if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
+          return;
+        }
+      }
+
       const descriptors = await adapter.inventory();
-      shouldRecord = true;
       if (_isTypedFailureResult(descriptors)) {
         throw _typedFailureToError(descriptors);
       }
