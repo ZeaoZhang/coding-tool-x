@@ -110,6 +110,44 @@ describe('dashboard-snapshot-worker', () => {
     await expect(worker.buildPayload({ kind: 'counts', source: 'demo-cli', config: {}, options: { force: false }, runtime }))
       .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'counts' });
   });
+  it('returns typed failures when runtime driver resolution throws for custom dashboard snapshots', async () => {
+    const cases = [
+      ['projects', 'projects'],
+      ['counts', 'counts'],
+      ['todayStats', 'statistics'],
+      ['channels', 'channels']
+    ];
+
+    for (const [kind, capability] of cases) {
+      const resolutionError = new Error(`${capability} resolution exploded`);
+      const runtime = {
+        getDriver: vi.fn((platform, requestedCapability) => {
+          expect(platform).toBe('demo-cli');
+          expect(requestedCapability).toBe(capability);
+          throw resolutionError;
+        })
+      };
+
+      const result = await worker.buildPayload({
+        kind,
+        source: 'demo-cli',
+        config: {},
+        options: { force: false },
+        runtime
+      });
+
+      expect(result).toMatchObject({
+        status: 'failed',
+        platform: 'demo-cli',
+        capability,
+        operation: 'resolve-driver',
+        error: `${capability} resolution exploded`
+      });
+      expect(Object.prototype.propertyIsEnumerable.call(result, 'cause')).toBe(false);
+      expect(result.cause).toBe(resolutionError);
+      expect(runtime.getDriver).toHaveBeenCalledTimes(1);
+    }
+  });
 
   it('builds a project payload through an injected platform driver', async () => {
     const getProjects = vi.fn(async () => [{ name: 'demo-project', lastUsed: 10 }]);

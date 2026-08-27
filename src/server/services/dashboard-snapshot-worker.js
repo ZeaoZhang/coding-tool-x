@@ -32,6 +32,20 @@ function _isTypedPayload(value) {
 function _unsupportedPayload(source, capability) {
   return { status: 'unsupported', platform: source, capability };
 }
+function _driverFailurePayload(source, capability, error) {
+  const result = {
+    status: 'failed',
+    platform: source,
+    capability,
+    operation: 'resolve-driver',
+    error: error && error.message ? error.message : String(error)
+  };
+  if (error) {
+    Object.defineProperty(result, 'cause', { value: error, enumerable: false });
+  }
+  return result;
+}
+
 
 function _getRuntimeDriver(runtime, source, capability) {
   if (!runtime || typeof runtime.getDriver !== 'function') {
@@ -39,8 +53,8 @@ function _getRuntimeDriver(runtime, source, capability) {
   }
   try {
     return runtime.getDriver(source, capability);
-  } catch (_) {
-    return null;
+  } catch (error) {
+    return _driverFailurePayload(source, capability, error);
   }
 }
 

@@ -730,6 +730,76 @@ describe('session-history-index runtime selection', () => {
     expect(runtimeInventory).toHaveBeenCalledTimes(1);
     expect(runtimeParse).toHaveBeenCalledTimes(1);
   });
+  it('rejects when runtime sessions driver resolution throws instead of falling back to the built-in adapter', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-resolve-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const runtimeError = new Error('resolve sessions driver failed');
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          throw runtimeError;
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const error = await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' })
+        .then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.failure).toMatchObject({
+        status: 'failed',
+        platform: 'claude',
+        capability: 'sessions',
+        operation: 'resolve-driver',
+        error: 'resolve sessions driver failed'
+      });
+      expect(error.cause).toBe(runtimeError);
+
+      const row = index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude');
+      expect(row.last_error).toContain('resolve-driver');
+      expect(row.last_error).toContain('resolve sessions driver failed');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  it('rejects unsupported custom session sources without a runtime driver or adapter', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-unsupported-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => null)
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const error = await index.ensureSourceIndexed('demo-cli', { consistency: 'complete' })
+        .then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.failure).toMatchObject({
+        status: 'failed',
+        platform: 'demo-cli',
+        capability: 'sessions',
+        operation: 'resolve-driver'
+      });
+      expect(error.failure.error).toContain('unsupported');
+
+      const row = index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('demo-cli');
+      expect(row.last_error).toContain('unsupported');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
 
   it('falls back to descriptor projectHint for generic direct runtime session payloads without project fields', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-hint-'));
