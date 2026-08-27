@@ -149,6 +149,55 @@ describe('dashboard-snapshot-worker', () => {
       .resolves.toEqual({ channels: [{ id: 'opencode-channel' }] });
   });
 
+  it('accepts wrapped Claude project payloads and preserves an explicit payload current project', async () => {
+    const getProjects = vi.fn(async () => ({
+      projects: [
+        { name: 'zeta-project', lastUsed: 30 },
+        { name: 'alpha-project', lastUsed: 20 },
+        { name: 'beta-project', lastUsed: 10 }
+      ],
+      currentProject: 'payload-project'
+    }));
+    const getProjectOrder = vi.fn(() => ['beta-project', 'zeta-project']);
+    vi.spyOn(runtimeModule, 'getPlatformRuntime').mockReturnValue({
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects, getProjectOrder };
+      })
+    });
+
+    const result = await worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config: { currentProject: 'config-project' },
+      options: { force: false }
+    });
+
+    expect(result).toEqual({
+      projects: [
+        { name: 'beta-project', lastUsed: 10 },
+        { name: 'zeta-project', lastUsed: 30 },
+        { name: 'alpha-project', lastUsed: 20 }
+      ],
+      currentProject: 'payload-project'
+    });
+  });
+
+  it('returns unrecognized project payload values unchanged', async () => {
+    const unsupported = { type: 'failed', error: 'boom' };
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects: vi.fn(async () => unsupported) };
+      })
+    };
+
+    await expect(worker.buildPayload({ kind: 'projects', source: 'claude', config: {}, options: {}, runtime }))
+      .resolves.toBe(unsupported);
+  });
+
   it('does not include injected runtime functions in production IPC options', () => {
     expect(worker._test.getSerializableWorkerOptions({
       force: true,

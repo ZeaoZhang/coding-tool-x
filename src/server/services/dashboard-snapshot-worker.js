@@ -74,15 +74,32 @@ function _getChannelsGetter(driver) {
 }
 
 function _normalizeProjectPayload(source, projects, config = {}) {
-  const list = Array.isArray(projects) ? projects : [];
-  const ordered = source === 'claude'
-    ? sortClaudeProjects(list, config.projectOrder || config.order || [])
-    : list;
+  if (Array.isArray(projects)) {
+    const ordered = source === 'claude'
+      ? sortClaudeProjects(projects, config.projectOrder || config.order || [])
+      : projects;
 
-  return {
-    projects: ordered,
-    currentProject: config.currentProject || (ordered[0] ? ordered[0].name : null)
-  };
+    return {
+      projects: ordered,
+      currentProject: config.currentProject || (ordered[0] ? ordered[0].name : null)
+    };
+  }
+
+  if (projects && typeof projects === 'object' && Array.isArray(projects.projects)) {
+    const ordered = source === 'claude'
+      ? sortClaudeProjects(projects.projects, config.projectOrder || config.order || [])
+      : projects.projects;
+    const hasExplicitCurrentProject = Object.prototype.hasOwnProperty.call(projects, 'currentProject');
+
+    return {
+      projects: ordered,
+      currentProject: hasExplicitCurrentProject
+        ? projects.currentProject
+        : (config.currentProject || (ordered[0] ? ordered[0].name : null))
+    };
+  }
+
+  return projects;
 }
 
 function _normalizeChannelsPayload(source, value) {
