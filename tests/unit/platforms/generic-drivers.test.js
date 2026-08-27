@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 
 const { createDriverRegistry } = require('../../../src/platforms/driver-registry');
@@ -168,6 +169,23 @@ describe('generic JSONL driver', () => {
       root: '/tmp/demo/sessions',
       error: 'missing'
     });
+  });
+
+  test('returns a failed inventory with non-enumerable cause for malformed mapped metadata', async () => {
+    const cause = new Error('malformed metadata');
+    const fsImpl = {
+      readdir: async () => ['session.jsonl'],
+      stat: async () => ({ size: 1, mtimeMs: 1 }),
+      readFile: async () => { throw cause; }
+    };
+    const driver = makeJsonlDriver(fsImpl, { sessionMapping: { sessionId: 'id' } });
+
+    const result = await driver.inventory();
+    expect(result).toEqual(expect.objectContaining({
+      status: 'failed', platform: 'demo-cli', capability: 'sessions', operation: 'inventory'
+    }));
+    expect(result.cause).toBe(cause);
+    expect(Object.keys(result)).not.toContain('cause');
   });
 
   test('returns a typed parse failure for malformed JSONL', async () => {
@@ -381,6 +399,41 @@ describe('generic filesystem driver', () => {
   });
 });
 
+  test('rejects symlink roots and targets outside the mapped resource root', async () => {
+    const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-resource-root-'));
+    const outside = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-resource-outside-'));
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'secret');
+    fs.symlinkSync(outside, path.join(root, 'escape'), 'dir');
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: root } }
+      });
+
+      await expect(driver.list('commands')).resolves.toEqual(expect.objectContaining({
+        status: 'failed', platform: 'demo-cli', capability: 'resourceSync', operation: 'list'
+      }));
+      await expect(driver.remove('commands', 'escape')).resolves.toEqual(expect.objectContaining({
+        status: 'failed', platform: 'demo-cli', capability: 'resourceSync', operation: 'remove'
+      }));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test('filesystem failures preserve their original cause safely', async () => {
+    const cause = new Error('filesystem failed');
+    const driver = makeRegistry().create('generic-filesystem', {
+      platform: 'demo-cli',
+      manifest: { resourceMappings: { commands: '/tmp/demo/commands' } },
+      fsImpl: { readdir: async () => { throw cause; } }
+    });
+    const result = await driver.list('commands');
+    expect(result.cause).toBe(cause);
+    expect(Object.keys(result)).not.toContain('cause');
+  });
+
 describe('generic OpenAI-compatible driver', () => {
   test('normalizes endpoints and authenticates requests without exposing API keys', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }));
@@ -432,4 +485,28 @@ describe('generic OpenAI-compatible driver', () => {
     expect(driver.start).toBeUndefined();
     expect(driver.stop).toBeUndefined();
   });
+
+  test('wraps network and JSON response failures with a safe typed error', async () => {
+    const networkCause = new Error('network failed');
+    const networkDriver = makeRegistry().create('generic-openai-compatible', {
+      platform: 'demo-cli',
+      manifest: { baseUrl: 'https://api.example.test' },
+      fetchImpl: async () => { throw networkCause; }
+    });
+    await expect(networkDriver.request('/models', { apiKey: 'secret-key' })).rejects.toMatchObject({
+      platform: 'demo-cli', capability: 'channels', operation: 'request', message: 'OpenAI-compatible request failed'
+    });
+
+    const jsonCause = new Error('invalid json');
+    const jsonDriver = makeRegistry().create('generic-openai-compatible', {
+      platform: 'demo-cli',
+      manifest: { baseUrl: 'https://api.example.test' },
+      fetchImpl: async () => ({ ok: true, json: async () => { throw jsonCause; } })
+    });
+    await expect(jsonDriver.request('/models', {})).rejects.toMatchObject({
+      platform: 'demo-cli', capability: 'channels', operation: 'request', message: 'OpenAI-compatible request failed'
+    });
+  });
 });
+
+

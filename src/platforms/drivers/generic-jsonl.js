@@ -13,6 +13,7 @@ function failure({ platform, operation, error, root, filePath }) {
   };
   if (root) result.root = root;
   if (filePath) result.filePath = filePath;
+  if (error) Object.defineProperty(result, 'cause', { value: error, enumerable: false });
   return result;
 }
 
