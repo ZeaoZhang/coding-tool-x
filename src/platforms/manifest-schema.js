@@ -60,9 +60,14 @@ const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
 function validateManifest(manifest) {
   const valid = validate(manifest);
   const errors = valid ? [] : (validate.errors || []).slice();
+  const allowed = {
+    'generic-jsonl': new Set(['sessions']),
+    'generic-filesystem': new Set(['resourceSync']),
+    'generic-openai-compatible': new Set(['channels'])
+  };
   for (const [capability, driver] of Object.entries(manifest && manifest.capabilities || {})) {
-    if (driver === 'generic-openai-compatible' && capability !== 'channels') {
-      errors.push({ instancePath: `/capabilities/${capability}`, message: 'generic-openai-compatible only supports channels' });
+    if (allowed[driver] && !allowed[driver].has(capability)) {
+      errors.push({ instancePath: `/capabilities/${capability}`, message: `${driver} only supports ${[...allowed[driver]].join(', ')}` });
     }
   }
   return { valid: errors.length === 0, errors };

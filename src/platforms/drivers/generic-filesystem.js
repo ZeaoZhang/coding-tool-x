@@ -42,12 +42,33 @@ function resolveTarget(root, name) {
   }
   return target;
 }
-async function assertSafeTarget(fsImpl, root, target) {
+async function assertSafeTarget(fsImpl, root, target, { allowMissingRoot = false } = {}) {
   if (typeof fsImpl.realpath !== 'function' || typeof fsImpl.lstat !== 'function') return;
   const resolvedRoot = path.resolve(root);
-  const rootReal = await fsImpl.realpath(resolvedRoot);
-  const rootStat = await fsImpl.lstat(resolvedRoot);
-  if (rootStat.isSymbolicLink()) throw new Error(`Resource root contains symlink: ${root}`);
+  let rootReal;
+  try {
+    rootReal = await fsImpl.realpath(resolvedRoot);
+  } catch (error) {
+    if (!allowMissingRoot || error.code !== 'ENOENT') throw error;
+    let parent = path.dirname(resolvedRoot);
+    while (parent !== path.dirname(parent)) {
+      try {
+        rootReal = await fsImpl.realpath(parent);
+        const parentStat = await fsImpl.lstat(parent);
+        if (parentStat.isSymbolicLink()) throw new Error(`Resource root contains symlink: ${root}`);
+        break;
+      } catch (parentError) {
+        if (parentError.code !== 'ENOENT') throw parentError;
+        parent = path.dirname(parent);
+      }
+    }
+    if (!rootReal) return;
+  }
+  const rootStat = await fsImpl.lstat(resolvedRoot).catch(error => {
+    if (allowMissingRoot && error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (rootStat && rootStat.isSymbolicLink()) throw new Error(`Resource root contains symlink: ${root}`);
   const relative = path.relative(resolvedRoot, target);
   const components = relative ? relative.split(path.sep) : [];
   let current = resolvedRoot;
@@ -65,8 +86,11 @@ async function assertSafeTarget(fsImpl, root, target) {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
-  if (targetReal && (targetReal === rootReal || path.relative(rootReal, targetReal).startsWith(`..${path.sep}`) || path.isAbsolute(path.relative(rootReal, targetReal)))) {
-    throw new Error(`Resource path escapes target root: ${target}`);
+  if (targetReal) {
+    const physicalRelative = path.relative(rootReal, targetReal);
+    if (physicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(physicalRelative)) {
+      throw new Error(`Resource path escapes target root: ${target}`);
+    }
   }
 }
 function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } = {}) {
@@ -87,13 +111,7 @@ function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } 
           const target = resolveTarget(root, name);
           await assertSafeTarget(fsImpl, root, target);
           const stat = await fsImpl.stat(target);
-          resources.push({
-            name,
-            target,
-            type: stat.isDirectory() ? 'directory' : 'file',
-            size: stat.size,
-            mtimeMs: stat.mtimeMs
-          });
+          resources.push({ name, target, type: stat.isDirectory() ? 'directory' : 'file', size: stat.size, mtimeMs: stat.mtimeMs });
         }
         return resources;
       } catch (error) {
@@ -104,8 +122,8 @@ function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } 
       try {
         const root = getRoot(type);
         const target = resolveTarget(root, name);
-        await assertSafeTarget(fsImpl, root, root);
-        await assertSafeTarget(fsImpl, root, path.dirname(target));
+        await assertSafeTarget(fsImpl, root, root, { allowMissingRoot: true });
+        await assertSafeTarget(fsImpl, root, path.dirname(target), { allowMissingRoot: true });
         const sourceStat = await fsImpl.stat(sourceRoot);
         await fsImpl.mkdir(path.dirname(target), { recursive: true });
         await assertSafeTarget(fsImpl, root, target);
