@@ -37,19 +37,21 @@ test('production singleton creates drivers through the default registry', () => 
     : originalLoad(request, parent, isMain);
   delete require.cache[RUNTIME_PATH];
 
-  const { getPlatformRuntime } = require('../../../src/platforms/runtime');
-  const runtime = getPlatformRuntime();
+  try {
+    const { getPlatformRuntime } = require('../../../src/platforms/runtime');
+    const runtime = getPlatformRuntime();
 
-  expect(runtime.getDriver('claude', 'sessions')).toBe(driver);
-  expect(defaultDriverRegistry.create).toHaveBeenCalledWith('legacy:claude', {
-    platform: 'claude',
-    capability: 'sessions',
-    context: {},
-    dependencies: {}
-  });
-
-  delete require.cache[RUNTIME_PATH];
-  Module._load = originalLoad;
+    expect(runtime.getDriver('claude', 'sessions')).toBe(driver);
+    expect(defaultDriverRegistry.create).toHaveBeenCalledWith('legacy:claude', {
+      platform: 'claude',
+      capability: 'sessions',
+      context: {},
+      dependencies: {}
+    });
+  } finally {
+    delete require.cache[RUNTIME_PATH];
+    Module._load = originalLoad;
+  }
 });
 
 test('production singleton throws clearly when no default driver registry is available', () => {
