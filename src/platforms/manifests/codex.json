@@ -1,0 +1,19 @@
+{
+  "key": "codex",
+  "title": "Codex-CLI",
+  "label": "Codex",
+  "command": "codex",
+  "iconToken": "code",
+  "color": "#3b82f6",
+  "defaultVisible": true,
+  "pathResolverId": "codex",
+  "capabilities": {
+    "projects": "legacy:codex",
+    "sessions": "legacy:codex",
+    "channels": "legacy:codex",
+    "proxy": "legacy:codex",
+    "statistics": "legacy:codex",
+    "resourceSync": "legacy:codex",
+    "nativeConfig": "legacy:codex"
+  }
+}

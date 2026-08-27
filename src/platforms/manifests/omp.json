@@ -1,0 +1,19 @@
+{
+  "key": "omp",
+  "title": "OMP",
+  "label": "OMP",
+  "command": "omp",
+  "iconToken": "omp",
+  "color": "#0f9f9a",
+  "defaultVisible": false,
+  "pathResolverId": "omp",
+  "capabilities": {
+    "projects": "legacy:omp",
+    "sessions": "legacy:omp",
+    "channels": "legacy:omp",
+    "proxy": "legacy:omp",
+    "statistics": "legacy:omp",
+    "resourceSync": "legacy:omp",
+    "nativeConfig": "legacy:omp"
+  }
+}

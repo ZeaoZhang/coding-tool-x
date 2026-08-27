@@ -1,0 +1,19 @@
+{
+  "key": "claude",
+  "title": "ClaudeCode",
+  "label": "Claude Code",
+  "command": "claude",
+  "iconToken": "claude",
+  "color": "#18a058",
+  "defaultVisible": true,
+  "pathResolverId": "claude",
+  "capabilities": {
+    "projects": "legacy:claude",
+    "sessions": "legacy:claude",
+    "channels": "legacy:claude",
+    "proxy": "legacy:claude",
+    "statistics": "legacy:claude",
+    "resourceSync": "legacy:claude",
+    "nativeConfig": "legacy:claude"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "key": "gemini",
+  "title": "Gemini-CLI",
+  "label": "Gemini",
+  "command": "gemini",
+  "iconToken": "gemini",
+  "color": "#a855f7",
+  "defaultVisible": true,
+  "pathResolverId": "gemini",
+  "capabilities": {
+    "projects": "legacy:gemini",
+    "sessions": "legacy:gemini",
+    "channels": "legacy:gemini",
+    "proxy": "legacy:gemini",
+    "statistics": "legacy:gemini",
+    "resourceSync": "legacy:gemini",
+    "nativeConfig": "legacy:gemini"
+  }
+}
