@@ -1,8 +1,11 @@
 import { describe, it, afterEach, expect, vi } from 'vitest';
+import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { createSessionHistoryIndex } from '../../../src/server/services/session-history-index.js';
+const require = createRequire(import.meta.url);
+const runtimeModule = require('../../../src/platforms/runtime');
 
 function makeSessionFixture(sessionId, projectName = 'test-project', overrides = {}) {
   const now = Date.now();
@@ -626,6 +629,67 @@ describe('session-history-index', () => {
   });
 });
 describe('session-history-index runtime selection', () => {
+
+  it('defaults to the platform runtime in child mode when no runtime or adapterRegistry is supplied', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    process.env.CC_TOOL_SESSION_HISTORY_CHILD = '1';
+
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-default-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'runtime-default.jsonl');
+    fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const runtimeInventory = vi.fn(async () => [{
+      filePath,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      sessionId: 'runtime-default',
+      projectHint: 'runtime-default-project'
+    }]);
+    const runtimeParse = vi.fn(async () => ({
+      session: makeSessionFixture('runtime-default', 'runtime-default-project'),
+      messages: makeMessageFixtures(2)
+    }));
+    const originalGetPlatformRuntime = runtimeModule.getPlatformRuntime;
+    runtimeModule.getPlatformRuntime = () => ({
+      getDriver: vi.fn((source, capability) => {
+        expect(source).toBe('claude');
+        expect(capability).toBe('sessions');
+        return { inventory: runtimeInventory, parse: runtimeParse };
+      })
+    });
+    delete require.cache[require.resolve('../../../src/server/services/session-history-index.js')];
+    const { createSessionHistoryIndex: createSessionHistoryIndexLocal } = require('../../../src/server/services/session-history-index.js');
+    const workerRunner = vi.fn(async () => {
+      throw new Error('worker runner should not be used when the child runtime is available');
+    });
+    const index = createSessionHistoryIndexLocal({
+      dbPath,
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+      const row = index._getDb().prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ?').get('claude');
+      expect(row.count).toBe(1);
+    } finally {
+      index.closeSessionHistoryIndex();
+      runtimeModule.getPlatformRuntime = originalGetPlatformRuntime;
+      delete require.cache[require.resolve('../../../src/server/services/session-history-index.js')];
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+      process.env.NODE_ENV = prevNodeEnv;
+      if (prevChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = prevChild;
+    }
+
+    expect(runtimeInventory).toHaveBeenCalledTimes(1);
+    expect(runtimeParse).toHaveBeenCalledTimes(1);
+    expect(workerRunner).not.toHaveBeenCalled();
+  });
+
   it('uses a runtime sessions driver when no explicit adapterRegistry is provided', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
