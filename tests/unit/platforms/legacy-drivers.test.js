@@ -2,6 +2,7 @@
 
 const { createDriverRegistry, getDriverRegistry } = require('../../../src/platforms/driver-registry');
 const { createPlatformRuntime } = require('../../../src/platforms/runtime');
+const { spawnSync } = require('child_process');
 
 function makeRequire(stubs) {
   const calls = [];
@@ -49,6 +50,156 @@ describe('legacy drivers', () => {
 
     expect(driver.list()).toEqual([{ id: 'claude-channel' }]);
     expect(getAllChannels).toHaveBeenCalledTimes(1);
+  });
+
+  test('preserves unsupported non-Claude channel list results from legacy modules', () => {
+    const unsupportedResult = {
+      status: 'unsupported',
+      platform: 'codex',
+      capability: 'channels',
+      operation: 'list'
+    };
+    const requireImpl = makeRequire({
+      '../../server/services/codex-channels': {
+        getChannels: vi.fn(() => unsupportedResult)
+      }
+    });
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const driver = createLegacyDriver({ platform: 'codex', capability: 'channels', requireImpl });
+
+    expect(driver.list()).toBe(unsupportedResult);
+  });
+
+  test('maps session operations to each platform legacy export name', () => {
+    const cases = [
+      ['claude', '../../server/services/sessions', 'getSessionsForProject'],
+      ['codex', '../../server/services/codex-sessions', 'getSessionsByProject'],
+      ['gemini', '../../server/services/gemini-sessions', 'getProjectSessions'],
+      ['opencode', '../../server/services/opencode-sessions', 'getSessionsByProjectId'],
+      ['omp', '../../server/services/omp-sessions', 'getSessionsByProject']
+    ];
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+
+    for (const [platform, modulePath, listSessionsExport] of cases) {
+      const exports = {
+        getProjects: vi.fn(() => `${platform}:projects`),
+        [listSessionsExport]: vi.fn((...args) => ({ platform, args })),
+        getRecentSessions: vi.fn(() => `${platform}:recent`),
+        searchSessions: vi.fn(() => `${platform}:search`),
+        deleteSession: vi.fn(() => `${platform}:delete`),
+        forkSession: vi.fn(() => `${platform}:fork`),
+        getProjectAndSessionCounts: vi.fn(() => `${platform}:counts`)
+      };
+      const requireImpl = makeRequire({ [modulePath]: exports });
+      const driver = createLegacyDriver({ platform, capability: 'sessions', requireImpl });
+
+      expect(driver.listProjects('config')).toBe(`${platform}:projects`);
+      expect(driver.listSessions('project', { limit: 2 })).toEqual({ platform, args: ['project', { limit: 2 }] });
+      expect(driver.recent(3)).toBe(`${platform}:recent`);
+      expect(driver.search('needle')).toBe(`${platform}:search`);
+      expect(driver.delete('session-id')).toBe(`${platform}:delete`);
+      expect(driver.fork('session-id')).toBe(`${platform}:fork`);
+      expect(driver.counts()).toBe(`${platform}:counts`);
+      expect(driver.status('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'status' });
+      expect(driver.messages('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'messages' });
+      expect(requireImpl.calls).toEqual([modulePath]);
+    }
+  });
+
+  test('exposes normalized statistics operations and unsupported reset when absent', () => {
+    const getStatistics = vi.fn(() => ({ total: 7 }));
+    const getDailyStatistics = vi.fn(date => ({ date }));
+    const recordRequest = vi.fn(request => ({ recorded: request.id }));
+    const requireImpl = makeRequire({
+      '../../server/services/codex-statistics-service': {
+        getStatistics,
+        getDailyStatistics,
+        recordRequest
+      }
+    });
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const driver = createLegacyDriver({ platform: 'codex', capability: 'statistics', requireImpl });
+
+    expect(driver.summary()).toEqual({ total: 7 });
+    expect(driver.list()).toEqual({ total: 7 });
+    expect(driver.daily('2026-08-27')).toEqual({ date: '2026-08-27' });
+    expect(driver.today()).toEqual({ date: undefined });
+    expect(driver.record({ id: 'request-1' })).toEqual({ recorded: 'request-1' });
+    expect(driver.reset()).toEqual({ status: 'unsupported', platform: 'codex', capability: 'statistics', operation: 'reset' });
+  });
+
+  test('falls back statistics daily and today operations to getTodayStatistics when needed', () => {
+    const getTodayStatistics = vi.fn(() => ({ today: true }));
+    const requireImpl = makeRequire({
+      '../../server/services/gemini-statistics-service': { getTodayStatistics }
+    });
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const driver = createLegacyDriver({ platform: 'gemini', capability: 'statistics', requireImpl });
+
+    expect(driver.daily()).toEqual({ today: true });
+    expect(driver.today()).toEqual({ today: true });
+    expect(getTodayStatistics).toHaveBeenCalledTimes(2);
+  });
+
+  test('uses real require cache stubs for config paths, codex channels, and proxy drivers', () => {
+    const script = `
+      const assert = require('assert');
+      const pathsPath = require.resolve('./src/config/paths');
+      const codexChannelsPath = require.resolve('./src/server/services/codex-channels');
+      const ompProxyPath = require.resolve('./src/server/omp-proxy-server');
+      const codexProxyPath = require.resolve('./src/server/codex-proxy-server');
+      const originals = new Map();
+      const unsupportedResult = { status: 'unsupported', platform: 'codex', capability: 'channels', operation: 'list' };
+      const calls = [];
+      const startOmpProxyServer = options => { calls.push(['omp-start', options]); return { op: 'omp-start', options }; };
+      const stopOmpProxyServer = options => { calls.push(['omp-stop', options]); return { op: 'omp-stop', options }; };
+      const startCodexProxyServer = options => { calls.push(['codex-start', options]); return { op: 'codex-start', options }; };
+      const stopCodexProxyServer = options => { calls.push(['codex-stop', options]); return { op: 'codex-stop', options }; };
+      function stub(modulePath, exports) {
+        originals.set(modulePath, require.cache[modulePath]);
+        delete require.cache[modulePath];
+        require.cache[modulePath] = { id: modulePath, filename: modulePath, loaded: true, exports };
+      }
+      try {
+        stub(pathsPath, { PATHS: { activeChannel: { codex: '/tmp/codex-active.json' } } });
+        stub(codexChannelsPath, { getChannels: () => unsupportedResult });
+        stub(ompProxyPath, {
+          getOmpProxyStatus: () => ({ running: true, port: 20092 }),
+          startOmpProxyServer,
+          stopOmpProxyServer
+        });
+        stub(codexProxyPath, {
+          getCodexProxyStatus: () => ({ running: false, port: null }),
+          startCodexProxyServer,
+          stopCodexProxyServer
+        });
+        const { createLegacyDriver } = require('./src/platforms/drivers/legacy');
+        assert.strictEqual(require('./src/config/paths').PATHS.activeChannel.codex, '/tmp/codex-active.json');
+        assert.strictEqual(createLegacyDriver({ platform: 'codex', capability: 'channels' }).list(), unsupportedResult);
+        const ompDriver = createLegacyDriver({ platform: 'omp', capability: 'proxy' });
+        const ompStartOptions = { preserveManagedMode: true, forceAfterMs: 25 };
+        const ompStopOptions = { drain: true, restoration: { activeChannelId: 'channel-1' } };
+        assert.deepStrictEqual(ompDriver.start(ompStartOptions), { op: 'omp-start', options: ompStartOptions });
+        assert.deepStrictEqual(ompDriver.stop(ompStopOptions), { op: 'omp-stop', options: ompStopOptions });
+        assert.deepStrictEqual(calls.slice(0, 2), [['omp-start', ompStartOptions], ['omp-stop', ompStopOptions]]);
+        const codexDriver = createLegacyDriver({ platform: 'codex', capability: 'proxy' });
+        assert.deepStrictEqual(codexDriver.start({ port: 21111 }), { op: 'codex-start', options: { port: 21111 } });
+        assert.deepStrictEqual(codexDriver.stop({ clearStartTime: false }), { op: 'codex-stop', options: { clearStartTime: false } });
+      } finally {
+        for (const [modulePath, original] of originals.entries()) {
+          if (original) require.cache[modulePath] = original;
+          else delete require.cache[modulePath];
+        }
+      }
+    `;
+
+    const result = spawnSync(process.execPath, ['-e', script], {
+      cwd: process.cwd(),
+      encoding: 'utf8'
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
   });
 
   test('passes OMP proxy lifecycle options through exactly', async () => {
