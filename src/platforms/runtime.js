@@ -59,6 +59,10 @@ function buildResolvedManifest(rawManifest, resolvedPaths, pathOptions = {}) {
     : rawManifest.resourceMappings;
   return { ...rawManifest, paths, resourceMappings };
 }
+function isLegacyDriverId(driverId) {
+  return typeof driverId === 'string' && driverId.startsWith('legacy:');
+}
+
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
   const resolvedRegistry = registry || createPlatformRegistry();
   return {
@@ -68,10 +72,12 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       if (!driverRegistry || typeof driverRegistry.create !== 'function') return null;
       const rawManifest = typeof resolvedRegistry.resolve === 'function' ? resolvedRegistry.resolve(platform) : null;
       const pathOptions = context.pathResolver || context.pathResolverOptions || dependencies.pathResolver || dependencies.pathResolverOptions || {};
-      const resolvedPaths = rawManifest && typeof resolvedRegistry.resolvePaths === 'function'
+      const resolvedPaths = rawManifest && !isLegacyDriverId(driverId) && typeof resolvedRegistry.resolvePaths === 'function'
         ? resolvedRegistry.resolvePaths(platform, pathOptions)
         : null;
-      const manifest = buildResolvedManifest(rawManifest, resolvedPaths, pathOptions);
+      const manifest = isLegacyDriverId(driverId)
+        ? rawManifest
+        : buildResolvedManifest(rawManifest, resolvedPaths, pathOptions);
       return driverRegistry.create(driverId, {
         ...dependencies,
         platform,

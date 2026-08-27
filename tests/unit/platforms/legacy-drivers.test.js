@@ -426,7 +426,7 @@ describe('legacy drivers', () => {
     const runtime = createPlatformRuntime({ registry: platformRegistry, driverRegistry });
 
     expect(runtime.invoke('codex', 'channels', 'list')).toEqual([{ id: 'codex-channel' }]);
-    expect(platformRegistry.resolvePaths).toHaveBeenCalledWith('codex', {});
+    expect(platformRegistry.resolvePaths).not.toHaveBeenCalled();
     expect(requireImpl.calls).toEqual(['../../server/services/codex-channels']);
   });
 });

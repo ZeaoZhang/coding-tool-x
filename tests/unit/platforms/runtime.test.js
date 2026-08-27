@@ -32,6 +32,27 @@ test('creates injected capability drivers with resolved manifest and flat depend
   expect(runtime.invoke('demo-cli', 'sessions', 'list')).toEqual(['session-1']);
 });
 
+test('runtime passes legacy manifests through without path resolution', () => {
+  const driver = { list: vi.fn(() => ['legacy-session']) };
+  const driverRegistry = { create: vi.fn(() => driver) };
+  const manifest = { key: 'claude', paths: { sessions: '{home}/projects' }, capabilities: { sessions: 'legacy:claude' } };
+  const registry = {
+    getCapability: vi.fn(() => 'legacy:claude'),
+    resolve: vi.fn(() => manifest),
+    resolvePaths: vi.fn(() => { throw new Error('path resolver should not run for legacy drivers'); })
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry });
+
+  expect(runtime.getDriver('claude', 'sessions')).toBe(driver);
+  expect(registry.resolvePaths).not.toHaveBeenCalled();
+  expect(driverRegistry.create).toHaveBeenCalledWith('legacy:claude', expect.objectContaining({
+    platform: 'claude',
+    capability: 'sessions',
+    manifest
+  }));
+  expect(runtime.invoke('claude', 'sessions', 'list')).toEqual(['legacy-session']);
+});
+
 test('runtime passes resolved paths and flat dependencies into a generic driver', async () => {
   const fsImpl = {
     readdir: async () => ['session-1.jsonl'],
