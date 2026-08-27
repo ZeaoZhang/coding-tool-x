@@ -4,6 +4,7 @@ const { createUnsupportedDriver } = require('./drivers/unsupported');
 const { createGenericJsonlDriver } = require('./drivers/generic-jsonl');
 const { createGenericFilesystemDriver } = require('./drivers/generic-filesystem');
 const { createGenericOpenAICompatibleDriver } = require('./drivers/generic-openai-compatible');
+const { registerLegacyDrivers } = require('./drivers/legacy');
 
 const DRIVER_ID_PATTERN = /^[a-z0-9:_-]+$/;
 
@@ -41,14 +42,10 @@ function getDriverRegistry() {
         unsupported: createUnsupportedDriver,
         'generic-jsonl': createGenericJsonlDriver,
         'generic-filesystem': createGenericFilesystemDriver,
-        'generic-openai-compatible': createGenericOpenAICompatibleDriver,
-        'legacy:claude': createUnsupportedDriver,
-        'legacy:codex': createUnsupportedDriver,
-        'legacy:gemini': createUnsupportedDriver,
-        'legacy:opencode': createUnsupportedDriver,
-        'legacy:omp': createUnsupportedDriver
+        'generic-openai-compatible': createGenericOpenAICompatibleDriver
       }
     });
+    registerLegacyDrivers(defaultRegistry);
   }
   return defaultRegistry;
 }
