@@ -21,12 +21,21 @@ function isUrl(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value));
 }
 
-function resolveResourceMappings(resourceMappings = {}, resolvedPaths = {}, pathOptions = {}) {
+function assertInsideHome(home, candidate, manifestKey, mappingName) {
+  const relative = path.relative(home, candidate);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Manifest ${manifestKey || 'platform'} resource mapping ${mappingName} escapes home`);
+  }
+}
+
+function resolveResourceMappings(manifest, resolvedPaths = {}, pathOptions = {}) {
+  const resourceMappings = manifest.resourceMappings || {};
   const home = resolvedPaths.home || process.cwd();
   const resolved = { env: { ...process.env, ...(pathOptions.env || {}) }, home };
   return Object.fromEntries(Object.entries(resourceMappings).map(([type, value]) => {
     const raw = resolveTemplate(value, resolved);
     const target = isUrl(raw) || path.isAbsolute(raw) ? raw : path.join(home, raw);
+    if (!isUrl(target) && !path.isAbsolute(String(value))) assertInsideHome(home, path.normalize(target), manifest.key, type);
     return [type, isUrl(target) ? target : path.normalize(target)];
   }));
 }
@@ -35,14 +44,13 @@ function buildResolvedManifest(rawManifest, resolvedPaths, pathOptions = {}) {
   if (!rawManifest) return null;
   const paths = resolvedPaths || rawManifest.paths;
   const resourceMappings = rawManifest.resourceMappings
-    ? resolveResourceMappings(rawManifest.resourceMappings, paths || {}, pathOptions)
+    ? resolveResourceMappings(rawManifest, paths || {}, pathOptions)
     : rawManifest.resourceMappings;
   return { ...rawManifest, paths, resourceMappings };
 }
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
   const resolvedRegistry = registry || createPlatformRegistry();
   return {
-    registry: resolvedRegistry,
     getDriver(platform, capability, context = {}) {
       const driverId = resolvedRegistry.getCapability(platform, capability);
       if (!driverId) return null;

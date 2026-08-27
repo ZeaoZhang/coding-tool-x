@@ -91,6 +91,47 @@ test('runtime passes resolved resource mappings and flat fs dependency into a ge
   ]);
 });
 
+test('runtime rejects relative resource mappings that escape the resolved home', () => {
+  const driverRegistry = { create: vi.fn() };
+  const manifest = {
+    key: 'demo-cli',
+    paths: { home: '/tmp/demo' },
+    resourceMappings: { commands: '../outside' }
+  };
+  const registry = {
+    getCapability: () => 'generic-filesystem',
+    resolve: () => manifest,
+    resolvePaths: () => ({ home: '/tmp/demo' })
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry });
+
+  expect(() => runtime.getDriver('demo-cli', 'resourceSync')).toThrow(/resource mapping commands escapes home/);
+  expect(driverRegistry.create).not.toHaveBeenCalled();
+});
+
+test('runtime keeps URL resource mappings out of filesystem containment checks', () => {
+  const driver = { ok: true };
+  const driverRegistry = { create: vi.fn(() => driver) };
+  const manifest = {
+    key: 'demo-cli',
+    paths: { home: '/tmp/demo' },
+    resourceMappings: { remote: '$REMOTE_ROOT' }
+  };
+  const registry = {
+    getCapability: () => 'generic-openai-compatible',
+    resolve: () => manifest,
+    resolvePaths: () => ({ home: '/tmp/demo' })
+  };
+  const runtime = createPlatformRuntime({
+    registry,
+    driverRegistry,
+    dependencies: { pathResolverOptions: { env: { REMOTE_ROOT: 'https://api.example.test/resources' } } }
+  });
+
+  expect(runtime.getDriver('demo-cli', 'channels')).toBe(driver);
+  expect(driverRegistry.create.mock.calls[0][1].manifest.resourceMappings.remote).toBe('https://api.example.test/resources');
+});
+
 test('runtime preserves environment-resolved OpenAI base URLs for generic channels', () => {
   const { resolveManifestPaths } = require('../../../src/platforms/path-resolver');
   const fetchImpl = vi.fn();
