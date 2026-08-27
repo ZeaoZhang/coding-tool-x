@@ -14,8 +14,56 @@ function loadNativePathResolvers() {
   return require('../config/paths');
 }
 
-function resolveNativeHome(pathResolverId, env, commandRunner, homeDir, hasInjectedHomeDir) {
+function resolveExistingEnvPath(envValue) {
+  if (typeof envValue !== 'string') return '';
+  return envValue.trim() || '';
+}
+
+function expandUserHome(value, homeDir) {
+  if (value === '~') return homeDir;
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(homeDir, value.slice(2));
+  return value;
+}
+
+function normalizeOmpProfileName(profile = '') {
+  const value = String(profile || '').trim();
+  return value && value !== 'default' ? value : '';
+}
+
+function resolveInjectedOmpHome(env, commandRunner, homeDir, hasInjectedHomeDir, hasInjectedCommandRunner) {
+  if (hasInjectedCommandRunner) {
+    const command = String(env.OMP_COMMAND || 'omp').trim() || 'omp';
+    try {
+      const output = commandRunner(command, ['config', 'path'], {
+        encoding: 'utf8',
+        env: { ...process.env, ...env },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 3000,
+        windowsHide: true
+      });
+      const configuredByCli = String(output || '').trim().split(/\r?\n/).find(Boolean);
+      if (configuredByCli) return path.resolve(expandUserHome(configuredByCli, homeDir));
+    } catch {
+      // Fall through to injected environment/profile paths.
+    }
+  }
+
+  const configuredDir = resolveExistingEnvPath(env.PI_CODING_AGENT_DIR || env.OMP_CODING_AGENT_DIR);
+  if (configuredDir) return path.resolve(expandUserHome(configuredDir, homeDir));
+
+  const hasInjectedOmpEnv = Boolean(env.OMP_CONFIG_DIR || env.PI_CODING_AGENT_DIR || env.OMP_CODING_AGENT_DIR || env.OMP_PROFILE);
+  if (!hasInjectedHomeDir && !hasInjectedOmpEnv && !hasInjectedCommandRunner) return undefined;
+  const profile = normalizeOmpProfileName(env.OMP_PROFILE);
+  const configRoot = expandUserHome(resolveExistingEnvPath(env.OMP_CONFIG_DIR) || path.join(homeDir, '.omp'), homeDir);
+  return path.resolve(profile ? path.join(configRoot, 'profiles', profile, 'agent') : path.join(configRoot, 'agent'));
+}
+
+function resolveNativeHome(pathResolverId, env, commandRunner, homeDir, hasInjectedHomeDir, hasInjectedCommandRunner) {
   if (pathResolverId === 'declarative') return undefined;
+  if (pathResolverId === 'omp') {
+    const injectedOmpHome = resolveInjectedOmpHome(env, commandRunner, homeDir, hasInjectedHomeDir, hasInjectedCommandRunner);
+    if (injectedOmpHome) return injectedOmpHome;
+  }
   if (hasInjectedHomeDir && pathResolverId !== 'omp') {
     switch (pathResolverId) {
       case 'claude': return env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
@@ -55,7 +103,7 @@ function resolveManifestPaths(manifest, options = {}) {
   const hasInjectedHomeDir = Object.prototype.hasOwnProperty.call(options, 'homeDir');
   const homeDir = options.homeDir || os.homedir();
   const commandRunner = options.commandRunner || execFileSync;
-  const nativeHome = resolveNativeHome(manifest.pathResolverId || 'declarative', env, commandRunner, homeDir, hasInjectedHomeDir);
+  const nativeHome = resolveNativeHome(manifest.pathResolverId || 'declarative', env, commandRunner, homeDir, hasInjectedHomeDir, Object.prototype.hasOwnProperty.call(options, 'commandRunner'));
   const declared = manifest.paths || {};
   const homeValue = declared.home || nativeHome || homeDir;
   const resolved = { env, home: '' };
