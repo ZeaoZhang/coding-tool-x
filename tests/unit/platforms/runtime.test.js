@@ -138,7 +138,7 @@ test('runtime expands tilde resource mappings consistently with manifest paths',
   const manifest = {
     key: 'demo-cli',
     paths: { home: '~/.demo' },
-    resourceMappings: { commands: '~/commands' }
+    resourceMappings: { commands: '~/.demo/commands' }
   };
   const registry = {
     getCapability: () => 'generic-filesystem',
@@ -148,7 +148,25 @@ test('runtime expands tilde resource mappings consistently with manifest paths',
   const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies: { pathResolverOptions: { homeDir: '/Users/demo' } } });
 
   expect(runtime.getDriver('demo-cli', 'resourceSync')).toBe(driver);
-  expect(driverRegistry.create.mock.calls[0][1].manifest.resourceMappings.commands).toBe('/Users/demo/commands');
+  expect(driverRegistry.create.mock.calls[0][1].manifest.resourceMappings.commands).toBe('/Users/demo/.demo/commands');
+});
+
+test('runtime rejects tilde resource mappings that escape resolved home', () => {
+  const driverRegistry = { create: vi.fn() };
+  const manifest = {
+    key: 'demo-cli',
+    paths: { home: '~/.demo' },
+    resourceMappings: { commands: '~/../../outside' }
+  };
+  const registry = {
+    getCapability: () => 'generic-filesystem',
+    resolve: () => manifest,
+    resolvePaths: () => ({ home: '/Users/demo/.demo' })
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies: { pathResolverOptions: { homeDir: '/Users/demo' } } });
+
+  expect(() => runtime.getDriver('demo-cli', 'resourceSync')).toThrow(/resource mapping commands escapes home/);
+  expect(driverRegistry.create).not.toHaveBeenCalled();
 });
 
 test('runtime preserves environment-resolved OpenAI base URLs for generic channels', () => {

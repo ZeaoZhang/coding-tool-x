@@ -23,8 +23,7 @@ function isUrl(value) {
 
 
 function isExplicitFilesystemRoot(value) {
-  const raw = String(value);
-  return path.isAbsolute(raw) || raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\');
+  return path.isAbsolute(String(value));
 }
 function expandTilde(value, homeDir) {
   if (value === '~') return homeDir;
