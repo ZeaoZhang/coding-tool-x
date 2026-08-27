@@ -43,6 +43,18 @@ test('accepts sessionGlob but still rejects unknown manifest fields', () => {
   expect(normalizeManifestError(withUnknown.errors)).toContain('arbitraryGlobRunner');
 });
 
+test('rejects OpenAI-compatible transport as a proxy lifecycle driver', () => {
+  const result = validateManifest({
+    key: 'proxy-cli',
+    label: 'Proxy CLI',
+    command: 'proxy-cli',
+    capabilities: { proxy: 'generic-openai-compatible' }
+  });
+
+  expect(result.valid).toBe(false);
+  expect(normalizeManifestError(result.errors)).toContain('only supports channels');
+});
+
 test('rejects executable module paths and unknown drivers', () => {
   const result = validateManifest({
     key: 'bad-cli',

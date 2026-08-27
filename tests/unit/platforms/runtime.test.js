@@ -5,28 +5,65 @@ const RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');
 
 const { createPlatformRuntime } = require('../../../src/platforms/runtime');
 
-test('creates injected capability drivers with invocation context', () => {
+test('creates injected capability drivers with resolved manifest and flat dependencies', () => {
   const driver = { list: vi.fn(() => ['session-1']) };
-  const driverRegistry = {
-    create: vi.fn(() => driver)
-  };
-  const manifest = { key: 'demo-cli', paths: { sessions: '/tmp/demo/sessions' } };
+  const driverRegistry = { create: vi.fn(() => driver) };
+  const manifest = { key: 'demo-cli', paths: { home: '/tmp/demo', sessions: '{home}/sessions', baseUrl: 'https://api.example.test/v1' } };
   const registry = {
     getCapability: vi.fn(() => 'generic-jsonl'),
-    resolve: vi.fn(() => manifest)
+    resolve: vi.fn(() => manifest),
+    resolvePaths: vi.fn(() => ({ home: '/tmp/demo', sessions: '/tmp/demo/sessions', baseUrl: 'https://api.example.test/v1' }))
   };
-  const dependencies = { clock: () => 123 };
+  const dependencies = { fsImpl: { marker: true }, fetchImpl: vi.fn(), clock: () => 123 };
   const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies });
 
   expect(runtime.getDriver('demo-cli', 'sessions', { project: '/tmp/project' })).toBe(driver);
-  expect(driverRegistry.create).toHaveBeenCalledWith('generic-jsonl', {
+  expect(registry.resolvePaths).toHaveBeenCalledWith('demo-cli', {});
+  expect(driverRegistry.create).toHaveBeenCalledWith('generic-jsonl', expect.objectContaining({
     platform: 'demo-cli',
     capability: 'sessions',
-    manifest,
+    manifest: expect.objectContaining({ key: 'demo-cli', paths: expect.objectContaining({ home: '/tmp/demo', sessions: '/tmp/demo/sessions' }) }),
     context: { project: '/tmp/project' },
     dependencies
-  });
+  }));
+  expect(driverRegistry.create.mock.calls[0][1]).toEqual(expect.objectContaining(dependencies));
+  expect(driverRegistry.create.mock.calls[0][1].fsImpl).toBe(dependencies.fsImpl);
+  expect(driverRegistry.create.mock.calls[0][1].fetchImpl).toBe(dependencies.fetchImpl);
   expect(runtime.invoke('demo-cli', 'sessions', 'list')).toEqual(['session-1']);
+});
+
+test('runtime passes resolved paths and flat dependencies into a generic driver', async () => {
+  const fsImpl = {
+    readdir: async () => ['session-1.jsonl'],
+    stat: async () => ({ size: 20, mtimeMs: 10 }),
+    readFile: async () => '{"role":"user","content":"hello"}\n'
+  };
+  const manifest = { key: 'demo-cli', paths: { home: '/tmp/demo', sessions: '{home}/sessions' } };
+  const registry = {
+    getCapability: () => 'generic-jsonl',
+    resolve: () => manifest,
+    resolvePaths: () => ({ home: '/tmp/demo', sessions: '/tmp/demo/sessions' })
+  };
+  const driverRegistry = require('../../../src/platforms/driver-registry').createDriverRegistry({
+    drivers: { 'generic-jsonl': require('../../../src/platforms/drivers/generic-jsonl').createGenericJsonlDriver }
+  });
+  const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies: { fsImpl } });
+
+  await expect(runtime.getDriver('demo-cli', 'sessions').inventory()).resolves.toEqual([
+    expect.objectContaining({ filePath: '/tmp/demo/sessions/session-1.jsonl' })
+  ]);
+});
+
+test('keeps OpenAI-compatible base URLs as URLs during manifest path resolution', () => {
+  const { resolveManifestPaths } = require('../../../src/platforms/path-resolver');
+
+  expect(resolveManifestPaths({
+    key: 'demo-cli',
+    paths: { home: '/tmp/demo', baseUrl: 'https://api.example.test/v1///' }
+  })).toEqual({
+    home: '/tmp/demo',
+    baseUrl: 'https://api.example.test/v1///'
+  });
 });
 
 test('production singleton creates drivers through the default registry', () => {

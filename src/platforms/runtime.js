@@ -22,8 +22,20 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       const driverId = resolvedRegistry.getCapability(platform, capability);
       if (!driverId) return null;
       if (!driverRegistry || typeof driverRegistry.create !== 'function') return null;
-      const manifest = typeof resolvedRegistry.resolve === 'function' ? resolvedRegistry.resolve(platform) : null;
-      return driverRegistry.create(driverId, { platform, capability, manifest, context, dependencies });
+      const rawManifest = typeof resolvedRegistry.resolve === 'function' ? resolvedRegistry.resolve(platform) : null;
+      const pathOptions = context.pathResolver || context.pathResolverOptions || dependencies.pathResolver || dependencies.pathResolverOptions || {};
+      const resolvedPaths = rawManifest && typeof resolvedRegistry.resolvePaths === 'function'
+        ? resolvedRegistry.resolvePaths(platform, pathOptions)
+        : null;
+      const manifest = rawManifest ? { ...rawManifest, paths: resolvedPaths || rawManifest.paths } : null;
+      return driverRegistry.create(driverId, {
+        ...dependencies,
+        platform,
+        capability,
+        manifest,
+        context,
+        dependencies
+      });
     },
     invoke(platform, capability, operation, args = []) {
       const driver = this.getDriver(platform, capability);

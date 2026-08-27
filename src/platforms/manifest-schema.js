@@ -59,7 +59,13 @@ const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
 
 function validateManifest(manifest) {
   const valid = validate(manifest);
-  return { valid, errors: valid ? [] : (validate.errors || []) };
+  const errors = valid ? [] : (validate.errors || []).slice();
+  for (const [capability, driver] of Object.entries(manifest && manifest.capabilities || {})) {
+    if (driver === 'generic-openai-compatible' && capability !== 'channels') {
+      errors.push({ instancePath: `/capabilities/${capability}`, message: 'generic-openai-compatible only supports channels' });
+    }
+  }
+  return { valid: errors.length === 0, errors };
 }
 
 function normalizeManifestError(errors = []) {
