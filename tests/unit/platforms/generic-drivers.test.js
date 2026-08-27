@@ -467,6 +467,30 @@ describe('generic filesystem driver', () => {
     }
   });
 
+  test('sync refuses to overwrite an existing symlink leaf outside the mapped root', async () => {
+    const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-leaf-root-'));
+    const outside = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-leaf-outside-'));
+    const source = path.join(root, 'source.md');
+    const victim = path.join(outside, 'victim.md');
+    fs.writeFileSync(source, 'source');
+    fs.writeFileSync(victim, 'victim');
+    fs.symlinkSync(victim, path.join(root, 'link'));
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: root } }
+      });
+
+      await expect(driver.sync('commands', 'link', source)).resolves.toEqual(expect.objectContaining({
+        status: 'failed', platform: 'demo-cli', capability: 'resourceSync', operation: 'sync'
+      }));
+      expect(fs.readFileSync(victim, 'utf8')).toBe('victim');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   test('filesystem failures preserve their original cause safely', async () => {
     const cause = new Error('filesystem failed');
     const driver = makeRegistry().create('generic-filesystem', {
