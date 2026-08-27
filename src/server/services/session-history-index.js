@@ -173,11 +173,14 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
     return result;
   }
   if (result.sessionId) {
+    const projectName = result.projectName || result.projectHint || descriptor.projectHint || '';
+    const projectDisplayName = result.projectDisplayName || result.projectName || result.projectHint || descriptor.projectHint || '';
+
     return {
       session: {
         sessionId: result.sessionId,
-        projectName: result.projectName || result.projectHint || '',
-        projectDisplayName: result.projectDisplayName || result.projectName || result.projectHint || '',
+        projectName,
+        projectDisplayName,
         projectFullPath: result.projectFullPath || result.projectPath || '',
         firstMessage: result.firstMessage || null,
         gitBranch: result.gitBranch || null,

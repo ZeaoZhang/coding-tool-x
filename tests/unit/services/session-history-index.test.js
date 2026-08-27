@@ -667,6 +667,55 @@ describe('session-history-index runtime selection', () => {
     expect(runtimeParse).toHaveBeenCalledTimes(1);
   });
 
+  it('falls back to descriptor projectHint for direct runtime session payloads without a project name', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-hint-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'hinted.jsonl');
+    fs.writeFileSync(filePath, '{"role":"user","content":"hello"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          return {
+            inventory: vi.fn(async () => [{
+              filePath,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              sessionId: 'hinted',
+              projectHint: 'descriptor-project'
+            }]),
+            parse: vi.fn(async () => ({
+              sessionId: 'hinted',
+              firstMessage: 'hello',
+              messages: makeMessageFixtures(1, { userPrefix: 'Hinted user' })
+            }))
+          };
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+      const sessions = await index.listSessions('claude', 'descriptor-project');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        sessionId: 'hinted',
+        projectName: 'descriptor-project',
+        projectDisplayName: 'descriptor-project',
+        firstMessage: 'hello',
+        updatedAt: stat.mtimeMs
+      });
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
   it('accepts generic runtime sessions drivers that return a direct session payload', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-generic-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
