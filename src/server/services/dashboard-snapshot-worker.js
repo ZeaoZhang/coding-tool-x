@@ -4,6 +4,19 @@ const childProcess = require('child_process');
 const platformRuntime = require('../../platforms/runtime');
 
 const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
+const MAX_SERIALIZED_ERROR_TEXT_LENGTH = 4096;
+
+function _safeErrorText(value, fallback = '') {
+  const text = value == null || value === '' ? fallback : String(value);
+  return text.length > MAX_SERIALIZED_ERROR_TEXT_LENGTH
+    ? `${text.slice(0, MAX_SERIALIZED_ERROR_TEXT_LENGTH)}…`
+    : text;
+}
+
+function _safeCode(value) {
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
 
 function sortClaudeProjects(projects, order = []) {
   if (!Array.isArray(order) || order.length === 0) {
@@ -40,26 +53,28 @@ function _serializeCause(cause) {
     return null;
   }
   const serialized = {
-    name: typeof cause.name === 'string' ? cause.name : 'Error',
-    message: cause && cause.message ? String(cause.message) : String(cause)
+    name: _safeErrorText(cause.name, 'Error'),
+    message: _safeErrorText(cause && cause.message ? cause.message : cause, 'Error')
   };
-  if (cause.code != null) {
-    serialized.code = cause.code;
+  const code = _safeCode(cause.code);
+  if (code !== undefined) {
+    serialized.code = code;
   }
   return serialized;
 }
 
 function _serializeError(error) {
   if (!error || typeof error !== 'object') {
-    return { message: String(error || 'Dashboard snapshot refresh failed') };
+    return { message: _safeErrorText(error, 'Dashboard snapshot refresh failed') };
   }
   const serialized = {
-    message: error.message ? String(error.message) : String(error),
-    platform: error.platform,
-    capability: error.capability,
-    operation: error.operation,
-    code: error.code
+    message: _safeErrorText(error.message ? error.message : error, 'Dashboard snapshot refresh failed')
   };
+  if (typeof error.platform === 'string') serialized.platform = _safeErrorText(error.platform);
+  if (typeof error.capability === 'string') serialized.capability = _safeErrorText(error.capability);
+  if (typeof error.operation === 'string') serialized.operation = _safeErrorText(error.operation);
+  const code = _safeCode(error.code);
+  if (code !== undefined) serialized.code = code;
   const cause = _serializeCause(error.cause);
   if (cause) {
     serialized.cause = cause;
@@ -74,12 +89,13 @@ function _deserializeCause(cause) {
   if (cause instanceof Error) {
     return cause;
   }
-  const error = new Error(cause.message ? String(cause.message) : String(cause));
+  const error = new Error(_safeErrorText(cause.message ? cause.message : cause, 'Error'));
   if (cause.name) {
-    error.name = String(cause.name);
+    error.name = _safeErrorText(cause.name, 'Error');
   }
-  if (cause.code != null) {
-    error.code = cause.code;
+  const code = _safeCode(cause.code);
+  if (code !== undefined) {
+    error.code = code;
   }
   return error;
 }
@@ -89,13 +105,14 @@ function _deserializeError(payload, fallbackMessage) {
     return payload;
   }
   if (!payload || typeof payload !== 'object') {
-    return new Error(payload ? String(payload) : fallbackMessage);
+    return new Error(_safeErrorText(payload, fallbackMessage));
   }
-  const error = new Error(payload.message ? String(payload.message) : fallbackMessage);
-  if (payload.platform) error.platform = payload.platform;
-  if (payload.capability) error.capability = payload.capability;
-  if (payload.operation) error.operation = payload.operation;
-  if (payload.code != null) error.code = payload.code;
+  const error = new Error(_safeErrorText(payload.message ? payload.message : fallbackMessage, fallbackMessage));
+  if (typeof payload.platform === 'string') error.platform = _safeErrorText(payload.platform);
+  if (typeof payload.capability === 'string') error.capability = _safeErrorText(payload.capability);
+  if (typeof payload.operation === 'string') error.operation = _safeErrorText(payload.operation);
+  const code = _safeCode(payload.code);
+  if (code !== undefined) error.code = code;
   const cause = _deserializeCause(payload.cause);
   if (cause) {
     error.cause = cause;
@@ -107,14 +124,21 @@ function _serializeWorkerValue(value) {
   if (!_isTypedFailurePayload(value)) {
     return value;
   }
-  const serialized = { ...value };
+  const serialized = {
+    status: value.status,
+    platform: _safeErrorText(value.platform),
+    capability: _safeErrorText(value.capability),
+    operation: _safeErrorText(value.operation),
+    error: value.error instanceof Error
+      ? _safeErrorText(value.error.message, 'dashboard snapshot failed')
+      : _safeErrorText(value.error, 'dashboard snapshot failed')
+  };
+  const code = _safeCode(value.code);
+  if (code !== undefined) serialized.code = code;
   const cause = value.cause || (value.error instanceof Error ? value.error : null);
   const serializedCause = _serializeCause(cause);
   if (serializedCause) {
     serialized.cause = serializedCause;
-  }
-  if (value.error instanceof Error) {
-    serialized.error = value.error.message;
   }
   return serialized;
 }
@@ -157,14 +181,15 @@ function _driverFailurePayload(source, capability, error) {
 }
 
 function _capabilityInvocationError(source, capability, operation, error) {
-  const cause = error instanceof Error ? error : new Error(String(error || 'unknown error'));
-  const wrapped = new Error(`Dashboard snapshot ${capability} ${operation} failed on ${source}: ${cause.message}`);
+  const cause = error instanceof Error ? error : new Error(_safeErrorText(error, 'unknown error'));
+  const wrapped = new Error(cause.message);
   wrapped.platform = source;
   wrapped.capability = capability;
   wrapped.operation = operation;
   wrapped.cause = cause;
-  if (cause.code != null) {
-    wrapped.code = cause.code;
+  const code = _safeCode(cause.code);
+  if (code !== undefined) {
+    wrapped.code = code;
   }
   return wrapped;
 }

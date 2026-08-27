@@ -298,7 +298,8 @@ describe('dashboard-snapshot-worker', () => {
     }).then(() => null, (err) => err);
 
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).toContain('Dashboard snapshot projects list failed on claude');
+    expect(error.message).toBe('project getter exploded');
+    expect(error.message).toBe(cause.message);
     expect(error.platform).toBe('claude');
     expect(error.capability).toBe('projects');
     expect(error.operation).toBe('list');
@@ -328,7 +329,8 @@ describe('dashboard-snapshot-worker', () => {
     }).then(() => null, (err) => err);
 
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).toContain('Dashboard snapshot project-order get failed on claude');
+    expect(error.message).toBe('order getter exploded');
+    expect(error.message).toBe(cause.message);
     expect(error.platform).toBe('claude');
     expect(error.capability).toBe('project-order');
     expect(error.operation).toBe('get');
@@ -654,6 +656,79 @@ describe('dashboard-snapshot-worker', () => {
       forkSpy.mockRestore();
     }
   });
+  it('serializes only JSON-safe error code values while preserving structured context', () => {
+    const cause = new Error('adapter exploded');
+    cause.name = 'AdapterError';
+    cause.code = 9001;
+    const error = new Error('snapshot failed');
+    error.platform = 'demo-cli';
+    error.capability = 'projects';
+    error.operation = 'list';
+    error.code = { unsafe: true };
+    error.cause = cause;
+
+    const serialized = worker._test.serializeError(error);
+
+    expect(serialized).toEqual({
+      message: 'snapshot failed',
+      platform: 'demo-cli',
+      capability: 'projects',
+      operation: 'list',
+      cause: {
+        name: 'AdapterError',
+        message: 'adapter exploded',
+        code: 9001
+      }
+    });
+    expect(JSON.stringify(serialized)).toContain('adapter exploded');
+  });
+
+  it('omits unsafe cause code values that would break JSON IPC serialization', () => {
+    const cause = new Error('adapter exploded');
+    cause.code = 1n;
+    const error = new Error('snapshot failed');
+    error.platform = 'demo-cli';
+    error.capability = 'projects';
+    error.operation = 'list';
+    error.code = () => 'E_UNSAFE';
+    error.cause = cause;
+
+    const serialized = worker._test.serializeError(error);
+
+    expect(serialized).not.toHaveProperty('code');
+    expect(serialized.cause).not.toHaveProperty('code');
+    expect(() => JSON.stringify(serialized)).not.toThrow();
+  });
+
+  it('serializes typed worker failure values without unsafe code properties', () => {
+    const serialized = worker._test.serializeWorkerValue({
+      status: 'failed',
+      platform: 'demo-cli',
+      capability: 'projects',
+      operation: 'list',
+      error: 'adapter exploded',
+      code: 1n,
+      cause: {
+        name: 'AdapterError',
+        message: 'adapter exploded',
+        code: { unsafe: true }
+      }
+    });
+
+    expect(serialized).toEqual({
+      status: 'failed',
+      platform: 'demo-cli',
+      capability: 'projects',
+      operation: 'list',
+      error: 'adapter exploded',
+      cause: {
+        name: 'AdapterError',
+        message: 'adapter exploded'
+      }
+    });
+    expect(() => JSON.stringify(serialized)).not.toThrow();
+  });
+
 
   it('rejects serialization errors from child.send and cleans up the worker', async () => {
     const originalNodeEnv = process.env.NODE_ENV;
