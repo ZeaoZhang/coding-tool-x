@@ -107,20 +107,70 @@ const PROXY_EXPORTS = Object.freeze({
 });
 
 const SESSION_EXPORTS = Object.freeze({
-  list: 'listSessions',
-  recent: 'getRecentSessions',
-  search: 'searchSessions',
-  messages: 'getSessionMessages',
-  status: 'getSessionStatus',
-  outline: 'getSessionOutline',
-  launch: 'launchSession'
+  claude: Object.freeze({
+    listProjects: 'getProjects',
+    listSessions: 'getSessionsForProject',
+    recent: 'getRecentSessions',
+    search: 'searchSessions',
+    delete: 'deleteSession',
+    fork: 'forkSession',
+    counts: 'getProjectAndSessionCounts',
+    status: 'getSessionStatus',
+    messages: 'getSessionMessages'
+  }),
+  codex: Object.freeze({
+    listProjects: 'getProjects',
+    listSessions: 'getSessionsByProject',
+    recent: 'getRecentSessions',
+    search: 'searchSessions',
+    delete: 'deleteSession',
+    fork: 'forkSession',
+    counts: 'getProjectAndSessionCounts',
+    status: 'getSessionStatus',
+    messages: 'getSessionMessages'
+  }),
+  gemini: Object.freeze({
+    listProjects: 'getProjects',
+    listSessions: 'getProjectSessions',
+    recent: 'getRecentSessions',
+    search: 'searchSessions',
+    delete: 'deleteSession',
+    fork: 'forkSession',
+    counts: 'getProjectAndSessionCounts',
+    status: 'getSessionStatus',
+    messages: 'getSessionMessages'
+  }),
+  opencode: Object.freeze({
+    listProjects: 'getProjects',
+    listSessions: 'getSessionsByProjectId',
+    recent: 'getRecentSessions',
+    search: 'searchSessions',
+    delete: 'deleteSession',
+    fork: 'forkSession',
+    counts: 'getProjectAndSessionCounts',
+    status: 'getSessionStatus',
+    messages: 'getSessionMessages'
+  }),
+  omp: Object.freeze({
+    listProjects: 'getProjects',
+    listSessions: 'getSessionsByProject',
+    recent: 'getRecentSessions',
+    search: 'searchSessions',
+    delete: 'deleteSession',
+    fork: 'forkSession',
+    counts: 'getProjectAndSessionCounts',
+    status: 'getSessionStatus',
+    messages: 'getSessionMessages'
+  })
 });
 
 const STATISTICS_EXPORTS = Object.freeze({
-  summary: 'getStatistics',
-  list: 'getStatistics',
-  record: 'recordRequest',
-  reset: 'resetStatistics'
+  summary: Object.freeze(['getStatistics']),
+  list: Object.freeze(['getStatistics']),
+  daily: Object.freeze(['getDailyStatistics', 'getTodayStatistics']),
+  today: Object.freeze(['getDailyStatistics', 'getTodayStatistics']),
+  record: Object.freeze(['recordRequest']),
+  reset: Object.freeze(['resetStatistics'])
 });
 
 function unsupported(platform, capability, operation) {
@@ -143,9 +193,12 @@ function createModuleLoader({ platform, capability, requireImpl }) {
 
 function invokeExport(loadModule, exportName, args, fallback) {
   const moduleExports = loadModule();
-  const fn = moduleExports && moduleExports[exportName];
-  if (typeof fn !== 'function') return fallback();
-  return fn(...args);
+  const exportNames = Array.isArray(exportName) ? exportName : [exportName];
+  for (const name of exportNames) {
+    const fn = moduleExports && moduleExports[name];
+    if (typeof fn === 'function') return fn(...args);
+  }
+  return fallback();
 }
 
 function createChannelsDriver({ platform, capability, requireImpl }) {
@@ -155,7 +208,7 @@ function createChannelsDriver({ platform, capability, requireImpl }) {
 
   driver.list = (...args) => {
     const result = invokeExport(loadModule, exportNames.list, args, () => unsupported(platform, capability, 'list'));
-    return platform === 'claude' ? result : (result && Array.isArray(result.channels) ? result.channels : []);
+    return platform !== 'claude' && result && Array.isArray(result.channels) ? result.channels : result;
   };
 
   for (const operation of ['create', 'update', 'remove', 'sync', 'reset']) {
@@ -215,7 +268,7 @@ function createLegacyDriver({ platform, capability, requireImpl = require } = {}
     return createProxyDriver({ platform, capability, requireImpl });
   }
   if (capability === 'sessions') {
-    return createMappedDriver({ platform, capability, requireImpl, operations: SESSION_EXPORTS });
+    return createMappedDriver({ platform, capability, requireImpl, operations: SESSION_EXPORTS[platform] });
   }
   if (capability === 'statistics') {
     return createMappedDriver({ platform, capability, requireImpl, operations: STATISTICS_EXPORTS });
