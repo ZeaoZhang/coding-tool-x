@@ -1,5 +1,8 @@
 'use strict';
 
+const Module = require('module');
+const RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');
+
 const { createPlatformRuntime } = require('../../../src/platforms/runtime');
 
 test('creates injected capability drivers with invocation context', () => {
@@ -21,4 +24,30 @@ test('creates injected capability drivers with invocation context', () => {
     dependencies
   });
   expect(runtime.invoke('demo-cli', 'sessions', 'list')).toEqual(['session-1']);
+});
+
+test('production singleton creates drivers through the default registry', () => {
+  const driver = { list: vi.fn(() => ['built-in-session']) };
+  const defaultDriverRegistry = {
+    create: vi.fn(() => driver)
+  };
+  const originalLoad = Module._load;
+  Module._load = (request, parent, isMain) => request === './driver-registry'
+    ? { getDriverRegistry: () => defaultDriverRegistry }
+    : originalLoad(request, parent, isMain);
+  delete require.cache[RUNTIME_PATH];
+
+  const { getPlatformRuntime } = require('../../../src/platforms/runtime');
+  const runtime = getPlatformRuntime();
+
+  expect(runtime.getDriver('claude', 'sessions')).toBe(driver);
+  expect(defaultDriverRegistry.create).toHaveBeenCalledWith('legacy:claude', {
+    platform: 'claude',
+    capability: 'sessions',
+    context: {},
+    dependencies: {}
+  });
+
+  delete require.cache[RUNTIME_PATH];
+  Module._load = originalLoad;
 });

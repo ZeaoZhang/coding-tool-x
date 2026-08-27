@@ -5,6 +5,15 @@ const { createPlatformRegistry } = require('./registry');
 let platformRegistry;
 let platformRuntime;
 
+function getDefaultDriverRegistry() {
+  try {
+    const { getDriverRegistry } = require('./driver-registry');
+    return getDriverRegistry();
+  } catch (error) {
+    if (error.code !== 'MODULE_NOT_FOUND' || !error.message.includes("'./driver-registry'")) throw error;
+    return { create: () => null };
+  }
+}
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
   const resolvedRegistry = registry || createPlatformRegistry();
   return {
@@ -31,7 +40,12 @@ function getPlatformRegistry() {
 }
 
 function getPlatformRuntime() {
-  if (!platformRuntime) platformRuntime = createPlatformRuntime({ registry: getPlatformRegistry() });
+  if (!platformRuntime) {
+    platformRuntime = createPlatformRuntime({
+      registry: getPlatformRegistry(),
+      driverRegistry: getDefaultDriverRegistry()
+    });
+  }
   return platformRuntime;
 }
 
