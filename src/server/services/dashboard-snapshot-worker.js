@@ -4,6 +4,7 @@ const { fork } = require('child_process');
 const platformRuntime = require('../../platforms/runtime');
 
 const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
+const BUILTIN_SNAPSHOT_SOURCES = new Set(['claude', 'codex', 'gemini', 'opencode', 'omp']);
 
 function sortClaudeProjects(projects, order = []) {
   if (!Array.isArray(order) || order.length === 0) {
@@ -18,6 +19,15 @@ function sortClaudeProjects(projects, order = []) {
     }
     return aIdx - bIdx;
   });
+}
+
+
+function _isTypedPayload(value) {
+  return !!value && typeof value === 'object' && typeof value.status === 'string' && value.status !== 'ok';
+}
+
+function _unsupportedProjectsPayload(source) {
+  return { status: 'unsupported', platform: source, capability: 'projects' };
 }
 
 function _getRuntimeDriver(runtime, source, capability) {
@@ -143,6 +153,14 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     return _normalizeProjectPayload(source, projects, config);
   }
 
+  if (_isTypedPayload(driver)) {
+    return driver;
+  }
+
+  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
+    return _unsupportedProjectsPayload(source);
+  }
+
   switch (source) {
     case 'claude': {
       const { getProjectsWithStats, getProjectOrder } = require('./sessions');
@@ -180,10 +198,26 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
 
 async function buildCountsPayload(source, config = {}, options = {}) {
   const runtime = options.runtime || platformRuntime.getPlatformRuntime();
-  const driver = _getRuntimeDriver(runtime, source, 'projects');
-  const getter = _getCountsGetter(driver);
-  if (getter) {
-    return getter({ force: options.force === true, config });
+  const countsDriver = _getRuntimeDriver(runtime, source, 'counts');
+  const countsGetter = _getCountsGetter(countsDriver);
+  if (countsGetter) {
+    return countsGetter({ force: options.force === true, config });
+  }
+  if (_isTypedPayload(countsDriver)) {
+    return countsDriver;
+  }
+
+  const projectsDriver = _getRuntimeDriver(runtime, source, 'projects');
+  const projectsGetter = _getCountsGetter(projectsDriver);
+  if (projectsGetter) {
+    return projectsGetter({ force: options.force === true, config });
+  }
+  if (_isTypedPayload(projectsDriver)) {
+    return projectsDriver;
+  }
+
+  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
+    return _unsupportedProjectsPayload(source);
   }
 
   switch (source) {

@@ -3,6 +3,7 @@
 const { openDatabase, closeDatabase } = require('./sqlite-connection');
 
 const { PATHS } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
 const fs = require('fs');
 const path = require('path');
 
@@ -250,7 +251,7 @@ function createSessionHistoryIndex(opts = {}) {
   const explicitAdapters = opts.adapterRegistry || null;
   const adapters = explicitAdapters || require('./session-history-adapters');
   const runtimeProvided = explicitAdapters ? false : Object.prototype.hasOwnProperty.call(opts, 'runtime');
-  const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : null);
+  const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : platformRuntime.getPlatformRuntime());
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;
   const ftsEnabled = opts.ftsEnabledOverride !== undefined
     ? opts.ftsEnabledOverride
