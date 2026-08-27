@@ -14,8 +14,17 @@ function loadNativePathResolvers() {
   return require('../config/paths');
 }
 
-function resolveNativeHome(pathResolverId, env, commandRunner) {
+function resolveNativeHome(pathResolverId, env, commandRunner, homeDir, hasInjectedHomeDir) {
   if (pathResolverId === 'declarative') return undefined;
+  if (hasInjectedHomeDir && pathResolverId !== 'omp') {
+    switch (pathResolverId) {
+      case 'claude': return env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
+      case 'codex': return env.CODEX_HOME || path.join(homeDir, '.codex');
+      case 'gemini': return path.join(homeDir, '.gemini');
+      case 'opencode': return path.join(homeDir, '.config', 'opencode');
+      default: return undefined;
+    }
+  }
   const {
     getClaudeConfigDir,
     getCodexDir,
@@ -34,11 +43,19 @@ function resolveNativeHome(pathResolverId, env, commandRunner) {
   }
 }
 
+function assertInsideHome(root, candidate, manifestKey, pathName) {
+  const relative = path.relative(root, candidate);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Manifest ${manifestKey || 'platform'} path ${pathName} escapes home`);
+  }
+}
+
 function resolveManifestPaths(manifest, options = {}) {
   const env = { ...process.env, ...(options.env || {}) };
+  const hasInjectedHomeDir = Object.prototype.hasOwnProperty.call(options, 'homeDir');
   const homeDir = options.homeDir || os.homedir();
   const commandRunner = options.commandRunner || execFileSync;
-  const nativeHome = resolveNativeHome(manifest.pathResolverId || 'declarative', env, commandRunner);
+  const nativeHome = resolveNativeHome(manifest.pathResolverId || 'declarative', env, commandRunner, homeDir, hasInjectedHomeDir);
   const declared = manifest.paths || {};
   const homeValue = declared.home || nativeHome || homeDir;
   const resolved = { env, home: '' };
@@ -50,18 +67,17 @@ function resolveManifestPaths(manifest, options = {}) {
     else if (!path.isAbsolute(result) && allowRelativeHomeFallback) result = path.join(resolved.home || homeDir, result);
     return path.normalize(result);
   };
+  const rawHome = resolveTemplate(homeValue, resolved);
   resolved.home = expand(homeValue);
   if (!resolved.home) throw new Error(`Manifest ${manifest.key || 'platform'} requires a non-empty home path`);
+  if (!path.isAbsolute(rawHome)) assertInsideHome(homeDir, resolved.home, manifest.key, 'home');
   const paths = {};
   for (const [name, value] of Object.entries(declared)) {
     const explicitAbsolute = path.isAbsolute(String(value));
     const raw = resolveTemplate(value, resolved);
     const candidate = expand(raw);
     if (name !== 'home' && !explicitAbsolute) {
-      const relative = path.relative(resolved.home, candidate);
-      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-        throw new Error(`Manifest ${manifest.key || 'platform'} path ${name} escapes home`);
-      }
+      assertInsideHome(resolved.home, candidate, manifest.key, name);
     }
     paths[name] = candidate;
   }
