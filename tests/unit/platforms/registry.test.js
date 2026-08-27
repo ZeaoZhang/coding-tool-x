@@ -82,6 +82,49 @@ test('explicit registry inputs do not load PATHS configuration', () => {
   }
 });
 
+test('default registry file lookup does not load PATHS configuration when file is missing', () => {
+  const originalLoad = Module._load;
+  Module._load = (request, parent, isMain) => request === '../config/paths'
+    ? (() => { throw new Error('config paths loaded'); })()
+    : originalLoad(request, parent, isMain);
+  delete require.cache[REGISTRY_PATH];
+  try {
+    const { createPlatformRegistry: createWithoutPaths } = require('../../../src/platforms/registry');
+    const checkedPaths = [];
+    const registry = createWithoutPaths({
+      builtIns: [],
+      fsImpl: {
+        existsSync: path => {
+          checkedPaths.push(path);
+          return false;
+        }
+      }
+    });
+
+    expect(registry.list()).toEqual([]);
+    expect(registry.diagnostics()).toEqual([]);
+    expect(checkedPaths).toEqual([expect.stringContaining('.cc-tool/config/platforms.json')]);
+  } finally {
+    delete require.cache[REGISTRY_PATH];
+    Module._load = originalLoad;
+  }
+});
+
+test('platformsFile option controls user manifest file lookup', () => {
+  const fsImpl = {
+    existsSync: vi.fn(path => path === '/tmp/platforms.json'),
+    readFileSync: vi.fn(() => JSON.stringify({
+      platforms: [{ key: 'demo-cli', label: 'Demo', command: 'demo', capabilities: {} }]
+    }))
+  };
+
+  const registry = createPlatformRegistry({ builtIns: [], fsImpl, platformsFile: '/tmp/platforms.json' });
+
+  expect(registry.resolve('demo-cli').label).toBe('Demo');
+  expect(fsImpl.existsSync).toHaveBeenCalledWith('/tmp/platforms.json');
+  expect(fsImpl.readFileSync).toHaveBeenCalledWith('/tmp/platforms.json', 'utf8');
+});
+
 test('duplicate user platform keys keep the first entry and record diagnostics', () => {
   const registry = createPlatformRegistry({
     builtIns: [],

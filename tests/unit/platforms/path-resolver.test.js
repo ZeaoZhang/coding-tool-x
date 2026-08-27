@@ -72,6 +72,13 @@ test('rejects self-referential home templates that escape the injected home dire
   }, { homeDir: '/tmp/test-home' })).toThrow(/escapes home/);
 });
 
+test('rejects environment home templates that traverse outside injected home directory', () => {
+  expect(() => resolveManifestPaths({
+    key: 'demo-cli',
+    paths: { home: '$DEMO_HOME/../../outside' }
+  }, { env: { DEMO_HOME: '/tmp/test-home/sub' }, homeDir: '/tmp/test-home' })).toThrow(/escapes home/);
+});
+
 test('allows explicit absolute home paths outside the injected home directory', () => {
   expect(resolveManifestPaths({
     key: 'demo-cli',

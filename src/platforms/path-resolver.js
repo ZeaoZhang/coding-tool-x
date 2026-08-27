@@ -10,6 +10,10 @@ function resolveTemplate(value, resolved) {
     .replace(/\{home\}/g, resolved.home);
 }
 
+function isBareEnvReference(value) {
+  return /^\$[A-Z][A-Z0-9_]*$/.test(String(value));
+}
+
 function loadNativePathResolvers() {
   return require('../config/paths');
 }
@@ -117,7 +121,7 @@ function resolveManifestPaths(manifest, options = {}) {
   };
   const homeSource = String(homeValue);
   const rawHome = resolveTemplate(homeValue, resolved);
-  const explicitHomeRoot = !homeSource.includes('{home}') && (path.isAbsolute(homeSource) || path.isAbsolute(rawHome));
+  const explicitHomeRoot = path.isAbsolute(homeSource) || (isBareEnvReference(homeSource) && path.isAbsolute(rawHome));
   resolved.home = expand(homeValue);
   if (!resolved.home) throw new Error(`Manifest ${manifest.key || 'platform'} requires a non-empty home path`);
   if (!explicitHomeRoot) assertInsideHome(homeDir, resolved.home, manifest.key, 'home');

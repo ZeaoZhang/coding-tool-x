@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { validateManifest, normalizeManifestError } = require('./manifest-schema');
 const { resolveManifestPaths } = require('./path-resolver');
@@ -13,12 +14,16 @@ const BUILT_IN_MANIFESTS = [
   require('./manifests/omp.json')
 ];
 
-function readUserFile(fsImpl) {
-  const { PATHS } = require('../config/paths');
-  const platformsFile = PATHS.platforms || path.join(PATHS.config || process.cwd(), 'platforms.json');
+function getDefaultPlatformsFile(env = process.env, homeDir = os.homedir()) {
+  const home = homeDir || env.HOME || env.USERPROFILE || process.cwd();
+  return path.join(home, '.cc-tool', 'config', 'platforms.json');
+}
+
+function readUserFile(fsImpl, platformsFile) {
+  const filePath = platformsFile || getDefaultPlatformsFile();
   try {
-    if (!fsImpl.existsSync(platformsFile)) return null;
-    return JSON.parse(fsImpl.readFileSync(platformsFile, 'utf8'));
+    if (!fsImpl.existsSync(filePath)) return null;
+    return JSON.parse(fsImpl.readFileSync(filePath, 'utf8'));
   } catch (error) {
     return { platforms: [], diagnostics: [{ key: null, source: 'userFile', message: error.message }] };
   }
@@ -28,7 +33,7 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = fs, logger } = {}) {
+function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = fs, logger, platformsFile } = {}) {
   const diagnostics = [];
   const definitions = new Map();
   const builtInKeys = new Set();
@@ -46,7 +51,7 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
     definitions.set(manifest.key, clone(manifest));
   }
 
-  const loadedUserFile = userFile === undefined ? readUserFile(fsImpl) : userFile;
+  const loadedUserFile = userFile === undefined ? readUserFile(fsImpl, platformsFile) : userFile;
   if (loadedUserFile && Array.isArray(loadedUserFile.diagnostics)) diagnostics.push(...loadedUserFile.diagnostics);
   const userPlatforms = loadedUserFile && Array.isArray(loadedUserFile.platforms) ? loadedUserFile.platforms : [];
   for (const manifest of userPlatforms) {
@@ -112,4 +117,4 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
   };
 }
 
-module.exports = { BUILT_IN_MANIFESTS, createPlatformRegistry };
+module.exports = { BUILT_IN_MANIFESTS, createPlatformRegistry, getDefaultPlatformsFile };
