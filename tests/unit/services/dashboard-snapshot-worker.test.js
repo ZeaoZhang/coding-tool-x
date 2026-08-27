@@ -37,6 +37,38 @@ describe('dashboard-snapshot-worker', () => {
     }));
   });
 
+  it('preserves an injected runtime when the worker runs directly in NODE_ENV=test', async () => {
+    const getProjects = vi.fn(async () => [{ name: 'test-runtime-project', lastUsed: 1 }]);
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects };
+      })
+    };
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    vi.spyOn(runtimeModule, 'getPlatformRuntime').mockImplementation(() => {
+      throw new Error('default runtime should not be used for direct worker execution');
+    });
+
+    try {
+      await expect(worker.runDashboardSnapshotWorker('projects', 'claude', {}, { runtime }))
+        .resolves.toEqual({
+          projects: [{ name: 'test-runtime-project', lastUsed: 1 }],
+          currentProject: 'test-runtime-project'
+        });
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+    }
+
+    expect(getProjects).toHaveBeenCalledWith(expect.objectContaining({ force: false, config: {} }));
+  });
+
   it('uses canonical default runtime capabilities for counts and channels', async () => {
     const getProjectAndSessionCounts = vi.fn(async () => ({ projectCount: 2, sessionCount: 3 }));
     const getChannels = vi.fn(async () => [{ id: 'open-channel' }]);
@@ -66,6 +98,18 @@ describe('dashboard-snapshot-worker', () => {
     expect(getDriver).toHaveBeenCalledWith('opencode', 'channels');
   });
 
+  it('returns unsupported counts with the counts capability for custom sources without counts or project getters', async () => {
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('demo-cli');
+        expect(['counts', 'projects']).toContain(capability);
+        return {};
+      })
+    };
+
+    await expect(worker.buildPayload({ kind: 'counts', source: 'demo-cli', config: {}, options: { force: false }, runtime }))
+      .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'counts' });
+  });
 
   it('builds a project payload through an injected platform driver', async () => {
     const getProjects = vi.fn(async () => [{ name: 'demo-project', lastUsed: 10 }]);
@@ -160,6 +204,41 @@ describe('dashboard-snapshot-worker', () => {
       .resolves.toEqual({ sessions: 4 });
   });
 
+  it('preserves typed todayStats and channels payloads for custom sources instead of reaching the legacy fallback switch', async () => {
+    const todayStatsPayload = { status: 'failed', error: 'today-stats-failed' };
+    const channelsPayload = { status: 'unsupported', platform: 'demo-cli', capability: 'channels' };
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        if (platform === 'demo-cli' && capability === 'statistics') {
+          return todayStatsPayload;
+        }
+        if (platform === 'demo-cli' && capability === 'channels') {
+          return channelsPayload;
+        }
+        throw new Error(`unexpected platform ${platform} capability ${capability}`);
+      })
+    };
+
+    await expect(worker.buildPayload({ kind: 'todayStats', source: 'demo-cli', config: {}, options: {}, runtime }))
+      .resolves.toBe(todayStatsPayload);
+    await expect(worker.buildPayload({ kind: 'channels', source: 'demo-cli', config: {}, options: {}, runtime }))
+      .resolves.toBe(channelsPayload);
+  });
+
+  it('returns typed unsupported payloads for custom todayStats and channels sources without usable getters', async () => {
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('demo-cli');
+        expect(['statistics', 'channels']).toContain(capability);
+        return {};
+      })
+    };
+
+    await expect(worker.buildPayload({ kind: 'todayStats', source: 'demo-cli', config: {}, options: { force: false }, runtime }))
+      .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'statistics' });
+    await expect(worker.buildPayload({ kind: 'channels', source: 'demo-cli', config: {}, options: { force: false }, runtime }))
+      .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'channels' });
+  });
 
   it('keeps known channel shapes for claude arrays and non-claude wrappers', async () => {
     const runtime = {
@@ -279,6 +358,7 @@ describe('dashboard-snapshot-worker', () => {
     await expect(worker.buildPayload({ kind: 'projects', source: 'claude', config: {}, options: {}, runtime }))
       .resolves.toBe(unsupported);
   });
+
   it('returns a typed unsupported payload for custom project sources without a runtime getter', async () => {
     const runtime = {
       getDriver: vi.fn((platform, capability) => {
@@ -291,8 +371,6 @@ describe('dashboard-snapshot-worker', () => {
     await expect(worker.buildPayload({ kind: 'projects', source: 'demo-cli', config: {}, options: { force: false }, runtime }))
       .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'projects' });
   });
-
-
 
   it('does not include injected runtime functions in production IPC options', () => {
     expect(worker._test.getSerializableWorkerOptions({
