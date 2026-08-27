@@ -1042,7 +1042,7 @@ describe('session-history-index runtime selection', () => {
     expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
   });
 
-  it('records typed runtime inventory failures instead of treating them as a successful empty index', async () => {
+  it('records typed runtime inventory failures without advancing last_inventory_ms', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-failure-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
     const filePath = path.join(rootDir, 'runtime-failure.jsonl');
@@ -1078,16 +1078,56 @@ describe('session-history-index runtime selection', () => {
       expect(error.operation).toBe('inventory');
       expect(error.cause).toBeInstanceOf(Error);
       expect(error.cause.message).toContain('missing');
-      expect(await index.listSessions('claude', 'runtime-failure-project')).toHaveLength(0);
-      expect(await index.getSessionStatus('claude', 'runtime-failure')).toBeNull();
+      const sessionRow = index._getDb().prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ? AND session_id = ?').get('claude', 'runtime-failure');
+      expect(sessionRow.count).toBe(0);
 
       const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('claude');
       expect(row).toBeTruthy();
-      expect(row.last_inventory_ms).not.toBeNull();
+      expect(row.last_inventory_ms).toBeNull();
       expect(row.last_error).toContain('test-platform');
       expect(row.last_error).toContain('sessions');
       expect(row.last_error).toContain('inventory');
       expect(row.last_error).toContain('missing');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  it('retries a non-force inventory after a typed failure leaves the source stale', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-retry-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'runtime-retry.jsonl');
+    fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const inventory = vi.fn()
+      .mockResolvedValueOnce({
+        status: 'failed',
+        platform: 'test-platform',
+        capability: 'sessions',
+        operation: 'inventory',
+        error: 'missing'
+      })
+      .mockResolvedValueOnce([{ filePath, size: stat.size, mtimeMs: stat.mtimeMs, sessionId: 'retry', projectHint: 'retry-project' }]);
+    const parse = vi.fn(async () => ({
+      session: makeSessionFixture('retry', 'retry-project'),
+      messages: makeMessageFixtures(2)
+    }));
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => ({ inventory, parse }))
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' }).catch(() => {});
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+      expect(inventory).toHaveBeenCalledTimes(2);
+      expect(await index.getSessionStatus('claude', 'retry')).not.toBeNull();
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}

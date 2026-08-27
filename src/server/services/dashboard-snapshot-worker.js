@@ -1,10 +1,9 @@
 'use strict';
 
-const { fork } = require('child_process');
+const childProcess = require('child_process');
 const platformRuntime = require('../../platforms/runtime');
 
 const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
-const BUILTIN_SNAPSHOT_SOURCES = new Set(['claude', 'codex', 'gemini', 'opencode', 'omp']);
 
 function sortClaudeProjects(projects, order = []) {
   if (!Array.isArray(order) || order.length === 0) {
@@ -21,7 +20,6 @@ function sortClaudeProjects(projects, order = []) {
   });
 }
 
-
 function _isTypedPayload(value) {
   return !!value && typeof value === 'object' && (
     (typeof value.status === 'string' && value.status !== 'ok') ||
@@ -29,9 +27,35 @@ function _isTypedPayload(value) {
   );
 }
 
+function _isTypedFailurePayload(value) {
+  return !!value && typeof value === 'object'
+    && value.status === 'failed'
+    && typeof value.platform === 'string'
+    && typeof value.capability === 'string'
+    && typeof value.operation === 'string';
+}
+
+function _typedFailurePayloadToError(payload) {
+  const cause = payload.cause instanceof Error
+    ? payload.cause
+    : payload.cause != null
+      ? new Error(String(payload.cause))
+      : payload.error instanceof Error
+        ? payload.error
+        : new Error(String(payload.error || 'dashboard snapshot failed'));
+  const error = new Error(`Dashboard snapshot ${payload.capability} ${payload.operation} failed on ${payload.platform}: ${cause.message}`);
+  error.platform = payload.platform;
+  error.capability = payload.capability;
+  error.operation = payload.operation;
+  error.cause = cause;
+  error.failure = payload;
+  return error;
+}
+
 function _unsupportedPayload(source, capability) {
   return { status: 'unsupported', platform: source, capability };
 }
+
 function _driverFailurePayload(source, capability, error) {
   const result = {
     status: 'failed',
@@ -45,7 +69,6 @@ function _driverFailurePayload(source, capability, error) {
   }
   return result;
 }
-
 
 function _getRuntimeDriver(runtime, source, capability) {
   if (!runtime || typeof runtime.getDriver !== 'function') {
@@ -174,43 +197,7 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     return driver;
   }
 
-  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
-    return _unsupportedPayload(source, 'projects');
-  }
-
-  switch (source) {
-    case 'claude': {
-      const { getProjectsWithStats, getProjectOrder } = require('./sessions');
-      const projects = await getProjectsWithStats(config, { force: options.force === true });
-      const sortedProjects = sortClaudeProjects(projects, getProjectOrder(config));
-      return {
-        projects: sortedProjects,
-        currentProject: config.currentProject || (sortedProjects[0] ? sortedProjects[0].name : null)
-      };
-    }
-    case 'codex': {
-      const { getProjects } = require('./codex-sessions');
-      const projects = await getProjects({ force: options.force === true });
-      return { projects, currentProject: projects[0] ? projects[0].name : null };
-    }
-    case 'gemini': {
-      const { getProjects } = require('./gemini-sessions');
-      const projects = await getProjects({ force: options.force === true });
-      return { projects, currentProject: projects[0] ? projects[0].name : null };
-    }
-    case 'opencode': {
-      const { getProjects } = require('./opencode-sessions');
-      const projects = getProjects({ force: options.force === true });
-      return { projects, currentProject: projects[0] ? projects[0].name : null };
-    }
-    case 'omp': {
-      const { getProjects } = require('./omp-sessions');
-      const projects = await getProjects({ force: options.force === true });
-      return { projects, currentProject: projects[0] ? projects[0].name : null };
-    }
-    default:
-      throw new Error(`Unsupported project snapshot source: ${source}`);
-  }
+  return _unsupportedPayload(source, 'projects');
 }
 
 async function buildCountsPayload(source, config = {}, options = {}) {
@@ -233,24 +220,7 @@ async function buildCountsPayload(source, config = {}, options = {}) {
     return projectsDriver;
   }
 
-  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
-    return _unsupportedPayload(source, 'counts');
-  }
-
-  switch (source) {
-    case 'claude':
-      return require('./sessions').getProjectAndSessionCounts(config);
-    case 'codex':
-      return require('./codex-sessions').getProjectAndSessionCounts({ force: options.force === true });
-    case 'gemini':
-      return require('./gemini-sessions').getProjectAndSessionCounts({ force: options.force === true });
-    case 'opencode':
-      return require('./opencode-sessions').getProjectAndSessionCounts({ force: options.force === true });
-    case 'omp':
-      return require('./omp-sessions').getProjectAndSessionCounts({ force: options.force === true });
-    default:
-      throw new Error(`Unsupported counts snapshot source: ${source}`);
-  }
+  return _unsupportedPayload(source, 'counts');
 }
 
 async function buildTodayStatsPayload(source, config = {}, options = {}) {
@@ -265,24 +235,7 @@ async function buildTodayStatsPayload(source, config = {}, options = {}) {
     return driver;
   }
 
-  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
-    return _unsupportedPayload(source, 'statistics');
-  }
-
-  switch (source) {
-    case 'claude':
-      return require('./claude-statistics-service').getTodayStatistics();
-    case 'codex':
-      return require('./codex-statistics-service').getTodayStatistics();
-    case 'gemini':
-      return require('./gemini-statistics-service').getTodayStatistics();
-    case 'opencode':
-      return require('./opencode-statistics-service').getTodayStatistics();
-    case 'omp':
-      return require('./omp-statistics-service').getTodayStatistics();
-    default:
-      throw new Error(`Unsupported today stats snapshot source: ${source}`);
-  }
+  return _unsupportedPayload(source, 'statistics');
 }
 
 async function buildChannelsPayload(source, config = {}, options = {}) {
@@ -298,24 +251,7 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
     return driver;
   }
 
-  if (!BUILTIN_SNAPSHOT_SOURCES.has(source)) {
-    return _unsupportedPayload(source, 'channels');
-  }
-
-  switch (source) {
-    case 'claude':
-      return require('./channels').getAllChannels();
-    case 'codex':
-      return require('./codex-channels').getChannels();
-    case 'gemini':
-      return require('./gemini-channels').getChannels();
-    case 'opencode':
-      return require('./opencode-channels').getChannels();
-    case 'omp':
-      return require('./omp-channels').getChannels();
-    default:
-      throw new Error(`Unsupported channels snapshot source: ${source}`);
-  }
+  return _unsupportedPayload(source, 'channels');
 }
 
 async function buildPayload({ kind, source, config, options, runtime } = {}) {
@@ -339,8 +275,7 @@ function _getSerializableWorkerOptions(options = {}) {
   if (!options || typeof options !== 'object') {
     return {};
   }
-  const { runtime: _runtime, ...serializableOptions } = options;
-  return serializableOptions;
+  return typeof options.force === 'boolean' ? { force: options.force } : {};
 }
 
 function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
@@ -348,11 +283,17 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
   const runtime = options.runtime;
 
   if (process.env.NODE_ENV === 'test') {
-    return Promise.resolve(buildPayload({ kind, source, config, options: workerOptions, runtime }));
+    return Promise.resolve(buildPayload({ kind, source, config, options: workerOptions, runtime }))
+      .then((value) => {
+        if (_isTypedFailurePayload(value)) {
+          throw _typedFailurePayloadToError(value);
+        }
+        return value;
+      });
   }
 
   return new Promise((resolve, reject) => {
-    const child = fork(__filename, [], {
+    const child = childProcess.fork(__filename, [], {
       stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
       windowsHide: true,
       env: {
@@ -394,6 +335,10 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
     child.on('message', (message) => {
       if (!message || typeof message !== 'object') return;
       if (message.ok) {
+        if (_isTypedFailurePayload(message.value)) {
+          finish(_typedFailurePayloadToError(message.value));
+          return;
+        }
         finish(null, message.value);
       } else {
         finish(new Error(message.error || `Dashboard snapshot refresh failed for ${kind}/${source}`));
@@ -407,7 +352,11 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
       finish(new Error(`Dashboard snapshot worker exited (${code || signal || 'unknown'})${suffix}`));
     });
 
-    child.send({ kind, source, config, options: workerOptions });
+    try {
+      child.send({ kind, source, config, options: workerOptions });
+    } catch (error) {
+      finish(error);
+    }
   });
 }
 
