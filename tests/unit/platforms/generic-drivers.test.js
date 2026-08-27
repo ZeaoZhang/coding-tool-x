@@ -76,11 +76,14 @@ describe('driver registry', () => {
       platform: 'demo-cli',
       capability: 'proxy'
     });
-    expect(registry.create('legacy:claude', { platform: 'claude', capability: 'sessions' })).toEqual({
-      status: 'unsupported',
+
+    const legacyClaude = registry.create('legacy:claude', { platform: 'claude', capability: 'projects' });
+    expect(legacyClaude).toEqual(expect.objectContaining({
       platform: 'claude',
-      capability: 'sessions'
-    });
+      capability: 'projects'
+    }));
+    expect(typeof legacyClaude.listProjects).toBe('function');
+    expect(typeof legacyClaude.getProjectAndSessionCounts).toBe('function');
   });
 });
 
