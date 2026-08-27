@@ -1,0 +1,19 @@
+{
+  "key": "opencode",
+  "title": "OpenCode",
+  "label": "OpenCode",
+  "command": "opencode",
+  "iconToken": "opencode",
+  "color": "#ea580c",
+  "defaultVisible": true,
+  "pathResolverId": "opencode",
+  "capabilities": {
+    "projects": "legacy:opencode",
+    "sessions": "legacy:opencode",
+    "channels": "legacy:opencode",
+    "proxy": "legacy:opencode",
+    "statistics": "legacy:opencode",
+    "resourceSync": "legacy:opencode",
+    "nativeConfig": "legacy:opencode"
+  }
+}
