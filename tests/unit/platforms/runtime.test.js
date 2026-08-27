@@ -10,8 +10,10 @@ test('creates injected capability drivers with invocation context', () => {
   const driverRegistry = {
     create: vi.fn(() => driver)
   };
+  const manifest = { key: 'demo-cli', paths: { sessions: '/tmp/demo/sessions' } };
   const registry = {
-    getCapability: vi.fn(() => 'generic-jsonl')
+    getCapability: vi.fn(() => 'generic-jsonl'),
+    resolve: vi.fn(() => manifest)
   };
   const dependencies = { clock: () => 123 };
   const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies });
@@ -20,6 +22,7 @@ test('creates injected capability drivers with invocation context', () => {
   expect(driverRegistry.create).toHaveBeenCalledWith('generic-jsonl', {
     platform: 'demo-cli',
     capability: 'sessions',
+    manifest,
     context: { project: '/tmp/project' },
     dependencies
   });
@@ -45,6 +48,7 @@ test('production singleton creates drivers through the default registry', () => 
     expect(defaultDriverRegistry.create).toHaveBeenCalledWith('legacy:claude', {
       platform: 'claude',
       capability: 'sessions',
+      manifest: expect.objectContaining({ key: 'claude' }),
       context: {},
       dependencies: {}
     });
