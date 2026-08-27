@@ -517,6 +517,58 @@ describe('dashboard-snapshot-worker', () => {
     });
   });
 
+  it('does not apply global config currentProject to non-Claude project payloads', async () => {
+    for (const source of ['codex', 'gemini', 'opencode', 'omp']) {
+      const getProjects = vi.fn(async () => [
+        { name: `${source}-first`, lastUsed: 30 },
+        { name: `${source}-second`, lastUsed: 20 }
+      ]);
+      const runtime = {
+        getDriver: vi.fn((platform, capability) => {
+          expect(platform).toBe(source);
+          expect(capability).toBe('projects');
+          return { getProjects };
+        })
+      };
+
+      await expect(worker.buildPayload({
+        kind: 'projects',
+        source,
+        config: { currentProject: 'global-claude-project' },
+        options: { force: false },
+        runtime
+      })).resolves.toEqual({
+        projects: [
+          { name: `${source}-first`, lastUsed: 30 },
+          { name: `${source}-second`, lastUsed: 20 }
+        ],
+        currentProject: `${source}-first`
+      });
+    }
+  });
+
+  it('preserves non-Claude payload currentProject when supplied', async () => {
+    const runtime = {
+      getDriver: vi.fn(() => ({
+        getProjects: vi.fn(async () => ({
+          projects: [{ name: 'codex-first', lastUsed: 1 }],
+          currentProject: 'codex-payload-project'
+        }))
+      }))
+    };
+
+    await expect(worker.buildPayload({
+      kind: 'projects',
+      source: 'codex',
+      config: { currentProject: 'global-claude-project' },
+      options: { force: false },
+      runtime
+    })).resolves.toEqual({
+      projects: [{ name: 'codex-first', lastUsed: 1 }],
+      currentProject: 'codex-payload-project'
+    });
+  });
+
   it('returns unsupported project wrappers unchanged instead of empty success payloads', async () => {
     const unsupported = { type: 'unsupported', projects: [], error: 'unsupported-driver' };
     const runtime = {

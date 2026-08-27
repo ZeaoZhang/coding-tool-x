@@ -111,42 +111,48 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
     });
 
     let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill('SIGTERM');
-      reject(new Error(`Inventory worker for ${source} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    let timer = null;
 
-    child.on('message', (msg) => {
+    const finish = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (msg && msg.type === 'done') {
-        resolve();
-      } else if (msg && msg.type === 'error') {
-        reject(_deserializeWorkerError(msg.error || { message: msg.message }, 'Inventory worker failed'));
+      child.removeAllListeners();
+      if (!child.killed) {
+        child.kill('SIGTERM');
+      }
+      if (error) {
+        reject(error);
       } else {
         resolve();
+      }
+    };
+
+    timer = setTimeout(() => {
+      finish(new Error(`Inventory worker for ${source} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.on('message', (msg) => {
+      if (msg && msg.type === 'done') {
+        finish();
+      } else if (msg && msg.type === 'error') {
+        finish(_deserializeWorkerError(msg.error || { message: msg.message }, 'Inventory worker failed'));
+      } else {
+        finish();
       }
     });
 
     child.on('exit', (code) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timer);
       if (code === 0) {
-        resolve();
+        finish();
       } else {
-        reject(new Error(`Inventory worker exited with code ${code}`));
+        finish(new Error(`Inventory worker exited with code ${code}`));
       }
     });
 
     child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(err);
+      finish(err);
     });
   });
 }
@@ -155,27 +161,25 @@ function attachWorkerHandler() {
   const source = process.env.CC_TOOL_SESSION_HISTORY_SOURCE;
   const dbPath = process.env.CC_TOOL_SESSION_HISTORY_DB;
   const force = process.env.CC_TOOL_SESSION_HISTORY_FORCE === '1';
-
   if (!source || !dbPath) {
     process.exit(1);
+    return;
   }
 
-  const { createSessionHistoryIndex } = require('./session-history-index');
+  const { createSessionHistoryIndex } = module.exports._test;
   const index = createSessionHistoryIndex({ dbPath });
 
   index.ensureSourceIndexed(source, { consistency: 'complete', force })
-    .then(() => {
-      if (process.send) {
-        process.send({ type: 'done' });
-      }
-      process.exit(0);
-    })
-    .catch((err) => {
-      if (process.send) {
-        process.send({ type: 'error', error: _serializeWorkerError(err) });
-      }
-      process.exit(1);
-    });
+    .then(() => _sendWorkerMessage({ type: 'done' }, 0))
+    .catch((err) => _sendWorkerMessage({ type: 'error', error: _serializeWorkerError(err) }, 1));
+}
+
+function _sendWorkerMessage(message, exitCode, send = process.send, exit = process.exit) {
+  if (!send) {
+    exit(exitCode);
+    return;
+  }
+  send(message, () => exit(exitCode));
 }
 
 if (process.env.CC_TOOL_SESSION_HISTORY_WORKER === '1' || require.main === module) {
@@ -184,8 +188,11 @@ if (process.env.CC_TOOL_SESSION_HISTORY_WORKER === '1' || require.main === modul
 
 module.exports = {
   runInventoryWorker,
+  attachWorkerHandler,
   _test: {
     serializeWorkerError: _serializeWorkerError,
-    deserializeWorkerError: _deserializeWorkerError
+    deserializeWorkerError: _deserializeWorkerError,
+    sendWorkerMessage: _sendWorkerMessage,
+    createSessionHistoryIndex: (...args) => require('./session-history-index').createSessionHistoryIndex(...args)
   }
 };

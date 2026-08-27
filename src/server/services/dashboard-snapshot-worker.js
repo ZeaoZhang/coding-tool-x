@@ -290,7 +290,7 @@ function _normalizeProjectPayload(source, projects, config = {}) {
 
     return {
       projects: ordered,
-      currentProject: config.currentProject ?? (ordered[0] ? ordered[0].name : null)
+      currentProject: source === 'claude' ? (config.currentProject ?? (ordered[0] ? ordered[0].name : null)) : (ordered[0] ? ordered[0].name : null)
     };
   }
 
@@ -302,7 +302,7 @@ function _normalizeProjectPayload(source, projects, config = {}) {
     return {
       ...projects,
       projects: ordered,
-      currentProject: projects.currentProject ?? config.currentProject ?? (ordered[0] ? ordered[0].name : null)
+      currentProject: projects.currentProject ?? (source === 'claude' ? config.currentProject : undefined) ?? (ordered[0] ? ordered[0].name : null)
     };
   }
 

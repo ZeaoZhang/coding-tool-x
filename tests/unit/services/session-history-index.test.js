@@ -768,6 +768,40 @@ describe('session-history-index runtime selection', () => {
     expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
     expect(getPlatformRuntime).toHaveBeenCalledTimes(1);
   });
+
+  it('ignores injected runtime in production-like environments so indexing uses the worker path', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-prod-ignored-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const runtimeInventory = vi.fn(async () => []);
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn(() => ({ inventory: runtimeInventory, parse: vi.fn() }))
+      },
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete', force: true });
+    } finally {
+      index.closeSessionHistoryIndex();
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = originalChild;
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
+    expect(runtimeInventory).not.toHaveBeenCalled();
+  });
   it('treats an unusable runtime object as omitted so production indexing uses the worker path', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-empty-object-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
@@ -1060,10 +1094,10 @@ describe('session-history-index runtime selection', () => {
     }
   });
 
-  it('uses the runtime driver in-process instead of the worker runner when runtime is supplied', async () => {
+  it('uses the runtime driver in-process instead of the worker runner only in NODE_ENV=test', async () => {
     const prevNodeEnv = process.env.NODE_ENV;
     const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
-    process.env.NODE_ENV = 'production';
+    process.env.NODE_ENV = 'test';
     delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
 
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-worker-bypass-'));
@@ -1072,7 +1106,7 @@ describe('session-history-index runtime selection', () => {
     fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
     const stat = fs.statSync(filePath);
     const workerRunner = vi.fn(async () => {
-      throw new Error('worker runner should not be used when runtime is supplied');
+      throw new Error('worker runner should not be used for test runtime injection');
     });
     const runtimeInventory = vi.fn(async () => [{
       filePath,
@@ -1106,7 +1140,8 @@ describe('session-history-index runtime selection', () => {
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
-      process.env.NODE_ENV = prevNodeEnv;
+      if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNodeEnv;
       if (prevChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
       else process.env.CC_TOOL_SESSION_HISTORY_CHILD = prevChild;
     }
