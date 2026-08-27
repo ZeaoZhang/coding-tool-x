@@ -1,6 +1,8 @@
 'use strict';
 
 const { openDatabase, closeDatabase } = require('./sqlite-connection');
+const { getPlatformRuntime } = require('../../platforms/runtime');
+
 const { PATHS } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
@@ -144,7 +146,63 @@ function _ftsQuote(s) {
   return '"' + String(s).replace(/"/g, '""') + '"';
 }
 
-// ---------------------------------------------------------------------------
+function _getRuntimeSessionsDriver(runtime, source) {
+  if (!runtime || typeof runtime.getDriver !== 'function') {
+    return null;
+  }
+
+  try {
+    const driver = runtime.getDriver(source, 'sessions');
+    if (!driver || typeof driver !== 'object') {
+      return null;
+    }
+    if (typeof driver.inventory !== 'function' || typeof driver.parse !== 'function') {
+      return null;
+    }
+    return driver;
+  } catch (_) {
+    return null;
+  }
+}
+
+function _normalizeRuntimeParseResult(result) {
+  if (!result || typeof result !== 'object') {
+    return result;
+  }
+  if (result.session && Array.isArray(result.messages)) {
+    return result;
+  }
+  if (result.sessionId) {
+    return {
+      session: {
+        sessionId: result.sessionId,
+        projectName: result.projectName || result.projectHint || '',
+        projectDisplayName: result.projectDisplayName || result.projectName || result.projectHint || '',
+        projectFullPath: result.projectFullPath || result.projectPath || '',
+        firstMessage: result.firstMessage || null,
+        gitBranch: result.gitBranch || null,
+        provider: result.provider || null,
+        model: result.model || null,
+        startedAt: result.startedAt || null,
+        updatedAt: result.updatedAt || null,
+        usageJson: result.usageJson || null,
+        extraJson: result.extraJson || null
+      },
+      messages: Array.isArray(result.messages) ? result.messages : []
+    };
+  }
+  return result;
+}
+
+function _adaptRuntimeSessionsDriver(driver) {
+  if (!driver) return null;
+  return {
+    inventory: (...args) => driver.inventory(...args),
+    parse: async (...args) => _normalizeRuntimeParseResult(await driver.parse(...args))
+  };
+}
+
+
 // Core: createSessionHistoryIndex
 // ---------------------------------------------------------------------------
 
@@ -152,13 +210,16 @@ function _ftsQuote(s) {
  * @param {object} [opts]
  * @param {string} [opts.dbPath]
  * @param {object} [opts.adapterRegistry] - source → { inventory, parse }
+ * @param {object} [opts.runtime] - runtime with getDriver(source, capability)
  * @param {Function} [opts.workerRunner] - (source, indexDbPath) => Promise<void>
  * @param {boolean|null} [opts.ftsEnabledOverride] - override FTS detection for tests
  * @returns {object} index API
  */
 function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
-  const adapters = opts.adapterRegistry || require('./session-history-adapters');
+  const explicitAdapters = opts.adapterRegistry || null;
+  const adapters = explicitAdapters || require('./session-history-adapters');
+  const runtime = explicitAdapters ? null : (opts.runtime || getPlatformRuntime());
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;
   const ftsEnabled = opts.ftsEnabledOverride !== undefined
     ? opts.ftsEnabledOverride
@@ -241,10 +302,11 @@ function createSessionHistoryIndex(opts = {}) {
 
   async function _runInventory(source, { force = false } = {}) {
     const db = _getDb();
-    const adapter = adapters[source];
+    const adapter = explicitAdapters ? adapters[source] : (_adaptRuntimeSessionsDriver(_getRuntimeSessionsDriver(runtime, source)) || adapters[source]);
     if (!adapter || !adapter.inventory) {
       return;
     }
+
 
     if (!force) {
       const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
