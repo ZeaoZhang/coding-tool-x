@@ -57,7 +57,8 @@ function _serializeError(error) {
     message: error.message ? String(error.message) : String(error),
     platform: error.platform,
     capability: error.capability,
-    operation: error.operation
+    operation: error.operation,
+    code: error.code
   };
   const cause = _serializeCause(error.cause);
   if (cause) {
@@ -94,6 +95,7 @@ function _deserializeError(payload, fallbackMessage) {
   if (payload.platform) error.platform = payload.platform;
   if (payload.capability) error.capability = payload.capability;
   if (payload.operation) error.operation = payload.operation;
+  if (payload.code != null) error.code = payload.code;
   const cause = _deserializeCause(payload.cause);
   if (cause) {
     error.cause = cause;
@@ -154,6 +156,38 @@ function _driverFailurePayload(source, capability, error) {
   return result;
 }
 
+function _capabilityInvocationError(source, capability, operation, error) {
+  const cause = error instanceof Error ? error : new Error(String(error || 'unknown error'));
+  const wrapped = new Error(`Dashboard snapshot ${capability} ${operation} failed on ${source}: ${cause.message}`);
+  wrapped.platform = source;
+  wrapped.capability = capability;
+  wrapped.operation = operation;
+  wrapped.cause = cause;
+  if (cause.code != null) {
+    wrapped.code = cause.code;
+  }
+  return wrapped;
+}
+
+async function _invokeCapabilityGetter(source, capability, operation, getter, options) {
+  try {
+    return await getter(options);
+  } catch (error) {
+    throw _capabilityInvocationError(source, capability, operation, error);
+  }
+}
+
+function _configProjectOrder(config = {}) {
+  if (Array.isArray(config.projectOrder)) {
+    return config.projectOrder;
+  }
+  if (Array.isArray(config.order)) {
+    return config.order;
+  }
+  return [];
+}
+
+
 function _getRuntimeDriver(runtime, source, capability) {
   if (!runtime || typeof runtime.getDriver !== 'function') {
     return null;
@@ -179,10 +213,20 @@ function _getProjectOrderGetter(driver) {
 
 async function _getClaudeProjectOrder(driver, config, options) {
   const getter = _getProjectOrderGetter(driver);
-  if (getter) {
-    return getter({ force: options.force === true, config });
+  if (!getter) {
+    return _configProjectOrder(config);
   }
-  return config.projectOrder || config.order || [];
+  const order = await _invokeCapabilityGetter(
+    'claude',
+    'project-order',
+    'get',
+    getter,
+    { force: options.force === true, config }
+  );
+  if (_isTypedFailurePayload(order)) {
+    throw _typedFailurePayloadToError(order);
+  }
+  return Array.isArray(order) ? order : _configProjectOrder(config);
 }
 
 function _getCountsGetter(driver) {
@@ -269,7 +313,7 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
   const getter = _getProjectsGetter(driver);
   if (getter) {
     const driverOptions = { force: options.force === true, config };
-    const projects = await getter(driverOptions);
+    const projects = await _invokeCapabilityGetter(source, 'projects', 'list', getter, driverOptions);
     if (source === 'claude') {
       const order = await _getClaudeProjectOrder(driver, config, options);
       return _normalizeProjectPayload(source, projects, { projectOrder: order, currentProject: config.currentProject });
@@ -289,7 +333,7 @@ async function buildCountsPayload(source, config = {}, options = {}) {
   const countsDriver = _getRuntimeDriver(runtime, source, 'counts');
   const countsGetter = _getCountsGetter(countsDriver);
   if (countsGetter) {
-    return countsGetter({ force: options.force === true, config });
+    return _invokeCapabilityGetter(source, 'counts', 'count', countsGetter, { force: options.force === true, config });
   }
   if (_isTypedPayload(countsDriver)) {
     return countsDriver;
@@ -298,7 +342,7 @@ async function buildCountsPayload(source, config = {}, options = {}) {
   const projectsDriver = _getRuntimeDriver(runtime, source, 'projects');
   const projectsGetter = _getCountsGetter(projectsDriver);
   if (projectsGetter) {
-    return projectsGetter({ force: options.force === true, config });
+    return _invokeCapabilityGetter(source, 'counts', 'count', projectsGetter, { force: options.force === true, config });
   }
   if (_isTypedPayload(projectsDriver)) {
     return projectsDriver;
@@ -312,7 +356,7 @@ async function buildTodayStatsPayload(source, config = {}, options = {}) {
   const driver = _getRuntimeDriver(runtime, source, 'statistics');
   const getter = _getTodayStatsGetter(driver);
   if (getter) {
-    return getter({ force: options.force === true, config });
+    return _invokeCapabilityGetter(source, 'statistics', 'get', getter, { force: options.force === true, config });
   }
 
   if (_isTypedPayload(driver)) {
@@ -327,7 +371,7 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   const driver = _getRuntimeDriver(runtime, source, 'channels');
   const getter = _getChannelsGetter(driver);
   if (getter) {
-    const value = await getter({ force: options.force === true, config });
+    const value = await _invokeCapabilityGetter(source, 'channels', 'list', getter, { force: options.force === true, config });
     return _normalizeChannelsPayload(source, value);
   }
 

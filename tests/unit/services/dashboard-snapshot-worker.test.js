@@ -278,6 +278,92 @@ describe('dashboard-snapshot-worker', () => {
     }));
   });
 
+  it('wraps Claude project getter failures and preserves typed cause fields', async () => {
+    const cause = new Error('project getter exploded');
+    cause.name = 'AdapterFailure';
+    cause.code = 'E_PROJECTS';
+    const getProjects = vi.fn(async () => {
+      throw cause;
+    });
+    const runtime = {
+      getDriver: vi.fn(() => ({ getProjects }))
+    };
+
+    const error = await worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config: {},
+      options: { force: true },
+      runtime
+    }).then(() => null, (err) => err);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('Dashboard snapshot projects list failed on claude');
+    expect(error.platform).toBe('claude');
+    expect(error.capability).toBe('projects');
+    expect(error.operation).toBe('list');
+    expect(error.cause).toBe(cause);
+    expect(error.cause.code).toBe('E_PROJECTS');
+  });
+
+  it('propagates typed Claude project order failures with context instead of normalizing them', async () => {
+    const cause = new Error('order getter exploded');
+    cause.code = 'E_ORDER';
+    const getProjects = vi.fn(async () => [
+      { name: 'alpha-project', lastUsed: 1 }
+    ]);
+    const getProjectOrder = vi.fn(async () => {
+      throw cause;
+    });
+    const runtime = {
+      getDriver: vi.fn(() => ({ getProjects, getProjectOrder }))
+    };
+
+    const error = await worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config: {},
+      options: { force: true },
+      runtime
+    }).then(() => null, (err) => err);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('Dashboard snapshot project-order get failed on claude');
+    expect(error.platform).toBe('claude');
+    expect(error.capability).toBe('project-order');
+    expect(error.operation).toBe('get');
+    expect(error.cause).toBe(cause);
+    expect(error.cause.code).toBe('E_ORDER');
+  });
+
+  it('falls back to config project order when Claude project order getter returns a non-array value', async () => {
+    const getProjects = vi.fn(async () => [
+      { name: 'zeta-project', lastUsed: 30 },
+      { name: 'alpha-project', lastUsed: 20 },
+      { name: 'beta-project', lastUsed: 10 }
+    ]);
+    const getProjectOrder = vi.fn(async () => ({ stale: true }));
+    const runtime = {
+      getDriver: vi.fn(() => ({ getProjects, getProjectOrder }))
+    };
+
+    const result = await worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config: { projectOrder: ['alpha-project', 'beta-project'] },
+      options: { force: false },
+      runtime
+    });
+
+    expect(result.projects.map((project) => project.name)).toEqual([
+      'alpha-project',
+      'beta-project',
+      'zeta-project'
+    ]);
+    expect(result.currentProject).toBe('alpha-project');
+  });
+
+
   it('uses canonical runtime capabilities while accepting legacy and generic getters', async () => {
     const runtime = {
       getDriver: vi.fn((platform, capability) => {
