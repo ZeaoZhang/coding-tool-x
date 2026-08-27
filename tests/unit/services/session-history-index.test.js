@@ -730,6 +730,45 @@ describe('session-history-index runtime selection', () => {
     expect(runtimeInventory).toHaveBeenCalledTimes(1);
     expect(runtimeParse).toHaveBeenCalledTimes(1);
   });
+  it('treats runtime undefined as omitted so production indexing uses the worker path', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-undefined-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const originalGetPlatformRuntime = runtimeModule.getPlatformRuntime;
+    const getPlatformRuntime = vi.fn(() => ({
+      getDriver: vi.fn(() => {
+        throw new Error('default runtime should not be consulted before worker path');
+      })
+    }));
+    runtimeModule.getPlatformRuntime = getPlatformRuntime;
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: undefined,
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete', force: true });
+    } finally {
+      index.closeSessionHistoryIndex();
+      runtimeModule.getPlatformRuntime = originalGetPlatformRuntime;
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = originalChild;
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
+    expect(getPlatformRuntime).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects when runtime sessions driver resolution throws instead of falling back to the built-in adapter', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-resolve-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
