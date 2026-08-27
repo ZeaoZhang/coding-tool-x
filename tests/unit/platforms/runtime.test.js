@@ -132,6 +132,25 @@ test('runtime keeps URL resource mappings out of filesystem containment checks',
   expect(driverRegistry.create.mock.calls[0][1].manifest.resourceMappings.remote).toBe('https://api.example.test/resources');
 });
 
+test('runtime expands tilde resource mappings consistently with manifest paths', () => {
+  const driver = { ok: true };
+  const driverRegistry = { create: vi.fn(() => driver) };
+  const manifest = {
+    key: 'demo-cli',
+    paths: { home: '~/.demo' },
+    resourceMappings: { commands: '~/commands' }
+  };
+  const registry = {
+    getCapability: () => 'generic-filesystem',
+    resolve: () => manifest,
+    resolvePaths: () => ({ home: '/Users/demo/.demo' })
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry, dependencies: { pathResolverOptions: { homeDir: '/Users/demo' } } });
+
+  expect(runtime.getDriver('demo-cli', 'resourceSync')).toBe(driver);
+  expect(driverRegistry.create.mock.calls[0][1].manifest.resourceMappings.commands).toBe('/Users/demo/commands');
+});
+
 test('runtime preserves environment-resolved OpenAI base URLs for generic channels', () => {
   const { resolveManifestPaths } = require('../../../src/platforms/path-resolver');
   const fetchImpl = vi.fn();

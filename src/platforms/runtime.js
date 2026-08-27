@@ -21,6 +21,17 @@ function isUrl(value) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(String(value));
 }
 
+
+function isExplicitFilesystemRoot(value) {
+  const raw = String(value);
+  return path.isAbsolute(raw) || raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\');
+}
+function expandTilde(value, homeDir) {
+  if (value === '~') return homeDir;
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(homeDir, value.slice(2));
+  return value;
+}
+
 function assertInsideHome(home, candidate, manifestKey, mappingName) {
   const relative = path.relative(home, candidate);
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
@@ -31,11 +42,12 @@ function assertInsideHome(home, candidate, manifestKey, mappingName) {
 function resolveResourceMappings(manifest, resolvedPaths = {}, pathOptions = {}) {
   const resourceMappings = manifest.resourceMappings || {};
   const home = resolvedPaths.home || process.cwd();
+  const homeDir = pathOptions.homeDir || require('os').homedir();
   const resolved = { env: { ...process.env, ...(pathOptions.env || {}) }, home };
   return Object.fromEntries(Object.entries(resourceMappings).map(([type, value]) => {
-    const raw = resolveTemplate(value, resolved);
+    const raw = expandTilde(resolveTemplate(value, resolved), homeDir);
     const target = isUrl(raw) || path.isAbsolute(raw) ? raw : path.join(home, raw);
-    if (!isUrl(target) && !path.isAbsolute(String(value))) assertInsideHome(home, path.normalize(target), manifest.key, type);
+    if (!isUrl(target) && !isExplicitFilesystemRoot(value)) assertInsideHome(home, path.normalize(target), manifest.key, type);
     return [type, isUrl(target) ? target : path.normalize(target)];
   }));
 }

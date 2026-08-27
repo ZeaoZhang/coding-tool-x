@@ -444,6 +444,27 @@ describe('generic filesystem driver', () => {
     }
   });
 
+  test('rejects mapped roots that are direct symlinks under a filesystem anchor', async () => {
+    const anchor = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-anchor-'));
+    const outside = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-anchor-outside-'));
+    const source = path.join(anchor, 'source.md');
+    fs.writeFileSync(source, 'source');
+    fs.symlinkSync(outside, path.join(anchor, 'link'), 'dir');
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: path.join(anchor, 'link') } }
+      });
+
+      await expect(driver.sync('commands', 'tool.md', source)).resolves.toEqual(expect.objectContaining({
+        status: 'failed', platform: 'demo-cli', capability: 'resourceSync', operation: 'sync'
+      }));
+    } finally {
+      fs.rmSync(anchor, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   test('rejects symlink roots and targets outside the mapped resource root', async () => {
     const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-resource-root-'));
     const outside = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-resource-outside-'));
