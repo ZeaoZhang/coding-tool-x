@@ -1,6 +1,7 @@
 'use strict';
 
 const { fork } = require('child_process');
+const platformRuntime = require('../../platforms/runtime');
 
 const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
 
@@ -19,7 +20,89 @@ function sortClaudeProjects(projects, order = []) {
   });
 }
 
+function _getRuntimeDriver(runtime, source, capability) {
+  if (!runtime || typeof runtime.getDriver !== 'function') {
+    return null;
+  }
+  try {
+    return runtime.getDriver(source, capability);
+  } catch (_) {
+    return null;
+  }
+}
+
+function _getProjectsGetter(driver) {
+  if (!driver) return null;
+  if (typeof driver.listProjects === 'function') return driver.listProjects.bind(driver);
+  if (typeof driver.getProjects === 'function') return driver.getProjects.bind(driver);
+  return null;
+}
+
+function _getCountsGetter(driver) {
+  if (!driver) return null;
+  if (typeof driver.getProjectAndSessionCounts === 'function') return driver.getProjectAndSessionCounts.bind(driver);
+  if (typeof driver.counts === 'function') return driver.counts.bind(driver);
+  return null;
+}
+
+function _getTodayStatsGetter(driver) {
+  if (!driver) return null;
+  if (typeof driver.getTodayStatistics === 'function') return driver.getTodayStatistics.bind(driver);
+  if (typeof driver.today === 'function') return driver.today.bind(driver);
+  return null;
+}
+
+function _getChannelsGetter(driver) {
+  if (!driver) return null;
+  if (typeof driver.list === 'function') return driver.list.bind(driver);
+  if (typeof driver.getChannels === 'function') return driver.getChannels.bind(driver);
+  return null;
+}
+
+function _normalizeProjectPayload(source, projects, config = {}) {
+  const list = Array.isArray(projects) ? projects : [];
+  const ordered = source === 'claude'
+    ? sortClaudeProjects(list, config.projectOrder || config.order || [])
+    : list;
+
+  return {
+    projects: ordered,
+    currentProject: config.currentProject || (ordered[0] ? ordered[0].name : null)
+  };
+}
+
+function _normalizeChannelsPayload(source, value) {
+  if (source === 'claude') {
+    if (Array.isArray(value)) {
+      return value;
+    }
+    if (value && Array.isArray(value.channels)) {
+      return value.channels;
+    }
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return { channels: value };
+  }
+  if (value && typeof value === 'object' && Array.isArray(value.channels)) {
+    return value;
+  }
+  if (value == null) {
+    return { channels: [] };
+  }
+  return value;
+}
+
 async function buildProjectsPayload(source, config = {}, options = {}) {
+  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const driver = _getRuntimeDriver(runtime, source, 'projects');
+  const getter = _getProjectsGetter(driver);
+  if (getter) {
+    const projects = await getter({ force: options.force === true, config });
+    return _normalizeProjectPayload(source, projects, config);
+  }
+
   switch (source) {
     case 'claude': {
       const { getProjectsWithStats, getProjectOrder } = require('./sessions');
@@ -56,6 +139,13 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
 }
 
 async function buildCountsPayload(source, config = {}, options = {}) {
+  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const driver = _getRuntimeDriver(runtime, source, 'projects');
+  const getter = _getCountsGetter(driver);
+  if (getter) {
+    return getter({ force: options.force === true, config });
+  }
+
   switch (source) {
     case 'claude':
       return require('./sessions').getProjectAndSessionCounts(config);
@@ -72,7 +162,14 @@ async function buildCountsPayload(source, config = {}, options = {}) {
   }
 }
 
-function buildTodayStatsPayload(source) {
+async function buildTodayStatsPayload(source, config = {}, options = {}) {
+  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const driver = _getRuntimeDriver(runtime, source, 'statistics');
+  const getter = _getTodayStatsGetter(driver);
+  if (getter) {
+    return getter({ force: options.force === true, config });
+  }
+
   switch (source) {
     case 'claude':
       return require('./claude-statistics-service').getTodayStatistics();
@@ -89,7 +186,15 @@ function buildTodayStatsPayload(source) {
   }
 }
 
-function buildChannelsPayload(source) {
+async function buildChannelsPayload(source, config = {}, options = {}) {
+  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const driver = _getRuntimeDriver(runtime, source, 'channels');
+  const getter = _getChannelsGetter(driver);
+  if (getter) {
+    const value = await getter({ force: options.force === true, config });
+    return _normalizeChannelsPayload(source, value);
+  }
+
   switch (source) {
     case 'claude':
       return require('./channels').getAllChannels();
@@ -106,25 +211,36 @@ function buildChannelsPayload(source) {
   }
 }
 
-async function buildPayload({ kind, source, config, options }) {
+async function buildPayload({ kind, source, config, options, runtime } = {}) {
   const snapshotOptions = options || {};
+  const effectiveOptions = runtime ? { ...snapshotOptions, runtime } : snapshotOptions;
   switch (kind) {
     case 'projects':
-      return buildProjectsPayload(source, config || {}, snapshotOptions);
+      return buildProjectsPayload(source, config || {}, effectiveOptions);
     case 'counts':
-      return buildCountsPayload(source, config || {}, snapshotOptions);
+      return buildCountsPayload(source, config || {}, effectiveOptions);
     case 'todayStats':
-      return buildTodayStatsPayload(source);
+      return buildTodayStatsPayload(source, config || {}, effectiveOptions);
     case 'channels':
-      return buildChannelsPayload(source);
+      return buildChannelsPayload(source, config || {}, effectiveOptions);
     default:
       throw new Error(`Unsupported dashboard snapshot kind: ${kind}`);
   }
 }
 
+function _getSerializableWorkerOptions(options = {}) {
+  if (!options || typeof options !== 'object') {
+    return {};
+  }
+  const { runtime: _runtime, ...serializableOptions } = options;
+  return serializableOptions;
+}
+
 function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
+  const workerOptions = _getSerializableWorkerOptions(options);
+
   if (process.env.NODE_ENV === 'test') {
-    return Promise.resolve(buildPayload({ kind, source, config, options }));
+    return Promise.resolve(buildPayload({ kind, source, config, options: workerOptions }));
   }
 
   return new Promise((resolve, reject) => {
@@ -144,9 +260,7 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
+      clearTimeout(timeout);
       child.removeAllListeners();
       if (!child.killed) {
         child.kill();
@@ -157,6 +271,7 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
         resolve(value);
       }
     };
+
 
     timeout = setTimeout(() => {
       finish(new Error(`Dashboard snapshot refresh timed out for ${kind}/${source}`));
@@ -185,7 +300,7 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
       finish(new Error(`Dashboard snapshot worker exited (${code || signal || 'unknown'})${suffix}`));
     });
 
-    child.send({ kind, source, config, options });
+    child.send({ kind, source, config, options: workerOptions });
   });
 }
 
@@ -213,5 +328,8 @@ if (process.env.CC_TOOL_DASHBOARD_SNAPSHOT_WORKER === '1' || require.main === mo
 
 module.exports = {
   buildPayload,
-  runDashboardSnapshotWorker
+  runDashboardSnapshotWorker,
+  _test: {
+    getSerializableWorkerOptions: _getSerializableWorkerOptions
+  }
 };

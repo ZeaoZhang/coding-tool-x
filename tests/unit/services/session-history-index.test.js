@@ -625,3 +625,120 @@ describe('session-history-index', () => {
     expect(results[0].sessionId).toBe('s1');
   });
 });
+describe('session-history-index runtime selection', () => {
+  it('uses a runtime sessions driver when no explicit adapterRegistry is provided', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'runtime.jsonl');
+    fs.writeFileSync(filePath, '{"type":"metadata"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const runtimeInventory = vi.fn(async () => [{
+      filePath,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      sessionId: 'runtime',
+      projectHint: 'runtime-project'
+    }]);
+    const runtimeParse = vi.fn(async () => ({
+      session: makeSessionFixture('runtime', 'runtime-project'),
+      messages: makeMessageFixtures(2)
+    }));
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          return { inventory: runtimeInventory, parse: runtimeParse };
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    expect(runtimeInventory).toHaveBeenCalledTimes(1);
+    expect(runtimeParse).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts generic runtime sessions drivers that return a direct session payload', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-generic-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'generic.jsonl');
+    fs.writeFileSync(filePath, '{"role":"user","content":"hello"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          return {
+            inventory: vi.fn(async () => [{
+              filePath,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              sessionId: 'generic',
+              projectHint: 'generic-project'
+            }]),
+            parse: vi.fn(async () => ({
+              sessionId: 'generic',
+              projectName: 'generic-project',
+              firstMessage: 'hello',
+              messages: makeMessageFixtures(1, { userPrefix: 'Generic user' })
+            }))
+          };
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+      const sessions = await index.listSessions('claude', 'generic-project');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].sessionId).toBe('generic');
+      expect(sessions[0].firstMessage).toBe('hello');
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+  it('keeps an explicit adapterRegistry ahead of runtime sessions drivers', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-explicit-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const explicitInventory = vi.fn(async () => []);
+    const explicitParse = vi.fn(async () => ({ session: null, messages: [] }));
+    const runtimeInventory = vi.fn(async () => []);
+    const runtimeParse = vi.fn(async () => ({ session: null, messages: [] }));
+    const index = createSessionHistoryIndex({
+      dbPath,
+      adapterRegistry: { claude: { inventory: explicitInventory, parse: explicitParse } },
+      runtime: {
+        getDriver: vi.fn(() => ({ inventory: runtimeInventory, parse: runtimeParse }))
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+
+    expect(explicitInventory).toHaveBeenCalledTimes(1);
+    expect(explicitParse).not.toHaveBeenCalled();
+    expect(runtimeInventory).not.toHaveBeenCalled();
+    expect(runtimeParse).not.toHaveBeenCalled();
+  });
+});
