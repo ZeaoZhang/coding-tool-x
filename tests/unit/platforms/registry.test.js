@@ -1,5 +1,8 @@
 'use strict';
 
+const Module = require('module');
+const REGISTRY_PATH = require.resolve('../../../src/platforms/registry');
+
 const { createPlatformRegistry } = require('../../../src/platforms/registry');
 
 test('resolves built-ins and rejects a user override', () => {
@@ -56,5 +59,61 @@ test('public definitions expose support flags without internal driver configurat
       proxy: false,
       resourceSync: true
     }
+  });
+});
+
+test('explicit registry inputs do not load PATHS configuration', () => {
+  const originalLoad = Module._load;
+  Module._load = (request, parent, isMain) => request === '../config/paths'
+    ? (() => { throw new Error('config paths loaded'); })()
+    : originalLoad(request, parent, isMain);
+  delete require.cache[REGISTRY_PATH];
+  try {
+    const { createPlatformRegistry: createWithoutPaths } = require('../../../src/platforms/registry');
+    const registry = createWithoutPaths({
+      builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: {} }],
+      userFile: { platforms: [] }
+    });
+
+    expect(registry.resolve('claude').label).toBe('Claude');
+  } finally {
+    delete require.cache[REGISTRY_PATH];
+    Module._load = originalLoad;
+  }
+});
+
+test('duplicate user platform keys keep the first entry and record diagnostics', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [],
+    userFile: {
+      platforms: [
+        { key: 'demo-cli', label: 'Demo One', command: 'demo-one', capabilities: {} },
+        { key: 'demo-cli', label: 'Demo Two', command: 'demo-two', capabilities: {} }
+      ]
+    }
+  });
+
+  expect(registry.resolve('demo-cli').label).toBe('Demo One');
+  expect(registry.diagnostics()).toEqual([
+    { key: 'demo-cli', source: 'userFile', message: 'duplicate platform key ignored' }
+  ]);
+});
+
+test('resolve and list return cloned manifests that cannot mutate registry state', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: { sessions: 'legacy:claude' } }],
+    userFile: { platforms: [] }
+  });
+
+  const resolved = registry.resolve('claude');
+  resolved.label = 'Mutated';
+  resolved.capabilities.sessions = 'unsupported';
+  registry.list()[0].label = 'Mutated Again';
+
+  expect(registry.resolve('claude')).toEqual({
+    key: 'claude',
+    label: 'Claude',
+    command: 'claude',
+    capabilities: { sessions: 'legacy:claude' }
   });
 });

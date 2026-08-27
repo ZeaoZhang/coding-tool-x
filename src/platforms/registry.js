@@ -2,7 +2,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../config/paths');
 const { validateManifest, normalizeManifestError } = require('./manifest-schema');
 const { resolveManifestPaths } = require('./path-resolver');
 
@@ -15,6 +14,7 @@ const BUILT_IN_MANIFESTS = [
 ];
 
 function readUserFile(fsImpl) {
+  const { PATHS } = require('../config/paths');
   const platformsFile = PATHS.platforms || path.join(PATHS.config || process.cwd(), 'platforms.json');
   try {
     if (!fsImpl.existsSync(platformsFile)) return null;
@@ -56,31 +56,40 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
       continue;
     }
     if (builtInKeys.has(manifest.key)) continue;
+    if (definitions.has(manifest.key)) {
+      diagnostics.push({ key: manifest.key, source: 'userFile', message: 'duplicate platform key ignored' });
+      continue;
+    }
     definitions.set(manifest.key, { ...clone(manifest), custom: manifest.custom !== false });
   }
 
 
-  function resolve(key) {
+  function getStored(key) {
     return definitions.get(String(key || '').trim().toLowerCase()) || null;
+  }
+
+  function resolve(key) {
+    const platform = getStored(key);
+    return platform ? clone(platform) : null;
   }
 
   return {
     resolve,
     list({ enabledOnly = false } = {}) {
-      const platforms = [...definitions.values()];
-      return enabledOnly ? platforms.filter(platform => platform.enabled !== false) : platforms;
+      const platforms = [...definitions.values()].filter(platform => !enabledOnly || platform.enabled !== false);
+      return clone(platforms);
     },
     getCapability(key, capability) {
-      const platform = resolve(key);
+      const platform = getStored(key);
       return platform && platform.capabilities ? platform.capabilities[capability] || null : null;
     },
     resolvePaths(key, options) {
-      const platform = resolve(key);
+      const platform = getStored(key);
       if (!platform) return null;
       return resolveManifestPaths(platform, options);
     },
     getPublicDefinition(key) {
-      const platform = resolve(key);
+      const platform = getStored(key);
       if (!platform) return null;
       const capabilities = {};
       for (const [capability, driverId] of Object.entries(platform.capabilities || {})) {

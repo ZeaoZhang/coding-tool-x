@@ -51,3 +51,22 @@ test('production singleton creates drivers through the default registry', () => 
   delete require.cache[RUNTIME_PATH];
   Module._load = originalLoad;
 });
+
+test('production singleton throws clearly when no default driver registry is available', () => {
+  const originalLoad = Module._load;
+  Module._load = (request, parent, isMain) => request === './driver-registry'
+    ? (() => {
+      const error = new Error("Cannot find module './driver-registry'");
+      error.code = 'MODULE_NOT_FOUND';
+      throw error;
+    })()
+    : originalLoad(request, parent, isMain);
+  delete require.cache[RUNTIME_PATH];
+  try {
+    const { getPlatformRuntime } = require('../../../src/platforms/runtime');
+    expect(() => getPlatformRuntime()).toThrow(/Platform driver registry is not available/);
+  } finally {
+    delete require.cache[RUNTIME_PATH];
+    Module._load = originalLoad;
+  }
+});

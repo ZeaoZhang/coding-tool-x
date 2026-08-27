@@ -11,7 +11,7 @@ function getDefaultDriverRegistry() {
     return getDriverRegistry();
   } catch (error) {
     if (error.code !== 'MODULE_NOT_FOUND' || !error.message.includes("'./driver-registry'")) throw error;
-    return { create: () => null };
+    throw new Error('Platform driver registry is not available; create(id, context) cannot be resolved');
   }
 }
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
