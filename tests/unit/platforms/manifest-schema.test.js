@@ -55,6 +55,19 @@ test('rejects OpenAI-compatible transport as a proxy lifecycle driver', () => {
   expect(normalizeManifestError(result.errors)).toContain('only supports channels');
 });
 
+test('rejects generic drivers assigned to incompatible capabilities', () => {
+  const cases = [
+    ['sessions', 'generic-filesystem'],
+    ['resourceSync', 'generic-jsonl'],
+    ['proxy', 'generic-openai-compatible']
+  ];
+  for (const [capability, driver] of cases) {
+    const result = validateManifest({ key: `bad-${capability}`, label: 'Bad', command: 'bad', capabilities: { [capability]: driver } });
+    expect(result.valid).toBe(false);
+    expect(normalizeManifestError(result.errors)).toContain('only supports');
+  }
+});
+
 test('rejects executable module paths and unknown drivers', () => {
   const result = validateManifest({
     key: 'bad-cli',

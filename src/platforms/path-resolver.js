@@ -127,10 +127,9 @@ function resolveManifestPaths(manifest, options = {}) {
   if (!explicitHomeRoot) assertInsideHome(homeDir, resolved.home, manifest.key, 'home');
   const paths = {};
   for (const [name, value] of Object.entries(declared)) {
-    const stringValue = String(value);
-    const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(stringValue);
-    const explicitAbsolute = path.isAbsolute(stringValue);
+    const explicitAbsolute = path.isAbsolute(String(value));
     const raw = resolveTemplate(value, resolved);
+    const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw);
     const candidate = isUrl ? raw : expand(raw);
     if (name !== 'home' && !explicitAbsolute && !isUrl) {
       assertInsideHome(resolved.home, candidate, manifest.key, name);

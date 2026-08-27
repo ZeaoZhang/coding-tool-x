@@ -434,6 +434,25 @@ describe('generic filesystem driver', () => {
     expect(Object.keys(result)).not.toContain('cause');
   });
 
+
+  test('sync creates a missing mapped resource root recursively', async () => {
+    const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-missing-root-'));
+    const source = path.join(root, 'source.md');
+    fs.writeFileSync(source, 'source');
+    const targetRoot = path.join(root, 'mapped');
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: targetRoot } }
+      });
+      await expect(driver.sync('commands', 'nested/file.md', source)).resolves.toEqual({
+        status: 'ok', target: path.join(targetRoot, 'nested/file.md')
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
 describe('generic OpenAI-compatible driver', () => {
   test('normalizes endpoints and authenticates requests without exposing API keys', async () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }));
