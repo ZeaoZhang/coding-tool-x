@@ -117,7 +117,7 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     const projects = await getter(driverOptions);
     if (source === 'claude') {
       const order = await _getClaudeProjectOrder(driver, config, options);
-      return _normalizeProjectPayload(source, projects, { projectOrder: order });
+      return _normalizeProjectPayload(source, projects, { projectOrder: order, currentProject: config.currentProject });
     }
     return _normalizeProjectPayload(source, projects, config);
   }

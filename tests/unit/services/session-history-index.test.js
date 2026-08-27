@@ -706,6 +706,7 @@ describe('session-history-index runtime selection', () => {
       expect(sessions).toHaveLength(1);
       expect(sessions[0].sessionId).toBe('generic');
       expect(sessions[0].firstMessage).toBe('hello');
+      expect(sessions[0].updatedAt).toBe(stat.mtimeMs);
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
