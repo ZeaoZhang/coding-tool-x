@@ -667,7 +667,7 @@ describe('session-history-index runtime selection', () => {
     expect(runtimeParse).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to descriptor projectHint for direct runtime session payloads without a project name', async () => {
+  it('falls back to descriptor projectHint for generic direct runtime session payloads without project fields', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-hint-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
     const filePath = path.join(rootDir, 'hinted.jsonl');
@@ -677,7 +677,7 @@ describe('session-history-index runtime selection', () => {
       dbPath,
       runtime: {
         getDriver: vi.fn((source, capability) => {
-          expect(source).toBe('claude');
+          expect(source).toBe('generic');
           expect(capability).toBe('sessions');
           return {
             inventory: vi.fn(async () => [{
@@ -689,6 +689,9 @@ describe('session-history-index runtime selection', () => {
             }]),
             parse: vi.fn(async () => ({
               sessionId: 'hinted',
+              projectHint: '',
+              projectName: '',
+              updatedAt: stat.mtimeMs - 1,
               firstMessage: 'hello',
               messages: makeMessageFixtures(1, { userPrefix: 'Hinted user' })
             }))
@@ -700,12 +703,13 @@ describe('session-history-index runtime selection', () => {
     });
 
     try {
-      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
-      const sessions = await index.listSessions('claude', 'descriptor-project');
+      await index.ensureSourceIndexed('generic', { consistency: 'complete' });
+      const sessions = await index.listSessions('generic', 'descriptor-project');
       expect(sessions).toHaveLength(1);
       expect(sessions[0]).toMatchObject({
         sessionId: 'hinted',
         extra: expect.objectContaining({ projectHint: 'descriptor-project', mtimeMs: stat.mtimeMs }),
+        projectHint: 'descriptor-project',
         projectName: 'descriptor-project',
         projectDisplayName: 'descriptor-project',
         firstMessage: 'hello',
@@ -787,8 +791,10 @@ describe('session-history-index runtime selection', () => {
             parse: vi.fn(async () => ({
               session: {
                 sessionId: 'wrapped',
-                firstMessage: 'hello',
-                messages: makeMessageFixtures(1, { userPrefix: 'Wrapped user' })
+                projectHint: '',
+                projectName: '',
+                updatedAt: stat.mtimeMs - 1,
+                firstMessage: 'hello'
               },
               messages: makeMessageFixtures(1, { userPrefix: 'Wrapped user' })
             }))
