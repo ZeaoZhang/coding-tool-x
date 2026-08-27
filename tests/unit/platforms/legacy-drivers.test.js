@@ -70,15 +70,38 @@ describe('legacy drivers', () => {
     expect(driver.list()).toBe(unsupportedResult);
   });
 
-  test('maps session operations to each platform legacy export name', () => {
+  test('normalizes session operations and Claude argument positions', () => {
     const cases = [
-      ['claude', '../../server/services/sessions', 'getSessionsForProject'],
       ['codex', '../../server/services/codex-sessions', 'getSessionsByProject'],
       ['gemini', '../../server/services/gemini-sessions', 'getProjectSessions'],
       ['opencode', '../../server/services/opencode-sessions', 'getSessionsByProjectId'],
       ['omp', '../../server/services/omp-sessions', 'getSessionsByProject']
     ];
     const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const config = { profile: 'claude-profile' };
+    const options = { config, limit: 2 };
+    const claudeGetProjects = vi.fn((...args) => ({ op: 'projects', args }));
+    const claudeGetSessions = vi.fn((...args) => ({ op: 'sessions', args }));
+    const claudeRequireImpl = makeRequire({
+      '../../server/services/sessions': {
+        getProjects: claudeGetProjects,
+        getSessionsForProject: claudeGetSessions,
+        getRecentSessions: vi.fn(),
+        searchSessions: vi.fn(),
+        deleteSession: vi.fn(),
+        forkSession: vi.fn(),
+        getProjectAndSessionCounts: vi.fn()
+      }
+    });
+    const claudeDriver = createLegacyDriver({ platform: 'claude', capability: 'sessions', requireImpl: claudeRequireImpl });
+
+    expect(claudeDriver.listProjects(config)).toEqual({ op: 'projects', args: [config] });
+    expect(claudeDriver.listSessions('project', options)).toEqual({
+      op: 'sessions',
+      args: [config, 'project', options]
+    });
+    expect(claudeGetProjects).toHaveBeenCalledWith(config);
+    expect(claudeGetSessions).toHaveBeenCalledWith(config, 'project', options);
 
     for (const [platform, modulePath, listSessionsExport] of cases) {
       const exports = {
@@ -102,6 +125,30 @@ describe('legacy drivers', () => {
       expect(driver.counts()).toBe(`${platform}:counts`);
       expect(driver.status('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'status' });
       expect(driver.messages('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'messages' });
+      expect(requireImpl.calls).toEqual([modulePath]);
+    }
+  });
+
+  test('creates project drivers for every legacy platform', () => {
+    const cases = [
+      ['claude', '../../server/services/sessions'],
+      ['codex', '../../server/services/codex-sessions'],
+      ['gemini', '../../server/services/gemini-sessions'],
+      ['opencode', '../../server/services/opencode-sessions'],
+      ['omp', '../../server/services/omp-sessions']
+    ];
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+
+    for (const [platform, modulePath] of cases) {
+      const getProjects = vi.fn(() => `${platform}:projects`);
+      const getProjectAndSessionCounts = vi.fn(() => `${platform}:counts`);
+      const requireImpl = makeRequire({ [modulePath]: { getProjects, getProjectAndSessionCounts } });
+      const driver = createLegacyDriver({ platform, capability: 'projects', requireImpl });
+
+      expect(driver.listProjects({ force: true })).toBe(`${platform}:projects`);
+      expect(driver.getProjectAndSessionCounts({ force: true })).toBe(`${platform}:counts`);
+      expect(getProjects).toHaveBeenCalledWith({ force: true });
+      expect(getProjectAndSessionCounts).toHaveBeenCalledWith({ force: true });
       expect(requireImpl.calls).toEqual([modulePath]);
     }
   });

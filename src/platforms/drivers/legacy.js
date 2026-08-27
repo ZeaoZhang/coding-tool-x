@@ -2,30 +2,35 @@
 
 const MODULE_PATHS = Object.freeze({
   claude: Object.freeze({
+    projects: '../../server/services/sessions',
     sessions: '../../server/services/sessions',
     channels: '../../server/services/channels',
     proxy: '../../server/proxy-server',
     statistics: '../../server/services/claude-statistics-service'
   }),
   codex: Object.freeze({
+    projects: '../../server/services/codex-sessions',
     sessions: '../../server/services/codex-sessions',
     channels: '../../server/services/codex-channels',
     proxy: '../../server/codex-proxy-server',
     statistics: '../../server/services/codex-statistics-service'
   }),
   gemini: Object.freeze({
+    projects: '../../server/services/gemini-sessions',
     sessions: '../../server/services/gemini-sessions',
     channels: '../../server/services/gemini-channels',
     proxy: '../../server/gemini-proxy-server',
     statistics: '../../server/services/gemini-statistics-service'
   }),
   opencode: Object.freeze({
+    projects: '../../server/services/opencode-sessions',
     sessions: '../../server/services/opencode-sessions',
     channels: '../../server/services/opencode-channels',
     proxy: '../../server/opencode-proxy-server',
     statistics: '../../server/services/opencode-statistics-service'
   }),
   omp: Object.freeze({
+    projects: '../../server/services/omp-sessions',
     sessions: '../../server/services/omp-sessions',
     channels: '../../server/services/omp-channels',
     proxy: '../../server/omp-proxy-server',
@@ -256,6 +261,20 @@ function createMappedDriver({ platform, capability, requireImpl, operations }) {
   return driver;
 }
 
+function createClaudeSessionDriver({ platform, capability, requireImpl }) {
+  const loadModule = createModuleLoader({ platform, capability, requireImpl });
+  const driver = { platform, capability };
+  for (const [operation, exportName] of Object.entries(SESSION_EXPORTS.claude)) {
+    driver[operation] = (...args) => invokeExport(
+      loadModule,
+      exportName,
+      operation === 'listSessions' ? [args[1]?.config || {}, args[0], args[1] || {}] : args,
+      () => unsupported(platform, capability, operation)
+    );
+  }
+  return driver;
+}
+
 function createLegacyDriver({ platform, capability, requireImpl = require } = {}) {
   if (!MODULE_PATHS[platform] || !MODULE_PATHS[platform][capability]) {
     return { status: 'unsupported', platform, capability };
@@ -267,8 +286,21 @@ function createLegacyDriver({ platform, capability, requireImpl = require } = {}
   if (capability === 'proxy') {
     return createProxyDriver({ platform, capability, requireImpl });
   }
+  if (capability === 'projects') {
+    return createMappedDriver({
+      platform,
+      capability,
+      requireImpl,
+      operations: {
+        listProjects: 'getProjects',
+        getProjectAndSessionCounts: 'getProjectAndSessionCounts'
+      }
+    });
+  }
   if (capability === 'sessions') {
-    return createMappedDriver({ platform, capability, requireImpl, operations: SESSION_EXPORTS[platform] });
+    return platform === 'claude'
+      ? createClaudeSessionDriver({ platform, capability, requireImpl })
+      : createMappedDriver({ platform, capability, requireImpl, operations: SESSION_EXPORTS[platform] });
   }
   if (capability === 'statistics') {
     return createMappedDriver({ platform, capability, requireImpl, operations: STATISTICS_EXPORTS });
