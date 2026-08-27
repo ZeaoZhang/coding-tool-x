@@ -71,65 +71,84 @@ describe('legacy drivers', () => {
   });
 
   test('normalizes session operations and Claude argument positions', () => {
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const config = { profile: 'claude-profile' };
+    const options = { config, limit: 2 };
+    const claudeGetSessions = vi.fn((...args) => ({ op: 'sessions', args }));
+    const claudeRecent = vi.fn((...args) => ({ op: 'recent', args }));
+    const claudeSearch = vi.fn((...args) => ({ op: 'search', args }));
+    const claudeDelete = vi.fn((...args) => ({ op: 'delete', args }));
+    const claudeFork = vi.fn((...args) => ({ op: 'fork', args }));
+    const claudeRequireImpl = makeRequire({
+      '../../server/services/sessions': {
+        getSessionsForProject: claudeGetSessions,
+        getRecentSessions: claudeRecent,
+        searchSessions: claudeSearch,
+        deleteSession: claudeDelete,
+        forkSession: claudeFork,
+        getProjects: vi.fn(),
+        getProjectAndSessionCounts: vi.fn()
+      }
+    });
+    const claudeDriver = createLegacyDriver({ platform: 'claude', capability: 'sessions', requireImpl: claudeRequireImpl });
+
+    expect(claudeDriver.listSessions('project', options)).toEqual({
+      op: 'sessions',
+      args: [config, 'project', options]
+    });
+    expect(claudeDriver.recent(3, options)).toEqual({
+      op: 'recent',
+      args: [config, 3]
+    });
+    expect(claudeDriver.search('project', 'needle', 21, options)).toEqual({
+      op: 'search',
+      args: [config, 'project', 'needle', 21]
+    });
+    expect(claudeDriver.delete('project', 'session-id', options)).toEqual({
+      op: 'delete',
+      args: [config, 'project', 'session-id']
+    });
+    expect(claudeDriver.fork('project', 'session-id', options)).toEqual({
+      op: 'fork',
+      args: [config, 'project', 'session-id', options]
+    });
+
+    expect(claudeGetSessions).toHaveBeenCalledWith(config, 'project', options);
+    expect(claudeRecent).toHaveBeenCalledWith(config, 3);
+    expect(claudeSearch).toHaveBeenCalledWith(config, 'project', 'needle', 21);
+    expect(claudeDelete).toHaveBeenCalledWith(config, 'project', 'session-id');
+    expect(claudeFork).toHaveBeenCalledWith(config, 'project', 'session-id', options);
+
     const cases = [
       ['codex', '../../server/services/codex-sessions', 'getSessionsByProject'],
       ['gemini', '../../server/services/gemini-sessions', 'getProjectSessions'],
       ['opencode', '../../server/services/opencode-sessions', 'getSessionsByProjectId'],
       ['omp', '../../server/services/omp-sessions', 'getSessionsByProject']
     ];
-    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
-    const config = { profile: 'claude-profile' };
-    const options = { config, limit: 2 };
-    const claudeGetProjects = vi.fn((...args) => ({ op: 'projects', args }));
-    const claudeGetSessions = vi.fn((...args) => ({ op: 'sessions', args }));
-    const claudeRequireImpl = makeRequire({
-      '../../server/services/sessions': {
-        getProjects: claudeGetProjects,
-        getSessionsForProject: claudeGetSessions,
-        getRecentSessions: vi.fn(),
-        searchSessions: vi.fn(),
-        deleteSession: vi.fn(),
-        forkSession: vi.fn(),
-        getProjectAndSessionCounts: vi.fn()
-      }
-    });
-    const claudeDriver = createLegacyDriver({ platform: 'claude', capability: 'sessions', requireImpl: claudeRequireImpl });
-
-    expect(claudeDriver.listProjects(config)).toEqual({ op: 'projects', args: [config] });
-    expect(claudeDriver.listSessions('project', options)).toEqual({
-      op: 'sessions',
-      args: [config, 'project', options]
-    });
-    expect(claudeGetProjects).toHaveBeenCalledWith(config);
-    expect(claudeGetSessions).toHaveBeenCalledWith(config, 'project', options);
-
     for (const [platform, modulePath, listSessionsExport] of cases) {
       const exports = {
-        getProjects: vi.fn(() => `${platform}:projects`),
-        [listSessionsExport]: vi.fn((...args) => ({ platform, args })),
-        getRecentSessions: vi.fn(() => `${platform}:recent`),
-        searchSessions: vi.fn(() => `${platform}:search`),
-        deleteSession: vi.fn(() => `${platform}:delete`),
-        forkSession: vi.fn(() => `${platform}:fork`),
-        getProjectAndSessionCounts: vi.fn(() => `${platform}:counts`)
+        [listSessionsExport]: vi.fn((...args) => ({ platform, op: 'sessions', args })),
+        getRecentSessions: vi.fn((...args) => ({ platform, op: 'recent', args })),
+        searchSessions: vi.fn((...args) => ({ platform, op: 'search', args })),
+        deleteSession: vi.fn((...args) => ({ platform, op: 'delete', args })),
+        forkSession: vi.fn((...args) => ({ platform, op: 'fork', args })),
+        getProjectAndSessionCounts: vi.fn((...args) => ({ platform, op: 'counts', args }))
       };
       const requireImpl = makeRequire({ [modulePath]: exports });
       const driver = createLegacyDriver({ platform, capability: 'sessions', requireImpl });
 
-      expect(driver.listProjects('config')).toBe(`${platform}:projects`);
-      expect(driver.listSessions('project', { limit: 2 })).toEqual({ platform, args: ['project', { limit: 2 }] });
-      expect(driver.recent(3)).toBe(`${platform}:recent`);
-      expect(driver.search('needle')).toBe(`${platform}:search`);
-      expect(driver.delete('session-id')).toBe(`${platform}:delete`);
-      expect(driver.fork('session-id')).toBe(`${platform}:fork`);
-      expect(driver.counts()).toBe(`${platform}:counts`);
+      expect(driver.listSessions('project', { limit: 2 })).toEqual({ platform, op: 'sessions', args: ['project', { limit: 2 }] });
+      expect(driver.recent(3)).toEqual({ platform, op: 'recent', args: [3] });
+      expect(driver.search('needle')).toEqual({ platform, op: 'search', args: ['needle'] });
+      expect(driver.delete('session-id')).toEqual({ platform, op: 'delete', args: ['session-id'] });
+      expect(driver.fork('session-id')).toEqual({ platform, op: 'fork', args: ['session-id'] });
+      expect(driver.counts({ force: true })).toEqual({ platform, op: 'counts', args: [{ force: true }] });
       expect(driver.status('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'status' });
       expect(driver.messages('session-id')).toEqual({ status: 'unsupported', platform, capability: 'sessions', operation: 'messages' });
-      expect(requireImpl.calls).toEqual([modulePath]);
     }
   });
 
-  test('creates project drivers for every legacy platform', () => {
+  test('creates project drivers for every legacy platform and maps deletion', () => {
     const cases = [
       ['claude', '../../server/services/sessions'],
       ['codex', '../../server/services/codex-sessions'],
@@ -140,27 +159,56 @@ describe('legacy drivers', () => {
     const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
 
     for (const [platform, modulePath] of cases) {
-      const getProjects = vi.fn(() => `${platform}:projects`);
-      const getProjectAndSessionCounts = vi.fn(() => `${platform}:counts`);
-      const requireImpl = makeRequire({ [modulePath]: { getProjects, getProjectAndSessionCounts } });
+      const getProjects = vi.fn((...args) => ({ op: 'projects', args }));
+      const getProjectAndSessionCounts = vi.fn((...args) => ({ op: 'counts', args }));
+      const deleteProject = vi.fn((...args) => ({ op: 'delete', args }));
+      const requireImpl = makeRequire({ [modulePath]: { getProjects, getProjectAndSessionCounts, deleteProject } });
       const driver = createLegacyDriver({ platform, capability: 'projects', requireImpl });
+      const options = { config: { profile: platform }, force: true };
 
-      expect(driver.listProjects({ force: true })).toBe(`${platform}:projects`);
-      expect(driver.getProjectAndSessionCounts({ force: true })).toBe(`${platform}:counts`);
-      expect(getProjects).toHaveBeenCalledWith({ force: true });
-      expect(getProjectAndSessionCounts).toHaveBeenCalledWith({ force: true });
+      expect(driver.listProjects(options)).toEqual({ op: 'projects', args: platform === 'claude' ? [options.config] : [options] });
+      expect(driver.counts(options)).toEqual({ op: 'counts', args: platform === 'claude' ? [options.config] : [options] });
+      expect(driver.getProjectAndSessionCounts(options)).toEqual({ op: 'counts', args: platform === 'claude' ? [options.config] : [options] });
+      expect(driver.deleteProject('project-id', options)).toEqual({ op: 'delete', args: platform === 'claude' ? [options.config, 'project-id'] : ['project-id'] });
       expect(requireImpl.calls).toEqual([modulePath]);
     }
   });
 
+  test('prefers Claude project statistics and falls back to basic projects', () => {
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const options = { config: { profile: 'claude-profile' }, force: true };
+    const getProjectsWithStats = vi.fn((...args) => ({ op: 'rich-projects', args }));
+    const getProjects = vi.fn((...args) => ({ op: 'projects', args }));
+    const richDriver = createLegacyDriver({
+      platform: 'claude',
+      capability: 'projects',
+      requireImpl: makeRequire({ '../../server/services/sessions': { getProjectsWithStats, getProjects } })
+    });
+
+    expect(richDriver.listProjects(options)).toEqual({ op: 'rich-projects', args: [options.config, options] });
+    expect(getProjectsWithStats).toHaveBeenCalledWith(options.config, options);
+    expect(getProjects).not.toHaveBeenCalled();
+
+    const fallbackGetProjects = vi.fn((...args) => ({ op: 'projects', args }));
+    const fallbackDriver = createLegacyDriver({
+      platform: 'claude',
+      capability: 'projects',
+      requireImpl: makeRequire({ '../../server/services/sessions': { getProjects: fallbackGetProjects } })
+    });
+    expect(fallbackDriver.listProjects(options)).toEqual({ op: 'projects', args: [options.config] });
+    expect(fallbackGetProjects).toHaveBeenCalledWith(options.config);
+  });
+
   test('exposes normalized statistics operations and unsupported reset when absent', () => {
     const getStatistics = vi.fn(() => ({ total: 7 }));
-    const getDailyStatistics = vi.fn(date => ({ date }));
+    const getDailyStatistics = vi.fn(date => ({ daily: date }));
+    const getTodayStatistics = vi.fn(() => ({ today: true }));
     const recordRequest = vi.fn(request => ({ recorded: request.id }));
     const requireImpl = makeRequire({
       '../../server/services/codex-statistics-service': {
         getStatistics,
         getDailyStatistics,
+        getTodayStatistics,
         recordRequest
       }
     });
@@ -169,8 +217,10 @@ describe('legacy drivers', () => {
 
     expect(driver.summary()).toEqual({ total: 7 });
     expect(driver.list()).toEqual({ total: 7 });
-    expect(driver.daily('2026-08-27')).toEqual({ date: '2026-08-27' });
-    expect(driver.today()).toEqual({ date: undefined });
+    expect(driver.daily('2026-08-27')).toEqual({ daily: '2026-08-27' });
+    expect(driver.today()).toEqual({ today: true });
+    expect(getDailyStatistics).toHaveBeenCalledWith('2026-08-27');
+    expect(getTodayStatistics).toHaveBeenCalledWith();
     expect(driver.record({ id: 'request-1' })).toEqual({ recorded: 'request-1' });
     expect(driver.reset()).toEqual({ status: 'unsupported', platform: 'codex', capability: 'statistics', operation: 'reset' });
   });

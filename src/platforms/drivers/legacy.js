@@ -173,7 +173,7 @@ const STATISTICS_EXPORTS = Object.freeze({
   summary: Object.freeze(['getStatistics']),
   list: Object.freeze(['getStatistics']),
   daily: Object.freeze(['getDailyStatistics', 'getTodayStatistics']),
-  today: Object.freeze(['getDailyStatistics', 'getTodayStatistics']),
+  today: Object.freeze(['getTodayStatistics', 'getDailyStatistics']),
   record: Object.freeze(['recordRequest']),
   reset: Object.freeze(['resetStatistics'])
 });
@@ -264,14 +264,60 @@ function createMappedDriver({ platform, capability, requireImpl, operations }) {
 function createClaudeSessionDriver({ platform, capability, requireImpl }) {
   const loadModule = createModuleLoader({ platform, capability, requireImpl });
   const driver = { platform, capability };
+  const adaptArguments = {
+    listSessions: (projectName, options = {}) => [options.config || {}, projectName, options],
+    recent: (limit, options = {}) => [options.config || {}, limit],
+    search: (projectName, keyword, contextLength, options = {}) => [options.config || {}, projectName, keyword, contextLength],
+    delete: (projectName, sessionId, options = {}) => [options.config || {}, projectName, sessionId],
+    fork: (projectName, sessionId, options = {}) => [options.config || {}, projectName, sessionId, options]
+  };
   for (const [operation, exportName] of Object.entries(SESSION_EXPORTS.claude)) {
     driver[operation] = (...args) => invokeExport(
       loadModule,
       exportName,
-      operation === 'listSessions' ? [args[1]?.config || {}, args[0], args[1] || {}] : args,
+      adaptArguments[operation] ? adaptArguments[operation](...args) : args,
       () => unsupported(platform, capability, operation)
     );
   }
+  return driver;
+}
+
+function createProjectsDriver({ platform, capability, requireImpl }) {
+  const loadModule = createModuleLoader({ platform, capability, requireImpl });
+  const driver = { platform, capability };
+  const getClaudeConfig = options => options?.config || {};
+  const invokeProjectOperation = (exportName, args, operation = exportName) => invokeExport(
+    loadModule,
+    exportName,
+    args,
+    () => unsupported(platform, capability, operation)
+  );
+
+  driver.listProjects = options => {
+    const normalizedOptions = options || {};
+    if (platform === 'claude') {
+      const moduleExports = loadModule();
+      if (typeof moduleExports?.getProjectsWithStats === 'function') {
+        return moduleExports.getProjectsWithStats(getClaudeConfig(normalizedOptions), normalizedOptions);
+      }
+      return invokeProjectOperation('getProjects', [getClaudeConfig(normalizedOptions)], 'listProjects');
+    }
+    return invokeProjectOperation('getProjects', [normalizedOptions], 'listProjects');
+  };
+
+  driver.getProjectAndSessionCounts = options => {
+    const normalizedOptions = options || {};
+    return invokeProjectOperation(
+      'getProjectAndSessionCounts',
+      platform === 'claude' ? [getClaudeConfig(normalizedOptions)] : [normalizedOptions]
+    );
+  };
+  driver.counts = driver.getProjectAndSessionCounts;
+
+  driver.deleteProject = (projectId, options = {}) => invokeProjectOperation(
+    'deleteProject',
+    platform === 'claude' ? [getClaudeConfig(options), projectId] : [projectId]
+  );
   return driver;
 }
 
@@ -287,15 +333,7 @@ function createLegacyDriver({ platform, capability, requireImpl = require } = {}
     return createProxyDriver({ platform, capability, requireImpl });
   }
   if (capability === 'projects') {
-    return createMappedDriver({
-      platform,
-      capability,
-      requireImpl,
-      operations: {
-        listProjects: 'getProjects',
-        getProjectAndSessionCounts: 'getProjectAndSessionCounts'
-      }
-    });
+    return createProjectsDriver({ platform, capability, requireImpl });
   }
   if (capability === 'sessions') {
     return platform === 'claude'
