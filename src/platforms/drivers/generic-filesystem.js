@@ -42,55 +42,59 @@ function resolveTarget(root, name) {
   }
   return target;
 }
-async function assertSafeTarget(fsImpl, root, target, { allowMissingRoot = false } = {}) {
-  if (typeof fsImpl.realpath !== 'function' || typeof fsImpl.lstat !== 'function') return;
-  const resolvedRoot = path.resolve(root);
-  let rootReal;
-  try {
-    rootReal = await fsImpl.realpath(resolvedRoot);
-  } catch (error) {
-    if (!allowMissingRoot || error.code !== 'ENOENT') throw error;
-    let parent = path.dirname(resolvedRoot);
-    while (parent !== path.dirname(parent)) {
-      try {
-        rootReal = await fsImpl.realpath(parent);
-        const parentStat = await fsImpl.lstat(parent);
-        if (parentStat.isSymbolicLink()) throw new Error(`Resource root contains symlink: ${root}`);
-        break;
-      } catch (parentError) {
-        if (parentError.code !== 'ENOENT') throw parentError;
-        parent = path.dirname(parent);
-      }
-    }
-    if (!rootReal) return;
-  }
-  const rootStat = await fsImpl.lstat(resolvedRoot).catch(error => {
-    if (allowMissingRoot && error.code === 'ENOENT') return null;
-    throw error;
-  });
-  if (rootStat && rootStat.isSymbolicLink()) throw new Error(`Resource root contains symlink: ${root}`);
-  const relative = path.relative(resolvedRoot, target);
-  const components = relative ? relative.split(path.sep) : [];
-  let current = resolvedRoot;
-  for (const component of components) {
-    current = path.join(current, component);
+async function assertNoSymlinkComponents(fsImpl, target) {
+  if (typeof fsImpl.lstat !== 'function') return;
+  const resolved = path.resolve(target);
+  const root = path.parse(resolved).root;
+  const parts = path.relative(root, resolved).split(path.sep).filter(Boolean);
+  let current = root;
+  for (let index = 0; index < parts.length; index += 1) {
+    current = path.join(current, parts[index]);
     try {
       const stat = await fsImpl.lstat(current);
-      if (stat.isSymbolicLink()) throw new Error(`Resource path contains symlink: ${target}`);
+      if (index > 0 && stat.isSymbolicLink()) throw new Error(`Resource path contains symlink: ${target}`);
     } catch (error) {
       if (error.code === 'ENOENT') break;
       throw error;
     }
   }
+}
+
+async function assertSafeRoot(fsImpl, root, { allowMissingRoot = false } = {}) {
+  if (typeof fsImpl.realpath !== 'function' || typeof fsImpl.lstat !== 'function') return path.resolve(root);
+  const resolvedRoot = path.resolve(root);
+  await assertNoSymlinkComponents(fsImpl, resolvedRoot);
+  try {
+    return await fsImpl.realpath(resolvedRoot);
+  } catch (error) {
+    if (error.code !== 'ENOENT' || !allowMissingRoot) throw error;
+    let current = path.dirname(resolvedRoot);
+    while (true) {
+      try {
+        await assertNoSymlinkComponents(fsImpl, current);
+        return await fsImpl.realpath(current);
+      } catch (parentError) {
+        if (parentError.code !== 'ENOENT') throw parentError;
+        const next = path.dirname(current);
+        if (next === current) return resolvedRoot;
+        current = next;
+      }
+    }
+  }
+}
+
+async function assertContainedTarget(fsImpl, root, target, { allowMissingTarget = false, allowMissingRoot = false } = {}) {
+  if (typeof fsImpl.realpath !== 'function' || typeof fsImpl.lstat !== 'function') return;
+  const rootReal = await assertSafeRoot(fsImpl, root, { allowMissingRoot });
+  await assertNoSymlinkComponents(fsImpl, target);
   const targetReal = await fsImpl.realpath(target).catch(error => {
-    if (error.code === 'ENOENT') return null;
+    if (allowMissingTarget && error.code === 'ENOENT') return null;
     throw error;
   });
-  if (targetReal) {
-    const physicalRelative = path.relative(rootReal, targetReal);
-    if (physicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(physicalRelative)) {
-      throw new Error(`Resource path escapes target root: ${target}`);
-    }
+  if (!targetReal) return;
+  const relative = path.relative(rootReal, targetReal);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Resource path escapes target root: ${target}`);
   }
 }
 function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } = {}) {
@@ -104,12 +108,12 @@ function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } 
     async list(type) {
       try {
         const root = getRoot(type);
-        await assertSafeTarget(fsImpl, root, root);
+        await assertSafeRoot(fsImpl, root);
         const names = await fsImpl.readdir(root);
         const resources = [];
         for (const name of names) {
           const target = resolveTarget(root, name);
-          await assertSafeTarget(fsImpl, root, target);
+          await assertContainedTarget(fsImpl, root, target);
           const stat = await fsImpl.stat(target);
           resources.push({ name, target, type: stat.isDirectory() ? 'directory' : 'file', size: stat.size, mtimeMs: stat.mtimeMs });
         }
@@ -122,11 +126,12 @@ function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } 
       try {
         const root = getRoot(type);
         const target = resolveTarget(root, name);
-        await assertSafeTarget(fsImpl, root, root, { allowMissingRoot: true });
-        await assertSafeTarget(fsImpl, root, path.dirname(target), { allowMissingRoot: true });
+        await assertSafeRoot(fsImpl, root, { allowMissingRoot: true });
+        await assertContainedTarget(fsImpl, root, path.dirname(target), { allowMissingTarget: true, allowMissingRoot: true });
         const sourceStat = await fsImpl.stat(sourceRoot);
         await fsImpl.mkdir(path.dirname(target), { recursive: true });
-        await assertSafeTarget(fsImpl, root, target);
+        await assertSafeRoot(fsImpl, root);
+        await assertContainedTarget(fsImpl, root, path.dirname(target));
         if (sourceStat.isDirectory()) {
           await fsImpl.cp(sourceRoot, target, { recursive: true });
         } else {
@@ -141,8 +146,8 @@ function createGenericFilesystemDriver({ platform, manifest = {}, fsImpl = fs } 
       try {
         const root = getRoot(type);
         const target = resolveTarget(root, name);
-        await assertSafeTarget(fsImpl, root, root);
-        await assertSafeTarget(fsImpl, root, target);
+        await assertSafeRoot(fsImpl, root);
+        await assertContainedTarget(fsImpl, root, target, { allowMissingTarget: true });
         await fsImpl.rm(target, { recursive: true, force: true });
         return { status: 'ok', target };
       } catch (error) {

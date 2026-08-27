@@ -236,20 +236,22 @@ describe('generic JSONL driver', () => {
     });
   });
 
-  test('keeps duplicate session ids as separate descriptors by file path', async () => {
+  test('keeps duplicate mapped session ids as separate descriptors by file path', async () => {
+    const readFile = vi.fn(async () => JSON.stringify({ id: 'same-session' }));
     const fsImpl = {
-      readdir: async () => ['duplicate.jsonl', 'duplicate.copy.jsonl'],
-      stat: async filePath => ({ size: filePath.endsWith('copy.jsonl') ? 30 : 20, mtimeMs: 10 })
+      readdir: async () => ['first.jsonl', 'second.jsonl'],
+      stat: async filePath => ({ size: filePath.endsWith('second.jsonl') ? 30 : 20, mtimeMs: 10 }),
+      readFile
     };
     const driver = makeJsonlDriver(fsImpl, {
-      sessionMapping: { sessionId: 'basename' }
+      sessionMapping: { sessionId: 'id' }
     });
 
     const descriptors = await driver.inventory();
 
     expect(descriptors).toEqual([
-      expect.objectContaining({ filePath: '/tmp/demo/sessions/duplicate.jsonl', sessionId: 'duplicate' }),
-      expect.objectContaining({ filePath: '/tmp/demo/sessions/duplicate.copy.jsonl', sessionId: 'duplicate.copy' })
+      expect.objectContaining({ filePath: '/tmp/demo/sessions/first.jsonl', sessionId: 'same-session' }),
+      expect.objectContaining({ filePath: '/tmp/demo/sessions/second.jsonl', sessionId: 'same-session' })
     ]);
   });
 
@@ -397,7 +399,50 @@ describe('generic filesystem driver', () => {
       operation: 'list'
     }));
   });
-});
+
+  test('lists and syncs through a normal existing filesystem root', async () => {
+    const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-existing-root-'));
+    const source = path.join(root, 'source.md');
+    fs.writeFileSync(path.join(root, 'tool.md'), 'tool');
+    fs.writeFileSync(source, 'source');
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: root } }
+      });
+
+      await expect(driver.list('commands')).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: 'tool.md', target: path.join(root, 'tool.md'), type: 'file' })
+      ]));
+      await expect(driver.sync('commands', 'nested/copied.md', source)).resolves.toEqual({
+        status: 'ok', target: path.join(root, 'nested', 'copied.md')
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects mapped roots whose existing parent is reached through a symlink', async () => {
+    const realParent = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-real-parent-'));
+    const source = path.join(realParent, 'source.md');
+    fs.writeFileSync(source, 'source');
+    const linkParent = path.join(require('os').tmpdir(), `generic-link-parent-${Date.now()}`);
+    fs.symlinkSync(realParent, linkParent, 'dir');
+    const root = path.join(linkParent, 'commands');
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: root } }
+      });
+
+      await expect(driver.sync('commands', 'tool.md', source)).resolves.toEqual(expect.objectContaining({
+        status: 'failed', platform: 'demo-cli', capability: 'resourceSync', operation: 'sync'
+      }));
+    } finally {
+      fs.rmSync(linkParent, { recursive: true, force: true });
+      fs.rmSync(realParent, { recursive: true, force: true });
+    }
+  });
 
   test('rejects symlink roots and targets outside the mapped resource root', async () => {
     const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-resource-root-'));
@@ -434,6 +479,23 @@ describe('generic filesystem driver', () => {
     expect(Object.keys(result)).not.toContain('cause');
   });
 
+  test('sync and remove are idempotent for existing and missing resources', async () => {
+    const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-idempotent-root-'));
+    const source = path.join(root, 'source.md');
+    fs.writeFileSync(source, 'source');
+    try {
+      const driver = makeRegistry().create('generic-filesystem', {
+        platform: 'demo-cli',
+        manifest: { resourceMappings: { commands: root } }
+      });
+      await expect(driver.sync('commands', 'tool.md', source)).resolves.toEqual({ status: 'ok', target: path.join(root, 'tool.md') });
+      await expect(driver.sync('commands', 'tool.md', source)).resolves.toEqual({ status: 'ok', target: path.join(root, 'tool.md') });
+      await expect(driver.remove('commands', 'tool.md')).resolves.toEqual({ status: 'ok', target: path.join(root, 'tool.md') });
+      await expect(driver.remove('commands', 'tool.md')).resolves.toEqual({ status: 'ok', target: path.join(root, 'tool.md') });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('sync creates a missing mapped resource root recursively', async () => {
     const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'generic-missing-root-'));
@@ -452,6 +514,7 @@ describe('generic filesystem driver', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
 
 describe('generic OpenAI-compatible driver', () => {
   test('normalizes endpoints and authenticates requests without exposing API keys', async () => {
