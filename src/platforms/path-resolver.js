@@ -67,10 +67,12 @@ function resolveManifestPaths(manifest, options = {}) {
     else if (!path.isAbsolute(result) && allowRelativeHomeFallback) result = path.join(resolved.home || homeDir, result);
     return path.normalize(result);
   };
+  const homeSource = String(homeValue);
   const rawHome = resolveTemplate(homeValue, resolved);
+  const explicitHomeRoot = !homeSource.includes('{home}') && (path.isAbsolute(homeSource) || path.isAbsolute(rawHome));
   resolved.home = expand(homeValue);
   if (!resolved.home) throw new Error(`Manifest ${manifest.key || 'platform'} requires a non-empty home path`);
-  if (!path.isAbsolute(rawHome)) assertInsideHome(homeDir, resolved.home, manifest.key, 'home');
+  if (!explicitHomeRoot) assertInsideHome(homeDir, resolved.home, manifest.key, 'home');
   const paths = {};
   for (const [name, value] of Object.entries(declared)) {
     const explicitAbsolute = path.isAbsolute(String(value));
