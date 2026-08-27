@@ -1,5 +1,8 @@
 'use strict';
 
+const Module = require('module');
+const PATH_RESOLVER_PATH = require.resolve('../../../src/platforms/path-resolver');
+
 const { resolveManifestPaths } = require('../../../src/platforms/path-resolver');
 
 test('expands home and environment values without touching the real home directory', () => {
@@ -35,4 +38,25 @@ test('rejects templated paths that escape home', () => {
     key: 'demo-cli',
     paths: { home: '/tmp/demo-home', sessions: '{home}/../outside' }
   }, { homeDir: '/tmp/test-home' })).toThrow(/escapes home/);
+});
+
+test('declarative resolution does not load native PATHS configuration', () => {
+  const originalLoad = Module._load;
+  Module._load = (request, parent, isMain) => request === '../config/paths'
+    ? (() => { throw new Error('config paths loaded'); })()
+    : originalLoad(request, parent, isMain);
+  delete require.cache[PATH_RESOLVER_PATH];
+  try {
+    const { resolveManifestPaths: resolveWithoutNativeConfig } = require('../../../src/platforms/path-resolver');
+    expect(resolveWithoutNativeConfig({
+      key: 'demo-cli',
+      paths: { home: '$DEMO_HOME', sessions: '{home}/sessions' }
+    }, { env: { DEMO_HOME: '/tmp/demo-home' }, homeDir: '/tmp/test-home' })).toEqual({
+      home: '/tmp/demo-home',
+      sessions: '/tmp/demo-home/sessions'
+    });
+  } finally {
+    delete require.cache[PATH_RESOLVER_PATH];
+    Module._load = originalLoad;
+  }
 });

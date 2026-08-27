@@ -3,7 +3,6 @@
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { getClaudeConfigDir, getCodexDir, getGeminiDir, getOpenCodeConfigDir, getOpenCodeDataDir, getOmpAgentDir } = require('../config/paths');
 
 function resolveTemplate(value, resolved) {
   return String(value)
@@ -11,19 +10,35 @@ function resolveTemplate(value, resolved) {
     .replace(/\{home\}/g, resolved.home);
 }
 
+function loadNativePathResolvers() {
+  return require('../config/paths');
+}
+
+function resolveNativeHome(pathResolverId, env, commandRunner) {
+  if (pathResolverId === 'declarative') return undefined;
+  const {
+    getClaudeConfigDir,
+    getCodexDir,
+    getGeminiDir,
+    getOpenCodeConfigDir,
+    getOpenCodeDataDir,
+    getOmpAgentDir
+  } = loadNativePathResolvers();
+  switch (pathResolverId) {
+    case 'claude': return env.CLAUDE_CONFIG_DIR || getClaudeConfigDir();
+    case 'codex': return env.CODEX_HOME || getCodexDir();
+    case 'gemini': return getGeminiDir();
+    case 'opencode': return getOpenCodeConfigDir() || getOpenCodeDataDir();
+    case 'omp': return getOmpAgentDir(env, { commandRunner });
+    default: return undefined;
+  }
+}
+
 function resolveManifestPaths(manifest, options = {}) {
   const env = { ...process.env, ...(options.env || {}) };
   const homeDir = options.homeDir || os.homedir();
   const commandRunner = options.commandRunner || execFileSync;
-  let nativeHome;
-  switch (manifest.pathResolverId || 'declarative') {
-    case 'claude': nativeHome = env.CLAUDE_CONFIG_DIR || getClaudeConfigDir(); break;
-    case 'codex': nativeHome = env.CODEX_HOME || getCodexDir(); break;
-    case 'gemini': nativeHome = getGeminiDir(); break;
-    case 'opencode': nativeHome = getOpenCodeConfigDir() || getOpenCodeDataDir(); break;
-    case 'omp': nativeHome = getOmpAgentDir(env, { commandRunner }); break;
-    default: nativeHome = undefined;
-  }
+  const nativeHome = resolveNativeHome(manifest.pathResolverId || 'declarative', env, commandRunner);
   const declared = manifest.paths || {};
   const homeValue = declared.home || nativeHome || homeDir;
   const resolved = { env, home: '' };
