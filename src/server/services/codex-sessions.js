@@ -229,6 +229,7 @@ function normalizeSession(codexSession) {
  * @returns {Array} 项目对象数组
  */
 async function getProjects(options = {}) {
+  if (!fs.existsSync(getSessionsDir())) return [];
   const projects = await idxListProjects('codex', options);
   const savedOrder = getProjectOrder();
   if (savedOrder.length === 0) return projects;
