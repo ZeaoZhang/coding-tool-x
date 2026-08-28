@@ -293,6 +293,46 @@ describe('session-history-index', () => {
     expect(fixture.parseCounts.get(newer.filePath)).toBe(1);
   });
 
+  it('persists retry stat metadata when a file changes during parse and retry succeeds', async () => {
+    const fixture = setupIndex();
+    const descriptor = fixture.writeFixtureFile({
+      name: 'retry-metadata.jsonl',
+      content: 'old content\n',
+      session: makeSessionFixture('retry-metadata', 'retry-project'),
+      messages: makeMessageFixtures(2)
+    });
+    const oldSize = descriptor.size;
+    const oldMtimeMs = descriptor.mtimeMs;
+    let retrySize;
+    let retryMtimeMs;
+
+    fixture.adapter.parse.mockImplementation(async () => {
+      const count = fixture.parseCounts.get(descriptor.filePath) || 0;
+      fixture.parseCounts.set(descriptor.filePath, count + 1);
+      if (count === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        fs.writeFileSync(descriptor.filePath, 'retry content with newer metadata\n', 'utf8');
+        const retryStat = fs.statSync(descriptor.filePath);
+        retrySize = retryStat.size;
+        retryMtimeMs = retryStat.mtimeMs;
+      }
+      return {
+        session: makeSessionFixture('retry-metadata', 'retry-project'),
+        messages: makeMessageFixtures(2)
+      };
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    expect(fixture.parseCounts.get(descriptor.filePath)).toBe(2);
+    expect(retrySize).not.toBe(oldSize);
+    expect(retryMtimeMs).not.toBe(oldMtimeMs);
+    const row = index._getDb().prepare(
+      'SELECT size, mtime_ms FROM session_file WHERE source = ? AND session_id = ?'
+    ).get('claude', 'retry-metadata');
+    expect(row).toMatchObject({ size: retrySize, mtime_ms: retryMtimeMs });
+  });
+
   it('deletion removes session and message rows', async () => {
     const fixture = setupIndex();
     const filePath = fixture.writeFixtureFile({
