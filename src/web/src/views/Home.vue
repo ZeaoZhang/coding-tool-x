@@ -24,10 +24,12 @@ import {
   DEFAULT_HOME_CLI_COLUMNS,
   normalizeHomeCliColumns
 } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
 const STORAGE_KEY = 'dashboardChannelOrder'
 
 const { uiConfig, updateConfig, loadUIConfig } = useUIConfig()
+const platformStore = usePlatformStore()
 
 // 从 localStorage 获取初始顺序
 function getOrderFromStorage() {
@@ -35,7 +37,7 @@ function getOrderFromStorage() {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       const order = JSON.parse(stored)
-      return normalizeHomeCliColumns(order, uiConfig.value.customCliPlatforms)
+      return normalizeHomeCliColumns(order, platformStore.all, uiConfig.value.customCliPlatforms)
     }
   } catch (e) {}
   return DEFAULT_HOME_CLI_COLUMNS
@@ -49,7 +51,7 @@ function saveOrderToStorage(order) {
 }
 
 function applyHomeColumns(order, customCliPlatforms = uiConfig.value.customCliPlatforms) {
-  const normalized = normalizeHomeCliColumns(order, customCliPlatforms)
+  const normalized = normalizeHomeCliColumns(order, platformStore.all, customCliPlatforms)
   channelList.value = normalized.map(type => ({ type }))
   saveOrderToStorage(normalized)
   return normalized
@@ -62,6 +64,7 @@ const channelList = ref(getOrderFromStorage().map(type => ({ type })))
 async function onDragEnd() {
   const order = normalizeHomeCliColumns(
     channelList.value.map(item => item.type),
+    platformStore.all,
     uiConfig.value.customCliPlatforms
   )
   channelList.value = order.map(type => ({ type }))

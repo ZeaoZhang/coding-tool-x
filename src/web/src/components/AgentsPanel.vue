@@ -172,7 +172,8 @@ import message from '../utils/message'
 import AgentCard from './AgentCard.vue'
 import AgentDetailDrawer from './AgentDetailDrawer.vue'
 import AgentFormModal from './AgentFormModal.vue'
-import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
+import { getPlatformConfig } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
 const props = defineProps({
   hideBack: {
@@ -195,7 +196,6 @@ const props = defineProps({
 
 const emit = defineEmits(['back', 'updated'])
 const route = useRoute()
-
 const agents = ref([])
 const loading = ref(false)
 const searchQuery = ref('')
@@ -208,16 +208,17 @@ const editingAgent = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
-const managedAgentPlatforms = BUILT_IN_CLI_PLATFORMS
-  .filter(platform => platform.supportsAgents !== false)
-  .map(platform => platform.key)
+const platformStore = usePlatformStore()
+const managedAgentPlatforms = computed(() => platformStore.all
+  .filter(platform => platform.capabilities?.agents === true)
+  .map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (managedAgentPlatforms.includes(props.platform)) {
-    return props.platform
+  if (managedAgentPlatforms.value.includes(props.platform)) {
+    return props.platform;
   }
   const channel = route.meta.channel
-  if (managedAgentPlatforms.includes(channel)) return channel
+  if (managedAgentPlatforms.value.includes(channel)) return channel
   return 'claude'
 })
 
@@ -230,7 +231,7 @@ const agentUsageHint = computed(() =>
 )
 
 const currentPlatformLabel = computed(() => {
-  const platform = getPlatformConfig(currentPlatform.value)
+  const platform = platformStore.get(currentPlatform.value) || getPlatformConfig(currentPlatform.value)
   return platform.label || platform.title || 'Claude Code'
 })
 

@@ -170,7 +170,8 @@ import message from '../utils/message'
 import CommandCard from './CommandCard.vue'
 import CommandDetailDrawer from './CommandDetailDrawer.vue'
 import CommandFormModal from './CommandFormModal.vue'
-import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
+import { getPlatformConfig } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
 const props = defineProps({
   hideBack: {
@@ -205,16 +206,17 @@ const editingCommand = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
-const managedCommandPlatforms = BUILT_IN_CLI_PLATFORMS
-  .filter(platform => platform.supportsCommands !== false)
-  .map(platform => platform.key)
+const platformStore = usePlatformStore()
+const managedCommandPlatforms = computed(() => platformStore.all
+  .filter(platform => platform.capabilities?.commands === true)
+  .map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (managedCommandPlatforms.includes(props.platform)) {
+  if (managedCommandPlatforms.value.includes(props.platform)) {
     return props.platform
   }
   const channel = route.meta.channel
-  if (managedCommandPlatforms.includes(channel)) return channel
+  if (managedCommandPlatforms.value.includes(channel)) return channel
   return 'claude'
 })
 
@@ -231,7 +233,7 @@ const commandUsageHint = computed(() =>
 )
 
 const currentPlatformLabel = computed(() => {
-  const platform = getPlatformConfig(currentPlatform.value)
+  const platform = platformStore.get(currentPlatform.value) || getPlatformConfig(currentPlatform.value)
   return platform.label || platform.title || 'Claude Code'
 })
 

@@ -273,8 +273,9 @@ import { AddOutline } from '@vicons/ionicons5'
 import ChannelCard from './ChannelCard.vue'
 import ModelRedirectEditor from './ModelRedirectEditor.vue'
 import channelPanelFactories from './channelPanelFactories'
-import useChannelManager from '../../composables/useChannelManager'
-import { useChannelScheduler } from '../../composables/useChannelScheduler'
+import { createGenericChannelPanel } from './commonChannelSchema'
+import { getPlatformChannels, createPlatformChannel, updatePlatformChannel, deletePlatformChannel } from '../../api/channels'
+import { usePlatformStore } from '../../stores/platforms'
 
 const props = defineProps({
   type: {
@@ -285,7 +286,16 @@ const props = defineProps({
 
 const emit = defineEmits(['open-website'])
 
-const configFactory = channelPanelFactories[props.type] || channelPanelFactories.claude
+const platformStore = usePlatformStore()
+const platformManifest = platformStore.get(props.type) || { key: props.type, label: props.type, capabilities: { channels: true } }
+const configFactory = channelPanelFactories[props.type]
+  || (() => createGenericChannelPanel(platformManifest, {
+    fetch: () => getPlatformChannels(props.type),
+    create: payload => createPlatformChannel(props.type, payload),
+    update: (channel, payload) => updatePlatformChannel(props.type, channel.id, payload),
+    remove: channelId => deletePlatformChannel(props.type, channelId),
+    toggle: (channel, enabled) => updatePlatformChannel(props.type, channel.id, { ...channel, enabled })
+  }))
 const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
