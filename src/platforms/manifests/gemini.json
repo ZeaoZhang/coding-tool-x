@@ -6,6 +6,9 @@
   "iconToken": "gemini",
   "color": "#a855f7",
   "defaultVisible": true,
+  "apiBasePath": "/api/gemini/proxy",
+  "portKey": "geminiProxy",
+  "defaultPort": 20090,
   "pathResolverId": "gemini",
   "capabilities": {
     "projects": "legacy:gemini",

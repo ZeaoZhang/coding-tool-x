@@ -41,6 +41,8 @@ const schema = {
     logAliases: { type: 'array', items: { type: 'string', minLength: 1 } },
     portKey: { type: 'string', minLength: 1 },
     defaultPort: { type: 'integer', minimum: 1 },
+    proxyMode: { enum: ['standard', 'managed'] },
+    proxyLabels: { type: 'object', additionalProperties: { type: 'string' } },
     statisticsPath: { type: 'string', minLength: 1 },
     promptFile: { type: ['string', 'null'] },
     paths: { type: 'object', additionalProperties: { type: 'string' } },

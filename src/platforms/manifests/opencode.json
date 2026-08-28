@@ -6,6 +6,9 @@
   "iconToken": "opencode",
   "color": "#ea580c",
   "defaultVisible": true,
+  "apiBasePath": "/api/opencode/proxy",
+  "portKey": "opencodeProxy",
+  "defaultPort": 20091,
   "pathResolverId": "opencode",
   "capabilities": {
     "projects": "legacy:opencode",

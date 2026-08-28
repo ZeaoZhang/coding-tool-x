@@ -6,12 +6,6 @@ const { loadConfig } = require('../config/loader');
 const { PATHS } = require('../config/paths');
 const { clearNativeOAuth } = require('../server/services/native-oauth-adapters');
 const { normalizePlatformKey } = require('../shared/platforms');
-const SETTINGS_MANAGERS = {
-  claude: () => require('../server/services/settings-manager'),
-  codex: () => require('../server/services/codex-settings-manager'),
-  gemini: () => require('../server/services/gemini-settings-manager'),
-  opencode: () => require('../server/services/opencode-settings-manager')
-};
 
 /**
  * 获取当前类型的代理服务
@@ -60,16 +54,38 @@ function getProxyServices(cliType) {
   return null;
 }
 
-function getSettingsManager(cliType) {
+function getPlatformRuntime() {
+  return require('../platforms/runtime').getPlatformRuntime();
+}
+
+function getSettingsManager(cliType, runtime = getPlatformRuntime()) {
   const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  const loader = SETTINGS_MANAGERS[normalizedCliType] || SETTINGS_MANAGERS.claude;
-  const manager = loader();
-  return {
-    setProxyConfig: manager.setProxyConfig,
-    restoreSettings: manager.restoreSettings,
-    hasBackup: manager.hasBackup,
-    deleteBackup: manager.deleteBackup
-  };
+  const candidates = ['nativeConfig', 'proxy'];
+
+  for (const capability of candidates) {
+    let driver;
+    try {
+      driver = runtime && typeof runtime.getDriver === 'function'
+        ? runtime.getDriver(normalizedCliType, capability)
+        : null;
+    } catch (_) {
+      continue;
+    }
+    if (!driver || typeof driver !== 'object' || driver.status === 'unsupported') {
+      continue;
+    }
+    if (typeof driver.setProxyConfig !== 'function') {
+      continue;
+    }
+    return {
+      setProxyConfig: driver.setProxyConfig.bind(driver),
+      restoreSettings: typeof driver.restoreSettings === 'function' ? driver.restoreSettings.bind(driver) : undefined,
+      hasBackup: typeof driver.hasBackup === 'function' ? driver.hasBackup.bind(driver) : () => false,
+      deleteBackup: typeof driver.deleteBackup === 'function' ? driver.deleteBackup.bind(driver) : undefined
+    };
+  }
+
+  return null;
 }
 
 function removeActiveChannelMarker(cliType) {
@@ -265,6 +281,9 @@ async function handleStartProxy(cliType, services) {
     // 修改配置文件
     if (!services.managedProviderConfig) {
       const settingsManager = getSettingsManager(cliType);
+      if (!settingsManager) {
+        throw new Error(`平台 ${cliType} 未提供 nativeConfig 能力`);
+      }
       clearNativeOAuth(cliType);
       settingsManager.setProxyConfig(proxyResult.port);
       console.log(chalk.green('[OK] 配置文件已更新'));
@@ -413,6 +432,7 @@ module.exports = {
   handleToggleProxy,
   _test: {
     getProxyServices,
+    getSettingsManager,
     pickRestoredChannel,
     restoreSingleChannelMode
   }

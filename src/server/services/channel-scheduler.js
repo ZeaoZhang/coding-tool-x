@@ -1,29 +1,24 @@
-const { getAllChannels } = require('./channels');
-const { getChannels: getCodexChannels } = require('./codex-channels');
-const { getChannels: getGeminiChannels } = require('./gemini-channels');
-const { getChannels: getOpenCodeChannels } = require('./opencode-channels');
-const { getChannels: getOmpChannels } = require('./omp-channels');
+const platformRuntime = require('../../platforms/runtime');
 const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } = require('./channel-health');
 
-const channelProviders = {
-  claude: () => getAllChannels(),
-  codex: () => {
-    const data = getCodexChannels();
-    return Array.isArray(data?.channels) ? data.channels : [];
-  },
-  gemini: () => {
-    const data = getGeminiChannels();
-    return Array.isArray(data?.channels) ? data.channels : [];
-  },
-  opencode: () => {
-    const data = getOpenCodeChannels();
-    return Array.isArray(data?.channels) ? data.channels : [];
-  },
-  omp: () => {
-    const data = getOmpChannels();
-    return Array.isArray(data?.channels) ? data.channels : [];
+function readChannels(source = 'claude') {
+  try {
+    const driver = platformRuntime.getPlatformRuntime().getDriver(source, 'channels');
+    if (!driver || (typeof driver.status === 'string' && driver.status !== 'ok')) {
+      return [];
+    }
+    const list = typeof driver.list === 'function'
+      ? driver.list.bind(driver)
+      : typeof driver.getChannels === 'function'
+        ? driver.getChannels.bind(driver)
+        : null;
+    if (!list) return [];
+    const result = list();
+    return Array.isArray(result) ? result : (Array.isArray(result?.channels) ? result.channels : []);
+  } catch (_) {
+    return [];
   }
-};
+}
 
 function createState() {
   return {
@@ -70,19 +65,13 @@ function unbindChannelSessions(source, channelId) {
 
 // 注册冻结回调，当渠道被冻结时解绑其会话
 setOnChannelFrozen(unbindChannelSessions);
-setChannelListProvider((source = 'claude') => {
-  const provider = channelProviders[source || 'claude'];
-  if (!provider) return [];
-  return provider();
-});
+setChannelListProvider((source = 'claude') => readChannels(source));
 
 function refreshChannels(source = 'claude') {
   const state = getState(source);
-  const provider = channelProviders[source];
-  if (!provider) return;
+  const raw = readChannels(source);
 
   // 每次直接读取最新配置，不做缓存
-  const raw = provider();
   state.channels = raw
     .filter(ch => ch.enabled !== false)
     .map(ch => ({
