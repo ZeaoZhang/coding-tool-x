@@ -210,6 +210,15 @@ function _getRuntimeSessionsDriver(runtime, source) {
   }
 }
 
+function _safeParseJson(value, fallback) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return fallback;
+  }
+}
+
 function _normalizeRuntimeParseResult(result, descriptor = {}) {
   if (!result || typeof result !== 'object') {
     return result;
@@ -237,7 +246,7 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
   }
 
   if (result.sessionId) {
-    const projectHint = result.projectHint || result.projectName || descriptor.projectHint || '';
+    const projectHint = descriptor.projectHint || result.projectHint || result.projectName || '';
     const projectName = result.projectName || projectHint || '';
     const projectDisplayName = result.projectDisplayName || result.projectName || projectHint || '';
     const resultExtra = result.extraJson ? JSON.parse(result.extraJson) : {};
@@ -660,26 +669,30 @@ function createSessionHistoryIndex(opts = {}) {
       ORDER BY updated_at DESC
     `).all(source, projectName);
 
-    return rows.map(r => ({
-      sessionId: r.session_id,
-      filePath: r.file_path,
-      size: r.size,
-      mtime: r.mtime_ms,
-      firstMessage: r.first_message,
-      gitBranch: r.git_branch,
-      provider: r.provider,
-      model: r.model,
-      messageCount: r.message_count,
-      tokens: r.usage_json ? JSON.parse(r.usage_json) : null,
-      extra: r.extra_json ? JSON.parse(r.extra_json) : {},
-      source: r.source,
-      projectName: r.project_name,
-      projectHint: r.project_name,
-      projectDisplayName: r.project_display_name,
-      projectFullPath: r.project_full_path,
-      startedAt: r.started_at,
-      updatedAt: r.updated_at
-    }));
+    return rows.map(r => {
+      const extra = _safeParseJson(r.extra_json, {});
+
+      return {
+        sessionId: r.session_id,
+        filePath: r.file_path,
+        size: r.size,
+        mtime: r.mtime_ms,
+        firstMessage: r.first_message,
+        gitBranch: r.git_branch,
+        provider: r.provider,
+        model: r.model,
+        messageCount: r.message_count,
+        tokens: _safeParseJson(r.usage_json, null),
+        extra,
+        source: r.source,
+        projectName: r.project_name,
+        projectHint: extra.projectHint || r.project_name,
+        projectDisplayName: r.project_display_name,
+        projectFullPath: r.project_full_path,
+        startedAt: r.started_at,
+        updatedAt: r.updated_at
+      };
+    });
   }
 
   /**
