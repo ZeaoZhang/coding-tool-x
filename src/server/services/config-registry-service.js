@@ -10,6 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
 
 // Configuration paths
 const CC_TOOL_DIR = PATHS.base;
@@ -24,17 +25,35 @@ const CLAUDE_DIRS = {
   agents: NATIVE_PATHS.claude.agents || path.join(CLAUDE_HOME_DIR, 'agents'),
   plugins: NATIVE_PATHS.claude.plugins || path.join(CLAUDE_HOME_DIR, 'plugins')
 };
-
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 
-const PLATFORM_SUPPORT = {
-  skills: { claude: true, codex: true, gemini: true, opencode: true, omp: true },
-  commands: { claude: true, codex: true, gemini: true, opencode: true, omp: true },
-  agents: { claude: true, codex: true, gemini: true, opencode: true, omp: false },
-  plugins: { claude: true, codex: false, gemini: false, opencode: true, omp: true }
-};
+function getSupportedPlatforms(registry = platformRuntime.getPlatformRegistry()) {
+  if (!registry || typeof registry.list !== 'function') return [];
+  return registry.list({ enabledOnly: true })
+    .map(platform => platform && platform.key)
+    .filter(Boolean);
+}
+
+function buildPlatformSupport(registry = platformRuntime.getPlatformRegistry()) {
+  const support = Object.fromEntries(CONFIG_TYPES.map(type => [type, {}]));
+  for (const platform of (registry?.list?.({ enabledOnly: true }) || [])) {
+    const key = platform && platform.key;
+    if (!key) continue;
+    const resourceDriver = platform.capabilities?.resourceSync;
+    for (const type of CONFIG_TYPES) {
+      const declared = resourceDriver && resourceDriver !== 'unsupported';
+      const typeDeclared = platform.resourceTypes && Object.prototype.hasOwnProperty.call(platform.resourceTypes, type)
+        ? platform.resourceTypes[type]
+        : declared;
+      support[type][key] = declared && typeDeclared !== false;
+    }
+  }
+  return support;
+}
+
+const SUPPORTED_PLATFORMS = getSupportedPlatforms();
+const PLATFORM_SUPPORT = buildPlatformSupport();
 
 function normalizePlatforms(type, platforms = {}) {
   const support = PLATFORM_SUPPORT[type] || {};
@@ -308,7 +327,7 @@ class ConfigRegistryService {
       throw new Error(`Invalid config type: ${type}`);
     }
 
-    if (!SUPPORTED_PLATFORMS.includes(platform)) {
+    if (!getSupportedPlatforms().includes(platform)) {
       throw new Error(`Invalid platform: ${platform}`);
     }
 
@@ -577,16 +596,11 @@ class ConfigRegistryService {
    */
   getStats() {
     const registry = this._readRegistry();
+    const supportedPlatforms = getSupportedPlatforms();
     const stats = {
       total: 0,
       byType: {},
-      byPlatform: {
-        claude: 0,
-        codex: 0,
-        gemini: 0,
-        opencode: 0,
-        omp: 0
-      }
+      byPlatform: Object.fromEntries(supportedPlatforms.map(platform => [platform, 0]))
     };
 
     for (const type of CONFIG_TYPES) {
@@ -594,21 +608,16 @@ class ConfigRegistryService {
       const typeStats = {
         total: items.length,
         enabled: items.filter(i => i.enabled).length,
-        disabled: items.filter(i => !i.enabled).length,
-        claude: items.filter(i => i.platforms?.claude).length,
-        codex: items.filter(i => i.platforms?.codex).length,
-        gemini: items.filter(i => i.platforms?.gemini).length,
-        opencode: items.filter(i => i.platforms?.opencode).length,
-        omp: items.filter(i => i.platforms?.omp).length
+        disabled: items.filter(i => !i.enabled).length
       };
+
+      for (const platform of supportedPlatforms) {
+        typeStats[platform] = items.filter(item => item.platforms?.[platform]).length;
+        stats.byPlatform[platform] += typeStats[platform];
+      }
 
       stats.byType[type] = typeStats;
       stats.total += typeStats.total;
-      stats.byPlatform.claude += typeStats.claude;
-      stats.byPlatform.codex += typeStats.codex;
-      stats.byPlatform.gemini += typeStats.gemini;
-      stats.byPlatform.opencode += typeStats.opencode;
-      stats.byPlatform.omp += typeStats.omp;
     }
 
     return stats;
@@ -827,6 +836,8 @@ module.exports = {
   ConfigRegistryService,
   CONFIG_TYPES,
   SUPPORTED_PLATFORMS,
+  getSupportedPlatforms,
+  buildPlatformSupport,
   CONFIGS_DIR,
   REGISTRY_FILE
 };

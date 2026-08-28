@@ -10,6 +10,14 @@
   "portKey": "geminiProxy",
   "defaultPort": 20090,
   "pathResolverId": "gemini",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": false
+  },
+  "promptFile": "GEMINI.md",
+  "promptLabel": "Gemini",
   "capabilities": {
     "projects": "legacy:gemini",
     "sessions": "legacy:gemini",

@@ -273,4 +273,27 @@ describe('ConfigSyncManager aggregation', () => {
       { type: 'skills', name: 'alpha', platform: 'codex', warnings: ['converted'] }
     ]);
   });
+
+  test('syncAll discovers and syncs a generic platform from the registry', () => {
+    const sync = vi.fn(() => ({ status: 'ok', target: '/tmp/demo/skills/review' }));
+    const remove = vi.fn(() => ({ status: 'ok' }));
+    const manager = new ConfigSyncManager({
+      registry: {
+        list: () => [{
+          key: 'demo-cli',
+          capabilities: { resourceSync: 'generic-filesystem' }
+        }]
+      },
+      runtime: {
+        getDriver: () => ({ sync, remove })
+      }
+    });
+
+    const result = manager.syncAll('skills', {
+      review: { enabled: true, platforms: { 'demo-cli': true } }
+    });
+
+    expect(sync).toHaveBeenCalledWith('skills', 'review');
+    expect(result.synced).toContainEqual({ type: 'skills', name: 'review', platform: 'demo-cli' });
+  });
 });

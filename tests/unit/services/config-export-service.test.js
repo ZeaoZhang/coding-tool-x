@@ -550,6 +550,27 @@ afterEach(() => {
 });
 
 describe('config-export-service export flows', () => {
+  test('exports snapshots for every enabled registry platform', () => {
+    const service = require('../../../src/server/services/config-export-service');
+    const registry = {
+      list: () => [{
+        key: 'demo-cli',
+        capabilities: { resourceSync: 'generic-filesystem' }
+      }, {
+        key: 'unsupported-cli',
+        capabilities: { resourceSync: 'unsupported' }
+      }]
+    };
+
+    expect(service.exportPlatformSnapshots({
+      registry,
+      exportByPlatform: platform => ({ platform })
+    })).toEqual({
+      'demo-cli': { platform: 'demo-cli' },
+      'unsupported-cli': { platform: 'unsupported-cli' }
+    });
+    expect(service.getPlatformKeysForType('agents', registry)).toEqual(['demo-cli']);
+  });
   test('exportAllConfigs builds multi-platform snapshot and filters builtin templates', () => {
     codexChannelsService.getChannels.mockReturnValue({
       channels: [{ id: 'codex-1', name: 'Codex', providerKey: 'openai', enabled: true }]

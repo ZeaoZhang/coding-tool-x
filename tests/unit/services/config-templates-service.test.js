@@ -369,6 +369,27 @@ describe('config-templates-service persistence and discovery', () => {
   });
 });
 
+describe('config-templates-service manifest mappings', () => {
+  test('derives AI config files and explicit unsupported results from manifest fields', () => {
+    const registry = {
+      list: () => [{
+        key: 'demo-cli',
+        label: 'Demo',
+        promptFile: 'DEMO.md'
+      }, {
+        key: 'no-project-file',
+        label: 'No Project File',
+        promptFile: null
+      }]
+    };
+
+    expect(templatesService.getAiConfigMap(registry)).toEqual({
+      'demo-cli': { fileName: 'DEMO.md', name: 'Demo' },
+      'no-project-file': { fileName: null, name: 'No Project File command templates' }
+    });
+  });
+});
+
 describe('config-templates-service apply and preview', () => {
   test('applies templates to project directories across selected AI config types', () => {
     const template = templatesService.createCustomTemplate({

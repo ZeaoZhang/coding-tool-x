@@ -10,6 +10,14 @@
   "portKey": "codexProxy",
   "defaultPort": 20089,
   "pathResolverId": "codex",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": false
+  },
+  "promptFile": "AGENTS.md",
+  "promptLabel": "Codex",
   "capabilities": {
     "projects": "legacy:codex",
     "sessions": "legacy:codex",
