@@ -152,12 +152,24 @@ function _ftsQuote(s) {
   return '"' + String(s).replace(/"/g, '""') + '"';
 }
 
+function _normalizeTypedSessionsResult(result, defaultOperation = 'resolve-driver') {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+  if (result.status !== 'failed' && result.status !== 'unsupported') {
+    return null;
+  }
+  if (typeof result.platform !== 'string' || typeof result.capability !== 'string') {
+    return null;
+  }
+  return {
+    ...result,
+    operation: typeof result.operation === 'string' ? result.operation : defaultOperation
+  };
+}
+
 function _isTypedSessionsResult(result) {
-  return !!result && typeof result === 'object'
-    && (result.status === 'failed' || result.status === 'unsupported')
-    && typeof result.platform === 'string'
-    && typeof result.capability === 'string'
-    && typeof result.operation === 'string';
+  return !!_normalizeTypedSessionsResult(result);
 }
 
 function _typedSessionsFailure(source, error, operation = 'resolve-driver') {
@@ -195,8 +207,9 @@ function _getRuntimeSessionsDriver(runtime, source) {
 
   try {
     const driver = runtime.getDriver(source, 'sessions');
-    if (_isTypedSessionsResult(driver)) {
-      return driver;
+    const typedResult = _normalizeTypedSessionsResult(driver);
+    if (typedResult) {
+      return typedResult;
     }
     if (!driver || typeof driver !== 'object') {
       return null;
@@ -392,11 +405,16 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   function _typedFailureToError(result) {
-    const cause = result.cause || (result.error instanceof Error ? result.error : new Error(String(result.error || 'inventory failed')));
-    const error = new Error(`Runtime ${result.capability} ${result.operation} failed on ${result.platform}: ${cause.message}`);
+    const fallbackMessage = result.status === 'unsupported'
+      ? `unsupported ${result.capability}`
+      : 'inventory failed';
+    const cause = result.cause || (result.error instanceof Error ? result.error : new Error(String(result.error || fallbackMessage)));
+    const error = new Error(`Runtime ${result.capability} ${result.operation} ${result.status} on ${result.platform}: ${cause.message}`);
+    error.status = result.status;
     error.platform = result.platform;
     error.capability = result.capability;
     error.operation = result.operation;
+    error.context = result;
     error.cause = cause;
     error.failure = result;
     return error;
