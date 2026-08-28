@@ -311,6 +311,9 @@ function _normalizeProjectPayload(source, projects, config = {}) {
 
 function _normalizeChannelsPayload(source, value) {
   if (source === 'claude') {
+    if (_isTypedPayload(value)) {
+      return value;
+    }
     if (Array.isArray(value)) {
       return value;
     }
