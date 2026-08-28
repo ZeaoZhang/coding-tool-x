@@ -116,7 +116,14 @@ class ConfigSyncManager {
       if (typeof driver.sync !== 'function') {
         return { status: 'unsupported', platform: key, capability: 'resourceSync', operation: 'sync' };
       }
-      return driver.sync(type, name);
+      const safeName = this._normalizeSafeRelativeName(name);
+      if (!safeName) {
+        return { status: 'invalid', platform: key, capability: 'resourceSync', operation: 'sync', error: 'Invalid config item name' };
+      }
+      const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+      return driver.sync.length >= 3
+        ? driver.sync(type, safeName, sourcePath)
+        : driver.sync(type, safeName);
     } catch (error) {
       return {
         status: 'failed',
@@ -138,7 +145,11 @@ class ConfigSyncManager {
       if (typeof driver.remove !== 'function') {
         return { status: 'unsupported', platform: key, capability: 'resourceSync', operation: 'remove' };
       }
-      return driver.remove(type, name);
+      const safeName = this._normalizeSafeRelativeName(name);
+      if (!safeName) {
+        return { status: 'invalid', platform: key, capability: 'resourceSync', operation: 'remove', error: 'Invalid config item name' };
+      }
+      return driver.remove(type, safeName);
     } catch (error) {
       return {
         status: 'failed',
