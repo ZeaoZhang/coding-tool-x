@@ -42,7 +42,10 @@ function buildPlatformSupport(registry = platformRuntime.getPlatformRegistry()) 
     if (!key) continue;
     const resourceDriver = platform.capabilities?.resourceSync;
     for (const type of CONFIG_TYPES) {
-      const declared = resourceDriver && resourceDriver !== 'unsupported';
+      const typeCapability = platform.capabilities && Object.prototype.hasOwnProperty.call(platform.capabilities, type)
+        ? platform.capabilities[type]
+        : null;
+      const declared = resourceDriver && resourceDriver !== 'unsupported' && typeCapability !== 'unsupported';
       const typeDeclared = platform.resourceTypes && Object.prototype.hasOwnProperty.call(platform.resourceTypes, type)
         ? platform.resourceTypes[type]
         : declared;

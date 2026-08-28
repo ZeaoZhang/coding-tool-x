@@ -4,6 +4,19 @@ const path = require('path');
 const { createPlatformRegistry } = require('./registry');
 const { resolveTemplate } = require('./path-resolver');
 
+function readLegacyUiConfig() {
+  try {
+    const { PATHS } = require('../config/paths');
+    const filePath = PATHS?.uiConfig;
+    if (!filePath) return undefined;
+    const fs = require('fs');
+    if (!fs.existsSync(filePath)) return undefined;
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return undefined;
+  }
+}
+
 let platformRegistry;
 let platformRuntime;
 
@@ -98,7 +111,9 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
 }
 
 function getPlatformRegistry() {
-  if (!platformRegistry) platformRegistry = createPlatformRegistry();
+  if (!platformRegistry) {
+    platformRegistry = createPlatformRegistry({ legacyUiConfig: readLegacyUiConfig() });
+  }
   return platformRegistry;
 }
 

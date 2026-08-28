@@ -58,7 +58,13 @@ const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 function getPlatformKeysForType(type, registry = platformRuntime.getPlatformRegistry()) {
   if (!registry || typeof registry.list !== 'function') return [];
   return registry.list({ enabledOnly: true })
-    .filter(platform => platform && platform.key && platform.capabilities?.resourceSync !== 'unsupported')
+    .filter(platform => {
+      if (!platform || !platform.key || platform.capabilities?.resourceSync === 'unsupported') return false;
+      const capability = platform.capabilities && Object.prototype.hasOwnProperty.call(platform.capabilities, type)
+        ? platform.capabilities[type]
+        : null;
+      return capability !== 'unsupported';
+    })
     .filter(platform => type === 'plugins' || platform.resourceTypes?.[type] !== false)
     .map(platform => platform.key);
 }
