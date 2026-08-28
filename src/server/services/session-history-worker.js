@@ -227,11 +227,29 @@ function attachWorkerHandler() {
 }
 
 function _sendWorkerMessage(message, exitCode, send = process.send, exit = process.exit) {
+  let exited = false;
+  const finish = (code) => {
+    if (exited) return;
+    exited = true;
+    exit(code);
+  };
+
   if (!send) {
-    exit(exitCode);
+    finish(exitCode);
     return;
   }
-  send(message, () => exit(exitCode));
+
+  try {
+    send(message, (callbackError) => {
+      if (callbackError) {
+        finish(exitCode || 1);
+        return;
+      }
+      finish(exitCode);
+    });
+  } catch (_error) {
+    finish(exitCode || 1);
+  }
 }
 
 if (process.env.CC_TOOL_SESSION_HISTORY_WORKER === '1' || require.main === module) {

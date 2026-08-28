@@ -441,6 +441,13 @@ function createSessionHistoryIndex(opts = {}) {
     let stateToRecord = null;
 
     try {
+      if (!force) {
+        const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
+        if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
+          return;
+        }
+      }
+
       let adapter = null;
 
       if (explicitAdapters) {
@@ -467,33 +474,19 @@ function createSessionHistoryIndex(opts = {}) {
         throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
       }
 
-      if (!force) {
-        const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
-        if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
-          return;
-        }
-      }
-
-      const descriptors = await adapter.inventory();
-      if (_isTypedFailureResult(descriptors)) {
-        throw _typedFailureToError(descriptors);
-      }
-      if (!Array.isArray(descriptors)) {
-        return;
+      const inventoryResult = await adapter.inventory();
+      if (_isTypedFailureResult(inventoryResult)) {
+        throw _typedFailureToError(inventoryResult);
       }
 
       const seen = new Map();
-      for (const d of descriptors) {
-        const prev = seen.get(d.sessionId);
-        if (!prev || d.mtimeMs > prev.mtimeMs || (d.mtimeMs === prev.mtimeMs && d.filePath < prev.filePath)) {
-          seen.set(d.sessionId, d);
-        }
+      const indexedFiles = new Map();
+      for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id FROM session_file WHERE source = ?').all(source)) {
+        indexedFiles.set(row.file_path, { size: row.size, mtime_ms: row.mtime_ms, sessionId: row.session_id });
       }
 
-      const indexedFiles = new Map();
-      const indexedRows = db.prepare('SELECT file_path, size, mtime_ms FROM session_file WHERE source = ?').all(source);
-      for (const r of indexedRows) {
-        indexedFiles.set(r.file_path, r);
+      for (const d of inventoryResult) {
+        seen.set(d.filePath, d);
       }
 
       const toParse = [];

@@ -415,7 +415,8 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
 
 async function buildPayload({ kind, source, config, options, runtime } = {}) {
   const snapshotOptions = options || {};
-  const effectiveOptions = runtime ? { ...snapshotOptions, runtime } : snapshotOptions;
+  const effectiveRuntime = process.env.NODE_ENV === 'test' ? runtime : undefined;
+  const effectiveOptions = effectiveRuntime ? { ...snapshotOptions, runtime: effectiveRuntime } : snapshotOptions;
   switch (kind) {
     case 'projects':
       return buildProjectsPayload(source, config || {}, effectiveOptions);
@@ -427,6 +428,33 @@ async function buildPayload({ kind, source, config, options, runtime } = {}) {
       return buildChannelsPayload(source, config || {}, effectiveOptions);
     default:
       throw new Error(`Unsupported dashboard snapshot kind: ${kind}`);
+  }
+}
+
+function _sendWorkerMessage(message, exitCode, send = process.send, exit = process.exit) {
+  let exited = false;
+  const finish = (code) => {
+    if (exited) return;
+    exited = true;
+    exit(code);
+  };
+  const failureCode = exitCode && exitCode !== 0 ? exitCode : 1;
+
+  if (!send) {
+    finish(exitCode);
+    return;
+  }
+
+  try {
+    send(message, (callbackError) => {
+      if (callbackError) {
+        finish(failureCode);
+        return;
+      }
+      finish(exitCode);
+    });
+  } catch (_error) {
+    finish(failureCode);
   }
 }
 
@@ -523,17 +551,10 @@ function attachWorkerHandler() {
   process.on('message', async (message) => {
     try {
       const value = await buildPayload(message || {});
-      if (process.send) {
-        process.send({ ok: true, value: _serializeWorkerValue(value) }, () => process.exit(0));
-        return;
-      }
+      _sendWorkerMessage({ ok: true, value: _serializeWorkerValue(value) }, 0);
     } catch (error) {
-      if (process.send) {
-        process.send({ ok: false, error: _serializeError(error) }, () => process.exit(1));
-        return;
-      }
+      _sendWorkerMessage({ ok: false, error: _serializeError(error) }, 1);
     }
-    process.exit(0);
   });
 }
 
@@ -546,6 +567,7 @@ module.exports = {
   runDashboardSnapshotWorker,
   _test: {
     getSerializableWorkerOptions: _getSerializableWorkerOptions,
+    sendWorkerMessage: _sendWorkerMessage,
     serializeError: _serializeError,
     deserializeError: _deserializeError,
     serializeWorkerValue: _serializeWorkerValue

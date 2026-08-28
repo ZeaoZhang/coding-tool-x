@@ -262,7 +262,31 @@ describe('session-history-worker error IPC helpers', () => {
 
     expect(exit).toHaveBeenCalledWith(1);
   });
+  it('treats synchronous send throws as a failure and exits once', () => {
+    const exit = vi.fn();
+    const send = vi.fn(() => {
+      throw new Error('send exploded');
+    });
 
+    worker._test.sendWorkerMessage({ type: 'done' }, 0, send, exit);
+
+    expect(send).toHaveBeenCalledWith({ type: 'done' }, expect.any(Function));
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('preserves a requested nonzero exit code when the send callback fails', () => {
+    const exit = vi.fn();
+    const send = vi.fn((_payload, callback) => {
+      callback(new Error('callback exploded'));
+    });
+
+    worker._test.sendWorkerMessage({ type: 'error' }, 2, send, exit);
+
+    expect(send).toHaveBeenCalledWith({ type: 'error' }, expect.any(Function));
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(2);
+  });
 
   it('centralizes parent cleanup for child error and exit paths', async () => {
     for (const event of ['error', 'exit']) {
