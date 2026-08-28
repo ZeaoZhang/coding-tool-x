@@ -378,6 +378,7 @@ describe('dashboard-snapshot-worker', () => {
     const cause = new Error('project getter exploded');
     cause.name = 'AdapterFailure';
     cause.code = 'E_PROJECTS';
+    cause.status = 'failed';
     const getProjects = vi.fn(async () => {
       throw cause;
     });
@@ -396,6 +397,7 @@ describe('dashboard-snapshot-worker', () => {
     expect(error).toBeInstanceOf(Error);
     expect(error.message).toBe('project getter exploded');
     expect(error.message).toBe(cause.message);
+    expect(error.status).toBe('failed');
     expect(error.platform).toBe('claude');
     expect(error.capability).toBe('projects');
     expect(error.operation).toBe('list');

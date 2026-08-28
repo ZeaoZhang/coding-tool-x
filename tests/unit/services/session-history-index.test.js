@@ -828,6 +828,13 @@ describe('session-history-index', () => {
     expect(results[0].sessionId).toBe('s1');
   });
 
+  it('returns no matches for an empty keyword without entering the matcher loop', async () => {
+    const fixture = setupIndex();
+    const result = await index.searchSessions('claude', '   ');
+    expect(result).toEqual([]);
+    expect(fixture.adapter.inventory).not.toHaveBeenCalled();
+  });
+
   it('ftsDisabled fallback uses instr-based matching', async () => {
     const fixture = setupIndex({ ftsEnabledOverride: false });
     fixture.writeFixtureFile({
