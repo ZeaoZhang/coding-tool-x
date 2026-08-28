@@ -342,6 +342,9 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
   if (getter) {
     const driverOptions = { force: options.force === true, config };
     const projects = await _invokeCapabilityGetter(source, 'projects', 'list', getter, driverOptions);
+    if (_isTypedPayload(projects)) {
+      return projects;
+    }
     if (source === 'claude') {
       const order = await _getClaudeProjectOrder(driver, config, options);
       return _normalizeProjectPayload(source, projects, { projectOrder: order, currentProject: config.currentProject });

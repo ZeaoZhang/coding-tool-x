@@ -46,6 +46,58 @@ describe('session-history-worker error IPC helpers', () => {
     expect(restored.cause.message).toBe('adapter secret-free failure');
     expect(restored.cause.code).toBe('E_ADAPTER');
   });
+  it('round-trips structured inventory worker status, failure, and context safely', () => {
+    const cause = new Error('adapter failed');
+    cause.code = 'E_ADAPTER';
+    const error = new Error('inventory failed');
+    error.platform = 'demo-cli';
+    error.capability = 'sessions';
+    error.operation = 'inventory';
+    error.status = 'failed';
+    error.failure = {
+      status: 'failed',
+      platform: 'demo-cli',
+      capability: 'sessions',
+      operation: 'inventory',
+      error: 'adapter failed',
+      unsafe: () => 'drop me',
+      nested: { bigint: 1n, keep: 'safe' }
+    };
+    error.context = {
+      source: 'demo-cli',
+      descriptors: ['a', 'b'],
+      unsafe: Symbol('drop me'),
+      nested: { keep: true, fn: () => null }
+    };
+    error.cause = cause;
+
+    const serialized = worker._test.serializeWorkerError(error);
+    expect(serialized.status).toBe('failed');
+    expect(serialized.failure).toEqual({
+      status: 'failed',
+      platform: 'demo-cli',
+      capability: 'sessions',
+      operation: 'inventory',
+      error: 'adapter failed',
+      nested: { keep: 'safe' }
+    });
+    expect(serialized.context).toEqual({
+      source: 'demo-cli',
+      descriptors: ['a', 'b'],
+      nested: { keep: true }
+    });
+    expect(() => JSON.stringify(serialized)).not.toThrow();
+
+    const restored = worker._test.deserializeWorkerError(serialized);
+    expect(restored.status).toBe('failed');
+    expect(restored.failure).toEqual(serialized.failure);
+    expect(restored.context).toEqual(serialized.context);
+    expect(restored.platform).toBe('demo-cli');
+    expect(restored.capability).toBe('sessions');
+    expect(restored.operation).toBe('inventory');
+    expect(restored.cause.code).toBe('E_ADAPTER');
+  });
+
 
   it('bounds serialized error text and omits non-JSON-safe code values', () => {
     const longMessage = 'x'.repeat(5000);
@@ -128,6 +180,54 @@ describe('session-history-worker error IPC helpers', () => {
     expect(error.cause.message).toBe('adapter exploded');
     expect(error.cause.code).toBe('E_ADAPTER');
   });
+  it('rejects unknown child messages as protocol errors and cleans up', async () => {
+    const handlers = {};
+    const child = {
+      killed: false,
+      kill: vi.fn(function () { child.killed = true; }),
+      on: vi.fn((event, handler) => {
+        handlers[event] = handler;
+        return child;
+      }),
+      removeAllListeners: vi.fn()
+    };
+    vi.spyOn(childProcess, 'fork').mockReturnValue(child);
+
+    const promise = worker.runInventoryWorker('demo-cli', '/tmp/history.sqlite', { timeoutMs: 1000 });
+    handlers.message({ type: 'progress' });
+
+    const error = await promise.then(() => null, (err) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('protocol error');
+    expect(error.message).toContain('unknown message');
+    expect(child.removeAllListeners).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects child exit code 0 before an explicit done packet', async () => {
+    const handlers = {};
+    const child = {
+      killed: false,
+      kill: vi.fn(function () { child.killed = true; }),
+      on: vi.fn((event, handler) => {
+        handlers[event] = handler;
+        return child;
+      }),
+      removeAllListeners: vi.fn()
+    };
+    vi.spyOn(childProcess, 'fork').mockReturnValue(child);
+
+    const promise = worker.runInventoryWorker('demo-cli', '/tmp/history.sqlite', { timeoutMs: 1000 });
+    handlers.exit(0);
+
+    const error = await promise.then(() => null, (err) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain('protocol error');
+    expect(error.message).toContain('exited before done');
+    expect(child.removeAllListeners).toHaveBeenCalledTimes(1);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
 
   it('waits for structured error IPC to flush before exiting the worker process', () => {
     const exit = vi.fn();

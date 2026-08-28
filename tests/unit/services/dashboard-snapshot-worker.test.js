@@ -322,6 +322,35 @@ describe('dashboard-snapshot-worker', () => {
       config
     }));
   });
+  it('preserves the projects failure returned by the primary getter instead of masking it with project-order errors', async () => {
+    const failedPayload = {
+      status: 'failed',
+      platform: 'claude',
+      capability: 'projects',
+      operation: 'list',
+      error: 'primary projects failed'
+    };
+    const getProjects = vi.fn(async () => failedPayload);
+    const getProjectOrder = vi.fn(() => {
+      throw new Error('secondary order failed');
+    });
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('projects');
+        return { getProjects, getProjectOrder };
+      })
+    };
+
+    await expect(worker.buildPayload({
+      kind: 'projects',
+      source: 'claude',
+      config: {},
+      options: { force: false },
+      runtime
+    })).resolves.toBe(failedPayload);
+    expect(getProjectOrder).not.toHaveBeenCalled();
+  });
 
   it('wraps Claude project getter failures and preserves typed cause fields', async () => {
     const cause = new Error('project getter exploded');
