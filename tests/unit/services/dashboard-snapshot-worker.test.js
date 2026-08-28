@@ -157,6 +157,51 @@ describe('dashboard-snapshot-worker', () => {
     expect(getDriver).toHaveBeenCalledWith('codex', 'projects');
     expect(getDriver).toHaveBeenCalledWith('opencode', 'channels');
   });
+  it('preserves Claude typed channel failures so dashboard worker rejects them', async () => {
+    const failedPayload = {
+      status: 'failed',
+      platform: 'claude',
+      capability: 'channels',
+      operation: 'list',
+      error: 'broken'
+    };
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('claude');
+        expect(capability).toBe('channels');
+        return { list: vi.fn(async () => failedPayload) };
+      })
+    };
+
+    await expect(worker.buildPayload({
+      kind: 'channels',
+      source: 'claude',
+      config: {},
+      options: { force: false },
+      runtime
+    })).resolves.toBe(failedPayload);
+
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    try {
+      const error = await worker.runDashboardSnapshotWorker('channels', 'claude', {}, { runtime })
+        .then(() => null, (err) => err);
+      expect(error).toBeInstanceOf(Error);
+      expect(error.platform).toBe('claude');
+      expect(error.capability).toBe('channels');
+      expect(error.operation).toBe('list');
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.cause.message).toBe('broken');
+      expect(error.failure).toBe(failedPayload);
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+    }
+  });
+
 
   it('returns unsupported counts with the counts capability for custom sources without counts or project getters', async () => {
     const runtime = {
