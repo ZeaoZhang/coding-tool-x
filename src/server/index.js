@@ -183,6 +183,13 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 
   }
 
+  // Registry-backed platform catalog and generic read routes
+  const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
+  app.use('/api/platforms', require('./api/platforms')({
+    registry: getPlatformRegistry(),
+    runtime: getPlatformRuntime()
+  }));
+
   // API Routes
   app.use('/api/projects', require('./api/projects')(config));
   app.use('/api/sessions', require('./api/sessions')(config));
