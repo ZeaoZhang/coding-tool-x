@@ -992,6 +992,59 @@ describe('session-history-index runtime selection', () => {
     }
   });
 
+  it('returns descriptor projectHint separately from normalized projectName for direct runtime payloads', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-direct-hint-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const filePath = path.join(rootDir, 'direct-hint.jsonl');
+    fs.writeFileSync(filePath, '{"role":"user","content":"hello"}\n', 'utf8');
+    const stat = fs.statSync(filePath);
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('generic');
+          expect(capability).toBe('sessions');
+          return {
+            inventory: vi.fn(async () => [{
+              filePath,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              sessionId: 'direct-hint',
+              projectHint: 'descriptor-project'
+            }]),
+            parse: vi.fn(async () => ({
+              sessionId: 'direct-hint',
+              projectName: 'normalized-project',
+              updatedAt: stat.mtimeMs - 1,
+              firstMessage: 'hello',
+              messages: makeMessageFixtures(1, { userPrefix: 'Direct hinted user' })
+            }))
+          };
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('generic', { consistency: 'complete' });
+      const sessions = await index.listSessions('generic', 'normalized-project');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        sessionId: 'direct-hint',
+        extra: expect.objectContaining({ projectHint: 'descriptor-project', mtimeMs: stat.mtimeMs }),
+        projectHint: 'descriptor-project',
+        projectName: 'normalized-project',
+        projectDisplayName: 'normalized-project',
+        firstMessage: 'hello',
+        updatedAt: stat.mtimeMs
+      });
+    } finally {
+      index.closeSessionHistoryIndex();
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
   it('accepts generic runtime sessions drivers that return a direct session payload', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-generic-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
