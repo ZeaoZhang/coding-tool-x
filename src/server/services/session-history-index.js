@@ -479,19 +479,24 @@ function createSessionHistoryIndex(opts = {}) {
         throw _typedFailureToError(inventoryResult);
       }
 
-      const seen = new Map();
       const indexedFiles = new Map();
       for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id FROM session_file WHERE source = ?').all(source)) {
         indexedFiles.set(row.file_path, { size: row.size, mtime_ms: row.mtime_ms, sessionId: row.session_id });
       }
 
-      for (const d of inventoryResult) {
-        seen.set(d.filePath, d);
+      const winnersBySessionId = new Map();
+      for (const descriptor of inventoryResult) {
+        const current = winnersBySessionId.get(descriptor.sessionId);
+        if (!current
+          || descriptor.mtimeMs > current.mtimeMs
+          || (descriptor.mtimeMs === current.mtimeMs && descriptor.filePath < current.filePath)) {
+          winnersBySessionId.set(descriptor.sessionId, descriptor);
+        }
       }
 
       const toParse = [];
       const activePaths = new Set();
-      for (const d of seen.values()) {
+      for (const d of winnersBySessionId.values()) {
         activePaths.add(d.filePath);
         const idx = indexedFiles.get(d.filePath);
         if (!idx || idx.size !== d.size || idx.mtime_ms !== d.mtimeMs) {
@@ -523,7 +528,7 @@ function createSessionHistoryIndex(opts = {}) {
                 throw _typedFailureToError(retry);
               }
               const retryStat = fs.statSync(d.filePath);
-              const stableDescriptor = { ...retryDescriptor, size: retryStat.size, mtimeMs: retryStat.mtimeMs };
+              const stableDescriptor = { ...retryDescriptor, mtimeMs: retryStat.mtimeMs };
               if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
                 const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
                 if (existing) continue;
@@ -547,6 +552,7 @@ function createSessionHistoryIndex(opts = {}) {
           errorMsg = errorMsg ? `${errorMsg}; ${d.filePath}: ${err.message}` : `${d.filePath}: ${err.message}`;
         }
       }
+
 
       stateToRecord = {
         lastInventoryMs: Date.now(),
