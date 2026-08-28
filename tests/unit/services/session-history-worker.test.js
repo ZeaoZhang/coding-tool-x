@@ -228,6 +228,28 @@ describe('session-history-worker error IPC helpers', () => {
     expect(child.kill).toHaveBeenCalledTimes(1);
   });
 
+  it('drains forked worker output streams before waiting for IPC', async () => {
+    const handlers = {};
+    const child = {
+      killed: false,
+      stdout: { resume: vi.fn() },
+      stderr: { resume: vi.fn() },
+      kill: vi.fn(function () { child.killed = true; }),
+      on: vi.fn((event, handler) => {
+        handlers[event] = handler;
+        return child;
+      }),
+      removeAllListeners: vi.fn()
+    };
+    vi.spyOn(childProcess, 'fork').mockReturnValue(child);
+
+    const promise = worker.runInventoryWorker('demo-cli', '/tmp/history.sqlite', { timeoutMs: 1000 });
+    expect(child.stdout.resume).toHaveBeenCalledTimes(1);
+    expect(child.stderr.resume).toHaveBeenCalledTimes(1);
+    handlers.message({ type: 'done' });
+    await expect(promise).resolves.toBeUndefined();
+  });
+
 
   it('waits for structured error IPC to flush before exiting the worker process', () => {
     const exit = vi.fn();

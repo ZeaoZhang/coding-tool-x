@@ -162,6 +162,13 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
       windowsHide: true
     });
 
+    if (child.stdout && typeof child.stdout.resume === 'function') {
+      child.stdout.resume();
+    }
+    if (child.stderr && typeof child.stderr.resume === 'function') {
+      child.stderr.resume();
+    }
+
     let settled = false;
     let timer = null;
 

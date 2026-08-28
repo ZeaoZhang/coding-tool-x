@@ -192,6 +192,9 @@ function _driverFailurePayload(source, capability, error) {
 function _capabilityInvocationError(source, capability, operation, error) {
   const cause = error instanceof Error ? error : new Error(_safeErrorText(error, 'unknown error'));
   const wrapped = new Error(cause.message);
+  if (typeof cause.status === 'string') {
+    wrapped.status = _safeErrorText(cause.status);
+  }
   wrapped.platform = source;
   wrapped.capability = capability;
   wrapped.operation = operation;
@@ -425,7 +428,7 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
 async function buildPayload({ kind, source, config, options, runtime } = {}) {
   const isTest = process.env.NODE_ENV === 'test';
   const snapshotOptions = isTest ? (options || {}) : _getSerializableWorkerOptions(options);
-  const effectiveRuntime = isTest ? runtime : undefined;
+  const effectiveRuntime = isTest ? (runtime || snapshotOptions.runtime) : undefined;
   const effectiveOptions = effectiveRuntime ? { ...snapshotOptions, runtime: effectiveRuntime } : snapshotOptions;
   switch (kind) {
     case 'projects':

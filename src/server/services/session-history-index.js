@@ -886,6 +886,7 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<Array>}
    */
   async function searchSessions(source, keyword, options = {}) {
+    if (!String(keyword || '').trim()) return [];
     await ensureSourceIndexed(source, { consistency: options.consistency || 'complete' });
     const db = _getDb();
     const contextLength = options.contextLength || 35;
@@ -938,19 +939,19 @@ function createSessionHistoryIndex(opts = {}) {
       }
       if (count === 0) continue;
 
-      if (!matchMap.has(c.session_id)) {
+      let entry = matchMap.get(c.session_id);
+      if (!entry) {
         const sf = db.prepare('SELECT * FROM session_file WHERE source = ? AND session_id = ?').get(source, c.session_id);
         if (!sf) continue;
-        matchMap.set(c.session_id, {
+        entry = {
           session: sf,
           matchCount: 0,
           messages: []
-        });
+        };
+        matchMap.set(c.session_id, entry);
       }
 
-      const entry = matchMap.get(c.session_id);
-      // Claude: count every occurrence; Codex/Gemini/OMP: at most 1 per message
-      entry.matchCount += (source === 'claude') ? count : 1;
+      entry.matchCount += source === 'claude' ? count : 1;
       entry.messages.push({
         ordinal: c.ordinal,
         content,
@@ -1018,7 +1019,6 @@ function createSessionHistoryIndex(opts = {}) {
     if (end < content.length) ctx = ctx + '...';
     return ctx;
   }
-
   function _buildPreview(content) {
     if (!content) return '（空消息）';
     const firstLine = String(content)
