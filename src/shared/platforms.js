@@ -1,93 +1,37 @@
-const BUILT_IN_CLI_PLATFORMS = [
-  {
-    key: 'claude',
-    title: 'ClaudeCode',
-    label: 'Claude Code',
-    command: 'claude',
-    color: '#18a058',
-    defaultVisible: true,
-    supportsManagedChannels: true,
-    supportsManagedConfig: true,
-    supportsProxy: true,
-    supportsProjects: true,
-    supportsSessions: true,
-    supportsSkills: true,
-    supportsCommands: true,
-    supportsPlugins: true,
-    supportsAgents: true
-  },
-  {
-    key: 'codex',
-    title: 'Codex-CLI',
-    label: 'Codex',
-    command: 'codex',
-    color: '#3b82f6',
-    defaultVisible: true,
-    supportsManagedChannels: true,
-    supportsManagedConfig: true,
-    supportsProxy: true,
-    supportsProjects: true,
-    supportsSessions: true,
-    supportsSkills: true,
-    supportsCommands: true,
-    supportsPlugins: true,
-    supportsAgents: true
-  },
-  {
-    key: 'gemini',
-    title: 'Gemini-CLI',
-    label: 'Gemini',
-    command: 'gemini',
-    color: '#a855f7',
-    defaultVisible: true,
-    supportsManagedChannels: true,
-    supportsManagedConfig: true,
-    supportsProxy: true,
-    supportsProjects: true,
-    supportsSessions: true,
-    supportsSkills: true,
-    supportsCommands: true,
-    supportsPlugins: false,
-    supportsAgents: true
-  },
-  {
-    key: 'opencode',
-    title: 'OpenCode',
-    label: 'OpenCode',
-    command: 'opencode',
-    color: '#ea580c',
-    defaultVisible: true,
-    supportsManagedChannels: true,
-    supportsManagedConfig: true,
-    supportsProxy: true,
-    supportsProjects: true,
-    supportsSessions: true,
-    supportsSkills: true,
-    supportsCommands: true,
-    supportsPlugins: true,
-    supportsAgents: true
-  },
-  {
-    key: 'omp',
-    title: 'OMP',
-    label: 'OMP',
-    command: 'omp',
-    color: '#0f9f9a',
-    defaultVisible: false,
-    supportsManagedChannels: true,
-    supportsManagedConfig: true,
-    supportsProxy: true,
-    supportsProjects: true,
-    supportsSessions: true,
-    supportsSkills: true,
-    supportsCommands: true,
-    supportsPlugins: true,
-    supportsAgents: false
-  }
+const BUILT_IN_MANIFESTS = [
+  require('../platforms/manifests/claude.json'),
+  require('../platforms/manifests/codex.json'),
+  require('../platforms/manifests/gemini.json'),
+  require('../platforms/manifests/opencode.json'),
+  require('../platforms/manifests/omp.json')
 ];
 
 const DEFAULT_HOME_CLI_COLUMNS = ['claude', 'codex', 'gemini', 'opencode'];
 const MAX_HOME_CLI_COLUMNS = 4;
+
+function capabilityEnabled(manifest, capability) {
+  const driver = manifest?.capabilities?.[capability];
+  return driver !== undefined && driver !== null && driver !== 'unsupported';
+}
+
+const BUILT_IN_CLI_PLATFORMS = BUILT_IN_MANIFESTS.map(manifest => ({
+  key: manifest.key,
+  title: manifest.title || manifest.label || manifest.key,
+  label: manifest.label || manifest.title || manifest.key,
+  command: manifest.command || manifest.key,
+  color: manifest.color || '',
+  defaultVisible: manifest.defaultVisible !== false,
+  supportsManagedChannels: capabilityEnabled(manifest, 'channels'),
+  supportsManagedConfig: capabilityEnabled(manifest, 'nativeConfig'),
+  supportsProxy: capabilityEnabled(manifest, 'proxy'),
+  supportsProjects: capabilityEnabled(manifest, 'projects'),
+  supportsSessions: capabilityEnabled(manifest, 'sessions'),
+  supportsSkills: manifest.resourceTypes?.skills !== false,
+  supportsCommands: manifest.resourceTypes?.commands !== false,
+  supportsPlugins: manifest.resourceTypes?.plugins !== false,
+  supportsAgents: manifest.resourceTypes?.agents !== false
+}));
+
 function normalizePlatformKey(value = '') {
   return String(value || '').trim().toLowerCase();
 }
