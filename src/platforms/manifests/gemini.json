@@ -6,6 +6,10 @@
   "iconToken": "gemini",
   "color": "#a855f7",
   "defaultVisible": true,
+  "helpLabel": "Gemini",
+  "terminalColor": "magenta",
+  "cliSelectable": true,
+  "portLabel": "Gemini 代理服务端口:",
   "apiBasePath": "/api/gemini/proxy",
   "portKey": "geminiProxy",
   "defaultPort": 20090,
@@ -16,6 +20,9 @@
     "agents": true,
     "plugins": false
   },
+  "logFile": "gemini-proxy.log",
+  "logColor": "magenta",
+  "statisticsPath": "/api/gemini/statistics",
   "promptFile": "GEMINI.md",
   "promptLabel": "Gemini",
   "capabilities": {

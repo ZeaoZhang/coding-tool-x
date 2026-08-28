@@ -6,23 +6,40 @@ const { PATHS } = require('../config/paths');
 const { normalizePlatformKey } = require('../shared/platforms');
 
 const LOGS_DIR = PATHS.logs;
+const UI_LOG_FILE = 'cc-tool-out.log';
 
-const LOG_FILES = {
-  ui: 'cc-tool-out.log',
-  claude: 'claude-proxy.log',
-  codex: 'codex-proxy.log',
-  gemini: 'gemini-proxy.log',
-  opencode: 'opencode-proxy.log'
-};
-const LOG_ALIASES = {
-  omp: 'ui'
-};
-const LOG_ALIAS_NOTES = {
-  omp: 'OMP 受管 provider 配置没有独立请求代理日志，相关活动记录在 UI/server 日志中。'
-};
+function getCommandRegistry() {
+  return require('./platform-command-registry').createPlatformCommandRegistry();
+}
+
+function getLogDefinitions() {
+  return getCommandRegistry().list().filter(platform => platform.logFile || platform.logAliases?.length);
+}
+
+function getLogFiles() {
+  return {
+    ui: UI_LOG_FILE,
+    ...Object.fromEntries(getLogDefinitions()
+      .filter(platform => platform.logFile && !(platform.logAliases || []).includes('ui'))
+      .map(platform => [platform.key, platform.logFile]))
+  };
+}
+
+function getLogAliases() {
+  return Object.fromEntries(getLogDefinitions()
+    .flatMap(platform => (platform.logAliases || []).map(alias => [platform.key, alias])));
+}
+
+function getLogAliasNotes() {
+  return Object.fromEntries(getLogDefinitions()
+    .filter(platform => platform.logNote)
+    .map(platform => [platform.key, platform.logNote]));
+}
 
 function getSupportedLogTypes() {
-  return [...Object.keys(LOG_FILES), 'omp'];
+  const files = getLogFiles();
+  const platformKeys = getLogDefinitions().map(platform => platform.key);
+  return [...new Set([...Object.keys(files), ...platformKeys])];
 }
 
 function resolveLogType(type) {
@@ -30,14 +47,17 @@ function resolveLogType(type) {
   if (!normalized) {
     return { requestedType: type, type: null, file: null, note: null };
   }
-  const aliasTarget = LOG_ALIASES[normalized];
+  const aliases = getLogAliases();
+  const files = getLogFiles();
+  const notes = getLogAliasNotes();
+  const aliasTarget = aliases[normalized];
   const resolvedType = aliasTarget || normalized;
   return {
     requestedType: type,
     normalizedType: normalized,
     type: resolvedType,
-    file: LOG_FILES[resolvedType] || null,
-    note: LOG_ALIAS_NOTES[normalized] || null
+    file: files[resolvedType] || null,
+    note: notes[normalized] || null
   };
 }
 
@@ -113,7 +133,7 @@ function showAllLogs(lines, follow) {
   const allLogs = [];
 
   // 读取所有日志文件
-  Object.entries(LOG_FILES).forEach(([type, filename]) => {
+  Object.entries(getLogFiles()).forEach(([type, filename]) => {
     const logPath = path.join(LOGS_DIR, filename);
     if (fs.existsSync(logPath)) {
       try {
@@ -241,7 +261,7 @@ function clearLogs(type) {
     console.log(chalk.cyan('\n[DEL]  清空所有日志...\n'));
 
     let cleared = 0;
-    Object.entries(LOG_FILES).forEach(([logType, filename]) => {
+    Object.entries(getLogFiles()).forEach(([logType, filename]) => {
       const logPath = path.join(LOGS_DIR, filename);
       if (fs.existsSync(logPath)) {
         try {
@@ -314,14 +334,11 @@ function extractTimestamp(line) {
  * 获取类型颜色
  */
 function getTypeColor(type) {
-  const colors = {
-    ui: chalk.blue,
-    claude: chalk.green,
-    codex: chalk.cyan,
-    gemini: chalk.magenta,
-    opencode: chalk.yellow
-  };
-  return colors[type] || chalk.gray;
+  if (type === 'ui') return chalk.blue;
+  const normalized = normalizePlatformKey(type);
+  const platform = getLogDefinitions().find(item => item.key === normalized);
+  const color = platform?.logColor || platform?.terminalColor;
+  return color && typeof chalk[color] === 'function' ? chalk[color] : chalk.gray;
 }
 
 module.exports = {
