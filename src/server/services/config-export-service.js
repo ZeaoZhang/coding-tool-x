@@ -20,6 +20,7 @@ const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
 
 const CONFIG_VERSION = '1.4.0';
 const SKILL_FILE_ENCODING = 'base64';
@@ -52,12 +53,31 @@ const CC_UI_CONFIG_PATH = PATHS.uiConfig;
 const CC_PROMPTS_PATH = PATHS.prompts;
 const CC_SECURITY_PATH = PATHS.security;
 const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
-const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
-const AGENT_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
-const COMMAND_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const PLUGIN_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
+function getPlatformKeysForType(type, registry = platformRuntime.getPlatformRegistry()) {
+  if (!registry || typeof registry.list !== 'function') return [];
+  return registry.list({ enabledOnly: true })
+    .filter(platform => platform && platform.key && platform.capabilities?.resourceSync !== 'unsupported')
+    .filter(platform => type === 'plugins' || platform.resourceTypes?.[type] !== false)
+    .map(platform => platform.key);
+}
+
+const AGENT_PLATFORMS = getPlatformKeysForType('agents');
+const COMMAND_PLATFORMS = getPlatformKeysForType('commands');
+const SKILL_PLATFORMS = getPlatformKeysForType('skills');
+const PLUGIN_PLATFORMS = getPlatformKeysForType('plugins');
+
+function exportPlatformSnapshots({ registry = platformRuntime.getPlatformRegistry(), exportByPlatform } = {}) {
+  if (!registry || typeof registry.list !== 'function' || typeof exportByPlatform !== 'function') {
+    return {};
+  }
+  return Object.fromEntries(
+    registry.list({ enabledOnly: true })
+      .filter(platform => platform && platform.key)
+      .map(platform => [platform.key, exportByPlatform(platform.key)])
+  );
+}
 const CLAUDE_MARKETPLACES_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
 const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'plugins');
 const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
@@ -2647,5 +2667,7 @@ function generateImportSummary(results) {
 module.exports = {
   exportAllConfigs,
   exportAllConfigsZip,
-  importConfigs
+  importConfigs,
+  exportPlatformSnapshots,
+  getPlatformKeysForType
 };

@@ -10,6 +10,14 @@
   "portKey": "opencodeProxy",
   "defaultPort": 20091,
   "pathResolverId": "opencode",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": true
+  },
+  "promptFile": ".opencode/AGENTS.md",
+  "promptLabel": "OpenCode",
   "capabilities": {
     "projects": "legacy:opencode",
     "sessions": "legacy:opencode",

@@ -25,6 +25,14 @@
     "startTip": "启动动态切换"
   },
   "pathResolverId": "omp",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": false,
+    "plugins": true
+  },
+  "promptFile": null,
+  "promptLabel": "OMP command templates",
   "capabilities": {
     "projects": "legacy:omp",
     "sessions": "legacy:omp",

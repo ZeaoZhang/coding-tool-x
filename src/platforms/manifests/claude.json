@@ -10,6 +10,14 @@
   "portKey": "proxy",
   "defaultPort": 20088,
   "pathResolverId": "claude",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": true
+  },
+  "promptFile": "CLAUDE.md",
+  "promptLabel": "Claude",
   "capabilities": {
     "projects": "legacy:claude",
     "sessions": "legacy:claude",

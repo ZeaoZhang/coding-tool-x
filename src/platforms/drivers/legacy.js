@@ -207,6 +207,37 @@ const NATIVE_CONFIG_EXPORTS = Object.freeze({
   })
 });
 
+const RESOURCE_SYNC_METHODS = Object.freeze({
+  claude: Object.freeze({ sync: 'syncToClaude', remove: 'removeFromClaude' }),
+  codex: Object.freeze({ sync: 'syncToCodex', remove: 'removeFromCodex' }),
+  gemini: Object.freeze({ sync: 'syncToGemini', remove: 'removeFromGemini' }),
+  opencode: Object.freeze({ sync: 'syncToOpenCode', remove: 'removeFromOpenCode' }),
+  omp: Object.freeze({ sync: 'syncToOmp', remove: 'removeFromOmp' })
+});
+
+function createResourceSyncDriver({ platform, capability, requireImpl }) {
+  let manager;
+  const operations = RESOURCE_SYNC_METHODS[platform];
+  const loadManager = () => {
+    if (!manager) {
+      const service = requireImpl('../../server/services/config-sync-manager');
+      manager = new service.ConfigSyncManager();
+    }
+    return manager;
+  };
+
+  return {
+    platform,
+    capability,
+    sync(type, name) {
+      return operations ? loadManager()[operations.sync](type, name) : unsupported(platform, capability, 'sync');
+    },
+    remove(type, name) {
+      return operations ? loadManager()[operations.remove](type, name) : unsupported(platform, capability, 'remove');
+    }
+  };
+}
+
 function unsupported(platform, capability, operation) {
   return { status: 'unsupported', platform, capability, operation };
 }
@@ -447,6 +478,9 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
 }
 
 function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {} } = {}) {
+  if (capability === 'resourceSync') {
+    return createResourceSyncDriver({ platform, capability, requireImpl });
+  }
   if (!MODULE_PATHS[platform] || !MODULE_PATHS[platform][capability]) {
     return { status: 'unsupported', platform, capability };
   }
