@@ -906,6 +906,84 @@ describe('session-history-index runtime selection', () => {
     }
   });
 
+  it('treats typed unsupported runtime sessions results without an operation as explicit unsupported errors', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-unsupported-typed-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const sessionAdaptersPath = require.resolve('../../../src/server/services/session-history-adapters');
+    const originalAdaptersCacheEntry = require.cache[sessionAdaptersPath];
+    const legacyInventory = vi.fn(async () => {
+      throw new Error('legacy adapter should not be used');
+    });
+    const legacyParse = vi.fn(async () => {
+      throw new Error('legacy adapter should not be used');
+    });
+
+    require.cache[sessionAdaptersPath] = {
+      id: sessionAdaptersPath,
+      filename: sessionAdaptersPath,
+      loaded: true,
+      exports: {
+        claude: { inventory: legacyInventory, parse: legacyParse },
+        codex: { inventory: legacyInventory, parse: legacyParse },
+        gemini: { inventory: legacyInventory, parse: legacyParse },
+        omp: { inventory: legacyInventory, parse: legacyParse }
+      }
+    };
+
+    const index = createSessionHistoryIndex({
+      dbPath,
+      runtime: {
+        getDriver: vi.fn((source, capability) => {
+          expect(source).toBe('claude');
+          expect(capability).toBe('sessions');
+          return { status: 'unsupported', platform: 'demo-cli', capability: 'sessions' };
+        })
+      },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const error = await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' })
+        .then(() => null, (err) => err);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.status).toBe('unsupported');
+      expect(error.operation).toBe('resolve-driver');
+      expect(error.context).toMatchObject({
+        status: 'unsupported',
+        platform: 'demo-cli',
+        capability: 'sessions',
+        operation: 'resolve-driver'
+      });
+      expect(error.failure).toMatchObject({
+        status: 'unsupported',
+        platform: 'demo-cli',
+        capability: 'sessions',
+        operation: 'resolve-driver'
+      });
+      expect(error.message).toContain('unsupported sessions');
+      expect(error.cause).toBeInstanceOf(Error);
+      expect(error.cause.message).toContain('unsupported');
+      expect(legacyInventory).not.toHaveBeenCalled();
+      expect(legacyParse).not.toHaveBeenCalled();
+
+      const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('claude');
+      expect(row).toBeTruthy();
+      expect(row.last_inventory_ms).toBeNull();
+      expect(row.last_error).toContain('unsupported');
+    } finally {
+      index.closeSessionHistoryIndex();
+      if (originalAdaptersCacheEntry) {
+        require.cache[sessionAdaptersPath] = originalAdaptersCacheEntry;
+      } else {
+        delete require.cache[sessionAdaptersPath];
+      }
+      try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
+    }
+  });
+
+
   it('rejects unsupported custom session sources without a runtime driver or adapter', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-unsupported-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
@@ -937,6 +1015,7 @@ describe('session-history-index runtime selection', () => {
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
     }
   });
+
 
   it('falls back to descriptor projectHint for generic direct runtime session payloads without project fields', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-hint-'));
