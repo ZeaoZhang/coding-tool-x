@@ -292,6 +292,79 @@ describe('session-history-index', () => {
     expect(outline.items[0].preview).toBe('newer wins message');
     expect(fixture.parseCounts.get(newer.filePath)).toBe(1);
   });
+  it('duplicate session ID keeps the greatest mtimeMs even when inventory order is reversed', async () => {
+    const fixture = setupIndex();
+    const newer = fixture.writeFixtureFile({
+      name: 'newer.jsonl',
+      content: 'newer\n',
+      session: makeSessionFixture('dup', 'test-proj', { firstMessage: 'newer wins' }),
+      messages: [
+        {
+          messageId: 'm1',
+          role: 'user',
+          type: 'user',
+          subtype: null,
+          content: 'newer wins message',
+          timestamp: Date.now(),
+          model: 'claude-sonnet-4-20250514',
+          provider: 'anthropic',
+          userMessageNumber: 1,
+          extraJson: null
+        }
+      ]
+    });
+    const older = fixture.writeFixtureFile({
+      name: 'older.jsonl',
+      content: 'older\n',
+      session: makeSessionFixture('dup', 'test-proj', { firstMessage: 'older' }),
+      messages: [
+        {
+          messageId: 'm1',
+          role: 'user',
+          type: 'user',
+          subtype: null,
+          content: 'older message',
+          timestamp: Date.now() - 60000,
+          model: 'claude-sonnet-4-20250514',
+          provider: 'anthropic',
+          userMessageNumber: 1,
+          extraJson: null
+        }
+      ]
+    });
+
+    fixture.rewriteFixtureFile(newer.filePath, 'newer with even more bytes\n', {
+      session: makeSessionFixture('dup', 'test-proj', { firstMessage: 'newer wins' }),
+      messages: [
+        {
+          messageId: 'm1',
+          role: 'user',
+          type: 'user',
+          subtype: null,
+          content: 'newer wins message',
+          timestamp: Date.now(),
+          model: 'claude-sonnet-4-20250514',
+          provider: 'anthropic',
+          userMessageNumber: 1,
+          extraJson: null
+        }
+      ]
+    });
+
+    fixture.adapter.inventory.mockResolvedValueOnce([
+      { ...older },
+      { ...newer }
+    ]);
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    const outline = await index.getSessionOutline('claude', 'dup');
+    expect(outline).not.toBeNull();
+    expect(outline.items).toHaveLength(1);
+    expect(outline.items[0].preview).toBe('newer wins message');
+    expect(fixture.parseCounts.get(newer.filePath)).toBe(1);
+    expect(fixture.parseCounts.get(older.filePath) || 0).toBe(0);
+  });
 
   it('persists retry stat metadata when a file changes during parse and retry succeeds', async () => {
     const fixture = setupIndex();

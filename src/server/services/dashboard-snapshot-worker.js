@@ -70,6 +70,7 @@ function _serializeError(error) {
   const serialized = {
     message: _safeErrorText(error.message ? error.message : error, 'Dashboard snapshot refresh failed')
   };
+  if (typeof error.status === 'string') serialized.status = _safeErrorText(error.status);
   if (typeof error.platform === 'string') serialized.platform = _safeErrorText(error.platform);
   if (typeof error.capability === 'string') serialized.capability = _safeErrorText(error.capability);
   if (typeof error.operation === 'string') serialized.operation = _safeErrorText(error.operation);
@@ -108,6 +109,7 @@ function _deserializeError(payload, fallbackMessage) {
     return new Error(_safeErrorText(payload, fallbackMessage));
   }
   const error = new Error(_safeErrorText(payload.message ? payload.message : fallbackMessage, fallbackMessage));
+  if (typeof payload.status === 'string') error.status = _safeErrorText(payload.status);
   if (typeof payload.platform === 'string') error.platform = _safeErrorText(payload.platform);
   if (typeof payload.capability === 'string') error.capability = _safeErrorText(payload.capability);
   if (typeof payload.operation === 'string') error.operation = _safeErrorText(payload.operation);
@@ -154,9 +156,16 @@ function _typedFailurePayloadToError(payload) {
           ? payload.error
           : new Error(String(payload.error || 'dashboard snapshot failed'));
   const error = new Error(`Dashboard snapshot ${payload.capability} ${payload.operation} failed on ${payload.platform}: ${cause.message}`);
+  if (typeof payload.status === 'string') {
+    error.status = payload.status;
+  }
   error.platform = payload.platform;
   error.capability = payload.capability;
   error.operation = payload.operation;
+  const code = _safeCode(payload.code);
+  if (code !== undefined) {
+    error.code = code;
+  }
   error.cause = cause;
   error.failure = payload;
   return error;
@@ -414,8 +423,9 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
 }
 
 async function buildPayload({ kind, source, config, options, runtime } = {}) {
-  const snapshotOptions = options || {};
-  const effectiveRuntime = process.env.NODE_ENV === 'test' ? runtime : undefined;
+  const isTest = process.env.NODE_ENV === 'test';
+  const snapshotOptions = isTest ? (options || {}) : _getSerializableWorkerOptions(options);
+  const effectiveRuntime = isTest ? runtime : undefined;
   const effectiveOptions = effectiveRuntime ? { ...snapshotOptions, runtime: effectiveRuntime } : snapshotOptions;
   switch (kind) {
     case 'projects':

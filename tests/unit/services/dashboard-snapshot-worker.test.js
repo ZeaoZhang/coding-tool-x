@@ -74,7 +74,8 @@ describe('dashboard-snapshot-worker', () => {
       platform: 'demo-cli',
       capability: 'projects',
       operation: 'resolve-driver',
-      error: 'broken snapshot driver'
+      error: 'broken snapshot driver',
+      code: 'E_PROJECTS_FAILED'
     };
     const runtime = {
       getDriver: vi.fn(() => ({
@@ -88,12 +89,14 @@ describe('dashboard-snapshot-worker', () => {
       const error = await worker.runDashboardSnapshotWorker('projects', 'demo-cli', {}, { runtime })
         .then(() => null, (err) => err);
       expect(error).toBeInstanceOf(Error);
+      expect(error.status).toBe('failed');
+      expect(error.code).toBe('E_PROJECTS_FAILED');
       expect(error.platform).toBe('demo-cli');
       expect(error.capability).toBe('projects');
       expect(error.operation).toBe('resolve-driver');
       expect(error.cause).toBeInstanceOf(Error);
       expect(error.cause.message).toContain('broken snapshot driver');
-      expect(error.failure).toMatchObject(failedPayload);
+      expect(error.failure).toBe(failedPayload);
     } finally {
       if (originalNodeEnv === undefined) {
         delete process.env.NODE_ENV;
@@ -102,6 +105,7 @@ describe('dashboard-snapshot-worker', () => {
       }
     }
   });
+
   it('ignores injected runtimes outside NODE_ENV=test and still uses the platform runtime', async () => {
     const listProjects = vi.fn(async () => [{ name: 'production-project', lastUsed: 11 }]);
     const injectedRuntime = {
@@ -124,7 +128,7 @@ describe('dashboard-snapshot-worker', () => {
         kind: 'projects',
         source: 'claude',
         config: { currentProject: 'production-project' },
-        options: { force: false },
+        options: { force: false, runtime: injectedRuntime },
         runtime: injectedRuntime
       });
 
@@ -133,8 +137,16 @@ describe('dashboard-snapshot-worker', () => {
         currentProject: 'production-project'
       });
       expect(injectedRuntime.getDriver).not.toHaveBeenCalled();
+      expect(listProjects).toHaveBeenCalledWith(expect.objectContaining({
+        force: false,
+        config: { currentProject: 'production-project' }
+      }));
     } finally {
-      process.env.NODE_ENV = originalNodeEnv;
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
     }
   });
 
@@ -717,7 +729,8 @@ describe('dashboard-snapshot-worker', () => {
       platform: 'demo-cli',
       capability: 'projects',
       operation: 'resolve-driver',
-      error: 'child exploded'
+      error: 'child exploded',
+      code: 'E_CHILD_FAILED'
     };
     process.env.NODE_ENV = 'production';
 
@@ -726,6 +739,8 @@ describe('dashboard-snapshot-worker', () => {
       handlers.message({ ok: true, value: failedPayload });
       const error = await promise.then(() => null, (err) => err);
       expect(error).toBeInstanceOf(Error);
+      expect(error.status).toBe('failed');
+      expect(error.code).toBe('E_CHILD_FAILED');
       expect(error.platform).toBe('demo-cli');
       expect(error.capability).toBe('projects');
       expect(error.operation).toBe('resolve-driver');
@@ -764,10 +779,12 @@ describe('dashboard-snapshot-worker', () => {
       handlers.message({
         ok: false,
         error: {
+          status: 'failed',
           message: 'Dashboard snapshot projects list failed on demo-cli: adapter exploded',
           platform: 'demo-cli',
           capability: 'projects',
           operation: 'list',
+          code: 'E_INVENTORY',
           cause: {
             name: 'AdapterError',
             message: 'adapter exploded',
@@ -777,6 +794,8 @@ describe('dashboard-snapshot-worker', () => {
       });
       const error = await promise.then(() => null, (err) => err);
       expect(error).toBeInstanceOf(Error);
+      expect(error.status).toBe('failed');
+      expect(error.code).toBe('E_INVENTORY');
       expect(error.message).toContain('adapter exploded');
       expect(error.platform).toBe('demo-cli');
       expect(error.capability).toBe('projects');
