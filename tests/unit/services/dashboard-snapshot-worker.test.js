@@ -102,9 +102,15 @@ describe('dashboard-snapshot-worker', () => {
       }
     }
   });
-
-  it('uses the default platform runtime when no test runtime is injected', async () => {
-    const listProjects = vi.fn(async () => [{ name: 'demo-project', lastUsed: 10 }]);
+  it('ignores injected runtimes outside NODE_ENV=test and still uses the platform runtime', async () => {
+    const listProjects = vi.fn(async () => [{ name: 'production-project', lastUsed: 11 }]);
+    const injectedRuntime = {
+      getDriver: vi.fn(() => {
+        throw new Error('injected runtime should be ignored outside test mode');
+      })
+    };
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
     vi.spyOn(runtimeModule, 'getPlatformRuntime').mockReturnValue({
       getDriver: vi.fn((platform, capability) => {
         expect(platform).toBe('claude');
@@ -113,22 +119,25 @@ describe('dashboard-snapshot-worker', () => {
       })
     });
 
-    const result = await worker.buildPayload({
-      kind: 'projects',
-      source: 'claude',
-      config: { currentProject: 'demo-project' },
-      options: { force: false }
-    });
+    try {
+      const result = await worker.buildPayload({
+        kind: 'projects',
+        source: 'claude',
+        config: { currentProject: 'production-project' },
+        options: { force: false },
+        runtime: injectedRuntime
+      });
 
-    expect(result).toEqual({
-      projects: [{ name: 'demo-project', lastUsed: 10 }],
-      currentProject: 'demo-project'
-    });
-    expect(listProjects).toHaveBeenCalledWith(expect.objectContaining({
-      force: false,
-      config: { currentProject: 'demo-project' }
-    }));
+      expect(result).toEqual({
+        projects: [{ name: 'production-project', lastUsed: 11 }],
+        currentProject: 'production-project'
+      });
+      expect(injectedRuntime.getDriver).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
   });
+
   it('uses canonical default runtime capabilities for counts and channels', async () => {
     const getProjectAndSessionCounts = vi.fn(async () => ({ projectCount: 2, sessionCount: 3 }));
     const getChannels = vi.fn(async () => [{ id: 'open-channel' }]);
@@ -157,6 +166,7 @@ describe('dashboard-snapshot-worker', () => {
     expect(getDriver).toHaveBeenCalledWith('codex', 'projects');
     expect(getDriver).toHaveBeenCalledWith('opencode', 'channels');
   });
+
   it('preserves Claude typed channel failures so dashboard worker rejects them', async () => {
     const failedPayload = {
       status: 'failed',
@@ -892,7 +902,31 @@ describe('dashboard-snapshot-worker', () => {
       forkSpy.mockRestore();
     }
   });
+  it('exits nonzero when worker IPC send throws synchronously', () => {
+    const exit = vi.fn();
+    const send = vi.fn(() => {
+      throw new Error('send exploded');
+    });
 
+    worker._test.sendWorkerMessage({ ok: true }, 0, send, exit);
+
+    expect(send).toHaveBeenCalledWith({ ok: true }, expect.any(Function));
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it('exits with a nonzero requested code when the worker IPC send callback reports an error', () => {
+    const exit = vi.fn();
+    const send = vi.fn((_payload, callback) => {
+      callback(new Error('callback exploded'));
+    });
+
+    worker._test.sendWorkerMessage({ ok: false }, 3, send, exit);
+
+    expect(send).toHaveBeenCalledWith({ ok: false }, expect.any(Function));
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(3);
+  });
   it('does not include injected runtime functions in production IPC options', () => {
     expect(worker._test.getSerializableWorkerOptions({
       force: true,
@@ -901,4 +935,6 @@ describe('dashboard-snapshot-worker', () => {
       extra: 'ignore-me'
     })).toEqual({ force: true });
   });
+
+
 });

@@ -1438,35 +1438,55 @@ describe('session-history-index runtime selection', () => {
     expect(runtimeInventory).toHaveBeenCalledTimes(1);
     expect(runtimeParse).toHaveBeenCalledTimes(1);
   });
-
-  it('passes serializable force options to the worker runner when runtime is absent', async () => {
+  it('returns from a fresh source_state before resolving the runtime driver, while stale and forced paths still resolve it', async () => {
     const prevNodeEnv = process.env.NODE_ENV;
     const prevChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
-    process.env.NODE_ENV = 'production';
+    process.env.NODE_ENV = 'test';
     delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
 
-    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-worker-force-'));
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-fresh-state-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
-    const workerRunner = vi.fn(async () => {});
+    const runtime = {
+      getDriver: vi.fn(() => {
+        throw new Error('runtime driver should not be resolved for a fresh source_state');
+      })
+    };
     const index = createSessionHistoryIndex({
       dbPath,
-      workerRunner,
+      runtime,
+      workerRunner: vi.fn(async () => {}),
       ftsEnabledOverride: false
     });
 
     try {
-      await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+      index._getDb().prepare(
+        'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES (?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+      ).run('claude', Date.now(), null);
+
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+      expect(runtime.getDriver).not.toHaveBeenCalled();
+
+      index._getDb().prepare(
+        'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES (?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+      ).run('claude', Date.now() - 60000, null);
+
+      await expect(index.ensureSourceIndexed('claude', { consistency: 'complete' }))
+        .rejects.toThrow('runtime driver should not be resolved for a fresh source_state');
+      expect(runtime.getDriver).toHaveBeenCalledTimes(1);
+
+      await expect(index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' }))
+        .rejects.toThrow('runtime driver should not be resolved for a fresh source_state');
+      expect(runtime.getDriver).toHaveBeenCalledTimes(2);
     } finally {
       index.closeSessionHistoryIndex();
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
-      process.env.NODE_ENV = prevNodeEnv;
+      if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prevNodeEnv;
       if (prevChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
       else process.env.CC_TOOL_SESSION_HISTORY_CHILD = prevChild;
     }
-
-    expect(workerRunner).toHaveBeenCalledTimes(1);
-    expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
   });
+
 
   it('records typed runtime inventory failures without advancing last_inventory_ms', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-failure-'));
