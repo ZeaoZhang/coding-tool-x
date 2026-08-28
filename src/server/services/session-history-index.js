@@ -711,7 +711,7 @@ function createSessionHistoryIndex(opts = {}) {
         provider: r.provider,
         model: r.model,
         messageCount: r.message_count,
-        tokens: _safeParseObject(r.usage_json),
+        tokens: _safeParseJson(r.usage_json, null),
         extra,
         source: r.source,
         projectName: r.project_name,

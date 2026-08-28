@@ -514,11 +514,10 @@ describe('session-history-index', () => {
 
   it('treats malformed optional JSON metadata as empty objects when listing sessions and messages', async () => {
     const fixture = setupIndex();
-    fixture.writeFixtureFile({
+    const filePath = fixture.writeFixtureFile({
       name: 'malformed-optional-json.jsonl',
       content: 'metadata fixture\n',
       session: makeSessionFixture('bad-json-session', 'proj-a', {
-        usageJson: '42',
         extraJson: '{not json'
       }),
       messages: [
@@ -532,7 +531,7 @@ describe('session-history-index', () => {
           extraJson: '["unexpected"]'
         }
       ]
-    });
+    }).filePath;
 
     await index.ensureSourceIndexed('claude', { consistency: 'complete' });
 
@@ -540,7 +539,31 @@ describe('session-history-index', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0].extra).toEqual({});
     expect(sessions[0].projectHint).toBe('proj-a');
-    expect(sessions[0].tokens).toEqual({});
+    expect(sessions[0].tokens).toBeNull();
+
+    fixture.rewriteFixtureFile(filePath, 'bad-json-session-updated\n', {
+      session: makeSessionFixture('bad-json-session', 'proj-a', {
+        usageJson: '{not json',
+        extraJson: 'null'
+      }),
+      messages: [
+        {
+          ...makeMessageFixtures(1)[0],
+          extraJson: 'null'
+        },
+        {
+          ...makeMessageFixtures(2)[1],
+          messageId: 'msg-array-extra',
+          extraJson: '["unexpected"]'
+        }
+      ]
+    });
+    await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+    const malformedSessions = await index.listSessions('claude', 'proj-a');
+    expect(malformedSessions).toHaveLength(1);
+    expect(malformedSessions[0].tokens).toBeNull();
+    expect(malformedSessions[0].extra).toEqual({});
+    expect(malformedSessions[0].projectHint).toBe('proj-a');
 
     const page = await index.getMessagePage('claude', 'bad-json-session', { page: 1, limit: 10, order: 'asc' });
     expect(page.messages.map(message => message.extra)).toEqual([{}, {}]);
