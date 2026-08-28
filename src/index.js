@@ -14,8 +14,7 @@ const { handleStats, handleStatsExport } = require('./commands/stats');
 const { handleDoctor } = require('./commands/doctor');
 const { handleUpdate } = require('./commands/update');
 const { ensureStorageDirMigrated } = require('./config/paths');
-const { normalizePlatformKey } = require('./shared/platforms');
-const PluginManager = require('./plugins/plugin-manager');
+const { createPlatformCommandRegistry } = require('./commands/platform-command-registry');
 const eventBus = require('./plugins/event-bus');
 const { hasHostFlag } = require('./utils/cli-flags');
 const chalk = require('chalk');
@@ -62,16 +61,15 @@ function showHelp() {
   console.log('  ctx ui stop             停止 Web UI');
   console.log('  ctx ui restart          重启 Web UI\n');
   console.log(chalk.gray('  提示: 如需禁止 LAN 远程写操作，可设置 CC_TOOL_ALLOW_REMOTE_WRITE=false\n'));
-
   console.log(chalk.yellow('[PROXY] 代理管理:'));
-  console.log('  ctx claude start        启动 Claude 代理');
-  console.log('  ctx claude stop         停止 Claude 代理');
-  console.log('  ctx claude status       查看 Claude 代理状态');
-  console.log('  ctx codex start         启动 Codex 代理');
-  console.log('  ctx gemini start        启动 Gemini 代理');
-  console.log('  ctx opencode start      启动 OpenCode 代理');
-  console.log('  ctx omp start           启动 OMP 动态切换');
-  console.log(chalk.gray('  (codex/gemini/opencode/omp 命令与 claude 类似)\n'));
+  const platformEntries = createPlatformCommandRegistry().helpEntries();
+  platformEntries.filter(entry => entry.proxy).forEach((entry) => {
+    const proxyLabel = entry.proxyLabel || '代理';
+    console.log(`  ctx ${entry.command} start        启动 ${entry.label} ${proxyLabel}`);
+    console.log(`  ctx ${entry.command} stop         停止 ${entry.label} ${proxyLabel}`);
+    console.log(`  ctx ${entry.command} status       查看 ${entry.label} ${proxyLabel}状态`);
+  });
+  console.log(chalk.gray('  (平台命令由 Registry 配置派生)\n'));
 
   console.log(chalk.yellow('[LOG] 日志管理:'));
   console.log('  ctx logs                查看所有日志');
@@ -124,6 +122,30 @@ function showHelp() {
   console.log(chalk.gray('  官网: https://github.com/ZeaoZhang/coding-tool'));
   console.log(chalk.gray('  文档: 运行 ctx start 后在 Web UI 右上角点击帮助'));
   console.log(chalk.gray('  问题: https://github.com/ZeaoZhang/coding-tool/issues\n'));
+}
+
+async function dispatchPlatformCommand(platform, args = [], dependencies = {}) {
+  const action = args[0] || 'status';
+  const channel = platform.key;
+  const options = dependencies.registry ? { registry: dependencies.registry } : {};
+
+  switch (action) {
+    case 'start':
+      await proxyStart(channel, options);
+      return;
+    case 'stop':
+      await proxyStop(channel, options);
+      return;
+    case 'restart':
+      await handleProxyRestart(channel, options);
+      return;
+    case 'status':
+      await proxyStatus(channel, options);
+      return;
+    default:
+      console.log(chalk.red(`\n[ERROR] 未知操作: ${action}\n`));
+      console.log(chalk.gray('支持的操作: start, stop, restart, status\n'));
+  }
 }
 
 let processShutdownPromise = null;
@@ -304,30 +326,11 @@ async function main() {
     return;
   }
 
-  // claude/codex/gemini/opencode/omp 代理管理命令
-  const channels = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-  const normalizedChannel = normalizePlatformKey(args[0]);
-  if (channels.includes(normalizedChannel)) {
-    const channel = String(args[0] || '').trim().toLowerCase();
-    const action = args[1] || 'status';
-
-    switch (action) {
-      case 'start':
-        await proxyStart(channel);
-        break;
-      case 'stop':
-        await proxyStop(channel);
-        break;
-      case 'restart':
-        await handleProxyRestart(channel);
-        break;
-      case 'status':
-        await proxyStatus(channel);
-        break;
-      default:
-        console.log(chalk.red(`\n[ERROR] 未知操作: ${action}\n`));
-        console.log(chalk.gray('支持的操作: start, stop, restart, status\n'));
-    }
+  // Registry-derived platform proxy commands
+  const commandRegistry = createPlatformCommandRegistry();
+  const platform = commandRegistry.resolve(args[0]);
+  if (platform) {
+    await dispatchPlatformCommand(platform, args.slice(1), { registry: commandRegistry });
     return;
   }
 
@@ -745,6 +748,8 @@ main().catch((error) => {
 
 module.exports = {
   _test: {
+    dispatchPlatformCommand,
+    showHelp,
     stopOwnedOmpGatewayBeforeExit
   }
 };

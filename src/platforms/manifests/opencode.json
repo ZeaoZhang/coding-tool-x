@@ -6,6 +6,10 @@
   "iconToken": "opencode",
   "color": "#ea580c",
   "defaultVisible": true,
+  "helpLabel": "OpenCode",
+  "terminalColor": "yellow",
+  "cliSelectable": true,
+  "portLabel": "OpenCode 代理服务端口:",
   "apiBasePath": "/api/opencode/proxy",
   "portKey": "opencodeProxy",
   "defaultPort": 20091,
@@ -16,6 +20,9 @@
     "agents": true,
     "plugins": true
   },
+  "logFile": "opencode-proxy.log",
+  "logColor": "yellow",
+  "statisticsPath": "/api/opencode/statistics",
   "promptFile": ".opencode/AGENTS.md",
   "promptLabel": "OpenCode",
   "capabilities": {

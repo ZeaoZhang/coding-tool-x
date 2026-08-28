@@ -6,6 +6,10 @@
   "iconToken": "code",
   "color": "#3b82f6",
   "defaultVisible": true,
+  "helpLabel": "Codex",
+  "terminalColor": "green",
+  "cliSelectable": true,
+  "portLabel": "Codex 代理服务端口:",
   "apiBasePath": "/api/codex/proxy",
   "portKey": "codexProxy",
   "defaultPort": 20089,
@@ -16,6 +20,9 @@
     "agents": true,
     "plugins": false
   },
+  "logFile": "codex-proxy.log",
+  "logColor": "cyan",
+  "statisticsPath": "/api/codex/statistics",
   "promptFile": "AGENTS.md",
   "promptLabel": "Codex",
   "capabilities": {
