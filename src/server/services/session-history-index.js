@@ -525,7 +525,7 @@ function createSessionHistoryIndex(opts = {}) {
                 if (existing) continue;
                 continue;
               }
-              _upsertSession(db, source, d, retry.session, retry.messages);
+              _upsertSession(db, source, { ...d, size: retryStat.size, mtimeMs: retryStat.mtimeMs }, retry.session, retry.messages);
               continue;
             }
           } catch (_statErr) {
