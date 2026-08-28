@@ -444,7 +444,7 @@ async function buildPayload({ kind, source, config, options, runtime } = {}) {
   }
 }
 
-function _sendWorkerMessage(message, exitCode, send = process.send, exit = process.exit) {
+function _sendWorkerMessage(message, exitCode, send, exit = process.exit) {
   let exited = false;
   const finish = (code) => {
     if (exited) return;
@@ -452,14 +452,15 @@ function _sendWorkerMessage(message, exitCode, send = process.send, exit = proce
     exit(code);
   };
   const failureCode = exitCode && exitCode !== 0 ? exitCode : 1;
+  const sendImpl = send || (typeof process.send === 'function' ? process.send.bind(process) : null);
 
-  if (!send) {
+  if (!sendImpl) {
     finish(exitCode);
     return;
   }
 
   try {
-    send(message, (callbackError) => {
+    sendImpl(message, (callbackError) => {
       if (callbackError) {
         finish(failureCode);
         return;

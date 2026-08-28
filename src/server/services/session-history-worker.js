@@ -148,6 +148,7 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
     const timeoutMs = options.timeoutMs || WORKER_TIMEOUT_MS;
     const workerPath = path.resolve(__dirname, 'session-history-worker.js');
 
+    let stderr = '';
     const child = childProcess.fork(workerPath, [], {
       env: {
         ...process.env,
@@ -165,8 +166,13 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
     if (child.stdout && typeof child.stdout.resume === 'function') {
       child.stdout.resume();
     }
-    if (child.stderr && typeof child.stderr.resume === 'function') {
-      child.stderr.resume();
+    if (child.stderr) {
+      if (typeof child.stderr.on === 'function') {
+        child.stderr.on('data', (chunk) => {
+          stderr = `${stderr}${chunk.toString()}`.slice(-MAX_SERIALIZED_ERROR_TEXT_LENGTH);
+        });
+      }
+      if (typeof child.stderr.resume === 'function') child.stderr.resume();
     }
 
     let settled = false;
@@ -203,10 +209,11 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
 
     child.on('exit', (code) => {
       if (settled) return;
+      const suffix = stderr.trim() ? `: ${stderr.trim()}` : '';
       if (code === 0) {
-        finish(new Error(`Inventory worker protocol error: exited before done for ${source}`));
+        finish(new Error(`Inventory worker protocol error: exited before done for ${source}${suffix}`));
       } else {
-        finish(new Error(`Inventory worker exited with code ${code}`));
+        finish(new Error(`Inventory worker exited with code ${code}${suffix}`));
       }
     });
 
@@ -233,7 +240,7 @@ function attachWorkerHandler() {
     .catch((err) => _sendWorkerMessage({ type: 'error', error: _serializeWorkerError(err) }, 1));
 }
 
-function _sendWorkerMessage(message, exitCode, send = process.send, exit = process.exit) {
+function _sendWorkerMessage(message, exitCode, send, exit = process.exit) {
   let exited = false;
   const finish = (code) => {
     if (exited) return;
@@ -241,13 +248,14 @@ function _sendWorkerMessage(message, exitCode, send = process.send, exit = proce
     exit(code);
   };
 
-  if (!send) {
+  const sendImpl = send || (typeof process.send === 'function' ? process.send.bind(process) : null);
+  if (!sendImpl) {
     finish(exitCode);
     return;
   }
 
   try {
-    send(message, (callbackError) => {
+    sendImpl(message, (callbackError) => {
       if (callbackError) {
         finish(exitCode || 1);
         return;
