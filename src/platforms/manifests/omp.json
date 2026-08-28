@@ -6,6 +6,24 @@
   "iconToken": "omp",
   "color": "#0f9f9a",
   "defaultVisible": false,
+  "apiBasePath": "/api/omp/proxy",
+  "portKey": "ompProxy",
+  "defaultPort": 20092,
+  "proxyMode": "managed",
+  "proxyLabels": {
+    "serviceLabel": "OMP 动态切换",
+    "proxyLabel": "动态切换",
+    "startAction": "启动",
+    "stopAction": "停止",
+    "restartAction": "重启",
+    "startedMessage": "OMP 动态切换已启用",
+    "stoppedMessage": "OMP 已切换为单渠道直连模式",
+    "runningText": "运行中",
+    "stoppedText": "单渠道直连",
+    "portLabel": "网关端口",
+    "addressLabel": "网关地址",
+    "startTip": "启动动态切换"
+  },
   "pathResolverId": "omp",
   "capabilities": {
     "projects": "legacy:omp",
@@ -13,7 +31,6 @@
     "channels": "legacy:omp",
     "proxy": "legacy:omp",
     "statistics": "legacy:omp",
-    "resourceSync": "legacy:omp",
-    "nativeConfig": "legacy:omp"
+    "resourceSync": "legacy:omp"
   }
 }

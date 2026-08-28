@@ -434,3 +434,26 @@ describe('allocateChannel - health check', () => {
     }
   });
 });
+
+describe('registry-backed channel sources', () => {
+  it('accepts an arbitrary platform key through the runtime channel driver', async () => {
+    const runtimeModule = require('../../../src/platforms/runtime');
+    const originalGetPlatformRuntime = runtimeModule.getPlatformRuntime;
+    const list = vi.fn(() => [{ id: 'demo-channel', enabled: true, weight: 1 }]);
+    runtimeModule.getPlatformRuntime = () => ({
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('demo-cli');
+        expect(capability).toBe('channels');
+        return { list };
+      })
+    });
+
+    try {
+      const channel = await allocateChannel({ source: 'demo-cli', enableSessionBinding: false });
+      expect(channel.id).toBe('demo-channel');
+      expect(list).toHaveBeenCalledTimes(1);
+    } finally {
+      runtimeModule.getPlatformRuntime = originalGetPlatformRuntime;
+    }
+  });
+});

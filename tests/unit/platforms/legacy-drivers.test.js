@@ -241,6 +241,31 @@ describe('legacy drivers', () => {
     expect(driver.reset()).toEqual({ status: 'unsupported', platform: 'codex', capability: 'statistics', operation: 'reset' });
   });
 
+  test('maps native configuration operations through the registry driver', () => {
+    const setProxyConfig = vi.fn(port => ({ success: true, port }));
+    const restoreSettings = vi.fn(() => ({ success: true }));
+    const hasBackup = vi.fn(() => true);
+    const deleteBackup = vi.fn(() => ({ success: true }));
+    const requireImpl = makeRequire({
+      '../../server/services/codex-settings-manager': {
+        setProxyConfig,
+        restoreSettings,
+        isProxyConfig: vi.fn(() => true),
+        settingsExists: vi.fn(() => true),
+        hasBackup,
+        deleteBackup
+      }
+    });
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const driver = createLegacyDriver({ platform: 'codex', capability: 'nativeConfig', requireImpl });
+
+    expect(driver.setProxyConfig(21111)).toEqual({ success: true, port: 21111 });
+    expect(driver.restoreSettings()).toEqual({ success: true });
+    expect(driver.hasBackup()).toBe(true);
+    expect(driver.deleteBackup()).toEqual({ success: true });
+    expect(requireImpl.calls).toEqual(['../../server/services/codex-settings-manager']);
+  });
+
   test('falls back statistics daily and today operations to getTodayStatistics when needed', () => {
     const getTodayStatistics = vi.fn(() => ({ today: true }));
     const requireImpl = makeRequire({
@@ -361,6 +386,27 @@ describe('legacy drivers', () => {
     expect(driver.status()).toEqual({ running: false, port: null });
     expect(await driver.start({ port: 21111 })).toEqual({ op: 'start', options: { port: 21111 } });
     expect(await driver.stop({ clearStartTime: false })).toEqual({ op: 'stop', options: { clearStartTime: false } });
+  });
+
+  test('restores a standard proxy through the driver and syncs native config', async () => {
+    const startCodexProxyServer = vi.fn(async options => ({ success: true, port: 21111, options }));
+    const setProxyConfig = vi.fn(() => ({ success: true }));
+    const requireImpl = makeRequire({
+      '../../server/codex-proxy-server': { startCodexProxyServer },
+      '../../server/services/codex-settings-manager': { setProxyConfig }
+    });
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const driver = createLegacyDriver({
+      platform: 'codex',
+      capability: 'proxy',
+      requireImpl,
+      manifest: { portKey: 'codexProxy', defaultPort: 20089 }
+    });
+
+    await expect(driver.restoreOnBoot({ config: { ports: { codexProxy: 21111 } } }))
+      .resolves.toMatchObject({ status: 'ok', platform: 'codex', port: 21111 });
+    expect(startCodexProxyServer).toHaveBeenCalledWith({});
+    expect(setProxyConfig).toHaveBeenCalledWith(21111);
   });
 
   test('returns an explicit unsupported result for missing legacy operations', () => {

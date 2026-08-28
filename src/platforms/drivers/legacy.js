@@ -6,28 +6,32 @@ const MODULE_PATHS = Object.freeze({
     sessions: '../../server/services/sessions',
     channels: '../../server/services/channels',
     proxy: '../../server/proxy-server',
-    statistics: '../../server/services/claude-statistics-service'
+    statistics: '../../server/services/claude-statistics-service',
+    nativeConfig: '../../server/services/settings-manager'
   }),
   codex: Object.freeze({
     projects: '../../server/services/codex-sessions',
     sessions: '../../server/services/codex-sessions',
     channels: '../../server/services/codex-channels',
     proxy: '../../server/codex-proxy-server',
-    statistics: '../../server/services/codex-statistics-service'
+    statistics: '../../server/services/codex-statistics-service',
+    nativeConfig: '../../server/services/codex-settings-manager'
   }),
   gemini: Object.freeze({
     projects: '../../server/services/gemini-sessions',
     sessions: '../../server/services/gemini-sessions',
     channels: '../../server/services/gemini-channels',
     proxy: '../../server/gemini-proxy-server',
-    statistics: '../../server/services/gemini-statistics-service'
+    statistics: '../../server/services/gemini-statistics-service',
+    nativeConfig: '../../server/services/gemini-settings-manager'
   }),
   opencode: Object.freeze({
     projects: '../../server/services/opencode-sessions',
     sessions: '../../server/services/opencode-sessions',
     channels: '../../server/services/opencode-channels',
     proxy: '../../server/opencode-proxy-server',
-    statistics: '../../server/services/opencode-statistics-service'
+    statistics: '../../server/services/opencode-statistics-service',
+    nativeConfig: '../../server/services/opencode-settings-manager'
   }),
   omp: Object.freeze({
     projects: '../../server/services/omp-sessions',
@@ -168,6 +172,41 @@ const STATISTICS_EXPORTS = Object.freeze({
   reset: Object.freeze(['resetStatistics'])
 });
 
+const NATIVE_CONFIG_EXPORTS = Object.freeze({
+  claude: Object.freeze({
+    setProxyConfig: 'setProxyConfig',
+    restoreSettings: 'restoreSettings',
+    isProxyConfig: 'isProxyConfig',
+    settingsExists: 'settingsExists',
+    hasBackup: 'hasBackup',
+    deleteBackup: 'deleteBackup'
+  }),
+  codex: Object.freeze({
+    setProxyConfig: 'setProxyConfig',
+    restoreSettings: 'restoreSettings',
+    isProxyConfig: 'isProxyConfig',
+    settingsExists: 'settingsExists',
+    hasBackup: 'hasBackup',
+    deleteBackup: 'deleteBackup'
+  }),
+  gemini: Object.freeze({
+    setProxyConfig: 'setProxyConfig',
+    restoreSettings: 'restoreSettings',
+    isProxyConfig: 'isProxyConfig',
+    settingsExists: 'settingsExists',
+    hasBackup: 'hasBackup',
+    deleteBackup: 'deleteBackup'
+  }),
+  opencode: Object.freeze({
+    setProxyConfig: 'setProxyConfig',
+    restoreSettings: 'restoreSettings',
+    isProxyConfig: 'isProxyConfig',
+    settingsExists: 'settingsExists',
+    hasBackup: 'hasBackup',
+    deleteBackup: 'deleteBackup'
+  })
+});
+
 function unsupported(platform, capability, operation) {
   return { status: 'unsupported', platform, capability, operation };
 }
@@ -218,7 +257,7 @@ function createChannelsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
-function createProxyDriver({ platform, capability, requireImpl }) {
+function createProxyDriver({ platform, capability, requireImpl, manifest = {} }) {
   const loadModule = createModuleLoader({ platform, capability, requireImpl });
   const exportNames = PROXY_EXPORTS[platform];
   const driver = { platform, capability };
@@ -231,6 +270,94 @@ function createProxyDriver({ platform, capability, requireImpl }) {
       () => unsupported(platform, capability, operation)
     );
   }
+
+  driver.restoreOnBoot = async ({ config = {} } = {}) => {
+    const options = platform === 'omp' ? { preserveStartTime: true } : {};
+    const started = await driver.start(options);
+    if (started && typeof started.status === 'string' && started.status !== 'ok') {
+      return started;
+    }
+    if (started && started.success === false) {
+      return {
+        status: 'failed',
+        platform,
+        capability,
+        operation: 'restoreOnBoot',
+        error: started.error || 'proxy start failed'
+      };
+    }
+
+    const port = started?.port
+      || (manifest.portKey && config.ports && config.ports[manifest.portKey])
+      || manifest.defaultPort
+      || null;
+
+    if (platform === 'codex') {
+      const settings = requireImpl(MODULE_PATHS.codex.nativeConfig);
+      const sync = settings.setProxyConfig(port);
+      if (sync && sync.success === false) {
+        return {
+          status: 'failed',
+          platform,
+          capability,
+          operation: 'restoreOnBoot',
+          error: sync.error || 'native config sync failed'
+        };
+      }
+    }
+
+    if (platform === 'opencode') {
+      const channelsModule = requireImpl('../../server/services/opencode-channels');
+      const proxyModule = loadModule();
+      const enabledChannels = typeof channelsModule.getEnabledChannels === 'function'
+        ? channelsModule.getEnabledChannels()
+        : (channelsModule.getChannels?.().channels || []);
+      const allModels = [];
+      const seenModels = new Set();
+      for (const channel of enabledChannels) {
+        for (const model of [channel.model, channel.speedTestModel]) {
+          if (typeof model === 'string' && model.trim() && !seenModels.has(model.trim().toLowerCase())) {
+            seenModels.add(model.trim().toLowerCase());
+            allModels.push(model.trim());
+          }
+        }
+      }
+      if (typeof proxyModule?.collectProxyModelList === 'function') {
+        const detectedModels = await proxyModule.collectProxyModelList(enabledChannels, { useCacheOnly: true });
+        if (Array.isArray(detectedModels)) {
+          for (const model of detectedModels) {
+            if (typeof model === 'string' && model.trim() && !seenModels.has(model.trim().toLowerCase())) {
+              seenModels.add(model.trim().toLowerCase());
+              allModels.push(model.trim());
+            }
+          }
+        }
+      }
+      const firstChannel = enabledChannels[0];
+      const sync = requireImpl(MODULE_PATHS.opencode.nativeConfig).setProxyConfig(port, {
+        model: firstChannel && (firstChannel.model || firstChannel.speedTestModel) || null,
+        models: allModels
+      });
+      if (sync && sync.success === false) {
+        return {
+          status: 'failed',
+          platform,
+          capability,
+          operation: 'restoreOnBoot',
+          error: sync.error || 'native config sync failed'
+        };
+      }
+    }
+
+    return {
+      status: 'ok',
+      platform,
+      capability,
+      operation: 'restoreOnBoot',
+      port,
+      result: started
+    };
+  };
 
   return driver;
 }
@@ -319,7 +446,7 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
-function createLegacyDriver({ platform, capability, requireImpl = require } = {}) {
+function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {} } = {}) {
   if (!MODULE_PATHS[platform] || !MODULE_PATHS[platform][capability]) {
     return { status: 'unsupported', platform, capability };
   }
@@ -328,7 +455,7 @@ function createLegacyDriver({ platform, capability, requireImpl = require } = {}
     return createChannelsDriver({ platform, capability, requireImpl });
   }
   if (capability === 'proxy') {
-    return createProxyDriver({ platform, capability, requireImpl });
+    return createProxyDriver({ platform, capability, requireImpl, manifest });
   }
   if (capability === 'projects') {
     return createProjectsDriver({ platform, capability, requireImpl });
@@ -340,6 +467,9 @@ function createLegacyDriver({ platform, capability, requireImpl = require } = {}
   }
   if (capability === 'statistics') {
     return createMappedDriver({ platform, capability, requireImpl, operations: STATISTICS_EXPORTS });
+  }
+  if (capability === 'nativeConfig') {
+    return createMappedDriver({ platform, capability, requireImpl, operations: NATIVE_CONFIG_EXPORTS[platform] });
   }
 
   return { status: 'unsupported', platform, capability };

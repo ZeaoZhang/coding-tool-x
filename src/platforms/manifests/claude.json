@@ -6,6 +6,9 @@
   "iconToken": "claude",
   "color": "#18a058",
   "defaultVisible": true,
+  "apiBasePath": "/api/proxy",
+  "portKey": "proxy",
+  "defaultPort": 20088,
   "pathResolverId": "claude",
   "capabilities": {
     "projects": "legacy:claude",

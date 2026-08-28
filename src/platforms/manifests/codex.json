@@ -6,6 +6,9 @@
   "iconToken": "code",
   "color": "#3b82f6",
   "defaultVisible": true,
+  "apiBasePath": "/api/codex/proxy",
+  "portKey": "codexProxy",
+  "defaultPort": 20089,
   "pathResolverId": "codex",
   "capabilities": {
     "projects": "legacy:codex",

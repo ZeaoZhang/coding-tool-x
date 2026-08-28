@@ -56,4 +56,29 @@ describe('toggle-proxy command helpers', () => {
     expect(services.managedProviderConfig).toBe(true);
     expect(services.getProxyStatus()).toEqual({ running: false, defaultPort: 29992 });
   });
+
+  test('resolves native config operations through the platform runtime', () => {
+    const setProxyConfig = vi.fn();
+    const runtime = {
+      getDriver: vi.fn((platform, capability) => {
+        expect(platform).toBe('demo-cli');
+        if (capability === 'nativeConfig') {
+          return {
+            setProxyConfig,
+            restoreSettings: vi.fn(),
+            hasBackup: vi.fn(() => true),
+            deleteBackup: vi.fn()
+          };
+        }
+        return { status: 'unsupported' };
+      })
+    };
+    const { _test } = require('../../../src/commands/toggle-proxy');
+
+    const manager = _test.getSettingsManager('demo-cli', runtime);
+    manager.setProxyConfig(23100);
+
+    expect(setProxyConfig).toHaveBeenCalledWith(23100);
+    expect(runtime.getDriver).toHaveBeenCalledWith('demo-cli', 'nativeConfig');
+  });
 });

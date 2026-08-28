@@ -12,7 +12,7 @@ const {
   formatPortToolIssue
 } = require('../utils/port-helper');
 const { hasHostFlag } = require('../utils/cli-flags');
-
+const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
 const PM2_APP_NAME = 'cc-tool';
 const STARTUP_LOG_FILE = 'cc-tool-out.log';
 const CURRENT_PM2_FORK_PATH = resolveCurrentPm2ForkPath();
@@ -254,15 +254,68 @@ function shouldStopPM2Process(status) {
   return !['stopped', 'errored', 'stopping', 'launching'].includes(String(status || '').toLowerCase());
 }
 
-function getManagedPorts(config = loadConfig()) {
-  return [
-    config.ports?.webUI || 19999,
-    config.ports?.proxy || 20088,
-    config.ports?.codexProxy || 20089,
-    config.ports?.geminiProxy || 20090,
-    config.ports?.opencodeProxy || 20091,
-    config.ports?.ompProxy || 20092
-  ].filter((port, index, list) => Number.isInteger(port) && port > 0 && list.indexOf(port) === index);
+function listProxyPlatforms(registry = getPlatformRegistry()) {
+  if (!registry || typeof registry.list !== 'function') return [];
+  try {
+    return registry.list({ enabledOnly: true }).filter(platform => platform && platform.key);
+  } catch (_) {
+    return [];
+  }
+}
+
+function getPlatformPort(platform, config = {}) {
+  const configured = platform.portKey && config.ports?.[platform.portKey];
+  return configured || platform.defaultPort || null;
+}
+
+async function getProxyStatusEntries({ registry = getPlatformRegistry(), runtime = getPlatformRuntime(), config = loadConfig() } = {}) {
+  const entries = [];
+  for (const platform of listProxyPlatforms(registry)) {
+    const context = {
+      platform: platform.key,
+      capability: 'proxy',
+      operation: 'status'
+    };
+    try {
+      const driver = runtime && typeof runtime.getDriver === 'function'
+        ? runtime.getDriver(platform.key, 'proxy')
+        : null;
+      if (!driver || (typeof driver.status === 'string' && driver.status !== 'ok')) {
+        entries.push({ platform, state: { status: 'unsupported', ...context }, port: getPlatformPort(platform, config) });
+        continue;
+      }
+      if (typeof driver.status !== 'function') {
+        entries.push({ platform, state: { status: 'unsupported', ...context }, port: getPlatformPort(platform, config) });
+        continue;
+      }
+      const state = await Promise.resolve(driver.status());
+      if (state && typeof state.status === 'string' && state.status !== 'ok') {
+        entries.push({ platform, state: { ...state, ...context }, port: getPlatformPort(platform, config) });
+      } else {
+        entries.push({ platform, state: state || {}, port: getPlatformPort(platform, config) });
+      }
+    } catch (error) {
+      entries.push({
+        platform,
+        state: {
+          status: 'failed',
+          ...context,
+          error: error && error.message ? error.message : String(error)
+        },
+        port: getPlatformPort(platform, config)
+      });
+    }
+  }
+  return entries;
+}
+
+function getManagedPorts(config = loadConfig(), registry = getPlatformRegistry()) {
+  const ports = [config.ports?.webUI || 19999];
+  for (const platform of listProxyPlatforms(registry)) {
+    const port = getPlatformPort(platform, config);
+    if (port) ports.push(port);
+  }
+  return ports.filter((port, index, list) => Number.isInteger(port) && port > 0 && list.indexOf(port) === index);
 }
 
 async function cleanupManagedPorts(config = loadConfig(), options = {}) {
@@ -654,30 +707,28 @@ async function handleStatus() {
       console.log(chalk.gray('  [ERROR] 状态: 未运行'));
     }
 
-    // 代理服务状态（从运行时文件检测）
-    ensureStorageDirMigrated();
-    const claudeActive = fs.existsSync(PATHS.activeChannel.claude);
-    const codexActive = fs.existsSync(PATHS.activeChannel.codex);
-    const geminiActive = fs.existsSync(PATHS.activeChannel.gemini);
-    const opencodeActive = fs.existsSync(PATHS.activeChannel.opencode);
-    const ompActive = fs.existsSync(PATHS.activeChannel.omp);
+    // 代理服务状态由 Registry 中声明的 proxy driver 提供
+    const proxyStatuses = await getProxyStatusEntries({ config });
 
     console.log(chalk.bold('\n[PROXY] 代理服务:'));
-
-    console.log(chalk.gray('  Claude:  ') + (claudeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.proxy || 20088})`));
-
-    console.log(chalk.gray('  Codex:   ') + (codexActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.codexProxy || 20089})`));
-
-    console.log(chalk.gray('  Gemini:  ') + (geminiActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.geminiProxy || 20090})`));
-
-    console.log(chalk.gray('  OpenCode:') + (opencodeActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.opencodeProxy || 20091})`));
-
-    console.log(chalk.gray('  OMP:     ') + (ompActive ? chalk.green('[OK] 运行中') : chalk.gray('[STOP]  未启动')) +
-      chalk.gray(` (http://localhost:${config.ports?.ompProxy || 20092})`));
+    for (const entry of proxyStatuses) {
+      const label = `${entry.platform.label || entry.platform.key}:`.padEnd(10);
+      const state = entry.state || {};
+      const port = state.port || entry.port || '-';
+      if (state.status === 'unsupported') {
+        console.log(chalk.gray(`  ${label}${chalk.gray('[N/A]  不支持')}`));
+        continue;
+      }
+      if (state.status === 'failed') {
+        console.log(chalk.red(`  ${label}${chalk.red('[ERROR] 查询失败')}`) +
+          chalk.gray(` (${state.error || 'unknown error'})`));
+        continue;
+      }
+      console.log(chalk.gray(`  ${label}`) + (state.running
+        ? chalk.green('[OK] 运行中')
+        : chalk.gray('[STOP]  未启动')) +
+        chalk.gray(` (http://localhost:${port})`));
+    }
 
     console.log(chalk.bold('\n[TIP] 提示:'));
     console.log(chalk.gray('  • 代理服务通过 Web UI 界面控制'));
@@ -733,6 +784,8 @@ module.exports = {
     buildStartOptions,
     shouldTreatPortOwnershipAsReady,
     getManagedPorts,
+    getProxyStatusEntries,
+    listProxyPlatforms,
     shouldStopPM2Process
   }
 };
