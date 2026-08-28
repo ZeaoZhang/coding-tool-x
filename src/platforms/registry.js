@@ -33,6 +33,28 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+const LEGACY_CAPABILITIES = ['projects', 'sessions', 'channels', 'proxy', 'statistics', 'resourceSync', 'nativeConfig'];
+
+function normalizeLegacyPlatform(input) {
+  if (!input || typeof input !== 'object') return null;
+  const key = String(input.key || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]*$/.test(key)) return null;
+  const label = String(input.label || input.name || key).trim();
+  const command = String(input.command || key).trim();
+  if (!label || !command) return null;
+  return {
+    key,
+    label,
+    title: String(input.title || label).trim() || label,
+    command,
+    iconToken: String(input.iconToken || input.icon || 'terminal').trim() || 'terminal',
+    color: String(input.color || '').trim(),
+    defaultVisible: input.enabled !== false,
+    custom: true,
+    capabilities: Object.fromEntries(LEGACY_CAPABILITIES.map(capability => [capability, 'unsupported']))
+  };
+}
+
 function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = fs, logger, platformsFile } = {}) {
   const diagnostics = [];
   const definitions = new Map();
@@ -57,7 +79,12 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
   for (const manifest of userPlatforms) {
     const result = validateManifest(manifest);
     if (!result.valid) {
-      diagnostics.push({ key: manifest && manifest.key ? manifest.key : null, source: 'userFile', message: normalizeManifestError(result.errors) });
+      diagnostics.push({
+        key: manifest && manifest.key ? manifest.key : null,
+        source: 'userFile',
+        reason: 'invalid manifest or capability driver',
+        message: normalizeManifestError(result.errors)
+      });
       continue;
     }
     if (builtInKeys.has(manifest.key)) continue;
@@ -66,6 +93,24 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
       continue;
     }
     definitions.set(manifest.key, { ...clone(manifest), custom: manifest.custom !== false });
+  }
+
+  const legacyPlatforms = legacyUiConfig?.customCliPlatforms;
+  if (Array.isArray(legacyPlatforms)) {
+    for (const legacyPlatform of legacyPlatforms) {
+      const normalized = normalizeLegacyPlatform(legacyPlatform);
+      if (!normalized) {
+        diagnostics.push({
+          key: legacyPlatform?.key || null,
+          source: 'legacyUiConfig',
+          reason: 'invalid legacy custom platform metadata',
+          message: 'invalid legacy custom platform metadata'
+        });
+        continue;
+      }
+      if (builtInKeys.has(normalized.key) || definitions.has(normalized.key)) continue;
+      definitions.set(normalized.key, normalized);
+    }
   }
 
 

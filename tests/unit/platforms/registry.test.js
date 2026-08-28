@@ -21,6 +21,45 @@ test('resolves built-ins and rejects a user override', () => {
   expect(registry.diagnostics()).toEqual([]);
 });
 
+test('legacy customCliPlatforms remain readable as registry metadata', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: {} }],
+    legacyUiConfig: {
+      customCliPlatforms: [{ key: 'demo-cli', name: 'Demo', command: 'demo', enabled: true }]
+    },
+    userFile: { platforms: [] }
+  });
+
+  expect(registry.resolve('demo-cli')).toEqual(expect.objectContaining({
+    key: 'demo-cli',
+    label: 'Demo',
+    command: 'demo',
+    custom: true
+  }));
+  expect(registry.getCapability('demo-cli', 'proxy')).toBe('unsupported');
+});
+
+test('invalid user driver IDs are rejected with an explicit diagnostic reason', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: {} }],
+    userFile: {
+      platforms: [{
+        key: 'demo-cli',
+        label: 'Demo',
+        command: 'demo',
+        capabilities: { proxy: 'user-code' }
+      }]
+    }
+  });
+
+  expect(registry.resolve('demo-cli')).toBeNull();
+  expect(registry.diagnostics()[0]).toEqual(expect.objectContaining({
+    key: 'demo-cli',
+    source: 'userFile',
+    reason: expect.stringMatching(/invalid|driver/i)
+  }));
+});
+
 test('public definitions expose support flags without internal driver configuration', () => {
   const registry = createPlatformRegistry({
     builtIns: [{
