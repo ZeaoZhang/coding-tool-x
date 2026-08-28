@@ -191,7 +191,9 @@ import { createCommand, updateCommand } from '../api/commands'
 import message from '../utils/message'
 import MarkdownEditor from './MarkdownEditor.vue'
 import { getPlatformConfig } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
+const platformStore = usePlatformStore()
 const props = defineProps({
   visible: {
     type: Boolean,
@@ -221,7 +223,7 @@ const visible = computed({
 const isEdit = computed(() => !!props.command)
 const modalTitle = computed(() => isEdit.value ? '编辑命令' : '创建命令')
 const currentPlatformLabel = computed(() => {
-  const platform = getPlatformConfig(props.platform)
+  const platform = platformStore.get(props.platform) || getPlatformConfig(props.platform)
   return platform.label || platform.title || 'Claude Code'
 })
 const userScopePath = computed(() =>

@@ -1,6 +1,7 @@
 'use strict';
 
 const STATUS_CODES = Object.freeze({
+  ok: 200,
   unsupported: 404,
   unavailable: 503,
   invalid: 400,
@@ -26,9 +27,31 @@ const ROUTES = Object.freeze([
     params: (req) => [req.params.projectName, { force: req.query?.fresh === '1' }]
   }),
   Object.freeze({
+    method: 'get',
     path: '/:platform/channels',
     capability: 'channels',
     params: (req) => [{ force: req.query?.fresh === '1' }]
+  }),
+  Object.freeze({
+    method: 'post',
+    path: '/:platform/channels',
+    capability: 'channels',
+    operation: 'create',
+    params: (req) => [req.body || {}]
+  }),
+  Object.freeze({
+    method: 'put',
+    path: '/:platform/channels/:channelId',
+    capability: 'channels',
+    operation: 'update',
+    params: (req) => [req.params.channelId, req.body || {}]
+  }),
+  Object.freeze({
+    method: 'delete',
+    path: '/:platform/channels/:channelId',
+    capability: 'channels',
+    operation: 'remove',
+    params: (req) => [req.params.channelId]
   }),
   Object.freeze({
     path: '/:platform/proxy/status',
@@ -111,7 +134,10 @@ function getDeclaredCapability(registry, platform, definition, capability) {
   return undefined;
 }
 
-function findOperation(driver, capability) {
+function findOperation(driver, capability, requestedOperation) {
+  if (requestedOperation && typeof driver?.[requestedOperation] === 'function') {
+    return requestedOperation;
+  }
   const names = OPERATION_CANDIDATES[capability] || [];
   for (const name of names) {
     if (typeof driver?.[name] === 'function') return name;
@@ -121,7 +147,7 @@ function findOperation(driver, capability) {
 
 async function invokeCapability({ registry, runtime, request, response, route }) {
   const platform = String(request.params.platform || '').trim().toLowerCase();
-  const operation = OPERATION_CANDIDATES[route.capability]?.[0] || 'invoke';
+  const operation = route.operation || OPERATION_CANDIDATES[route.capability]?.[0] || 'invoke';
   const context = { platform, capability: route.capability, operation };
   const definition = resolvePlatform(registry, platform);
 
@@ -163,7 +189,7 @@ async function invokeCapability({ registry, runtime, request, response, route })
     return stateResponse(response, makeUnsupported(context), context);
   }
 
-  const methodName = findOperation(driver, route.capability);
+  const methodName = findOperation(driver, route.capability, route.operation);
   if (!methodName) {
     return stateResponse(response, makeUnsupported({ ...context, operation: operation }), context);
   }
@@ -182,7 +208,7 @@ function createPlatformRouteFactory({ registry, runtime } = {}) {
   return {
     mount(router) {
       for (const route of ROUTES) {
-        router.get(route.path, (request, response) => invokeCapability({
+        router[route.method || 'get'](route.path, (request, response) => invokeCapability({
           registry,
           runtime,
           request,

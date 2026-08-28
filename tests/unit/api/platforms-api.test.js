@@ -2,12 +2,16 @@ const express = require('express');
 const { once } = require('events');
 const createPlatformRouter = require('../../../src/server/api/platforms');
 
-async function requestJson(app, route) {
+async function requestJson(app, route, { method = 'GET', body } = {}) {
   const server = app.listen(0);
   await once(server, 'listening');
   try {
     const { port } = server.address();
-    const response = await fetch(`http://127.0.0.1:${port}${route}`);
+    const response = await fetch(`http://127.0.0.1:${port}${route}`, {
+      method,
+      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
     return { status: response.status, body: await response.json() };
   } finally {
     await new Promise(resolve => server.close(resolve));
@@ -100,6 +104,47 @@ describe('platform catalog and generic routes', () => {
     expect(drivers.sessions.listSessions).toHaveBeenCalledWith('my-project', { force: false });
     expect(drivers.channels.list).toHaveBeenCalledWith({ force: false });
     expect(drivers.proxy.status).toHaveBeenCalledWith({ force: false });
+  });
+
+  it('supports generic channel create, update, and remove operations', async () => {
+    const create = vi.fn(async payload => ({ status: 'ok', data: { id: 'new-channel', ...payload } }));
+    const update = vi.fn(async (id, payload) => ({ status: 'ok', data: { id, ...payload } }));
+    const remove = vi.fn(async id => ({ status: 'ok', data: { removed: id } }));
+    const app = express();
+    app.use(express.json());
+    app.use('/api/platforms', createPlatformRouter({
+      registry: {
+        resolve: () => ({ key: 'demo-cli', capabilities: { channels: 'channels' } }),
+        getCapability: () => 'channels'
+      },
+      runtime: {
+        getDriver: () => ({ create, update, remove })
+      }
+    }));
+
+    await expect(requestJson(app, '/api/platforms/demo-cli/channels', {
+      method: 'POST',
+      body: { name: 'Demo Channel' }
+    })).resolves.toMatchObject({
+      status: 200,
+      body: { id: 'new-channel', name: 'Demo Channel' }
+    });
+    await expect(requestJson(app, '/api/platforms/demo-cli/channels/channel-1', {
+      method: 'PUT',
+      body: { enabled: false }
+    })).resolves.toMatchObject({
+      status: 200,
+      body: { id: 'channel-1', enabled: false }
+    });
+    await expect(requestJson(app, '/api/platforms/demo-cli/channels/channel-1', {
+      method: 'DELETE'
+    })).resolves.toMatchObject({
+      status: 200,
+      body: { removed: 'channel-1' }
+    });
+    expect(create).toHaveBeenCalledWith({ name: 'Demo Channel' });
+    expect(update).toHaveBeenCalledWith('channel-1', { enabled: false });
+    expect(remove).toHaveBeenCalledWith('channel-1');
   });
 
   it.each([

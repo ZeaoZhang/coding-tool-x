@@ -140,7 +140,8 @@ import SkillRepoManager from './SkillRepoManager.vue'
 import SkillCreateModal from './SkillCreateModal.vue'
 import SkillDetailDrawer from './SkillDetailDrawer.vue'
 import OmpSkillSettingsModal from './OmpSkillSettingsModal.vue'
-import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
+import { getPlatformConfig } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 import { completeOmpSkillSettingsSave, supportsOmpSkillSettings, validateOmpSkillListResponse } from '../utils/omp-skill-settings'
 
 const props = defineProps({
@@ -154,6 +155,7 @@ const props = defineProps({
 defineEmits(['back', 'updated'])
 
 const route = useRoute()
+const platformStore = usePlatformStore()
 const message = useMessage()
 const loading = ref(false)
 const skills = ref([])
@@ -169,22 +171,22 @@ const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
 const loadRequestId = ref(0)
-const managedSkillPlatforms = BUILT_IN_CLI_PLATFORMS
-  .filter(platform => platform.supportsSkills !== false)
-  .map(platform => platform.key)
+const managedSkillPlatforms = computed(() => platformStore.all
+  .filter(platform => platform.capabilities?.skills === true)
+  .map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (props.platform && managedSkillPlatforms.includes(props.platform)) {
+  if (props.platform && managedSkillPlatforms.value.includes(props.platform)) {
     return props.platform
   }
   const channel = route.meta.channel
-  if (managedSkillPlatforms.includes(channel)) return channel
+  if (managedSkillPlatforms.value.includes(channel)) return channel
   return 'claude'
 })
 const showOmpSettings = computed(() => supportsOmpSkillSettings(currentPlatform.value))
 
 const currentPlatformLabel = computed(() => {
-  const platform = getPlatformConfig(currentPlatform.value)
+  const platform = platformStore.get(currentPlatform.value) || getPlatformConfig(currentPlatform.value)
   return platform.label || platform.title || 'Claude Code'
 })
 

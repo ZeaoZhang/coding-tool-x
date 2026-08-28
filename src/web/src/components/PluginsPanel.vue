@@ -141,7 +141,8 @@ import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
-import { BUILT_IN_CLI_PLATFORMS, getPlatformConfig } from '../config/platforms'
+import { getPlatformConfig } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -154,6 +155,7 @@ const props = defineProps({
 defineEmits(['back', 'updated'])
 
 const route = useRoute()
+const platformStore = usePlatformStore()
 const message = useMessage()
 const loading = ref(false)
 const plugins = ref([])
@@ -175,25 +177,25 @@ const capabilities = ref({
   import: true,
   syncRepos: true
 })
-const managedPluginPlatforms = BUILT_IN_CLI_PLATFORMS
-  .filter(platform => platform.supportsPlugins !== false)
-  .map(platform => platform.key)
+const managedPluginPlatforms = computed(() => platformStore.all
+  .filter(platform => platform.capabilities?.plugins === true)
+  .map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (props.platform && managedPluginPlatforms.includes(props.platform)) {
+  if (props.platform && managedPluginPlatforms.value.includes(props.platform)) {
     return props.platform
   }
   const queryPlatform = Array.isArray(route.query.platform)
     ? route.query.platform[0]
     : route.query.platform
-  if (managedPluginPlatforms.includes(queryPlatform)) return queryPlatform
+  if (managedPluginPlatforms.value.includes(queryPlatform)) return queryPlatform
   const channel = route.meta.channel
-  if (managedPluginPlatforms.includes(channel)) return channel
+  if (managedPluginPlatforms.value.includes(channel)) return channel
   return 'claude'
 })
 
 const currentPlatformLabel = computed(() => {
-  const platform = getPlatformConfig(currentPlatform.value)
+  const platform = platformStore.get(currentPlatform.value) || getPlatformConfig(currentPlatform.value)
   return platform.label || platform.title || 'Claude Code'
 })
 

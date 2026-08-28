@@ -445,6 +445,7 @@ import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import { useUIConfig } from '../../composables/useUIConfig'
 import { getPlatformConfig } from '../../config/platforms'
+import { usePlatformStore } from '../../stores/platforms'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import {
   getUIConfig,
@@ -468,6 +469,7 @@ const props = defineProps({
 const router = useRouter()
 const message = useMessage()
 const { uiConfig } = useUIConfig()
+const platformStore = usePlatformStore()
 const {
   claudeProxy,
   codexProxy,
@@ -494,7 +496,8 @@ const {
 const { dashboardData, isLoading: dashboardLoading, loadDashboard } = useDashboard()
 
 // 渠道配置
-const platformConfig = computed(() => getPlatformConfig(props.channelType, uiConfig.value.customCliPlatforms))
+const platformConfig = computed(() => platformStore.get(props.channelType)
+  || getPlatformConfig(props.channelType, [], uiConfig.value.customCliPlatforms))
 const channelTitle = computed(() => platformConfig.value.title || platformConfig.value.label || props.channelType)
 const channelIcon = computed(() => platformConfig.value.icon || TerminalOutline)
 const accentColor = computed(() => platformConfig.value.color || '#64748b')
@@ -827,7 +830,7 @@ function formatLogToken(log, key) {
 }
 
 function supportsKnownRuntime() {
-  return ['claude', 'codex', 'gemini', 'opencode', 'omp'].includes(props.channelType)
+  return platformStore.hasCapability(props.channelType, 'channels')
 }
 
 function getLogTitle(log) {
