@@ -232,13 +232,22 @@ function _safeParseJson(value, fallback) {
   }
 }
 
+function _safeParseObject(value) {
+  const parsed = _safeParseJson(value, {});
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+  return parsed;
+}
+
+
 function _normalizeRuntimeParseResult(result, descriptor = {}) {
   if (!result || typeof result !== 'object') {
     return result;
   }
 
   if (result.session && Array.isArray(result.messages)) {
-    const sessionExtra = result.session.extraJson ? JSON.parse(result.session.extraJson) : {};
+    const sessionExtra = _safeParseObject(result.session.extraJson);
     const extraJson = JSON.stringify({
       ...sessionExtra,
       projectHint: result.session.projectHint || descriptor.projectHint || null,
@@ -262,7 +271,7 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
     const projectHint = descriptor.projectHint || result.projectHint || result.projectName || '';
     const projectName = result.projectName || projectHint || '';
     const projectDisplayName = result.projectDisplayName || result.projectName || projectHint || '';
-    const resultExtra = result.extraJson ? JSON.parse(result.extraJson) : {};
+    const resultExtra = _safeParseObject(result.extraJson);
     const descriptorMtime = descriptor.mtimeMs ?? null;
 
     return {
@@ -515,17 +524,19 @@ function createSessionHistoryIndex(opts = {}) {
           try {
             const postStat = fs.statSync(d.filePath);
             if (postStat.size !== preStat.size || postStat.mtimeMs !== preStat.mtimeMs) {
-              const retry = await adapter.parse(d);
+              const retryDescriptor = { ...d, size: postStat.size, mtimeMs: postStat.mtimeMs };
+              const retry = await adapter.parse(retryDescriptor);
               if (_isTypedFailureResult(retry)) {
                 throw _typedFailureToError(retry);
               }
               const retryStat = fs.statSync(d.filePath);
+              const stableDescriptor = { ...retryDescriptor, size: retryStat.size, mtimeMs: retryStat.mtimeMs };
               if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
                 const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
                 if (existing) continue;
                 continue;
               }
-              _upsertSession(db, source, { ...d, size: retryStat.size, mtimeMs: retryStat.mtimeMs }, retry.session, retry.messages);
+              _upsertSession(db, source, stableDescriptor, retry.session, retry.messages);
               continue;
             }
           } catch (_statErr) {
@@ -688,7 +699,7 @@ function createSessionHistoryIndex(opts = {}) {
     `).all(source, projectName);
 
     return rows.map(r => {
-      const extra = _safeParseJson(r.extra_json, {});
+      const extra = _safeParseObject(r.extra_json);
 
       return {
         sessionId: r.session_id,
@@ -700,7 +711,7 @@ function createSessionHistoryIndex(opts = {}) {
         provider: r.provider,
         model: r.model,
         messageCount: r.message_count,
-        tokens: _safeParseJson(r.usage_json, null),
+        tokens: _safeParseObject(r.usage_json),
         extra,
         source: r.source,
         projectName: r.project_name,
@@ -822,7 +833,7 @@ function createSessionHistoryIndex(opts = {}) {
         model: r.model,
         provider: r.provider,
         userMessageNumber: r.user_message_number,
-        extra: r.extra_json ? JSON.parse(r.extra_json) : {}
+        extra: _safeParseObject(r.extra_json)
       })),
       metadata: _buildMessageMetadata(sf),
       pagination: {
@@ -1025,8 +1036,8 @@ function createSessionHistoryIndex(opts = {}) {
       provider: sf.provider,
       model: sf.model,
       messageCount: sf.message_count,
-      usage: sf.usage_json ? JSON.parse(sf.usage_json) : null,
-      extra: sf.extra_json ? JSON.parse(sf.extra_json) : {}
+      usage: _safeParseObject(sf.usage_json),
+      extra: _safeParseObject(sf.extra_json)
     };
   }
 

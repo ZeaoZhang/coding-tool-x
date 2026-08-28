@@ -454,6 +454,99 @@ describe('session-history-index', () => {
     const overlap = page.messages.map(m => m.messageId).filter(id => page2.messages.some(m => m.messageId === id));
     expect(overlap).toHaveLength(0);
   });
+  it('uses refreshed descriptor metadata when retry parsing a concurrently changed runtime session file', async () => {
+    const fixture = setupIndex();
+    const descriptor = fixture.writeFixtureFile({
+      name: 'retry-runtime.jsonl',
+      content: 'first version\n',
+      session: makeSessionFixture('retry-session', 'proj-a', { updatedAt: 111, extraJson: JSON.stringify({ keep: true }) }),
+      messages: makeMessageFixtures(1)
+    });
+    let parseCall = 0;
+    const parsedDescriptors = [];
+    fixture.adapter.parse.mockImplementation(async (receivedDescriptor) => {
+      parsedDescriptors.push({ ...receivedDescriptor });
+      parseCall += 1;
+      if (parseCall === 1) {
+        fs.writeFileSync(descriptor.filePath, 'second version with more bytes\n', 'utf8');
+        return {
+          session: { ...makeSessionFixture('retry-session', 'proj-a', { updatedAt: 111, extraJson: JSON.stringify({ keep: true }) }), projectHint: 'proj-a' },
+          messages: makeMessageFixtures(1)
+        };
+      }
+      return {
+        session: { ...makeSessionFixture('retry-session', 'proj-a', { updatedAt: 222, extraJson: JSON.stringify({ keep: true }) }), projectHint: 'proj-a' },
+        messages: makeMessageFixtures(1)
+      };
+    });
+    index.closeSessionHistoryIndex();
+    const prevNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    index = createSessionHistoryIndex({
+      dbPath: fixture.dbPath,
+      runtime: { getDriver: () => fixture.adapter },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+      expect(fixture.adapter.parse).toHaveBeenCalledTimes(2);
+      const finalStat = fs.statSync(descriptor.filePath);
+      expect(parsedDescriptors[1].size).toBe(finalStat.size);
+      expect(parsedDescriptors[1].mtimeMs).toBe(finalStat.mtimeMs);
+      const sessions = await index.listSessions('claude', 'proj-a');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].size).toBe(finalStat.size);
+      expect(sessions[0].mtime).toBe(finalStat.mtimeMs);
+      expect(sessions[0].updatedAt).toBe(finalStat.mtimeMs);
+      expect(sessions[0].extra).toMatchObject({ keep: true, projectHint: 'proj-a', mtimeMs: finalStat.mtimeMs });
+    } finally {
+      if (prevNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = prevNodeEnv;
+      }
+    }
+  });
+
+  it('treats malformed optional JSON metadata as empty objects when listing sessions and messages', async () => {
+    const fixture = setupIndex();
+    fixture.writeFixtureFile({
+      name: 'malformed-optional-json.jsonl',
+      content: 'metadata fixture\n',
+      session: makeSessionFixture('bad-json-session', 'proj-a', {
+        usageJson: '42',
+        extraJson: '{not json'
+      }),
+      messages: [
+        {
+          ...makeMessageFixtures(1)[0],
+          extraJson: 'null'
+        },
+        {
+          ...makeMessageFixtures(2)[1],
+          messageId: 'msg-array-extra',
+          extraJson: '["unexpected"]'
+        }
+      ]
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    const sessions = await index.listSessions('claude', 'proj-a');
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].extra).toEqual({});
+    expect(sessions[0].projectHint).toBe('proj-a');
+    expect(sessions[0].tokens).toEqual({});
+
+    const page = await index.getMessagePage('claude', 'bad-json-session', { page: 1, limit: 10, order: 'asc' });
+    expect(page.messages.map(message => message.extra)).toEqual([{}, {}]);
+    expect(page.metadata.usage).toEqual({});
+    expect(page.metadata.extra).toEqual({});
+  });
 
   it('getRecentSessions returns limited recent sessions', async () => {
     const fixture = setupIndex();

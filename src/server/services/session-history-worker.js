@@ -17,6 +17,48 @@ function _safeCode(value) {
   return typeof value === 'string' || typeof value === 'number' ? value : undefined;
 }
 
+const MAX_SERIALIZED_OBJECT_DEPTH = 6;
+const MAX_SERIALIZED_OBJECT_KEYS = 32;
+const MAX_SERIALIZED_ARRAY_LENGTH = 64;
+
+function _safeStructuredValue(value, depth = 0) {
+  if (value == null || typeof value === 'boolean' || typeof value === 'number') {
+    return Number.isFinite(value) || typeof value !== 'number' ? value : undefined;
+  }
+  if (typeof value === 'string') {
+    return _safeErrorText(value);
+  }
+  if (typeof value !== 'object') {
+    return undefined;
+  }
+  if (depth >= MAX_SERIALIZED_OBJECT_DEPTH) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    const items = [];
+    for (const item of value.slice(0, MAX_SERIALIZED_ARRAY_LENGTH)) {
+      const safeItem = _safeStructuredValue(item, depth + 1);
+      if (safeItem !== undefined) {
+        items.push(safeItem);
+      }
+    }
+    return items;
+  }
+
+  const result = {};
+  let count = 0;
+  for (const [key, item] of Object.entries(value)) {
+    if (count >= MAX_SERIALIZED_OBJECT_KEYS) break;
+    const safeItem = _safeStructuredValue(item, depth + 1);
+    if (safeItem !== undefined) {
+      result[_safeErrorText(key)] = safeItem;
+      count += 1;
+    }
+  }
+  return result;
+}
+
+
 
 function _serializeCause(cause) {
   if (!cause) {
@@ -45,6 +87,11 @@ function _serializeWorkerError(error) {
   if (typeof error.operation === 'string') serialized.operation = _safeErrorText(error.operation);
   const code = _safeCode(error.code);
   if (code !== undefined) serialized.code = code;
+  if (typeof error.status === 'string') serialized.status = _safeErrorText(error.status);
+  const failure = _safeStructuredValue(error.failure);
+  if (failure && typeof failure === 'object' && !Array.isArray(failure)) serialized.failure = failure;
+  const context = _safeStructuredValue(error.context);
+  if (context && typeof context === 'object' && !Array.isArray(context)) serialized.context = context;
   const cause = _serializeCause(error.cause);
   if (cause) {
     serialized.cause = cause;
@@ -83,6 +130,11 @@ function _deserializeWorkerError(payload, fallbackMessage = 'Inventory worker fa
   if (typeof payload.operation === 'string') error.operation = _safeErrorText(payload.operation);
   const code = _safeCode(payload.code);
   if (code !== undefined) error.code = code;
+  if (typeof payload.status === 'string') error.status = _safeErrorText(payload.status);
+  const failure = _safeStructuredValue(payload.failure);
+  if (failure && typeof failure === 'object' && !Array.isArray(failure)) error.failure = failure;
+  const context = _safeStructuredValue(payload.context);
+  if (context && typeof context === 'object' && !Array.isArray(context)) error.context = context;
   const cause = _deserializeCause(payload.cause);
   if (cause) {
     error.cause = cause;
@@ -138,14 +190,14 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
       } else if (msg && msg.type === 'error') {
         finish(_deserializeWorkerError(msg.error || { message: msg.message }, 'Inventory worker failed'));
       } else {
-        finish();
+        finish(new Error(`Inventory worker protocol error: unknown message from ${source}`));
       }
     });
 
     child.on('exit', (code) => {
       if (settled) return;
       if (code === 0) {
-        finish();
+        finish(new Error(`Inventory worker protocol error: exited before done for ${source}`));
       } else {
         finish(new Error(`Inventory worker exited with code ${code}`));
       }
