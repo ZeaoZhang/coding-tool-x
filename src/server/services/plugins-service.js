@@ -43,6 +43,8 @@ const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const REPO_SOURCE_META_FILE = '.cc-tool-plugin-source.json';
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
+const PLUGIN_LIST_TTL_MS = 1000;
+const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 const DEFAULT_REPOS_BY_PLATFORM = {
@@ -449,10 +451,43 @@ class PluginsService {
     this.codexPluginsCacheDir = CODEX_PLUGINS_CACHE_DIR;
     this.marketCachePath = PATHS.pluginMarketCache[this.platform] || PATHS.pluginMarketCache.claude;
     this._marketCache = null;
+    this._marketCacheByKey = new Map();
+    this._pluginListCache = new Map();
+    this._pluginListGeneration = 0;
+    this._marketRefreshPromise = null;
+    this._marketFetchedAt = 0;
+    this._marketRepoFingerprint = null;
+    this._marketLastUsedStale = false;
     this.ompNativeAdapter = this.platform === 'omp'
       ? new OmpNativePluginAdapter()
       : null;
   }
+
+  _pluginListKey(options = {}) {
+    const cwd = options.cwd ? path.resolve(options.cwd) : '';
+    const scope = options.scope || '';
+    return `${this.platform}:${cwd}:${scope}`;
+  }
+
+  _clone(value) {
+    if (value === undefined) return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+      return value;
+    }
+  }
+
+  _invalidatePluginList(options = null) {
+    this._pluginListGeneration++;
+    if (!options) {
+      this._pluginListCache.clear();
+      return;
+    }
+    const key = this._pluginListKey(options);
+    this._pluginListCache.delete(key);
+  }
+
 
   getCapabilities() {
     return { ...(PLATFORM_CAPABILITIES[this.platform] || PLATFORM_CAPABILITIES.claude) };
@@ -595,6 +630,10 @@ class PluginsService {
 
   clearMarketCache({ removeFile = true } = {}) {
     this._marketCache = null;
+    this._marketCacheByKey.clear();
+    this._marketFetchedAt = 0;
+    this._marketRepoFingerprint = null;
+    this._invalidatePluginList();
     if (removeFile) {
       try {
         if (fs.existsSync(this.marketCachePath)) {
@@ -606,13 +645,19 @@ class PluginsService {
     }
   }
 
-  loadMarketCacheFromFile() {
+  loadMarketCacheEnvelope() {
     try {
-      if (fs.existsSync(this.marketCachePath)) {
-        const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
-        if (Array.isArray(data.plugins)) {
-          return data.plugins;
-        }
+      if (!fs.existsSync(this.marketCachePath)) return null;
+      const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
+      if (Array.isArray(data)) {
+        return { plugins: data, fetchedAt: 0, reposFingerprint: null };
+      }
+      if (Array.isArray(data?.plugins)) {
+        return {
+          plugins: data.plugins,
+          fetchedAt: Number(data.fetchedAt || data.time || 0) || 0,
+          reposFingerprint: typeof data.reposFingerprint === 'string' ? data.reposFingerprint : null
+        };
       }
     } catch (err) {
       // ignore cache read errors
@@ -620,10 +665,22 @@ class PluginsService {
     return null;
   }
 
-  saveMarketCacheToFile(plugins) {
+  loadMarketCacheFromFile() {
+    const cached = this.loadMarketCacheEnvelope();
+    return cached?.fetchedAt && Date.now() - cached.fetchedAt < MARKET_CACHE_TTL_MS
+      ? cached.plugins
+      : null;
+  }
+
+  saveMarketCacheToFile(plugins, fetchedAt = Date.now(), reposFingerprint = null) {
     try {
       this._ensureDir(path.dirname(this.marketCachePath));
-      fs.writeFileSync(this.marketCachePath, JSON.stringify({ plugins }), 'utf-8');
+      fs.writeFileSync(this.marketCachePath, JSON.stringify({
+        fetchedAt,
+        time: fetchedAt,
+        reposFingerprint,
+        plugins
+      }), 'utf-8');
     } catch (err) {
       // ignore cache write errors
     }
@@ -723,6 +780,7 @@ class PluginsService {
   _writeOpenCodeConfig(filePath, config) {
     this._ensureDir(path.dirname(filePath));
     fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
+    this._invalidatePluginList();
   }
 
   _listOpenCodeConfiguredPlugins() {
@@ -898,6 +956,7 @@ class PluginsService {
     this._ensureDir(path.dirname(filePath));
     const safeConfig = JSON.parse(JSON.stringify(config || {}));
     fs.writeFileSync(filePath, tomlStringify(safeConfig), 'utf8');
+    this._invalidatePluginList();
   }
 
   _readClaudeSettings() {
@@ -916,6 +975,7 @@ class PluginsService {
     const filePath = NATIVE_PATHS.claude.settings;
     this._ensureDir(path.dirname(filePath));
     fs.writeFileSync(filePath, JSON.stringify(settings || {}, null, 2), 'utf8');
+    this._invalidatePluginList();
   }
 
   _setClaudePluginEnabled(name, marketplace, enabled) {
@@ -1110,6 +1170,7 @@ class PluginsService {
       ...(installData.repoSourceMeta || {})
     }];
     fs.writeFileSync(CLAUDE_INSTALLED_FILE, JSON.stringify(nativeData, null, 2), 'utf8');
+    this._invalidatePluginList();
     this._setClaudePluginEnabled(name, marketplace, true);
   }
 
@@ -1176,12 +1237,31 @@ class PluginsService {
     return slugifyCodexKey(repo.name || repo.owner || 'github');
   }
 
+  listPlugins(options = {}) {
+    const key = this._pluginListKey(options);
+    const now = Date.now();
+    const cached = this._pluginListCache.get(key);
+    if (!options.force && cached
+      && now - cached.cachedAt < PLUGIN_LIST_TTL_MS
+      && cached.generation === this._pluginListGeneration) {
+      return this._clone(cached.value);
+    }
+
+    const value = this._listPluginsUncached(options);
+    this._pluginListCache.set(key, {
+      value: this._clone(value),
+      cachedAt: now,
+      generation: this._pluginListGeneration
+    });
+    return this._clone(value);
+  }
+
   /**
    * List all installed plugins with their status
    * Reads from Claude Code's native installed_plugins.json
    * @returns {Object} { plugins: Array }
    */
-  listPlugins(options = {}) {
+  _listPluginsUncached(options = {}) {
     if (!this._pluginsSupported()) {
       return { plugins: [] };
     }
@@ -1224,6 +1304,27 @@ class PluginsService {
     }
 
     const plugins = [];
+    const legacyPlugins = (() => {
+      try {
+        return listPlugins();
+      } catch {
+        return [];
+      }
+    })();
+    const legacyByName = new Map(legacyPlugins.map(plugin => [plugin.name, plugin]));
+    const claudeSettings = this._readClaudeSettings().settings || {};
+    const enabledPlugins = claudeSettings.enabledPlugins || {};
+    const isEnabled = (name, marketplace) => {
+      const exactKey = marketplace ? `${name}@${marketplace}` : name;
+      if (Object.prototype.hasOwnProperty.call(enabledPlugins, exactKey)) {
+        return enabledPlugins[exactKey] !== false;
+      }
+      for (const [key, value] of Object.entries(enabledPlugins)) {
+        const parsed = splitPluginMarketplaceKey(key);
+        if (parsed.name === name) return value !== false;
+      }
+      return true;
+    };
 
     // Read Claude Code's installed_plugins.json
     if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
@@ -1285,9 +1386,10 @@ class PluginsService {
               }
 
               // Read enabled state from CTX registry (defaults to true if not set)
-              const legacyInfo = getPlugin(name);
-              const enabledState = this._isClaudePluginEnabled(name, marketplace) &&
-                (legacyInfo ? legacyInfo.enabled !== false : true);
+              // Project settings and legacy registry are loaded once per list call.
+              const legacyInfo = legacyByName.get(name);
+              const enabledState = isEnabled(name, marketplace)
+                && (legacyInfo ? legacyInfo.enabled !== false : true);
 
               plugins.push({
                 name,
@@ -1319,16 +1421,11 @@ class PluginsService {
       }
     }
 
-    // Also check legacy registry
-    try {
-      const legacyPlugins = listPlugins();
-      for (const plugin of legacyPlugins) {
-        if (!plugins.find(p => p.name === plugin.name)) {
-          plugins.push(plugin);
-        }
+    // Add registry-only plugins without rereading the registry.
+    for (const plugin of legacyPlugins) {
+      if (!plugins.find(existing => existing.name === plugin.name)) {
+        plugins.push(plugin);
       }
-    } catch (err) {
-      // Ignore legacy registry errors
     }
 
     return { plugins };
@@ -1442,7 +1539,9 @@ class PluginsService {
         || metadata.installSource
         || ''
       ).trim();
-      return this.ompNativeAdapter.installPlugin(target, metadata, options);
+      const result = this.ompNativeAdapter.installPlugin(target, metadata, options);
+      this._invalidatePluginList(options);
+      return result;
     }
 
     if (this._isOpenCode()) {
@@ -1868,9 +1967,10 @@ class PluginsService {
         error: `${this.platform} plugin management is not supported`
       };
     }
-
     if (this._isOmp()) {
-      return this.ompNativeAdapter.uninstallPlugin(name, options);
+      const result = this.ompNativeAdapter.uninstallPlugin(name, options);
+      this._invalidatePluginList(options);
+      return result;
     }
 
     if (this._isOpenCode()) {
@@ -1951,6 +2051,7 @@ class PluginsService {
               delete data.plugins[key];
             }
             fs.writeFileSync(CLAUDE_INSTALLED_FILE, JSON.stringify(data, null, 2), 'utf8');
+            this._invalidatePluginList();
             removed = true;
           }
         }
@@ -2006,7 +2107,9 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      return this.ompNativeAdapter.togglePlugin(name, enabled, options);
+      const result = this.ompNativeAdapter.togglePlugin(name, enabled, options);
+      this._invalidatePluginList(options);
+      return result;
     }
 
     if (this._isOpenCode()) {
@@ -2103,7 +2206,9 @@ class PluginsService {
     }
 
     if (this._isOmp()) {
-      return this.ompNativeAdapter.updatePluginConfig(name, config, options);
+      const result = this.ompNativeAdapter.updatePluginConfig(name, config, options);
+      this._invalidatePluginList(options);
+      return result;
     }
 
     if (this._isOpenCode()) {
@@ -2975,45 +3080,46 @@ class PluginsService {
     };
   }
 
-  async _fetchOpenCodeMarketplacePlugins(repo, branch) {
+  async _fetchOpenCodeMarketplacePlugins(repo, branch, tree = null) {
     if (!this._isOpenCode()) return [];
 
-    const tree = await this.fetchRepoTree(repo);
-    const manifestFiles = tree.filter(item =>
+    const sourceTree = tree || await this.fetchRepoTree(repo);
+    const manifestFiles = sourceTree.filter(item =>
       item.type === 'blob' &&
       item.path.startsWith('plugins/') &&
       item.path.endsWith('.plugin.json')
     );
     if (manifestFiles.length === 0) return [];
 
-    const results = await Promise.allSettled(
-      manifestFiles.map(async (file) => {
-        const manifest = await this.fetchRepoJson(repo, file.path, file);
+    const results = [];
+    for (let start = 0; start < manifestFiles.length; start += 5) {
+      const batch = manifestFiles.slice(start, start + 5);
+      results.push(...await Promise.allSettled(
+        batch.map(async (file) => {
+          const manifest = await this.fetchRepoJson(repo, file.path, file);
 
-        const author = Array.isArray(manifest.authors)
-          ? manifest.authors.map(item => item?.name).filter(Boolean).join(', ')
-          : '';
-        const firstCategory = Array.isArray(manifest.categories) ? manifest.categories[0] : '';
-        const repoUrl = manifest.links?.repository || `https://github.com/${repo.owner}/${repo.name}`;
-        // OpenCode supports npm package plugins via opencode.json "plugin" array.
-        // Use package name as install source so UI install button is enabled.
-        const installSource = String(manifest.name || '').trim();
-        const githubRepo = this._parseGitHubRepo(repoUrl);
+          const author = Array.isArray(manifest.authors)
+            ? manifest.authors.map(item => item?.name).filter(Boolean).join(', ')
+            : '';
+          const firstCategory = Array.isArray(manifest.categories) ? manifest.categories[0] : '';
+          const repoUrl = manifest.links?.repository || `https://github.com/${repo.owner}/${repo.name}`;
+          const installSource = String(manifest.name || '').trim();
 
-        return this.buildMarketPluginItem(repo, {
-          name: manifest.name || file.name.replace(/\.plugin\.json$/, ''),
-          displayName: manifest.displayName || '',
-          description: manifest.description || '',
-          author: author || repo.owner,
-          version: manifest.version || manifest.opencode?.minimumVersion || '1.0.0',
-          category: firstCategory ? String(firstCategory).toLowerCase() : 'general',
-          directory: file.path,
-          installSource,
-          marketplaceFormat: 'opencode-plugin-json',
-          repoUrl
-        });
-      })
-    );
+          return this.buildMarketPluginItem(repo, {
+            name: manifest.name || file.name.replace(/\.plugin\.json$/, ''),
+            displayName: manifest.displayName || '',
+            description: manifest.description || '',
+            author: author || repo.owner,
+            version: manifest.version || manifest.opencode?.minimumVersion || '1.0.0',
+            category: firstCategory ? String(firstCategory).toLowerCase() : 'general',
+            directory: file.path,
+            installSource,
+            marketplaceFormat: 'opencode-plugin-json',
+            repoUrl
+          });
+        })
+      ));
+    }
 
     return results
       .filter(item => item.status === 'fulfilled' && item.value)
@@ -3219,14 +3325,85 @@ class PluginsService {
     return results;
   }
 
+  _marketKey(options = {}) {
+    return `${this.platform}:${options.cwd ? path.resolve(options.cwd) : ''}:${options.scope || ''}`;
+  }
+
+  _marketReposFingerprint(repos) {
+    return JSON.stringify((repos || []).map(repo => ({
+      id: repo.id || '',
+      enabled: repo.enabled !== false,
+      source: repo.source || repo.repoUrl || repo.localPath || ''
+    })));
+  }
+
+  async getMarketPlugins(forceRefresh = false, options = {}) {
+    if (!this.getCapabilities().market) return [];
+    const key = this._marketKey(options);
+    const repos = this._isOmp() ? [] : this.getRepos(options).filter(repo => repo.enabled);
+    const reposFingerprint = this._marketReposFingerprint(repos);
+    const now = Date.now();
+    const cached = this._marketCacheByKey.get(key);
+    const memoryPlugins = Array.isArray(cached?.plugins)
+      ? cached.plugins
+      : (Array.isArray(this._marketCache) ? this._marketCache : null);
+    if (!forceRefresh && cached && now - cached.fetchedAt < MARKET_CACHE_TTL_MS
+      && cached.reposFingerprint === reposFingerprint) {
+      return this._clone(cached.plugins);
+    }
+
+    const disk = this.loadMarketCacheEnvelope();
+    if (!forceRefresh && Array.isArray(disk?.plugins)) {
+      const diskPlugins = this.prepareMarketPlugins(disk.plugins);
+      const diskIsFresh = disk.fetchedAt
+        && now - disk.fetchedAt < MARKET_CACHE_TTL_MS
+        && (!disk.reposFingerprint || disk.reposFingerprint === reposFingerprint);
+      const diskIsMoreComplete = memoryPlugins && diskPlugins.length > memoryPlugins.length;
+      if (diskIsFresh || diskIsMoreComplete) {
+        this._marketCacheByKey.set(key, {
+          plugins: diskPlugins,
+          fetchedAt: disk.fetchedAt,
+          reposFingerprint: disk.reposFingerprint || reposFingerprint
+        });
+        this._marketCache = diskPlugins;
+        this._marketFetchedAt = disk.fetchedAt;
+        this._marketRepoFingerprint = disk.reposFingerprint || reposFingerprint;
+        return this._clone(diskPlugins);
+      }
+    }
+
+    if (this._marketRefreshPromise) return this._marketRefreshPromise;
+    const promise = this._getMarketPluginsUncached(forceRefresh, options, { reposFingerprint })
+      .then(plugins => {
+        this._marketCache = Array.isArray(plugins) ? plugins : [];
+        this._marketFetchedAt = this._marketLastUsedStale ? 0 : Date.now();
+        this._marketRepoFingerprint = reposFingerprint;
+        this._marketCacheByKey.set(key, {
+          plugins: this._marketCache,
+          fetchedAt: this._marketFetchedAt,
+          reposFingerprint
+        });
+        if (!this._marketLastUsedStale) {
+          this.saveMarketCacheToFile(this._marketCache, this._marketFetchedAt, reposFingerprint);
+        }
+        return this._clone(this._marketCache);
+      })
+      .finally(() => {
+        if (this._marketRefreshPromise === promise) this._marketRefreshPromise = null;
+      });
+    this._marketRefreshPromise = promise;
+    return promise;
+  }
+
   /**
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
    */
-  async getMarketPlugins(forceRefresh = false, options = {}) {
+  async _getMarketPluginsUncached(forceRefresh = false, options = {}, { reposFingerprint = null } = {}) {
     if (!this.getCapabilities().market) {
       return [];
     }
+    this._marketLastUsedStale = false;
     if (this._isOmp()) {
       if (forceRefresh) {
         this.ompNativeAdapter.updateMarketplaces('', options);
@@ -3238,27 +3415,16 @@ class PluginsService {
       this.clearMarketCache({ removeFile: false });
     }
 
-    const fileCache = this.loadMarketCacheFromFile();
-
-    if (!forceRefresh && Array.isArray(this._marketCache) && this._marketCache.length > 0) {
-      if (Array.isArray(fileCache) && fileCache.length > this._marketCache.length) {
-        this._marketCache = this.prepareMarketPlugins(fileCache);
-        return this._marketCache;
-      }
-      this._marketCache = this.prepareMarketPlugins(this._marketCache);
-      return this._marketCache;
-    }
-
-    if (!forceRefresh && Array.isArray(fileCache) && fileCache.length > 0) {
-      this._marketCache = this.prepareMarketPlugins(fileCache);
-      return this._marketCache;
-    }
+    const fileCache = this.loadMarketCacheEnvelope()?.plugins || null;
 
     const repos = this.getRepos().filter(r => r.enabled);
     const marketPlugins = [];
     let repoFailureCount = 0;
 
-    for (const repo of repos) {
+    let nextRepoIndex = 0;
+    const processRepo = async () => {
+      while (nextRepoIndex < repos.length) {
+        const repo = repos[nextRepoIndex++];
       const repoLabel = repo.label || repo.repoUrl || repo.localPath || `${repo.owner || ''}/${repo.name || ''}`;
       const pluginsBefore = marketPlugins.length;
       try {
@@ -3294,7 +3460,7 @@ class PluginsService {
 
         // OpenCode plugin marketplace format: plugins/*.plugin.json
         if (this._isOpenCode()) {
-          const openCodeMarketplacePlugins = await this._fetchOpenCodeMarketplacePlugins(repo, repo.branch || 'main');
+          const openCodeMarketplacePlugins = await this._fetchOpenCodeMarketplacePlugins(repo, repo.branch || 'main', tree);
           if (openCodeMarketplacePlugins.length > 0) {
             marketPlugins.push(...openCodeMarketplacePlugins);
             continue;
@@ -3344,7 +3510,9 @@ class PluginsService {
             .filter(dir => dir && !dir.startsWith('.') && dir !== 'node_modules')
         ));
 
-        for (const dir of pluginDirs) {
+        for (let batchStart = 0; batchStart < pluginDirs.length; batchStart += 5) {
+          const batch = pluginDirs.slice(batchStart, batchStart + 5);
+          await Promise.all(batch.map(async (dir) => {
           try {
             const manifest = await readJson(`${dir}/plugin.json`);
             if (!manifest) {
@@ -3377,6 +3545,7 @@ class PluginsService {
               }
             }
           }
+          }));
         }
       } catch (err) {
         repoFailureCount++;
@@ -3386,6 +3555,8 @@ class PluginsService {
       const added = marketPlugins.length - pluginsBefore;
       console.log(`[PluginsService] ${repoLabel}: ${added} plugins loaded`);
     }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, repos.length) }, () => processRepo()));
 
     const preparedPlugins = this.prepareMarketPlugins(marketPlugins);
     const preparedFileCache = Array.isArray(fileCache) && fileCache.length > 0
@@ -3397,12 +3568,13 @@ class PluginsService {
     );
 
     if (shouldUseStaleFileCache) {
+      this._marketLastUsedStale = true;
       this._marketCache = preparedFileCache;
       return this._marketCache;
     }
 
     this._marketCache = preparedPlugins;
-    this.saveMarketCacheToFile(preparedPlugins);
+    this.saveMarketCacheToFile(preparedPlugins, Date.now(), reposFingerprint);
 
     return preparedPlugins;
   }

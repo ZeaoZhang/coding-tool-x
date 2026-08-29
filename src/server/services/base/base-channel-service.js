@@ -21,6 +21,15 @@ function clearChannelBalanceCache(platform, channel) {
   }
 }
 
+function invalidateDashboardSource(platform) {
+  try {
+    const { invalidateDashboardSourceSnapshot } = require('../snapshot-cache');
+    invalidateDashboardSourceSnapshot(platform);
+  } catch (_) {
+    // Dashboard snapshots are an optimization; channel mutations still succeed.
+  }
+}
+
 class BaseChannelService {
   /**
    * @param {object} config
@@ -34,7 +43,9 @@ class BaseChannelService {
     this.channelsFilePath = config.channelsFilePath;
     this.defaultGatewaySource = config.defaultGatewaySource || config.platform;
     this._isProxyRunning = config.isProxyRunning || (() => false);
+    this._channelCache = { value: null, mtimeMs: 0, invalidated: true };
   }
+
 
   // ── 文件 I/O ──
 
@@ -45,23 +56,59 @@ class BaseChannelService {
     }
   }
 
+  _channelFileMtime() {
+    try {
+      return fs.statSync(this.channelsFilePath).mtimeMs;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  _cloneChannelData(data) {
+    return {
+      channels: Array.isArray(data?.channels)
+        ? data.channels.map(channel => ({ ...channel }))
+        : []
+    };
+  }
+
   loadChannels() {
     this._ensureDir();
+    const mtimeMs = this._channelFileMtime();
+    if (!this._channelCache.invalidated
+      && this._channelCache.mtimeMs === mtimeMs
+      && this._channelCache.value) {
+      return this._cloneChannelData(this._channelCache.value);
+    }
+
+    let value = { channels: [] };
     try {
       if (fs.existsSync(this.channelsFilePath)) {
         const raw = JSON.parse(fs.readFileSync(this.channelsFilePath, 'utf8'));
         const channels = Array.isArray(raw?.channels) ? raw.channels : [];
-        return { channels: channels.map(ch => this._applyDefaults(ch)) };
+        value = { channels: channels.map(channel => this._applyDefaults(channel)) };
       }
     } catch (err) {
       console.error(`[${this.platform}-channels] Error loading channels:`, err.message);
     }
-    return { channels: [] };
+    this._channelCache = { value, mtimeMs: this._channelFileMtime(), invalidated: false };
+    return this._cloneChannelData(value);
   }
 
   saveChannels(data) {
     this._ensureDir();
     fs.writeFileSync(this.channelsFilePath, JSON.stringify(data, null, 2), 'utf8');
+    const value = {
+      channels: Array.isArray(data?.channels)
+        ? data.channels.map(channel => this._applyDefaults(channel))
+        : []
+    };
+    this._channelCache = { value, mtimeMs: this._channelFileMtime(), invalidated: false };
+    invalidateDashboardSource(this.platform);
+  }
+
+  invalidate() {
+    this._channelCache.invalidated = true;
   }
 
   // ── 查询 ──
@@ -101,7 +148,6 @@ class BaseChannelService {
     this._onAfterCreate(channel, data.channels);
     return channel;
   }
-
   updateChannel(channelId, updates) {
     const data = this.loadChannels();
     const index = data.channels.findIndex(ch => ch.id === channelId);

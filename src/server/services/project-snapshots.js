@@ -2,7 +2,8 @@
 
 const {
   getSnapshot,
-  invalidateSnapshot
+  invalidateSnapshot,
+  invalidateDashboardSourceSnapshot
 } = require('./snapshot-cache');
 
 const PROJECT_SNAPSHOT_TTL_MS = 60 * 1000;
@@ -41,10 +42,10 @@ async function getProjectListSnapshot(source, {
     waitOnForceMs: PROJECT_SNAPSHOT_WAIT_ON_FORCE_MS
   });
 }
-
 function invalidateProjectSnapshots(source) {
   invalidateSnapshot(projectListKey(source));
   invalidateSnapshot(projectCountKey(source));
+  invalidateDashboardSourceSnapshot(source);
 }
 
 module.exports = {

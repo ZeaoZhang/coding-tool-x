@@ -10,6 +10,7 @@ const path = require('path');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('./repo-scanner-base');
+const { LocalResourceIndex } = require('./local-resource-index');
 const { NATIVE_PATHS } = require('../../config/paths');
 const {
   parseFrontmatter
@@ -19,6 +20,57 @@ const {
   normalizeSafeRelativePath,
   resolveInsideRoot
 } = require('./config-artifact-paths');
+
+function readMetadataPrefix(filePath, platform) {
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.alloc(8192);
+  const chunks = [];
+  let total = 0;
+  const isGemini = platform === 'gemini';
+  try {
+    while (total < (isGemini ? 64 * 1024 : 1024 * 1024)) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      total += bytesRead;
+      let text = Buffer.concat(chunks).toString('utf8');
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      if (!isGemini && total === bytesRead && !/^\s*---\s*(?:\n|$)/.test(text)) break;
+      if (isGemini && /^\s*description\s*=.*(?:\n|$)/m.test(text)) break;
+      if (!isGemini && /^\s*---\s*\n[\s\S]*?\n\s*---\s*(?:\n|$)/.test(text)) break;
+    }
+    let result = Buffer.concat(chunks).toString('utf8');
+    if (result.charCodeAt(0) === 0xFEFF) result = result.slice(1);
+    if (isGemini && !/^\s*description\s*=/m.test(result)) {
+      const stat = fs.fstatSync(fd);
+      if (stat.size > total) {
+        const remaining = stat.size - total;
+        const tailSize = Math.min(1024 * 1024, remaining);
+        const offset = remaining <= 1024 * 1024 ? total : stat.size - tailSize;
+        const tail = Buffer.alloc(tailSize);
+        const bytesRead = fs.readSync(fd, tail, 0, tailSize, offset);
+        result += `\n${tail.toString('utf8', 0, bytesRead)}`;
+      }
+    }
+    return result;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function parseCommandMetadata(filePath, platform) {
+  const content = readMetadataPrefix(filePath, platform);
+  if (platform === 'gemini') {
+    try {
+      const parsed = toml.parse(content);
+      return { frontmatter: {}, gemini: { description: parsed.description || '' } };
+    } catch (error) {
+      const match = content.match(/^\s*description\s*=\s*(.+)$/m);
+      return { frontmatter: {}, gemini: { description: match ? match[1].trim().replace(/^['"]|['"]$/g, '') : '', parseError: error.message } };
+    }
+  }
+  return { ...parseFrontmatter(content), gemini: null };
+}
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
@@ -165,12 +217,9 @@ function parseGeminiCommandToml(content) {
 }
 
 function generateGeminiCommandToml({ description, body }) {
-  const data = {
-    prompt: body || ''
-  };
-  if (description) {
-    data.description = description;
-  }
+  const data = {};
+  if (description) data.description = description;
+  data.prompt = body || '';
   return tomlStringify(data);
 }
 
@@ -353,8 +402,73 @@ class CommandsService {
     this.projectCommandsDir = config.projectCommandsDir;
     this.repoScanner = new CommandsRepoScanner(this.platform, this.userCommandsDir);
     ensureDir(this.userCommandsDir);
+    this._localIndexes = new Map();
+    this._localIndexLimit = 32;
   }
 
+  _getLocalIndex(scope, projectPath = null) {
+    const root = scope === 'user' ? this.userCommandsDir : this.getProjectCommandsDir(projectPath);
+    if (!root) return null;
+    const key = `${this.platform}:${scope}:${path.resolve(root)}`;
+    if (!this._localIndexes.has(key)) {
+      if (this._localIndexes.size >= this._localIndexLimit) {
+        const [oldKey, oldIndex] = this._localIndexes.entries().next().value;
+        oldIndex.dispose();
+        this._localIndexes.delete(oldKey);
+      }
+      const extension = getCommandFileExtension(this.platform);
+      this._localIndexes.set(key, new LocalResourceIndex({ key, roots: [root],
+        scanFile: (descriptor) => {
+          if (!descriptor.fullPath.endsWith(extension)) return null;
+          const parsed = parseCommandMetadata(descriptor.fullPath, this.platform);
+          const relativePath = descriptor.relativePath;
+          const commandName = path.basename(relativePath, extension);
+          const namespace = path.dirname(relativePath);
+          return {
+            name: commandName,
+            namespace: namespace === '.' ? null : namespace,
+            scope,
+            path: relativePath,
+            fullPath: descriptor.fullPath,
+            description: parsed.gemini?.description || parsed.frontmatter.description || '',
+            allowedTools: parsed.frontmatter['allowed-tools'] || '',
+            argumentHint: parsed.frontmatter['argument-hint'] || '',
+            agent: parsed.frontmatter.agent || '',
+            model: parsed.frontmatter.model || '',
+            subtask: parsed.frontmatter.subtask || '',
+            parseError: parsed.gemini?.parseError || '',
+            updatedAt: descriptor.stat.mtime.getTime()
+          };
+        },
+        detailFile: (summary) => {
+          const content = fs.readFileSync(summary.fullPath, 'utf-8');
+          const parsed = this.platform === 'gemini'
+            ? { frontmatter: {}, body: '', gemini: parseGeminiCommandToml(content) }
+            : { ...parseFrontmatter(content), gemini: null };
+          return {
+            body: parsed.gemini?.body ?? parsed.body,
+            fullContent: content,
+            parseError: parsed.gemini?.parseError || '',
+            updatedAt: fs.statSync(summary.fullPath).mtime.getTime()
+          };
+        }
+      }));
+    }
+    const index = this._localIndexes.get(key);
+    this._localIndexes.delete(key);
+    this._localIndexes.set(key, index);
+    return index;
+  }
+
+  _invalidateLocal(scope, projectPath = null) {
+    this._getLocalIndex(scope, projectPath)?.invalidate();
+  }
+
+
+  dispose() {
+    for (const index of this._localIndexes.values()) index.dispose();
+    this._localIndexes.clear();
+  }
   getProjectCommandsDir(projectPath) {
     if (!projectPath) return null;
     return this.projectCommandsDir(projectPath);
@@ -406,133 +520,60 @@ class CommandsService {
    * @param {string} projectPath - 项目路径（可选，用于获取项目级命令）
    */
   listCommands(projectPath = null) {
-    const commands = [];
-
-    // 获取用户级命令
-    const userCommands = scanCommandsDir(this.userCommandsDir, this.userCommandsDir, 'user', this.platform);
-    commands.push(...userCommands);
-
-    // 获取项目级命令（如果提供了项目路径）
-    if (projectPath) {
-      const projectCommandsDir = this.getProjectCommandsDir(projectPath);
-      const projectCommands = scanCommandsDir(projectCommandsDir, projectCommandsDir, 'project', this.platform);
-      commands.push(...projectCommands);
-    }
-
-    // 按名称排序
+    const userCommands = this._getLocalIndex('user').listSync();
+    const projectCommands = projectPath ? this._getLocalIndex('project', projectPath).listSync() : [];
+    const commands = [...userCommands, ...projectCommands];
     commands.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-
     return {
       commands,
       total: commands.length,
       userCount: userCommands.length,
-      projectCount: commands.length - userCommands.length
+      projectCount: projectCommands.length
     };
   }
 
-  /**
-   * 获取所有命令（包括远程仓库）
-   * @param {boolean} forceRefresh - 强制刷新远程缓存
-   */
+  /** 获取所有命令（包括远程仓库） */
   async listAllCommands(projectPath = null, forceRefresh = false) {
-    // 获取本地命令
     const { commands: localCommands, userCount, projectCount } = this.listCommands(projectPath);
-
-    // 获取远程命令
     let remoteCommands = [];
     try {
       remoteCommands = await this.repoScanner.listRemoteItems(forceRefresh);
-
-      // 更新安装状态
-      for (const cmd of remoteCommands) {
-        cmd.installed = this.repoScanner.isInstalled(cmd.path);
-      }
+      for (const cmd of remoteCommands) cmd.installed = this.repoScanner.isInstalled(cmd.path);
     } catch (err) {
       console.warn('[CommandsService] Failed to fetch remote commands:', err.message);
     }
-
-    // 合并列表（本地优先）
     const allCommands = [...localCommands];
-    const localKeys = new Set(localCommands.map(c =>
-      c.namespace ? `${c.namespace}/${c.name}`.toLowerCase() : c.name.toLowerCase()
-    ));
-
+    const localKeys = new Set(localCommands.map(c => c.namespace ? `${c.namespace}/${c.name}`.toLowerCase() : c.name.toLowerCase()));
     for (const remote of remoteCommands) {
       const key = remote.namespace ? `${remote.namespace}/${remote.name}`.toLowerCase() : remote.name.toLowerCase();
-      if (!localKeys.has(key)) {
-        allCommands.push(remote);
-      }
+      if (!localKeys.has(key)) allCommands.push(remote);
     }
-
-    // 排序
     allCommands.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-
-    return {
-      commands: allCommands,
-      total: allCommands.length,
-      userCount,
-      projectCount,
-      remoteCount: remoteCommands.length
-    };
+    return { commands: allCommands, total: allCommands.length, userCount, projectCount, remoteCount: remoteCommands.length };
   }
 
-  /**
-   * 获取单个命令详情
-   */
+  /** 获取单个命令详情 */
   getCommand(name, scope, projectPath = null, namespace = null) {
     const safeName = normalizeCommandName(name);
     const safeNamespace = normalizeCommandNamespace(namespace);
     const baseDir = this._getBaseDir(scope, projectPath);
-    const { relativePath, fullPath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
-
-    if (!fs.existsSync(fullPath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(fullPath, 'utf-8');
-    const parsed = this.platform === 'gemini'
-      ? { frontmatter: {}, body: '', gemini: parseGeminiCommandToml(content) }
-      : { ...parseFrontmatter(content), gemini: null };
-
-    return {
-      name: safeName,
-      namespace: safeNamespace || null,
-      scope,
-      path: relativePath,
-      fullPath,
-      description: parsed.gemini?.description || parsed.frontmatter.description || '',
-      allowedTools: parsed.frontmatter['allowed-tools'] || '',
-      argumentHint: parsed.frontmatter['argument-hint'] || '',
-      agent: parsed.frontmatter.agent || '',
-      model: parsed.frontmatter.model || '',
-      subtask: parsed.frontmatter.subtask || '',
-      body: parsed.gemini?.body ?? parsed.body,
-      parseError: parsed.gemini?.parseError || '',
-      fullContent: content,
-      updatedAt: fs.statSync(fullPath).mtime.getTime()
-    };
+    const { relativePath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
+    const detail = this._getLocalIndex(scope, projectPath)?.getSync(relativePath);
+    if (!detail) return null;
+    return { ...detail, name: safeName, namespace: safeNamespace || null, scope, path: relativePath };
   }
 
-  /**
-   * 创建命令
-   */
+  /** 创建命令 */
   createCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body }) {
     const safeName = normalizeCommandName(name);
     const safeNamespace = normalizeCommandNamespace(namespace);
     const baseDir = this._getBaseDir(scope, projectPath);
     const { fullPath: filePath } = this._resolveCommandPath(baseDir, safeName, safeNamespace);
-    const targetDir = path.dirname(filePath);
-    ensureDir(targetDir);
-
-    // 检查是否已存在
-    if (fs.existsSync(filePath)) {
-      throw new Error(`命令 "${safeName}" 已存在`);
-    }
-
+    ensureDir(path.dirname(filePath));
+    if (fs.existsSync(filePath)) throw new Error(`命令 "${safeName}" 已存在`);
     const content = this._generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body });
-
     fs.writeFileSync(filePath, content, 'utf-8');
-
+    this._invalidateLocal(scope, projectPath);
     return this.getCommand(safeName, scope, projectPath, safeNamespace);
   }
 
@@ -550,9 +591,8 @@ class CommandsService {
     }
 
     const content = this._generateCommandContent({ description, allowedTools, argumentHint, agent, model, subtask, body });
-
     fs.writeFileSync(filePath, content, 'utf-8');
-
+    this._invalidateLocal(scope, projectPath);
     return this.getCommand(safeName, scope, projectPath, safeNamespace);
   }
 
@@ -584,6 +624,7 @@ class CommandsService {
       }
     }
 
+    this._invalidateLocal(scope, projectPath);
     return { success: true, message: '命令已删除' };
   }
 
@@ -645,14 +686,16 @@ class CommandsService {
    * 从远程仓库安装命令
    */
   async installFromRemote(command) {
-    return this.repoScanner.installCommand(command);
+    const result = await this.repoScanner.installCommand(command);
+    if (result && result.success !== false) this._invalidateLocal('user');
+    return result;
   }
 
-  /**
-   * 卸载命令
-   */
+  /** 卸载命令 */
   uninstallCommand(relativePath) {
-    return this.repoScanner.uninstall(relativePath);
+    const result = this.repoScanner.uninstall(relativePath);
+    if (result && result.success !== false) this._invalidateLocal('user');
+    return result;
   }
 
   // ==================== 格式转换 ====================

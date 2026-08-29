@@ -235,9 +235,10 @@ const emptyText = computed(() => {
   return '暂无可用插件，请配置仓库源'
 })
 
-async function loadCapabilities(platform) {
+async function loadCapabilities(platform, requestId) {
   try {
     const res = await getPluginCapabilities(platform)
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
     if (res.success && res.capabilities) {
       capabilities.value = {
         supportsPlugins: true,
@@ -249,20 +250,23 @@ async function loadCapabilities(platform) {
         syncRepos: false,
         ...res.capabilities
       }
-      return
+      return true
     }
   } catch {
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
     // 旧服务端降级：保留 Claude/OpenCode 可用，Codex 不再前端硬编码只读
   }
+  if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
   capabilities.value = {
-    supportsPlugins: managedPluginPlatforms.includes(currentPlatform.value),
-    repositories: managedPluginPlatforms.includes(currentPlatform.value),
-    market: managedPluginPlatforms.includes(currentPlatform.value),
-    install: managedPluginPlatforms.includes(currentPlatform.value),
-    uninstall: managedPluginPlatforms.includes(currentPlatform.value),
-    import: currentPlatform.value === 'claude',
-    syncRepos: currentPlatform.value === 'claude'
+    supportsPlugins: managedPluginPlatforms.value.includes(platform),
+    repositories: managedPluginPlatforms.value.includes(platform),
+    market: managedPluginPlatforms.value.includes(platform),
+    install: managedPluginPlatforms.value.includes(platform),
+    uninstall: managedPluginPlatforms.value.includes(platform),
+    import: platform === 'claude',
+    syncRepos: platform === 'claude'
   }
+  return true
 }
 
 async function loadData(force = false) {
@@ -270,7 +274,8 @@ async function loadData(force = false) {
   const platform = currentPlatform.value
   loading.value = true
   try {
-    await loadCapabilities(platform)
+    if (!await loadCapabilities(platform, requestId)) return
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
 
     if (capabilities.value.supportsPlugins === false) {
       plugins.value = []
@@ -279,11 +284,14 @@ async function loadData(force = false) {
 
     if (force && capabilities.value.syncRepos) {
       await syncPluginRepos(platform, requestContext()).catch(() => {})
+      if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
     }
 
     const installedRes = await getPlugins(platform, {
       ...(props.projectPath ? { cwd: props.projectPath } : {})
     })
+    if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
+
     const installedList = installedRes.success ? installedRes.plugins : []
     let marketList = []
 
@@ -348,7 +356,9 @@ async function loadData(force = false) {
         })
     }
   } catch (err) {
-    message.error('加载插件失败: ' + err.message)
+    if (requestId === loadRequestId.value && platform === currentPlatform.value) {
+      message.error('加载插件失败: ' + err.message)
+    }
   } finally {
     if (requestId === loadRequestId.value) {
       loading.value = false

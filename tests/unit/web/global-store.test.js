@@ -78,4 +78,29 @@ describe('global web store proxy channel state', () => {
       })
     ]);
   });
+
+  test('uses dashboard hydration instead of reloading every channel endpoint', async () => {
+    const store = useGlobalStore()
+    store.hydrateFromDashboard({
+      channels: {
+        claude: [{ id: 'claude-1', name: 'Claude' }],
+        codex: [{ id: 'codex-1', name: 'Codex' }],
+        gemini: [{ id: 'gemini-1', name: 'Gemini' }],
+        opencode: [{ id: 'opencode-1', name: 'OpenCode' }],
+        omp: [{ id: 'omp-1', name: 'OMP' }]
+      },
+      proxyStatus: {}
+    })
+
+    const result = await store.loadChannels()
+
+    expect(store.dashboardHydrated).toBe(true)
+    expect(result.channels).toEqual({
+      claude: [{ id: 'claude-1', name: 'Claude' }],
+      codex: [{ id: 'codex-1', name: 'Codex' }],
+      gemini: [{ id: 'gemini-1', name: 'Gemini' }],
+      opencode: [{ id: 'opencode-1', name: 'OpenCode' }],
+      omp: [{ id: 'omp-1', name: 'OMP' }]
+    })
+  })
 });

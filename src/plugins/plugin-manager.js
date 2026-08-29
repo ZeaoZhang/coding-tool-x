@@ -36,8 +36,8 @@ function initializePlugins(options = {}) {
     .sort((a, b) => (a[1].loadOrder || 10) - (b[1].loadOrder || 10));
 
   // Load each enabled plugin
-  for (const [name] of sortedPlugins) {
-    const result = loadPlugin(name);
+  for (const [name, pluginInfo] of sortedPlugins) {
+    const result = loadPlugin(name, { pluginInfo });
 
     if (result.success) {
       loadedCount++;

@@ -589,7 +589,7 @@ const channelPanelFactories = {
       syncCurrent: syncCurrentClaudeChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
-        await createClaudeChannel(
+        return await createClaudeChannel(
           form.name,
           form.baseUrl,
           authPayload.apiKey,
@@ -612,7 +612,7 @@ const channelPanelFactories = {
       },
       update: async (channel, form) => {
         const authPayload = buildAuthPayload(form)
-        await updateClaudeChannel(channel.id, {
+        return await updateClaudeChannel(channel.id, {
           name: form.name,
           baseUrl: form.baseUrl,
           apiKey: authPayload.apiKey,
@@ -631,9 +631,7 @@ const channelPanelFactories = {
           balanceUserId: authPayload.balanceUserId
         })
       },
-      toggle: async (channel, enabled) => {
-        await updateClaudeChannel(channel.id, { enabled })
-      },
+      toggle: (channel, enabled) => updateClaudeChannel(channel.id, { enabled }),
       remove: deleteClaudeChannel,
       applyToSettings: async (channel) => {
         return applyChannelToSettings(channel.id)
@@ -860,7 +858,7 @@ const channelPanelFactories = {
       syncCurrent: syncCurrentCodexChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
-        await createCodexChannel(
+        return await createCodexChannel(
           form.name,
           form.providerKey,
           form.baseUrl,
@@ -881,7 +879,7 @@ const channelPanelFactories = {
       },
       update: async (channel, form) => {
         const authPayload = buildAuthPayload(form)
-        await updateCodexChannel(channel.id, {
+        return await updateCodexChannel(channel.id, {
           name: form.name,
           baseUrl: form.baseUrl,
           apiKey: authPayload.apiKey,
@@ -1116,7 +1114,7 @@ const channelPanelFactories = {
       syncCurrent: syncCurrentGeminiChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
-        await createGeminiChannel(
+        return await createGeminiChannel(
           form.name,
           form.baseUrl,
           authPayload.apiKey,
@@ -1138,7 +1136,7 @@ const channelPanelFactories = {
       },
       update: async (channel, form) => {
         const authPayload = buildAuthPayload(form)
-        await updateGeminiChannel(channel.id, {
+        return await updateGeminiChannel(channel.id, {
           name: form.name,
           model: form.model,
           baseUrl: form.baseUrl,
@@ -1419,7 +1417,7 @@ const channelPanelFactories = {
       syncCurrent: syncCurrentOpenCodeChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
-        await createOpenCodeChannel(
+        return await createOpenCodeChannel(
           form.name,
           form.baseUrl,
           authPayload.apiKey,
@@ -1442,7 +1440,7 @@ const channelPanelFactories = {
       },
       update: async (channel, form) => {
         const authPayload = buildAuthPayload(form)
-        await updateOpenCodeChannel(channel.id, {
+        return await updateOpenCodeChannel(channel.id, {
           name: form.name,
           baseUrl: form.baseUrl,
           apiKey: authPayload.apiKey,
@@ -1799,7 +1797,7 @@ const channelPanelFactories = {
       syncCurrent: syncCurrentOmpChannel,
       create: async (form) => {
         const authPayload = buildAuthPayload(form)
-        await createOmpChannel(form.name, form.baseUrl, authPayload.apiKey, {
+        return await createOmpChannel(form.name, form.baseUrl, authPayload.apiKey, {
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
           providerKey: form.providerKey,
@@ -1825,7 +1823,7 @@ const channelPanelFactories = {
       },
       update: async (channel, form) => {
         const authPayload = buildAuthPayload(form)
-        await updateOmpChannel(channel.id, {
+        return await updateOmpChannel(channel.id, {
           name: form.name,
           providerKey: form.providerKey,
           baseUrl: form.baseUrl,

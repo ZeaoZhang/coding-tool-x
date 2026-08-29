@@ -5,16 +5,18 @@
  */
 
 import { client } from './client'
+import { requestKey, requestSingleflight } from './request-singleflight'
 
 /**
  * 获取命令列表
  * @param {string} projectPath - 项目路径（可选，用于获取项目级命令）
  */
-export async function getCommands(projectPath = null, platform = 'claude') {
-  const response = await client.get('/commands', {
-    params: projectPath ? { projectPath, platform } : { platform }
-  })
-  return response.data
+export async function getCommands(projectPath = null, platform = 'claude', options = {}) {
+  const key = requestKey('commands', platform, options.scope || '', projectPath || '')
+  return requestSingleflight(key, signal => client.get('/commands', {
+    params: projectPath ? { projectPath, platform } : { platform },
+    signal
+  }).then(response => response.data), 'commands', `commands:${platform}`)
 }
 
 /**
@@ -22,14 +24,14 @@ export async function getCommands(projectPath = null, platform = 'claude') {
  * @param {string} projectPath - 项目路径（可选）
  * @param {boolean} forceRefresh - 是否强制刷新缓存
  */
-export async function getAllCommands(projectPath = null, forceRefresh = false, platform = 'claude') {
+export async function getAllCommands(projectPath = null, forceRefresh = false, platform = 'claude', options = {}) {
   const params = {}
   if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
   if (forceRefresh) params.refresh = '1'
-
-  const response = await client.get('/commands/all', { params })
-  return response.data
+  const key = requestKey('commands-all', platform, options.scope || '', projectPath || '')
+  return requestSingleflight(key, signal => client.get('/commands/all', { params, signal })
+    .then(response => response.data), 'commands-all', `commands-all:${platform}`)
 }
 
 /**
@@ -50,14 +52,14 @@ export async function getCommandsStats(projectPath = null, platform = 'claude') 
  * @param {string} projectPath - 项目路径（项目级命令需要）
  * @param {string} namespace - 命名空间（可选）
  */
-export async function getCommand(name, scope, projectPath = null, namespace = null, platform = 'claude') {
+export async function getCommand(name, scope, projectPath = null, namespace = null, platform = 'claude', options = {}) {
   const params = {}
   if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
   if (namespace) params.namespace = namespace
-
-  const response = await client.get(`/commands/${scope}/${name}`, { params })
-  return response.data
+  const key = requestKey(`command-detail:${name}:${namespace || ''}`, platform, scope || '', projectPath || '')
+  return requestSingleflight(key, signal => client.get(`/commands/${scope}/${name}`, { params, signal })
+    .then(response => response.data), 'command-detail', `command-detail:${platform}`)
 }
 
 /**

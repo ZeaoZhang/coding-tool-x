@@ -76,6 +76,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const isLoading = ref(false)
   const isLoaded = ref(false)
   let loadPromise = null
+  let refreshWindowPromise = null
+  let refreshWindowUntil = 0
   let snapshotRefreshTimer = null
   let snapshotRefreshAttempt = 0
 
@@ -195,6 +197,18 @@ export const useDashboardStore = defineStore('dashboard', () => {
     })
 
     return loadPromise
+  }
+
+  function scheduleRefresh(options = {}) {
+    const now = Date.now()
+    if (refreshWindowPromise) return refreshWindowPromise
+    if (now < refreshWindowUntil) return Promise.resolve(dashboardData.value)
+
+    refreshWindowUntil = now + 5000
+    refreshWindowPromise = loadDashboard(true, options).finally(() => {
+      refreshWindowPromise = null
+    })
+    return refreshWindowPromise
   }
 
   async function refreshChannels(channelType) {

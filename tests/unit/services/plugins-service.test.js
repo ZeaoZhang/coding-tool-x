@@ -168,8 +168,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
-  execFileSyncSpy.mockRestore();
   delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
   delete require.cache[require.resolve('../../../src/server/services/omp-native-plugin-adapter')];
   delete require.cache[require.resolve('../../../src/server/services/omp-config')];
@@ -1087,7 +1087,75 @@ describe('PluginsService OMP native plugin CLI', () => {
       repositoryAuth: false
     }));
   });
+  test('caches OMP plugin list by cwd until forced', () => {
+    const { PluginsService } = loadModule();
+
+    const svc = new PluginsService('omp');
+
+    const first = svc.listPlugins({ cwd: testDir });
+    const second = svc.listPlugins({ cwd: testDir });
+    const forced = svc.listPlugins({ cwd: testDir, force: true });
+
+    expect(second).toEqual(first);
+    expect(forced).toEqual(first);
+    const listCalls = execFileSyncSpy.mock.calls.filter(([, args]) =>
+      args?.join(' ') === 'plugin list --json'
+    );
+    expect(listCalls).toHaveLength(2);
+  });
+
 });
+
+describe('PluginsService Claude list aggregation', () => {
+  test('reads installed metadata once across repeated list projections', () => {
+    const installedPath = path.join(testDir, 'plugins', 'installed_plugins.json');
+    const pluginPath = path.join(testDir, 'installed', 'demo');
+    fs.mkdirSync(path.dirname(installedPath), { recursive: true });
+    fs.mkdirSync(pluginPath, { recursive: true });
+    fs.writeFileSync(path.join(pluginPath, 'plugin.json'), JSON.stringify({
+      name: 'demo',
+      description: 'Demo plugin',
+      version: '1.0.0'
+    }));
+    fs.writeFileSync(installedPath, JSON.stringify({
+      version: 2,
+      plugins: {
+        'demo@local': [{ installPath: pluginPath, version: '1.0.0', scope: 'user' }]
+      }
+    }));
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+
+    const first = svc.listPlugins();
+    const second = svc.listPlugins();
+
+    expect(first).toEqual(second);
+    expect(readSpy.mock.calls.filter(([filePath]) => filePath === installedPath)).toHaveLength(1);
+  });
+});
+  test('coalesces concurrent market refreshes for one repository set', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    svc.getRepos = vi.fn(() => [{
+      owner: 'owner',
+      name: 'market',
+      branch: 'main',
+      enabled: true
+    }]);
+    let resolveTree;
+    const treeResult = new Promise(resolve => {
+      resolveTree = resolve;
+    });
+    const fetchTree = vi.spyOn(svc, 'fetchRepoTree').mockReturnValue(treeResult);
+
+    const requests = Array.from({ length: 20 }, () => svc.getMarketPlugins(true));
+    await Promise.resolve();
+
+    expect(fetchTree).toHaveBeenCalledTimes(1);
+    resolveTree([]);
+    await Promise.all(requests);
+  });
 
 describe('PluginsService Claude native plugin integration', () => {
   test('installPlugin writes Claude cache, marketplace, installed registry, and enabled setting', async () => {

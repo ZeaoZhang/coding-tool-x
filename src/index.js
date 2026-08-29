@@ -5,21 +5,56 @@
  * 主入口文件
  */
 
-const { loadConfig } = require('./config/loader');
-const { resetConfig } = require('./reset-config');
-const { handleStart, handleStop, handleRestart, handleStatus } = require('./commands/daemon');
-const { handleProxyStart: proxyStart, handleProxyStop: proxyStop, handleProxyRestart, handleProxyStatus: proxyStatus } = require('./commands/proxy-control');
-const { handleLogs } = require('./commands/logs');
-const { handleStats, handleStatsExport } = require('./commands/stats');
-const { handleDoctor } = require('./commands/doctor');
-const { handleUpdate } = require('./commands/update');
-const { ensureStorageDirMigrated } = require('./config/paths');
-const { createPlatformCommandRegistry } = require('./commands/platform-command-registry');
-const eventBus = require('./plugins/event-bus');
-const { hasHostFlag } = require('./utils/cli-flags');
 const chalk = require('chalk');
 const path = require('path');
 const fs = require('fs');
+
+function lazyExport(modulePath, exportName) {
+  return (...args) => require(modulePath)[exportName](...args);
+}
+
+const loadConfig = lazyExport('./config/loader', 'loadConfig');
+const resetConfig = lazyExport('./reset-config', 'resetConfig');
+const handleStart = lazyExport('./commands/daemon', 'handleStart');
+const handleStop = lazyExport('./commands/daemon', 'handleStop');
+const handleRestart = lazyExport('./commands/daemon', 'handleRestart');
+const handleStatus = lazyExport('./commands/daemon', 'handleStatus');
+const proxyStart = lazyExport('./commands/proxy-control', 'handleProxyStart');
+const proxyStop = lazyExport('./commands/proxy-control', 'handleProxyStop');
+const handleProxyRestart = lazyExport('./commands/proxy-control', 'handleProxyRestart');
+const proxyStatus = lazyExport('./commands/proxy-control', 'handleProxyStatus');
+const handleLogs = lazyExport('./commands/logs', 'handleLogs');
+const handleStats = lazyExport('./commands/stats', 'handleStats');
+const handleStatsExport = lazyExport('./commands/stats', 'handleStatsExport');
+const handleDoctor = lazyExport('./commands/doctor', 'handleDoctor');
+const handleUpdate = lazyExport('./commands/update', 'handleUpdate');
+const ensureStorageDirMigrated = lazyExport('./config/paths', 'ensureStorageDirMigrated');
+const createPlatformCommandRegistry = lazyExport('./commands/platform-command-registry', 'createPlatformCommandRegistry');
+
+const eventBus = {
+  emitSync(...args) {
+    return require('./plugins/event-bus').emitSync(...args);
+  }
+};
+
+const PluginManager = {
+  initializePlugins(...args) {
+    return require('./plugins/plugin-manager').initializePlugins(...args);
+  },
+  isPluginCommand(...args) {
+    return require('./plugins/plugin-manager').isPluginCommand(...args);
+  },
+  executePluginCommand(...args) {
+    return require('./plugins/plugin-manager').executePluginCommand(...args);
+  },
+  shutdownPlugins(...args) {
+    return require('./plugins/plugin-manager').shutdownPlugins(...args);
+  }
+};
+
+function hasHostFlag(argv = process.argv) {
+  return Array.isArray(argv) && (argv.includes('--host') || argv.includes('--hosts'));
+}
 
 function getInquirer() {
   return require('inquirer');
@@ -171,6 +206,11 @@ function shutdownProcess(code = 0, error = null) {
     await stopOwnedOmpGatewayBeforeExit();
     eventBus.emitSync('cli:shutdown', {});
     PluginManager.shutdownPlugins();
+    try {
+      await require('./server/services/statistics-service').shutdownStatistics();
+    } catch (flushError) {
+      console.error(`[WARN] Statistics flush failed during shutdown: ${flushError.message}`);
+    }
     if (error) {
       console.error(error);
     }
@@ -198,17 +238,8 @@ process.on('SIGTERM', () => {
  * 主函数
  */
 async function main() {
-  ensureStorageDirMigrated();
-
   // 处理命令行参数
   const args = process.argv.slice(2);
-
-  // LAN 快捷入口，等同于 ctx ui --host/--hosts
-  if (hasHostFlag(process.argv) && !args.some((arg) => arg && !arg.startsWith('-'))) {
-    const { handleUI } = require('./commands/ui');
-    await handleUI();
-    return;
-  }
 
   // --version 或 -v - 显示版本号
   if (args[0] === '--version' || args[0] === '-v') {
@@ -219,6 +250,15 @@ async function main() {
   // --help 或 -h - 显示帮助信息
   if (args[0] === '--help' || args[0] === '-h') {
     showHelp();
+    return;
+  }
+
+  ensureStorageDirMigrated();
+
+  // LAN 快捷入口，等同于 ctx ui --host/--hosts
+  if (hasHostFlag(process.argv) && !args.some((arg) => arg && !arg.startsWith('-'))) {
+    const { handleUI } = require('./commands/ui');
+    await handleUI();
     return;
   }
 
@@ -326,6 +366,12 @@ async function main() {
     return;
   }
 
+  // plugin 命令 - 插件管理
+  if (args[0] === 'plugin') {
+    const { handlePluginCommand } = require('./commands/plugin');
+    await handlePluginCommand(args.slice(1));
+    return;
+  }
   // Registry-derived platform proxy commands
   const commandRegistry = createPlatformCommandRegistry();
   const platform = commandRegistry.resolve(args[0]);
@@ -421,12 +467,6 @@ async function main() {
     }
   }
 
-  // plugin 命令 - 插件管理
-  if (args[0] === 'plugin') {
-    const { handlePluginCommand } = require('./commands/plugin');
-    await handlePluginCommand(args.slice(1));
-    return;
-  }
 
   // 加载配置
   let config = loadConfig();

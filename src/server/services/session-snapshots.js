@@ -4,7 +4,8 @@ const path = require('path');
 const { fork } = require('child_process');
 const {
   getSnapshot,
-  invalidateSnapshot
+  invalidateSnapshot,
+  invalidateDashboardSourceSnapshot
 } = require('./snapshot-cache');
 
 const SESSION_SNAPSHOT_TTL_MS = 60 * 1000;
@@ -122,14 +123,15 @@ async function getSessionListSnapshot(source, projectName, {
     deferMs: SESSION_SNAPSHOT_DEFER_MS
   });
 }
-
 function invalidateSessionSnapshots(source, projectName = null) {
   if (!source) return;
   if (projectName) {
     invalidateSnapshot(sessionListKey(source, projectName));
+    invalidateDashboardSourceSnapshot(source);
     return;
   }
   invalidateSnapshot(`sessions:list:${source}:`);
+  invalidateDashboardSourceSnapshot(source);
 }
 
 module.exports = {

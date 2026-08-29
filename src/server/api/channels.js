@@ -75,8 +75,8 @@ router.get('/pool/status', (req, res) => {
 // GET /api/channels/current - Get current settings
 router.get('/current', (req, res) => {
   try {
-    const settings = getCurrentSettings();
     const channels = getAllChannels();
+    const settings = getCurrentSettings(channels);
     let currentChannel = null;
 
     if (settings) {

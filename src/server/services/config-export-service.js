@@ -559,13 +559,19 @@ function buildCommandExportItem(command, platform) {
 
 function exportAgentsSnapshotByPlatform() {
   return AGENT_PLATFORMS.reduce((result, platform) => {
+    let agentsService;
     try {
-      const agentsService = new AgentsService(platform);
+      agentsService = new AgentsService(platform);
       const { agents: rawAgents = [] } = agentsService.listAgents();
-      result[platform] = rawAgents.map(agent => buildAgentExportItem(agent, platform));
+      result[platform] = rawAgents.map(agent => {
+        const detail = typeof agentsService.getAgent === 'function' ? (agentsService.getAgent(agent.fileName, agent.scope || 'user') || agent) : agent;
+        return buildAgentExportItem({ ...agent, ...detail }, platform);
+      });
     } catch (err) {
       console.warn(`[ConfigExport] Failed to export agents for ${platform}:`, err.message);
       result[platform] = [];
+    } finally {
+      agentsService?.dispose?.();
     }
     return result;
   }, {});
@@ -573,13 +579,19 @@ function exportAgentsSnapshotByPlatform() {
 
 function exportCommandsSnapshotByPlatform() {
   return COMMAND_PLATFORMS.reduce((result, platform) => {
+    let commandsService;
     try {
-      const commandsService = new CommandsService(platform);
+      commandsService = new CommandsService(platform);
       const { commands: rawCommands = [] } = commandsService.listCommands();
-      result[platform] = rawCommands.map(command => buildCommandExportItem(command, platform));
+      result[platform] = rawCommands.map(command => {
+        const detail = typeof commandsService.getCommand === 'function' ? (commandsService.getCommand(command.name, command.scope || 'user', null, command.namespace) || command) : command;
+        return buildCommandExportItem({ ...command, ...detail }, platform);
+      });
     } catch (err) {
       console.warn(`[ConfigExport] Failed to export commands for ${platform}:`, err.message);
       result[platform] = [];
+    } finally {
+      commandsService?.dispose?.();
     }
     return result;
   }, {});

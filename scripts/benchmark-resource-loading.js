@@ -1,0 +1,45 @@
+#!/usr/bin/env node
+'use strict';
+/** Benchmark actual local-resource service APIs against isolated synthetic paths. */
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { performance } = require('perf_hooks');
+const PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const registry = new Map();
+let installedDir;
+function stub(file, exports) { require.cache[file] = { id: file, filename: file, loaded: true, exports }; }
+function installStubs(root) {
+  const dirs = Object.fromEntries(PLATFORMS.map(p => [p, path.join(root, p)]));
+  const files = kind => Object.fromEntries(PLATFORMS.map(p => [p, path.join(root, kind, `${p}.json`)]));
+  installedDir = path.join(root, 'plugins', 'installed');
+  stub(require.resolve('../src/config/paths'), { HOME_DIR: root, NATIVE_PATHS: {
+    claude: { dir: dirs.claude, settings: path.join(dirs.claude, 'settings.json'), commands: path.join(dirs.claude, 'commands'), agents: path.join(dirs.claude, 'agents'), skills: path.join(dirs.claude, 'skills'), plugins: path.join(dirs.claude, 'plugins') },
+    codex: { dir: dirs.codex, config: path.join(dirs.codex, 'config.toml') }, gemini: { dir: dirs.gemini, env: path.join(dirs.gemini, '.env') }, opencode: { dir: dirs.opencode, config: dirs.opencode }, omp: { dir: dirs.omp, skills: path.join(dirs.omp, 'skills') }
+  }, PATHS: { base: root, config: path.join(root, 'config'), localSkills: Object.fromEntries(PLATFORMS.map(p => [p, path.join(root, 'local-skills', p)])), skillRepos: files('repos'), skillCaches: files('cache'), pluginRepos: files('plugin-repos'), pluginMarketCache: files('plugin-cache'), plugins: { registry: path.join(root, 'plugins', 'registry.json') } }, getRepoScannerReposPath: t => path.join(root, 'repos', `${t}.json`), getRepoScannerCachePath: t => path.join(root, 'cache', `${t}-cache.json`) });
+  stub(require.resolve('../src/utils/home-dir'), { resolvePreferredHomeDir: () => root });
+  stub(require.resolve('../src/server/services/omp-config'), { getOmpCommand: () => 'omp', getOmpPaths: () => ({ agentDir: dirs.omp, settings: path.join(dirs.omp, 'config.yml'), skills: path.join(dirs.omp, 'skills') }) });
+  stub(require.resolve('../src/plugins/registry'), { listPlugins: () => [...registry.values()], getPlugin: n => registry.get(n) || null, updatePlugin: () => null });
+  stub(require.resolve('../src/plugins/plugin-installer'), { installPlugin: () => null, uninstallPlugin: () => null });
+  stub(require.resolve('../src/plugins/plugin-manager'), { initializePlugins: async () => {}, shutdownPlugins: async () => {} });
+  stub(require.resolve('../src/plugins/constants'), { INSTALLED_DIR: installedDir, CONFIG_DIR: path.join(root, 'plugins', 'config') });
+}
+function clearModules() { for (const m of ['../src/server/services/commands-service', '../src/server/services/agents-service', '../src/server/services/skill-service', '../src/server/services/plugins-service', '../src/server/services/omp-native-plugin-adapter']) delete require.cache[require.resolve(m)]; }
+function fixture(root) {
+  const d = { commands: path.join(root, 'claude', 'commands'), agents: path.join(root, 'claude', 'agents'), skills: path.join(root, 'local-skills', 'claude'), nativeSkills: path.join(root, 'claude', 'skills') };
+  for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true }); fs.mkdirSync(installedDir, { recursive: true });
+  for (const p of PLATFORMS) { fs.mkdirSync(path.join(root, 'repos'), { recursive: true }); fs.mkdirSync(path.join(root, 'cache'), { recursive: true }); fs.mkdirSync(path.join(root, 'local-skills', p), { recursive: true }); fs.writeFileSync(path.join(root, 'repos', `${p}.json`), '{"repos":[]}'); }
+  const installed = {};
+  for (let i = 0; i < 12; i++) {
+    const cg = path.join(d.commands, `group-${i % 3}`); fs.mkdirSync(cg, { recursive: true }); fs.writeFileSync(path.join(cg, `command-${i}.md`), `---\ndescription: Command ${i}\n---\nbody\n`);
+    fs.writeFileSync(path.join(d.agents, `agent-${i}.md`), `---\nname: Agent ${i}\ndescription: Agent ${i}\n---\nprompt\n`);
+    const text = `---\nname: Skill ${i}\ndescription: Skill ${i}\n---\nbody\n`; const sd = path.join(d.skills, `skill-${i}`); const ns = path.join(d.nativeSkills, `skill-${i}`); fs.mkdirSync(sd, { recursive: true }); fs.mkdirSync(ns, { recursive: true }); fs.writeFileSync(path.join(sd, 'SKILL.md'), text); fs.writeFileSync(path.join(ns, 'SKILL.md'), text);
+    const pd = path.join(installedDir, `plugin-${i}`); fs.mkdirSync(pd, { recursive: true }); const manifest = { name: `plugin-${i}`, version: '1.0.0', description: `Plugin ${i}`, commands: [], hooks: [] }; fs.writeFileSync(path.join(pd, 'plugin.json'), JSON.stringify(manifest)); registry.set(manifest.name, { ...manifest, enabled: true }); installed[`${manifest.name}@local`] = [{ installPath: pd, version: manifest.version, scope: 'user' }];
+  }
+  fs.mkdirSync(path.join(root, 'claude', 'plugins'), { recursive: true }); fs.writeFileSync(path.join(root, 'claude', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: installed }));
+}
+function counters() { const c = { syncFsCalls: 0, syncReadCalls: 0, scanCalls: 0, parseCalls: 0 }; const methods = ['existsSync', 'readdirSync', 'statSync', 'readFileSync']; const originals = Object.fromEntries(methods.map(m => [m, fs[m]])); const json = JSON.parse; for (const m of methods) fs[m] = (...a) => { c.syncFsCalls++; if (m === 'syncReadCalls') c.syncReadCalls++; if (m === 'readdirSync') c.scanCalls++; if (m === 'readFileSync') c.syncReadCalls++; return originals[m](...a); }; JSON.parse = (...a) => { c.parseCalls++; return json(...a); }; return { c, restore: () => { for (const [m, f] of Object.entries(originals)) fs[m] = f; JSON.parse = json; } }; }
+function summary(xs) { const s = [...xs].sort((a, b) => a - b); const at = p => s[Math.max(0, Math.ceil(s.length * p) - 1)] || 0; return { p50: +at(.5).toFixed(3), p95: +at(.95).toFixed(3), max: +Math.max(...xs, 0).toFixed(3) }; }
+async function timed(fn) { const t = performance.now(); const value = await fn(); return { value, ms: performance.now() - t }; }
+async function benchmark(name, create, list, detail, reset, forceList = list) { const op = counters(); let refreshOperationCalls = 0; let active = 0; let maxActive = 0; const run = async (service, fn, refresh) => { await new Promise(r => setImmediate(r)); if (refresh) refreshOperationCalls++; active++; maxActive = Math.max(maxActive, active); try { return await fn(service); } finally { active--; } }; try { reset(); const concurrent = []; await Promise.all(Array.from({ length: 20 }, () => timed(() => run(create(), forceList, true)).then(x => concurrent.push(x.ms)))); reset(); const cold = []; let first; for (let i = 0; i < 5; i++) { const service = create(); const x = await timed(() => run(service, list, true)); cold.push(x.ms); first ||= Array.isArray(x.value) ? x.value[0] : x.value?.[name]?.[0]; if (first) { const d = await detail(service, first); if (name === 'plugins' && d?.manifest?.name !== first.name) throw new Error('plugin manifest detail was not loaded'); } } const cachedService = create(); await run(cachedService, list, false); const cached = []; for (let i = 0; i < 20; i++) cached.push((await timed(() => list(cachedService))).ms); return { cold: summary(cold), cached: summary(cached), concurrent20: summary(concurrent), counts: { ...op.c, refreshOperationCalls, inflightRefreshCalls: refreshOperationCalls, maxInflightRefreshes: maxActive, refreshPromiseSupport: 'unsupported in pre-Task5 legacy services' } }; } finally { op.restore(); } }
+(async () => { const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-resource-loading-')); try { installStubs(root); clearModules(); fixture(root); const { CommandsService } = require('../src/server/services/commands-service'); const { AgentsService } = require('../src/server/services/agents-service'); const { SkillService } = require('../src/server/services/skill-service'); const { PluginsService } = require('../src/server/services/plugins-service'); const f = { commands: [() => new CommandsService('claude'), s => s.listCommands().commands, (s, x) => s.getCommand(x.name, x.scope, null, x.namespace), () => {}], agents: [() => new AgentsService('claude'), s => s.listAgents().agents, (s, x) => s.getAgent(x.fileName, x.scope), () => {}], skills: [() => new SkillService('claude'), s => s.listSkills(false), (s, x) => s.getSkillDetail(x.directory), () => new SkillService('claude').clearCache({ removeFile: true }), s => s.listSkills(true)], plugins: [() => new PluginsService('claude'), s => s.listPlugins().plugins, (s, x) => s.getPlugin(x.name), () => {}] }; const out = {}; for (const [n, [create, list, detail, reset, force]] of Object.entries(f)) out[n] = await benchmark(n, create, list, detail, reset, force || list); console.log('Local resource loading benchmark (actual production services; synthetic temporary fixture)'); console.log(JSON.stringify(out, null, 2)); } finally { fs.rmSync(root, { recursive: true, force: true }); } })();
