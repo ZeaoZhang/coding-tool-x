@@ -1,0 +1,37 @@
+{
+  "key": "codex",
+  "title": "Codex-CLI",
+  "label": "Codex",
+  "command": "codex",
+  "iconToken": "code",
+  "color": "#3b82f6",
+  "defaultVisible": true,
+  "helpLabel": "Codex",
+  "terminalColor": "green",
+  "cliSelectable": true,
+  "portLabel": "Codex 代理服务端口:",
+  "apiBasePath": "/api/codex/proxy",
+  "portKey": "codexProxy",
+  "defaultPort": 20089,
+  "pathResolverId": "codex",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": false
+  },
+  "logFile": "codex-proxy.log",
+  "logColor": "cyan",
+  "statisticsPath": "/api/codex/statistics",
+  "promptFile": "AGENTS.md",
+  "promptLabel": "Codex",
+  "capabilities": {
+    "projects": "legacy:codex",
+    "sessions": "legacy:codex",
+    "channels": "legacy:codex",
+    "proxy": "legacy:codex",
+    "statistics": "legacy:codex",
+    "resourceSync": "legacy:codex",
+    "nativeConfig": "legacy:codex"
+  }
+}

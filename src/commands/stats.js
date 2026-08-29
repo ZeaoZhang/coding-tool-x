@@ -3,14 +3,22 @@ const http = require('http');
 const { loadConfig } = require('../config/loader');
 const { normalizePlatformKey } = require('../shared/platforms');
 
-const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const TOOL_ENDPOINTS = {
-  claude: '/api/claude/statistics',
-  codex: '/api/codex/statistics',
-  gemini: '/api/gemini/statistics',
-  opencode: '/api/opencode/statistics',
-  omp: '/api/omp/statistics'
-};
+function getPlatformCommands() {
+  return require('./platform-command-registry').createPlatformCommandRegistry();
+}
+
+function getToolTypes() {
+  return getPlatformCommands().statsTypes();
+}
+
+function getToolDefinition(type) {
+  return getPlatformCommands().resolve(type);
+}
+function getToolEndpoint(type) {
+  const platform = getToolDefinition(type);
+  if (!platform || platform.capabilities?.statistics === 'unsupported') return null;
+  return platform.statisticsPath || `/api/${normalizePlatformKey(type)}/statistics`;
+}
 
 /**
  * HTTP 请求辅助函数
@@ -81,7 +89,7 @@ async function checkUIService() {
 
 function validateToolType(type) {
   if (!type) return true;
-  return TOOL_TYPES.includes(normalizePlatformKey(type));
+  return getToolTypes().includes(normalizePlatformKey(type));
 }
 
 function getDateString(offsetDays = 0) {
@@ -177,7 +185,7 @@ function getRangeDays(timeRange) {
 
 async function fetchToolStats(toolType, timeRange) {
   const normalizedToolType = normalizePlatformKey(toolType);
-  const endpointBase = TOOL_ENDPOINTS[normalizedToolType];
+  const endpointBase = getToolEndpoint(normalizedToolType);
   if (!endpointBase) {
     throw new Error(`不支持的渠道类型: ${toolType}`);
   }
@@ -207,7 +215,7 @@ async function fetchOverallStats(timeRange) {
   const byToolType = {};
   const summary = emptySummary();
 
-  for (const toolType of TOOL_TYPES) {
+  for (const toolType of getToolTypes()) {
     const toolSummary = await fetchToolStats(toolType, timeRange);
     byToolType[toolType] = toolSummary;
     mergeSummaries(summary, toolSummary);
@@ -252,7 +260,7 @@ async function handleStats(type = null, options = {}) {
   try {
     if (!validateToolType(normalizedType)) {
       console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
-      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode, omp\n'));
+      console.log(chalk.gray(`支持的类型: ${getToolTypes().join(', ')}\n`));
       process.exit(1);
     }
 
@@ -320,11 +328,11 @@ function displayStats(stats) {
   }
 
   if (!type && stats.byToolType) {
-    const iconMap = { claude: '[*]', codex: '[*]', gemini: '[*]', opencode: '[*]', omp: '[*]' };
     console.log(chalk.bold('\n[CH] 分渠道汇总:'));
-    TOOL_TYPES.forEach((toolType) => {
+    getToolTypes().forEach((toolType) => {
       const item = stats.byToolType[toolType] || emptySummary();
-      console.log(chalk.gray(`  ${iconMap[toolType]} ${getToolDisplayName(toolType)}:`));
+      const iconToken = getToolDefinition(toolType)?.iconToken || '*';
+      console.log(chalk.gray(`  [${iconToken}] ${getToolDisplayName(toolType)}:`));
       console.log(
         chalk.gray(
           `     请求: ${formatNumber(item.requests)}  |  Tokens: ${formatNumber(item.tokens)}  |  成本: $${normalizeNumber(item.cost).toFixed(4)}`
@@ -333,17 +341,15 @@ function displayStats(stats) {
     });
   }
 
-  console.log(chalk.gray('\n[TIP] 提示:'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats --today') + chalk.gray(' 查看今日统计'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats claude') + chalk.gray(' 查看特定渠道'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats omp') + chalk.gray(' 查看 OMP 统计'));
-  console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats opencode') + chalk.gray(' 查看 OpenCode 统计'));
   console.log(chalk.gray('  • 使用 ') + chalk.cyan('ctx stats export') + chalk.gray(' 导出统计数据\n'));
 }
 
 function getToolDisplayName(type) {
   const normalizedType = normalizePlatformKey(type);
-  if (normalizedType === 'omp') return 'OMP';
+  const platform = getToolDefinition(normalizedType);
+  if (platform?.proxyMode === 'managed') {
+    return platform.helpLabel || platform.label || normalizedType.toUpperCase();
+  }
   return String(normalizedType || '').toUpperCase();
 }
 
@@ -371,7 +377,7 @@ async function handleStatsExport(type = null, format = 'json') {
   try {
     if (!validateToolType(normalizedType)) {
       console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${type}\n`));
-      console.log(chalk.gray('支持的类型: claude, codex, gemini, opencode, omp\n'));
+      console.log(chalk.gray(`支持的类型: ${getToolTypes().join(', ')}\n`));
       process.exit(1);
     }
 
@@ -411,6 +417,8 @@ module.exports = {
     buildDisplayPayload,
     fetchToolStats,
     getToolDisplayName,
+    getToolEndpoint,
+    getToolTypes,
     validateToolType
   }
 };

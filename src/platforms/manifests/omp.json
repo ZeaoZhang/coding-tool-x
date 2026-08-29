@@ -1,0 +1,52 @@
+{
+  "key": "omp",
+  "title": "OMP",
+  "label": "OMP",
+  "command": "omp",
+  "iconToken": "omp",
+  "color": "#0f9f9a",
+  "defaultVisible": false,
+  "helpLabel": "OMP",
+  "terminalColor": "cyan",
+  "cliSelectable": false,
+  "portLabel": "OMP 代理服务端口:",
+  "apiBasePath": "/api/omp/proxy",
+  "portKey": "ompProxy",
+  "defaultPort": 20092,
+  "proxyMode": "managed",
+  "proxyLabels": {
+    "serviceLabel": "OMP 动态切换",
+    "proxyLabel": "动态切换",
+    "startAction": "启动",
+    "stopAction": "停止",
+    "restartAction": "重启",
+    "startedMessage": "OMP 动态切换已启用",
+    "stoppedMessage": "OMP 已切换为单渠道直连模式",
+    "runningText": "运行中",
+    "stoppedText": "单渠道直连",
+    "portLabel": "网关端口",
+    "addressLabel": "网关地址",
+    "startTip": "启动动态切换"
+  },
+  "logFile": "cc-tool-out.log",
+  "logAliases": ["ui"],
+  "logNote": "OMP 受管 provider 配置没有独立请求代理日志，相关活动记录在 UI/server 日志中。",
+  "statisticsPath": "/api/omp/statistics",
+  "pathResolverId": "omp",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": false,
+    "plugins": true
+  },
+  "promptFile": null,
+  "promptLabel": "OMP command templates",
+  "capabilities": {
+    "projects": "legacy:omp",
+    "sessions": "legacy:omp",
+    "channels": "legacy:omp",
+    "proxy": "legacy:omp",
+    "statistics": "legacy:omp",
+    "resourceSync": "legacy:omp"
+  }
+}

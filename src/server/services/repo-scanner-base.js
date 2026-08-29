@@ -10,15 +10,27 @@ const path = require('path');
 const os = require('os');
 const https = require('https');
 const http = require('http');
+const { execFileSync } = require('child_process');
 const { createWriteStream } = require('fs');
 const AdmZip = require('adm-zip');
 const { PATHS, getRepoScannerReposPath, getRepoScannerCachePath } = require('../../config/paths');
+const remoteCredentialCache = require('./remote-credential-cache');
 const {
   normalizeSafeRelativePath,
   resolveInsideRoot
 } = require('./config-artifact-paths');
 
 // 缓存有效期（5分钟）
+
+function extractHostname(value) {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  try {
+    return new URL(input).hostname || '';
+  } catch (_) {
+    return input.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
+  }
+}
 const CACHE_TTL = 5 * 60 * 1000;
 
 /**
@@ -50,10 +62,12 @@ class RepoScannerBase {
     this.configDir = PATHS.config;
     this.reposConfigPath = getRepoScannerReposPath(this.type);
     this.cachePath = getRepoScannerCachePath(this.type);
-
-    // 内存缓存
+    // Remote item refreshes are shared per scanner instance.
     this.itemsCache = null;
     this.cacheTime = 0;
+    this.itemsRefreshPromise = null;
+    this.itemsFetchedAt = 0;
+    this._cacheGeneration = 0;
 
     // 确保目录存在
     this.ensureDirs();
@@ -162,82 +176,124 @@ class RepoScannerBase {
    * 清除缓存
    */
   clearCache() {
+    this._cacheGeneration++;
     this.itemsCache = null;
     this.cacheTime = 0;
+    this.itemsFetchedAt = 0;
+    this.itemsRefreshPromise = null;
+    remoteCredentialCache.clear();
     try {
       if (fs.existsSync(this.cachePath)) {
         fs.unlinkSync(this.cachePath);
       }
     } catch (err) {
-      // 忽略
+      // Ignore cache removal failures.
     }
   }
 
   // ==================== 远程仓库扫描 ====================
+
+  _reposFingerprint(repos) {
+    return JSON.stringify((Array.isArray(repos) ? repos : []).map(repo => ({
+      owner: repo.owner || '',
+      name: repo.name || '',
+      branch: repo.branch || '',
+      directory: repo.directory || '',
+      enabled: repo.enabled !== false
+    })));
+  }
+
+  _setItemsCache(items, fetchedAt = Date.now()) {
+    this.itemsCache = Array.isArray(items) ? items : [];
+    this.cacheTime = Date.now();
+    this.itemsFetchedAt = fetchedAt;
+    return this.itemsCache;
+  }
+
+  async _refreshRemoteItems(repos, reposFingerprint, staleItems = null) {
+    if (this.itemsRefreshPromise) return this.itemsRefreshPromise;
+    const generation = this._cacheGeneration;
+    const refreshPromise = (async () => {
+      const items = [];
+      const enabledRepos = repos.filter(repo => repo.enabled);
+      const failedRepos = [];
+
+      const results = await Promise.allSettled(
+        enabledRepos.map(async repo => {
+          let timer;
+          try {
+            return await Promise.race([
+              this.fetchRepoItems(repo),
+              new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error('Fetch timeout')), 30000);
+              })
+            ]);
+          } finally {
+            clearTimeout(timer);
+          }
+        })
+      );
+
+      results.forEach((result, index) => {
+        const repo = enabledRepos[index];
+        if (result.status === 'fulfilled') {
+          items.push(...(Array.isArray(result.value) ? result.value : []));
+          return;
+        }
+        failedRepos.push(repo);
+        const label = `${repo.owner || repo.projectPath || ''}/${repo.name || ''}`;
+        console.warn(`[${this.type}RepoScanner] Fetch repo ${label} failed:`, result.reason?.message);
+      });
+
+      const useStale = Array.isArray(staleItems)
+        && items.length === 0
+        && (failedRepos.length > 0 || enabledRepos.length === 0);
+      if (useStale) items.push(...staleItems);
+
+      this.deduplicateItems(items);
+      items.sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()));
+      const fetchedAt = useStale ? 0 : Date.now();
+      if (generation === this._cacheGeneration) {
+        this._setItemsCache(items, fetchedAt);
+        if (!useStale) this.saveCacheToFile(items, fetchedAt, reposFingerprint);
+      }
+      return items;
+    })();
+
+    const trackedPromise = refreshPromise.finally(() => {
+      if (this.itemsRefreshPromise === trackedPromise) {
+        this.itemsRefreshPromise = null;
+      }
+    });
+    this.itemsRefreshPromise = trackedPromise;
+    return trackedPromise;
+  }
 
   /**
    * 获取所有项目列表（带缓存）
    * @param {boolean} forceRefresh - 强制刷新
    */
   async listRemoteItems(forceRefresh = false) {
-    if (forceRefresh) {
-      this.clearCache();
-    }
+    const repos = this.loadRepos();
+    const reposFingerprint = this._reposFingerprint(repos);
+    const now = Date.now();
 
-    // 检查内存缓存
-    if (!forceRefresh && this.itemsCache && (Date.now() - this.cacheTime < CACHE_TTL)) {
+    if (!forceRefresh && this.itemsCache && now - this.cacheTime < CACHE_TTL) {
       return this.itemsCache;
     }
 
-    // 检查文件缓存
-    if (!forceRefresh) {
-      const fileCache = this.loadCacheFromFile();
-      if (fileCache) {
-        this.itemsCache = fileCache;
-        this.cacheTime = Date.now();
-        return this.itemsCache;
-      }
+    const diskCache = this.loadCacheEnvelope();
+    const staleItems = Array.isArray(this.itemsCache) && this.itemsCache.length > 0
+      ? this.itemsCache
+      : (Array.isArray(diskCache?.items) ? diskCache.items : null);
+    if (!forceRefresh && diskCache?.fetchedAt
+      && now - diskCache.fetchedAt < CACHE_TTL
+      && (!diskCache.reposFingerprint || diskCache.reposFingerprint === reposFingerprint)) {
+      return this._setItemsCache(diskCache.items, diskCache.fetchedAt);
     }
 
-    const repos = this.loadRepos();
-    const items = [];
-
-    // 并行获取所有启用仓库的项目
-    const enabledRepos = repos.filter(r => r.enabled);
-
-    if (enabledRepos.length > 0) {
-      const results = await Promise.allSettled(
-        enabledRepos.map(repo =>
-          Promise.race([
-            this.fetchRepoItems(repo),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Fetch timeout')), 30000)
-            )
-          ])
-        )
-      );
-
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        const repoInfo = `${enabledRepos[i].owner}/${enabledRepos[i].name}`;
-        if (result.status === 'fulfilled') {
-          items.push(...result.value);
-        } else {
-          console.warn(`[${this.type}RepoScanner] Fetch repo ${repoInfo} failed:`, result.reason?.message);
-        }
-      }
-    }
-
-    // 去重并排序
-    this.deduplicateItems(items);
-    items.sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()));
-
-    // 更新缓存
-    this.itemsCache = items;
-    this.cacheTime = Date.now();
-    this.saveCacheToFile(items);
-
-    return items;
+    if (this.itemsRefreshPromise) return this.itemsRefreshPromise;
+    return this._refreshRemoteItems(repos, reposFingerprint, staleItems);
   }
 
   /**
@@ -446,57 +502,108 @@ class RepoScannerBase {
   /**
    * 从文件加载缓存
    */
-  loadCacheFromFile() {
+  loadCacheEnvelope() {
     try {
-      if (fs.existsSync(this.cachePath)) {
-        const data = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'));
-        if (data.time && (Date.now() - data.time < CACHE_TTL)) {
-          return data.items;
-        }
+      if (!fs.existsSync(this.cachePath)) return null;
+      const data = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'));
+      if (Array.isArray(data)) {
+        return { fetchedAt: 0, reposFingerprint: null, items: data };
+      }
+      if (Array.isArray(data?.items)) {
+        return {
+          fetchedAt: Number(data.fetchedAt || data.time || 0) || 0,
+          reposFingerprint: typeof data.reposFingerprint === 'string' ? data.reposFingerprint : null,
+          items: data.items
+        };
       }
     } catch (err) {
-      // 忽略
+      // Ignore malformed cache files and refresh remotely.
     }
     return null;
   }
 
-  /**
-   * 保存缓存到文件
-   */
-  saveCacheToFile(items) {
+  loadCacheFromFile() {
+    const cached = this.loadCacheEnvelope();
+    return cached?.fetchedAt && Date.now() - cached.fetchedAt < CACHE_TTL
+      ? cached.items
+      : null;
+  }
+
+  saveCacheToFile(items, fetchedAt = Date.now(), reposFingerprint = null) {
     try {
       fs.writeFileSync(this.cachePath, JSON.stringify({
-        time: Date.now(),
+        fetchedAt,
+        time: fetchedAt,
+        reposFingerprint,
         items
       }));
     } catch (err) {
-      // 忽略
+      // Ignore cache write failures.
     }
   }
 
   /**
    * 获取 GitHub Token
    */
-  getGitHubToken() {
-    if (process.env.GITHUB_TOKEN) {
-      return process.env.GITHUB_TOKEN;
+  getTokenFromCommand(command, args = []) {
+    try {
+      return execFileSync(command, args, {
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true
+      }).trim() || null;
+    } catch (_) {
+      return null;
     }
+  }
+
+  getTokenFromGitCredential(host) {
+    const hostname = extractHostname(host);
+    if (!hostname) return null;
+    try {
+      const output = execFileSync('git', ['credential', 'fill'], {
+        input: `protocol=https\nhost=${hostname}\n\n`,
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        windowsHide: true
+      });
+      const line = output.split(/\r?\n/).find(item => item.startsWith('password='));
+      return line ? line.slice('password='.length).trim() || null : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  getGitHubToken(host = 'https://github.com') {
+    if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
     try {
       const configPath = path.join(this.configDir, 'github-token.txt');
       if (fs.existsSync(configPath)) {
-        return fs.readFileSync(configPath, 'utf-8').trim();
+        const token = fs.readFileSync(configPath, 'utf8').trim();
+        if (token) return token;
       }
     } catch (err) {
-      // 忽略
+      // Continue to host-specific credential providers.
     }
-    return null;
+
+    const hostname = extractHostname(host) || 'github.com';
+    const cached = remoteCredentialCache.get('github', hostname);
+    if (cached.hit) return cached.value;
+
+    const hostToken = this.getTokenFromCommand('gh', ['auth', 'token', '--hostname', hostname]);
+    if (hostToken) return remoteCredentialCache.set('github', hostname, hostToken);
+    const globalToken = this.getTokenFromCommand('gh', ['auth', 'token']);
+    if (globalToken) return remoteCredentialCache.set('github', hostname, globalToken);
+    return remoteCredentialCache.set('github', hostname, this.getTokenFromGitCredential(host));
   }
 
   /**
    * GitHub API 请求
    */
   async fetchGitHubApi(url) {
-    const token = this.getGitHubToken();
+    const token = this.getGitHubToken(url);
     const headers = {
       'User-Agent': 'cc-cli-repo-scanner',
       'Accept': 'application/vnd.github.v3+json'

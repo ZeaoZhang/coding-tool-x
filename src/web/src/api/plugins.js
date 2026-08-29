@@ -5,6 +5,7 @@
  */
 
 import { client } from './client'
+import { requestKey, requestSingleflight } from './request-singleflight'
 
 /**
  * 获取插件列表
@@ -18,28 +19,38 @@ function withPluginContext(payload = {}, options = {}) {
 }
 
 export async function getPlugins(platform = 'claude', options = {}) {
-  const response = await client.get('/plugins', {
-    params: withPluginContext({ platform }, options)
-  })
-  return response.data
+  const key = requestKey('plugins', platform, options.scope || '', options.cwd || '')
+  return requestSingleflight(key, signal => client.get('/plugins', {
+    params: withPluginContext({ platform }, options),
+    signal
+  }).then(response => response.data), 'plugins', `plugins:${platform}`)
 }
 
 /**
  * 获取平台插件能力
  */
-export async function getPluginCapabilities(platform = 'claude') {
-  const response = await client.get('/plugins/capabilities', { params: { platform } })
-  return response.data
+export async function getPluginCapabilities(platform = 'claude', options = {}) {
+  const key = requestKey('plugin-capabilities', platform, options.scope || '', options.cwd || '')
+  return requestSingleflight(
+    key,
+    signal => client.get('/plugins/capabilities', {
+      params: { platform },
+      signal
+    }).then(response => response.data),
+    'plugin-capabilities',
+    `plugin-capabilities:${platform}`
+  )
 }
 
 /**
  * 获取市场插件列表
  */
 export async function getMarketPlugins(platform = 'claude', forceRefresh = false, options = {}) {
-  const response = await client.get('/plugins/market', {
-    params: withPluginContext({ platform, refresh: forceRefresh ? '1' : '' }, options)
-  })
-  return response.data
+  const key = requestKey('plugins-market', platform, options.scope || '', options.cwd || '')
+  return requestSingleflight(key, signal => client.get('/plugins/market', {
+    params: withPluginContext({ platform, refresh: forceRefresh ? '1' : '' }, options),
+    signal
+  }).then(response => response.data), 'plugins-market', `plugins-market:${platform}`)
 }
 
 /**
@@ -47,10 +58,11 @@ export async function getMarketPlugins(platform = 'claude', forceRefresh = false
  * @param {string} name - 插件名称
  */
 export async function getPlugin(pluginId, platform = 'claude', options = {}) {
-  const response = await client.get(`/plugins/${encodeURIComponent(pluginId)}`, {
-    params: withPluginContext({ platform, pluginId }, options)
-  })
-  return response.data
+  const key = requestKey(`plugin-detail:${pluginId}`, platform, options.scope || '', options.cwd || '')
+  return requestSingleflight(key, signal => client.get(`/plugins/${encodeURIComponent(pluginId)}`, {
+    params: withPluginContext({ platform, pluginId }, options),
+    signal
+  }).then(response => response.data), 'plugin-detail', `plugin-detail:${platform}`)
 }
 
 /**
@@ -212,7 +224,14 @@ export async function syncPlugins(platform = 'claude') {
  * @param {string} name - 插件名称
  * @param {object} repoInfo - 仓库信息 { repoOwner, repoName, repoBranch, directory, source, repoUrl }
  */
-export async function getPluginReadme(name, repoInfo = {}, platform = 'claude') {
+export function getPluginReadme(name, repoInfo = {}, platform = 'claude', options = {}) {
+  const scope = repoInfo.scope || options.scope || ''
+  const projectPath = repoInfo.repoLocalPath
+    || repoInfo.repoProjectPath
+    || repoInfo.repoUrl
+    || repoInfo.directory
+    || name
+  const key = requestKey(`plugin-readme:${name}`, platform, scope, projectPath)
   const params = new URLSearchParams()
   if (platform) params.append('platform', platform)
   if (repoInfo.repoId) params.append('repoId', repoInfo.repoId)
@@ -228,6 +247,11 @@ export async function getPluginReadme(name, repoInfo = {}, platform = 'claude') 
   if (repoInfo.repoLocalPath) params.append('repoLocalPath', repoInfo.repoLocalPath)
   if (repoInfo.installPath) params.append('installPath', repoInfo.installPath)
 
-  const response = await client.get(`/plugins/${encodeURIComponent(name)}/readme?${params.toString()}`)
-  return response.data
+  return requestSingleflight(
+    key,
+    signal => client.get(`/plugins/${encodeURIComponent(name)}/readme?${params.toString()}`, { signal })
+      .then(response => response.data),
+    `plugin-readme:${name}`,
+    `plugin-readme:${platform}`
+  )
 }

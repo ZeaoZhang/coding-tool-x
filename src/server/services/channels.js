@@ -201,6 +201,7 @@ class ClaudeChannelService extends BaseChannelService {
     // Claude 特有：文件监听缓存
     this._cache = null;
     this._cacheInitialized = false;
+    this._watchRegistered = false;
   }
 
   _generateId() {
@@ -221,25 +222,21 @@ class ClaudeChannelService extends BaseChannelService {
     return normalized;
   }
 
-  // Claude 使用缓存 + fs.watchFile
   loadChannels() {
-    if (this._cacheInitialized && this._cache) {
-      return { channels: this._cache.channels.map(ch => this._applyDefaults(ch)) };
-    }
-
     const data = super.loadChannels();
     this._cache = data;
     this._cacheInitialized = true;
 
-    // 设置文件监听
-    try {
-      fs.watchFile(this.channelsFilePath, { interval: 2000 }, () => {
-        try {
+    if (!this._watchRegistered) {
+      try {
+        fs.watchFile(this.channelsFilePath, { interval: 2000 }, () => {
+          this.invalidate();
           this._cache = null;
           this._cacheInitialized = false;
-        } catch (_) {}
-      });
-    } catch (_) {}
+        });
+        this._watchRegistered = true;
+      } catch (_) {}
+    }
 
     return data;
   }
@@ -323,8 +320,7 @@ function getAllChannels() {
   return data.channels;
 }
 
-function getCurrentChannel() {
-  const channels = getAllChannels();
+function getCurrentChannel(channels = getAllChannels()) {
   const activeId = loadActiveChannelId();
   if (activeId) {
     const active = channels.find(ch => ch.id === activeId);
@@ -333,8 +329,8 @@ function getCurrentChannel() {
   return channels.find(ch => ch.enabled !== false) || channels[0] || null;
 }
 
-function getCurrentSettings() {
-  const channel = getCurrentChannel();
+function getCurrentSettings(channels) {
+  const channel = getCurrentChannel(channels);
   if (!channel) return null;
   return {
     baseUrl: channel.baseUrl,

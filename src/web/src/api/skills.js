@@ -3,6 +3,7 @@
  */
 
 import { client } from './client'
+import { requestKey, requestSingleflight } from './request-singleflight'
 
 /**
  * 获取技能列表
@@ -10,14 +11,15 @@ import { client } from './client'
  * @param {string} platform - 平台: claude | codex | opencode
  */
 export async function getSkills(forceRefresh = false, platform = 'claude', options = {}) {
-  const response = await client.get('/skills', {
+  const key = requestKey('skills', platform, options.scope || '', options.cwd || '');
+  return requestSingleflight(key, signal => client.get('/skills', {
     params: {
       refresh: forceRefresh ? '1' : '',
       platform,
       ...(options.cwd ? { cwd: options.cwd } : {})
-    }
-  })
-  return response.data
+    },
+    signal
+  }).then(response => response.data), 'skills', `skills:${platform}`);
 }
 
 /**
@@ -51,7 +53,7 @@ export async function getInstalledSkills(platform = 'claude') {
  * @param {object|null} repo - 仓库上下文
  * @param {string|null} fullDirectory - 仓库中的完整路径
  */
-export async function getSkillDetail(directory, platform = 'claude', repo = null, fullDirectory = null) {
+export async function getSkillDetail(directory, platform = 'claude', repo = null, fullDirectory = null, options = {}) {
   const params = { platform }
   if (fullDirectory) params.fullDirectory = fullDirectory
   if (repo) {
@@ -66,8 +68,9 @@ export async function getSkillDetail(directory, platform = 'claude', repo = null
     if (repo.localPath) params.localPath = repo.localPath
     if (repo.repoUrl) params.repoUrl = repo.repoUrl
   }
-  const response = await client.get(`/skills/detail/${directory}`, { params })
-  return response.data
+  const key = requestKey(`skill-detail:${directory}:${fullDirectory || ''}`, platform, options.scope || '', repo?.localPath || repo?.projectPath || '')
+  return requestSingleflight(key, signal => client.get(`/skills/detail/${directory}`, { params, signal })
+    .then(response => response.data), 'skill-detail', `skill-detail:${platform}`)
 }
 
 /**

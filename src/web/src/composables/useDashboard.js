@@ -14,6 +14,7 @@ export function useDashboard() {
     isLoading,
     isLoaded,
     loadDashboard: store.loadDashboard,
+    scheduleRefresh: store.scheduleRefresh,
     enableAutoRefresh: store.enableAutoRefresh,
     disableAutoRefresh: store.disableAutoRefresh,
     refreshChannels: store.refreshChannels,

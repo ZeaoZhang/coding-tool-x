@@ -7,7 +7,8 @@ let baseDir;
 let registryPath;
 let configsDir;
 let ConfigRegistryService;
-
+let getSupportedPlatforms;
+let buildPlatformSupport;
 function writeFile(filePath, content) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, content, 'utf8');
@@ -39,7 +40,7 @@ beforeEach(() => {
   };
 
   delete require.cache[require.resolve('../../../src/server/services/config-registry-service')];
-  ({ ConfigRegistryService } = require('../../../src/server/services/config-registry-service'));
+  ({ ConfigRegistryService, getSupportedPlatforms, buildPlatformSupport } = require('../../../src/server/services/config-registry-service'));
 });
 
 afterEach(() => {
@@ -178,5 +179,28 @@ describe('ConfigRegistryService import and sync', () => {
     expect(service.getItem('agents', 'helper.md')).toEqual(expect.objectContaining({
       source: 'synced'
     }));
+  });
+});
+
+describe('ConfigRegistryService platform capability metadata', () => {
+  test('derives supported platforms and resource support from manifest data', () => {
+    const registry = {
+      list: () => [{
+        key: 'demo-cli',
+        capabilities: { resourceSync: 'generic-filesystem' },
+        resourceTypes: { skills: true, commands: true, agents: false, plugins: true }
+      }, {
+        key: 'unsupported-cli',
+        capabilities: { resourceSync: 'unsupported' }
+      }]
+    };
+
+    expect(getSupportedPlatforms(registry)).toEqual(['demo-cli', 'unsupported-cli']);
+    expect(buildPlatformSupport(registry)).toEqual({
+      skills: { 'demo-cli': true, 'unsupported-cli': false },
+      commands: { 'demo-cli': true, 'unsupported-cli': false },
+      agents: { 'demo-cli': false, 'unsupported-cli': false },
+      plugins: { 'demo-cli': true, 'unsupported-cli': false }
+    });
   });
 });

@@ -1,5 +1,29 @@
 import { SPEED_TEST_API_TIMEOUT_MS, client } from './client'
 
+function platformChannelPath(platform) {
+  return `/platforms/${encodeURIComponent(String(platform || '').trim().toLowerCase())}/channels`
+}
+
+export async function getPlatformChannels(platform) {
+  const response = await client.get(platformChannelPath(platform))
+  return response.data
+}
+
+export async function createPlatformChannel(platform, payload) {
+  const response = await client.post(platformChannelPath(platform), payload)
+  return response.data
+}
+
+export async function updatePlatformChannel(platform, channelId, payload) {
+  const response = await client.put(`${platformChannelPath(platform)}/${encodeURIComponent(channelId)}`, payload)
+  return response.data
+}
+
+export async function deletePlatformChannel(platform, channelId) {
+  const response = await client.delete(`${platformChannelPath(platform)}/${encodeURIComponent(channelId)}`)
+  return response.data
+}
+
 // Claude channels
 export async function getChannels() {
   const response = await client.get('/channels')

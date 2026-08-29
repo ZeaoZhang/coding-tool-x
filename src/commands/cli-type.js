@@ -3,12 +3,17 @@ const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig, saveConfig } = require('../config/loader');
 
-const CLI_TYPES = {
-  claude: { name: 'Claude Code', color: 'cyan' },
-  codex: { name: 'Codex', color: 'green' },
-  gemini: { name: 'Gemini', color: 'magenta' },
-  opencode: { name: 'OpenCode', color: 'yellow' }
-};
+function getCliTypes(registry) {
+  const { createPlatformCommandRegistry } = require('./platform-command-registry');
+  return Object.fromEntries(
+    createPlatformCommandRegistry({ registry }).list()
+      .filter(platform => platform.cliSelectable !== false)
+      .map(platform => [platform.key, {
+        name: platform.label || platform.title || platform.key,
+        color: platform.terminalColor || 'cyan'
+      }])
+  );
+}
 
 /**
  * 切换CLI类型
@@ -20,13 +25,14 @@ async function handleSwitchCliType() {
   console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
   const config = loadConfig();
+  const cliTypes = getCliTypes();
   const currentType = config.currentCliType || 'claude';
-  const currentTypeInfo = CLI_TYPES[currentType] || CLI_TYPES.claude;
+  const currentTypeInfo = cliTypes[currentType] || cliTypes.claude || { name: currentType, color: 'cyan' };
 
   console.log(chalk.gray(`当前类型: ${currentTypeInfo.name}\n`));
 
   // 构建类型选项
-  const choices = Object.entries(CLI_TYPES).map(([type, info]) => {
+  const choices = Object.entries(cliTypes).map(([type, info]) => {
     let name = '';
 
     // 如果是当前类型，添加[v]标记
@@ -37,7 +43,8 @@ async function handleSwitchCliType() {
     }
 
     // 类型名称
-    name += chalk[info.color](info.name);
+    const colorize = typeof chalk[info.color] === 'function' ? chalk[info.color] : chalk.cyan;
+    name += colorize(info.name);
 
     return {
       name,
@@ -81,7 +88,7 @@ async function handleSwitchCliType() {
   config.currentCliType = selectedType;
   saveConfig(config);
 
-  console.log(chalk.green(`\n[OK] 已切换到 ${CLI_TYPES[selectedType].name}\n`));
+  console.log(chalk.green(`\n[OK] 已切换到 ${cliTypes[selectedType].name}\n`));
   console.log(chalk.gray('下次启动时将使用新的类型\n'));
 
   await inquirer.prompt([
@@ -97,5 +104,6 @@ async function handleSwitchCliType() {
 }
 
 module.exports = {
-  handleSwitchCliType
+  handleSwitchCliType,
+  _test: { getCliTypes }
 };

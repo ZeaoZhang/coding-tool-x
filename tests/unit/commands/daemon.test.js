@@ -233,3 +233,29 @@ describe('daemon stop helpers', () => {
     ).toBeNull();
   });
 });
+
+describe('daemon registry-backed proxy status', () => {
+  test('reads status for arbitrary enabled registry platforms', async () => {
+    const status = vi.fn(async () => ({ running: true, port: 23100 }));
+    const entries = await daemon._test.getProxyStatusEntries({
+      registry: {
+        list: vi.fn(() => [{ key: 'demo-cli', label: 'Demo CLI', portKey: 'demoProxy', defaultPort: 23100 }])
+      },
+      runtime: {
+        getDriver: vi.fn((platform, capability) => {
+          expect(platform).toBe('demo-cli');
+          expect(capability).toBe('proxy');
+          return { status };
+        })
+      },
+      config: { ports: { demoProxy: 23101 } }
+    });
+
+    expect(entries).toEqual([expect.objectContaining({
+      platform: expect.objectContaining({ key: 'demo-cli' }),
+      state: { running: true, port: 23100 },
+      port: 23101
+    })]);
+    expect(status).toHaveBeenCalledTimes(1);
+  });
+});

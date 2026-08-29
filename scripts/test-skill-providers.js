@@ -81,6 +81,8 @@ async function run() {
       });
       assert.strictEqual(fileUrlLocalRepo.localPath, tempRoot, 'file:// 本地路径应被正确解析');
 
+      const originalGithubToken = process.env.GITHUB_TOKEN;
+      delete process.env.GITHUB_TOKEN;
       service.getTokenFromConfigFile = () => null;
       service.getTokenFromCommand = (command, args) => (
         command === 'gh' && args.includes('--hostname') ? 'gh-host-token' : null
@@ -91,6 +93,7 @@ async function run() {
         'gh-host-token',
         'GitHub token 应优先回退到 gh CLI 认证'
       );
+      service.clearCache();
 
       service.getTokenFromCommand = () => null;
       assert.strictEqual(
@@ -108,6 +111,7 @@ async function run() {
         'glab-host-token',
         'GitLab token 应优先回退到 glab CLI 认证'
       );
+      service.clearCache();
 
       service.getTokenFromCommand = () => null;
       assert.strictEqual(
@@ -115,6 +119,11 @@ async function run() {
         'gitlab-credential-token',
         'GitLab token 在 CLI 不可用时应回退到 git credential'
       );
+      if (originalGithubToken === undefined) {
+        delete process.env.GITHUB_TOKEN;
+      } else {
+        process.env.GITHUB_TOKEN = originalGithubToken;
+      }
 
       const githubRepos = service.addRepo({
         provider: 'github',

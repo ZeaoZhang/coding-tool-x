@@ -216,10 +216,17 @@ function initializeFromEnv() {
   }
 }
 
+function invalidateDashboardSource() {
+  try {
+    require('./snapshot-cache').invalidateDashboardSourceSnapshot('gemini');
+  } catch (_) {}
+}
+
 // 保存渠道数据
 function saveChannels(data) {
   const filePath = getChannelsFilePath();
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  invalidateDashboardSource();
 }
 
 // 获取所有渠道

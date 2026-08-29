@@ -1,0 +1,37 @@
+{
+  "key": "claude",
+  "title": "ClaudeCode",
+  "label": "Claude Code",
+  "command": "claude",
+  "iconToken": "claude",
+  "color": "#18a058",
+  "defaultVisible": true,
+  "helpLabel": "Claude",
+  "terminalColor": "cyan",
+  "cliSelectable": true,
+  "portLabel": "Claude 代理服务端口:",
+  "apiBasePath": "/api/proxy",
+  "portKey": "proxy",
+  "defaultPort": 20088,
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": true
+  },
+  "logFile": "claude-proxy.log",
+  "logColor": "green",
+  "statisticsPath": "/api/claude/statistics",
+  "promptFile": "CLAUDE.md",
+  "promptLabel": "Claude",
+  "pathResolverId": "claude",
+  "capabilities": {
+    "projects": "legacy:claude",
+    "sessions": "legacy:claude",
+    "channels": "legacy:claude",
+    "proxy": "legacy:claude",
+    "statistics": "legacy:claude",
+    "resourceSync": "legacy:claude",
+    "nativeConfig": "legacy:claude"
+  }
+}

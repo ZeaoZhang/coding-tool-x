@@ -49,6 +49,7 @@
 - `src/server/services/session-history-index.js`: 默认 adapter 从 runtime 获取，显式 `adapterRegistry` 仍优先。
 - `src/server/services/dashboard-snapshot-worker.js`: 用 capability driver 替换平台聚合 `switch`。
 - `src/server/index.js`: 挂载平台目录 API，逐步切换自动恢复和 route registration。
+- `src/server/services/session-history-worker.js`: 子进程 inventory boot、结构化 IPC 错误和协议清理。
 - `src/server/services/config-sync-manager.js`: 增加 `syncToPlatform`，让批量同步遍历 Registry。
 - `src/server/services/config-registry-service.js`: 平台集合和支持矩阵从 Registry 派生。
 - `src/server/services/config-export-service.js`: 平台 snapshot 和 native config 通过 driver 获取。
@@ -60,6 +61,9 @@
 - `src/commands/cli-type.js`: 类型选项从 Registry 派生。
 - `src/index.js`: 保留兼容命令，平台路由使用 command registry。
 - `src/web/src/config/platforms.js`: 删除完整内置平台副本，只保留 API 归一化、图标和排序 fallback。
+- `src/web/src/main.js`、`src/web/src/stores/platforms.js`: 启动时加载公共平台目录并保留最小离线 fallback。
+- `src/web/src/components/channel/BaseChannelPanel.vue`、`src/web/src/components/channel/commonChannelSchema.js`: 泛型渠道面板和 CRUD API 接入。
+- `src/web/src/components/dashboard/ChannelColumn.vue`、`src/web/src/views/SkillManager.vue`、资源面板及命令抽屉：消费 reactive platform store。
 - `src/web/src/api/channels.js`: 增加基于 platform key 的通用请求函数，保留旧导出。
 - `src/web/src/components/channel/channelPanelFactories.js`: 提取 common schema，保留平台专用字段和 driver。
 - `src/web/src/composables/useUIConfig.js`、`src/web/src/views/Home.vue`、`SettingsDrawer.vue` 及平台面板：消费 reactive platform catalog。
@@ -78,6 +82,9 @@
 - `tests/unit/commands/platform-command-registry.test.js`
 - `tests/unit/commands/cli-type.test.js`
 - `src/web/src/config/__tests__/platforms.test.js`
+- `src/web/src/stores/__tests__/platforms.test.js`
+- `tests/unit/platforms/config-only-contract.test.js`
+- `tests/unit/services/session-history-worker.test.js`
 - `src/web/src/components/channel/__tests__/commonChannelSchema.test.js`
 
 ---

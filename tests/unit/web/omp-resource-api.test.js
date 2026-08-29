@@ -26,13 +26,15 @@ describe('OMP resource web API context', () => {
         refresh: '',
         platform: 'omp',
         cwd: '/workspace/project'
-      }
+      },
+      signal: expect.any(AbortSignal)
     });
     expect(client.get).toHaveBeenNthCalledWith(2, '/plugins', {
       params: {
         platform: 'omp',
         cwd: '/workspace/project'
-      }
+      },
+      signal: expect.any(AbortSignal)
     });
   });
 

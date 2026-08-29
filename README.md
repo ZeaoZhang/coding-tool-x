@@ -354,6 +354,20 @@ npm test
 - OpenCode 部分能力依赖本机可访问的 OpenCode 配置目录和 `sqlite3`
 - 配置导出包可能包含 API Key、Webhook、OAuth 等敏感信息，请妥善保管
 
+## 可配置 CLI 平台
+
+平台目录由 Registry 统一提供。用户扩展写入：
+
+```text
+~/.cc-tool/config/platforms.json
+```
+
+每个平台必须通过 Manifest 校验，并只能引用内置 allowlisted driver（例如 `generic-jsonl`、`generic-filesystem` 或 `generic-openai-compatible`）。配置文件不支持任意 Node.js 模块、`require`、函数值或 shell 命令；运行时不会从用户配置动态加载可执行代码。
+
+声明稳定文件协议的平台可以直接复用 generic driver。特殊 SQLite schema、OAuth / keychain、非标准配置或特殊 fork 语义仍需要专用 capability driver；不能仅靠配置保证任意 CLI 获得完整功能对等。
+
+现有 `ctx claude ...`、`ctx codex ...` 等 CLI/API 路径继续保留。`GET /api/platforms` 只返回安全的公共元数据；旧 facade、`require.resolve()` + `require.cache` 测试 seam 以及 OMP managed mode 都是有意保留的兼容契约。
+
 ## 相关文档
 
 - [CHANGELOG.md](CHANGELOG.md)

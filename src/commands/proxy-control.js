@@ -3,153 +3,180 @@ const http = require('http');
 const { loadConfig } = require('../config/loader');
 const { normalizePlatformKey } = require('../shared/platforms');
 
-const CHANNEL_CONFIG = {
-  claude: {
-    name: 'Claude',
-    icon: '[*]',
-    aompPath: '/api/proxy'
-  },
-  codex: {
-    name: 'Codex',
-    icon: '[*]',
-    aompPath: '/api/codex/proxy'
-  },
-  gemini: {
-    name: 'Gemini',
-    icon: '[*]',
-    aompPath: '/api/gemini/proxy'
-  },
-  opencode: {
-    name: 'OpenCode',
-    icon: '[*]',
-    aompPath: '/api/opencode/proxy'
-  },
-  omp: {
-    name: 'OMP',
-    icon: '[*]',
-    aompPath: '/api/omp/proxy',
-    serviceLabel: 'OMP 动态切换',
-    proxyLabel: '动态切换',
-    startAction: '启动',
-    stopAction: '停止',
-    restartAction: '重启',
-    startedMessage: 'OMP 动态切换已启用',
-    stoppedMessage: 'OMP 已切换为单渠道直连模式',
-    runningText: '运行中',
-    stoppedText: '单渠道直连',
-    portLabel: '网关端口',
-    addressLabel: '网关地址',
-    startTip: '启动动态切换'
-  }
-};
-
-function getServiceLabel(channelInfo) {
-  return channelInfo.serviceLabel || `${channelInfo.name} 代理服务`;
+function getDefaultRegistry() {
+  return require('../platforms/runtime').getPlatformRegistry();
 }
 
-function getProxyLabel(channelInfo) {
-  return channelInfo.proxyLabel || '代理';
+function getSupportedPlatformKeys(registry = getDefaultRegistry()) {
+  if (!registry || typeof registry.list !== 'function') return [];
+  return registry.list().map(platform => platform && platform.key).filter(Boolean);
 }
 
-/**
- * HTTP 请求辅助函数
- */
-function httpRequest(method, path, data = null) {
-  const config = loadConfig();
-  const port = config.ports?.webUI || 19999;
+function getPlatformInfo(channel, registry = getDefaultRegistry()) {
+  const key = normalizePlatformKey(channel);
+  const definition = registry && typeof registry.resolve === 'function'
+    ? registry.resolve(key)
+    : null;
+  if (!definition) return null;
 
-  return new Promise((resolve, reject) => {
-    const postData = data ? JSON.stringify(data) : null;
-    const options = {
-      hostname: 'localhost',
-      port: port,
-      path: path,
-      method: method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(postData && { 'Content-Length': Buffer.byteLength(postData) })
-      },
-      timeout: 5000
-    };
+  const labels = definition.proxyLabels && typeof definition.proxyLabels === 'object'
+    ? definition.proxyLabels
+    : {};
+  const configuredPath = definition.apiBasePath || `/api/platforms/${key}`;
+  const aompPath = configuredPath.replace(/\/+$/, '').endsWith('/proxy')
+    ? configuredPath.replace(/\/+$/, '')
+    : `${configuredPath.replace(/\/+$/, '')}/proxy`;
+  return {
+    ...labels,
+    key,
+    name: definition.label || definition.title || key,
+    icon: labels.icon || '[*]',
+    aompPath,
+    defaultPort: definition.defaultPort,
+    portKey: definition.portKey,
+    managedProviderConfig: definition.proxyMode === 'managed'
+  };
+}
 
-    const req = http.request(options, (res) => {
-      let responseData = '';
+function createHttpRequest(loadConfigImpl = loadConfig) {
+  return function request(method, requestPath, data = null) {
+    const config = loadConfigImpl();
+    const port = config.ports?.webUI || 19999;
 
-      res.on('data', (chunk) => {
-        responseData += chunk;
+    return new Promise((resolve, reject) => {
+      const postData = data ? JSON.stringify(data) : null;
+      const options = {
+        hostname: 'localhost',
+        port,
+        path: requestPath,
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(postData && { 'Content-Length': Buffer.byteLength(postData) })
+        },
+        timeout: 5000
+      };
+
+      const req = http.request(options, (res) => {
+        let responseData = '';
+
+        res.on('data', (chunk) => {
+          responseData += chunk;
+        });
+
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(responseData);
+            resolve({ data: json, status: res.statusCode });
+          } catch (err) {
+            reject(new Error('Invalid JSON response'));
+          }
+        });
       });
 
-      res.on('end', () => {
-        try {
-          const json = JSON.parse(responseData);
-          resolve({ data: json, status: res.statusCode });
-        } catch (err) {
-          reject(new Error('Invalid JSON response'));
-        }
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timeout'));
       });
-    });
 
-    req.on('error', (err) => {
-      reject(err);
+      if (postData) req.write(postData);
+      req.end();
     });
+  };
+}
 
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Request timeout'));
-    });
+function createProxyControl({ registry = getDefaultRegistry(), httpRequest: request, loadConfig: loadConfigImpl, sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const requestImpl = request || createHttpRequest(loadConfigImpl || loadConfig);
 
-    if (postData) {
-      req.write(postData);
+  function resolve(channel) {
+    const info = getPlatformInfo(channel, registry);
+    if (!info) {
+      const error = new Error(`Invalid platform: ${channel}`);
+      error.code = 'INVALID_PLATFORM';
+      throw error;
     }
+    return info;
+  }
 
-    req.end();
-  });
+  return {
+    resolve,
+    async checkUIService() {
+      try {
+        await requestImpl('GET', '/api/proxy/status');
+        return true;
+      } catch (err) {
+        return false;
+      }
+    },
+    async start(channel) {
+      const info = resolve(channel);
+      const response = await requestImpl('POST', `${info.aompPath}/start`);
+      return { info, response };
+    },
+    async stop(channel) {
+      const info = resolve(channel);
+      const response = await requestImpl('POST', `${info.aompPath}/stop`);
+      return { info, response };
+    },
+    async status(channel) {
+      const info = resolve(channel);
+      const response = await requestImpl('GET', `${info.aompPath}/status`);
+      return { info, response };
+    },
+    async restart(channel) {
+      const info = resolve(channel);
+      await requestImpl('POST', `${info.aompPath}/stop`);
+      await sleep(1000);
+      const response = await requestImpl('POST', `${info.aompPath}/start`);
+      return { info, response };
+    }
+  };
 }
 
-/**
- * 检查 UI 服务是否运行
- */
-async function checkUIService() {
-  try {
-    await httpRequest('GET', '/api/proxy/status');
-    return true;
-  } catch (err) {
-    return false;
+function printInvalidPlatform(channel, registry) {
+  const supported = getSupportedPlatformKeys(registry);
+  console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
+  if (supported.length > 0) {
+    console.log(chalk.gray(`支持的渠道: ${supported.join(', ')}\n`));
   }
 }
 
 /**
  * 启动代理
  */
-async function handleProxyStart(channel) {
-  const normalizedChannel = normalizePlatformKey(channel);
-  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
-  if (!channelInfo) {
-    console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
+async function handleProxyStart(channel, dependencies = {}) {
+  const control = createProxyControl(dependencies);
+  let channelInfo;
+  try {
+    channelInfo = control.resolve(channel);
+  } catch (error) {
+    printInvalidPlatform(channel, dependencies.registry);
     process.exit(1);
+    return;
   }
 
   console.log(chalk.cyan(`\n[START] ${channelInfo.startAction || '启动'} ${getServiceLabel(channelInfo)}...\n`));
 
-  // 检查 UI 服务
-  const uiRunning = await checkUIService();
+  const uiRunning = await control.checkUIService();
   if (!uiRunning) {
     console.error(chalk.red('[ERROR] UI 服务未运行\n'));
     console.log(chalk.yellow('[TIP] 请先启动 UI 服务:'));
     console.log(chalk.gray('   ') + chalk.cyan('ctx start') + chalk.gray('  或  ') + chalk.cyan('ctx ui\n'));
     process.exit(1);
+    return;
   }
 
   try {
-    const response = await httpRequest('POST', `${channelInfo.aompPath}/start`);
+    const { response } = await control.start(channel);
+    const payload = response.data || {};
 
-    if (response.data.success) {
+    if (payload.success) {
       console.log(chalk.green(`[OK] ${channelInfo.startedMessage || `${channelInfo.name} ${getProxyLabel(channelInfo)}已启动`}\n`));
-      console.log(chalk.gray(`${channelInfo.icon} ${channelInfo.portLabel || '代理端口'}: ${response.data.port}`));
-      console.log(chalk.gray(`[NET] ${channelInfo.addressLabel || '代理地址'}: http://localhost:${response.data.port}\n`));
+      console.log(chalk.gray(`${channelInfo.icon} ${channelInfo.portLabel || '代理端口'}: ${payload.port}`));
+      console.log(chalk.gray(`[NET] ${channelInfo.addressLabel || '代理地址'}: http://localhost:${payload.port}\n`));
     } else {
-      console.error(chalk.red(`[ERROR] 启动失败: ${response.data.message}\n`));
+      console.error(chalk.red(`[ERROR] 启动失败: ${payload.message || payload.error || 'Unknown error'}\n`));
       process.exit(1);
     }
   } catch (error) {
@@ -166,30 +193,34 @@ async function handleProxyStart(channel) {
 /**
  * 停止代理
  */
-async function handleProxyStop(channel) {
-  const normalizedChannel = normalizePlatformKey(channel);
-  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
-  if (!channelInfo) {
-    console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
+async function handleProxyStop(channel, dependencies = {}) {
+  const control = createProxyControl(dependencies);
+  let channelInfo;
+  try {
+    channelInfo = control.resolve(channel);
+  } catch (error) {
+    printInvalidPlatform(channel, dependencies.registry);
     process.exit(1);
+    return;
   }
 
   console.log(chalk.cyan(`\n[STOP]  ${channelInfo.stopAction || '停止'} ${getServiceLabel(channelInfo)}...\n`));
 
-  const uiRunning = await checkUIService();
+  const uiRunning = await control.checkUIService();
   if (!uiRunning) {
     console.error(chalk.red('[ERROR] UI 服务未运行，无法停止代理\n'));
     process.exit(1);
+    return;
   }
 
   try {
-    const response = await httpRequest('POST', `${channelInfo.aompPath}/stop`);
+    const { response } = await control.stop(channel);
+    const payload = response.data || {};
 
-    if (response.data.success) {
+    if (payload.success) {
       console.log(chalk.green(`[OK] ${channelInfo.stoppedMessage || `${channelInfo.name} ${getProxyLabel(channelInfo)}已停止`}\n`));
     } else {
-      console.error(chalk.red(`[ERROR] 停止失败: ${response.data.message}\n`));
+      console.error(chalk.red(`[ERROR] 停止失败: ${payload.message || payload.error || 'Unknown error'}\n`));
       process.exit(1);
     }
   } catch (error) {
@@ -201,35 +232,55 @@ async function handleProxyStop(channel) {
 /**
  * 重启代理
  */
-async function handleProxyRestart(channel) {
-  const normalizedChannel = normalizePlatformKey(channel);
-  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
-  if (!channelInfo) {
-    console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
+async function handleProxyRestart(channel, dependencies = {}) {
+  const control = createProxyControl(dependencies);
+  let channelInfo;
+  try {
+    channelInfo = control.resolve(channel);
+  } catch (error) {
+    printInvalidPlatform(channel, dependencies.registry);
     process.exit(1);
+    return;
   }
 
   console.log(chalk.cyan(`\n[SYNC] ${channelInfo.restartAction || '重启'} ${getServiceLabel(channelInfo)}...\n`));
+  const uiRunning = await control.checkUIService();
+  if (!uiRunning) {
+    console.error(chalk.red('[ERROR] UI 服务未运行，无法重启代理\n'));
+    process.exit(1);
+    return;
+  }
 
-  await handleProxyStop(channel);
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  await handleProxyStart(channel);
+  try {
+    const { response } = await control.restart(channel);
+    const payload = response.data || {};
+    if (!payload.success) {
+      console.error(chalk.red(`[ERROR] 重启失败: ${payload.message || payload.error || 'Unknown error'}\n`));
+      process.exit(1);
+      return;
+    }
+    console.log(chalk.green(`[OK] ${channelInfo.startedMessage || `${channelInfo.name} ${getProxyLabel(channelInfo)}已重启`}\n`));
+  } catch (error) {
+    console.error(chalk.red(`[ERROR] 重启失败: ${error.message}\n`));
+    process.exit(1);
+  }
 }
 
 /**
  * 查看代理状态
  */
-async function handleProxyStatus(channel) {
-  const normalizedChannel = normalizePlatformKey(channel);
-  const channelInfo = CHANNEL_CONFIG[normalizedChannel];
-  if (!channelInfo) {
-    console.error(chalk.red(`\n[ERROR] 无效的渠道类型: ${channel}\n`));
-    console.log(chalk.gray('支持的渠道: claude, codex, gemini, opencode, omp\n'));
+async function handleProxyStatus(channel, dependencies = {}) {
+  const control = createProxyControl(dependencies);
+  let channelInfo;
+  try {
+    channelInfo = control.resolve(channel);
+  } catch (error) {
+    printInvalidPlatform(channel, dependencies.registry);
     process.exit(1);
+    return;
   }
 
-  const uiRunning = await checkUIService();
+  const uiRunning = await control.checkUIService();
   if (!uiRunning) {
     console.log(chalk.bold.cyan(`\n╔======================================╗`));
     console.log(chalk.bold.cyan(`║      ${getServiceLabel(channelInfo)}状态           ║`));
@@ -240,7 +291,7 @@ async function handleProxyStatus(channel) {
   }
 
   try {
-    const response = await httpRequest('GET', `${channelInfo.aompPath}/status`);
+    const { response } = await control.status(channel);
     const payload = response.data || {};
     const status = payload.proxy || payload;
 
@@ -260,18 +311,23 @@ async function handleProxyStatus(channel) {
     }
 
     console.log(chalk.bold('\n[TIP] 提示:'));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx ${channel} start`) + chalk.gray(` ${channelInfo.startTip || '启动代理'}`));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx logs ${channel}`) + chalk.gray(` 查看日志`));
-    console.log(chalk.gray(`  • 使用 `) + chalk.cyan(`ctx stats ${channel}`) + chalk.gray(` 查看统计\n`));
+    console.log(chalk.gray('  • 使用 ') + chalk.cyan(`ctx ${channel} start`) + chalk.gray(` ${channelInfo.startTip || '启动代理'}`));
+    console.log(chalk.gray('  • 使用 ') + chalk.cyan(`ctx logs ${channel}`) + chalk.gray(' 查看日志'));
+    console.log(chalk.gray('  • 使用 ') + chalk.cyan(`ctx stats ${channel}`) + chalk.gray(' 查看统计\n'));
   } catch (error) {
     console.error(chalk.red(`[ERROR] 查询状态失败: ${error.message}\n`));
     process.exit(1);
   }
 }
 
-/**
- * 格式化运行时长
- */
+function getServiceLabel(channelInfo) {
+  return channelInfo.serviceLabel || `${channelInfo.name} 代理服务`;
+}
+
+function getProxyLabel(channelInfo) {
+  return channelInfo.proxyLabel || '代理';
+}
+
 function formatRuntime(ms) {
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -284,14 +340,20 @@ function formatRuntime(ms) {
     return `${hours}小时 ${minutes % 60}分钟`;
   } else if (minutes > 0) {
     return `${minutes}分钟`;
-  } else {
-    return `${seconds}秒`;
   }
+  return `${seconds}秒`;
 }
 
 module.exports = {
   handleProxyStart,
   handleProxyStop,
   handleProxyRestart,
-  handleProxyStatus
+  handleProxyStatus,
+  createProxyControl,
+  _test: {
+    createHttpRequest,
+    getPlatformInfo,
+    getSupportedPlatformKeys,
+    formatRuntime
+  }
 };

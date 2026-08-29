@@ -30,10 +30,10 @@ function extractContentText(value) {
 /**
  * Load storage-name → project root mapping from projects.json.
  */
-function loadProjectRootsByStorageName() {
+async function loadProjectRootsByStorageName() {
   const projectsPath = path.join(getGeminiDir(), 'projects.json');
   try {
-    const content = fs.readFileSync(projectsPath, 'utf8');
+    const content = await fs.promises.readFile(projectsPath, 'utf8');
     const parsed = JSON.parse(content);
     const projects = parsed && typeof parsed.projects === 'object' ? parsed.projects : {};
     return new Map(
@@ -194,12 +194,16 @@ async function inventory() {
   const descriptors = [];
   const tmpDir = path.join(getGeminiDir(), 'tmp');
 
-  if (!fs.existsSync(tmpDir)) return descriptors;
+  try {
+    await fs.promises.stat(tmpDir);
+  } catch (_) {
+    return descriptors;
+  }
 
-  const projectRoots = loadProjectRootsByStorageName();
+  const projectRoots = await loadProjectRootsByStorageName();
   let entries;
   try {
-    entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+    entries = await fs.promises.readdir(tmpDir, { withFileTypes: true });
   } catch (_) {
     return descriptors;
   }
@@ -208,11 +212,15 @@ async function inventory() {
     if (!entry.isDirectory()) continue;
     const hashDir = path.join(tmpDir, entry.name);
     const chatsDir = path.join(hashDir, 'chats');
-    if (!fs.existsSync(chatsDir)) continue;
+    try {
+      await fs.promises.stat(chatsDir);
+    } catch (_) {
+      continue;
+    }
 
     let chatFiles;
     try {
-      chatFiles = fs.readdirSync(chatsDir);
+      chatFiles = await fs.promises.readdir(chatsDir);
     } catch (_) {
       continue;
     }
@@ -223,17 +231,18 @@ async function inventory() {
       const filePath = path.join(chatsDir, f);
       let stat;
       try {
-        stat = fs.statSync(filePath);
+        stat = await fs.promises.stat(filePath);
       } catch (_) {
         continue;
       }
-      const projectRoot = projectRoots.get(entry.name) || (() => {
+      let projectRoot = projectRoots.get(entry.name) || null;
+      if (!projectRoot) {
         try {
-          return fs.readFileSync(path.join(hashDir, '.project_root'), 'utf8').trim() || null;
+          projectRoot = (await fs.promises.readFile(path.join(hashDir, '.project_root'), 'utf8')).trim() || null;
         } catch (_) {
-          return null;
+          projectRoot = null;
         }
-      })();
+      }
 
       descriptors.push({
         filePath,

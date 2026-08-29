@@ -1,7 +1,9 @@
 'use strict';
 
 const { openDatabase, closeDatabase } = require('./sqlite-connection');
+
 const { PATHS } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
 const fs = require('fs');
 const path = require('path');
 
@@ -17,6 +19,12 @@ const COLD_STALE_WAIT_MS = 2500;
 
 /** @type {number} Hard timeout for worker processes */
 const WORKER_TIMEOUT_MS = 180000;
+
+const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
+function _isUsableRuntime(runtime) {
+  return !!runtime && typeof runtime === 'object' && typeof runtime.getDriver === 'function';
+}
+
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -80,6 +88,9 @@ CREATE TABLE IF NOT EXISTS session_message (
 
 CREATE INDEX IF NOT EXISTS idx_session_message_sid_ord
   ON session_message(source, session_id, ordinal);
+
+CREATE INDEX IF NOT EXISTS idx_session_message_user_number
+  ON session_message(source, session_id, user_message_number, ordinal);
 `;
 
 const FTS_SETUP_SQL = `
@@ -144,7 +155,164 @@ function _ftsQuote(s) {
   return '"' + String(s).replace(/"/g, '""') + '"';
 }
 
-// ---------------------------------------------------------------------------
+function _normalizeTypedSessionsResult(result, defaultOperation = 'resolve-driver') {
+  if (!result || typeof result !== 'object') {
+    return null;
+  }
+  if (result.status !== 'failed' && result.status !== 'unsupported') {
+    return null;
+  }
+  if (typeof result.platform !== 'string' || typeof result.capability !== 'string') {
+    return null;
+  }
+  return {
+    ...result,
+    operation: typeof result.operation === 'string' ? result.operation : defaultOperation
+  };
+}
+
+function _isTypedSessionsResult(result) {
+  return !!_normalizeTypedSessionsResult(result);
+}
+
+function _typedSessionsFailure(source, error, operation = 'resolve-driver') {
+  const result = {
+    status: 'failed',
+    platform: source,
+    capability: 'sessions',
+    operation,
+    error: error && error.message ? error.message : String(error)
+  };
+  if (error) {
+    Object.defineProperty(result, 'cause', { value: error, enumerable: false });
+  }
+  return result;
+}
+
+function _typedSessionsUnsupported(source, error, operation = 'resolve-driver') {
+  const result = {
+    status: 'unsupported',
+    platform: source,
+    capability: 'sessions',
+    operation,
+    error: error && error.message ? error.message : String(error)
+  };
+  if (error) {
+    Object.defineProperty(result, 'cause', { value: error, enumerable: false });
+  }
+  return result;
+}
+
+function _getRuntimeSessionsDriver(runtime, source) {
+  if (!runtime || typeof runtime.getDriver !== 'function') {
+    return null;
+  }
+
+  try {
+    const driver = runtime.getDriver(source, 'sessions');
+    const typedResult = _normalizeTypedSessionsResult(driver);
+    if (typedResult) {
+      return typedResult;
+    }
+    if (!driver || typeof driver !== 'object') {
+      return null;
+    }
+    if (typeof driver.inventory !== 'function' || typeof driver.parse !== 'function') {
+      return null;
+    }
+    return driver;
+  } catch (error) {
+    return _typedSessionsFailure(source, error);
+  }
+}
+
+function _safeParseJson(value, fallback) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function _safeParseObject(value) {
+  const parsed = _safeParseJson(value, {});
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+  return parsed;
+}
+
+
+function _normalizeRuntimeParseResult(result, descriptor = {}) {
+  if (!result || typeof result !== 'object') {
+    return result;
+  }
+
+  if (result.session && Array.isArray(result.messages)) {
+    const sessionExtra = _safeParseObject(result.session.extraJson);
+    const extraJson = JSON.stringify({
+      ...sessionExtra,
+      projectHint: result.session.projectHint || descriptor.projectHint || null,
+      mtimeMs: descriptor.mtimeMs ?? sessionExtra.mtimeMs ?? null
+    });
+    return {
+      ...result,
+      session: {
+        ...result.session,
+        projectHint: result.session.projectHint || descriptor.projectHint || '',
+        projectName: result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
+        projectDisplayName: result.session.projectDisplayName || result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
+        projectFullPath: result.session.projectFullPath || result.session.projectPath || '',
+        updatedAt: descriptor.mtimeMs ?? result.session.updatedAt ?? null,
+        extraJson
+      }
+    };
+  }
+
+  if (result.sessionId) {
+    const projectHint = descriptor.projectHint || result.projectHint || result.projectName || '';
+    const projectName = result.projectName || projectHint || '';
+    const projectDisplayName = result.projectDisplayName || result.projectName || projectHint || '';
+    const resultExtra = _safeParseObject(result.extraJson);
+    const descriptorMtime = descriptor.mtimeMs ?? null;
+
+    return {
+      session: {
+        sessionId: result.sessionId,
+        projectHint,
+        projectName,
+        projectDisplayName,
+        projectFullPath: result.projectFullPath || result.projectPath || '',
+        firstMessage: result.firstMessage || null,
+        gitBranch: result.gitBranch || null,
+        provider: result.provider || null,
+        model: result.model || null,
+        startedAt: result.startedAt || null,
+        updatedAt: descriptorMtime ?? result.updatedAt ?? null,
+        usageJson: result.usageJson || null,
+        extraJson: JSON.stringify({
+          ...resultExtra,
+          projectHint: projectHint || null,
+          mtimeMs: descriptor.mtimeMs ?? resultExtra.mtimeMs ?? null
+        })
+      },
+      messages: Array.isArray(result.messages) ? result.messages : []
+    };
+  }
+
+  return result;
+}
+
+function _adaptRuntimeSessionsDriver(driver) {
+  if (!driver) return null;
+  return {
+    inventory: (...args) => driver.inventory(...args),
+    parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(await driver.parse(descriptor, ...args), descriptor)
+  };
+}
+
+
 // Core: createSessionHistoryIndex
 // ---------------------------------------------------------------------------
 
@@ -152,19 +320,27 @@ function _ftsQuote(s) {
  * @param {object} [opts]
  * @param {string} [opts.dbPath]
  * @param {object} [opts.adapterRegistry] - source → { inventory, parse }
+ * @param {object} [opts.runtime] - runtime with getDriver(source, capability)
  * @param {Function} [opts.workerRunner] - (source, indexDbPath) => Promise<void>
  * @param {boolean|null} [opts.ftsEnabledOverride] - override FTS detection for tests
  * @returns {object} index API
  */
 function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
-  const adapters = opts.adapterRegistry || require('./session-history-adapters');
+  const explicitAdapters = opts.adapterRegistry || null;
+  const adapters = explicitAdapters || require('./session-history-adapters');
+  const runtimeProvided = !explicitAdapters && process.env.NODE_ENV === 'test' && _isUsableRuntime(opts.runtime);
+  const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : platformRuntime.getPlatformRuntime());
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;
   const ftsEnabled = opts.ftsEnabledOverride !== undefined
     ? opts.ftsEnabledOverride
     : null;
   const shouldUseWorker = process.env.NODE_ENV !== 'test' && process.env.CC_TOOL_SESSION_HISTORY_CHILD !== '1';
   let _db = null;
+  /** @type {Map<string, {size: number, mtimeMs: number, checkedAt: number, filePath: string}>} */
+  const fileVersions = new Map();
+  const fileChecks = new Map();
+  const sourceFreshness = new Map();
   let _ftsAvailable = null;
   /** @type {Map<string, Promise<void>>} */
   const _inflight = new Map();
@@ -183,6 +359,30 @@ function createSessionHistoryIndex(opts = {}) {
     }
     return _db;
   }
+  /**
+   * Check only the persisted inventory timestamp. This deliberately does not
+   * touch the source's files: the worker remains responsible for inventory
+   * and file consistency checks when the timestamp is stale.
+   *
+   * @param {string} source
+   * @returns {boolean}
+   */
+  function _isSourceFresh(source) {
+    const row = _getDb().prepare(
+      'SELECT last_inventory_ms FROM source_state WHERE source = ?'
+    ).get(source);
+    return row?.last_inventory_ms
+      ? Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
+      : false;
+  }
+  function _hasIndexedData(source) {
+    const row = _getDb().prepare(
+      'SELECT 1 AS indexed FROM session_file WHERE source = ? LIMIT 1'
+    ).get(source);
+    return Boolean(row);
+  }
+
+
 
   function _initSchema(db) {
     db.exec('PRAGMA journal_mode = WAL');
@@ -205,20 +405,28 @@ function createSessionHistoryIndex(opts = {}) {
   async function ensureSourceIndexed(source, options = {}) {
     const consistency = options.consistency || 'stale-ok';
     const force = options.force === true;
-
     const key = `ensure:${source}`;
+
+    if (!force && _isSourceFresh(source)) {
+      return;
+    }
+
     if (_inflight.has(key)) {
       if (consistency === 'complete') {
         return _inflight.get(key);
       }
       const inflight = _inflight.get(key);
+      if (_hasIndexedData(source)) {
+        return;
+      }
       const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), COLD_STALE_WAIT_MS));
       const result = await Promise.race([inflight, timeout]);
       if (result === 'timeout') return;
       return result;
     }
 
-    const promise = shouldUseWorker
+    const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
+    const promise = useWorker
       ? workerRunner(source, dbPath, { force })
       : _runInventory(source, { force });
     _inflight.set(key, promise);
@@ -229,6 +437,9 @@ function createSessionHistoryIndex(opts = {}) {
     }).catch(() => {});
 
     if (consistency === 'stale-ok') {
+      if (_hasIndexedData(source)) {
+        return;
+      }
       const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), COLD_STALE_WAIT_MS));
       const result = await Promise.race([promise, timeout]);
       if (result === 'timeout') {
@@ -239,155 +450,263 @@ function createSessionHistoryIndex(opts = {}) {
     await promise;
   }
 
-  async function _runInventory(source, { force = false } = {}) {
-    const db = _getDb();
-    const adapter = adapters[source];
-    if (!adapter || !adapter.inventory) {
-      return;
-    }
-
-    if (!force) {
-      const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
-      if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
-        return;
-      }
-    }
-
-    const descriptors = await adapter.inventory();
-    if (!Array.isArray(descriptors)) return;
-
-    const seen = new Map();
-    for (const d of descriptors) {
-      const prev = seen.get(d.sessionId);
-      if (!prev || d.mtimeMs > prev.mtimeMs || (d.mtimeMs === prev.mtimeMs && d.filePath < prev.filePath)) {
-        seen.set(d.sessionId, d);
-      }
-    }
-
-    const indexedFiles = new Map();
-    const indexedRows = db.prepare('SELECT file_path, size, mtime_ms FROM session_file WHERE source = ?').all(source);
-    for (const r of indexedRows) {
-      indexedFiles.set(r.file_path, r);
-    }
-
-    const toParse = [];
-    const activePaths = new Set();
-    for (const d of seen.values()) {
-      activePaths.add(d.filePath);
-      const idx = indexedFiles.get(d.filePath);
-      if (!idx || idx.size !== d.size || idx.mtime_ms !== d.mtimeMs) {
-        toParse.push(d);
-      }
-    }
-
-    for (const filePath of indexedFiles.keys()) {
-      if (!activePaths.has(filePath)) {
-        db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, filePath);
-      }
-    }
-
-    let errorMsg = null;
-    for (const d of toParse) {
-      try {
-        const preStat = { size: d.size, mtimeMs: d.mtimeMs };
-        const { session, messages } = await adapter.parse(d);
-
-        try {
-          const postStat = fs.statSync(d.filePath);
-          if (postStat.size !== preStat.size || postStat.mtimeMs !== preStat.mtimeMs) {
-            const retry = await adapter.parse(d);
-            const retryStat = fs.statSync(d.filePath);
-            if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
-              const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
-              if (existing) continue;
-              continue;
-            }
-            _upsertSession(db, source, d, retry.session, retry.messages);
-            continue;
-          }
-        } catch (_statErr) {
-          continue;
-        }
-
-        _upsertSession(db, source, d, session, messages);
-      } catch (err) {
-        const existing = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND file_path = ?').get(source, d.filePath);
-        if (!existing) {
-          errorMsg = (errorMsg ? errorMsg + '; ' : '') + `${d.filePath}: ${err.message}`;
-        }
-      }
-    }
-
-    db.prepare(
-      'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
-    ).run(source, Date.now(), errorMsg);
+  function _isTypedFailureResult(result) {
+    return _isTypedSessionsResult(result);
   }
 
-  function _upsertSession(db, source, descriptor, session, messages) {
-    try {
-      db.exec('BEGIN IMMEDIATE');
-      db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?').run(source, session.sessionId);
+  function _typedFailureToError(result) {
+    const fallbackMessage = result.status === 'unsupported'
+      ? `unsupported ${result.capability}`
+      : 'inventory failed';
+    const cause = result.cause || (result.error instanceof Error ? result.error : new Error(String(result.error || fallbackMessage)));
+    const error = new Error(`Runtime ${result.capability} ${result.operation} ${result.status} on ${result.platform}: ${cause.message}`);
+    error.status = result.status;
+    error.platform = result.platform;
+    error.capability = result.capability;
+    error.operation = result.operation;
+    error.context = result;
+    error.cause = cause;
+    error.failure = result;
+    return error;
+  }
 
-      db.prepare(`
+  function _recordSourceState(db, source, lastInventoryMs, lastError) {
+    db.prepare(
+      'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES(?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+    ).run(source, lastInventoryMs, lastError);
+  }
+
+  async function _runInventory(source, { force = false } = {}) {
+    const db = _getDb();
+    let errorMsg = null;
+    let stateToRecord = null;
+
+    try {
+      if (!force) {
+        const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
+        if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
+          return;
+        }
+      }
+
+      let adapter = null;
+
+      if (explicitAdapters) {
+        adapter = adapters[source];
+      } else {
+        const runtimeDriver = _getRuntimeSessionsDriver(runtime, source);
+        if (_isTypedFailureResult(runtimeDriver)) {
+          throw _typedFailureToError(runtimeDriver);
+        }
+
+        if (runtimeDriver) {
+          adapter = _adaptRuntimeSessionsDriver(runtimeDriver);
+        } else if (BUILTIN_SESSION_SOURCES.has(source) && adapters[source]) {
+          adapter = adapters[source];
+        } else {
+          throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
+        }
+      }
+
+      if (!adapter || typeof adapter.inventory !== 'function' || typeof adapter.parse !== 'function') {
+        if (explicitAdapters) {
+          return;
+        }
+        throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
+      }
+
+      const inventoryResult = await adapter.inventory();
+      if (_isTypedFailureResult(inventoryResult)) {
+        throw _typedFailureToError(inventoryResult);
+      }
+
+      const indexedFiles = new Map();
+      for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id FROM session_file WHERE source = ?').all(source)) {
+        indexedFiles.set(row.file_path, { size: row.size, mtime_ms: row.mtime_ms, sessionId: row.session_id });
+      }
+
+      const winnersBySessionId = new Map();
+      for (const descriptor of inventoryResult) {
+        const current = winnersBySessionId.get(descriptor.sessionId);
+        if (!current
+          || descriptor.mtimeMs > current.mtimeMs
+          || (descriptor.mtimeMs === current.mtimeMs && descriptor.filePath < current.filePath)) {
+          winnersBySessionId.set(descriptor.sessionId, descriptor);
+        }
+      }
+
+      const toParse = [];
+      const activePaths = new Set();
+      for (const d of winnersBySessionId.values()) {
+        activePaths.add(d.filePath);
+        const idx = indexedFiles.get(d.filePath);
+        if (!idx || idx.size !== d.size || idx.mtime_ms !== d.mtimeMs) {
+          toParse.push(d);
+        }
+      }
+
+      // Parse concurrently with a fixed four-file limit. Individual failures
+      // are recorded below and do not cancel sibling parses.
+      const parseDescriptor = async (d) => {
+        const preFingerprint = { size: d.size, mtimeMs: d.mtimeMs };
+        const parseResult = await adapter.parse(d);
+        if (_isTypedFailureResult(parseResult)) throw _typedFailureToError(parseResult);
+        if (!parseResult || typeof parseResult !== 'object' || !parseResult.session || typeof parseResult.session !== 'object' || typeof parseResult.session.sessionId !== 'string' || !parseResult.session.sessionId.trim() || !Array.isArray(parseResult.messages)) {
+          throw new Error('invalid parsed session result');
+        }
+
+        let postStat;
+        try {
+          postStat = await fs.promises.stat(d.filePath);
+        } catch (_) {
+          return null;
+        }
+        if (postStat.size === preFingerprint.size && postStat.mtimeMs === preFingerprint.mtimeMs) {
+          return { descriptor: d, parseResult };
+        }
+        const retryDescriptor = { ...d, size: postStat.size, mtimeMs: postStat.mtimeMs };
+        const retryResult = await adapter.parse(retryDescriptor);
+        if (_isTypedFailureResult(retryResult)) {
+          throw _typedFailureToError(retryResult);
+        }
+        if (!retryResult || typeof retryResult !== 'object' || !retryResult.session || typeof retryResult.session !== 'object' || typeof retryResult.session.sessionId !== 'string' || !retryResult.session.sessionId.trim() || !Array.isArray(retryResult.messages)) {
+          throw new Error('invalid parsed session result');
+        }
+        let retryStat;
+        try {
+          retryStat = await fs.promises.stat(d.filePath);
+        } catch (_) {
+          return null;
+        }
+        if (retryStat.size !== postStat.size || retryStat.mtimeMs !== postStat.mtimeMs) {
+          return null;
+        }
+        return {
+          descriptor: { ...retryDescriptor, size: retryStat.size, mtimeMs: retryStat.mtimeMs },
+          parseResult: retryResult
+        };
+      };
+
+      const parsed = new Array(toParse.length);
+      let next = 0;
+      const parseWorker = async () => {
+        while (true) {
+          const index = next++;
+          if (index >= toParse.length) return;
+          const descriptor = toParse[index];
+          try {
+            parsed[index] = { descriptor, value: await parseDescriptor(descriptor) };
+          } catch (error) {
+            parsed[index] = { descriptor, error };
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, toParse.length) }, parseWorker));
+
+      for (const item of parsed) {
+        if (item?.error) {
+          errorMsg = errorMsg
+            ? `${errorMsg}; ${item.descriptor.filePath}: ${item.error.message}`
+            : `${item.descriptor.filePath}: ${item.error.message}`;
+        }
+      }
+
+      const deletePath = db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?');
+      const deleteSession = db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?');
+      const insertFile = db.prepare(`
         INSERT INTO session_file(
           source, file_path, size, mtime_ms, session_id,
           project_name, project_display_name, project_full_path,
           first_message, git_branch, provider, model,
           started_at, updated_at, message_count, usage_json, extra_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        source,
-        descriptor.filePath,
-        descriptor.size,
-        descriptor.mtimeMs,
-        session.sessionId,
-        session.projectName || '',
-        session.projectDisplayName || null,
-        session.projectFullPath || null,
-        session.firstMessage || null,
-        session.gitBranch || null,
-        session.provider || null,
-        session.model || null,
-        session.startedAt || null,
-        session.updatedAt || null,
-        messages.length,
-        session.usageJson || null,
-        session.extraJson || null
-      );
+      `);
+      const insertMessage = db.prepare(`
+        INSERT INTO session_message(
+          source, session_id, ordinal, message_id, role, type, subtype,
+          content, timestamp, model, provider, user_message_number, extra_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-      if (messages.length > 0) {
-        const stmt = db.prepare(`
-          INSERT INTO session_message(
-            source, session_id, ordinal, message_id, role, type, subtype,
-            content, timestamp, model, provider, user_message_number, extra_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        let ordinal = 0;
-        for (const msg of messages) {
-          stmt.run(
-            source,
-            session.sessionId,
-            ordinal,
-            msg.messageId || null,
-            msg.role || null,
-            msg.type || null,
-            msg.subtype || null,
-            msg.content || null,
-            msg.timestamp || null,
-            msg.model || null,
-            msg.provider || null,
-            msg.userMessageNumber != null ? msg.userMessageNumber : null,
-            msg.extraJson || null
-          );
-          ordinal++;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const filePath of indexedFiles.keys()) {
+          if (!activePaths.has(filePath)) deletePath.run(source, filePath);
         }
+        for (const item of parsed) {
+          if (item?.value) {
+            const { descriptor, parseResult } = item.value;
+            _insertSession({ deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages);
+          }
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch (_) {}
+        throw error;
       }
 
-      db.exec('COMMIT');
+      stateToRecord = {
+        lastInventoryMs: Date.now(),
+        lastError: errorMsg
+      };
     } catch (err) {
-      try { db.exec('ROLLBACK'); } catch (_) {}
+      errorMsg = err && err.message ? err.message : String(err);
+      stateToRecord = {
+        lastInventoryMs: null,
+        lastError: errorMsg
+      };
       throw err;
+    } finally {
+      if (stateToRecord) {
+        try {
+          _recordSourceState(db, source, stateToRecord.lastInventoryMs, stateToRecord.lastError);
+        } catch (_err) {}
+      }
+    }
+  }
+
+
+  function _insertSession(statements, source, descriptor, session, messages) {
+    const { deleteSession, insertFile, insertMessage } = statements;
+    deleteSession.run(source, session.sessionId);
+    insertFile.run(
+      source,
+      descriptor.filePath,
+      descriptor.size,
+      descriptor.mtimeMs,
+      session.sessionId,
+      session.projectName || '',
+      session.projectDisplayName || null,
+      session.projectFullPath || null,
+      session.firstMessage || null,
+      session.gitBranch || null,
+      session.provider || null,
+      session.model || null,
+      session.startedAt || null,
+      session.updatedAt || null,
+      messages.length,
+      session.usageJson || null,
+      session.extraJson || null
+    );
+
+    let ordinal = 0;
+    for (const msg of messages) {
+      insertMessage.run(
+        source,
+        session.sessionId,
+        ordinal,
+        msg.messageId || null,
+        msg.role || null,
+        msg.type || null,
+        msg.subtype || null,
+        msg.content || null,
+        msg.timestamp || null,
+        msg.model || null,
+        msg.provider || null,
+        msg.userMessageNumber != null ? msg.userMessageNumber : null,
+        msg.extraJson || null
+      );
+      ordinal++;
     }
   }
 
@@ -445,25 +764,30 @@ function createSessionHistoryIndex(opts = {}) {
       ORDER BY updated_at DESC
     `).all(source, projectName);
 
-    return rows.map(r => ({
-      sessionId: r.session_id,
-      filePath: r.file_path,
-      size: r.size,
-      mtime: r.mtime_ms,
-      firstMessage: r.first_message,
-      gitBranch: r.git_branch,
-      provider: r.provider,
-      model: r.model,
-      messageCount: r.message_count,
-      tokens: r.usage_json ? JSON.parse(r.usage_json) : null,
-      extra: r.extra_json ? JSON.parse(r.extra_json) : {},
-      source: r.source,
-      projectName: r.project_name,
-      projectDisplayName: r.project_display_name,
-      projectFullPath: r.project_full_path,
-      startedAt: r.started_at,
-      updatedAt: r.updated_at
-    }));
+    return rows.map(r => {
+      const extra = _safeParseObject(r.extra_json);
+
+      return {
+        sessionId: r.session_id,
+        filePath: r.file_path,
+        size: r.size,
+        mtime: r.mtime_ms,
+        firstMessage: r.first_message,
+        gitBranch: r.git_branch,
+        provider: r.provider,
+        model: r.model,
+        messageCount: r.message_count,
+        tokens: _safeParseJson(r.usage_json, null),
+        extra,
+        source: r.source,
+        projectName: r.project_name,
+        projectHint: extra.projectHint || r.project_name,
+        projectDisplayName: r.project_display_name,
+        projectFullPath: r.project_full_path,
+        startedAt: r.started_at,
+        updatedAt: r.updated_at
+      };
+    });
   }
 
   /**
@@ -473,22 +797,12 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<{sessionId, lastModified, size, filePath}|null>}
    */
   async function getSessionStatus(source, sessionId, options = {}) {
-    await ensureSourceIndexed(source, { consistency: 'stale-ok' });
+    await _ensureSessionCurrent(source, sessionId);
     const db = _getDb();
     const row = db.prepare(
       'SELECT session_id, mtime_ms, size, file_path FROM session_file WHERE source = ? AND session_id = ?'
     ).get(source, sessionId);
-
     if (!row) return null;
-
-    // Verify file still exists
-    try {
-      await fs.promises.stat(row.file_path);
-    } catch (_) {
-      // File gone - invalidate and return null
-      db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?').run(source, sessionId);
-      return null;
-    }
 
     return {
       sessionId: row.session_id,
@@ -575,7 +889,7 @@ function createSessionHistoryIndex(opts = {}) {
         model: r.model,
         provider: r.provider,
         userMessageNumber: r.user_message_number,
-        extra: r.extra_json ? JSON.parse(r.extra_json) : {}
+        extra: _safeParseObject(r.extra_json)
       })),
       metadata: _buildMessageMetadata(sf),
       pagination: {
@@ -629,6 +943,7 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<Array>}
    */
   async function searchSessions(source, keyword, options = {}) {
+    if (!String(keyword || '').trim()) return [];
     await ensureSourceIndexed(source, { consistency: options.consistency || 'complete' });
     const db = _getDb();
     const contextLength = options.contextLength || 35;
@@ -641,13 +956,15 @@ function createSessionHistoryIndex(opts = {}) {
       const needle = String(keyword);
       if ([...needle].length >= 3) {
         const ftsRows = db.prepare(`
-          SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp
+          SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
+                 sf.project_name, sf.project_display_name, sf.project_full_path,
+                 sf.file_path, sf.first_message, sf.updated_at
           FROM session_message_fts fts
           JOIN session_message sm ON sm.rowid = fts.rowid
           JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
           WHERE sm.source = ? AND session_message_fts MATCH ?
           ${projectName ? 'AND sf.project_name = ?' : ''}
-          ORDER BY sf.updated_at DESC
+          ORDER BY sf.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
           LIMIT 500
         `);
         const params = [source, _ftsQuote(needle)];
@@ -680,20 +997,26 @@ function createSessionHistoryIndex(opts = {}) {
         idx += lowerKeyword.length;
       }
       if (count === 0) continue;
-
-      if (!matchMap.has(c.session_id)) {
-        const sf = db.prepare('SELECT * FROM session_file WHERE source = ? AND session_id = ?').get(source, c.session_id);
-        if (!sf) continue;
-        matchMap.set(c.session_id, {
-          session: sf,
+      let entry = matchMap.get(c.session_id);
+      if (!entry) {
+        entry = {
+          session: {
+            source: c.source,
+            session_id: c.session_id,
+            project_name: c.project_name,
+            project_display_name: c.project_display_name,
+            project_full_path: c.project_full_path,
+            file_path: c.file_path,
+            first_message: c.first_message,
+            updated_at: c.updated_at
+          },
           matchCount: 0,
           messages: []
-        });
+        };
+        matchMap.set(c.session_id, entry);
       }
 
-      const entry = matchMap.get(c.session_id);
-      // Claude: count every occurrence; Codex/Gemini/OMP: at most 1 per message
-      entry.matchCount += (source === 'claude') ? count : 1;
+      entry.matchCount += source === 'claude' ? count : 1;
       entry.messages.push({
         ordinal: c.ordinal,
         content,
@@ -724,6 +1047,7 @@ function createSessionHistoryIndex(opts = {}) {
 
     // Sort: matchCount DESC, then updated_at DESC
     results.sort((a, b) => {
+
       const cm = b.matchCount - a.matchCount;
       if (cm !== 0) return cm;
       const aRow = matchMap.get(a.sessionId);
@@ -737,20 +1061,50 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   function _scanMessagesRelational(db, source, keyword, projectName = null) {
-    const lowerKeyword = String(keyword).toLocaleLowerCase();
-    // Use instr for case-insensitive substring matching
-    let sql = `
-      SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp
+    const useSqlMatch = /^[\x00-\x7F]*$/.test(String(keyword));
+    const select = `
+      SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
+             sf.project_name, sf.project_display_name, sf.project_full_path,
+             sf.file_path, sf.first_message, sf.updated_at
       FROM session_message sm
       JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
-      WHERE sm.source = ? AND instr(lower(sm.content), lower(?)) > 0
+      WHERE sm.source = ?
       ${projectName ? 'AND sf.project_name = ?' : ''}
-      ORDER BY sf.updated_at DESC
-      LIMIT 500
+      ORDER BY sf.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
     `;
-    const params = [source, keyword];
-    if (projectName) params.push(projectName);
-    return db.prepare(sql).all(...params);
+
+    if (useSqlMatch) {
+      const sql = `${select.replace('WHERE sm.source = ?', 'WHERE sm.source = ? AND instr(lower(sm.content), lower(?)) > 0')}\nLIMIT 500`;
+      const params = [source, keyword];
+      if (projectName) params.push(projectName);
+      return db.prepare(sql).all(...params);
+    }
+
+    // SQLite's lower() is ASCII-oriented. Page the broad joined query and
+    // apply the same locale-aware JavaScript matcher used by searchSessions,
+    // collecting at most the 500 matching candidates (not 500 raw rows).
+    const candidates = [];
+    const pageSize = 500;
+    let offset = 0;
+    while (candidates.length < pageSize) {
+      const params = [source];
+      if (projectName) params.push(projectName);
+      params.push(pageSize, offset);
+      const batch = db.prepare(`${select}\nLIMIT ? OFFSET ?`).all(...params);
+      if (batch.length === 0) break;
+      for (const row of batch) {
+        if (_containsLocaleMatch(row.content, keyword)) candidates.push(row);
+        if (candidates.length >= pageSize) break;
+      }
+      if (batch.length < pageSize) break;
+      offset += batch.length;
+    }
+    return candidates;
+  }
+
+  function _containsLocaleMatch(content, keyword) {
+    const lowerKeyword = String(keyword).toLocaleLowerCase();
+    return String(content || '').toLocaleLowerCase().indexOf(lowerKeyword) !== -1;
   }
 
   function _extractContext(content, position, contextLength, keywordLength) {
@@ -778,8 +1132,8 @@ function createSessionHistoryIndex(opts = {}) {
       provider: sf.provider,
       model: sf.model,
       messageCount: sf.message_count,
-      usage: sf.usage_json ? JSON.parse(sf.usage_json) : null,
-      extra: sf.extra_json ? JSON.parse(sf.extra_json) : {}
+      usage: _safeParseObject(sf.usage_json),
+      extra: _safeParseObject(sf.extra_json)
     };
   }
 
@@ -794,17 +1148,41 @@ function createSessionHistoryIndex(opts = {}) {
     ).get(source, sessionId);
     if (!row) return;
 
-    let currentStat;
-    try {
-      currentStat = await fs.promises.stat(row.file_path);
-    } catch (_) {
-      // File gone, session stays indexed as-is
+    const fileKey = `${source}:${row.file_path}`;
+    const now = Date.now();
+    const cached = fileVersions.get(fileKey);
+    if (cached && now - cached.checkedAt < INDEX_INVENTORY_TTL_MS) return;
+
+    const activeCheck = fileChecks.get(fileKey);
+    if (activeCheck) {
+      await activeCheck;
       return;
     }
 
-    if (currentStat.size !== row.size || currentStat.mtimeMs !== row.mtime_ms) {
-      // File changed; force re-index
-      await ensureSourceIndexed(source, { force: true, consistency: 'complete' });
+    const check = (async () => {
+      let currentStat;
+      try {
+        currentStat = await fs.promises.stat(row.file_path);
+      } catch (_) {
+        fileVersions.set(fileKey, { size: -1, mtimeMs: -1, checkedAt: Date.now(), missing: true });
+        db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, row.file_path);
+        return;
+      }
+
+      fileVersions.set(fileKey, {
+        size: currentStat.size,
+        mtimeMs: currentStat.mtimeMs,
+        checkedAt: Date.now()
+      });
+      if (currentStat.size !== row.size || currentStat.mtimeMs !== row.mtime_ms) {
+        await ensureSourceIndexed(source, { force: true, consistency: 'complete' });
+      }
+    })();
+    fileChecks.set(fileKey, check);
+    try {
+      await check;
+    } finally {
+      if (fileChecks.get(fileKey) === check) fileChecks.delete(fileKey);
     }
   }
 
@@ -824,11 +1202,15 @@ function createSessionHistoryIndex(opts = {}) {
     db.prepare(
       'UPDATE source_state SET last_inventory_ms = NULL WHERE source = ?'
     ).run(source);
+    for (const key of fileVersions.keys()) {
+      if (key.startsWith(`${source}:`)) fileVersions.delete(key);
+    }
   }
-
   function closeSessionHistoryIndex() {
     closeDatabase(dbPath);
     _db = null;
+    fileVersions.clear();
+    fileChecks.clear();
   }
 
   // Build the API object

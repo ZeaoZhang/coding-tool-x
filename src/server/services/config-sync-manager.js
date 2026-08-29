@@ -22,6 +22,7 @@ const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { convertSkillToCodex, convertCommandToCodex, convertCommandToGemini } = require('./format-converter');
 const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
 
 // Paths
 const HOME = HOME_DIR || os.homedir();
@@ -92,8 +93,10 @@ const CONFIG_TYPES = {
 };
 
 class ConfigSyncManager {
-  constructor() {
+  constructor({ registry, runtime } = {}) {
     ensureStorageDirMigrated();
+    this.registry = registry || platformRuntime.getPlatformRegistry();
+    this.runtime = runtime || platformRuntime.getPlatformRuntime();
     this.ccToolConfigs = CC_TOOL_CONFIGS;
     this.claudeDir = CLAUDE_CODE_DIR;
     this.codexDir = CODEX_DIR;
@@ -101,6 +104,61 @@ class ConfigSyncManager {
     this.opencodeDir = OPENCODE_DIR;
     this.ompDir = OMP_AGENT_DIR;
     this.configTypes = CONFIG_TYPES;
+  }
+
+  syncToPlatform(platform, type, name) {
+    const key = String(platform || '').trim().toLowerCase();
+    try {
+      const driver = this.runtime?.getDriver?.(key, 'resourceSync');
+      if (!driver || (typeof driver.status === 'string' && driver.status !== 'ok')) {
+        return { status: 'unsupported', platform: key, capability: 'resourceSync', operation: 'sync' };
+      }
+      if (typeof driver.sync !== 'function') {
+        return { status: 'unsupported', platform: key, capability: 'resourceSync', operation: 'sync' };
+      }
+      const safeName = this._normalizeSafeRelativeName(name);
+      if (!safeName) {
+        return { status: 'invalid', platform: key, capability: 'resourceSync', operation: 'sync', error: 'Invalid config item name' };
+      }
+      const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+      return driver.sync.length >= 3
+        ? driver.sync(type, safeName, sourcePath)
+        : driver.sync(type, safeName);
+    } catch (error) {
+      return {
+        status: 'failed',
+        platform: key,
+        capability: 'resourceSync',
+        operation: 'sync',
+        error: error.message
+      };
+    }
+  }
+
+  removeFromPlatform(platform, type, name) {
+    const key = String(platform || '').trim().toLowerCase();
+    try {
+      const driver = this.runtime?.getDriver?.(key, 'resourceSync');
+      if (!driver || (typeof driver.status === 'string' && driver.status !== 'ok')) {
+        return { status: 'unsupported', platform: key, capability: 'resourceSync', operation: 'remove' };
+      }
+      if (typeof driver.remove !== 'function') {
+        return { status: 'unsupported', platform: key, capability: 'resourceSync', operation: 'remove' };
+      }
+      const safeName = this._normalizeSafeRelativeName(name);
+      if (!safeName) {
+        return { status: 'invalid', platform: key, capability: 'resourceSync', operation: 'remove', error: 'Invalid config item name' };
+      }
+      return driver.remove(type, safeName);
+    } catch (error) {
+      return {
+        status: 'failed',
+        platform: key,
+        capability: 'resourceSync',
+        operation: 'remove',
+        error: error.message
+      };
+    }
   }
 
   /**
@@ -682,116 +740,70 @@ class ConfigSyncManager {
       return results;
     }
 
-    for (const [name, item] of Object.entries(registryItems)) {
-      if (!item || typeof item !== 'object') continue;
+    let platforms = [];
+    try {
+      platforms = this.registry?.list?.({ enabledOnly: true }) || [];
+    } catch (error) {
+      results.errors.push({ type, operation: 'list-platforms', error: error.message });
+      return results;
+    }
 
-      const { enabled, platforms } = item;
+    const definitions = new Map(
+      platforms
+        .filter(platform => platform && platform.key)
+        .map(platform => [String(platform.key).toLowerCase(), platform])
+    );
+    const legacyMethods = {
+      claude: { sync: 'syncToClaude', remove: 'removeFromClaude' },
+      codex: { sync: 'syncToCodex', remove: 'removeFromCodex' },
+      gemini: { sync: 'syncToGemini', remove: 'removeFromGemini' },
+      opencode: { sync: 'syncToOpenCode', remove: 'removeFromOpenCode' },
+      omp: { sync: 'syncToOmp', remove: 'removeFromOmp' }
+    };
 
-      if (enabled && platforms) {
-        // Sync to enabled platforms
-        if (platforms.claude) {
-          const result = this.syncToClaude(type, name);
-          if (result.success && !result.skipped) {
-            results.synced.push({ type, name, platform: 'claude' });
-          } else if (!result.success) {
-            results.errors.push({ type, name, platform: 'claude', error: result.error });
-          }
-        } else {
-          // Platform disabled, remove
-          const result = this.removeFromClaude(type, name);
-          if (result.success && !result.message) {
-            results.removed.push({ type, name, platform: 'claude' });
-          }
-        }
+    const invoke = (platform, operation, name) => {
+      const definition = definitions.get(platform);
+      const driverId = definition?.capabilities?.resourceSync;
+      const legacyMethod = legacyMethods[platform]?.[operation];
+      if (typeof driverId === 'string' && driverId.startsWith('legacy:') && legacyMethod) {
+        return this[legacyMethod](type, name);
+      }
+      return operation === 'sync'
+        ? this.syncToPlatform(platform, type, name)
+        : this.removeFromPlatform(platform, type, name);
+    };
 
-        if (platforms.codex) {
-          const result = this.syncToCodex(type, name);
-          if (result.success && !result.skipped) {
-            results.synced.push({ type, name, platform: 'codex' });
-            if (result.warnings && result.warnings.length > 0) {
-              results.warnings.push({ type, name, platform: 'codex', warnings: result.warnings });
-            }
-          } else if (!result.success) {
-            results.errors.push({ type, name, platform: 'codex', error: result.error });
+    const isSuccessful = result => result?.success === true || result?.status === 'ok';
+    const isSkipped = result => result?.skipped === true || result?.status === 'unsupported';
+    const appendResult = (name, platform, operation, result) => {
+      if (isSkipped(result)) return;
+      if (isSuccessful(result)) {
+        if (operation === 'sync') {
+          results.synced.push({ type, name, platform });
+          if (Array.isArray(result.warnings) && result.warnings.length > 0) {
+            results.warnings.push({ type, name, platform, warnings: result.warnings });
           }
-        } else {
-          // Platform disabled, remove
-          const result = this.removeFromCodex(type, name);
-          if (result.success && !result.message && !result.skipped) {
-            results.removed.push({ type, name, platform: 'codex' });
-          }
-        }
-
-        if (platforms.gemini) {
-          const result = this.syncToGemini(type, name);
-          if (result.success && !result.skipped) {
-            results.synced.push({ type, name, platform: 'gemini' });
-            if (result.warnings && result.warnings.length > 0) {
-              results.warnings.push({ type, name, platform: 'gemini', warnings: result.warnings });
-            }
-          } else if (!result.success) {
-            results.errors.push({ type, name, platform: 'gemini', error: result.error });
-          }
-        } else {
-          const result = this.removeFromGemini(type, name);
-          if (result.success && !result.message && !result.skipped) {
-            results.removed.push({ type, name, platform: 'gemini' });
-          }
-        }
-
-        if (platforms.opencode) {
-          const result = this.syncToOpenCode(type, name);
-          if (result.success && !result.skipped) {
-            results.synced.push({ type, name, platform: 'opencode' });
-          } else if (!result.success) {
-            results.errors.push({ type, name, platform: 'opencode', error: result.error });
-          }
-        } else {
-          const result = this.removeFromOpenCode(type, name);
-          if (result.success && !result.message && !result.skipped) {
-            results.removed.push({ type, name, platform: 'opencode' });
-          }
-        }
-
-        if (platforms.omp) {
-          const result = this.syncToOmp(type, name);
-          if (result.success && !result.skipped) {
-            results.synced.push({ type, name, platform: 'omp' });
-          } else if (!result.success) {
-            results.errors.push({ type, name, platform: 'omp', error: result.error });
-          }
-        } else {
-          const result = this.removeFromOmp(type, name);
-          if (result.success && !result.message && !result.skipped) {
-            results.removed.push({ type, name, platform: 'omp' });
-          }
+        } else if (!result.message) {
+          results.removed.push({ type, name, platform });
         }
       } else {
-        // Item disabled, remove from all platforms
-        const claudeResult = this.removeFromClaude(type, name);
-        if (claudeResult.success && !claudeResult.message) {
-          results.removed.push({ type, name, platform: 'claude' });
-        }
+        results.errors.push({
+          type,
+          name,
+          platform,
+          error: result?.error || `${operation} failed`
+        });
+      }
+    };
 
-        const codexResult = this.removeFromCodex(type, name);
-        if (codexResult.success && !codexResult.message && !codexResult.skipped) {
-          results.removed.push({ type, name, platform: 'codex' });
-        }
+    for (const [name, item] of Object.entries(registryItems)) {
+      if (!item || typeof item !== 'object') continue;
+      const active = item.enabled === true && item.platforms && typeof item.platforms === 'object';
 
-        const geminiResult = this.removeFromGemini(type, name);
-        if (geminiResult.success && !geminiResult.message && !geminiResult.skipped) {
-          results.removed.push({ type, name, platform: 'gemini' });
-        }
-
-        const opencodeResult = this.removeFromOpenCode(type, name);
-        if (opencodeResult.success && !opencodeResult.message && !opencodeResult.skipped) {
-          results.removed.push({ type, name, platform: 'opencode' });
-        }
-
-        const ompResult = this.removeFromOmp(type, name);
-        if (ompResult.success && !ompResult.message && !ompResult.skipped) {
-          results.removed.push({ type, name, platform: 'omp' });
-        }
+      for (const platform of definitions.keys()) {
+        const shouldSync = active && item.platforms[platform] === true;
+        const operation = shouldSync ? 'sync' : 'remove';
+        appendResult(name, platform, operation, invoke(platform, operation, name));
       }
     }
 
