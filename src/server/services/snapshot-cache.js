@@ -147,17 +147,27 @@ function runRefresh(refresh, defer, deferMs) {
 
 function refreshSnapshot(key, refresh, {
   defer = false,
-  deferMs = DEFAULT_BACKGROUND_DELAY_MS,
-  bypassInflight = false
+  deferMs = DEFAULT_BACKGROUND_DELAY_MS
 } = {}) {
-  if (!bypassInflight && inflight.has(key)) {
+  if (inflight.has(key)) {
     return inflight.get(key);
   }
 
-  const startedVersion = bypassInflight ? bumpInvalidationVersion(key) : getInvalidationVersion(key);
+  const startedVersion = getInvalidationVersion(key);
   const promise = runRefresh(refresh, defer, deferMs)
     .then((value) => {
-      const entry = makeEntry(key, value);
+      let nextValue = value;
+      const existing = getEntry(key);
+      if (value && Array.isArray(value.__errors) && existing?.value && typeof existing.value === 'object') {
+        nextValue = { ...existing.value, ...value };
+        for (const failure of value.__errors) {
+          const capability = failure?.capability === 'statistics' ? 'todayStats' : failure?.capability;
+          if (capability && Object.prototype.hasOwnProperty.call(existing.value, capability)) {
+            nextValue[capability] = existing.value[capability];
+          }
+        }
+      }
+      const entry = makeEntry(key, nextValue);
       if (getInvalidationVersion(key) === startedVersion) {
         snapshots.set(key, entry);
         lastErrors.delete(key);
@@ -271,7 +281,7 @@ async function getSnapshot(key, {
       : 0;
 
     if (!entry && Number(coldWaitMs) > 0) {
-      refreshPromise = refreshSnapshot(key, refresh, { bypassInflight: force });
+      refreshPromise = refreshSnapshot(key, refresh);
       const waitResult = await waitForRefresh(refreshPromise, coldWaitMs);
       if (waitResult.entry) {
         entry = waitResult.entry;
@@ -287,7 +297,7 @@ async function getSnapshot(key, {
       }
     } else if (!entry && backgroundOnMiss === false) {
       try {
-        entry = await refreshSnapshot(key, refresh, { bypassInflight: force });
+        entry = await refreshSnapshot(key, refresh);
         expired = false;
       } catch (error) {
         refreshError = error?.message || String(error);
@@ -295,7 +305,7 @@ async function getSnapshot(key, {
         if (!entry) throw error;
       }
     } else {
-      refreshPromise = refreshSnapshot(key, refresh, { defer: !force, deferMs, bypassInflight: force });
+      refreshPromise = refreshSnapshot(key, refresh, { defer: !force, deferMs });
     }
   }
 
@@ -370,6 +380,16 @@ function invalidateSnapshot(keyOrPrefix) {
   }
 }
 
+function dashboardSourceKey(source) {
+  return `dashboard:source:${source}`;
+}
+
+function invalidateDashboardSourceSnapshot(source) {
+  if (source) {
+    invalidateSnapshot(dashboardSourceKey(source));
+  }
+}
+
 function clearSnapshotCache({ deleteFiles = false } = {}) {
   for (const key of inflight.keys()) {
     bumpInvalidationVersion(key);
@@ -392,6 +412,8 @@ module.exports = {
   refreshSnapshot,
   invalidateSnapshot,
   clearSnapshotCache,
+  dashboardSourceKey,
+  invalidateDashboardSourceSnapshot,
   _test: {
     getSnapshotDir,
     getSnapshotPath,

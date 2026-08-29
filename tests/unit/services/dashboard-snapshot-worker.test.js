@@ -708,6 +708,61 @@ describe('dashboard-snapshot-worker', () => {
       .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'projects' });
   });
 
+  it('builds source payloads concurrently and isolates capability failures', async () => {
+    const channelsError = new Error('channels unavailable');
+    const getDriver = vi.fn((source, capability) => {
+      expect(source).toBe('demo-cli');
+      if (capability === 'channels') return { list: vi.fn(async () => { throw channelsError; }) };
+      if (capability === 'statistics') return { getTodayStatistics: vi.fn(async () => ({ summary: { requests: 4, tokens: 8, cost: 0.2 } })) };
+      if (capability === 'counts') return { getProjectAndSessionCounts: vi.fn(async () => ({ projectCount: 2, sessionCount: 3 })) };
+      throw new Error(`unexpected capability ${capability}`);
+    });
+    const payload = await worker.buildSourceDashboardPayload('demo-cli', { cwd: '/tmp/demo' }, { force: true, runtime: { getDriver } });
+    expect(payload.channels).toEqual({ channels: [] });
+    expect(payload.__errors).toEqual(expect.arrayContaining([expect.objectContaining({ capability: 'channels', error: 'channels unavailable', retryable: true })]));
+    expect(payload.todayStats).toEqual({ summary: { requests: 4, tokens: 8, cost: 0.2 } });
+    expect(payload.counts).toEqual({ projectCount: 2, sessionCount: 3 });
+    expect(getDriver).toHaveBeenCalledTimes(3);
+  });
+
+  it('records statistics capability failures while preserving sibling source values', async () => {
+    const runtime = { getDriver: vi.fn((source, capability) => {
+      if (capability === 'channels') return { list: vi.fn(async () => [{ id: 'ok' }]) };
+      if (capability === 'statistics') return { today: vi.fn(async () => { throw new Error('stats unavailable'); }) };
+      if (capability === 'counts') return { counts: vi.fn(async () => ({ projectCount: 1, sessionCount: 2 })) };
+      throw new Error(`unexpected capability ${capability}`);
+    }) };
+    const payload = await worker.buildSourceDashboardPayload('demo-cli', {}, { runtime });
+    expect(payload.channels).toEqual({ channels: [{ id: 'ok' }] });
+    expect(payload.todayStats).toBeNull();
+    expect(payload.counts).toEqual({ projectCount: 1, sessionCount: 2 });
+    expect(payload.__errors).toEqual(expect.arrayContaining([expect.objectContaining({ capability: 'statistics', error: 'stats unavailable' })]));
+  });
+
+  it('dispatches source messages through the same build payload IPC branch', async () => {
+    const runtime = {
+      getDriver: vi.fn((source, capability) => {
+        expect(source).toBe('demo-cli');
+        if (capability === 'channels') return { list: vi.fn(async () => []) };
+        if (capability === 'statistics') return { today: vi.fn(async () => null) };
+        if (capability === 'counts') return { counts: vi.fn(async () => ({ projectCount: 1, sessionCount: 1 })) };
+        throw new Error(`unexpected capability ${capability}`);
+      })
+    };
+
+    await expect(worker.buildPayload({
+      kind: 'source',
+      source: 'demo-cli',
+      config: {},
+      options: { force: false },
+      runtime
+    })).resolves.toEqual({
+      channels: { channels: [] },
+      todayStats: null,
+      counts: { projectCount: 1, sessionCount: 1 }
+    });
+  });
+
   it('rejects typed failed payloads from child IPC instead of resolving snapshot values', async () => {
     const originalNodeEnv = process.env.NODE_ENV;
     const cp = require('child_process');

@@ -11,6 +11,7 @@ const os = require('os');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('./repo-scanner-base');
+const { LocalResourceIndex } = require('./local-resource-index');
 const { NATIVE_PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 const {
@@ -18,6 +19,28 @@ const {
   normalizeSafeRelativePath,
   resolveInsideRoot
 } = require('./config-artifact-paths');
+
+function readAgentMetadata(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.alloc(8192);
+  const chunks = [];
+  let total = 0;
+  try {
+    while (total < 1024 * 1024) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      total += bytesRead;
+      let text = Buffer.concat(chunks).toString('utf8');
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      if (total === bytesRead && !/^\s*---\s*(?:\n|$)/.test(text)) return {};
+      if (/^\s*---\s*\n[\s\S]*?\n\s*---\s*(?:\n|$)/.test(text)) return parseFrontmatter(text).frontmatter;
+    }
+    return {};
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
@@ -317,6 +340,7 @@ function readCodexAgentConfigFile(configFilePath) {
  * 解析 YAML frontmatter
  */
 function parseFrontmatter(content) {
+
   const result = {
     frontmatter: {},
     body: content
@@ -353,6 +377,32 @@ function parseFrontmatter(content) {
   }
 
   return result;
+}
+function readCodexTomlMetadata(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.alloc(8192);
+  const chunks = [];
+  let total = 0;
+  let updatedAt = 0;
+  try {
+    updatedAt = fs.fstatSync(fd).mtimeMs;
+    while (total < 1024 * 1024) {
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
+      total += bytesRead;
+      let content = Buffer.concat(chunks).toString('utf8');
+      if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+      if (/^\s*model\s*=.*(?:\n|$)/m.test(content)) return { data: toml.parse(content), content, updatedAt };
+    }
+    let content = Buffer.concat(chunks).toString('utf8');
+    if (content.charCodeAt(0) === 0xFEFF) content = content.slice(1);
+    return { data: toml.parse(content), content, updatedAt };
+  } catch (error) {
+    return { data: {}, content: '', updatedAt, error };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**
@@ -539,18 +589,56 @@ class AgentsService {
   constructor(platform = 'claude') {
     this.platform = normalizePlatform(platform);
     const config = PLATFORM_CONFIG[this.platform];
-
     this.userAgentsDir = config.userAgentsDir;
     if (this.platform === 'opencode') {
       const legacyUserDir = config.legacyUserAgentsDir;
-      if (legacyUserDir && fs.existsSync(legacyUserDir) && !fs.existsSync(this.userAgentsDir)) {
-        this.userAgentsDir = legacyUserDir;
-      }
+      if (legacyUserDir && fs.existsSync(legacyUserDir) && !fs.existsSync(this.userAgentsDir)) this.userAgentsDir = legacyUserDir;
     }
-
     this.projectAgentsDir = config.projectAgentsDir;
     this.repoScanner = new AgentsRepoScanner(this.platform, this.userAgentsDir);
     ensureDir(this.userAgentsDir);
+    this._localIndexes = new Map();
+    this._localIndexLimit = 32;
+  }
+  _getLocalIndex(scope, projectPath = null) {
+    const root = scope === 'user' ? this.userAgentsDir : this.getProjectAgentsDir(projectPath);
+    if (!root) return null;
+    const key = `${this.platform}:${scope}:${path.resolve(root)}`;
+    if (!this._localIndexes.has(key)) {
+      if (this._localIndexes.size >= this._localIndexLimit) {
+        const [oldKey, oldIndex] = this._localIndexes.entries().next().value;
+        oldIndex.dispose();
+        this._localIndexes.delete(oldKey);
+      }
+      this._localIndexes.set(key, new LocalResourceIndex({ key, roots: [root],
+        scanFile: (descriptor) => {
+          if (!descriptor.fullPath.endsWith('.md') || descriptor.relativePath.includes(path.sep)) return null;
+          const frontmatter = readAgentMetadata(descriptor.fullPath);
+          const fileName = path.basename(descriptor.relativePath, '.md');
+          return { name: frontmatter.name || fileName, fileName, scope, path: descriptor.relativePath, fullPath: descriptor.fullPath, description: frontmatter.description || '', tools: frontmatter.tools || '', model: frontmatter.model || '', permissionMode: frontmatter.permissionMode || '', skills: frontmatter.skills || '', updatedAt: descriptor.stat.mtime.getTime() };
+        },
+        detailFile: (summary) => {
+          const content = fs.readFileSync(summary.fullPath, 'utf-8');
+          const { frontmatter, body } = parseFrontmatter(content);
+          return { systemPrompt: body, fullContent: content, updatedAt: fs.statSync(summary.fullPath).mtime.getTime(), name: frontmatter.name || summary.fileName, description: frontmatter.description || '', tools: frontmatter.tools || '', model: frontmatter.model || '', permissionMode: frontmatter.permissionMode || '', skills: frontmatter.skills || '' };
+        }
+      }));
+    }
+    const index = this._localIndexes.get(key);
+    this._localIndexes.delete(key);
+    this._localIndexes.set(key, index);
+    return index;
+  }
+
+  dispose() {
+    for (const index of this._localIndexes.values()) index.dispose();
+    this._localIndexes.clear();
+    this._codexIndex?.dispose();
+    this._codexIndex = null;
+  }
+
+  _invalidateLocal(scope, projectPath = null) {
+    this._getLocalIndex(scope, projectPath)?.invalidate();
   }
 
   getProjectAgentsDir(projectPath) {
@@ -575,52 +663,20 @@ class AgentsService {
     return { safeFileName, relativePath, fullPath };
   }
 
-  /**
-   * 获取所有代理列表
-   * @param {string} projectPath - 项目路径（可选，用于获取项目级代理）
-   */
   listAgents(projectPath = null) {
-    if (this.platform === 'codex') {
-      return this.listCodexAgents();
-    }
-
-    const agents = [];
-
-    // 获取用户级代理
-    const userAgents = scanAgentsDir(this.userAgentsDir, this.userAgentsDir, 'user');
-    agents.push(...userAgents);
-
-    // 获取项目级代理（如果提供了项目路径）
-    if (projectPath) {
-      const projectAgentsDir = this.getProjectAgentsDir(projectPath);
-      const projectAgents = scanAgentsDir(projectAgentsDir, projectAgentsDir, 'project');
-      agents.push(...projectAgents);
-    }
-
-    // 按名称排序
+    if (this.platform === 'codex') return this.listCodexAgents(false);
+    const userAgents = this._getLocalIndex('user').listSync();
+    const projectAgents = projectPath ? this._getLocalIndex('project', projectPath).listSync() : [];
+    const agents = [...userAgents, ...projectAgents];
     agents.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-
-    return {
-      agents,
-      total: agents.length,
-      userCount: userAgents.length,
-      projectCount: agents.length - userAgents.length
-    };
+    return { agents, total: agents.length, userCount: userAgents.length, projectCount: projectAgents.length };
   }
 
-  /**
-   * 获取所有代理（包括远程仓库）
-   */
+  /** 获取所有代理（包括远程仓库） */
   async listAllAgents(projectPath = null, forceRefresh = false) {
     if (this.platform === 'codex') {
-      const { agents, userCount, projectCount } = this.listCodexAgents();
-      return {
-        agents,
-        total: agents.length,
-        userCount,
-        projectCount,
-        remoteCount: 0
-      };
+      const { agents, userCount, projectCount } = this.listCodexAgents(false);
+      return { agents, total: agents.length, userCount, projectCount, remoteCount: 0 };
     }
 
     // 获取本地代理
@@ -666,36 +722,12 @@ class AgentsService {
    */
   getAgent(fileName, scope, projectPath = null) {
     const safeFileName = assertSafeAgentFileName(fileName);
-
-    if (this.platform === 'codex') {
-      return this.getCodexAgent(safeFileName, scope);
-    }
-
+    if (this.platform === 'codex') return this.getCodexAgent(safeFileName, scope);
     const baseDir = this._getBaseDir(scope, projectPath);
-    const { relativePath, fullPath: filePath } = this._resolveAgentFilePath(baseDir, safeFileName);
-
-    if (!fs.existsSync(filePath)) {
-      return null;
-    }
-
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const { frontmatter, body } = parseFrontmatter(content);
-
-    return {
-      name: frontmatter.name || safeFileName,
-      fileName: safeFileName,
-      scope,
-      path: relativePath,
-      fullPath: filePath,
-      description: frontmatter.description || '',
-      tools: frontmatter.tools || '',
-      model: frontmatter.model || '',
-      permissionMode: frontmatter.permissionMode || '',
-      skills: frontmatter.skills || '',
-      systemPrompt: body,
-      fullContent: content,
-      updatedAt: fs.statSync(filePath).mtime.getTime()
-    };
+    const { relativePath } = this._resolveAgentFilePath(baseDir, safeFileName);
+    const detail = this._getLocalIndex(scope, projectPath)?.getSync(relativePath);
+    if (!detail) return null;
+    return { ...detail, fileName: safeFileName, scope, path: relativePath };
   }
 
   /**
@@ -734,9 +766,8 @@ class AgentsService {
     if (skills) frontmatterData.skills = skills;
 
     const content = generateFrontmatter(frontmatterData, this.platform) + '\n\n' + (systemPrompt || '');
-
     fs.writeFileSync(filePath, content, 'utf-8');
-
+    this._invalidateLocal(scope, projectPath);
     return this.getAgent(safeFileName, scope, projectPath);
   }
 
@@ -768,9 +799,8 @@ class AgentsService {
     if (skills) frontmatterData.skills = skills;
 
     const content = generateFrontmatter(frontmatterData, this.platform) + '\n\n' + (systemPrompt || '');
-
     fs.writeFileSync(filePath, content, 'utf-8');
-
+    this._invalidateLocal(scope, projectPath);
     return this.getAgent(safeFileName, scope, projectPath);
   }
 
@@ -792,7 +822,7 @@ class AgentsService {
     }
 
     fs.unlinkSync(filePath);
-
+    this._invalidateLocal(scope, projectPath);
     return { success: true, message: '代理已删除' };
   }
 
@@ -864,27 +894,23 @@ class AgentsService {
    * 从远程仓库安装代理
    */
   async installFromRemote(agent) {
-    if (!agent || typeof agent !== 'object') {
-      throw new Error('无效的代理安装参数');
-    }
+    if (!agent || typeof agent !== 'object') throw new Error('无效的代理安装参数');
     const safeFileName = assertSafeAgentFileName(agent.fileName);
     const safeRepoPath = assertSafeRepoPath(agent.repoPath);
-    return this.repoScanner.installAgent({
-      ...agent,
-      fileName: safeFileName,
-      repoPath: safeRepoPath
-    });
+    const result = await this.repoScanner.installAgent({ ...agent, fileName: safeFileName, repoPath: safeRepoPath });
+    if (result && result.success !== false) this._invalidateLocal('user');
+    return result;
   }
 
-  /**
-   * 卸载代理
-   */
+  /** 卸载代理 */
   uninstallAgent(fileName) {
     const safeFileName = assertSafeAgentFileName(fileName);
-    return this.repoScanner.uninstall(`${safeFileName}.md`);
+    const result = this.repoScanner.uninstall(`${safeFileName}.md`);
+    if (result && result.success !== false) this._invalidateLocal('user');
+    return result;
   }
 
-  listCodexAgents() {
+  _readCodexAgents(includeDetails = true) {
     const config = readCodexTomlConfig();
     const agentsTable = isPlainObject(config.agents) ? config.agents : {};
     const agentsByName = new Map();
@@ -902,19 +928,12 @@ class AgentsService {
       let fullContent = '';
       let configReadError = '';
       let updatedAt = fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : Date.now();
-
-      if (configFile) {
+      if (includeDetails && configFile) {
         const parsedConfigFile = readCodexAgentConfigFile(resolvedConfigFile);
         fullContent = parsedConfigFile.content;
-        if (isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string') {
-          model = parsedConfigFile.data.model;
-        }
-        if (parsedConfigFile.updatedAt) {
-          updatedAt = Math.max(updatedAt, parsedConfigFile.updatedAt);
-        }
-        if (parsedConfigFile.error) {
-          configReadError = parsedConfigFile.error;
-        }
+        if (isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string') model = parsedConfigFile.data.model;
+        if (parsedConfigFile.updatedAt) updatedAt = Math.max(updatedAt, parsedConfigFile.updatedAt);
+        if (parsedConfigFile.error) configReadError = parsedConfigFile.error;
       }
 
       agentsByName.set(key, {
@@ -955,11 +974,9 @@ class AgentsService {
           }
 
           const configFilePath = path.join(CODEX_AGENTS_DIR, entry.name);
-          const parsedConfigFile = readCodexAgentConfigFile(configFilePath);
+          const parsedConfigFile = includeDetails ? readCodexAgentConfigFile(configFilePath) : { content: '', data: null, updatedAt: fs.statSync(configFilePath).mtime.getTime(), error: null };
           const existing = agentsByName.get(fileName);
-          const model = isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string'
-            ? parsedConfigFile.data.model
-            : '';
+          const model = isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string' ? parsedConfigFile.data.model : '';
           const updatedAt = parsedConfigFile.updatedAt || fs.statSync(configFilePath).mtime.getTime();
 
           if (existing) {
@@ -970,19 +987,11 @@ class AgentsService {
               existing.fullPath = configFilePath;
               existing.resolvedConfigFile = configFilePath;
             }
-            if (!existing.fullContent && parsedConfigFile.content) {
-              existing.fullContent = parsedConfigFile.content;
-            }
-            if (!existing.model && model) {
-              existing.model = model;
-            }
-            if (parsedConfigFile.error && !existing.configReadError) {
-              existing.configReadError = parsedConfigFile.error;
-            }
+            if (includeDetails && !existing.fullContent && parsedConfigFile.content) existing.fullContent = parsedConfigFile.content;
+            if (!existing.model && model) existing.model = model;
+            if (parsedConfigFile.error && !existing.configReadError) existing.configReadError = parsedConfigFile.error;
             existing.updatedAt = Math.max(existing.updatedAt || 0, updatedAt);
-            existing.source = existing.source === 'codex-config'
-              ? 'codex-config+native-file'
-              : existing.source;
+            existing.source = existing.source === 'codex-config' ? 'codex-config+native-file' : existing.source;
             continue;
           }
 
@@ -1012,27 +1021,101 @@ class AgentsService {
       }
     }
 
+
     const agents = Array.from(agentsByName.values());
-
     agents.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    return { agents, total: agents.length, userCount: agents.length, projectCount: 0 };
+  }
+  _getCodexIndex() {
+    if (!this._codexIndex) {
+      this._codexIndex = new LocalResourceIndex({
+        key: `${this.platform}:codex`, roots: [CODEX_AGENTS_DIR], ttlMs: 1000,
+        scanFile: ({ fullPath, relativePath, stat }) => {
+          if (!fullPath.endsWith('.toml') || relativePath.includes(path.sep)) return null;
+          const fileName = path.basename(fullPath, '.toml');
+          const metadata = readCodexTomlMetadata(fullPath);
+          const data = metadata.data || {};
+          return { name: fileName, fileName, scope: 'user', path: fullPath, fullPath, description: '', tools: '', model: typeof data.model === 'string' ? data.model : '', permissionMode: '', skills: '', configFile: fullPath, configMode: 'managed', resolvedConfigFile: fullPath, configReadError: metadata.error?.message || '', updatedAt: stat.mtime.getTime(), source: 'native-file' };
+        },
+        detailFile: (summary) => this._hydrateCodexAgent(summary)
+      });
+    }
+    return this._codexIndex;
+  }
 
+  _hydrateCodexAgent(summary) {
+    const configPath = summary.resolvedConfigFile || resolveCodexConfigPath(summary.configFile) || (summary.source === 'native-file' ? summary.fullPath : '');
+    if (!configPath) return { ...summary, fullContent: '', systemPrompt: '', configReadError: '' };
+    const parsed = readCodexAgentConfigFile(configPath);
+    const data = parsed.data || {};
     return {
-      agents,
-      total: agents.length,
-      userCount: agents.length,
-      projectCount: 0
+      ...summary,
+      model: typeof data.model === 'string' ? data.model : summary.model || '',
+      fullContent: parsed.content,
+      systemPrompt: '',
+      configReadError: parsed.error || summary.configReadError || '',
+      updatedAt: parsed.updatedAt || summary.updatedAt
     };
   }
 
-  getCodexAgent(fileName, scope) {
-    assertSafeAgentFileName(fileName);
-
-    if (scope !== 'user') {
-      return null;
+  listCodexAgents(includeDetails = true) {
+    const indexed = this._getCodexIndex().listSync();
+    const config = readCodexTomlConfig();
+    const table = isPlainObject(config.agents) ? config.agents : {};
+    const merged = new Map(indexed.map((agent) => [agent.fileName, { ...agent }]));
+    for (const [fileName, entry] of Object.entries(table)) {
+      if (!isPlainObject(entry)) continue;
+      const configFile = normalizeCodexConfigPath(entry.config_file);
+      const resolvedConfigFile = resolveCodexConfigPath(configFile);
+      const existing = merged.get(fileName);
+      const externalMetadata = configFile && !isManagedCodexConfigPath(configFile) && fs.existsSync(resolvedConfigFile)
+        ? readCodexTomlMetadata(resolvedConfigFile)
+        : { data: {}, error: null };
+      const summary = {
+        ...(existing || {
+          name: fileName, fileName, scope: 'user', path: configFile || `${fileName}.toml`,
+          fullPath: resolvedConfigFile || `${fileName}.toml`, tools: '', model: '',
+          permissionMode: '', skills: '', updatedAt: fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : 0, source: 'codex-config'
+        }),
+        description: entry.description || existing?.description || '',
+        model: existing?.model || (typeof externalMetadata.data?.model === 'string' ? externalMetadata.data.model : ''),
+        configReadError: externalMetadata.error?.message || existing?.configReadError || '',
+        updatedAt: externalMetadata.updatedAt || existing?.updatedAt || (fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : 0),
+        configFile: configFile || existing?.configFile || '',
+        configMode: inferCodexConfigMode(configFile || existing?.configFile || ''),
+        resolvedConfigFile: resolvedConfigFile || existing?.resolvedConfigFile || existing?.fullPath || '',
+        source: existing ? 'codex-config+native-file' : 'codex-config'
+      };
+      merged.set(fileName, summary);
     }
+    const agents = Array.from(merged.values()).map((summary) => includeDetails ? this._hydrateCodexAgent(summary) : summary);
+    agents.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    return { agents, total: agents.length, userCount: agents.length, projectCount: 0 };
+  }
 
-    const { agents } = this.listCodexAgents();
-    return agents.find(agent => agent.fileName === fileName) || null;
+  getCodexAgent(fileName, scope) {
+    const safeFileName = assertSafeAgentFileName(fileName);
+    if (scope !== 'user') return null;
+    const config = readCodexTomlConfig();
+    const entry = isPlainObject(config.agents) && isPlainObject(config.agents[safeFileName]) ? config.agents[safeFileName] : null;
+    const managedPath = path.join(CODEX_AGENTS_DIR, `${safeFileName}.toml`);
+    const configFile = normalizeCodexConfigPath(entry?.config_file);
+    const resolvedConfigFile = resolveCodexConfigPath(configFile);
+    const nativePath = !configFile && fs.existsSync(managedPath) ? managedPath : '';
+    const exists = Boolean(entry || nativePath || (resolvedConfigFile && fs.existsSync(resolvedConfigFile)));
+    if (!exists) return null;
+    const targetPath = resolvedConfigFile || nativePath;
+    const summary = {
+      name: safeFileName, fileName: safeFileName, scope: 'user',
+      path: targetPath || `${safeFileName}.toml`, fullPath: targetPath || `${safeFileName}.toml`,
+      description: entry?.description || '', tools: '', model: '', permissionMode: '', skills: '',
+      configFile: configFile || nativePath,
+      configMode: inferCodexConfigMode(configFile || nativePath),
+      resolvedConfigFile: targetPath,
+      updatedAt: fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : 0,
+      source: entry ? 'codex-config' : 'native-file'
+    };
+    return this._hydrateCodexAgent(summary);
   }
 
   createCodexAgent({ fileName, scope, description, model, configMode, configFile, configContent }) {
@@ -1086,7 +1169,7 @@ class AgentsService {
 
     config.agents[fileName] = agentConfig;
     writeCodexTomlConfig(config);
-
+    this._codexIndex?.invalidate();
     return this.getCodexAgent(fileName, scope);
   }
 
@@ -1191,7 +1274,7 @@ class AgentsService {
 
     config.agents[fileName] = agentConfig;
     writeCodexTomlConfig(config);
-
+    this._codexIndex?.invalidate();
     return this.getCodexAgent(fileName, scope);
   }
 
@@ -1221,7 +1304,7 @@ class AgentsService {
 
     delete config.agents[fileName];
     writeCodexTomlConfig(config);
-
+    this._codexIndex?.invalidate();
     return { success: true, message: '代理已删除' };
   }
 }

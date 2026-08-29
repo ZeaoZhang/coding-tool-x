@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, reactive, computed } from 'vue'
 import axios from 'axios'
+import { requestKey, requestSingleflight } from '../api/request-singleflight'
 
 const ADVANCED_CONFIG_FLAG = '__ccAdvancedConfigBound__'
 let ws = null
@@ -8,6 +9,17 @@ let reconnectAttempts = 0
 let isReceivingHistory = false
 let historyTimer = null
 const channelSourceByName = Object.create(null)
+
+function globalRequest(resource, platform, endpoint, params = {}, fallback) {
+  const key = requestKey(resource, platform, '', '')
+  return requestSingleflight(
+    key,
+    signal => axios.get(endpoint, { params, signal }),
+    resource,
+    `${resource}:${platform}`
+  )
+    .catch(() => fallback)
+}
 const shownBrowserNotificationIds = new Set()
 
 function computeTodayRange() {
@@ -152,8 +164,10 @@ export const useGlobalStore = defineStore('global', () => {
     omp: []
   })
   const wsConnected = ref(false)
+  const dashboardHydrated = ref(false)
   const logLimit = ref(100)
   const statsInterval = ref(30)
+  let loadChannelsPromise = null
   let maxLogsLimit = 100
   let todayRange = computeTodayRange()
 
@@ -380,6 +394,7 @@ export const useGlobalStore = defineStore('global', () => {
       if (!status || typeof status !== 'object') return
       patchProxyState(getProxyState(source), status, status.activeChannel)
     })
+    dashboardHydrated.value = true
   }
 
   if (typeof window !== 'undefined' && !window[ADVANCED_CONFIG_FLAG]) {
@@ -471,13 +486,14 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   async function initializeState() {
+    if (dashboardHydrated.value) return
     try {
       const [claudeRes, codexRes, geminiRes, opencodeRes, ompRes] = await Promise.all([
-        axios.get('/api/proxy/status').catch(() => ({})),
-        axios.get('/api/codex/proxy/status').catch(() => ({})),
-        axios.get('/api/gemini/proxy/status').catch(() => ({})),
-        axios.get('/api/opencode/proxy/status').catch(() => ({})),
-        axios.get('/api/omp/proxy/status').catch(() => ({}))
+        globalRequest('proxy-status', 'claude', '/api/proxy/status', {}, {}),
+        globalRequest('proxy-status', 'codex', '/api/codex/proxy/status', {}, {}),
+        globalRequest('proxy-status', 'gemini', '/api/gemini/proxy/status', {}, {}),
+        globalRequest('proxy-status', 'opencode', '/api/opencode/proxy/status', {}, {}),
+        globalRequest('proxy-status', 'omp', '/api/omp/proxy/status', {}, {})
       ])
 
       if (claudeRes.data?.proxy) {
@@ -500,19 +516,39 @@ export const useGlobalStore = defineStore('global', () => {
     }
   }
 
-  async function loadChannels() {
+  async function loadChannels(options = {}) {
+    if (dashboardHydrated.value && !options.force) {
+      return {
+        success: true,
+        channels: {
+          claude: claudeChannels.value,
+          codex: codexChannels.value,
+          gemini: geminiChannels.value,
+          opencode: opencodeChannels.value,
+          omp: ompChannels.value
+        }
+      }
+    }
+    if (loadChannelsPromise) return loadChannelsPromise
+    loadChannelsPromise = _loadChannels().finally(() => {
+      loadChannelsPromise = null
+    })
+    return loadChannelsPromise
+  }
+
+  async function _loadChannels() {
     try {
       const [claudeRes, codexRes, geminiRes, opencodeRes, ompRes, claudePool, codexPool, geminiPool, opencodePool, ompPool] = await Promise.all([
-        axios.get('/api/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/codex/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/gemini/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/opencode/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/omp/channels').catch(() => ({ data: { channels: [] } })),
-        axios.get('/api/channels/pool/status?source=claude').catch(() => ({ data: null })),
-        axios.get('/api/channels/pool/status?source=codex').catch(() => ({ data: null })),
-        axios.get('/api/channels/pool/status?source=gemini').catch(() => ({ data: null })),
-        axios.get('/api/channels/pool/status?source=opencode').catch(() => ({ data: null })),
-        axios.get('/api/channels/pool/status?source=omp').catch(() => ({ data: null }))
+        globalRequest('channels', 'claude', '/api/channels', {}, { data: { channels: [] } }),
+        globalRequest('channels', 'codex', '/api/codex/channels', {}, { data: { channels: [] } }),
+        globalRequest('channels', 'gemini', '/api/gemini/channels', {}, { data: { channels: [] } }),
+        globalRequest('channels', 'opencode', '/api/opencode/channels', {}, { data: { channels: [] } }),
+        globalRequest('channels', 'omp', '/api/omp/channels', {}, { data: { channels: [] } }),
+        globalRequest('channel-pool', 'claude', '/api/channels/pool/status?source=claude', {}, { data: null }),
+        globalRequest('channel-pool', 'codex', '/api/channels/pool/status?source=codex', {}, { data: null }),
+        globalRequest('channel-pool', 'gemini', '/api/channels/pool/status?source=gemini', {}, { data: null }),
+        globalRequest('channel-pool', 'opencode', '/api/channels/pool/status?source=opencode', {}, { data: null }),
+        globalRequest('channel-pool', 'omp', '/api/channels/pool/status?source=omp', {}, { data: null })
       ])
 
       claudeChannels.value = claudeRes.data.channels || []
@@ -608,7 +644,7 @@ export const useGlobalStore = defineStore('global', () => {
     proxyState.value.runtime = null
 
     if (response.data?.success !== false) {
-      await loadChannels()
+      await loadChannels({ force: true })
     }
 
     if (options.refreshChannelsDrawer && response.data?.success !== false && typeof window !== 'undefined') {
@@ -639,7 +675,6 @@ export const useGlobalStore = defineStore('global', () => {
         historyTimer = setTimeout(() => {
           isReceivingHistory = false
         }, 2000)
-        initializeState()
       }
 
       ws.onmessage = (event) => {
@@ -703,6 +738,7 @@ export const useGlobalStore = defineStore('global', () => {
     stopProxy,
     getLogs,
     wsConnected,
+    dashboardHydrated,
     clearLogsState,
     clearLogsForSource,
     logLimit,
@@ -719,7 +755,6 @@ export function initializeGlobalStore() {
   store.connectWebSocket()
   queueMicrotask(() => {
     const runDeferredLoads = () => {
-      store.loadChannels()
       store.loadAdvancedConfig()
     }
 

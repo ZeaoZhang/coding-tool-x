@@ -2,6 +2,20 @@ const fs = require('fs');
 const path = require('path');
 const { PLUGINS_DIR, REGISTRY_FILE } = require('./constants');
 
+let registryCache = null;
+
+function getRegistryMtime() {
+  try {
+    return fs.statSync(REGISTRY_FILE).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+function cacheRegistry(data) {
+  registryCache = { data, mtimeMs: getRegistryMtime() };
+  return data;
+}
+
 /**
  * Ensure plugins directory exists
  */
@@ -19,24 +33,26 @@ function loadRegistry() {
   ensurePluginsDir();
 
   if (!fs.existsSync(REGISTRY_FILE)) {
-    const emptyRegistry = { plugins: {} };
-    fs.writeFileSync(REGISTRY_FILE, JSON.stringify(emptyRegistry, null, 2), 'utf8');
-    return emptyRegistry;
+    const data = { plugins: {} };
+    saveRegistry(data);
+    return data;
+  }
+
+  const mtimeMs = getRegistryMtime();
+  if (registryCache && registryCache.mtimeMs === mtimeMs) {
+    return registryCache.data;
   }
 
   try {
     const content = fs.readFileSync(REGISTRY_FILE, 'utf8');
     const data = JSON.parse(content);
-
-    // Ensure plugins key exists
-    if (!data.plugins) {
-      data.plugins = {};
-    }
-
+    if (!data.plugins) data.plugins = {};
+    registryCache = { data, mtimeMs };
     return data;
   } catch (error) {
     console.error('Failed to load registry:', error.message);
-    return { plugins: {} };
+    registryCache = { data: { plugins: {} }, mtimeMs };
+    return registryCache.data;
   }
 }
 
@@ -49,6 +65,7 @@ function saveRegistry(data) {
 
   try {
     fs.writeFileSync(REGISTRY_FILE, JSON.stringify(data, null, 2), 'utf8');
+    cacheRegistry(data);
   } catch (error) {
     throw new Error(`Failed to save registry: ${error.message}`);
   }

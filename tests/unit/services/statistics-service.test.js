@@ -2,7 +2,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
-let testDir, summaryFile, dailyStatsDir, requestLogsDir, proxyLogsFile;
+let testDir, summaryFile, dailyStatsDir, requestLogsDir, proxyLogsFile, loadedService;
 
 function setupPathsCache() {
   const pathsModPath = require.resolve('../../../src/config/paths');
@@ -26,7 +26,8 @@ function setupPathsCache() {
 function loadService() {
   const modPath = require.resolve('../../../src/server/services/statistics-service');
   delete require.cache[modPath];
-  return require('../../../src/server/services/statistics-service');
+  loadedService = require('../../../src/server/services/statistics-service');
+  return loadedService;
 }
 
 function makeRequest(overrides = {}) {
@@ -57,8 +58,13 @@ beforeEach(() => {
   setupPathsCache();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  if (loadedService) {
+    await loadedService.shutdownStatistics();
+  }
+  vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
+  loadedService = null;
 });
 
 // ─── getStatistics ───────────────────────────────────────────────────────────
@@ -176,14 +182,65 @@ describe('recordRequest', () => {
     expect(stats.byModel['claude-3-5-sonnet'].requests).toBe(1);
   });
 
-  test('creates daily stats file', () => {
+  test('creates daily stats file after the queued flush completes', async () => {
     const mod = loadService();
     mod.recordRequest(makeRequest());
+    await mod.flushStatistics();
 
-    // daily-stats dir should now exist and contain a file
     expect(fs.existsSync(dailyStatsDir)).toBe(true);
     const files = fs.readdirSync(dailyStatsDir);
     expect(files.length).toBeGreaterThan(0);
+  });
+});
+
+describe('statistics write queue', () => {
+  afterEach(() => vi.restoreAllMocks());
+  test('batches request persistence behind one flush promise', async () => {
+    const mod = loadService();
+    const appendSync = vi.spyOn(fs, 'appendFileSync');
+    const appendAsync = vi.spyOn(fs.promises, 'appendFile').mockResolvedValue();
+    const writeAsync = vi.spyOn(fs.promises, 'writeFile').mockResolvedValue();
+
+    for (let index = 0; index < 20; index++) {
+      mod.recordRequest(makeRequest({ id: `queued-${index}` }));
+    }
+
+    expect(appendSync).not.toHaveBeenCalled();
+    await expect(mod.flushStatistics()).resolves.toEqual(expect.objectContaining({
+      flushed: 20,
+      pending: 0
+    }));
+    expect(appendAsync).toHaveBeenCalledTimes(1);
+    expect(writeAsync).toHaveBeenCalled();
+  });
+
+  test('retains entries after a failed flush and retries them', async () => {
+    const mod = loadService();
+    const appendAsync = vi.spyOn(fs.promises, 'appendFile')
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue();
+
+    mod.recordRequest(makeRequest());
+    await expect(mod.flushStatistics()).resolves.toEqual(expect.objectContaining({
+      flushed: 0,
+      pending: 1
+    }));
+    await expect(mod.flushStatistics()).resolves.toEqual(expect.objectContaining({
+      flushed: 1,
+      pending: 0
+    }));
+    expect(appendAsync).toHaveBeenCalledTimes(2);
+  });
+
+  test('shutdown waits for queued entries to flush', async () => {
+    const mod = loadService();
+    vi.spyOn(fs.promises, 'appendFile').mockResolvedValue();
+    vi.spyOn(fs.promises, 'writeFile').mockResolvedValue();
+    mod.recordRequest(makeRequest());
+
+    await expect(mod.shutdownStatistics()).resolves.toEqual(expect.objectContaining({
+      pending: 0
+    }));
   });
 });
 

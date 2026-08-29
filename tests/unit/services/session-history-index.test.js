@@ -863,7 +863,285 @@ describe('session-history-index', () => {
     expect(results.length).toBe(1);
     expect(results[0].sessionId).toBe('s1');
   });
-});
+  it('preserves Unicode case matching when FTS is disabled', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({
+      name: 'unicode.jsonl',
+      content: 'unicode fixture\n',
+      session: makeSessionFixture('unicode', 'unicode-project'),
+      messages: [{ ...makeMessageFixtures(1)[0], content: 'Καλημέρα κόσμε' }]
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const results = await index.searchSessions('claude', 'ΚΑΛΗΜΈΡΑ');
+    expect(results).toHaveLength(1);
+    expect(results[0].sessionId).toBe('unicode');
+  });
+  it('finds an older Unicode match beyond the first broad candidate page', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    for (let i = 0; i < 501; i++) {
+      fixture.writeFixtureFile({ name: `unicode-page-${i}.jsonl`, content: `unicode page ${i}\n`, session: makeSessionFixture(`unicode-page-${i}`, 'unicode-page-project', { updatedAt: 1000 + i }), messages: [{ ...makeMessageFixtures(1)[0], content: i === 0 ? 'Καλημέρα κόσμε' : `ordinary row ${i}` }] });
+    }
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const results = await index.searchSessions('claude', 'ΚΑΛΗΜΈΡΑ');
+    expect(results).toHaveLength(1);
+    expect(results[0].sessionId).toBe('unicode-page-0');
+  });
+  it('searches a large candidate set using one joined session-file query', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    for (let i = 0; i < 100; i++) {
+      fixture.writeFixtureFile({
+        name: `joined-${i}.jsonl`,
+        content: `joined fixture ${i}\n`,
+        session: makeSessionFixture(`joined-${i}`, 'joined-project'),
+        messages: [{ ...makeMessageFixtures(1)[0], content: `needle ${i}` }]
+      });
+    }
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const prepareSpy = vi.spyOn(index._getDb(), 'prepare');
+    const results = await index.searchSessions('claude', 'needle');
+    expect(results).toHaveLength(100);
+    expect(results[0]).toMatchObject({ projectName: 'joined-project', projectDisplayName: 'joined-project', projectFullPath: '/home/user/joined-project', firstMessage: 'Hello, this is a test' });
+    expect(prepareSpy.mock.calls.filter(([sql]) => /SELECT \* FROM session_file/.test(sql))).toHaveLength(0);
+    expect(prepareSpy.mock.calls.map(([sql]) => sql).find(sql => /FROM session_message sm/.test(sql))).toContain('JOIN session_file sf');
+  });
+
+  it('limits concurrent inventory parsing to four and isolates parse failures', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    for (let i = 0; i < 7; i++) fixture.writeFixtureFile({ name: `parse-${i}.jsonl`, content: `parse fixture ${i}\n`, session: makeSessionFixture(`parse-${i}`, 'parse-project'), messages: makeMessageFixtures(2) });
+    let active = 0;
+    let maximum = 0;
+    fixture.adapter.parse.mockImplementation(async descriptor => {
+      active++;
+      maximum = Math.max(maximum, active);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      active--;
+      if (descriptor.sessionId === 'parse-3') throw new Error('parse failed');
+      return { session: makeSessionFixture(descriptor.sessionId, 'parse-project'), messages: makeMessageFixtures(2) };
+    });
+    await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+    expect(maximum).toBeGreaterThan(1);
+    expect(maximum).toBeLessThanOrEqual(4);
+    expect(await index.getSessionStatus('claude', 'parse-3')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'parse-4')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude').last_error).toContain('parse failed');
+  });
+
+  it('shares one unchanged detail fingerprint check within a source TTL', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({ name: 'unchanged.jsonl', content: 'unchanged fixture\n', session: makeSessionFixture('unchanged', 'detail-project'), messages: makeMessageFixtures(4) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const statSpy = vi.spyOn(fs.promises, 'stat');
+    try {
+      await Promise.all([index.getSessionOutline('claude', 'unchanged'), index.getMessagePage('claude', 'unchanged', { page: 1, limit: 2 })]);
+      expect(statSpy).toHaveBeenCalledTimes(1);
+    } finally { statSpy.mockRestore(); }
+  });
+
+  it('refreshes one source when a changed detail file is observed', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const descriptor = fixture.writeFixtureFile({ name: 'changed.jsonl', content: 'before change\n', session: makeSessionFixture('changed', 'detail-project'), messages: makeMessageFixtures(2) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    fixture.rewriteFixtureFile(descriptor.filePath, 'after change with more bytes\n', { session: makeSessionFixture('changed', 'detail-project'), messages: makeMessageFixtures(4) });
+    index.invalidateSource('claude');
+    await Promise.all([index.getSessionOutline('claude', 'changed'), index.getMessagePage('claude', 'changed', { page: 1, limit: 2 })]);
+    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(2);
+    expect((await index.getMessagePage('claude', 'changed')).pagination.total).toBe(4);
+  });
+  it('detects a changed sibling file during one source freshness check', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const first = fixture.writeFixtureFile({ name: 'sibling-a.jsonl', content: 'sibling a\n', session: makeSessionFixture('sibling-a', 'sibling-project'), messages: makeMessageFixtures(2) });
+    const second = fixture.writeFixtureFile({ name: 'sibling-b.jsonl', content: 'sibling b\n', session: makeSessionFixture('sibling-b', 'sibling-project'), messages: makeMessageFixtures(2) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    await index.getSessionOutline('claude', first.sessionId);
+    fixture.rewriteFixtureFile(second.filePath, 'sibling b changed with more bytes\n', { session: makeSessionFixture('sibling-b', 'sibling-project'), messages: makeMessageFixtures(4) });
+    await index.getSessionOutline('claude', second.sessionId);
+    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(2);
+    expect((await index.getMessagePage('claude', second.sessionId)).pagination.total).toBe(4);
+  });
+
+  it('removes deleted sessions from status, outline, and message page APIs', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const descriptor = fixture.writeFixtureFile({ name: 'deleted-detail.jsonl', content: 'deleted fixture\n', session: makeSessionFixture('deleted-detail', 'deleted-project'), messages: makeMessageFixtures(4) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    fs.unlinkSync(descriptor.filePath);
+    expect(await index.getSessionStatus('claude', 'deleted-detail')).toBeNull();
+    expect(await index.getSessionOutline('claude', 'deleted-detail')).toBeNull();
+    expect(await index.getMessagePage('claude', 'deleted-detail')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'deleted-detail')).toBeNull();
+  });
+
+  it('creates the outline user-message index while retaining ordinal index', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({ name: 'outline-index.jsonl', content: 'outline index fixture\n', session: makeSessionFixture('outline-index', 'outline-project'), messages: makeMessageFixtures(4) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const names = index._getDb().prepare('PRAGMA index_list(session_message)').all().map(row => row.name);
+    expect(names).toContain('idx_session_message_user_number');
+    expect(names).toContain('idx_session_message_sid_ord');
+    expect((await index.getSessionOutline('claude', 'outline-index')).items).toHaveLength(2);
+  });
+  it('removes previous messages when a session is replaced with fewer messages', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const descriptor = fixture.writeFixtureFile({ name: 'replace.jsonl', content: 'replace fixture\n', session: makeSessionFixture('replace', 'replace-project'), messages: makeMessageFixtures(4) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    fixture.rewriteFixtureFile(descriptor.filePath, 'replace fixture updated\n', { session: makeSessionFixture('replace', 'replace-project'), messages: makeMessageFixtures(2) });
+    await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+    const page = await index.getMessagePage('claude', 'replace');
+    expect(page.pagination.total).toBe(2);
+    expect((await index.getSessionOutline('claude', 'replace')).items).toHaveLength(1);
+  });
+
+  it('rolls back the entire inventory write phase when one write fails', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({ name: 'rollback-a.jsonl', content: 'rollback a\n', session: makeSessionFixture('rollback-a', 'rollback-project'), messages: makeMessageFixtures(2) });
+    fixture.writeFixtureFile({ name: 'rollback-b.jsonl', content: 'rollback b\n', session: makeSessionFixture('rollback-b', 'rollback-project'), messages: makeMessageFixtures(2) });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const db = index._getDb();
+    const originalPrepare = db.prepare.bind(db);
+    let injected = false;
+    const prepareSpy = vi.spyOn(db, 'prepare').mockImplementation((sql) => {
+      const statement = originalPrepare(sql);
+      if (!injected && /INSERT INTO session_message/.test(sql)) {
+        injected = true;
+        const originalRun = statement.run.bind(statement);
+        statement.run = (...args) => {
+          throw new Error('injected inventory write failure');
+        };
+        void originalRun;
+      }
+      return statement;
+    });
+    try {
+      fixture.rewriteFixtureFile(path.join(fixture.rootDir, 'rollback-a.jsonl'), 'rollback a updated\n', { session: makeSessionFixture('rollback-a', 'rollback-project'), messages: makeMessageFixtures(2) });
+      await expect(index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' })).rejects.toThrow('injected inventory write failure');
+      expect(db.prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ?').get('claude').count).toBe(2);
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+  it('skips malformed parse payloads while committing valid sibling files', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({ name: 'malformed-payload.jsonl', content: 'malformed payload\n', session: makeSessionFixture('malformed-payload', 'payload-project'), messages: makeMessageFixtures(2) });
+    fixture.writeFixtureFile({ name: 'valid-payload.jsonl', content: 'valid payload\n', session: makeSessionFixture('valid-payload', 'payload-project'), messages: makeMessageFixtures(2) });
+    fixture.adapter.parse.mockImplementation(async descriptor => {
+      if (descriptor.sessionId === 'malformed-payload') return null;
+      return { session: makeSessionFixture(descriptor.sessionId, 'payload-project'), messages: makeMessageFixtures(2) };
+    });
+    await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+    expect(await index.getSessionStatus('claude', 'malformed-payload')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'valid-payload')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude').last_error).toContain('invalid parsed session result');
+  });
+  it('skips parsed sessions without an identity while committing valid siblings', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({ name: 'empty-session.jsonl', content: 'empty session\n', session: makeSessionFixture('empty-session', 'identity-project'), messages: makeMessageFixtures(2) });
+    fixture.writeFixtureFile({ name: 'identified-session.jsonl', content: 'identified session\n', session: makeSessionFixture('identified-session', 'identity-project'), messages: makeMessageFixtures(2) });
+    fixture.adapter.parse.mockImplementation(async descriptor => {
+      if (descriptor.sessionId === 'empty-session') return { session: {}, messages: [] };
+      return { session: makeSessionFixture('identified-session', 'identity-project'), messages: makeMessageFixtures(2) };
+    });
+    await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
+    expect(await index.getSessionStatus('claude', 'empty-session')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'identified-session')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude').last_error).toContain('invalid parsed session result');
+  });
+  it('does not invoke worker while source_state is fresh', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-fresh-worker-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const freshIndex = createSessionHistoryIndex({
+      dbPath,
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      freshIndex._getDb().prepare(
+        'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES (?, ?, ?)'
+        + ' ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+      ).run('claude', Date.now() - 1000, null);
+
+      await freshIndex.listProjects('claude');
+      expect(workerRunner).toHaveBeenCalledTimes(0);
+    } finally {
+      freshIndex.closeSessionHistoryIndex();
+      fs.rmSync(rootDir, { recursive: true, force: true });
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = previousChild;
+    }
+  });
+  it('coalesces concurrent non-force stale requests without workers when source is fresh', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-fresh-concurrent-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const concurrentIndex = createSessionHistoryIndex({ dbPath, workerRunner, ftsEnabledOverride: false });
+    try {
+      concurrentIndex._getDb().prepare(
+        'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES (?, ?, ?)'
+        + ' ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
+      ).run('claude', Date.now() - 1000, null);
+      await Promise.all(Array.from({ length: 20 }, () => concurrentIndex.listSessions('claude', null)));
+      expect(workerRunner).not.toHaveBeenCalled();
+    } finally {
+      concurrentIndex.closeSessionHistoryIndex();
+      fs.rmSync(rootDir, { recursive: true, force: true });
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = previousChild;
+    }
+  });
+
+
+  it('coalesces concurrent complete refreshes by source', async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-singleflight-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    let resolveWorker;
+    const workerRunner = vi.fn(() => new Promise(resolve => {
+      resolveWorker = resolve;
+    }));
+    const refreshIndex = createSessionHistoryIndex({
+      dbPath,
+      workerRunner,
+      ftsEnabledOverride: false
+    });
+
+    try {
+      let completed = false;
+      const requests = Array.from({ length: 20 }, () => refreshIndex.ensureSourceIndexed('claude', {
+        force: true,
+        consistency: 'complete'
+      }).then(() => { completed = true; }));
+      await Promise.resolve();
+      expect(completed).toBe(false);
+      expect(workerRunner).toHaveBeenCalledTimes(1);
+      resolveWorker();
+      await Promise.all(requests);
+    } finally {
+      refreshIndex.closeSessionHistoryIndex();
+      fs.rmSync(rootDir, { recursive: true, force: true });
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = previousChild;
+    }
+  });
+ });
 describe('session-history-index runtime selection', () => {
 
   it('defaults to the platform runtime in child mode when no runtime or adapterRegistry is supplied', async () => {
@@ -1700,18 +1978,9 @@ describe('session-history-index runtime selection', () => {
     });
 
     try {
-      const error = await index.ensureSourceIndexed('demo-cli', { force: true, consistency: 'complete' })
-        .then(() => null, (err) => err);
-      expect(error).toBeInstanceOf(Error);
-      expect(error.platform).toBe('demo-cli');
-      expect(error.capability).toBe('sessions');
-      expect(error.operation).toBe('parse');
-      expect(error.cause).toBeInstanceOf(Error);
-      expect(error.cause.message).toContain('descriptor parse failed');
-      expect(error.failure).toMatchObject(parseFailure);
-
+      await expect(index.ensureSourceIndexed('demo-cli', { force: true, consistency: 'complete' })).resolves.toBeUndefined();
       const row = index._getDb().prepare('SELECT last_error, last_inventory_ms FROM source_state WHERE source = ?').get('demo-cli');
-      expect(row.last_inventory_ms).toBeNull();
+      expect(row.last_inventory_ms).not.toBeNull();
       expect(row.last_error).toContain('parse');
       expect(row.last_error).toContain('descriptor parse failed');
       const sessionRow = index._getDb().prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ?').get('demo-cli');
@@ -1721,7 +1990,6 @@ describe('session-history-index runtime selection', () => {
       try { fs.rmSync(rootDir, { recursive: true, force: true }); } catch (_) {}
     }
   });
-
   it('retries a non-force inventory after a typed failure leaves the source stale', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-retry-'));
     const dbPath = path.join(rootDir, 'history.sqlite');

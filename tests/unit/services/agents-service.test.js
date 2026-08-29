@@ -128,7 +128,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(testDir, { recursive: true, force: true });
+  vi.restoreAllMocks();
   [
     '../../../src/server/services/agents-service',
     '../../../src/config/paths',
@@ -243,6 +243,18 @@ describe('AgentsService local file management', () => {
   });
 });
 
+test('listAgents reads metadata without full agent body', () => {
+  const service = new AgentsService('claude');
+  service.createAgent({ fileName: 'summary', scope: 'user', name: 'Summary', description: 'Summary', systemPrompt: 'private prompt' });
+  const readSpy = vi.spyOn(fs, 'readFileSync');
+  const listed = service.listAgents();
+  expect(listed.agents[0]).not.toHaveProperty('systemPrompt');
+  expect(readSpy).not.toHaveBeenCalledWith(expect.stringContaining('summary.md'), 'utf-8');
+  service.getAgent('summary', 'user');
+  expect(readSpy).toHaveBeenCalledWith(expect.stringContaining('summary.md'), 'utf-8');
+  readSpy.mockRestore();
+});
+
 describe('AgentsService remote repo operations', () => {
   test('delegates repo management and remote installation with path validation', async () => {
     const service = new AgentsService('claude');
@@ -308,6 +320,33 @@ describe('AgentsService codex mode', () => {
       fileName: 'dependency-expert',
       fullPath: nativeAgentPath
     }));
+  });
+
+  test('listAgents and listAllAgents return Codex summaries without bodies', async () => {
+    const service = new AgentsService('codex');
+    const configPath = path.join(testDir, '.codex', 'agents', 'summary.toml');
+    writeFile(configPath, 'model = "gpt-5.4-mini"\n');
+    const listed = service.listAgents();
+    const all = await service.listAllAgents();
+    expect(listed.agents[0]).not.toHaveProperty('fullContent');
+    expect(listed.agents[0]).not.toHaveProperty('systemPrompt');
+    expect(all.agents[0]).not.toHaveProperty('fullContent');
+    expect(all.agents[0]).not.toHaveProperty('systemPrompt');
+    expect(service.getAgent('summary', 'user')).toEqual(expect.objectContaining({ fullContent: 'model = "gpt-5.4-mini"\n' }));
+  });
+
+  test('Codex get hydrates only the requested native file', () => {
+    const service = new AgentsService('codex');
+    const target = path.join(testDir, '.codex', 'agents', 'target.toml');
+    const other = path.join(testDir, '.codex', 'agents', 'other.toml');
+    writeFile(target, 'model = "target-model"\n');
+    writeFile(other, 'model = "other-model"\n');
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    const loaded = service.getAgent('target', 'user');
+    expect(loaded).toEqual(expect.objectContaining({ fileName: 'target', fullContent: 'model = "target-model"\n' }));
+    expect(readSpy).toHaveBeenCalledWith(target, 'utf-8');
+    expect(readSpy).not.toHaveBeenCalledWith(other, 'utf-8');
+    readSpy.mockRestore();
   });
 
   test('creates, updates, and deletes codex agents with managed config files', () => {

@@ -6,6 +6,12 @@ const { normalizeUsageTokens, resolveActualModel } = require('./proxy-log-helper
 // 北京时间辅助（UTC+8），统一所有时间计算
 const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
 
+const pendingEntries = [];
+let flushPromise = null;
+let flushScheduled = false;
+let aggregateStatsCache = null;
+const dailyStatsCache = new Map();
+
 function toCSTDate(ts) {
   // 返回以北京时间解释的 Date 对象各字段（通过偏移 UTC）
   return new Date(new Date(ts).getTime() + CST_OFFSET_MS);
@@ -181,6 +187,111 @@ function appendRequestLog(logEntry) {
   }
 }
 
+function cloneJson(value) {
+  return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function getRequestLogPath(timestamp) {
+  const cst = toCSTDate(timestamp);
+  const year = cst.getUTCFullYear();
+  const month = String(cst.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(cst.getUTCDate()).padStart(2, '0');
+  return path.join(PATHS.statistics.requestLogs, `${year}-${month}`, `${day}.jsonl`);
+}
+
+async function appendRequestLogsAsync(entries) {
+  const byPath = new Map();
+  for (const entry of entries) {
+    const filePath = getRequestLogPath(entry.logEntry.timestamp);
+    const group = byPath.get(filePath) || [];
+    group.push(entry);
+    byPath.set(filePath, group);
+  }
+
+  const persisted = [];
+  for (const [filePath, group] of byPath) {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.appendFile(
+      filePath,
+      group.map(entry => `${JSON.stringify(entry.logEntry)}\n`).join(''),
+      'utf8'
+    );
+    persisted.push(...group);
+  }
+  return persisted;
+}
+
+async function writeJsonAsync(filePath, value) {
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
+}
+
+function scheduleStatisticsFlush() {
+  if (flushScheduled) return;
+  flushScheduled = true;
+  queueMicrotask(() => {
+    flushScheduled = false;
+    void flushStatistics();
+  });
+}
+
+async function flushStatistics() {
+  if (flushPromise) return flushPromise;
+  if (pendingEntries.length === 0) {
+    return { flushed: 0, pending: 0 };
+  }
+
+  const batch = pendingEntries.splice(0, pendingEntries.length);
+  const globalSnapshot = aggregateStatsCache ? cloneJson(aggregateStatsCache) : null;
+  const dates = [...new Set(batch.map(entry => entry.date))];
+  const dailySnapshots = new Map(
+    dates.map(date => [date, cloneJson(dailyStatsCache.get(date))])
+  );
+
+  const writer = (async () => {
+    try {
+      const pendingLogEntries = batch.filter(entry => !entry.logPersisted);
+      const persisted = await appendRequestLogsAsync(pendingLogEntries);
+      persisted.forEach(entry => { entry.logPersisted = true; });
+      if (globalSnapshot) {
+        globalSnapshot.lastUpdated = new Date().toISOString();
+        await writeJsonAsync(getStatisticsFilePath(), globalSnapshot);
+      }
+      for (const [date, stats] of dailySnapshots) {
+        if (stats) await writeJsonAsync(getDailyStatsFilePathWithoutCreate(date), stats);
+      }
+      return { flushed: batch.length, pending: pendingEntries.length };
+    } catch (error) {
+      pendingEntries.unshift(...batch);
+      console.error('[Statistics] Failed to flush queued entries:', error.message);
+      return {
+        flushed: 0,
+        pending: pendingEntries.length,
+        error: error.message
+      };
+    }
+  })();
+
+  flushPromise = writer.finally(() => {
+    flushPromise = null;
+    if (pendingEntries.length > 0) scheduleStatisticsFlush();
+  });
+  return flushPromise;
+}
+
+function getDailyStatsFilePathWithoutCreate(date) {
+  return path.join(PATHS.statistics.dailyStats, `${date}.json`);
+}
+
+async function shutdownStatistics() {
+  let result = await flushStatistics();
+  while (result.pending > 0 && !result.error) {
+    result = await flushStatistics();
+  }
+  return result;
+}
+
+
 // 初始化统计对象
 function initStatsObject() {
   return {
@@ -257,11 +368,10 @@ function recordRequest(requestData) {
     if (requestData.redirectedModel) {
       logEntry.redirectedModel = requestData.redirectedModel;
     }
-    appendRequestLog(logEntry);
 
     // 2. 更新总体统计
-    const globalStats = loadStatistics();
-
+    const globalStats = aggregateStatsCache || loadStatistics();
+    aggregateStatsCache = globalStats;
     // 更新全局统计
     globalStats.global.totalRequests += 1;
     globalStats.global.totalTokens += totalTokens;
@@ -319,13 +429,13 @@ function recordRequest(requestData) {
     }
     updateStats(globalStats.byModel[modelKey], tokens, cost);
 
-    saveStatistics(globalStats);
 
     // 3. 更新每日统计（使用北京时间）
     const date = getCSTDateStr(timestamp); // YYYY-MM-DD (CST)
     const hour = getCSTHour(timestamp).toString().padStart(2, '0'); // HH (CST)
 
-    const dailyStats = loadDailyStats(date);
+    const dailyStats = dailyStatsCache.get(date) || loadDailyStats(date);
+    dailyStatsCache.set(date, dailyStats);
 
     // 更新每日汇总
     dailyStats.summary.requests += 1;
@@ -397,10 +507,16 @@ function recordRequest(requestData) {
     }
     updateStats(dailyStats.byModel[modelKey], tokens, cost);
 
-    saveDailyStats(date, dailyStats);
 
     // Invalidate cached trend results that cover this date
     invalidateTrendCacheForDate(date);
+    pendingEntries.push({ logEntry, date });
+    if (pendingEntries.length >= 1000) {
+      console.error('[Statistics] Write queue reached its limit; flushing immediately');
+      void flushStatistics();
+    } else {
+      scheduleStatisticsFlush();
+    }
   } catch (err) {
     console.error('[Statistics] Failed to record request:', err);
   }
@@ -410,14 +526,14 @@ function recordRequest(requestData) {
  * 获取统计数据
  */
 function getStatistics() {
-  return loadStatistics();
+  return aggregateStatsCache ? cloneJson(aggregateStatsCache) : loadStatistics();
 }
 
 /**
  * 获取每日统计
  */
 function getDailyStatistics(date) {
-  return aggregateDailyStatistics(date);
+  return aggregateDailyStatistics(date, dailyStatsCache.get(date) || null);
 }
 
 /**
@@ -425,7 +541,7 @@ function getDailyStatistics(date) {
  */
 function getTodayStatistics() {
   const today = getCSTDateStr(Date.now());
-  return aggregateDailyStatistics(today);
+  return getDailyStatistics(today);
 }
 
 /**
@@ -448,6 +564,35 @@ function extractMetric(stats, metric) {
  * @param {string} groupBy
  * @param {Object} [filters] - optional { toolType, channel, model }
  */
+function addLogEntryToResult(result, entry, groupBy, filters = null) {
+  const actualModel = resolveActualModel(entry.model, entry);
+  if (filters) {
+    if (filters.toolType && entry.toolType !== filters.toolType) return;
+    if (filters.channel && entry.channel !== filters.channel) return;
+    if (filters.model && actualModel !== filters.model) return;
+  }
+
+  let key;
+  if (groupBy === 'model') key = actualModel || 'unknown';
+  else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
+  else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
+  else return;
+
+  if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
+  result[key].tokens.total += getTokenTotal(entry.tokens);
+  result[key].cost += entry.cost || 0;
+  result[key].requests += 1;
+}
+
+function mergePendingLogEntries(result, dateStr, hour, groupBy, filters = null) {
+  for (const { logEntry } of pendingEntries) {
+    const timestamp = new Date(logEntry.timestamp);
+    if (getCSTDateStr(timestamp) !== dateStr) continue;
+    if (hour !== undefined && getCSTHour(timestamp) !== hour) continue;
+    addLogEntryToResult(result, logEntry, groupBy, filters);
+  }
+}
+
 function readJsonlForHour(year, month, day, hour, groupBy, filters) {
   const filePath = getRequestLogFilePath(year, month, day);
   const result = {};
@@ -488,6 +633,8 @@ function readJsonlForHour(year, month, day, hour, groupBy, filters) {
     console.error('Failed to read JSONL for hour:', err);
   }
 
+  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  mergePendingLogEntries(result, dateStr, hour, groupBy, filters);
   return result;
 }
 
@@ -536,6 +683,8 @@ function readJsonlForDay(year, month, day, groupBy, filters) {
     console.error('Failed to read JSONL for day:', err);
   }
 
+  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  mergePendingLogEntries(result, dateStr, undefined, groupBy, filters);
   return result;
 }
 
@@ -725,7 +874,7 @@ function hasStatsData(stats = {}) {
   return requests > 0 || cost > 0 || totalTokens > 0;
 }
 
-function aggregateDailyStatistics(dateStr) {
+function aggregateDailyStatistics(dateStr, sharedStatsOverride = null) {
   const aggregated = {
     date: dateStr,
     summary: {
@@ -739,7 +888,7 @@ function aggregateDailyStatistics(dateStr) {
     byModel: {}
   };
 
-  const sharedStats = loadDailyStats(dateStr);
+  const sharedStats = sharedStatsOverride || loadDailyStats(dateStr);
   const sharedSummaryEntry = createEmptyEntry();
   mergeStatsEntry(sharedSummaryEntry, {
     requests: sharedStats.summary?.requests || 0,
@@ -814,7 +963,7 @@ function aggregateDailyStatistics(dateStr) {
 function mergeAllToolsDailyStats(dateStr, groupBy) {
   const merged = {};
 
-  const aggregated = aggregateDailyStatistics(dateStr);
+  const aggregated = aggregateDailyStatistics(dateStr, dailyStatsCache.get(dateStr) || null);
   if (!aggregated) return merged;
 
   if (groupBy === 'toolType') {
@@ -891,6 +1040,13 @@ function getAvailableFilters(startDate, endDate) {
     }
   }
 
+for (const { logEntry, date } of pendingEntries) {
+  if (date < startDate || date > endDate) continue;
+  if (logEntry.toolType) toolTypes.add(logEntry.toolType);
+  if (logEntry.channel) channels.add(logEntry.channel);
+  const actualModel = resolveActualModel(logEntry.model, logEntry);
+  if (actualModel) models.add(actualModel);
+}
   if (includeProxyLogs) {
     for (const entry of loadProxyLogs()) {
       if (!entry || entry.type === 'action' || entry.status === 'error') continue;
@@ -1029,7 +1185,7 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
             if (activeFilters) {
               byDimension = readJsonlForHour(year, month, day, hh, groupBy, activeFilters);
             } else if (groupBy === 'toolType') {
-              const dailyStats = aggregateDailyStatistics(dateStr);
+              const dailyStats = aggregateDailyStatistics(dateStr, dailyStatsCache.get(dateStr) || null);
               const hourData = dailyStats?.hourly?.[hhStr];
               for (const [toolType, toolStats] of Object.entries(hourData?.byToolType || {})) {
                 if (!hasStatsData(toolStats)) continue;
@@ -1095,5 +1251,7 @@ module.exports = {
   getDailyStatistics,
   getTodayStatistics,
   getTrendStatistics,
-  getAvailableFilters
+  getAvailableFilters,
+  flushStatistics,
+  shutdownStatistics
 };

@@ -28,6 +28,7 @@ const {
   pathHasProtectedSegment,
   resolveInsideRoot
 } = require('./config-artifact-paths');
+const remoteCredentialCache = require('./remote-credential-cache');
 
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
@@ -237,13 +238,22 @@ class SkillService {
     this.reposConfigPath = platformConfig.reposFile;
     this.cachePath = platformConfig.cacheFile;
 
-    // 内存缓存
+    // Prepared projections are keyed by cwd; raw repository skills are cwd-independent.
     this.skillsCache = null;
     this.cacheTime = 0;
+    this._preparedSkillsCache = new Map();
+    this._listSkillsInflight = new Map();
+    this._remoteSkillsCache = null;
+    this._remoteSkillsFetchedAt = 0;
+    this._remoteRefreshPromise = null;
+    this._cacheGeneration = 0;
     this.ompRemoteSkillsCache = null;
     this.ompRemoteRefreshPromise = null;
     this.ompRemoteRefreshTimeoutMs = OMP_REMOTE_REFRESH_TIMEOUT_MS;
     this.ompRemoteRefreshGeneration = 0;
+    this._ompPreparedSkillsCache = new Map();
+    this._ompListInflight = new Map();
+    this._ompRemoteFetchedAt = 0;
     this.ompPreparedSkillsCache = null;
     this.ompPreparedSkillsCacheKey = null;
 
@@ -283,13 +293,23 @@ class SkillService {
   }
 
   clearCache({ removeFile = false, invalidateRemoteRefresh = removeFile } = {}) {
+    this._cacheGeneration++;
     this.skillsCache = null;
+    this.cacheTime = 0;
+    this._preparedSkillsCache.clear();
+    this._listSkillsInflight.clear();
+    this._remoteSkillsCache = null;
+    this._remoteSkillsFetchedAt = 0;
+    this._remoteRefreshPromise = null;
+    this._ompPreparedSkillsCache.clear();
+    this._ompListInflight.clear();
+    this._ompRemoteFetchedAt = 0;
     this.ompPreparedSkillsCache = null;
     this.ompPreparedSkillsCacheKey = null;
-    this.cacheTime = 0;
     this.ompRemoteSkillsCache = null;
     this.githubTokenCache.clear();
-
+    remoteCredentialCache.clear('github');
+    remoteCredentialCache.clear('gitlab');
     if (invalidateRemoteRefresh) {
       this.ompRemoteRefreshGeneration++;
       this.ompRemoteRefreshPromise = null;
@@ -304,6 +324,140 @@ class SkillService {
         console.warn('[SkillService] Failed to delete cache file:', err.message);
       }
     }
+  }
+
+  _skillCwdKey(options = {}) {
+    return options.cwd ? path.resolve(options.cwd) : '';
+  }
+
+  _preparedEntry(cwdKey) {
+    const cached = this._preparedSkillsCache.get(cwdKey);
+    if (cached) return cached;
+    if (!cwdKey && Array.isArray(this.skillsCache) && this.cacheTime > 0) {
+      return { value: this.skillsCache, cachedAt: this.cacheTime, generation: this._cacheGeneration };
+    }
+    return null;
+  }
+
+  _storePrepared(cwdKey, skills, generation = this._cacheGeneration) {
+    const value = Array.isArray(skills) ? skills.map(skill => ({ ...skill })) : [];
+    if (generation !== this._cacheGeneration) {
+      return value.map(skill => ({ ...skill }));
+    }
+    const entry = { value, cachedAt: Date.now(), generation };
+    this._preparedSkillsCache.set(cwdKey, entry);
+    if (!cwdKey) {
+      this.skillsCache = value;
+      this.cacheTime = entry.cachedAt;
+    }
+    return value.map(skill => ({ ...skill }));
+  }
+
+  _readRawRemoteCache() {
+    const now = Date.now();
+    if (Array.isArray(this._remoteSkillsCache)) {
+      return {
+        skills: this._remoteSkillsCache,
+        fetchedAt: this._remoteSkillsFetchedAt,
+        fresh: this._remoteSkillsFetchedAt > 0 && now - this._remoteSkillsFetchedAt < CACHE_TTL
+      };
+    }
+
+    const cached = this._readCacheEnvelope();
+    if (!cached) return null;
+    this._remoteSkillsCache = cached.skills;
+    this._remoteSkillsFetchedAt = cached.fetchedAt;
+    return {
+      skills: cached.skills,
+      fetchedAt: cached.fetchedAt,
+      fresh: cached.fetchedAt > 0 && now - cached.fetchedAt < CACHE_TTL
+    };
+  }
+
+  async _refreshRemoteSkills(staleSkills = null) {
+    if (this._remoteRefreshPromise) return this._remoteRefreshPromise;
+    const generation = this._cacheGeneration;
+    const refreshPromise = (async () => {
+      const repos = this.loadRepos();
+      const enabledRepos = repos.filter(repo => repo.enabled);
+      const enabledRemoteRepos = enabledRepos.filter(repo => repo.provider !== 'local');
+      const skills = [];
+      let remoteFailureCount = 0;
+      const results = await Promise.allSettled(
+        enabledRepos.map(async repo => {
+          let timer;
+          try {
+            return await Promise.race([
+              this.fetchRepoSkills(repo),
+              new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error('Fetch timeout')), 30000);
+              })
+            ]);
+          } finally {
+            clearTimeout(timer);
+          }
+        })
+      );
+
+      results.forEach((result, index) => {
+        const repo = enabledRepos[index];
+        if (result.status === 'fulfilled') {
+          skills.push(...(Array.isArray(result.value) ? result.value : []));
+          return;
+        }
+        if (repo.provider !== 'local') remoteFailureCount++;
+        console.warn(`[SkillService] Fetch repo ${repo.owner || repo.projectPath}/${repo.name || ''} failed:`, result.reason?.message);
+      });
+
+      const failureCount = results.filter(result => result.status === 'rejected').length;
+      const useStale = Array.isArray(staleSkills)
+        && enabledRemoteRepos.length > 0
+        && (
+          (remoteFailureCount === enabledRemoteRepos.length && skills.length === 0)
+          || (remoteFailureCount > 0 && staleSkills.length > skills.length)
+        );
+      const publishedSkills = useStale ? staleSkills : skills;
+      const fetchedAt = useStale ? 0 : Date.now();
+      if (generation === this._cacheGeneration) {
+        this._remoteSkillsCache = publishedSkills;
+        this._remoteSkillsFetchedAt = fetchedAt;
+        if (!useStale) this.saveCacheToFile(publishedSkills, fetchedAt);
+      }
+      return {
+        skills: publishedSkills,
+        enabledRemoteCount: enabledRemoteRepos.length,
+        remoteFailureCount,
+        failureCount,
+        fetchedAt
+      };
+    })();
+
+    const trackedPromise = refreshPromise.finally(() => {
+      if (this._remoteRefreshPromise === trackedPromise) {
+        this._remoteRefreshPromise = null;
+      }
+    });
+    this._remoteRefreshPromise = trackedPromise;
+    return trackedPromise;
+  }
+
+  async _listSkillsUncached(forceRefresh, options, cwdKey, generation) {
+    const cached = this._readRawRemoteCache();
+    if (!forceRefresh && cached?.fresh) {
+      return this._storePrepared(cwdKey, this.prepareSkills(cached.skills, options), generation);
+    }
+
+    let refreshed;
+    try {
+      refreshed = await this._refreshRemoteSkills(cached?.skills || null);
+    } catch (error) {
+      if (cached) {
+        return this._storePrepared(cwdKey, this.prepareSkills(cached.skills, options), generation);
+      }
+      throw error;
+    }
+
+    return this._storePrepared(cwdKey, this.prepareSkills(refreshed.skills, options), generation);
   }
 
   prepareSkills(skills = [], options = {}) {
@@ -605,113 +759,73 @@ class SkillService {
     if (this.platform === 'omp') {
       return this.listOmpSkills(forceRefresh, options);
     }
-    // 强制刷新时仅清空内存缓存，保留磁盘缓存作为回退来源
-    if (forceRefresh) {
-      this.clearCache();
+
+    const cwdKey = this._skillCwdKey(options);
+    const now = Date.now();
+    const prepared = this._preparedEntry(cwdKey);
+    if (!forceRefresh && prepared && prepared.generation === this._cacheGeneration
+      && now - prepared.cachedAt < CACHE_TTL) {
+      return prepared.value.map(skill => ({ ...skill }));
     }
 
-    const fileCache = this.loadCacheFromFile();
+    const generation = this._cacheGeneration;
+    const inflightKey = `${this.platform}:${cwdKey}:${generation}`;
+    const existing = this._listSkillsInflight.get(inflightKey);
+    if (existing) return existing;
 
-    // 检查内存缓存
-    if (!forceRefresh && Array.isArray(this.skillsCache) && this.skillsCache.length > 0) {
-      if (Array.isArray(fileCache) && fileCache.length > this.skillsCache.length) {
-        this.skillsCache = this.prepareSkills(fileCache);
-        this.cacheTime = Date.now();
-        return this.skillsCache;
-      }
-      this.skillsCache = this.prepareSkills(this.skillsCache);
-      this.cacheTime = Date.now();
-      return this.skillsCache;
-    }
-
-    // 检查文件缓存
-    if (!forceRefresh) {
-      if (fileCache && fileCache.length > 0) {
-        this.skillsCache = this.prepareSkills(fileCache);
-        this.cacheTime = Date.now();
-        return this.skillsCache;
-      }
-    }
-
-    const repos = this.loadRepos();
-    const skills = [];
-
-    // 并行获取所有启用仓库的技能（带超时保护）
-    const enabledRepos = repos.filter(r => r.enabled);
-    const enabledRemoteRepos = enabledRepos.filter(repo => repo.provider !== 'local');
-    let remoteFailureCount = 0;
-
-    if (enabledRepos.length > 0) {
-      const results = await Promise.allSettled(
-        enabledRepos.map(repo =>
-          Promise.race([
-            this.fetchRepoSkills(repo),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Fetch timeout')), 30000)  // 30秒超时
-            )
-          ])
-        )
-      );
-
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        const repo = enabledRepos[i];
-        const repoInfo = `${repo.owner}/${repo.name}`;
-        if (result.status === 'fulfilled') {
-          skills.push(...result.value);
-        } else {
-          console.warn(`[SkillService] Fetch repo ${repoInfo} failed:`, result.reason?.message);
-          if (repo.provider !== 'local') {
-            remoteFailureCount++;
-          }
+    const promise = this._listSkillsUncached(forceRefresh, options, cwdKey, generation)
+      .then(skills => skills.map(skill => ({ ...skill })))
+      .finally(() => {
+        if (this._listSkillsInflight.get(inflightKey) === promise) {
+          this._listSkillsInflight.delete(inflightKey);
         }
-      }
-    }
-
-    const preparedSkills = this.prepareSkills(skills);
-
-    const hasUsableFileCache = Array.isArray(fileCache) && fileCache.length > 0;
-    const preparedFileCache = hasUsableFileCache ? this.prepareSkills(fileCache) : null;
-    const shouldUseStaleFileCache = hasUsableFileCache && (
-      (enabledRemoteRepos.length > 0 && remoteFailureCount === enabledRemoteRepos.length) ||
-      (remoteFailureCount > 0 && preparedFileCache.length > preparedSkills.length)
-    );
-
-    if (shouldUseStaleFileCache) {
-      this.skillsCache = preparedFileCache;
-      this.cacheTime = Date.now();
-      return this.skillsCache;
-    }
-
-    // 更新缓存
-    this.skillsCache = preparedSkills;
-    this.cacheTime = Date.now();
-    this.saveCacheToFile(preparedSkills);
-
-    return preparedSkills;
+      });
+    this._listSkillsInflight.set(inflightKey, promise);
+    return promise;
   }
 
   async listOmpSkills(forceRefresh = false, options = {}) {
-    if (forceRefresh) {
-      this.clearCache();
-    }
-    const requestGeneration = this.ompRemoteRefreshGeneration;
-    const preparedCacheKey = options.cwd ? path.resolve(options.cwd) : '';
-    if (
-      !forceRefresh &&
-      this.ompPreparedSkillsCacheKey === preparedCacheKey &&
-      Array.isArray(this.ompPreparedSkillsCache)
-    ) {
-      return this.ompPreparedSkillsCache;
+    const cwdKey = this._skillCwdKey(options);
+    const now = Date.now();
+    const cached = this._ompPreparedSkillsCache.get(cwdKey)
+      || (this.ompPreparedSkillsCacheKey === cwdKey && Array.isArray(this.ompPreparedSkillsCache)
+        ? { value: this.ompPreparedSkillsCache, cachedAt: this.cacheTime, generation: this._cacheGeneration }
+        : null);
+    if (!forceRefresh && cached && cached.generation === this._cacheGeneration
+      && now - cached.cachedAt < CACHE_TTL) {
+      return cached.value.map(skill => ({ ...skill }));
     }
 
-    const fileCache = this.loadCacheFromFile();
+    const inflightKey = `omp:${cwdKey}:${this._cacheGeneration}:${this.ompRemoteRefreshGeneration}`;
+    const existing = this._ompListInflight.get(inflightKey);
+    if (existing) return existing;
+
+    const promise = this._listOmpSkillsUncached(forceRefresh, {
+      ...options,
+      cwd: cwdKey || options.cwd,
+      force: forceRefresh
+    }, cwdKey)
+      .then(skills => skills.map(skill => ({ ...skill })))
+      .finally(() => {
+        if (this._ompListInflight.get(inflightKey) === promise) {
+          this._ompListInflight.delete(inflightKey);
+        }
+      });
+    this._ompListInflight.set(inflightKey, promise);
+    return promise;
+  }
+
+  async _listOmpSkillsUncached(forceRefresh, options, cwdKey) {
+    const requestGeneration = this.ompRemoteRefreshGeneration;
+    const envelope = this._readCacheEnvelope();
     const cachedRemoteSkills = Array.isArray(this.ompRemoteSkillsCache)
       ? this.ompRemoteSkillsCache
-      : fileCache;
+      : envelope?.skills;
+    const fetchedAt = this._ompRemoteFetchedAt || envelope?.fetchedAt || 0;
 
-    if (!forceRefresh && Array.isArray(cachedRemoteSkills)) {
-      return this.prepareAndCacheOmpSkills(cachedRemoteSkills, options, requestGeneration);
+    if (!forceRefresh && Array.isArray(cachedRemoteSkills)
+      && fetchedAt > 0 && Date.now() - fetchedAt < CACHE_TTL) {
+      return this.prepareAndCacheOmpSkills(cachedRemoteSkills, options, requestGeneration, cwdKey);
     }
 
     const timeoutToken = Symbol('omp-refresh-timeout');
@@ -739,7 +853,7 @@ class SkillService {
     let remoteSkills;
 
     if (!refreshIsCurrent) {
-      remoteSkills = [];
+      remoteSkills = hasCachedRemoteSkills ? cachedRemoteSkills : [];
     } else if (hasRemoteResult && failureCount === 0) {
       remoteSkills = remoteResult.skills;
     } else if (hasRemoteResult && remoteResult.skills.length > 0) {
@@ -750,25 +864,28 @@ class SkillService {
       remoteSkills = hasCachedRemoteSkills ? cachedRemoteSkills : [];
     }
 
-    if (
-      refreshIsCurrent && (
-        !hasCachedRemoteSkills ||
-        (hasRemoteResult && failureCount > 0 && remoteResult.skills.length > 0)
-      )
-    ) {
+    if (refreshIsCurrent && (!hasCachedRemoteSkills || (hasRemoteResult && remoteSkills.length > 0))) {
       this.ompRemoteSkillsCache = remoteSkills;
     }
+    return this.prepareAndCacheOmpSkills(remoteSkills, options, requestGeneration, cwdKey);
+  }
 
-    if (!refreshIsCurrent) {
-      return this.prepareSkills([], options);
-    }
-    return this.prepareAndCacheOmpSkills(remoteSkills, options, requestGeneration);
+  _storeOmpPrepared(cwdKey, prepared) {
+    const value = Array.isArray(prepared) ? prepared.map(skill => ({ ...skill })) : [];
+    const entry = { value, cachedAt: Date.now(), generation: this._cacheGeneration };
+    this._ompPreparedSkillsCache.set(cwdKey, entry);
+    this.ompPreparedSkillsCache = value;
+    this.ompPreparedSkillsCacheKey = cwdKey;
+    this.skillsCache = value;
+    this.cacheTime = entry.cachedAt;
+    return value.map(skill => ({ ...skill }));
   }
 
   prepareAndCacheOmpSkills(
     remoteSkills,
     options = {},
-    expectedGeneration = this.ompRemoteRefreshGeneration
+    expectedGeneration = this.ompRemoteRefreshGeneration,
+    cwdKey = this._skillCwdKey(options)
   ) {
     if (expectedGeneration !== this.ompRemoteRefreshGeneration) {
       return this.prepareSkills([], options);
@@ -779,11 +896,7 @@ class SkillService {
       return this.prepareSkills([], options);
     }
 
-    this.skillsCache = prepared;
-    this.cacheTime = Date.now();
-    this.ompPreparedSkillsCache = prepared;
-    this.ompPreparedSkillsCacheKey = options.cwd ? path.resolve(options.cwd) : '';
-    return prepared;
+    return this._storeOmpPrepared(cwdKey, prepared);
   }
 
   startOmpRemoteRefresh() {
@@ -826,11 +939,14 @@ class SkillService {
         const publishedSkills = failureCount === 0
           ? skills
           : [...skills, ...cachedRemoteSkills];
+        const publishedAt = Date.now();
         this.ompRemoteSkillsCache = publishedSkills;
+        this._ompRemoteFetchedAt = publishedAt;
+        this._ompPreparedSkillsCache.clear();
         this.ompPreparedSkillsCache = null;
         this.ompPreparedSkillsCacheKey = null;
         if (failureCount === 0) {
-          this.saveCacheToFile(skills);
+          this.saveCacheToFile(skills, publishedAt);
         }
       }
 
@@ -850,31 +966,44 @@ class SkillService {
   /**
    * 从文件加载缓存
    */
-  loadCacheFromFile() {
+  _readCacheEnvelope() {
     try {
-      if (fs.existsSync(this.cachePath)) {
-        const data = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'));
-        if (Array.isArray(data.skills)) {
-          return data.skills;
-        }
+      if (!fs.existsSync(this.cachePath)) return null;
+      const data = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'));
+      if (Array.isArray(data)) {
+        return { skills: data, fetchedAt: 0 };
+      }
+      if (Array.isArray(data?.skills)) {
+        return {
+          skills: data.skills,
+          fetchedAt: Number(data.fetchedAt || data.time || 0) || 0
+        };
       }
     } catch (err) {
-      // 忽略缓存读取错误
+      // Ignore malformed cache files and refresh from repositories.
     }
     return null;
   }
 
   /**
+   * 从文件加载缓存
+   */
+  loadCacheFromFile() {
+    return this._readCacheEnvelope()?.skills || null;
+  }
+
+  /**
    * 保存缓存到文件
    */
-  saveCacheToFile(skills) {
+  saveCacheToFile(skills, fetchedAt = Date.now()) {
     try {
       fs.writeFileSync(this.cachePath, JSON.stringify({
-        time: Date.now(),
+        fetchedAt,
+        time: fetchedAt,
         skills
       }));
     } catch (err) {
-      // 忽略缓存写入错误
+      // Ignore cache write failures; callers retain the in-memory value.
     }
   }
 
@@ -1209,87 +1338,68 @@ class SkillService {
   getGitHubToken(repoOrHost = DEFAULT_GITHUB_HOST) {
     if (repoOrHost && typeof repoOrHost === 'object') {
       const repoToken = this.resolveRepoToken(repoOrHost);
-      if (repoToken) {
-        return repoToken;
-      }
+      if (repoToken) return repoToken;
     }
 
     const host = typeof repoOrHost === 'string'
       ? repoOrHost
       : (repoOrHost?.host || DEFAULT_GITHUB_HOST);
-    const hostname = extractHostname(host);
-    const cacheKey = `${this.ompRemoteRefreshGeneration}:${hostname || String(host || DEFAULT_GITHUB_HOST).toLowerCase()}`;
+    const hostname = extractHostname(host) || 'github.com';
 
-    if (process.env.GITHUB_TOKEN) {
-      return process.env.GITHUB_TOKEN;
-    }
-
+    if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
     const configToken = this.getTokenFromConfigFile('github-token.txt');
-    if (configToken) {
-      return configToken;
-    }
+    if (configToken) return configToken;
+
+    const cached = remoteCredentialCache.get('github', hostname);
+    if (cached.hit) return cached.value;
 
     if (hostname) {
       const ghHostToken = this.getTokenFromCommand('gh', ['auth', 'token', '--hostname', hostname]);
       if (ghHostToken) {
-        return ghHostToken;
+        return remoteCredentialCache.set('github', hostname, ghHostToken);
       }
     }
 
     const ghToken = this.getTokenFromCommand('gh', ['auth', 'token']);
     if (ghToken) {
-      return ghToken;
-    }
-
-    if (this.platform === 'omp' && this.githubTokenCache.has(cacheKey)) {
-      return this.githubTokenCache.get(cacheKey);
+      return remoteCredentialCache.set('github', hostname, ghToken);
     }
 
     const credentialToken = this.getTokenFromGitCredential(host);
-    if (this.platform === 'omp') {
-      this.githubTokenCache.set(cacheKey, credentialToken || null);
-    }
-    return credentialToken || null;
+    return remoteCredentialCache.set('github', hostname, credentialToken);
   }
 
   getGitLabToken(repoOrHost = DEFAULT_GITLAB_HOST) {
     if (repoOrHost && typeof repoOrHost === 'object') {
       const repoToken = this.resolveRepoToken(repoOrHost);
-      if (repoToken) {
-        return repoToken;
-      }
+      if (repoToken) return repoToken;
     }
 
     const host = typeof repoOrHost === 'string'
       ? repoOrHost
       : (repoOrHost?.host || DEFAULT_GITLAB_HOST);
+    const hostname = extractHostname(host) || 'gitlab.com';
 
-    if (process.env.GITLAB_TOKEN) {
-      return process.env.GITLAB_TOKEN;
-    }
-    if (process.env.GITLAB_PRIVATE_TOKEN) {
-      return process.env.GITLAB_PRIVATE_TOKEN;
-    }
-
+    if (process.env.GITLAB_TOKEN) return process.env.GITLAB_TOKEN;
+    if (process.env.GITLAB_PRIVATE_TOKEN) return process.env.GITLAB_PRIVATE_TOKEN;
     const configToken = this.getTokenFromConfigFile('gitlab-token.txt');
-    if (configToken) {
-      return configToken;
-    }
+    if (configToken) return configToken;
 
-    const hostname = extractHostname(host);
-    if (hostname) {
-      const glabHostToken = this.getTokenFromCommand('glab', ['auth', 'token', '--hostname', hostname]);
-      if (glabHostToken) {
-        return glabHostToken;
-      }
+    const cached = remoteCredentialCache.get('gitlab', hostname);
+    if (cached.hit) return cached.value;
+
+    const glabHostToken = this.getTokenFromCommand('glab', ['auth', 'token', '--hostname', hostname]);
+    if (glabHostToken) {
+      return remoteCredentialCache.set('gitlab', hostname, glabHostToken);
     }
 
     const glabToken = this.getTokenFromCommand('glab', ['auth', 'token']);
     if (glabToken) {
-      return glabToken;
+      return remoteCredentialCache.set('gitlab', hostname, glabToken);
     }
 
-    return this.getTokenFromGitCredential(host);
+    const credentialToken = this.getTokenFromGitCredential(host);
+    return remoteCredentialCache.set('gitlab', hostname, credentialToken);
   }
 
   /**

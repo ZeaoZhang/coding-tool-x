@@ -1,8 +1,12 @@
 const chalk = require('chalk');
-const inquirer = require('inquirer');
-const { installPlugin, uninstallPlugin, updatePlugin, updateAllPlugins } = require('../plugins/plugin-installer');
+function getInquirer() {
+  return require('inquirer');
+}
+
+function getPluginInstaller() {
+  return require('../plugins/plugin-installer');
+}
 const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('../plugins/registry');
-const { createPluginContext } = require('../plugins/plugin-api');
 const fs = require('fs');
 const path = require('path');
 const { INSTALLED_DIR } = require('../plugins/constants');
@@ -70,6 +74,7 @@ async function handleInstall(args) {
   }
 
   console.log(chalk.cyan(`\n[PKG] Installing plugin from ${url}...\n`));
+  const { installPlugin } = getPluginInstaller();
 
   const result = await installPlugin(url);
 
@@ -111,8 +116,7 @@ async function handleRemove(args) {
     process.exit(1);
   }
 
-  // Confirm uninstall
-  const { confirmed } = await inquirer.prompt([
+  const { confirmed } = await getInquirer().prompt([
     {
       type: 'confirm',
       name: 'confirmed',
@@ -126,6 +130,7 @@ async function handleRemove(args) {
     return;
   }
 
+  const { uninstallPlugin } = getPluginInstaller();
   console.log(chalk.cyan(`\n[DEL]  Uninstalling plugin "${name}"...\n`));
 
   const result = uninstallPlugin(name);
@@ -477,6 +482,7 @@ async function handleUpdate(args) {
     console.log(chalk.gray('       ctx plugin update --all\n'));
     process.exit(1);
   }
+  const { updatePlugin, updateAllPlugins } = getPluginInstaller();
 
   if (isUpdateAll) {
     console.log(chalk.cyan('\n[SYNC] Updating all plugins...\n'));

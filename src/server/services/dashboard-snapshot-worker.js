@@ -425,6 +425,77 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   return _unsupportedPayload(source, 'channels');
 }
 
+function _sourceCapabilityFallback(source, capability) {
+  if (capability === 'channels') {
+    return source === 'claude' ? [] : { channels: [] };
+  }
+  if (capability === 'counts') {
+    return { projectCount: 0, sessionCount: 0 };
+  }
+  return null;
+}
+
+function _sourceCapabilityFailure(source, capability, operation, error) {
+  const failure = {
+    status: 'failed',
+    platform: source,
+    capability,
+    operation,
+    error: error && error.message ? error.message : String(error),
+    retryable: error?.retryable !== false,
+  };
+  if (error?.retryAfter !== undefined) failure.retryAfter = error.retryAfter;
+  if (error?.code !== undefined && (typeof error.code === 'string' || typeof error.code === 'number')) {
+    failure.code = error.code;
+  }
+  if (error) {
+    Object.defineProperty(failure, 'cause', { value: error, enumerable: false });
+  }
+  return failure;
+}
+
+function _settledCapability(result, source, capability, operation) {
+  const value = result.status === 'fulfilled'
+    ? result.value
+    : _sourceCapabilityFailure(source, capability, operation, result.reason);
+  if (_isTypedPayload(value)) {
+    return {
+      value: _sourceCapabilityFallback(source, capability),
+      failure: {
+        ...value,
+        retryable: value.status === 'failed' ? value.retryable !== false : false
+      }
+    };
+  }
+  return { value, failure: null };
+}
+
+async function buildSourceDashboardPayload(source, config = {}, options = {}) {
+  const results = await Promise.allSettled([
+    buildChannelsPayload(source, config, options),
+    buildTodayStatsPayload(source, config, options),
+    buildCountsPayload(source, config, options)
+  ]);
+  const channels = _settledCapability(results[0], source, 'channels', 'list');
+  const todayStats = _settledCapability(results[1], source, 'statistics', 'get');
+  const counts = _settledCapability(results[2], source, 'counts', 'count');
+  const failures = [channels, todayStats, counts]
+    .filter(capability => capability.failure)
+    .map(capability => capability.failure);
+  const payload = {
+    channels: channels.value,
+    todayStats: todayStats.value,
+    counts: counts.value
+  };
+  if (failures.length > 0) {
+    Object.defineProperty(payload, '__errors', {
+      value: failures,
+      enumerable: true
+    });
+  }
+  return payload;
+}
+
 async function buildPayload({ kind, source, config, options, runtime } = {}) {
   const isTest = process.env.NODE_ENV === 'test';
   const snapshotOptions = isTest ? (options || {}) : _getSerializableWorkerOptions(options);
@@ -439,6 +510,8 @@ async function buildPayload({ kind, source, config, options, runtime } = {}) {
       return buildTodayStatsPayload(source, config || {}, effectiveOptions);
     case 'channels':
       return buildChannelsPayload(source, config || {}, effectiveOptions);
+    case 'source':
+      return buildSourceDashboardPayload(source, config || {}, effectiveOptions);
     default:
       throw new Error(`Unsupported dashboard snapshot kind: ${kind}`);
   }
@@ -561,6 +634,9 @@ function runDashboardSnapshotWorker(kind, source, config = {}, options = {}) {
   });
 }
 
+function runDashboardSourceWorker(source, config = {}, options = {}) {
+  return runDashboardSnapshotWorker('source', source, config, options);
+}
 function attachWorkerHandler() {
   process.on('message', async (message) => {
     try {
@@ -575,10 +651,11 @@ function attachWorkerHandler() {
 if (process.env.CC_TOOL_DASHBOARD_SNAPSHOT_WORKER === '1' || require.main === module) {
   attachWorkerHandler();
 }
-
 module.exports = {
   buildPayload,
+  buildSourceDashboardPayload,
   runDashboardSnapshotWorker,
+  runDashboardSourceWorker,
   _test: {
     getSerializableWorkerOptions: _getSerializableWorkerOptions,
     sendWorkerMessage: _sendWorkerMessage,

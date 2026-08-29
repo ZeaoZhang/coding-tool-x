@@ -164,7 +164,7 @@ import {
   AddOutline,
   TerminalOutline
 } from '@vicons/ionicons5'
-import { getCommands, deleteCommand } from '../api/commands'
+import { getCommands, getCommand, deleteCommand } from '../api/commands'
 import { listItems, toggleEnabled, togglePlatform, syncAll } from '../api/config-registry'
 import message from '../utils/message'
 import CommandCard from './CommandCard.vue'
@@ -206,6 +206,7 @@ const editingCommand = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
+let commandDetailRequestId = 0
 const platformStore = usePlatformStore()
 const managedCommandPlatforms = computed(() => platformStore.all
   .filter(platform => platform.capabilities?.commands === true)
@@ -286,7 +287,7 @@ async function loadCommands() {
   try {
     const [cmdRes, registryRes] = await Promise.all([
       getCommands(props.projectPath, currentPlatform.value),
-      listItems('commands')
+      listItems('commands', { platform: currentPlatform.value, projectPath: props.projectPath })
     ])
     if (cmdRes.success) {
       commands.value = cmdRes.commands || []
@@ -346,14 +347,51 @@ async function handleRefresh() {
   }
   await loadCommands()
 }
+async function loadCommandDetail(command, forEdit = false) {
+  if (!command) return
 
-function handleEdit(cmd) {
-  editingCommand.value = cmd
-  showCreateModal.value = true
+  const requestId = ++commandDetailRequestId
+  if (!forEdit) {
+    selectedCommand.value = null
+    showDetailDrawer.value = true
+  }
+
+  try {
+    const detailRes = await getCommand(
+      command.name,
+      command.scope,
+      props.projectPath,
+      command.namespace,
+      currentPlatform.value
+    )
+    if (requestId !== commandDetailRequestId) return
+
+    const nextCommand = detailRes?.command || command
+    if (forEdit) {
+      editingCommand.value = nextCommand
+      showCreateModal.value = true
+    } else {
+      selectedCommand.value = nextCommand
+    }
+  } catch (err) {
+    if (requestId !== commandDetailRequestId) return
+    message.error('加载命令详情失败: ' + err.message)
+    if (forEdit) {
+      editingCommand.value = command
+      showCreateModal.value = true
+    } else {
+      selectedCommand.value = command
+    }
+  }
+}
+
+function handleEdit(command) {
+  loadCommandDetail(command, true)
 }
 
 async function handleDelete(cmd) {
-  deletingKeys.value[cmd.path] = true
+  const key = cmd.path
+  deletingKeys.value[key] = true
   try {
     const result = await deleteCommand(cmd.name, cmd.scope, props.projectPath, cmd.namespace, currentPlatform.value)
     if (result.success) {
@@ -364,13 +402,12 @@ async function handleDelete(cmd) {
   } catch (err) {
     message.error('删除失败: ' + err.message)
   } finally {
-    delete deletingKeys.value[cmd.path]
+    delete deletingKeys.value[key]
   }
 }
 
-function handleCardClick(cmd) {
-  selectedCommand.value = cmd
-  showDetailDrawer.value = true
+function handleCardClick(command) {
+  loadCommandDetail(command, false)
 }
 
 function handleSaved() {
@@ -388,6 +425,8 @@ onMounted(() => {
 })
 
 watch(currentPlatform, () => {
+  commandDetailRequestId += 1
+  selectedCommand.value = null
   loadCommands()
 })
 </script>

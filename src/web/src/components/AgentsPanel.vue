@@ -208,6 +208,7 @@ const editingAgent = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
+let detailRequestId = 0
 const platformStore = usePlatformStore()
 const managedAgentPlatforms = computed(() => platformStore.all
   .filter(platform => platform.capabilities?.agents === true)
@@ -321,7 +322,7 @@ async function loadAgents() {
   try {
     const [agentRes, registryRes] = await Promise.all([
       getAgents(props.projectPath, currentPlatform.value),
-      listItems('agents')
+      listItems('agents', { platform: currentPlatform.value, projectPath: props.projectPath })
     ])
     if (agentRes.success) {
       agents.value = agentRes.agents || []
@@ -430,17 +431,7 @@ async function handleDelete(agent) {
 async function loadAgentDetail(agent, forEdit = false) {
   if (!agent) return
 
-  if (currentPlatform.value !== 'codex') {
-    if (forEdit) {
-      editingAgent.value = agent
-      showCreateModal.value = true
-      return
-    }
-    selectedAgent.value = agent
-    showDetailDrawer.value = true
-    return
-  }
-
+  const requestId = ++detailRequestId
   detailLoading.value = true
   if (!forEdit) {
     selectedAgent.value = null
@@ -449,6 +440,8 @@ async function loadAgentDetail(agent, forEdit = false) {
 
   try {
     const detailRes = await getAgent(agent.fileName, agent.scope, props.projectPath, currentPlatform.value)
+    if (requestId !== detailRequestId) return
+
     const nextAgent = detailRes?.agent || agent
     if (forEdit) {
       editingAgent.value = nextAgent
@@ -457,6 +450,7 @@ async function loadAgentDetail(agent, forEdit = false) {
       selectedAgent.value = nextAgent
     }
   } catch (err) {
+    if (requestId !== detailRequestId) return
     message.error('加载代理详情失败: ' + err.message)
     if (forEdit) {
       editingAgent.value = agent
@@ -465,7 +459,9 @@ async function loadAgentDetail(agent, forEdit = false) {
       selectedAgent.value = agent
     }
   } finally {
-    detailLoading.value = false
+    if (requestId === detailRequestId) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -488,6 +484,9 @@ onMounted(() => {
 })
 
 watch(currentPlatform, () => {
+  detailRequestId += 1
+  detailLoading.value = false
+  selectedAgent.value = null
   loadAgents()
 })
 </script>

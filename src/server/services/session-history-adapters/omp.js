@@ -142,22 +142,26 @@ async function inventory() {
   } catch (_) {
     return descriptors;
   }
-  if (!fs.existsSync(sessionsDir)) return descriptors;
+  try {
+    await fs.promises.stat(sessionsDir);
+  } catch (_) {
+    return descriptors;
+  }
 
-  function walk(dir) {
+  async function walk(dir) {
     let entries;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        walk(fullPath);
+        await walk(fullPath);
       } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
         try {
-          const stat = fs.statSync(fullPath);
+          const stat = await fs.promises.stat(fullPath);
           descriptors.push({
             filePath: fullPath,
             size: stat.size,
@@ -170,7 +174,7 @@ async function inventory() {
     }
   }
 
-  walk(sessionsDir);
+  await walk(sessionsDir);
   return descriptors;
 }
 

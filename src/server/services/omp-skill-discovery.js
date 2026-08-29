@@ -23,6 +23,21 @@ const DEFAULT_SKILL_SETTINGS = Object.freeze({
   disabledExtensions: []
 });
 
+const DISCOVERY_CACHE_TTL_MS = 1000;
+const settingsCache = new Map();
+const pluginPathsCache = new Map();
+const discoveryCache = new Map();
+
+function cacheKey(cwd) {
+  return cwd ? path.resolve(cwd) : '';
+}
+
+function cloneSkills(skills) {
+  return Array.isArray(skills)
+    ? skills.map(skill => ({ ...skill, shadowedSources: Array.isArray(skill.shadowedSources) ? skill.shadowedSources.map(source => ({ ...source })) : [] }))
+    : [];
+}
+
 function expandHome(value) {
   const input = String(value || '').trim();
   if (input === '~') return HOME_DIR;
@@ -30,7 +45,7 @@ function expandHome(value) {
   return input;
 }
 
-function readEffectiveSettings(cwd) {
+function _readEffectiveSettings(cwd) {
   try {
     const output = execFileSync(getOmpCommand(), ['config', 'list', '--json'], {
       cwd: cwd || process.cwd(),
@@ -58,6 +73,18 @@ function readEffectiveSettings(cwd) {
       disabledProviders: persisted.disabledProviders || []
     };
   }
+}
+
+function readEffectiveSettings(cwd, { force = false } = {}) {
+  const key = cacheKey(cwd);
+  const now = Date.now();
+  const cached = settingsCache.get(key);
+  if (!force && cached && now - cached.checkedAt < DISCOVERY_CACHE_TTL_MS) {
+    return { ...cached.value };
+  }
+  const value = _readEffectiveSettings(cwd);
+  settingsCache.set(key, { value, checkedAt: now });
+  return { ...value };
 }
 
 function globMatches(value, pattern) {
@@ -161,7 +188,7 @@ function scanOneLevel(service, root, descriptor, settings) {
   return result;
 }
 
-function getPluginInstallPaths(cwd) {
+function _getPluginInstallPaths(cwd) {
   try {
     const output = execFileSync(getOmpCommand(), ['plugin', 'list', '--json'], {
       cwd: cwd || process.cwd(),
@@ -194,6 +221,18 @@ function getPluginInstallPaths(cwd) {
   } catch {
     return [];
   }
+}
+
+function getPluginInstallPaths(cwd, { force = false } = {}) {
+  const key = cacheKey(cwd);
+  const now = Date.now();
+  const cached = pluginPathsCache.get(key);
+  if (!force && cached && now - cached.checkedAt < DISCOVERY_CACHE_TTL_MS) {
+    return cached.value.map(item => ({ ...item }));
+  }
+  const value = _getPluginInstallPaths(cwd);
+  pluginPathsCache.set(key, { value, checkedAt: now });
+  return value.map(item => ({ ...item }));
 }
 
 function getClaudePluginSkillRoots() {
@@ -286,9 +325,8 @@ function deduplicateDiscoveredSkills(skills) {
   return result;
 }
 
-function discoverOmpSkills(service, options = {}) {
+function _discoverOmpSkills(service, options = {}, settings = readEffectiveSettings(options.cwd), pluginPaths = getPluginInstallPaths(options.cwd), claudePluginRoots = getClaudePluginSkillRoots()) {
   const cwd = options.cwd ? path.resolve(options.cwd) : null;
-  const settings = readEffectiveSettings(cwd);
   if (settings.enabled === false) return [];
 
   const ompPaths = getOmpPaths();
@@ -296,7 +334,7 @@ function discoverOmpSkills(service, options = {}) {
   const descriptors = [
     { provider: 'native', scope: 'user', root: ompPaths.skills, requireDescription: true },
     ...(cwd ? [{ provider: 'native', scope: 'project', root: path.join(cwd, '.omp', 'skills'), requireDescription: true }] : []),
-    ...getPluginInstallPaths(cwd)
+    ...pluginPaths
       .filter(item => cwd || item.scope !== 'project')
       .map(item => ({
         provider: 'omp-plugins',
@@ -306,7 +344,7 @@ function discoverOmpSkills(service, options = {}) {
       })),
     { provider: 'claude', scope: 'user', root: NATIVE_PATHS.claude.skills, requireDescription: false },
     ...(cwd ? [{ provider: 'claude', scope: 'project', root: path.join(cwd, '.claude', 'skills'), requireDescription: false }] : []),
-    ...getClaudePluginSkillRoots()
+    ...claudePluginRoots
       .filter(item => cwd || item.scope !== 'project')
       .map(item => ({
         provider: 'claude-plugins',
@@ -348,6 +386,30 @@ function discoverOmpSkills(service, options = {}) {
   }
 
   return deduplicateDiscoveredSkills(discovered);
+}
+
+function discoverOmpSkills(service, options = {}) {
+  const cwd = options.cwd ? path.resolve(options.cwd) : null;
+  const settings = readEffectiveSettings(cwd, { force: options.force === true });
+  if (settings.enabled === false) return [];
+  const pluginPaths = getPluginInstallPaths(cwd, { force: options.force === true });
+  const claudePluginRoots = getClaudePluginSkillRoots();
+  const fingerprint = JSON.stringify({
+    settings,
+    pluginPaths,
+    claudePluginRoots
+  });
+  const key = cacheKey(cwd);
+  const now = Date.now();
+  const cached = discoveryCache.get(key);
+  if (!options.force && cached
+    && cached.fingerprint === fingerprint
+    && now - cached.checkedAt < DISCOVERY_CACHE_TTL_MS) {
+    return cloneSkills(cached.skills);
+  }
+  const discovered = _discoverOmpSkills(service, { ...options, cwd }, settings, pluginPaths, claudePluginRoots);
+  discoveryCache.set(key, { fingerprint, checkedAt: now, skills: cloneSkills(discovered) });
+  return cloneSkills(discovered);
 }
 
 module.exports = {

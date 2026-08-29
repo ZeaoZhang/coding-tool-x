@@ -384,65 +384,48 @@ function getAvailableConfigs() {
   const commandsByPlatform = {};
 
   for (const platform of agentPlatforms) {
-    const service = new AgentsService(platform);
-    const { agents } = service.listAgents();
-    for (const agent of agents || []) {
-      if (agent.scope !== 'user') continue;
-      const normalizedAgent = {
-        fileName: agent.fileName,
-        name: agent.name,
-        description: agent.description,
-        tools: agent.tools,
-        model: agent.model,
-        permissionMode: agent.permissionMode,
-        skills: agent.skills,
-        systemPrompt: agent.systemPrompt
-      };
-      agentsByPlatform[platform] = agentsByPlatform[platform] || [];
-      agentsByPlatform[platform].push(normalizedAgent);
-      const key = `${agent.fileName || agent.name}|${agent.model || ''}|${agent.description || ''}`;
-      if (!agentMap.has(key)) {
-        agentMap.set(key, normalizedAgent);
+    let service;
+    try {
+      service = new AgentsService(platform);
+      const { agents } = service.listAgents();
+      for (const agent of agents || []) {
+        if (agent.scope !== 'user') continue;
+        const detail = typeof service.getAgent === 'function' ? (service.getAgent(agent.fileName, 'user') || agent) : agent;
+        const normalizedAgent = { fileName: agent.fileName, name: agent.name, description: agent.description, tools: agent.tools, model: agent.model, permissionMode: agent.permissionMode, skills: agent.skills, systemPrompt: detail.systemPrompt };
+        agentsByPlatform[platform] = agentsByPlatform[platform] || [];
+        agentsByPlatform[platform].push(normalizedAgent);
+        const key = `${agent.fileName || agent.name}|${agent.model || ''}|${agent.description || ''}`;
+        if (!agentMap.has(key)) agentMap.set(key, normalizedAgent);
       }
+    } finally {
+      service?.dispose?.();
     }
   }
 
   for (const platform of commandPlatforms) {
-    const service = new CommandsService(platform);
-    const { commands } = service.listCommands();
-    for (const command of commands || []) {
-      if (command.scope !== 'user') continue;
-      const normalizedCommand = {
-        name: command.name,
-        namespace: command.namespace,
-        description: command.description,
-        allowedTools: command.allowedTools,
-        argumentHint: command.argumentHint,
-        body: command.body
-      };
-      commandsByPlatform[platform] = commandsByPlatform[platform] || [];
-      commandsByPlatform[platform].push(normalizedCommand);
-      const key = command.namespace ? `${command.namespace}/${command.name}` : command.name;
-      if (!commandMap.has(key)) {
-        commandMap.set(key, normalizedCommand);
+    let service;
+    try {
+      service = new CommandsService(platform);
+      const { commands } = service.listCommands();
+      for (const command of commands || []) {
+        if (command.scope !== 'user') continue;
+        const detail = typeof service.getCommand === 'function' ? (service.getCommand(command.name, 'user', null, command.namespace) || command) : command;
+        const normalizedCommand = { name: command.name, namespace: command.namespace, description: command.description, allowedTools: command.allowedTools, argumentHint: command.argumentHint, body: detail.body };
+        commandsByPlatform[platform] = commandsByPlatform[platform] || [];
+        commandsByPlatform[platform].push(normalizedCommand);
+        const key = command.namespace ? `${command.namespace}/${command.name}` : command.name;
+        if (!commandMap.has(key)) commandMap.set(key, normalizedCommand);
       }
+    } finally {
+      service?.dispose?.();
     }
   }
-
   // 按平台分别获取 skills（每个平台有独立的安装目录）
   const skillsByPlatform = {};
   for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
     const service = new SkillService(platform);
-    skillsByPlatform[platform] = service.getInstalledSkills().map(skill => ({
-      directory: skill.directory,
-      name: skill.name || skill.directory,
-      description: skill.description || '',
-      repoOwner: skill.repoOwner || null,
-      repoName: skill.repoName || null,
-      repoBranch: skill.repoBranch || null
-    }));
+    skillsByPlatform[platform] = service.getInstalledSkills().map(skill => ({ directory: skill.directory, name: skill.name || skill.directory, description: skill.description || '', repoOwner: skill.repoOwner || null, repoName: skill.repoName || null, repoBranch: skill.repoBranch || null }));
   }
-
   // 获取已安装的插件和市场插件
   const { plugins: installedPlugins } = pluginsService.listPlugins();
 

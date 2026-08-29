@@ -4,6 +4,7 @@
  */
 
 import { client } from './client'
+import { requestKey, requestSingleflight } from './request-singleflight'
 
 /**
  * Get statistics for all config types
@@ -17,9 +18,16 @@ export async function getStats() {
  * List all items for a config type
  * @param {string} type - 'skills' | 'commands' | 'agents' | 'plugins'
  */
-export async function listItems(type) {
-  const response = await client.get(`/config-registry/${type}`)
-  return response.data
+export function listItems(type, options = {}) {
+  const platform = options.platform || ''
+  const projectPath = options.projectPath || ''
+  const key = requestKey(`config-registry:${type}`, platform, options.scope || '', projectPath)
+  return requestSingleflight(
+    key,
+    signal => client.get(`/config-registry/${type}`, { signal }).then(response => response.data),
+    `config-registry:${type}`,
+    `config-registry:${type}:${platform}`
+  )
 }
 
 /**

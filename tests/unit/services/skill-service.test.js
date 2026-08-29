@@ -909,6 +909,124 @@ describe('SkillService file operations', () => {
   });
 });
 
+describe('SkillService cache scheduling', () => {
+  it('uses a fresh prepared cache before loading the disk cache', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    svc.skillsCache = [{
+      name: 'prepared',
+      description: 'cached',
+      directory: 'prepared',
+      installed: true,
+      sourceProvider: 'remote'
+    }];
+    svc.cacheTime = Date.now();
+    const loadCache = vi.spyOn(svc, 'loadCacheFromFile');
+    const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills');
+
+    const result = await svc.listSkills(false);
+
+    expect(result).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'prepared' })
+    ]));
+    expect(loadCache).not.toHaveBeenCalled();
+    expect(fetchRepos).not.toHaveBeenCalled();
+  });
+
+  it('coalesces concurrent forced remote refreshes', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    svc.loadRepos = vi.fn(() => [{
+      provider: 'github',
+      owner: 'owner',
+      name: 'repo',
+      branch: 'main',
+      enabled: true
+    }]);
+    let resolveFetch;
+    const fetchResult = new Promise(resolve => {
+      resolveFetch = resolve;
+    });
+    const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills').mockReturnValue(fetchResult);
+
+    const first = svc.listSkills(true);
+    const second = svc.listSkills(true);
+    await Promise.resolve();
+
+    expect(fetchRepos).toHaveBeenCalledTimes(1);
+    resolveFetch([]);
+    await Promise.all([first, second]);
+  });
+});
+describe('OMP discovery cache', () => {
+  it('reuses settings and plugin path CLI results for the same cwd', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const { discoverOmpSkills } = require('../../../src/server/services/omp-skill-discovery');
+    const svc = new SkillService('omp');
+    const ompConfig = require('../../../src/server/services/omp-config');
+    const cwd = path.join(testDir, 'project');
+    fs.mkdirSync(cwd, { recursive: true });
+
+    discoverOmpSkills(svc, { cwd });
+    discoverOmpSkills(svc, { cwd });
+
+    expect(ompConfig.getOmpCommand).toHaveBeenCalledTimes(2);
+  });
+  it('coalesces concurrent OMP lists by cwd while refreshing remote skills once', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    svc.loadRepos = vi.fn(() => [{
+      provider: 'github',
+      owner: 'owner',
+      name: 'omp-repo',
+      branch: 'main',
+      enabled: true
+    }]);
+    let resolveFetch;
+    const fetchResult = new Promise(resolve => {
+      resolveFetch = resolve;
+    });
+    const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills').mockReturnValue(fetchResult);
+    const cwd = path.join(testDir, 'omp-project');
+    fs.mkdirSync(cwd, { recursive: true });
+
+    const requests = Array.from({ length: 20 }, () => svc.listSkills(false, { cwd }));
+    await Promise.resolve();
+
+    expect(fetchRepos).toHaveBeenCalledTimes(1);
+    resolveFetch([]);
+    await Promise.all(requests);
+  });
+});
+
+describe('SkillService credential cache', () => {
+  it('shares host token resolution across service instances', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const credentialCache = require('../../../src/server/services/remote-credential-cache');
+    const previousToken = process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    try {
+      credentialCache.clear();
+      const first = new SkillService('claude');
+      const second = new SkillService('omp');
+      first.getTokenFromCommand = vi.fn(() => 'shared-token');
+      second.getTokenFromCommand = vi.fn(() => 'unexpected-second-token');
+      first.getTokenFromGitCredential = vi.fn(() => null);
+      second.getTokenFromGitCredential = vi.fn(() => null);
+
+      expect(first.getGitHubToken('https://github.example')).toBe('shared-token');
+      expect(second.getGitHubToken('https://github.example')).toBe('shared-token');
+      expect(first.getTokenFromCommand).toHaveBeenCalledTimes(1);
+      expect(second.getTokenFromCommand).not.toHaveBeenCalled();
+    } finally {
+      if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previousToken;
+      credentialCache.clear();
+    }
+  });
+});
+
+
 describe('SkillService local repository path safety', () => {
   it('scans only the configured skills directory in mixed plugin/skill repositories', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');

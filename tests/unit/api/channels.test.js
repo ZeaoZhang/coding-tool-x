@@ -209,13 +209,13 @@ describe('GET /current - current settings', () => {
     const settings = { baseUrl: 'http://api', apiKey: 'key1' };
     getAllChannels.mockReturnValue([ch]);
     getCurrentSettings.mockReturnValue(settings);
-
     const handler = findHandler(router, 'get', '/current');
     const res = makeRes();
     handler({}, res);
 
     expect(res._body.channel).toEqual(ch);
     expect(res._body.settings).toEqual(settings);
+    expect(getCurrentSettings).toHaveBeenCalledWith([ch]);
   });
 
   it('returns channel:null and settings:null when no settings', () => {
