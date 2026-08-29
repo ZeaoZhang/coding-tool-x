@@ -12,7 +12,7 @@ const loadedPlugins = new Map();
  * @param {string} name - Plugin name
  * @returns {Object} Result object with success status and optional error
  */
-function loadPlugin(name) {
+function loadPlugin(name, options = {}) {
   // ERROR ISOLATION: Wrap entire function to prevent CTX crash
   try {
     // Check if already loaded
@@ -24,7 +24,7 @@ function loadPlugin(name) {
     }
 
     // Get plugin info from registry
-    const pluginInfo = getPlugin(name);
+    const pluginInfo = options.pluginInfo || getPlugin(name);
     if (!pluginInfo) {
       return {
         success: false,

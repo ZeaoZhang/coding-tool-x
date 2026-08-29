@@ -272,4 +272,78 @@ describe('snapshot-cache service', () => {
     expect(second.value).toEqual({ items: [] });
     expect(second.meta).toMatchObject({ stale: true, fallback: true, error: 'worker failed' });
   });
+  test('coalesces concurrent force refreshes for the same key', async () => {
+    const { service } = loadService();
+    let resolveRefresh;
+    const refreshResult = new Promise(resolve => {
+      resolveRefresh = resolve;
+    });
+    const refresh = vi.fn(() => refreshResult);
+
+    const requests = Array.from({ length: 20 }, () => service.getSnapshot('force-singleflight', {
+      force: true,
+      fallbackValue: { count: 0 },
+      refresh,
+      backgroundOnMiss: false
+    }));
+
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    resolveRefresh({ count: 1 });
+    const results = await Promise.all(requests);
+    expect(results.every(result => result.value.count === 1)).toBe(true);
+  });
+
+  test('invalidates dashboard source snapshots without changing unrelated keys', async () => {
+    const { service } = loadService();
+    await service.getSnapshot('dashboard:source:claude', {
+      fallbackValue: null,
+      refresh: () => ({ source: 'old' }),
+      backgroundOnMiss: false
+    });
+    await service.getSnapshot('dashboard:counts:claude', {
+      fallbackValue: null,
+      refresh: () => ({ counts: 'old' }),
+      backgroundOnMiss: false
+    });
+
+    service.invalidateDashboardSourceSnapshot('claude');
+
+    const source = await service.getSnapshot('dashboard:source:claude', {
+      fallbackValue: { source: 'empty' }
+    });
+    const counts = await service.getSnapshot('dashboard:counts:claude', {
+      fallbackValue: { counts: 'empty' }
+    });
+    expect(source.value).toEqual({ source: 'empty' });
+    expect(source.meta.fallback).toBe(true);
+    expect(counts.value).toEqual({ counts: 'old' });
+  });
+
+  test('force ignores TTL while returning stale value during an in-flight refresh', async () => {
+    const { service } = loadService();
+    let resolveRefresh;
+    const refresh = vi.fn()
+      .mockReturnValueOnce({ count: 1 })
+      .mockReturnValueOnce(new Promise(resolve => { resolveRefresh = resolve; }));
+
+    await service.getSnapshot('force-stale', {
+      fallbackValue: null,
+      refresh,
+      backgroundOnMiss: false
+    });
+    const stale = await service.getSnapshot('force-stale', {
+      force: true,
+      staleWhileForce: true,
+      fallbackValue: null,
+      refresh,
+      backgroundOnMiss: false
+    });
+
+    expect(stale.value).toEqual({ count: 1 });
+    expect(stale.meta).toMatchObject({ stale: true, refreshing: true });
+    expect(refresh).toHaveBeenCalledTimes(2);
+    resolveRefresh({ count: 2 });
+    await sleep(10);
+  });
 });

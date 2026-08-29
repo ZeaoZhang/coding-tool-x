@@ -67,6 +67,7 @@ export default function useChannelManager(config) {
   let balanceLoadPromise = null
   let uiConfigPromise = null
   let channelMetaRefreshTimer = null
+  let loadPromise = null
   let channelMetaRefreshAttempt = 0
 
   const state = reactive({
@@ -87,6 +88,30 @@ export default function useChannelManager(config) {
 
   const validation = reactive({})
 
+
+  function extractMutationChannel(result) {
+    if (isPlainObject(result?.channel) && result.channel.id) return result.channel
+    if (isPlainObject(result) && result.id) return result
+    return null
+  }
+
+  function applyMutationResult(result, { fallback = null, allowInsert = false } = {}) {
+    const channel = extractMutationChannel(result) || fallback
+    if (!channel?.id) return false
+
+    const index = state.channels.findIndex(item => item.id === channel.id)
+    if (index === -1) {
+      if (!allowInsert) return false
+      state.channels = [...state.channels, channel]
+    } else {
+      state.channels[index] = { ...state.channels[index], ...channel }
+    }
+
+    applyChannelOrder()
+    updateChannelHealth()
+    scheduleFrozenChannelRefresh()
+    return true
+  }
   // 监听 scheduler-state 更新，实时更新渠道健康状态
   function updateChannelHealth() {
     const scheduler = globalStore.schedulerState[config.schedulerSource]
@@ -146,7 +171,15 @@ export default function useChannelManager(config) {
     }, delay)
   }
 
-  async function loadChannels({ silent = false, skipBalance = false } = {}) {
+  async function loadChannels(options = {}) {
+    if (loadPromise) return loadPromise
+    loadPromise = _loadChannels(options).finally(() => {
+      loadPromise = null
+    })
+    return loadPromise
+  }
+
+  async function _loadChannels({ silent = false, skipBalance = false } = {}) {
     if (!silent) {
       channelMetaRefreshAttempt = 0
     }
@@ -446,15 +479,16 @@ export default function useChannelManager(config) {
     }
 
     try {
-      if (state.editingChannel) {
-        await config.api.update(state.editingChannel, state.formData)
-        message.success(`${config.displayName} 渠道已更新`)
-      } else {
-        await config.api.create(state.formData)
-        message.success(`${config.displayName} 渠道已添加`)
-      }
+      const editing = Boolean(state.editingChannel)
+      const result = editing
+        ? await config.api.update(state.editingChannel, state.formData)
+        : await config.api.create(state.formData)
+      const applied = applyMutationResult(result, { allowInsert: !editing })
+      message.success(`${config.displayName} 渠道已${editing ? '更新' : '添加'}`)
       closeDialog()
-      await loadChannels()
+      if (!applied) {
+        await loadChannels()
+      }
     } catch (error) {
       message.error(resolveError(error))
     }
@@ -512,7 +546,7 @@ export default function useChannelManager(config) {
     state.toggling[channel.id] = true
     try {
       const enabled = typeof value === 'boolean' ? value : channel.enabled === false
-      await config.api.toggle(channel, enabled)
+      const result = await config.api.toggle(channel, enabled)
       message.success(`${config.displayName} 渠道已${enabled ? '启用' : '禁用'}`)
       if (enabled) {
         delete state.collapsed[channel.id]
@@ -523,7 +557,10 @@ export default function useChannelManager(config) {
         setLocalCollapse(config.storageKeys.localCollapse, state.collapsed)
         saveCollapseSettings()
       }
-      await loadChannels()
+      const applied = applyMutationResult(result, { fallback: { ...channel, enabled } })
+      if (!applied) {
+        await loadChannels()
+      }
       window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: config.type } }))
     } catch (error) {
       message.error(resolveError(error))
@@ -541,8 +578,10 @@ export default function useChannelManager(config) {
       onPositiveClick: async () => {
         try {
           await config.api.remove(id)
+          state.channels = state.channels.filter(channel => channel.id !== id)
+          delete state.collapsed[id]
+          setLocalCollapse(config.storageKeys.localCollapse, state.collapsed)
           message.success(`${config.displayName} 渠道已删除`)
-          await loadChannels()
         } catch (error) {
           message.error(resolveError(error))
         }
@@ -559,9 +598,11 @@ export default function useChannelManager(config) {
       negativeText: '取消',
       onPositiveClick: async () => {
         try {
-          await config.api.applyToSettings(channel)
+          const result = await config.api.applyToSettings(channel)
           message.success('已将渠道写入配置文件')
-          await loadChannels()
+          if (!applyMutationResult(result) && result?.success !== false) {
+            await loadChannels()
+          }
           window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: config.type } }))
         } catch (error) {
           message.error(resolveError(error))
@@ -573,9 +614,15 @@ export default function useChannelManager(config) {
   async function handleResetHealth(channel) {
     if (typeof config.api.resetHealth !== 'function') return
     try {
-      await config.api.resetHealth(channel)
+      const result = await config.api.resetHealth(channel)
+      if (result?.health) {
+        channel.health = result.health
+        updateChannelHealth()
+        scheduleFrozenChannelRefresh()
+      } else {
+        await loadChannels()
+      }
       message.success('渠道健康状态已重置')
-      await loadChannels()
     } catch (error) {
       message.error(resolveError(error))
     }

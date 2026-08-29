@@ -1,0 +1,37 @@
+{
+  "key": "opencode",
+  "title": "OpenCode",
+  "label": "OpenCode",
+  "command": "opencode",
+  "iconToken": "opencode",
+  "color": "#ea580c",
+  "defaultVisible": true,
+  "helpLabel": "OpenCode",
+  "terminalColor": "yellow",
+  "cliSelectable": true,
+  "portLabel": "OpenCode 代理服务端口:",
+  "apiBasePath": "/api/opencode/proxy",
+  "portKey": "opencodeProxy",
+  "defaultPort": 20091,
+  "pathResolverId": "opencode",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": true
+  },
+  "logFile": "opencode-proxy.log",
+  "logColor": "yellow",
+  "statisticsPath": "/api/opencode/statistics",
+  "promptFile": ".opencode/AGENTS.md",
+  "promptLabel": "OpenCode",
+  "capabilities": {
+    "projects": "legacy:opencode",
+    "sessions": "legacy:opencode",
+    "channels": "legacy:opencode",
+    "proxy": "legacy:opencode",
+    "statistics": "legacy:opencode",
+    "resourceSync": "legacy:opencode",
+    "nativeConfig": "legacy:opencode"
+  }
+}

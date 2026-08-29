@@ -165,6 +165,7 @@ const loading = ref(false)
 const error = ref('')
 const detail = ref(null)
 const installing = ref(false)
+const loadRequestId = ref(0)
 const uninstalling = ref(false)
 
 const bodyContentStyle = {
@@ -208,6 +209,7 @@ function buildSkillRepoContext(skill) {
 async function loadDetail() {
   if (!props.skill?.directory) return
 
+  const requestId = ++loadRequestId.value
   loading.value = true
   error.value = ''
 
@@ -218,6 +220,7 @@ async function loadDetail() {
       buildSkillRepoContext(props.skill),
       props.skill.fullDirectory || null
     )
+    if (requestId !== loadRequestId.value) return
 
     if (result.success) {
       detail.value = {
@@ -235,9 +238,12 @@ async function loadDetail() {
       error.value = result.message || '加载失败'
     }
   } catch (err) {
+    if (requestId !== loadRequestId.value) return
     error.value = err.response?.data?.message || err.message || '加载失败'
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId.value) {
+      loading.value = false
+    }
   }
 }
 
@@ -299,10 +305,12 @@ async function copyContent() {
   }
 }
 
-watch(() => props.visible, (val) => {
-  if (val && props.skill) {
+watch(() => [props.visible, props.skill], ([val, skill]) => {
+  if (val && skill) {
     loadDetail()
   } else {
+    loadRequestId.value += 1
+    loading.value = false
     detail.value = null
     error.value = ''
   }

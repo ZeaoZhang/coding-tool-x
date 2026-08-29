@@ -11,20 +11,21 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { NCard } from 'naive-ui'
 import SkillsPanel from '../components/SkillsPanel.vue'
-import { BUILT_IN_CLI_PLATFORMS } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
 const route = useRoute()
-const skillPlatforms = BUILT_IN_CLI_PLATFORMS
-  .filter(platform => platform.supportsSkills !== false)
-  .map(platform => platform.key)
+const platformStore = usePlatformStore()
+const skillPlatforms = computed(() => platformStore.all
+  .filter(item => item.capabilities?.skills === true)
+  .map(item => item.key))
 const platform = computed(() => {
   const queryPlatform = Array.isArray(route.query.platform)
     ? route.query.platform[0]
     : route.query.platform
-  return skillPlatforms.includes(queryPlatform) ? queryPlatform : ''
+  return skillPlatforms.value.includes(queryPlatform) ? queryPlatform : ''
 })
-</script>
 
+</script>
 <style scoped>
 .skill-manager {
   padding: 16px;

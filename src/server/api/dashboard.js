@@ -11,9 +11,7 @@ const { getGeminiProxyStatus } = require('../gemini-proxy-server');
 const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
 const { getOmpProxyStatus } = require('../omp-proxy-server');
 const { getSnapshot } = require('../services/snapshot-cache');
-const { projectCountKey } = require('../services/project-snapshots');
-const { runDashboardSnapshotWorker } = require('../services/dashboard-snapshot-worker');
-
+const { runDashboardSourceWorker } = require('../services/dashboard-snapshot-worker');
 const SNAPSHOT_TTL_MS = 60 * 1000;
 const DASHBOARD_SNAPSHOT_DEFER_MS = 0;
 const EMPTY_COUNTS = { projectCount: 0, sessionCount: 0 };
@@ -28,12 +26,8 @@ function safeRead(label, reader, fallback) {
   }
 }
 
-function channelSnapshotKey(source) {
-  return `dashboard:channels:${source}`;
-}
-
-function todayStatsSnapshotKey(source) {
-  return `dashboard:today-stats:${source}`;
+function sourceSnapshotKey(source) {
+  return `dashboard:source:${source}`;
 }
 
 function normalizeChannelTokens(tokens) {
@@ -73,17 +67,37 @@ function formatStats(stats) {
   return { ...EMPTY_STATS };
 }
 
-async function readDashboardSnapshot(kind, source, key, fallbackValue, config = {}, options = {}) {
+async function readDashboardSnapshot(source, fallbackValue, config = {}, options = {}) {
   const force = options.force === true;
-  return getSnapshot(key, {
+  const key = sourceSnapshotKey(source);
+  const makeReadOptions = (effectiveForce) => ({
     ttlMs: SNAPSHOT_TTL_MS,
     fallbackValue,
-    force,
-    staleWhileForce: force,
+    force: effectiveForce,
+    staleWhileForce: effectiveForce,
     deferMs: DASHBOARD_SNAPSHOT_DEFER_MS,
-    refresh: () => runDashboardSnapshotWorker(kind, source, config, { force })
+    refresh: () => runDashboardSourceWorker(source, config, { force: effectiveForce })
   });
+  const snapshot = await getSnapshot(key, makeReadOptions(force));
+  const generatedAtMs = Date.parse(snapshot.meta?.generatedAt || '');
+  const errorAgeMs = Number.isFinite(generatedAtMs) ? Date.now() - generatedAtMs : SNAPSHOT_TTL_MS;
+  if (!force
+    && errorAgeMs >= SNAPSHOT_TTL_MS
+    && Array.isArray(snapshot.value?.__errors)
+    && snapshot.value.__errors.length > 0) {
+    return getSnapshot(key, makeReadOptions(true));
+  }
+  return snapshot;
 }
+
+function sourceFallback(source) {
+  return {
+    channels: source === 'claude' ? [] : { channels: [] },
+    todayStats: null,
+    counts: EMPTY_COUNTS
+  };
+}
+
 
 function summarizePart(partSnapshots = {}) {
   const items = {};
@@ -127,7 +141,6 @@ router.get('/init', async (req, res) => {
   try {
     const config = loadConfig();
     const force = req.query?.fresh === '1' || req.query?.force === '1';
-
     const uiConfig = safeRead('uiConfig', () => loadUIConfig(), {});
     const favorites = safeRead('favorites', () => loadFavorites(), {});
     const proxyStatus = {
@@ -138,63 +151,41 @@ router.get('/init', async (req, res) => {
       omp: safeRead('omp proxy status', () => getOmpProxyStatus(), {})
     };
 
-    const [
-      claudeChannels,
-      codexChannels,
-      geminiChannels,
-      opencodeChannels,
-      ompChannels,
-      claudeTodayStats,
-      codexTodayStats,
-      geminiTodayStats,
-      opencodeTodayStats,
-      ompTodayStats,
-      claudeCounts,
-      codexCounts,
-      geminiCounts,
-      opencodeCounts,
-      ompCounts
-    ] = await Promise.all([
-      readDashboardSnapshot('channels', 'claude', channelSnapshotKey('claude'), [], config, { force }),
-      readDashboardSnapshot('channels', 'codex', channelSnapshotKey('codex'), { channels: [] }, config, { force }),
-      readDashboardSnapshot('channels', 'gemini', channelSnapshotKey('gemini'), { channels: [] }, config, { force }),
-      readDashboardSnapshot('channels', 'opencode', channelSnapshotKey('opencode'), { channels: [] }, config, { force }),
-      readDashboardSnapshot('channels', 'omp', channelSnapshotKey('omp'), { channels: [] }, config, { force }),
-      readDashboardSnapshot('todayStats', 'claude', todayStatsSnapshotKey('claude'), null, config, { force }),
-      readDashboardSnapshot('todayStats', 'codex', todayStatsSnapshotKey('codex'), null, config, { force }),
-      readDashboardSnapshot('todayStats', 'gemini', todayStatsSnapshotKey('gemini'), null, config, { force }),
-      readDashboardSnapshot('todayStats', 'opencode', todayStatsSnapshotKey('opencode'), null, config, { force }),
-      readDashboardSnapshot('todayStats', 'omp', todayStatsSnapshotKey('omp'), null, config, { force }),
-      readDashboardSnapshot('counts', 'claude', projectCountKey('claude'), EMPTY_COUNTS, config, { force }),
-      readDashboardSnapshot('counts', 'codex', projectCountKey('codex'), EMPTY_COUNTS, config, { force }),
-      readDashboardSnapshot('counts', 'gemini', projectCountKey('gemini'), EMPTY_COUNTS, config, { force }),
-      readDashboardSnapshot('counts', 'opencode', projectCountKey('opencode'), EMPTY_COUNTS, config, { force }),
-      readDashboardSnapshot('counts', 'omp', projectCountKey('omp'), EMPTY_COUNTS, config, { force })
-    ]);
+    const sources = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+    const sourceFallbackPayload = (source) => ({
+      channels: source === 'claude' ? [] : { channels: [] },
+      todayStats: null,
+      counts: EMPTY_COUNTS
+    });
+    const sourceSnapshots = await Promise.all(sources.map(async (source) => {
+      const snapshot = await readDashboardSnapshot(source, sourceFallbackPayload(source), config, { force });
+      return [source, snapshot];
+    }));
+    const snapshotsBySource = Object.fromEntries(sourceSnapshots);
 
-    const parts = {
-      counts: summarizePart({
-        claude: claudeCounts,
-        codex: codexCounts,
-        gemini: geminiCounts,
-        opencode: opencodeCounts,
-        omp: ompCounts
-      }),
-      todayStats: summarizePart({
-        claude: claudeTodayStats,
-        codex: codexTodayStats,
-        gemini: geminiTodayStats,
-        opencode: opencodeTodayStats,
-        omp: ompTodayStats
-      }),
-      channels: summarizePart({
-        claude: claudeChannels,
-        codex: codexChannels,
-        gemini: geminiChannels,
-        opencode: opencodeChannels,
-        omp: ompChannels
-      })
+    const capabilitySnapshot = (source, capability) => {
+      const snapshot = snapshotsBySource[source];
+      const value = snapshot.value || sourceFallbackPayload(source);
+      const failure = Array.isArray(value.__errors)
+        ? value.__errors.find(error => error.capability === capability
+          || (capability === 'todayStats' && error.capability === 'statistics'))
+        : null;
+      const meta = { ...(snapshot.meta || {}) };
+      if (failure) {
+        meta.stale = true;
+        meta.error = failure.error || 'dashboard capability failed';
+        if (failure.retryable !== undefined) meta.retryable = failure.retryable;
+        if (failure.retryAfter !== undefined) meta.retryAfter = failure.retryAfter;
+        if (failure.code !== undefined) meta.code = failure.code;
+      }
+      return { value: value[capability], meta };
     };
+    const parts = {
+      counts: summarizePart(Object.fromEntries(sources.map(source => [source, capabilitySnapshot(source, 'counts')]))),
+      todayStats: summarizePart(Object.fromEntries(sources.map(source => [source, capabilitySnapshot(source, 'todayStats')]))),
+      channels: summarizePart(Object.fromEntries(sources.map(source => [source, capabilitySnapshot(source, 'channels')]))),
+    };
+    const capabilityValueFor = (source, capability) => capabilitySnapshot(source, capability).value;
 
     res.json({
       success: true,
@@ -202,26 +193,26 @@ router.get('/init', async (req, res) => {
         uiConfig,
         favorites,
         channels: {
-          claude: claudeChannels.value,
-          codex: codexChannels.value,
-          gemini: geminiChannels.value,
-          opencode: opencodeChannels.value.channels || [],
-          omp: ompChannels.value.channels || []
+          claude: capabilityValueFor('claude', 'channels'),
+          codex: capabilityValueFor('codex', 'channels'),
+          gemini: capabilityValueFor('gemini', 'channels'),
+          opencode: capabilityValueFor('opencode', 'channels')?.channels || [],
+          omp: capabilityValueFor('omp', 'channels')?.channels || []
         },
         proxyStatus,
         counts: {
-          claude: claudeCounts.value || EMPTY_COUNTS,
-          codex: codexCounts.value || EMPTY_COUNTS,
-          gemini: geminiCounts.value || EMPTY_COUNTS,
-          opencode: opencodeCounts.value || EMPTY_COUNTS,
-          omp: ompCounts.value || EMPTY_COUNTS
+          claude: capabilityValueFor('claude', 'counts') || EMPTY_COUNTS,
+          codex: capabilityValueFor('codex', 'counts') || EMPTY_COUNTS,
+          gemini: capabilityValueFor('gemini', 'counts') || EMPTY_COUNTS,
+          opencode: capabilityValueFor('opencode', 'counts') || EMPTY_COUNTS,
+          omp: capabilityValueFor('omp', 'counts') || EMPTY_COUNTS
         },
         todayStats: {
-          claude: formatStats(claudeTodayStats.value),
-          codex: formatStats(codexTodayStats.value),
-          gemini: formatStats(geminiTodayStats.value),
-          opencode: formatStats(opencodeTodayStats.value),
-          omp: formatStats(ompTodayStats.value)
+          claude: formatStats(capabilityValueFor('claude', 'todayStats')),
+          codex: formatStats(capabilityValueFor('codex', 'todayStats')),
+          gemini: formatStats(capabilityValueFor('gemini', 'todayStats')),
+          opencode: formatStats(capabilityValueFor('opencode', 'todayStats')),
+          omp: formatStats(capabilityValueFor('omp', 'todayStats'))
         },
         meta: dashboardMeta(parts)
       }

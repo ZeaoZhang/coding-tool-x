@@ -15,63 +15,43 @@ function validatePort(input) {
   return true;
 }
 
-function buildPortQuestions(config = {}) {
+function getPlatformPortDefinitions() {
+  const { createPlatformCommandRegistry } = require('./platform-command-registry');
+  return createPlatformCommandRegistry().list()
+    .filter(platform => platform.portKey && Number.isInteger(platform.defaultPort) && platform.defaultPort > 0);
+}
+
+function buildPortQuestions(config = {}, platformDefinitions = getPlatformPortDefinitions()) {
   const ports = config.ports || {};
-  return [
+  const questions = [
     {
       type: 'input',
       name: 'webUI',
       message: 'Web UI 页面端口 (同时用于 WebSocket):',
       default: ports.webUI || 19999,
       validate: validatePort,
-    },
-    {
-      type: 'input',
-      name: 'proxy',
-      message: 'Claude 代理服务端口:',
-      default: ports.proxy || 20088,
-      validate: validatePort,
-    },
-    {
-      type: 'input',
-      name: 'codexProxy',
-      message: 'Codex 代理服务端口:',
-      default: ports.codexProxy || 20089,
-      validate: validatePort,
-    },
-    {
-      type: 'input',
-      name: 'geminiProxy',
-      message: 'Gemini 代理服务端口:',
-      default: ports.geminiProxy || 20090,
-      validate: validatePort,
-    },
-    {
-      type: 'input',
-      name: 'opencodeProxy',
-      message: 'OpenCode 代理服务端口:',
-      default: ports.opencodeProxy || 20091,
-      validate: validatePort,
-    },
-    {
-      type: 'input',
-      name: 'ompProxy',
-      message: 'OMP 代理服务端口:',
-      default: ports.ompProxy || 20092,
-      validate: validatePort,
-    },
+    }
   ];
+
+  for (const platform of platformDefinitions) {
+    questions.push({
+      type: 'input',
+      name: platform.portKey,
+      message: platform.portLabel || `${platform.label || platform.key} 代理服务端口:`,
+      default: ports[platform.portKey] || platform.defaultPort,
+      validate: validatePort
+    });
+  }
+
+  return questions;
 }
 
-function buildPortsConfig(answers = {}) {
-  return {
-    webUI: normalizePort(answers.webUI),
-    proxy: normalizePort(answers.proxy),
-    codexProxy: normalizePort(answers.codexProxy),
-    geminiProxy: normalizePort(answers.geminiProxy),
-    opencodeProxy: normalizePort(answers.opencodeProxy),
-    ompProxy: normalizePort(answers.ompProxy),
-  };
+function buildPortsConfig(answers = {}, platformDefinitions = getPlatformPortDefinitions()) {
+  const ports = { webUI: normalizePort(answers.webUI) };
+  for (const platform of platformDefinitions) {
+    ports[platform.portKey] = normalizePort(answers[platform.portKey]);
+  }
+  return ports;
 }
 
 /**
@@ -91,13 +71,14 @@ async function handlePortConfig() {
   const config = loadConfig();
   const ports = config.ports || {};
 
+  const platformDefinitions = getPlatformPortDefinitions();
   console.log(chalk.cyan('当前端口配置:'));
   console.log(chalk.gray(`• Web UI 页面端口:     ${ports.webUI || 19999} (同时用于 WebSocket)`));
-  console.log(chalk.gray(`• Claude 代理端口:     ${ports.proxy || 20088}`));
-  console.log(chalk.gray(`• Codex 代理端口:      ${ports.codexProxy || 20089}`));
-  console.log(chalk.gray(`• Gemini 代理端口:     ${ports.geminiProxy || 20090}`));
-  console.log(chalk.gray(`• OpenCode 代理端口:   ${ports.opencodeProxy || 20091}`));
-  console.log(chalk.gray(`• OMP 代理端口:        ${ports.ompProxy || 20092}\n`));
+  for (const platform of platformDefinitions) {
+    const label = platform.label || platform.key;
+    console.log(chalk.gray(`• ${label} 端口:     ${ports[platform.portKey] || platform.defaultPort}`));
+  }
+  console.log('');
 
   console.log(chalk.yellow('说明:'));
   console.log(chalk.gray('• 端口范围: 1024-65535'));
@@ -134,6 +115,7 @@ module.exports = {
   _test: {
     buildPortQuestions,
     buildPortsConfig,
+    getPlatformPortDefinitions,
     validatePort
   }
 };

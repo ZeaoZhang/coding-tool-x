@@ -9,6 +9,8 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const { PATHS } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
+const TEMPLATES_FILE = path.join(PATHS.config, 'config-templates.json');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
@@ -18,23 +20,24 @@ const mcpService = require('./mcp-service');
 const promptsService = require('./prompts-service');
 const pluginsService = new PluginsService();
 
-// 配置模板文件路径
-const TEMPLATES_FILE = path.join(PATHS.config, 'config-templates.json');
-const AI_CONFIG_MAP = {
-  claude: { fileName: 'CLAUDE.md', name: 'Claude' },
-  codex: { fileName: 'AGENTS.md', name: 'Codex' },
-  gemini: { fileName: 'GEMINI.md', name: 'Gemini' },
-  opencode: { fileName: '.opencode/AGENTS.md', name: 'OpenCode' },
-  omp: { fileName: null, name: 'OMP command templates' }
-};
+function getAiConfigMap(registry = platformRuntime.getPlatformRegistry()) {
+  if (!registry || typeof registry.list !== 'function') return {};
+  return Object.fromEntries(
+    registry.list({ enabledOnly: true })
+      .filter(platform => platform && platform.key)
+      .map(platform => [platform.key, {
+        fileName: platform.promptFile || null,
+        name: platform.promptLabel
+          || (platform.promptFile
+            ? (platform.label || platform.title || platform.key)
+            : `${platform.label || platform.title || platform.key} command templates`)
+      }])
+  );
+}
 
-const CLI_DEFAULT_AI_TYPE = {
-  claude: 'claude',
-  codex: 'codex',
-  gemini: 'gemini',
-  opencode: 'opencode',
-  omp: 'omp'
-};
+// Configuration file destinations are declared by platform manifests.
+const AI_CONFIG_MAP = getAiConfigMap();
+const CLI_DEFAULT_AI_TYPE = Object.fromEntries(Object.keys(AI_CONFIG_MAP).map(key => [key, key]));
 
 /**
  * 确保目录存在
@@ -381,65 +384,48 @@ function getAvailableConfigs() {
   const commandsByPlatform = {};
 
   for (const platform of agentPlatforms) {
-    const service = new AgentsService(platform);
-    const { agents } = service.listAgents();
-    for (const agent of agents || []) {
-      if (agent.scope !== 'user') continue;
-      const normalizedAgent = {
-        fileName: agent.fileName,
-        name: agent.name,
-        description: agent.description,
-        tools: agent.tools,
-        model: agent.model,
-        permissionMode: agent.permissionMode,
-        skills: agent.skills,
-        systemPrompt: agent.systemPrompt
-      };
-      agentsByPlatform[platform] = agentsByPlatform[platform] || [];
-      agentsByPlatform[platform].push(normalizedAgent);
-      const key = `${agent.fileName || agent.name}|${agent.model || ''}|${agent.description || ''}`;
-      if (!agentMap.has(key)) {
-        agentMap.set(key, normalizedAgent);
+    let service;
+    try {
+      service = new AgentsService(platform);
+      const { agents } = service.listAgents();
+      for (const agent of agents || []) {
+        if (agent.scope !== 'user') continue;
+        const detail = typeof service.getAgent === 'function' ? (service.getAgent(agent.fileName, 'user') || agent) : agent;
+        const normalizedAgent = { fileName: agent.fileName, name: agent.name, description: agent.description, tools: agent.tools, model: agent.model, permissionMode: agent.permissionMode, skills: agent.skills, systemPrompt: detail.systemPrompt };
+        agentsByPlatform[platform] = agentsByPlatform[platform] || [];
+        agentsByPlatform[platform].push(normalizedAgent);
+        const key = `${agent.fileName || agent.name}|${agent.model || ''}|${agent.description || ''}`;
+        if (!agentMap.has(key)) agentMap.set(key, normalizedAgent);
       }
+    } finally {
+      service?.dispose?.();
     }
   }
 
   for (const platform of commandPlatforms) {
-    const service = new CommandsService(platform);
-    const { commands } = service.listCommands();
-    for (const command of commands || []) {
-      if (command.scope !== 'user') continue;
-      const normalizedCommand = {
-        name: command.name,
-        namespace: command.namespace,
-        description: command.description,
-        allowedTools: command.allowedTools,
-        argumentHint: command.argumentHint,
-        body: command.body
-      };
-      commandsByPlatform[platform] = commandsByPlatform[platform] || [];
-      commandsByPlatform[platform].push(normalizedCommand);
-      const key = command.namespace ? `${command.namespace}/${command.name}` : command.name;
-      if (!commandMap.has(key)) {
-        commandMap.set(key, normalizedCommand);
+    let service;
+    try {
+      service = new CommandsService(platform);
+      const { commands } = service.listCommands();
+      for (const command of commands || []) {
+        if (command.scope !== 'user') continue;
+        const detail = typeof service.getCommand === 'function' ? (service.getCommand(command.name, 'user', null, command.namespace) || command) : command;
+        const normalizedCommand = { name: command.name, namespace: command.namespace, description: command.description, allowedTools: command.allowedTools, argumentHint: command.argumentHint, body: detail.body };
+        commandsByPlatform[platform] = commandsByPlatform[platform] || [];
+        commandsByPlatform[platform].push(normalizedCommand);
+        const key = command.namespace ? `${command.namespace}/${command.name}` : command.name;
+        if (!commandMap.has(key)) commandMap.set(key, normalizedCommand);
       }
+    } finally {
+      service?.dispose?.();
     }
   }
-
   // 按平台分别获取 skills（每个平台有独立的安装目录）
   const skillsByPlatform = {};
   for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
     const service = new SkillService(platform);
-    skillsByPlatform[platform] = service.getInstalledSkills().map(skill => ({
-      directory: skill.directory,
-      name: skill.name || skill.directory,
-      description: skill.description || '',
-      repoOwner: skill.repoOwner || null,
-      repoName: skill.repoName || null,
-      repoBranch: skill.repoBranch || null
-    }));
+    skillsByPlatform[platform] = service.getInstalledSkills().map(skill => ({ directory: skill.directory, name: skill.name || skill.directory, description: skill.description || '', repoOwner: skill.repoOwner || null, repoName: skill.repoName || null, repoBranch: skill.repoBranch || null }));
   }
-
   // 获取已安装的插件和市场插件
   const { plugins: installedPlugins } = pluginsService.listPlugins();
 
@@ -656,7 +642,10 @@ function applyTemplateToProject(targetDir, templateId, options = {}) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
     const configInfo = AI_CONFIG_MAP[aiConfigType];
     if (!configInfo?.fileName) {
-      pushSkipped(results.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件');
+      const reason = aiConfigType === 'omp'
+        ? 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件'
+        : `平台 ${configInfo?.name || aiConfigType} 未声明项目级配置文件，已跳过`;
+      pushSkipped(results.skipped, 'aiConfig', configInfo?.name || aiConfigType, reason);
     } else if (aiConfig?.enabled && aiConfig?.content) {
       const configPath = path.join(targetDir, configInfo.fileName);
       ensureDir(path.dirname(configPath));
@@ -888,7 +877,10 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
     const configInfo = AI_CONFIG_MAP[aiConfigType];
     if (!configInfo?.fileName) {
-      pushSkipped(preview.skipped, 'aiConfig', configInfo?.name || aiConfigType, 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件');
+      const reason = aiConfigType === 'omp'
+        ? 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件'
+        : `平台 ${configInfo?.name || aiConfigType} 未声明项目级配置文件，预览已跳过`;
+      pushSkipped(preview.skipped, 'aiConfig', configInfo?.name || aiConfigType, reason);
     } else if (aiConfig?.enabled && aiConfig?.content) {
       const configPath = path.join(targetDir, configInfo.fileName);
       if (fs.existsSync(configPath)) {
@@ -1055,5 +1047,6 @@ module.exports = {
   readCurrentConfig,
   getAvailableConfigs,
   applyTemplateToProject,
-  previewTemplateApplication
+  previewTemplateApplication,
+  getAiConfigMap
 };

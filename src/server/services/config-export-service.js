@@ -20,6 +20,7 @@ const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const platformRuntime = require('../../platforms/runtime');
 
 const CONFIG_VERSION = '1.4.0';
 const SKILL_FILE_ENCODING = 'base64';
@@ -52,12 +53,37 @@ const CC_UI_CONFIG_PATH = PATHS.uiConfig;
 const CC_PROMPTS_PATH = PATHS.prompts;
 const CC_SECURITY_PATH = PATHS.security;
 const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
-const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
-const AGENT_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
-const COMMAND_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const SKILL_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const PLUGIN_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
+function getPlatformKeysForType(type, registry = platformRuntime.getPlatformRegistry()) {
+  if (!registry || typeof registry.list !== 'function') return [];
+  return registry.list({ enabledOnly: true })
+    .filter(platform => {
+      if (!platform || !platform.key || platform.capabilities?.resourceSync === 'unsupported') return false;
+      const capability = platform.capabilities && Object.prototype.hasOwnProperty.call(platform.capabilities, type)
+        ? platform.capabilities[type]
+        : null;
+      return capability !== 'unsupported';
+    })
+    .filter(platform => type === 'plugins' || platform.resourceTypes?.[type] !== false)
+    .map(platform => platform.key);
+}
+
+const AGENT_PLATFORMS = getPlatformKeysForType('agents');
+const COMMAND_PLATFORMS = getPlatformKeysForType('commands');
+const SKILL_PLATFORMS = getPlatformKeysForType('skills');
+const PLUGIN_PLATFORMS = getPlatformKeysForType('plugins');
+
+function exportPlatformSnapshots({ registry = platformRuntime.getPlatformRegistry(), exportByPlatform } = {}) {
+  if (!registry || typeof registry.list !== 'function' || typeof exportByPlatform !== 'function') {
+    return {};
+  }
+  return Object.fromEntries(
+    registry.list({ enabledOnly: true })
+      .filter(platform => platform && platform.key)
+      .map(platform => [platform.key, exportByPlatform(platform.key)])
+  );
+}
 const CLAUDE_MARKETPLACES_REGISTRY = path.join(CLAUDE_PLUGINS_DIR, 'known_marketplaces.json');
 const CODEX_PLUGINS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'plugins');
 const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
@@ -533,13 +559,19 @@ function buildCommandExportItem(command, platform) {
 
 function exportAgentsSnapshotByPlatform() {
   return AGENT_PLATFORMS.reduce((result, platform) => {
+    let agentsService;
     try {
-      const agentsService = new AgentsService(platform);
+      agentsService = new AgentsService(platform);
       const { agents: rawAgents = [] } = agentsService.listAgents();
-      result[platform] = rawAgents.map(agent => buildAgentExportItem(agent, platform));
+      result[platform] = rawAgents.map(agent => {
+        const detail = typeof agentsService.getAgent === 'function' ? (agentsService.getAgent(agent.fileName, agent.scope || 'user') || agent) : agent;
+        return buildAgentExportItem({ ...agent, ...detail }, platform);
+      });
     } catch (err) {
       console.warn(`[ConfigExport] Failed to export agents for ${platform}:`, err.message);
       result[platform] = [];
+    } finally {
+      agentsService?.dispose?.();
     }
     return result;
   }, {});
@@ -547,13 +579,19 @@ function exportAgentsSnapshotByPlatform() {
 
 function exportCommandsSnapshotByPlatform() {
   return COMMAND_PLATFORMS.reduce((result, platform) => {
+    let commandsService;
     try {
-      const commandsService = new CommandsService(platform);
+      commandsService = new CommandsService(platform);
       const { commands: rawCommands = [] } = commandsService.listCommands();
-      result[platform] = rawCommands.map(command => buildCommandExportItem(command, platform));
+      result[platform] = rawCommands.map(command => {
+        const detail = typeof commandsService.getCommand === 'function' ? (commandsService.getCommand(command.name, command.scope || 'user', null, command.namespace) || command) : command;
+        return buildCommandExportItem({ ...command, ...detail }, platform);
+      });
     } catch (err) {
       console.warn(`[ConfigExport] Failed to export commands for ${platform}:`, err.message);
       result[platform] = [];
+    } finally {
+      commandsService?.dispose?.();
     }
     return result;
   }, {});
@@ -2647,5 +2685,7 @@ function generateImportSummary(results) {
 module.exports = {
   exportAllConfigs,
   exportAllConfigsZip,
-  importConfigs
+  importConfigs,
+  exportPlatformSnapshots,
+  getPlatformKeysForType
 };

@@ -13,17 +13,6 @@ const {
   getPortToolIssue,
   formatPortToolIssue
 } = require('../utils/port-helper');
-const { isProxyConfig } = require('./services/settings-manager');
-const {
-  isProxyConfig: isCodexProxyConfig,
-  setProxyConfig: setCodexProxyConfig
-} = require('./services/codex-settings-manager');
-const { setProxyConfig: setOpenCodeProxyConfig } = require('./services/opencode-settings-manager');
-const { startProxyServer } = require('./proxy-server');
-const { startCodexProxyServer } = require('./codex-proxy-server');
-const { startGeminiProxyServer } = require('./gemini-proxy-server');
-const { startOpenCodeProxyServer, collectProxyModelList } = require('./opencode-proxy-server');
-const { startOmpProxyServer } = require('./omp-proxy-server');
 const {
   createRemoteMutationGuard,
   isRemoteMutationAllowedByEnv
@@ -182,6 +171,13 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     }));
 
   }
+
+  // Registry-backed platform catalog and generic read routes
+  const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
+  app.use('/api/platforms', require('./api/platforms')({
+    registry: getPlatformRegistry(),
+    runtime: getPlatformRuntime()
+  }));
 
   // API Routes
   app.use('/api/projects', require('./api/projects')(config));
@@ -346,132 +342,47 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 }
 
 // 自动恢复代理状态
-function autoRestoreProxies() {
-  const config = loadConfig();
-  const fs = require('fs');
+function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') } = {}) {
+  const resolvedRegistry = registry || require('../platforms/runtime').getPlatformRegistry();
+  const resolvedRuntime = runtime || require('../platforms/runtime').getPlatformRuntime();
+  const resolvedConfig = config || loadConfig();
+  const platforms = typeof resolvedRegistry.list === 'function'
+    ? resolvedRegistry.list({ enabledOnly: true })
+    : [];
 
-  // 检查 Claude 代理状态文件
-  const claudeActiveFile = PATHS.activeChannel.claude;
-  if (fs.existsSync(claudeActiveFile)) {
-    console.log(chalk.cyan('\n[SYNC] 检测到 Claude 代理状态文件，正在自动启动...'));
-    const proxyPort = config.ports?.proxy || 20088;
-    startProxyServer(proxyPort)
-      .then(() => {
-        console.log(chalk.green(`[OK] Claude 代理已自动启动，端口: ${proxyPort}`));
-      })
-      .catch((err) => {
-        console.error(chalk.red(`[ERROR] Claude 代理启动失败: ${err.message}`));
-      });
-  }
+  for (const platform of platforms) {
+    const key = platform && platform.key;
+    const markerPath = key && PATHS.activeChannel?.[key];
+    if (!key || !markerPath || !fsImpl.existsSync(markerPath)) continue;
 
-  // 检查 Codex 代理状态文件
-  const codexActiveFile = PATHS.activeChannel.codex;
-  if (fs.existsSync(codexActiveFile)) {
-    console.log(chalk.cyan('\n[SYNC] 检测到 Codex 代理状态文件，正在自动启动...'));
-    const codexProxyPort = config.ports?.codexProxy || 20089;
-    startCodexProxyServer(codexProxyPort)
+    let driver;
+    try {
+      driver = resolvedRuntime.getDriver(key, 'proxy');
+    } catch (error) {
+      console.error(chalk.red(`[ERROR] ${platform.label || key} 代理恢复失败: ${error.message}`));
+      continue;
+    }
+    if (!driver || typeof driver.restoreOnBoot !== 'function') continue;
+
+    const serviceLabel = platform.proxyLabels?.serviceLabel || `${platform.label || key} 代理服务`;
+    console.log(chalk.cyan(`\n[SYNC] 检测到 ${serviceLabel} 状态文件，正在自动恢复...`));
+    Promise.resolve(driver.restoreOnBoot({ config: resolvedConfig }))
       .then((result) => {
-        const port = result?.port || codexProxyPort;
-        console.log(chalk.green(`[OK] Codex 代理已自动启动，端口: ${port}`));
-
-        // 重启后重新写入 cc-proxy 配置与环境变量，避免缺少 provider/env 导致报错
-        try {
-          const cfgResult = setCodexProxyConfig(port);
-          if (cfgResult?.success) {
-            console.log(chalk.gray('   已同步 codex config.toml 与 CC_PROXY_KEY'));
-          }
-        } catch (err) {
-          console.error(chalk.red(`[ERROR] Codex 代理配置同步失败: ${err.message}`));
+        if (!result || result.status === 'ok') {
+          const port = result?.port;
+          const suffix = port
+            ? platform.proxyMode === 'managed'
+              ? `: http://127.0.0.1:${port}`
+              : `，端口: ${port}`
+            : '';
+          const action = platform.proxyMode === 'managed' ? '动态网关已自动恢复' : '代理已自动启动';
+          console.log(chalk.green(`[OK] ${platform.label || key} ${action}${suffix}`));
+          return;
         }
+        console.error(chalk.red(`[ERROR] ${platform.label || key} 代理恢复失败: ${result.error || result.status}`));
       })
-      .catch((err) => {
-        console.error(chalk.red(`[ERROR] Codex 代理启动失败: ${err.message}`));
-      });
-  }
-
-  // 检查 Gemini 代理状态文件
-  const geminiActiveFile = PATHS.activeChannel.gemini;
-  if (fs.existsSync(geminiActiveFile)) {
-    console.log(chalk.cyan('\n[SYNC] 检测到 Gemini 代理状态文件，正在自动启动...'));
-    const geminiProxyPort = config.ports?.geminiProxy || 20090;
-    startGeminiProxyServer(geminiProxyPort)
-      .then((result) => {
-        if (result.success) {
-          console.log(chalk.green(`[OK] Gemini 代理已自动启动，端口: ${result.port}`));
-        } else {
-          console.error(chalk.red(`[ERROR] Gemini 代理启动失败: ${result.error || 'Unknown error'}`));
-        }
-      })
-      .catch((err) => {
-        console.error(chalk.red(`[ERROR] Gemini 代理启动失败: ${err.message}`));
-      });
-  } else {
-    console.log(chalk.gray('\n[TIP] 提示: 如需使用 Gemini 代理，请在前端界面激活 Gemini 渠道'));
-  }
-
-  // 检查 OpenCode 代理状态文件
-  const opencodeActiveFile = PATHS.activeChannel.opencode;
-  if (fs.existsSync(opencodeActiveFile)) {
-    console.log(chalk.cyan('\n[SYNC] 检测到 OpenCode 代理状态文件，正在自动启动...'));
-    const opencodeProxyPort = config.ports?.opencodeProxy || 20091;
-    startOpenCodeProxyServer(opencodeProxyPort)
-      .then(async (result) => {
-        if (result.success) {
-          console.log(chalk.green(`[OK] OpenCode 代理已自动启动，端口: ${result.port}`));
-          try {
-            const { getEnabledChannels: getEnabledOpenCodeChannels } = require('./services/opencode-channels');
-            const enabledChs = getEnabledOpenCodeChannels();
-            const allModels = [];
-            const seen = new Set();
-            enabledChs.forEach((ch) => {
-              [ch.model, ch.speedTestModel].forEach((m) => {
-                if (typeof m === 'string' && m.trim() && !seen.has(m.trim().toLowerCase())) {
-                  seen.add(m.trim().toLowerCase());
-                  allModels.push(m.trim());
-                }
-              });
-            });
-            const detectedModels = await collectProxyModelList(enabledChs, { useCacheOnly: true });
-            if (Array.isArray(detectedModels)) {
-              detectedModels.forEach((m) => {
-                if (typeof m === 'string' && m.trim() && !seen.has(m.trim().toLowerCase())) {
-                  seen.add(m.trim().toLowerCase());
-                  allModels.push(m.trim());
-                }
-              });
-            }
-            const firstChannel = enabledChs[0];
-            const activeModel = firstChannel && (firstChannel.model || firstChannel.speedTestModel) || null;
-            const cfgResult = setOpenCodeProxyConfig(result.port, { model: activeModel, models: allModels });
-            if (cfgResult?.success) {
-              console.log(chalk.gray('   已同步 OpenCode 配置文件'));
-            }
-          } catch (err) {
-            console.error(chalk.red(`[ERROR] OpenCode 代理配置同步失败: ${err.message}`));
-          }
-        } else {
-          console.error(chalk.red(`[ERROR] OpenCode 代理启动失败: ${result.error || 'Unknown error'}`));
-        }
-      })
-      .catch((err) => {
-        console.error(chalk.red(`[ERROR] OpenCode 代理启动失败: ${err.message}`));
-      });
-  }
-
-  // 检查 OMP 受管 provider 配置状态文件
-  const ompActiveFile = PATHS.activeChannel.omp;
-  if (fs.existsSync(ompActiveFile)) {
-    console.log(chalk.cyan('\n[SYNC] 检测到 OMP 受管渠道状态文件，正在自动恢复...'));
-    startOmpProxyServer({ preserveStartTime: true })
-      .then((result) => {
-        if (result.success) {
-          console.log(chalk.green(`[OK] OMP 动态网关已自动恢复: http://127.0.0.1:${result.port}`));
-        } else {
-          console.error(chalk.red(`[ERROR] OMP 动态网关恢复失败: ${result.error || 'Unknown error'}`));
-        }
-      })
-      .catch((err) => {
-        console.error(chalk.red(`[ERROR] OMP 动态网关恢复失败: ${err.message}`));
+      .catch((error) => {
+        console.error(chalk.red(`[ERROR] ${platform.label || key} 代理恢复失败: ${error.message}`));
       });
   }
 }
@@ -514,4 +425,7 @@ async function performStartupHealthCheck() {
   }
 }
 
-module.exports = { startServer };
+module.exports = {
+  startServer,
+  _test: { autoRestoreProxies }
+};

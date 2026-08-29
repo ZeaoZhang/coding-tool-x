@@ -47,7 +47,9 @@ function parseRealProjectPath(encodedName) {
 async function inventory() {
   const descriptors = [];
 
-  if (!fs.existsSync(CLAUDE_PROJECTS_DIR)) {
+  try {
+    await fs.promises.stat(CLAUDE_PROJECTS_DIR);
+  } catch (_) {
     return descriptors;
   }
 

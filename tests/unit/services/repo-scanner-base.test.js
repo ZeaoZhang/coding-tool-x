@@ -131,6 +131,72 @@ describe('repo-scanner-base repository config and caching', () => {
   });
 });
 
+describe('RepoScannerBase refresh singleflight', () => {
+  test('coalesces concurrent remote refreshes for one scanner', async () => {
+    const scanner = createScanner([
+      { owner: 'alpha', name: 'one', branch: 'main', enabled: true }
+    ]);
+    let resolveFetch;
+    const fetchResult = new Promise(resolve => {
+      resolveFetch = resolve;
+    });
+    const fetchSpy = vi.spyOn(scanner, 'fetchRepoItems').mockReturnValue(fetchResult);
+
+    const first = scanner.listRemoteItems();
+    const second = scanner.listRemoteItems();
+    await Promise.resolve();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    resolveFetch([{ name: 'shared' }]);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      [{ name: 'shared' }],
+      [{ name: 'shared' }]
+    ]);
+  });
+
+  test('force refresh reuses an existing refresh promise', async () => {
+    const scanner = createScanner();
+    let resolveFetch;
+    const fetchResult = new Promise(resolve => {
+      resolveFetch = resolve;
+    });
+    const fetchSpy = vi.spyOn(scanner, 'fetchRepoItems').mockReturnValue(fetchResult);
+
+    const first = scanner.listRemoteItems(true);
+    const second = scanner.listRemoteItems(true);
+    await Promise.resolve();
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    resolveFetch([{ name: 'forced' }]);
+    await Promise.all([first, second]);
+  });
+});
+describe('RepoScannerBase credential cache', () => {
+  test('shares host credential resolution across scanner instances', () => {
+    const cache = require('../../../src/server/services/remote-credential-cache');
+    const previousToken = process.env.GITHUB_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    try {
+      cache.clear();
+      const first = createScanner([]);
+      const second = createScanner([]);
+      first.getTokenFromCommand = vi.fn(() => 'scanner-token');
+      second.getTokenFromCommand = vi.fn(() => 'unexpected-token');
+      first.getTokenFromGitCredential = vi.fn(() => null);
+      second.getTokenFromGitCredential = vi.fn(() => null);
+
+      expect(first.getGitHubToken('https://github.example')).toBe('scanner-token');
+      expect(second.getGitHubToken('https://github.example')).toBe('scanner-token');
+      expect(first.getTokenFromCommand).toHaveBeenCalledTimes(1);
+      expect(second.getTokenFromCommand).not.toHaveBeenCalled();
+    } finally {
+      if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previousToken;
+      cache.clear();
+    }
+  });
+});
+
 describe('repo-scanner-base install and utility helpers', () => {
   test('installFromRepo downloads and copies a file into the install directory', async () => {
     const scanner = createScanner([]);

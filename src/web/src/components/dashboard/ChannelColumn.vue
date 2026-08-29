@@ -445,6 +445,7 @@ import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
 import { useUIConfig } from '../../composables/useUIConfig'
 import { getPlatformConfig } from '../../config/platforms'
+import { usePlatformStore } from '../../stores/platforms'
 import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import {
   getUIConfig,
@@ -468,6 +469,7 @@ const props = defineProps({
 const router = useRouter()
 const message = useMessage()
 const { uiConfig } = useUIConfig()
+const platformStore = usePlatformStore()
 const {
   claudeProxy,
   codexProxy,
@@ -491,10 +493,11 @@ const {
 } = useGlobalState()
 
 // Dashboard 聚合数据
-const { dashboardData, isLoading: dashboardLoading, loadDashboard } = useDashboard()
+const { dashboardData, isLoading: dashboardLoading, loadDashboard, scheduleRefresh } = useDashboard()
 
 // 渠道配置
-const platformConfig = computed(() => getPlatformConfig(props.channelType, uiConfig.value.customCliPlatforms))
+const platformConfig = computed(() => platformStore.get(props.channelType)
+  || getPlatformConfig(props.channelType, [], uiConfig.value.customCliPlatforms))
 const channelTitle = computed(() => platformConfig.value.title || platformConfig.value.label || props.channelType)
 const channelIcon = computed(() => platformConfig.value.icon || TerminalOutline)
 const accentColor = computed(() => platformConfig.value.color || '#64748b')
@@ -827,7 +830,7 @@ function formatLogToken(log, key) {
 }
 
 function supportsKnownRuntime() {
-  return ['claude', 'codex', 'gemini', 'opencode', 'omp'].includes(props.channelType)
+  return platformStore.hasCapability(props.channelType, 'channels')
 }
 
 function getLogTitle(log) {
@@ -855,7 +858,7 @@ function debouncedRefreshDashboardStats() {
   }
   // 5秒内的多次调用只执行最后一次
   statsDebounceTimer = setTimeout(() => {
-    loadDashboard(true, { fresh: true }).then(() => loadStats()).catch(() => {})
+    scheduleRefresh({ fresh: true }).then(() => loadStats()).catch(() => {})
   }, 5000)
 }
 
@@ -1059,7 +1062,7 @@ async function handleQuickToggle(channel, enabled) {
       await syncChannelCollapseForToggle(channel.id, enabled)
       message.success(enabled ? `渠道「${channel.name}」已启用` : `渠道「${channel.name}」已停用`)
       // 使用全局 store 的 loadChannels 刷新数据
-      await loadGlobalChannels()
+      await loadGlobalChannels({ force: true })
       window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: props.channelType } }))
     }
   } catch (error) {
@@ -1102,7 +1105,7 @@ function setupStatsTimer() {
   const intervalSeconds = statsIntervalSetting.value || 30
   const delay = Math.max(intervalSeconds * 1000, 10000)
   statsIntervalId = setInterval(() => {
-    loadDashboard(true, { fresh: true }).then(() => loadStats()).catch(() => {})
+    scheduleRefresh({ fresh: true }).then(() => loadStats()).catch(() => {})
   }, delay)
 }
 

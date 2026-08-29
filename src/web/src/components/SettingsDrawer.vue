@@ -1301,12 +1301,14 @@ import {
 } from '@vicons/ionicons5'
 import { getUIConfig, saveUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { DEFAULT_HOME_CLI_COLUMNS, buildCliPlatformOptions, normalizeCustomCliPlatforms, normalizeHomeCliColumns } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 import { getSecurityStatus, setSecurityPassword } from '../api/security'
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { client } from '../api/client'
 
+const platformStore = usePlatformStore()
 async function fetchModelSettings() {
   const resp = await client.get('/settings/model-settings')
   return resp.data
@@ -2052,7 +2054,7 @@ const portsChanged = computed(() => {
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
 })
 
-const homeCliOptions = computed(() => buildCliPlatformOptions(customCliPlatforms.value))
+const homeCliOptions = computed(() => buildCliPlatformOptions(platformStore.all, customCliPlatforms.value))
 
 const homeCliDirty = computed(() => {
   return JSON.stringify(homeCliColumns.value) !== JSON.stringify(originalHomeCliSettings.value.homeCliColumns) ||
@@ -2125,6 +2127,7 @@ async function loadPanelSettings() {
       const normalizedCustom = normalizeCustomCliPlatforms(response.config.customCliPlatforms || [])
       const normalizedColumns = normalizeHomeCliColumns(
         response.config.homeCliColumns || response.config.dashboardChannelOrder,
+        platformStore.all,
         normalizedCustom
       )
       customCliPlatforms.value = normalizedCustom.map(platform => ({ ...platform }))
@@ -2141,7 +2144,7 @@ async function loadPanelSettings() {
 
 function normalizeCustomCliEdits() {
   customCliPlatforms.value = normalizeCustomCliPlatforms(customCliPlatforms.value)
-  homeCliColumns.value = normalizeHomeCliColumns(homeCliColumns.value, customCliPlatforms.value)
+  homeCliColumns.value = normalizeHomeCliColumns(homeCliColumns.value, platformStore.all, customCliPlatforms.value)
 }
 
 function handleHomeCliSlotChange(index, value) {
@@ -2151,7 +2154,7 @@ function handleHomeCliSlotChange(index, value) {
   if (duplicateIndex >= 0) {
     next[duplicateIndex] = homeCliColumns.value[index]
   }
-  homeCliColumns.value = normalizeHomeCliColumns(next, customCliPlatforms.value)
+  homeCliColumns.value = normalizeHomeCliColumns(next, platformStore.all, customCliPlatforms.value)
 }
 
 function addCustomCliPlatform() {
@@ -2182,7 +2185,7 @@ async function saveHomeCliSettings() {
   try {
     normalizeCustomCliEdits()
     const custom = normalizeCustomCliPlatforms(customCliPlatforms.value)
-    const columns = normalizeHomeCliColumns(homeCliColumns.value, custom)
+    const columns = normalizeHomeCliColumns(homeCliColumns.value, platformStore.all, custom)
     const response = await getUIConfig()
     const baseConfig = response.success && response.config ? response.config : {}
     const saveResult = await saveUIConfig({

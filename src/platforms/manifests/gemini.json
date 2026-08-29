@@ -1,0 +1,37 @@
+{
+  "key": "gemini",
+  "title": "Gemini-CLI",
+  "label": "Gemini",
+  "command": "gemini",
+  "iconToken": "gemini",
+  "color": "#a855f7",
+  "defaultVisible": true,
+  "helpLabel": "Gemini",
+  "terminalColor": "magenta",
+  "cliSelectable": true,
+  "portLabel": "Gemini 代理服务端口:",
+  "apiBasePath": "/api/gemini/proxy",
+  "portKey": "geminiProxy",
+  "defaultPort": 20090,
+  "pathResolverId": "gemini",
+  "resourceTypes": {
+    "skills": true,
+    "commands": true,
+    "agents": true,
+    "plugins": false
+  },
+  "logFile": "gemini-proxy.log",
+  "logColor": "magenta",
+  "statisticsPath": "/api/gemini/statistics",
+  "promptFile": "GEMINI.md",
+  "promptLabel": "Gemini",
+  "capabilities": {
+    "projects": "legacy:gemini",
+    "sessions": "legacy:gemini",
+    "channels": "legacy:gemini",
+    "proxy": "legacy:gemini",
+    "statistics": "legacy:gemini",
+    "resourceSync": "legacy:gemini",
+    "nativeConfig": "legacy:gemini"
+  }
+}

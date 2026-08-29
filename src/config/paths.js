@@ -379,6 +379,7 @@ const PATHS = {
   // 全局配置
   configFile: path.join(CONFIG_DIR, 'config.json'),
   uiConfig: path.join(CONFIG_DIR, 'ui-config.json'),
+  platforms: path.join(CONFIG_DIR, 'platforms.json'),
   prompts: path.join(CONFIG_DIR, 'prompts.json'),
   mcpConfig: path.join(CONFIG_DIR, 'mcp-servers.json'),
   mcpServers: path.join(CONFIG_DIR, 'mcp-servers.json'),

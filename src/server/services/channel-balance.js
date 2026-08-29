@@ -1737,8 +1737,7 @@ async function refreshChannelBalance(source, channelId) {
 
   const entry = await refreshSnapshot(
     buildBalanceSnapshotKey(normalizedSource, channel),
-    () => refreshChannelBalanceSnapshot(normalizedSource, channel, { force: true }),
-    { bypassInflight: true }
+    () => refreshChannelBalanceSnapshot(normalizedSource, channel, { force: true })
   );
   const balance = entry.value;
   return {

@@ -130,7 +130,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(testDir, { recursive: true, force: true });
+  vi.restoreAllMocks();
   [
     '../../../src/server/services/commands-service',
     '../../../src/config/paths',
@@ -337,6 +337,19 @@ describe('CommandsService local command management', () => {
     expect(projectCommand.fullPath).toBe(path.join(projectPath, '.omp', 'commands', 'team', 'local.md'));
     expect(fs.readFileSync(projectCommand.fullPath, 'utf8')).toBe('Review locally');
   });
+});
+
+test('listCommands reads metadata without full command body', () => {
+  const { CommandsService } = require('../../../src/server/services/commands-service');
+  const service = new CommandsService('claude');
+  service.createCommand({ name: 'summary', scope: 'user', description: 'Summary', body: 'private body' });
+  const readSpy = vi.spyOn(fs, 'readFileSync');
+  const listed = service.listCommands();
+  expect(listed.commands[0]).not.toHaveProperty('body');
+  expect(readSpy).not.toHaveBeenCalledWith(expect.stringContaining('summary.md'), 'utf-8');
+  service.getCommand('summary', 'user');
+  expect(readSpy).toHaveBeenCalledWith(expect.stringContaining('summary.md'), 'utf-8');
+  readSpy.mockRestore();
 });
 
 describe('CommandsService remote merge and stats', () => {

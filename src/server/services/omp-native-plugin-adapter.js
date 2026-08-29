@@ -143,6 +143,61 @@ function normalizeMarketplacePlugin(entry, inheritedMarketplace = '') {
 class OmpNativePluginAdapter {
   constructor(options = {}) {
     this.commandRunner = options.commandRunner || execFileSync;
+    this.cacheTtlMs = Math.max(0, Number(options.cacheTtlMs) || 1000);
+    this._operationCache = new Map();
+    this._operationInflight = new Map();
+  }
+
+  _operationKey(operation, options = {}) {
+    const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd();
+    const scope = normalizeScope(options.scope, '');
+    return `${operation}:${cwd}:${scope}`;
+  }
+
+  _clone(value) {
+    if (value === undefined) return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+      return value;
+    }
+  }
+
+  _cachedOperation(operation, options, execute) {
+    const key = this._operationKey(operation, options);
+    const now = Date.now();
+    const cached = this._operationCache.get(key);
+    if (!options.force && cached && now - cached.cachedAt < this.cacheTtlMs) {
+      return this._clone(cached.value);
+    }
+    if (this._operationInflight.has(key)) {
+      return this._operationInflight.get(key);
+    }
+    try {
+      const value = execute();
+      this._operationCache.set(key, { value: this._clone(value), cachedAt: now });
+      return this._clone(value);
+    } catch (error) {
+      if (cached) {
+        return {
+          ...this._clone(cached.value),
+          error: {
+            message: error.message || String(error),
+            retryable: true
+          }
+        };
+      }
+      throw error;
+    }
+  }
+
+  invalidate(options = {}) {
+    const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd();
+    const scope = normalizeScope(options.scope, '');
+    const suffix = `:${cwd}:${scope}`;
+    for (const key of this._operationCache.keys()) {
+      if (key.endsWith(suffix)) this._operationCache.delete(key);
+    }
   }
 
   run(args, options = {}) {
@@ -169,6 +224,14 @@ class OmpNativePluginAdapter {
   }
 
   listPlugins(options = {}) {
+    return this._cachedOperation(
+      'plugin:list',
+      options,
+      () => this._listPluginsUncached(options)
+    );
+  }
+
+  _listPluginsUncached(options = {}) {
     const payload = this.runJson(['plugin', 'list', '--json'], options);
     if (!payload || typeof payload !== 'object') {
       throw new Error('OMP plugin list returned an invalid JSON payload');
@@ -256,6 +319,7 @@ class OmpNativePluginAdapter {
     if (options.force) args.push('--force');
     if (options.scope) args.push('--scope', normalizeScope(options.scope));
     this.run(args, options);
+    this.invalidate(options);
     const parsed = splitMarketplaceId(pluginId);
     return {
       success: true,
@@ -295,6 +359,7 @@ class OmpNativePluginAdapter {
       if (options.scope) args.push('--scope', normalizeScope(options.scope));
       this.run(args, options);
     }
+    this.invalidate(options);
     return {
       success: true,
       message: `Configuration updated for plugin "${target}"`
@@ -310,9 +375,18 @@ class OmpNativePluginAdapter {
     const args = ['plugin', action, target];
     if (options.scope) args.push('--scope', normalizeScope(options.scope));
     this.run(args, options);
+    this.invalidate(options);
   }
 
   discover(options = {}) {
+    return this._cachedOperation(
+      'plugin:discover',
+      options,
+      () => this._discoverUncached(options)
+    );
+  }
+
+  _discoverUncached(options = {}) {
     const output = this.run(['plugin', 'discover', '--json'], options);
     const text = stripAnsi(output).trim();
     if (!text || text.includes('No plugins available')) return [];
@@ -381,6 +455,14 @@ class OmpNativePluginAdapter {
   }
 
   listMarketplaces(options = {}) {
+    return this._cachedOperation(
+      'marketplace:list',
+      options,
+      () => this._listMarketplacesUncached(options)
+    );
+  }
+
+  _listMarketplacesUncached(options = {}) {
     const output = this.run(['plugin', 'marketplace', 'list', '--json'], options);
     const text = stripAnsi(output).trim();
     if (!text || text.includes('No marketplaces configured')) return [];
@@ -429,20 +511,21 @@ class OmpNativePluginAdapter {
     const target = String(source || '').trim();
     if (!target) throw new Error('Missing marketplace source');
     this.run(['plugin', 'marketplace', 'add', target], options);
+    this.invalidate(options);
     return this.listMarketplaces(options);
   }
 
   removeMarketplace(name, options = {}) {
     const target = String(name || '').trim();
-    if (!target) throw new Error('Missing marketplace name');
     this.run(['plugin', 'marketplace', 'remove', target], options);
+    this.invalidate(options);
     return this.listMarketplaces(options);
   }
 
   updateMarketplaces(name = '', options = {}) {
     const args = ['plugin', 'marketplace', 'update'];
-    if (name) args.push(name);
     this.run(args, options);
+    this.invalidate(options);
     return this.listMarketplaces(options);
   }
 }

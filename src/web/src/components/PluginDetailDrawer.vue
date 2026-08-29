@@ -130,6 +130,7 @@ const visible = computed({
 
 const readmeContent = ref('')
 const loadingReadme = ref(false)
+const readmeRequestId = ref(0)
 
 const isRemoteRepoLink = computed(() => /^(https?:)?\/\//.test(props.plugin?.repoUrl || props.plugin?.gitUrl || ''))
 const pluginPath = computed(() => props.plugin?.installPath || props.plugin?.fullPath || props.plugin?.path || props.plugin?.directory || '')
@@ -141,31 +142,39 @@ const bodyContentStyle = {
   overflow: 'hidden'
 }
 
-// Fetch README when drawer opens
-watch(() => props.visible, async (newVisible) => {
-  if (newVisible && props.plugin) {
-    loadingReadme.value = true
-    try {
-      const repoInfo = {
-        repoId: props.plugin.repoId,
-        repoProvider: props.plugin.repoProvider,
-        repoHost: props.plugin.repoHost,
-        repoOwner: props.plugin.repoOwner,
-        repoName: props.plugin.repoName,
-        repoBranch: props.plugin.repoBranch,
-        directory: props.plugin.directory,
-        source: props.plugin.source,
-        repoUrl: props.plugin.repoUrl,
-        repoProjectPath: props.plugin.repoProjectPath,
-        repoLocalPath: props.plugin.repoLocalPath,
-        installPath: props.plugin.installPath
-      }
-      const response = await getPluginReadme(props.plugin.name, repoInfo, props.platform)
-      readmeContent.value = response.readme || ''
-    } catch (error) {
-      console.error('Failed to fetch README:', error)
-      readmeContent.value = ''
-    } finally {
+watch(() => [props.visible, props.plugin, props.platform], async ([newVisible, plugin, platform]) => {
+  const requestId = ++readmeRequestId.value
+  if (!newVisible || !plugin) {
+    loadingReadme.value = false
+    readmeContent.value = ''
+    return
+  }
+
+  loadingReadme.value = true
+  try {
+    const repoInfo = {
+      repoId: plugin.repoId,
+      repoProvider: plugin.repoProvider,
+      repoHost: plugin.repoHost,
+      repoOwner: plugin.repoOwner,
+      repoName: plugin.repoName,
+      repoBranch: plugin.repoBranch,
+      directory: plugin.directory,
+      source: plugin.source,
+      repoUrl: plugin.repoUrl,
+      repoProjectPath: plugin.repoProjectPath,
+      repoLocalPath: plugin.repoLocalPath,
+      installPath: plugin.installPath
+    }
+    const response = await getPluginReadme(plugin.name, repoInfo, platform)
+    if (requestId !== readmeRequestId.value) return
+    readmeContent.value = response.readme || ''
+  } catch (error) {
+    if (requestId !== readmeRequestId.value) return
+    console.error('Failed to fetch README:', error)
+    readmeContent.value = ''
+  } finally {
+    if (requestId === readmeRequestId.value) {
       loadingReadme.value = false
     }
   }

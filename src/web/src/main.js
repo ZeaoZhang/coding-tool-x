@@ -3,12 +3,15 @@ import { createPinia } from 'pinia'
 import router from './router'
 import App from './App.vue'
 import { initializeGlobalState } from './composables/useGlobalState'
+import { usePlatformStore } from './stores/platforms'
 
 // Naive UI - no need to import CSS, it's built-in
 const app = createApp(App)
 const pinia = createPinia()
 
 app.use(pinia)
+const platformStore = usePlatformStore()
+void platformStore.load()
 app.use(router)
 app.mount('#app')
 

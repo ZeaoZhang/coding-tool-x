@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete require.cache[CHANNEL_BALANCE_PATH];
+  vi.restoreAllMocks();
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -73,6 +73,37 @@ describe('BaseChannelService', () => {
       const data = svc.loadChannels();
       expect(data.channels[0].websiteUrl).toBe('https://www.anthropic.com');
     });
+  });
+    it('reuses channel data while the file mtime is unchanged', () => {
+      fs.mkdirSync(path.dirname(channelsFile), { recursive: true });
+      fs.writeFileSync(channelsFile, JSON.stringify({ channels: [{ id: 'cached', name: 'Cached' }] }));
+      const svc = createService();
+      const readSpy = vi.spyOn(fs, 'readFileSync');
+
+      const first = svc.loadChannels();
+      const second = svc.loadChannels();
+
+      expect(second).toEqual(first);
+      expect(readSpy.mock.calls.filter(([filePath]) => filePath === channelsFile)).toHaveLength(1);
+    });
+
+    it('updates the cache immediately after saveChannels', () => {
+      const svc = createService();
+      svc.saveChannels({ channels: [{ id: 'saved', name: 'Saved' }] });
+
+      expect(svc.loadChannels().channels).toEqual([
+        expect.objectContaining({ id: 'saved', name: 'Saved' })
+      ]);
+    });
+
+  it('reloads channels after an external mtime change', () => {
+    const svc = createService();
+    svc.saveChannels({ channels: [{ id: 'before', name: 'Before' }] });
+    fs.writeFileSync(channelsFile, JSON.stringify({ channels: [{ id: 'after', name: 'After' }] }));
+
+    expect(svc.loadChannels().channels).toEqual([
+      expect.objectContaining({ id: 'after', name: 'After' })
+    ]);
   });
 
   describe('createChannel', () => {

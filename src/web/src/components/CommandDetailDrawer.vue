@@ -95,7 +95,9 @@ import { DocumentTextOutline, HammerOutline, TerminalOutline } from '@vicons/ion
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import AssetPathField from './AssetPathField.vue'
 import { getPlatformConfig } from '../config/platforms'
+import { usePlatformStore } from '../stores/platforms'
 
+const platformStore = usePlatformStore()
 const { drawerWidth } = useResponsiveDrawer(600)
 
 const props = defineProps({
@@ -127,7 +129,7 @@ const bodyContentStyle = {
 }
 
 const platformLabel = computed(() => {
-  const platform = getPlatformConfig(props.platform)
+  const platform = platformStore.get(props.platform) || getPlatformConfig(props.platform)
   return platform.label || platform.title || ''
 })
 

@@ -85,6 +85,16 @@ describe('plugin-manager initialization and commands', () => {
     expect(eventBus.emitSync).toHaveBeenCalledWith('cli:init', { config: { env: 'test' }, args: ['ctx'] });
   });
 
+
+  test('passes parsed plugin metadata into each loader call', () => {
+    const manager = loadFreshPluginManager();
+
+    manager.initializePlugins();
+
+    expect(loaderExports.loadPlugin.mock.calls[0][1]).toEqual({
+      pluginInfo: expect.objectContaining({ loadOrder: 5, enabled: true })
+    });
+  });
   test('returns already initialized on second initialize call', () => {
     const manager = loadFreshPluginManager();
     manager.initializePlugins();

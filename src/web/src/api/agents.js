@@ -5,16 +5,18 @@
  */
 
 import { client } from './client'
+import { requestKey, requestSingleflight } from './request-singleflight'
 
 /**
  * 获取代理列表
  * @param {string} projectPath - 项目路径（可选，用于获取项目级代理）
  */
-export async function getAgents(projectPath = null, platform = 'claude') {
-  const response = await client.get('/agents', {
-    params: projectPath ? { projectPath, platform } : { platform }
-  })
-  return response.data
+export async function getAgents(projectPath = null, platform = 'claude', options = {}) {
+  const key = requestKey('agents', platform, options.scope || '', projectPath || '')
+  return requestSingleflight(key, signal => client.get('/agents', {
+    params: projectPath ? { projectPath, platform } : { platform },
+    signal
+  }).then(response => response.data), 'agents', `agents:${platform}`)
 }
 
 /**
@@ -22,14 +24,14 @@ export async function getAgents(projectPath = null, platform = 'claude') {
  * @param {string} projectPath - 项目路径（可选）
  * @param {boolean} forceRefresh - 是否强制刷新缓存
  */
-export async function getAllAgents(projectPath = null, forceRefresh = false, platform = 'claude') {
+export async function getAllAgents(projectPath = null, forceRefresh = false, platform = 'claude', options = {}) {
   const params = {}
   if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
   if (forceRefresh) params.refresh = '1'
-
-  const response = await client.get('/agents/all', { params })
-  return response.data
+  const key = requestKey('agents-all', platform, options.scope || '', projectPath || '')
+  return requestSingleflight(key, signal => client.get('/agents/all', { params, signal })
+    .then(response => response.data), 'agents-all', `agents-all:${platform}`)
 }
 
 /**
@@ -47,15 +49,14 @@ export async function getAgentsStats(projectPath = null, platform = 'claude') {
  * 获取单个代理详情
  * @param {string} fileName - 文件名
  * @param {string} scope - 作用域 (user/project)
- * @param {string} projectPath - 项目路径（项目级代理需要）
  */
-export async function getAgent(fileName, scope, projectPath = null, platform = 'claude') {
+export async function getAgent(fileName, scope, projectPath = null, platform = 'claude', options = {}) {
   const params = {}
   if (platform) params.platform = platform
   if (projectPath) params.projectPath = projectPath
-
-  const response = await client.get(`/agents/${scope}/${fileName}`, { params })
-  return response.data
+  const key = requestKey(`agent-detail:${fileName}`, platform, scope || '', projectPath || '')
+  return requestSingleflight(key, signal => client.get(`/agents/${scope}/${fileName}`, { params, signal })
+    .then(response => response.data), 'agent-detail', `agent-detail:${platform}`)
 }
 
 /**
