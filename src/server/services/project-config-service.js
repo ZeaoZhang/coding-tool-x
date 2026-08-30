@@ -168,6 +168,8 @@ class ProjectConfigService {
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
       throw new Error('MCP server spec must be an object');
     }
+    const { validateServerSpec } = require('./mcp-service');
+    validateServerSpec(spec);
     const { adapter, projectRoot } = await this._resolve(projectPath, platform);
     const result = adapter.upsertProjectMcp(projectRoot, String(id).trim(), spec);
     return redactSecrets({ ...result, id: String(id).trim(), scope: 'project' });
@@ -180,8 +182,54 @@ class ProjectConfigService {
     return redactSecrets({ ...result, id: String(id).trim(), scope: 'project' });
   }
 
-  async testProjectMcp() {
-    return unsupportedResource(null);
+  async testProjectMcp(projectPath, platform, id) {
+    if (!id || !String(id).trim()) throw new Error('MCP server ID is required');
+    const { key, adapter, projectRoot } = await this._resolve(projectPath, platform);
+    const description = adapter.describe().mcp;
+    if (!description.supported) {
+      return { success: false, status: 'unsupported', platform: key, id: String(id).trim() };
+    }
+
+    const spec = adapter.readProjectMcpSpec(projectRoot, String(id).trim());
+    if (!spec) throw new Error(`MCP server "${id}" is not configured for this project`);
+    const effectiveSpec = { ...spec };
+    if ((effectiveSpec.type || 'stdio') === 'stdio' && !effectiveSpec.cwd) {
+      effectiveSpec.cwd = projectRoot;
+    }
+    const client = this.mcpClientFactory
+      ? this.mcpClientFactory(effectiveSpec, { projectPath: projectRoot, platform: key })
+      : new (require('./mcp-client').McpClient)(effectiveSpec);
+    const startedAt = Date.now();
+
+    try {
+      await client.connect();
+      const tools = typeof client.listTools === 'function' ? await client.listTools() : [];
+      return {
+        success: true,
+        platform: key,
+        id: String(id).trim(),
+        scope: 'project',
+        tools: Array.isArray(tools) ? tools.map(tool => ({ name: tool.name })) : [],
+        duration: Date.now() - startedAt
+      };
+    } catch (error) {
+      return {
+        success: false,
+        platform: key,
+        id: String(id).trim(),
+        scope: 'project',
+        message: error.message,
+        duration: Date.now() - startedAt
+      };
+    } finally {
+      try {
+        if (typeof client.disconnect === 'function') {
+          await client.disconnect();
+        } else {
+          await client.close?.();
+        }
+      } catch (_) {}
+    }
   }
 
   async getSnapshot(projectPath, platform) {
@@ -190,8 +238,8 @@ class ProjectConfigService {
     const instruction = adapter.readInstruction(projectRoot);
     const mcp = adapter.readProjectMcp(projectRoot);
     const skills = description.skills?.supported !== false
-      ? { supported: true, project: [], inherited: [] }
-      : { supported: false, project: [], inherited: [] };
+      ? await this.listProjectSkills(projectRoot, key)
+      : { supported: false, project: [], inherited: [], path: null };
 
     return {
       success: true,

@@ -1,9 +1,21 @@
 'use strict';
 
-const { createProjectAdapter } = require('./shared');
+const mcpFormat = require('../mcp-format');
+const {
+  createProjectAdapter,
+  createTomlMcpHandlers
+} = require('./shared');
 
-function createAdapter(options = {}) {
-  return createProjectAdapter(options);
+function createAdapter({ manifest, fsImpl } = {}) {
+  const relativePath = manifest?.projectResources?.mcp?.path;
+  const mcpHandlers = createTomlMcpHandlers({
+    relativePath,
+    format: manifest?.projectResources?.mcp?.format || 'codex-toml',
+    toNative: mcpFormat.convertToCodexFormat,
+    fromNative: mcpFormat.convertFromCodexFormat,
+    fsImpl
+  });
+  return createProjectAdapter({ manifest, fsImpl, mcpHandlers });
 }
 
 module.exports = { createAdapter };
