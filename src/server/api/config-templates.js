@@ -185,10 +185,18 @@ router.delete('/:id', (req, res) => {
  * POST /api/config-templates/:id/apply
  * 应用模板到项目目录
  */
-router.post('/:id/apply', (req, res) => {
+router.post('/:id/apply', async (req, res) => {
   try {
     const { targetPath, aiConfigType, aiConfigTypes } = req.body;
     if (!targetPath) {
+      return res.status(400).json({
+        success: false,
+        message: '目标路径不能为空'
+      });
+    }
+    const { validateKnownProjectCwd } = require('../services/project-path-validation');
+    const validatedTargetPath = await validateKnownProjectCwd(targetPath);
+    if (!validatedTargetPath) {
       return res.status(400).json({
         success: false,
         message: '目标路径不能为空'
@@ -199,7 +207,7 @@ router.post('/:id/apply', (req, res) => {
     if (normalizedAiConfigTypes.length > 0) {
       options.aiConfigTypes = normalizedAiConfigTypes;
     }
-    const result = templatesService.applyTemplateToProject(targetPath, req.params.id, options);
+    const result = await templatesService.applyTemplateToProject(validatedTargetPath, req.params.id, options);
     const skippedCount = result?.results?.skipped?.length || 0;
     res.json({
       success: true,
@@ -218,10 +226,18 @@ router.post('/:id/apply', (req, res) => {
  * POST /api/config-templates/:id/preview
  * 预览模板应用效果
  */
-router.post('/:id/preview', (req, res) => {
+router.post('/:id/preview', async (req, res) => {
   try {
     const { targetPath, aiConfigType, aiConfigTypes } = req.body;
     if (!targetPath) {
+      return res.status(400).json({
+        success: false,
+        message: '目标路径不能为空'
+      });
+    }
+    const { validateKnownProjectCwd } = require('../services/project-path-validation');
+    const validatedTargetPath = await validateKnownProjectCwd(targetPath);
+    if (!validatedTargetPath) {
       return res.status(400).json({
         success: false,
         message: '目标路径不能为空'
@@ -232,7 +248,7 @@ router.post('/:id/preview', (req, res) => {
     if (normalizedAiConfigTypes.length > 0) {
       options.aiConfigTypes = normalizedAiConfigTypes;
     }
-    const preview = templatesService.previewTemplateApplication(targetPath, req.params.id, options);
+    const preview = await templatesService.previewTemplateApplication(validatedTargetPath, req.params.id, options);
     res.json({
       success: true,
       data: preview

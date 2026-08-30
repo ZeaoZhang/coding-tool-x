@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const { randomUUID } = require('crypto');
 const path = require('path');
 const toml = require('@iarna/toml');
 const {
@@ -90,11 +91,29 @@ function writeTextFileAtomic(projectRoot, relativePath, content, fsImpl = fs) {
   fsImpl.mkdirSync(parentDir, { recursive: true });
   assertNoSymlinkComponents(path.resolve(projectRoot), parentDir, fsImpl);
 
-  const tempPath = `${target}.tmp-${process.pid}-${Date.now()}`;
+  const tempPath = `${target}.tmp-${process.pid}-${Date.now()}-${randomUUID()}`;
+  let fileDescriptor;
   try {
-    fsImpl.writeFileSync(tempPath, String(content ?? ''), 'utf8');
+    const constants = fsImpl.constants || fs.constants;
+    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0);
+    fileDescriptor = fsImpl.openSync(tempPath, flags, 0o600);
+    const tempRealPath = fsImpl.realpathSync(tempPath);
+    const rootRealPath = fsImpl.realpathSync(path.resolve(projectRoot));
+    const relative = path.relative(rootRealPath, tempRealPath);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error(`Project target escapes root: ${relativePath}`);
+    }
+    fsImpl.writeFileSync(fileDescriptor, String(content ?? ''), 'utf8');
+    fsImpl.closeSync(fileDescriptor);
+    fileDescriptor = undefined;
+    assertNoSymlinkComponents(path.resolve(projectRoot), parentDir, fsImpl);
     fsImpl.renameSync(tempPath, target);
   } catch (error) {
+    if (fileDescriptor !== undefined) {
+      try {
+        fsImpl.closeSync(fileDescriptor);
+      } catch (_) {}
+    }
     try {
       if (fsImpl.existsSync(tempPath)) fsImpl.unlinkSync(tempPath);
     } catch (_) {}

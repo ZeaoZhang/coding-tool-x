@@ -8,6 +8,7 @@
 ### Added
 - **配置驱动的平台 Registry** - 新增 Manifest 校验、allowlisted capability driver、`~/.cc-tool/config/platforms.json` 用户扩展和安全的 `GET /api/platforms` 公共目录；`generic-jsonl`、`generic-filesystem` 与 `generic-openai-compatible` 仅覆盖可声明的稳定协议。
 - **Registry-backed CLI / Web UI 路由** - 代理、日志、统计、端口配置、Dashboard 聚合和前端平台元数据改为从 Registry 派生，同时保留旧 CLI/API facade、OMP managed mode 与现有测试 mock 路径。
+- **项目级配置控制** - 在项目历史会话页管理原生项目指令、Skills 和 MCP，配置按项目 realpath 隔离并保留用户级配置。
 
 ### Changed
 - **兼容性边界明确** - 用户配置禁止任意 Node.js 模块、函数值和 shell 命令；特殊 SQLite、OAuth/keychain、非标准配置及 fork 语义继续由专用 capability driver 负责。
