@@ -43,12 +43,23 @@
                   完成
                 </n-button>
               </template>
-              <n-button v-else size="small" type="error" secondary @click="enterSelectionMode">
-                <template #icon>
-                  <n-icon><TrashOutline /></n-icon>
-                </template>
-                管理
-              </n-button>
+              <template v-else>
+                <n-button size="small" type="error" secondary @click="enterSelectionMode">
+                  <template #icon>
+                    <n-icon><TrashOutline /></n-icon>
+                  </template>
+                  管理
+                </n-button>
+                <n-button
+                  size="small"
+                  type="primary"
+                  secondary
+                  :disabled="!displayProjectPath"
+                  @click="showProjectConfig = true"
+                >
+                  项目配置
+                </n-button>
+              </template>
             </div>
           </div>
           <n-text depth="3" class="project-path">{{ displayProjectPath }}</n-text>
@@ -346,6 +357,12 @@
       @error="handleChatHistoryError"
     />
 
+    <ProjectConfigDrawer
+      v-model:show="showProjectConfig"
+      :project-path="displayProjectPath"
+      :platform="currentChannel"
+    />
+
 
   </div>
 </template>
@@ -368,6 +385,7 @@ import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
 import { searchSessions as searchSessionsApi, copySessionLaunchCommand, getSessionOutline } from '../api/sessions'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
+import ProjectConfigDrawer from '../components/ProjectConfigDrawer.vue'
 
 const props = defineProps({
   projectName: {
@@ -395,6 +413,7 @@ const hoveredSession = ref(null)
 const orderedSessions = ref([])
 const searchResults = ref(null)
 const showSearchResults = ref(false)
+const showProjectConfig = ref(false)
 const contentEl = ref(null)
 const searching = ref(false)
 const selectionMode = ref(false)
@@ -855,6 +874,7 @@ function handleWindowFocus() {
 
 // 监听 channel 变化
 watch([currentChannel, () => props.projectName], ([newChannel]) => {
+  showProjectConfig.value = false
   exitSelectionMode()
   store.setChannel(newChannel)
   loadSessions()
