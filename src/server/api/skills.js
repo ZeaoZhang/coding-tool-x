@@ -37,6 +37,23 @@ function getSkillService(req) {
   };
 }
 
+async function getScopeOptions(source = {}) {
+  const scope = source.scope;
+  if (scope && scope !== 'user' && scope !== 'project') {
+    throw new Error('Invalid scope: expected "user" or "project"');
+  }
+
+  const cwd = await validateKnownProjectCwd(source.cwd);
+  if (scope === 'project' && !cwd) {
+    throw new Error('Project scope requires a valid cwd');
+  }
+
+  return {
+    ...(cwd ? { cwd } : {}),
+    ...(scope ? { scope } : {})
+  };
+}
+
 function extractRepoPayload(source = {}) {
   const repo = source.repo && typeof source.repo === 'object' ? source.repo : source;
   return {
@@ -81,11 +98,11 @@ router.get('/', async (req, res) => {
   try {
     const { platform, service, warning } = getSkillService(req);
     const forceRefresh = req.query.refresh === '1';
-    const cwd = await validateKnownProjectCwd(req.query.cwd);
+    const options = await getScopeOptions(req.query);
     if (forceRefresh) {
       console.log(`[Skills API] Refreshing skills for ${platform}...`);
     }
-    const skills = await service.listSkills(forceRefresh, { cwd });
+    const skills = await service.listSkills(forceRefresh, options);
     console.log(`[Skills API] ${platform}: ${skills.length} skills loaded (refresh=${forceRefresh})`);
     res.json({
       success: true,
@@ -144,9 +161,21 @@ router.get('/detail/*', async (req, res) => {
       });
     }
 
+    const options = await getScopeOptions(req.query);
     const repoHint = extractRepoPayload(req.query || {});
     const hasRepoHint = Object.values(repoHint).some(Boolean);
-    const result = await service.getSkillDetail(directory, hasRepoHint ? repoHint : null, req.query.fullDirectory || '');
+    const result = Object.keys(options).length > 0
+      ? await service.getSkillDetail(
+        directory,
+        hasRepoHint ? repoHint : null,
+        req.query.fullDirectory || '',
+        options
+      )
+      : await service.getSkillDetail(
+        directory,
+        hasRepoHint ? repoHint : null,
+        req.query.fullDirectory || ''
+      );
     res.json({
       success: true,
       platform,
@@ -162,10 +191,13 @@ router.get('/detail/*', async (req, res) => {
  * 获取已安装的技能
  * GET /api/skills/installed
  */
-router.get('/installed', (req, res) => {
+router.get('/installed', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
-    const skills = service.getInstalledSkills();
+    const options = await getScopeOptions(req.query);
+    const skills = Object.keys(options).length > 0
+      ? service.getInstalledSkills(options)
+      : service.getInstalledSkills();
     res.json({
       success: true,
       platform,
@@ -188,6 +220,7 @@ router.post('/install', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory, fullDirectory, repo } = req.body;
+    const options = await getScopeOptions(req.body);
 
     if (!directory) {
       return res.status(400).json({
@@ -202,12 +235,14 @@ router.post('/install', async (req, res) => {
         message: 'Missing repo info'
       });
     }
-
-    const result = await service.installSkill(
+    const installArgs = [
       directory,
       extractRepoPayload({ repo }),
       fullDirectory || null  // 传递 fullDirectory 用于从仓库子目录下载
-    );
+    ];
+    const result = Object.keys(options).length > 0
+      ? await service.installSkill(...installArgs, options)
+      : await service.installSkill(...installArgs);
 
     res.json({
       success: true,
@@ -225,16 +260,18 @@ router.post('/install', async (req, res) => {
  * POST /api/skills/install-local
  * Body: { directory }
  */
-router.post('/install-local', (req, res) => {
+router.post('/install-local', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory } = req.body;
+    const options = await getScopeOptions(req.body);
 
     if (!directory) {
       return res.status(400).json({ success: false, message: 'Missing directory' });
     }
-
-    const result = service.installLocalSkill(directory);
+    const result = Object.keys(options).length > 0
+      ? service.installLocalSkill(directory, options)
+      : service.installLocalSkill(directory);
     res.json({ success: true, platform, ...result });
   } catch (err) {
     console.error('[Skills API] Install local skill error:', err);
@@ -247,10 +284,11 @@ router.post('/install-local', (req, res) => {
  * POST /api/skills/create
  * Body: { name, directory, description, content }
  */
-router.post('/create', (req, res) => {
+router.post('/create', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { name, directory, description, content } = req.body;
+    const options = await getScopeOptions(req.body);
 
     if (!directory) {
       return res.status(400).json({
@@ -273,12 +311,12 @@ router.post('/create', (req, res) => {
         message: '请输入技能内容'
       });
     }
-
-    const result = service.createCustomSkill({
+    const result = await service.createCustomSkill({
       name: name || directory,
       directory,
       description: description || '',
-      content
+      content,
+      ...options
     });
 
     res.json({
@@ -309,18 +347,8 @@ router.post('/uninstall', async (req, res) => {
       });
     }
 
-    const cwd = await validateKnownProjectCwd(req.body.cwd);
-    if (scope && scope !== 'user' && scope !== 'project') {
-      throw new Error('Invalid scope: expected "user" or "project"');
-    }
-    if (scope === 'project' && !cwd) {
-      throw new Error('Project scope requires a valid cwd');
-    }
-    const options = {
-      ...(cwd ? { cwd } : {}),
-      ...(scope ? { scope } : {})
-    };
-    const result = platform === 'omp' && Object.keys(options).length > 0
+    const options = await getScopeOptions(req.body);
+    const result = Object.keys(options).length > 0
       ? service.uninstallSkill(directory, options)
       : service.uninstallSkill(directory);
 
@@ -508,10 +536,11 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
  * POST /api/skills/create-with-files
  * Body: { directory, files: [{path, content, isBase64?}] }
  */
-router.post('/create-with-files', (req, res) => {
+router.post('/create-with-files', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory, files } = req.body;
+    const options = await getScopeOptions(req.body);
 
     if (!directory) {
       return res.status(400).json({
@@ -535,7 +564,7 @@ router.post('/create-with-files', (req, res) => {
       });
     }
 
-    const result = service.createSkillWithFiles({ directory, files });
+    const result = await service.createSkillWithFiles({ directory, files, ...options });
 
     res.json({
       success: true,
@@ -552,12 +581,14 @@ router.post('/create-with-files', (req, res) => {
  * 获取技能文件列表
  * GET /api/skills/:directory/files
  */
-router.get('/:directory/files', (req, res) => {
+router.get('/:directory/files', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory } = req.params;
-    const files = service.getSkillFiles(directory);
-
+    const options = await getScopeOptions(req.query);
+    const files = Object.keys(options).length > 0
+      ? service.getSkillFiles(directory, options)
+      : service.getSkillFiles(directory);
     res.json({
       success: true,
       platform,
@@ -575,10 +606,11 @@ router.get('/:directory/files', (req, res) => {
  * GET /api/skills/:directory/files/:filePath
  * 注意：filePath 可能包含子目录，使用通配符
  */
-router.get('/:directory/file/*', (req, res) => {
+router.get('/:directory/file/*', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory } = req.params;
+    const options = await getScopeOptions(req.query);
     const filePath = req.params[0];
 
     if (!filePath) {
@@ -588,7 +620,9 @@ router.get('/:directory/file/*', (req, res) => {
       });
     }
 
-    const result = service.getSkillFileContent(directory, filePath);
+    const result = Object.keys(options).length > 0
+      ? service.getSkillFileContent(directory, filePath, options)
+      : service.getSkillFileContent(directory, filePath);
 
     res.json({
       success: true,
@@ -606,11 +640,12 @@ router.get('/:directory/file/*', (req, res) => {
  * POST /api/skills/:directory/files
  * Body: { files: [{path, content, isBase64?}] }
  */
-router.post('/:directory/files', (req, res) => {
+router.post('/:directory/files', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory } = req.params;
     const { files } = req.body;
+    const options = await getScopeOptions(req.body);
 
     if (!files || !Array.isArray(files) || files.length === 0) {
       return res.status(400).json({
@@ -619,7 +654,9 @@ router.post('/:directory/files', (req, res) => {
       });
     }
 
-    const result = service.addSkillFiles(directory, files);
+    const result = Object.keys(options).length > 0
+      ? service.addSkillFiles(directory, files, options)
+      : service.addSkillFiles(directory, files);
 
     res.json({
       success: true,
@@ -636,10 +673,11 @@ router.post('/:directory/files', (req, res) => {
  * 删除技能中的文件
  * DELETE /api/skills/:directory/file/*
  */
-router.delete('/:directory/file/*', (req, res) => {
+router.delete('/:directory/file/*', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory } = req.params;
+    const options = await getScopeOptions(req.query);
     const filePath = req.params[0];
 
     if (!filePath) {
@@ -649,7 +687,9 @@ router.delete('/:directory/file/*', (req, res) => {
       });
     }
 
-    const result = service.deleteSkillFile(directory, filePath);
+    const result = Object.keys(options).length > 0
+      ? service.deleteSkillFile(directory, filePath, options)
+      : service.deleteSkillFile(directory, filePath);
 
     res.json({
       success: true,
@@ -667,10 +707,11 @@ router.delete('/:directory/file/*', (req, res) => {
  * PUT /api/skills/:directory/file/*
  * Body: { content, isBase64? }
  */
-router.put('/:directory/file/*', (req, res) => {
+router.put('/:directory/file/*', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const { directory } = req.params;
+    const options = await getScopeOptions(req.body);
     const filePath = req.params[0];
     const { content, isBase64 = false } = req.body;
 
@@ -688,7 +729,9 @@ router.put('/:directory/file/*', (req, res) => {
       });
     }
 
-    const result = service.updateSkillFile(directory, filePath, content, isBase64);
+    const result = Object.keys(options).length > 0
+      ? service.updateSkillFile(directory, filePath, content, isBase64, options)
+      : service.updateSkillFile(directory, filePath, content, isBase64);
 
     res.json({
       success: true,
