@@ -29,9 +29,13 @@ function createRepo(name) {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-service-'));
   workspacesFile = path.join(testDir, 'config', 'workspaces.json');
-
   templateService = {
-    applyTemplate: vi.fn(() => ({ template: 'Starter Template' }))
+    applyTemplate: vi.fn(() => {
+      const persisted = JSON.parse(fs.readFileSync(workspacesFile, 'utf8'));
+      expect(persisted.workspaces).toHaveLength(1);
+      expect(persisted.workspaces[0].configTemplate).toBeNull();
+      return { template: 'Starter Template' };
+    })
   };
 
   const pathsModulePath = require.resolve('../../../src/config/paths');
@@ -143,11 +147,11 @@ describe('workspace-service config and git helpers', () => {
 });
 
 describe('workspace-service workspace lifecycle', () => {
-  test('createWorkspace creates git worktrees, applies template, and saves config', () => {
+  test('createWorkspace creates git worktrees, applies template, and saves config', async () => {
     const repoPath = createRepo('repo-a');
     const service = loadWorkspaceService();
 
-    const workspace = service.createWorkspace({
+    const workspace = await service.createWorkspace({
       name: 'team-space',
       baseDir: testDir,
       projects: [{ sourcePath: repoPath, name: 'app' }],
@@ -181,7 +185,36 @@ describe('workspace-service workspace lifecycle', () => {
     expect(service.loadWorkspaces().workspaces).toHaveLength(1);
   });
 
-  test('createWorkspace creates a new worktree branch after updating the base branch', () => {
+  test('rolls back provisional metadata and worktrees after a fatal save failure', async () => {
+    const repoPath = createRepo('repo-rollback');
+    const workspacePath = path.join(testDir, 'rollback-space');
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+    let workspaceWrites = 0;
+    const writeFileSyncSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation((filePath, ...args) => {
+      if (filePath === workspacesFile && ++workspaceWrites === 2) {
+        throw new Error('persist failed');
+      }
+      return originalWriteFileSync(filePath, ...args);
+    });
+
+    const service = loadWorkspaceService();
+    await expect(service.createWorkspace({
+      name: 'rollback-space',
+      baseDir: testDir,
+      projects: [{ sourcePath: repoPath, name: 'app' }]
+    })).rejects.toThrow('保存工作区配置失败');
+
+    writeFileSyncSpy.mockRestore();
+    expect(service.loadWorkspaces().workspaces).toEqual([]);
+    expect(fs.existsSync(workspacePath)).toBe(false);
+    expect(execFileSyncSpy).toHaveBeenCalledWith(
+      'git',
+      ['worktree', 'remove', path.join(workspacePath, 'app'), '--force'],
+      expect.objectContaining({ cwd: repoPath, encoding: 'utf8' })
+    );
+  });
+
+  test('createWorkspace creates a new worktree branch after updating the base branch', async () => {
     const repoPath = createRepo('repo-b');
     const gitCalls = [];
     execFileSyncSpy.mockImplementation((command, args, options = {}) => {
@@ -201,7 +234,7 @@ describe('workspace-service workspace lifecycle', () => {
     });
 
     const service = loadWorkspaceService();
-    service.createWorkspace({
+    await service.createWorkspace({
       name: 'branch-space',
       baseDir: testDir,
       projects: [{
@@ -223,7 +256,7 @@ describe('workspace-service workspace lifecycle', () => {
     ]);
   });
 
-  test('createWorkspace passes -f when checking out an existing branch', () => {
+  test('createWorkspace passes -f when checking out an existing branch', async () => {
     const repoPath = createRepo('repo-existing-busy');
     const addCalls = [];
     execFileSyncSpy.mockImplementation((command, args) => {
@@ -235,7 +268,7 @@ describe('workspace-service workspace lifecycle', () => {
 
     const service = loadWorkspaceService();
 
-    const workspace = service.createWorkspace({
+    const workspace = await service.createWorkspace({
       name: 'existing-space',
       baseDir: testDir,
       projects: [{

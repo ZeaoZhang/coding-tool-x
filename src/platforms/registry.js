@@ -153,7 +153,8 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
         iconToken: platform.iconToken,
         color: platform.color,
         defaultVisible: platform.defaultVisible,
-        capabilities
+        capabilities,
+        ...(platform.projectResources ? { projectResources: platform.projectResources } : {})
       });
     },
     diagnostics() {

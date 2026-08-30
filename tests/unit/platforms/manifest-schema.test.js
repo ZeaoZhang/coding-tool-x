@@ -92,3 +92,37 @@ test('rejects duplicate or malformed platform keys', () => {
   expect(result.valid).toBe(false);
   expect(normalizeManifestError(result.errors)).toContain('key');
 });
+
+test('accepts project resource metadata with safe relative paths', () => {
+  const result = validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    projectResources: {
+      instruction: { path: 'AGENTS.md' },
+      skills: { canonicalRoot: '.agents/skills', readRoots: ['.agents/skills'] },
+      mcp: { path: '.codex/config.toml', format: 'codex-toml' }
+    },
+    capabilities: {}
+  });
+
+  expect(result.valid).toBe(true);
+  expect(result.errors).toEqual([]);
+});
+
+test('rejects malformed project resource metadata', () => {
+  const result = validateManifest({
+    key: 'unsafe-cli',
+    label: 'Unsafe CLI',
+    command: 'unsafe',
+    projectResources: {
+      instruction: { path: '../AGENTS.md' },
+      skills: { canonicalRoot: '.agents/skills', readRoots: ['.agents/skills'] },
+      mcp: { path: '.mcp.json', format: 'unknown-format' }
+    },
+    capabilities: {}
+  });
+
+  expect(result.valid).toBe(false);
+  expect(normalizeManifestError(result.errors)).toContain('projectResources');
+});

@@ -230,6 +230,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/prompts', require('./api/prompts'));
   app.use('/api/env', require('./api/env'));
   app.use('/api/skills', require('./api/skills'));
+  app.use('/api/project-config', require('./api/project-config'));
   const claudeHooks = require('./api/claude-hooks');
   const notificationHooks = require('./services/notification-hooks');
   app.use('/api/claude/hooks', claudeHooks);

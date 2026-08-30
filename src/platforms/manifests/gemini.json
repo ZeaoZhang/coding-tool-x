@@ -20,6 +20,14 @@
     "agents": true,
     "plugins": false
   },
+  "projectResources": {
+    "instruction": { "path": "GEMINI.md" },
+    "skills": {
+      "canonicalRoot": ".gemini/skills",
+      "readRoots": [".gemini/skills"]
+    },
+    "mcp": { "path": ".gemini/settings.json", "format": "gemini-json" }
+  },
   "logFile": "gemini-proxy.log",
   "logColor": "magenta",
   "statisticsPath": "/api/gemini/statistics",
