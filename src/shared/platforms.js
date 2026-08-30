@@ -7,7 +7,7 @@ const BUILT_IN_MANIFESTS = [
 ];
 
 const DEFAULT_HOME_CLI_COLUMNS = ['claude', 'codex', 'gemini', 'opencode'];
-const MAX_HOME_CLI_COLUMNS = 4;
+const DEFAULT_ENABLED_CLI_PLATFORMS = ['claude', 'codex', 'opencode', 'omp'];
 
 function capabilityEnabled(manifest, capability) {
   const driver = manifest?.capabilities?.[capability];
@@ -34,6 +34,88 @@ const BUILT_IN_CLI_PLATFORMS = BUILT_IN_MANIFESTS.map(manifest => ({
 
 function normalizePlatformKey(value = '') {
   return String(value || '').trim().toLowerCase();
+}
+
+function normalizeAllowedPlatformKeys(allowedKeys) {
+  if (!allowedKeys || typeof allowedKeys[Symbol.iterator] !== 'function') {
+    return new Set();
+  }
+
+  const normalized = new Set();
+  for (const value of allowedKeys) {
+    const key = normalizePlatformKey(value);
+    if (key) {
+      normalized.add(key);
+    }
+  }
+  return normalized;
+}
+
+function normalizeEnabledCliPlatforms(input, allowedKeys, fallback = DEFAULT_ENABLED_CLI_PLATFORMS) {
+  const allowed = normalizeAllowedPlatformKeys(allowedKeys);
+  const values = Array.isArray(input) ? input : fallback;
+  const result = [];
+  const seen = new Set();
+
+  if (!Array.isArray(values)) {
+    return result;
+  }
+
+  for (const value of values) {
+    const key = normalizePlatformKey(value);
+    if (!key || seen.has(key) || !allowed.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(key);
+  }
+  return result;
+}
+
+function migrateLegacyCliConfig(config = {}) {
+  const {
+    enabledCliPlatforms,
+    homeCliColumns,
+    dashboardChannelOrder,
+    allowedKeys,
+    fallback = []
+  } = config;
+  const hasExplicitSelection = Object.prototype.hasOwnProperty.call(config, 'enabledCliPlatforms');
+
+  if (hasExplicitSelection) {
+    return normalizeEnabledCliPlatforms(enabledCliPlatforms, allowedKeys, fallback);
+  }
+
+  const allowed = normalizeAllowedPlatformKeys(allowedKeys);
+  const legacyInput = Array.isArray(homeCliColumns)
+    ? homeCliColumns
+    : dashboardChannelOrder;
+  const normalizedLegacyInput = Array.isArray(legacyInput)
+    ? legacyInput.map(normalizePlatformKey)
+    : [];
+  const normalizedLegacy = normalizeEnabledCliPlatforms(legacyInput, allowedKeys, []);
+  const isExactOldDefault = normalizedLegacyInput.length === DEFAULT_HOME_CLI_COLUMNS.length &&
+    normalizedLegacyInput.every((key, index) => key === DEFAULT_HOME_CLI_COLUMNS[index]);
+
+  if (isExactOldDefault) {
+    return normalizeEnabledCliPlatforms(DEFAULT_ENABLED_CLI_PLATFORMS, allowedKeys, fallback);
+  }
+
+  const result = [...normalizedLegacy];
+  for (const key of DEFAULT_ENABLED_CLI_PLATFORMS) {
+    if (allowed.has(key) && !result.includes(key)) {
+      result.push(key);
+    }
+  }
+
+  if (result.length > 0) {
+    return result;
+  }
+
+  const normalizedDefault = normalizeEnabledCliPlatforms(DEFAULT_ENABLED_CLI_PLATFORMS, allowedKeys, []);
+  return normalizedDefault.length > 0
+    ? normalizedDefault
+    : normalizeEnabledCliPlatforms(fallback, allowedKeys, []);
 }
 
 function getBuiltInPlatformKeys() {
@@ -100,45 +182,21 @@ function normalizeCustomCliPlatforms(input = []) {
   return result;
 }
 
-function normalizeHomeCliColumns(input = [], customCliPlatforms = []) {
-  const customKeys = new Set(
-    normalizeCustomCliPlatforms(customCliPlatforms)
-      .filter(platform => platform.enabled !== false)
-      .map(platform => platform.key)
-  );
-  const builtInKeys = new Set(getBuiltInPlatformKeys());
-  const allowed = key => builtInKeys.has(key) || customKeys.has(key);
-  const result = [];
-
-  if (Array.isArray(input)) {
-    input.forEach((value) => {
-      const key = normalizePlatformKey(value);
-      if (!key || result.includes(key) || !allowed(key)) {
-        return;
-      }
-      result.push(key);
-    });
-  }
-
-  DEFAULT_HOME_CLI_COLUMNS.forEach((key) => {
-    if (result.length >= MAX_HOME_CLI_COLUMNS) {
-      return;
-    }
-    if (!result.includes(key)) {
-      result.push(key);
-    }
-  });
-
-  return result.slice(0, MAX_HOME_CLI_COLUMNS);
+// Kept only for callers that still normalize the legacy homepage setting.
+// Canonical selection and defaulting are handled by the helpers above.
+function normalizeHomeCliColumns(input = []) {
+  return normalizeEnabledCliPlatforms(input, getBuiltInPlatformKeys(), []);
 }
 
 module.exports = {
   BUILT_IN_CLI_PLATFORMS,
   DEFAULT_HOME_CLI_COLUMNS,
-  MAX_HOME_CLI_COLUMNS,
+  DEFAULT_ENABLED_CLI_PLATFORMS,
   getBuiltInPlatformKeys,
   getPlatformDefinition,
   normalizePlatformKey,
+  normalizeEnabledCliPlatforms,
+  migrateLegacyCliConfig,
   normalizeCustomCliPlatform,
   normalizeCustomCliPlatforms,
   normalizeHomeCliColumns
