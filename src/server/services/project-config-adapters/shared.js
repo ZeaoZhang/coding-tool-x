@@ -147,6 +147,152 @@ function redactSecrets(value, key = '') {
   );
 }
 
+function readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl = fs) {
+  const config = readJsonFile(projectRoot, relativePath, {}, fsImpl);
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    return { config: {}, servers: {} };
+  }
+  if (!config[serverKey] || typeof config[serverKey] !== 'object' || Array.isArray(config[serverKey])) {
+    config[serverKey] = {};
+  }
+  return { config, servers: config[serverKey] };
+}
+
+function createJsonMcpHandlers({
+  relativePath,
+  format,
+  serverKey = 'mcpServers',
+  toNative = value => value,
+  fromNative = value => value,
+  validateId = () => {},
+  fsImpl = fs
+} = {}) {
+  function readProjectMcp(projectRoot) {
+    const { servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
+    return {
+      supported: true,
+      path: relativePath,
+      format,
+      servers: Object.entries(servers).map(([id, nativeSpec]) => ({
+        id,
+        scope: 'project',
+        server: redactSecrets(fromNative(nativeSpec)),
+        enabled: nativeSpec?.enabled !== false
+      }))
+    };
+  }
+
+  function readProjectMcpSpec(projectRoot, id) {
+    const { servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
+    if (!Object.prototype.hasOwnProperty.call(servers, id)) return null;
+    return fromNative(servers[id]);
+  }
+
+  function upsertProjectMcp(projectRoot, id, spec) {
+    validateId(id);
+    const { config, servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
+    const existing = servers[id] && typeof servers[id] === 'object' ? servers[id] : {};
+    servers[id] = { ...existing, ...toNative(spec) };
+    writeJsonFileAtomic(projectRoot, relativePath, config, fsImpl);
+    return {
+      success: true,
+      supported: true,
+      path: relativePath,
+      format,
+      id,
+      scope: 'project',
+      server: redactSecrets(fromNative(servers[id])),
+      enabled: servers[id].enabled !== false
+    };
+  }
+
+  function removeProjectMcp(projectRoot, id) {
+    validateId(id);
+    const { config, servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
+    const removed = Object.prototype.hasOwnProperty.call(servers, id);
+    if (removed) {
+      delete servers[id];
+      writeJsonFileAtomic(projectRoot, relativePath, config, fsImpl);
+    }
+    return { success: true, supported: true, path: relativePath, format, id, scope: 'project', removed };
+  }
+
+  return { readProjectMcp, readProjectMcpSpec, upsertProjectMcp, removeProjectMcp };
+}
+
+function createTomlMcpHandlers({
+  relativePath,
+  format,
+  serverKey = 'mcp_servers',
+  toNative = value => value,
+  fromNative = value => value,
+  validateId = () => {},
+  fsImpl = fs
+} = {}) {
+  function readTomlServerMap(projectRoot) {
+    const config = readTomlFile(projectRoot, relativePath, {}, fsImpl);
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      return { config: {}, servers: {} };
+    }
+    if (!config[serverKey] || typeof config[serverKey] !== 'object' || Array.isArray(config[serverKey])) {
+      config[serverKey] = {};
+    }
+    return { config, servers: config[serverKey] };
+  }
+
+  function readProjectMcp(projectRoot) {
+    const { servers } = readTomlServerMap(projectRoot);
+    return {
+      supported: true,
+      path: relativePath,
+      format,
+      servers: Object.entries(servers).map(([id, nativeSpec]) => ({
+        id,
+        scope: 'project',
+        server: redactSecrets(fromNative(nativeSpec)),
+        enabled: nativeSpec?.enabled !== false
+      }))
+    };
+  }
+
+  function readProjectMcpSpec(projectRoot, id) {
+    const { servers } = readTomlServerMap(projectRoot);
+    if (!Object.prototype.hasOwnProperty.call(servers, id)) return null;
+    return fromNative(servers[id]);
+  }
+
+  function upsertProjectMcp(projectRoot, id, spec) {
+    validateId(id);
+    const { config, servers } = readTomlServerMap(projectRoot);
+    const existing = servers[id] && typeof servers[id] === 'object' ? servers[id] : {};
+    servers[id] = { ...existing, ...toNative(spec) };
+    writeTomlFileAtomic(projectRoot, relativePath, config, fsImpl);
+    return {
+      success: true,
+      supported: true,
+      path: relativePath,
+      format,
+      id,
+      scope: 'project',
+      server: redactSecrets(fromNative(servers[id])),
+      enabled: servers[id].enabled !== false
+    };
+  }
+
+  function removeProjectMcp(projectRoot, id) {
+    validateId(id);
+    const { config, servers } = readTomlServerMap(projectRoot);
+    const removed = Object.prototype.hasOwnProperty.call(servers, id);
+    if (removed) {
+      delete servers[id];
+      writeTomlFileAtomic(projectRoot, relativePath, config, fsImpl);
+    }
+    return { success: true, supported: true, path: relativePath, format, id, scope: 'project', removed };
+  }
+
+  return { readProjectMcp, readProjectMcpSpec, upsertProjectMcp, removeProjectMcp };
+}
+
 function createProjectAdapter({ manifest, fsImpl = fs, mcpHandlers = {} } = {}) {
   const projectResources = manifest?.projectResources || {};
   const instructionPath = projectResources.instruction?.path ?? null;
@@ -234,6 +380,7 @@ function createProjectAdapter({ manifest, fsImpl = fs, mcpHandlers = {} } = {}) 
     deleteInstruction,
     listSkillRoots,
     readProjectMcp: mcpHandlers.readProjectMcp || emptyProjectMcp,
+    readProjectMcpSpec: mcpHandlers.readProjectMcpSpec || (() => null),
     upsertProjectMcp: mcpHandlers.upsertProjectMcp || (() => emptyProjectMcp()),
     removeProjectMcp: mcpHandlers.removeProjectMcp || (() => emptyProjectMcp())
   };
@@ -249,7 +396,8 @@ module.exports = {
   readJsonFile,
   writeJsonFileAtomic,
   readTomlFile,
-  writeTomlFileAtomic,
   redactSecrets,
-  createProjectAdapter
+  createProjectAdapter,
+  createJsonMcpHandlers,
+  createTomlMcpHandlers
 };
