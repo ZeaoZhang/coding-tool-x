@@ -94,6 +94,9 @@ class ProjectConfigService {
     return adapter.deleteInstruction(projectRoot);
   }
 
+
+
+
   async listProjectSkills(projectPath, platform) {
     const { key, adapter, projectRoot } = await this._resolve(projectPath, platform);
     const description = adapter.describe().skills;

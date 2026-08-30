@@ -68,4 +68,52 @@ describe('project-config-service', () => {
       capabilities: { instruction: true, skills: true, mcp: true }
     }));
   });
+  test('routes project Skill operations with project scope', async () => {
+    const skillService = {
+      listSkills: vi.fn(async () => [
+        { directory: 'project-skill', sourceScope: 'project', scope: 'project' },
+        { directory: 'user-skill', sourceScope: 'user', scope: 'user' }
+      ]),
+      installLocalSkill: vi.fn(async () => ({ success: true })),
+      installSkill: vi.fn(async () => ({ success: true })),
+      uninstallSkill: vi.fn(async () => ({ success: true }))
+    };
+    service = new ProjectConfigService({
+      registry: makeRegistry(),
+      validateProjectPath: vi.fn(async (candidate) => fs.realpathSync(candidate)),
+      skillServiceFactory: vi.fn(() => skillService),
+      fsImpl: fs
+    });
+    const canonicalPath = fs.realpathSync(projectDir);
+
+    await expect(service.listProjectSkills(projectDir, 'codex')).resolves.toEqual(expect.objectContaining({
+      supported: true,
+      project: [{ directory: 'project-skill', sourceScope: 'project', scope: 'project' }],
+      inherited: [{ directory: 'user-skill', sourceScope: 'user', scope: 'user' }]
+    }));
+    await service.installProjectSkill(projectDir, 'codex', { directory: 'local-skill' });
+    await service.installProjectSkill(projectDir, 'codex', {
+      directory: 'remote-skill',
+      repo: { provider: 'local', localPath: projectDir },
+      fullDirectory: 'remote-skill'
+    });
+    await service.removeProjectSkill(projectDir, 'codex', 'project-skill');
+
+    expect(skillService.listSkills).toHaveBeenCalledWith(false, { scope: 'project', cwd: canonicalPath });
+    expect(skillService.installLocalSkill).toHaveBeenCalledWith('local-skill', {
+      scope: 'project',
+      cwd: canonicalPath
+    });
+    expect(skillService.installSkill).toHaveBeenCalledWith(
+      'remote-skill',
+      { provider: 'local', localPath: projectDir },
+      'remote-skill',
+      { scope: 'project', cwd: canonicalPath }
+    );
+    expect(skillService.uninstallSkill).toHaveBeenCalledWith('project-skill', {
+      scope: 'project',
+      cwd: canonicalPath
+    });
+  });
+
 });
