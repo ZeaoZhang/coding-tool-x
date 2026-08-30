@@ -62,6 +62,22 @@ beforeEach(() => {
       updateOmpSkillSettings
     }
   };
+  const validationPath = require.resolve('../../../src/server/services/project-path-validation');
+  require.cache[validationPath] = {
+    id: validationPath,
+    filename: validationPath,
+    loaded: true,
+    exports: {
+      validateKnownProjectCwd: vi.fn(async rawCwd => {
+        if (rawCwd == null || String(rawCwd).trim() === '') return null;
+        const candidate = fs.realpathSync(String(rawCwd).trim());
+        if (candidate !== fs.realpathSync(process.cwd())) {
+          throw new Error('Invalid cwd: path is not a known project or workspace');
+        }
+        return candidate;
+      })
+    }
+  };
 
   delete require.cache[require.resolve('../../../src/server/api/skills')];
 });
@@ -96,6 +112,7 @@ afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/api/skills')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
   delete require.cache[require.resolve('../../../src/server/services/omp-skill-settings-service')];
+  delete require.cache[require.resolve('../../../src/server/services/project-path-validation')];
 });
 
 function buildApp() {

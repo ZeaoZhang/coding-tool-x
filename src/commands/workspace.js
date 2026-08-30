@@ -299,7 +299,7 @@ async function createWorkspace() {
     // 创建工作区
     console.log(chalk.cyan('\n正在创建工作区...\n'));
 
-    const workspace = workspaceService.createWorkspace({
+    const workspace = await workspaceService.createWorkspace({
       name,
       description,
       baseDir,

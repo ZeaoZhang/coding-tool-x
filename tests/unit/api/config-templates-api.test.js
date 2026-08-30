@@ -62,17 +62,29 @@ beforeEach(() => {
     createCustomTemplate: vi.fn((body) => ({ id: 'new-tpl', ...body })),
     updateCustomTemplate: vi.fn((id, body) => ({ id, ...body })),
     deleteCustomTemplate: vi.fn(),
-    applyTemplateToProject: vi.fn((_targetPath, id, options) => ({
-      templateId: id,
-      applied: true,
-      options,
-      results: { skipped: [{ path: '.env.local' }] }
-    })),
+    applyTemplateToProject: vi.fn(async (_targetPath, id, options) => {
+      await new Promise(resolve => setImmediate(resolve));
+      return {
+        templateId: id,
+        applied: true,
+        options,
+        results: { skipped: [{ path: '.env.local' }] }
+      };
+    }),
     previewTemplateApplication: vi.fn((_targetPath, id, options) => ({
       templateId: id,
       options,
       preview: true
     }))
+  };
+  const validationPath = require.resolve('../../../src/server/services/project-path-validation');
+  require.cache[validationPath] = {
+    id: validationPath,
+    filename: validationPath,
+    loaded: true,
+    exports: {
+      validateKnownProjectCwd: vi.fn(async targetPath => targetPath)
+    }
   };
 
   require.cache[require.resolve('../../../src/server/services/config-templates-service')] = {
@@ -86,7 +98,8 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/config-templates',
-    '../../../src/server/services/config-templates-service'
+    '../../../src/server/services/config-templates-service',
+    '../../../src/server/services/project-path-validation'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -137,6 +150,12 @@ describe('config-templates api', () => {
     const applied = await request(app).post('/tpl-1/apply', {
       targetPath: '/workspace/demo',
       aiConfigTypes: '["Claude","Gemini"]'
+    });
+    expect(applied.body.data).toEqual({
+      templateId: 'tpl-1',
+      applied: true,
+      options: { aiConfigTypes: ['claude', 'gemini'] },
+      results: { skipped: [{ path: '.env.local' }] }
     });
     const previewed = await request(app).post('/tpl-1/preview', {
       targetPath: '/workspace/demo',
