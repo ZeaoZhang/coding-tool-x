@@ -348,7 +348,7 @@ function getGitWorktrees(repoPath) {
  * @param {string} options.baseDir - 基础目录（可选）
  * @param {Array} options.projects - 项目列表 [{sourcePath, name, createWorktree, branch}]
  */
-function createWorkspace(options) {
+async function createWorkspace(options) {
   const { name, description = '', baseDir, projects = [], configTemplateId } = options;
 
   if (!name || name.trim() === '') {
@@ -501,23 +501,6 @@ function createWorkspace(options) {
       });
     }
 
-    // 应用配置模板（如果指定）
-    let templateInfo = null;
-    if (configTemplateId) {
-      try {
-        const result = configTemplatesService.applyTemplate(workspacePath, configTemplateId);
-        templateInfo = {
-          templateId: configTemplateId,
-          templateName: result.template,
-          appliedAt: new Date().toISOString()
-        };
-      } catch (templateError) {
-        console.warn('应用配置模板失败:', templateError.message);
-        // 不中断工作区创建流程
-      }
-    }
-
-    // 保存工作区配置
     const workspaceId = generateWorkspaceId();
     const workspace = {
       id: workspaceId,
@@ -525,17 +508,64 @@ function createWorkspace(options) {
       description,
       path: workspacePath,
       projects: workspaceProjects,
-      configTemplate: templateInfo,
+      configTemplate: null,
       createdAt: new Date().toISOString(),
       lastUsed: new Date().toISOString()
     };
 
     const data = loadWorkspaces();
     data.workspaces.push(workspace);
-    saveWorkspaces(data);
+    if (!saveWorkspaces(data)) {
+      throw new Error('保存工作区配置失败');
+    }
+    let workspaceRegistered = true;
 
-    return workspace;
+    try {
+      // 应用配置模板（如果指定）
+      if (configTemplateId) {
+        try {
+          const result = await configTemplatesService.applyTemplate(workspacePath, configTemplateId);
+          workspace.configTemplate = {
+            templateId: configTemplateId,
+            templateName: result.template,
+            appliedAt: new Date().toISOString()
+          };
+        } catch (templateError) {
+          console.warn('应用配置模板失败:', templateError.message);
+          // 不中断工作区创建流程
+        }
+      }
+
+      if (!saveWorkspaces(data)) {
+        throw new Error('保存工作区配置失败');
+      }
+      return workspace;
+    } catch (error) {
+      if (workspaceRegistered) {
+        const current = loadWorkspaces();
+        const index = current.workspaces.findIndex(item => item.id === workspaceId);
+        if (index !== -1 && !saveWorkspaces({
+          ...current,
+          workspaces: current.workspaces.filter(item => item.id !== workspaceId)
+        })) {
+          console.error('回滚工作区配置失败:', workspaceId);
+        }
+        workspaceRegistered = false;
+      }
+      throw error;
+    }
   } catch (error) {
+    for (const project of workspaceProjects) {
+      if (!project.useWorktree || !project.sourcePath || !project.targetPath) continue;
+      try {
+        runGitCommand(['worktree', 'remove', project.targetPath, '--force'], {
+          cwd: project.sourcePath
+        });
+      } catch (cleanupError) {
+        console.error(`注销 worktree 失败: ${project.targetPath}`, cleanupError.message);
+      }
+    }
+
     // 清理已创建的目录
     try {
       if (fs.existsSync(workspacePath)) {

@@ -1106,3 +1106,53 @@ describe('SkillService local repository path safety', () => {
     })).rejects.toThrow(/Invalid skill repository file path/);
   });
 });
+
+describe('SkillService project scope', () => {
+  it('installs and lists a Skill in the project canonical directory', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('codex');
+    const projectRoot = path.join(testDir, 'project-scope');
+    fs.mkdirSync(projectRoot, { recursive: true });
+    const repoRoot = path.join(testDir, 'skill-repo');
+    fs.mkdirSync(path.join(repoRoot, 'repo-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, 'repo-skill', 'SKILL.md'),
+      '---\nname: Repo Skill\ndescription: Project skill\n---\nBody',
+      'utf8'
+    );
+
+    await svc.installSkill(
+      'repo-skill',
+      { provider: 'local', localPath: repoRoot, id: 'local:repo' },
+      null,
+      { scope: 'project', cwd: projectRoot }
+    );
+
+    expect(fs.existsSync(path.join(projectRoot, '.agents', 'skills', 'repo-skill', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(testDir, 'codex-skills', 'repo-skill'))).toBe(false);
+
+    const skills = await svc.listSkills(true, { scope: 'project', cwd: projectRoot });
+    expect(skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        directory: 'repo-skill',
+        sourceScope: 'project',
+        installed: true
+      })
+    ]));
+  });
+
+  it('keeps user and project prepared caches separate', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const projectRoot = path.join(testDir, 'cache-project');
+    fs.mkdirSync(projectRoot, { recursive: true });
+
+    await svc.listSkills(false, { scope: 'user' });
+    await svc.listSkills(false, { scope: 'project', cwd: projectRoot });
+
+    expect([...svc._preparedSkillsCache.keys()]).toEqual(expect.arrayContaining([
+      'user:',
+      `project:${path.resolve(projectRoot)}`
+    ]));
+  });
+});

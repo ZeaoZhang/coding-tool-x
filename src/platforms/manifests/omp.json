@@ -39,6 +39,14 @@
     "agents": false,
     "plugins": true
   },
+  "projectResources": {
+    "instruction": { "path": null },
+    "skills": {
+      "canonicalRoot": ".omp/skills",
+      "readRoots": [".omp/skills"]
+    },
+    "mcp": { "path": ".omp/mcp.json", "format": "omp-json" }
+  },
   "promptFile": null,
   "promptLabel": "OMP command templates",
   "capabilities": {

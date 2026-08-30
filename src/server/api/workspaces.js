@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const workspaceService = require('../services/workspace-service');
+const { resolveKnownProjectPath } = require('../services/project-path-validation');
 
 function normalizeBranchName(branchName) {
   if (typeof branchName !== 'string') {
@@ -51,6 +52,7 @@ function validateBranchMode(branchMode) {
   return { valid: true, normalized };
 }
 
+
 /**
  * GET /api/workspaces
  * 获取所有工作区列表
@@ -75,7 +77,7 @@ router.get('/', (req, res) => {
  * 读取工作区中的文件内容（仅限 CLAUDE.md 等配置文件）
  * Query: path=文件路径
  */
-router.get('/read-file', (req, res) => {
+router.get('/read-file', async (req, res) => {
   try {
     const filePath = req.query.path;
 
@@ -97,19 +99,52 @@ router.get('/read-file', (req, res) => {
       });
     }
 
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({
+    const canonicalPath = await resolveKnownProjectPath(filePath);
+    if (!canonicalPath || !allowedFiles.includes(path.basename(canonicalPath))) {
+      return res.status(403).json({
         success: false,
-        message: '文件不存在'
+        message: '仅允许读取已登记项目或工作区中的配置文件'
       });
     }
 
-    const content = fs.readFileSync(filePath, 'utf8');
-
-    res.json({
-      success: true,
-      content: content
-    });
+    let fileDescriptor;
+    try {
+      const noFollow = fs.constants.O_NOFOLLOW || 0;
+      fileDescriptor = fs.openSync(canonicalPath, fs.constants.O_RDONLY | noFollow);
+      const openedStat = fs.fstatSync(fileDescriptor);
+      const revalidatedPath = await resolveKnownProjectPath(canonicalPath);
+      const pathStat = fs.statSync(canonicalPath);
+      const sameFile = openedStat.dev === pathStat.dev && openedStat.ino === pathStat.ino;
+      if (revalidatedPath !== canonicalPath || !sameFile) {
+        return res.status(403).json({
+          success: false,
+          message: '仅允许读取已登记项目或工作区中的配置文件'
+        });
+      }
+      if (!openedStat.isFile()) {
+        return res.status(403).json({
+          success: false,
+          message: '仅允许读取配置文件'
+        });
+      }
+      const content = fs.readFileSync(fileDescriptor, 'utf8');
+      return res.json({
+        success: true,
+        content
+      });
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        return res.status(404).json({
+          success: false,
+          message: '文件不存在'
+        });
+      }
+      throw error;
+    } finally {
+      if (fileDescriptor !== undefined) {
+        fs.closeSync(fileDescriptor);
+      }
+    }
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -217,7 +252,7 @@ router.get('/:id', (req, res, next) => {
  *   }]
  * }
  */
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { name, description, baseDir, projects, configTemplateId } = req.body;
 
@@ -280,7 +315,7 @@ router.post('/', (req, res) => {
       }
     }
 
-    const workspace = workspaceService.createWorkspace({
+    const workspace = await workspaceService.createWorkspace({
       name,
       description,
       baseDir,

@@ -14,7 +14,7 @@ beforeEach(() => {
   execFileSyncSpy = vi.spyOn(childProcess, 'execFileSync').mockImplementation(() => '');
 
   workspaceService = {
-    listWorkspaces: vi.fn(() => [{ id: 'ws-1', name: 'Workspace 1' }]),
+    listWorkspaces: vi.fn(() => [{ id: 'ws-1', name: 'Workspace 1', path: testDir, projects: [] }]),
     isGitRepo: vi.fn(() => true),
     getGitWorktrees: vi.fn(() => [{ path: '/tmp/worktree', branch: 'feature' }]),
     getAllAvailableProjects: vi.fn(async () => [{ name: 'proj-a', tool: 'claude' }]),
@@ -35,6 +35,7 @@ beforeEach(() => {
     exports: workspaceService
   };
 
+  delete require.cache[require.resolve('../../../src/server/services/project-path-validation')];
   delete require.cache[require.resolve('../../../src/server/api/workspaces')];
 });
 
@@ -43,6 +44,7 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   delete require.cache[require.resolve('../../../src/server/api/workspaces')];
   delete require.cache[require.resolve('../../../src/server/services/workspace-service')];
+  delete require.cache[require.resolve('../../../src/server/services/project-path-validation')];
 });
 
 function buildApp() {
@@ -121,6 +123,47 @@ describe('workspace listing and file reading', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.content).toBe('# workspace rules');
+  });
+
+  test('returns 404 for a missing allowed file inside a known root', async () => {
+    const missingFile = path.join(testDir, 'AGENTS.md');
+
+    const res = await request(buildApp()).get(`/read-file?path=${encodeURIComponent(missingFile)}`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.success).toBe(false);
+  });
+
+  test('rejects an allowed basename outside known workspace roots', async () => {
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-outside-'));
+    const outsideFile = path.join(outsideRoot, 'AGENTS.md');
+    fs.writeFileSync(outsideFile, '# outside', 'utf8');
+
+    try {
+      const res = await request(buildApp()).get(`/read-file?path=${encodeURIComponent(outsideFile)}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    } finally {
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects an allowed file through a symlink escaping known roots', async () => {
+    const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-symlink-outside-'));
+    const outsideFile = path.join(outsideRoot, 'AGENTS.md');
+    const linkedPath = path.join(testDir, 'linked-project');
+    fs.writeFileSync(outsideFile, '# outside', 'utf8');
+    fs.symlinkSync(outsideRoot, linkedPath, 'dir');
+
+    try {
+      const res = await request(buildApp()).get(`/read-file?path=${encodeURIComponent(path.join(linkedPath, 'AGENTS.md'))}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    } finally {
+      fs.rmSync(outsideRoot, { recursive: true, force: true });
+    }
   });
 
   test('rejects disallowed file names', async () => {
