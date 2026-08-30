@@ -65,7 +65,7 @@
 
 ### Project path is the configuration identity
 
-所有项目配置 API 接收 `projectPath`，但服务内部必须执行：
+所有来自 HTTP API 的项目配置请求接收 `projectPath`，但服务内部必须执行：
 
 ```text
 validateKnownProjectCwd(projectPath)
@@ -76,7 +76,10 @@ validateKnownProjectCwd(projectPath)
 
 项目路径不能使用显示名、历史会话路由参数或工作区名称替代。一个项目加入多个工作区时仍共享同一项目配置。
 
+工作区创建流程中的模板应用是受控的内部调用：`workspace-service` 只把刚创建且仍由本次创建流程持有的工作区根目录传给模板写入用例，并先完成目录、项目目标和符号链接安全校验。该内部调用不能由 HTTP 请求直接设置“绕过路径校验”选项；所有外部调用仍必须通过 `validateKnownProjectCwd`。
+
 ### “移除项目配置”不等于“禁用用户级配置”
+
 
 第一版只管理项目目录中的实际文件：
 
@@ -362,7 +365,7 @@ SessionList 目前使用 `projectName` 作为路由参数，但已有 `store.cur
 
 ### Path safety
 
-每个项目写入都必须满足：
+每个来自 HTTP API 的项目写入都必须满足：
 
 - 输入为绝对目录；
 - 目录属于 `getKnownProjectPaths()`；
@@ -370,6 +373,8 @@ SessionList 目前使用 `projectName` 作为路由参数，但已有 `store.cur
 - 目标相对路径不能包含 `..`、绝对路径或 NUL；
 - 目标根目录及已有路径组件不能通过符号链接逃逸；
 - 服务端不接受前端传入的任意目标文件路径作为写入位置。
+
+工作区创建中的内部模板调用可以使用刚创建的工作区根目录，但只能由 `workspace-service` 在完成项目目标和符号链接校验后传递受控根目录；HTTP 请求不能传入绕过校验的标志或任意 target root。
 
 同时修复 `src/server/api/workspaces.js` 的 `/read-file`：允许文件名校验之外，必须验证文件位于已登记工作区或项目根目录内。
 
