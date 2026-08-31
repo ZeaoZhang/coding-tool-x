@@ -32,6 +32,8 @@
     "proxy": "legacy:gemini",
     "statistics": "legacy:gemini",
     "resourceSync": "legacy:gemini",
-    "nativeConfig": "legacy:gemini"
+    "nativeConfig": "legacy:gemini",
+    "mcp": "legacy:gemini",
+    "prompts": "legacy:gemini"
   }
 }

@@ -233,17 +233,33 @@ describe('ConfigSyncManager direct sync helpers', () => {
 
 describe('ConfigSyncManager aggregation', () => {
   test('syncAll aggregates synced, removed, warnings, and errors across platforms', () => {
-    const manager = new ConfigSyncManager();
-    vi.spyOn(manager, 'syncToClaude').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'syncToCodex').mockReturnValue({ success: true, warnings: ['converted'] });
-    vi.spyOn(manager, 'syncToGemini').mockReturnValue({ success: false, error: 'missing source' });
-    vi.spyOn(manager, 'syncToOpenCode').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'syncToOmp').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'removeFromClaude').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'removeFromCodex').mockReturnValue({ success: true, message: 'Already removed' });
-    vi.spyOn(manager, 'removeFromGemini').mockReturnValue({ success: true, skipped: true });
-    vi.spyOn(manager, 'removeFromOpenCode').mockReturnValue({ success: true });
-    vi.spyOn(manager, 'removeFromOmp').mockReturnValue({ success: true, skipped: true });
+    const manager = new ConfigSyncManager({
+      registry: {
+        list: () => [
+          { key: 'claude' },
+          { key: 'codex' },
+          { key: 'gemini' },
+          { key: 'opencode' },
+          { key: 'omp' }
+        ]
+      }
+    });
+    const syncResults = {
+      claude: { success: true },
+      codex: { success: true, warnings: ['converted'] },
+      gemini: { success: false, error: 'missing source' },
+      opencode: { success: true },
+      omp: { success: true }
+    };
+    const removeResults = {
+      claude: { success: true },
+      codex: { success: true, message: 'Already removed' },
+      gemini: { success: true, skipped: true },
+      opencode: { success: true },
+      omp: { success: true, skipped: true }
+    };
+    vi.spyOn(manager, 'syncToPlatform').mockImplementation(platform => syncResults[platform]);
+    vi.spyOn(manager, 'removeFromPlatform').mockImplementation(platform => removeResults[platform]);
 
     const result = manager.syncAll('skills', {
       alpha: {

@@ -6,8 +6,9 @@
  */
 
 const express = require('express');
-const { ConfigRegistryService, CONFIG_TYPES, SUPPORTED_PLATFORMS } = require('../services/config-registry-service');
+const { ConfigRegistryService, CONFIG_TYPES } = require('../services/config-registry-service');
 const { ConfigSyncManager } = require('../services/config-sync-manager');
+const { getPlatformRegistry } = require('../../platforms/runtime');
 
 const router = express.Router();
 const registryService = new ConfigRegistryService();
@@ -16,8 +17,12 @@ const syncManager = new ConfigSyncManager();
 // Valid config types
 const VALID_TYPES = CONFIG_TYPES;
 
-// Valid platforms
-const VALID_PLATFORMS = SUPPORTED_PLATFORMS;
+function getValidPlatforms() {
+  const registry = getPlatformRegistry();
+  return (registry?.list?.({ enabledOnly: true }) || [])
+    .map(platform => platform && String(platform.key || '').trim().toLowerCase())
+    .filter(Boolean);
+}
 
 /**
  * Validate config type parameter
@@ -37,46 +42,29 @@ function validateType(type) {
  * @returns {string|null} Error message or null if valid
  */
 function validatePlatform(platform) {
-  if (!VALID_PLATFORMS.includes(platform)) {
-    return `Invalid platform: ${platform}. Must be one of: ${VALID_PLATFORMS.join(', ')}`;
+  const validPlatforms = getValidPlatforms();
+  if (!validPlatforms.includes(String(platform || '').trim().toLowerCase())) {
+    return `Invalid platform: ${platform}. Must be one of: ${validPlatforms.join(', ')}`;
   }
   return null;
 }
 
-const PLATFORM_SYNC_METHODS = {
-  claude: { sync: 'syncToClaude', remove: 'removeFromClaude' },
-  codex: { sync: 'syncToCodex', remove: 'removeFromCodex' },
-  gemini: { sync: 'syncToGemini', remove: 'removeFromGemini' },
-  opencode: { sync: 'syncToOpenCode', remove: 'removeFromOpenCode' },
-  omp: { sync: 'syncToOmp', remove: 'removeFromOmp' }
-};
-
-function syncPlatform(type, name, platform) {
-  const method = PLATFORM_SYNC_METHODS[platform]?.sync;
-  if (method && typeof syncManager[method] === 'function') {
-    syncManager[method](type, name);
-  }
+async function syncPlatform(type, name, platform) {
+  return syncManager.syncToPlatform(platform, type, name);
 }
 
-function removePlatform(type, name, platform) {
-  const method = PLATFORM_SYNC_METHODS[platform]?.remove;
-  if (method && typeof syncManager[method] === 'function') {
-    syncManager[method](type, name);
-  }
+async function removePlatform(type, name, platform) {
+  return syncManager.removeFromPlatform(platform, type, name);
 }
 
-function syncEnabledPlatforms(type, name, platforms = {}) {
-  for (const platform of VALID_PLATFORMS) {
-    if (platforms?.[platform]) {
-      syncPlatform(type, name, platform);
-    }
-  }
+async function syncEnabledPlatforms(type, name, platforms = {}) {
+  await Promise.all(getValidPlatforms()
+    .filter(platform => platforms?.[platform])
+    .map(platform => syncPlatform(type, name, platform)));
 }
 
-function removeAllPlatforms(type, name) {
-  for (const platform of VALID_PLATFORMS) {
-    removePlatform(type, name, platform);
-  }
+async function removeAllPlatforms(type, name) {
+  await Promise.all(getValidPlatforms().map(platform => removePlatform(type, name, platform)));
 }
 
 /**
@@ -163,7 +151,7 @@ router.post('/:type/import', async (req, res) => {
       for (const name of result.items) {
         const item = registryService.getItem(type, name);
         if (item && item.enabled && item.platforms?.claude) {
-          syncManager.syncToClaude(type, name);
+          await syncPlatform(type, name, 'claude');
         }
       }
     }
@@ -229,10 +217,10 @@ router.put('/:type/:name/toggle', async (req, res) => {
     // Apply sync based on new state
     if (enabled) {
       // Sync to platforms where platform=true
-      syncEnabledPlatforms(type, name, item.platforms);
+      await syncEnabledPlatforms(type, name, item.platforms);
     } else {
-      // Remove from all platforms
-      removeAllPlatforms(type, name);
+      // Remove from all platforms.
+      await removeAllPlatforms(type, name);
     }
 
     res.json({
@@ -259,7 +247,8 @@ router.put('/:type/:name/toggle', async (req, res) => {
  */
 router.put('/:type/:name/platform/:platform', async (req, res) => {
   try {
-    const { type, platform } = req.params;
+    const { type } = req.params;
+    const platform = String(req.params.platform || '').trim().toLowerCase();
     const name = decodeURIComponent(req.params.name);
     const { enabled } = req.body;
 
@@ -301,10 +290,10 @@ router.put('/:type/:name/platform/:platform', async (req, res) => {
     // Apply sync based on new state
     if (enabled && item.enabled) {
       // Sync to this platform (only if item is enabled)
-      syncPlatform(type, name, platform);
+      await syncPlatform(type, name, platform);
     } else {
-      // Remove from this platform
-      removePlatform(type, name, platform);
+      // Remove from this platform.
+      await removePlatform(type, name, platform);
     }
 
     res.json({
@@ -341,7 +330,7 @@ router.post('/:type/sync', async (req, res) => {
     const items = registryService.listItems(type);
 
     // Sync all items based on their registry state
-    const result = syncManager.syncAll(type, items);
+    const result = await syncManager.syncAll(type, items);
 
     res.json({
       success: true,

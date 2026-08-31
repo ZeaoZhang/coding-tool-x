@@ -1,6 +1,10 @@
 import { client, getChannelPrefix } from './client'
+import { getPlatformProjects, usesLegacyPlatformApi } from './platforms'
 
 export async function getProjects(channel = 'claude', options = {}) {
+  if (!usesLegacyPlatformApi(channel)) {
+    return getPlatformProjects(channel, options)
+  }
   const prefix = getChannelPrefix(channel)
   const response = await client.get(`${prefix}/projects`, {
     params: options.fresh ? { fresh: '1' } : undefined

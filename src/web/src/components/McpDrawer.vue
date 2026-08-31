@@ -39,9 +39,9 @@
         <div class="stats-bar">
           <span class="stats-text">
             共 {{ serverCount }} 个服务器
-            <template v-if="serverCount > 0">
-              · Claude: {{ stats.claude }} · Codex: {{ stats.codex }} · Gemini: {{ stats.gemini }} · OpenCode: {{ stats.opencode }} · OMP: {{ stats.omp }}
-            </template>
+              <template v-for="platform in mcpPlatforms" :key="platform.key">
+                · {{ platform.label || platform.title || platform.key }}: {{ stats[platform.key] || 0 }}
+              </template>
           </span>
           <n-dropdown trigger="click" :options="syncOptions" @select="handleSync">
             <n-button size="tiny" quaternary>
@@ -141,45 +141,18 @@
                 </div>
 
                 <div class="card-apps">
-                  <label class="app-toggle" @click.stop>
+                  <label
+                    v-for="platform in mcpPlatforms"
+                    :key="platform.key"
+                    class="app-toggle"
+                    @click.stop
+                  >
                     <n-switch
                       size="small"
-                      :value="server.apps?.claude"
-                      @update:value="(v) => toggleApp(server.id, 'claude', v)"
+                      :value="server.apps?.[platform.key] === true"
+                      @update:value="(v) => toggleApp(server.id, platform.key, v)"
                     />
-                    <span class="app-label">Claude</span>
-                  </label>
-                  <label class="app-toggle" @click.stop>
-                    <n-switch
-                      size="small"
-                      :value="server.apps?.codex"
-                      @update:value="(v) => toggleApp(server.id, 'codex', v)"
-                    />
-                    <span class="app-label">Codex</span>
-                  </label>
-                  <label class="app-toggle" @click.stop>
-                    <n-switch
-                      size="small"
-                      :value="server.apps?.gemini"
-                      @update:value="(v) => toggleApp(server.id, 'gemini', v)"
-                    />
-                    <span class="app-label">Gemini</span>
-                  </label>
-                  <label class="app-toggle" @click.stop>
-                    <n-switch
-                      size="small"
-                      :value="server.apps?.opencode"
-                      @update:value="(v) => toggleApp(server.id, 'opencode', v)"
-                    />
-                    <span class="app-label">OpenCode</span>
-                  </label>
-                  <label class="app-toggle" @click.stop>
-                    <n-switch
-                      size="small"
-                      :value="server.apps?.omp"
-                      @update:value="(v) => toggleApp(server.id, 'omp', v)"
-                    />
-                    <span class="app-label">OMP</span>
+                    <span class="app-label">{{ platform.label || platform.title || platform.key }}</span>
                   </label>
                 </div>
               </div>
@@ -195,6 +168,7 @@
     v-model:visible="showForm"
     :editing-server="editingServer"
     :existing-ids="existingIds"
+    :platforms="mcpPlatforms"
     @saved="handleSaved"
   />
 
@@ -343,8 +317,9 @@ import message, { dialog } from '../utils/message'
 import { showMcpError } from '../utils/mcp-error'
 import { copyTextToClipboard } from '../utils/clipboard'
 import McpFormDrawer from './McpFormDrawer.vue'
-import McpServerDetailDrawer from './McpServerDetailDrawer.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
+import { isLegacyPlatformKey } from '../api/client'
 
 const { drawerWidth } = useResponsiveDrawer(720)
 
@@ -410,15 +385,17 @@ const serverCount = computed(() => serverList.value.length)
 
 const existingIds = computed(() => Object.keys(servers.value))
 
+const { byCapability } = useEnabledCliPlatforms()
+const mcpPlatforms = computed(() => byCapability('mcp'))
+
 const stats = computed(() => {
   const list = serverList.value
-  return {
-    claude: list.filter(s => s.apps?.claude).length,
-    codex: list.filter(s => s.apps?.codex).length,
-    gemini: list.filter(s => s.apps?.gemini).length,
-    opencode: list.filter(s => s.apps?.opencode).length,
-    omp: list.filter(s => s.apps?.omp).length
-  }
+  return Object.fromEntries(
+    mcpPlatforms.value.map(platform => [
+      platform.key,
+      list.filter(server => server.apps?.[platform.key] === true).length
+    ])
+  )
 })
 
 const selectAll = computed({
@@ -431,22 +408,20 @@ const selectAll = computed({
   set: () => {}
 })
 
-const syncOptions = [
-  { label: '同步 Claude 已有配置', key: 'claude' },
-  { label: '同步 Codex 已有配置', key: 'codex' },
-  { label: '同步 Gemini 已有配置', key: 'gemini' },
-  { label: '同步 OpenCode 已有配置', key: 'opencode' },
-  { label: '同步 OMP 已有配置', key: 'omp' }
-]
+const syncOptions = computed(() => mcpPlatforms.value.map(platform => ({
+  label: `同步 ${platform.label || platform.title || platform.key} 已有配置`,
+  key: platform.key
+})))
 
-const exportOptions = [
+const exportOptions = computed(() => [
   { label: '导出为 JSON (通用)', key: 'json' },
-  { label: '导出为 Claude 格式', key: 'claude' },
-  { label: '导出为 Codex 格式 (TOML)', key: 'codex' },
-  { label: '导出为 OpenCode 格式', key: 'opencode' },
-  { label: '导出为 Gemini 格式', key: 'gemini' },
-  { label: '导出为 OMP 格式', key: 'omp' }
-]
+  ...mcpPlatforms.value
+    .filter(platform => isLegacyPlatformKey(platform.key))
+    .map(platform => ({
+      label: `导出为 ${platform.label || platform.title || platform.key} 格式`,
+      key: platform.key
+    }))
+])
 
 // 获取状态文本
 function getStatusText(server) {
@@ -743,7 +718,10 @@ function handleParse() {
       const server = {
         id: id,
         name: id,
-        apps: { claude: true, codex: false, gemini: false, opencode: false, omp: false },
+        apps: Object.fromEntries(mcpPlatforms.value.map((platform, index) => [
+          platform.key,
+          index === 0
+        ])),
         server: {
           type: config.type || 'stdio'
         }

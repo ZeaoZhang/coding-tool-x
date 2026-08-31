@@ -1,9 +1,13 @@
 'use strict';
 
 const Module = require('module');
+const fs = require('fs');
+const path = require('path');
 const RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');
 
 const { createPlatformRuntime } = require('../../../src/platforms/runtime');
+const { createPlatformRegistry } = require('../../../src/platforms/registry');
+const { getDriverRegistry } = require('../../../src/platforms/driver-registry');
 
 test('creates injected capability drivers with resolved manifest and flat dependencies', () => {
   const driver = { list: vi.fn(() => ['session-1']) };
@@ -222,6 +226,86 @@ test('keeps OpenAI-compatible base URLs as URLs during manifest path resolution'
     baseUrl: 'https://api.example.test/v1///'
   });
 });
+
+test('production runtime allows no-home absolute generic MCP mappings', async () => {
+  const root = fs.mkdtempSync(path.join('/var/tmp', 'runtime-generic-mcp-'));
+  const file = path.join(root, 'mcp.json');
+  fs.writeFileSync(file, JSON.stringify({ servers: { demo: { command: 'demo' } } }), 'utf8');
+  const registry = createPlatformRegistry({
+    builtIns: [],
+    userFile: {
+      platforms: [{
+        key: 'demo-cli',
+        label: 'Demo',
+        command: 'demo',
+        mcpFormat: 'json',
+        resourceMappings: { mcp: file },
+        capabilities: { mcp: 'generic-mcp' }
+      }]
+    }
+  });
+  try {
+    const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
+    await expect(runtime.invoke('demo-cli', 'mcp', 'read')).resolves.toEqual({
+      servers: { demo: { command: 'demo' } }
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('production runtime falls back to promptFile when prompts mapping is empty', async () => {
+  const root = fs.mkdtempSync(path.join('/var/tmp', 'runtime-generic-prompt-'));
+  const file = path.join(root, 'PROMPT.md');
+  fs.writeFileSync(file, 'hello from promptFile', 'utf8');
+  const registry = createPlatformRegistry({
+    builtIns: [],
+    userFile: {
+      platforms: [{
+        key: 'demo-cli',
+        label: 'Demo',
+        command: 'demo',
+        promptFile: file,
+        resourceMappings: { prompts: '' },
+        capabilities: { prompts: 'generic-prompt' }
+      }]
+    }
+  });
+  try {
+    const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
+    await expect(runtime.invoke('demo-cli', 'prompts', 'read')).resolves.toBe('hello from promptFile');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+test('production runtime still contains absolute generic mappings under a declared home', () => {
+  const root = fs.mkdtempSync(path.join('/var/tmp', 'runtime-generic-contained-'));
+  const home = path.join(root, 'home');
+  const outside = path.join(root, 'outside.json');
+  fs.mkdirSync(home);
+  fs.writeFileSync(outside, '{}', 'utf8');
+  const registry = createPlatformRegistry({
+    builtIns: [],
+    userFile: {
+      platforms: [{
+        key: 'demo-cli',
+        label: 'Demo',
+        command: 'demo',
+        paths: { home },
+        mcpFormat: 'json',
+        resourceMappings: { mcp: outside },
+        capabilities: { mcp: 'generic-mcp' }
+      }]
+    }
+  });
+  try {
+    const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
+    expect(() => runtime.getDriver('demo-cli', 'mcp')).toThrow(/resource mapping mcp escapes home/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 
 test('production singleton creates drivers through the default registry', () => {
   const driver = { list: vi.fn(() => ['built-in-session']) };

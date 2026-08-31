@@ -19,7 +19,7 @@ describe('web log components source routing', () => {
     expect(source).not.toContain('|| logStreams.claude');
   });
 
-  test('dashboard log panels include OpenCode and OMP without Claude fallback', () => {
+  test('dashboard log panels route by the requested platform source', () => {
     const realtimePanel = readProjectFile('src/web/src/components/dashboard/RealtimeLogsPanel.vue');
     const channelColumn = readProjectFile('src/web/src/components/dashboard/ChannelColumn.vue');
 
@@ -29,8 +29,7 @@ describe('web log components source routing', () => {
     expect(realtimePanel).toContain('...ompLogs.value.map(normalizeLog)');
     expect(realtimePanel).toContain("channelType: log.source || 'unknown'");
 
-    expect(channelColumn).toContain("opencode: getLogs('opencode')");
-    expect(channelColumn).toContain("omp: getLogs('omp')");
-    expect(channelColumn).not.toContain('|| logStreams.claude');
+    expect(channelColumn).toContain('getLogs(props.channelType)');
+    expect(channelColumn).not.toContain('logStreams.claude');
   });
 });

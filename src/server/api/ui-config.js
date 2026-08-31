@@ -30,8 +30,8 @@ router.post('/', (req, res) => {
     if (!config) {
       return res.status(400).json({ error: 'Missing config' });
     }
-    saveUIConfig(config);
-    res.json({ success: true, config });
+    const normalizedConfig = saveUIConfig(config);
+    res.json({ success: true, config: normalizedConfig });
   } catch (error) {
     console.error('Error saving UI config:', error);
     res.status(500).json({ error: error.message });

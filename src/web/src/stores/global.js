@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, toRef } from 'vue'
 import axios from 'axios'
 import { requestKey, requestSingleflight } from '../api/request-singleflight'
-
+import { getPlatformApiPrefix, isLegacyPlatformKey, createPlatformApiError } from '../api/client'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 const ADVANCED_CONFIG_FLAG = '__ccAdvancedConfigBound__'
 let ws = null
 let reconnectAttempts = 0
@@ -20,7 +21,6 @@ function globalRequest(resource, platform, endpoint, params = {}, fallback) {
   )
     .catch(() => fallback)
 }
-const shownBrowserNotificationIds = new Set()
 
 function computeTodayRange() {
   const start = new Date()
@@ -68,103 +68,122 @@ function resolveLogModel(data = {}) {
 
   return ''
 }
-
 export const useGlobalStore = defineStore('global', () => {
-  const claudeProxy = ref({
-    running: false,
-    loading: false,
-    activeChannel: null,
-    port: 20088,
-    runtime: null,
-    startTime: null,
-    defaultPort: 20088
-  })
+  const { catalog, enabledKeys } = useEnabledCliPlatforms()
+  const proxyStateByPlatform = reactive({})
+  const channelsByPlatform = reactive({})
+  const schedulerStateByPlatform = reactive({})
+  const logsBySource = reactive({})
+  const proxyStateRefs = new Map()
+  const channelRefs = new Map()
+  const shownBrowserNotificationIds = new Set()
 
-  const codexProxy = ref({
-    running: false,
-    loading: false,
-    activeChannel: null,
-    port: 20089,
-    runtime: null,
-    startTime: null,
-    defaultPort: 20089
-  })
+  function normalizePlatformKey(value) {
+    return String(value || '').trim().toLowerCase()
+  }
 
-  const geminiProxy = ref({
-    running: false,
-    loading: false,
-    activeChannel: null,
-    port: 20090,
-    runtime: null,
-    startTime: null,
-    defaultPort: 20090
-  })
+  function isKnownPlatform(key) {
+    const normalized = normalizePlatformKey(key)
+    return Boolean(normalized) && catalog.value.some(platform => platform.key === normalized)
+  }
 
-  const opencodeProxy = ref({
-    running: false,
-    loading: false,
-    activeChannel: null,
-    port: 20091,
-    runtime: null,
-    startTime: null,
-    defaultPort: 20091
-  })
+  function isEnabledPlatform(key) {
+    const normalized = normalizePlatformKey(key)
+    return enabledKeys.value.includes(normalized)
+  }
 
-  const ompProxy = ref({
-    running: false,
-    loading: false,
-    activeChannel: null,
-    port: 20092,
-    runtime: null,
-    startTime: null,
-    defaultPort: 20092
-  })
+  function hasPlatformCapability(key, capability) {
+    const normalized = normalizePlatformKey(key)
+    return isKnownPlatform(normalized)
+      && catalog.value.some(platform => (
+        platform.key === normalized
+        && platform.capabilities?.[capability] === true
+      ))
+  }
 
-  const claudeChannels = ref([])
-  const codexChannels = ref([])
-  const geminiChannels = ref([])
-  const opencodeChannels = ref([])
-  const ompChannels = ref([])
+  function resolveEnabledKeys(keys) {
+    const requested = Array.isArray(keys) ? keys : enabledKeys.value
+    const allowed = new Set(enabledKeys.value)
+    const result = []
+    const seen = new Set()
+    requested.forEach((value) => {
+      const key = normalizePlatformKey(value)
+      if (!key || seen.has(key) || !allowed.has(key)) return
+      seen.add(key)
+      result.push(key)
+    })
+    return result
+  }
+
+  function ensurePlatformState(platform) {
+    const key = normalizePlatformKey(platform)
+    if (!isKnownPlatform(key)) return null
+
+    if (!proxyStateByPlatform[key]) {
+      proxyStateByPlatform[key] = {
+        running: false,
+        loading: false,
+        activeChannel: null,
+        port: null,
+        runtime: null,
+        startTime: null,
+        defaultPort: null
+      }
+    }
+    if (!channelsByPlatform[key]) channelsByPlatform[key] = []
+    if (!schedulerStateByPlatform[key]) {
+      schedulerStateByPlatform[key] = { channels: [], pending: 0 }
+    }
+    if (!logsBySource[key]) logsBySource[key] = []
+    return key
+  }
+
+  function getProxyState(platform) {
+    const key = ensurePlatformState(platform)
+    if (!key) return null
+    if (!proxyStateRefs.has(key)) {
+      proxyStateRefs.set(key, toRef(proxyStateByPlatform, key))
+    }
+    return proxyStateRefs.get(key)
+  }
+
+  function getChannels(platform) {
+    const key = ensurePlatformState(platform)
+    if (!key) return null
+    if (!channelRefs.has(key)) {
+      channelRefs.set(key, toRef(channelsByPlatform, key))
+    }
+    return channelRefs.get(key)
+  }
+
+  function getSchedulerState(platform) {
+    const key = ensurePlatformState(platform)
+    return key ? schedulerStateByPlatform[key] : null
+  }
+
+  function getSourceLogs(platform) {
+    const key = ensurePlatformState(platform)
+    return key ? logsBySource[key] : []
+  }
 
   function rebuildChannelSourceCache() {
     Object.keys(channelSourceByName).forEach((key) => {
       delete channelSourceByName[key]
     })
-    claudeChannels.value.forEach((ch) => {
-      if (ch?.name) channelSourceByName[ch.name] = 'claude'
-    })
-    codexChannels.value.forEach((ch) => {
-      if (ch?.name) channelSourceByName[ch.name] = 'codex'
-    })
-    geminiChannels.value.forEach((ch) => {
-      if (ch?.name) channelSourceByName[ch.name] = 'gemini'
-    })
-    opencodeChannels.value.forEach((ch) => {
-      if (ch?.name) channelSourceByName[ch.name] = 'opencode'
-    })
-    ompChannels.value.forEach((ch) => {
-      if (ch?.name) channelSourceByName[ch.name] = 'omp'
+    Object.entries(channelsByPlatform).forEach(([platform, channels]) => {
+      channels.forEach((channel) => {
+        if (channel?.name) channelSourceByName[channel.name] = platform
+      })
     })
   }
 
-  // 调度状态（实时并发信息）
-  const schedulerState = reactive({
-    claude: { channels: [], pending: 0 },
-    codex: { channels: [], pending: 0 },
-    gemini: { channels: [], pending: 0 },
-    opencode: { channels: [], pending: 0 },
-    omp: { channels: [], pending: 0 }
-  })
+  enabledKeys.value.forEach(ensurePlatformState)
 
-  const logsBySource = reactive({
-    claude: [],
-    codex: [],
-    gemini: [],
-    opencode: [],
-    omp: []
-  })
+  // 调度状态（实时并发信息）和日志均按平台 key 存储。
   const wsConnected = ref(false)
   const dashboardHydrated = ref(false)
+  let hydratedPlatformSignature = ''
+  let channelsHydratedSignature = ''
   const logLimit = ref(100)
   const statsInterval = ref(30)
   let loadChannelsPromise = null
@@ -221,13 +240,16 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   function detectLogSource(data) {
-    if (data.source) return data.source
+    if (data.source) return normalizePlatformKey(data.source)
 
-    if (data.toolType === 'opencode') return 'opencode'
-    if (data.toolType === 'omp') return 'omp'
-    if (data.toolType === 'codex') return 'codex'
-    if (data.toolType === 'gemini') return 'gemini'
-    if (data.toolType === 'claude' || data.toolType === 'claude-code') return 'claude'
+    if (data.toolType) {
+      const toolType = normalizePlatformKey(data.toolType)
+      return isKnownPlatform(toolType) ? toolType : ''
+    }
+
+    if (data.channel) {
+      return channelSourceByName[data.channel] || ''
+    }
 
     if (data.model) {
       const model = data.model.toLowerCase()
@@ -238,25 +260,27 @@ export const useGlobalStore = defineStore('global', () => {
       if (model.includes('omp')) return 'omp'
     }
 
-    if (data.channel) {
-      const source = channelSourceByName[data.channel]
-      if (source) return source
-    }
-
     if (data.action?.includes('opencode')) return 'opencode'
     if (data.action?.includes('omp')) return 'omp'
     if (data.action?.includes('codex')) return 'codex'
     if (data.action?.includes('gemini')) return 'gemini'
-    return 'claude'
+    if (data.action?.includes('claude')) return 'claude'
+    return ''
   }
+
 
   function appendLogEntry(data) {
     const source = detectLogSource(data)
-    const buffer = logsBySource[source]
+    if (!isKnownPlatform(source) || !isEnabledPlatform(source)) {
+      console.warn('[GlobalState] 未识别或未启用来源日志，丢弃: ', data)
+      return
+    }
+    const buffer = getSourceLogs(source)
     if (!buffer) {
       console.warn('[GlobalState] 未识别来源日志，丢弃: ', data)
       return
     }
+
 
     const timestamp = data.timestamp || Date.now()
     if (!isToday(timestamp)) {
@@ -317,7 +341,7 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   function getLogs(source) {
-    return computed(() => logsBySource[source] || [])
+    return computed(() => getSourceLogs(source))
   }
 
   function clearLogsForSource(source) {
@@ -371,29 +395,28 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   function setChannelsForSource(source, channels) {
+    const channelRef = getChannels(source)
+    if (!channelRef) return
     const normalized = normalizeDashboardChannels(channels)
-    if (source === 'claude') claudeChannels.value = mergeProxyChannels(claudeChannels.value, normalized)
-    else if (source === 'codex') codexChannels.value = mergeProxyChannels(codexChannels.value, normalized)
-    else if (source === 'gemini') geminiChannels.value = mergeProxyChannels(geminiChannels.value, normalized)
-    else if (source === 'opencode') opencodeChannels.value = mergeProxyChannels(opencodeChannels.value, normalized)
-    else if (source === 'omp') ompChannels.value = mergeProxyChannels(ompChannels.value, normalized)
+    channelRef.value = mergeProxyChannels(channelRef.value, normalized)
   }
 
   function hydrateFromDashboard(data = {}) {
     const channelData = data.channels || {}
-    ;['claude', 'codex', 'gemini', 'opencode', 'omp'].forEach((source) => {
-      if (Object.prototype.hasOwnProperty.call(channelData, source)) {
-        setChannelsForSource(source, channelData[source])
+    Object.entries(channelData).forEach(([source, channels]) => {
+      if (isEnabledPlatform(source)) {
+        setChannelsForSource(source, channels)
       }
     })
     rebuildChannelSourceCache()
 
     const proxyStatus = data.proxyStatus || {}
-    ;['claude', 'codex', 'gemini', 'opencode', 'omp'].forEach((source) => {
-      const status = proxyStatus[source]
-      if (!status || typeof status !== 'object') return
-      patchProxyState(getProxyState(source), status, status.activeChannel)
+    Object.entries(proxyStatus).forEach(([source, status]) => {
+      if (!isEnabledPlatform(source) || !status || typeof status !== 'object') return
+      const proxyRef = getProxyState(source)
+      if (proxyRef) patchProxyState(proxyRef, status, status.activeChannel)
     })
+    hydratedPlatformSignature = enabledKeys.value.join(',')
     dashboardHydrated.value = true
   }
 
@@ -410,48 +433,26 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   function handleProxyStateUpdate(data) {
-    const { source, proxy, activeChannel, channels } = data
+    const source = normalizePlatformKey(data?.source)
+    if (!source || !isEnabledPlatform(source)) return
 
-    if (source === 'claude') {
-      patchProxyState(claudeProxy, proxy, activeChannel)
-      if (channels) {
-        claudeChannels.value = mergeProxyChannels(claudeChannels.value, channels)
-        rebuildChannelSourceCache()
-      }
-    } else if (source === 'codex') {
-      patchProxyState(codexProxy, proxy, activeChannel)
-      if (channels) {
-        codexChannels.value = mergeProxyChannels(codexChannels.value, channels)
-        rebuildChannelSourceCache()
-      }
-    } else if (source === 'gemini') {
-      patchProxyState(geminiProxy, proxy, activeChannel)
-      if (channels) {
-        geminiChannels.value = mergeProxyChannels(geminiChannels.value, channels)
-        rebuildChannelSourceCache()
-      }
-    } else if (source === 'opencode') {
-      patchProxyState(opencodeProxy, proxy, activeChannel)
-      if (channels) {
-        opencodeChannels.value = mergeProxyChannels(opencodeChannels.value, channels)
-        rebuildChannelSourceCache()
-      }
-    } else if (source === 'omp') {
-      patchProxyState(ompProxy, proxy, activeChannel)
-      if (channels) {
-        ompChannels.value = mergeProxyChannels(ompChannels.value, channels)
-        rebuildChannelSourceCache()
-      }
+    const proxyRef = getProxyState(source)
+    if (!proxyRef) return
+    patchProxyState(proxyRef, data.proxy, data.activeChannel)
+    if (data.channels) {
+      setChannelsForSource(source, data.channels)
+      rebuildChannelSourceCache()
     }
   }
 
   function handleSchedulerStateUpdate(data) {
-    const { source, scheduler } = data
-    if (schedulerState[source] && scheduler) {
-      schedulerState[source] = scheduler
+    const source = normalizePlatformKey(data?.source)
+    if (!source || !isEnabledPlatform(source) || !data.scheduler) return
+    const state = getSchedulerState(source)
+    if (state) {
+      schedulerStateByPlatform[source] = data.scheduler
     }
   }
-
   function showBrowserNotification(data) {
     if (typeof window === 'undefined' || typeof Notification === 'undefined') {
       return
@@ -486,170 +487,138 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   async function initializeState() {
-    if (dashboardHydrated.value) return
+    const platformSignature = enabledKeys.value.join(',')
+    if (dashboardHydrated.value && hydratedPlatformSignature === platformSignature) return
+    const keys = resolveEnabledKeys().filter(key => hasPlatformCapability(key, 'proxy'))
     try {
-      const [claudeRes, codexRes, geminiRes, opencodeRes, ompRes] = await Promise.all([
-        globalRequest('proxy-status', 'claude', '/api/proxy/status', {}, {}),
-        globalRequest('proxy-status', 'codex', '/api/codex/proxy/status', {}, {}),
-        globalRequest('proxy-status', 'gemini', '/api/gemini/proxy/status', {}, {}),
-        globalRequest('proxy-status', 'opencode', '/api/opencode/proxy/status', {}, {}),
-        globalRequest('proxy-status', 'omp', '/api/omp/proxy/status', {}, {})
-      ])
-
-      if (claudeRes.data?.proxy) {
-        patchProxyState(claudeProxy, claudeRes.data.proxy, claudeRes.data.activeChannel)
-      }
-      if (codexRes.data?.proxy) {
-        patchProxyState(codexProxy, codexRes.data.proxy, codexRes.data.activeChannel)
-      }
-      if (geminiRes.data?.proxy) {
-        patchProxyState(geminiProxy, geminiRes.data.proxy, geminiRes.data.activeChannel)
-      }
-      if (opencodeRes.data?.proxy) {
-        patchProxyState(opencodeProxy, opencodeRes.data.proxy, opencodeRes.data.activeChannel)
-      }
-      if (ompRes.data?.proxy) {
-        patchProxyState(ompProxy, ompRes.data.proxy, ompRes.data.activeChannel)
-      }
+      const responses = await Promise.all(keys.map((key) => {
+        const prefix = getPlatformApiPrefix(key)
+        return globalRequest(
+          'proxy-status',
+          key,
+          `/api${prefix}/proxy/status`,
+          {},
+          { data: {} }
+        )
+      }))
+      responses.forEach((response, index) => {
+        const payload = response?.data || {}
+        const proxyRef = getProxyState(keys[index])
+        if (proxyRef && payload.proxy) {
+          patchProxyState(proxyRef, payload.proxy, payload.activeChannel)
+        }
+      })
+      hydratedPlatformSignature = platformSignature
+      dashboardHydrated.value = true
     } catch (error) {
       console.error('Failed to initialize global state:', error)
     }
   }
 
   async function loadChannels(options = {}) {
-    if (dashboardHydrated.value && !options.force) {
+    const keys = resolveEnabledKeys(options.keys).filter(key => hasPlatformCapability(key, 'channels'))
+    if (channelsHydratedSignature === enabledKeys.value.join(',') && !options.force) {
       return {
         success: true,
-        channels: {
-          claude: claudeChannels.value,
-          codex: codexChannels.value,
-          gemini: geminiChannels.value,
-          opencode: opencodeChannels.value,
-          omp: ompChannels.value
-        }
+        channels: Object.fromEntries(keys.map(key => [key, getChannels(key)?.value || []]))
       }
     }
+    const requestSignature = enabledKeys.value.join(',')
+    const hydrateAllChannels = !Array.isArray(options.keys)
     if (loadChannelsPromise) return loadChannelsPromise
-    loadChannelsPromise = _loadChannels().finally(() => {
+    loadChannelsPromise = _loadChannels(keys).then((result) => {
+      if (hydrateAllChannels) channelsHydratedSignature = requestSignature
+      return result
+    }).finally(() => {
       loadChannelsPromise = null
     })
     return loadChannelsPromise
   }
 
-  async function _loadChannels() {
+  async function _loadChannels(keys) {
     try {
-      const [claudeRes, codexRes, geminiRes, opencodeRes, ompRes, claudePool, codexPool, geminiPool, opencodePool, ompPool] = await Promise.all([
-        globalRequest('channels', 'claude', '/api/channels', {}, { data: { channels: [] } }),
-        globalRequest('channels', 'codex', '/api/codex/channels', {}, { data: { channels: [] } }),
-        globalRequest('channels', 'gemini', '/api/gemini/channels', {}, { data: { channels: [] } }),
-        globalRequest('channels', 'opencode', '/api/opencode/channels', {}, { data: { channels: [] } }),
-        globalRequest('channels', 'omp', '/api/omp/channels', {}, { data: { channels: [] } }),
-        globalRequest('channel-pool', 'claude', '/api/channels/pool/status?source=claude', {}, { data: null }),
-        globalRequest('channel-pool', 'codex', '/api/channels/pool/status?source=codex', {}, { data: null }),
-        globalRequest('channel-pool', 'gemini', '/api/channels/pool/status?source=gemini', {}, { data: null }),
-        globalRequest('channel-pool', 'opencode', '/api/channels/pool/status?source=opencode', {}, { data: null }),
-        globalRequest('channel-pool', 'omp', '/api/channels/pool/status?source=omp', {}, { data: null })
-      ])
+      const responses = await Promise.all(keys.map(async (key) => {
+        const prefix = getPlatformApiPrefix(key)
+        const channelResponse = globalRequest(
+          'channels',
+          key,
+          `/api${prefix}/channels`,
+          {},
+          { data: { channels: [] } }
+        )
+        const poolResponse = isLegacyPlatformKey(key)
+          ? globalRequest(
+            'channel-pool',
+            key,
+            `/api${prefix}/channels/pool/status?source=${encodeURIComponent(key)}`,
+            {},
+            { data: null }
+          )
+          : Promise.resolve({ data: null })
+        return {
+          key,
+          channelResponse: await channelResponse,
+          poolResponse: await poolResponse
+        }
+      }))
 
-      claudeChannels.value = claudeRes.data.channels || []
-      codexChannels.value = codexRes.data.channels || []
-      geminiChannels.value = geminiRes.data.channels || []
-      opencodeChannels.value = opencodeRes.data.channels || []
-      ompChannels.value = ompRes.data.channels || []
+      responses.forEach(({ key, channelResponse, poolResponse }) => {
+        const payload = channelResponse?.data
+        setChannelsForSource(key, Array.isArray(payload) ? payload : payload?.channels)
+        if (poolResponse?.data?.scheduler) {
+          schedulerStateByPlatform[key] = poolResponse.data.scheduler
+        }
+      })
       rebuildChannelSourceCache()
-
-      if (claudePool.data?.scheduler) {
-        schedulerState.claude = claudePool.data.scheduler
-      }
-      if (codexPool.data?.scheduler) {
-        schedulerState.codex = codexPool.data.scheduler
-      }
-      if (geminiPool.data?.scheduler) {
-        schedulerState.gemini = geminiPool.data.scheduler
-      }
-      if (opencodePool.data?.scheduler) {
-        schedulerState.opencode = opencodePool.data.scheduler
-      }
-      if (ompPool.data?.scheduler) {
-        schedulerState.omp = ompPool.data.scheduler
+      return {
+        success: true,
+        channels: Object.fromEntries(keys.map(key => [key, getChannels(key)?.value || []]))
       }
     } catch (error) {
       console.error('Failed to load channels:', error)
+      return {
+        success: false,
+        channels: Object.fromEntries(keys.map(key => [key, getChannels(key)?.value || []]))
+      }
     }
-  }
-
-  function getProxyState(type) {
-    if (type === 'codex') return codexProxy
-    if (type === 'gemini') return geminiProxy
-    if (type === 'opencode') return opencodeProxy
-    if (type === 'omp') return ompProxy
-    return claudeProxy
-  }
-
-  function getChannels(type) {
-    if (type === 'codex') return codexChannels
-    if (type === 'gemini') return geminiChannels
-    if (type === 'opencode') return opencodeChannels
-    if (type === 'omp') return ompChannels
-    return claudeChannels
-  }
-
-  function getSchedulerState(type) {
-    return schedulerState[type] || { channels: [], pending: 0 }
   }
 
   async function startProxy(type) {
-    let endpoint
-    if (type === 'codex') {
-      endpoint = '/api/codex/proxy/start'
-    } else if (type === 'gemini') {
-      endpoint = '/api/gemini/proxy/start'
-    } else if (type === 'opencode') {
-      endpoint = '/api/opencode/proxy/start'
-    } else if (type === 'omp') {
-      endpoint = '/api/omp/proxy/start'
-    } else {
-      endpoint = '/api/proxy/start'
+    const key = normalizePlatformKey(type)
+    if (!isEnabledPlatform(key) || !hasPlatformCapability(key, 'proxy')) {
+      throw createPlatformApiError(key, 'unsupported')
     }
-
-    const response = await axios.post(endpoint)
+    const proxyRef = getProxyState(key)
+    if (!proxyRef) throw createPlatformApiError(key, 'not_found')
+    const response = await axios.post(`/api${getPlatformApiPrefix(key)}/proxy/start`)
     if (response.data.success) {
-      const proxyState = getProxyState(type)
-      proxyState.value.running = true
-      proxyState.value.activeChannel = response.data.activeChannel
-      proxyState.value.startTime = Date.now()
+      proxyRef.value.running = true
+      proxyRef.value.activeChannel = response.data.activeChannel
+      proxyRef.value.startTime = Date.now()
     }
     return response.data
   }
 
   async function stopProxy(type, options = {}) {
-    let endpoint
-    if (type === 'codex') {
-      endpoint = '/api/codex/proxy/stop'
-    } else if (type === 'gemini') {
-      endpoint = '/api/gemini/proxy/stop'
-    } else if (type === 'opencode') {
-      endpoint = '/api/opencode/proxy/stop'
-    } else if (type === 'omp') {
-      endpoint = '/api/omp/proxy/stop'
-    } else {
-      endpoint = '/api/proxy/stop'
+    const key = normalizePlatformKey(type)
+    if (!isEnabledPlatform(key) || !hasPlatformCapability(key, 'proxy')) {
+      throw createPlatformApiError(key, 'unsupported')
     }
-
-    const response = await axios.post(endpoint)
-    const proxyState = getProxyState(type)
-    proxyState.value.running = false
-    proxyState.value.activeChannel = null
-    proxyState.value.startTime = null
-    proxyState.value.runtime = null
+    const proxyRef = getProxyState(key)
+    if (!proxyRef) throw createPlatformApiError(key, 'not_found')
+    const response = await axios.post(`/api${getPlatformApiPrefix(key)}/proxy/stop`)
+    proxyRef.value.running = false
+    proxyRef.value.activeChannel = null
+    proxyRef.value.startTime = null
+    proxyRef.value.runtime = null
 
     if (response.data?.success !== false) {
-      await loadChannels({ force: true })
+      await loadChannels({ force: true, keys: [key] })
     }
 
     if (options.refreshChannelsDrawer && response.data?.success !== false && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('channel-management-refresh', {
-        detail: { channel: type, reason: 'proxy-stop' }
+        detail: { channel: key, reason: 'proxy-stop' }
       }))
     }
 
@@ -715,17 +684,11 @@ export const useGlobalStore = defineStore('global', () => {
   }
 
   return {
-    claudeProxy,
-    codexProxy,
-    geminiProxy,
-    opencodeProxy,
-    ompProxy,
-    claudeChannels,
-    codexChannels,
-    geminiChannels,
-    opencodeChannels,
-    ompChannels,
-    schedulerState,
+    proxyStateByPlatform,
+    channelsByPlatform,
+    schedulerStateByPlatform,
+    logsBySource,
+    ensurePlatformState,
     connectWebSocket,
     initializeState,
     loadChannels,

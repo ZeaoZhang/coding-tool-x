@@ -6,7 +6,13 @@ export async function getUIConfig() {
 }
 
 export async function saveUIConfig(config) {
-  const response = await client.post('/ui-config', { config })
+  const current = await getUIConfig()
+  const existingConfig = current?.success && current.config && typeof current.config === 'object'
+    ? current.config
+    : {}
+  const response = await client.post('/ui-config', {
+    config: { ...existingConfig, ...config }
+  })
   return response.data
 }
 

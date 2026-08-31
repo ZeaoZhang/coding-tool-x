@@ -32,6 +32,8 @@
     "proxy": "legacy:claude",
     "statistics": "legacy:claude",
     "resourceSync": "legacy:claude",
-    "nativeConfig": "legacy:claude"
+    "nativeConfig": "legacy:claude",
+    "mcp": "legacy:claude",
+    "prompts": "legacy:claude"
   }
 }
