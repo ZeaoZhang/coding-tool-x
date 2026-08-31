@@ -10,7 +10,7 @@ export const MINIMAL_PLATFORM_FALLBACK = [
 ]
 
 function normalizeCapabilities(platform = {}) {
-  if (platform.capabilities && typeof platform.capabilities === 'object' && !Array.isArray(platform.capabilities)) {
+  if (platform?.capabilities && typeof platform.capabilities === 'object' && !Array.isArray(platform.capabilities)) {
     return { ...platform.capabilities }
   }
 
@@ -25,7 +25,7 @@ function normalizeCapabilities(platform = {}) {
   }
   return Object.fromEntries(Object.entries(supportKeys).map(([capability, key]) => [
     capability,
-    platform[key] !== false
+    platform?.[key] !== false
   ]))
 }
 
@@ -35,6 +35,7 @@ function normalizeResourceTypes(resourceTypes) {
 }
 
 export function normalizePublicPlatform(platform = {}) {
+  if (!platform || typeof platform !== 'object' || Array.isArray(platform)) return null
   const key = String(platform?.key || '').trim().toLowerCase()
   const capabilities = normalizeCapabilities(platform)
   const iconToken = String(platform?.iconToken || platform?.icon || 'terminal').trim()
@@ -66,7 +67,7 @@ export function normalizePublicPlatforms(platforms = []) {
   const seen = new Set()
   if (!Array.isArray(platforms)) return []
   return platforms.map(normalizePublicPlatform).filter(platform => {
-    if (!platform.key || seen.has(platform.key)) return false
+    if (!platform || !platform.key || seen.has(platform.key)) return false
     seen.add(platform.key)
     return true
   })
