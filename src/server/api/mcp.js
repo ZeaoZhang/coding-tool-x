@@ -47,18 +47,7 @@ function resolveMcpExportPlatform(platform) {
   return { key: resolved.key, driver };
 }
 
-function getMcpExportFormats() {
-  const formats = new Set(['json']);
-  const registry = getPlatformRegistry();
 
-  for (const definition of registry.list()) {
-    const resolved = resolveMcpExportPlatform(definition.key);
-    if (resolved.error) continue;
-    formats.add(resolved.key);
-  }
-
-  return formats;
-}
 
 function sendCapabilityError(res, error, fallbackStatus = 400) {
   const status = error?.status === 404 && error?.code ? 404 : fallbackStatus;
