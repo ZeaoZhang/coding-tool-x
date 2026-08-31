@@ -21,9 +21,6 @@ const CLAUDE_PROMPT_PATH = NATIVE_PATHS.claude.prompt || path.join(CLAUDE_CONFIG
 const CODEX_PROMPT_PATH = path.join(HOME_DIR, '.codex', 'AGENTS.md');
 const GEMINI_PROMPT_PATH = path.join(HOME_DIR, '.gemini', 'GEMINI.md');
 const OPENCODE_PROMPT_PATH = path.join(NATIVE_PATHS.opencode.config, 'AGENTS.md');
-const OMP_PROMPTS_DIR = NATIVE_PATHS.omp?.prompts
-  || path.join(NATIVE_PATHS.omp?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'prompts');
-const MANAGED_OMP_PROMPTS_DIR = path.join(OMP_PROMPTS_DIR, 'coding-tool-x');
 
 function normalizePlatformKey(platform) {
   return String(platform || '').trim().toLowerCase();
@@ -39,12 +36,19 @@ function getPlatformServices() {
 
 function getPromptPlatformKeys() {
   const { registry } = getPlatformServices();
-  return registry.list({ enabledOnly: true })
-    .map(platform => normalizePlatformKey(platform.key))
-    .filter(platform => {
-      const driverId = registry.getCapability(platform, 'prompts');
-      return Boolean(driverId && driverId !== 'unsupported');
-    });
+  const keys = [];
+  const seen = new Set();
+
+  for (const platform of registry.list()) {
+    const key = normalizePlatformKey(platform.key);
+    if (!key || seen.has(key)) continue;
+    const driverId = registry.getCapability(key, 'prompts');
+    if (!driverId || driverId === 'unsupported') continue;
+    seen.add(key);
+    keys.push(key);
+  }
+
+  return keys;
 }
 
 function createPlatformCapabilityError(platform, capability, code) {
@@ -89,23 +93,6 @@ function assertPromptReadResult(result, platform) {
   return result;
 }
 
-async function invokePromptRead(driver, platform) {
-  return assertPromptReadResult(await driver.read(), platform);
-}
-
-async function invokePromptWrite(driver, platform, content) {
-  const result = await driver.write(content);
-  const failure = getDriverFailure(result, platform, 'write');
-  if (failure) throw failure;
-  return content;
-}
-
-async function invokePromptRemove(driver, platform) {
-  const result = await driver.remove();
-  const failure = getDriverFailure(result, platform, 'remove');
-  if (failure) throw failure;
-  return true;
-}
 
 function normalizeApps(apps = {}, defaults = {
   claude: true,
@@ -116,7 +103,7 @@ function normalizeApps(apps = {}, defaults = {
 }) {
   const source = apps && typeof apps === 'object' && !Array.isArray(apps) ? apps : {};
   const fallback = defaults && typeof defaults === 'object' && !Array.isArray(defaults) ? defaults : {};
-  const platformKeys = new Set([...getPromptPlatformKeys(), 'omp']);
+  const platformKeys = new Set(getPromptPlatformKeys());
   const normalized = {};
 
   for (const platform of platformKeys) {
@@ -429,9 +416,6 @@ function savePreset(preset) {
   writeJsonFile(PROMPTS_FILE, data);
 
   if (wasActive) {
-    if (existing && normalizeApps(existing.apps).omp && !preset.apps.omp) {
-      deleteOmpPromptTemplate(existing);
-    }
     const syncResult = syncPresetToAllPlatforms(preset);
     if (syncResult && typeof syncResult.then === 'function') {
       return syncResult.then(() => preset);
@@ -461,10 +445,6 @@ function deletePreset(id) {
     data.activePresetId = null;
   }
 
-  if (normalizeApps(preset.apps).omp) {
-    deleteOmpPromptTemplate(preset);
-  }
-
   delete data.presets[id];
   writeJsonFile(PROMPTS_FILE, data);
 
@@ -477,7 +457,6 @@ function deletePreset(id) {
 async function activatePreset(id) {
   const data = initPromptsData();
   const preset = data.presets[id];
-  const previousPreset = data.activePresetId ? data.presets[data.activePresetId] : null;
 
   if (!preset) {
     throw new Error(`预设 "${id}" 不存在`);
@@ -486,10 +465,6 @@ async function activatePreset(id) {
   // 更新激活状态
   data.activePresetId = id;
   writeJsonFile(PROMPTS_FILE, data);
-
-  if (previousPreset && previousPreset.id !== id && normalizeApps(previousPreset.apps).omp) {
-    deleteOmpPromptTemplate(previousPreset);
-  }
 
   // 同步到各平台
   await syncPresetToAllPlatforms(preset);
@@ -502,7 +477,6 @@ async function activatePreset(id) {
  */
 async function deactivatePrompt() {
   const data = initPromptsData();
-  const activePreset = data.activePresetId ? data.presets[data.activePresetId] : null;
 
   // Clear active state.
   data.activePresetId = null;
@@ -530,11 +504,6 @@ async function deactivatePrompt() {
       results[platform] = true;
     }
   }
-
-  // OMP templates are a legacy directory capability.
-  results.omp = activePreset && normalizeApps(activePreset.apps).omp
-    ? deleteOmpPromptTemplate(activePreset)
-    : false;
 
   await Promise.all(pending);
   console.log('[Prompts] Deactivated and removed prompt files:', results);
@@ -587,46 +556,10 @@ function syncPresetToAllPlatforms(preset) {
     }
   }
 
-  // OMP templates are a legacy directory capability, not a single prompt file.
-  if (apps.omp) {
-    const targetPath = writeOmpPromptTemplate(preset);
-    console.log('[Prompts] Synced to OMP:', targetPath);
-  }
 
   return pending.length ? Promise.all(pending) : undefined;
 }
 
-function buildOmpPromptFileName(preset) {
-  const rawId = (preset?.id || 'preset').toString().trim();
-  const safeId = rawId.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').slice(0, 100) || 'preset';
-  return `${safeId}.md`;
-}
-
-function getOmpPromptTemplatePath(preset) {
-  return path.join(MANAGED_OMP_PROMPTS_DIR, buildOmpPromptFileName(preset));
-}
-
-function escapeFrontmatterValue(value) {
-  return String(value || '')
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\r?\n/g, ' ');
-}
-
-function buildOmpPromptTemplateContent(preset) {
-  const description = escapeFrontmatterValue(preset.description || preset.name || preset.id);
-  return `---\ndescription: "${description}"\n---\n\n${preset.content || ''}`;
-}
-
-function writeOmpPromptTemplate(preset) {
-  const filePath = getOmpPromptTemplatePath(preset);
-  writeTextFile(filePath, buildOmpPromptTemplateContent(preset));
-  return filePath;
-}
-
-function deleteOmpPromptTemplate(preset) {
-  return deleteFile(getOmpPromptTemplatePath(preset));
-}
 
 function readLegacyPlatformPrompt(platform) {
   switch (platform) {
@@ -741,38 +674,6 @@ function removePlatformPrompt(platform) {
   return result;
 }
 
-function listOmpPromptTemplates() {
-  if (!fs.existsSync(OMP_PROMPTS_DIR)) {
-    return [];
-  }
-
-  const results = [];
-  const walk = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith('.')) continue;
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath);
-      } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.md') {
-        const relativePath = path.relative(OMP_PROMPTS_DIR, fullPath);
-        results.push({
-          name: path.basename(entry.name, '.md'),
-          path: fullPath,
-          relativePath,
-          managed: relativePath.split(path.sep)[0] === 'coding-tool-x'
-        });
-      }
-    }
-  };
-
-  try {
-    walk(OMP_PROMPTS_DIR);
-  } catch (err) {
-    console.error(`[Prompts] Failed to list OMP prompt templates:`, err.message);
-  }
-
-  return results.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-}
 
 /**
  * 获取各平台当前的提示词状态
@@ -810,12 +711,6 @@ function getPlatformStatus() {
     else apply(result);
   }
 
-  statuses.omp = {
-    path: OMP_PROMPTS_DIR,
-    managedPath: MANAGED_OMP_PROMPTS_DIR,
-    exists: fs.existsSync(OMP_PROMPTS_DIR),
-    templates: listOmpPromptTemplates()
-  };
 
   return pending.length ? Promise.all(pending).then(() => statuses) : statuses;
 }
@@ -833,9 +728,7 @@ function importFromPlatform(platform, presetName) {
     }
 
     const id = `imported-${normalizedPlatform}-${Date.now()}`;
-    const emptyApps = Object.fromEntries(
-      [...getPromptPlatformKeys(), 'omp'].map(key => [key, false])
-    );
+    const emptyApps = Object.fromEntries(getPromptPlatformKeys().map(key => [key, false]));
     const preset = {
       id,
       name: presetName || `从 ${normalizedPlatform} 导入`,

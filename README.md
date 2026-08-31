@@ -45,7 +45,7 @@
 
 - 集中存储在 `~/.cc-tool`
 - 保留并同步各平台原生配置目录，而不是替代原生用法
-- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP 同步为原生 prompt templates
+- 支持 Prompts 预设管理，并同步到声明 `prompts` capability 的平台提示文件；具体平台能力以 Manifest 为准
 - 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
 - OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
 - 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP 写入原生 `mcp.json`
@@ -73,7 +73,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
 | 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持，含余额显示与批量测速 |
-| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 写入 OMP prompt templates |
+| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 不提供集中式提示文件同步 |
 | Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
 | Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
 | Agents 管理 | 支持 | 用户级 | 支持 | 支持 | 不提供直接原生管理 |
@@ -87,7 +87,7 @@
 
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取使用内置 `node:sqlite`，不再依赖本机 sqlite3 可执行文件
-- OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
+- OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；集中式 Prompts 预设不向 OMP 同步，Agents 暂不作为独立可写配置文件管理
 - OMP 平台键统一为 `omp`，不再保留 `omp` 平台键兼容
 - OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
 
