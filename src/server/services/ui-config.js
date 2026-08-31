@@ -10,7 +10,6 @@ const {
 
 const UI_CONFIG_FILE = PATHS.uiConfig;
 const OPTIONAL_UI_CONFIG_FIELDS = ['remoteNotifications', 'claudeNotificationDisabledByUser'];
-const LEGACY_SELECTION_FIELDS = ['homeCliColumns', 'dashboardChannelOrder', 'customCliPlatforms'];
 
 const DEFAULT_UI_CONFIG = {
   theme: 'light',
