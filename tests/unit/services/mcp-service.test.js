@@ -267,6 +267,41 @@ describe('mcp-service', () => {
       expect(result).toEqual({});
     });
 
+    it('keeps legacy Claude default for missing apps while preserving hidden historical flags', async () => {
+      const mcpFile = path.join(testDir, 'mcp-servers.json');
+      const data = {
+        'legacy-server': {
+          id: 'legacy-server',
+          name: 'Legacy Server',
+          server: { type: 'stdio', command: 'npx' }
+        },
+        'hidden-server': {
+          id: 'hidden-server',
+          name: 'Hidden Server',
+          server: { type: 'stdio', command: 'npx' },
+          apps: { claude: false, 'hidden-cli': true }
+        }
+      };
+      fs.writeFileSync(mcpFile, JSON.stringify(data), 'utf-8');
+
+      const result = service.getAllServers();
+
+      expect(result['legacy-server'].apps.claude).toBe(true);
+      expect(result['legacy-server'].apps.codex).toBe(false);
+      expect(result['hidden-server'].apps.claude).toBe(false);
+      expect(result['hidden-server'].apps['hidden-cli']).toBe(true);
+
+      const saved = await service.saveServer({
+        id: 'legacy-server',
+        name: 'Legacy Server Updated',
+        server: { type: 'stdio', command: 'npx' }
+      }, { syncPlatforms: false });
+
+      expect(saved.apps.claude).toBe(true);
+      expect(saved.apps.codex).toBe(false);
+      expect(saved.name).toBe('Legacy Server Updated');
+    });
+
     it('returns parsed servers when file exists', () => {
       const mcpFile = path.join(testDir, 'mcp-servers.json');
       const data = {
@@ -336,23 +371,25 @@ describe('mcp-service', () => {
       expect(service.getServer('srv-default').createdAt).toBeDefined();
     });
 
-    it('saveServer preserves existing app toggles when updating without apps', async () => {
+    it('saveServer preserves historical hidden app flags when updating apps', async () => {
       const first = await service.saveServer({
-        id: 'srv-keep-apps',
-        name: 'Keep Apps',
+        id: 'srv-hidden-apps',
+        name: 'Hidden Apps',
         server: { type: 'stdio', command: 'uvx' },
-        apps: { claude: true, codex: true }
+        apps: { claude: true, 'hidden-cli': true }
       }, { syncPlatforms: false });
 
       const updated = await service.saveServer({
-        id: 'srv-keep-apps',
-        name: 'Keep Apps Updated',
-        server: { type: 'stdio', command: 'uvx' }
+        id: 'srv-hidden-apps',
+        name: 'Hidden Apps Updated',
+        server: { type: 'stdio', command: 'uvx' },
+        apps: { claude: false }
       }, { syncPlatforms: false });
 
       expect(updated.createdAt).toBe(first.createdAt);
-      expect(updated.apps.codex).toBe(true);
-      expect(updated.apps.claude).toBe(true);
+      expect(updated.apps.claude).toBe(false);
+      expect(updated.apps['hidden-cli']).toBe(true);
+      expect(service.getServer('srv-hidden-apps').apps['hidden-cli']).toBe(true);
     });
 
     it('deleteServer removes existing server and returns true', async () => {
@@ -646,6 +683,44 @@ describe('mcp-service', () => {
         expect(config.mcpServers).toEqual({});
       } finally {
         restore();
+      }
+    });
+    it('syncs registry MCP platforms even when enabledOnly filters them from UI selection', async () => {
+      const driver = {
+        read: vi.fn(async () => ({ mcpServers: {} })),
+        write: vi.fn(async next => next)
+      };
+      const runtime = require('../../../src/platforms/runtime');
+      const definitions = [
+        { key: 'visible-cli', capabilities: { mcp: 'generic-mcp' } },
+        { key: 'hidden-cli', capabilities: { mcp: 'generic-mcp' } }
+      ];
+      const byKey = new Map(definitions.map(definition => [definition.key, definition]));
+      const registry = {
+        list: vi.fn((options = {}) => (options.enabledOnly ? definitions.filter(definition => definition.key === 'visible-cli') : definitions)),
+        resolve: key => byKey.get(String(key).trim().toLowerCase()) || null,
+        getCapability: (key, capability) => byKey.get(String(key).trim().toLowerCase())?.capabilities?.[capability] || null
+      };
+      const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+      const runtimeSpy = vi.spyOn(runtime, 'getPlatformRuntime').mockReturnValue({ getDriver: vi.fn(() => driver) });
+
+      try {
+        await service.saveServer({
+          id: 'hidden-demo',
+          name: 'Hidden demo',
+          server: { type: 'stdio', command: 'hidden-mcp' },
+          apps: { 'hidden-cli': true }
+        });
+
+        expect(driver.write).toHaveBeenCalledTimes(1);
+        expect(service.getStats()).toEqual({
+          total: 1,
+          'visible-cli': 0,
+          'hidden-cli': 1
+        });
+      } finally {
+        registrySpy.mockRestore();
+        runtimeSpy.mockRestore();
       }
     });
 
