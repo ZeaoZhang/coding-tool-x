@@ -44,6 +44,11 @@ describe('public platform normalization', () => {
       publicPlatform({ key: 'other-cli', label: 'Other' })
     ]).map(platform => platform.label)).toEqual(['Demo CLI', 'Other'])
   })
+
+  it('skips malformed catalog entries instead of throwing', () => {
+    expect(normalizePublicPlatforms([null, 'invalid', publicPlatform()]).map(platform => platform.key))
+      .toEqual(['demo-cli'])
+  })
 })
 
 describe('platform catalog selection', () => {
@@ -90,6 +95,11 @@ describe('platform catalog selection', () => {
     expect(getPlatformsByCapability(catalog, 'sessions').map(platform => platform.key)).toEqual([
       'claude', 'codex', 'gemini', 'opencode', 'omp'
     ])
+  })
+
+  it('keeps empty resolved selections empty for capability and navigation helpers', () => {
+    expect(getPlatformsByCapability([], 'sessions')).toEqual([])
+    expect(buildPlatformNavigation([])).toEqual([])
   })
 
   it('builds safe navigation metadata with a terminal fallback icon', () => {
