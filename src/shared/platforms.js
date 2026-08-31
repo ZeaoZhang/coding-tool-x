@@ -6,7 +6,6 @@ const BUILT_IN_MANIFESTS = [
   require('../platforms/manifests/omp.json')
 ];
 
-const DEFAULT_HOME_CLI_COLUMNS = ['claude', 'codex', 'gemini', 'opencode'];
 const DEFAULT_ENABLED_CLI_PLATFORMS = ['claude', 'codex', 'opencode', 'omp'];
 
 function capabilityEnabled(manifest, capability) {
@@ -77,13 +76,12 @@ function migrateLegacyCliConfig(config = {}) {
     enabledCliPlatforms,
     homeCliColumns,
     dashboardChannelOrder,
-    allowedKeys,
-    fallback = []
+    allowedKeys
   } = config;
   const hasExplicitSelection = Object.prototype.hasOwnProperty.call(config, 'enabledCliPlatforms');
 
   if (hasExplicitSelection) {
-    return normalizeEnabledCliPlatforms(enabledCliPlatforms, allowedKeys, fallback);
+    return normalizeEnabledCliPlatforms(enabledCliPlatforms, allowedKeys, DEFAULT_ENABLED_CLI_PLATFORMS);
   }
 
   const allowed = normalizeAllowedPlatformKeys(allowedKeys);
@@ -94,11 +92,11 @@ function migrateLegacyCliConfig(config = {}) {
     ? legacyInput.map(normalizePlatformKey)
     : [];
   const normalizedLegacy = normalizeEnabledCliPlatforms(legacyInput, allowedKeys, []);
-  const isExactOldDefault = normalizedLegacyInput.length === DEFAULT_HOME_CLI_COLUMNS.length &&
-    normalizedLegacyInput.every((key, index) => key === DEFAULT_HOME_CLI_COLUMNS[index]);
+  const isExactOldDefault = normalizedLegacyInput.length === 4 &&
+    normalizedLegacyInput.every((key, index) => key === ['claude', 'codex', 'gemini', 'opencode'][index]);
 
   if (isExactOldDefault) {
-    return normalizeEnabledCliPlatforms(DEFAULT_ENABLED_CLI_PLATFORMS, allowedKeys, fallback);
+    return normalizeEnabledCliPlatforms(DEFAULT_ENABLED_CLI_PLATFORMS, allowedKeys, DEFAULT_ENABLED_CLI_PLATFORMS);
   }
 
   const result = [...normalizedLegacy];
@@ -108,14 +106,9 @@ function migrateLegacyCliConfig(config = {}) {
     }
   }
 
-  if (result.length > 0) {
-    return result;
-  }
-
-  const normalizedDefault = normalizeEnabledCliPlatforms(DEFAULT_ENABLED_CLI_PLATFORMS, allowedKeys, []);
-  return normalizedDefault.length > 0
-    ? normalizedDefault
-    : normalizeEnabledCliPlatforms(fallback, allowedKeys, []);
+  return result.length > 0
+    ? result
+    : normalizeEnabledCliPlatforms(DEFAULT_ENABLED_CLI_PLATFORMS, allowedKeys, DEFAULT_ENABLED_CLI_PLATFORMS);
 }
 
 function getBuiltInPlatformKeys() {
@@ -127,77 +120,12 @@ function getPlatformDefinition(key) {
   return BUILT_IN_CLI_PLATFORMS.find(platform => platform.key === normalizedKey) || null;
 }
 
-function normalizeCustomCliPlatform(input = {}) {
-  const rawKey = normalizePlatformKey(input.key);
-  const key = rawKey
-    .replace(/[^a-z0-9_-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-
-  if (!key || getPlatformDefinition(key)) {
-    return null;
-  }
-
-  const name = String(input.name || input.title || key).trim() || key;
-  const command = String(input.command || key).trim() || key;
-  return {
-    key,
-    name,
-    title: String(input.title || name).trim() || name,
-    command,
-    configDir: String(input.configDir || '').trim(),
-    icon: String(input.icon || '').trim(),
-    color: String(input.color || '').trim(),
-    enabled: input.enabled !== false,
-    custom: true,
-    supportsManagedChannels: false,
-    supportsManagedConfig: false,
-    supportsProxy: false,
-    supportsProjects: false,
-    supportsSessions: false,
-    supportsSkills: false,
-    supportsCommands: false,
-    supportsPlugins: false,
-    supportsAgents: false
-  };
-}
-
-function normalizeCustomCliPlatforms(input = []) {
-  const result = [];
-  const seen = new Set();
-
-  if (!Array.isArray(input)) {
-    return result;
-  }
-
-  input.forEach((item) => {
-    const normalized = normalizeCustomCliPlatform(item);
-    if (!normalized || seen.has(normalized.key)) {
-      return;
-    }
-    seen.add(normalized.key);
-    result.push(normalized);
-  });
-
-  return result;
-}
-
-// Kept only for callers that still normalize the legacy homepage setting.
-// Canonical selection and defaulting are handled by the helpers above.
-function normalizeHomeCliColumns(input = []) {
-  return normalizeEnabledCliPlatforms(input, getBuiltInPlatformKeys(), []);
-}
-
 module.exports = {
   BUILT_IN_CLI_PLATFORMS,
-  DEFAULT_HOME_CLI_COLUMNS,
   DEFAULT_ENABLED_CLI_PLATFORMS,
   getBuiltInPlatformKeys,
   getPlatformDefinition,
   normalizePlatformKey,
   normalizeEnabledCliPlatforms,
-  migrateLegacyCliConfig,
-  normalizeCustomCliPlatform,
-  normalizeCustomCliPlatforms,
-  normalizeHomeCliColumns
+  migrateLegacyCliConfig
 };
