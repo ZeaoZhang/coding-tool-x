@@ -34,16 +34,27 @@ function resolveMcpPlatform(platform) {
   return { key, driverId };
 }
 
+function resolveMcpExportPlatform(platform) {
+  const resolved = resolveMcpPlatform(platform);
+  if (resolved.error) return resolved;
+
+  const runtime = getPlatformRuntime();
+  const driver = runtime.getDriver(resolved.key, 'mcp');
+  if (!driver || typeof driver.export !== 'function') {
+    return { error: createCapabilityError(resolved.key, 'unsupported') };
+  }
+
+  return { key: resolved.key, driver };
+}
+
 function getMcpExportFormats() {
   const formats = new Set(['json']);
   const registry = getPlatformRegistry();
-  const runtime = getPlatformRuntime();
 
   for (const definition of registry.list()) {
-    const resolved = resolveMcpPlatform(definition.key);
+    const resolved = resolveMcpExportPlatform(definition.key);
     if (resolved.error) continue;
-    const driver = runtime.getDriver(resolved.key, 'mcp');
-    if (driver && typeof driver.export === 'function') formats.add(resolved.key);
+    formats.add(resolved.key);
   }
 
   return formats;
@@ -330,11 +341,17 @@ router.get('/export', (req, res) => {
   try {
     const format = normalizePlatformKey(req.query.format || 'json');
 
-    if (!getMcpExportFormats().has(format)) {
-      return res.status(400).json({
-        success: false,
-        error: `无效的导出格式: ${format}`
-      });
+    if (format !== 'json') {
+      const resolved = resolveMcpExportPlatform(format);
+      if (resolved.error) {
+        if (resolved.error.code === 'not_found') {
+          return res.status(400).json({
+            success: false,
+            error: `无效的导出格式: ${format}`
+          });
+        }
+        return sendCapabilityError(res, resolved.error, 404);
+      }
     }
 
     const result = mcpService.exportServers(format);
@@ -356,11 +373,17 @@ router.get('/export/download', (req, res) => {
   try {
     const format = normalizePlatformKey(req.query.format || 'json');
 
-    if (!getMcpExportFormats().has(format)) {
-      return res.status(400).json({
-        success: false,
-        error: `无效的导出格式: ${format}`
-      });
+    if (format !== 'json') {
+      const resolved = resolveMcpExportPlatform(format);
+      if (resolved.error) {
+        if (resolved.error.code === 'not_found') {
+          return res.status(400).json({
+            success: false,
+            error: `无效的导出格式: ${format}`
+          });
+        }
+        return sendCapabilityError(res, resolved.error, 404);
+      }
     }
 
     const result = mcpService.exportServers(format);
