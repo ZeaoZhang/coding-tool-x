@@ -174,6 +174,8 @@ import AgentDetailDrawer from './AgentDetailDrawer.vue'
 import AgentFormModal from './AgentFormModal.vue'
 import { getPlatformConfig } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
+import { getRoutePlatform } from '../config/platformCatalog'
 
 const props = defineProps({
   hideBack: {
@@ -195,6 +197,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'updated'])
+const platformStore = usePlatformStore()
 const route = useRoute()
 const agents = ref([])
 const loading = ref(false)
@@ -209,18 +212,12 @@ const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
 let detailRequestId = 0
-const platformStore = usePlatformStore()
-const managedAgentPlatforms = computed(() => platformStore.all
-  .filter(platform => platform.capabilities?.agents === true)
-  .map(platform => platform.key))
+const { byCapability } = useEnabledCliPlatforms()
+const managedAgentPlatforms = computed(() => byCapability('agents').map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (managedAgentPlatforms.value.includes(props.platform)) {
-    return props.platform;
-  }
-  const channel = route.meta.channel
-  if (managedAgentPlatforms.value.includes(channel)) return channel
-  return 'claude'
+  const requested = String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
+  return requested
 })
 
 const agentUsageHint = computed(() =>

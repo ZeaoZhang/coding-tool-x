@@ -3,8 +3,7 @@
     <!-- 渠道头部 -->
     <div
       class="channel-header"
-      :class="[channelType, { 'custom-cli': platformConfig.custom }]"
-      :style="platformConfig.custom ? { '--channel-accent': accentColor } : null"
+      :class="channelType"
     >
       <!-- 拖拽手柄 -->
       <div class="drag-handle" title="拖拽排序">
@@ -21,8 +20,8 @@
       <h2 class="channel-title">{{ channelTitle }}</h2>
 
       <!-- 配置入口 -->
-      <div v-if="platformConfig.supportsManagedConfig !== false" class="claude-extra-area">
-        <n-tooltip trigger="hover">
+      <div v-if="managedConfigCapability" class="claude-extra-area">
+        <n-tooltip v-if="supportsResource('skills')" trigger="hover">
           <template #trigger>
             <n-button
               text
@@ -39,7 +38,7 @@
           </template>
           Skills 技能管理
         </n-tooltip>
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="supportsResource('commands')" trigger="hover">
           <template #trigger>
             <n-button
               text
@@ -56,7 +55,7 @@
           </template>
           Commands 命令管理
         </n-tooltip>
-        <n-tooltip v-if="platformConfig.supportsAgents !== false" trigger="hover">
+        <n-tooltip v-if="supportsResource('agents')" trigger="hover">
           <template #trigger>
             <n-button
               text
@@ -94,7 +93,7 @@
     <!-- 滚动内容区 -->
     <div v-if="!isLocked" class="channel-content">
       <!-- 代理控制 -->
-      <div v-if="platformConfig.supportsProxy !== false" class="card">
+      <div v-if="supportsCapability('proxy')" class="card">
         <div class="card-header">
           <n-icon :size="16">
             <PowerOutline />
@@ -120,7 +119,7 @@
               </n-text>
               <span v-if="channelType !== 'omp'" class="proxy-port">端口: {{ proxyState.port }}</span>
             </div>
-            <n-popover trigger="click" placement="bottom" :width="320" class="channel-popover">
+            <n-popover v-if="supportsCapability('channels')" trigger="click" placement="bottom" :width="320" class="channel-popover">
               <template #trigger>
                 <n-button text size="tiny" class="channel-status">
                   <span class="channel-name">{{ statusText }}</span>
@@ -199,7 +198,7 @@
           <div class="quick-access-list">
             <div
               class="access-card access-card-projects"
-              :class="{ clickable: platformConfig.supportsProjects !== false, disabled: platformConfig.supportsProjects === false }"
+              :class="{ clickable: supportsCapability('projects'), disabled: !supportsCapability('projects') }"
               @click="goToProjects"
             >
               <div class="access-icon">
@@ -212,7 +211,7 @@
             </div>
             <div
               class="access-card access-card-sessions"
-              :class="{ clickable: platformConfig.supportsSessions !== false, disabled: platformConfig.supportsSessions === false }"
+              :class="{ clickable: supportsCapability('sessions'), disabled: !supportsCapability('sessions') }"
               @click="openRecentSessions"
             >
               <div class="access-icon">
@@ -225,7 +224,7 @@
             </div>
             <div
               class="access-card access-card-goto"
-              :class="{ clickable: platformConfig.supportsProjects !== false, disabled: platformConfig.supportsProjects === false }"
+              :class="{ clickable: supportsCapability('projects'), disabled: !supportsCapability('projects') }"
               @click="goToChannelPage"
             >
               <div class="access-icon">
@@ -241,7 +240,7 @@
       </div>
 
       <!-- 今日数据 -->
-      <div class="card stats-card" :class="`stats-card-${channelType}`">
+      <div v-if="supportsCapability('statistics')" class="card stats-card" :class="`stats-card-${channelType}`">
         <div class="card-header compact">
           <n-icon :size="14">
             <TrendingUpOutline />
@@ -276,13 +275,13 @@
       </div>
 
       <!-- Model Usage Chart (Collapsible) -->
-      <div class="card chart-card" :class="`chart-card-${channelType}`" v-if="Object.keys(modelStats).length > 0">
+      <div class="card chart-card" :class="`chart-card-${channelType}`" v-if="supportsCapability('statistics') && Object.keys(modelStats).length > 0">
         <n-collapse :default-expanded-names="[]" accordion>
         </n-collapse>
       </div>
 
       <!-- 实时日志 -->
-      <div v-if="showLogs" class="card logs-card">
+      <div v-if="showLogs && supportsKnownRuntime()" class="card logs-card">
         <div class="card-header compact">
           <n-icon :size="14">
             <RadioOutline />
@@ -323,6 +322,9 @@
             <template v-else-if="channelType === 'opencode' || channelType === 'omp'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">推理</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
+              <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
+            </template>
+            <template v-else>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
             <div class="log-col col-time" :class="`col-time-${channelType}`">时间</div>
@@ -386,6 +388,9 @@
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cached') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
+                <template v-else>
+                  <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
+                </template>
                 <div class="log-col col-time" :class="`col-time-${channelType}`">{{ log.time }}</div>
               </template>
             </div>
@@ -412,7 +417,7 @@
 
     <!-- 最新对话抽屉 -->
     <RecentSessionsDrawer
-      v-if="platformConfig.supportsSessions !== false"
+      v-if="supportsCapability('sessions')"
       v-model:visible="showRecentSessions"
       :channel="channelType"
     />
@@ -443,21 +448,13 @@ import {
 } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
 import { useDashboard } from '../../composables/useDashboard'
-import { useUIConfig } from '../../composables/useUIConfig'
-import { getPlatformConfig } from '../../config/platforms'
 import { usePlatformStore } from '../../stores/platforms'
-import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
 import {
   getUIConfig,
   updateNestedUIConfig
 } from '../../api/ui-config'
-import {
-  updateChannel,
-  updateCodexChannel,
-  updateGeminiChannel,
-  updateOpenCodeChannel,
-  updateOmpChannel
-} from '../../api/channels'
+import RecentSessionsDrawer from '../RecentSessionsDrawer.vue'
+import { updateChannelForPlatform } from '../../api/channels'
 
 const props = defineProps({
   channelType: {
@@ -467,22 +464,12 @@ const props = defineProps({
 })
 
 const router = useRouter()
-const message = useMessage()
-const { uiConfig } = useUIConfig()
 const platformStore = usePlatformStore()
+const message = useMessage()
 const {
-  claudeProxy,
-  codexProxy,
-  geminiProxy,
-  opencodeProxy,
-  ompProxy,
-  claudeChannels,
-  codexChannels,
-  geminiChannels,
-  opencodeChannels,
-  ompChannels,
-  schedulerState,
   getProxyState,
+  getChannels,
+  getSchedulerState,
   startProxy,
   stopProxy,
   getLogs,
@@ -495,42 +482,25 @@ const {
 // Dashboard 聚合数据
 const { dashboardData, isLoading: dashboardLoading, loadDashboard, scheduleRefresh } = useDashboard()
 
-// 渠道配置
-const platformConfig = computed(() => platformStore.get(props.channelType)
-  || getPlatformConfig(props.channelType, [], uiConfig.value.customCliPlatforms))
+const platformConfig = computed(() => platformStore.get(props.channelType) || {
+  key: props.channelType,
+  label: props.channelType,
+  title: props.channelType,
+  icon: TerminalOutline,
+  color: '#64748b',
+  capabilities: {},
+  resourceTypes: {}
+})
 const channelTitle = computed(() => platformConfig.value.title || platformConfig.value.label || props.channelType)
 const channelIcon = computed(() => platformConfig.value.icon || TerminalOutline)
 const accentColor = computed(() => platformConfig.value.color || '#64748b')
+// 目录 label 是所有平台的唯一展示名称来源。
+const channelTypeName = computed(() => (
+  platformConfig.value.label || platformConfig.value.title || props.channelType
+))
 
-// 代理状态（根据渠道类型选择）
-const proxyState = computed(() => {
-  if (props.channelType === 'claude') return claudeProxy.value
-  if (props.channelType === 'codex') return codexProxy.value
-  if (props.channelType === 'gemini') return geminiProxy.value
-  if (props.channelType === 'opencode') return opencodeProxy.value
-  if (props.channelType === 'omp') return ompProxy.value
-  if (platformConfig.value.custom) {
-    return {
-      running: false,
-      loading: false,
-      activeChannel: null,
-      port: null,
-      runtime: null,
-      startTime: null
-    }
-  }
-  return {}
-})
-
-// 渠道类型名称
-const channelTypeName = computed(() => {
-  if (props.channelType === 'claude') return 'Claude'
-  if (props.channelType === 'codex') return 'Codex'
-  if (props.channelType === 'gemini') return 'Gemini'
-  if (props.channelType === 'opencode') return 'OpenCode'
-  if (props.channelType === 'omp') return 'OMP'
-  return platformConfig.value.label || props.channelType
-})
+// 代理状态和渠道列表按目录 key 读取，未知 key 不回退到 Claude。
+const proxyState = computed(() => getProxyState(props.channelType)?.value || {})
 
 // 统计数据
 const stats = ref({ projects: 0, sessions: 0 })
@@ -552,9 +522,8 @@ const statPrecision = {
   tokens: 0,
   cost: 3
 }
-
-// 动画计时器ID
-let animationFrameIds = {
+// 动画计时器 ID
+const animationFrameIds = {
   requests: null,
   tokens: null,
   cost: null
@@ -614,12 +583,8 @@ const showRecentSessions = ref(false)
 
 // localStorage key
 const LOCK_STORAGE_KEY = 'channelLocks'
-const CHANNEL_COLLAPSE_STORAGE_KEYS = {
-  claude: 'claudeChannelCollapse',
-  codex: 'codexChannelCollapse',
-  gemini: 'geminiChannelCollapse',
-  opencode: 'opencodeChannelCollapse',
-  omp: 'ompChannelCollapse'
+function getChannelCollapseStorageKey() {
+  return `${props.channelType}ChannelCollapse`
 }
 
 // 从 localStorage 读取锁定状态
@@ -751,20 +716,10 @@ const runtimeDisplay = computed(() => {
 // 日志
 const logsContainer = ref(null)
 const maxLogs = computed(() => logLimit.value)
-const logStreams = {
-  claude: getLogs('claude'),
-  codex: getLogs('codex'),
-  gemini: getLogs('gemini'),
-  opencode: getLogs('opencode'),
-  omp: getLogs('omp')
-}
 const logsToDisplay = computed(() => {
-  if (!supportsKnownRuntime()) {
-    return []
-  }
-  const stream = logStreams[props.channelType]
-  if (!stream) return []
-  const list = stream.value || []
+  if (!supportsKnownRuntime()) return []
+  const stream = getLogs(props.channelType)
+  const list = stream?.value || []
   return list.slice(0, maxLogs.value)
 })
 let latestLogId = null
@@ -773,27 +728,19 @@ let timeIntervalId = null
 let componentMounted = false
 let statsDebounceTimer = null
 
-// 渠道列表 - 使用 Pinia store 的共享数据，启用的排前面
+// 渠道列表来自按 key 分片的全局 store。
 const channels = computed(() => {
-  let list = []
-  if (props.channelType === 'claude') list = claudeChannels.value || []
-  else if (props.channelType === 'codex') list = codexChannels.value || []
-  else if (props.channelType === 'gemini') list = geminiChannels.value || []
-  else if (props.channelType === 'opencode') list = opencodeChannels.value || []
-  else if (props.channelType === 'omp') list = ompChannels.value || []
-
-  // 启用的排前面，禁用的排后面
+  const list = getChannels(props.channelType)?.value || []
   const enabled = list.filter(ch => ch.enabled !== false)
   const disabled = list.filter(ch => ch.enabled === false)
   return [...enabled, ...disabled]
 })
 
-// 获取渠道的实时并发数
 function getChannelInflight(channelId) {
-  const scheduler = schedulerState[props.channelType]
-  if (!scheduler || !scheduler.channels) return 0
-  const ch = scheduler.channels.find(c => c.id === channelId)
-  return ch ? ch.inflight : 0
+  const scheduler = getSchedulerState(props.channelType)
+  if (!scheduler?.channels) return 0
+  const channel = scheduler.channels.find(item => item.id === channelId)
+  return channel ? channel.inflight : 0
 }
 
 // 当前状态文本
@@ -829,8 +776,21 @@ function formatLogToken(log, key) {
   return log?.tokens?.[key] || 0
 }
 
+function supportsCapability(capability) {
+  return platformStore.hasCapability(props.channelType, capability)
+}
+
+function supportsResource(resourceType) {
+  return supportsCapability(resourceType)
+    || platformConfig.value.resourceTypes?.[resourceType] === true
+}
+
+const managedConfigCapability = computed(() => (
+  ['skills', 'commands', 'agents', 'plugins'].some(supportsResource)
+))
+
 function supportsKnownRuntime() {
-  return platformStore.hasCapability(props.channelType, 'channels')
+  return supportsCapability('channels') || supportsCapability('proxy')
 }
 
 function getLogTitle(log) {
@@ -934,12 +894,13 @@ function formatTime(timestamp) {
 
 // 处理代理切换
 async function handleProxyToggle(value) {
-  if (platformConfig.value.supportsProxy === false || !supportsKnownRuntime()) {
+  if (!supportsCapability('proxy')) {
     message.warning(`${channelTitle.value} 暂未接入动态代理`)
     return
   }
-  const proxyState = getProxyState(props.channelType)
-  proxyState.value.loading = true
+  const proxyStateRef = getProxyState(props.channelType)
+  if (!proxyStateRef) return
+  proxyStateRef.value.loading = true
   try {
     let result
     if (value) {
@@ -957,37 +918,37 @@ async function handleProxyToggle(value) {
     } else {
       message.error(result.error || '操作失败')
       // 回滚状态
-      proxyState.value.running = !value
+      proxyStateRef.value.running = !value
     }
   } catch (error) {
     message.error(error.response?.data?.error || error.message || '操作失败')
     // 回滚状态
-    proxyState.value.running = !value
+    proxyStateRef.value.running = !value
   } finally {
-    proxyState.value.loading = false
+    proxyStateRef.value.loading = false
   }
 }
 
 // 跳转到项目列表
 function goToProjects() {
-  if (platformConfig.value.supportsProjects === false || !supportsKnownRuntime()) {
+  if (!supportsCapability('projects')) {
     message.info(`${channelTitle.value} 当前仅作为首页显示项`)
     return
   }
-  router.push({ name: `${props.channelType}-projects` })
+  router.push({ name: 'cli-projects', params: { platform: props.channelType } })
 }
 
 // 跳转到渠道单独页面
 function goToChannelPage() {
-  if (platformConfig.value.supportsProjects === false || !supportsKnownRuntime()) {
+  if (!supportsCapability('projects')) {
     message.info(`${channelTitle.value} 当前仅作为首页显示项`)
     return
   }
-  router.push({ name: `${props.channelType}-projects` })
+  router.push({ name: 'cli-projects', params: { platform: props.channelType } })
 }
 
 function openRecentSessions() {
-  if (platformConfig.value.supportsSessions === false || !supportsKnownRuntime()) {
+  if (!supportsCapability('sessions')) {
     message.info(`${channelTitle.value} 当前没有托管会话列表`)
     return
   }
@@ -1011,7 +972,7 @@ function setQuickToggleLoading(channelId, value) {
 
 async function syncChannelCollapseForToggle(channelId, enabled) {
   if (!channelId) return
-  const storageKey = CHANNEL_COLLAPSE_STORAGE_KEYS[props.channelType]
+  const storageKey = getChannelCollapseStorageKey()
   let collapse = {}
 
   try {
@@ -1044,27 +1005,11 @@ async function handleQuickToggle(channel, enabled) {
   if (!channel || isQuickToggleLoading(channel.id)) return
   setQuickToggleLoading(channel.id, true)
   try {
-    let updateFn
-    if (props.channelType === 'claude') {
-      updateFn = updateChannel
-    } else if (props.channelType === 'codex') {
-      updateFn = updateCodexChannel
-    } else if (props.channelType === 'gemini') {
-      updateFn = updateGeminiChannel
-    } else if (props.channelType === 'opencode') {
-      updateFn = updateOpenCodeChannel
-    } else if (props.channelType === 'omp') {
-      updateFn = updateOmpChannel
-    }
-
-    if (updateFn) {
-      await updateFn(channel.id, { enabled })
-      await syncChannelCollapseForToggle(channel.id, enabled)
-      message.success(enabled ? `渠道「${channel.name}」已启用` : `渠道「${channel.name}」已停用`)
-      // 使用全局 store 的 loadChannels 刷新数据
-      await loadGlobalChannels({ force: true })
-      window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: props.channelType } }))
-    }
+    await updateChannelForPlatform(props.channelType, channel.id, { enabled })
+    await syncChannelCollapseForToggle(channel.id, enabled)
+    message.success(enabled ? `渠道「${channel.name}」已启用` : `渠道「${channel.name}」已停用`)
+    await loadGlobalChannels({ force: true, keys: [props.channelType] })
+    window.dispatchEvent(new CustomEvent('channel-management-refresh', { detail: { channel: props.channelType } }))
   } catch (error) {
     message.error('操作失败: ' + error.message)
   } finally {
@@ -1124,7 +1069,7 @@ function openCommandsManager(event) {
 }
 
 function openAgentsManager(event) {
-  if (platformConfig.value.supportsAgents === false) {
+  if (!supportsResource('agents')) {
     message.info(`${channelTitle.value} 的 Agent 能力通过插件/扩展提供`)
     blurShortcutButton(event)
     return
@@ -1256,14 +1201,6 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #0f9f9a, rgba(15, 159, 154, 0.3));
 }
 
-.channel-header.custom-cli {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--channel-accent, #64748b) 12%, transparent) 0%, var(--bg-secondary) 100%);
-}
-
-.channel-header.custom-cli::after {
-  background: linear-gradient(90deg, var(--channel-accent, #64748b), color-mix(in srgb, var(--channel-accent, #64748b) 32%, transparent));
-}
-
 .header-icon {
   width: 36px;
   height: 36px;
@@ -1296,11 +1233,6 @@ onUnmounted(() => {
 
 .channel-header.omp .header-icon {
   background: linear-gradient(135deg, #0f9f9a 0%, #0f766e 100%);
-  color: white;
-}
-
-.channel-header.custom-cli .header-icon {
-  background: linear-gradient(135deg, var(--channel-accent, #64748b) 0%, color-mix(in srgb, var(--channel-accent, #64748b) 72%, #0f172a) 100%);
   color: white;
 }
 

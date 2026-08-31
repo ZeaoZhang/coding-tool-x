@@ -16,8 +16,8 @@ beforeEach(() => {
 describe('global web store proxy channel state', () => {
   test('keeps existing api keys when proxy-state channels are sanitized', () => {
     const store = useGlobalStore();
-
-    store.codexChannels = [
+    const channels = store.getChannels('codex');
+    channels.value = [
       {
         id: 'codex-1',
         name: 'Codex Test',
@@ -44,7 +44,7 @@ describe('global web store proxy channel state', () => {
       ]
     });
 
-    expect(store.codexChannels).toEqual([
+    expect(store.getChannels('codex').value).toEqual([
       expect.objectContaining({
         id: 'codex-1',
         apiKey: 'sk-test-secret',
@@ -57,30 +57,31 @@ describe('global web store proxy channel state', () => {
 
   test('does not invent api keys for channels that never had one loaded', () => {
     const store = useGlobalStore();
+    const channels = store.getChannels('codex');
+    channels.value = [];
 
-    store.geminiChannels = [];
     store.handleProxyStateUpdate({
       type: 'proxy-state',
-      source: 'gemini',
+      source: 'codex',
       proxy: { running: true },
       channels: [
         {
-          id: 'gemini-1',
-          name: 'Gemini Test',
+          id: 'codex-1',
+          name: 'Codex Test',
           enabled: true
         }
       ]
     });
 
-    expect(store.geminiChannels).toEqual([
+    expect(store.getChannels('codex').value).toEqual([
       expect.not.objectContaining({
         apiKey: expect.any(String)
       })
     ]);
   });
 
-  test('uses dashboard hydration instead of reloading every channel endpoint', async () => {
-    const store = useGlobalStore()
+  test('hydrates keyed enabled channel state from the dashboard', () => {
+    const store = useGlobalStore();
     store.hydrateFromDashboard({
       channels: {
         claude: [{ id: 'claude-1', name: 'Claude' }],
@@ -90,17 +91,20 @@ describe('global web store proxy channel state', () => {
         omp: [{ id: 'omp-1', name: 'OMP' }]
       },
       proxyStatus: {}
-    })
+    });
 
-    const result = await store.loadChannels()
-
-    expect(store.dashboardHydrated).toBe(true)
-    expect(result.channels).toEqual({
+    expect(store.dashboardHydrated).toBe(true);
+    expect({
+      claude: store.getChannels('claude').value,
+      codex: store.getChannels('codex').value,
+      opencode: store.getChannels('opencode').value,
+      omp: store.getChannels('omp').value
+    }).toEqual({
       claude: [{ id: 'claude-1', name: 'Claude' }],
       codex: [{ id: 'codex-1', name: 'Codex' }],
-      gemini: [{ id: 'gemini-1', name: 'Gemini' }],
       opencode: [{ id: 'opencode-1', name: 'OpenCode' }],
       omp: [{ id: 'omp-1', name: 'OMP' }]
-    })
-  })
+    });
+    expect(store.getChannels('gemini')).toBeNull();
+  });
 });

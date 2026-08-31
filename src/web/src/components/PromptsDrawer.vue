@@ -141,13 +141,13 @@
                 <div class="card-apps">
                   <span class="apps-label">生效范围:</span>
                   <n-tag
-                    v-for="app in promptApps"
-                    :key="app"
-                    :type="preset.apps?.[app] ? 'success' : 'default'"
+                    v-for="platform in promptPlatforms"
+                    :key="platform.key"
+                    :type="preset.apps?.[platform.key] ? 'success' : 'default'"
                     size="tiny"
                     :bordered="false"
                   >
-                    {{ appLabels[app] }}
+                    {{ platform.promptLabel || platform.label || platform.title || platform.key }}
                   </n-tag>
                 </div>
 
@@ -167,6 +167,7 @@
     v-model:visible="showForm"
     :editing-preset="editingPreset"
     :existing-ids="existingIds"
+    :platforms="promptPlatforms"
     @saved="handleSaved"
   />
 </template>
@@ -182,6 +183,7 @@ import { getAllPresets, activatePreset, deletePreset, importFromPlatform, deacti
 import message, { dialog } from '../utils/message'
 import PromptsFormDrawer from './PromptsFormDrawer.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 
 const { drawerWidth } = useResponsiveDrawer(720)
 
@@ -206,15 +208,8 @@ const showForm = ref(false)
 const editingPreset = ref(null)
 const activatingId = ref(null)
 const deactivating = ref(false)
-const promptApps = ['claude', 'codex', 'gemini', 'opencode', 'omp']
-const appLabels = {
-  claude: 'Claude',
-  codex: 'Codex',
-  gemini: 'Gemini',
-  opencode: 'OpenCode',
-  omp: 'OMP'
-}
-
+const { byCapability } = useEnabledCliPlatforms()
+const promptPlatforms = computed(() => byCapability('prompts'))
 const presetList = computed(() => {
   const list = Object.values(presets.value)
 
@@ -249,12 +244,10 @@ const stats = computed(() => {
   }
 })
 
-const importOptions = [
-  { label: '从 Claude 导入', key: 'claude' },
-  { label: '从 Codex 导入', key: 'codex' },
-  { label: '从 Gemini 导入', key: 'gemini' },
-  { label: '从 OpenCode 导入', key: 'opencode' }
-]
+const importOptions = computed(() => promptPlatforms.value.map(platform => ({
+  label: `从 ${platform.promptLabel || platform.label || platform.title || platform.key} 导入`,
+  key: platform.key
+})))
 
 // 截断内容用于预览
 function truncateContent(content) {

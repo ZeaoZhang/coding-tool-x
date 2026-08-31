@@ -21,7 +21,7 @@ test('resolves built-ins and rejects a user override', () => {
   expect(registry.diagnostics()).toEqual([]);
 });
 
-test('legacy customCliPlatforms remain readable as registry metadata', () => {
+test('legacy customCliPlatforms do not enter the registry', () => {
   const registry = createPlatformRegistry({
     builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: {} }],
     legacyUiConfig: {
@@ -30,13 +30,8 @@ test('legacy customCliPlatforms remain readable as registry metadata', () => {
     userFile: { platforms: [] }
   });
 
-  expect(registry.resolve('demo-cli')).toEqual(expect.objectContaining({
-    key: 'demo-cli',
-    label: 'Demo',
-    command: 'demo',
-    custom: true
-  }));
-  expect(registry.getCapability('demo-cli', 'proxy')).toBe('unsupported');
+  expect(registry.resolve('demo-cli')).toBeNull();
+  expect(registry.list().map(platform => platform.key)).toEqual(['claude']);
 });
 
 test('invalid user driver IDs are rejected with an explicit diagnostic reason', () => {
@@ -60,6 +55,38 @@ test('invalid user driver IDs are rejected with an explicit diagnostic reason', 
   }));
 });
 
+test('user manifests cannot select reserved legacy capability drivers', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: {} }],
+    userFile: {
+      platforms: [
+        {
+          key: 'demo-cli',
+          label: 'Demo',
+          command: 'demo',
+          capabilities: { sessions: 'legacy:claude' }
+        },
+        {
+          key: 'generic-cli',
+          label: 'Generic',
+          command: 'generic',
+          capabilities: { sessions: 'generic-jsonl' }
+        }
+      ]
+    }
+  });
+
+  expect(registry.resolve('demo-cli')).toBeNull();
+  expect(registry.resolve('generic-cli').label).toBe('Generic');
+  expect(registry.diagnostics()).toEqual([
+    expect.objectContaining({
+      key: 'demo-cli',
+      source: 'userFile',
+      reason: expect.stringMatching(/legacy|reserved/i)
+    })
+  ]);
+});
+
 test('public definitions expose support flags without internal driver configuration', () => {
   const registry = createPlatformRegistry({
     builtIns: [{
@@ -70,7 +97,8 @@ test('public definitions expose support flags without internal driver configurat
       iconToken: 'terminal',
       color: '#123456',
       defaultVisible: true,
-      apiBasePath: '/api/demo',
+      promptLabel: 'Demo prompt',
+      resourceTypes: { skills: true, commands: false },
       logFile: 'demo.log',
       portKey: 'demoProxy',
       defaultPort: 18080,
@@ -93,12 +121,34 @@ test('public definitions expose support flags without internal driver configurat
     iconToken: 'terminal',
     color: '#123456',
     defaultVisible: true,
+    promptLabel: 'Demo prompt',
+    resourceTypes: { skills: true, commands: false },
     capabilities: {
       sessions: true,
       proxy: false,
       resourceSync: true
     }
   });
+});
+
+test('built-in manifests expose MCP and valid prompt capabilities', () => {
+  const registry = createPlatformRegistry({ userFile: { platforms: [] } });
+
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
+    expect(registry.getCapability(platform, 'mcp')).toBe(`legacy:${platform}`);
+    expect(registry.getCapability(platform, 'prompts')).toBe(`legacy:${platform}`);
+    expect(registry.getPublicDefinition(platform).capabilities).toEqual(expect.objectContaining({
+      mcp: true,
+      prompts: true
+    }));
+  }
+
+  expect(registry.getCapability('omp', 'mcp')).toBe('legacy:omp');
+  expect(registry.getCapability('omp', 'prompts')).toBeNull();
+  expect(registry.getPublicDefinition('omp').capabilities).toEqual(expect.objectContaining({
+    mcp: true
+  }));
+  expect(registry.getPublicDefinition('omp').capabilities.prompts).toBeUndefined();
 });
 
 test('explicit registry inputs do not load PATHS configuration', () => {

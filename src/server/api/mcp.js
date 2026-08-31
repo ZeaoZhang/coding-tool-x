@@ -5,8 +5,60 @@
 const express = require('express');
 const router = express.Router();
 const mcpService = require('../services/mcp-service');
-const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'omp'];
+const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
+
+function normalizePlatformKey(platform) {
+  return String(platform || '').trim().toLowerCase();
+}
+
+function createCapabilityError(platform, code) {
+  const key = normalizePlatformKey(platform);
+  const error = new Error(code === 'not_found'
+    ? `无效的平台: ${key}`
+    : `平台 ${key} 未声明 mcp capability`);
+  error.status = 404;
+  error.code = code;
+  error.platform = key;
+  error.capability = 'mcp';
+  return error;
+}
+
+function resolveMcpPlatform(platform) {
+  const key = normalizePlatformKey(platform);
+  const registry = getPlatformRegistry();
+  if (!registry.resolve(key)) return { error: createCapabilityError(key, 'not_found') };
+  const driverId = registry.getCapability(key, 'mcp');
+  if (!driverId || driverId === 'unsupported') {
+    return { error: createCapabilityError(key, 'unsupported') };
+  }
+  return { key, driverId };
+}
+
+function getMcpExportFormats() {
+  const formats = new Set(['json']);
+  const registry = getPlatformRegistry();
+  const runtime = getPlatformRuntime();
+
+  for (const definition of registry.list()) {
+    const resolved = resolveMcpPlatform(definition.key);
+    if (resolved.error) continue;
+    const driver = runtime.getDriver(resolved.key, 'mcp');
+    if (driver && typeof driver.export === 'function') formats.add(resolved.key);
+  }
+
+  return formats;
+}
+
+function sendCapabilityError(res, error, fallbackStatus = 400) {
+  const status = error?.status === 404 && error?.code ? 404 : fallbackStatus;
+  return res.status(status).json({
+    success: false,
+    error: error.message,
+    code: error.code || undefined,
+    platform: error.platform || undefined,
+    capability: error.capability || undefined
+  });
+}
 
 /**
  * GET /api/mcp/servers
@@ -177,29 +229,20 @@ router.get('/presets', (req, res) => {
  */
 router.post('/import/:platform', async (req, res) => {
   try {
-    const { platform } = req.params;
+    const resolved = resolveMcpPlatform(req.params.platform);
+    if (resolved.error) return sendCapabilityError(res, resolved.error, 404);
 
-    if (!MCP_PLATFORMS.includes(platform)) {
-      return res.status(400).json({
-        success: false,
-        error: `无效的平台: ${platform}`
-      });
-    }
-
-    const count = await mcpService.importFromPlatform(platform);
+    const count = await mcpService.importFromPlatform(resolved.key);
     res.json({
       success: true,
       imported: count,
       message: count > 0
-        ? `成功从 ${platform} 导入 ${count} 个 MCP 服务器`
-        : `${platform} 没有可导入的 MCP 服务器`
+        ? `成功从 ${resolved.key} 导入 ${count} 个 MCP 服务器`
+        : `${resolved.key} 没有可导入的 MCP 服务器`
     });
   } catch (error) {
     console.error('[MCP API] Import failed:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 500);
   }
 });
 
@@ -285,9 +328,9 @@ router.post('/servers/order', (req, res) => {
  */
 router.get('/export', (req, res) => {
   try {
-    const format = req.query.format || 'json';
+    const format = normalizePlatformKey(req.query.format || 'json');
 
-    if (!MCP_EXPORT_FORMATS.includes(format)) {
+    if (!getMcpExportFormats().has(format)) {
       return res.status(400).json({
         success: false,
         error: `无效的导出格式: ${format}`
@@ -301,10 +344,7 @@ router.get('/export', (req, res) => {
     });
   } catch (error) {
     console.error('[MCP API] Export failed:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 500);
   }
 });
 
@@ -314,9 +354,9 @@ router.get('/export', (req, res) => {
  */
 router.get('/export/download', (req, res) => {
   try {
-    const format = req.query.format || 'json';
+    const format = normalizePlatformKey(req.query.format || 'json');
 
-    if (!MCP_EXPORT_FORMATS.includes(format)) {
+    if (!getMcpExportFormats().has(format)) {
       return res.status(400).json({
         success: false,
         error: `无效的导出格式: ${format}`
@@ -325,15 +365,12 @@ router.get('/export/download', (req, res) => {
 
     const result = mcpService.exportServers(format);
 
-    res.setHeader('Content-Type', format === 'codex' ? 'application/toml' : 'application/json');
+    res.setHeader('Content-Type', result.contentType || 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.content);
   } catch (error) {
     console.error('[MCP API] Export download failed:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 500);
   }
 });
 

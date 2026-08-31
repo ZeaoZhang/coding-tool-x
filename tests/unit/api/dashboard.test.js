@@ -35,6 +35,7 @@ const GEMINI_STATS_PATH            = require.resolve('../../../src/server/servic
 const OPENCODE_STATS_PATH          = require.resolve('../../../src/server/services/opencode-statistics-service');
 const OMP_STATS_PATH               = require.resolve('../../../src/server/services/omp-statistics-service');
 const PATHS_PATH                   = require.resolve('../../../src/config/paths');
+const PLATFORM_RUNTIME_PATH        = require.resolve('../../../src/platforms/runtime');
 const SNAPSHOT_CACHE_PATH          = require.resolve('../../../src/server/services/snapshot-cache');
 const PROJECT_SNAPSHOTS_PATH       = require.resolve('../../../src/server/services/project-snapshots');
 const DASHBOARD_WORKER_PATH        = require.resolve('../../../src/server/services/dashboard-snapshot-worker');
@@ -66,6 +67,11 @@ let getCodexTodayStatistics;
 let getGeminiTodayStatistics;
 let getOpenCodeTodayStatistics;
 let getOmpTodayStatistics;
+let platformDefinitions;
+let platformRuntime;
+let platformRegistry;
+let platformDrivers;
+let runDashboardSourceWorker;
 
 function injectStubs() {
   delete require.cache[SNAPSHOT_CACHE_PATH];
@@ -73,7 +79,10 @@ function injectStubs() {
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-test-'));
   loadConfig               = vi.fn(() => ({ currentProject: 'test-project' }));
-  loadUIConfig             = vi.fn(() => ({ theme: 'light' }));
+  loadUIConfig             = vi.fn(() => ({
+    theme: 'light',
+    enabledCliPlatforms: ['claude', 'codex', 'gemini', 'opencode', 'omp']
+  }));
   loadFavorites            = vi.fn(() => ({ claude: [], codex: [], gemini: [], opencode: [], omp: [] }));
   getAllChannels            = vi.fn(() => []);
   getProxyStatus           = vi.fn(() => null);
@@ -95,10 +104,67 @@ function injectStubs() {
   getGeminiTodayStatistics = vi.fn(() => null);
   getOpenCodeTodayStatistics = vi.fn(() => null);
   getOmpTodayStatistics    = vi.fn(() => null);
+  platformDefinitions = [
+    { key: 'claude' },
+    { key: 'codex' },
+    { key: 'gemini' },
+    { key: 'opencode' },
+    { key: 'omp' }
+  ];
+  platformDrivers = {
+    claude: {
+      proxy: { status: getProxyStatus },
+      channels: { list: getAllChannels },
+      counts: { count: getClaudeCounts },
+      statistics: { get: getTodayStatistics }
+    },
+    codex: {
+      proxy: { status: getCodexProxyStatus },
+      channels: { list: getCodexChannels },
+      counts: { count: getCodexCounts },
+      statistics: { get: getCodexTodayStatistics }
+    },
+    gemini: {
+      proxy: { status: getGeminiProxyStatus },
+      channels: { list: getGeminiChannels },
+      counts: { count: getGeminiCounts },
+      statistics: { get: getGeminiTodayStatistics }
+    },
+    opencode: {
+      proxy: { status: getOpenCodeProxyStatus },
+      channels: { list: getOpenCodeChannels },
+      counts: { count: getOpenCodeCounts },
+      statistics: { get: getOpenCodeTodayStatistics }
+    },
+    omp: {
+      proxy: { status: getOmpProxyStatus },
+      channels: { list: getOmpChannels },
+      counts: { count: getOmpCounts },
+      statistics: { get: getOmpTodayStatistics }
+    }
+  };
+  platformRegistry = {
+    list: () => platformDefinitions
+  };
+  platformRuntime = {
+    getDriver: vi.fn((platform, capability) => platformDrivers[platform]?.[capability] || null)
+  };
+  runDashboardSourceWorker = vi.fn(async (source) => {
+    const drivers = platformDrivers[source] || {};
+    const read = async (driver, operation) => (
+      typeof driver?.[operation] === 'function' ? driver[operation]() : null
+    );
+    return {
+      channels: await read(drivers.channels, 'list'),
+      todayStats: await read(drivers.statistics, 'get'),
+      counts: await read(drivers.counts, 'count')
+    };
+  });
 
   const stub = (absPath, exports) => {
     require.cache[absPath] = { id: absPath, filename: absPath, loaded: true, exports };
   };
+  stub(DASHBOARD_WORKER_PATH, { runDashboardSourceWorker });
 
   stub(PATHS_PATH,            {
     PATHS: {
@@ -127,6 +193,10 @@ function injectStubs() {
   stub(OMP_CHANNELS_PATH,      { getChannels: getOmpChannels });
   stub(CLAUDE_STATS_PATH,      { getTodayStatistics });
   stub(CODEX_STATS_PATH,       { getTodayStatistics: getCodexTodayStatistics });
+  stub(PLATFORM_RUNTIME_PATH, {
+    getPlatformRegistry: () => platformRegistry,
+    getPlatformRuntime: () => platformRuntime
+  });
   stub(GEMINI_STATS_PATH,      { getTodayStatistics: getGeminiTodayStatistics });
   stub(OPENCODE_STATS_PATH,    { getTodayStatistics: getOpenCodeTodayStatistics });
   stub(OMP_STATS_PATH,         { getTodayStatistics: getOmpTodayStatistics });
@@ -139,7 +209,7 @@ function cleanStubs() {
     SESSIONS_PATH, CODEX_SESSIONS_PATH, GEMINI_SESSIONS_PATH, OPENCODE_SESSIONS_PATH, OMP_SESSIONS_PATH,
     CODEX_CHANNELS_PATH, GEMINI_CHANNELS_PATH, OPENCODE_CHANNELS_PATH, OMP_CHANNELS_PATH,
     CLAUDE_STATS_PATH, CODEX_STATS_PATH, GEMINI_STATS_PATH, OPENCODE_STATS_PATH, OMP_STATS_PATH,
-    PATHS_PATH, SNAPSHOT_CACHE_PATH, PROJECT_SNAPSHOTS_PATH, DASHBOARD_WORKER_PATH,
+    PATHS_PATH, PLATFORM_RUNTIME_PATH, SNAPSHOT_CACHE_PATH, PROJECT_SNAPSHOTS_PATH, DASHBOARD_WORKER_PATH,
     DASHBOARD_PATH
   ];
   paths.forEach(p => delete require.cache[p]);
@@ -241,7 +311,6 @@ describe('GET /api/dashboard/init', () => {
     getGeminiCounts.mockReturnValue({ projectCount: 0, sessionCount: 0 });
     getOpenCodeCounts.mockReturnValue({ projectCount: 2, sessionCount: 4 });
     getOmpCounts.mockReturnValue({ projectCount: 5, sessionCount: 9 });
-
     await callInit();
     await flushDashboardSnapshots();
     const res = await callInit();
@@ -323,5 +392,49 @@ describe('GET /api/dashboard/init', () => {
     const hydrated = await callInit();
     expect(getOmpCounts).toHaveBeenCalled();
     expect(hydrated._body.data.counts.omp).toEqual({ projectCount: 99, sessionCount: 101 });
+  });
+
+  it('only queries enabled registry platforms and maps generic dashboard data', async () => {
+    loadUIConfig.mockReturnValue({
+      enabledCliPlatforms: ['claude', 'demo-cli', 'not-registered', 'claude']
+    });
+    platformDefinitions.push({ key: 'demo-cli' });
+    platformDrivers['demo-cli'] = {
+      proxy: { status: vi.fn(() => ({ running: true, port: 23001 })) },
+      channels: { list: vi.fn(() => [{ id: 'demo-channel' }]) },
+      counts: { count: vi.fn(() => ({ projectCount: 8, sessionCount: 13 })) },
+      statistics: {
+        get: vi.fn(() => ({
+          summary: { requests: 4, tokens: 12, cost: 0.02 },
+          byModel: {},
+          byChannel: {}
+        }))
+      }
+    };
+
+    await callInit();
+    await flushDashboardSnapshots();
+    const res = await callInit();
+    const { data } = res._body;
+
+    expect(Object.keys(data.channels)).toEqual(['claude', 'demo-cli']);
+    expect(Object.keys(data.counts)).toEqual(['claude', 'demo-cli']);
+    expect(Object.keys(data.todayStats)).toEqual(['claude', 'demo-cli']);
+    expect(Object.keys(data.proxyStatus)).toEqual(['claude', 'demo-cli']);
+    expect(data.channels['demo-cli']).toEqual([{ id: 'demo-channel' }]);
+    expect(data.counts['demo-cli']).toEqual({ projectCount: 8, sessionCount: 13 });
+    expect(data.todayStats['demo-cli']).toEqual({
+      requests: 4,
+      tokens: 12,
+      cost: 0.02,
+      byModel: {},
+      byChannel: {}
+    });
+    expect(runDashboardSourceWorker.mock.calls.map(([source]) => source))
+      .toEqual(['claude', 'demo-cli']);
+    expect(getCodexProxyStatus).not.toHaveBeenCalled();
+    expect(getGeminiProxyStatus).not.toHaveBeenCalled();
+    expect(getOpenCodeProxyStatus).not.toHaveBeenCalled();
+    expect(getOmpProxyStatus).not.toHaveBeenCalled();
   });
 });

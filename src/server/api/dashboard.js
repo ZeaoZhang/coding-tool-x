@@ -1,15 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { loadConfig } = require('../../config/loader');
+const { DEFAULT_ENABLED_CLI_PLATFORMS } = require('../../shared/platforms');
+const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
 
 // Services
 const { loadUIConfig } = require('../services/ui-config');
 const { loadFavorites } = require('../services/favorites');
-const { getProxyStatus } = require('../proxy-server');
-const { getCodexProxyStatus } = require('../codex-proxy-server');
-const { getGeminiProxyStatus } = require('../gemini-proxy-server');
-const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
-const { getOmpProxyStatus } = require('../omp-proxy-server');
 const { getSnapshot } = require('../services/snapshot-cache');
 const { runDashboardSourceWorker } = require('../services/dashboard-snapshot-worker');
 const SNAPSHOT_TTL_MS = 60 * 1000;
@@ -23,6 +20,45 @@ function safeRead(label, reader, fallback) {
   } catch (error) {
     console.warn(`[Dashboard] ${label} failed:`, error.message);
     return fallback;
+  }
+}
+
+function resolveEnabledSources(uiConfig = {}, registry = getPlatformRegistry()) {
+  const definitions = registry?.list?.() || [];
+  const knownKeys = new Set(
+    definitions
+      .map(platform => String(platform?.key || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const requested = Array.isArray(uiConfig.enabledCliPlatforms)
+    ? uiConfig.enabledCliPlatforms
+    : DEFAULT_ENABLED_CLI_PLATFORMS;
+  const seen = new Set();
+
+  return requested
+    .map(platform => String(platform || '').trim().toLowerCase())
+    .filter(platform => {
+      if (!knownKeys.has(platform) || seen.has(platform)) return false;
+      seen.add(platform);
+      return true;
+    });
+}
+
+async function readProxyStatus(source, runtime) {
+  try {
+    const driver = runtime?.getDriver?.(source, 'proxy');
+    if (!driver || typeof driver.status !== 'function') {
+      return { status: 'unsupported', platform: source, capability: 'proxy', operation: 'status' };
+    }
+    return await driver.status();
+  } catch (error) {
+    return {
+      status: 'failed',
+      platform: source,
+      capability: 'proxy',
+      operation: 'status',
+      error: error.message
+    };
   }
 }
 
@@ -76,7 +112,10 @@ async function readDashboardSnapshot(source, fallbackValue, config = {}, options
     force: effectiveForce,
     staleWhileForce: effectiveForce,
     deferMs: DASHBOARD_SNAPSHOT_DEFER_MS,
-    refresh: () => runDashboardSourceWorker(source, config, { force: effectiveForce })
+    refresh: () => runDashboardSourceWorker(source, config, {
+      force: effectiveForce,
+      runtime: options.runtime
+    })
   });
   const snapshot = await getSnapshot(key, makeReadOptions(force));
   const generatedAtMs = Date.parse(snapshot.meta?.generatedAt || '');
@@ -139,38 +178,38 @@ function dashboardMeta(parts) {
  */
 router.get('/init', async (req, res) => {
   try {
-    const config = loadConfig();
+    const config = safeRead('config', () => loadConfig(), {});
     const force = req.query?.fresh === '1' || req.query?.force === '1';
     const uiConfig = safeRead('uiConfig', () => loadUIConfig(), {});
     const favorites = safeRead('favorites', () => loadFavorites(), {});
-    const proxyStatus = {
-      claude: safeRead('claude proxy status', () => getProxyStatus(), {}),
-      codex: safeRead('codex proxy status', () => getCodexProxyStatus(), {}),
-      gemini: safeRead('gemini proxy status', () => getGeminiProxyStatus(), {}),
-      opencode: safeRead('opencode proxy status', () => getOpenCodeProxyStatus(), {}),
-      omp: safeRead('omp proxy status', () => getOmpProxyStatus(), {})
-    };
-
-    const sources = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-    const sourceFallbackPayload = (source) => ({
-      channels: source === 'claude' ? [] : { channels: [] },
-      todayStats: null,
-      counts: EMPTY_COUNTS
-    });
+    const registry = getPlatformRegistry();
+    const runtime = getPlatformRuntime();
+    const sources = resolveEnabledSources(uiConfig, registry);
+    const sourceFallbackPayload = sourceFallback;
+    const proxyStatusEntries = await Promise.all(sources.map(async source => [
+      source,
+      await readProxyStatus(source, runtime)
+    ]));
+    const proxyStatus = Object.fromEntries(proxyStatusEntries);
     const sourceSnapshots = await Promise.all(sources.map(async (source) => {
-      const snapshot = await readDashboardSnapshot(source, sourceFallbackPayload(source), config, { force });
+      const snapshot = await readDashboardSnapshot(
+        source,
+        sourceFallbackPayload(source),
+        config,
+        { force, runtime }
+      );
       return [source, snapshot];
     }));
     const snapshotsBySource = Object.fromEntries(sourceSnapshots);
 
     const capabilitySnapshot = (source, capability) => {
       const snapshot = snapshotsBySource[source];
-      const value = snapshot.value || sourceFallbackPayload(source);
+      const value = snapshot?.value || sourceFallbackPayload(source);
       const failure = Array.isArray(value.__errors)
         ? value.__errors.find(error => error.capability === capability
           || (capability === 'todayStats' && error.capability === 'statistics'))
         : null;
-      const meta = { ...(snapshot.meta || {}) };
+      const meta = { ...(snapshot?.meta || {}) };
       if (failure) {
         meta.stale = true;
         meta.error = failure.error || 'dashboard capability failed';
@@ -186,34 +225,37 @@ router.get('/init', async (req, res) => {
       channels: summarizePart(Object.fromEntries(sources.map(source => [source, capabilitySnapshot(source, 'channels')]))),
     };
     const capabilityValueFor = (source, capability) => capabilitySnapshot(source, capability).value;
+    const channels = Object.fromEntries(sources.map(source => {
+      const value = capabilityValueFor(source, 'channels');
+      if (source === 'opencode' || source === 'omp') {
+        return [source, value?.channels || []];
+      }
+      if (source === 'claude') {
+        return [source, value || []];
+      }
+      if (Array.isArray(value)) {
+        return [source, value];
+      }
+      return [source, value || { channels: [] }];
+    }));
+    const counts = Object.fromEntries(sources.map(source => [
+      source,
+      capabilityValueFor(source, 'counts') || EMPTY_COUNTS
+    ]));
+    const todayStats = Object.fromEntries(sources.map(source => [
+      source,
+      formatStats(capabilityValueFor(source, 'todayStats'))
+    ]));
 
     res.json({
       success: true,
       data: {
         uiConfig,
         favorites,
-        channels: {
-          claude: capabilityValueFor('claude', 'channels'),
-          codex: capabilityValueFor('codex', 'channels'),
-          gemini: capabilityValueFor('gemini', 'channels'),
-          opencode: capabilityValueFor('opencode', 'channels')?.channels || [],
-          omp: capabilityValueFor('omp', 'channels')?.channels || []
-        },
+        channels,
         proxyStatus,
-        counts: {
-          claude: capabilityValueFor('claude', 'counts') || EMPTY_COUNTS,
-          codex: capabilityValueFor('codex', 'counts') || EMPTY_COUNTS,
-          gemini: capabilityValueFor('gemini', 'counts') || EMPTY_COUNTS,
-          opencode: capabilityValueFor('opencode', 'counts') || EMPTY_COUNTS,
-          omp: capabilityValueFor('omp', 'counts') || EMPTY_COUNTS
-        },
-        todayStats: {
-          claude: formatStats(capabilityValueFor('claude', 'todayStats')),
-          codex: formatStats(capabilityValueFor('codex', 'todayStats')),
-          gemini: formatStats(capabilityValueFor('gemini', 'todayStats')),
-          opencode: formatStats(capabilityValueFor('opencode', 'todayStats')),
-          omp: formatStats(capabilityValueFor('omp', 'todayStats'))
-        },
+        counts,
+        todayStats,
         meta: dashboardMeta(parts)
       }
     });

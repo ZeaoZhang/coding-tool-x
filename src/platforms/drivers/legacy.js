@@ -7,7 +7,9 @@ const MODULE_PATHS = Object.freeze({
     channels: '../../server/services/channels',
     proxy: '../../server/proxy-server',
     statistics: '../../server/services/claude-statistics-service',
-    nativeConfig: '../../server/services/settings-manager'
+    nativeConfig: '../../server/services/settings-manager',
+    mcp: '../../server/services/mcp-service',
+    prompts: '../../server/services/prompts-service'
   }),
   codex: Object.freeze({
     projects: '../../server/services/codex-sessions',
@@ -15,7 +17,9 @@ const MODULE_PATHS = Object.freeze({
     channels: '../../server/services/codex-channels',
     proxy: '../../server/codex-proxy-server',
     statistics: '../../server/services/codex-statistics-service',
-    nativeConfig: '../../server/services/codex-settings-manager'
+    nativeConfig: '../../server/services/codex-settings-manager',
+    mcp: '../../server/services/mcp-service',
+    prompts: '../../server/services/prompts-service'
   }),
   gemini: Object.freeze({
     projects: '../../server/services/gemini-sessions',
@@ -23,7 +27,9 @@ const MODULE_PATHS = Object.freeze({
     channels: '../../server/services/gemini-channels',
     proxy: '../../server/gemini-proxy-server',
     statistics: '../../server/services/gemini-statistics-service',
-    nativeConfig: '../../server/services/gemini-settings-manager'
+    nativeConfig: '../../server/services/gemini-settings-manager',
+    mcp: '../../server/services/mcp-service',
+    prompts: '../../server/services/prompts-service'
   }),
   opencode: Object.freeze({
     projects: '../../server/services/opencode-sessions',
@@ -31,14 +37,17 @@ const MODULE_PATHS = Object.freeze({
     channels: '../../server/services/opencode-channels',
     proxy: '../../server/opencode-proxy-server',
     statistics: '../../server/services/opencode-statistics-service',
-    nativeConfig: '../../server/services/opencode-settings-manager'
+    nativeConfig: '../../server/services/opencode-settings-manager',
+    mcp: '../../server/services/mcp-service',
+    prompts: '../../server/services/prompts-service'
   }),
   omp: Object.freeze({
     projects: '../../server/services/omp-sessions',
     sessions: '../../server/services/omp-sessions',
     channels: '../../server/services/omp-channels',
     proxy: '../../server/omp-proxy-server',
-    statistics: '../../server/services/omp-statistics-service'
+    statistics: '../../server/services/omp-statistics-service',
+    mcp: '../../server/services/mcp-service'
   })
 });
 
@@ -213,6 +222,22 @@ const RESOURCE_SYNC_METHODS = Object.freeze({
   gemini: Object.freeze({ sync: 'syncToGemini', remove: 'removeFromGemini' }),
   opencode: Object.freeze({ sync: 'syncToOpenCode', remove: 'removeFromOpenCode' }),
   omp: Object.freeze({ sync: 'syncToOmp', remove: 'removeFromOmp' })
+});
+
+const LEGACY_FILE_EXPORTS = Object.freeze({
+  mcp: Object.freeze({
+    read: 'readPlatformMcpConfig',
+    write: 'writePlatformMcpConfig',
+    remove: 'removePlatformMcpServer',
+    sync: 'syncPlatformMcpServer',
+    import: 'importPlatformMcpServers',
+    export: 'exportPlatformMcpServers'
+  }),
+  prompts: Object.freeze({
+    read: 'readLegacyPlatformPrompt',
+    write: 'writeLegacyPlatformPrompt',
+    remove: 'removeLegacyPlatformPrompt'
+  })
 });
 
 function createResourceSyncDriver({ platform, capability, requireImpl }) {
@@ -409,6 +434,23 @@ function createMappedDriver({ platform, capability, requireImpl, operations }) {
   return driver;
 }
 
+function createLegacyFileDriver({ platform, capability, requireImpl }) {
+  const loadModule = createModuleLoader({ platform, capability, requireImpl });
+  const operations = LEGACY_FILE_EXPORTS[capability];
+  const driver = { platform, capability };
+
+  for (const [operation, exportName] of Object.entries(operations || {})) {
+    driver[operation] = (...args) => invokeExport(
+      loadModule,
+      exportName,
+      [platform, ...args],
+      () => unsupported(platform, capability, operation)
+    );
+  }
+
+  return driver;
+}
+
 function createClaudeSessionDriver({ platform, capability, requireImpl }) {
   const loadModule = createModuleLoader({ platform, capability, requireImpl });
   const driver = { platform, capability };
@@ -480,6 +522,9 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
 function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {} } = {}) {
   if (capability === 'resourceSync') {
     return createResourceSyncDriver({ platform, capability, requireImpl });
+  }
+  if ((capability === 'mcp' || capability === 'prompts') && MODULE_PATHS[platform]?.[capability]) {
+    return createLegacyFileDriver({ platform, capability, requireImpl });
   }
   if (!MODULE_PATHS[platform] || !MODULE_PATHS[platform][capability]) {
     return { status: 'unsupported', platform, capability };

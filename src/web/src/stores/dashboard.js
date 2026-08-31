@@ -1,9 +1,11 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getDashboardInit } from '../api/dashboard'
-import api from '../api'
 import { useGlobalStore } from './global'
-
+import { getDashboardInit } from '../api/dashboard'
+import { getPlatformChannels } from '../api/channels'
+import { getPlatformProxyStatus } from '../api/proxy'
+import { getPlatformTodayStatistics } from '../api/statistics'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 const emptyCounts = () => ({ projectCount: 0, sessionCount: 0 })
 const emptyStats = () => ({ requests: 0, tokens: 0, cost: 0, byModel: {}, byChannel: {} })
 
@@ -37,45 +39,22 @@ function normalizeStats(stats = {}) {
     byChannel: normalizeChannelStats(stats.byChannel)
   }
 }
-
 export const useDashboardStore = defineStore('dashboard', () => {
+  const { enabledKeys, getPlatform } = useEnabledCliPlatforms()
   const dashboardData = ref({
     uiConfig: null,
     favorites: null,
-    channels: {
-      claude: [],
-      codex: [],
-      gemini: [],
-      opencode: [],
-      omp: []
-    },
-    proxyStatus: {
-      claude: {},
-      codex: {},
-      gemini: {},
-      opencode: {},
-      omp: {}
-    },
-    todayStats: {
-      claude: emptyStats(),
-      codex: emptyStats(),
-      gemini: emptyStats(),
-      opencode: emptyStats(),
-      omp: emptyStats()
-    },
-    counts: {
-      claude: emptyCounts(),
-      codex: emptyCounts(),
-      gemini: emptyCounts(),
-      opencode: emptyCounts(),
-      omp: emptyCounts()
-    },
+    channels: {},
+    proxyStatus: {},
+    todayStats: {},
+    counts: {},
     meta: null
   })
-
   const isLoading = ref(false)
   const isLoaded = ref(false)
+
   let loadPromise = null
+  let loadedPlatformSignature = ''
   let refreshWindowPromise = null
   let refreshWindowUntil = 0
   let snapshotRefreshTimer = null
@@ -126,8 +105,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
     ensureAutoRefreshDisabled()
   }
 
+  function enabledPlatformKeys() {
+    return enabledKeys.value
+  }
+
+  function mapEnabledPlatforms(source, normalize = value => value) {
+    const input = source && typeof source === 'object' ? source : {}
+    return Object.fromEntries(
+      enabledPlatformKeys().map(key => [key, normalize(input[key])])
+    )
+  }
+
+  function hasEnabledPlatform(channelType) {
+    const key = String(channelType || '').trim().toLowerCase()
+    return enabledPlatformKeys().includes(key) ? key : null
+  }
+  function hasEnabledCapability(channelType, capability) {
+    const key = hasEnabledPlatform(channelType)
+    return key && getPlatform(key)?.capabilities?.[capability] === true ? key : null
+  }
   async function loadDashboard(force = false, options = {}) {
-    if (isLoaded.value && !force) {
+    const platformSignature = enabledPlatformKeys().join(',')
+    if (isLoaded.value && !force && loadedPlatformSignature === platformSignature) {
       return dashboardData.value
     }
     if (loadPromise) {
@@ -143,39 +142,31 @@ export const useDashboardStore = defineStore('dashboard', () => {
         }
 
         const data = response.data || {}
+        const selectedKeys = enabledPlatformKeys()
 
         dashboardData.value = {
           uiConfig: data.uiConfig || null,
           favorites: data.favorites || null,
-          channels: {
-            claude: normalizeChannels(data.channels?.claude),
-            codex: normalizeChannels(data.channels?.codex),
-            gemini: normalizeChannels(data.channels?.gemini),
-            opencode: normalizeChannels(data.channels?.opencode),
-            omp: normalizeChannels(data.channels?.omp)
-          },
-          proxyStatus: {
-            claude: data.proxyStatus?.claude || {},
-            codex: data.proxyStatus?.codex || {},
-            gemini: data.proxyStatus?.gemini || {},
-            opencode: data.proxyStatus?.opencode || {},
-            omp: data.proxyStatus?.omp || {}
-          },
-          todayStats: {
-            claude: normalizeStats(data.todayStats?.claude),
-            codex: normalizeStats(data.todayStats?.codex),
-            gemini: normalizeStats(data.todayStats?.gemini),
-            opencode: normalizeStats(data.todayStats?.opencode),
-            omp: normalizeStats(data.todayStats?.omp)
-          },
-          counts: {
-            claude: data.counts?.claude || emptyCounts(),
-            codex: data.counts?.codex || emptyCounts(),
-            gemini: data.counts?.gemini || emptyCounts(),
-            opencode: data.counts?.opencode || emptyCounts(),
-            omp: data.counts?.omp || emptyCounts()
-          },
+          channels: mapEnabledPlatforms(data.channels, normalizeChannels),
+          proxyStatus: mapEnabledPlatforms(
+            data.proxyStatus,
+            value => value && typeof value === 'object' ? value : {}
+          ),
+          todayStats: mapEnabledPlatforms(data.todayStats, normalizeStats),
+          counts: mapEnabledPlatforms(
+            data.counts,
+            value => value && typeof value === 'object' ? value : emptyCounts()
+          ),
           meta: data.meta || null
+        }
+
+        // Keep this local assertion useful when the selection is empty: the
+        // maps above intentionally remain empty rather than restoring defaults.
+        if (selectedKeys.length === 0) {
+          dashboardData.value.channels = {}
+          dashboardData.value.proxyStatus = {}
+          dashboardData.value.todayStats = {}
+          dashboardData.value.counts = {}
         }
 
         try {
@@ -185,6 +176,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         }
         scheduleSnapshotRefresh(dashboardData.value.meta)
 
+        loadedPlatformSignature = platformSignature
         isLoaded.value = true
         return dashboardData.value
       } finally {
@@ -212,82 +204,41 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function refreshChannels(channelType) {
+    const key = hasEnabledCapability(channelType, 'channels')
+    if (!key) return
     try {
-      if (channelType === 'claude') {
-        const response = await api.getChannels()
-        if (response.success) dashboardData.value.channels.claude = response.channels
-      } else if (channelType === 'codex') {
-        const response = await api.getCodexChannels()
-        if (response.success) dashboardData.value.channels.codex = response.channels
-      } else if (channelType === 'gemini') {
-        const response = await api.getGeminiChannels()
-        if (response.success) dashboardData.value.channels.gemini = response.channels
-      } else if (channelType === 'opencode') {
-        const response = await api.getOpenCodeChannels()
-        if (response.success) dashboardData.value.channels.opencode = response.channels
-      } else if (channelType === 'omp') {
-        const response = await api.getOmpChannels()
-        if (response.success) dashboardData.value.channels.omp = response.channels
-      }
+      const response = await getPlatformChannels(key)
+      dashboardData.value.channels[key] = normalizeChannels(response)
     } catch (err) {
-      console.error(`Failed to refresh ${channelType} channels:`, err)
+      console.error(`Failed to refresh ${key} channels:`, err)
     }
   }
 
   async function refreshProxyStatus(channelType) {
+    const key = hasEnabledCapability(channelType, 'proxy')
+    if (!key) return
     try {
-      if (channelType === 'claude') {
-        const response = await api.getProxyStatus()
-        if (response.success) dashboardData.value.proxyStatus.claude = response
-      } else if (channelType === 'codex') {
-        const response = await api.getCodexProxyStatus()
-        if (response.success) dashboardData.value.proxyStatus.codex = response
-      } else if (channelType === 'gemini') {
-        const response = await api.getGeminiProxyStatus()
-        if (response.success) dashboardData.value.proxyStatus.gemini = response
-      } else if (channelType === 'opencode') {
-        const response = await api.getOpenCodeProxyStatus()
-        if (response.success) dashboardData.value.proxyStatus.opencode = response
-      } else if (channelType === 'omp') {
-        const response = await api.getOmpProxyStatus()
-        if (response.success) dashboardData.value.proxyStatus.omp = response
-      }
+      dashboardData.value.proxyStatus[key] = await getPlatformProxyStatus(key)
     } catch (err) {
-      console.error(`Failed to refresh ${channelType} proxy status:`, err)
+      console.error(`Failed to refresh ${key} proxy status:`, err)
     }
   }
 
   async function refreshStats(channelType) {
+    const key = hasEnabledCapability(channelType, 'statistics')
+    if (!key) return
     try {
-      const parseStats = (response = {}) => {
-        const summary = response.summary || {}
-        return normalizeStats({
-          requests: summary.requests || 0,
-          tokens: summary.tokens || 0,
-          cost: summary.cost || 0,
-          byModel: response.byModel || {},
-          byChannel: response.byChannel || {}
-        })
-      }
-
-      if (channelType === 'claude') {
-        const response = await api.getClaudeTodayStatistics()
-        dashboardData.value.todayStats.claude = parseStats(response)
-      } else if (channelType === 'codex') {
-        const response = await api.getCodexTodayStatistics()
-        dashboardData.value.todayStats.codex = parseStats(response)
-      } else if (channelType === 'gemini') {
-        const response = await api.getGeminiTodayStatistics()
-        dashboardData.value.todayStats.gemini = parseStats(response)
-      } else if (channelType === 'opencode') {
-        const response = await api.getOpenCodeTodayStatistics()
-        dashboardData.value.todayStats.opencode = parseStats(response)
-      } else if (channelType === 'omp') {
-        const response = await api.getOmpTodayStatistics()
-        dashboardData.value.todayStats.omp = parseStats(response)
-      }
+      const response = await getPlatformTodayStatistics(key)
+      const summary = response?.summary || {}
+      dashboardData.value.todayStats[key] = normalizeStats({
+        requests: summary.requests || 0,
+        tokens: summary.tokens || 0,
+        cost: summary.cost || 0,
+        byModel: response?.byModel || {},
+        byChannel: response?.byChannel || {}
+      })
     } catch (err) {
-      console.error(`Failed to refresh ${channelType} stats:`, err)
+      console.error(`Failed to refresh ${key} stats:`, err)
     }
   }
 

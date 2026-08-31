@@ -38,7 +38,6 @@ const POOL_TTL = 5 * 60 * 1000; // 5 minutes
 const STREAMABLE_HTTP_TYPE = 'streamable_http';
 const MCP_SERVER_TYPES = ['stdio', STREAMABLE_HTTP_TYPE, 'sse'];
 const REMOTE_MCP_SERVER_TYPES = [STREAMABLE_HTTP_TYPE, 'sse'];
-const MCP_PLATFORM_KEYS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const OMP_MCP_SCHEMA_URL = 'https://raw.githubusercontent.com/can1357/oh-my-omp/main/packages/coding-agent/src/config/mcp-schema.json';
 const OMP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/;
 
@@ -49,6 +48,57 @@ function normalizeServerSpec(spec = {}) {
   const normalized = { ...spec };
   normalized.type = normalized.type || 'stdio';
   return normalized;
+}
+
+function normalizePlatformKey(platform) {
+  return String(platform || '').trim().toLowerCase();
+}
+
+function getPlatformServices() {
+  const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
+  return {
+    registry: getPlatformRegistry(),
+    runtime: getPlatformRuntime()
+  };
+}
+
+function getMcpPlatformKeys() {
+  const { registry } = getPlatformServices();
+  return registry.list({ enabledOnly: true })
+    .map(platform => normalizePlatformKey(platform.key))
+    .filter(platform => {
+      const driverId = registry.getCapability(platform, 'mcp');
+      return Boolean(driverId && driverId !== 'unsupported');
+    });
+}
+
+function createPlatformCapabilityError(platform, capability, code) {
+  const key = normalizePlatformKey(platform);
+  const error = new Error(code === 'not_found'
+    ? `无效的平台: ${key}`
+    : `平台 ${key} 未声明 ${capability} capability`);
+  error.status = 404;
+  error.code = code;
+  error.platform = key;
+  error.capability = capability;
+  return error;
+}
+
+function requireMcpCapability(platform) {
+  const key = normalizePlatformKey(platform);
+  const { registry, runtime } = getPlatformServices();
+  if (!registry.resolve(key)) {
+    throw createPlatformCapabilityError(key, 'mcp', 'not_found');
+  }
+  const driverId = registry.getCapability(key, 'mcp');
+  if (!driverId || driverId === 'unsupported') {
+    throw createPlatformCapabilityError(key, 'mcp', 'unsupported');
+  }
+  const driver = runtime.getDriver(key, 'mcp');
+  if (!driver) {
+    throw createPlatformCapabilityError(key, 'mcp', 'unsupported');
+  }
+  return { platform: key, driver };
 }
 
 // MCP 预设模板
@@ -533,22 +583,26 @@ function buildMcpFailureResult(error, fallbackMessage, duration) {
 // MCP 数据管理
 // ============================================================================
 
-const DEFAULT_SERVER_APPS = {
-  claude: true,
-  codex: false,
-  gemini: false,
-  opencode: false,
-  omp: false
-};
+function normalizeServerApps(apps = {}, fallbackApps = { claude: true }) {
+  const source = apps && typeof apps === 'object' && !Array.isArray(apps) ? apps : {};
+  const fallback = fallbackApps && typeof fallbackApps === 'object' && !Array.isArray(fallbackApps)
+    ? fallbackApps
+    : {};
+  const platformKeys = new Set(getMcpPlatformKeys());
+  const normalized = {};
 
-function normalizeServerApps(apps = {}, fallbackApps = DEFAULT_SERVER_APPS) {
-  return {
-    claude: apps.claude !== undefined ? !!apps.claude : !!fallbackApps.claude,
-    codex: apps.codex !== undefined ? !!apps.codex : !!fallbackApps.codex,
-    gemini: apps.gemini !== undefined ? !!apps.gemini : !!fallbackApps.gemini,
-    opencode: apps.opencode !== undefined ? !!apps.opencode : !!fallbackApps.opencode,
-    omp: apps.omp !== undefined ? !!apps.omp: !!fallbackApps.omp
-  };
+  for (const platform of platformKeys) {
+    normalized[platform] = source[platform] !== undefined
+      ? !!source[platform]
+      : !!fallback[platform];
+  }
+
+  // Keep historical flags for platforms that are temporarily absent from the
+  // current registry so disabling/re-enabling a Manifest does not erase data.
+  for (const [platform, enabled] of Object.entries(source)) {
+    if (!platformKeys.has(platform)) normalized[platform] = !!enabled;
+  }
+  return normalized;
 }
 
 /**
@@ -603,14 +657,13 @@ async function saveServer(server, options = {}) {
   }
   server.updatedAt = Date.now();
 
-  // 确保 apps 字段存在
+  // Ensure apps is present while preserving existing flags.
   if (!server.apps) {
-    // Updating a server without explicit app flags should preserve existing platform toggles.
     server.apps = previousApps
       ? normalizeServerApps(previousApps)
-      : normalizeServerApps(DEFAULT_SERVER_APPS);
+      : normalizeServerApps({ claude: true });
   } else {
-    server.apps = normalizeServerApps(server.apps, previousApps || DEFAULT_SERVER_APPS);
+    server.apps = normalizeServerApps(server.apps, previousApps || { claude: true });
   }
 
   // 同步到各平台配置
@@ -655,18 +708,17 @@ async function toggleServerApp(serverId, app, enabled) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
   }
 
-  if (!MCP_PLATFORM_KEYS.includes(app)) {
-    throw new Error(`无效的平台: ${app}`);
-  }
+  const { platform: normalizedPlatform } = requireMcpCapability(app);
 
-  server.apps[app] = enabled;
+  server.apps = normalizeServerApps(server.apps);
+  server.apps[normalizedPlatform] = !!enabled;
   server.updatedAt = Date.now();
 
-  // 同步到对应平台
+  // Sync to the selected platform.
   if (enabled) {
-    await syncServerToPlatform(server, app);
+    await syncServerToPlatform(server, normalizedPlatform);
   } else {
-    await removeServerFromPlatform(serverId, app);
+    await removeServerFromPlatform(serverId, normalizedPlatform);
   }
 
   writeJsonFile(MCP_SERVERS_FILE, servers);
@@ -727,7 +779,7 @@ async function syncServerToAllPlatforms(server, previousApps = null) {
     return previous[platform] && !apps[platform];
   };
 
-  for (const platform of MCP_PLATFORM_KEYS) {
+  for (const platform of getMcpPlatformKeys()) {
     if (apps[platform]) {
       await syncServerToPlatform(server, platform);
     } else if (shouldRemoveFromPlatform(platform)) {
@@ -740,7 +792,7 @@ async function syncServerToAllPlatforms(server, previousApps = null) {
  * 从所有平台移除服务器
  */
 async function removeServerFromAllPlatforms(serverId) {
-  for (const platform of MCP_PLATFORM_KEYS) {
+  for (const platform of getMcpPlatformKeys()) {
     await removeServerFromPlatform(serverId, platform);
   }
 }
@@ -750,57 +802,231 @@ async function removeServerFromAllPlatforms(serverId) {
  */
 async function syncServerToPlatform(server, platform) {
   try {
-    switch (platform) {
-      case 'claude':
-        syncToClaudeConfig(server);
-        break;
-      case 'codex':
-        syncToCodexConfig(server);
-        break;
-      case 'gemini':
-        syncToGeminiConfig(server);
-        break;
-      case 'opencode':
-        syncToOpenCodeConfig(server);
-        break;
-      case 'omp':
-        syncToOmpMcpConfig(server);
-        break;
+    const { platform: normalizedPlatform, driver } = requireMcpCapability(platform);
+    if (typeof driver.sync === 'function') {
+      await driver.sync(server);
+    } else {
+      await syncGenericMcpServer(driver, normalizedPlatform, server);
     }
-    console.log(`[MCP] Synced "${server.id}" to ${platform}`);
+    console.log(`[MCP] Synced "${server.id}" to ${normalizedPlatform}`);
   } catch (err) {
     console.error(`[MCP] Failed to sync "${server.id}" to ${platform}:`, err.message);
     throw err;
   }
 }
 
-/**
- * 从指定平台移除服务器
- */
 async function removeServerFromPlatform(serverId, platform) {
   try {
-    switch (platform) {
-      case 'claude':
-        removeFromClaudeConfig(serverId);
-        break;
-      case 'codex':
-        removeFromCodexConfig(serverId);
-        break;
-      case 'gemini':
-        removeFromGeminiConfig(serverId);
-        break;
-      case 'opencode':
-        removeFromOpenCodeConfig(serverId);
-        break;
-      case 'omp':
-        removeFromOmpMcpConfig(serverId);
-        break;
+    const { platform: normalizedPlatform, driver } = requireMcpCapability(platform);
+    if (typeof driver.sync === 'function') {
+      await driver.remove(serverId);
+    } else {
+      await removeGenericMcpServer(driver, normalizedPlatform, serverId);
     }
-    console.log(`[MCP] Removed "${serverId}" from ${platform}`);
+    console.log(`[MCP] Removed "${serverId}" from ${normalizedPlatform}`);
   } catch (err) {
     console.error(`[MCP] Failed to remove "${serverId}" from ${platform}:`, err.message);
     throw err;
   }
+}
+
+function readPlatformMcpConfig(platform) {
+  switch (platform) {
+    case 'claude':
+      return readJsonFile(CLAUDE_CONFIG_PATH, {});
+    case 'codex':
+      return readTomlFile(CODEX_CONFIG_PATH, {});
+    case 'gemini':
+      return readJsonFile(GEMINI_CONFIG_PATH, {});
+    case 'opencode':
+      return readOpenCodeConfig().config;
+    case 'omp':
+      return readOmpMcpConfig();
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function writePlatformMcpConfig(platform, config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    throw new Error('MCP 平台配置必须是对象');
+  }
+
+  switch (platform) {
+    case 'claude':
+      writeJsonFile(CLAUDE_CONFIG_PATH, config);
+      return config;
+    case 'codex':
+      writeTomlFile(CODEX_CONFIG_PATH, config);
+      return config;
+    case 'gemini':
+      writeJsonFile(GEMINI_CONFIG_PATH, config);
+      return config;
+    case 'opencode':
+      writeOpenCodeConfig(selectOpenCodeConfigPath(), config);
+      return config;
+    case 'omp':
+      writeJsonFile(OMP_MCP_CONFIG_PATH, config);
+      return config;
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function removePlatformMcpServer(platform, serverId) {
+  if (!serverId || !String(serverId).trim()) {
+    throw new Error('MCP 服务器 ID 不能为空');
+  }
+
+  switch (platform) {
+    case 'claude':
+      return removeFromClaudeConfig(serverId);
+    case 'codex':
+      return removeFromCodexConfig(serverId);
+    case 'gemini':
+      return removeFromGeminiConfig(serverId);
+    case 'opencode':
+      return removeFromOpenCodeConfig(serverId);
+    case 'omp':
+      return removeFromOmpMcpConfig(serverId);
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function syncPlatformMcpServer(platform, server) {
+  switch (platform) {
+    case 'claude':
+      return syncToClaudeConfig(server);
+    case 'codex':
+      return syncToCodexConfig(server);
+    case 'gemini':
+      return syncToGeminiConfig(server);
+    case 'opencode':
+      return syncToOpenCodeConfig(server);
+    case 'omp':
+      return syncToOmpMcpConfig(server);
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function importPlatformMcpServers(platform, servers) {
+  switch (platform) {
+    case 'claude':
+      return importFromClaude(servers);
+    case 'codex':
+      return importFromCodex(servers);
+    case 'gemini':
+      return importFromGemini(servers);
+    case 'opencode':
+      return importFromOpenCode(servers);
+    case 'omp':
+      return importFromOmp(servers);
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function getDriverFailure(result, platform, operation) {
+  if (!result || result.status !== 'failed' || result.capability !== 'mcp') return null;
+  if (result.cause instanceof Error) return result.cause;
+  return new Error(result.error || `MCP ${operation} failed for ${platform}`);
+}
+
+async function readGenericMcpConfig(driver, platform, allowMissing = false) {
+  const result = await driver.read();
+  const failure = getDriverFailure(result, platform, 'read');
+  if (failure) {
+    if (allowMissing && failure.code === 'ENOENT') return {};
+    throw failure;
+  }
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new Error(`MCP 配置必须是 JSON 对象: ${platform}`);
+  }
+  return result;
+}
+
+async function writeGenericMcpConfig(driver, platform, config) {
+  const result = await driver.write(config);
+  const failure = getDriverFailure(result, platform, 'write');
+  if (failure) throw failure;
+  return result;
+}
+
+function exportPlatformMcpServers(platform, servers) {
+  switch (platform) {
+    case 'claude':
+      return exportForClaude(servers);
+    case 'codex':
+      return exportForCodex(servers);
+    case 'gemini':
+      return exportForGemini(servers);
+    case 'opencode':
+      return exportForOpenCode(servers);
+    case 'omp':
+      return exportForOmp(servers);
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function getGenericMcpServerMap(config) {
+  for (const key of ['mcpServers', 'mcp_servers', 'mcp']) {
+    if (!Object.prototype.hasOwnProperty.call(config, key)) continue;
+    if (!config[key] || typeof config[key] !== 'object' || Array.isArray(config[key])) {
+      throw new Error(`MCP 配置 ${key} 必须是对象`);
+    }
+    return config[key];
+  }
+  return config;
+}
+
+async function syncGenericMcpServer(driver, platform, server) {
+  const config = await readGenericMcpConfig(driver, platform, true);
+  const mcpServers = getGenericMcpServerMap(config);
+  mcpServers[server.id] = extractServerSpec(server.server);
+  return writeGenericMcpConfig(driver, platform, config);
+}
+
+async function removeGenericMcpServer(driver, platform, serverId) {
+  const config = await readGenericMcpConfig(driver, platform, true);
+  const mcpServers = getGenericMcpServerMap(config);
+  if (!Object.prototype.hasOwnProperty.call(mcpServers, serverId)) return config;
+  delete mcpServers[serverId];
+  return writeGenericMcpConfig(driver, platform, config);
+}
+
+async function importGenericMcpServers(driver, platform, servers) {
+  const config = await readGenericMcpConfig(driver, platform, true);
+  const mcpServers = getGenericMcpServerMap(config);
+  const defaultApps = normalizeServerApps({}, {});
+  let count = 0;
+
+  for (const [id, spec] of Object.entries(mcpServers)) {
+    if (!spec || typeof spec !== 'object' || Array.isArray(spec)) continue;
+    if (servers[id]) {
+      servers[id].apps = normalizeServerApps(servers[id].apps);
+      if (!servers[id].apps[platform]) {
+        servers[id].apps[platform] = true;
+        count++;
+      }
+      continue;
+    }
+
+    const now = Date.now();
+    servers[id] = {
+      id,
+      name: id,
+      server: normalizeServerSpec(spec),
+      apps: { ...defaultApps, [platform]: true },
+      createdAt: now,
+      updatedAt: now
+    };
+    count++;
+  }
+
+  return count;
 }
 
 // ============================================================================
@@ -1215,28 +1441,11 @@ function removeFromOpenCodeConfig(serverId) {
  * 从指定平台导入 MCP 配置
  */
 async function importFromPlatform(platform) {
-  let importedCount = 0;
+  const { platform: normalizedPlatform, driver } = requireMcpCapability(platform);
   const servers = getAllServers();
-
-  switch (platform) {
-    case 'claude':
-      importedCount = importFromClaude(servers);
-      break;
-    case 'codex':
-      importedCount = importFromCodex(servers);
-      break;
-    case 'gemini':
-      importedCount = importFromGemini(servers);
-      break;
-    case 'opencode':
-      importedCount = importFromOpenCode(servers);
-      break;
-    case 'omp':
-      importedCount = importFromOmp(servers);
-      break;
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
+  const importedCount = typeof driver.import === 'function'
+    ? await driver.import(servers)
+    : await importGenericMcpServers(driver, normalizedPlatform, servers);
 
   if (importedCount > 0) {
     writeJsonFile(MCP_SERVERS_FILE, servers);
@@ -1464,15 +1673,13 @@ function extractServerSpec(spec) {
 function getStats() {
   const servers = getAllServers();
   const serverList = Object.values(servers);
+  const stats = { total: serverList.length };
 
-  return {
-    total: serverList.length,
-    claude: serverList.filter(s => s.apps?.claude).length,
-    codex: serverList.filter(s => s.apps?.codex).length,
-    gemini: serverList.filter(s => s.apps?.gemini).length,
-    opencode: serverList.filter(s => s.apps?.opencode).length,
-    omp: serverList.filter(s => s.apps?.omp).length
-  };
+  for (const platform of getMcpPlatformKeys()) {
+    stats[platform] = serverList.filter(server => server.apps?.[platform]).length;
+  }
+
+  return stats;
 }
 
 // ============================================================================
@@ -1923,26 +2130,19 @@ function updateServerOrder(serverIds) {
 
 /**
  * 导出所有 MCP 配置
- * @param {string} format - 导出格式: 'json' | 'claude' | 'codex' | 'opencode' | 'gemini' | 'omp'
+ * @param {string} format - 导出格式: json 或声明了导出操作的 MCP 平台 key
  */
 function exportServers(format = 'json') {
   const servers = getAllServers();
+  if (format === 'json') return exportAsJson(servers);
 
-  switch (format) {
-    case 'claude':
-      return exportForClaude(servers);
-    case 'codex':
-      return exportForCodex(servers);
-    case 'opencode':
-      return exportForOpenCode(servers);
-    case 'gemini':
-      return exportForGemini(servers);
-    case 'omp':
-      return exportForOmp(servers);
-    case 'json':
-    default:
-      return exportAsJson(servers);
+  const { platform, driver } = requireMcpCapability(format);
+  if (typeof driver.export !== 'function') {
+    const error = createPlatformCapabilityError(platform, 'mcp', 'unsupported');
+    error.operation = 'export';
+    throw error;
   }
+  return driver.export(servers);
 }
 
 /**
@@ -1958,7 +2158,8 @@ function exportAsJson(servers) {
   return {
     format: 'json',
     content: JSON.stringify({ mcpServers }, null, 2),
-    filename: 'mcp-servers.json'
+    filename: 'mcp-servers.json',
+    contentType: 'application/json'
   };
 }
 
@@ -1977,7 +2178,8 @@ function exportForClaude(servers) {
   return {
     format: 'claude',
     content: JSON.stringify({ mcpServers }, null, 2),
-    filename: 'claude-mcp-config.json'
+    filename: 'claude-mcp-config.json',
+    contentType: 'application/json'
   };
 }
 
@@ -1996,7 +2198,8 @@ function exportForCodex(servers) {
   return {
     format: 'codex',
     content: toml.stringify({ mcp_servers }),
-    filename: 'codex-mcp-config.toml'
+    filename: 'codex-mcp-config.toml',
+    contentType: 'application/toml'
   };
 }
 
@@ -2015,7 +2218,8 @@ function exportForOpenCode(servers) {
   return {
     format: 'opencode',
     content: JSON.stringify({ mcp }, null, 2),
-    filename: 'opencode-mcp-config.json'
+    filename: 'opencode-mcp-config.json',
+    contentType: 'application/json'
   };
 }
 
@@ -2034,7 +2238,8 @@ function exportForGemini(servers) {
   return {
     format: 'gemini',
     content: JSON.stringify({ mcpServers }, null, 2),
-    filename: 'gemini-mcp-config.json'
+    filename: 'gemini-mcp-config.json',
+    contentType: 'application/json'
   };
 }
 
@@ -2054,6 +2259,7 @@ function exportForOmp(servers) {
   return {
     format: 'omp',
     content: JSON.stringify({ $schema: OMP_MCP_SCHEMA_URL, mcpServers }, null, 2),
+    contentType: 'application/json',
     filename: 'omp-mcp-config.json'
   };
 }
@@ -2068,6 +2274,13 @@ module.exports = {
   importFromPlatform,
   getStats,
   validateServerSpec,
+  readPlatformMcpConfig,
+  writePlatformMcpConfig,
+  removePlatformMcpServer,
+  syncPlatformMcpServer,
+  importPlatformMcpServers,
+  exportPlatformMcpServers,
+  getMcpPlatformKeys,
   // 新增功能
   testServer,
   getServerTools,
