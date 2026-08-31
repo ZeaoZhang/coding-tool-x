@@ -105,7 +105,7 @@ async function loadStats() {
 }
 
 function goToChannel(channel) {
-  router.push({ name: `${channel}-projects` })
+  router.push({ name: 'cli-projects', params: { platform: channel } })
 }
 
 onMounted(() => {

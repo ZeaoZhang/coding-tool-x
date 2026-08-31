@@ -5,7 +5,7 @@ import {
   updateUIConfigKey,
   updateNestedUIConfig
 } from '../api/ui-config'
-import { DEFAULT_HOME_CLI_COLUMNS } from '../config/platforms'
+import { DEFAULT_ENABLED_CLI_PLATFORMS } from '../config/platforms'
 
 // UI 配置
 const uiConfig = ref({
@@ -38,17 +38,16 @@ const uiConfig = ref({
     opencode: [],
     omp: []
   },
-  dashboardChannelOrder: DEFAULT_HOME_CLI_COLUMNS,
-  homeCliColumns: DEFAULT_HOME_CLI_COLUMNS,
-  customCliPlatforms: []
+  enabledCliPlatforms: [...DEFAULT_ENABLED_CLI_PLATFORMS]
 })
 
 let isLoaded = false
+let loadSettled = false
 let loadPromise = null
 
 // 加载 UI 配置
-async function loadUIConfig() {
-  if (isLoaded) return uiConfig.value
+async function loadUIConfig({ force = false } = {}) {
+  if (!force && (isLoaded || loadSettled)) return uiConfig.value
   if (loadPromise) return loadPromise
 
   loadPromise = (async () => {
@@ -58,7 +57,9 @@ async function loadUIConfig() {
         uiConfig.value = response.config
         isLoaded = true
       }
+      loadSettled = true
     } catch (err) {
+      loadSettled = true
       console.error('Failed to load UI config:', err)
     } finally {
       loadPromise = null

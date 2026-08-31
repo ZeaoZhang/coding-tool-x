@@ -1,4 +1,4 @@
-import { client } from './client'
+import { client, getPlatformApiPrefix, normalizePlatformKey } from './client'
 
 export async function getStatistics() {
   const response = await client.get('/statistics/summary')
@@ -7,6 +7,20 @@ export async function getStatistics() {
 
 export async function getTodayStatistics() {
   const response = await client.get('/statistics/today')
+  return response.data
+}
+
+export async function getPlatformTodayStatistics(platform) {
+  const key = normalizePlatformKey(platform)
+  const legacyPrefix = {
+    claude: '/claude',
+    codex: '/codex',
+    gemini: '/gemini',
+    opencode: '/opencode',
+    omp: '/omp'
+  }[key]
+  const prefix = legacyPrefix || getPlatformApiPrefix(key)
+  const response = await client.get(`${prefix}/statistics/today`)
   return response.data
 }
 

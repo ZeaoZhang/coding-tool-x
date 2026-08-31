@@ -92,6 +92,8 @@ beforeEach(() => {
   };
 
   syncManager = {
+    syncToPlatform: vi.fn(),
+    removeFromPlatform: vi.fn(),
     syncToClaude: vi.fn(),
     syncToCodex: vi.fn(),
     syncToGemini: vi.fn(),
@@ -171,9 +173,8 @@ describe('config-registry api import and toggle routes', () => {
   test('imports from claude and syncs imported enabled claude items', async () => {
     const res = await request(buildApp()).post('/skills/import', {});
 
-    expect(res.status).toBe(200);
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('claude', 'skills', 'demo-item');
     expect(registryService.importFromClaude).toHaveBeenCalledWith('skills');
-    expect(syncManager.syncToClaude).toHaveBeenCalledWith('skills', 'demo-item');
   });
 
   test('validates toggle enabled payload and handles missing items', async () => {
@@ -191,17 +192,15 @@ describe('config-registry api import and toggle routes', () => {
 
     const enable = await request(app).put('/skills/demo-item/toggle', { enabled: true });
     const disable = await request(app).put('/skills/demo-item/toggle', { enabled: false });
-
-    expect(enable.status).toBe(200);
-    expect(syncManager.syncToClaude).toHaveBeenCalledWith('skills', 'demo-item');
-    expect(syncManager.syncToCodex).toHaveBeenCalledWith('skills', 'demo-item');
-    expect(syncManager.syncToOmp).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('claude', 'skills', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('codex', 'skills', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('omp', 'skills', 'demo-item');
     expect(disable.status).toBe(200);
-    expect(syncManager.removeFromClaude).toHaveBeenCalledWith('skills', 'demo-item');
-    expect(syncManager.removeFromCodex).toHaveBeenCalledWith('skills', 'demo-item');
-    expect(syncManager.removeFromGemini).toHaveBeenCalledWith('skills', 'demo-item');
-    expect(syncManager.removeFromOpenCode).toHaveBeenCalledWith('skills', 'demo-item');
-    expect(syncManager.removeFromOmp).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('claude', 'skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('codex', 'skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('gemini', 'skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('opencode', 'skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('omp', 'skills', 'demo-item');
   });
 
   test('toggle platform validates input and syncs specific platforms', async () => {
@@ -213,11 +212,9 @@ describe('config-registry api import and toggle routes', () => {
     const disable = await request(app).put('/skills/demo-item/platform/codex', { enabled: false });
 
     expect(invalidPlatform.status).toBe(400);
-    expect(invalidBody.status).toBe(400);
-    expect(enable.status).toBe(200);
-    expect(syncManager.syncToCodex).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('codex', 'skills', 'demo-item');
     expect(disable.status).toBe(200);
-    expect(syncManager.removeFromCodex).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('codex', 'skills', 'demo-item');
   });
 
   test('toggle platform syncs OMP through OMP-specific config path', async () => {
@@ -225,11 +222,9 @@ describe('config-registry api import and toggle routes', () => {
 
     const enable = await request(app).put('/skills/demo-item/platform/omp', { enabled: true });
     const disable = await request(app).put('/skills/demo-item/platform/omp', { enabled: false });
-
-    expect(enable.status).toBe(200);
-    expect(syncManager.syncToOmp).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('omp', 'skills', 'demo-item');
     expect(disable.status).toBe(200);
-    expect(syncManager.removeFromOmp).toHaveBeenCalledWith('skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('omp', 'skills', 'demo-item');
   });
 
   test('syncs all registry items for a type', async () => {

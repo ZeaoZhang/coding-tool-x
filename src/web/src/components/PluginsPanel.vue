@@ -143,6 +143,8 @@ import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
 import { getPlatformConfig } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
+import { getRoutePlatform } from '../config/platformCatalog'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -177,21 +179,17 @@ const capabilities = ref({
   import: true,
   syncRepos: true
 })
-const managedPluginPlatforms = computed(() => platformStore.all
-  .filter(platform => platform.capabilities?.plugins === true)
-  .map(platform => platform.key))
+const { byCapability } = useEnabledCliPlatforms()
+const managedPluginPlatforms = computed(() => byCapability('plugins').map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (props.platform && managedPluginPlatforms.value.includes(props.platform)) {
-    return props.platform
-  }
-  const queryPlatform = Array.isArray(route.query.platform)
-    ? route.query.platform[0]
-    : route.query.platform
-  if (managedPluginPlatforms.value.includes(queryPlatform)) return queryPlatform
-  const channel = route.meta.channel
-  if (managedPluginPlatforms.value.includes(channel)) return channel
-  return 'claude'
+  const requested = String(
+    props.platform ||
+    (Array.isArray(route.query.platform) ? route.query.platform[0] : route.query.platform) ||
+    getRoutePlatform(route) ||
+    ''
+  ).trim().toLowerCase()
+  return requested
 })
 
 const currentPlatformLabel = computed(() => {

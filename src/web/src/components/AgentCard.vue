@@ -51,53 +51,18 @@
           {{ registryInfo.enabled ? '已启用' : '已禁用' }}
         </n-tooltip>
         <div class="asset-platform-strip">
-          <n-tooltip trigger="hover">
+          <n-tooltip v-for="platform in managedPlatforms" :key="platform.key" trigger="hover">
             <template #trigger>
               <span
                 class="asset-platform-icon"
-                :class="{ active: registryInfo.platforms?.claude }"
-                @click.stop="emit('toggle-platform', agent, 'claude', !registryInfo.platforms?.claude)"
+                :class="{ active: registryInfo.platforms?.[platform.key] }"
+                @click.stop="emit('toggle-platform', agent, platform.key, !registryInfo.platforms?.[platform.key])"
               >
-                <n-icon size="14"><LogoApple /></n-icon>
+                <n-icon size="14"><component :is="platform.icon" /></n-icon>
               </span>
             </template>
-            Claude Code {{ registryInfo.platforms?.claude ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="asset-platform-icon"
-                :class="{ active: registryInfo.platforms?.codex }"
-                @click.stop="emit('toggle-platform', agent, 'codex', !registryInfo.platforms?.codex)"
-              >
-                <n-icon size="14"><TerminalOutline /></n-icon>
-              </span>
-            </template>
-            Codex CLI {{ registryInfo.platforms?.codex ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="asset-platform-icon"
-                :class="{ active: registryInfo.platforms?.gemini }"
-                @click.stop="emit('toggle-platform', agent, 'gemini', !registryInfo.platforms?.gemini)"
-              >
-                <n-icon size="14"><SparklesOutline /></n-icon>
-              </span>
-            </template>
-            Gemini CLI {{ registryInfo.platforms?.gemini ? '已启用' : '未启用' }}
-          </n-tooltip>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <span
-                class="asset-platform-icon"
-                :class="{ active: registryInfo.platforms?.opencode }"
-                @click.stop="emit('toggle-platform', agent, 'opencode', !registryInfo.platforms?.opencode)"
-              >
-                <n-icon size="14"><CodeSlashOutline /></n-icon>
-              </span>
-            </template>
-            OpenCode {{ registryInfo.platforms?.opencode ? '已启用' : '未启用' }}
+            {{ platform.label || platform.title || platform.key }}
+            {{ registryInfo.platforms?.[platform.key] ? '已启用' : '未启用' }}
           </n-tooltip>
         </div>
       </template>
@@ -125,8 +90,10 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { NButton, NTag, NIcon, NSwitch, NTooltip } from 'naive-ui'
-import { HammerOutline, ShieldOutline, LogoApple, TerminalOutline, CodeSlashOutline, SparklesOutline } from '@vicons/ionicons5'
+import { HammerOutline, ShieldOutline } from '@vicons/ionicons5'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 
 const props = defineProps({
   agent: {
@@ -148,6 +115,8 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['click', 'edit', 'delete', 'toggle-enabled', 'toggle-platform'])
+const { byCapability } = useEnabledCliPlatforms()
+const managedPlatforms = computed(() => byCapability('agents'))
 
 function truncateDesc(desc) {
   if (!desc) return ''

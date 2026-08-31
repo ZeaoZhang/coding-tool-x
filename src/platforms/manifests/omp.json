@@ -5,7 +5,7 @@
   "command": "omp",
   "iconToken": "omp",
   "color": "#0f9f9a",
-  "defaultVisible": false,
+  "defaultVisible": true,
   "helpLabel": "OMP",
   "terminalColor": "cyan",
   "cliSelectable": false,
@@ -55,6 +55,7 @@
     "channels": "legacy:omp",
     "proxy": "legacy:omp",
     "statistics": "legacy:omp",
-    "resourceSync": "legacy:omp"
+    "resourceSync": "legacy:omp",
+    "mcp": "legacy:omp"
   }
 }

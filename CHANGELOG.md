@@ -6,12 +6,12 @@
 
 ## [Unreleased]
 ### Added
-- **配置驱动的平台 Registry** - 新增 Manifest 校验、allowlisted capability driver、`~/.cc-tool/config/platforms.json` 用户扩展和安全的 `GET /api/platforms` 公共目录；`generic-jsonl`、`generic-filesystem` 与 `generic-openai-compatible` 仅覆盖可声明的稳定协议。
-- **Registry-backed CLI / Web UI 路由** - 代理、日志、统计、端口配置、Dashboard 聚合和前端平台元数据改为从 Registry 派生，同时保留旧 CLI/API facade、OMP managed mode 与现有测试 mock 路径。
+- **配置驱动的平台 Registry** - 新增 Manifest 校验、allowlisted capability driver、`~/.cc-tool/config/platforms.json` 用户扩展和安全的 `GET /api/platforms` 公共目录；符合通用协议的 CLI 可通过受控 Manifest / driver 扩展，但不会自动获得任意平台的完整能力。
+- **Registry-backed CLI / Web UI 路由** - 代理、日志、统计、端口配置、Dashboard 聚合和前端平台元数据改为从 Registry 派生，同时保留旧 CLI/API facade、OMP managed mode 与现有测试 mock seam。
 - **项目级配置控制** - 在项目历史会话页管理原生项目指令、Skills 和 MCP，配置按项目 realpath 隔离并保留用户级配置。
 
 ### Changed
-- **兼容性边界明确** - 用户配置禁止任意 Node.js 模块、函数值和 shell 命令；特殊 SQLite、OAuth/keychain、非标准配置及 fork 语义继续由专用 capability driver 负责。
+- **兼容性边界明确** - 用户配置禁止任意 Node.js 模块、函数值和 shell 命令；特殊 SQLite、OAuth/keychain、非标准配置及 fork 语义继续由专用 capability driver 负责；既有 CLI/API 兼容路径与 mock seam 保持有意稳定。
 
 ### Security
 - **依赖安全升级** - adm-zip 升至 0.6.0（GHSA-xcpc-8h2w-3j85）、js-yaml 升至 4.3.1（GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj）、pm2 升至 7.0.3（GHSA-x5gf-qvw8-r2rm），overrides 同步更新 basic-ftp / qs / systeminformation / js-yaml；`npm audit` 报告归零

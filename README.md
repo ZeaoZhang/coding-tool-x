@@ -1,11 +1,11 @@
 # coding-tool-x
 
-> 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP 的统一增强控制台
+> 面向 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP 的统一增强控制台，并支持通过 Manifest 扩展兼容协议的 Coding CLI
 > Web UI + CLI + 多平台代理 + 配置托管 + 工作区编排 + 分析面板
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22.13.0-43853d?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
-![Platforms](https://img.shields.io/badge/Platforms-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20OpenCode%20%7C%20OMP-1f6feb?style=flat-square)
+![Platforms](https://img.shields.io/badge/Platforms-Registry--driven-1f6feb?style=flat-square)
 
 ![Home Preview](docs/home.png)
 
@@ -15,7 +15,7 @@
 
 ## 适合做什么
 
-- 统一查看五个平台的项目和会话
+- 统一查看已启用平台的项目和会话
 - 管理多渠道代理、测速、模型探测和健康状态
 - 集中托管 Prompts、Skills、Agents、Commands、MCP、Plugins 等常用配置项
 - 为多项目创建工作区，必要时自动创建 Git worktree
@@ -26,7 +26,7 @@
 
 ### 会话与项目
 
-- 支持 Claude、Codex、Gemini、OpenCode、OMP 五个平台的项目与会话列表
+- 支持内置平台及已启用扩展平台的项目与会话列表；具体能力以平台 Manifest 为准
 - 支持项目排序、项目搜索、会话排序、会话搜索
 - 支持最近会话、收藏、别名、聊天记录查看
 - 支持新建会话、删除会话、复制启动命令
@@ -35,7 +35,7 @@
 
 ### 多渠道代理
 
-- 五个平台均支持独立代理端口和独立渠道配置
+- 具备渠道能力的平台支持独立代理端口和独立渠道配置
 - 支持渠道增删改查、启用 / 停用、权重、并发限制
 - 支持速度测试、模型可用性探测、健康检查与故障冻结
 - 支持模型重定向和默认测速模型配置
@@ -90,6 +90,14 @@
 - OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
 - OMP 平台键统一为 `omp`，不再保留 `omp` 平台键兼容
 - OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
+
+## 配置驱动的平台扩展
+
+- 平台目录由 Registry 统一发布；用户 Manifest 放在 `~/.cc-tool/config/platforms.json`，修改后由服务重新加载。
+- 通用 CLI 必须提供有效 Manifest，并且只能使用项目 allowlist 中的通用 capability driver；声明式配置不会自动赋予任意 CLI 完整功能。
+- 非标准协议（例如特殊数据库、OAuth / keychain 或平台专有配置语义）必须由专用 capability driver 实现，不能仅靠 Manifest 拼接出等价行为。
+- 用户配置禁止加载任意 Node.js 模块、执行函数值或 shell 命令；Manifest 只能引用受控路径和已登记的 driver。
+- 现有 CLI/API facade、OMP managed mode、旧的 mock path 和测试 seam 会继续保留；配置驱动扩展不会替换已有平台专用实现。
 
 ## 安装
 

@@ -89,6 +89,18 @@ function call(app, method, url, body) {
   });
 }
 
+function stubPlatformRegistry(definitions) {
+  const runtime = require('../../../src/platforms/runtime');
+  const byKey = new Map(definitions.map(definition => [definition.key, definition]));
+  const registry = {
+    list: () => definitions,
+    resolve: key => byKey.get(String(key).trim().toLowerCase()) || null,
+    getCapability: (key, capability) => byKey.get(String(key).trim().toLowerCase())?.capabilities?.[capability] || null
+  };
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+  return () => registrySpy.mockRestore();
+}
+
 describe('prompts api preset routes', () => {
   test('lists presets and active preset', async () => {
     const app = buildApp();
@@ -143,12 +155,50 @@ describe('prompts api platform routes', () => {
     expect(statusRes.body.success).toBe(true);
   });
 
-  test('validates platform when reading/importing', async () => {
+  test('returns typed not-found responses for unknown platform reads/imports', async () => {
     const readRes = await request(buildApp()).get('/platform/invalid');
     const importRes = await request(buildApp()).post('/import/invalid', { name: 'Preset' });
 
-    expect(readRes.status).toBe(400);
-    expect(importRes.status).toBe(400);
+    expect(readRes.status).toBe(404);
+    expect(readRes.body.code).toBe('not_found');
+    expect(importRes.status).toBe(404);
+    expect(importRes.body.code).toBe('not_found');
+  });
+
+  test('reads and imports a registered generic prompt platform', async () => {
+    const restore = stubPlatformRegistry([
+      { key: 'demo-cli', capabilities: { prompts: 'generic-prompt' } }
+    ]);
+
+    try {
+      const app = buildApp();
+      const readRes = await request(app).get('/platform/demo-cli');
+      const importRes = await request(app).post('/import/demo-cli', { name: 'Demo' });
+
+      expect(readRes.status).toBe(200);
+      expect(readRes.body.platform).toBe('demo-cli');
+      expect(importRes.status).toBe(200);
+      expect(promptsService.readPlatformPrompt).toHaveBeenCalledWith('demo-cli');
+      expect(promptsService.importFromPlatform).toHaveBeenCalledWith('demo-cli', 'Demo');
+    } finally {
+      restore();
+    }
+  });
+
+  test('returns typed unsupported response for a registered non-prompt platform', async () => {
+    const restore = stubPlatformRegistry([
+      { key: 'mcp-only', capabilities: { mcp: 'generic-mcp' } }
+    ]);
+
+    try {
+      const res = await request(buildApp()).get('/platform/mcp-only');
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('unsupported');
+      expect(res.body.platform).toBe('mcp-only');
+    } finally {
+      restore();
+    }
   });
 
   test('reads platform prompt, imports preset, and returns stats', async () => {

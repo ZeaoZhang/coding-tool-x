@@ -180,13 +180,16 @@ import ProjectCard from '../components/ProjectCard.vue'
 import message, { dialog } from '../utils/message'
 import { searchSessionsGlobally, copySessionLaunchCommand } from '../api/sessions'
 import { copyTextToClipboard } from '../utils/clipboard'
+import { getRoutePlatform } from '../config/platformCatalog'
+import { usePlatformStore } from '../stores/platforms'
 
 const router = useRouter()
 const route = useRoute()
 const store = useSessionsStore()
+const platformStore = usePlatformStore()
 
 // 当前渠道
-const currentChannel = computed(() => route.meta.channel || 'claude')
+const currentChannel = computed(() => getRoutePlatform(route))
 
 // Search query
 const searchQuery = ref('')
@@ -218,11 +221,13 @@ const filteredProjects = computed(() => {
 // Sync with store
 watch(() => store.projects, (newProjects) => {
   orderedProjects.value = [...newProjects]
-}, { immediate: true })
+})
 
 function handleProjectClick(projectName) {
-  const channel = route.meta.channel || 'claude'
-  router.push({ name: `${channel}-sessions`, params: { projectName } })
+  router.push({
+    name: 'cli-sessions',
+    params: { platform: currentChannel.value, projectName }
+  })
 }
 
 async function handleDragEnd() {
@@ -253,17 +258,13 @@ function handleDeleteProject(project) {
 }
 
 function getChannelBaseCommand(channel) {
-  if (channel === 'codex') return 'codex'
-  if (channel === 'gemini') return 'gemini'
-  if (channel === 'opencode') return 'opencode'
-  if (channel === 'omp') return 'omp'
-  return 'claude'
+  return platformStore.get(channel)?.command || channel
 }
 
 // 新建项目入口改为复制基础启动命令
 async function handleNewProjectCommand() {
   try {
-    const command = getChannelBaseCommand(currentChannel.value || 'claude')
+    const command = getChannelBaseCommand(currentChannel.value)
     const copyResult = await copyTextToClipboard(command)
     if (copyResult?.method === 'manual') {
       message.warning('自动复制失败，已弹出手动复制框')

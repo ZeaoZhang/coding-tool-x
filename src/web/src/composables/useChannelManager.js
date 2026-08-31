@@ -114,9 +114,8 @@ export default function useChannelManager(config) {
   }
   // 监听 scheduler-state 更新，实时更新渠道健康状态
   function updateChannelHealth() {
-    const scheduler = globalStore.schedulerState[config.schedulerSource]
+    const scheduler = globalStore.getSchedulerState(config.schedulerSource)
     if (!scheduler?.channels?.length || !state.channels.length) return
-
     state.channels.forEach(channel => {
       const schedulerChannel = scheduler.channels.find(sc => sc.id === channel.id)
       if (schedulerChannel?.health) {
@@ -129,7 +128,7 @@ export default function useChannelManager(config) {
 
   // 监听 schedulerState 变化
   const stopWatch = watch(
-    () => globalStore.schedulerState[config.schedulerSource]?.channels,
+    () => globalStore.getSchedulerState(config.schedulerSource)?.channels,
     updateChannelHealth
   )
 

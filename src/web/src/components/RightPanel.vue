@@ -5,13 +5,15 @@
       <div class="toolbar-left">
         <n-text depth="3" class="toolbar-label">{{ proxyToggleLabel }}</n-text>
         <n-switch
+          v-if="supportsCapability('proxy')"
           :value="proxyRunning"
           :loading="proxyLoading"
           :disabled="proxyLoading"
           size="small"
           @update:value="handleProxyToggle"
         />
-        <n-tag v-if="managedConfigChannel && installedSkillsCount > 0" type="success" size="small" :bordered="false">
+        <n-text v-else depth="3" class="toolbar-label">当前平台暂无代理控制</n-text>
+        <n-tag v-if="skillsChannel && installedSkillsCount > 0" type="success" size="small" :bordered="false">
           {{ installedSkillsCount }} 技能
         </n-tag>
       </div>
@@ -56,7 +58,7 @@
         </template>
         <div class="toolbar-divider" />
         <!-- 通用功能 -->
-        <n-tooltip trigger="hover">
+        <n-tooltip v-if="supportsCapability('sessions')" trigger="hover">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowRecent">
               <template #icon><n-icon :size="18"><ChatbubblesOutline /></n-icon></template>
@@ -77,7 +79,11 @@
     </div>
 
     <!-- 渠道管理区域 -->
-    <div v-if="showChannels" class="channels-section" :class="{ 'full-height': !showLogs || !proxyRunning }">
+    <div
+      v-if="showChannels && supportsCapability('channels')"
+      class="channels-section"
+      :class="{ 'full-height': !showLogs || !proxyRunning }"
+    >
       <div class="panel-header">
         <div class="header-title">
           <h3>{{ channelTitle }}</h3>
@@ -101,16 +107,22 @@
         </div>
       </div>
       <div class="channels-scroll-area">
-        <ClaudeChannelPanel v-if="currentChannel === 'claude'" ref="claudePanelRef" @open-website="openWebsite" />
-        <CodexChannelPanel v-else-if="currentChannel === 'codex'" ref="codexPanelRef" @open-website="openWebsite" />
-        <GeminiChannelPanel v-else-if="currentChannel === 'gemini'" ref="geminiPanelRef" @open-website="openWebsite" />
-        <OpenCodeChannelPanel v-else-if="currentChannel === 'opencode'" ref="opencodePanelRef" @open-website="openWebsite" />
-        <OmpChannelPanel v-else-if="currentChannel === 'omp'" ref="ompPanelRef" @open-website="openWebsite" />
+        <component
+          :is="currentPanelComponent"
+          ref="currentPanelRef"
+          v-bind="currentPanelProps"
+          @open-website="openWebsite"
+        />
       </div>
+    </div>
+    <div v-else-if="showChannels" class="channels-section channels-unsupported">
+      <n-alert type="info" :show-icon="false">
+        {{ channelTitle }} 未声明渠道管理能力。
+      </n-alert>
     </div>
 
     <!-- 实时日志区域 -->
-    <div v-if="showLogs" class="logs-section" :class="{ 'full-height': !showChannels }">
+    <div v-if="showLogs && (supportsCapability('channels') || supportsCapability('proxy'))" class="logs-section" :class="{ 'full-height': !showChannels }">
       <ProxyLogs :source="currentChannel" />
     </div>
   </div>
@@ -137,9 +149,11 @@ import CodexChannelPanel from './channel/CodexChannelPanel.vue'
 import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
 import OmpChannelPanel from './channel/OmpChannelPanel.vue'
-import ProxyLogs from './ProxyLogs.vue'
+import BaseChannelPanel from './channel/BaseChannelPanel.vue'
 import { getSkills } from '../api/skills'
 import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
+import { getRoutePlatform } from '../config/platformCatalog'
 
 const route = useRoute()
 // Props for panel visibility
@@ -164,27 +178,49 @@ const props = defineProps({
 
 // Emits
 const emit = defineEmits(['proxy-toggle', 'show-recent'])
-
-// Get current channel from route
-const currentChannel = computed(() => route.meta.channel || 'claude')
-
-const claudePanelRef = ref(null)
-const codexPanelRef = ref(null)
-const geminiPanelRef = ref(null)
-const opencodePanelRef = ref(null)
-const ompPanelRef = ref(null)
+const currentChannel = computed(() => getRoutePlatform(route))
+const { getPlatform } = useEnabledCliPlatforms()
+const currentPlatform = computed(() => getPlatform(currentChannel.value))
+const currentPanelRef = ref(null)
 const syncingCurrentChannel = ref(false)
 const installedSkillsCount = ref(0)
 const oauthSummaries = ref({})
-const managedConfigChannels = ['claude', 'codex', 'gemini', 'opencode', 'omp']
-const pluginChannels = ['claude', 'codex', 'opencode', 'omp']
-const agentChannels = ['claude', 'codex', 'gemini', 'opencode']
-const managedConfigChannel = computed(() => managedConfigChannels.includes(currentChannel.value))
-const skillsChannel = managedConfigChannel
-const commandsChannel = managedConfigChannel
-const pluginChannel = computed(() => pluginChannels.includes(currentChannel.value))
-const agentsChannel = computed(() => agentChannels.includes(currentChannel.value))
-const proxyToggleLabel = computed(() => '动态切换')
+
+const panelComponents = {
+  claude: ClaudeChannelPanel,
+  codex: CodexChannelPanel,
+  gemini: GeminiChannelPanel,
+  opencode: OpenCodeChannelPanel,
+  omp: OmpChannelPanel
+}
+const currentPanelComponent = computed(() => (
+  panelComponents[currentChannel.value] || BaseChannelPanel
+))
+const currentPanelProps = computed(() => (
+  panelComponents[currentChannel.value]
+    ? {}
+    : { type: currentChannel.value }
+))
+
+function supportsCapability(capability) {
+  return currentPlatform.value?.capabilities?.[capability] === true
+}
+
+function supportsResource(resourceType) {
+  return supportsCapability(resourceType)
+    || currentPlatform.value?.resourceTypes?.[resourceType] === true
+}
+
+const managedConfigChannel = computed(() => (
+  ['skills', 'commands', 'agents', 'plugins'].some(supportsResource)
+))
+const skillsChannel = computed(() => supportsResource('skills'))
+const commandsChannel = computed(() => supportsResource('commands'))
+const pluginChannel = computed(() => supportsResource('plugins'))
+const agentsChannel = computed(() => supportsResource('agents'))
+const proxyToggleLabel = computed(() => (
+  currentPlatform.value?.proxyLabels?.toggle || '动态切换'
+))
 
 // 当前渠道是否处于 OAuth 控制模式
 const isOAuthControlled = computed(() => {
@@ -215,7 +251,7 @@ function openOAuthCredentialsDrawer() {
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
-  if (!managedConfigChannel.value) {
+  if (!skillsChannel.value) {
     installedSkillsCount.value = 0
     return
   }
@@ -229,34 +265,21 @@ async function loadInstalledSkillsCount() {
   }
 }
 
-const channelRefs = {
-  claude: claudePanelRef,
-  codex: codexPanelRef,
-  gemini: geminiPanelRef,
-  opencode: opencodePanelRef,
-  omp: ompPanelRef
-}
-
-const channelTitles = {
-  claude: 'Claude 渠道管理',
-  codex: 'Codex 渠道管理',
-  gemini: 'Gemini 渠道管理',
-  opencode: 'OpenCode 渠道管理',
-  omp: 'OMP 渠道管理'
-}
-
-const channelTitle = computed(() => channelTitles[currentChannel.value] || 'Claude 渠道管理')
+const channelTitle = computed(() => {
+  const label = currentPlatform.value?.label || currentPlatform.value?.title || currentChannel.value
+  return `${label} 渠道管理`
+})
 
 function openWebsite(url) {
   window.open(url, '_blank')
 }
 
 function handleAddClick() {
-  channelRefs[currentChannel.value]?.value?.openAddDialog?.()
+  currentPanelRef.value?.openAddDialog?.()
 }
 
 async function handleSyncCurrentClick() {
-  const panel = channelRefs[currentChannel.value]?.value
+  const panel = currentPanelRef.value
   if (!panel?.syncCurrentChannels || syncingCurrentChannel.value) return
   syncingCurrentChannel.value = true
   try {
@@ -266,12 +289,12 @@ async function handleSyncCurrentClick() {
   }
 }
 
-function refreshChannelPanel(channel = currentChannel.value) {
-  channelRefs[channel]?.value?.refresh?.()
+function refreshChannelPanel() {
+  currentPanelRef.value?.refresh?.()
 }
 
 function handleChannelManagementRefresh(event) {
-  const targetChannel = event?.detail?.channel
+  const targetChannel = String(event?.detail?.channel || '').trim().toLowerCase()
   if (!targetChannel || targetChannel === currentChannel.value) {
     refreshChannelPanel()
   }

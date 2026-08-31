@@ -4,8 +4,6 @@ const API_PATH = require.resolve('../../../src/server/api/ui-config');
 const UI_CONFIG_PATH = require.resolve('../../../src/server/services/ui-config');
 const NETWORK_ACCESS_PATH = require.resolve('../../../src/server/services/network-access');
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
 function findHandler(router, method, routePath) {
   for (const layer of router.stack) {
     if (layer.route && layer.route.path === routePath) {
@@ -18,22 +16,16 @@ function findHandler(router, method, routePath) {
 }
 
 const mockReq = (o = {}) => ({
-  body: {},
-  params: {},
-  query: {},
-  headers: {},
-  socket: { remoteAddress: '127.0.0.1' },
-  ...o,
+  body: {}, params: {}, query: {}, headers: {},
+  socket: { remoteAddress: '127.0.0.1' }, ...o
 });
 
 const mockRes = () => {
   const r = { statusCode: 200, _data: null };
   r.status = vi.fn(c => { r.statusCode = c; return r; });
-  r.json  = vi.fn(d => { r._data = d; return r; });
+  r.json = vi.fn(d => { r._data = d; return r; });
   return r;
 };
-
-// ── stubs ─────────────────────────────────────────────────────────────────────
 
 let uiConfigStub;
 let networkAccessStub;
@@ -42,38 +34,21 @@ function loadRouter() {
   delete require.cache[API_PATH];
   delete require.cache[UI_CONFIG_PATH];
   delete require.cache[NETWORK_ACCESS_PATH];
-
   require.cache[UI_CONFIG_PATH] = {
-    id: UI_CONFIG_PATH,
-    filename: UI_CONFIG_PATH,
-    loaded: true,
-    exports: uiConfigStub,
+    id: UI_CONFIG_PATH, filename: UI_CONFIG_PATH, loaded: true, exports: uiConfigStub
   };
-
   require.cache[NETWORK_ACCESS_PATH] = {
-    id: NETWORK_ACCESS_PATH,
-    filename: NETWORK_ACCESS_PATH,
-    loaded: true,
-    exports: networkAccessStub,
+    id: NETWORK_ACCESS_PATH, filename: NETWORK_ACCESS_PATH, loaded: true, exports: networkAccessStub
   };
-
   return require(API_PATH);
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
-
 describe('ui-config API router', () => {
   beforeEach(() => {
-    // Pass-through guard middleware
-    networkAccessStub = {
-      createSameOriginGuard: vi.fn(() => (_req, _res, next) => next()),
-    };
-
+    networkAccessStub = { createSameOriginGuard: vi.fn(() => (_req, _res, next) => next()) };
     uiConfigStub = {
-      loadUIConfig:        vi.fn(),
-      saveUIConfig:        vi.fn(),
-      updateUIConfig:      vi.fn(),
-      updateNestedUIConfig: vi.fn(),
+      loadUIConfig: vi.fn(), saveUIConfig: vi.fn(),
+      updateUIConfig: vi.fn(), updateNestedUIConfig: vi.fn()
     };
   });
 
@@ -84,62 +59,40 @@ describe('ui-config API router', () => {
     delete require.cache[NETWORK_ACCESS_PATH];
   });
 
-  // ── GET / ────────────────────────────────────────────────────────────────
-
   it('GET / returns config from loadUIConfig', () => {
-    const fakeConfig = { theme: 'dark', lang: 'zh' };
-    uiConfigStub.loadUIConfig.mockReturnValue(fakeConfig);
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'get', '/');
-    const req = mockReq();
+    const config = { enabledCliPlatforms: ['claude'] };
+    uiConfigStub.loadUIConfig.mockReturnValue(config);
+    const handler = findHandler(loadRouter(), 'get', '/');
     const res = mockRes();
-
-    handler(req, res);
-
-    expect(res.json).toHaveBeenCalledWith({ success: true, config: fakeConfig });
+    handler(mockReq(), res);
+    expect(res.json).toHaveBeenCalledWith({ success: true, config });
     expect(res.statusCode).toBe(200);
   });
 
   it('GET / returns 500 when loadUIConfig throws', () => {
     uiConfigStub.loadUIConfig.mockImplementation(() => { throw new Error('disk error'); });
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'get', '/');
-    const req = mockReq();
+    const handler = findHandler(loadRouter(), 'get', '/');
     const res = mockRes();
-
-    handler(req, res);
-
+    handler(mockReq(), res);
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res._data).toMatchObject({ error: 'disk error' });
   });
 
-  // ── POST / ───────────────────────────────────────────────────────────────
-
-  it('POST / saves and returns config', () => {
-    const fakeConfig = { theme: 'light' };
-    uiConfigStub.saveUIConfig.mockReturnValue(undefined);
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'post', '/');
-    const req = mockReq({ body: { config: fakeConfig } });
+  it('POST / returns normalized config from saveUIConfig', () => {
+    const request = { theme: 'dark', enabledCliPlatforms: ['claude', 'unknown'] };
+    const normalized = { theme: 'dark', enabledCliPlatforms: ['claude'] };
+    uiConfigStub.saveUIConfig.mockReturnValue(normalized);
+    const handler = findHandler(loadRouter(), 'post', '/');
     const res = mockRes();
-
-    handler(req, res);
-
-    expect(uiConfigStub.saveUIConfig).toHaveBeenCalledWith(fakeConfig);
-    expect(res.json).toHaveBeenCalledWith({ success: true, config: fakeConfig });
+    handler(mockReq({ body: { config: request } }), res);
+    expect(uiConfigStub.saveUIConfig).toHaveBeenCalledWith(request);
+    expect(res.json).toHaveBeenCalledWith({ success: true, config: normalized });
   });
 
-  it('POST / returns 400 when config is missing from body', () => {
-    const router = loadRouter();
-    const handler = findHandler(router, 'post', '/');
-    const req = mockReq({ body: {} });
+  it('POST / returns 400 when config is missing', () => {
+    const handler = findHandler(loadRouter(), 'post', '/');
     const res = mockRes();
-
-    handler(req, res);
-
+    handler(mockReq(), res);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res._data).toMatchObject({ error: 'Missing config' });
     expect(uiConfigStub.saveUIConfig).not.toHaveBeenCalled();
@@ -147,89 +100,54 @@ describe('ui-config API router', () => {
 
   it('POST / returns 500 when saveUIConfig throws', () => {
     uiConfigStub.saveUIConfig.mockImplementation(() => { throw new Error('write failed'); });
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'post', '/');
-    const req = mockReq({ body: { config: { x: 1 } } });
+    const handler = findHandler(loadRouter(), 'post', '/');
     const res = mockRes();
-
-    handler(req, res);
-
+    handler(mockReq({ body: { config: { theme: 'dark' } } }), res);
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res._data).toMatchObject({ error: 'write failed' });
   });
 
-  // ── PUT /:key ─────────────────────────────────────────────────────────────
-
-  it('PUT /:key calls updateUIConfig and returns updated config', () => {
-    const updated = { theme: 'dark' };
+  it('PUT /:key returns normalized updated config', () => {
+    const updated = { enabledCliPlatforms: ['omp'] };
     uiConfigStub.updateUIConfig.mockReturnValue(updated);
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'put', '/:key');
-    const req = mockReq({ params: { key: 'theme' }, body: { value: 'dark' } });
+    const handler = findHandler(loadRouter(), 'put', '/:key');
     const res = mockRes();
-
-    handler(req, res);
-
-    expect(uiConfigStub.updateUIConfig).toHaveBeenCalledWith('theme', 'dark');
+    handler(mockReq({ params: { key: 'enabledCliPlatforms' }, body: { value: ['omp'] } }), res);
+    expect(uiConfigStub.updateUIConfig).toHaveBeenCalledWith('enabledCliPlatforms', ['omp']);
     expect(res.json).toHaveBeenCalledWith({ success: true, config: updated });
   });
 
   it('PUT /:key returns 500 when updateUIConfig throws', () => {
     uiConfigStub.updateUIConfig.mockImplementation(() => { throw new Error('bad key'); });
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'put', '/:key');
-    const req = mockReq({ params: { key: 'unknown' }, body: { value: 'v' } });
+    const handler = findHandler(loadRouter(), 'put', '/:key');
     const res = mockRes();
-
-    handler(req, res);
-
+    handler(mockReq({ params: { key: 'unknown' }, body: { value: 'v' } }), res);
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res._data).toMatchObject({ error: 'bad key' });
   });
 
-  // ── PUT /:parentKey/:childKey ─────────────────────────────────────────────
-
-  it('PUT /:parentKey/:childKey calls updateNestedUIConfig and returns config', () => {
-    const updated = { sidebar: { collapsed: true } };
+  it('PUT /:parentKey/:childKey returns normalized config', () => {
+    const updated = { panelVisibility: { showLogs: false } };
     uiConfigStub.updateNestedUIConfig.mockReturnValue(updated);
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'put', '/:parentKey/:childKey');
-    const req = mockReq({
-      params: { parentKey: 'sidebar', childKey: 'collapsed' },
-      body: { value: true },
-    });
+    const handler = findHandler(loadRouter(), 'put', '/:parentKey/:childKey');
     const res = mockRes();
-
-    handler(req, res);
-
-    expect(uiConfigStub.updateNestedUIConfig).toHaveBeenCalledWith('sidebar', 'collapsed', true);
+    handler(mockReq({
+      params: { parentKey: 'panelVisibility', childKey: 'showLogs' }, body: { value: false }
+    }), res);
+    expect(uiConfigStub.updateNestedUIConfig).toHaveBeenCalledWith('panelVisibility', 'showLogs', false);
     expect(res.json).toHaveBeenCalledWith({ success: true, config: updated });
   });
 
   it('PUT /:parentKey/:childKey returns 500 when updateNestedUIConfig throws', () => {
     uiConfigStub.updateNestedUIConfig.mockImplementation(() => { throw new Error('nested error'); });
-
-    const router = loadRouter();
-    const handler = findHandler(router, 'put', '/:parentKey/:childKey');
-    const req = mockReq({
-      params: { parentKey: 'a', childKey: 'b' },
-      body: { value: 1 },
-    });
+    const handler = findHandler(loadRouter(), 'put', '/:parentKey/:childKey');
     const res = mockRes();
-
-    handler(req, res);
-
+    handler(mockReq({ params: { parentKey: 'a', childKey: 'b' }, body: { value: 1 } }), res);
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res._data).toMatchObject({ error: 'nested error' });
   });
 
-  // ── middleware wired ───────────────────────────────────────────────────────
-
-  it('createSameOriginGuard is called once during router setup', () => {
+  it('wires createSameOriginGuard once', () => {
     loadRouter();
     expect(networkAccessStub.createSameOriginGuard).toHaveBeenCalledTimes(1);
   });
