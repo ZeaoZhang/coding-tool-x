@@ -42,6 +42,35 @@ async function getKnownProjectPaths() {
   return known;
 }
 
+async function resolveKnownProjectPath(rawPath) {
+  if (rawPath == null || String(rawPath).trim() === '') return null;
+  const input = String(rawPath).trim();
+  if (!path.isAbsolute(input)) return null;
+
+  const resolvedInput = path.resolve(input);
+  let resolved;
+  try {
+    resolved = fs.realpathSync(resolvedInput);
+  } catch (error) {
+    if (error.code !== 'ENOENT') return null;
+    try {
+      resolved = path.join(fs.realpathSync(path.dirname(resolvedInput)), path.basename(resolvedInput));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  const known = await getKnownProjectPaths();
+  return Array.from(known).some(root => {
+    const relative = path.relative(root, resolved);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  }) ? resolved : null;
+}
+
+async function isKnownProjectPath(rawPath) {
+  return Boolean(await resolveKnownProjectPath(rawPath));
+}
+
 async function validateKnownProjectCwd(rawCwd) {
   if (rawCwd == null || String(rawCwd).trim() === '') return null;
   const input = String(rawCwd).trim();
@@ -61,5 +90,7 @@ async function validateKnownProjectCwd(rawCwd) {
 
 module.exports = {
   getKnownProjectPaths,
+  resolveKnownProjectPath,
+  isKnownProjectPath,
   validateKnownProjectCwd
 };

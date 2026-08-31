@@ -10,6 +10,7 @@ const os = require('os');
 const toml = require('@iarna/toml');
 const { spawn } = require('child_process');
 const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
+const mcpFormat = require('./mcp-format');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 
@@ -1112,29 +1113,7 @@ function removeFromCodexConfig(serverId) {
  * 转换为 Codex TOML 格式
  */
 function convertToCodexFormat(spec) {
-  const result = {
-    type: spec.type || 'stdio'
-  };
-
-  if (result.type === 'stdio') {
-    result.command = spec.command || '';
-    if (spec.args && spec.args.length > 0) {
-      result.args = spec.args;
-    }
-    if (spec.env && Object.keys(spec.env).length > 0) {
-      result.env = spec.env;
-    }
-    if (spec.cwd) {
-      result.cwd = spec.cwd;
-    }
-  } else if (REMOTE_MCP_SERVER_TYPES.includes(result.type)) {
-    result.url = spec.url || '';
-    if (spec.headers && Object.keys(spec.headers).length > 0) {
-      result.http_headers = spec.headers;
-    }
-  }
-
-  return result;
+  return mcpFormat.convertToCodexFormat(spec);
 }
 
 // ============================================================================
@@ -1190,95 +1169,13 @@ function readOmpMcpConfig() {
   return config;
 }
 
-function copyCommonMcpFields(source, target) {
-  for (const key of ['timeout', 'auth', 'oauth']) {
-    if (source[key] !== undefined) {
-      target[key] = source[key];
-    }
-  }
-  return target;
-}
 
 function convertToOmpMcpFormat(spec = {}) {
-  const sourceType = spec.type || 'stdio';
-  let result;
-
-  if (sourceType === 'stdio') {
-    result = {
-      type: 'stdio',
-      command: spec.command || ''
-    };
-    if (Array.isArray(spec.args) && spec.args.length > 0) {
-      result.args = spec.args;
-    }
-    if (spec.env && Object.keys(spec.env).length > 0) {
-      result.env = spec.env;
-    }
-    if (spec.cwd) {
-      result.cwd = spec.cwd;
-    }
-  } else if (sourceType === STREAMABLE_HTTP_TYPE) {
-    result = {
-      type: 'http',
-      url: spec.url || ''
-    };
-    if (spec.headers && Object.keys(spec.headers).length > 0) {
-      result.headers = spec.headers;
-    }
-  } else if (sourceType === 'sse') {
-    result = {
-      type: 'sse',
-      url: spec.url || ''
-    };
-    if (spec.headers && Object.keys(spec.headers).length > 0) {
-      result.headers = spec.headers;
-    }
-  } else {
-    result = extractServerSpec(spec);
-  }
-
-  return copyCommonMcpFields(spec, result);
+  return mcpFormat.convertToOmpMcpFormat(spec);
 }
 
 function convertFromOmpMcpFormat(spec = {}) {
-  const sourceType = spec.type || 'stdio';
-  let result;
-
-  if (sourceType === 'stdio') {
-    result = {
-      type: 'stdio',
-      command: spec.command || ''
-    };
-    if (spec.args) {
-      result.args = spec.args;
-    }
-    if (spec.env) {
-      result.env = spec.env;
-    }
-    if (spec.cwd) {
-      result.cwd = spec.cwd;
-    }
-  } else if (sourceType === 'http') {
-    result = {
-      type: STREAMABLE_HTTP_TYPE,
-      url: spec.url || ''
-    };
-    if (spec.headers) {
-      result.headers = spec.headers;
-    }
-  } else if (sourceType === 'sse') {
-    result = {
-      type: 'sse',
-      url: spec.url || ''
-    };
-    if (spec.headers) {
-      result.headers = spec.headers;
-    }
-  } else {
-    result = convertFromCodexFormat(spec);
-  }
-
-  return copyCommonMcpFields(spec, result);
+  return mcpFormat.convertFromOmpMcpFormat(spec);
 }
 
 function syncToOmpMcpConfig(server) {
@@ -1304,105 +1201,14 @@ function removeFromOmpMcpConfig(serverId) {
  * 转换为 OpenCode 配置格式
  */
 function convertToOpenCodeFormat(spec) {
-  const sourceType = spec.type || 'stdio';
-
-  if (sourceType === 'local' || sourceType === 'remote') {
-    const result = { ...spec };
-    result.enabled = spec.enabled !== false;
-    if (sourceType === 'local' && typeof result.command === 'string') {
-      result.command = result.command ? [result.command] : [];
-    }
-    return result;
-  }
-
-  if (sourceType === 'stdio') {
-    const command = [];
-    if (spec.command) {
-      command.push(spec.command);
-    }
-    if (Array.isArray(spec.args) && spec.args.length > 0) {
-      command.push(...spec.args);
-    }
-
-    const result = {
-      type: 'local',
-      command,
-      enabled: true
-    };
-
-    if (spec.env && Object.keys(spec.env).length > 0) {
-      result.environment = spec.env;
-    }
-    if (spec.cwd) {
-      result.cwd = spec.cwd;
-    }
-
-    return result;
-  }
-
-  const result = {
-    type: 'remote',
-    url: spec.url || '',
-    enabled: true
-  };
-
-  if (spec.headers && Object.keys(spec.headers).length > 0) {
-    result.headers = spec.headers;
-  }
-
-  return result;
+  return mcpFormat.convertToOpenCodeFormat(spec);
 }
 
 /**
  * 从 OpenCode 格式转换到通用格式
  */
 function convertFromOpenCodeFormat(spec) {
-  const sourceType = spec.type || (Array.isArray(spec.command) ? 'local' : 'remote');
-
-  if (sourceType === 'local') {
-    const result = { type: 'stdio' };
-    if (Array.isArray(spec.command) && spec.command.length > 0) {
-      result.command = spec.command[0];
-      if (spec.command.length > 1) {
-        result.args = spec.command.slice(1);
-      }
-    } else if (typeof spec.command === 'string') {
-      result.command = spec.command;
-    } else {
-      result.command = '';
-    }
-
-    if (spec.environment && typeof spec.environment === 'object') {
-      result.env = spec.environment;
-    } else if (spec.env && typeof spec.env === 'object') {
-      result.env = spec.env;
-    }
-    if (spec.cwd) {
-      result.cwd = spec.cwd;
-    }
-    return result;
-  }
-
-  if (sourceType === 'remote') {
-    const result = {
-      type: STREAMABLE_HTTP_TYPE,
-      url: spec.url || ''
-    };
-    if (spec.headers && typeof spec.headers === 'object') {
-      result.headers = spec.headers;
-    }
-    return result;
-  }
-
-  // 已经是通用格式时直接兼容处理
-  if (sourceType === 'stdio' || REMOTE_MCP_SERVER_TYPES.includes(sourceType)) {
-    return convertFromCodexFormat(spec);
-  }
-
-  return {
-    type: 'stdio',
-    command: ''
-  };
+  return mcpFormat.convertFromOpenCodeFormat(spec);
 }
 
 /**
@@ -1622,49 +1428,14 @@ function importFromOmp(servers) {
  * 从 Codex 格式转换
  */
 function convertFromCodexFormat(spec) {
-  const result = {
-    type: spec.type || 'stdio'
-  };
-
-  if (result.type === 'stdio') {
-    result.command = spec.command || '';
-    if (spec.args) {
-      result.args = spec.args;
-    }
-    if (spec.env) {
-      result.env = spec.env;
-    }
-    if (spec.cwd) {
-      result.cwd = spec.cwd;
-    }
-  } else if (REMOTE_MCP_SERVER_TYPES.includes(result.type)) {
-    result.url = spec.url || '';
-    if (spec.http_headers) {
-      result.headers = spec.http_headers;
-    } else if (spec.headers) {
-      result.headers = spec.headers;
-    }
-  }
-
-  return result;
+  return mcpFormat.convertFromCodexFormat(spec);
 }
 
 /**
  * 提取纯净的服务器规范（移除元数据）
  */
 function extractServerSpec(spec) {
-  const result = { ...spec };
-  // 移除可能存在的非规范字段
-  delete result.id;
-  delete result.name;
-  delete result.description;
-  delete result.tags;
-  delete result.homepage;
-  delete result.docs;
-  delete result.apps;
-  delete result.createdAt;
-  delete result.updatedAt;
-  return result;
+  return mcpFormat.extractServerSpec(spec);
 }
 
 /**

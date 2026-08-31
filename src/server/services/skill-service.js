@@ -29,6 +29,11 @@ const {
   resolveInsideRoot
 } = require('./config-artifact-paths');
 const remoteCredentialCache = require('./remote-credential-cache');
+const platformRuntime = require('../../platforms/runtime');
+const {
+  assertExistingProjectRoot,
+  resolveProjectTarget
+} = require('./project-config-adapters/shared');
 
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
@@ -214,13 +219,12 @@ const PLATFORM_CONFIG = {
     cacheFile: PATHS.skillCaches.omp
   }
 };
-
-// 缓存有效期（5分钟）
 const CACHE_TTL = 5 * 60 * 1000;
 const OMP_REMOTE_REFRESH_TIMEOUT_MS = 3000;
 
 class SkillService {
-  constructor(platform = 'claude') {
+  constructor(platform = 'claude', { registry = platformRuntime.getPlatformRegistry() } = {}) {
+    this.registry = registry;
     this.platform = resolveManagedPlatform(platform).platform;
     if (this.platform === 'omp') {
       const migration = migratePiStorage(PATHS);
@@ -330,23 +334,28 @@ class SkillService {
     return options.cwd ? path.resolve(options.cwd) : '';
   }
 
-  _preparedEntry(cwdKey) {
-    const cached = this._preparedSkillsCache.get(cwdKey);
+  _skillCacheKey(options = {}) {
+    const scope = options.scope || 'user';
+    return `${scope}:${this._skillCwdKey(options)}`;
+  }
+
+  _preparedEntry(cacheKey) {
+    const cached = this._preparedSkillsCache.get(cacheKey);
     if (cached) return cached;
-    if (!cwdKey && Array.isArray(this.skillsCache) && this.cacheTime > 0) {
+    if (cacheKey === 'user:' && Array.isArray(this.skillsCache) && this.cacheTime > 0) {
       return { value: this.skillsCache, cachedAt: this.cacheTime, generation: this._cacheGeneration };
     }
     return null;
   }
 
-  _storePrepared(cwdKey, skills, generation = this._cacheGeneration) {
+  _storePrepared(cacheKey, skills, generation = this._cacheGeneration) {
     const value = Array.isArray(skills) ? skills.map(skill => ({ ...skill })) : [];
     if (generation !== this._cacheGeneration) {
       return value.map(skill => ({ ...skill }));
     }
     const entry = { value, cachedAt: Date.now(), generation };
-    this._preparedSkillsCache.set(cwdKey, entry);
-    if (!cwdKey) {
+    this._preparedSkillsCache.set(cacheKey, entry);
+    if (cacheKey === 'user:') {
       this.skillsCache = value;
       this.cacheTime = entry.cachedAt;
     }
@@ -471,11 +480,17 @@ class SkillService {
     }
     this.mergeLocalSkills(preparedSkills);
     if (this.platform !== 'omp') {
-      this.mergeInstalledSkills(preparedSkills);
+      this.mergeInstalledSkills(preparedSkills, options);
+      if (options.scope === 'project') {
+        this.mergeProjectSkills(preparedSkills, options);
+      }
     }
     this.deduplicateSkills(preparedSkills);
     preparedSkills.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-    this.updateInstallStatus(preparedSkills, { pathsRefreshed: this.platform === 'omp' });
+    this.updateInstallStatus(preparedSkills, {
+      pathsRefreshed: this.platform === 'omp',
+      options
+    });
 
     return preparedSkills;
   }
@@ -760,20 +775,20 @@ class SkillService {
       return this.listOmpSkills(forceRefresh, options);
     }
 
-    const cwdKey = this._skillCwdKey(options);
+    const cacheKey = this._skillCacheKey(options);
     const now = Date.now();
-    const prepared = this._preparedEntry(cwdKey);
+    const prepared = this._preparedEntry(cacheKey);
     if (!forceRefresh && prepared && prepared.generation === this._cacheGeneration
       && now - prepared.cachedAt < CACHE_TTL) {
       return prepared.value.map(skill => ({ ...skill }));
     }
 
     const generation = this._cacheGeneration;
-    const inflightKey = `${this.platform}:${cwdKey}:${generation}`;
+    const inflightKey = `${this.platform}:${cacheKey}:${generation}`;
     const existing = this._listSkillsInflight.get(inflightKey);
     if (existing) return existing;
 
-    const promise = this._listSkillsUncached(forceRefresh, options, cwdKey, generation)
+    const promise = this._listSkillsUncached(forceRefresh, options, cacheKey, generation)
       .then(skills => skills.map(skill => ({ ...skill })))
       .finally(() => {
         if (this._listSkillsInflight.get(inflightKey) === promise) {
@@ -1010,16 +1025,21 @@ class SkillService {
   /**
    * 更新技能的安装状态
    */
-  updateInstallStatus(skills, { pathsRefreshed = false } = {}) {
+  updateInstallStatus(skills, { pathsRefreshed = false, options = {} } = {}) {
     if (this.platform === 'omp' && !pathsRefreshed) {
       this.refreshOmpPaths();
     }
 
     for (const skill of skills) {
-      if (skill.sourceProvider || skill.sourcePath || skill.readonly) {
+      if (skill.sourceScope === 'project') {
+        skill.installed = true;
+      } else if (skill.sourceProvider || skill.sourcePath || skill.readonly) {
         skill.installed = skill.installed !== false;
       } else {
-        skill.installed = this.isInstalled(skill.directory, { refresh: false });
+        const installOptions = options.scope === 'project'
+          ? { scope: 'project', cwd: options.cwd, refresh: false }
+          : { scope: 'user', refresh: false };
+        skill.installed = this.isInstalled(skill.directory, installOptions);
       }
     }
   }
@@ -1686,14 +1706,56 @@ class SkillService {
     return normalizeSkillRelativePath(directory, label);
   }
 
-  resolveInstallPath(directory, label = 'skill directory', { refresh = true } = {}) {
-    if (refresh) {
+  resolveScopeOptions(options = {}) {
+    const scope = options.scope || 'user';
+    if (scope === 'user') {
+      return {
+        scope,
+        cwd: '',
+        roots: [this.installDir],
+        writeRoot: this.installDir
+      };
+    }
+    if (scope !== 'project') {
+      throw new Error('Invalid scope: expected "user" or "project"');
+    }
+    if (!options.cwd) {
+      throw new Error('Project scope requires a valid cwd');
+    }
+
+    const projectRoot = assertExistingProjectRoot(options.cwd, fs);
+    const mapping = this.registry?.resolve?.(this.platform)?.projectResources?.skills;
+    if (!mapping) {
+      throw new Error(`Project Skills are not supported for ${this.platform}`);
+    }
+
+    const roots = mapping.readRoots.map(relativeRoot => resolveProjectTarget(
+      projectRoot,
+      relativeRoot,
+      'project skill root',
+      { allowRoot: true },
+      fs
+    ));
+    const writeRoot = resolveProjectTarget(
+      projectRoot,
+      mapping.canonicalRoot,
+      'project skill root',
+      { allowRoot: true },
+      fs
+    );
+    return { scope, cwd: projectRoot, roots, writeRoot };
+  }
+
+  resolveInstallPath(directory, label = 'skill directory', options = {}) {
+    if (options.refresh !== false) {
       this.refreshOmpPaths();
     }
     const safeDirectory = this.normalizeSkillDirectory(directory, label);
+    const { scope, writeRoot } = this.resolveScopeOptions(options);
     return {
       safeDirectory,
-      path: resolveInsideRoot(this.installDir, safeDirectory, label, { allowHiddenSegments: true })
+      scope,
+      path: resolveInsideRoot(writeRoot, safeDirectory, label, { allowHiddenSegments: true })
     };
   }
 
@@ -1704,6 +1766,13 @@ class SkillService {
       safeDirectory,
       path: resolveInsideRoot(this.storageDir, safeDirectory, label, { allowHiddenSegments: true })
     };
+  }
+
+  resolveWritableSkillPath(directory, options = {}) {
+    if (options.scope === 'project') {
+      return this.resolveInstallPath(directory, 'skill directory', options);
+    }
+    return this.resolveStoragePath(directory);
   }
 
   isProtectedSkillDirectory(directory) {
@@ -1736,13 +1805,29 @@ class SkillService {
   /**
    * 合并平台原生已安装技能（扫描 installDir）。
    */
-  mergeInstalledSkills(skills) {
+  mergeInstalledSkills(skills, options = {}) {
     if (!fs.existsSync(this.installDir)) return;
     this.scanLocalDir(this.installDir, this.installDir, skills, {
       includeHiddenDirs: this.platform === 'codex',
       forceInstalled: true,
-      source: 'native-installed'
+      source: 'native-installed',
+      sourceScope: 'user',
+      installOptions: { scope: 'user', refresh: false }
     });
+  }
+
+  mergeProjectSkills(skills, options = {}) {
+    const scopeOptions = this.resolveScopeOptions(options);
+    for (const root of scopeOptions.roots) {
+      if (!fs.existsSync(root)) continue;
+      this.scanLocalDir(root, root, skills, {
+        includeHiddenDirs: true,
+        forceInstalled: true,
+        source: 'project-installed',
+        sourceScope: 'project',
+        installOptions: { scope: 'project', cwd: scopeOptions.cwd, refresh: false }
+      });
+    }
   }
 
   /**
@@ -1758,12 +1843,16 @@ class SkillService {
 
       const protectedSkill = this.isProtectedSkillDirectory(directory);
       const skillSource = protectedSkill ? 'system-installed' : (options.source || 'local');
+      const sourceScope = options.sourceScope || 'user';
 
       // 判断是否已安装到平台目录
       let isInstalled = options.forceInstalled === true;
       if (!isInstalled) {
         try {
-          isInstalled = fs.existsSync(path.join(this.resolveInstallPath(directory).path, 'SKILL.md'));
+          isInstalled = fs.existsSync(path.join(
+            this.resolveInstallPath(directory, 'skill directory', options.installOptions || {}).path,
+            'SKILL.md'
+          ));
         } catch {
           isInstalled = false;
         }
@@ -1774,7 +1863,7 @@ class SkillService {
         const metadata = this.parseSkillMd(content);
 
         const skill = {
-          key: `local:${directory}`,
+          key: `local:${sourceScope}:${directory}`,
           name: metadata.name || directory,
           description: metadata.description || '',
           directory,
@@ -1784,7 +1873,7 @@ class SkillService {
           protected: protectedSkill,
           readonly: false,
           sourceProvider: options.source === 'native-installed' ? 'native' : 'cc-tool',
-          sourceScope: 'user',
+          sourceScope,
           sourcePath: skillMdPath,
           shadowedSources: [],
           readmeUrl: null,
@@ -1896,8 +1985,8 @@ class SkillService {
    * @param {Object} repo - 仓库配置
    * @param {string} [fullDirectory] - 仓库中的完整路径（可选，默认与 directory 相同）
    */
-  async installSkill(directory, repo, fullDirectory = null) {
-    const { safeDirectory, path: dest } = this.resolveInstallPath(directory);
+  async installSkill(directory, repo, fullDirectory = null, options = {}) {
+    const { safeDirectory, path: dest } = this.resolveInstallPath(directory, 'skill directory', options);
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能安装到 Codex 系统技能目录');
     }
@@ -2068,9 +2157,9 @@ class SkillService {
   /**
    * 创建自定义技能
    */
-  createCustomSkill({ name, directory, description, content }) {
-    const { safeDirectory, path: dest } = this.resolveStoragePath(directory);
-
+  createCustomSkill({ name, directory, description, content, scope = 'user', cwd } = {}) {
+    const options = { scope, ...(cwd ? { cwd } : {}) };
+    const { safeDirectory, path: dest } = this.resolveWritableSkillPath(directory, options);
     // 检查是否已存在
     if (fs.existsSync(dest)) {
       throw new Error(`技能目录 "${directory}" 已存在`);
@@ -2105,8 +2194,9 @@ ${content}
    * @param {Array<{path: string, content: string}>} files - 文件数组
    * @returns {Object} 创建结果
    */
-  createSkillWithFiles({ directory, files }) {
-    const { safeDirectory, path: dest } = this.resolveStoragePath(directory);
+  createSkillWithFiles({ directory, files, scope = 'user', cwd } = {}) {
+    const options = { scope, ...(cwd ? { cwd } : {}) };
+    const { safeDirectory, path: dest } = this.resolveWritableSkillPath(directory, options);
 
     // 检查是否已存在
     if (fs.existsSync(dest)) {
@@ -2162,8 +2252,8 @@ ${content}
    * @param {string} directory - 技能目录名
    * @returns {Array<{path: string, size: number, isDirectory: boolean}>}
    */
-  getSkillFiles(directory) {
-    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory);
+  getSkillFiles(directory, options = {}) {
+    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
 
     if (!fs.existsSync(skillPath)) {
       throw new Error(`技能 "${safeDirectory}" 不存在`);
@@ -2208,8 +2298,8 @@ ${content}
    * @param {string} filePath - 文件相对路径
    * @returns {Object} 文件内容
    */
-  getSkillFileContent(directory, filePath) {
-    const { path: skillPath } = this.resolveInstallPath(directory);
+  getSkillFileContent(directory, filePath, options = {}) {
+    const { path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
     const safeFilePath = normalizeSkillRelativePath(filePath, 'skill file path');
     const fullPath = resolveInsideRoot(skillPath, safeFilePath, 'skill file path', { allowHiddenSegments: true });
 
@@ -2249,8 +2339,8 @@ ${content}
    * @param {string} directory - 技能目录名
    * @param {Array<{path: string, content: string, isBase64?: boolean}>} files - 文件数组
    */
-  addSkillFiles(directory, files) {
-    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory);
+  addSkillFiles(directory, files, options = {}) {
+    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能修改 Codex 系统技能');
     }
@@ -2289,8 +2379,8 @@ ${content}
    * @param {string} directory - 技能目录名
    * @param {string} filePath - 文件相对路径
    */
-  deleteSkillFile(directory, filePath) {
-    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory);
+  deleteSkillFile(directory, filePath, options = {}) {
+    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能修改 Codex 系统技能');
     }
@@ -2333,8 +2423,8 @@ ${content}
    * @param {string} content - 新内容
    * @param {boolean} isBase64 - 是否为 base64 编码
    */
-  updateSkillFile(directory, filePath, content, isBase64 = false) {
-    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory);
+  updateSkillFile(directory, filePath, content, isBase64 = false, options = {}) {
+    const { safeDirectory, path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能修改 Codex 系统技能');
     }
@@ -2365,9 +2455,9 @@ ${content}
   /**
    * 安装 cc-tool 本地托管的技能（从 storageDir cp 到 installDir）
    */
-  installLocalSkill(directory) {
+  installLocalSkill(directory, options = {}) {
     const { safeDirectory, path: src } = this.resolveStoragePath(directory);
-    const { path: dest } = this.resolveInstallPath(safeDirectory);
+    const { path: dest } = this.resolveInstallPath(safeDirectory, 'skill directory', options);
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能安装到 Codex 系统技能目录');
     }
@@ -2391,14 +2481,7 @@ ${content}
    */
   uninstallSkill(directory, options = {}) {
     const safeDirectory = this.normalizeSkillDirectory(directory);
-    const projectInstallDir = this.platform === 'omp' && options.scope === 'project' && options.cwd
-      ? path.join(path.resolve(options.cwd), '.omp', 'skills')
-      : null;
-    const dest = projectInstallDir
-      ? resolveInsideRoot(projectInstallDir, safeDirectory, 'skill directory', {
-          allowHiddenSegments: true
-        })
-      : this.resolveInstallPath(safeDirectory).path;
+    const dest = this.resolveInstallPath(safeDirectory, 'skill directory', options).path;
     if (this.isProtectedSkillDirectory(safeDirectory)) {
       throw new Error('不能卸载 Codex 系统技能');
     }
@@ -2415,10 +2498,10 @@ ${content}
   /**
    * 获取技能详情（完整内容）
    */
-  async getSkillDetail(directory, repoHint = null, fullDirectoryHint = '') {
+  async getSkillDetail(directory, repoHint = null, fullDirectoryHint = '', options = {}) {
     const safeDirectory = this.normalizeSkillDirectory(directory);
     // 先检查本地是否安装
-    const localSkillDir = this.resolveInstallPath(safeDirectory).path;
+    const localSkillDir = this.resolveInstallPath(safeDirectory, 'skill directory', options).path;
     const localPath = path.join(localSkillDir, 'SKILL.md');
 
     if (fs.existsSync(localPath)) {
@@ -2436,6 +2519,8 @@ ${content}
         content: body,
         fullContent: content,
         installed: true,
+        scope: options.scope || 'user',
+        sourceScope: options.scope || 'user',
         path: localSkillDir,
         fullPath: localPath,
         installPath: localSkillDir,
@@ -2635,16 +2720,22 @@ ${content}
   /**
    * 获取已安装技能列表
    */
-  getInstalledSkills() {
+  getInstalledSkills(options = {}) {
     this.refreshOmpPaths();
     if (this.platform === 'omp') {
-      return this.prepareSkills([]);
+      return this.prepareSkills([], options);
+    }
+    if (options.scope === 'project') {
+      const skills = [];
+      this.mergeProjectSkills(skills, options);
+      return skills;
     }
     const skills = [];
     this.scanLocalDir(this.installDir, this.installDir, skills, {
       includeHiddenDirs: this.platform === 'codex',
       forceInstalled: true,
-      source: 'native-installed'
+      source: 'native-installed',
+      sourceScope: 'user'
     });
     return skills;
   }

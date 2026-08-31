@@ -62,6 +62,22 @@ beforeEach(() => {
       updateOmpSkillSettings
     }
   };
+  const validationPath = require.resolve('../../../src/server/services/project-path-validation');
+  require.cache[validationPath] = {
+    id: validationPath,
+    filename: validationPath,
+    loaded: true,
+    exports: {
+      validateKnownProjectCwd: vi.fn(async rawCwd => {
+        if (rawCwd == null || String(rawCwd).trim() === '') return null;
+        const candidate = fs.realpathSync(String(rawCwd).trim());
+        if (candidate !== fs.realpathSync(process.cwd())) {
+          throw new Error('Invalid cwd: path is not a known project or workspace');
+        }
+        return candidate;
+      })
+    }
+  };
 
   delete require.cache[require.resolve('../../../src/server/api/skills')];
 });
@@ -96,6 +112,7 @@ afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/api/skills')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
   delete require.cache[require.resolve('../../../src/server/services/omp-skill-settings-service')];
+  delete require.cache[require.resolve('../../../src/server/services/project-path-validation')];
 });
 
 function buildApp() {
@@ -232,6 +249,15 @@ describe('GET /', () => {
     expect(services.omp.listSkills).toHaveBeenCalledWith(false, { cwd });
   });
 
+  test('passes project scope through to the selected Skill service', async () => {
+    const app = buildApp();
+    const cwd = fs.realpathSync(process.cwd());
+    const res = await request(app).get(`/?platform=codex&cwd=${encodeURIComponent(cwd)}&scope=project`);
+
+    expect(res.status).toBe(200);
+    expect(services.codex.listSkills).toHaveBeenCalledWith(false, { cwd, scope: 'project' });
+  });
+
   test('rejects an existing cwd that is not a known project or workspace', async () => {
     const unknownDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unknown-skill-cwd-'));
     try {
@@ -362,6 +388,26 @@ describe('POST /install', () => {
     expect(res.body.success).toBe(true);
   });
 
+  test('passes project scope and cwd to the install service', async () => {
+    const app = buildApp();
+    const cwd = fs.realpathSync(process.cwd());
+    const res = await request(app).post('/install', {
+      platform: 'codex',
+      cwd,
+      scope: 'project',
+      directory: 'project-skill',
+      repo: { owner: 'anthropics', name: 'skills' }
+    });
+
+    expect(res.status).toBe(200);
+    expect(services.codex.installSkill).toHaveBeenCalledWith(
+      'project-skill',
+      expect.objectContaining({ owner: 'anthropics', name: 'skills' }),
+      null,
+      { scope: 'project', cwd }
+    );
+  });
+
   test('missing directory → 400', async () => {
     const app = buildApp();
     const res = await request(app).post('/install', {
@@ -413,6 +459,23 @@ describe('POST /uninstall', () => {
     const res = await request(app).post('/uninstall', { directory: 'my-skill' });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  test('passes project scope and cwd to the uninstall service', async () => {
+    const app = buildApp();
+    const cwd = fs.realpathSync(process.cwd());
+    const res = await request(app).post('/uninstall', {
+      platform: 'codex',
+      cwd,
+      scope: 'project',
+      directory: 'project-skill'
+    });
+
+    expect(res.status).toBe(200);
+    expect(services.codex.uninstallSkill).toHaveBeenCalledWith(
+      'project-skill',
+      { scope: 'project', cwd }
+    );
   });
 
   test('missing directory → 400', async () => {

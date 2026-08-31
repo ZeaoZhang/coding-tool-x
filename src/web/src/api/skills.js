@@ -5,6 +5,13 @@
 import { client } from './client'
 import { requestKey, requestSingleflight } from './request-singleflight'
 
+
+function scopeParams(options = {}) {
+  return {
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.scope ? { scope: options.scope } : {})
+  };
+}
 /**
  * 获取技能列表
  * @param {boolean} forceRefresh - 是否强制刷新缓存
@@ -16,7 +23,7 @@ export async function getSkills(forceRefresh = false, platform = 'claude', optio
     params: {
       refresh: forceRefresh ? '1' : '',
       platform,
-      ...(options.cwd ? { cwd: options.cwd } : {})
+      ...scopeParams(options)
     },
     signal
   }).then(response => response.data), 'skills', `skills:${platform}`);
@@ -42,8 +49,8 @@ export async function updateOmpSkillSettings(settings) {
 /**
  * 获取已安装的技能
  */
-export async function getInstalledSkills(platform = 'claude') {
-  const response = await client.get('/skills/installed', { params: { platform } })
+export async function getInstalledSkills(platform = 'claude', options = {}) {
+  const response = await client.get('/skills/installed', { params: { platform, ...scopeParams(options) } })
   return response.data
 }
 
@@ -54,7 +61,7 @@ export async function getInstalledSkills(platform = 'claude') {
  * @param {string|null} fullDirectory - 仓库中的完整路径
  */
 export async function getSkillDetail(directory, platform = 'claude', repo = null, fullDirectory = null, options = {}) {
-  const params = { platform }
+  const params = { platform, ...scopeParams(options) }
   if (fullDirectory) params.fullDirectory = fullDirectory
   if (repo) {
     if (repo.id) params.repoId = repo.id
@@ -68,7 +75,12 @@ export async function getSkillDetail(directory, platform = 'claude', repo = null
     if (repo.localPath) params.localPath = repo.localPath
     if (repo.repoUrl) params.repoUrl = repo.repoUrl
   }
-  const key = requestKey(`skill-detail:${directory}:${fullDirectory || ''}`, platform, options.scope || '', repo?.localPath || repo?.projectPath || '')
+  const key = requestKey(
+    `skill-detail:${directory}:${fullDirectory || ''}`,
+    platform,
+    options.scope || '',
+    `${options.cwd || ''}:${repo?.localPath || repo?.projectPath || ''}`
+  )
   return requestSingleflight(key, signal => client.get(`/skills/detail/${directory}`, { params, signal })
     .then(response => response.data), 'skill-detail', `skill-detail:${platform}`)
 }
@@ -79,8 +91,8 @@ export async function getSkillDetail(directory, platform = 'claude', repo = null
  * @param {object} repo - 仓库信息
  * @param {string} [fullDirectory] - 仓库中的完整路径（当指定了仓库子目录时使用）
  */
-export async function installSkill(directory, repo, fullDirectory = null, platform = 'claude') {
-  const response = await client.post('/skills/install', { directory, repo, fullDirectory, platform })
+export async function installSkill(directory, repo, fullDirectory = null, platform = 'claude', options = {}) {
+  const response = await client.post('/skills/install', { directory, repo, fullDirectory, platform, ...scopeParams(options) })
   return response.data
 }
 
@@ -102,8 +114,8 @@ export async function uninstallSkill(directory, platform = 'claude', options = {
  * 安装本地 cc-tool 托管的技能
  * @param {string} directory - 技能目录
  */
-export async function installLocalSkill(directory, platform = 'claude') {
-  const response = await client.post('/skills/install-local', { directory, platform })
+export async function installLocalSkill(directory, platform = 'claude', options = {}) {
+  const response = await client.post('/skills/install-local', { directory, platform, ...scopeParams(options) })
   return response.data
 }
 
@@ -204,8 +216,8 @@ export async function createSkillWithFiles(data, platform = 'claude') {
  * 获取技能文件列表
  * @param {string} directory - 技能目录
  */
-export async function getSkillFiles(directory, platform = 'claude') {
-  const response = await client.get(`/skills/${directory}/files`, { params: { platform } })
+export async function getSkillFiles(directory, platform = 'claude', options = {}) {
+  const response = await client.get(`/skills/${directory}/files`, { params: { platform, ...scopeParams(options) } })
   return response.data
 }
 
@@ -214,8 +226,8 @@ export async function getSkillFiles(directory, platform = 'claude') {
  * @param {string} directory - 技能目录
  * @param {string} filePath - 文件路径
  */
-export async function getSkillFileContent(directory, filePath, platform = 'claude') {
-  const response = await client.get(`/skills/${directory}/file/${filePath}`, { params: { platform } })
+export async function getSkillFileContent(directory, filePath, platform = 'claude', options = {}) {
+  const response = await client.get(`/skills/${directory}/file/${filePath}`, { params: { platform, ...scopeParams(options) } })
   return response.data
 }
 
@@ -224,8 +236,8 @@ export async function getSkillFileContent(directory, filePath, platform = 'claud
  * @param {string} directory - 技能目录
  * @param {Array<{path, content, isBase64?}>} files - 文件列表
  */
-export async function addSkillFiles(directory, files, platform = 'claude') {
-  const response = await client.post(`/skills/${directory}/files`, { files, platform })
+export async function addSkillFiles(directory, files, platform = 'claude', options = {}) {
+  const response = await client.post(`/skills/${directory}/files`, { files, platform, ...scopeParams(options) })
   return response.data
 }
 
@@ -234,8 +246,8 @@ export async function addSkillFiles(directory, files, platform = 'claude') {
  * @param {string} directory - 技能目录
  * @param {string} filePath - 文件路径
  */
-export async function deleteSkillFile(directory, filePath, platform = 'claude') {
-  const response = await client.delete(`/skills/${directory}/file/${filePath}`, { params: { platform } })
+export async function deleteSkillFile(directory, filePath, platform = 'claude', options = {}) {
+  const response = await client.delete(`/skills/${directory}/file/${filePath}`, { params: { platform, ...scopeParams(options) } })
   return response.data
 }
 
@@ -246,7 +258,7 @@ export async function deleteSkillFile(directory, filePath, platform = 'claude') 
  * @param {string} content - 文件内容
  * @param {boolean} [isBase64] - 是否 base64 编码
  */
-export async function updateSkillFile(directory, filePath, content, isBase64 = false, platform = 'claude') {
-  const response = await client.put(`/skills/${directory}/file/${filePath}`, { content, isBase64, platform })
+export async function updateSkillFile(directory, filePath, content, isBase64 = false, platform = 'claude', options = {}) {
+  const response = await client.put(`/skills/${directory}/file/${filePath}`, { content, isBase64, platform, ...scopeParams(options) })
   return response.data
 }

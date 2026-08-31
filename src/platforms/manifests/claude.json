@@ -19,6 +19,14 @@
     "agents": true,
     "plugins": true
   },
+  "projectResources": {
+    "instruction": { "path": "CLAUDE.md" },
+    "skills": {
+      "canonicalRoot": ".claude/skills",
+      "readRoots": [".claude/skills"]
+    },
+    "mcp": { "path": ".mcp.json", "format": "claude-json" }
+  },
   "logFile": "claude-proxy.log",
   "logColor": "green",
   "statisticsPath": "/api/claude/statistics",

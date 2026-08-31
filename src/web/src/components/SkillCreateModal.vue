@@ -250,8 +250,21 @@ const props = defineProps({
   platform: {
     type: String,
     default: 'claude'
+  },
+  scope: {
+    type: String,
+    default: 'user'
+  },
+  projectPath: {
+    type: String,
+    default: ''
   }
 })
+
+const scopeOptions = computed(() => ({
+  ...(props.projectPath ? { cwd: props.projectPath } : {}),
+  ...(props.scope && props.scope !== 'user' ? { scope: props.scope } : {})
+}))
 
 const emit = defineEmits(['update:visible', 'created'])
 
@@ -466,7 +479,8 @@ async function submitSimpleMode() {
       name: simpleFormData.value.name || simpleFormData.value.directory,
       directory: simpleFormData.value.directory,
       description: simpleFormData.value.description,
-      content: simpleFormData.value.content
+      content: simpleFormData.value.content,
+      ...scopeOptions.value
     }, props.platform)
 
     if (result.success) {
@@ -503,7 +517,8 @@ async function submitAdvancedMode() {
         path: f.path,
         content: f.content,
         isBase64: f.isBase64
-      }))
+      })),
+      ...scopeOptions.value
     }, props.platform)
 
     if (result.success) {

@@ -20,6 +20,14 @@
     "agents": true,
     "plugins": false
   },
+  "projectResources": {
+    "instruction": { "path": "AGENTS.md" },
+    "skills": {
+      "canonicalRoot": ".agents/skills",
+      "readRoots": [".agents/skills", ".codex/skills"]
+    },
+    "mcp": { "path": ".codex/config.toml", "format": "codex-toml" }
+  },
   "logFile": "codex-proxy.log",
   "logColor": "cyan",
   "statisticsPath": "/api/codex/statistics",
