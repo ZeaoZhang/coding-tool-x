@@ -255,6 +255,25 @@ ctx omp start
 - 聊天历史查看
 - 收藏、别名、删除、复制启动命令，部分平台支持 Fork
 
+
+#### 项目级配置
+
+在项目历史会话页点击“项目配置”，可管理当前项目的项目指令、Skills 和 MCP。
+项目配置写入 CLI 原生文件；工作区只负责项目分组和发现项目。
+
+支持的项目级原生位置：
+
+| 平台 | 项目指令 | 项目 Skills | 项目 MCP |
+| --- | --- | --- | --- |
+| Claude | `CLAUDE.md` | `.claude/skills/` | `.mcp.json` |
+| Codex | `AGENTS.md` | `.agents/skills/`（读取兼容 `.codex/skills/`） | `.codex/config.toml` 的 `[mcp_servers]` |
+| Gemini | `GEMINI.md` | `.gemini/skills/` | `.gemini/settings.json` 的 `mcpServers` |
+| OpenCode | `.opencode/AGENTS.md`（以平台 Manifest 为准） | `.opencode/skills/` | `.opencode/opencode.json` |
+| OMP | 无单独项目指令文件 | `.omp/skills/` | `.omp/mcp.json` |
+
+这里的 `AGENTS.md` 是 Codex 的项目指令文件，不是配置管理页中的 Agents 定义。
+删除项目级配置只删除项目目录中的对应文件、Skill 或 MCP 条目，不会禁用或删除用户级配置。
+静态 MCP 环境变量、Headers 或凭据可能写入项目文件；提交项目到 Git 前请检查这些文件，避免泄露密钥。
 ### 配置管理
 
 - Prompts

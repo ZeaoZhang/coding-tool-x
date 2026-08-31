@@ -20,6 +20,14 @@
     "agents": true,
     "plugins": true
   },
+  "projectResources": {
+    "instruction": { "path": ".opencode/AGENTS.md" },
+    "skills": {
+      "canonicalRoot": ".opencode/skills",
+      "readRoots": [".opencode/skills", ".claude/skills", ".agents/skills"]
+    },
+    "mcp": { "path": ".opencode/opencode.json", "format": "opencode-json" }
+  },
   "logFile": "opencode-proxy.log",
   "logColor": "yellow",
   "statisticsPath": "/api/opencode/statistics",

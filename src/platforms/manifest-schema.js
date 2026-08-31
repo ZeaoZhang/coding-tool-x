@@ -61,11 +61,85 @@ const schema = {
     sessionMapping: { type: 'object', additionalProperties: { type: 'string' } },
     sessionGlob: { type: 'string', minLength: 1 },
     resourceMappings: { type: 'object', additionalProperties: { type: 'string' } },
+    projectResources: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['instruction', 'skills', 'mcp'],
+      properties: {
+        instruction: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['path'],
+          properties: {
+            path: { type: ['string', 'null'] }
+          }
+        },
+        skills: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['canonicalRoot', 'readRoots'],
+          properties: {
+            canonicalRoot: { type: 'string', minLength: 1 },
+            readRoots: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 }
+            }
+          }
+        },
+        mcp: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['path', 'format'],
+          properties: {
+            path: { type: ['string', 'null'] },
+            format: { enum: ['none', 'claude-json', 'codex-toml', 'gemini-json', 'opencode-json', 'omp-json'] }
+          }
+        }
+      }
+    },
     capabilities: { type: 'object', additionalProperties: { enum: [...DRIVER_IDS] } }
   }
 };
 
 const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
+
+function isSafeRelativePath(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  const raw = value.trim().replace(/\\/g, '/');
+  if (raw.startsWith('/') || /^[a-zA-Z]:\//.test(raw) || raw.includes('\0')) return false;
+  const normalized = raw.replace(/^(\.\/)+/, '');
+  const segments = normalized.split('/');
+  return segments.every(segment => segment && segment !== '..');
+}
+
+function validateProjectResources(manifest, errors) {
+  const resources = manifest?.projectResources;
+  if (!resources) return;
+
+  const instructionPath = resources.instruction?.path;
+  if (instructionPath !== null && !isSafeRelativePath(instructionPath)) {
+    errors.push({ instancePath: '/projectResources/instruction/path', message: 'must be a safe relative path or null' });
+  }
+
+  const skills = resources.skills;
+  if (skills && !isSafeRelativePath(skills.canonicalRoot)) {
+    errors.push({ instancePath: '/projectResources/skills/canonicalRoot', message: 'must be a safe relative path' });
+  }
+  for (const [index, root] of (skills?.readRoots || []).entries()) {
+    if (!isSafeRelativePath(root)) {
+      errors.push({ instancePath: `/projectResources/skills/readRoots/${index}`, message: 'must be a safe relative path' });
+    }
+  }
+
+  const mcpPath = resources.mcp?.path;
+  if (mcpPath !== null && !isSafeRelativePath(mcpPath)) {
+    errors.push({ instancePath: '/projectResources/mcp/path', message: 'must be a safe relative path or null' });
+  }
+  if (mcpPath === null && resources.mcp?.format !== 'none') {
+    errors.push({ instancePath: '/projectResources/mcp/format', message: 'must be none when mcp path is null' });
+  }
+}
 
 function validateManifest(manifest) {
   const valid = validate(manifest);
@@ -104,6 +178,7 @@ function validateManifest(manifest) {
     }
   }
 
+  validateProjectResources(manifest, errors);
   return { valid: errors.length === 0, errors };
 }
 

@@ -93,7 +93,7 @@
           </div>
 
           <!-- 启用平台 -->
-          <div class="form-group">
+          <div v-if="scope !== 'project'" class="form-group">
             <div class="group-title">
               <n-icon :size="16" class="group-icon"><AppsOutline /></n-icon>
               <span>启用平台</span>
@@ -272,6 +272,7 @@ import {
   AppsOutline, ServerOutline, DocumentTextOutline, CheckmarkCircleOutline
 } from '@vicons/ionicons5'
 import { getPresets, saveServer } from '../api/mcp'
+import { saveProjectMcp } from '../api/project-config'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
@@ -294,6 +295,18 @@ const props = defineProps({
   platforms: {
     type: Array,
     default: () => []
+  },
+  platform: {
+    type: String,
+    default: 'claude'
+  },
+  scope: {
+    type: String,
+    default: 'user'
+  },
+  projectPath: {
+    type: String,
+    default: ''
   }
 })
 
@@ -562,7 +575,9 @@ async function handleSave() {
 
   saving.value = true
   try {
-    const result = await saveServer(data)
+    const result = props.scope === 'project'
+      ? await saveProjectMcp(props.projectPath, props.platform, data.id, data.server)
+      : await saveServer(data)
     if (result.success) {
       message.success(isEditing.value ? '保存成功' : '添加成功')
       emit('saved')

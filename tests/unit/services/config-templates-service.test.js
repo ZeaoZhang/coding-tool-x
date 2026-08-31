@@ -15,6 +15,7 @@ let mcpPresets;
 let promptPresets;
 let convertCommandToCodexMock;
 let convertCommandToGeminiMock;
+let projectConfigService;
 let templatesService;
 
 function writeFile(filePath, content) {
@@ -237,6 +238,66 @@ beforeEach(() => {
     }
   };
 
+  projectConfigService = {
+    writeInstruction: vi.fn(async (targetDir, platform, content) => {
+      const paths = {
+        claude: 'CLAUDE.md',
+        codex: 'AGENTS.md',
+        gemini: 'GEMINI.md',
+        opencode: path.join('.opencode', 'AGENTS.md')
+      };
+      const relativePath = paths[platform];
+      if (relativePath) writeFile(path.join(targetDir, relativePath), content);
+      return { supported: Boolean(relativePath), path: relativePath, content };
+    }),
+    installProjectSkill: vi.fn(async () => ({ success: true })),
+    upsertProjectMcp: vi.fn(async (targetDir, platform, id, spec) => {
+      const configPaths = {
+        claude: [ '.mcp.json', 'mcpServers' ],
+        codex: [ path.join('.codex', 'config.toml'), 'mcp_servers' ],
+        gemini: [ path.join('.gemini', 'settings.json'), 'mcpServers' ],
+        opencode: [ path.join('.opencode', 'opencode.json'), 'mcp' ],
+        omp: [ path.join('.omp', 'mcp.json'), 'mcpServers' ]
+      };
+      const [relativePath, key] = configPaths[platform];
+      const filePath = path.join(targetDir, relativePath);
+      let config = {};
+      if (fs.existsSync(filePath)) config = readJson(filePath);
+      let projectSpec = spec;
+      if (platform === 'opencode' && spec.type === 'stdio') {
+        projectSpec = {
+          type: 'local',
+          command: [spec.command, ...(spec.args || [])],
+          environment: spec.env,
+          cwd: spec.cwd
+        };
+      } else if (platform === 'opencode' && spec.type !== 'local' && spec.type !== 'remote') {
+        projectSpec = {
+          type: 'remote',
+          url: spec.url || '',
+          ...(spec.headers ? { headers: spec.headers } : {})
+        };
+      }
+      config[key] = { ...(config[key] || {}), [id]: projectSpec };
+      if (relativePath.endsWith('.toml')) return { success: true, id, scope: 'project' };
+      writeFile(filePath, JSON.stringify(config, null, 2));
+      return { success: true, id, scope: 'project' };
+    })
+  };
+  const projectConfigPath = require.resolve('../../../src/server/services/project-config-service');
+  require.cache[projectConfigPath] = {
+    id: projectConfigPath,
+    filename: projectConfigPath,
+    loaded: true,
+    exports: {
+      ProjectConfigService: class {
+        constructor() {
+          return projectConfigService;
+        }
+      }
+    }
+  };
+
   delete require.cache[require.resolve('../../../src/server/services/config-templates-service')];
   templatesService = require('../../../src/server/services/config-templates-service');
 });
@@ -246,6 +307,7 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/services/config-templates-service',
+    '../../../src/server/services/project-config-service',
     '../../../src/config/paths',
     '../../../src/server/services/agents-service',
     '../../../src/server/services/commands-service',
@@ -391,7 +453,7 @@ describe('config-templates-service manifest mappings', () => {
 });
 
 describe('config-templates-service apply and preview', () => {
-  test('applies templates to project directories across selected AI config types', () => {
+  test('applies templates to project directories across selected AI config types', async () => {
     const template = templatesService.createCustomTemplate({
       name: 'Workspace Starter',
       cliType: 'claude',
@@ -422,7 +484,8 @@ describe('config-templates-service apply and preview', () => {
     });
 
     const targetDir = path.join(testDir, 'workspace');
-    const result = templatesService.applyTemplateToProject(targetDir, template.id, {
+    fs.mkdirSync(targetDir, { recursive: true });
+    const result = await templatesService.applyTemplateToProject(targetDir, template.id, {
       aiConfigTypes: ['claude', 'codex', 'gemini', 'opencode']
     });
 
@@ -476,6 +539,7 @@ describe('config-templates-service apply and preview', () => {
       mcpServers: {
         'local-server': {
           type: 'stdio',
+
           command: 'npx',
           args: ['-y', '@ctx/local-server'],
           env: { TOKEN: 'abc' },
@@ -513,7 +577,111 @@ describe('config-templates-service apply and preview', () => {
     }));
   });
 
-  test('applies OMP template commands as prompt templates and skips project agents', () => {
+  test('delegates project instruction, skills, and MCP resources to project config service', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Project Resources',
+      cliType: 'claude',
+      aiConfigs: {
+        claude: { enabled: true, content: '# CLAUDE' }
+      },
+      skills: [{ directory: 'skill-claude', name: 'Skill Claude' }],
+      mcpServers: ['local-server']
+    });
+    const targetDir = path.join(testDir, 'project-resources');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    await templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['claude']
+    });
+
+    expect(projectConfigService.writeInstruction).toHaveBeenCalledWith(targetDir, 'claude', '# CLAUDE');
+    expect(projectConfigService.installProjectSkill).toHaveBeenCalledWith(targetDir, 'claude', {
+      directory: 'skill-claude',
+      name: 'Skill Claude'
+    });
+    expect(projectConfigService.upsertProjectMcp).toHaveBeenCalledWith(
+      targetDir,
+      'claude',
+      'local-server',
+      mcpServers['local-server'].server
+    );
+  });
+
+  test('rejects template resource paths that escape the project root', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Unsafe Agent Path',
+      cliType: 'claude',
+      agents: [{ fileName: '../../../escaped', systemPrompt: 'unsafe' }]
+    });
+    const targetDir = path.join(testDir, 'unsafe-agent');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    await expect(templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['claude']
+    })).rejects.toThrow('Invalid template agent file');
+    expect(fs.existsSync(path.join(testDir, 'escaped.md'))).toBe(false);
+  });
+
+  test('preserves malformed OpenCode project config instead of overwriting it', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Malformed OpenCode Config',
+      cliType: 'opencode',
+      plugins: [{ name: 'plugin-a' }]
+    });
+    const targetDir = path.join(testDir, 'unsafe-opencode');
+    const configPath = path.join(targetDir, '.opencode', 'opencode.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, '{malformed', 'utf8');
+
+    await expect(templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['opencode']
+    })).rejects.toThrow('无法解析 OpenCode 项目配置');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe('{malformed');
+  });
+
+  test('preserves malformed OMP project config instead of overwriting it', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Malformed OMP Config',
+      cliType: 'omp',
+      plugins: [{ name: 'plugin-a' }]
+    });
+    const targetDir = path.join(testDir, 'unsafe-omp');
+    const configPath = path.join(targetDir, '.omp', 'config.yml');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, 'packages: [', 'utf8');
+
+    await expect(templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['omp']
+    })).rejects.toThrow('无法解析 OMP 项目配置');
+    expect(fs.readFileSync(configPath, 'utf8')).toBe('packages: [');
+  });
+
+  test('keeps the legacy applyTemplate result counters', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Legacy Result Shape',
+      cliType: 'claude',
+      claudeMd: { enabled: true, content: '# CLAUDE' }
+    });
+    const targetDir = path.join(testDir, 'legacy-result');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const result = await templatesService.applyTemplate(targetDir, template.id);
+
+    expect(result).toEqual({
+      success: true,
+      results: {
+        claudeMd: true,
+        skills: 0,
+        commands: 0,
+        agents: 0,
+        plugins: 0,
+        mcpServers: 0
+      },
+      template: 'Legacy Result Shape'
+    });
+  });
+
+  test('applies OMP template commands as prompt templates and skips project agents', async () => {
     const template = templatesService.createCustomTemplate({
       name: 'OMP Starter',
       cliType: 'omp',
@@ -538,7 +706,8 @@ describe('config-templates-service apply and preview', () => {
     });
 
     const targetDir = path.join(testDir, 'omp-workspace');
-    const result = templatesService.applyTemplateToProject(targetDir, template.id, {
+    fs.mkdirSync(targetDir, { recursive: true });
+    const result = await templatesService.applyTemplateToProject(targetDir, template.id, {
       aiConfigTypes: ['omp']
     });
 

@@ -249,3 +249,33 @@ test('resolve and list return cloned manifests that cannot mutate registry state
     capabilities: { sessions: 'legacy:claude' }
   });
 });
+
+test('public definitions expose safe project resource metadata', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [{
+      key: 'codex',
+      label: 'Codex',
+      command: 'codex',
+      paths: { home: '/tmp/codex' },
+      projectResources: {
+        instruction: { path: 'AGENTS.md' },
+        skills: { canonicalRoot: '.agents/skills', readRoots: ['.agents/skills', '.codex/skills'] },
+        mcp: { path: '.codex/config.toml', format: 'codex-toml' }
+      },
+      capabilities: {}
+    }],
+    userFile: { platforms: [] }
+  });
+
+  expect(registry.getPublicDefinition('codex')).toEqual(expect.objectContaining({
+    projectResources: {
+      instruction: { path: 'AGENTS.md' },
+      skills: {
+        canonicalRoot: '.agents/skills',
+        readRoots: ['.agents/skills', '.codex/skills']
+      },
+      mcp: { path: '.codex/config.toml', format: 'codex-toml' }
+    }
+  }));
+  expect(JSON.stringify(registry.getPublicDefinition('codex'))).not.toContain('/tmp/codex');
+});

@@ -72,7 +72,7 @@
                     安装此技能
                   </n-button>
                   <n-button
-                    v-if="detail.installed && !detail.protected"
+                    v-if="detail.installed && !detail.protected && !(scope === 'project' && detail.sourceScope !== 'project')"
                     type="error"
                     tertiary
                     size="small"
@@ -151,6 +151,14 @@ const props = defineProps({
   platform: {
     type: String,
     default: 'claude'
+  },
+  scope: {
+    type: String,
+    default: 'user'
+  },
+  projectPath: {
+    type: String,
+    default: ''
   }
 })
 
@@ -191,6 +199,11 @@ const sourceLink = computed(() => detail.value ? getSkillSourceLink(detail.value
 const sourceLinkLabel = computed(() => detail.value ? getSkillSourceLinkLabel(detail.value) : '')
 const skillPath = computed(() => detail.value?.installPath || detail.value?.path || detail.value?.fullPath || '')
 
+const scopeOptions = computed(() => ({
+  ...(props.projectPath ? { cwd: props.projectPath } : {}),
+  ...(props.scope && props.scope !== 'user' ? { scope: props.scope } : {})
+}))
+
 function buildSkillRepoContext(skill) {
   return {
     id: skill.repoId,
@@ -218,7 +231,8 @@ async function loadDetail() {
       props.skill.directory,
       props.platform,
       buildSkillRepoContext(props.skill),
-      props.skill.fullDirectory || null
+      props.skill.fullDirectory || null,
+      scopeOptions.value
     )
     if (requestId !== loadRequestId.value) return
 
@@ -256,7 +270,8 @@ async function handleInstall() {
       props.skill.directory,
       buildSkillRepoContext(props.skill),
       props.skill.fullDirectory || null,
-      props.platform
+      props.platform,
+      scopeOptions.value
     )
 
     if (result.success) {
@@ -270,13 +285,16 @@ async function handleInstall() {
     installing.value = false
   }
 }
-
 async function handleUninstall() {
-  if (!detail.value || detail.value.protected) return
+  if (
+    !detail.value
+    || detail.value.protected
+    || (props.scope === 'project' && detail.value.sourceScope !== 'project')
+  ) return
 
   uninstalling.value = true
   try {
-    const result = await uninstallSkill(detail.value.directory, props.platform)
+    const result = await uninstallSkill(detail.value.directory, props.platform, scopeOptions.value)
 
     if (result.success) {
       message.success('卸载成功')

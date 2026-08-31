@@ -122,8 +122,21 @@
 
     <!-- 弹窗组件 -->
     <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData(true)" />
-    <SkillCreateModal v-model:visible="showCreateModal" :platform="currentPlatform" @created="loadData" />
-    <SkillDetailDrawer v-model:visible="showDetailDrawer" :skill="selectedSkill" :platform="currentPlatform" @updated="loadData" />
+    <SkillCreateModal
+      v-model:visible="showCreateModal"
+      :platform="currentPlatform"
+      :scope="props.scope"
+      :project-path="props.projectPath"
+      @created="loadData"
+    />
+    <SkillDetailDrawer
+      v-model:visible="showDetailDrawer"
+      :skill="selectedSkill"
+      :platform="currentPlatform"
+      :scope="props.scope"
+      :project-path="props.projectPath"
+      @updated="loadData"
+    />
     <OmpSkillSettingsModal v-model:visible="showOmpSettingsModal" :operation-token="ompSettingsEpoch" @saved="handleOmpSettingsSaved" />
   </div>
 </template>
@@ -151,7 +164,8 @@ const props = defineProps({
   hideBack: { type: Boolean, default: false },
   drawerVisible: { type: Boolean, default: false },
   platform: { type: String, default: '' },
-  projectPath: { type: String, default: '' }
+  projectPath: { type: String, default: '' },
+  scope: { type: String, default: 'user' }
 })
 
 defineEmits(['back', 'updated'])
@@ -179,6 +193,11 @@ const managedSkillPlatforms = computed(() => byCapability('skills').map(platform
 const currentPlatform = computed(() => {
   return String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
 })
+
+const scopeOptions = computed(() => ({
+  ...(props.projectPath ? { cwd: props.projectPath } : {}),
+  ...(props.scope && props.scope !== 'user' ? { scope: props.scope } : {})
+}))
 const showOmpSettings = computed(() => supportsOmpSkillSettings(currentPlatform.value))
 
 const currentPlatformLabel = computed(() => {
@@ -217,9 +236,7 @@ async function loadData(force = false, { notifyError = true } = {}) {
   const platform = currentPlatform.value
   loading.value = true
   try {
-    const skillsRes = await getSkills(force, platform, {
-      ...(props.projectPath ? { cwd: props.projectPath } : {})
-    })
+    const skillsRes = await getSkills(force, platform, scopeOptions.value)
     const loadedSkills = validateOmpSkillListResponse(skillsRes)
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
 
@@ -262,9 +279,12 @@ async function handleInstall(skill) {
   try {
     let res
     if (skill.isLocal) {
-      res = await installLocalSkill(skill.directory, currentPlatform.value)
+      res = await installLocalSkill(skill.directory, currentPlatform.value, scopeOptions.value)
     } else {
-      if (!skill.repoOwner && !skill.repoProjectPath && !skill.repoLocalPath) { message.error('缺少仓库信息'); return }
+      if (!skill.repoOwner && !skill.repoProjectPath && !skill.repoLocalPath) {
+        message.error('缺少仓库信息')
+        return
+      }
       res = await installSkill(
         skill.directory,
         {
@@ -280,33 +300,41 @@ async function handleInstall(skill) {
           repoUrl: skill.repoUrl
         },
         skill.fullDirectory || null,
-        currentPlatform.value
+        currentPlatform.value,
+        scopeOptions.value
       )
     }
     if (res.success) {
       message.success(`技能 "${skill.name}" 安装成功`)
-      const s = skills.value.find(x => x.key === skill.key)
-      if (s) s.installed = true
+      const currentSkill = skills.value.find(item => item.key === skill.key)
+      if (currentSkill) currentSkill.installed = true
     }
-  } catch (err) { message.error('安装失败: ' + err.message) }
-  finally { delete installingKeys.value[skill.key] }
+  } catch (err) {
+    message.error('安装失败: ' + err.message)
+  } finally {
+    delete installingKeys.value[skill.key]
+  }
 }
 
 async function handleUninstall(skill) {
-  if (skill.protected || skill.readonly) return
+  if (
+    skill.protected
+    || skill.readonly
+    || (props.scope === 'project' && skill.sourceScope !== 'project')
+  ) return
   uninstallingKeys.value[skill.key] = true
   try {
-    const res = await uninstallSkill(skill.directory, currentPlatform.value, {
-      ...(props.projectPath ? { cwd: props.projectPath } : {}),
-      ...(skill.sourceScope ? { scope: skill.sourceScope } : {})
-    })
+    const res = await uninstallSkill(skill.directory, currentPlatform.value, scopeOptions.value)
     if (res.success) {
       message.success(`技能 "${skill.name}" 已卸载`)
-      const s = skills.value.find(x => x.key === skill.key)
-      if (s) s.installed = false
+      const currentSkill = skills.value.find(item => item.key === skill.key)
+      if (currentSkill) currentSkill.installed = false
     }
-  } catch (err) { message.error('卸载失败: ' + err.message) }
-  finally { delete uninstallingKeys.value[skill.key] }
+  } catch (err) {
+    message.error('卸载失败: ' + err.message)
+  } finally {
+    delete uninstallingKeys.value[skill.key]
+  }
 }
 
 function openOmpSettings() {
