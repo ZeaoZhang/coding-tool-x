@@ -134,14 +134,7 @@ function readUIConfigFromFile() {
   }
 
   const normalized = normalizeUIConfig(data);
-  const hasLegacyFields = LEGACY_SELECTION_FIELDS.some(field =>
-    Object.prototype.hasOwnProperty.call(data, field)
-  );
-  const persistedSelection = data.enabledCliPlatforms;
-  const selectionNeedsRewrite = !Object.prototype.hasOwnProperty.call(data, 'enabledCliPlatforms') ||
-    hasLegacyFields ||
-    JSON.stringify(persistedSelection) !== JSON.stringify(normalized.enabledCliPlatforms);
-  if (selectionNeedsRewrite) {
+  if (JSON.stringify(data) !== JSON.stringify(normalized)) {
     try {
       writeCanonicalConfig(normalized);
     } catch (error) {
