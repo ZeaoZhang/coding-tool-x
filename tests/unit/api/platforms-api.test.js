@@ -29,6 +29,12 @@ describe('platform catalog and generic routes', () => {
           command: 'demo',
           iconToken: 'terminal',
           color: '#000',
+          promptLabel: 'Demo prompt',
+          resourceTypes: {
+            skills: true,
+            commands: false,
+            leakedPath: '/private/home'
+          },
           capabilities: { sessions: 'generic-jsonl' },
           paths: { home: '/private/home' },
           driverIds: { sessions: 'generic-jsonl' }
@@ -42,6 +48,8 @@ describe('platform catalog and generic routes', () => {
     expect(response.body.platforms[0]).toEqual(expect.objectContaining({
       key: 'demo-cli',
       label: 'Demo',
+      promptLabel: 'Demo prompt',
+      resourceTypes: { skills: true, commands: false },
       capabilities: { sessions: true }
     }));
     expect(response.body.platforms[0]).not.toHaveProperty('paths');

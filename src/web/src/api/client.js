@@ -25,11 +25,43 @@ client.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+export const LEGACY_PLATFORM_PREFIXES = Object.freeze({
+  claude: '',
+  codex: '/codex',
+  gemini: '/gemini',
+  opencode: '/opencode',
+  omp: '/omp'
+})
+
+export function normalizePlatformKey(platform) {
+  return String(platform || '').trim().toLowerCase()
+}
+
+export function isLegacyPlatformKey(platform) {
+  return Object.prototype.hasOwnProperty.call(
+    LEGACY_PLATFORM_PREFIXES,
+    normalizePlatformKey(platform)
+  )
+}
+
+export function createPlatformApiError(platform, code = 'not_found') {
+  const key = normalizePlatformKey(platform)
+  const error = new Error(code === 'not_found'
+    ? `Unknown platform: ${key || '(empty)'}`
+    : `Unsupported platform capability: ${key || '(empty)'}`)
+  error.code = code
+  error.status = 404
+  error.platform = key
+  return error
+}
+
+export function getPlatformApiPrefix(platform = 'claude') {
+  const key = normalizePlatformKey(platform)
+  if (!key) throw createPlatformApiError(platform)
+  if (isLegacyPlatformKey(key)) return LEGACY_PLATFORM_PREFIXES[key]
+  return `/platforms/${encodeURIComponent(key)}`
+}
 
 export function getChannelPrefix(channel = 'claude') {
-  if (channel === 'codex') return '/codex'
-  if (channel === 'gemini') return '/gemini'
-  if (channel === 'opencode') return '/opencode'
-  if (channel === 'omp') return '/omp'
-  return ''
+  return getPlatformApiPrefix(channel)
 }

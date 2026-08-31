@@ -426,6 +426,54 @@ describe('legacy drivers', () => {
     });
   });
 
+  test('adapts legacy MCP and prompt file operations through fixed service exports', () => {
+    const readPlatformMcpConfig = vi.fn(platform => ({ platform, mcpServers: {} }));
+    const writePlatformMcpConfig = vi.fn((platform, config) => ({ platform, config }));
+    const removePlatformMcpServer = vi.fn((platform, serverId) => ({ platform, serverId }));
+    const readLegacyPlatformPrompt = vi.fn(platform => `${platform} prompt`);
+    const writeLegacyPlatformPrompt = vi.fn((platform, content) => ({ platform, content }));
+    const removeLegacyPlatformPrompt = vi.fn(platform => ({ platform, removed: true }));
+    const requireImpl = makeRequire({
+      '../../server/services/mcp-service': {
+        readPlatformMcpConfig,
+        writePlatformMcpConfig,
+        removePlatformMcpServer
+      },
+      '../../server/services/prompts-service': {
+        readLegacyPlatformPrompt,
+        writeLegacyPlatformPrompt,
+        removeLegacyPlatformPrompt
+      }
+    });
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const mcpDriver = createLegacyDriver({ platform: 'codex', capability: 'mcp', requireImpl });
+    const promptDriver = createLegacyDriver({ platform: 'codex', capability: 'prompts', requireImpl });
+
+    expect(requireImpl.calls).toEqual([]);
+    expect(mcpDriver.read()).toEqual({ platform: 'codex', mcpServers: {} });
+    expect(mcpDriver.write({ mcpServers: { demo: {} } })).toEqual({
+      platform: 'codex',
+      config: { mcpServers: { demo: {} } }
+    });
+    expect(mcpDriver.remove('demo')).toEqual({ platform: 'codex', serverId: 'demo' });
+    expect(promptDriver.read()).toBe('codex prompt');
+    expect(promptDriver.write('content')).toEqual({ platform: 'codex', content: 'content' });
+    expect(promptDriver.remove()).toEqual({ platform: 'codex', removed: true });
+    expect(readPlatformMcpConfig).toHaveBeenCalledWith('codex');
+    expect(writePlatformMcpConfig).toHaveBeenCalledWith('codex', { mcpServers: { demo: {} } });
+    expect(removePlatformMcpServer).toHaveBeenCalledWith('codex', 'demo');
+    expect(readLegacyPlatformPrompt).toHaveBeenCalledWith('codex');
+    expect(writeLegacyPlatformPrompt).toHaveBeenCalledWith('codex', 'content');
+    expect(removeLegacyPlatformPrompt).toHaveBeenCalledWith('codex');
+    expect(requireImpl.calls).toEqual([
+      '../../server/services/mcp-service',
+      '../../server/services/prompts-service'
+    ]);
+
+    const ompPrompt = createLegacyDriver({ platform: 'omp', capability: 'prompts', requireImpl });
+    expect(ompPrompt).toEqual({ status: 'unsupported', platform: 'omp', capability: 'prompts' });
+  });
+
   test('registers legacy factories without loading config paths or implementation modules', () => {
     const requireImpl = makeRequire({});
     const { registerLegacyDrivers } = require('../../../src/platforms/drivers/legacy');

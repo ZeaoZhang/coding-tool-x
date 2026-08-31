@@ -1,248 +1,241 @@
 'use strict';
 
-const fs   = require('fs');
-const os   = require('os');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const UI_CONFIG_PATH = require.resolve('../../../src/server/services/ui-config');
-const PATHS_PATH     = require.resolve('../../../src/config/paths');
+const PATHS_PATH = require.resolve('../../../src/config/paths');
 
 let testDir;
 let testConfigFile;
-let loadUIConfig, saveUIConfig, updateUIConfig, updateNestedUIConfig;
+let loadUIConfig;
+let saveUIConfig;
+let updateUIConfig;
+let updateNestedUIConfig;
+
+function loadService() {
+  delete require.cache[UI_CONFIG_PATH];
+  const mod = require('../../../src/server/services/ui-config');
+  loadUIConfig = mod.loadUIConfig;
+  saveUIConfig = mod.saveUIConfig;
+  updateUIConfig = mod.updateUIConfig;
+  updateNestedUIConfig = mod.updateNestedUIConfig;
+  return mod;
+}
 
 beforeEach(() => {
-  testDir        = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-ui-config-test-'));
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-ui-config-test-'));
   testConfigFile = path.join(testDir, 'ui-config.json');
-
   delete require.cache[UI_CONFIG_PATH];
   require.cache[PATHS_PATH] = {
     id: PATHS_PATH, filename: PATHS_PATH, loaded: true,
     exports: { PATHS: { uiConfig: testConfigFile }, ensureStorageDirMigrated: () => {} }
   };
-
-  const mod        = require('../../../src/server/services/ui-config');
-  loadUIConfig          = mod.loadUIConfig;
-  saveUIConfig          = mod.saveUIConfig;
-  updateUIConfig        = mod.updateUIConfig;
-  updateNestedUIConfig  = mod.updateNestedUIConfig;
+  loadService();
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete require.cache[UI_CONFIG_PATH];
   try { fs.rmSync(testDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-// ─── loadUIConfig ─────────────────────────────────────────────────────────────
-
 describe('loadUIConfig', () => {
-  test('returns default config with theme=light when file does not exist', () => {
+  test('returns canonical defaults when file does not exist', () => {
     const config = loadUIConfig();
-    expect(config.theme).toBe('light');
+    expect(config.enabledCliPlatforms).toEqual(['claude', 'codex', 'opencode', 'omp']);
+    expect(config).not.toHaveProperty('homeCliColumns');
+    expect(config).not.toHaveProperty('dashboardChannelOrder');
+    expect(config).not.toHaveProperty('customCliPlatforms');
   });
 
-  test('defaults homepage CLI columns to the four legacy platforms', () => {
+  test('allows more than four enabled platforms and preserves explicit order', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      enabledCliPlatforms: ['omp', 'claude', 'codex', 'gemini', 'opencode']
+    }));
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['omp', 'claude', 'codex', 'gemini', 'opencode']);
+  });
+
+  test('preserves an explicitly empty enabled list', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({ enabledCliPlatforms: [] }));
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual([]);
+  });
+  test('rewrites explicit noncanonical enabled platforms on read', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      enabledCliPlatforms: [' OMP ', 'omp', 'unknown', 'CLAUDE']
+    }));
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['omp', 'claude']);
+    expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8')).enabledCliPlatforms)
+      .toEqual(['omp', 'claude']);
+  });
+
+  test('maps the exact legacy default to the new default', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      homeCliColumns: ['claude', 'codex', 'gemini', 'opencode']
+    }));
+    loadService();
     const config = loadUIConfig();
-    expect(config.homeCliColumns).toEqual(['claude', 'codex', 'gemini', 'opencode']);
-    expect(config.dashboardChannelOrder).toEqual(['claude', 'codex', 'gemini', 'opencode']);
+    expect(config.enabledCliPlatforms).toEqual(['claude', 'codex', 'opencode', 'omp']);
+    expect(config).not.toHaveProperty('homeCliColumns');
   });
 
-  test('returns all expected top-level default keys when file does not exist', () => {
+  test('migrates legacy order using known registry keys and new defaults', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      dashboardChannelOrder: ['gemini', 'omp', 'claude']
+    }));
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['gemini', 'omp', 'claude', 'codex', 'opencode']);
+  });
+
+  test('prefers homeCliColumns over dashboardChannelOrder during migration', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      homeCliColumns: ['codex'], dashboardChannelOrder: ['gemini']
+    }));
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['codex', 'claude', 'opencode', 'omp']);
+  });
+
+  test('discards custom platform keys and metadata during migration', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      homeCliColumns: ['my-cli', 'claude'],
+      customCliPlatforms: [{ key: 'my-cli', name: 'Injected', command: 'evil' }]
+    }));
+    loadService();
     const config = loadUIConfig();
-    expect(config).toHaveProperty('theme');
-    expect(config).toHaveProperty('panelVisibility');
-    expect(config).toHaveProperty('channelBalance');
-    expect(config).toHaveProperty('channelLocks');
-    expect(config).toHaveProperty('channelCollapse');
-    expect(config).toHaveProperty('channelOrder');
+    expect(config.enabledCliPlatforms).toEqual(['claude', 'codex', 'opencode', 'omp']);
+    expect(config).not.toHaveProperty('customCliPlatforms');
+  });
+  test('accepts formal manifest keys from the lazy registry', () => {
+    const runtimePath = require.resolve('../../../src/platforms/runtime');
+    require.cache[runtimePath] = {
+      id: runtimePath, filename: runtimePath, loaded: true,
+      exports: { getPlatformRegistry: () => ({ list: () => [
+        { key: 'claude' }, { key: 'codex' }, { key: 'gemini' },
+        { key: 'opencode' }, { key: 'omp' }, { key: 'demo-cli' }
+      ] }) }
+    };
+    fs.writeFileSync(testConfigFile, JSON.stringify({ enabledCliPlatforms: ['demo-cli', 'unknown'] }));
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['demo-cli']);
   });
 
-  test('merges file data with defaults when file exists', () => {
-    fs.writeFileSync(testConfigFile, JSON.stringify({ theme: 'dark' }), 'utf8');
-    // Re-require to get fresh module that reads the file on init
-    delete require.cache[UI_CONFIG_PATH];
-    const mod = require('../../../src/server/services/ui-config');
-    const config = mod.loadUIConfig();
-    expect(config.theme).toBe('dark');
-    // Defaults for missing keys are still present
-    expect(config).toHaveProperty('panelVisibility');
-    expect(config.channelBalance.showRemaining).toBe(false);
-    expect(config).toHaveProperty('channelLocks');
+  test('retains normalized settings when canonical rewrite fails', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({ theme: 'dark', homeCliColumns: ['codex'] }));
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation(() => { throw new Error('rename failed'); });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    loadService();
+    expect(loadUIConfig().theme).toBe('dark');
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['codex', 'claude', 'opencode', 'omp']);
+    expect(errorSpy).toHaveBeenCalledWith('Error rewriting UI config:', expect.any(Error));
+    renameSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
-  test('preserves OMP when it replaces one homepage column', () => {
-    fs.writeFileSync(testConfigFile, JSON.stringify({
-      homeCliColumns: ['claude', 'omp', 'gemini', 'opencode']
-    }), 'utf8');
-    delete require.cache[UI_CONFIG_PATH];
-    const mod = require('../../../src/server/services/ui-config');
-    const config = mod.loadUIConfig();
-
-    expect(config.homeCliColumns).toEqual(['claude', 'omp', 'gemini', 'opencode']);
-    expect(config.dashboardChannelOrder).toEqual(config.homeCliColumns);
-  });
-
-  test('normalizes illegal and duplicate homepage columns back to four valid slots', () => {
-    fs.writeFileSync(testConfigFile, JSON.stringify({
-      homeCliColumns: ['omp', 'omp', 'unknown', 'claude', 'codex']
-    }), 'utf8');
-    delete require.cache[UI_CONFIG_PATH];
-    const mod = require('../../../src/server/services/ui-config');
-    const config = mod.loadUIConfig();
-
-    expect(config.homeCliColumns).toEqual(['omp', 'claude', 'codex', 'gemini']);
-    expect(config.homeCliColumns).toHaveLength(4);
-  });
-
-  test('allows enabled custom CLI platforms in homepage slots', () => {
-    fs.writeFileSync(testConfigFile, JSON.stringify({
-      customCliPlatforms: [
-        { key: 'my-cli', name: 'My CLI', command: 'my-cli', enabled: true },
-        { key: 'off-cli', name: 'Off CLI', command: 'off-cli', enabled: false }
-      ],
-      homeCliColumns: ['my-cli', 'off-cli', 'omp', 'claude']
-    }), 'utf8');
-    delete require.cache[UI_CONFIG_PATH];
-    const mod = require('../../../src/server/services/ui-config');
-    const config = mod.loadUIConfig();
-
-    expect(config.customCliPlatforms).toEqual([
-      expect.objectContaining({ key: 'my-cli', name: 'My CLI', command: 'my-cli' }),
-      expect.objectContaining({ key: 'off-cli', enabled: false })
-    ]);
-    expect(config.homeCliColumns).toEqual(['my-cli', 'omp', 'claude', 'codex']);
-  });
-
-  test('returns defaults when file contains invalid JSON', () => {
-    fs.writeFileSync(testConfigFile, '{ not valid json', 'utf8');
-    delete require.cache[UI_CONFIG_PATH];
-    const mod = require('../../../src/server/services/ui-config');
-    const config = mod.loadUIConfig();
-    expect(config.theme).toBe('light');
-  });
-
-  test('fills in missing nested defaults for a partial config', () => {
-    fs.writeFileSync(testConfigFile, JSON.stringify({ theme: 'dark', channelLocks: { claude: true } }), 'utf8');
-    delete require.cache[UI_CONFIG_PATH];
-    const mod = require('../../../src/server/services/ui-config');
-    const config = mod.loadUIConfig();
-    // Provided value preserved
-    expect(config.channelLocks.claude).toBe(true);
-    // Missing defaults filled in
-    expect(config.channelLocks.codex).toBe(false);
-    expect(config.channelLocks.gemini).toBe(false);
-  });
-
-  test('returns a deep copy — mutations do not affect the internal cache', () => {
+  test('atomically rewrites a legacy file and remains canonical on next load', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({ homeCliColumns: ['codex'] }));
+    loadService();
     const first = loadUIConfig();
-    first.theme = 'mutated';
+    const rewritten = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
+    expect(rewritten.enabledCliPlatforms).toEqual(first.enabledCliPlatforms);
+    expect(rewritten).not.toHaveProperty('homeCliColumns');
+    const mtime = fs.statSync(testConfigFile).mtimeMs;
+    loadService();
+    expect(loadUIConfig()).toEqual(first);
+    expect(fs.statSync(testConfigFile).mtimeMs).toBe(mtime);
+  });
+
+  test('rewrites a valid file that omits enabledCliPlatforms', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({ theme: 'dark' }));
+    loadUIConfig();
+    expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8'))).toMatchObject({
+      theme: 'dark', enabledCliPlatforms: ['claude', 'codex', 'opencode', 'omp']
+    });
+  });
+
+  test('returns canonical defaults for corrupt JSON and preserves the load error', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fs.writeFileSync(testConfigFile, '{ not valid json');
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['claude', 'codex', 'opencode', 'omp']);
+    expect(errorSpy).toHaveBeenCalledWith('Error loading UI config:', expect.any(Error));
+    errorSpy.mockRestore();
+  });
+  test.each(['null', '[]', '"text"'])('falls back for valid JSON %s', (content) => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fs.writeFileSync(testConfigFile, content);
+    loadService();
+    expect(loadUIConfig().enabledCliPlatforms).toEqual(['claude', 'codex', 'opencode', 'omp']);
+    expect(errorSpy).toHaveBeenCalledWith('Error loading UI config:', expect.any(Error));
+    errorSpy.mockRestore();
+  });
+
+  test('fills nested defaults and returns deep copies', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({ theme: 'dark', channelLocks: { claude: true } }));
+    loadService();
+    const first = loadUIConfig();
+    expect(first.channelLocks).toMatchObject({ claude: true, codex: false, gemini: false });
     first.panelVisibility.showChannels = false;
-    const second = loadUIConfig();
-    expect(second.theme).toBe('light');
-    expect(second.panelVisibility.showChannels).toBe(true);
+    expect(loadUIConfig().panelVisibility.showChannels).toBe(true);
   });
 });
 
-// ─── saveUIConfig ─────────────────────────────────────────────────────────────
-
-describe('saveUIConfig', () => {
-  test('writes the config as JSON to the file', () => {
-    const config = { theme: 'dark', panelVisibility: {}, channelLocks: {}, channelCollapse: {}, channelOrder: {} };
-    saveUIConfig(config);
-    const written = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
-    expect(written.theme).toBe('dark');
+describe('save and update UI config', () => {
+  test('normalizes, persists, and returns canonical config', () => {
+    const result = saveUIConfig({
+      theme: 'dark', enabledCliPlatforms: [' GEMINI ', 'gemini', 'unknown'],
+      homeCliColumns: ['codex'], customCliPlatforms: [{ key: 'evil' }]
+    });
+    expect(result.enabledCliPlatforms).toEqual(['gemini']);
+    expect(result).not.toHaveProperty('homeCliColumns');
+    expect(result).not.toHaveProperty('customCliPlatforms');
+    expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8'))).toEqual(result);
+  });
+  test('omits unknown top-level keys from canonical output', () => {
+    const result = saveUIConfig({ theme: 'dark', enabledCliPlatforms: ['claude'], injected: 'discard' });
+    expect(result).not.toHaveProperty('injected');
+    expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8'))).not.toHaveProperty('injected');
   });
 
-  test('updates in-memory cache so subsequent loadUIConfig returns saved data', () => {
-    const config = loadUIConfig();
-    config.theme = 'dark';
-    saveUIConfig(config);
-    const reloaded = loadUIConfig();
-    expect(reloaded.theme).toBe('dark');
+  test('preserves established notification fields while omitting arbitrary extras', () => {
+    const result = saveUIConfig({
+      theme: 'dark', enabledCliPlatforms: ['claude'], injected: 'discard',
+      remoteNotifications: { providers: [] }, claudeNotificationDisabledByUser: true
+    });
+    expect(result.remoteNotifications).toEqual({ providers: [] });
+    expect(result.claudeNotificationDisabledByUser).toBe(true);
+    expect(result).not.toHaveProperty('injected');
   });
-});
-
-// ─── updateUIConfig ───────────────────────────────────────────────────────────
-
-describe('updateUIConfig', () => {
-  test('sets the specified top-level key and persists it', () => {
-    updateUIConfig('theme', 'dark');
-    const config = loadUIConfig();
-    expect(config.theme).toBe('dark');
+  test('updateUIConfig returns the normalized config', () => {
+    const result = updateUIConfig('enabledCliPlatforms', ['omp', 'omp', 'invalid']);
+    expect(result.enabledCliPlatforms).toEqual(['omp']);
   });
 
-  test('returns the updated config object', () => {
-    const result = updateUIConfig('theme', 'dark');
+  test('updateNestedUIConfig preserves generic nested settings', () => {
+    const result = updateNestedUIConfig('channelLocks', 'claude', true);
+    expect(result.channelLocks.claude).toBe(true);
+    expect(loadUIConfig().channelLocks.claude).toBe(true);
+  });
+
+  test('installs the file watcher after saving before the first load', () => {
+    const watchSpy = vi.spyOn(fs, 'watchFile');
+    const result = saveUIConfig({ theme: 'dark' });
     expect(result.theme).toBe('dark');
-  });
-
-  test('writes the change to disk', () => {
-    updateUIConfig('theme', 'dark');
-    const written = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
-    expect(written.theme).toBe('dark');
+    expect(watchSpy).toHaveBeenCalledWith(testConfigFile, { persistent: false }, expect.any(Function));
+    watchSpy.mockRestore();
   });
 });
-
-// ─── updateNestedUIConfig ─────────────────────────────────────────────────────
-
-describe('updateNestedUIConfig', () => {
-  test('sets a nested child key under an existing parent', () => {
-    updateNestedUIConfig('channelLocks', 'claude', true);
-    const config = loadUIConfig();
-    expect(config.channelLocks.claude).toBe(true);
-  });
-
-  test('creates the parent object if it does not exist', () => {
-    updateNestedUIConfig('brandNewParent', 'childKey', 'value');
-    const config = loadUIConfig();
-    expect(config.brandNewParent).toBeDefined();
-    expect(config.brandNewParent.childKey).toBe('value');
-  });
-
-  test('returns the updated config object', () => {
-    const result = updateNestedUIConfig('channelCollapse', 'gemini', ['session1']);
-    expect(result.channelCollapse.gemini).toEqual(['session1']);
-  });
-
-  test('persists the nested change to disk', () => {
-    updateNestedUIConfig('channelOrder', 'codex', ['a', 'b']);
-    const written = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
-    expect(written.channelOrder.codex).toEqual(['a', 'b']);
-  });
-});
-
-// ─── Default config structure ─────────────────────────────────────────────────
 
 describe('default config structure', () => {
-  test('panelVisibility has showChannels=true and showLogs=true', () => {
+  test('retains generic panel and channel defaults', () => {
     const config = loadUIConfig();
-    expect(config.panelVisibility.showChannels).toBe(true);
-    expect(config.panelVisibility.showLogs).toBe(true);
-  });
-
-  test('channelBalance defaults to not showing remaining balance', () => {
-    const config = loadUIConfig();
-    expect(config.channelBalance.showRemaining).toBe(false);
-  });
-
-  test('channelLocks defaults are all false', () => {
-    const config = loadUIConfig();
+    expect(config.panelVisibility).toEqual({ showChannels: true, showLogs: true });
+    expect(config.channelBalance).toEqual({ showRemaining: false });
     expect(config.channelLocks.claude).toBe(false);
-    expect(config.channelLocks.codex).toBe(false);
-    expect(config.channelLocks.gemini).toBe(false);
-  });
-
-  test('channelCollapse defaults are empty arrays', () => {
-    const config = loadUIConfig();
     expect(config.channelCollapse.claude).toEqual([]);
-    expect(config.channelCollapse.codex).toEqual([]);
-    expect(config.channelCollapse.gemini).toEqual([]);
-  });
-
-  test('channelOrder defaults are empty arrays', () => {
-    const config = loadUIConfig();
     expect(config.channelOrder.claude).toEqual([]);
-    expect(config.channelOrder.codex).toEqual([]);
-    expect(config.channelOrder.gemini).toEqual([]);
   });
 });

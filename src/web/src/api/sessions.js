@@ -1,7 +1,11 @@
 import { client, getChannelPrefix } from './client'
+import { getPlatformSessions, usesLegacyPlatformApi } from './platforms'
 import { copyTextToClipboard } from '../utils/clipboard'
 
 export async function getSessions(projectName, channel = 'claude', options = {}) {
+  if (!usesLegacyPlatformApi(channel)) {
+    return getPlatformSessions(channel, projectName, options)
+  }
   const prefix = getChannelPrefix(channel)
   const params = {}
   if (options.fresh) {

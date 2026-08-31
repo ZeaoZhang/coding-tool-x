@@ -172,6 +172,8 @@ import CommandDetailDrawer from './CommandDetailDrawer.vue'
 import CommandFormModal from './CommandFormModal.vue'
 import { getPlatformConfig } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
+import { getRoutePlatform } from '../config/platformCatalog'
 
 const props = defineProps({
   hideBack: {
@@ -193,6 +195,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['back', 'updated'])
+const platformStore = usePlatformStore()
 const route = useRoute()
 
 const commands = ref([])
@@ -207,18 +210,12 @@ const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
 let commandDetailRequestId = 0
-const platformStore = usePlatformStore()
-const managedCommandPlatforms = computed(() => platformStore.all
-  .filter(platform => platform.capabilities?.commands === true)
-  .map(platform => platform.key))
+const { byCapability } = useEnabledCliPlatforms()
+const managedCommandPlatforms = computed(() => byCapability('commands').map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (managedCommandPlatforms.value.includes(props.platform)) {
-    return props.platform
-  }
-  const channel = route.meta.channel
-  if (managedCommandPlatforms.value.includes(channel)) return channel
-  return 'claude'
+  const requested = String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
+  return requested
 })
 
 const commandUsageHint = computed(() =>

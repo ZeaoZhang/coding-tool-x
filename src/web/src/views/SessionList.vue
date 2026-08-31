@@ -384,6 +384,7 @@ import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
 import { searchSessions as searchSessionsApi, copySessionLaunchCommand, getSessionOutline } from '../api/sessions'
+import { getRoutePlatform } from '../config/platformCatalog'
 import ChatHistoryDrawer from '../components/ChatHistoryDrawer.vue'
 import ProjectConfigDrawer from '../components/ProjectConfigDrawer.vue'
 
@@ -400,7 +401,7 @@ const store = useSessionsStore()
 const { addFavorite, removeFavorite, isFavorite } = useFavorites()
 
 // 当前渠道
-const currentChannel = computed(() => route.meta.channel || 'claude')
+const currentChannel = computed(() => getRoutePlatform(route))
 const resolvedProjectName = ref(props.projectName)
 const effectiveProjectName = computed(() => resolvedProjectName.value || props.projectName)
 
@@ -480,8 +481,11 @@ async function ensureProjectNameResolved() {
     resolvedProjectName.value = displayMatch.name
     if (displayMatch.name !== props.projectName) {
       await router.replace({
-        name: `${currentChannel.value}-sessions`,
-        params: { projectName: displayMatch.name }
+        name: 'cli-sessions',
+        params: {
+          platform: currentChannel.value,
+          projectName: displayMatch.name
+        }
       })
     }
     return displayMatch.name
@@ -521,8 +525,10 @@ const filteredSessions = computed(() => {
 })
 
 function goBack() {
-  const channel = route.meta.channel || 'claude'
-  router.push({ name: `${channel}-projects` })
+  router.push({
+    name: 'cli-projects',
+    params: { platform: currentChannel.value }
+  })
 }
 
 async function handleSearch() {

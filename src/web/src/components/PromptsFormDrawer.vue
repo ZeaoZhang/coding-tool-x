@@ -53,31 +53,13 @@
           </div>
 
           <div class="apps-toggles">
-            <label class="app-toggle">
-              <n-switch v-model:value="form.apps.claude" />
-              <span class="app-name">Claude</span>
-              <span class="app-path">~/.claude/CLAUDE.md</span>
+            <label v-for="platform in promptPlatforms" :key="platform.key" class="app-toggle">
+              <n-switch v-model:value="form.apps[platform.key]" />
+              <span class="app-name">{{ platform.promptLabel || platform.label || platform.title || platform.key }}</span>
             </label>
-            <label class="app-toggle">
-              <n-switch v-model:value="form.apps.codex" />
-              <span class="app-name">Codex</span>
-              <span class="app-path">~/.codex/AGENTS.md</span>
-            </label>
-            <label class="app-toggle">
-              <n-switch v-model:value="form.apps.gemini" />
-              <span class="app-name">Gemini</span>
-              <span class="app-path">~/.gemini/GEMINI.md</span>
-            </label>
-            <label class="app-toggle">
-              <n-switch v-model:value="form.apps.opencode" />
-              <span class="app-name">OpenCode</span>
-              <span class="app-path">~/.config/opencode/AGENTS.md</span>
-            </label>
-            <label class="app-toggle">
-              <n-switch v-model:value="form.apps.omp" />
-              <span class="app-name">OMP</span>
-              <span class="app-path">~/.omp/agent/prompts/coding-tool-x/*.md</span>
-            </label>
+            <span v-if="promptPlatforms.length === 0" class="platform-empty">
+              当前没有可用的 Prompt 平台
+            </span>
           </div>
         </div>
 
@@ -117,10 +99,10 @@ import { DocumentTextOutline, InformationCircleOutline, AppsOutline, CodeSlashOu
 import { savePreset } from '../api/prompts'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import MarkdownEditor from './MarkdownEditor.vue'
 
 const { drawerWidth } = useResponsiveDrawer(600)
-
 const props = defineProps({
   visible: {
     type: Boolean,
@@ -131,6 +113,10 @@ const props = defineProps({
     default: null
   },
   existingIds: {
+    type: Array,
+    default: () => []
+  },
+  platforms: {
     type: Array,
     default: () => []
   }
@@ -144,6 +130,16 @@ const visible = computed({
 })
 
 const isEditing = computed(() => !!props.editingPreset)
+const { byCapability } = useEnabledCliPlatforms()
+const promptPlatforms = computed(() => (
+  props.platforms.length > 0 ? props.platforms : byCapability('prompts')
+))
+
+function buildDefaultApps() {
+  return Object.fromEntries(
+    promptPlatforms.value.map(platform => [platform.key, true])
+  )
+}
 
 const saving = ref(false)
 const idError = ref('')
@@ -153,13 +149,7 @@ const form = reactive({
   name: '',
   description: '',
   content: '',
-  apps: {
-    claude: true,
-    codex: true,
-    gemini: true,
-    opencode: true,
-    omp: false
-  }
+  apps: {}
 })
 
 // 初始化表单
@@ -169,19 +159,15 @@ function initForm() {
     form.name = props.editingPreset.name || ''
     form.description = props.editingPreset.description || ''
     form.content = props.editingPreset.content || ''
-    form.apps = {
-      claude: props.editingPreset.apps?.claude ?? true,
-      codex: props.editingPreset.apps?.codex ?? true,
-      gemini: props.editingPreset.apps?.gemini ?? true,
-      opencode: props.editingPreset.apps?.opencode ?? true,
-      omp: props.editingPreset.apps?.omp ?? false
-    }
+    form.apps = props.editingPreset.apps
+      ? { ...props.editingPreset.apps }
+      : buildDefaultApps()
   } else {
     form.id = ''
     form.name = ''
     form.description = ''
     form.content = ''
-    form.apps = { claude: true, codex: true, gemini: true, opencode: true, omp: false }
+    form.apps = buildDefaultApps()
   }
   idError.value = ''
 }
@@ -225,7 +211,12 @@ async function handleSave() {
       name: form.name.trim(),
       description: form.description.trim(),
       content: form.content,
-      apps: { ...form.apps }
+      apps: isEditing.value
+        ? { ...form.apps }
+        : Object.fromEntries(promptPlatforms.value.map(platform => [
+          platform.key,
+          form.apps[platform.key] === true
+        ]))
     }
 
     // 保留内置标记

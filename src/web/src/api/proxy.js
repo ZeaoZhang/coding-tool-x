@@ -1,5 +1,4 @@
-import { client } from './client'
-
+import { client, getPlatformApiPrefix } from './client'
 export async function getProxyStatus() {
   const response = await client.get('/proxy/status')
   return response.data
@@ -12,6 +11,11 @@ export async function startProxy() {
 
 export async function stopProxy() {
   const response = await client.post('/proxy/stop')
+  return response.data
+}
+
+export async function getPlatformProxyStatus(platform) {
+  const response = await client.get(`${getPlatformApiPrefix(platform)}/proxy/status`)
   return response.data
 }
 

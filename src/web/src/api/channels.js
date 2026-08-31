@@ -1,7 +1,7 @@
-import { SPEED_TEST_API_TIMEOUT_MS, client } from './client'
+import { SPEED_TEST_API_TIMEOUT_MS, client, getPlatformApiPrefix, normalizePlatformKey } from './client'
 
 function platformChannelPath(platform) {
-  return `/platforms/${encodeURIComponent(String(platform || '').trim().toLowerCase())}/channels`
+  return `${getPlatformApiPrefix(platform)}/channels`
 }
 
 export async function getPlatformChannels(platform) {
@@ -469,6 +469,21 @@ export async function saveOmpChannelOrder(order) {
 export async function resetOmpChannelHealth(channelId) {
   const response = await client.post(`/omp/channels/${channelId}/reset-health`)
   return response.data
+}
+
+export async function updateChannelForPlatform(platform, channelId, updates) {
+  const key = normalizePlatformKey(platform)
+  const legacyUpdaters = {
+    claude: updateChannel,
+    codex: updateCodexChannel,
+    gemini: updateGeminiChannel,
+    opencode: updateOpenCodeChannel,
+    omp: updateOmpChannel
+  }
+  const updater = legacyUpdaters[key]
+  return updater
+    ? updater(channelId, updates)
+    : updatePlatformChannel(key, channelId, updates)
 }
 
 export async function testOmpChannelSpeed(channelId, timeout = 20000) {

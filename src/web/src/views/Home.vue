@@ -20,82 +20,49 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import draggable from 'vuedraggable'
 import ChannelColumn from '../components/dashboard/ChannelColumn.vue'
 import { useUIConfig } from '../composables/useUIConfig'
-import {
-  DEFAULT_HOME_CLI_COLUMNS,
-  normalizeHomeCliColumns
-} from '../config/platforms'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import { usePlatformStore } from '../stores/platforms'
-
-const STORAGE_KEY = 'dashboardChannelOrder'
 
 const { uiConfig, updateConfig, loadUIConfig } = useUIConfig()
 const platformStore = usePlatformStore()
+const { enabledKeys } = useEnabledCliPlatforms({
+  platformStore,
+  configRef: uiConfig
+})
+const channelList = ref([])
 
-// 从 localStorage 获取初始顺序
-function getOrderFromStorage() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      const order = JSON.parse(stored)
-      return normalizeHomeCliColumns(order, platformStore.all, uiConfig.value.customCliPlatforms)
-    }
-  } catch (e) {}
-  return DEFAULT_HOME_CLI_COLUMNS
+function applyEnabledPlatforms(keys = enabledKeys.value) {
+  channelList.value = keys.map(type => ({ type }))
 }
 
-// 保存顺序到 localStorage
-function saveOrderToStorage(order) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(order))
-  } catch (e) {}
-}
-
-function applyHomeColumns(order, customCliPlatforms = uiConfig.value.customCliPlatforms) {
-  const normalized = normalizeHomeCliColumns(order, platformStore.all, customCliPlatforms)
-  channelList.value = normalized.map(type => ({ type }))
-  saveOrderToStorage(normalized)
-  return normalized
-}
-
-// 初始化使用 localStorage 的顺序
-const channelList = ref(getOrderFromStorage().map(type => ({ type })))
-
-// 拖拽结束后保存
 async function onDragEnd() {
-  const order = normalizeHomeCliColumns(
-    channelList.value.map(item => item.type),
-    platformStore.all,
-    uiConfig.value.customCliPlatforms
-  )
-  channelList.value = order.map(type => ({ type }))
-
-  // 同时保存到 localStorage 和服务端
-  saveOrderToStorage(order)
-  await updateConfig('homeCliColumns', order)
-  await updateConfig('dashboardChannelOrder', order)
+  const order = channelList.value.map(item => item.type)
+  applyEnabledPlatforms(order)
+  await updateConfig('enabledCliPlatforms', order)
 }
 
-function handleHomeCliColumnsChange(event) {
-  const detail = event?.detail || {}
-  applyHomeColumns(detail.homeCliColumns, detail.customCliPlatforms)
+function handleEnabledCliPlatformsChange(event) {
+  const keys = event?.detail?.enabledCliPlatforms
+  if (Array.isArray(keys)) {
+    uiConfig.value = {
+      ...uiConfig.value,
+      enabledCliPlatforms: [...keys]
+    }
+  }
+  applyEnabledPlatforms()
 }
 
-// 组件挂载时从服务端加载配置并同步
 onMounted(async () => {
-  window.addEventListener('home-cli-columns-change', handleHomeCliColumnsChange)
-  await loadUIConfig()
-
-  // 如果服务端有保存的顺序，使用服务端的
-  applyHomeColumns(
-    uiConfig.value.homeCliColumns || uiConfig.value.dashboardChannelOrder,
-    uiConfig.value.customCliPlatforms
-  )
+  window.addEventListener('enabled-cli-platforms-change', handleEnabledCliPlatformsChange)
+  await Promise.all([loadUIConfig(), platformStore.load()])
+  applyEnabledPlatforms()
 })
 
 onUnmounted(() => {
-  window.removeEventListener('home-cli-columns-change', handleHomeCliColumnsChange)
+  window.removeEventListener('enabled-cli-platforms-change', handleEnabledCliPlatformsChange)
 })
 </script>
+
 
 <style scoped>
 .dashboard-container {
@@ -138,7 +105,7 @@ onUnmounted(() => {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
   flex: 1;
   min-height: 0;

@@ -1,11 +1,15 @@
 import { defineStore, createPinia, getActivePinia } from 'pinia'
 import { getCurrentInstance } from 'vue'
 import { getPlatforms } from '../api/platforms'
-import { MINIMAL_PLATFORM_FALLBACK, normalizePublicPlatforms } from '../config/platforms'
+import { DEFAULT_ENABLED_CLI_PLATFORMS, MINIMAL_PLATFORM_FALLBACK, normalizePublicPlatforms } from '../config/platforms'
+import { resolveEnabledCliPlatforms } from '../config/platformCatalog'
+import { useUIConfig } from '../composables/useUIConfig'
+const FALLBACK_PLATFORM_KEYS = new Set(DEFAULT_ENABLED_CLI_PLATFORMS)
+const FALLBACK_PLATFORMS = MINIMAL_PLATFORM_FALLBACK.filter(platform => FALLBACK_PLATFORM_KEYS.has(platform.key))
 
 const definePlatformStore = defineStore('platforms', {
   state: () => ({
-    platforms: normalizePublicPlatforms(MINIMAL_PLATFORM_FALLBACK),
+    platforms: normalizePublicPlatforms(FALLBACK_PLATFORMS),
     loaded: false,
     loading: false,
     error: null,
@@ -13,7 +17,15 @@ const definePlatformStore = defineStore('platforms', {
   }),
   getters: {
     all: state => state.platforms,
-    enabled: state => state.platforms.filter(platform => platform.enabled !== false && platform.defaultVisible !== false)
+    enabled: state => {
+      const { uiConfig } = useUIConfig()
+      const selectedKeys = resolveEnabledCliPlatforms({
+        catalog: state.platforms,
+        enabledCliPlatforms: uiConfig.value.enabledCliPlatforms
+      })
+      const byKey = new Map(state.platforms.map(platform => [platform.key, platform]))
+      return selectedKeys.map(key => byKey.get(key)).filter(Boolean)
+    }
   },
   actions: {
     async fetchPlatforms() {
@@ -35,6 +47,7 @@ const definePlatformStore = defineStore('platforms', {
         })
         .catch((cause) => {
           this.error = cause
+          this.loaded = true
           return this.platforms
         })
         .finally(() => {

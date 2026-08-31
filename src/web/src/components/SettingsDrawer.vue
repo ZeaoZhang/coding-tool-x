@@ -110,78 +110,48 @@
                   <div class="setting-label">
                     <n-text strong>首页 CLI 显示</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      固定四个槽位，默认是 Claude Code / Codex / Gemini / OpenCode；OMP 和自定义 CLI 可替换任一列
+                      从已注册的平台目录中选择并排序首页显示的 CLI
                     </n-text>
                   </div>
 
                   <div class="home-cli-settings">
-                    <div class="home-cli-slots">
-                      <div v-for="(_, index) in homeCliColumns" :key="index" class="home-cli-slot">
-                        <n-text depth="3" style="font-size: 12px;">第 {{ index + 1 }} 列</n-text>
-                        <n-select
-                          :value="homeCliColumns[index]"
-                          :options="homeCliOptions"
-                          size="small"
-                          @update:value="value => handleHomeCliSlotChange(index, value)"
-                        />
-                      </div>
-                    </div>
-
-                    <div class="custom-cli-list">
+                    <div class="platform-catalog-list">
                       <div
-                        v-for="(platform, index) in customCliPlatforms"
-                        :key="platform.key || index"
-                        class="custom-cli-item"
+                        v-for="platform in platformCatalog"
+                        :key="platform.key"
+                        class="platform-catalog-item"
                       >
-                        <div class="custom-cli-grid">
-                          <n-input
-                            v-model:value="platform.key"
+                        <n-checkbox
+                          :checked="enabledCliPlatforms.includes(platform.key)"
+                          @update:checked="value => toggleEnabledCliPlatform(platform.key, value)"
+                        >
+                          {{ platform.label || platform.title || platform.key }}
+                        </n-checkbox>
+                        <div v-if="enabledCliPlatforms.includes(platform.key)" class="platform-order-actions">
+                          <n-button
+                            text
                             size="small"
-                            placeholder="key，如 aider"
-                            @blur="normalizeCustomCliEdits"
-                          />
-                          <n-input
-                            v-model:value="platform.name"
+                            :disabled="enabledPlatformIndex(platform.key) === 0"
+                            aria-label="上移"
+                            @click="moveEnabledCliPlatform(platform.key, -1)"
+                          >
+                            <template #icon><n-icon><ChevronUpOutline /></n-icon></template>
+                          </n-button>
+                          <n-button
+                            text
                             size="small"
-                            placeholder="名称"
-                          />
-                          <n-input
-                            v-model:value="platform.command"
-                            size="small"
-                            placeholder="启动命令"
-                          />
-                          <n-input
-                            v-model:value="platform.configDir"
-                            size="small"
-                            placeholder="配置目录（可选）"
-                          />
-                          <n-input
-                            v-model:value="platform.icon"
-                            size="small"
-                            placeholder="图标名（可选）"
-                          />
-                          <n-input
-                            v-model:value="platform.color"
-                            size="small"
-                            placeholder="颜色（可选）"
-                          />
-                        </div>
-                        <div class="custom-cli-actions">
-                          <n-switch v-model:value="platform.enabled" size="small" />
-                          <n-text depth="3" style="font-size: 12px;">可作为首页列</n-text>
-                          <n-button text size="small" type="error" @click="removeCustomCliPlatform(index)">
-                            <template #icon><n-icon><TrashOutline /></n-icon></template>
+                            :disabled="enabledPlatformIndex(platform.key) === enabledCliPlatforms.length - 1"
+                            aria-label="下移"
+                            @click="moveEnabledCliPlatform(platform.key, 1)"
+                          >
+                            <template #icon><n-icon><ChevronDownOutline /></n-icon></template>
                           </n-button>
                         </div>
                       </div>
                     </div>
 
                     <div class="home-cli-actions">
-                      <n-button size="small" @click="addCustomCliPlatform">
-                        <template #icon><n-icon><AddOutline /></n-icon></template>
-                        新增自定义 CLI
-                      </n-button>
-                      <n-button size="small" @click="resetHomeCliColumns">恢复默认四列</n-button>
+                      <n-button size="small" @click="resetEnabledCliPlatforms">恢复默认显示</n-button>
                       <n-button
                         type="primary"
                         size="small"
@@ -1287,7 +1257,7 @@ import { ref, computed, watch, onMounted, markRaw } from 'vue'
 import {
   NDrawer, NDrawerContent, NSpace, NText, NSelect, NButton, NAlert,
   NIcon, NBadge, NSpin, NDivider, NTag, NEmpty, NSwitch, NInputNumber,
-  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard
+  NRadio, NRadioGroup, NInput, NModal, NCollapse, NCollapseItem, NCard, NCheckbox
 } from 'naive-ui'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
@@ -1297,18 +1267,20 @@ import {
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
   SunnyOutline, MoonOutline, NotificationsOutline,
   SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline,
-  TrashOutline
+  TrashOutline, ChevronUpOutline, ChevronDownOutline
 } from '@vicons/ionicons5'
 import { getUIConfig, saveUIConfig, updateNestedUIConfig } from '../api/ui-config'
-import { DEFAULT_HOME_CLI_COLUMNS, buildCliPlatformOptions, normalizeCustomCliPlatforms, normalizeHomeCliColumns } from '../config/platforms'
+import { DEFAULT_ENABLED_CLI_PLATFORMS } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
 import { getSecurityStatus, setSecurityPassword } from '../api/security'
 import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm2'
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
+import { useUIConfig } from '../composables/useUIConfig'
 import { client } from '../api/client'
 
 const platformStore = usePlatformStore()
+const { uiConfig } = useUIConfig()
 async function fetchModelSettings() {
   const resp = await client.get('/settings/model-settings')
   return resp.data
@@ -1365,12 +1337,8 @@ const originalPorts = ref({
   ompProxy: 20092
 })
 const savingPorts = ref(false)
-const homeCliColumns = ref([...DEFAULT_HOME_CLI_COLUMNS])
-const customCliPlatforms = ref([])
-const originalHomeCliSettings = ref({
-  homeCliColumns: [...DEFAULT_HOME_CLI_COLUMNS],
-  customCliPlatforms: []
-})
+const enabledCliPlatforms = ref([...DEFAULT_ENABLED_CLI_PLATFORMS])
+const originalEnabledCliPlatforms = ref([...DEFAULT_ENABLED_CLI_PLATFORMS])
 const savingHomeCli = ref(false)
 
 // 开机自启配置
@@ -1735,6 +1703,23 @@ const securityForm = ref({
   confirmPassword: ''
 })
 const savingSecurity = ref(false)
+const securityFormError = computed(() => {
+  const currentPassword = securityForm.value.currentPassword.trim()
+  const newPassword = securityForm.value.newPassword
+  const confirmPassword = securityForm.value.confirmPassword
+
+  if (securityStatus.value.hasPassword && !currentPassword) return '请输入当前密码'
+  if (!newPassword) return ''
+  if (newPassword.length < 4) return '新密码至少需要 4 位'
+  if (confirmPassword && newPassword !== confirmPassword) return '两次输入的新密码不一致'
+  return ''
+})
+const securityFormReady = computed(() => {
+  const form = securityForm.value
+  return (!securityStatus.value.hasPassword || Boolean(form.currentPassword.trim()))
+    && form.newPassword.length >= 4
+    && form.newPassword === form.confirmPassword
+})
 let securityStatusPromise = null
 
 // ─── 模型设置管理 ──────────────────────────────────────────────────────────
@@ -2040,8 +2025,6 @@ async function handleDeleteModelMeta(modelId) {
     message.error('删除失败：' + err.message)
   }
 }
-
-// 检查配置是否有修改
 const portsChanged = computed(() => {
   return ports.value.webUI !== originalPorts.value.webUI ||
     ports.value.proxy !== originalPorts.value.proxy ||
@@ -2052,39 +2035,6 @@ const portsChanged = computed(() => {
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
-})
-
-const homeCliOptions = computed(() => buildCliPlatformOptions(platformStore.all, customCliPlatforms.value))
-
-const homeCliDirty = computed(() => {
-  return JSON.stringify(homeCliColumns.value) !== JSON.stringify(originalHomeCliSettings.value.homeCliColumns) ||
-    JSON.stringify(normalizeCustomCliPlatforms(customCliPlatforms.value)) !== JSON.stringify(originalHomeCliSettings.value.customCliPlatforms)
-})
-
-const securityFormError = computed(() => {
-  if (!securityForm.value.newPassword || !securityForm.value.confirmPassword) {
-    return ''
-  }
-  if (securityForm.value.newPassword.length < 4) {
-    return '密码至少 4 位'
-  }
-  if (securityForm.value.newPassword !== securityForm.value.confirmPassword) {
-    return '两次输入的新密码不一致'
-  }
-  return ''
-})
-
-const securityFormReady = computed(() => {
-  if (!securityForm.value.newPassword || !securityForm.value.confirmPassword) {
-    return false
-  }
-  if (securityFormError.value) {
-    return false
-  }
-  if (securityStatus.value.hasPassword && !securityForm.value.currentPassword) {
-    return false
-  }
-  return true
 })
 
 // 菜单项配置
@@ -2116,6 +2066,37 @@ const menuItems = computed(() => [
   }
 ])
 
+const platformCatalog = computed(() => platformStore.all)
+const homeCliDirty = computed(() =>
+  JSON.stringify(enabledCliPlatforms.value) !== JSON.stringify(originalEnabledCliPlatforms.value)
+)
+
+function enabledPlatformIndex(key) {
+  return enabledCliPlatforms.value.indexOf(key)
+}
+
+function toggleEnabledCliPlatform(key, checked) {
+  const current = enabledCliPlatforms.value.filter(item => item !== key)
+  if (checked) {
+    current.push(key)
+  }
+  enabledCliPlatforms.value = current
+}
+
+function moveEnabledCliPlatform(key, offset) {
+  const index = enabledPlatformIndex(key)
+  const nextIndex = index + offset
+  if (index < 0 || nextIndex < 0 || nextIndex >= enabledCliPlatforms.value.length) return
+  const next = [...enabledCliPlatforms.value]
+  const [item] = next.splice(index, 1)
+  next.splice(nextIndex, 0, item)
+  enabledCliPlatforms.value = next
+}
+
+function resetEnabledCliPlatforms() {
+  enabledCliPlatforms.value = [...DEFAULT_ENABLED_CLI_PLATFORMS]
+}
+
 // 加载面板可见性设置
 async function loadPanelSettings() {
   try {
@@ -2124,89 +2105,36 @@ async function loadPanelSettings() {
       showChannels.value = response.config.panelVisibility?.showChannels !== false // default true
       showLogs.value = response.config.panelVisibility?.showLogs !== false // default true
       showChannelBalance.value = response.config.channelBalance?.showRemaining === true
-      const normalizedCustom = normalizeCustomCliPlatforms(response.config.customCliPlatforms || [])
-      const normalizedColumns = normalizeHomeCliColumns(
-        response.config.homeCliColumns || response.config.dashboardChannelOrder,
-        platformStore.all,
-        normalizedCustom
-      )
-      customCliPlatforms.value = normalizedCustom.map(platform => ({ ...platform }))
-      homeCliColumns.value = normalizedColumns
-      originalHomeCliSettings.value = {
-        homeCliColumns: [...normalizedColumns],
-        customCliPlatforms: normalizedCustom.map(platform => ({ ...platform }))
-      }
+      const configuredPlatforms = Array.isArray(response.config.enabledCliPlatforms)
+        ? response.config.enabledCliPlatforms
+        : DEFAULT_ENABLED_CLI_PLATFORMS
+      enabledCliPlatforms.value = [...configuredPlatforms]
+      originalEnabledCliPlatforms.value = [...configuredPlatforms]
     }
   } catch (err) {
     console.error('Failed to load panel settings:', err)
   }
 }
 
-function normalizeCustomCliEdits() {
-  customCliPlatforms.value = normalizeCustomCliPlatforms(customCliPlatforms.value)
-  homeCliColumns.value = normalizeHomeCliColumns(homeCliColumns.value, platformStore.all, customCliPlatforms.value)
-}
-
-function handleHomeCliSlotChange(index, value) {
-  const next = [...homeCliColumns.value]
-  const duplicateIndex = next.findIndex((item, itemIndex) => item === value && itemIndex !== index)
-  next[index] = value
-  if (duplicateIndex >= 0) {
-    next[duplicateIndex] = homeCliColumns.value[index]
-  }
-  homeCliColumns.value = normalizeHomeCliColumns(next, platformStore.all, customCliPlatforms.value)
-}
-
-function addCustomCliPlatform() {
-  const count = customCliPlatforms.value.length + 1
-  customCliPlatforms.value.push({
-    key: `custom-cli-${count}`,
-    name: `Custom CLI ${count}`,
-    command: '',
-    configDir: '',
-    icon: '',
-    color: '',
-    enabled: true
-  })
-  normalizeCustomCliEdits()
-}
-
-function removeCustomCliPlatform(index) {
-  customCliPlatforms.value.splice(index, 1)
-  normalizeCustomCliEdits()
-}
-
-function resetHomeCliColumns() {
-  homeCliColumns.value = [...DEFAULT_HOME_CLI_COLUMNS]
-}
-
 async function saveHomeCliSettings() {
   savingHomeCli.value = true
   try {
-    normalizeCustomCliEdits()
-    const custom = normalizeCustomCliPlatforms(customCliPlatforms.value)
-    const columns = normalizeHomeCliColumns(homeCliColumns.value, platformStore.all, custom)
-    const response = await getUIConfig()
-    const baseConfig = response.success && response.config ? response.config : {}
-    const saveResult = await saveUIConfig({
-      ...baseConfig,
-      customCliPlatforms: custom,
-      homeCliColumns: columns,
-      dashboardChannelOrder: columns
-    })
+    const saveResult = await saveUIConfig({ enabledCliPlatforms: [...enabledCliPlatforms.value] })
     if (!saveResult.success) {
       throw new Error(saveResult.message || '保存失败')
     }
-    customCliPlatforms.value = custom.map(platform => ({ ...platform }))
-    homeCliColumns.value = columns
-    originalHomeCliSettings.value = {
-      homeCliColumns: [...columns],
-      customCliPlatforms: custom.map(platform => ({ ...platform }))
+    const saved = Array.isArray(saveResult.config?.enabledCliPlatforms)
+      ? [...saveResult.config.enabledCliPlatforms]
+      : [...enabledCliPlatforms.value]
+    enabledCliPlatforms.value = [...saved]
+    originalEnabledCliPlatforms.value = [...saved]
+    uiConfig.value = {
+      ...uiConfig.value,
+      enabledCliPlatforms: [...saved]
     }
-    try {
-      localStorage.setItem('dashboardChannelOrder', JSON.stringify(columns))
-    } catch {}
-    window.dispatchEvent(new CustomEvent('home-cli-columns-change', { detail: { homeCliColumns: columns, customCliPlatforms: custom } }))
+    window.dispatchEvent(new CustomEvent('enabled-cli-platforms-change', {
+      detail: { enabledCliPlatforms: [...saved] }
+    }))
     message.success('首页 CLI 显示已保存')
   } catch (err) {
     message.error('保存失败: ' + err.message)
@@ -2970,52 +2898,26 @@ watch(activeMenu, (newVal, oldVal) => {
   margin-top: 16px;
 }
 
-.home-cli-slots {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.home-cli-slot {
+.platform-catalog-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+  gap: 8px;
 }
 
-.custom-cli-list {
+.platform-catalog-item {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.custom-cli-item {
-  padding: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--border-primary);
   border-radius: 8px;
   background: var(--bg-secondary);
 }
 
-[data-theme="dark"] .custom-cli-item {
-  background: rgba(30, 41, 59, 0.4);
-  border-color: rgba(148, 163, 184, 0.15);
-}
-
-.custom-cli-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.custom-cli-actions {
+.platform-order-actions {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.custom-cli-actions .n-button {
-  margin-left: auto;
+  gap: 2px;
 }
 
 .home-cli-actions {
@@ -3023,30 +2925,6 @@ watch(activeMenu, (newVal, oldVal) => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-/* 高级设置选项样式 */
-.advanced-options {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin-top: 16px;
-}
-
-.option-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: 10px;
-  transition: all 0.2s ease;
-}
-
-[data-theme="dark"] .option-field {
-  background: rgba(30, 41, 59, 0.4);
-  border: 1px solid rgba(148, 163, 184, 0.15);
 }
 
 .option-field:hover {
@@ -3431,11 +3309,6 @@ watch(activeMenu, (newVal, oldVal) => {
   .speed-test-default-row {
     grid-template-columns: 1fr;
     gap: 6px;
-  }
-
-  .home-cli-slots,
-  .custom-cli-grid {
-    grid-template-columns: 1fr;
   }
 }
 </style>

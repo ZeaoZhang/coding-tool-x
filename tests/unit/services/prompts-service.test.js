@@ -41,6 +41,29 @@ function stubModules() {
   };
 }
 
+function stubDynamicPromptRuntime(driver) {
+  const runtime = require('../../../src/platforms/runtime');
+  const definitions = [
+    { key: 'demo-cli', capabilities: { prompts: 'generic-prompt' } },
+    { key: 'mcp-only', capabilities: { mcp: 'generic-mcp' } }
+  ];
+  const byKey = new Map(definitions.map(definition => [definition.key, definition]));
+  const registry = {
+    list: () => definitions,
+    resolve: key => byKey.get(String(key).trim().toLowerCase()) || null,
+    getCapability: (key, capability) => byKey.get(String(key).trim().toLowerCase())?.capabilities?.[capability] || null
+  };
+  const platformRuntime = {
+    getDriver: vi.fn(() => driver)
+  };
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+  const runtimeSpy = vi.spyOn(runtime, 'getPlatformRuntime').mockReturnValue(platformRuntime);
+  return () => {
+    registrySpy.mockRestore();
+    runtimeSpy.mockRestore();
+  };
+}
+
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompts-service-'));
   globalClaudeDir = path.join(testDir, 'custom-claude');
@@ -189,5 +212,82 @@ describe('prompts-service import and stats', () => {
     const promptsService = require('../../../src/server/services/prompts-service');
 
     expect(() => promptsService.readPlatformPrompt('invalid')).toThrow(/无效的平台/);
+  });
+});
+
+describe('legacy prompt file adapters', () => {
+  test('reads, writes, and removes fixed native prompt files', () => {
+    const promptsService = require('../../../src/server/services/prompts-service');
+    const cases = [
+      ['claude', path.join(globalClaudeDir, 'CLAUDE.md')],
+    ];
+
+    for (const [platform, promptPath] of cases) {
+      expect(promptsService.writePlatformPrompt(platform, `${platform} prompt`)).toBe(`${platform} prompt`);
+      expect(promptsService.readPlatformPrompt(platform)).toBe(`${platform} prompt`);
+      expect(promptsService.removePlatformPrompt(platform)).toBe(true);
+      expect(fs.existsSync(promptPath)).toBe(false);
+    }
+
+    expect(() => promptsService.writePlatformPrompt('omp', 'unsupported')).toThrow(/prompts capability/);
+    expect(() => promptsService.removePlatformPrompt('omp')).toThrow(/prompts capability/);
+  });
+});
+describe('registry-driven prompt platforms', () => {
+  it('reads, writes, removes, syncs, and imports a generic prompt capability', async () => {
+    let content = 'generic prompt';
+    const driver = {
+      read: vi.fn(async () => content),
+      write: vi.fn(async value => {
+        content = value;
+        return { status: 'ok', capability: 'prompts', operation: 'write' };
+      }),
+      remove: vi.fn(async () => {
+        content = '';
+        return { status: 'ok', capability: 'prompts', operation: 'remove' };
+      })
+    };
+    const restore = stubDynamicPromptRuntime(driver);
+    const promptsService = require('../../../src/server/services/prompts-service');
+
+    try {
+      expect(await promptsService.readPlatformPrompt('demo-cli')).toBe('generic prompt');
+      expect(await promptsService.writePlatformPrompt('demo-cli', 'updated prompt')).toBe('updated prompt');
+
+      const preset = promptsService.savePreset({
+        id: 'generic-preset',
+        name: 'Generic preset',
+        content: 'preset content',
+        apps: { 'demo-cli': true, omp: false }
+      });
+      await promptsService.activatePreset(preset.id);
+      expect(content).toBe('preset content');
+
+      const imported = await promptsService.importFromPlatform('demo-cli', 'Imported generic');
+      expect(imported.name).toBe('Imported generic');
+      expect(imported.apps['demo-cli']).toBe(true);
+
+      expect(await promptsService.removePlatformPrompt('demo-cli')).toBe(true);
+      expect(driver.write).toHaveBeenCalled();
+      expect(driver.remove).toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('returns typed errors for unknown and non-prompt platforms', () => {
+    const restore = stubDynamicPromptRuntime({
+      read: vi.fn(async () => 'prompt'),
+      write: vi.fn(async () => ({ status: 'ok', capability: 'prompts', operation: 'write' })),
+      remove: vi.fn(async () => ({ status: 'ok', capability: 'prompts', operation: 'remove' }))
+    });
+    const promptsService = require('../../../src/server/services/prompts-service');
+
+    try {
+      expect(() => promptsService.readPlatformPrompt('missing-cli')).toThrow(/无效的平台/);
+      expect(() => promptsService.readPlatformPrompt('mcp-only')).toThrow(/prompts capability/);
+    } finally {
+      restore();
+    }
   });
 });

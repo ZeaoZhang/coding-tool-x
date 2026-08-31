@@ -5,7 +5,45 @@
 const express = require('express');
 const router = express.Router();
 const promptsService = require('../services/prompts-service');
-const PROMPT_FILE_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
+const { getPlatformRegistry } = require('../../platforms/runtime');
+
+function normalizePlatformKey(platform) {
+  return String(platform || '').trim().toLowerCase();
+}
+
+function createCapabilityError(platform, code) {
+  const key = normalizePlatformKey(platform);
+  const error = new Error(code === 'not_found'
+    ? `无效的平台: ${key}`
+    : `平台 ${key} 未声明 prompts capability`);
+  error.status = 404;
+  error.code = code;
+  error.platform = key;
+  error.capability = 'prompts';
+  return error;
+}
+
+function resolvePromptPlatform(platform) {
+  const key = normalizePlatformKey(platform);
+  const registry = getPlatformRegistry();
+  if (!registry.resolve(key)) return { error: createCapabilityError(key, 'not_found') };
+  const driverId = registry.getCapability(key, 'prompts');
+  if (!driverId || driverId === 'unsupported') {
+    return { error: createCapabilityError(key, 'unsupported') };
+  }
+  return { key, driverId };
+}
+
+function sendCapabilityError(res, error, fallbackStatus = 400) {
+  const status = error?.status === 404 && error?.code ? 404 : fallbackStatus;
+  return res.status(status).json({
+    success: false,
+    error: error.message,
+    code: error.code || undefined,
+    platform: error.platform || undefined,
+    capability: error.capability || undefined
+  });
+}
 
 /**
  * GET /api/prompts/presets
@@ -77,7 +115,7 @@ router.get('/presets/:id', (req, res) => {
  * POST /api/prompts/presets
  * 添加或更新预设
  */
-router.post('/presets', (req, res) => {
+router.post('/presets', async (req, res) => {
   try {
     const preset = req.body;
 
@@ -95,17 +133,14 @@ router.post('/presets', (req, res) => {
       });
     }
 
-    const result = promptsService.savePreset(preset);
+    const result = await promptsService.savePreset(preset);
     res.json({
       success: true,
       preset: result
     });
   } catch (error) {
     console.error('[Prompts API] Save preset failed:', error);
-    res.status(400).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 400);
   }
 });
 
@@ -180,49 +215,36 @@ router.post('/deactivate', async (req, res) => {
  * GET /api/prompts/platform-status
  * 获取各平台提示词状态
  */
-router.get('/platform-status', (req, res) => {
+router.get('/platform-status', async (req, res) => {
   try {
-    const status = promptsService.getPlatformStatus();
+    const status = await promptsService.getPlatformStatus();
     res.json({
       success: true,
       status
     });
   } catch (error) {
     console.error('[Prompts API] Get platform status failed:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 500);
   }
 });
-
 /**
  * GET /api/prompts/platform/:platform
  * 读取指定平台的提示词
  */
-router.get('/platform/:platform', (req, res) => {
+router.get('/platform/:platform', async (req, res) => {
   try {
-    const { platform } = req.params;
+    const resolved = resolvePromptPlatform(req.params.platform);
+    if (resolved.error) return sendCapabilityError(res, resolved.error, 404);
 
-    if (!PROMPT_FILE_PLATFORMS.includes(platform)) {
-      return res.status(400).json({
-        success: false,
-        error: `无效的平台: ${platform}`
-      });
-    }
-
-    const content = promptsService.readPlatformPrompt(platform);
+    const content = await promptsService.readPlatformPrompt(resolved.key);
     res.json({
       success: true,
-      platform,
+      platform: resolved.key,
       content
     });
   } catch (error) {
     console.error('[Prompts API] Read platform prompt failed:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 500);
   }
 });
 
@@ -230,30 +252,21 @@ router.get('/platform/:platform', (req, res) => {
  * POST /api/prompts/import/:platform
  * 从指定平台导入提示词
  */
-router.post('/import/:platform', (req, res) => {
+router.post('/import/:platform', async (req, res) => {
   try {
-    const { platform } = req.params;
+    const resolved = resolvePromptPlatform(req.params.platform);
+    if (resolved.error) return sendCapabilityError(res, resolved.error, 404);
+
     const { name } = req.body;
-
-    if (!PROMPT_FILE_PLATFORMS.includes(platform)) {
-      return res.status(400).json({
-        success: false,
-        error: `无效的平台: ${platform}`
-      });
-    }
-
-    const preset = promptsService.importFromPlatform(platform, name);
+    const preset = await promptsService.importFromPlatform(resolved.key, name);
     res.json({
       success: true,
       preset,
-      message: `成功从 ${platform} 导入提示词`
+      message: `成功从 ${resolved.key} 导入提示词`
     });
   } catch (error) {
     console.error('[Prompts API] Import failed:', error);
-    res.status(400).json({
-      success: false,
-      error: error.message
-    });
+    return sendCapabilityError(res, error, 500);
   }
 });
 

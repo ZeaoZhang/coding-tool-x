@@ -55,24 +55,27 @@ function buildPlatformSupport(registry = platformRuntime.getPlatformRegistry()) 
   return support;
 }
 
-const SUPPORTED_PLATFORMS = getSupportedPlatforms();
-const PLATFORM_SUPPORT = buildPlatformSupport();
-
 function normalizePlatforms(type, platforms = {}) {
-  const support = PLATFORM_SUPPORT[type] || {};
+  const supportedPlatforms = getSupportedPlatforms();
+  const support = buildPlatformSupport();
   const normalized = {};
 
-  for (const platform of SUPPORTED_PLATFORMS) {
+  for (const platform of supportedPlatforms) {
     normalized[platform] = !!platforms?.[platform];
   }
 
-  for (const platform of SUPPORTED_PLATFORMS) {
-    if (support[platform] === false) {
-      normalized[platform] = false;
+  for (const platform of supportedPlatforms) {
+    if (support[type]?.[platform] === false) normalized[platform] = false;
+  }
+
+  // Preserve historical flags for platforms absent from the current registry.
+  for (const [platform, enabled] of Object.entries(platforms || {})) {
+    if (!Object.prototype.hasOwnProperty.call(normalized, platform)) {
+      normalized[platform] = !!enabled;
     }
   }
 
-  // Default to Claude enabled when no platform explicitly configured
+  // Default to Claude enabled when no platform explicitly configured.
   if (!platforms || Object.keys(platforms).length === 0) {
     normalized.claude = true;
   }
@@ -334,7 +337,7 @@ class ConfigRegistryService {
       throw new Error(`Invalid platform: ${platform}`);
     }
 
-    if (PLATFORM_SUPPORT[type] && PLATFORM_SUPPORT[type][platform] === false) {
+    if (buildPlatformSupport()[type]?.[platform] === false) {
       throw new Error(`Platform "${platform}" is not supported for ${type}`);
     }
 
@@ -838,7 +841,6 @@ class ConfigRegistryService {
 module.exports = {
   ConfigRegistryService,
   CONFIG_TYPES,
-  SUPPORTED_PLATFORMS,
   getSupportedPlatforms,
   buildPlatformSupport,
   CONFIGS_DIR,

@@ -155,7 +155,9 @@ import SkillDetailDrawer from './SkillDetailDrawer.vue'
 import OmpSkillSettingsModal from './OmpSkillSettingsModal.vue'
 import { getPlatformConfig } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import { completeOmpSkillSettingsSave, supportsOmpSkillSettings, validateOmpSkillListResponse } from '../utils/omp-skill-settings'
+import { getRoutePlatform } from '../config/platformCatalog'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -185,17 +187,11 @@ const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
 const loadRequestId = ref(0)
-const managedSkillPlatforms = computed(() => platformStore.all
-  .filter(platform => platform.capabilities?.skills === true)
-  .map(platform => platform.key))
+const { byCapability } = useEnabledCliPlatforms()
+const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  if (props.platform && managedSkillPlatforms.value.includes(props.platform)) {
-    return props.platform
-  }
-  const channel = route.meta.channel
-  if (managedSkillPlatforms.value.includes(channel)) return channel
-  return 'claude'
+  return String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
 })
 
 const scopeOptions = computed(() => ({

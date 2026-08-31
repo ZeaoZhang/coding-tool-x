@@ -751,27 +751,14 @@ class ConfigSyncManager {
     const definitions = new Map(
       platforms
         .filter(platform => platform && platform.key)
-        .map(platform => [String(platform.key).toLowerCase(), platform])
+        .map(platform => [String(platform.key).trim().toLowerCase(), platform])
     );
-    const legacyMethods = {
-      claude: { sync: 'syncToClaude', remove: 'removeFromClaude' },
-      codex: { sync: 'syncToCodex', remove: 'removeFromCodex' },
-      gemini: { sync: 'syncToGemini', remove: 'removeFromGemini' },
-      opencode: { sync: 'syncToOpenCode', remove: 'removeFromOpenCode' },
-      omp: { sync: 'syncToOmp', remove: 'removeFromOmp' }
-    };
 
-    const invoke = (platform, operation, name) => {
-      const definition = definitions.get(platform);
-      const driverId = definition?.capabilities?.resourceSync;
-      const legacyMethod = legacyMethods[platform]?.[operation];
-      if (typeof driverId === 'string' && driverId.startsWith('legacy:') && legacyMethod) {
-        return this[legacyMethod](type, name);
-      }
-      return operation === 'sync'
+    const invoke = (platform, operation, name) => (
+      operation === 'sync'
         ? this.syncToPlatform(platform, type, name)
-        : this.removeFromPlatform(platform, type, name);
-    };
+        : this.removeFromPlatform(platform, type, name)
+    );
 
     const isSuccessful = result => result?.success === true || result?.status === 'ok';
     const isSkipped = result => result?.skipped === true || result?.status === 'unsupported';
@@ -796,6 +783,7 @@ class ConfigSyncManager {
       }
     };
 
+    const pending = [];
     for (const [name, item] of Object.entries(registryItems)) {
       if (!item || typeof item !== 'object') continue;
       const active = item.enabled === true && item.platforms && typeof item.platforms === 'object';
@@ -803,12 +791,20 @@ class ConfigSyncManager {
       for (const platform of definitions.keys()) {
         const shouldSync = active && item.platforms[platform] === true;
         const operation = shouldSync ? 'sync' : 'remove';
-        appendResult(name, platform, operation, invoke(platform, operation, name));
+        const result = invoke(platform, operation, name);
+        if (result && typeof result.then === 'function') {
+          pending.push(result.then(value => appendResult(name, platform, operation, value)));
+        } else {
+          appendResult(name, platform, operation, result);
+        }
       }
     }
 
-    console.log(`[ConfigSyncManager] syncAll(${type}): synced=${results.synced.length}, removed=${results.removed.length}, errors=${results.errors.length}`);
-    return results;
+    const finish = () => {
+      console.log(`[ConfigSyncManager] syncAll(${type}): synced=${results.synced.length}, removed=${results.removed.length}, errors=${results.errors.length}`);
+      return results;
+    };
+    return pending.length ? Promise.all(pending).then(finish) : finish();
   }
 
   // ==================== Helper Methods ====================

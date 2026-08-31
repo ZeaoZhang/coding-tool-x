@@ -33,29 +33,18 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-const LEGACY_CAPABILITIES = ['projects', 'sessions', 'channels', 'proxy', 'statistics', 'resourceSync', 'nativeConfig'];
-
-function normalizeLegacyPlatform(input) {
-  if (!input || typeof input !== 'object') return null;
-  const key = String(input.key || '').trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(key)) return null;
-  const label = String(input.label || input.name || key).trim();
-  const command = String(input.command || key).trim();
-  if (!label || !command) return null;
-  return {
-    key,
-    label,
-    title: String(input.title || label).trim() || label,
-    command,
-    iconToken: String(input.iconToken || input.icon || 'terminal').trim() || 'terminal',
-    color: String(input.color || '').trim(),
-    defaultVisible: input.enabled !== false,
-    custom: true,
-    capabilities: Object.fromEntries(LEGACY_CAPABILITIES.map(capability => [capability, 'unsupported']))
-  };
+function publicResourceTypes(resourceTypes) {
+  if (!resourceTypes || typeof resourceTypes !== 'object' || Array.isArray(resourceTypes)) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(resourceTypes).filter(([, value]) => typeof value === 'boolean')
+  );
 }
 
-function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = fs, logger, platformsFile } = {}) {
+
+
+function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platformsFile } = {}) {
   const diagnostics = [];
   const definitions = new Map();
   const builtInKeys = new Set();
@@ -77,6 +66,19 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
   if (loadedUserFile && Array.isArray(loadedUserFile.diagnostics)) diagnostics.push(...loadedUserFile.diagnostics);
   const userPlatforms = loadedUserFile && Array.isArray(loadedUserFile.platforms) ? loadedUserFile.platforms : [];
   for (const manifest of userPlatforms) {
+    const legacyCapability = Object.entries(manifest && manifest.capabilities || {}).find(([, driverId]) => (
+      typeof driverId === 'string' && driverId.startsWith('legacy:')
+    ));
+    if (legacyCapability) {
+      const [capability, driverId] = legacyCapability;
+      diagnostics.push({
+        key: manifest && manifest.key ? manifest.key : null,
+        source: 'userFile',
+        reason: 'legacy capability drivers are reserved for built-in manifests',
+        message: `capability ${capability} cannot use reserved driver ${driverId}`
+      });
+      continue;
+    }
     const result = validateManifest(manifest);
     if (!result.valid) {
       diagnostics.push({
@@ -95,23 +97,6 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
     definitions.set(manifest.key, { ...clone(manifest), custom: manifest.custom !== false });
   }
 
-  const legacyPlatforms = legacyUiConfig?.customCliPlatforms;
-  if (Array.isArray(legacyPlatforms)) {
-    for (const legacyPlatform of legacyPlatforms) {
-      const normalized = normalizeLegacyPlatform(legacyPlatform);
-      if (!normalized) {
-        diagnostics.push({
-          key: legacyPlatform?.key || null,
-          source: 'legacyUiConfig',
-          reason: 'invalid legacy custom platform metadata',
-          message: 'invalid legacy custom platform metadata'
-        });
-        continue;
-      }
-      if (builtInKeys.has(normalized.key) || definitions.has(normalized.key)) continue;
-      definitions.set(normalized.key, normalized);
-    }
-  }
 
 
   function getStored(key) {
@@ -145,7 +130,7 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
       for (const [capability, driverId] of Object.entries(platform.capabilities || {})) {
         capabilities[capability] = driverId !== 'unsupported';
       }
-      return clone({
+      const result = {
         key: platform.key,
         label: platform.label,
         title: platform.title,
@@ -153,9 +138,17 @@ function createPlatformRegistry({ builtIns, userFile, legacyUiConfig, fsImpl = f
         iconToken: platform.iconToken,
         color: platform.color,
         defaultVisible: platform.defaultVisible,
-        capabilities,
-        ...(platform.projectResources ? { projectResources: platform.projectResources } : {})
-      });
+        capabilities
+      };
+      const resourceTypes = publicResourceTypes(platform.resourceTypes);
+      if (resourceTypes) result.resourceTypes = resourceTypes;
+      if (platform.projectResources) {
+        result.projectResources = clone(platform.projectResources);
+      }
+      if (typeof platform.promptLabel === 'string' && platform.promptLabel.trim()) {
+        result.promptLabel = platform.promptLabel;
+      }
+      return clone(result);
     },
     diagnostics() {
       return clone(diagnostics);
