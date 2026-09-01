@@ -736,15 +736,17 @@ describe('new Skill control surface', () => {
     }));
     mockService.refreshRemoteSkills = vi.fn();
 
+    const enqueue = vi.fn()
     const app = buildInjectedApp({
       controlService: { setSkillEnabled: vi.fn() },
-      refreshTasks: { enqueue: vi.fn(), get: vi.fn() }
+      refreshTasks: { enqueue, get: vi.fn() }
     });
     const res = await request(app).get('/?platform=claude&refresh=1');
 
     expect(res.status).toBe(200);
     expect(mockService.scanSkills).toHaveBeenCalledWith({ scope: 'user' });
     expect(mockService.refreshRemoteSkills).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
     expect(res.body).not.toHaveProperty('installed');
   });
 
@@ -756,15 +758,17 @@ describe('new Skill control surface', () => {
     }))
     ompService.refreshRemoteSkills = vi.fn()
 
+    const ompEnqueue = vi.fn()
     const app = buildInjectedApp({
       controlService: { setSkillEnabled: vi.fn() },
-      refreshTasks: { enqueue: vi.fn(), get: vi.fn() }
+      refreshTasks: { enqueue: ompEnqueue, get: vi.fn() }
     })
     const res = await request(app).get('/?platform=omp&refresh=1')
 
     expect(res.status).toBe(200)
     expect(ompService.scanSkills).toHaveBeenCalledWith({ scope: 'user' })
     expect(ompService.refreshRemoteSkills).not.toHaveBeenCalled()
+    expect(ompEnqueue).not.toHaveBeenCalled()
   })
 
   test('POST refresh returns an asynchronous task snapshot', async () => {
