@@ -442,8 +442,6 @@ const PATHS = {
   // 运行时、缓存、备份
   cache: CACHE_DIR,
   snapshotCache: path.join(CACHE_DIR, 'snapshots'),
-  sessionCache: path.join(CACHE_DIR, 'session-cache.json'),
-  sessionHasCache: path.join(CACHE_DIR, 'session-has-cache.json'),
   channelModels: path.join(CACHE_DIR, 'channel-models.json'),
   channelBalanceStrategies: path.join(CACHE_DIR, 'channel-balance-strategies.json'),
   sessionHistoryIndex: path.join(CACHE_DIR, 'session-history.sqlite'),
@@ -572,8 +570,6 @@ const LEGACY_STORAGE_RELOCATIONS = [
   { source: rootEntry('opencode-daily-stats'), target: PATHS.statistics.legacy.opencodeDaily },
 
   // 缓存、运行时、脚本
-  { source: rootEntry('session-cache.json'), target: PATHS.sessionCache },
-  { source: rootEntry('session-has-cache.json'), target: PATHS.sessionHasCache },
   { source: rootEntry('channel-models.json'), target: PATHS.channelModels },
   { source: rootEntry('proxy-runtime.json'), target: PATHS.proxyRuntime.claude },
   { source: rootEntry('claude-proxy-runtime.json'), target: PATHS.proxyRuntime.claude },
