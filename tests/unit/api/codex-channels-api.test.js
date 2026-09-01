@@ -40,6 +40,7 @@ let deleteBackup;
 let isCodexInstalled;
 let getDefaultSpeedTestModelByToolType;
 let routerFactory;
+let runtimeDriver;
 
 beforeEach(() => {
   getChannels = vi.fn(() => ({
@@ -78,6 +79,14 @@ beforeEach(() => {
   stopCodexProxyServer = vi.fn(async () => {});
   deleteBackup = vi.fn();
   isCodexInstalled = vi.fn(() => true);
+  runtimeDriver = {
+    applyChannelToSettings,
+    getChannels,
+    getEnabledChannels,
+    createChannel,
+    updateChannel,
+    saveChannelOrder
+  };
   getDefaultSpeedTestModelByToolType = vi.fn(() => 'gpt-5-codex');
 
   require.cache[require.resolve('../../../src/server/services/codex-channels')] = {
@@ -154,6 +163,19 @@ beforeEach(() => {
     loaded: true,
     exports: { PATHS: { activeChannel: { codex: '/tmp/codex-active-channel.json' } } }
   };
+  const runtimePath = require.resolve('../../../src/platforms/runtime');
+  require.cache[runtimePath] = {
+    id: runtimePath, filename: runtimePath, loaded: true,
+    exports: {
+      getPlatformRuntime: () => ({
+        getDriver: (_platform, capability) => capability === 'channels'
+          ? runtimeDriver
+          : capability === 'proxy'
+            ? { status: getCodexProxyStatus, stop: stopCodexProxyServer }
+            : { deleteBackup, clearActiveChannelMarker: vi.fn() }
+      })
+    }
+  };
   require.cache[require.resolve('../../../src/config/model-metadata')] = {
     id: require.resolve('../../../src/config/model-metadata'),
     filename: require.resolve('../../../src/config/model-metadata'),
@@ -177,7 +199,8 @@ afterEach(() => {
     '../../../src/server/codex-proxy-server',
     '../../../src/server/services/codex-settings-manager',
     '../../../src/config/paths',
-    '../../../src/config/model-metadata'
+    '../../../src/config/model-metadata',
+    '../../../src/platforms/runtime'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

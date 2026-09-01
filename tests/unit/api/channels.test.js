@@ -16,6 +16,7 @@ const MODEL_DETECTOR_PATH = require.resolve('../../../src/server/services/model-
 const WS_SERVER_PATH      = require.resolve('../../../src/server/websocket-server');
 const PROXY_SERVER_PATH   = require.resolve('../../../src/server/proxy-server');
 const NATIVE_OAUTH_PATH   = require.resolve('../../../src/server/services/native-oauth-adapters');
+const RUNTIME_PATH        = require.resolve('../../../src/platforms/runtime');
 const API_PATH            = require.resolve('../../../src/server/api/channels');
 
 // Stable stub references – recreated in beforeEach
@@ -45,6 +46,8 @@ let broadcastSchedulerState;
 let clearRedirectCache;
 let getProxyStatus;
 let stopProxyServer;
+let runtimeDriver;
+let syncCurrentClaudeChannel;
 let clearNativeOAuth;
 
 let router;
@@ -85,6 +88,18 @@ function injectStubs() {
   getProxyStatus                   = vi.fn(() => null);
   stopProxyServer                  = vi.fn(async () => {});
   clearNativeOAuth                 = vi.fn();
+  syncCurrentClaudeChannel = vi.fn();
+  runtimeDriver = {
+    getAllChannels,
+    applyChannelToSettings,
+    updateClaudeSettingsWithModelConfig,
+    getCurrentSettings,
+    getBestChannelForRestore,
+    createChannel,
+    updateChannel,
+    deleteChannel,
+    syncCurrentClaudeChannel
+  };
 
   require.cache[CHANNELS_SVC_PATH] = {
     id: CHANNELS_SVC_PATH, filename: CHANNELS_SVC_PATH, loaded: true,
@@ -125,6 +140,18 @@ function injectStubs() {
   require.cache[PROXY_SERVER_PATH] = {
     id: PROXY_SERVER_PATH, filename: PROXY_SERVER_PATH, loaded: true,
     exports: { clearRedirectCache, getProxyStatus, stopProxyServer }
+  };
+  require.cache[RUNTIME_PATH] = {
+    id: RUNTIME_PATH, filename: RUNTIME_PATH, loaded: true,
+    exports: {
+      getPlatformRuntime: () => ({
+        getDriver: (_platform, capability) => capability === 'channels'
+          ? runtimeDriver
+          : capability === 'proxy'
+            ? { status: getProxyStatus, stop: stopProxyServer }
+            : { deleteBackup, clearActiveChannelMarker: vi.fn() }
+      })
+    }
   };
   require.cache[NATIVE_OAUTH_PATH] = {
     id: NATIVE_OAUTH_PATH, filename: NATIVE_OAUTH_PATH, loaded: true,

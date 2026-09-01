@@ -73,6 +73,7 @@ function createChannelDriver({
   };
 
   const driver = { platform, capability };
+  Object.defineProperty(driver, '_service', { value: loadService, enumerable: false });
   driver.list = (...args) => call('list', listMethod, args, sanitizeChannels);
   driver.getEnabled = (...args) => call('getEnabled', 'getEnabledChannels', args, channels => sanitizeChannels(channels).channels);
   driver.create = (input, ...rest) => {

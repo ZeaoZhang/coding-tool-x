@@ -286,7 +286,7 @@ function invokeExport(loadModule, exportName, args, fallback) {
   return fallback();
 }
 
-function createChannelsDriver({ platform, capability, requireImpl, ...context }) {
+function createChannelsDriver({ platform, capability, requireImpl, useBuiltInDrivers = requireImpl === require, ...context }) {
   const legacyPaths = {
     claude: '../../server/services/channels',
     codex: '../../server/services/codex-channels',
@@ -294,7 +294,7 @@ function createChannelsDriver({ platform, capability, requireImpl, ...context })
     opencode: '../../server/services/opencode-channels',
     omp: '../../server/services/omp-channels'
   };
-  const modulePath = requireImpl === require
+  const modulePath = useBuiltInDrivers
     ? `./${platform}/channels`
     : legacyPaths[platform];
   let loaded = false;
@@ -307,7 +307,7 @@ function createChannelsDriver({ platform, capability, requireImpl, ...context })
     return moduleExports;
   };
 
-  if (requireImpl === require) {
+  if (useBuiltInDrivers) {
     const driverModule = loadModule();
     if (typeof driverModule?.createDriver === 'function') {
       const builtIn = driverModule.createDriver({ ...context, platform, capability, requireImpl });
@@ -331,6 +331,9 @@ function createChannelsDriver({ platform, capability, requireImpl, ...context })
             ? value.then(result => unwrap(operation, result))
             : unwrap(operation, value);
         };
+      }
+      for (const name of Object.keys(builtIn)) {
+        if (!(name in driver)) driver[name] = builtIn[name];
       }
       return driver;
     }
@@ -559,7 +562,7 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
-function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, ...context } = {}) {
+function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = requireImpl === require, ...context } = {}) {
   if (capability === 'resourceSync') {
     return createResourceSyncDriver({ platform, capability, requireImpl });
   }
@@ -567,10 +570,40 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
     return createLegacyFileDriver({ platform, capability, requireImpl });
   }
   if (capability === 'channels') {
-    return createChannelsDriver({ ...context, platform, capability, requireImpl, manifest });
+    return createChannelsDriver({ ...context, platform, capability, requireImpl, manifest, useBuiltInDrivers });
   }
-  if (!MODULE_PATHS[platform] || !MODULE_PATHS[platform][capability]) {
-    return { status: 'unsupported', platform, capability };
+
+  if (capability === 'nativeConfig' && useBuiltInDrivers && (platform === 'claude' || platform === 'codex')) {
+    const nativeModule = requireImpl(`./${platform}/native-config`);
+    if (typeof nativeModule?.createDriver === 'function') {
+      return nativeModule.createDriver({ ...context, platform, capability, requireImpl });
+    }
+  }
+  if (capability === 'proxy' && useBuiltInDrivers) {
+    const proxyModule = requireImpl(`./${platform}/proxy`);
+    if (typeof proxyModule?.createDriver === 'function') {
+      const builtIn = proxyModule.createDriver({ ...context, platform, capability, manifest, requireImpl });
+      const unwrap = value => value && typeof value === 'object' && value.status === 'ok' ? value.data : value;
+      const driver = { platform, capability, restoreOnBoot: builtIn.restoreOnBoot };
+      for (const operation of ['status', 'start', 'stop']) {
+        driver[operation] = (...args) => {
+          const value = builtIn[operation](...args);
+          return value && typeof value.then === 'function' ? value.then(unwrap) : unwrap(value);
+        };
+      }
+      for (const name of Object.keys(PROXY_EXPORTS[platform] || {})) {
+        driver[PROXY_EXPORTS[platform][name]] = driver[name];
+      }
+      if (typeof builtIn.handleRequest === 'function') driver.handleRequest = builtIn.handleRequest;
+      return driver;
+    }
+  }
+
+  if (useBuiltInDrivers && (capability === 'sessions' || capability === 'statistics')) {
+    const capabilityModule = requireImpl(`./${platform}/${capability}`);
+    if (typeof capabilityModule?.createDriver === 'function') {
+      return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+    }
   }
 
   if (capability === 'proxy') {
@@ -599,7 +632,8 @@ function registerLegacyDrivers(driverRegistry, { requireImpl = require } = {}) {
     driverRegistry.register(`legacy:${platform}`, context => createLegacyDriver({
       ...context,
       platform,
-      requireImpl
+      requireImpl,
+      useBuiltInDrivers: true
     }));
   }
   return driverRegistry;
