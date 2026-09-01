@@ -90,7 +90,7 @@ beforeEach(() => {
     })),
     togglePlatform: vi.fn((_type, _name, platform, enabled) => ({
       enabled: true,
-      platforms: { claude: true, codex: platform === 'codex' ? enabled : false, gemini: false, opencode: false, omp: platform === 'omp' ? enabled : false }
+      platforms: { claude: true, codex: platform === 'codex' ? enabled : false, gemini: false, opencode: false, omp: platform === 'omp' ? enabled : false, 'demo-cli': platform === 'demo-cli' ? enabled : false }
     }))
   };
 
@@ -113,6 +113,42 @@ beforeEach(() => {
       errors: [],
       warnings: ['warn']
     }))
+  };
+
+  const runtimePath = require.resolve('../../../src/platforms/runtime');
+  const platformRegistry = {
+    list: vi.fn((options = {}) => {
+      const builtIns = [
+        { key: 'claude' },
+        { key: 'codex' },
+        { key: 'gemini' },
+        { key: 'opencode' },
+        { key: 'omp' }
+      ];
+
+      if (options.enabledOnly) {
+        return builtIns;
+      }
+
+      return [...builtIns, { key: 'demo-cli', enabled: false }];
+    })
+  };
+  require.cache[runtimePath] = {
+    id: runtimePath,
+    filename: runtimePath,
+    loaded: true,
+    exports: {
+      getPlatformRegistry: () => platformRegistry
+    }
+  };
+
+  const projectionPath = require.resolve('../../../src/server/services/skill-projection-service');
+  function SkillProjectionServiceMock() {}
+  require.cache[projectionPath] = {
+    id: projectionPath,
+    filename: projectionPath,
+    loaded: true,
+    exports: { SkillProjectionService: SkillProjectionServiceMock }
   };
 
   controlService = {
@@ -168,7 +204,9 @@ afterEach(() => {
     '../../../src/server/api/config-registry',
     '../../../src/server/services/config-registry-service',
     '../../../src/server/services/config-sync-manager',
-    '../../../src/server/services/effective-control-service'
+    '../../../src/platforms/runtime',
+    '../../../src/server/services/effective-control-service',
+    '../../../src/server/services/skill-projection-service'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -248,6 +286,19 @@ describe('config-registry api import and toggle routes', () => {
     expect(disable.status).toBe(200);
     expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('omp', 'commands', 'demo-item');
   });
+
+  test('validates disabled registry platforms for non-Skill resources', async () => {
+    const app = buildApp();
+
+    const enable = await request(app).put('/commands/demo-item/platform/demo-cli', { enabled: true });
+    const disable = await request(app).put('/commands/demo-item/platform/demo-cli', { enabled: false });
+
+    expect(enable.status).toBe(200);
+    expect(disable.status).toBe(200);
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('demo-cli', 'commands', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('demo-cli', 'commands', 'demo-item');
+  });
+
 
   test('syncs all non-Skill registry items for a type', async () => {
     const res = await request(buildApp()).post('/commands/sync', {});

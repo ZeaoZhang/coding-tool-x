@@ -18,14 +18,24 @@ test('resolves built-ins and rejects a user override', () => {
 
   expect(registry.resolve('claude').label).toBe('Claude');
   expect(registry.resolve('demo-cli').label).toBe('Demo');
-  expect(registry.diagnostics()).toEqual([]);
+  expect(registry.diagnostics()).toEqual([
+    { key: 'claude', source: 'userFile', message: 'duplicate platform key ignored' }
+  ]);
 });
 
 test('legacy customCliPlatforms do not enter the registry', () => {
   const registry = createPlatformRegistry({
     builtIns: [{ key: 'claude', label: 'Claude', command: 'claude', capabilities: {} }],
     legacyUiConfig: {
-      customCliPlatforms: [{ key: 'demo-cli', name: 'Demo', command: 'demo', enabled: true }]
+      customCliPlatforms: [{
+        key: 'demo-cli',
+        name: 'Demo',
+        command: 'demo',
+        icon: 'terminal',
+        color: '#123456',
+        projectResources: { instruction: { path: 'AGENTS.md' } },
+        enabled: true
+      }]
     },
     userFile: { platforms: [] }
   });
@@ -250,7 +260,7 @@ test('resolve and list return cloned manifests that cannot mutate registry state
   });
 });
 
-test('public definitions expose safe project resource metadata', () => {
+test('public definitions do not expose internal project resource configuration', () => {
   const registry = createPlatformRegistry({
     builtIns: [{
       key: 'codex',
@@ -267,15 +277,12 @@ test('public definitions expose safe project resource metadata', () => {
     userFile: { platforms: [] }
   });
 
-  expect(registry.getPublicDefinition('codex')).toEqual(expect.objectContaining({
-    projectResources: {
-      instruction: { path: 'AGENTS.md' },
-      skills: {
-        canonicalRoot: '.agents/skills',
-        readRoots: ['.agents/skills', '.codex/skills']
-      },
-      mcp: { path: '.codex/config.toml', format: 'codex-toml' }
-    }
-  }));
+  expect(registry.getPublicDefinition('codex')).toEqual({
+    key: 'codex',
+    label: 'Codex',
+    command: 'codex',
+    capabilities: {}
+  });
+  expect(JSON.stringify(registry.getPublicDefinition('codex'))).not.toContain('projectResources');
   expect(JSON.stringify(registry.getPublicDefinition('codex'))).not.toContain('/tmp/codex');
 });

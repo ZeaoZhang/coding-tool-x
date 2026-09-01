@@ -16,7 +16,7 @@
           <div class="asset-subtitle">维护 slash commands、作用域和跨平台启用状态</div>
         </div>
       </div>
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
@@ -34,7 +34,7 @@
 
     <!-- Drawer 模式下的简化头部 -->
     <div class="asset-drawer-toolbar" v-if="props.inDrawer">
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text @click="showCreateModal = true" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
@@ -102,7 +102,7 @@
               </n-icon>
             </template>
             <template #extra>
-              <n-button size="small" @click="showCreateModal = true">
+              <n-button size="small" @click="showCreateModal = true" v-if="supportsCurrentPlatform">
                 创建第一个命令
               </n-button>
             </template>
@@ -212,6 +212,7 @@ const togglingKeys = ref({})
 let commandDetailRequestId = 0
 const { byCapability } = useEnabledCliPlatforms()
 const managedCommandPlatforms = computed(() => byCapability('commands').map(platform => platform.key))
+const supportsCurrentPlatform = computed(() => managedCommandPlatforms.value.includes(currentPlatform.value))
 
 const currentPlatform = computed(() => {
   const requested = String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
@@ -276,10 +277,17 @@ const emptyText = computed(() => {
   if (filterScope.value === 'user') return '暂无用户级命令'
   if (filterScope.value === 'project') return '暂无项目级命令'
   if (filterScope.value === 'managed') return '暂无托管的命令'
+  if (!supportsCurrentPlatform.value) return `${currentPlatformLabel.value} 暂未提供 Commands 能力`
   return '暂无自定义命令'
 })
 
 async function loadCommands() {
+  if (!supportsCurrentPlatform.value) {
+    commands.value = []
+    registryMap.value = {}
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
     const [cmdRes, registryRes] = await Promise.all([

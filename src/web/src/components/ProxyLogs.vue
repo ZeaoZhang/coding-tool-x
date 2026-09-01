@@ -142,7 +142,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { NButton, NIcon, NTag, NTooltip } from 'naive-ui'
 import { TrashOutline, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
-import { getTodayStatistics, getClaudeTodayStatistics, getOpenCodeTodayStatistics, getOmpTodayStatistics } from '../api/statistics'
+import { getPlatformTodayStatistics } from '../api/statistics'
 import { clearProxyLogs } from '../api/proxy'
 import message from '../utils/message'
 import { useGlobalState } from '../composables/useGlobalState'
@@ -155,19 +155,11 @@ const props = defineProps({
   }
 })
 
-const { getLogs, wsConnected, clearLogsState, logLimit } = useGlobalState()
-const logStreams = {
-  claude: getLogs('claude'),
-  codex: getLogs('codex'),
-  gemini: getLogs('gemini'),
-  opencode: getLogs('opencode'),
-  omp: getLogs('omp')
-}
+const { logsBySource, wsConnected, clearLogsState, logLimit } = useGlobalState()
 
 const filteredLogs = computed(() => {
-  const stream = logStreams[props.source]
-  if (!stream) return []
-  const list = stream.value || []
+  const source = String(props.source || '').trim().toLowerCase()
+  const list = logsBySource.value[source] || []
   return list.slice(0, logLimit.value)
 })
 const logsBefore = ref(filteredLogs.value.length)
@@ -199,49 +191,14 @@ function formatTokenCell(log, key) {
 // 加载今日统计数据（根据 source 过滤）
 async function loadTodayStats() {
   try {
-    if (props.source === 'opencode') {
-      const stats = await getOpenCodeTodayStatistics()
-      todayStats.value = {
-        requests: stats?.summary?.requests || 0,
-        tokens: stats?.summary?.tokens || 0
-      }
-      return
-    }
-
-    if (props.source === 'omp') {
-      const stats = await getOmpTodayStatistics()
-      todayStats.value = {
-        requests: stats?.summary?.requests || 0,
-        tokens: stats?.summary?.tokens || 0
-      }
-      return
-    }
-
-    if (props.source === 'claude') {
-      const stats = await getClaudeTodayStatistics()
-      todayStats.value = {
-        requests: stats?.summary?.requests || 0,
-        tokens: stats?.summary?.tokens || 0
-      }
-      return
-    }
-
-    const stats = await getTodayStatistics()
-
-    const toolType = props.source === 'gemini' ? 'gemini' : 'codex'
-
-    const toolStats = stats.byToolType?.[toolType]
-
-    if (toolStats) {
-      todayStats.value = {
-        requests: toolStats.requests || 0,
-        tokens: toolStats.tokens?.total || 0
-      }
-    } else {
-      todayStats.value = {
-        requests: 0,
-        tokens: 0
-      }
+    const stats = await getPlatformTodayStatistics(props.source)
+    const summary = stats?.summary || {}
+    const tokens = typeof summary.tokens === 'object'
+      ? summary.tokens.total
+      : summary.tokens
+    todayStats.value = {
+      requests: summary.requests || 0,
+      tokens: tokens || 0
     }
   } catch (err) {
     // 静默失败，不影响日志功能

@@ -10,7 +10,6 @@ const {
 
 const UI_CONFIG_FILE = PATHS.uiConfig;
 const OPTIONAL_UI_CONFIG_FIELDS = ['remoteNotifications', 'claudeNotificationDisabledByUser'];
-const LEGACY_SELECTION_FIELDS = ['homeCliColumns', 'dashboardChannelOrder', 'customCliPlatforms'];
 
 const DEFAULT_UI_CONFIG = {
   theme: 'light',
@@ -134,14 +133,7 @@ function readUIConfigFromFile() {
   }
 
   const normalized = normalizeUIConfig(data);
-  const hasLegacyFields = LEGACY_SELECTION_FIELDS.some(field =>
-    Object.prototype.hasOwnProperty.call(data, field)
-  );
-  const persistedSelection = data.enabledCliPlatforms;
-  const selectionNeedsRewrite = !Object.prototype.hasOwnProperty.call(data, 'enabledCliPlatforms') ||
-    hasLegacyFields ||
-    JSON.stringify(persistedSelection) !== JSON.stringify(normalized.enabledCliPlatforms);
-  if (selectionNeedsRewrite) {
+  if (JSON.stringify(data) !== JSON.stringify(normalized)) {
     try {
       writeCanonicalConfig(normalized);
     } catch (error) {
@@ -177,7 +169,9 @@ function loadUIConfig() {
 
 function saveUIConfig(config) {
   try {
-    const normalizedConfig = normalizeUIConfig(config);
+    const currentConfig = loadUIConfig();
+    const source = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+    const normalizedConfig = normalizeUIConfig({ ...currentConfig, ...source });
     writeCanonicalConfig(normalizedConfig);
     uiConfigCache = clone(normalizedConfig);
     cacheInitialized = true;

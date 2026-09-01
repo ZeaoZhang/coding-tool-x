@@ -78,13 +78,10 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { NIcon, NText, NTag, NCheckbox, NButton } from 'naive-ui'
 import { RadioOutline, TrashOutline, DocumentTextOutline } from '@vicons/ionicons5'
 import { useGlobalState } from '../../composables/useGlobalState'
+import { useEnabledCliPlatforms } from '../../composables/useEnabledCliPlatforms'
 
-const { getLogs, clearLogsState, logLimit } = useGlobalState()
-const claudeLogs = getLogs('claude')
-const codexLogs = getLogs('codex')
-const geminiLogs = getLogs('gemini')
-const opencodeLogs = getLogs('opencode')
-const ompLogs = getLogs('omp')
+const { logsBySource, clearLogsState, logLimit } = useGlobalState()
+const { enabledKeys } = useEnabledCliPlatforms()
 
 const autoScroll = ref(true)
 const logsContainer = ref(null)
@@ -109,13 +106,9 @@ function normalizeLog(log) {
 }
 
 const logs = computed(() => {
-  const merged = [
-    ...claudeLogs.value.map(normalizeLog),
-    ...codexLogs.value.map(normalizeLog),
-    ...geminiLogs.value.map(normalizeLog),
-    ...opencodeLogs.value.map(normalizeLog),
-    ...ompLogs.value.map(normalizeLog)
-  ]
+  const merged = enabledKeys.value.flatMap((key) => (
+    (logsBySource.value[key] || []).map(normalizeLog)
+  ))
   return merged
     .filter(log => log.type !== 'action')
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))

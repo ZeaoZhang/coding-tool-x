@@ -64,6 +64,61 @@ describe('generic MCP driver', () => {
     expect(driver).not.toHaveProperty('require');
     expect(driver).not.toHaveProperty('invoke');
   });
+
+  test.each([
+    {
+      capability: 'mcp',
+      driverFactory: createGenericMcpDriver,
+      manifest: { paths: { home: '/tmp/demo/home' }, resourceMappings: { mcp: '../outside.json' }, mcpFormat: 'json' },
+      writeValue: { servers: { demo: { command: 'demo' } } },
+      error: 'MCP mapping escapes platform home'
+    },
+    {
+      capability: 'prompts',
+      driverFactory: createGenericPromptDriver,
+      manifest: { paths: { home: '/tmp/demo/home' }, resourceMappings: { prompts: '../outside.md' } },
+      writeValue: 'outside prompt',
+      error: 'Prompt mapping escapes platform home'
+    }
+  ])('rejects $capability mappings escaping home without lstat or realpath', async ({ driverFactory, manifest, writeValue, error, capability }) => {
+    const fsImpl = {
+      open: vi.fn(async () => { throw new Error('unexpected open'); }),
+      writeFile: vi.fn(async () => { throw new Error('unexpected writeFile'); }),
+      mkdir: vi.fn(async () => { throw new Error('unexpected mkdir'); }),
+      rename: vi.fn(async () => { throw new Error('unexpected rename'); }),
+      rm: vi.fn(async () => { throw new Error('unexpected rm'); })
+    };
+    const driver = driverFactory({ platform: 'demo-cli', fsImpl, manifest });
+
+    await expect(driver.read()).resolves.toEqual(expect.objectContaining({
+      status: 'failed',
+      platform: 'demo-cli',
+      capability,
+      operation: 'read',
+      error
+    }));
+    await expect(driver.write(writeValue)).resolves.toEqual(expect.objectContaining({
+      status: 'failed',
+      platform: 'demo-cli',
+      capability,
+      operation: 'write',
+      error
+    }));
+    await expect(driver.remove()).resolves.toEqual(expect.objectContaining({
+      status: 'failed',
+      platform: 'demo-cli',
+      capability,
+      operation: 'remove',
+      error
+    }));
+
+    expect(fsImpl.open).not.toHaveBeenCalled();
+    expect(fsImpl.writeFile).not.toHaveBeenCalled();
+    expect(fsImpl.mkdir).not.toHaveBeenCalled();
+    expect(fsImpl.rename).not.toHaveBeenCalled();
+    expect(fsImpl.rm).not.toHaveBeenCalled();
+  });
+
   test.each([
     ['declared home', 'home'],
     ['ancestor under home', 'ancestor'],
@@ -94,6 +149,7 @@ describe('generic MCP driver', () => {
       fs.rmSync(outside, { recursive: true, force: true });
     }
   });
+
 
   test('keeps the previous JSON mapping when an atomic write fails and cleans its temp file', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'generic-mcp-atomic-'));

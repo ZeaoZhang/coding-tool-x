@@ -6,6 +6,8 @@ import {
 } from './platforms'
 
 function normalizedCatalog(catalog) {
+  if (Array.isArray(catalog)) return normalizePublicPlatforms(catalog)
+
   const normalized = normalizePublicPlatforms(catalog)
   if (normalized.length > 0) return normalized
 

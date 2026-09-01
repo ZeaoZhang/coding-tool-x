@@ -155,6 +155,25 @@ describe('loadUIConfig', () => {
       theme: 'dark', enabledCliPlatforms: ['claude', 'codex', 'opencode', 'omp']
     });
   });
+  test('rewrites arbitrary extra keys out of an otherwise canonical file on read', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      theme: 'dark',
+      enabledCliPlatforms: ['omp', 'claude'],
+      injected: 'discard'
+    }));
+    loadService();
+    const config = loadUIConfig();
+    expect(config.enabledCliPlatforms).toEqual(['omp', 'claude']);
+    expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8'))).toEqual({
+      theme: 'dark',
+      panelVisibility: { showChannels: true, showLogs: true },
+      channelBalance: { showRemaining: false },
+      channelLocks: { claude: false, codex: false, gemini: false, opencode: false, omp: false },
+      channelCollapse: { claude: [], codex: [], gemini: [], opencode: [], omp: [] },
+      channelOrder: { claude: [], codex: [], gemini: [], opencode: [], omp: [] },
+      enabledCliPlatforms: ['omp', 'claude']
+    });
+  });
 
   test('returns canonical defaults for corrupt JSON and preserves the load error', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -193,6 +212,20 @@ describe('save and update UI config', () => {
     expect(result).not.toHaveProperty('homeCliColumns');
     expect(result).not.toHaveProperty('customCliPlatforms');
     expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8'))).toEqual(result);
+  });
+
+  test('merges partial saves and preserves an explicitly empty selection', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      theme: 'dark',
+      panelVisibility: { showChannels: false, showLogs: false },
+      enabledCliPlatforms: ['claude']
+    }));
+
+    const result = saveUIConfig({ enabledCliPlatforms: [] });
+
+    expect(result.theme).toBe('dark');
+    expect(result.panelVisibility).toEqual({ showChannels: false, showLogs: false });
+    expect(result.enabledCliPlatforms).toEqual([]);
   });
   test('omits unknown top-level keys from canonical output', () => {
     const result = saveUIConfig({ theme: 'dark', enabledCliPlatforms: ['claude'], injected: 'discard' });

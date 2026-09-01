@@ -298,7 +298,7 @@ async function handleActivate(preset) {
 async function handleDeactivate() {
   dialog.warning({
     title: '移除提示词',
-    content: '确定要移除当前激活的提示词吗？这将删除各平台的提示词文件，并移除 coding-tool-x 管理的 OMP prompt template。',
+    content: '确定要移除当前激活的提示词吗？这将删除各平台的提示词文件。',
     positiveText: '移除',
     negativeText: '取消',
     onPositiveClick: async () => {

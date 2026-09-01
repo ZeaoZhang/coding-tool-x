@@ -56,7 +56,7 @@ const VALID_TYPES = CONFIG_TYPES;
 
 function getValidPlatforms() {
   const registry = getPlatformRegistry();
-  return (registry?.list?.({ enabledOnly: true }) || [])
+  return (registry?.list?.() || [])
     .map(platform => platform && String(platform.key || '').trim().toLowerCase())
     .filter(Boolean);
 }
