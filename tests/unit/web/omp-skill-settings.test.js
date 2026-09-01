@@ -48,7 +48,7 @@ describe('OMP skill settings web integration', () => {
     expect(supportsOmpSkillSettings(platform)).toBe(expected);
   });
 
-  test('closes settings before awaiting one forced skill refresh', async () => {
+  test('closes settings before awaiting one local Skill scan', async () => {
     const { completeOmpSkillSettingsSave } = await import(
       '../../../src/web/src/utils/omp-skill-settings.js'
     );
@@ -72,7 +72,7 @@ describe('OMP skill settings web integration', () => {
     expect(events).toEqual(['closed', 'refreshing']);
     expect(closeSettings).toHaveBeenCalledTimes(1);
     expect(refreshSkills).toHaveBeenCalledTimes(1);
-    expect(refreshSkills).toHaveBeenCalledWith(true, { notifyError: false });
+    expect(refreshSkills).toHaveBeenCalledWith({ notifyError: false });
     expect(completed).toBe(false);
 
     finishRefresh(true);

@@ -17,6 +17,12 @@ beforeEach(() => {
       mcp: { supported: true, path: '.codex/config.toml', servers: [] },
       capabilities: { instruction: true, skills: true, mcp: true }
     })),
+    listProjectSkills: vi.fn(async () => ({ supported: true, project: [], inherited: [] })),
+    setProjectSkillEnabled: vi.fn(async (_path, _platform, controlKey, enabled) => ({
+      controlKey,
+      enabled,
+      status: 'disabled'
+    })),
     readInstruction: vi.fn(async () => ({ supported: true, path: 'AGENTS.md', exists: false, content: '', updatedAt: null })),
     writeInstruction: vi.fn(async (_path, _platform, content) => ({ supported: true, path: 'AGENTS.md', content })),
     deleteInstruction: vi.fn(async () => ({ supported: true, path: 'AGENTS.md', deleted: true })),
@@ -133,10 +139,41 @@ test('passes project path and platform to MCP mutations', async () => {
   });
 
   expect(res.status).toBe(200);
+
   expect(projectConfigService.upsertProjectMcp).toHaveBeenCalledWith(
     '/tmp/project',
     'claude',
     'local',
     { type: 'stdio', command: 'node' }
+  );
+});
+test('lists project Skills through the project scan facade', async () => {
+  projectConfigService.listProjectSkills.mockResolvedValue({
+    supported: true,
+    project: [{ controlKey: 'project-skill', enabled: true, managed: true }],
+    inherited: []
+  });
+
+  const res = await request(buildApp()).get('/skills?projectPath=%2Ftmp%2Fproject&platform=codex');
+
+  expect(res.status).toBe(200);
+  expect(res.body.skills.project[0].controlKey).toBe('project-skill');
+  expect(projectConfigService.listProjectSkills).toHaveBeenCalledWith('/tmp/project', 'codex');
+});
+
+test('toggles a project Skill through the effective control service', async () => {
+  const res = await request(buildApp()).put('/skills/toggle', {
+    projectPath: '/tmp/project',
+    platform: 'codex',
+    controlKey: 'project-skill',
+    enabled: false
+  });
+
+  expect(res.status).toBe(200);
+  expect(projectConfigService.setProjectSkillEnabled).toHaveBeenCalledWith(
+    '/tmp/project',
+    'codex',
+    'project-skill',
+    false
   );
 });

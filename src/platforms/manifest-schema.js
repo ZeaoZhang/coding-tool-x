@@ -52,6 +52,31 @@ const schema = {
     proxyMode: { enum: ['standard', 'managed'] },
     proxyLabels: { type: 'object', additionalProperties: { type: 'string' } },
     resourceTypes: { type: 'object', additionalProperties: { type: 'boolean' } },
+    skillActivation: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['user', 'project'],
+      properties: {
+        user: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['mode', 'format'],
+          properties: {
+            mode: { enum: ['native-copy', 'native-filter', 'unsupported'] },
+            format: { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^[a-z][a-z0-9-]*-skill-v[0-9]+$' }] }
+          }
+        },
+        project: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['mode', 'format'],
+          properties: {
+            mode: { enum: ['native-copy', 'native-filter', 'unsupported'] },
+            format: { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^[a-z][a-z0-9-]*-skill-v[0-9]+$' }] }
+          }
+        }
+      }
+    },
     promptFile: { type: ['string', 'null'] },
     promptLabel: { type: 'string', minLength: 1 },
     mcpFormat: { enum: ['json'] },

@@ -26,7 +26,8 @@ function setupStubs() {
     loaded: true,
     exports: {
       PATHS: {
-        mcpServers: path.join(testDir, 'mcp-servers.json')
+        mcpServers: path.join(testDir, 'mcp-servers.json'),
+        effectiveControlManifest: path.join(testDir, 'effective-control.json')
       },
       NATIVE_PATHS: {
         claude: { settings: path.join(testDir, 'claude-settings.json') },
@@ -318,6 +319,21 @@ describe('mcp-service', () => {
       expect(result['my-server'].name).toBe('My Server');
     });
 
+    it('registers existing native-only MCP as external without catalog ownership', () => {
+      fs.writeFileSync(path.join(testDir, '.claude.json'), JSON.stringify({
+        mcpServers: { native: { type: 'stdio', command: 'node' } }
+      }), 'utf8');
+
+      const result = service.getAllServers();
+      const manifest = JSON.parse(fs.readFileSync(path.join(testDir, 'effective-control.json'), 'utf8'));
+
+      expect(result.native).toBeUndefined();
+      expect(manifest.mcp['mcp:claude:user:native']).toEqual(expect.objectContaining({
+        managed: false,
+        source: 'native'
+      }));
+    });
+
     it('returns empty object on invalid JSON', () => {
       const mcpFile = path.join(testDir, 'mcp-servers.json');
       fs.writeFileSync(mcpFile, 'not valid json', 'utf-8');
@@ -390,6 +406,31 @@ describe('mcp-service', () => {
       expect(updated.apps.claude).toBe(false);
       expect(updated.apps['hidden-cli']).toBe(true);
       expect(service.getServer('srv-hidden-apps').apps['hidden-cli']).toBe(true);
+    });
+
+    it('preserves omitted and redacted secret fields when updating a server spec', async () => {
+      await service.saveServer({
+        id: 'srv-keep-secrets',
+        name: 'Keep Secrets',
+        server: {
+          type: 'stdio',
+          command: 'uvx',
+          env: { TOKEN: 'secret-value' },
+          headers: { Authorization: 'Bearer secret-value' }
+        }
+      }, { syncPlatforms: false });
+
+      await service.saveServer({
+        id: 'srv-keep-secrets',
+        name: 'Keep Secrets Updated',
+        server: { type: 'stdio', command: 'uvx-new', env: { TOKEN: '[REDACTED]' } }
+      }, { syncPlatforms: false });
+
+      expect(service.getServer('srv-keep-secrets').server).toEqual(expect.objectContaining({
+        command: 'uvx-new',
+        env: { TOKEN: 'secret-value' },
+        headers: { Authorization: 'Bearer secret-value' }
+      }));
     });
 
     it('deleteServer removes existing server and returns true', async () => {
@@ -483,6 +524,10 @@ describe('mcp-service', () => {
       expect(result['srv-order-a'].order).toBe(1);
     });
 
+    it('rejects prototype-polluting IDs while reordering servers', () => {
+      expect(() => service.updateServerOrder(['__proto__'])).toThrow(/MCP server ID|invalid/i);
+    });
+
     it('exportServers filters by format app flags', async () => {
       await service.saveServer({
         id: 'srv-export-a',
@@ -506,6 +551,39 @@ describe('mcp-service', () => {
       expect(jsonExport.filename).toBe('mcp-servers.json');
       expect(jsonExport.content).toContain('srv-export-a');
       expect(jsonExport.content).toContain('srv-export-b');
+    });
+
+    it('redacts secrets from explicit MCP exports', async () => {
+      await service.saveServer({
+        id: 'srv-export-secrets',
+        name: 'Secrets',
+        server: {
+          type: 'streamable_http',
+          url: 'https://user:password@example.com/mcp?token=query-secret',
+          args: ['--token', 'argument-secret'],
+          headers: { Authorization: 'Bearer secret-value' },
+          env_vars: { API_TOKEN: 'actual-token' },
+          environment: { API_KEY: 'actual-key' },
+          bearer_token_env_var: 'MCP_TOKEN',
+          auth: 'auth-secret',
+          apiKey: 'api-secret',
+          oauth: { access_token: 'access-secret' }
+        },
+        apps: { claude: true }
+      }, { syncPlatforms: false });
+
+      const exported = service.exportServers('json');
+
+      expect(exported.content).not.toContain('password@example.com');
+      expect(exported.content).not.toContain('secret-value');
+      expect(exported.content).not.toContain('actual-token');
+      expect(exported.content).not.toContain('actual-key');
+      expect(exported.content).not.toContain('oauth-secret');
+      expect(exported.content).not.toContain('argument-secret');
+      expect(exported.content).not.toContain('auth-secret');
+      expect(exported.content).not.toContain('api-secret');
+      expect(exported.content).not.toContain('access-secret');
+      expect(exported.content).toContain('[REDACTED]');
     });
 
     it('exports remote servers as streamable_http', async () => {
@@ -802,6 +880,30 @@ describe('mcp-service', () => {
       expect(client.initialize).toHaveBeenCalled();
     });
 
+    it('redacts sensitive fields in MCP tool definitions', async () => {
+      const client = {
+        connected: false,
+        connect: vi.fn(async () => { client.connected = true; }),
+        initialize: vi.fn(async () => {}),
+        listTools: vi.fn(async () => [{
+          name: 'fetch',
+          description: 'Bearer tool-secret https://example.com/mcp?token=query-secret',
+          inputSchema: {
+            properties: {
+              token: { default: 'schema-secret' }
+            }
+          }
+        }]),
+        disconnect: vi.fn(async () => {})
+      };
+      McpClientMock.mockImplementation(function MockClient() { return client; });
+
+      const result = await service.getServerTools('srv-tools');
+
+      expect(result.tools[0].description).not.toContain('tool-secret');
+      expect(result.tools[0].inputSchema.properties.token).toBe('[REDACTED]');
+    });
+
     it('testServer performs the same MCP handshake for streamable_http servers', async () => {
       await service.saveServer({
         id: 'srv-streamable-http',
@@ -826,6 +928,13 @@ describe('mcp-service', () => {
       expect(client.disconnect).toHaveBeenCalled();
     });
 
+    it('refuses connection tests when the effective control disables the server', async () => {
+      await service.toggleServerApp('srv-tools', 'claude', false);
+
+      await expect(service.testServer('srv-tools')).rejects.toMatchObject({ code: 'MCP_DISABLED' });
+      expect(McpClientMock).not.toHaveBeenCalled();
+    });
+
     it('callServerTool truncates oversized results', async () => {
       const client = {
         connected: false,
@@ -842,5 +951,104 @@ describe('mcp-service', () => {
       expect(result.result.truncated).toBe(true);
       expect(result.truncatedSize).toBeGreaterThan(10 * 1024);
     });
+
+    it('redacts protocol error results returned by MCP tools', async () => {
+      const client = {
+        connected: false,
+        connect: vi.fn(async () => { client.connected = true; }),
+        initialize: vi.fn(async () => {}),
+        callTool: vi.fn(async () => ({
+          isError: true,
+          content: [{
+            type: 'text',
+            text: 'Bearer top-secret https://example.com/mcp?token=query-secret'
+          }],
+          credentials: { token: 'nested-secret' }
+        })),
+        disconnect: vi.fn(async () => {})
+      };
+      McpClientMock.mockImplementation(function MockClient() { return client; });
+
+      const result = await service.callServerTool('srv-tools', 'fetch', {});
+
+      expect(result.isError).toBe(true);
+      expect(result.result.credentials).toBe('[REDACTED]');
+      expect(result.result.content[0].text).not.toContain('top-secret');
+      expect(result.result.content[0].text).not.toContain('query-secret');
+    });
+
+    it('refuses tool access when every controlled platform is disabled', async () => {
+      await service.toggleServerApp('srv-tools', 'claude', false);
+
+      await expect(service.getServerTools('srv-tools')).rejects.toMatchObject({ code: 'MCP_DISABLED' });
+      await expect(service.callServerTool('srv-tools', 'fetch', {})).rejects.toMatchObject({ code: 'MCP_DISABLED' });
+    });
+  it('rejects unsafe IDs and non-string transport fields', async () => {
+    await expect(service.saveServer({
+      id: '__proto__',
+      server: { type: 'stdio', command: 'node' }
+    }, { syncPlatforms: false })).rejects.toThrow(/ID|invalid|prototype/i);
+    expect(() => service.validateServerSpec({ type: 'stdio', command: 42 })).toThrow(/string|command/i);
+    expect(() => service.validateServerSpec({ type: 'sse', url: 42 })).toThrow(/string|url/i);
+  });
+
+  it('uses the effective control manifest as the MCP activation authority', async () => {
+    await service.saveServer({
+      id: 'control-server',
+      name: 'Control Server',
+      server: { type: 'stdio', command: 'node' },
+      apps: { claude: true }
+    }, { syncPlatforms: false });
+
+    const manifestPath = path.join(testDir, 'effective-control.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    expect(manifest.mcp['mcp:claude:user:control-server'].enabled).toBe(true);
+
+    await service.toggleServerApp('control-server', 'claude', false);
+    expect(service.getServer('control-server').apps.claude).toBe(false);
+    const updated = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    expect(updated.mcp['mcp:claude:user:control-server'].enabled).toBe(false);
+  });
+
+  it('applies persisted MCP app changes through the effective control', async () => {
+    await service.saveServer({
+      id: 'save-toggle',
+      name: 'Save Toggle',
+      server: { type: 'stdio', command: 'node' },
+      apps: { claude: true }
+    }, { syncPlatforms: false });
+
+    await service.saveServer({
+      id: 'save-toggle',
+      name: 'Save Toggle',
+      server: { type: 'stdio', command: 'node' },
+      apps: { claude: false }
+    }, { syncPlatforms: false });
+
+    expect(service.getServer('save-toggle').apps.claude).toBe(false);
+  });
+
+  it('does not sync native MCP files for a blocked control entry', async () => {
+    await service.saveServer({
+      id: 'blocked-sync',
+      name: 'Blocked Sync',
+      server: { type: 'stdio', command: 'node' },
+      apps: { claude: false }
+    }, { syncPlatforms: false });
+    const manifestPath = path.join(testDir, 'effective-control.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.mcp['mcp:claude:user:blocked-sync'].trust = 'blocked';
+    manifest.mcp['mcp:claude:user:blocked-sync'].enabled = false;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    await service.saveServer({
+      id: 'blocked-sync',
+      name: 'Blocked Sync',
+      server: { type: 'stdio', command: 'node' },
+      apps: { claude: true }
+    });
+
+    expect(service.getServer('blocked-sync').apps.claude).toBe(false);
+  });
   });
 });

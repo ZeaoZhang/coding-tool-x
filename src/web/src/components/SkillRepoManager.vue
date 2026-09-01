@@ -379,7 +379,7 @@ async function handleAdd() {
       repos.value = result.repos
       newRepo.value.input = ''
       newRepo.value.branch = 'main'
-      message.success('仓库添加成功')
+      message.success('仓库已保存，请手动点击“刷新远端”获取 Skill')
       emit('updated')
     }
   } catch (err) {
@@ -471,8 +471,8 @@ async function quickAdd(rec) {
     }, props.platform)
 
     if (result.success) {
+      message.success('仓库已保存，请手动点击“刷新远端”获取 Skill')
       repos.value = result.repos
-      message.success('仓库添加成功')
       emit('updated')
     }
   } catch (err) {

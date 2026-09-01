@@ -11,7 +11,10 @@ const VALIDATION_ERROR_PATTERNS = [
   /required/i,
   /escapes/i,
   /not support/i,
-  /不支持/
+  /不支持/,
+  /symlink/i,
+  /string/i,
+  /MCP server ID/i,
 ];
 
 function isValidationError(error) {

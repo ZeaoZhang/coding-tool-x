@@ -20,6 +20,10 @@
     "agents": true,
     "plugins": true
   },
+  "skillActivation": {
+    "user": { "mode": "native-copy", "format": "opencode-skill-v1" },
+    "project": { "mode": "native-copy", "format": "opencode-skill-v1" }
+  },
   "projectResources": {
     "instruction": { "path": ".opencode/AGENTS.md" },
     "skills": {

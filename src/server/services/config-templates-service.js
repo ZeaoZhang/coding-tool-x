@@ -659,34 +659,45 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
         directory: skill.directory || skill.name,
         name: skill.name || skill.directory,
         ...(skill.fullDirectory ? { fullDirectory: skill.fullDirectory } : {}),
-        ...((skill.repoProvider || skill.repoId || skill.repoLocalPath || skill.repoProjectPath)
-          ? {
-            repo: {
-              provider: skill.repoProvider,
-              owner: skill.repoOwner || null,
-              name: skill.repoName || null,
-              branch: skill.repoBranch || null,
-              directory: skill.repoDirectory || '',
-              host: skill.repoHost || null,
-              projectPath: skill.repoProjectPath || null,
-              localPath: skill.repoLocalPath || null,
-              id: skill.repoId || null,
-              repoUrl: skill.repoUrl || null
+        ...(Array.isArray(skill.files) ? { files: skill.files } : {}),
+        ...(skill.repo
+          ? { repo: skill.repo }
+          : ((skill.repoProvider || skill.repoId || skill.repoLocalPath || skill.repoProjectPath)
+            ? {
+              repo: {
+                provider: skill.repoProvider,
+                owner: skill.repoOwner || null,
+                name: skill.repoName || null,
+                branch: skill.repoBranch || null,
+                directory: skill.repoDirectory || '',
+                host: skill.repoHost || null,
+                projectPath: skill.repoProjectPath || null,
+                localPath: skill.repoLocalPath || null,
+                id: skill.repoId || null,
+                repoUrl: skill.repoUrl || null
+              }
             }
-          }
-          : {})
+            : {}))
       };
 
     try {
-      const installed = await projectConfigService.installProjectSkill(targetDir, skillPlatform, skillInput);
-      if (installed?.success === false) {
-        pushSkipped(results.skipped, 'skill', skillName, installed.message || '项目级技能安装失败，已跳过');
+      const skillService = new SkillService(skillPlatform);
+      const registration = skillService.registerTemplateSkill({
+        ...skillInput,
+        scope: 'project',
+        cwd: targetDir
+      });
+      if (registration?.status === 'pending_refresh') {
+        results.skills.pending = (results.skills.pending || 0) + 1;
+        results.skills.pendingItems = [...(results.skills.pendingItems || []), skillName];
+      } else if (registration?.status === 'failed') {
+        pushSkipped(results.skipped, 'skill', skillName, '项目级 Skill 注册失败，已跳过');
       } else {
         results.skills.applied++;
-        results.skills.items.push(skillName);
       }
+      results.skills.items.push(skillName);
     } catch (error) {
-      pushSkipped(results.skipped, 'skill', skillName, `安装项目级技能失败: ${error.message}`);
+      pushSkipped(results.skipped, 'skill', skillName, `注册项目级 Skill 失败: ${error.message}`);
     }
   }
 

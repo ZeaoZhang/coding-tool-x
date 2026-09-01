@@ -43,7 +43,8 @@ beforeEach(() => {
     loaded: true,
     exports: {
       PATHS: {
-        configs: configsDir
+        configs: configsDir,
+        skillArtifacts: path.join(testDir, '.cc-tool', 'skill-artifacts')
       },
       NATIVE_PATHS: {
         claude: {
@@ -119,6 +120,18 @@ describe('ConfigSyncManager direct sync helpers', () => {
     expect(removeResult).toEqual({ success: true });
     expect(fs.existsSync(targetPath)).toBe(false);
     expect(fs.existsSync(path.join(testDir, '.claude', 'commands', 'nested'))).toBe(false);
+  });
+
+  test('syncToClaude accepts a validated controlled artifact source path', () => {
+    const sourceDir = path.join(testDir, '.cc-tool', 'skill-artifacts', 'claude', 'override');
+    writeFile(path.join(sourceDir, 'SKILL.md'), '# Controlled artifact');
+    const manager = new ConfigSyncManager();
+
+    const result = manager.syncToClaude('skills', 'override', sourceDir);
+
+    expect(result.success).toBe(true);
+    expect(fs.readFileSync(path.join(testDir, 'custom-claude', 'skills', 'override', 'SKILL.md'), 'utf8'))
+      .toBe('# Controlled artifact');
   });
 
   test('syncToCodex converts skills and preserves non-text files', () => {

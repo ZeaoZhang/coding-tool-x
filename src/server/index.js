@@ -15,7 +15,8 @@ const {
 } = require('../utils/port-helper');
 const {
   createRemoteMutationGuard,
-  isRemoteMutationAllowedByEnv
+  isRemoteMutationAllowedByEnv,
+  createSameOriginGuard
 } = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
@@ -171,6 +172,10 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     }));
 
   }
+  app.use(['/api/skills', '/api/project-config', '/api/mcp', '/api/config-registry'], createSameOriginGuard({
+    enabled: true,
+    message: 'Skill/MCP/project configuration requires same-origin access.'
+  }));
 
   // Registry-backed platform catalog and generic read routes
   const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
@@ -327,10 +332,10 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 
   if (host === '0.0.0.0') {
     if (allowRemoteMutation) {
-      console.log(chalk.yellow('   [WARN]  LAN 远程写操作已启用（默认行为）'));
-      console.log(chalk.gray('   如需禁止，请设置 CC_TOOL_ALLOW_REMOTE_WRITE=false'));
+      console.log(chalk.yellow('   [WARN]  LAN 远程写操作已启用（显式授权）'));
+      console.log(chalk.gray('   默认远程写操作关闭；如需关闭显式授权，请移除 CC_TOOL_ALLOW_REMOTE_WRITE=true'));
     } else {
-      console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作被 CC_TOOL_ALLOW_REMOTE_WRITE=false 禁止'));
+      console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作默认关闭'));
     }
   }
   // 自动恢复代理状态

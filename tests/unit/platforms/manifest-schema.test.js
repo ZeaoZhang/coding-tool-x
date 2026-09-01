@@ -150,3 +150,30 @@ test('rejects malformed project resource metadata', () => {
   expect(result.valid).toBe(false);
   expect(normalizeManifestError(result.errors)).toContain('projectResources');
 });
+
+test('validates per-scope Skill activation modes and native formats', () => {
+  const valid = validateManifest({
+    key: 'skill-cli',
+    label: 'Skill CLI',
+    command: 'skill',
+    skillActivation: {
+      user: { mode: 'native-copy', format: 'demo-skill-v1' },
+      project: { mode: 'unsupported', format: null }
+    },
+    capabilities: {}
+  });
+  expect(valid.valid).toBe(true);
+
+  const invalid = validateManifest({
+    key: 'skill-cli',
+    label: 'Skill CLI',
+    command: 'skill',
+    skillActivation: {
+      user: { mode: 'unknown-mode', format: 'demo-skill-v1' },
+      project: { mode: 'native-copy', format: 'unknown-format' }
+    },
+    capabilities: {}
+  });
+  expect(invalid.valid).toBe(false);
+  expect(normalizeManifestError(invalid.errors)).toContain('skillActivation');
+});

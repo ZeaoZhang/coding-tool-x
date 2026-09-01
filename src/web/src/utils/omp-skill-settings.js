@@ -60,5 +60,5 @@ export async function submitOmpSkillSettings(settings, updateSettings) {
 
 export async function completeOmpSkillSettingsSave(closeSettings, refreshSkills) {
   closeSettings()
-  return refreshSkills(true, { notifyError: false })
+  return refreshSkills({ notifyError: false })
 }

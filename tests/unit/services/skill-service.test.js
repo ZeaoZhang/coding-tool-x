@@ -30,26 +30,29 @@ function stubPaths() {
       PATHS: {
         base:   testDir,
         config: path.join(testDir, 'config'),
+        effectiveControlManifest: path.join(testDir, 'config', 'effective-control.json'),
+        skillArtifacts: path.join(testDir, 'artifacts'),
+        skillRefreshTasks: path.join(testDir, 'runtime', 'skill-refresh-tasks.json'),
         localSkills: {
           claude:   path.join(testDir, 'local', 'claude'),
           codex:    path.join(testDir, 'local', 'codex'),
           gemini:   path.join(testDir, 'local', 'gemini'),
           opencode: path.join(testDir, 'local', 'opencode'),
-          omp: path.join(testDir, 'local', 'omp')
+          omp:      path.join(testDir, 'local', 'omp')
         },
         skillRepos: {
           claude:   path.join(testDir, 'repos', 'claude.json'),
           codex:    path.join(testDir, 'repos', 'codex.json'),
           gemini:   path.join(testDir, 'repos', 'gemini.json'),
           opencode: path.join(testDir, 'repos', 'opencode.json'),
-          omp: path.join(testDir, 'repos', 'omp.json')
+          omp:      path.join(testDir, 'repos', 'omp.json')
         },
         skillCaches: {
           claude:   path.join(testDir, 'cache', 'claude.json'),
           codex:    path.join(testDir, 'cache', 'codex.json'),
           gemini:   path.join(testDir, 'cache', 'gemini.json'),
           opencode: path.join(testDir, 'cache', 'opencode.json'),
-          omp: path.join(testDir, 'cache', 'omp.json')
+          omp:      path.join(testDir, 'cache', 'omp.json')
         }
       }
     }
@@ -72,7 +75,8 @@ function stubFormatConverter() {
           body: c,
           format: options.platform === 'codex' ? 'codex' : 'claude'
         };
-      })
+      }),
+      convertSkillToCodex: vi.fn(content => ({ content, warnings: [] }))
     }
   };
 }
@@ -103,6 +107,7 @@ beforeEach(() => {
   stubFormatConverter();
   stubOmpConfig();
   delete require.cache[require.resolve('../../../src/server/services/omp-skill-discovery')];
+  delete require.cache[require.resolve('../../../src/server/services/skill-projection-service')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
 });
 
@@ -112,6 +117,7 @@ afterEach(() => {
   delete require.cache[require.resolve('../../../src/config/paths')];
   delete require.cache[require.resolve('../../../src/server/services/omp-config')];
   delete require.cache[require.resolve('../../../src/server/services/omp-skill-discovery')];
+  delete require.cache[require.resolve('../../../src/server/services/skill-projection-service')];
   try {
     delete require.cache[require.resolve('../../../src/server/services/format-converter')];
   } catch (_) {}
@@ -254,6 +260,52 @@ describe('SkillService.getRepos / addRepo / removeRepo', () => {
     expect(updated.some(r => r.owner === 'rm-owner' && r.name === 'rm-repo')).toBe(false);
   });
 
+  it('marks removed repo artifacts orphaned without deleting their content', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const [repo] = svc.addRepo({
+      owner: 'orphan-owner',
+      name: 'orphan-repo',
+      branch: 'main',
+      directory: '',
+      enabled: true
+    });
+    const sourceKey = `repo:${repo.id}:skill`;
+    const artifact = svc.artifactStore.publishSkill({
+      platform: 'claude',
+      sourceKey,
+      format: 'claude-skill-v1',
+      files: [{ relativePath: 'SKILL.md', content: '# Orphan' }],
+      metadata: { repoId: repo.id, name: 'orphan', directory: 'orphan' }
+    });
+    const target = path.join(svc.installDir, 'orphan');
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'SKILL.md'), '# Orphan');
+    const controlKey = `skill:claude:user:user:${sourceKey}`;
+    svc.controlService.registerSkill({
+      kind: 'skill',
+      controlKey,
+      platform: 'claude',
+      scope: 'user',
+      sourceKey,
+      targetDirectory: 'orphan',
+      artifact: { ...artifact, state: 'ready' },
+      enabled: true,
+      trust: 'approved',
+      projection: { mode: 'native-copy', state: 'enabled', sourceKey },
+      managed: true
+    });
+
+    svc.removeRepo('orphan-owner', 'orphan-repo', '', repo.id);
+
+    expect(svc.artifactStore.get({
+      platform: 'claude',
+      sourceKey,
+      format: 'claude-skill-v1'
+    })).toEqual(expect.objectContaining({ state: 'orphaned', contentHash: expect.any(String) }));
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
   it('removeRepo is a no-op when repo does not exist', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
@@ -326,6 +378,21 @@ describe('SkillService repo auth', () => {
 
     updated = svc.updateRepoAuth('', '', '', '', true, repo.id);
     expect(updated[0].token).toBeUndefined();
+  });
+  it('rejects GitLab repositories without a valid project path', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+
+    expect(() => svc.normalizeRepoConfig({
+      provider: 'gitlab',
+      host: 'gitlab.example.com',
+      projectPath: ''
+    })).toThrow(/GitLab project path/i);
+    expect(() => svc.normalizeRepoConfig({
+      provider: 'gitlab',
+      host: 'gitlab.example.com',
+      projectPath: '../private'
+    })).toThrow(/GitLab project path/i);
   });
 });
 
@@ -425,7 +492,7 @@ describe('SkillService.getInstalledSkills', () => {
     }));
   });
 
-  it('OMP keeps the highest-priority provider by name and reports shadowed sources', async () => {
+  it('OMP retains same-name Skills from distinct providers for projection conflict handling', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('omp');
     const nativeRoot = path.join(ompRuntimeDir, 'skills', 'shared');
@@ -434,7 +501,7 @@ describe('SkillService.getInstalledSkills', () => {
     fs.mkdirSync(claudeRoot, { recursive: true });
     fs.writeFileSync(
       path.join(nativeRoot, 'SKILL.md'),
-      '---\nname: shared\ndescription: Native wins\n---\nBody'
+      '---\nname: shared\ndescription: Native skill\n---\nBody'
     );
     fs.writeFileSync(
       path.join(claudeRoot, 'SKILL.md'),
@@ -443,11 +510,8 @@ describe('SkillService.getInstalledSkills', () => {
 
     const skills = await svc.listSkills(true);
 
-    expect(skills).toHaveLength(1);
-    expect(skills[0].sourceProvider).toBe('native');
-    expect(skills[0].shadowedSources).toEqual([
-      expect.objectContaining({ sourceProvider: 'claude', sourceScope: 'user' })
-    ]);
+    expect(skills.filter(skill => skill.name.toLowerCase() === 'shared')).toHaveLength(2);
+    expect(skills.map(skill => skill.sourceProvider)).toEqual(expect.arrayContaining(['native', 'claude']));
   });
 
   it('OMP resolves its native path again for every scan instead of retaining a profile path', async () => {
@@ -471,7 +535,7 @@ describe('SkillService.getInstalledSkills', () => {
     }));
   });
 
-  it('OMP honors provider toggles plus include and ignore skill settings', async () => {
+  it('OMP provider settings affect discovery while cached artifacts remain local', async () => {
     const ompConfig = require('../../../src/server/services/omp-config');
     const claudeRoot = path.join(testDir, 'claude-skills');
     for (const name of ['included', 'ignored', 'not-included']) {
@@ -498,7 +562,7 @@ describe('SkillService.getInstalledSkills', () => {
     ompConfig.readOmpSettings.mockReturnValue({
       skills: { enabled: true, enableClaudeUser: false }
     });
-    expect(await svc.listSkills(true)).toEqual([]);
+    expect((await svc.listSkills(true)).map(skill => skill.name)).toEqual(['included']);
   });
 
   it('OMP external provider skills are installed and readonly without description', async () => {
@@ -602,6 +666,49 @@ describe('SkillService.getInstalledSkills', () => {
     }));
   });
 
+  it('rejects project Skill roots that are symlinks', async () => {
+    const outsideRoot = path.join(testDir, 'outside-omp-skills');
+    const projectRoot = path.join(testDir, 'omp-project');
+    const projectSkillsRoot = path.join(projectRoot, '.omp', 'skills');
+    fs.mkdirSync(path.join(outsideRoot, 'escaped'), { recursive: true });
+    fs.mkdirSync(path.dirname(projectSkillsRoot), { recursive: true });
+    fs.mkdirSync(projectRoot, { recursive: true });
+    fs.writeFileSync(path.join(outsideRoot, 'escaped', 'SKILL.md'), '---\nname: escaped\ndescription: outside\n---\nBody');
+    fs.symlinkSync(outsideRoot, projectSkillsRoot, 'dir');
+
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+
+    await expect(svc.scanSkills({
+      scope: 'project',
+      cwd: projectRoot
+    })).rejects.toThrow(/symlink/i);
+  });
+
+  it('OMP classifies a custom directory equal to cwd as project scope', async () => {
+    const projectRoot = path.join(testDir, 'omp-custom-project');
+    const skillRoot = path.join(projectRoot, 'child');
+    fs.mkdirSync(skillRoot, { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '---\nname: custom-child\ndescription: custom\n---\nBody');
+    const ompConfig = require('../../../src/server/services/omp-config');
+    ompConfig.readOmpSettings.mockReturnValue({
+      skills: {
+        enabled: true,
+        customDirectories: ['.']
+      }
+    });
+
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const result = await new SkillService('omp').scanSkills({
+      scope: 'project',
+      cwd: projectRoot
+    });
+
+    expect(result.skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'custom-child', sourceScope: 'project' })
+    ]));
+  });
+
   it('marks Codex .system skills as protected system-installed entries', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('codex');
@@ -643,35 +750,41 @@ describe('SkillService.getSkillDetail', () => {
     expect(detail).toEqual(expect.objectContaining({
       directory: 'detail-skill',
       installed: true,
-      path: skillDir,
-      installPath: skillDir,
-      fullPath: path.join(skillDir, 'SKILL.md')
+      path: expect.stringContaining(path.join('artifacts', 'claude')),
+      installPath: expect.stringContaining(path.join('artifacts', 'claude')),
+      fullPath: expect.stringContaining(path.join('artifacts', 'claude'))
     }));
   });
 
-  it('returns absolute paths for local repository skills', async () => {
+  it('returns absolute paths for published local artifacts without remote fetch', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
-    const repoRoot = path.join(testDir, 'repo');
-    const skillDir = path.join(repoRoot, 'skills', 'repo-skill');
-    fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(skillDir, 'SKILL.md'),
-      '---\nname: Repo Skill\ndescription: From repo\n---\nBody',
-      'utf-8'
-    );
+    const artifact = svc.artifactStore.publishSkill({
+      platform: 'claude',
+      sourceKey: 'repo:local-repo:skills/repo-skill',
+      format: 'claude-skill-v1',
+      files: [{
+        relativePath: 'SKILL.md',
+        content: '---\nname: Repo Skill\ndescription: From repo\n---\nBody'
+      }],
+      metadata: {
+        name: 'Repo Skill',
+        directory: 'repo-skill',
+        fullDirectory: 'skills/repo-skill',
+        sourceProvider: 'remote',
+        sourceScope: 'user',
+        repoId: 'local-repo'
+      }
+    });
 
-    const detail = await svc.getSkillDetail('repo-skill', {
-      provider: 'local',
-      localPath: repoRoot,
-      directory: 'skills'
-    }, 'skills/repo-skill');
+    const detail = await svc.getSkillDetail('repo-skill', null, 'skills/repo-skill');
 
     expect(detail).toEqual(expect.objectContaining({
       directory: 'repo-skill',
       installed: false,
-      path: skillDir,
-      fullPath: path.join(skillDir, 'SKILL.md')
+      cached: true,
+      path: artifact.root,
+      fullPath: path.join(artifact.root, 'SKILL.md')
     }));
   });
 
@@ -859,31 +972,16 @@ describe('SkillService file operations', () => {
     expect(fs.readFileSync(path.join(skillDir, 'README.md'), 'utf-8')).toBe('# New');
   });
 
-  it('installLocalSkill copies hosted skill into install dir', () => {
+  it('no longer exposes install or uninstall lifecycle methods', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
-    const localSkillDir = path.join(svc.storageDir, 'local-skill');
-    fs.mkdirSync(localSkillDir, { recursive: true });
-    fs.writeFileSync(path.join(localSkillDir, 'SKILL.md'), '# Local', 'utf-8');
 
-    const result = svc.installLocalSkill('local-skill');
-
-    expect(result.success).toBe(true);
-    expect(fs.existsSync(path.join(svc.installDir, 'local-skill', 'SKILL.md'))).toBe(true);
+    expect(svc.installSkill).toBeUndefined();
+    expect(svc.installLocalSkill).toBeUndefined();
+    expect(svc.uninstallSkill).toBeUndefined();
   });
 
-  it('uninstallSkill rejects unsafe target directories without deleting outside files', () => {
-    const { SkillService } = require('../../../src/server/services/skill-service');
-    const svc = new SkillService('claude');
-    const outsideDir = path.join(testDir, 'victim');
-    fs.mkdirSync(outsideDir, { recursive: true });
-    fs.writeFileSync(path.join(outsideDir, 'SKILL.md'), '# Victim', 'utf-8');
-
-    expect(() => svc.uninstallSkill('../victim')).toThrow(/Invalid skill directory/);
-    expect(fs.existsSync(path.join(outsideDir, 'SKILL.md'))).toBe(true);
-  });
-
-  it('refuses to uninstall or modify Codex system skills', () => {
+  it('refuses to modify Codex system skills', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('codex');
     const systemSkillDir = path.join(svc.installDir, '.system', 'skill-installer');
@@ -891,26 +989,15 @@ describe('SkillService file operations', () => {
     fs.writeFileSync(path.join(systemSkillDir, 'SKILL.md'), '# System', 'utf-8');
     fs.writeFileSync(path.join(systemSkillDir, 'README.md'), '# Readme', 'utf-8');
 
-    expect(() => svc.uninstallSkill('.system/skill-installer')).toThrow(/系统技能/);
     expect(() => svc.addSkillFiles('.system/skill-installer', [{ path: 'notes.md', content: 'x' }])).toThrow(/系统技能/);
     expect(() => svc.deleteSkillFile('.system/skill-installer', 'README.md')).toThrow(/系统技能/);
     expect(() => svc.updateSkillFile('.system/skill-installer', 'README.md', 'x')).toThrow(/系统技能/);
     expect(fs.existsSync(path.join(systemSkillDir, 'SKILL.md'))).toBe(true);
   });
-
-  it('uninstallSkill returns not installed when target is absent', () => {
-    const { SkillService } = require('../../../src/server/services/skill-service');
-    const svc = new SkillService('claude');
-
-    expect(svc.uninstallSkill('missing-skill')).toEqual({
-      success: true,
-      message: 'Not installed'
-    });
-  });
 });
 
 describe('SkillService cache scheduling', () => {
-  it('uses a fresh prepared cache before loading the disk cache', async () => {
+  it('scanSkills ignores stale prepared state and never loads remote repositories', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');
     svc.skillsCache = [{
@@ -921,45 +1008,19 @@ describe('SkillService cache scheduling', () => {
       sourceProvider: 'remote'
     }];
     svc.cacheTime = Date.now();
-    const loadCache = vi.spyOn(svc, 'loadCacheFromFile');
     const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills');
 
-    const result = await svc.listSkills(false);
+    const result = await svc.scanSkills({ scope: 'user' });
 
-    expect(result).toEqual(expect.arrayContaining([
+    expect(result.skills).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'prepared' })
     ]));
-    expect(loadCache).not.toHaveBeenCalled();
     expect(fetchRepos).not.toHaveBeenCalled();
   });
-
-  it('coalesces concurrent forced remote refreshes', async () => {
-    const { SkillService } = require('../../../src/server/services/skill-service');
-    const svc = new SkillService('claude');
-    svc.loadRepos = vi.fn(() => [{
-      provider: 'github',
-      owner: 'owner',
-      name: 'repo',
-      branch: 'main',
-      enabled: true
-    }]);
-    let resolveFetch;
-    const fetchResult = new Promise(resolve => {
-      resolveFetch = resolve;
-    });
-    const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills').mockReturnValue(fetchResult);
-
-    const first = svc.listSkills(true);
-    const second = svc.listSkills(true);
-    await Promise.resolve();
-
-    expect(fetchRepos).toHaveBeenCalledTimes(1);
-    resolveFetch([]);
-    await Promise.all([first, second]);
-  });
 });
+
 describe('OMP discovery cache', () => {
-  it('reuses settings and plugin path CLI results for the same cwd', () => {
+  it('reuses settings and plugin path CLI results for the same scope and cwd', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const { discoverOmpSkills } = require('../../../src/server/services/omp-skill-discovery');
     const svc = new SkillService('omp');
@@ -967,35 +1028,26 @@ describe('OMP discovery cache', () => {
     const cwd = path.join(testDir, 'project');
     fs.mkdirSync(cwd, { recursive: true });
 
-    discoverOmpSkills(svc, { cwd });
-    discoverOmpSkills(svc, { cwd });
+    discoverOmpSkills(svc, { cwd, scope: 'user' });
+    discoverOmpSkills(svc, { cwd, scope: 'user' });
+    discoverOmpSkills(svc, { cwd, scope: 'project' });
 
-    expect(ompConfig.getOmpCommand).toHaveBeenCalledTimes(2);
+    expect(ompConfig.getOmpCommand).toHaveBeenCalledTimes(4);
   });
-  it('coalesces concurrent OMP lists by cwd while refreshing remote skills once', async () => {
+
+  it('scanSkills does not refresh remote OMP repositories', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('omp');
-    svc.loadRepos = vi.fn(() => [{
-      provider: 'github',
-      owner: 'owner',
-      name: 'omp-repo',
-      branch: 'main',
-      enabled: true
-    }]);
-    let resolveFetch;
-    const fetchResult = new Promise(resolve => {
-      resolveFetch = resolve;
-    });
-    const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills').mockReturnValue(fetchResult);
+    const fetchRepos = vi.spyOn(svc, 'fetchRepoSkills');
     const cwd = path.join(testDir, 'omp-project');
     fs.mkdirSync(cwd, { recursive: true });
 
-    const requests = Array.from({ length: 20 }, () => svc.listSkills(false, { cwd }));
-    await Promise.resolve();
+    await Promise.all(Array.from({ length: 20 }, () => svc.scanSkills({
+      scope: 'project',
+      cwd
+    })));
 
-    expect(fetchRepos).toHaveBeenCalledTimes(1);
-    resolveFetch([]);
-    await Promise.all(requests);
+    expect(fetchRepos).not.toHaveBeenCalled();
   });
 });
 
@@ -1105,38 +1157,61 @@ describe('SkillService local repository path safety', () => {
       path: '../secret/SKILL.md'
     })).rejects.toThrow(/Invalid skill repository file path/);
   });
+
+  it('rejects local repository roots that are symlinks', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const realRoot = path.join(testDir, 'real-repo');
+    const linkedRoot = path.join(testDir, 'linked-repo');
+    fs.mkdirSync(realRoot, { recursive: true });
+    fs.symlinkSync(realRoot, linkedRoot, 'dir');
+
+    await expect(svc.fetchLocalRepoSkills({
+      provider: 'local',
+      localPath: linkedRoot
+    })).rejects.toThrow(/symlink/i);
+  });
+
+  it('rejects symlinked local repository subdirectories', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const repoRoot = path.join(testDir, 'repo-with-link');
+    const outsideRoot = path.join(testDir, 'outside-repo');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    fs.mkdirSync(outsideRoot, { recursive: true });
+    fs.symlinkSync(outsideRoot, path.join(repoRoot, 'skills-link'), 'dir');
+
+    await expect(svc.fetchLocalRepoSkills({
+      provider: 'local',
+      localPath: repoRoot,
+      directory: 'skills-link'
+    })).rejects.toThrow(/symlink/i);
+  });
 });
 
 describe('SkillService project scope', () => {
-  it('installs and lists a Skill in the project canonical directory', async () => {
+  it('scans a Skill in the project canonical directory', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('codex');
     const projectRoot = path.join(testDir, 'project-scope');
-    fs.mkdirSync(projectRoot, { recursive: true });
-    const repoRoot = path.join(testDir, 'skill-repo');
-    fs.mkdirSync(path.join(repoRoot, 'repo-skill'), { recursive: true });
+    const projectSkillDir = path.join(projectRoot, '.agents', 'skills', 'repo-skill');
+    fs.mkdirSync(projectSkillDir, { recursive: true });
     fs.writeFileSync(
-      path.join(repoRoot, 'repo-skill', 'SKILL.md'),
+      path.join(projectSkillDir, 'SKILL.md'),
       '---\nname: Repo Skill\ndescription: Project skill\n---\nBody',
       'utf8'
     );
 
-    await svc.installSkill(
-      'repo-skill',
-      { provider: 'local', localPath: repoRoot, id: 'local:repo' },
-      null,
-      { scope: 'project', cwd: projectRoot }
-    );
+    const result = await svc.scanSkills({ scope: 'project', cwd: projectRoot });
+    const skills = result.skills;
 
-    expect(fs.existsSync(path.join(projectRoot, '.agents', 'skills', 'repo-skill', 'SKILL.md'))).toBe(true);
-    expect(fs.existsSync(path.join(testDir, 'codex-skills', 'repo-skill'))).toBe(false);
-
-    const skills = await svc.listSkills(true, { scope: 'project', cwd: projectRoot });
+    expect(fs.existsSync(path.join(projectSkillDir, 'SKILL.md'))).toBe(true);
     expect(skills).toEqual(expect.arrayContaining([
       expect.objectContaining({
         directory: 'repo-skill',
         sourceScope: 'project',
-        installed: true
+        enabled: true,
+        managed: true
       })
     ]));
   });
@@ -1152,7 +1227,431 @@ describe('SkillService project scope', () => {
 
     expect([...svc._preparedSkillsCache.keys()]).toEqual(expect.arrayContaining([
       'user:',
-      `project:${path.resolve(projectRoot)}`
+      `project:${fs.realpathSync(projectRoot)}`
     ]));
+  });
+});
+
+describe('SkillService scan-only control surface', () => {
+  it('scanSkills never performs a network refresh', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    svc.refreshRemoteSkills = vi.fn(() => {
+      throw new Error('network called');
+    });
+
+    const result = await svc.scanSkills({ scope: 'user' });
+
+    expect(svc.refreshRemoteSkills).not.toHaveBeenCalled();
+    expect(result.refresh.state).toMatch(/never_fetched|idle/);
+  });
+
+  it('reports the latest terminal refresh task in scan snapshots', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const { PATHS } = require('../../../src/config/paths');
+    const svc = new SkillService('claude');
+    fs.mkdirSync(path.dirname(PATHS.skillRefreshTasks), { recursive: true });
+    fs.writeFileSync(PATHS.skillRefreshTasks, JSON.stringify({
+      version: 1,
+      tasks: [{
+        id: 'failed-refresh',
+        platform: 'claude',
+        scope: 'user',
+        status: 'failed',
+        createdAt: Date.now() - 10,
+        finishedAt: Date.now(),
+        error: 'remote token=secret-value'
+      }]
+    }));
+
+    const result = await svc.scanSkills({ scope: 'user' });
+
+    expect(result.refresh).toEqual(expect.objectContaining({
+      state: 'failed',
+      taskId: 'failed-refresh',
+      error: 'remote token=[REDACTED]'
+    }));
+  });
+
+  it('project and user scans use independent canonical cache keys', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const projectRoot = path.join(testDir, 'scan-project');
+    fs.mkdirSync(projectRoot, { recursive: true });
+
+    await svc.scanSkills({ scope: 'user' });
+    await svc.scanSkills({ scope: 'project', cwd: projectRoot });
+
+    expect([...svc._preparedSkillsCache.keys()]).toEqual(expect.arrayContaining([
+      'user:',
+      `project:${fs.realpathSync(projectRoot)}`
+    ]));
+  });
+
+  it('keeps missing control entries visible with a missing artifact state', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const control = svc.controlService.registerSkill({
+      kind: 'skill',
+      platform: 'claude',
+      scope: 'user',
+      projectPath: null,
+      sourceKey: 'repo:missing:skills/ghost',
+      source: { kind: 'remote', repoId: 'repo:missing', fullDirectory: 'skills/ghost', revision: 'commit-a' },
+      artifact: { root: path.join(testDir, 'does-not-exist'), state: 'metadata_only' },
+      targetDirectory: 'ghost',
+      cached: false,
+      enabled: false,
+      trust: 'needs_review',
+      projection: { mode: 'native-copy', state: 'disabled' },
+      managed: true
+    });
+
+    const result = await svc.scanSkills({ scope: 'user' });
+    const missing = result.skills.find(skill => skill.controlKey === control.controlKey);
+
+    expect(missing).toEqual(expect.objectContaining({
+      artifactState: 'missing',
+      cached: false,
+      enabled: false,
+      trust: 'needs_review',
+      managed: true
+    }));
+  });
+
+  it('updates the managed artifact when local Skill content changes', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const skillDir = path.join(svc.storageDir, 'mutable');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: mutable\n---\nfirst');
+
+    const first = await svc.scanSkills({ scope: 'user' });
+    const initial = first.skills.find(skill => skill.directory === 'mutable');
+    const initialHash = initial.artifact.contentHash;
+    svc.controlService.setSkillTrust({ controlKey: initial.controlKey, scope: 'user', trust: 'approved' });
+    svc.controlService.setSkillEnabled({ controlKey: initial.controlKey, scope: 'user', enabled: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: mutable\n---\nsecond');
+    svc.clearCache({ removeFile: true });
+
+    const second = await svc.scanSkills({ scope: 'user' });
+    const updated = second.skills.find(skill => skill.controlKey === initial.controlKey);
+
+    expect(updated.artifact.contentHash).not.toBe(initialHash);
+    expect(updated.trust).toBe('needs_review');
+    expect(updated.enabled).toBe(false);
+    expect(fs.existsSync(path.join(svc.installDir, 'mutable'))).toBe(false);
+  });
+  it('takes ownership of a native target through its artifact and disables it safely', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const skillDir = path.join(svc.installDir, 'kept-artifact');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: kept-artifact\n---\nBody');
+
+    const snapshot = await svc.scanSkills({ scope: 'user' });
+    const skill = snapshot.skills.find(item => item.directory === 'kept-artifact');
+    const artifactRoot = skill.artifact.root;
+
+    const result = svc.controlService.setSkillEnabled({
+      controlKey: skill.controlKey,
+      scope: 'user',
+      enabled: false
+    });
+
+    expect(result.enabled).toBe(false);
+    expect(result.projection.state).toBe('disabled');
+    expect(fs.existsSync(artifactRoot)).toBe(true);
+    expect(fs.existsSync(skillDir)).toBe(false);
+  });
+  it('keeps project-local artifacts isolated by canonical project path', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const projectA = path.join(testDir, 'project-a');
+    const projectB = path.join(testDir, 'project-b');
+    fs.mkdirSync(projectA, { recursive: true });
+    fs.mkdirSync(projectB, { recursive: true });
+    const files = [{ path: 'SKILL.md', content: '# Same directory' }];
+
+    svc.createSkillWithFiles({ directory: 'same', files, scope: 'project', cwd: projectA });
+    svc.createSkillWithFiles({ directory: 'same', files, scope: 'project', cwd: projectB });
+
+    const artifacts = svc.artifactStore.list({ platform: 'claude' })
+      .filter(artifact => artifact.sourceProvider === 'local' && artifact.directory === 'same');
+    expect(artifacts).toHaveLength(2);
+    expect(new Set(artifacts.map(artifact => artifact.sourceKey)).size).toBe(2);
+    const userScan = await svc.scanSkills({ scope: 'user' });
+    const projectAScan = await svc.scanSkills({ scope: 'project', cwd: projectA });
+    const projectBScan = await svc.scanSkills({ scope: 'project', cwd: projectB });
+    expect(userScan.skills.some(skill => skill.sourceScope === 'project' && skill.directory === 'same')).toBe(false);
+    expect(projectAScan.skills.some(skill => skill.projectPath === fs.realpathSync(projectA))).toBe(true);
+    expect(projectBScan.skills.some(skill => skill.projectPath === fs.realpathSync(projectB))).toBe(true);
+  });
+
+  it('project Skill overrides the same-directory user Skill', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const projectRoot = path.join(testDir, 'precedence-project');
+    const userSkill = path.join(svc.installDir, 'shared');
+    const projectSkill = path.join(projectRoot, '.claude', 'skills', 'shared');
+    fs.mkdirSync(userSkill, { recursive: true });
+    fs.mkdirSync(projectSkill, { recursive: true });
+    fs.writeFileSync(path.join(userSkill, 'SKILL.md'), '---\\nname: Shared\\ndescription: user\\n---\\nUser');
+    fs.writeFileSync(path.join(projectSkill, 'SKILL.md'), '---\\nname: Shared\\ndescription: project\\n---\\nProject');
+
+    const result = await svc.scanSkills({ scope: 'project', cwd: projectRoot });
+    const shared = result.skills.filter(skill => skill.directory === 'shared');
+
+    expect(shared).toHaveLength(1);
+    expect(shared[0].sourceScope).toBe('project');
+    expect(shared[0].shadowedSources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceScope: 'user' })
+    ]));
+  });
+  it('keeps project Skill details scoped to the requested project', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const projectA = path.join(testDir, 'detail-project-a');
+    const projectB = path.join(testDir, 'detail-project-b');
+    const artifactA = path.join(testDir, 'artifacts', 'a');
+    const artifactB = path.join(testDir, 'artifacts', 'b');
+    fs.mkdirSync(projectA, { recursive: true });
+    fs.mkdirSync(projectB, { recursive: true });
+    fs.mkdirSync(artifactA, { recursive: true });
+    fs.mkdirSync(artifactB, { recursive: true });
+    fs.writeFileSync(path.join(artifactA, 'SKILL.md'), '---\nname: same\n---\nProject A');
+    fs.writeFileSync(path.join(artifactB, 'SKILL.md'), '---\nname: same\n---\nProject B');
+    const svc = new SkillService('claude', {
+      artifactStore: {
+        list: vi.fn(() => [
+          {
+            sourceKey: 'project-a',
+            sourceScope: 'project',
+            projectPath: fs.realpathSync(projectA),
+            directory: 'same',
+            root: artifactA
+          },
+          {
+            sourceKey: 'project-b',
+            sourceScope: 'project',
+            projectPath: fs.realpathSync(projectB),
+            directory: 'same',
+            root: artifactB
+          }
+        ])
+      },
+      controlService: {
+        getSkill: vi.fn(() => null)
+      }
+    });
+    svc.scanSkills = vi.fn(async () => ({ skills: [] }));
+
+    const detail = await svc.getSkillDetail('same', null, 'same', {
+      scope: 'project',
+      cwd: projectA
+    });
+
+    expect(detail.fullContent).toContain('Project A');
+    expect(detail.fullContent).not.toContain('Project B');
+  });
+});
+
+describe('SkillService explicit remote refresh', () => {
+  it('downloads every Skill in a repository and publishes a platform-specific artifact', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const controls = new Map();
+    const svc = new SkillService('codex', {
+      artifactStore: {
+        publishSkill: vi.fn(async input => ({
+          ...input.metadata,
+          platform: input.platform,
+          sourceKey: input.sourceKey,
+          format: input.format,
+          root: path.join(testDir, 'artifacts', input.sourceKey.replace(/[^a-z0-9]/gi, '_')),
+          contentHash: 'b'.repeat(64),
+          state: 'ready',
+          fetchedAt: Date.now()
+        }))
+      },
+      formatAdapter: {
+        normalize: vi.fn(({ files }) => ({
+          format: 'codex-skill-v1',
+          files,
+          warnings: []
+        }))
+      },
+      controlService: {
+        getSkill: vi.fn((controlKey, options) => controls.get(`${options.scope}:${controlKey}`) || null),
+        registerSkill: vi.fn(entry => {
+          controls.set(`${entry.scope}:${entry.controlKey}`, entry);
+          return entry;
+        })
+      }
+    });
+    svc.loadRepos = vi.fn(() => [{
+      id: 'github:owner/repo::main::',
+      provider: 'github',
+      owner: 'owner',
+      name: 'repo',
+      branch: 'main',
+      enabled: true
+    }]);
+    svc.fetchRepoSkillBundles = vi.fn(async () => [
+      {
+        sourceKey: 'repo:github:owner/repo::main:::skills/one',
+        directory: 'one',
+        fullDirectory: 'skills/one',
+        files: [{ relativePath: 'SKILL.md', content: 'one' }],
+        metadata: { name: 'one', description: 'One', revision: 'commit-a' }
+      },
+      {
+        sourceKey: 'repo:github:owner/repo::main:::skills/two',
+        directory: 'two',
+        fullDirectory: 'skills/two',
+        files: [
+          { relativePath: 'SKILL.md', content: 'two' },
+          { relativePath: 'scripts/helper.sh', content: 'true' }
+        ],
+        metadata: { name: 'two', description: 'Two', revision: 'commit-a' }
+      }
+    ]);
+
+    const result = await svc.refreshRemoteSkills({ platform: 'codex', scope: 'user' });
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'succeeded',
+      fetchedRepos: 1,
+      fetchedSkills: 2
+    }));
+    expect(svc.formatAdapter.normalize).toHaveBeenCalledTimes(2);
+    expect(svc.artifactStore.publishSkill).toHaveBeenCalledTimes(2);
+    expect([...controls.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ trust: 'needs_review', enabled: false, managed: true }),
+      expect.objectContaining({ trust: 'needs_review', enabled: false, managed: true })
+    ]));
+  });
+
+  it('stores project remote refreshes under the canonical project scope', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const projectPath = path.join(testDir, 'project-refresh');
+    fs.mkdirSync(projectPath, { recursive: true });
+    const controls = new Map();
+    const svc = new SkillService('claude', {
+      artifactStore: {
+        publishSkill: vi.fn(async input => ({
+          ...input.metadata,
+          platform: input.platform,
+          sourceKey: input.sourceKey,
+          format: input.format,
+          root: path.join(testDir, 'artifacts', 'project'),
+          contentHash: 'c'.repeat(64),
+          state: 'ready',
+          fetchedAt: Date.now()
+        }))
+      },
+      formatAdapter: {
+        normalize: vi.fn(({ files }) => ({ format: 'claude-skill-v1', files, warnings: [] }))
+      },
+      controlService: {
+        getSkill: vi.fn((controlKey, options) => controls.get(`${options.scope}:${options.projectPath || 'user'}:${controlKey}`) || null),
+        registerSkill: vi.fn(entry => {
+          controls.set(`${entry.scope}:${entry.projectPath || 'user'}:${entry.controlKey}`, entry);
+          return entry;
+        })
+      }
+    });
+    svc.loadRepos = vi.fn(() => [{
+      id: 'repo-project',
+      provider: 'github',
+      owner: 'owner',
+      name: 'repo',
+      branch: 'main',
+      enabled: true
+    }]);
+    svc.fetchRepoSkillBundles = vi.fn(async () => [{
+      sourceKey: 'repo:repo-project:skills/demo',
+      directory: 'demo',
+      fullDirectory: 'skills/demo',
+      files: [{ relativePath: 'SKILL.md', content: 'demo' }],
+      metadata: { name: 'demo', revision: 'commit-project' }
+    }]);
+
+    await svc.refreshRemoteSkills({
+      platform: 'claude',
+      scope: 'project',
+      projectPath
+    });
+
+    const [entry] = [...controls.values()];
+    expect(entry).toEqual(expect.objectContaining({
+      scope: 'project',
+      projectPath: fs.realpathSync(projectPath),
+      trust: 'needs_review',
+      enabled: false
+    }));
+    expect(entry.sourceKey).toContain(`:project:${fs.realpathSync(projectPath)}`);
+    expect(svc.artifactStore.publishSkill).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKey: entry.sourceKey,
+      metadata: expect.objectContaining({
+        sourceScope: 'project',
+        projectPath: fs.realpathSync(projectPath)
+      })
+    }));
+  });
+
+  it('preserves an approved enabled control entry when the artifact revision is unchanged', async () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const existing = {
+      controlKey: 'skill:claude:user:user:repo:repo-1:skills/demo',
+      kind: 'skill',
+      platform: 'claude',
+      scope: 'user',
+      projectPath: null,
+      sourceKey: 'repo:repo-1:skills/demo',
+      source: { revision: 'commit-a' },
+      artifact: { root: path.join(testDir, 'old'), contentHash: 'a'.repeat(64), state: 'ready' },
+      targetDirectory: 'demo',
+      cached: true,
+      enabled: true,
+      trust: 'approved',
+      projection: { state: 'enabled', mode: 'native-copy' },
+      managed: true
+    };
+    const registerSkill = vi.fn(entry => entry);
+    const svc = new SkillService('claude', {
+      artifactStore: {
+        publishSkill: vi.fn(async input => ({
+          ...input.metadata,
+          platform: 'claude',
+          sourceKey: input.sourceKey,
+          format: input.format,
+          root: path.join(testDir, 'new'),
+          contentHash: existing.artifact.contentHash,
+          state: 'ready'
+        }))
+      },
+      formatAdapter: {
+        normalize: vi.fn(({ files }) => ({ format: 'claude-skill-v1', files, warnings: [] }))
+      },
+      controlService: {
+        getSkill: vi.fn(() => existing),
+        registerSkill
+      }
+    });
+    svc.loadRepos = vi.fn(() => [{ id: 'repo-1', provider: 'local', localPath: testDir, enabled: true }]);
+    svc.fetchRepoSkillBundles = vi.fn(async () => [{
+      sourceKey: 'repo:repo-1:skills/demo',
+      directory: 'demo',
+      fullDirectory: 'skills/demo',
+      files: [{ relativePath: 'SKILL.md', content: 'demo' }],
+      metadata: { name: 'demo', revision: 'commit-a' }
+    }]);
+
+    await svc.refreshRemoteSkills({ platform: 'claude', scope: 'user' });
+
+    expect(registerSkill).toHaveBeenCalledWith(expect.objectContaining({
+      enabled: true,
+      trust: 'approved',
+      projection: expect.objectContaining({ state: 'enabled' })
+    }));
   });
 });

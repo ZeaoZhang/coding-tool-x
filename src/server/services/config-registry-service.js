@@ -11,6 +11,10 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const platformRuntime = require('../../platforms/runtime');
+const { ControlManifestStore } = require('./control-manifest-store');
+const { EffectiveControlService } = require('./effective-control-service');
+const { SkillArtifactStore } = require('./skill-artifact-store');
+const { SkillFormatAdapter } = require('./skill-format-adapters');
 
 // Configuration paths
 const CC_TOOL_DIR = PATHS.base;
@@ -83,6 +87,8 @@ function normalizePlatforms(type, platforms = {}) {
   return normalized;
 }
 
+const RESERVED_CONFIG_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
+
 function normalizeRelativeConfigName(name) {
   const raw = String(name || '').replace(/\\/g, '/').trim();
   if (!raw || raw.includes('\0')) {
@@ -96,6 +102,9 @@ function normalizeRelativeConfigName(name) {
 
   if (path.isAbsolute(raw) || raw.startsWith('/')) {
     throw new Error('Absolute path is not allowed');
+  }
+  if (RESERVED_CONFIG_NAMES.has(normalized)) {
+    throw new Error('Invalid config name');
   }
 
   return normalized;
@@ -119,13 +128,52 @@ function ensureDir(dirPath) {
   }
 }
 
+function collectSkillFiles(rootDir) {
+  const files = [];
+  const visit = currentDir => {
+    if (fs.lstatSync(currentDir).isSymbolicLink()) {
+      throw new Error(`Skill artifact contains symlink: ${currentDir}`);
+    }
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const sourcePath = path.join(currentDir, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Skill artifact contains symlink: ${sourcePath}`);
+      }
+      if (entry.isDirectory()) {
+        visit(sourcePath);
+      } else if (entry.isFile()) {
+        files.push({
+          relativePath: path.relative(rootDir, sourcePath).replace(/\\/g, '/'),
+          content: fs.readFileSync(sourcePath)
+        });
+      }
+    }
+  };
+  visit(rootDir);
+  return files;
+}
+
 /**
  * Config Registry Service
  */
 class ConfigRegistryService {
-  constructor() {
+  constructor({ controlService = null, artifactStore = null, formatAdapter = null } = {}) {
     this.registryPath = REGISTRY_FILE;
     this.configsDir = CONFIGS_DIR;
+    this.artifactStore = artifactStore || (
+      PATHS.skillArtifacts ? new SkillArtifactStore({ root: PATHS.skillArtifacts }) : null
+    );
+    this.formatAdapter = formatAdapter || new SkillFormatAdapter();
+    this.controlService = controlService || (
+      PATHS.effectiveControlManifest
+        ? new EffectiveControlService({
+          store: new ControlManifestStore({
+            userPath: PATHS.effectiveControlManifest,
+            projectPathResolver: ({ projectPath }) => path.join(projectPath, '.ctx-control.json')
+          })
+        })
+        : null
+    );
 
     // Ensure directories exist
     this._ensureDirs();
@@ -143,6 +191,141 @@ class ConfigRegistryService {
     for (const type of CONFIG_TYPES) {
       ensureDir(path.join(this.configsDir, type));
     }
+  }
+
+  migrateSkillControls() {
+    if (!this.controlService) return { migrated: 0, skipped: 0, migrationVersion: 0 };
+    const registry = this._readRegistry();
+    let migrated = 0;
+    let skipped = 0;
+    for (const [name, item] of Object.entries(registry.skills || {})) {
+      let safeName;
+      try {
+        safeName = normalizeRelativeConfigName(name);
+      } catch {
+        skipped++;
+        continue;
+      }
+      if (!item || typeof item !== 'object') continue;
+      const platforms = Object.keys(item.platforms || {});
+      for (const platform of platforms.length > 0 ? platforms : ['claude']) {
+        const sourceKey = `local:${platform}:${safeName}`;
+        const controlKey = `skill:${platform}:user:user:${sourceKey}`;
+        if (this.controlService.getSkill(controlKey, { scope: 'user' })) {
+          skipped++;
+          continue;
+        }
+
+        const legacyRoot = path.join(this.configsDir, 'skills', safeName);
+        const legacySkillPath = path.join(legacyRoot, 'SKILL.md');
+        const legacyReady = fs.existsSync(legacySkillPath);
+        let artifactRoot = legacyReady ? legacyRoot : null;
+        let artifactFormat = null;
+        let artifactHash = null;
+        let artifactState = legacyReady ? 'ready' : 'metadata_only';
+        let lastError = null;
+
+        if (legacyReady && this.artifactStore) {
+          try {
+            const normalized = this.formatAdapter.normalize({
+              platform,
+              files: collectSkillFiles(legacyRoot),
+              sourceMetadata: { name: safeName }
+            });
+            const published = this.artifactStore.publishSkill({
+              platform,
+              sourceKey,
+              format: normalized.format,
+              files: normalized.files,
+              metadata: {
+                name: safeName,
+                directory: safeName,
+                sourceProvider: 'local',
+                sourceScope: 'user',
+                revision: null
+              }
+            });
+            artifactRoot = published.root;
+            artifactFormat = published.format || normalized.format;
+            artifactHash = published.contentHash || null;
+            artifactState = published.state || 'ready';
+          } catch (error) {
+            artifactRoot = null;
+            artifactState = 'missing';
+            lastError = error.message;
+          }
+        }
+
+        const platformEnabled = platforms.length === 0
+          ? platform === 'claude'
+          : item.platforms?.[platform] === true;
+        const enabled = artifactState !== 'metadata_only'
+          && artifactState !== 'missing'
+          && item.enabled !== false
+          && platformEnabled;
+        const registered = this.controlService.registerSkill({
+          kind: 'skill',
+          controlKey,
+          platform,
+          scope: 'user',
+          projectPath: null,
+          sourceKey,
+          source: {
+            kind: 'local',
+            repoId: null,
+            fullDirectory: safeName,
+            revision: null
+          },
+          artifact: {
+            root: artifactRoot,
+            format: artifactFormat,
+            contentHash: artifactHash,
+            state: artifactState,
+            fetchedAt: null
+          },
+          targetDirectory: safeName,
+          cached: Boolean(artifactRoot) && artifactState !== 'missing',
+          enabled,
+          trust: enabled ? 'approved' : (artifactState === 'missing' ? 'needs_review' : 'pending'),
+          projection: {
+            mode: 'native-copy',
+            state: enabled ? 'enabled' : 'disabled',
+            sourceKey,
+            path: null,
+            updatedAt: null
+          },
+          managed: true,
+          lastError,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+        if (!enabled && this.controlService.setSkillEnabled) {
+          try {
+            this.controlService.setSkillEnabled({
+              platform,
+              controlKey: registered.controlKey,
+              scope: 'user',
+              projectPath: null,
+              enabled: false
+            });
+          } catch (error) {
+            console.warn(`[ConfigRegistry] Failed to disable migrated Skill ${safeName}:`, error.message);
+          }
+        }
+        migrated++;
+      }
+    }
+
+    const store = this.controlService.store;
+    if (store?.read && store?.write) {
+      const scope = { scope: 'user', projectPath: null };
+      const manifest = store.read(scope);
+      if (manifest.migrationVersion !== 1) {
+        manifest.migrationVersion = 1;
+        store.write(scope, manifest);
+      }
+    }
+    return { migrated, skipped, migrationVersion: 1 };
   }
 
   /**
@@ -205,9 +388,11 @@ class ConfigRegistryService {
     if (!CONFIG_TYPES.includes(type)) {
       throw new Error(`Invalid config type: ${type}`);
     }
-
+    const safeName = normalizeRelativeConfigName(name);
     const registry = this._readRegistry();
-    return registry[type][name] || null;
+    return Object.prototype.hasOwnProperty.call(registry[type], safeName)
+      ? registry[type][safeName]
+      : null;
   }
 
   /**
@@ -215,17 +400,18 @@ class ConfigRegistryService {
    * @param {string} type - Config type
    * @param {string} name - Item name/key
    * @param {Object} data - Item data
-   * @returns {Object} Updated entry
    */
   setItem(type, name, data) {
     if (!CONFIG_TYPES.includes(type)) {
       throw new Error(`Invalid config type: ${type}`);
     }
-
+    const safeName = normalizeRelativeConfigName(name);
     const registry = this._readRegistry();
     const now = new Date().toISOString();
 
-    const existing = registry[type][name];
+    const existing = Object.prototype.hasOwnProperty.call(registry[type], safeName)
+      ? registry[type][safeName]
+      : null;
     const entry = {
       ...data,
       enabled: data.enabled !== undefined ? data.enabled : true,
@@ -235,7 +421,7 @@ class ConfigRegistryService {
       source: data.source || 'local'
     };
 
-    registry[type][name] = entry;
+    registry[type][safeName] = entry;
     this._writeRegistry(registry);
 
     return entry;
@@ -251,18 +437,18 @@ class ConfigRegistryService {
     if (!CONFIG_TYPES.includes(type)) {
       throw new Error(`Invalid config type: ${type}`);
     }
-
+    const safeName = normalizeRelativeConfigName(name);
     const registry = this._readRegistry();
 
-    if (!registry[type][name]) {
+    if (!Object.prototype.hasOwnProperty.call(registry[type], safeName)) {
       return false;
     }
 
-    delete registry[type][name];
+    delete registry[type][safeName];
     this._writeRegistry(registry);
 
     // Also remove the actual config files
-    const configPath = this.getConfigPath(type, name);
+    const configPath = this.getConfigPath(type, safeName);
     if (fs.existsSync(configPath)) {
       try {
         const stats = fs.statSync(configPath);
@@ -272,7 +458,7 @@ class ConfigRegistryService {
           fs.unlinkSync(configPath);
         }
       } catch (err) {
-        console.error(`[ConfigRegistry] Failed to remove config files for ${type}/${name}:`, err.message);
+        console.error(`[ConfigRegistry] Failed to remove config files for ${type}/${safeName}:`, err.message);
       }
     }
 
@@ -304,9 +490,11 @@ class ConfigRegistryService {
     if (!CONFIG_TYPES.includes(type)) {
       throw new Error(`Invalid config type: ${type}`);
     }
-
+    const safeName = normalizeRelativeConfigName(name);
     const registry = this._readRegistry();
-    const entry = registry[type][name];
+    const entry = Object.prototype.hasOwnProperty.call(registry[type], safeName)
+      ? registry[type][safeName]
+      : null;
 
     if (!entry) {
       throw new Error(`Item "${name}" not found in ${type}`);
@@ -326,7 +514,6 @@ class ConfigRegistryService {
    * @param {string} name - Item name/key
    * @param {string} platform - Platform name (claude, codex, gemini, opencode)
    * @param {boolean} enabled - New platform status
-   * @returns {Object} Updated entry
    */
   togglePlatform(type, name, platform, enabled) {
     if (!CONFIG_TYPES.includes(type)) {
@@ -341,8 +528,11 @@ class ConfigRegistryService {
       throw new Error(`Platform "${platform}" is not supported for ${type}`);
     }
 
+    const safeName = normalizeRelativeConfigName(name);
     const registry = this._readRegistry();
-    const entry = registry[type][name];
+    const entry = Object.prototype.hasOwnProperty.call(registry[type], safeName)
+      ? registry[type][safeName]
+      : null;
 
     if (!entry) {
       throw new Error(`Item "${name}" not found in ${type}`);
@@ -580,6 +770,9 @@ class ConfigRegistryService {
    * @private
    */
   _copyDirRecursive(src, dest) {
+    if (fs.lstatSync(src).isSymbolicLink()) {
+      throw new Error(`Config source contains symlink: ${src}`);
+    }
     ensureDir(dest);
 
     const entries = fs.readdirSync(src, { withFileTypes: true });
@@ -587,10 +780,12 @@ class ConfigRegistryService {
     for (const entry of entries) {
       const srcPath = path.join(src, entry.name);
       const destPath = path.join(dest, entry.name);
-
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Config source contains symlink: ${srcPath}`);
+      }
       if (entry.isDirectory()) {
         this._copyDirRecursive(srcPath, destPath);
-      } else {
+      } else if (entry.isFile()) {
         fs.copyFileSync(srcPath, destPath);
       }
     }

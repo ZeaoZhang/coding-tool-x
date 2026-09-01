@@ -8,11 +8,11 @@ import SkillManager from '../../views/SkillManager.vue'
 const { api, message } = vi.hoisted(() => ({
   api: {
     getSkills: vi.fn(),
+    refreshSkills: vi.fn(),
+    getSkillRefreshTask: vi.fn(),
+    toggleSkill: vi.fn(),
     getOmpSkillSettings: vi.fn(),
-    updateOmpSkillSettings: vi.fn(),
-    installSkill: vi.fn(),
-    uninstallSkill: vi.fn(),
-    installLocalSkill: vi.fn()
+    updateOmpSkillSettings: vi.fn()
   },
   message: {
     success: vi.fn(),
@@ -272,6 +272,8 @@ afterAll(() => {
 beforeEach(() => {
   vi.resetAllMocks()
   api.getSkills.mockResolvedValue({ success: true, skills: [] })
+  api.refreshSkills.mockResolvedValue({ task: { id: 'refresh-task', status: 'succeeded' } })
+  api.getSkillRefreshTask.mockResolvedValue({ task: { id: 'refresh-task', status: 'succeeded' } })
 })
 describe('SkillsPanel OMP settings entry', () => {
   test.each([
@@ -348,7 +350,7 @@ describe('SkillManager standalone platform query', () => {
     const wrapper = mountTracked(SkillManager, {
       global: { stubs: irrelevantStubs }
     })
-    expect(api.getSkills).toHaveBeenLastCalledWith(false, resolvedPlatform, {})
+    expect(api.getSkills).toHaveBeenLastCalledWith(resolvedPlatform, {})
     const settingsButton = findSettingsButton(wrapper)
     expect(settingsButton.exists()).toBe(showsSettings)
 
@@ -369,9 +371,8 @@ describe('SkillManager standalone platform query', () => {
     route.query = { platform: 'claude' }
     await nextTick()
 
-    expect(findSettingsButton(wrapper).exists()).toBe(false)
+    expect(api.getSkills).toHaveBeenLastCalledWith('claude', {})
     expect(wrapper.findComponent(OmpSkillSettingsModal).props('visible')).toBe(false)
-    expect(api.getSkills).toHaveBeenLastCalledWith(false, 'claude', {})
   })
 })
 describe('SkillsPanel skill refresh validation', () => {
@@ -384,7 +385,7 @@ describe('SkillsPanel skill refresh validation', () => {
     const wrapper = mountTracked(SkillsPanel, { props: { platform: 'omp' }, global: { stubs: irrelevantStubs } })
     await flushPromises()
     api.getSkills.mockResolvedValueOnce(response)
-    await findButton(wrapper, '刷新').trigger('click')
+    await findButton(wrapper, '刷新远端').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('旧技能')
@@ -396,7 +397,7 @@ describe('SkillsPanel skill refresh validation', () => {
     const second = deferred()
     api.getSkills.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
     const wrapper = mountTracked(SkillsPanel, { props: { platform: 'omp' }, global: { stubs: irrelevantStubs } })
-    await findButton(wrapper, '刷新').trigger('click')
+    await findButton(wrapper, '刷新远端').trigger('click')
     expect(message.error).not.toHaveBeenCalled()
     second.resolve({ success: true, skills: [{ key: 'new', name: '新技能', installed: false }] })
     await flushPromises()
@@ -722,7 +723,7 @@ describe('OmpSkillSettingsModal save behavior', () => {
 })
 
 describe('SkillsPanel successful settings flow', () => {
-  test('closes the real modal and forces one OMP refresh after saved', async () => {
+  test('closes the real modal and performs one local scan after saved', async () => {
     api.getOmpSkillSettings.mockResolvedValue({ success: true, settings: { ...validSettings } })
     api.updateOmpSkillSettings.mockImplementation(submitted => Promise.resolve({ success: true, settings: { ...submitted } }))
     const wrapper = mountTracked(SkillsPanel, { props: { platform: 'omp' }, global: { stubs: irrelevantStubs } })
@@ -735,9 +736,8 @@ describe('SkillsPanel successful settings flow', () => {
     await findButton(modal, '保存').trigger('click')
     await flushPromises()
 
-    expect(api.updateOmpSkillSettings).toHaveBeenCalledTimes(1)
+    expect(api.getSkills).toHaveBeenCalledWith('omp', {})
     expect(modal.emitted('saved')).toHaveLength(1)
-    expect(api.getSkills).toHaveBeenCalledWith(true, 'omp', {})
     expect(modal.props('visible')).toBe(false)
   })
 
