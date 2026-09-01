@@ -3,17 +3,28 @@
 const { createChannelDriver } = require('../shared/channel-driver');
 
 function createDriver(context = {}) {
-  return createChannelDriver({
+  const driver = createChannelDriver({
     ...context,
     platform: 'claude',
-    servicePath: '../../server/services/channels',
-    localServicePath: '../../../server/services/channels',
+    servicePath: './claude/channels-implementation',
+    localServicePath: './channels-implementation',
     listMethod: 'getAllChannels',
     syncMethod: 'syncCurrentClaudeChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.websiteUrl, input.extra || {}]
       : [input, ...rest]
   });
+  const callLegacy = (name, args) => driver._service()[name](...args);
+  for (const name of [
+    'getAllChannels', 'getCurrentChannel', 'getCurrentSettings', 'createChannel',
+    'updateChannel', 'markChannelAsRecentlyUsed', 'deleteChannel',
+    'applyChannelToSettings', 'getBestChannelForRestore', 'updateClaudeSettings',
+    'updateClaudeSettingsWithModelConfig', 'extractApiKeyFromHelper',
+    'syncCurrentClaudeChannel'
+  ]) {
+    driver[name] = (...args) => callLegacy(name, args);
+  }
+  return driver;
 }
 
 module.exports = { createDriver };
