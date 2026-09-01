@@ -748,6 +748,25 @@ describe('new Skill control surface', () => {
     expect(res.body).not.toHaveProperty('installed');
   });
 
+  test('OMP GET ignores refresh query and never starts remote work', async () => {
+    const ompService = services.omp
+    ompService.scanSkills = vi.fn(async () => ({
+      skills: [{ name: 'omp-local', enabled: false, cached: true, managed: true }],
+      refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+    }))
+    ompService.refreshRemoteSkills = vi.fn()
+
+    const app = buildInjectedApp({
+      controlService: { setSkillEnabled: vi.fn() },
+      refreshTasks: { enqueue: vi.fn(), get: vi.fn() }
+    })
+    const res = await request(app).get('/?platform=omp&refresh=1')
+
+    expect(res.status).toBe(200)
+    expect(ompService.scanSkills).toHaveBeenCalledWith({ scope: 'user' })
+    expect(ompService.refreshRemoteSkills).not.toHaveBeenCalled()
+  })
+
   test('POST refresh returns an asynchronous task snapshot', async () => {
     const task = { id: 'task-1', status: 'queued', platform: 'claude', scope: 'user' };
     const enqueue = vi.fn(() => task);
