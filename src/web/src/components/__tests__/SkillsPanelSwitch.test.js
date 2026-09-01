@@ -21,11 +21,20 @@ vi.mock('../../api/project-config', () => ({
 }))
 vi.mock('../../stores/platforms', () => ({
   usePlatformStore: () => ({
-    all: [{ key: 'claude', label: 'Claude', capabilities: { skills: true } }],
-    get: () => ({ label: 'Claude' })
+    all: [
+      { key: 'claude', label: 'Claude', capabilities: { skills: true } },
+      { key: 'omp', label: 'OMP', capabilities: { skills: true } }
+    ],
+    get: key => ({ label: key === 'omp' ? 'OMP' : 'Claude' })
   })
 }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ meta: {} }) }))
+vi.mock('../../composables/useUIConfig', () => ({
+  useUIConfig: () => ({
+    uiConfig: { value: {} },
+    loadUIConfig: vi.fn().mockResolvedValue({})
+  })
+}))
 vi.mock('naive-ui', () => {
   const simple = { template: '<div><slot /></div>' }
   const noop = vi.fn()
@@ -75,9 +84,10 @@ describe('SkillsPanel switch lifecycle', () => {
     api.importFromClaude.mockResolvedValue({ success: true, imported: 0 })
   })
 
-  async function createWrapper() {
+  async function createWrapper(props = {}) {
     const { default: SkillsPanel } = await import('../SkillsPanel.vue')
     return mount(SkillsPanel, {
+      props,
       global: {
         stubs: {
           SkillCard: {
@@ -94,6 +104,10 @@ describe('SkillsPanel switch lifecycle', () => {
     })
   }
 
+  async function createOmpWrapper(props = {}) {
+    return createWrapper({ platform: 'omp', ...props })
+  }
+
   test('mount scans local state without refreshing remotely', async () => {
     const wrapper = await createWrapper()
     await flushPromises()
@@ -101,6 +115,31 @@ describe('SkillsPanel switch lifecycle', () => {
     expect(api.getSkills).toHaveBeenCalledWith('claude', {})
     expect(api.refreshSkills).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('已缓存')
+  })
+
+  test.each([
+    { inDrawer: false, drawerVisible: false },
+    { inDrawer: true, drawerVisible: true }
+  ])('OMP panel load scans local state without remote refresh (%o)', async props => {
+    const wrapper = await createOmpWrapper(props)
+    await flushPromises()
+
+    expect(api.getSkills).toHaveBeenCalledWith('omp', {})
+    expect(api.refreshSkills).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  test('opening a hidden OMP drawer scans once without enqueuing refresh', async () => {
+    const wrapper = await createOmpWrapper({ inDrawer: true, drawerVisible: false })
+    await flushPromises()
+    expect(api.getSkills).not.toHaveBeenCalled()
+
+    await wrapper.setProps({ drawerVisible: true })
+    await flushPromises()
+
+    expect(api.getSkills).toHaveBeenCalledWith('omp', {})
+    expect(api.refreshSkills).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   test('refresh button starts a task and scans again only after completion', async () => {

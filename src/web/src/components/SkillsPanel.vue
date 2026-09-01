@@ -125,13 +125,13 @@
     </div>
 
     <!-- 弹窗组件 -->
-    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
+    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="scanLocalSkills" />
     <SkillCreateModal
       v-model:visible="showCreateModal"
       :platform="currentPlatform"
       :scope="props.scope"
       :project-path="props.projectPath"
-      @created="loadData"
+      @created="scanLocalSkills"
     />
     <SkillDetailDrawer
       v-model:visible="showDetailDrawer"
@@ -139,7 +139,7 @@
       :platform="currentPlatform"
       :scope="props.scope"
       :project-path="props.projectPath"
-      @updated="loadData"
+      @updated="scanLocalSkills"
     />
     <OmpSkillSettingsModal v-model:visible="showOmpSettingsModal" :operation-token="ompSettingsEpoch" @saved="handleOmpSettingsSaved" />
   </div>
@@ -257,7 +257,7 @@ const emptyText = computed(() => {
   return '暂无可用技能，请配置仓库源'
 })
 
-async function loadData({ notifyError = true } = {}) {
+async function scanLocalSkills({ notifyError = true } = {}) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
   if (!supportsCurrentPlatform.value) {
@@ -294,7 +294,7 @@ async function handleImport() {
     const res = await importFromClaude('skills')
     if (res.success) {
       message.success(`成功导入 ${res.imported} 个技能`)
-      await loadData()
+      await scanLocalSkills()
     } else {
       message.error(res.message || '导入失败')
     }
@@ -427,7 +427,7 @@ async function handleRefresh() {
     } else {
       message.success('远端 Skill 刷新完成')
     }
-    await loadData()
+    await scanLocalSkills()
   } catch (err) {
     if (isCurrent()) message.error('刷新失败: ' + (err.response?.data?.message || err.message))
   } finally {
@@ -451,7 +451,7 @@ async function handleOmpSettingsSaved(_settings, operationToken) {
 
   const platform = currentPlatform.value
   showOmpSettingsModal.value = false
-  const refreshed = await completeOmpSkillSettingsSave(() => {}, loadData)
+  const refreshed = await completeOmpSkillSettingsSave(() => {}, scanLocalSkills)
   if (platform !== currentPlatform.value || operationToken !== ompSettingsEpoch.value) return
   if (refreshed) {
     message.success('技能扫描设置已保存')
@@ -468,12 +468,12 @@ function handleCardClick(skill) {
 onMounted(() => {
   // 抽屉模式下仅在打开时加载，避免应用启动时触发网络依赖
   if (!props.inDrawer || props.drawerVisible) {
-    loadData()
+    scanLocalSkills()
   }
 })
 
 watch(() => props.drawerVisible, (val) => {
-  if (val) loadData()
+  if (val) scanLocalSkills()
 })
 
 watch([() => currentPlatform.value, () => props.scope, () => props.projectPath], ([platform]) => {
@@ -482,7 +482,7 @@ watch([() => currentPlatform.value, () => props.scope, () => props.projectPath],
   refreshTask.value = null
   ompSettingsEpoch.value += 1
   if (!supportsOmpSkillSettings(platform)) showOmpSettingsModal.value = false
-  loadData()
+  scanLocalSkills()
 })
 </script>
 
