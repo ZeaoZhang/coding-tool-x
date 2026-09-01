@@ -15,7 +15,6 @@ const os   = require('os');
 const PATHS_PATH         = require.resolve('../../../src/config/paths');
 const SESSION_UTIL_PATH  = require.resolve('../../../src/utils/session');
 const ALIAS_PATH         = require.resolve('../../../src/server/services/alias');
-const SESSION_CACHE_PATH = require.resolve('../../../src/server/services/session-cache');
 const ENHANCED_CACHE_PATH = require.resolve('../../../src/server/services/enhanced-cache');
 const SESSIONS_PATH      = require.resolve('../../../src/server/services/sessions');
 const SESSION_INDEX_PATH = require.resolve('../../../src/server/services/session-history-index');
@@ -70,16 +69,6 @@ beforeEach(() => {
     exports: { loadAliases: vi.fn(() => ({})), setAlias: SET_ALIAS_MOCK },
   };
 
-  require.cache[SESSION_CACHE_PATH] = {
-    id: SESSION_CACHE_PATH, filename: SESSION_CACHE_PATH, loaded: true,
-    exports: {
-      getCachedProjects:       vi.fn(),
-      setCachedProjects:       vi.fn(),
-      invalidateProjectsCache: vi.fn(),
-      checkHasMessagesCache:   vi.fn(),
-      rememberHasMessages:     vi.fn(),
-    },
-  };
 
   require.cache[ENHANCED_CACHE_PATH] = {
     id: ENHANCED_CACHE_PATH, filename: ENHANCED_CACHE_PATH, loaded: true,

@@ -42,7 +42,7 @@ const DEFAULT_CONFIG = {
       cacheCreation: 3.75,
       cacheRead: 0.30,
       models: {
-        // All models use centralized pricing from src/config/model-pricing.js
+        // All model pricing comes from src/config/model-metadata.js
         // Add custom entries here only if you need to override official pricing
       }
     },
