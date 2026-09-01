@@ -22,24 +22,26 @@ coverage/
 dist/
 build/
 
-# User config (keep template only)
-# config.json is tracked for template
+# Project-native instructions and Skills may be committed; local settings stay ignored
 .claude/
+!.claude/
+.claude/*
+!.claude/skills/
+!.claude/skills/**
+!.agents/
+!.agents/skills/
+!.agents/skills/**
+!CLAUDE.md
+!AGENTS.md
+.claude/settings.local.json
+.ctx-control.local.json
 
-# Temporary files
-tmp/
-temp/
-.worktrees/
-*.tmp
-
-# AI files
-CLAUDE.md
-AGENTS.md
-.serenai/
-.claude/
-.omc/
-.omx/
-.serena/
-.trellis/
+# Project MCP/runtime files may reference local secrets
+.mcp.json
+.codex/config.toml
+.gemini/settings.json
+.opencode/opencode.json
+.opencode/opencode.jsonc
+.omp/mcp.json
 .cursor/
 

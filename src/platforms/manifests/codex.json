@@ -20,6 +20,10 @@
     "agents": true,
     "plugins": false
   },
+  "skillActivation": {
+    "user": { "mode": "native-copy", "format": "codex-skill-v1" },
+    "project": { "mode": "native-copy", "format": "codex-skill-v1" }
+  },
   "projectResources": {
     "instruction": { "path": "AGENTS.md" },
     "skills": {

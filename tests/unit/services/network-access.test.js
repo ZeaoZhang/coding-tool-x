@@ -201,17 +201,19 @@ describe('createRemoteMutationGuard', () => {
 });
 
 describe('isRemoteMutationAllowedByEnv', () => {
-  it('defaults to allowing remote mutation when env is unset', () => {
-    expect(isRemoteMutationAllowedByEnv({})).toBe(true);
+  it('defaults to denying remote mutation when env is unset', () => {
+    expect(isRemoteMutationAllowedByEnv({})).toBe(false);
   });
 
-  it('allows remote mutation when env is true', () => {
+  it('allows remote mutation only when env is explicitly true', () => {
     expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'true' })).toBe(true);
+    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'TRUE' })).toBe(true);
   });
 
-  it('blocks remote mutation only when env is false', () => {
+  it('blocks remote mutation for false, empty, and unexpected values', () => {
     expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'false' })).toBe(false);
-    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'FALSE' })).toBe(false);
+    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: '' })).toBe(false);
+    expect(isRemoteMutationAllowedByEnv({ CC_TOOL_ALLOW_REMOTE_WRITE: 'yes' })).toBe(false);
   });
 });
 

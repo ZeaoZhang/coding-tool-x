@@ -256,9 +256,9 @@ async function loadInstalledSkillsCount() {
     return
   }
   try {
-    const result = await getSkills(false, currentChannel.value)
+    const result = await getSkills(currentChannel.value)
     if (result.success && result.skills) {
-      installedSkillsCount.value = result.skills.filter(s => s.installed).length
+      installedSkillsCount.value = result.skills.filter(s => s.enabled).length
     }
   } catch (err) {
     console.error('Failed to load skills count:', err)

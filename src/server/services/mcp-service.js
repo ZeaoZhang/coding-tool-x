@@ -13,6 +13,9 @@ const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = requ
 const mcpFormat = require('./mcp-format');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
+const { ControlManifestStore } = require('./control-manifest-store');
+const { EffectiveControlService, deriveMcpPolicy } = require('./effective-control-service');
+const { validateMcpId, mergeMcpPatch, redactSecrets } = require('./project-config-adapters/shared');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 
@@ -39,6 +42,16 @@ const POOL_TTL = 5 * 60 * 1000; // 5 minutes
 const STREAMABLE_HTTP_TYPE = 'streamable_http';
 const MCP_SERVER_TYPES = ['stdio', STREAMABLE_HTTP_TYPE, 'sse'];
 const REMOTE_MCP_SERVER_TYPES = [STREAMABLE_HTTP_TYPE, 'sse'];
+const MCP_PLATFORM_KEYS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+
+const MCP_CONTROL_SERVICE = PATHS.effectiveControlManifest
+  ? new EffectiveControlService({
+    store: new ControlManifestStore({
+      userPath: PATHS.effectiveControlManifest,
+      projectPathResolver: ({ projectPath }) => path.join(projectPath, '.ctx-control.json')
+    })
+  })
+  : null;
 const OMP_MCP_SCHEMA_URL = 'https://raw.githubusercontent.com/can1357/oh-my-omp/main/packages/coding-agent/src/config/mcp-schema.json';
 const OMP_SERVER_NAME_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/;
 
@@ -336,7 +349,7 @@ function readJsonFile(filePath, defaultValue = {}) {
       return JSON.parse(content);
     }
   } catch (err) {
-    console.error(`[MCP] Failed to read ${filePath}:`, err.message);
+    console.error(`[MCP] Failed to read ${filePath}:`, sanitizeMcpErrorText(err.message || err));
   }
   return defaultValue;
 }
@@ -469,7 +482,7 @@ function readOpenCodeConfig() {
       config: JSON.parse(content)
     };
   } catch (err) {
-    console.error(`[MCP] Failed to read OpenCode config:`, err.message);
+    console.error(`[MCP] Failed to read OpenCode config:`, sanitizeMcpErrorText(err.message || err));
     return { path: filePath, config: {} };
   }
 }
@@ -571,10 +584,79 @@ function extractMcpHint(error) {
   return error?.data?.hint || error?.hint || null;
 }
 
+function sanitizeMcpErrorText(value) {
+  return String(value || '')
+    .replace(/(https?:\/\/[^\s?]+)\?[^\s]+/gi, '$1?[REDACTED]')
+    .replace(/(Bearer\s+)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:token|secret|password|key)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/((?:token|secret|password|api[-_]?key|authorization)\s*[:=]\s*)[^,\s}]+/gi, '$1[REDACTED]');
+}
+
+const SENSITIVE_MCP_HINT_KEYS = /(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|headers?|env(?:ironment)?|envvars|experimentalenvironment|auth|oauth|credential|private[_-]?key)/i;
+
+function sanitizeMcpHint(value) {
+  if (Array.isArray(value)) {
+    const sanitized = value.map(sanitizeMcpHint);
+    return sanitized.every((item, index) => item === value[index]) ? value : sanitized;
+  }
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string' ? sanitizeCommandLineValue(value) : value;
+  }
+  let changed = false;
+  const sanitized = Object.fromEntries(Object.entries(value).map(([key, child]) => {
+    const safe = SENSITIVE_MCP_HINT_KEYS.test(key)
+      ? '[REDACTED]'
+      : sanitizeMcpHint(child);
+    if (safe !== child) changed = true;
+    return [key, safe];
+  }));
+  return changed ? sanitized : value;
+}
+
+const SENSITIVE_MCP_RESULT_KEYS = /(?:token|secret|password|authorization|api[-_]?key|access[_-]?token|credential|private[_-]?key|env(?:ironment)?|envvars|experimentalenvironment|headers?|auth|oauth)/i;
+
+const SENSITIVE_COMMAND_FLAG = /^(?:--?|\/)(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key|auth|credential|client[-_]?secret|bearer)$/i;
+
+function sanitizeCommandLineValue(value) {
+  if (Array.isArray(value)) {
+    let redactNext = false;
+    return value.map(item => {
+      if (redactNext) {
+        redactNext = false;
+        return '[REDACTED]';
+      }
+      if (typeof item !== 'string') return '[REDACTED]';
+      if (SENSITIVE_COMMAND_FLAG.test(item)) {
+        redactNext = true;
+        return item;
+      }
+      const inline = item.match(/^((?:--?|\/)(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key|auth|credential|client[-_]?secret|bearer)=).*/i);
+      if (inline) return `${inline[1]}[REDACTED]`;
+      return sanitizeMcpErrorText(item);
+    });
+  }
+  if (typeof value !== 'string') return value;
+  return sanitizeMcpErrorText(value)
+    .replace(/((?:^|\s)(?:--?|\/)(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key|auth|credential|client[-_]?secret|bearer)(?:=|\s+))\S+/gi, '$1[REDACTED]');
+}
+
+
+function sanitizeMcpToolValue(value, key = '') {
+  if (SENSITIVE_MCP_RESULT_KEYS.test(String(key))) return '[REDACTED]';
+  if (/^(?:command|args)$/i.test(key)) return sanitizeCommandLineValue(value);
+  if (typeof value === 'string') return sanitizeMcpErrorText(value);
+  if (Array.isArray(value)) return value.map(item => sanitizeMcpToolValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+    childKey,
+    sanitizeMcpToolValue(childValue, childKey)
+  ]));
+}
+
 function buildMcpFailureResult(error, fallbackMessage, duration) {
-  const hint = extractMcpHint(error);
+  const hint = sanitizeMcpHint(extractMcpHint(error));
   return {
-    message: hint?.title || fallbackMessage || error?.message || '操作失败',
+    message: sanitizeMcpErrorText(hint?.title || fallbackMessage || error?.message || '操作失败'),
     hint,
     duration
   };
@@ -606,20 +688,192 @@ function normalizeServerApps(apps = {}, fallbackApps = { claude: true }) {
   return normalized;
 }
 
+function getControlMcpPlatformKeys() {
+  const dynamic = getMcpPlatformKeys();
+  return dynamic.length > 0 ? dynamic : MCP_PLATFORM_KEYS;
+}
+function mcpControlKey(platform, serverId, scope = 'user') {
+  return `mcp:${platform}:${scope}:${serverId}`;
+}
+
+function secretRefsForServer(server = {}) {
+  const refs = [];
+  for (const key of Object.keys(server.server?.env || {})) refs.push(`env:${key}`);
+  for (const key of Object.keys(server.server?.headers || {})) refs.push(`header:${key}`);
+  if (server.server?.url) refs.push('url:configured');
+  return refs;
+}
+
+function ensureMcpControlEntry(server, platform) {
+  if (!MCP_CONTROL_SERVICE || !server?.id) return null;
+  const controlKey = mcpControlKey(platform, server.id);
+  const existing = MCP_CONTROL_SERVICE.getMcp(controlKey, { scope: 'user' });
+  const policy = deriveMcpPolicy({ transport: server.server?.type, scope: 'user' });
+  if (existing) {
+    const secretRefs = secretRefsForServer(server);
+    if (
+      existing.transport !== policy.transport
+      || existing.riskTier !== policy.riskTier
+      || existing.egressProfile !== policy.egressProfile
+      || !existing.source
+      || JSON.stringify(existing.secretRefs || []) !== JSON.stringify(secretRefs)
+    ) {
+      return MCP_CONTROL_SERVICE.registerMcp({
+        ...existing,
+        ...policy,
+        source: existing.source || 'catalog',
+        secretRefs
+      });
+    }
+    return existing;
+  }
+  return MCP_CONTROL_SERVICE.registerMcp({
+    kind: 'mcp',
+    controlKey,
+    platform,
+    scope: 'user',
+    name: server.id,
+    source: 'catalog',
+    enabled: server.apps?.[platform] === true,
+    trust: 'approved',
+    ...policy,
+    secretRefs: secretRefsForServer(server),
+    managed: true
+  });
+}
+
+function promoteMcpControlEntry(server, platform, enabled) {
+  if (!MCP_CONTROL_SERVICE || !server?.id) return null;
+  const controlKey = mcpControlKey(platform, server.id);
+  const existing = MCP_CONTROL_SERVICE.getMcp(controlKey, { scope: 'user' });
+  if (!existing) {
+    return ensureMcpControlEntry(server, platform);
+  }
+  if (existing.managed !== true) {
+    return MCP_CONTROL_SERVICE.registerMcp({
+      ...existing,
+      ...deriveMcpPolicy({ transport: server.server?.type, scope: 'user' }),
+      source: 'catalog',
+      enabled: enabled === true,
+      trust: 'approved',
+      secretRefs: secretRefsForServer(server),
+      managed: true
+    });
+  }
+  ensureMcpControlEntry(server, platform);
+  return MCP_CONTROL_SERVICE.setMcpPolicy({
+    platform,
+    controlKey,
+    scope: 'user',
+    enabled: enabled === true
+  });
+}
+
+function getMcpControlEnabled(server, platform) {
+  const entry = ensureMcpControlEntry(server, platform);
+  return entry
+    ? entry.managed === true && entry.trust === 'approved' && entry.enabled === true
+    : server.apps?.[platform] === true;
+}
+
+function applyMcpControlApps(server) {
+  if (!MCP_CONTROL_SERVICE || !server?.id) return;
+  for (const platform of getControlMcpPlatformKeys()) {
+    const controlKey = mcpControlKey(platform, server.id);
+    const existing = MCP_CONTROL_SERVICE.getMcp(controlKey, { scope: 'user' });
+    if (!existing) {
+      ensureMcpControlEntry(server, platform);
+      continue;
+    }
+    if (existing.managed !== true) {
+      promoteMcpControlEntry(server, platform, server.apps?.[platform] === true);
+      continue;
+    }
+    MCP_CONTROL_SERVICE.setMcpPolicy({
+      platform,
+      controlKey,
+      scope: 'user',
+      enabled: server.apps?.[platform] === true
+    });
+  }
+}
+
+function readNativeMcpEntries() {
+  const sources = [
+    ['claude', () => readJsonFile(CLAUDE_CONFIG_PATH, {}).mcpServers || {}, spec => normalizeServerSpec(spec)],
+    ['codex', () => readTomlFile(CODEX_CONFIG_PATH, {}).mcp_servers || {}, spec => convertFromCodexFormat(spec)],
+    ['gemini', () => readJsonFile(GEMINI_CONFIG_PATH, {}).mcpServers || {}, spec => normalizeServerSpec(spec)],
+    ['opencode', () => readOpenCodeConfig().config?.mcp || {}, spec => convertFromOpenCodeFormat(spec || {})],
+    ['omp', () => readOmpMcpConfig().mcpServers || {}, spec => convertFromOmpMcpFormat(spec || {})]
+  ];
+  const entries = [];
+  for (const [platform, readServers, convert] of sources) {
+    let servers;
+    try {
+      servers = readServers();
+    } catch {
+      continue;
+    }
+    for (const [rawId, spec] of Object.entries(servers || {})) {
+      let id;
+      try {
+        id = validateMcpId(rawId);
+      } catch {
+        console.warn(`[MCP] Ignoring invalid native server id for ${platform}`);
+        continue;
+      }
+      entries.push({ platform, id, spec: convert(spec) });
+    }
+  }
+  return entries;
+}
+
+function ensureExternalNativeMcpControl(platform, id, spec) {
+  if (!MCP_CONTROL_SERVICE) return null;
+  const controlKey = mcpControlKey(platform, id);
+  const existing = MCP_CONTROL_SERVICE.getMcp(controlKey, { scope: 'user' });
+  if (existing) return existing;
+  return MCP_CONTROL_SERVICE.registerMcp({
+    kind: 'mcp',
+    controlKey,
+    platform,
+    scope: 'user',
+    name: id,
+    source: 'native',
+    enabled: false,
+    trust: 'approved',
+    ...deriveMcpPolicy({ transport: spec?.type, scope: 'user' }),
+    secretRefs: secretRefsForServer({ server: spec }),
+    managed: false
+  });
+}
+
 /**
  * 获取所有 MCP 服务器
  */
 function getAllServers() {
-  const servers = readJsonFile(MCP_SERVERS_FILE, {});
+  const persisted = readJsonFile(MCP_SERVERS_FILE, {});
+  const servers = {};
 
-  for (const server of Object.values(servers)) {
-    if (!server || typeof server !== 'object') {
+  for (const [rawId, server] of Object.entries(persisted)) {
+    const normalizedId = validateMcpId(server?.id || rawId);
+    if (!server || typeof server !== 'object' || Array.isArray(server)) {
       continue;
     }
+    server.id = normalizedId;
     server.apps = normalizeServerApps(server.apps);
     server.server = normalizeServerSpec(server.server);
+    for (const platform of getControlMcpPlatformKeys()) {
+      server.apps[platform] = getMcpControlEnabled(server, platform);
+    }
+    servers[normalizedId] = server;
   }
 
+  for (const entry of readNativeMcpEntries()) {
+    if (!servers[entry.id]) {
+      ensureExternalNativeMcpControl(entry.platform, entry.id, entry.spec);
+    }
+  }
   return servers;
 }
 
@@ -627,8 +881,9 @@ function getAllServers() {
  * 获取单个 MCP 服务器
  */
 function getServer(id) {
+  const normalizedId = validateMcpId(id);
   const servers = getAllServers();
-  return servers[id] || null;
+  return servers[normalizedId] || null;
 }
 
 /**
@@ -636,18 +891,19 @@ function getServer(id) {
  */
 async function saveServer(server, options = {}) {
   const { syncPlatforms = true } = options;
-
-  if (!server.id || !server.id.trim()) {
-    throw new Error('MCP 服务器 ID 不能为空');
+  if (!server || typeof server !== 'object') {
+    throw new Error('MCP server must be an object');
   }
-
-  server.server = normalizeServerSpec(server.server);
+  server.id = validateMcpId(server.id);
+  const incomingSpec = normalizeServerSpec(server.server);
+  const servers = getAllServers();
+  const existingServer = servers[server.id];
+  server.server = existingServer
+    ? mergeMcpPatch(existingServer.server, incomingSpec)
+    : incomingSpec;
 
   // 验证服务器配置
   validateServerSpec(server.server);
-
-  const servers = getAllServers();
-  const existingServer = servers[server.id];
   const previousApps = existingServer ? normalizeServerApps(existingServer.apps) : null;
 
   // 如果是新服务器，设置默认值
@@ -667,13 +923,25 @@ async function saveServer(server, options = {}) {
     server.apps = normalizeServerApps(server.apps, previousApps || { claude: true });
   }
 
-  // 同步到各平台配置
+  if (MCP_CONTROL_SERVICE) {
+    const requestedApps = normalizeServerApps(server.apps);
+    const effectiveApps = {};
+    for (const platform of getControlMcpPlatformKeys()) {
+      const control = promoteMcpControlEntry({ ...server, apps: requestedApps }, platform, requestedApps[platform]);
+      effectiveApps[platform] = control
+        ? control.managed === true && control.trust === 'approved' && control.enabled === true
+        : requestedApps[platform];
+    }
+    server.apps = effectiveApps;
+  }
+
   if (syncPlatforms) {
     await syncServerToAllPlatforms(server, previousApps);
   }
 
   servers[server.id] = server;
   writeJsonFile(MCP_SERVERS_FILE, servers);
+  applyMcpControlApps(server);
 
   return server;
 }
@@ -682,18 +950,23 @@ async function saveServer(server, options = {}) {
  * 删除 MCP 服务器
  */
 async function deleteServer(id) {
+  const normalizedId = validateMcpId(id);
   const servers = getAllServers();
-  const server = servers[id];
+  const server = servers[normalizedId];
 
   if (!server) {
     return false;
   }
 
-  // 从所有平台配置中移除
-  await removeServerFromAllPlatforms(id);
-
-  delete servers[id];
+  await removeServerFromAllPlatforms(normalizedId);
+  delete servers[normalizedId];
   writeJsonFile(MCP_SERVERS_FILE, servers);
+  for (const platform of getControlMcpPlatformKeys()) {
+    MCP_CONTROL_SERVICE?.removeMcp?.({
+      controlKey: mcpControlKey(platform, normalizedId),
+      scope: 'user'
+    });
+  }
 
   return true;
 }
@@ -702,8 +975,9 @@ async function deleteServer(id) {
  * 切换 MCP 服务器在某平台的启用状态
  */
 async function toggleServerApp(serverId, app, enabled) {
+  const normalizedId = validateMcpId(serverId);
   const servers = getAllServers();
-  const server = servers[serverId];
+  const server = servers[normalizedId];
 
   if (!server) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
@@ -711,15 +985,27 @@ async function toggleServerApp(serverId, app, enabled) {
 
   const { platform: normalizedPlatform } = requireMcpCapability(app);
 
+  const policy = MCP_CONTROL_SERVICE
+    ? MCP_CONTROL_SERVICE.setMcpPolicy({
+      platform: normalizedPlatform,
+      controlKey: mcpControlKey(normalizedPlatform, normalizedId),
+      scope: 'user',
+      enabled: enabled === true
+    })
+    : { enabled: enabled === true };
+  if (policy.status === 'needs_approval' || policy.status === 'blocked') {
+    return { ...server, apps: { ...server.apps, [normalizedPlatform]: policy.enabled === true }, status: policy.status };
+  }
+
   server.apps = normalizeServerApps(server.apps);
-  server.apps[normalizedPlatform] = !!enabled;
+  server.apps[normalizedPlatform] = policy.enabled === true;
   server.updatedAt = Date.now();
 
   // Sync to the selected platform.
-  if (enabled) {
+  if (server.apps[normalizedPlatform]) {
     await syncServerToPlatform(server, normalizedPlatform);
   } else {
-    await removeServerFromPlatform(serverId, normalizedPlatform);
+    await removeServerFromPlatform(normalizedId, normalizedPlatform);
   }
 
   writeJsonFile(MCP_SERVERS_FILE, servers);
@@ -751,14 +1037,17 @@ function validateServerSpec(spec) {
   if (!MCP_SERVER_TYPES.includes(type)) {
     throw new Error(`无效的服务器类型: ${spec.type || type}，必须是 stdio、streamable_http 或 sse`);
   }
+  if (spec.args !== undefined && (!Array.isArray(spec.args) || spec.args.some(arg => typeof arg !== 'string'))) {
+    throw new Error('MCP server args must be an array of strings');
+  }
 
   if (type === 'stdio') {
-    if (!spec.command || !spec.command.trim()) {
-      throw new Error('stdio 类型必须指定 command');
+    if (typeof spec.command !== 'string' || !spec.command.trim()) {
+      throw new Error('stdio 类型必须指定 string command');
     }
   } else if (REMOTE_MCP_SERVER_TYPES.includes(type)) {
-    if (!spec.url || !spec.url.trim()) {
-      throw new Error(`${type} 类型必须指定 url`);
+    if (typeof spec.url !== 'string' || !spec.url.trim()) {
+      throw new Error(`${type} 类型必须指定 string url`);
     }
   }
 }
@@ -794,6 +1083,11 @@ async function syncServerToAllPlatforms(server, previousApps = null) {
  */
 async function removeServerFromAllPlatforms(serverId) {
   for (const platform of getMcpPlatformKeys()) {
+    const control = MCP_CONTROL_SERVICE?.getMcp?.(
+      mcpControlKey(platform, serverId),
+      { scope: 'user' }
+    );
+    if (control && control.managed !== true) continue;
     await removeServerFromPlatform(serverId, platform);
   }
 }
@@ -811,7 +1105,7 @@ async function syncServerToPlatform(server, platform) {
     }
     console.log(`[MCP] Synced "${server.id}" to ${normalizedPlatform}`);
   } catch (err) {
-    console.error(`[MCP] Failed to sync "${server.id}" to ${platform}:`, err.message);
+    console.error(`[MCP] Failed to sync "${server.id}" to ${platform}:`, sanitizeMcpErrorText(err.message || err));
     throw err;
   }
 }
@@ -826,7 +1120,7 @@ async function removeServerFromPlatform(serverId, platform) {
     }
     console.log(`[MCP] Removed "${serverId}" from ${normalizedPlatform}`);
   } catch (err) {
-    console.error(`[MCP] Failed to remove "${serverId}" from ${platform}:`, err.message);
+    console.error(`[MCP] Failed to remove "${serverId}" from ${platform}:`, sanitizeMcpErrorText(err.message || err));
     throw err;
   }
 }
@@ -1153,7 +1447,9 @@ function removeFromGeminiConfig(serverId) {
 // ============================================================================
 
 function validateOmpServerName(serverId) {
-  if (!OMP_SERVER_NAME_PATTERN.test(serverId)) {
+  try {
+    return validateMcpId(serverId);
+  } catch {
     throw new Error(`OMP MCP 服务器 ID "${serverId}" 无效。OMP 仅支持 1-100 个字母、数字、下划线、点或连字符。`);
   }
 }
@@ -1255,8 +1551,10 @@ async function importFromPlatform(platform) {
 
   if (importedCount > 0) {
     writeJsonFile(MCP_SERVERS_FILE, servers);
+    for (const server of Object.values(servers)) {
+      applyMcpControlApps(server);
+    }
   }
-
   return importedCount;
 }
 
@@ -1269,17 +1567,16 @@ function importFromClaude(servers) {
   let count = 0;
 
   for (const [id, spec] of Object.entries(mcpServers)) {
-    if (servers[id]) {
-      // 已存在，只启用 Claude
-      if (!servers[id].apps.claude) {
-        servers[id].apps.claude = true;
+    const normalizedId = validateMcpId(id);
+    if (servers[normalizedId]) {
+      if (!servers[normalizedId].apps.claude) {
+        servers[normalizedId].apps.claude = true;
         count++;
       }
     } else {
-      // 新服务器
-      servers[id] = {
-        id,
-        name: id,
+      servers[normalizedId] = {
+        id: normalizedId,
+        name: normalizedId,
         server: spec,
         apps: { claude: true, codex: false, gemini: false, opencode: false },
         createdAt: Date.now(),
@@ -1301,20 +1598,18 @@ function importFromCodex(servers) {
   let count = 0;
 
   for (const [id, spec] of Object.entries(mcpServers)) {
-    // 转换 Codex 格式到通用格式
+    const normalizedId = validateMcpId(id);
     const convertedSpec = convertFromCodexFormat(spec);
 
-    if (servers[id]) {
-      // 已存在，只启用 Codex
-      if (!servers[id].apps.codex) {
-        servers[id].apps.codex = true;
+    if (servers[normalizedId]) {
+      if (!servers[normalizedId].apps.codex) {
+        servers[normalizedId].apps.codex = true;
         count++;
       }
     } else {
-      // 新服务器
-      servers[id] = {
-        id,
-        name: id,
+      servers[normalizedId] = {
+        id: normalizedId,
+        name: normalizedId,
         server: convertedSpec,
         apps: { claude: false, codex: true, gemini: false, opencode: false },
         createdAt: Date.now(),
@@ -1336,17 +1631,16 @@ function importFromGemini(servers) {
   let count = 0;
 
   for (const [id, spec] of Object.entries(mcpServers)) {
-    if (servers[id]) {
-      // 已存在，只启用 Gemini
-      if (!servers[id].apps.gemini) {
-        servers[id].apps.gemini = true;
+    const normalizedId = validateMcpId(id);
+    if (servers[normalizedId]) {
+      if (!servers[normalizedId].apps.gemini) {
+        servers[normalizedId].apps.gemini = true;
         count++;
       }
     } else {
-      // 新服务器
-      servers[id] = {
-        id,
-        name: id,
+      servers[normalizedId] = {
+        id: normalizedId,
+        name: normalizedId,
         server: spec,
         apps: { claude: false, codex: false, gemini: true, opencode: false },
         createdAt: Date.now(),
@@ -1368,17 +1662,18 @@ function importFromOpenCode(servers) {
   let count = 0;
 
   for (const [id, spec] of Object.entries(mcpServers)) {
+    const normalizedId = validateMcpId(id);
     const convertedSpec = convertFromOpenCodeFormat(spec || {});
 
-    if (servers[id]) {
-      if (!servers[id].apps.opencode) {
-        servers[id].apps.opencode = true;
+    if (servers[normalizedId]) {
+      if (!servers[normalizedId].apps.opencode) {
+        servers[normalizedId].apps.opencode = true;
         count++;
       }
     } else {
-      servers[id] = {
-        id,
-        name: id,
+      servers[normalizedId] = {
+        id: normalizedId,
+        name: normalizedId,
         server: convertedSpec,
         apps: { claude: false, codex: false, gemini: false, opencode: true },
         createdAt: Date.now(),
@@ -1400,18 +1695,19 @@ function importFromOmp(servers) {
   let count = 0;
 
   for (const [id, spec] of Object.entries(mcpServers)) {
+    const normalizedId = validateMcpId(id);
     const convertedSpec = convertFromOmpMcpFormat(spec || {});
 
-    if (servers[id]) {
-      servers[id].apps = normalizeServerApps(servers[id].apps);
-      if (!servers[id].apps.omp) {
-        servers[id].apps.omp = true;
+    if (servers[normalizedId]) {
+      servers[normalizedId].apps = normalizeServerApps(servers[normalizedId].apps);
+      if (!servers[normalizedId].apps.omp) {
+        servers[normalizedId].apps.omp = true;
         count++;
       }
     } else {
-      servers[id] = {
-        id,
-        name: id,
+      servers[normalizedId] = {
+        id: normalizedId,
+        name: normalizedId,
         server: convertedSpec,
         apps: { claude: false, codex: false, gemini: false, opencode: false, omp: true },
         createdAt: Date.now(),
@@ -1436,6 +1732,51 @@ function convertFromCodexFormat(spec) {
  */
 function extractServerSpec(spec) {
   return mcpFormat.extractServerSpec(spec);
+}
+
+const EXPORT_SECRET_KEY_PATTERN = /(?:token|secret|password|authorization|api[-_]?key|access[_-]?token|credential|private[_-]?key|secretrefs?|auth|oauth|envvars|experimentalenvironment)/i;
+
+function sanitizeExportValue(value, key = '') {
+  if (/^url$/i.test(key)) return typeof value === 'string' ? redactSecrets({ url: value }).url : value;
+  if (/^(?:auth|oauth|bearer_token_env_var|secretRefs?)$/i.test(key) || EXPORT_SECRET_KEY_PATTERN.test(key)) {
+    return '[REDACTED]';
+  }
+  if (/^(?:command|args)$/i.test(key)) return sanitizeCommandLineValue(value);
+  if (typeof value === 'string') return sanitizeMcpErrorText(value);
+  if (/^(?:env|environment|env_vars|experimental_environment)$/i.test(key)) {
+    if (Array.isArray(value)) {
+      return value.map(item => (
+        typeof item === 'string' && /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(item)
+          ? item
+          : '[REDACTED]'
+      ));
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        typeof childValue === 'string' && /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(childValue)
+          ? childValue
+          : '[REDACTED]'
+      ]));
+    }
+    return '[REDACTED]';
+  }
+  if (/^(?:headers|http_headers)$/i.test(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.fromEntries(Object.entries(value).map(([header, headerValue]) => [
+      header,
+      /^(?:accept|content-type|user-agent)$/i.test(header) ? headerValue : '[REDACTED]'
+    ]));
+  }
+  if (Array.isArray(value)) return value.map(item => sanitizeExportValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+    childKey,
+    sanitizeExportValue(childValue, childKey)
+  ]));
+}
+
+function sanitizeExportSpec(spec = {}) {
+  return sanitizeExportValue(extractServerSpec(spec));
 }
 
 /**
@@ -1467,6 +1808,7 @@ async function testServer(serverId) {
   if (!server) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
   }
+  assertMcpServerActivated(server);
 
   const spec = server.server;
   const type = spec.type || 'stdio';
@@ -1563,7 +1905,7 @@ async function testStdioServer(spec) {
         } else {
           done({
             success: false,
-            message: `启动失败: ${err.message}`,
+            message: sanitizeMcpErrorText(`启动失败: ${err.message}`),
             duration: Date.now() - startTime
           });
         }
@@ -1579,7 +1921,7 @@ async function testStdioServer(spec) {
         } else {
           done({
             success: false,
-            message: stderr || `进程退出码: ${code}`,
+            message: sanitizeMcpErrorText(stderr || `进程退出码: ${code}`),
             duration: Date.now() - startTime
           });
         }
@@ -1654,6 +1996,13 @@ async function testHttpServer(spec) {
   }
 }
 
+function assertMcpServerActivated(server) {
+  if (getControlMcpPlatformKeys().some(platform => server.apps?.[platform] === true)) return;
+  const error = new Error('MCP server is disabled by the effective control policy');
+  error.code = 'MCP_DISABLED';
+  throw error;
+}
+
 /**
  * Get tools list from MCP server
  * @param {string} serverId - Server ID from config
@@ -1664,6 +2013,7 @@ async function getServerTools(serverId) {
   if (!server) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
   }
+  assertMcpServerActivated(server);
 
   const startTime = Date.now();
   const spec = server.server;
@@ -1687,7 +2037,7 @@ async function getServerTools(serverId) {
         try {
           await cached.client.disconnect();
         } catch (err) {
-          console.error(`[MCP] Error disconnecting expired client: ${err.message}`);
+          console.error(`[MCP] Error disconnecting expired client: ${sanitizeMcpErrorText(err.message || err)}`);
         }
         mcpClientPool.delete(serverId);
       }
@@ -1711,7 +2061,7 @@ async function getServerTools(serverId) {
     }
 
     // Get tools list
-    const tools = await client.listTools();
+    const tools = sanitizeMcpToolValue(await client.listTools());
 
     return {
       tools,
@@ -1755,6 +2105,7 @@ async function callServerTool(serverId, toolName, arguments = {}) {
   if (!server) {
     throw new Error(`MCP 服务器 "${serverId}" 不存在`);
   }
+  assertMcpServerActivated(server);
 
   const startTime = Date.now();
   const spec = server.server;
@@ -1780,7 +2131,7 @@ async function callServerTool(serverId, toolName, arguments = {}) {
         try {
           await cached.client.disconnect();
         } catch (err) {
-          console.error(`[MCP] Error disconnecting expired client: ${err.message}`);
+          console.error(`[MCP] Error disconnecting expired client: ${sanitizeMcpErrorText(err.message || err)}`);
         }
         mcpClientPool.delete(serverId);
       }
@@ -1805,27 +2156,30 @@ async function callServerTool(serverId, toolName, arguments = {}) {
 
     // Call the tool
     const result = await client.callTool(toolName, arguments);
-
+    const safeResult = sanitizeMcpToolValue(result);
+    const resultObject = safeResult && typeof safeResult === 'object' && !Array.isArray(safeResult)
+      ? safeResult
+      : { value: safeResult };
     const duration = Date.now() - startTime;
 
     // Check result size, truncate if > 10KB
-    const resultStr = JSON.stringify(result);
+    const resultStr = JSON.stringify(resultObject);
     if (resultStr.length > 10 * 1024) {
       return {
         result: {
-          ...result,
+          ...resultObject,
           truncated: true
         },
         truncatedSize: resultStr.length,
         duration,
-        isError: result.isError || false
+        isError: resultObject.isError || false
       };
     }
 
     return {
-      result,
+      result: resultObject,
       duration,
-      isError: result.isError || false
+      isError: resultObject.isError || false
     };
 
   } catch (err) {
@@ -1844,8 +2198,7 @@ async function callServerTool(serverId, toolName, arguments = {}) {
     return {
       result: {
         error: failure.message,
-        code: err.code,
-        data: err.data
+        ...(err.code ? { code: sanitizeMcpErrorText(err.code) } : {})
       },
       duration: failure.duration,
       isError: true,
@@ -1886,8 +2239,9 @@ function updateServerOrder(serverIds) {
 
   // 更新每个服务器的排序索引
   serverIds.forEach((id, index) => {
-    if (servers[id]) {
-      servers[id].order = index;
+    const normalizedId = validateMcpId(id);
+    if (Object.prototype.hasOwnProperty.call(servers, normalizedId)) {
+      servers[normalizedId].order = index;
     }
   });
 
@@ -1923,7 +2277,7 @@ function exportAsJson(servers) {
   const mcpServers = {};
 
   for (const [id, server] of Object.entries(servers)) {
-    mcpServers[id] = extractServerSpec(server.server);
+    mcpServers[id] = sanitizeExportSpec(server.server);
   }
 
   return {
@@ -1942,7 +2296,7 @@ function exportForClaude(servers) {
 
   for (const [id, server] of Object.entries(servers)) {
     if (server.apps?.claude) {
-      mcpServers[id] = extractServerSpec(server.server);
+      mcpServers[id] = sanitizeExportSpec(server.server);
     }
   }
 
@@ -1962,7 +2316,7 @@ function exportForCodex(servers) {
 
   for (const [id, server] of Object.entries(servers)) {
     if (server.apps?.codex) {
-      mcp_servers[id] = convertToCodexFormat(server.server);
+      mcp_servers[id] = convertToCodexFormat(sanitizeExportSpec(server.server));
     }
   }
 
@@ -1982,7 +2336,7 @@ function exportForOpenCode(servers) {
 
   for (const [id, server] of Object.entries(servers)) {
     if (server.apps?.opencode) {
-      mcp[id] = convertToOpenCodeFormat(server.server);
+      mcp[id] = convertToOpenCodeFormat(sanitizeExportSpec(server.server));
     }
   }
 
@@ -2002,7 +2356,7 @@ function exportForGemini(servers) {
 
   for (const [id, server] of Object.entries(servers)) {
     if (server.apps?.gemini) {
-      mcpServers[id] = extractServerSpec(server.server);
+      mcpServers[id] = sanitizeExportSpec(server.server);
     }
   }
 
@@ -2023,7 +2377,7 @@ function exportForOmp(servers) {
   for (const [id, server] of Object.entries(servers)) {
     if (server.apps?.omp) {
       validateOmpServerName(id);
-      mcpServers[id] = convertToOmpMcpFormat(server.server);
+      mcpServers[id] = convertToOmpMcpFormat(sanitizeExportSpec(server.server));
     }
   }
 

@@ -17,7 +17,7 @@ function requireProjectPath(source = {}) {
 }
 
 function requirePlatform(source = {}) {
-  const platform = String(source.platform || '').trim().toLowerCase();
+  const platform = String(source.platform || 'claude').trim().toLowerCase();
   if (!SUPPORTED_PLATFORMS.has(platform)) {
     throw new Error(`Unsupported platform: ${source.platform || platform}`);
   }
@@ -37,6 +37,37 @@ router.get('/', async (req, res) => {
     res.json(snapshot);
   } catch (error) {
     console.error('[Project Config API] Get snapshot failed:', error);
+    sendApiError(res, error);
+  }
+});
+
+router.get('/skills', async (req, res) => {
+  try {
+    const input = queryInput(req);
+    const projectPath = requireProjectPath(input);
+    const platform = requirePlatform(input);
+    const skills = await projectConfigService.listProjectSkills(projectPath, platform);
+    res.json({ success: true, projectPath, platform, skills });
+  } catch (error) {
+    console.error('[Project Config API] List project Skills failed:', error);
+    sendApiError(res, error);
+  }
+});
+
+router.put('/skills/toggle', async (req, res) => {
+  try {
+    const projectPath = requireProjectPath(req.body);
+    const platform = requirePlatform(req.body);
+    if (!req.body.controlKey) throw new Error('Skill controlKey is required');
+    const result = await projectConfigService.setProjectSkillEnabled(
+      projectPath,
+      platform,
+      req.body.controlKey,
+      req.body.enabled
+    );
+    res.json({ success: true, projectPath, platform, ...result });
+  } catch (error) {
+    console.error('[Project Config API] Toggle project Skill failed:', error);
     sendApiError(res, error);
   }
 });
@@ -106,7 +137,7 @@ router.put('/mcp/:id', async (req, res) => {
       req.params.id,
       req.body.server
     );
-    res.json({ success: true, projectPath, platform, server: result });
+    res.json({ success: result.success !== false, projectPath, platform, server: result });
   } catch (error) {
     console.error('[Project Config API] Upsert project MCP failed:', error);
     sendApiError(res, error);
@@ -119,7 +150,7 @@ router.delete('/mcp/:id', async (req, res) => {
     const projectPath = requireProjectPath(input);
     const platform = requirePlatform(input);
     const result = await projectConfigService.removeProjectMcp(projectPath, platform, req.params.id);
-    res.json({ success: true, projectPath, platform, server: result });
+    res.json({ success: result.success !== false, projectPath, platform, server: result });
   } catch (error) {
     console.error('[Project Config API] Remove project MCP failed:', error);
     sendApiError(res, error);
@@ -134,7 +165,7 @@ router.post('/mcp/:id/test', async (req, res) => {
     res.json({ success: true, projectPath, platform, result });
   } catch (error) {
     console.error('[Project Config API] Test project MCP failed:', error);
-    sendApiError(res, error);
+    sendApiError(res, error, error.code === 'MCP_DISABLED' ? 403 : 500);
   }
 });
 

@@ -14,17 +14,17 @@ describe('OMP resource web API context', () => {
     vi.clearAllMocks();
   });
 
-  test('skill and plugin listing pass the selected project cwd', async () => {
+  test('local Skill listing omits refresh flags and preserves project scope', async () => {
     const { getSkills } = await import('../../../src/web/src/api/skills.js');
     const { getPlugins } = await import('../../../src/web/src/api/plugins.js');
 
-    await getSkills(false, 'omp', { cwd: '/workspace/project' });
+    await getSkills('omp', { cwd: '/workspace/project', scope: 'project' });
     await getPlugins('omp', { cwd: '/workspace/project' });
 
     expect(client.get).toHaveBeenNthCalledWith(1, '/skills', {
       params: {
-        refresh: '',
         platform: 'omp',
+        scope: 'project',
         cwd: '/workspace/project'
       },
       signal: expect.any(AbortSignal)
@@ -35,6 +35,24 @@ describe('OMP resource web API context', () => {
         cwd: '/workspace/project'
       },
       signal: expect.any(AbortSignal)
+    });
+  });
+
+  test('manual Skill refresh and toggle use explicit control endpoints', async () => {
+    const { refreshSkills, toggleSkill } = await import('../../../src/web/src/api/skills.js');
+
+    await refreshSkills('omp', { scope: 'user' });
+    await toggleSkill('skill:omp:user:user:demo', false, 'omp', { scope: 'user' });
+
+    expect(client.post).toHaveBeenCalledWith('/skills/refresh', {
+      platform: 'omp',
+      scope: 'user'
+    });
+    expect(client.put).toHaveBeenCalledWith('/skills/toggle', {
+      controlKey: 'skill:omp:user:user:demo',
+      enabled: false,
+      platform: 'omp',
+      scope: 'user'
     });
   });
 

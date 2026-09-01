@@ -3,16 +3,20 @@ import { mount } from '@vue/test-utils'
 
 const api = vi.hoisted(() => ({
   getSkills: vi.fn(),
-  uninstallSkill: vi.fn(),
-  installSkill: vi.fn(),
-  installLocalSkill: vi.fn()
+  refreshSkills: vi.fn(),
+  getSkillRefreshTask: vi.fn(),
+  toggleSkill: vi.fn()
 }))
 
 vi.mock('../../api/skills', () => ({
   getSkills: api.getSkills,
-  uninstallSkill: api.uninstallSkill,
-  installSkill: api.installSkill,
-  installLocalSkill: api.installLocalSkill
+  refreshSkills: api.refreshSkills,
+  getSkillRefreshTask: api.getSkillRefreshTask,
+  toggleSkill: api.toggleSkill
+}))
+
+vi.mock('../../api/project-config', () => ({
+  setProjectSkillEnabled: vi.fn()
 }))
 
 vi.mock('naive-ui', async () => {
@@ -31,7 +35,11 @@ import SkillsPanel from '../SkillsPanel.vue'
 
 beforeEach(() => {
   api.getSkills.mockReset()
-  api.getSkills.mockResolvedValue({ success: true, skills: [] })
+  api.getSkills.mockResolvedValue({
+    success: true,
+    skills: [],
+    refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+  })
 })
 
 it('loads Skills with project scope and cwd', async () => {
@@ -53,7 +61,7 @@ it('loads Skills with project scope and cwd', async () => {
     }
   })
 
-  await vi.waitFor(() => expect(api.getSkills).toHaveBeenCalledWith(false, 'codex', {
+  await vi.waitFor(() => expect(api.getSkills).toHaveBeenCalledWith('codex', {
     cwd: '/tmp/project',
     scope: 'project'
   }))

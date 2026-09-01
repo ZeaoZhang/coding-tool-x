@@ -85,8 +85,12 @@ beforeEach(() => {
 function createMockService() {
   return {
     listSkills: vi.fn(async () => [{ name: 'test-skill', installed: false }]),
-    getSkillDetail: vi.fn(async () => ({ name: 'test', content: '# Test' })),
+    scanSkills: vi.fn(async () => ({
+      skills: [{ name: 'test-skill', enabled: false, cached: true, managed: true }],
+      refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+    })),
     getInstalledSkills: vi.fn(() => []),
+    getSkillDetail: vi.fn(async () => ({ name: 'test', content: '# Test' })),
     installSkill: vi.fn(async () => ({ success: true })),
     uninstallSkill: vi.fn(() => ({ success: true })),
     loadRepos: vi.fn(() => [{ owner: 'anthropics', name: 'skills', token: 'secret-token' }]),
@@ -176,39 +180,45 @@ function call(app, method, url, body) {
 // GET /
 // ---------------------------------------------------------------------------
 describe('GET /', () => {
-  test('returns skills list with total and installed count', async () => {
-    mockService.listSkills.mockResolvedValue([
-      { name: 'a', installed: true },
-      { name: 'b', installed: false }
-    ]);
+  test('returns local Skill state with total and enabled count omitted from unique lifecycle', async () => {
+    mockService.scanSkills.mockResolvedValue({
+      skills: [
+        { name: 'a', enabled: true, cached: true, managed: true },
+        { name: 'b', enabled: false, cached: true, managed: true }
+      ],
+      refresh: { state: 'idle', taskId: null, fetchedAt: Date.now(), error: null }
+    });
     const app = buildApp();
     const res = await request(app).get('/');
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.total).toBe(2);
-    expect(res.body.installed).toBe(1);
-    expect(Array.isArray(res.body.skills)).toBe(true);
+    expect(res.body).not.toHaveProperty('installed');
+    expect(res.body.skills[0]).toEqual(expect.objectContaining({ cached: true, managed: true }));
   });
 
-  test('returns 500 on service error', async () => {
-    mockService.listSkills.mockRejectedValue(new Error('db error'));
+  test('returns 500 on scan service error', async () => {
+    mockService.scanSkills.mockRejectedValue(new Error('db error'));
     const app = buildApp();
     const res = await request(app).get('/');
     expect(res.status).toBe(500);
     expect(res.body.success).toBe(false);
   });
 
-  test('routes OMP skills to the OMP service instance', async () => {
-    services.omp.listSkills.mockResolvedValue([{ name: 'omp-skill', installed: true }]);
+
+  test('routes OMP scan to the OMP service instance', async () => {
+    services.omp.scanSkills.mockResolvedValue({
+      skills: [{ name: 'omp-skill', enabled: true, cached: true, managed: true }],
+      refresh: { state: 'idle', taskId: null, fetchedAt: null, error: null }
+    });
     const app = buildApp();
     const res = await request(app).get('/?platform=omp');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.platform).toBe('omp');
-    expect(res.body.installed).toBe(1);
-    expect(services.omp.listSkills).toHaveBeenCalled();
-    expect(services.claude.listSkills).not.toHaveBeenCalled();
+    expect(services.omp.scanSkills).toHaveBeenCalled();
+    expect(services.claude.scanSkills).not.toHaveBeenCalled();
   });
 
   test('normalizes platform case and whitespace', async () => {
@@ -217,8 +227,8 @@ describe('GET /', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.platform).toBe('omp');
-    expect(services.omp.listSkills).toHaveBeenCalled();
-    expect(services.claude.listSkills).not.toHaveBeenCalled();
+    expect(services.omp.scanSkills).toHaveBeenCalled();
+    expect(services.claude.scanSkills).not.toHaveBeenCalled();
   });
 
   test('maps deprecated pi to omp and returns a warning', async () => {
@@ -228,7 +238,7 @@ describe('GET /', () => {
     expect(res.status).toBe(200);
     expect(res.body.platform).toBe('omp');
     expect(res.body.warnings).toEqual([expect.stringMatching(/deprecated/i)]);
-    expect(services.omp.listSkills).toHaveBeenCalled();
+    expect(services.omp.scanSkills).toHaveBeenCalled();
   });
 
   test.each(['omx', 'unknown'])('rejects unsupported platform %s', async platform => {
@@ -237,25 +247,16 @@ describe('GET /', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
-    expect(services.claude.listSkills).not.toHaveBeenCalled();
+    expect(services.claude.scanSkills).not.toHaveBeenCalled();
   });
 
-  test('passes a validated project cwd to OMP skill discovery', async () => {
+  test('passes a validated project cwd to OMP scan', async () => {
     const app = buildApp();
     const cwd = fs.realpathSync(process.cwd());
     const res = await request(app).get(`/?platform=omp&cwd=${encodeURIComponent(cwd)}`);
 
     expect(res.status).toBe(200);
-    expect(services.omp.listSkills).toHaveBeenCalledWith(false, { cwd });
-  });
-
-  test('passes project scope through to the selected Skill service', async () => {
-    const app = buildApp();
-    const cwd = fs.realpathSync(process.cwd());
-    const res = await request(app).get(`/?platform=codex&cwd=${encodeURIComponent(cwd)}&scope=project`);
-
-    expect(res.status).toBe(200);
-    expect(services.codex.listSkills).toHaveBeenCalledWith(false, { cwd, scope: 'project' });
+    expect(services.omp.scanSkills).toHaveBeenCalledWith({ cwd, scope: 'user' });
   });
 
   test('rejects an existing cwd that is not a known project or workspace', async () => {
@@ -266,7 +267,7 @@ describe('GET /', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.message).toMatch(/known project or workspace/i);
-      expect(services.omp.listSkills).not.toHaveBeenCalled();
+      expect(services.omp.scanSkills).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(unknownDir, { recursive: true, force: true });
     }
@@ -353,11 +354,14 @@ describe('OMP skill settings', () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /installed
+// GET /installed is retained as a scan-only compatibility route.
 // ---------------------------------------------------------------------------
 describe('GET /installed', () => {
   test('returns installed skills', async () => {
-    mockService.getInstalledSkills.mockReturnValue([{ name: 'my-skill', installed: true }]);
+    mockService.scanSkills.mockResolvedValue({
+      skills: [{ name: 'my-skill', enabled: true, cached: true, managed: true }],
+      refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+    });
     const app = buildApp();
     const res = await request(app).get('/installed');
     expect(res.status).toBe(200);
@@ -366,7 +370,7 @@ describe('GET /installed', () => {
   });
 
   test('returns 500 on service error', async () => {
-    mockService.getInstalledSkills.mockImplementation(() => { throw new Error('fail'); });
+    mockService.scanSkills.mockRejectedValue(new Error('fail'));
     const app = buildApp();
     const res = await request(app).get('/installed');
     expect(res.status).toBe(500);
@@ -375,124 +379,22 @@ describe('GET /installed', () => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /install
+// Legacy lifecycle routes
 // ---------------------------------------------------------------------------
-describe('POST /install', () => {
-  test('success with directory and repo', async () => {
+describe('legacy Skill lifecycle routes', () => {
+  test.each(['/install', '/install-local', '/uninstall'])('%s returns 410 without mutating files', async route => {
     const app = buildApp();
-    const res = await request(app).post('/install', {
-      directory: 'my-skill',
-      repo: { owner: 'anthropics', name: 'skills' }
-    });
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-  });
-
-  test('passes project scope and cwd to the install service', async () => {
-    const app = buildApp();
-    const cwd = fs.realpathSync(process.cwd());
-    const res = await request(app).post('/install', {
-      platform: 'codex',
-      cwd,
-      scope: 'project',
-      directory: 'project-skill',
-      repo: { owner: 'anthropics', name: 'skills' }
+    const res = await request(app).post(route, {
+      platform: 'claude',
+      directory: 'demo',
+      repo: { owner: 'owner', name: 'repo' }
     });
 
-    expect(res.status).toBe(200);
-    expect(services.codex.installSkill).toHaveBeenCalledWith(
-      'project-skill',
-      expect.objectContaining({ owner: 'anthropics', name: 'skills' }),
-      null,
-      { scope: 'project', cwd }
-    );
-  });
-
-  test('missing directory → 400', async () => {
-    const app = buildApp();
-    const res = await request(app).post('/install', {
-      repo: { owner: 'anthropics', name: 'skills' }
-    });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(410);
     expect(res.body.success).toBe(false);
-    expect(res.body.message).toMatch(/directory/i);
-  });
-
-  test('missing repo → 400', async () => {
-    const app = buildApp();
-    const res = await request(app).post('/install', { directory: 'my-skill' });
-    expect(res.status).toBe(400);
-    expect(res.body.success).toBe(false);
-    expect(res.body.message).toMatch(/repo/i);
-  });
-
-  test('service error → 500', async () => {
-    mockService.installSkill.mockRejectedValue(new Error('network error'));
-    const app = buildApp();
-    const res = await request(app).post('/install', {
-      directory: 'my-skill',
-      repo: { owner: 'anthropics', name: 'skills' }
-    });
-    expect(res.status).toBe(500);
-    expect(res.body.success).toBe(false);
-  });
-
-  test('validation error from service → 400', async () => {
-    mockService.installSkill.mockRejectedValue(new Error('Invalid skill directory'));
-    const app = buildApp();
-    const res = await request(app).post('/install', {
-      directory: '../bad',
-      repo: { owner: 'anthropics', name: 'skills' }
-    });
-
-    expect(res.status).toBe(400);
-    expect(res.body.success).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// POST /uninstall
-// ---------------------------------------------------------------------------
-describe('POST /uninstall', () => {
-  test('success with directory', async () => {
-    const app = buildApp();
-    const res = await request(app).post('/uninstall', { directory: 'my-skill' });
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-  });
-
-  test('passes project scope and cwd to the uninstall service', async () => {
-    const app = buildApp();
-    const cwd = fs.realpathSync(process.cwd());
-    const res = await request(app).post('/uninstall', {
-      platform: 'codex',
-      cwd,
-      scope: 'project',
-      directory: 'project-skill'
-    });
-
-    expect(res.status).toBe(200);
-    expect(services.codex.uninstallSkill).toHaveBeenCalledWith(
-      'project-skill',
-      { scope: 'project', cwd }
-    );
-  });
-
-  test('missing directory → 400', async () => {
-    const app = buildApp();
-    const res = await request(app).post('/uninstall', {});
-    expect(res.status).toBe(400);
-    expect(res.body.success).toBe(false);
-    expect(res.body.message).toMatch(/directory/i);
-  });
-
-  test('validation error from uninstall service → 400', async () => {
-    mockService.uninstallSkill.mockImplementation(() => { throw new Error('Invalid skill directory'); });
-    const app = buildApp();
-    const res = await request(app).post('/uninstall', { directory: '../bad' });
-
-    expect(res.status).toBe(400);
-    expect(res.body.success).toBe(false);
+    expect(mockService.installSkill).not.toHaveBeenCalled();
+    expect(mockService.installLocalSkill).not.toHaveBeenCalled();
+    expect(mockService.uninstallSkill).not.toHaveBeenCalled();
   });
 });
 
@@ -597,26 +499,16 @@ describe('GET /detail/*', () => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /install-local
+// POST /install-local (legacy lifecycle)
 // ---------------------------------------------------------------------------
 describe('POST /install-local', () => {
-  test('installs a local skill successfully', async () => {
-    mockService.installLocalSkill.mockReturnValue({ success: true, message: 'ok' });
+  test('returns 410 without mutating local Skill state', async () => {
     const app = buildApp();
     const res = await request(app).post('/install-local', { directory: 'local-skill', platform: 'opencode' });
 
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.platform).toBe('opencode');
-    expect(services.opencode.installLocalSkill).toHaveBeenCalledWith('local-skill');
-  });
-
-  test('returns 400 when directory is missing', async () => {
-    const app = buildApp();
-    const res = await request(app).post('/install-local', {});
-
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(410);
     expect(res.body.success).toBe(false);
+    expect(services.opencode.installLocalSkill).not.toHaveBeenCalled();
   });
 });
 
@@ -820,5 +712,120 @@ describe('skills file routes', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
+  });
+});
+
+describe('new Skill control surface', () => {
+  function buildInjectedApp({ controlService, refreshTasks } = {}) {
+    const routerModule = require('../../../src/server/api/skills');
+    const router = routerModule.createRouter({
+      skillServiceFactory: platform => services[platform],
+      controlService,
+      refreshTasks
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/', router);
+    return app;
+  }
+
+  test('GET never performs remote refresh even when refresh query is present', async () => {
+    mockService.scanSkills = vi.fn(async () => ({
+      skills: [{ name: 'local', enabled: true, cached: true, managed: true }],
+      refresh: { state: 'never_fetched', fetchedAt: null, error: null }
+    }));
+    mockService.refreshRemoteSkills = vi.fn();
+
+    const app = buildInjectedApp({
+      controlService: { setSkillEnabled: vi.fn() },
+      refreshTasks: { enqueue: vi.fn(), get: vi.fn() }
+    });
+    const res = await request(app).get('/?platform=claude&refresh=1');
+
+    expect(res.status).toBe(200);
+    expect(mockService.scanSkills).toHaveBeenCalledWith({ scope: 'user' });
+    expect(mockService.refreshRemoteSkills).not.toHaveBeenCalled();
+    expect(res.body).not.toHaveProperty('installed');
+  });
+
+  test('POST refresh returns an asynchronous task snapshot', async () => {
+    const task = { id: 'task-1', status: 'queued', platform: 'claude', scope: 'user' };
+    const enqueue = vi.fn(() => task);
+    const app = buildInjectedApp({
+      controlService: { setSkillEnabled: vi.fn() },
+      refreshTasks: { enqueue, get: vi.fn() }
+    });
+
+    const res = await request(app).post('/refresh', { platform: 'claude' });
+
+    expect(res.status).toBe(202);
+    expect(res.body.task).toEqual(task);
+    expect(enqueue).toHaveBeenCalledWith({ platform: 'claude', scope: 'user', projectPath: null, reason: 'manual' });
+  });
+
+  test('scopes refresh task reads to the requested platform and scope', async () => {
+    const task = { id: 'task-1', status: 'succeeded', platform: 'claude', scope: 'user', projectPath: null };
+    const get = vi.fn(() => task);
+    const app = buildInjectedApp({
+      controlService: { setSkillEnabled: vi.fn() },
+      refreshTasks: { enqueue: vi.fn(), get }
+    });
+
+    const allowed = await request(app).get('/refresh/task-1?platform=claude&scope=user');
+    const mismatched = await request(app).get('/refresh/task-1?platform=codex&scope=user');
+
+    expect(allowed.status).toBe(200);
+    expect(mismatched.status).toBe(404);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test('PUT toggle delegates activation to the effective control service', async () => {
+    const setSkillEnabled = vi.fn(() => ({ enabled: false, artifact: { state: 'ready' } }));
+    const app = buildInjectedApp({
+      controlService: { setSkillEnabled },
+      refreshTasks: { enqueue: vi.fn(), get: vi.fn() }
+    });
+
+    const res = await request(app).put('/toggle', {
+      platform: 'claude',
+      scope: 'user',
+      controlKey: 'skill:claude:user:user:local',
+      enabled: false
+    });
+
+    expect(res.status).toBe(200);
+    expect(setSkillEnabled).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'claude',
+      scope: 'user',
+      projectPath: null,
+      controlKey: 'skill:claude:user:user:local',
+      enabled: false
+    }));
+    expect(res.body.artifact.state).toBe('ready');
+  });
+
+  test('PUT trust updates approval without enabling the Skill', async () => {
+    const setSkillTrust = vi.fn(() => ({ trust: 'approved', enabled: false }));
+    const app = buildInjectedApp({
+      controlService: { setSkillEnabled: vi.fn(), setSkillTrust },
+      refreshTasks: { enqueue: vi.fn(), get: vi.fn() }
+    });
+
+    const res = await request(app).put('/trust', {
+      platform: 'claude',
+      scope: 'user',
+      controlKey: 'skill:claude:user:user:local',
+      trust: 'approved'
+    });
+
+    expect(res.status).toBe(200);
+    expect(setSkillTrust).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'claude',
+      scope: 'user',
+      projectPath: null,
+      controlKey: 'skill:claude:user:user:local',
+      trust: 'approved'
+    }));
+    expect(res.body.enabled).toBe(false);
   });
 });

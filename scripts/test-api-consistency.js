@@ -326,55 +326,19 @@ async function run() {
     ]);
   });
 
-  await runCase('[skills] POST /install 透传 repo payload 与 fullDirectory', async () => {
-    const calls = [];
-    const skillsRouter = loadSkillsRouterWithStub((platform) => ({
-      installSkill: async (...args) => {
-        calls.push({ platform, args });
-        return { installed: true };
+  await runCase('[skills] POST /install 明确返回迁移状态', async () => {
+    const skillsRouter = loadSkillsRouterWithStub(() => ({
+      installSkill: () => {
+        throw new Error('legacy install must not be called');
       }
     }));
 
     const result = await invokeRoute(skillsRouter, 'POST', '/install', {
-      body: {
-        platform: 'gemini',
-        directory: 'skills/repo-hint',
-        fullDirectory: 'skills/repo-hint/examples',
-        repo: {
-          id: 'local-456',
-          provider: 'local',
-          host: 'https://gitlab.example.com',
-          localPath: '/Users/demo/skills',
-          projectPath: '/Users/demo/project',
-          owner: 'openai',
-          name: 'local-skills',
-          branch: 'main',
-          directory: 'repo-hint',
-          repoUrl: '/Users/demo/skills'
-        }
-      }
+      body: { platform: 'gemini', directory: 'skills/repo-hint' }
     });
 
-    assert.strictEqual(result.statusCode, 200, '技能安装接口应返回 200');
-    assert.strictEqual(calls.length, 1, '应调用一次 installSkill');
-    assert.strictEqual(calls[0].platform, 'gemini', '应按请求平台选择技能服务');
-    assert.deepStrictEqual(calls[0].args, [
-      'skills/repo-hint',
-      {
-        id: 'local-456',
-        provider: 'local',
-        host: 'https://gitlab.example.com',
-        owner: 'openai',
-        name: 'local-skills',
-        branch: 'main',
-        directory: 'repo-hint',
-        projectPath: '/Users/demo/project',
-        localPath: '/Users/demo/skills',
-        repoUrl: '/Users/demo/skills',
-        token: ''
-      },
-      'skills/repo-hint/examples'
-    ]);
+    assert.strictEqual(result.statusCode, 410, '旧技能安装接口应返回 410');
+    assert.strictEqual(result.payload.success, false, '旧技能安装接口不得执行写操作');
   });
 
   await runCase('[skills] DELETE /repos 在存在 id 时优先透传 id', async () => {
