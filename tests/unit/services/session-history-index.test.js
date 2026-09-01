@@ -465,6 +465,30 @@ describe('session-history-index', () => {
     expect(sessions[0].firstMessage).toBe('Hello, this is a test');
     expect(sessions[0].projectName).toBe('proj-a');
   });
+  it('reparses rows with an older parser version', async () => {
+    const fixture = setupIndex();
+    fixture.writeFixtureFile({
+      name: 'parser-version.jsonl',
+      content: 'parser version fixture\n',
+      session: makeSessionFixture('parser-version', 'proj-a', { firstMessage: 'old indexed content' }),
+      messages: makeMessageFixtures(2)
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const db = index._getDb();
+    db.prepare('UPDATE session_file SET parser_version = 0 WHERE source = ?').run('claude');
+    db.prepare('UPDATE source_state SET last_inventory_ms = ? WHERE source = ?').run(Date.now(), 'claude');
+    fixture.adapter.parse.mockClear();
+    fixture.adapter.parse.mockResolvedValue({
+      session: makeSessionFixture('parser-version', 'proj-a', { firstMessage: 'reparsed content' }),
+      messages: makeMessageFixtures(2)
+    });
+
+    const sessions = await index.listSessions('claude', 'proj-a');
+
+    expect(fixture.adapter.parse).toHaveBeenCalledTimes(1);
+    expect(sessions[0].firstMessage).toBe('reparsed content');
+  });
 
   it('getSessionStatus returns lightweight status', async () => {
     const fixture = setupIndex();
