@@ -489,6 +489,62 @@ describe('session-history-index', () => {
     expect(fixture.adapter.parse).toHaveBeenCalledTimes(1);
     expect(sessions[0].firstMessage).toBe('reparsed content');
   });
+  it('waits for a cold inventory before returning empty project data', async () => {
+    const fixture = setupIndex();
+    const descriptor = fixture.writeFixtureFile({
+      name: 'cold-project.jsonl',
+      content: 'cold project fixture\n',
+      session: makeSessionFixture('cold-project-session', 'cold-project'),
+      messages: makeMessageFixtures(2)
+    });
+    let releaseInventory;
+    fixture.adapter.inventory.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseInventory = resolve;
+    }));
+
+    let settled = false;
+    const projectsPromise = index.listProjects('claude').then((projects) => {
+      settled = true;
+      return projects;
+    });
+    await vi.waitFor(() => expect(fixture.adapter.inventory).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    releaseInventory([descriptor]);
+
+    const projects = await projectsPromise;
+    expect(projects[0].name).toBe('cold-project');
+  });
+
+  it('waits for a cold inventory before returning a missing session detail', async () => {
+    const fixture = setupIndex();
+    const descriptor = fixture.writeFixtureFile({
+      name: 'cold-detail.jsonl',
+      content: 'cold detail fixture\n',
+      session: makeSessionFixture('cold-detail-session', 'cold-project'),
+      messages: makeMessageFixtures(2)
+    });
+    let releaseInventory;
+    fixture.adapter.inventory.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseInventory = resolve;
+    }));
+
+    let settled = false;
+    const pagePromise = index.getMessagePage('claude', 'cold-detail-session').then((page) => {
+      settled = true;
+      return page;
+    });
+    await vi.waitFor(() => expect(fixture.adapter.inventory).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    releaseInventory([descriptor]);
+
+    const page = await pagePromise;
+    expect(page.messages).toHaveLength(2);
+    expect(page.messages[0].content).toContain('Assistant response');
+  });
 
   it('getSessionStatus returns lightweight status', async () => {
     const fixture = setupIndex();
@@ -697,7 +753,7 @@ describe('session-history-index', () => {
     expect(recent[1].sessionId).toBe('s2');
   });
 
-  it('stale-ok may return before complete while worker continues', async () => {
+  it('stale-ok waits for a cold source before returning', async () => {
     vi.useFakeTimers();
     const fixture = setupIndex();
     fixture.writeFixtureFile({
@@ -719,11 +775,17 @@ describe('session-history-index', () => {
       }) : [];
     });
 
-    const promise = index.ensureSourceIndexed('claude', { consistency: 'stale-ok' });
+    let settled = false;
+    const promise = index.ensureSourceIndexed('claude', { consistency: 'stale-ok' }).then(() => {
+      settled = true;
+    });
     await vi.advanceTimersByTimeAsync(2500);
-    await promise;
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
     resolveInventory();
-    await vi.advanceTimersByTimeAsync(3000);
+    await promise;
+    expect(settled).toBe(true);
   });
 
   it('complete awaits the worker', async () => {
