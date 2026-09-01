@@ -4,6 +4,11 @@
 
 const express = require('express');
 const { SkillService } = require('../services/skill-service');
+const { ControlManifestStore } = require('../services/control-manifest-store');
+const { EffectiveControlService } = require('../services/effective-control-service');
+const { SkillProjectionService } = require('../services/skill-projection-service');
+const { SkillRefreshTaskService } = require('../services/skill-refresh-task-service');
+const { PATHS } = require('../../config/paths');
 const { maskToken } = require('../services/oauth-utils');
 const { sendApiError } = require('./validation-errors');
 const { resolveManagedPlatform } = require('../services/platform-resolution');
@@ -15,6 +20,9 @@ const {
 
 const router = express.Router();
 const skillServices = new Map();
+let routerOptions = {};
+let defaultControlService;
+let defaultRefreshTasks;
 
 function resolvePlatform(rawPlatform) {
   return resolveManagedPlatform(rawPlatform);
@@ -24,17 +32,54 @@ function getPlatform(req) {
   return resolvePlatform(req.query?.platform || req.body?.platform);
 }
 
-function getSkillService(req) {
-  const resolution = getPlatform(req);
-  const platform = resolution.platform;
+function getSkillServiceForPlatform(platform) {
+  if (typeof routerOptions.skillServiceFactory === 'function') {
+    return routerOptions.skillServiceFactory(platform);
+  }
   if (!skillServices.has(platform)) {
     skillServices.set(platform, new SkillService(platform));
   }
+  return skillServices.get(platform);
+}
+
+function getSkillService(req) {
+  const resolution = getPlatform(req);
   return {
-    platform,
-    service: skillServices.get(platform),
+    platform: resolution.platform,
+    service: getSkillServiceForPlatform(resolution.platform),
     warning: resolution.warning
   };
+}
+
+function getControlService() {
+  if (routerOptions.controlService) return routerOptions.controlService;
+  if (!defaultControlService && PATHS.effectiveControlManifest) {
+    const registry = require('../../platforms/runtime').getPlatformRegistry();
+    defaultControlService = new EffectiveControlService({
+      store: new ControlManifestStore({
+        userPath: PATHS.effectiveControlManifest,
+        projectPathResolver: ({ projectPath }) => require('path').join(projectPath, '.ctx-control.json')
+      }),
+      projection: new SkillProjectionService({ registry })
+    });
+  }
+  return defaultControlService;
+}
+
+function getRefreshTasks() {
+  if (routerOptions.refreshTasks) return routerOptions.refreshTasks;
+  if (!defaultRefreshTasks && PATHS.skillRefreshTasks) {
+    defaultRefreshTasks = new SkillRefreshTaskService({
+      persistencePath: PATHS.skillRefreshTasks,
+      worker: context => getSkillServiceForPlatform(context.platform).refreshRemoteSkills(context)
+    });
+  }
+  return defaultRefreshTasks;
+}
+
+function createRouter(options = {}) {
+  routerOptions = options;
+  return router;
 }
 
 async function getScopeOptions(source = {}) {
@@ -51,6 +96,14 @@ async function getScopeOptions(source = {}) {
   return {
     ...(cwd ? { cwd } : {}),
     ...(scope ? { scope } : {})
+  };
+}
+
+function toControlScopeOptions(options = {}) {
+  const scope = options.scope || 'user';
+  return {
+    scope,
+    projectPath: scope === 'project' ? options.cwd : null
   };
 }
 
@@ -90,31 +143,136 @@ function sanitizeRepos(service, repos = []) {
 }
 
 /**
- * 获取技能列表
+ * 获取本地 Skill 列表
  * GET /api/skills
- * Query: refresh=1 强制刷新缓存
+ *
+ * `refresh=1` is intentionally ignored here. Remote work only starts through
+ * POST /refresh.
  */
 router.get('/', async (req, res) => {
   try {
     const { platform, service, warning } = getSkillService(req);
-    const forceRefresh = req.query.refresh === '1';
-    const options = await getScopeOptions(req.query);
-    if (forceRefresh) {
-      console.log(`[Skills API] Refreshing skills for ${platform}...`);
+    const options = { ...(await getScopeOptions(req.query)), scope: req.query.scope || 'user' };
+    const snapshot = typeof service.scanSkills === 'function'
+      ? await service.scanSkills(options)
+      : {
+        skills: await service.listSkills(false, options),
+        refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+      };
+    const skills = Array.isArray(snapshot.skills) ? snapshot.skills : [];
+    const refreshService = getRefreshTasks();
+    const refreshOptions = {
+      platform,
+      scope: options.scope || 'user',
+      projectPath: options.scope === 'project' ? options.cwd : null
+    };
+    const activeTask = refreshService?.getActive?.(refreshOptions);
+    const latestTask = activeTask || refreshService?.listRecent?.(refreshOptions)?.[0];
+    if (latestTask) {
+      snapshot.refresh = {
+        ...(snapshot.refresh || {}),
+        state: latestTask.status,
+        taskId: latestTask.id,
+        error: latestTask.error || snapshot.refresh?.error || null
+      };
     }
-    const skills = await service.listSkills(forceRefresh, options);
-    console.log(`[Skills API] ${platform}: ${skills.length} skills loaded (refresh=${forceRefresh})`);
     res.json({
       success: true,
       platform,
-      skills,
+      ...snapshot,
       total: skills.length,
-      installed: skills.filter(s => s.installed).length,
       ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
     console.error('[Skills API] List skills error:', err);
     sendApiError(res, err);
+  }
+});
+
+router.post('/refresh', async (req, res) => {
+  try {
+    const { platform } = getSkillService(req);
+    const options = await getScopeOptions(req.body);
+    const refreshTasks = getRefreshTasks();
+    if (!refreshTasks) throw new Error('Skill refresh task service is unavailable');
+    const task = refreshTasks.enqueue({
+      platform,
+      scope: options.scope || 'user',
+      projectPath: options.scope === 'project' ? options.cwd : null,
+      reason: 'manual'
+    });
+    res.status(202).json({ success: true, platform, task });
+  } catch (err) {
+    console.error('[Skills API] Refresh skills error:', err);
+    sendApiError(res, err);
+  }
+});
+
+router.get('/refresh/:taskId', async (req, res) => {
+  try {
+    const { platform } = getSkillService(req);
+    const options = await getScopeOptions(req.query);
+    const refreshTasks = getRefreshTasks();
+    const task = refreshTasks?.get(req.params.taskId);
+    if (!task) return res.status(404).json({ success: false, message: 'Refresh task not found' });
+    const taskScope = task.scope || 'user';
+    const taskProjectPath = taskScope === 'project' ? (task.projectPath || null) : null;
+    const requestedProjectPath = options.scope === 'project' ? (options.cwd || null) : null;
+    if (
+      task.platform !== platform
+      || taskScope !== (options.scope || 'user')
+      || taskProjectPath !== requestedProjectPath
+    ) {
+      return res.status(404).json({ success: false, message: 'Refresh task not found' });
+    }
+    return res.json({ success: true, task });
+  } catch (err) {
+    console.error('[Skills API] Get refresh task error:', err);
+    return sendApiError(res, err);
+  }
+});
+
+router.put('/toggle', async (req, res) => {
+  try {
+    const { platform } = getSkillService(req);
+    if (!req.body?.controlKey) {
+      return res.status(400).json({ success: false, message: 'Missing controlKey' });
+    }
+    const options = await getScopeOptions(req.body);
+    const controlService = getControlService();
+    if (!controlService) throw new Error('Effective control service is unavailable');
+    const result = controlService.setSkillEnabled({
+      platform,
+      controlKey: req.body.controlKey,
+      enabled: req.body.enabled,
+      ...toControlScopeOptions(options)
+    });
+    return res.json({ success: true, platform, ...result });
+  } catch (err) {
+    console.error('[Skills API] Toggle skill error:', err);
+    return sendApiError(res, err);
+  }
+});
+
+router.put('/trust', async (req, res) => {
+  try {
+    const { platform } = getSkillService(req);
+    if (!req.body?.controlKey) {
+      return res.status(400).json({ success: false, message: 'Missing controlKey' });
+    }
+    const options = await getScopeOptions(req.body);
+    const controlService = getControlService();
+    if (!controlService) throw new Error('Effective control service is unavailable');
+    const result = controlService.setSkillTrust({
+      platform,
+      controlKey: req.body.controlKey,
+      trust: req.body.trust,
+      ...toControlScopeOptions(options)
+    });
+    return res.json({ success: true, platform, ...result });
+  } catch (err) {
+    console.error('[Skills API] Set Skill trust error:', err);
+    return sendApiError(res, err);
   }
 });
 
@@ -195,13 +353,12 @@ router.get('/installed', async (req, res) => {
   try {
     const { platform, service } = getSkillService(req);
     const options = await getScopeOptions(req.query);
-    const skills = Object.keys(options).length > 0
-      ? service.getInstalledSkills(options)
-      : service.getInstalledSkills();
+    const snapshot = await service.scanSkills(options);
     res.json({
       success: true,
       platform,
-      skills
+      ...snapshot,
+      total: Array.isArray(snapshot.skills) ? snapshot.skills.length : 0
     });
   } catch (err) {
     console.error('[Skills API] Get installed skills error:', err);
@@ -210,73 +367,23 @@ router.get('/installed', async (req, res) => {
 });
 
 /**
- * 安装技能
- * POST /api/skills/install
- * Body: { directory, fullDirectory, repo }
- * - directory: 本地安装目录（相对路径）
- * - fullDirectory: 仓库中的完整路径（当指定了仓库子目录时使用）
+ * 旧安装入口已被 Skill control plane 取代。
  */
-router.post('/install', async (req, res) => {
-  try {
-    const { platform, service } = getSkillService(req);
-    const { directory, fullDirectory, repo } = req.body;
-    const options = await getScopeOptions(req.body);
-
-    if (!directory) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing directory'
-      });
-    }
-
-    if (!repo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing repo info'
-      });
-    }
-    const installArgs = [
-      directory,
-      extractRepoPayload({ repo }),
-      fullDirectory || null  // 传递 fullDirectory 用于从仓库子目录下载
-    ];
-    const result = Object.keys(options).length > 0
-      ? await service.installSkill(...installArgs, options)
-      : await service.installSkill(...installArgs);
-
-    res.json({
-      success: true,
-      platform,
-      ...result
-    });
-  } catch (err) {
-    console.error('[Skills API] Install skill error:', err);
-    sendApiError(res, err);
-  }
+router.post('/install', (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'Skill installation is replaced by POST /api/skills/refresh and PUT /api/skills/toggle'
+  });
 });
 
 /**
- * 安装本地 cc-tool 托管的技能
- * POST /api/skills/install-local
- * Body: { directory }
+ * 旧本地安装入口已被 Skill control plane 取代。
  */
-router.post('/install-local', async (req, res) => {
-  try {
-    const { platform, service } = getSkillService(req);
-    const { directory } = req.body;
-    const options = await getScopeOptions(req.body);
-
-    if (!directory) {
-      return res.status(400).json({ success: false, message: 'Missing directory' });
-    }
-    const result = Object.keys(options).length > 0
-      ? service.installLocalSkill(directory, options)
-      : service.installLocalSkill(directory);
-    res.json({ success: true, platform, ...result });
-  } catch (err) {
-    console.error('[Skills API] Install local skill error:', err);
-    sendApiError(res, err);
-  }
+router.post('/install-local', (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'Skill installation is replaced by PUT /api/skills/toggle'
+  });
 });
 
 /**
@@ -331,36 +438,13 @@ router.post('/create', async (req, res) => {
 });
 
 /**
- * 卸载技能
- * POST /api/skills/uninstall
- * Body: { directory }
+ * 旧卸载入口已被 Skill toggle 取代。
  */
-router.post('/uninstall', async (req, res) => {
-  try {
-    const { platform, service } = getSkillService(req);
-    const { directory, scope } = req.body;
-
-    if (!directory) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing directory'
-      });
-    }
-
-    const options = await getScopeOptions(req.body);
-    const result = Object.keys(options).length > 0
-      ? service.uninstallSkill(directory, options)
-      : service.uninstallSkill(directory);
-
-    res.json({
-      success: true,
-      platform,
-      ...result
-    });
-  } catch (err) {
-    console.error('[Skills API] Uninstall skill error:', err);
-    sendApiError(res, err);
-  }
+router.post('/uninstall', (req, res) => {
+  res.status(410).json({
+    success: false,
+    message: 'Skill uninstallation is replaced by PUT /api/skills/toggle'
+  });
 });
 
 /**
@@ -744,4 +828,5 @@ router.put('/:directory/file/*', async (req, res) => {
   }
 });
 
+router.createRouter = createRouter;
 module.exports = router;

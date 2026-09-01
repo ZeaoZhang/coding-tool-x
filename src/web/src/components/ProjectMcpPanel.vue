@@ -20,8 +20,8 @@
         </div>
         <n-space size="small">
           <n-button size="tiny" :loading="testingId === server.id" @click="handleTest(server)">测试</n-button>
-          <n-button size="tiny" @click="openEdit(server)">编辑</n-button>
-          <n-button size="tiny" type="error" secondary @click="handleRemove(server)">移除</n-button>
+          <n-button size="tiny" :disabled="server.external" @click="openEdit(server)">编辑</n-button>
+          <n-button size="tiny" type="error" secondary :disabled="server.external" @click="handleRemove(server)">移除</n-button>
         </n-space>
       </div>
     </div>
