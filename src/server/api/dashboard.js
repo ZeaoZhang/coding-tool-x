@@ -23,6 +23,27 @@ function safeRead(label, reader, fallback) {
   }
 }
 
+function safeText(value, fallback = '') {
+  const text = typeof value === 'string'
+    ? value
+    : typeof value === 'number'
+      ? String(value)
+      : fallback;
+  return text.length > 1024 ? text.slice(0, 1024) : text;
+}
+
+function safeRetryAfter(value) {
+  return typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
+    ? value
+    : undefined;
+}
+function safeCode(value) {
+  return typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
+    ? value
+    : undefined;
+}
+
+
 function resolveEnabledSources(uiConfig = {}, registry = getPlatformRegistry()) {
   const definitions = registry?.list?.() || [];
   const knownKeys = new Set(
@@ -52,13 +73,23 @@ async function readProxyStatus(source, runtime) {
     }
     return await driver.status();
   } catch (error) {
-    return {
-      status: 'failed',
+    const failure = {
+      status: typeof error?.status === 'string' ? safeText(error.status, 'failed') : 'failed',
       platform: source,
       capability: 'proxy',
       operation: 'status',
-      error: error.message
+      error: safeText(error && error.message ? error.message : error, 'proxy status failed')
     };
+    if (typeof error?.retryable === 'boolean') failure.retryable = error.retryable;
+    const retryAfter = safeRetryAfter(error?.retryAfter);
+    if (retryAfter !== undefined) {
+      failure.retryAfter = retryAfter;
+    }
+    const code = safeCode(error?.code);
+    if (code !== undefined) {
+      failure.code = code;
+    }
+    return failure;
   }
 }
 
