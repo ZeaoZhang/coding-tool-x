@@ -10,26 +10,23 @@ function readProjectFile(relativePath) {
 }
 
 describe('web log components source routing', () => {
-  test('ProxyLogs renders OpenCode and OMP streams without Claude fallback', () => {
+  test('ProxyLogs routes logs and statistics by the requested source', () => {
     const source = readProjectFile('src/web/src/components/ProxyLogs.vue');
 
-    expect(source).toContain("opencode: getLogs('opencode')");
-    expect(source).toContain("omp: getLogs('omp')");
-    expect(source).toContain("source === 'opencode' || source === 'omp'");
-    expect(source).not.toContain('|| logStreams.claude');
+    expect(source).toContain('const source = String(props.source ||');
+    expect(source).toContain('logsBySource.value[source]');
+    expect(source).toContain('getPlatformTodayStatistics(props.source)');
+    expect(source).not.toContain('logStreams.claude');
   });
 
-  test('dashboard log panels route by the requested platform source', () => {
+  test('dashboard log panels aggregate keyed platform sources', () => {
     const realtimePanel = readProjectFile('src/web/src/components/dashboard/RealtimeLogsPanel.vue');
     const channelColumn = readProjectFile('src/web/src/components/dashboard/ChannelColumn.vue');
 
-    expect(realtimePanel).toContain("const opencodeLogs = getLogs('opencode')");
-    expect(realtimePanel).toContain("const ompLogs = getLogs('omp')");
-    expect(realtimePanel).toContain('...opencodeLogs.value.map(normalizeLog)');
-    expect(realtimePanel).toContain('...ompLogs.value.map(normalizeLog)');
-    expect(realtimePanel).toContain("channelType: log.source || 'unknown'");
-
+    expect(realtimePanel).toContain('enabledKeys.value.flatMap');
+    expect(realtimePanel).toContain('(logsBySource.value[key] || [])');
     expect(channelColumn).toContain('getLogs(props.channelType)');
+    expect(channelColumn).toContain('supportsKnownRuntime()');
     expect(channelColumn).not.toContain('logStreams.claude');
   });
 });
