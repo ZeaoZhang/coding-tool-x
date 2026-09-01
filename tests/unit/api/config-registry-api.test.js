@@ -87,7 +87,7 @@ beforeEach(() => {
     })),
     togglePlatform: vi.fn((_type, _name, platform, enabled) => ({
       enabled: true,
-      platforms: { claude: true, codex: platform === 'codex' ? enabled : false, gemini: false, opencode: false, omp: platform === 'omp' ? enabled : false }
+      platforms: { claude: true, codex: platform === 'codex' ? enabled : false, gemini: false, opencode: false, omp: platform === 'omp' ? enabled : false, 'demo-cli': platform === 'demo-cli' ? enabled : false }
     }))
   };
 
@@ -110,6 +110,33 @@ beforeEach(() => {
       errors: [],
       warnings: ['warn']
     }))
+  };
+
+  const runtimePath = require.resolve('../../../src/platforms/runtime');
+  const platformRegistry = {
+    list: vi.fn((options = {}) => {
+      const builtIns = [
+        { key: 'claude' },
+        { key: 'codex' },
+        { key: 'gemini' },
+        { key: 'opencode' },
+        { key: 'omp' }
+      ];
+
+      if (options.enabledOnly) {
+        return builtIns;
+      }
+
+      return [...builtIns, { key: 'demo-cli', enabled: false }];
+    })
+  };
+  require.cache[runtimePath] = {
+    id: runtimePath,
+    filename: runtimePath,
+    loaded: true,
+    exports: {
+      getPlatformRegistry: () => platformRegistry
+    }
   };
 
   const registryPath = require.resolve('../../../src/server/services/config-registry-service');
@@ -145,7 +172,8 @@ afterEach(() => {
   [
     '../../../src/server/api/config-registry',
     '../../../src/server/services/config-registry-service',
-    '../../../src/server/services/config-sync-manager'
+    '../../../src/server/services/config-sync-manager',
+    '../../../src/platforms/runtime'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -222,9 +250,23 @@ describe('config-registry api import and toggle routes', () => {
 
     const enable = await request(app).put('/skills/demo-item/platform/omp', { enabled: true });
     const disable = await request(app).put('/skills/demo-item/platform/omp', { enabled: false });
+
+    expect(enable.status).toBe(200);
     expect(syncManager.syncToPlatform).toHaveBeenCalledWith('omp', 'skills', 'demo-item');
     expect(disable.status).toBe(200);
     expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('omp', 'skills', 'demo-item');
+  });
+
+  test('validates disabled registry platforms when toggling platform sync', async () => {
+    const app = buildApp();
+
+    const enable = await request(app).put('/skills/demo-item/platform/demo-cli', { enabled: true });
+    const disable = await request(app).put('/skills/demo-item/platform/demo-cli', { enabled: false });
+
+    expect(enable.status).toBe(200);
+    expect(disable.status).toBe(200);
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('demo-cli', 'skills', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('demo-cli', 'skills', 'demo-item');
   });
 
   test('syncs all registry items for a type', async () => {
