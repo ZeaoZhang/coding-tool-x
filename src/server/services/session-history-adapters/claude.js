@@ -7,6 +7,21 @@ const { NATIVE_PATHS } = require('../../../config/paths');
 
 const CLAUDE_PROJECTS_DIR = NATIVE_PATHS?.claude?.projects || '';
 
+function _asContentBlocks(content) {
+  if (Array.isArray(content)) return content;
+  return content && typeof content === 'object' ? [content] : [];
+}
+
+function _formatJsonBlock(value, fallback = '') {
+  if (typeof value === 'string') return value;
+  try {
+    const serialized = JSON.stringify(value, null, 2);
+    return serialized === undefined ? fallback : serialized;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 /**
  * Get Claude user-visible text from a message content block.
  * Shared with sessions.js API for display consistency.
@@ -16,12 +31,8 @@ function getClaudeUserText(content) {
     return content === 'Warmup' ? '' : content;
   }
 
-  if (!Array.isArray(content)) {
-    return '';
-  }
-
   const parts = [];
-  for (const item of content) {
+  for (const item of _asContentBlocks(content)) {
     if (item?.type === 'text' && item.text) {
       parts.push(item.text);
     } else if (item?.type === 'image') {
@@ -30,6 +41,49 @@ function getClaudeUserText(content) {
   }
 
   return parts.join('\n\n').trim();
+}
+
+function getClaudeToolResultText(content) {
+  const parts = [];
+  for (const item of _asContentBlocks(content)) {
+    if (item?.type !== 'tool_result') continue;
+    const resultContent = _formatJsonBlock(item.content, '');
+    if (resultContent) {
+      parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
+    }
+  }
+  return parts.join('\n\n').trim();
+}
+
+function getClaudeAssistantText(content) {
+  if (typeof content === 'string') {
+    return content === 'Warmup' ? '' : content;
+  }
+
+  const parts = [];
+  let subtype = null;
+  for (const item of _asContentBlocks(content)) {
+    if (item?.type === 'text' && item.text) {
+      parts.push(item.text);
+    } else if (item?.type === 'image') {
+      parts.push('[图片]');
+    } else if (item?.type === 'tool_use') {
+      subtype = 'tool_use';
+      const input = _formatJsonBlock(item.input, '{}');
+      parts.push(`**[调用工具: ${item.name || 'unknown'}]**\n\`\`\`json\n${input}\n\`\`\``);
+    } else if (item?.type === 'tool_result') {
+      subtype = subtype || 'tool_result';
+      const resultContent = _formatJsonBlock(item.content, '');
+      if (resultContent) {
+        parts.push(`**[工具结果]**\n\`\`\`\n${resultContent}\n\`\`\``);
+      }
+    } else if (item?.type === 'thinking') {
+      subtype = subtype || 'thinking';
+      if (item.thinking) parts.push(`**[思考]**\n${item.thinking}`);
+    }
+  }
+
+  return { content: parts.join('\n\n').trim(), subtype };
 }
 
 /**
@@ -106,7 +160,6 @@ async function parse(descriptor) {
   let updatedAt = null;
   let usageJson = null;
   const extra = {};
-
   let userMessageNumber = 0;
 
   const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
@@ -122,99 +175,108 @@ async function parse(descriptor) {
       continue;
     }
 
-    // Extract metadata
+    const messagePayload = json.message && typeof json.message === 'object' && !Array.isArray(json.message)
+      ? json.message
+      : {};
+    const recordTimestamp = json.timestamp || messagePayload.timestamp || null;
+    const timestampValue = recordTimestamp ? new Date(recordTimestamp).getTime() : null;
+    const timestamp = Number.isFinite(timestampValue) ? timestampValue : null;
+    const recordModel = json.model || messagePayload.model || null;
+    const recordProvider = json.provider || messagePayload.provider || null;
+    const recordUsage = json.usage || messagePayload.usage || null;
+
     if (json.type === 'metadata' || json.type === 'summary') {
-      if (json.cwd) extra.cwd = json.cwd;
-      if (json.gitBranch) gitBranch = json.gitBranch;
-      if (json.timestamp && !startedAt) {
-        startedAt = new Date(json.timestamp).getTime();
+      if (json.cwd || messagePayload.cwd) extra.cwd = json.cwd || messagePayload.cwd;
+      if (json.gitBranch || messagePayload.gitBranch) {
+        gitBranch = json.gitBranch || messagePayload.gitBranch;
       }
-      if (json.model) {
-        model = json.model;
-        provider = json.provider || null;
-      }
-      if (json.usage) usageJson = JSON.stringify(json.usage);
+      if (json.summary) extra.summary = json.summary;
+      if (timestamp !== null && startedAt === null) startedAt = timestamp;
+      if (recordModel) model = recordModel;
+      if (recordProvider) provider = recordProvider;
+      if (recordUsage) usageJson = JSON.stringify(recordUsage);
       continue;
     }
 
-    // Determine role
-    let role = json.role;
-    if (!role) {
-      if (json.type === 'user' || json.type === 'human') role = 'user';
-      else if (json.type === 'assistant' || json.type === 'ai') role = 'assistant';
-      else if (json.type === 'system') role = 'system';
-      else role = json.type || 'unknown';
-    }
+    const role = json.role
+      || messagePayload.role
+      || (json.type === 'user' || json.type === 'human'
+        ? 'user'
+        : json.type === 'assistant' || json.type === 'ai'
+          ? 'assistant'
+          : null);
+    if (role !== 'user' && role !== 'assistant') continue;
 
-    // Extract message content
-    let content = '';
-    let subtype = null;
+    const rawContent = json.content !== undefined && json.content !== null && json.content !== ''
+      ? json.content
+      : messagePayload.content !== undefined
+        ? messagePayload.content
+        : typeof json.message === 'string' ? json.message : '';
+    const messageId = messagePayload.id || json.uuid || json.id || null;
+
+    if (timestamp !== null) {
+      if (startedAt === null) startedAt = timestamp;
+      updatedAt = timestamp;
+    }
+    if (recordModel) model = recordModel;
+    if (recordProvider) provider = recordProvider;
+    if (recordUsage) usageJson = JSON.stringify(recordUsage);
 
     if (role === 'user') {
-      content = getClaudeUserText(json.content || json.message || '');
-      if (!content && json.type === 'Warmup') {
-        content = ''; // Warmup excluded
+      const content = getClaudeUserText(rawContent);
+      if (content) {
+        userMessageNumber++;
+        if (!firstMessage) firstMessage = content;
+        messages.push({
+          messageId,
+          role,
+          type: json.type || role,
+          subtype: null,
+          content,
+          timestamp,
+          model: recordModel || model || null,
+          provider: recordProvider || provider || null,
+          userMessageNumber,
+          extraJson: null
+        });
       }
-    } else if (role === 'assistant') {
-      if (Array.isArray(json.content)) {
-        const parts = [];
-        for (const block of json.content) {
-          if (block.type === 'text' && block.text) {
-            parts.push(block.text);
-          } else if (block.type === 'tool_use') {
-            subtype = 'tool_use';
-            parts.push(`[调用工具: ${block.name || 'unknown'}]`);
-          } else if (block.type === 'tool_result') {
-            subtype = subtype || 'tool_result';
-            if (typeof block.content === 'string') {
-              parts.push(block.content);
-            }
-          } else if (block.type === 'thinking') {
-            subtype = subtype || 'thinking';
-            parts.push(block.thinking || '');
-          }
-        }
-        content = parts.join('\n').trim();
-      } else if (typeof json.content === 'string') {
-        content = json.content;
+
+      const toolResultContent = getClaudeToolResultText(rawContent);
+      if (toolResultContent) {
+        messages.push({
+          messageId: messageId ? `${messageId}-tool-result` : null,
+          role: 'assistant',
+          type: 'assistant',
+          subtype: 'tool_result',
+          content: toolResultContent,
+          timestamp,
+          model: recordModel || model || null,
+          provider: recordProvider || provider || null,
+          userMessageNumber: null,
+          extraJson: null
+        });
       }
-    } else {
-      content = typeof json.content === 'string' ? json.content : (typeof json.message === 'string' ? json.message : '');
+      continue;
     }
 
-    // Build message
-    const msg = {
-      messageId: json.uuid || json.id || null,
+    const assistant = getClaudeAssistantText(rawContent);
+    if (!assistant.content) continue;
+    messages.push({
+      messageId,
       role,
       type: json.type || role,
-      subtype,
-      content,
-      timestamp: json.timestamp ? new Date(json.timestamp).getTime() : null,
-      model: json.model || model || null,
-      provider: json.provider || provider || null,
+      subtype: assistant.subtype,
+      content: assistant.content,
+      timestamp,
+      model: recordModel || model || null,
+      provider: recordProvider || provider || null,
+      userMessageNumber: null,
       extraJson: null
-    };
-
-    if (role === 'user') {
-      userMessageNumber++;
-      msg.userMessageNumber = userMessageNumber;
-      if (!firstMessage && content) {
-        firstMessage = content;
-      }
-    } else {
-      msg.userMessageNumber = null;
-    }
-
-    messages.push(msg);
+    });
   }
 
   rl.close();
   stream.destroy();
-
-  if (messages.length > 0) {
-    const lastTs = messages[messages.length - 1].timestamp;
-    if (lastTs) updatedAt = lastTs;
-  }
 
   const session = {
     sessionId,
@@ -231,7 +293,13 @@ async function parse(descriptor) {
     extraJson: JSON.stringify(extra)
   };
 
-  return { session, messages: messages.map(m => ({ ...m, extraJson: m.extraJson ? JSON.stringify(m.extraJson) : null })) };
+  return {
+    session,
+    messages: messages.map((message) => ({
+      ...message,
+      extraJson: message.extraJson ? JSON.stringify(message.extraJson) : null
+    }))
+  };
 }
 
 module.exports = { inventory, parse, getClaudeUserText };
