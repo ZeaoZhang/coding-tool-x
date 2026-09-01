@@ -7,9 +7,12 @@ function createDriver({ requireImpl, ...context } = {}) {
   const manager = typeof moduleExports === 'function' ? new moduleExports() : new moduleExports.ConfigSyncManager();
   const invoke = (operation, args) => {
     try {
-      const value = manager[operation === 'sync' ? 'syncToPlatform' : 'removeFromPlatform']('claude', ...args);
-      return value && typeof value.then === 'function' ? value.then(data => ok('claude', 'resourceSync', operation, data)).catch(error => failed('claude', 'resourceSync', operation, error)) : ok('claude', 'resourceSync', operation, value);
-    } catch (error) { return failed('claude', 'resourceSync', operation, error); }
+      const method = operation === 'sync' ? 'syncToClaude' : 'removeFromClaude';
+      const value = manager[method](...args);
+      return value && typeof value.then === 'function' ? value.then(data => ok('claude', 'resourceSync', operation, data)) : ok('claude', 'resourceSync', operation, value);
+    } catch (error) {
+      return failed('claude', 'resourceSync', operation, error);
+    }
   };
   return { platform: 'claude', capability: 'resourceSync', ...context, sync: (...args) => invoke('sync', args), remove: (...args) => invoke('remove', args) };
 }

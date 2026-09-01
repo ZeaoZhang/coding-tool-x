@@ -7,9 +7,12 @@ function createDriver({ requireImpl, ...context } = {}) {
   const manager = typeof moduleExports === 'function' ? new moduleExports() : new moduleExports.ConfigSyncManager();
   const invoke = (operation, args) => {
     try {
-      const value = manager[operation === 'sync' ? 'syncToPlatform' : 'removeFromPlatform']('opencode', ...args);
-      return value && typeof value.then === 'function' ? value.then(data => ok('opencode', 'resourceSync', operation, data)).catch(error => failed('opencode', 'resourceSync', operation, error)) : ok('opencode', 'resourceSync', operation, value);
-    } catch (error) { return failed('opencode', 'resourceSync', operation, error); }
+      const method = operation === 'sync' ? 'syncToOpenCode' : 'removeFromOpenCode';
+      const value = manager[method](...args);
+      return value && typeof value.then === 'function' ? value.then(data => ok('opencode', 'resourceSync', operation, data)) : ok('opencode', 'resourceSync', operation, value);
+    } catch (error) {
+      return failed('opencode', 'resourceSync', operation, error);
+    }
   };
   return { platform: 'opencode', capability: 'resourceSync', ...context, sync: (...args) => invoke('sync', args), remove: (...args) => invoke('remove', args) };
 }

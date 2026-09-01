@@ -17,7 +17,7 @@ const CODEX_PATH    = require.resolve('../../../src/server/services/codex-channe
 const GEMINI_PATH   = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_PATH = require.resolve('../../../src/server/services/opencode-channels');
 const OMP_PATH      = require.resolve('../../../src/server/services/omp-channels');
-const HEALTH_PATH   = require.resolve('../../../src/server/services/channel-health');
+const RUNTIME_PATH   = require.resolve('../../../src/platforms/runtime');
 const SCHEDULER_PATH = require.resolve('../../../src/server/services/channel-scheduler');
 
 // Stable vi.fn() stubs – recreated in beforeEach so each test starts fresh
@@ -47,9 +47,22 @@ function injectStubs() {
   getOpenCodeChannels = vi.fn(() => ({ channels: [] }));
   getOmpChannels      = vi.fn(() => ({ channels: [] }));
   isChannelAvailable    = vi.fn(() => true);
-  getChannelHealthStatus = vi.fn(() => ({ available: true }));
   setOnChannelFrozen    = vi.fn();
   setChannelListProvider = vi.fn();
+
+  const channelDrivers = {
+    claude: { list: () => ({ status: 'ok', data: getAllChannels() }) },
+    codex: { list: () => ({ status: 'ok', data: getCodexChannels().channels || [] }) },
+    gemini: { list: () => ({ status: 'ok', data: getGeminiChannels().channels || [] }) },
+    opencode: { list: () => ({ status: 'ok', data: getOpenCodeChannels().channels || [] }) },
+    omp: { list: () => ({ status: 'ok', data: getOmpChannels().channels || [] }) }
+  };
+  require.cache[RUNTIME_PATH] = {
+    id: RUNTIME_PATH,
+    filename: RUNTIME_PATH,
+    loaded: true,
+    exports: { getPlatformRuntime: () => ({ getDriver: source => channelDrivers[source] }) }
+  };
 
   require.cache[CHANNELS_PATH]  = { id: CHANNELS_PATH,  filename: CHANNELS_PATH,  loaded: true, exports: { getAllChannels } };
   require.cache[CODEX_PATH]     = { id: CODEX_PATH,     filename: CODEX_PATH,     loaded: true, exports: { getChannels: getCodexChannels } };
