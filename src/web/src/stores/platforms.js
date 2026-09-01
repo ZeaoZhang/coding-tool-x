@@ -63,7 +63,9 @@ const definePlatformStore = defineStore('platforms', {
     },
 
     hasCapability(key, capability) {
-      return this.get(key)?.capabilities?.[capability] === true
+      const platform = this.get(key)
+      return platform?.capabilities?.[capability] === true
+        || platform?.resourceTypes?.[capability] === true
     }
   }
 })

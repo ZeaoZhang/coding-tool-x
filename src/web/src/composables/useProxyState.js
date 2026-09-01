@@ -8,10 +8,8 @@ import { useEnabledCliPlatforms } from './useEnabledCliPlatforms'
  */
 export function useProxyState() {
   const store = useGlobalStore()
-  const { enabledPlatforms } = useEnabledCliPlatforms()
-  const proxyPlatforms = computed(() => enabledPlatforms.value.filter(platform => (
-    platform.capabilities?.proxy === true
-  )))
+  const { byCapability } = useEnabledCliPlatforms()
+  const proxyPlatforms = computed(() => byCapability('proxy'))
 
   async function checkStatus(platform) {
     await store.initializeState()
