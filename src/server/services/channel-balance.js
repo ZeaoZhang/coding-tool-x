@@ -6,6 +6,7 @@ const path = require('path');
 const { URL } = require('url');
 const { PATHS } = require('../../config/paths');
 const { loadUIConfig } = require('./ui-config');
+const { getPlatformRuntime } = require('../../platforms/runtime');
 const {
   getSnapshot,
   refreshSnapshot,
@@ -1622,24 +1623,16 @@ function clearChannelBalanceCache(source, channel) {
     writePersistedStrategyCache();
   }
 }
-
 function getChannelsForSource(source) {
-  if (source === 'claude') {
-    return require('./channels').getAllChannels() || [];
+  try {
+    const driver = getPlatformRuntime().getDriver(source, 'channels');
+    if (!driver) return [];
+    const value = typeof driver.list === 'function' ? driver.list() : driver.getChannels?.();
+    if (value?.status === 'ok') return value.data?.channels || value.data || [];
+    return Array.isArray(value) ? value : value?.channels || [];
+  } catch (_) {
+    return [];
   }
-  if (source === 'codex') {
-    return require('./codex-channels').getChannels().channels || [];
-  }
-  if (source === 'gemini') {
-    return require('./gemini-channels').getChannels().channels || [];
-  }
-  if (source === 'opencode') {
-    return require('./opencode-channels').getChannels().channels || [];
-  }
-  if (source === 'omp') {
-    return require('./omp-channels').getChannels().channels || [];
-  }
-  return [];
 }
 
 function getEnabledBalanceChannels(source) {
