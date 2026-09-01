@@ -198,7 +198,7 @@ const { byCapability } = useEnabledCliPlatforms()
 const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  return String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
+  return String(props.platform || getRoutePlatform(route) || 'claude').trim().toLowerCase()
 })
 
 const scopeOptions = computed(() => ({
