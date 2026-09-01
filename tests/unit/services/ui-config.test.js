@@ -213,6 +213,20 @@ describe('save and update UI config', () => {
     expect(result).not.toHaveProperty('customCliPlatforms');
     expect(JSON.parse(fs.readFileSync(testConfigFile, 'utf8'))).toEqual(result);
   });
+
+  test('merges partial saves and preserves an explicitly empty selection', () => {
+    fs.writeFileSync(testConfigFile, JSON.stringify({
+      theme: 'dark',
+      panelVisibility: { showChannels: false, showLogs: false },
+      enabledCliPlatforms: ['claude']
+    }));
+
+    const result = saveUIConfig({ enabledCliPlatforms: [] });
+
+    expect(result.theme).toBe('dark');
+    expect(result.panelVisibility).toEqual({ showChannels: false, showLogs: false });
+    expect(result.enabledCliPlatforms).toEqual([]);
+  });
   test('omits unknown top-level keys from canonical output', () => {
     const result = saveUIConfig({ theme: 'dark', enabledCliPlatforms: ['claude'], injected: 'discard' });
     expect(result).not.toHaveProperty('injected');

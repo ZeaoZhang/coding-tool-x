@@ -169,7 +169,9 @@ function loadUIConfig() {
 
 function saveUIConfig(config) {
   try {
-    const normalizedConfig = normalizeUIConfig(config);
+    const currentConfig = loadUIConfig();
+    const source = config && typeof config === 'object' && !Array.isArray(config) ? config : {};
+    const normalizedConfig = normalizeUIConfig({ ...currentConfig, ...source });
     writeCanonicalConfig(normalizedConfig);
     uiConfigCache = clone(normalizedConfig);
     cacheInitialized = true;
