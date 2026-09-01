@@ -14,13 +14,20 @@ const path = require('path');
 /** @type {number} Maximum time a source inventory is considered fresh */
 const INDEX_INVENTORY_TTL_MS = 30000;
 
-/** @type {number} Max wait for stale-ok on a cold source */
-const COLD_STALE_WAIT_MS = 2500;
 
 /** @type {number} Hard timeout for worker processes */
 const WORKER_TIMEOUT_MS = 180000;
 
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
+const SESSION_PARSER_VERSIONS = Object.freeze({
+  claude: 2,
+  codex: 1,
+  gemini: 1,
+  omp: 1
+});
+function _parserVersionFor(source) {
+  return SESSION_PARSER_VERSIONS[source] || 1;
+}
 function _isUsableRuntime(runtime) {
   return !!runtime && typeof runtime === 'object' && typeof runtime.getDriver === 'function';
 }
@@ -57,6 +64,7 @@ CREATE TABLE IF NOT EXISTS session_file (
   message_count        INTEGER NOT NULL DEFAULT 0,
   usage_json           TEXT,
   extra_json           TEXT,
+  parser_version       INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (source, file_path),
   UNIQUE (source, session_id)
 );
@@ -359,10 +367,16 @@ function createSessionHistoryIndex(opts = {}) {
     }
     return _db;
   }
+  function _hasParserMigrationPending(source) {
+    const row = _getDb().prepare(
+      'SELECT 1 AS pending FROM session_file WHERE source = ? AND parser_version <> ? LIMIT 1'
+    ).get(source, _parserVersionFor(source));
+    return Boolean(row);
+  }
+
   /**
-   * Check only the persisted inventory timestamp. This deliberately does not
-   * touch the source's files: the worker remains responsible for inventory
-   * and file consistency checks when the timestamp is stale.
+   * Check only the persisted inventory timestamp and parser format. This
+   * deliberately does not touch source files; inventory owns file checks.
    *
    * @param {string} source
    * @returns {boolean}
@@ -371,10 +385,13 @@ function createSessionHistoryIndex(opts = {}) {
     const row = _getDb().prepare(
       'SELECT last_inventory_ms FROM source_state WHERE source = ?'
     ).get(source);
-    return row?.last_inventory_ms
-      ? Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
-      : false;
+    return Boolean(
+      row?.last_inventory_ms
+      && Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
+      && !_hasParserMigrationPending(source)
+    );
   }
+
   function _hasIndexedData(source) {
     const row = _getDb().prepare(
       'SELECT 1 AS indexed FROM session_file WHERE source = ? LIMIT 1'
@@ -382,11 +399,17 @@ function createSessionHistoryIndex(opts = {}) {
     return Boolean(row);
   }
 
-
+  function _hasUsableIndexedData(source) {
+    return _hasIndexedData(source) && !_hasParserMigrationPending(source);
+  }
 
   function _initSchema(db) {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec(SCHEMA_SQL);
+    const columns = db.prepare('PRAGMA table_info(session_file)').all();
+    if (!columns.some((column) => column.name === 'parser_version')) {
+      db.exec('ALTER TABLE session_file ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   function _initFts(db) {
@@ -415,14 +438,10 @@ function createSessionHistoryIndex(opts = {}) {
       if (consistency === 'complete') {
         return _inflight.get(key);
       }
-      const inflight = _inflight.get(key);
-      if (_hasIndexedData(source)) {
+      if (_hasUsableIndexedData(source)) {
         return;
       }
-      const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), COLD_STALE_WAIT_MS));
-      const result = await Promise.race([inflight, timeout]);
-      if (result === 'timeout') return;
-      return result;
+      return _inflight.get(key);
     }
 
     const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
@@ -436,24 +455,15 @@ function createSessionHistoryIndex(opts = {}) {
       }
     }).catch(() => {});
 
-    if (consistency === 'stale-ok') {
-      if (_hasIndexedData(source)) {
-        return;
-      }
-      const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), COLD_STALE_WAIT_MS));
-      const result = await Promise.race([promise, timeout]);
-      if (result === 'timeout') {
-        return;
-      }
+    if (consistency === 'stale-ok' && _hasUsableIndexedData(source)) {
+      return;
     }
 
     await promise;
   }
-
   function _isTypedFailureResult(result) {
     return _isTypedSessionsResult(result);
   }
-
   function _typedFailureToError(result) {
     const fallbackMessage = result.status === 'unsupported'
       ? `unsupported ${result.capability}`
@@ -482,11 +492,8 @@ function createSessionHistoryIndex(opts = {}) {
     let stateToRecord = null;
 
     try {
-      if (!force) {
-        const row = db.prepare('SELECT last_inventory_ms FROM source_state WHERE source = ?').get(source);
-        if (row && row.last_inventory_ms && (Date.now() - row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS) {
-          return;
-        }
+      if (!force && _isSourceFresh(source)) {
+        return;
       }
 
       let adapter = null;
@@ -521,8 +528,13 @@ function createSessionHistoryIndex(opts = {}) {
       }
 
       const indexedFiles = new Map();
-      for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id FROM session_file WHERE source = ?').all(source)) {
-        indexedFiles.set(row.file_path, { size: row.size, mtime_ms: row.mtime_ms, sessionId: row.session_id });
+      for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id, parser_version FROM session_file WHERE source = ?').all(source)) {
+        indexedFiles.set(row.file_path, {
+          size: row.size,
+          mtime_ms: row.mtime_ms,
+          sessionId: row.session_id,
+          parserVersion: row.parser_version
+        });
       }
 
       const winnersBySessionId = new Map();
@@ -540,7 +552,10 @@ function createSessionHistoryIndex(opts = {}) {
       for (const d of winnersBySessionId.values()) {
         activePaths.add(d.filePath);
         const idx = indexedFiles.get(d.filePath);
-        if (!idx || idx.size !== d.size || idx.mtime_ms !== d.mtimeMs) {
+        if (!idx
+          || idx.size !== d.size
+          || idx.mtime_ms !== d.mtimeMs
+          || idx.parserVersion !== _parserVersionFor(source)) {
           toParse.push(d);
         }
       }
@@ -618,8 +633,9 @@ function createSessionHistoryIndex(opts = {}) {
           source, file_path, size, mtime_ms, session_id,
           project_name, project_display_name, project_full_path,
           first_message, git_branch, provider, model,
-          started_at, updated_at, message_count, usage_json, extra_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          started_at, updated_at, message_count, usage_json, extra_json,
+          parser_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const insertMessage = db.prepare(`
         INSERT INTO session_message(
@@ -686,7 +702,8 @@ function createSessionHistoryIndex(opts = {}) {
       session.updatedAt || null,
       messages.length,
       session.usageJson || null,
-      session.extraJson || null
+      session.extraJson || null,
+      _parserVersionFor(source)
     );
 
     let ordinal = 0;
