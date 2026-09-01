@@ -14,7 +14,8 @@ function readChannels(source = 'claude') {
         : null;
     if (!list) return [];
     const result = list();
-    return Array.isArray(result) ? result : (Array.isArray(result?.channels) ? result.channels : []);
+    const payload = result?.status === 'ok' ? result.data : result;
+    return Array.isArray(payload) ? payload : (Array.isArray(payload?.channels) ? payload.channels : []);
   } catch (_) {
     return [];
   }
