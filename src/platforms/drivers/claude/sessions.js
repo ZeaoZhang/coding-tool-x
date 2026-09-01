@@ -7,6 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'claude',
     capability: 'sessions',
+    preservePayloadUpdatedAt: true,
     servicePath: '../../server/services/sessions',
     localServicePath: '../../../server/services/sessions',
     adapterLocalPath: '../../../server/services/session-history-adapters/claude',

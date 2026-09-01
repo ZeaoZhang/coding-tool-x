@@ -29,14 +29,7 @@ function createState() {
     queue: []
   };
 }
-
-const schedulerStates = {
-  claude: createState(),
-  codex: createState(),
-  gemini: createState(),
-  opencode: createState(),
-  omp: createState()
-};
+const schedulerStates = Object.create(null);
 
 function getState(source = 'claude') {
   if (!schedulerStates[source]) {

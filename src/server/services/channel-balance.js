@@ -6,7 +6,7 @@ const path = require('path');
 const { URL } = require('url');
 const { PATHS } = require('../../config/paths');
 const { loadUIConfig } = require('./ui-config');
-const { getPlatformRuntime } = require('../../platforms/runtime');
+const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
 const {
   getSnapshot,
   refreshSnapshot,
@@ -19,7 +19,6 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const QUOTA_UNIT = 500000;
 const VELOERA_QUOTA_UNIT = 1000000;
 const NEWCLI_QUOTA_UNIT = 1000000;
-const VALID_SOURCES = new Set(['claude', 'codex', 'gemini', 'opencode', 'omp']);
 const GATEWAY_PATH_SEGMENTS = new Set(['openai', 'anthropic', 'claude', 'gemini', 'codex']);
 const HUB_PLATFORMS = new Set(['new-api', 'one-api', 'one-hub', 'done-hub', 'veloera', 'anyrouter', 'aihubmix']);
 const UNSUPPORTED_BALANCE_PLATFORMS = new Set(['dashscope', 'modelscope']);
@@ -1649,7 +1648,7 @@ function isBalanceDisplayEnabled() {
 
 function validateSource(source) {
   const normalized = String(source || '').trim().toLowerCase();
-  if (!VALID_SOURCES.has(normalized)) {
+  if (!getPlatformRegistry().resolve(normalized)) {
     throw new Error('Invalid channel balance source');
   }
   return normalized;

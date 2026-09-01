@@ -562,7 +562,7 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
-function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = requireImpl === require, ...context } = {}) {
+function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = false, ...context } = {}) {
   if (capability === 'resourceSync') {
     return createResourceSyncDriver({ platform, capability, requireImpl });
   }
@@ -633,7 +633,7 @@ function registerLegacyDrivers(driverRegistry, { requireImpl = require } = {}) {
       ...context,
       platform,
       requireImpl,
-      useBuiltInDrivers: true
+      useBuiltInDrivers: requireImpl === require
     }));
   }
   return driverRegistry;
