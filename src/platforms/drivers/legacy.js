@@ -4,7 +4,6 @@ const MODULE_PATHS = Object.freeze({
   claude: Object.freeze({
     projects: '../../server/services/sessions',
     sessions: '../../server/services/sessions',
-    channels: '../../server/services/channels',
     proxy: '../../server/proxy-server',
     statistics: '../../server/services/claude-statistics-service',
     nativeConfig: '../../server/services/settings-manager',
@@ -14,7 +13,6 @@ const MODULE_PATHS = Object.freeze({
   codex: Object.freeze({
     projects: '../../server/services/codex-sessions',
     sessions: '../../server/services/codex-sessions',
-    channels: '../../server/services/codex-channels',
     proxy: '../../server/codex-proxy-server',
     statistics: '../../server/services/codex-statistics-service',
     nativeConfig: '../../server/services/codex-settings-manager',
@@ -24,7 +22,6 @@ const MODULE_PATHS = Object.freeze({
   gemini: Object.freeze({
     projects: '../../server/services/gemini-sessions',
     sessions: '../../server/services/gemini-sessions',
-    channels: '../../server/services/gemini-channels',
     proxy: '../../server/gemini-proxy-server',
     statistics: '../../server/services/gemini-statistics-service',
     nativeConfig: '../../server/services/gemini-settings-manager',
@@ -34,7 +31,6 @@ const MODULE_PATHS = Object.freeze({
   opencode: Object.freeze({
     projects: '../../server/services/opencode-sessions',
     sessions: '../../server/services/opencode-sessions',
-    channels: '../../server/services/opencode-channels',
     proxy: '../../server/opencode-proxy-server',
     statistics: '../../server/services/opencode-statistics-service',
     nativeConfig: '../../server/services/opencode-settings-manager',
@@ -44,7 +40,6 @@ const MODULE_PATHS = Object.freeze({
   omp: Object.freeze({
     projects: '../../server/services/omp-sessions',
     sessions: '../../server/services/omp-sessions',
-    channels: '../../server/services/omp-channels',
     proxy: '../../server/omp-proxy-server',
     statistics: '../../server/services/omp-statistics-service',
     mcp: '../../server/services/mcp-service'
@@ -291,16 +286,62 @@ function invokeExport(loadModule, exportName, args, fallback) {
   return fallback();
 }
 
-function createChannelsDriver({ platform, capability, requireImpl }) {
-  const loadModule = createModuleLoader({ platform, capability, requireImpl });
+function createChannelsDriver({ platform, capability, requireImpl, ...context }) {
+  const legacyPaths = {
+    claude: '../../server/services/channels',
+    codex: '../../server/services/codex-channels',
+    gemini: '../../server/services/gemini-channels',
+    opencode: '../../server/services/opencode-channels',
+    omp: '../../server/services/omp-channels'
+  };
+  const modulePath = requireImpl === require
+    ? `./${platform}/channels`
+    : legacyPaths[platform];
+  let loaded = false;
+  let moduleExports;
+  const loadModule = () => {
+    if (!loaded) {
+      moduleExports = modulePath ? requireImpl(modulePath) : null;
+      loaded = true;
+    }
+    return moduleExports;
+  };
+
+  if (requireImpl === require) {
+    const driverModule = loadModule();
+    if (typeof driverModule?.createDriver === 'function') {
+      const builtIn = driverModule.createDriver({ ...context, platform, capability, requireImpl });
+      const unwrap = (operation, value) => {
+        if (!value || typeof value !== 'object' || typeof value.status !== 'string') return value;
+        return value.status === 'ok'
+          ? operation === 'list' ? value.data.channels : value.data
+          : value;
+      };
+      const driver = { platform, capability };
+      for (const [operation, method] of Object.entries({
+        list: 'list',
+        create: 'create',
+        update: 'update',
+        remove: 'remove',
+        sync: 'syncCurrent'
+      })) {
+        driver[operation] = (...args) => {
+          const value = builtIn[method](...args);
+          return value && typeof value.then === 'function'
+            ? value.then(result => unwrap(operation, result))
+            : unwrap(operation, value);
+        };
+      }
+      return driver;
+    }
+  }
+
   const exportNames = CHANNEL_EXPORTS[platform];
   const driver = { platform, capability };
-
   driver.list = (...args) => {
     const result = invokeExport(loadModule, exportNames.list, args, () => unsupported(platform, capability, 'list'));
     return platform !== 'claude' && result && Array.isArray(result.channels) ? result.channels : result;
   };
-
   for (const operation of ['create', 'update', 'remove', 'sync', 'reset']) {
     driver[operation] = (...args) => invokeExport(
       loadModule,
@@ -309,7 +350,6 @@ function createChannelsDriver({ platform, capability, requireImpl }) {
       () => unsupported(platform, capability, operation)
     );
   }
-
   return driver;
 }
 
@@ -519,20 +559,20 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
-function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {} } = {}) {
+function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, ...context } = {}) {
   if (capability === 'resourceSync') {
     return createResourceSyncDriver({ platform, capability, requireImpl });
   }
   if ((capability === 'mcp' || capability === 'prompts') && MODULE_PATHS[platform]?.[capability]) {
     return createLegacyFileDriver({ platform, capability, requireImpl });
   }
+  if (capability === 'channels') {
+    return createChannelsDriver({ ...context, platform, capability, requireImpl, manifest });
+  }
   if (!MODULE_PATHS[platform] || !MODULE_PATHS[platform][capability]) {
     return { status: 'unsupported', platform, capability };
   }
 
-  if (capability === 'channels') {
-    return createChannelsDriver({ platform, capability, requireImpl });
-  }
   if (capability === 'proxy') {
     return createProxyDriver({ platform, capability, requireImpl, manifest });
   }
