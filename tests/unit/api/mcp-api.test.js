@@ -143,6 +143,47 @@ describe('GET /servers', () => {
   });
 });
 
+test('redacts complete MCP secrets from server responses', async () => {
+  mockService.getAllServers.mockReturnValue({
+    github: {
+      id: 'github',
+      name: 'GitHub',
+      server: {
+        type: 'stdio',
+        command: 'node',
+        env: { TOKEN: 'secret-value' },
+        headers: { Authorization: 'Bearer secret-value' }
+      }
+    }
+  });
+
+  const res = await request(buildApp()).get('/servers');
+
+  expect(res.status).toBe(200);
+  expect(res.body.servers.github.hasSecret).toBe(true);
+  expect(JSON.stringify(res.body)).not.toContain('secret-value');
+});
+
+test('redacts MCP URL credentials and sensitive query values', async () => {
+  mockService.getAllServers.mockReturnValue({
+    remote: {
+      id: 'remote',
+      server: {
+        type: 'streamable_http',
+        url: 'https://user:password@example.com/mcp?token=secret-value&mode=read'
+      }
+    }
+  })
+
+  const res = await request(buildApp()).get('/servers')
+
+  expect(res.status).toBe(200)
+  expect(res.body.servers.remote.hasSecret).toBe(true)
+  expect(JSON.stringify(res.body)).not.toContain('password@example')
+  expect(JSON.stringify(res.body)).not.toContain('secret-value')
+  expect(res.body.servers.remote.server.url).toContain('mode=read')
+})
+
 describe('GET /servers/:id', () => {
   test('returns 404 when server does not exist', async () => {
     const res = await request(buildApp()).get('/servers/missing');
@@ -325,6 +366,18 @@ describe('POST /servers/:id/test', () => {
     expect(res.body.success).toBe(false);
     expect(res.body.hint).toEqual({ title: 'Install uvx' });
   });
+
+  test('returns forbidden without updating status when effective control disables test', async () => {
+    const error = new Error('MCP server is disabled by the effective control policy');
+    error.code = 'MCP_DISABLED';
+    mockService.testServer.mockRejectedValue(error);
+
+    const res = await request(buildApp()).post('/servers/fetch/test', {});
+
+    expect(res.status).toBe(403);
+    expect(res.body.success).toBe(false);
+    expect(mockService.updateServerStatus).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /servers/order', () => {
@@ -341,6 +394,36 @@ describe('POST /servers/order', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(mockService.updateServerOrder).toHaveBeenCalledWith(['fetch']);
+  });
+
+  test('redacts server specs returned after reordering', async () => {
+    mockService.updateServerOrder.mockReturnValue({
+      fetch: {
+        id: 'fetch',
+        server: {
+          type: 'stdio',
+          env: { TOKEN: 'secret-token' },
+          url: 'https://user:pass@example.com/mcp?token=query-secret'
+        }
+      }
+    });
+
+    const res = await request(buildApp()).post('/servers/order', { serverIds: ['fetch'] });
+
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(res.body)).not.toContain('secret-token');
+    expect(JSON.stringify(res.body)).not.toContain('user:pass');
+  });
+
+  test('returns a client error for invalid server IDs', async () => {
+    mockService.updateServerOrder.mockImplementation(() => {
+      throw new Error('Invalid MCP server ID');
+    });
+
+    const res = await request(buildApp()).post('/servers/order', { serverIds: ['__proto__'] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
   });
 });
 
@@ -386,7 +469,7 @@ describe('tool routes', () => {
     mockService.getServerTools.mockResolvedValue({
       status: 'error',
       error: 'failed to fetch',
-      hint: { title: 'Install tool' },
+      hint: { title: 'Install tool', auth: 'hint-secret', command: 'node --token hint-token' },
       duration: 22
     });
 
@@ -395,6 +478,8 @@ describe('tool routes', () => {
     expect(res.status).toBe(502);
     expect(res.body.success).toBe(false);
     expect(res.body.tools).toEqual([]);
+    expect(res.body.hint.auth).toBe('[REDACTED]');
+    expect(res.body.hint.command).toContain('[REDACTED]');
   });
 
   test('POST /servers/:id/tools/test validates toolName', async () => {

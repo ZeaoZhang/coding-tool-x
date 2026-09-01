@@ -5,6 +5,107 @@
 const express = require('express');
 const router = express.Router();
 const mcpService = require('../services/mcp-service');
+const { redactSecrets } = require('../services/project-config-adapters/shared');
+
+const SENSITIVE_URL_KEY = /^(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)$/i;
+
+function hasSensitiveUrl(value) {
+  if (typeof value !== 'string') return false;
+  try {
+    const parsed = new URL(value);
+    return Boolean(
+      parsed.username
+      || parsed.password
+      || [...parsed.searchParams.keys()].some(key => SENSITIVE_URL_KEY.test(key))
+    );
+  } catch {
+    return /\/\/[^/@\s:]+:[^@/\s]+@|[?&](?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)=/i.test(value);
+  }
+}
+
+function sanitizeMcpUrl(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    const parsed = new URL(value);
+    parsed.username = '';
+    parsed.password = '';
+    for (const key of parsed.searchParams.keys()) {
+      if (SENSITIVE_URL_KEY.test(key)) parsed.searchParams.set(key, '[REDACTED]');
+    }
+    return parsed.toString();
+  } catch {
+    return value
+      .replace(/\/\/[^/@\s:]+:[^@/\s]+@/g, '//[REDACTED]@')
+      .replace(/([?&](?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)=)[^&\s]+/gi, '$1[REDACTED]');
+  }
+}
+
+const SENSITIVE_COMMAND_FLAG = /^(?:--?|\/)(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key|auth|credential|client[-_]?secret|bearer)$/i;
+
+function sanitizeCommandLineValue(value) {
+  if (Array.isArray(value)) {
+    let redactNext = false;
+    return value.map(item => {
+      if (redactNext) {
+        redactNext = false;
+        return '[REDACTED]';
+      }
+      if (typeof item !== 'string') return '[REDACTED]';
+      if (SENSITIVE_COMMAND_FLAG.test(item)) {
+        redactNext = true;
+        return item;
+      }
+      const inline = item.match(/^((?:--?|\/)(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key|auth|credential|client[-_]?secret|bearer)=).*/i);
+      if (inline) return `${inline[1]}[REDACTED]`;
+      return sanitizeErrorMessage(item);
+    });
+  }
+  if (typeof value !== 'string') return value;
+  return sanitizeErrorMessage(value)
+    .replace(/((?:^|\s)(?:--?|\/)(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key|auth|credential|client[-_]?secret|bearer)(?:=|\s+))\S+/gi, '$1[REDACTED]');
+}
+
+function sanitizeMcpValue(value, key = '') {
+  if (/^url$/i.test(key)) return sanitizeMcpUrl(value);
+  if (/^(?:command|args)$/i.test(key)) return sanitizeCommandLineValue(value);
+  if (/(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|headers?|env(?:ironment)?|envvars|experimentalenvironment|auth|oauth|credential|private[_-]?key)/i.test(key)) {
+    return '[REDACTED]';
+  }
+  if (typeof value === 'string') return sanitizeErrorMessage(value);
+  if (Array.isArray(value)) return value.map(item => sanitizeMcpValue(item));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+    childKey,
+    sanitizeMcpValue(childValue, childKey)
+  ]));
+}
+function sanitizeMcpServer(server) {
+  if (!server || typeof server !== 'object') return server;
+  const safe = sanitizeMcpValue(redactSecrets(server));
+  const env = server.server?.env;
+  const headers = server.server?.headers;
+  const url = server.server?.url;
+  return {
+    ...safe,
+    ...(env || headers || hasSensitiveUrl(url)
+      ? { hasSecret: true }
+      : {})
+  };
+}
+
+function sanitizeErrorMessage(value) {
+  return String(value || '')
+    .replace(/(https?:\/\/[^\s?]+)\?[^\s]+/gi, '$1?[REDACTED]')
+    .replace(/(Bearer\s+)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/((?:token|secret|password|api[-_]?key|access[_-]?token|authorization)\s*[:=]\s*)[^,\s}]+/gi, '$1[REDACTED]');
+}
+function sanitizeMcpServers(servers) {
+  if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
+  return Object.fromEntries(Object.entries(servers).map(([id, server]) => [id, sanitizeMcpServer(server)]));
+}
+const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'omp'];
 const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
 
 function normalizePlatformKey(platform) {
@@ -53,7 +154,7 @@ function sendCapabilityError(res, error, fallbackStatus = 400) {
   const status = error?.status === 404 && error?.code ? 404 : fallbackStatus;
   return res.status(status).json({
     success: false,
-    error: error.message,
+    error: sanitizeErrorMessage(error.message),
     code: error.code || undefined,
     platform: error.platform || undefined,
     capability: error.capability || undefined
@@ -69,13 +170,13 @@ router.get('/servers', (req, res) => {
     const servers = mcpService.getAllServers();
     res.json({
       success: true,
-      servers
+      servers: sanitizeMcpServers(servers)
     });
   } catch (error) {
-    console.error('[MCP API] Get servers failed:', error);
+    console.error('[MCP API] Get servers failed:', sanitizeErrorMessage(error.message || error));
     res.status(500).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -95,13 +196,13 @@ router.get('/servers/:id', (req, res) => {
     }
     res.json({
       success: true,
-      server
+      server: sanitizeMcpServer(server)
     });
   } catch (error) {
-    console.error('[MCP API] Get server failed:', error);
-    res.status(500).json({
+    console.error('[MCP API] Get server failed:', sanitizeErrorMessage(error.message || error));
+    res.status(400).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -131,13 +232,13 @@ router.post('/servers', async (req, res) => {
     const result = await mcpService.saveServer(server);
     res.json({
       success: true,
-      server: result
+      server: sanitizeMcpServer(result)
     });
   } catch (error) {
-    console.error('[MCP API] Save server failed:', error);
+    console.error('[MCP API] Save server failed:', sanitizeErrorMessage(error.message || error));
     res.status(400).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -159,10 +260,10 @@ router.delete('/servers/:id', async (req, res) => {
       success: true
     });
   } catch (error) {
-    console.error('[MCP API] Delete server failed:', error);
-    res.status(500).json({
+    console.error('[MCP API] Delete server failed:', sanitizeErrorMessage(error.message || error));
+    res.status(400).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -192,13 +293,13 @@ router.post('/servers/:id/toggle', async (req, res) => {
     const server = await mcpService.toggleServerApp(req.params.id, app, enabled);
     res.json({
       success: true,
-      server
+      server: sanitizeMcpServer(server)
     });
   } catch (error) {
-    console.error('[MCP API] Toggle server failed:', error);
+    console.error('[MCP API] Toggle server failed:', sanitizeErrorMessage(error.message || error));
     res.status(400).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -215,10 +316,10 @@ router.get('/presets', (req, res) => {
       presets
     });
   } catch (error) {
-    console.error('[MCP API] Get presets failed:', error);
+    console.error('[MCP API] Get presets failed:', sanitizeErrorMessage(error.message || error));
     res.status(500).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -241,7 +342,7 @@ router.post('/import/:platform', async (req, res) => {
         : `${resolved.key} 没有可导入的 MCP 服务器`
     });
   } catch (error) {
-    console.error('[MCP API] Import failed:', error);
+    console.error('[MCP API] Import failed:', sanitizeErrorMessage(error.message || error));
     return sendCapabilityError(res, error, 500);
   }
 });
@@ -258,10 +359,10 @@ router.get('/stats', (req, res) => {
       stats
     });
   } catch (error) {
-    console.error('[MCP API] Get stats failed:', error);
+    console.error('[MCP API] Get stats failed:', sanitizeErrorMessage(error.message || error));
     res.status(500).json({
       success: false,
-      error: error.message
+      error: sanitizeErrorMessage(error.message)
     });
   }
 });
@@ -283,12 +384,13 @@ router.post('/servers/:id/test', async (req, res) => {
       result
     });
   } catch (error) {
-    console.error('[MCP API] Test server failed:', error);
-    res.status(500).json({
+    console.error('[MCP API] Test server failed:', sanitizeErrorMessage(error.message || error));
+    const safeError = sanitizeErrorMessage(error.message || error);
+    res.status(error.code === 'MCP_DISABLED' ? 403 : 500).json({
       success: false,
-      error: error.message,
-      message: error.message,
-      hint: error?.data?.hint || null
+      error: safeError,
+      message: safeError,
+      hint: sanitizeMcpValue(error?.data?.hint)
     });
   }
 });
@@ -311,13 +413,14 @@ router.post('/servers/order', (req, res) => {
     const servers = mcpService.updateServerOrder(serverIds);
     res.json({
       success: true,
-      servers
+      servers: sanitizeMcpServers(servers)
     });
   } catch (error) {
-    console.error('[MCP API] Update order failed:', error);
-    res.status(500).json({
+    console.error('[MCP API] Update order failed:', sanitizeErrorMessage(error.message || error));
+    const safeError = sanitizeErrorMessage(error.message || error);
+    res.status(/invalid MCP server ID/i.test(safeError) ? 400 : 500).json({
       success: false,
-      error: error.message
+      error: safeError
     });
   }
 });
@@ -343,7 +446,7 @@ router.get('/export', (req, res) => {
       ...result
     });
   } catch (error) {
-    console.error('[MCP API] Export failed:', error);
+    console.error('[MCP API] Export failed:', sanitizeErrorMessage(error.message || error));
     return sendCapabilityError(res, error, 500);
   }
 });
@@ -369,7 +472,7 @@ router.get('/export/download', (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.content);
   } catch (error) {
-    console.error('[MCP API] Export download failed:', error);
+    console.error('[MCP API] Export download failed:', sanitizeErrorMessage(error.message || error));
     return sendCapabilityError(res, error, 500);
   }
 });
@@ -385,20 +488,20 @@ router.get('/servers/:id/tools', async (req, res) => {
     if (result.status === 'error') {
       return res.status(502).json({
         success: false,
-        error: result.error || '获取工具列表失败',
-        message: result.error || '获取工具列表失败',
-        hint: result.hint || null,
+        error: sanitizeErrorMessage(result.error || '获取工具列表失败'),
+        message: sanitizeErrorMessage(result.error || '获取工具列表失败'),
+        hint: sanitizeMcpValue(result.hint || null),
         duration: result.duration,
         tools: []
       });
     }
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(404).json({
+    res.status(err.code === 'MCP_DISABLED' ? 403 : 404).json({
       success: false,
-      error: err.message,
-      message: err.message,
-      hint: err?.data?.hint || null
+      error: sanitizeErrorMessage(err.message),
+      message: sanitizeErrorMessage(err.message),
+      hint: sanitizeMcpValue(err?.data?.hint || null)
     });
   }
 });
@@ -419,11 +522,11 @@ router.post('/servers/:id/tools/test', async (req, res) => {
     const result = await mcpService.callServerTool(id, toolName, args || {});
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({
+    res.status(err.code === 'MCP_DISABLED' ? 403 : 500).json({
       success: false,
-      error: err.message,
-      message: err.message,
-      hint: err?.data?.hint || null
+      error: sanitizeErrorMessage(err.message),
+      message: sanitizeErrorMessage(err.message),
+      hint: sanitizeMcpValue(err?.data?.hint || null)
     });
   }
 });
@@ -453,7 +556,7 @@ router.get('/servers/:id/info', async (req, res) => {
       } : {}
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: sanitizeErrorMessage(err.message) });
   }
 });
 

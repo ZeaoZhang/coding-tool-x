@@ -9,7 +9,68 @@ const {
   resolveInsideRoot
 } = require('../config-artifact-paths');
 
-const SECRET_KEY_PATTERN = /(?:token|secret|password|api[-_]?key|authorization|headers?|env)/i;
+const SECRET_KEY_PATTERN = /(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|headers?|env(?:ironment)?|auth|oauth|credential|private[_-]?key)/i;
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+const MCP_ID_PATTERN = /^[a-zA-Z0-9_.-]{1,100}$/;
+const RESERVED_MCP_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function validateMcpId(id) {
+  const normalized = String(id || '').trim();
+  if (!MCP_ID_PATTERN.test(normalized) || RESERVED_MCP_IDS.has(normalized)) {
+    throw new Error('Invalid MCP server ID');
+  }
+  return normalized;
+}
+
+function isRedactedSecret(value) {
+  return value === '[REDACTED]' || value === '[redacted]';
+}
+
+function mergeSecretValue(existing, incoming) {
+  if (incoming === undefined || incoming === null || isRedactedSecret(incoming)) return existing;
+  if (isPlainObject(existing) && isPlainObject(incoming)) {
+    const merged = { ...existing };
+    for (const [key, value] of Object.entries(incoming)) {
+      merged[key] = isRedactedSecret(value)
+        ? existing[key]
+        : value;
+    }
+    return merged;
+  }
+  return incoming;
+}
+
+function mergeMcpPatch(existingNative, incomingSpec, fromNative = value => value, toNative = value => value) {
+  const existing = isPlainObject(fromNative(existingNative)) ? fromNative(existingNative) : {};
+  const incoming = isPlainObject(incomingSpec) ? incomingSpec : {};
+  const merged = { ...existing, ...incoming };
+  for (const key of ['env', 'headers']) {
+    if (Object.prototype.hasOwnProperty.call(existing, key) || Object.prototype.hasOwnProperty.call(incoming, key)) {
+      merged[key] = mergeSecretValue(existing[key], incoming[key]);
+    }
+  }
+  if (
+    typeof existing.url === 'string'
+    && typeof incoming.url === 'string'
+    && /(?:%5B|\[)redacted(?:%5D|\])/i.test(incoming.url)
+  ) {
+    merged.url = existing.url;
+  }
+
+  const type = merged.type || existing.type || 'stdio';
+  merged.type = type;
+  if (type === 'stdio') {
+    delete merged.url;
+  } else {
+    delete merged.command;
+    delete merged.args;
+    delete merged.cwd;
+    delete merged.env;
+  }
+  return toNative(merged);
+}
 
 function assertExistingProjectRoot(projectRoot, fsImpl = fs) {
   if (typeof projectRoot !== 'string' || !projectRoot.trim()) {
@@ -156,8 +217,28 @@ function writeTomlFileAtomic(projectRoot, relativePath, value, fsImpl = fs) {
   return writeTextFileAtomic(projectRoot, relativePath, toml.stringify(value), fsImpl);
 }
 
+const SENSITIVE_URL_QUERY_KEY = /^(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)$/i;
+
+function redactUrlSecrets(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    const parsed = new URL(value);
+    parsed.username = '';
+    parsed.password = '';
+    for (const key of parsed.searchParams.keys()) {
+      if (SENSITIVE_URL_QUERY_KEY.test(key)) parsed.searchParams.set(key, '[REDACTED]');
+    }
+    return parsed.toString();
+  } catch {
+    return value
+      .replace(/\/\/[^/@\s:]+:[^@/\s]+@/g, '//[REDACTED]@')
+      .replace(/([?&](?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)=)[^&\s]+/gi, '$1[REDACTED]');
+  }
+}
+
 function redactSecrets(value, key = '') {
   if (SECRET_KEY_PATTERN.test(key)) return '[REDACTED]';
+  if (/^url$/i.test(key)) return redactUrlSecrets(value);
   if (Array.isArray(value)) return value.map(item => redactSecrets(item));
   if (!value || typeof value !== 'object') return value;
 
@@ -183,7 +264,7 @@ function createJsonMcpHandlers({
   serverKey = 'mcpServers',
   toNative = value => value,
   fromNative = value => value,
-  validateId = () => {},
+  validateId = validateMcpId,
   fsImpl = fs
 } = {}) {
   function readProjectMcp(projectRoot) {
@@ -192,48 +273,51 @@ function createJsonMcpHandlers({
       supported: true,
       path: relativePath,
       format,
-      servers: Object.entries(servers).map(([id, nativeSpec]) => ({
-        id,
-        scope: 'project',
-        server: redactSecrets(fromNative(nativeSpec)),
-        enabled: nativeSpec?.enabled !== false
-      }))
+      servers: Object.entries(servers).map(([id, nativeSpec]) => {
+        const normalizedId = validateId(id);
+        return {
+          id: normalizedId,
+          scope: 'project',
+          server: redactSecrets(fromNative(nativeSpec)),
+          enabled: nativeSpec?.enabled !== false
+        };
+      })
     };
   }
 
   function readProjectMcpSpec(projectRoot, id) {
+    const normalizedId = validateId(id);
     const { servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
-    if (!Object.prototype.hasOwnProperty.call(servers, id)) return null;
-    return fromNative(servers[id]);
+    if (!Object.prototype.hasOwnProperty.call(servers, normalizedId)) return null;
+    return fromNative(servers[normalizedId]);
   }
-
   function upsertProjectMcp(projectRoot, id, spec) {
-    validateId(id);
+    const normalizedId = validateId(id);
     const { config, servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
-    const existing = servers[id] && typeof servers[id] === 'object' ? servers[id] : {};
-    servers[id] = { ...existing, ...toNative(spec) };
+    const existing = servers[normalizedId] && typeof servers[normalizedId] === 'object' ? servers[normalizedId] : {};
+    servers[normalizedId] = mergeMcpPatch(existing, spec, fromNative, toNative);
     writeJsonFileAtomic(projectRoot, relativePath, config, fsImpl);
     return {
       success: true,
       supported: true,
       path: relativePath,
       format,
-      id,
+      id: normalizedId,
       scope: 'project',
-      server: redactSecrets(fromNative(servers[id])),
-      enabled: servers[id].enabled !== false
+      server: redactSecrets(fromNative(servers[normalizedId])),
+      enabled: servers[normalizedId].enabled !== false
     };
   }
 
   function removeProjectMcp(projectRoot, id) {
-    validateId(id);
+    const normalizedId = validateId(id);
     const { config, servers } = readMcpServerMap(projectRoot, relativePath, serverKey, fsImpl);
-    const removed = Object.prototype.hasOwnProperty.call(servers, id);
+    const removed = Object.prototype.hasOwnProperty.call(servers, normalizedId);
     if (removed) {
-      delete servers[id];
+      delete servers[normalizedId];
       writeJsonFileAtomic(projectRoot, relativePath, config, fsImpl);
     }
-    return { success: true, supported: true, path: relativePath, format, id, scope: 'project', removed };
+    return { success: true, supported: true, path: relativePath, format, id: normalizedId, scope: 'project', removed };
   }
 
   return { readProjectMcp, readProjectMcpSpec, upsertProjectMcp, removeProjectMcp };
@@ -245,7 +329,7 @@ function createTomlMcpHandlers({
   serverKey = 'mcp_servers',
   toNative = value => value,
   fromNative = value => value,
-  validateId = () => {},
+  validateId = validateMcpId,
   fsImpl = fs
 } = {}) {
   function readTomlServerMap(projectRoot) {
@@ -265,48 +349,52 @@ function createTomlMcpHandlers({
       supported: true,
       path: relativePath,
       format,
-      servers: Object.entries(servers).map(([id, nativeSpec]) => ({
-        id,
-        scope: 'project',
-        server: redactSecrets(fromNative(nativeSpec)),
-        enabled: nativeSpec?.enabled !== false
-      }))
+      servers: Object.entries(servers).map(([id, nativeSpec]) => {
+        const normalizedId = validateId(id);
+        return {
+          id: normalizedId,
+          scope: 'project',
+          server: redactSecrets(fromNative(nativeSpec)),
+          enabled: nativeSpec?.enabled !== false
+        };
+      })
     };
   }
 
   function readProjectMcpSpec(projectRoot, id) {
+    const normalizedId = validateId(id);
     const { servers } = readTomlServerMap(projectRoot);
-    if (!Object.prototype.hasOwnProperty.call(servers, id)) return null;
-    return fromNative(servers[id]);
+    if (!Object.prototype.hasOwnProperty.call(servers, normalizedId)) return null;
+    return fromNative(servers[normalizedId]);
   }
 
   function upsertProjectMcp(projectRoot, id, spec) {
-    validateId(id);
+    const normalizedId = validateId(id);
     const { config, servers } = readTomlServerMap(projectRoot);
-    const existing = servers[id] && typeof servers[id] === 'object' ? servers[id] : {};
-    servers[id] = { ...existing, ...toNative(spec) };
+    const existing = servers[normalizedId] && typeof servers[normalizedId] === 'object' ? servers[normalizedId] : {};
+    servers[normalizedId] = mergeMcpPatch(existing, spec, fromNative, toNative);
     writeTomlFileAtomic(projectRoot, relativePath, config, fsImpl);
     return {
       success: true,
       supported: true,
       path: relativePath,
       format,
-      id,
+      id: normalizedId,
       scope: 'project',
-      server: redactSecrets(fromNative(servers[id])),
-      enabled: servers[id].enabled !== false
+      server: redactSecrets(fromNative(servers[normalizedId])),
+      enabled: servers[normalizedId].enabled !== false
     };
   }
 
   function removeProjectMcp(projectRoot, id) {
-    validateId(id);
+    const normalizedId = validateId(id);
     const { config, servers } = readTomlServerMap(projectRoot);
-    const removed = Object.prototype.hasOwnProperty.call(servers, id);
+    const removed = Object.prototype.hasOwnProperty.call(servers, normalizedId);
     if (removed) {
-      delete servers[id];
+      delete servers[normalizedId];
       writeTomlFileAtomic(projectRoot, relativePath, config, fsImpl);
     }
-    return { success: true, supported: true, path: relativePath, format, id, scope: 'project', removed };
+    return { success: true, supported: true, path: relativePath, format, id: normalizedId, scope: 'project', removed };
   }
 
   return { readProjectMcp, readProjectMcpSpec, upsertProjectMcp, removeProjectMcp };
@@ -416,6 +504,8 @@ module.exports = {
   writeJsonFileAtomic,
   readTomlFile,
   redactSecrets,
+  validateMcpId,
+  mergeMcpPatch,
   createProjectAdapter,
   createJsonMcpHandlers,
   createTomlMcpHandlers

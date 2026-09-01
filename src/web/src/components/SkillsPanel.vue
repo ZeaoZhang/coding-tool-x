@@ -11,7 +11,7 @@
             <span class="asset-title">技能管理</span>
             <span class="asset-platform-pill">{{ currentPlatformLabel }}</span>
           </div>
-          <div class="asset-subtitle">安装、创建和同步当前平台可用的技能</div>
+      <div class="asset-subtitle">缓存并控制当前平台可用的技能</div>
         </div>
       </div>
       <div class="asset-action-row">
@@ -31,9 +31,9 @@
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
-        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
+        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing || loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
-          刷新
+          刷新远端
         </n-button>
       </div>
     </div>
@@ -57,9 +57,9 @@
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
-        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
+        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing || loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
-          刷新
+          刷新远端
         </n-button>
       </div>
     </div>
@@ -71,12 +71,12 @@
         <span class="asset-summary-value">{{ skills.length }}</span>
       </span>
       <span class="asset-summary-item">
-        <span class="asset-summary-label">已安装</span>
-        <span class="asset-summary-value">{{ installedCount }}</span>
+        <span class="asset-summary-label">已启用</span>
+        <span class="asset-summary-value">{{ enabledCount }}</span>
       </span>
       <span class="asset-summary-item">
-        <span class="asset-summary-label">可安装</span>
-        <span class="asset-summary-value">{{ skills.length - installedCount }}</span>
+        <span class="asset-summary-label">待审批</span>
+        <span class="asset-summary-value">{{ pendingCount }}</span>
       </span>
     </div>
 
@@ -102,13 +102,12 @@
         <div v-else class="asset-list">
           <SkillCard
             v-for="skill in filteredSkills"
-            :key="skill.key"
+            :key="skill.controlKey || skill.key"
             :skill="skill"
-            :installing="!!installingKeys[skill.key]"
-            :uninstalling="!!uninstallingKeys[skill.key]"
-            @install="handleInstall"
-            @uninstall="handleUninstall"
-            @click="handleCardClick"
+            :toggling="!!togglingKeys[skill.controlKey || skill.key]"
+            :panel-scope="props.scope"
+            @toggle="handleToggle"
+            @approve="handleApprove"
           />
         </div>
       </n-spin>
@@ -117,11 +116,16 @@
     <!-- 底部提示 -->
     <div class="asset-footer">
       <n-icon size="14" class="asset-info-icon"><InformationCircleOutline /></n-icon>
-      <span>安装/卸载后需重启 {{ currentPlatformLabel }} 生效</span>
+      <span>开关变更后需重启 {{ currentPlatformLabel }} 生效；远端刷新只在手动点击后执行</span>
+    </div>
+    <div v-if="refreshStatusText" class="asset-refresh-status">
+      刷新任务：{{ refreshStatusText }}
+      <span v-if="refreshTask?.fetchedSkills !== undefined"> · 已处理 {{ refreshTask.fetchedSkills }} 个 Skill</span>
+      <span v-if="refreshTask?.failedRepos?.length"> · 失败仓库 {{ refreshTask.failedRepos.length }}</span>
     </div>
 
     <!-- 弹窗组件 -->
-    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData(true)" />
+    <SkillRepoManager v-model:visible="showRepoManager" :platform="currentPlatform" @updated="loadData" />
     <SkillCreateModal
       v-model:visible="showCreateModal"
       :platform="currentPlatform"
@@ -146,7 +150,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline, SettingsOutline } from '@vicons/ionicons5'
-import { getSkills, installSkill, uninstallSkill, installLocalSkill } from '../api/skills'
+import { getSkills, refreshSkills, getSkillRefreshTask, toggleSkill, setSkillTrust } from '../api/skills'
+import { setProjectSkillEnabled } from '../api/project-config'
 import { importFromClaude } from '../api/config-registry'
 import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
@@ -183,15 +188,17 @@ const showDetailDrawer = ref(false)
 const showOmpSettingsModal = ref(false)
 const ompSettingsEpoch = ref(0)
 const selectedSkill = ref(null)
-const installingKeys = ref({})
-const uninstallingKeys = ref({})
+const togglingKeys = ref({})
+const refreshing = ref(false)
+const refreshTask = ref(null)
 const importing = ref(false)
 const loadRequestId = ref(0)
+const refreshContextEpoch = ref(0)
 const { byCapability } = useEnabledCliPlatforms()
 const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
 
 const currentPlatform = computed(() => {
-  return String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
+  return String(props.platform || getRoutePlatform(route) || 'claude').trim().toLowerCase()
 })
 
 const scopeOptions = computed(() => ({
@@ -207,40 +214,58 @@ const currentPlatformLabel = computed(() => {
 
 const filterOptions = [
   { label: '全部', value: 'all' },
-  { label: '已安装', value: 'installed' },
-  { label: '未安装', value: 'uninstalled' }
+  { label: '已启用', value: 'enabled' },
+  { label: '已关闭', value: 'disabled' },
+  { label: '待审批 / 需复审', value: 'pending' }
 ]
 
-const installedCount = computed(() => skills.value.filter(s => s.installed).length)
+const enabledCount = computed(() => skills.value.filter(s => s.enabled).length)
+const refreshStatusText = computed(() => {
+  const status = refreshTask.value?.status || refreshTask.value?.state
+  return ({
+    never_fetched: '从未刷新',
+    queued: '排队中',
+    running: '刷新中',
+    succeeded: '已完成',
+    partial: '部分成功',
+    failed: '失败',
+    interrupted: '已中断',
+    idle: '已完成'
+  })[status] || ''
+})
+const pendingCount = computed(() => skills.value.filter(s => ['pending', 'needs_review'].includes(s.trust)).length)
 
 const filteredSkills = computed(() => {
   let result = skills.value
-  if (filterStatus.value === 'installed') result = result.filter(s => s.installed)
-  else if (filterStatus.value === 'uninstalled') result = result.filter(s => !s.installed)
+  if (filterStatus.value === 'enabled') result = result.filter(s => s.enabled)
+  else if (filterStatus.value === 'disabled') result = result.filter(s => !s.enabled)
+  else if (filterStatus.value === 'pending') result = result.filter(s => ['pending', 'needs_review'].includes(s.trust))
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
   }
-  return [...result].sort((a, b) => (a.installed === b.installed ? 0 : a.installed ? -1 : 1))
+  return [...result].sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1))
 })
 
 const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的技能'
-  if (filterStatus.value === 'installed') return '暂无已安装的技能'
-  if (filterStatus.value === 'uninstalled') return '所有技能都已安装'
+  if (filterStatus.value === 'enabled') return '暂无已启用的技能'
+  if (filterStatus.value === 'disabled') return '暂无已关闭的技能'
+  if (filterStatus.value === 'pending') return '暂无待审批的技能'
   return '暂无可用技能，请配置仓库源'
 })
 
-async function loadData(force = false, { notifyError = true } = {}) {
+async function loadData({ notifyError = true } = {}) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
   loading.value = true
   try {
-    const skillsRes = await getSkills(force, platform, scopeOptions.value)
+    const skillsRes = await getSkills(platform, scopeOptions.value)
     const loadedSkills = validateOmpSkillListResponse(skillsRes)
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
 
     skills.value = loadedSkills
+    refreshTask.value = skillsRes.refresh || null
     return true
   } catch (err) {
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
@@ -273,67 +298,131 @@ async function handleImport() {
   }
 }
 
-async function handleInstall(skill) {
-  if (skill.protected) return
-  installingKeys.value[skill.key] = true
+async function handleToggle(skill, enabled) {
+  if (
+    !skill.controlKey
+    || skill.protected
+    || skill.readonly
+    || skill.managed === false
+    || (props.scope === 'project' && skill.sourceScope !== 'project')
+  ) return
+  if (enabled && skill.trust !== 'approved') {
+    message.warning(skill.trust === 'blocked' ? '该技能已被阻止' : '该技能需要先审批')
+    return
+  }
+  if (skill.projection?.state === 'unsupported') {
+    message.error('当前平台不支持安全投影，无法切换该项目技能')
+    return
+  }
+  if (enabled && !skill.cached) {
+    message.warning('该技能尚无完整缓存，请先手动刷新远端')
+    return
+  }
+
+  const key = skill.controlKey
+  togglingKeys.value[key] = true
   try {
-    let res
-    if (skill.isLocal) {
-      res = await installLocalSkill(skill.directory, currentPlatform.value, scopeOptions.value)
-    } else {
-      if (!skill.repoOwner && !skill.repoProjectPath && !skill.repoLocalPath) {
-        message.error('缺少仓库信息')
-        return
-      }
-      res = await installSkill(
-        skill.directory,
-        {
-          id: skill.repoId,
-          provider: skill.repoProvider,
-          host: skill.repoHost,
-          owner: skill.repoOwner,
-          name: skill.repoName,
-          branch: skill.repoBranch || 'main',
-          directory: skill.repoDirectory || '',
-          projectPath: skill.repoProjectPath,
-          localPath: skill.repoLocalPath,
-          repoUrl: skill.repoUrl
-        },
-        skill.fullDirectory || null,
-        currentPlatform.value,
-        scopeOptions.value
-      )
+    const result = props.scope === 'project'
+      ? await setProjectSkillEnabled(props.projectPath, currentPlatform.value, key, enabled)
+      : await toggleSkill(key, enabled, currentPlatform.value, scopeOptions.value)
+    if (result.status === 'needs_approval') {
+      message.warning('该技能需要先审批')
+      return
     }
-    if (res.success) {
-      message.success(`技能 "${skill.name}" 安装成功`)
-      const currentSkill = skills.value.find(item => item.key === skill.key)
-      if (currentSkill) currentSkill.installed = true
+    if (result.status === 'blocked') {
+      message.error('该技能已被阻止')
+      return
     }
+    if (result.status === 'unsupported') {
+      message.error('当前平台不支持安全投影')
+      return
+    }
+    if (result.status === 'conflict') {
+      message.warning('目标 Skill 目录已被其他来源占用')
+      return
+    }
+    if (result.status === 'projection_failed') {
+      message.error(result.lastError || 'Skill 投影失败')
+      return
+    }
+    const currentSkill = skills.value.find(item => item.controlKey === key)
+    if (currentSkill) {
+      currentSkill.enabled = result.enabled
+      currentSkill.installed = result.enabled
+      currentSkill.projection = result.projection || currentSkill.projection
+    }
+    message.success(enabled ? `技能 "${skill.name}" 已启用` : `技能 "${skill.name}" 已关闭`)
   } catch (err) {
-    message.error('安装失败: ' + err.message)
+    message.error('切换失败: ' + (err.response?.data?.message || err.message))
   } finally {
-    delete installingKeys.value[skill.key]
+    delete togglingKeys.value[key]
   }
 }
 
-async function handleUninstall(skill) {
-  if (
-    skill.protected
-    || skill.readonly
-    || (props.scope === 'project' && skill.sourceScope !== 'project')
-  ) return
-  uninstallingKeys.value[skill.key] = true
+async function handleApprove(skill) {
+  if (!skill.controlKey || !['pending', 'needs_review'].includes(skill.trust)) return
+  if (props.scope === 'project' && skill.sourceScope !== 'project') return
+  const key = skill.controlKey
+  togglingKeys.value[key] = true
   try {
-    const res = await uninstallSkill(skill.directory, currentPlatform.value, scopeOptions.value)
-    if (res.success) {
-      message.success(`技能 "${skill.name}" 已卸载`)
-      const currentSkill = skills.value.find(item => item.key === skill.key)
-      if (currentSkill) currentSkill.installed = false
-    }
+    const result = await setSkillTrust(key, 'approved', currentPlatform.value, scopeOptions.value)
+    const currentSkill = skills.value.find(item => item.controlKey === key)
+    if (currentSkill) currentSkill.trust = result.trust
+    message.success(`技能 "${skill.name}" 已批准，当前仍保持关闭`)
   } catch (err) {
-    message.error('卸载失败: ' + err.message)
+    message.error('审批失败: ' + (err.response?.data?.message || err.message))
   } finally {
-    delete uninstallingKeys.value[skill.key]
+    delete togglingKeys.value[key]
+  }
+}
+
+async function handleRefresh() {
+  if (refreshing.value) return
+  const epoch = refreshContextEpoch.value
+  const contextKey = JSON.stringify({
+    platform: currentPlatform.value,
+    scope: props.scope || 'user',
+    projectPath: props.projectPath || ''
+  })
+  const isCurrent = () => (
+    epoch === refreshContextEpoch.value
+    && contextKey === JSON.stringify({
+      platform: currentPlatform.value,
+      scope: props.scope || 'user',
+      projectPath: props.projectPath || ''
+    })
+  )
+
+  refreshing.value = true
+  try {
+    const platform = currentPlatform.value
+    const result = await refreshSkills(platform, scopeOptions.value)
+    if (!isCurrent()) return
+    refreshTask.value = result.task || null
+    let task = result.task
+    while (task && ['queued', 'running'].includes(task.status)) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const taskResult = await getSkillRefreshTask(task.id, {
+        ...scopeOptions.value,
+        platform: currentPlatform.value
+      })
+      if (!isCurrent()) return
+      task = taskResult.task
+      refreshTask.value = task
+    }
+    if (!isCurrent()) return
+    if (task?.status === 'failed') {
+      message.error(task.error || '远端刷新失败')
+    } else if (task?.status === 'partial') {
+      message.warning('远端刷新部分成功')
+    } else {
+      message.success('远端 Skill 刷新完成')
+    }
+    await loadData()
+  } catch (err) {
+    if (isCurrent()) message.error('刷新失败: ' + (err.response?.data?.message || err.message))
+  } finally {
+    if (isCurrent()) refreshing.value = false
   }
 }
 
@@ -378,7 +467,10 @@ watch(() => props.drawerVisible, (val) => {
   if (val) loadData()
 })
 
-watch(() => currentPlatform.value, platform => {
+watch([() => currentPlatform.value, () => props.scope, () => props.projectPath], ([platform]) => {
+  refreshContextEpoch.value += 1
+  refreshing.value = false
+  refreshTask.value = null
   ompSettingsEpoch.value += 1
   if (!supportsOmpSkillSettings(platform)) showOmpSettingsModal.value = false
   loadData()

@@ -484,7 +484,7 @@ async function submitSimpleMode() {
     }, props.platform)
 
     if (result.success) {
-      message.success('技能创建成功')
+      message.success('技能已缓存，当前为关闭状态，审批后可启用')
       emit('created')
       handleClose()
     } else {
@@ -522,7 +522,7 @@ async function submitAdvancedMode() {
     }, props.platform)
 
     if (result.success) {
-      message.success(`技能创建成功，包含 ${result.fileCount} 个文件`)
+      message.success(`技能已缓存，当前为关闭状态，包含 ${result.fileCount} 个文件`)
       emit('created')
       handleClose()
     } else {

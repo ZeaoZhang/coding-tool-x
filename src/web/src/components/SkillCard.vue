@@ -1,16 +1,22 @@
 <template>
-  <div class="skill-card asset-card" :class="{ 'is-installed': skill.installed, 'is-protected': skill.protected }" @click="$emit('click', skill)">
+  <div class="skill-card asset-card" :class="{ 'is-enabled': skill.enabled, 'is-protected': skill.protected }" @click="$emit('click', skill)">
     <div class="asset-card-main">
       <div class="asset-card-top">
         <div class="asset-card-title-stack">
           <div class="asset-card-title-row">
-            <span class="asset-status-dot" :class="{ active: skill.installed }"></span>
+            <span class="asset-status-dot" :class="{ active: skill.enabled }"></span>
             <span class="asset-name">{{ skill.name }}</span>
           </div>
           <div class="asset-tags">
-            <n-tag v-if="skill.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
+            <n-tag v-if="skill.enabled" type="success" size="tiny" :bordered="false">已启用</n-tag>
+            <n-tag v-else type="default" size="tiny" :bordered="false">已关闭</n-tag>
+            <n-tag v-if="skill.cached" type="info" size="tiny" :bordered="false">已缓存</n-tag>
+            <n-tag v-if="skill.trust === 'approved'" type="success" size="tiny" :bordered="false">已批准</n-tag>
+            <n-tag v-if="skill.trust === 'blocked'" type="error" size="tiny" :bordered="false">已阻止</n-tag>
+            <n-tag v-if="skill.trust === 'pending'" type="warning" size="tiny" :bordered="false">待审批</n-tag>
+            <n-tag v-if="skill.trust === 'needs_review'" type="warning" size="tiny" :bordered="false">需复审</n-tag>
             <n-tag v-if="skill.protected" type="default" size="tiny" :bordered="false">受保护</n-tag>
-            <n-tag v-if="skill.readonly" type="default" size="tiny" :bordered="false">只读</n-tag>
+            <n-tag v-if="skill.projection?.state === 'unsupported'" type="warning" size="tiny" :bordered="false">不支持投影</n-tag>
             <n-tag v-if="getSkillSourceTag(skill)" type="info" size="tiny" :bordered="false">{{ getSkillSourceTag(skill) }}</n-tag>
           </div>
         </div>
@@ -29,42 +35,30 @@
           rel="noopener noreferrer"
           @click.stop
         >{{ getSkillSourceLinkLabel(skill) }}</a>
-      </div>
     </div>
-    <div v-if="!skill.readonly" class="asset-card-actions" @click.stop>
+    </div>
+    <div class="asset-card-actions" @click.stop>
       <n-button
-        v-if="skill.installed && !skill.protected && !skill.readonly"
+        v-if="['pending', 'needs_review'].includes(skill.trust) && !(panelScope === 'project' && skill.sourceScope !== 'project')"
         size="small"
         tertiary
-        type="error"
-        :loading="uninstalling"
-        :focusable="false"
-        @click="$emit('uninstall', skill)"
-      >卸载</n-button>
-      <n-button
-        v-else-if="skill.installed && skill.protected"
-        size="small"
-        tertiary
-        disabled
-        :focusable="false"
-      >受保护</n-button>
-      <n-button
-        v-else
-        size="small"
-        type="primary"
-        :loading="installing"
-        :disabled="!canInstallSkill(skill)"
-        :focusable="false"
-        @click="$emit('install', skill)"
-      >安装</n-button>
+        type="warning"
+        @click="$emit('approve', skill)"
+      >审批</n-button>
+      <n-switch
+        :value="skill.enabled"
+        :loading="toggling"
+        :disabled="skill.protected || skill.readonly || skill.managed === false || !skill.cached || skill.trust !== 'approved' || skill.projection?.state === 'unsupported' || (panelScope === 'project' && skill.sourceScope !== 'project')"
+        :aria-label="`${skill.name} 开关`"
+        @update:value="$emit('toggle', skill, $event)"
+      />
     </div>
   </div>
 </template>
 
 <script setup>
-import { NTag, NButton } from 'naive-ui'
+import { NTag, NButton, NSwitch } from 'naive-ui'
 import {
-  canInstallSkill,
   getSkillSourceLink,
   getSkillSourceLinkLabel,
   getSkillSourceLocation,
@@ -73,11 +67,11 @@ import {
 
 defineProps({
   skill: { type: Object, required: true },
-  installing: { type: Boolean, default: false },
-  uninstalling: { type: Boolean, default: false }
+  toggling: { type: Boolean, default: false },
+  panelScope: { type: String, default: 'user' }
 })
 
-defineEmits(['click', 'install', 'uninstall'])
+defineEmits(['click', 'toggle', 'approve'])
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text

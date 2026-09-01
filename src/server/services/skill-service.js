@@ -7,13 +7,10 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const https = require('https');
 const http = require('http');
 const { execFileSync } = require('child_process');
-const { createWriteStream } = require('fs');
-const { pipeline } = require('stream/promises');
-const AdmZip = require('adm-zip');
+const { randomUUID } = require('crypto');
 const {
   parseSkillContent,
 } = require('./format-converter');
@@ -32,12 +29,27 @@ const remoteCredentialCache = require('./remote-credential-cache');
 const platformRuntime = require('../../platforms/runtime');
 const {
   assertExistingProjectRoot,
+  assertNoSymlinkComponents,
   resolveProjectTarget
 } = require('./project-config-adapters/shared');
+const { ControlManifestStore } = require('./control-manifest-store');
+const { EffectiveControlService } = require('./effective-control-service');
+const { SkillArtifactStore } = require('./skill-artifact-store');
+const { SkillFormatAdapter } = require('./skill-format-adapters');
+const { SkillProjectionService } = require('./skill-projection-service');
 
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
+const CACHE_TTL = 5 * 60 * 1000;
+
+function sanitizeRefreshError(value) {
+  return String(value || '')
+    .replace(/(https?:\/\/[^\s?]+)\?[^\s]+/gi, '$1?[REDACTED]')
+    .replace(/(Bearer\s+)[^\s]+/gi, '$1[REDACTED]')
+    .replace(/([?&](?:access[_-]?token|api[-_]?key|token|password|secret|key)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/((?:token|secret|password|api[-_]?key|authorization)\s*[:=]\s*)[^,\s}]+/gi, '$1[REDACTED]');
+}
 
 function cloneRepos(repos = []) {
   return repos.map(repo => ({ ...repo }));
@@ -104,6 +116,25 @@ function resolveLocalRepoPath(input = '') {
   return path.resolve(expanded);
 }
 
+function resolveExistingLocalRepoRoot(input) {
+  const value = String(input || '').trim();
+  if (!value) throw new Error('Missing local repository path');
+  const resolved = path.resolve(value);
+  let stat;
+  try {
+    stat = fs.lstatSync(resolved);
+  } catch (error) {
+    throw new Error(`Local repo path not found: ${resolved}`, { cause: error });
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Local repo root contains symlink: ${resolved}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Local repo path is not a directory: ${resolved}`);
+  }
+  return fs.realpathSync(resolved);
+}
+
 function normalizeRepoHost(host, provider = 'github') {
   const fallback = provider === 'gitlab' ? DEFAULT_GITLAB_HOST : DEFAULT_GITHUB_HOST;
   let normalized = String(host || '').trim();
@@ -149,6 +180,21 @@ function buildRepoLabel(repo) {
     return repo.projectPath || '';
   }
   return [repo.owner, repo.name].filter(Boolean).join('/');
+}
+
+function sanitizeRepoUrl(value, fallback = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+  try {
+    const parsed = new URL(raw);
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return fallback;
+  }
 }
 
 function buildRepoId(repo) {
@@ -219,11 +265,17 @@ const PLATFORM_CONFIG = {
     cacheFile: PATHS.skillCaches.omp
   }
 };
-const CACHE_TTL = 5 * 60 * 1000;
-const OMP_REMOTE_REFRESH_TIMEOUT_MS = 3000;
 
 class SkillService {
-  constructor(platform = 'claude', { registry = platformRuntime.getPlatformRegistry() } = {}) {
+  constructor(
+    platform = 'claude',
+    {
+      registry = platformRuntime.getPlatformRegistry(),
+      controlService = null,
+      artifactStore = null,
+      formatAdapter = null
+    } = {}
+  ) {
     this.registry = registry;
     this.platform = resolveManagedPlatform(platform).platform;
     if (this.platform === 'omp') {
@@ -241,25 +293,32 @@ class SkillService {
     this.storageDir = platformConfig.storageDir;
     this.reposConfigPath = platformConfig.reposFile;
     this.cachePath = platformConfig.cacheFile;
+    this.artifactStore = artifactStore || (
+      PATHS.skillArtifacts
+        ? new SkillArtifactStore({ root: PATHS.skillArtifacts })
+        : null
+    );
+    this.formatAdapter = formatAdapter || new SkillFormatAdapter();
+    this.controlService = controlService || (
+      PATHS.effectiveControlManifest
+        ? new EffectiveControlService({
+          store: new ControlManifestStore({
+            userPath: PATHS.effectiveControlManifest,
+            projectPathResolver: ({ projectPath }) => path.join(projectPath, '.ctx-control.json')
+          }),
+          projection: new SkillProjectionService({ registry: this.registry })
+        })
+        : null
+    );
 
-    // Prepared projections are keyed by cwd; raw repository skills are cwd-independent.
+    // Prepared projections are keyed by scope and canonical cwd; raw repository skills are cwd-independent.
     this.skillsCache = null;
     this.cacheTime = 0;
     this._preparedSkillsCache = new Map();
-    this._listSkillsInflight = new Map();
+    this._cacheGeneration = 0;
     this._remoteSkillsCache = null;
     this._remoteSkillsFetchedAt = 0;
-    this._remoteRefreshPromise = null;
-    this._cacheGeneration = 0;
-    this.ompRemoteSkillsCache = null;
-    this.ompRemoteRefreshPromise = null;
-    this.ompRemoteRefreshTimeoutMs = OMP_REMOTE_REFRESH_TIMEOUT_MS;
-    this.ompRemoteRefreshGeneration = 0;
-    this._ompPreparedSkillsCache = new Map();
-    this._ompListInflight = new Map();
-    this._ompRemoteFetchedAt = 0;
-    this.ompPreparedSkillsCache = null;
-    this.ompPreparedSkillsCacheKey = null;
+    this._legacyMigrationChecked = false;
 
     this.githubTokenCache = new Map();
 
@@ -272,7 +331,7 @@ class SkillService {
     const nextInstallDir = getOmpPaths().skills;
     if (this.installDir !== nextInstallDir) {
       this.installDir = nextInstallDir;
-      this.clearCache({ invalidateRemoteRefresh: true });
+      this.clearCache();
     }
   }
 
@@ -294,30 +353,21 @@ class SkillService {
     if (!fs.existsSync(cacheDir)) {
       fs.mkdirSync(cacheDir, { recursive: true });
     }
+    if (this.artifactStore?.root && !fs.existsSync(this.artifactStore.root)) {
+      fs.mkdirSync(this.artifactStore.root, { recursive: true });
+    }
   }
 
-  clearCache({ removeFile = false, invalidateRemoteRefresh = removeFile } = {}) {
+  clearCache({ removeFile = false } = {}) {
     this._cacheGeneration++;
     this.skillsCache = null;
     this.cacheTime = 0;
     this._preparedSkillsCache.clear();
-    this._listSkillsInflight.clear();
     this._remoteSkillsCache = null;
     this._remoteSkillsFetchedAt = 0;
-    this._remoteRefreshPromise = null;
-    this._ompPreparedSkillsCache.clear();
-    this._ompListInflight.clear();
-    this._ompRemoteFetchedAt = 0;
-    this.ompPreparedSkillsCache = null;
-    this.ompPreparedSkillsCacheKey = null;
-    this.ompRemoteSkillsCache = null;
     this.githubTokenCache.clear();
     remoteCredentialCache.clear('github');
     remoteCredentialCache.clear('gitlab');
-    if (invalidateRemoteRefresh) {
-      this.ompRemoteRefreshGeneration++;
-      this.ompRemoteRefreshPromise = null;
-    }
 
     if (removeFile) {
       try {
@@ -331,7 +381,13 @@ class SkillService {
   }
 
   _skillCwdKey(options = {}) {
-    return options.cwd ? path.resolve(options.cwd) : '';
+    if (!options.cwd) return '';
+    const resolved = path.resolve(options.cwd);
+    try {
+      return fs.realpathSync(resolved);
+    } catch {
+      return resolved;
+    }
   }
 
   _skillCacheKey(options = {}) {
@@ -339,14 +395,6 @@ class SkillService {
     return `${scope}:${this._skillCwdKey(options)}`;
   }
 
-  _preparedEntry(cacheKey) {
-    const cached = this._preparedSkillsCache.get(cacheKey);
-    if (cached) return cached;
-    if (cacheKey === 'user:' && Array.isArray(this.skillsCache) && this.cacheTime > 0) {
-      return { value: this.skillsCache, cachedAt: this.cacheTime, generation: this._cacheGeneration };
-    }
-    return null;
-  }
 
   _storePrepared(cacheKey, skills, generation = this._cacheGeneration) {
     const value = Array.isArray(skills) ? skills.map(skill => ({ ...skill })) : [];
@@ -360,6 +408,536 @@ class SkillService {
       this.cacheTime = entry.cachedAt;
     }
     return value.map(skill => ({ ...skill }));
+  }
+
+  _artifactSkills(options = {}) {
+    if (!this.artifactStore || typeof this.artifactStore.list !== 'function') return [];
+    const artifacts = this.artifactStore.list({ platform: this.platform });
+    const projectPath = options.scope === 'project' ? this._skillCwdKey(options) : null;
+    return artifacts.map(artifact => {
+      if (!artifact || typeof artifact.root !== 'string') return null;
+      const artifactScope = artifact.sourceScope || 'user';
+      if (
+        (artifactScope === 'project' && (!projectPath || artifact.projectPath !== projectPath))
+        || (artifactScope !== 'project' && artifact.projectPath && artifact.projectPath !== projectPath)
+      ) return null;
+      const skillPath = path.join(artifact.root, 'SKILL.md');
+      try {
+        if (!fs.existsSync(skillPath) || fs.lstatSync(skillPath).isSymbolicLink()) return null;
+        const metadata = this.parseSkillMd(fs.readFileSync(skillPath, 'utf8'));
+        const rawSourceProvider = artifact.sourceProvider || 'remote';
+        const sourceProvider = rawSourceProvider === 'remote'
+          ? (artifact.repoProvider || 'remote')
+          : rawSourceProvider;
+        const source = rawSourceProvider === 'remote'
+          ? 'remote'
+          : (rawSourceProvider === 'local-repo' ? 'local-repo' : 'provider-installed');
+        const directory = artifact.targetDirectory
+          || artifact.directory
+          || artifact.fullDirectory
+          || metadata.name;
+        return {
+          key: `artifact:${this.platform}:${artifact.sourceKey}:${artifact.format}`,
+          sourceKey: artifact.sourceKey,
+          name: metadata.name || artifact.name || directory,
+          description: metadata.description || artifact.description || '',
+          directory,
+          fullDirectory: artifact.fullDirectory || directory,
+          installed: false,
+          cached: true,
+          isLocal: ['local', 'local-repo', 'template'].includes(sourceProvider),
+          source,
+          sourceProvider,
+          sourceScope: artifactScope,
+          projectPath: artifact.projectPath || null,
+          sourcePath: skillPath,
+          artifact: {
+            root: artifact.root,
+            contentHash: artifact.contentHash || null,
+            format: artifact.format || null,
+            state: artifact.state || 'ready',
+            fetchedAt: artifact.fetchedAt || null
+          },
+          repoProvider: artifact.repoProvider || null,
+          repoOwner: artifact.repoOwner || null,
+          repoName: artifact.repoName || null,
+          repoBranch: artifact.repoBranch || null,
+          repoDirectory: artifact.repoDirectory || artifact.fullDirectory || directory,
+          repoHost: artifact.repoHost || null,
+          repoProjectPath: artifact.repoProjectPath || null,
+          repoLocalPath: artifact.repoLocalPath || null,
+          repoUrl: artifact.repoUrl || null,
+          protected: false,
+          shadowedSources: [],
+          readmeUrl: artifact.readmeUrl || null,
+          license: metadata.license || null
+        };
+      } catch (error) {
+        console.warn(`[SkillService] Read artifact ${artifact.sourceKey || ''} error:`, error.message);
+        return null;
+      }
+    }).filter(Boolean);
+  }
+  _legacyCachedSkills(options = {}) {
+    const cached = this._readRawRemoteCache();
+    if (!cached || !Array.isArray(cached.skills)) return [];
+    const scope = options.scope || 'user';
+    const projectPath = scope === 'project' ? this._skillCwdKey(options) : null;
+    return cached.skills
+      .filter(skill => {
+        const skillScope = skill.sourceScope || 'user';
+        if (skillScope === 'project') {
+          return scope === 'project' && skill.projectPath === projectPath;
+        }
+        return !skill.projectPath || skill.projectPath === projectPath;
+      })
+      .map(skill => ({
+        ...skill,
+        source: skill.source || 'remote',
+        sourceProvider: skill.sourceProvider || 'remote',
+        sourceScope: skill.sourceScope || 'user',
+        sourceKey: skill.sourceKey || `legacy-cache:${this.platform}:${skill.repoId || skill.repoName || ''}:${skill.fullDirectory || skill.directory || skill.name || ''}`,
+        cached: false,
+        artifactRoot: null,
+        artifactState: 'metadata_only',
+        artifact: {
+          ...(skill.artifact || {}),
+          root: null,
+          state: 'metadata_only'
+        }
+      }));
+  }
+
+  _sourceKeyForSkill(skill = {}, options = {}) {
+    const sourceProvider = skill.sourceProvider || skill.source || 'native';
+    const isProjectLocal = options.scope === 'project'
+      && skill.sourceScope === 'project'
+      && sourceProvider !== 'remote'
+      && !skill.repoId;
+    const projectPath = isProjectLocal ? this._skillCwdKey(options) : '';
+    const addProjectIdentity = sourceKey => (
+      isProjectLocal && projectPath && !sourceKey.includes(':project:')
+        ? `${sourceKey}:project:${projectPath}`
+        : sourceKey
+    );
+    if (skill.sourceKey) return addProjectIdentity(String(skill.sourceKey));
+    const directory = skill.fullDirectory || skill.directory || skill.name || '';
+    let sourceKey;
+    if (sourceProvider === 'native' || sourceProvider === 'native-installed') {
+      sourceKey = `native:${this.platform}:${directory}`;
+    } else if (sourceProvider === 'cc-tool' || sourceProvider === 'local') {
+      sourceKey = `local:${this.platform}:${directory}`;
+    } else {
+      const repo = skill.repoId || [skill.repoOwner, skill.repoName, skill.repoBranch].filter(Boolean).join('/');
+      sourceKey = repo
+        ? `repo:${repo}:${directory}`
+        : `${sourceProvider}:${this.platform}:${skill.realPath || skill.sourcePath || directory}`;
+    }
+    return addProjectIdentity(sourceKey);
+  }
+
+  _controlKeyForSkill(skill, scope, projectPath, sourceKey) {
+    const location = scope === 'project' ? projectPath : 'user';
+    return skill.controlKey || `skill:${this.platform}:${scope}:${location}:${sourceKey}`;
+  }
+
+  _materializeLocalArtifact(skill, sourceKey, options = {}) {
+    if (!this.artifactStore || !skill.sourcePath) return null;
+    if (skill.source === 'remote' || skill.sourceProvider === 'remote' || skill.artifactRoot) return null;
+    const root = path.dirname(skill.sourcePath);
+    const projectPath = skill.sourceScope === 'project' && options.scope === 'project'
+      ? this._skillCwdKey(options)
+      : null;
+    try {
+      const files = this._collectLocalSkillFiles(root);
+      const normalized = this.formatAdapter.normalize({
+        platform: this.platform,
+        files,
+        sourceMetadata: {
+          name: skill.name || skill.directory,
+          sourceScope: skill.sourceScope || 'user',
+          projectPath
+        }
+      });
+      const existing = this.artifactStore.get?.({
+        platform: this.platform,
+        sourceKey,
+        format: normalized.format
+      });
+      const contentHash = this.artifactStore.hashFileTree?.(normalized.files);
+      if (existing && (!contentHash || existing.contentHash === contentHash)) return existing;
+      return this.artifactStore.publishSkill({
+        platform: this.platform,
+        sourceKey,
+        format: normalized.format,
+        files: normalized.files,
+        metadata: {
+          name: skill.name || skill.directory,
+          description: skill.description || '',
+          directory: skill.directory,
+          fullDirectory: skill.fullDirectory || skill.directory,
+          sourceProvider: skill.sourceProvider || skill.source || 'native',
+          sourceScope: skill.sourceScope || 'user',
+          ...(projectPath ? { projectPath } : {}),
+          revision: skill.revision || null
+        }
+      });
+    } catch (error) {
+      console.warn(`[SkillService] Materialize local Skill ${skill.directory || ''} failed:`, error.message);
+      return {
+        root: null,
+        contentHash: null,
+        state: 'unsupported',
+        fetchedAt: null,
+        lastError: error.message
+      };
+    }
+  }
+
+  _skillProjectionCapability(scope) {
+    const capability = this.controlService?.projection?.getCapability?.(this.platform, scope);
+    if (capability) return capability;
+    const mapping = this.registry?.resolve?.(this.platform)?.projectResources?.skills;
+    return mapping || scope === 'user'
+      ? { mode: 'native-copy', format: null }
+      : { mode: 'unsupported', format: null };
+  }
+
+  _buildSkillControlEntry(skill, options = {}) {
+    const sourceScope = skill.sourceScope === 'project' && options.scope === 'project'
+      ? 'project'
+      : 'user';
+    const projectPath = sourceScope === 'project' ? this._skillCwdKey(options) : null;
+    const sourceKey = this._sourceKeyForSkill(skill, options);
+    const controlKey = this._controlKeyForSkill(skill, sourceScope, projectPath, sourceKey);
+    const isRemote = skill.source === 'remote'
+      || skill.sourceProvider === 'remote'
+      || skill.artifactState === 'metadata_only'
+      || Boolean(skill.repoId);
+    const projectionCapability = this._skillProjectionCapability(sourceScope);
+    const localArtifact = this._materializeLocalArtifact(skill, sourceKey, options);
+    const artifact = localArtifact || skill.artifact || null;
+    const artifactRoot = skill.artifactRoot || artifact?.root || (
+      skill.sourcePath ? path.dirname(skill.sourcePath) : null
+    );
+    const projectionUnsupported = skill.protected
+      || skill.readonly === true
+      || artifact?.state === 'unsupported'
+      || projectionCapability.mode !== 'native-copy';
+    return {
+      kind: 'skill',
+      controlKey,
+      platform: this.platform,
+      scope: sourceScope,
+      projectPath,
+      sourceKey,
+      source: {
+        kind: skill.sourceProvider || skill.source || 'native',
+        repoId: skill.repoId || null,
+        fullDirectory: skill.fullDirectory || skill.directory || '',
+        revision: skill.revision || null
+      },
+      artifact: {
+        ...(artifact || {}),
+        root: artifactRoot,
+        contentHash: skill.contentHash || artifact?.contentHash || null,
+        state: skill.artifactState || artifact?.state || (isRemote ? 'metadata_only' : 'ready'),
+        fetchedAt: artifact?.fetchedAt || null
+      },
+      targetDirectory: skill.directory,
+      cached: skill.cached !== false && skill.artifactState !== 'metadata_only',
+      enabled: isRemote ? false : skill.installed !== false,
+      trust: isRemote ? 'pending' : 'approved',
+      projection: {
+        mode: projectionUnsupported ? 'unsupported' : projectionCapability.mode,
+        sourceKey: !projectionUnsupported
+          && !isRemote
+          && (
+            skill.sourceProvider === 'native'
+            || skill.source === 'native-installed'
+            || skill.source === 'project-installed'
+          )
+          ? sourceKey
+          : null,
+        path: null,
+        updatedAt: null
+      },
+      managed: true,
+      lastError: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+  }
+
+  _applyControlState(skills, options = {}) {
+    if (!this.controlService) {
+      return skills.map(skill => ({
+        ...skill,
+        managed: true,
+        cached: skill.cached !== false,
+        enabled: skill.enabled === true || skill.installed === true,
+        trust: skill.trust || (skill.source === 'remote' ? 'pending' : 'approved'),
+        installed: skill.enabled === true || skill.installed === true
+      }));
+    }
+
+    return skills.map(skill => {
+      const candidate = this._buildSkillControlEntry(skill, options);
+      const scopeOptions = { scope: candidate.scope, projectPath: candidate.projectPath };
+      let entry = this.controlService.getSkill(candidate.controlKey, scopeOptions);
+      if (!entry && (skill.sourceProvider === 'native' || skill.source === 'native-installed')) {
+        const effective = this.controlService.getEffectiveSnapshot?.({
+          platform: this.platform,
+          scope: candidate.scope,
+          projectPath: candidate.projectPath
+        });
+        entry = effective?.skills?.active?.find(item => (
+          item.scope === candidate.scope
+          && item.projectPath === candidate.projectPath
+          && item.targetDirectory === candidate.targetDirectory
+          && item.sourceKey !== candidate.sourceKey
+          && item.artifact?.root
+        )) || null;
+      }
+      if (!entry) {
+        entry = this.controlService.registerSkill(candidate);
+      } else if (
+        candidate.artifact?.root
+        && candidate.artifact?.contentHash
+        && candidate.artifact.contentHash !== entry.artifact?.contentHash
+      ) {
+        if (entry.enabled || entry.projection?.state === 'enabled') {
+          try {
+            this.controlService.setSkillEnabled({
+              platform: this.platform,
+              controlKey: entry.controlKey,
+              scope: candidate.scope,
+              projectPath: candidate.projectPath,
+              enabled: false
+            });
+          } catch (error) {
+            candidate.lastError = error.message;
+          }
+        }
+        entry = this.controlService.registerSkill({
+          ...entry,
+          artifact: { ...(entry.artifact || {}), ...candidate.artifact },
+          cached: candidate.cached,
+          enabled: false,
+          trust: 'needs_review',
+          projection: { ...(entry.projection || {}), state: 'disabled', updatedAt: Date.now() },
+          lastError: candidate.lastError || null,
+          updatedAt: Date.now()
+        });
+      } else if (
+        (skill.sourceProvider === 'native' || skill.source === 'native-installed')
+        && entry.sourceKey === candidate.sourceKey
+        && !entry.projection?.sourceKey
+        && candidate.projection?.sourceKey
+      ) {
+        entry = this.controlService.registerSkill({
+          ...entry,
+          projection: {
+            ...(entry.projection || {}),
+            sourceKey: candidate.projection.sourceKey,
+            state: entry.enabled ? 'enabled' : (entry.projection?.state || 'disabled'),
+            updatedAt: Date.now()
+          },
+          updatedAt: Date.now()
+        });
+      }
+      const loadable = entry.trust === 'approved' && entry.artifact?.state === 'ready';
+      return {
+        ...skill,
+        controlKey: entry.controlKey,
+        sourceKey: entry.sourceKey || candidate.sourceKey,
+        scope: entry.scope,
+        sourceScope: entry.scope,
+        projectPath: entry.projectPath,
+        managed: true,
+        cached: entry.cached,
+        enabled: loadable && entry.enabled === true,
+        trust: entry.trust,
+        artifact: entry.artifact,
+        installed: loadable && entry.enabled === true,
+        lastError: entry.lastError || null
+      };
+    });
+  }
+
+  _latestRefreshTask(options = {}) {
+    if (!PATHS.skillRefreshTasks || !fs.existsSync(PATHS.skillRefreshTasks)) return null;
+    try {
+      const persisted = JSON.parse(fs.readFileSync(PATHS.skillRefreshTasks, 'utf8'));
+      const scope = options.scope || 'user';
+      const projectPath = scope === 'project' ? this._skillCwdKey(options) : null;
+      return (Array.isArray(persisted?.tasks) ? persisted.tasks : [])
+        .filter(task => (
+          task?.platform === this.platform
+          && (task.scope || 'user') === scope
+          && (task.projectPath || null) === projectPath
+        ))
+        .sort((a, b) => Number(b.finishedAt || b.createdAt || 0) - Number(a.finishedAt || a.createdAt || 0))[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  _refreshSnapshot(options = {}) {
+    const scope = options.scope || 'user';
+    const projectPath = scope === 'project' ? this._skillCwdKey(options) : null;
+    const cached = this._readRawRemoteCache();
+    const matchesScope = item => {
+      const itemScope = item?.sourceScope || 'user';
+      if (itemScope === 'project') {
+        return scope === 'project' && item.projectPath === projectPath;
+      }
+      return !item.projectPath || item.projectPath === projectPath;
+    };
+    const cachedSkills = Array.isArray(cached?.skills)
+      ? cached.skills.filter(matchesScope)
+      : [];
+    const cachedFetchedAt = cachedSkills.reduce(
+      (latest, skill) => Math.max(latest, Number(skill.fetchedAt || 0)),
+      0
+    ) || (cachedSkills.length > 0 ? Number(cached?.fetchedAt || 0) : 0);
+    const artifactFetchedAt = (this.artifactStore?.list?.({ platform: this.platform }) || [])
+      .filter(matchesScope)
+      .filter(artifact => artifact.sourceProvider === 'remote' || artifact.source === 'remote' || artifact.repoId)
+      .reduce((latest, artifact) => Math.max(latest, Number(artifact.fetchedAt || 0)), 0);
+    const fetchedAt = Math.max(cachedFetchedAt, artifactFetchedAt);
+    const task = this._latestRefreshTask(options);
+    return {
+      state: task?.status || (fetchedAt > 0 ? 'idle' : 'never_fetched'),
+      taskId: task?.id || null,
+      fetchedAt: fetchedAt || null,
+      error: task?.error ? sanitizeRefreshError(task.error) : null
+    };
+  }
+
+  _ensureLegacyControlMigration() {
+    if (this._legacyMigrationChecked || !this.controlService || !PATHS.configRegistry || !PATHS.configs) {
+      return;
+    }
+    this._legacyMigrationChecked = true;
+    try {
+      const { ConfigRegistryService } = require('./config-registry-service');
+      new ConfigRegistryService({ controlService: this.controlService }).migrateSkillControls();
+    } catch (error) {
+      this._legacyMigrationChecked = false;
+      console.warn('[SkillService] Legacy control migration skipped:', error.message);
+    }
+  }
+
+  _controlOnlySkills(options = {}, knownControlKeys = new Set()) {
+    if (!this.controlService?.getEffectiveSnapshot) return [];
+    const scope = options.scope || 'user';
+    const projectPath = scope === 'project' ? this._skillCwdKey(options) : null;
+    const snapshot = this.controlService.getEffectiveSnapshot({
+      platform: this.platform,
+      scope,
+      projectPath
+    });
+    return (snapshot.skills?.active || [])
+      .filter(entry => entry?.controlKey && !knownControlKeys.has(entry.controlKey))
+      .map(entry => {
+        const artifactRoot = typeof entry.artifact?.root === 'string' ? entry.artifact.root : null;
+        const skillFile = artifactRoot ? path.join(artifactRoot, 'SKILL.md') : null;
+        const artifactAllowed = !artifactRoot || !this.artifactStore?.root || (() => {
+          try {
+            assertNoSymlinkComponents(this.artifactStore.root, artifactRoot, fs);
+            const relative = path.relative(path.resolve(this.artifactStore.root), path.resolve(artifactRoot));
+            return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+          } catch {
+            return false;
+          }
+        })();
+        const available = Boolean(
+          artifactAllowed
+          && skillFile
+          && path.isAbsolute(artifactRoot)
+          && fs.existsSync(skillFile)
+          && !fs.lstatSync(artifactRoot).isSymbolicLink()
+          && !fs.lstatSync(skillFile).isSymbolicLink()
+        );
+        const artifactState = available ? (entry.artifact?.state || 'ready') : 'missing';
+        const loadable = available && artifactState === 'ready' && entry.trust === 'approved';
+        const source = entry.source || {};
+        const sourceKind = typeof source === 'string' ? source : source.kind || 'unknown';
+        const directory = String(entry.targetDirectory || source.fullDirectory || entry.name || entry.controlKey);
+        return {
+          key: entry.controlKey,
+          controlKey: entry.controlKey,
+          sourceKey: entry.sourceKey || null,
+          name: entry.name || path.basename(directory),
+          description: entry.description || '',
+          directory,
+          installed: loadable && entry.enabled === true,
+          enabled: loadable && entry.enabled === true,
+          cached: available && entry.cached !== false,
+          isLocal: sourceKind === 'local' || sourceKind === 'template',
+          source: sourceKind === 'remote' || sourceKind === 'git' ? 'remote' : sourceKind,
+          sourceProvider: sourceKind,
+          sourceScope: entry.scope,
+          scope: entry.scope,
+          projectPath: entry.projectPath || null,
+          sourcePath: skillFile,
+          artifact: {
+            ...(entry.artifact || {}),
+            root: artifactRoot,
+            state: artifactState
+          },
+          artifactRoot,
+          projectionOverlay: true,
+          artifactState,
+          contentHash: entry.artifact?.contentHash || null,
+          revision: source.revision || null,
+          repoId: source.repoId || null,
+          cachedAt: entry.artifact?.fetchedAt || null,
+          trust: entry.trust || 'pending',
+          managed: true,
+          projection: entry.projection || { mode: 'unsupported', state: 'unsupported' },
+          lastError: entry.lastError || (!available ? 'Skill artifact is missing' : null),
+          readonly: sourceKind === 'remote' || sourceKind === 'git',
+          protected: false,
+          shadowedSources: [],
+          readmeUrl: null,
+          license: null
+        };
+      });
+  }
+
+  async scanSkills(options = {}) {
+    this._ensureLegacyControlMigration();
+    const scope = options.scope || 'user';
+    const scopeOptions = scope === 'project'
+      ? this.resolveScopeOptions(options)
+      : { scope: 'user', cwd: '' };
+    const normalizedOptions = {
+      ...options,
+      scope,
+      ...(scope === 'project' ? { cwd: scopeOptions.cwd } : {})
+    };
+    const cacheKey = this._skillCacheKey({
+      scope,
+      cwd: options.cwd || (scope === 'project' ? scopeOptions.cwd : '')
+    });
+    const generation = this._cacheGeneration;
+    const rawSkills = [
+      ...this._artifactSkills(normalizedOptions),
+      ...this._legacyCachedSkills(normalizedOptions)
+    ];
+    const prepared = this.prepareSkills(rawSkills, normalizedOptions);
+    const controlled = this._applyControlState(prepared, normalizedOptions);
+    const knownControlKeys = new Set(controlled.map(skill => skill.controlKey).filter(Boolean));
+    const missingControls = this._controlOnlySkills(normalizedOptions, knownControlKeys);
+    const skills = [...controlled, ...missingControls];
+    this.deduplicateSkills(skills);
+    const preparedSkills = this._storePrepared(cacheKey, skills, generation);
+    return {
+      skills: preparedSkills,
+      refresh: this._refreshSnapshot(normalizedOptions)
+    };
   }
 
   _readRawRemoteCache() {
@@ -383,91 +961,6 @@ class SkillService {
     };
   }
 
-  async _refreshRemoteSkills(staleSkills = null) {
-    if (this._remoteRefreshPromise) return this._remoteRefreshPromise;
-    const generation = this._cacheGeneration;
-    const refreshPromise = (async () => {
-      const repos = this.loadRepos();
-      const enabledRepos = repos.filter(repo => repo.enabled);
-      const enabledRemoteRepos = enabledRepos.filter(repo => repo.provider !== 'local');
-      const skills = [];
-      let remoteFailureCount = 0;
-      const results = await Promise.allSettled(
-        enabledRepos.map(async repo => {
-          let timer;
-          try {
-            return await Promise.race([
-              this.fetchRepoSkills(repo),
-              new Promise((_, reject) => {
-                timer = setTimeout(() => reject(new Error('Fetch timeout')), 30000);
-              })
-            ]);
-          } finally {
-            clearTimeout(timer);
-          }
-        })
-      );
-
-      results.forEach((result, index) => {
-        const repo = enabledRepos[index];
-        if (result.status === 'fulfilled') {
-          skills.push(...(Array.isArray(result.value) ? result.value : []));
-          return;
-        }
-        if (repo.provider !== 'local') remoteFailureCount++;
-        console.warn(`[SkillService] Fetch repo ${repo.owner || repo.projectPath}/${repo.name || ''} failed:`, result.reason?.message);
-      });
-
-      const failureCount = results.filter(result => result.status === 'rejected').length;
-      const useStale = Array.isArray(staleSkills)
-        && enabledRemoteRepos.length > 0
-        && (
-          (remoteFailureCount === enabledRemoteRepos.length && skills.length === 0)
-          || (remoteFailureCount > 0 && staleSkills.length > skills.length)
-        );
-      const publishedSkills = useStale ? staleSkills : skills;
-      const fetchedAt = useStale ? 0 : Date.now();
-      if (generation === this._cacheGeneration) {
-        this._remoteSkillsCache = publishedSkills;
-        this._remoteSkillsFetchedAt = fetchedAt;
-        if (!useStale) this.saveCacheToFile(publishedSkills, fetchedAt);
-      }
-      return {
-        skills: publishedSkills,
-        enabledRemoteCount: enabledRemoteRepos.length,
-        remoteFailureCount,
-        failureCount,
-        fetchedAt
-      };
-    })();
-
-    const trackedPromise = refreshPromise.finally(() => {
-      if (this._remoteRefreshPromise === trackedPromise) {
-        this._remoteRefreshPromise = null;
-      }
-    });
-    this._remoteRefreshPromise = trackedPromise;
-    return trackedPromise;
-  }
-
-  async _listSkillsUncached(forceRefresh, options, cwdKey, generation) {
-    const cached = this._readRawRemoteCache();
-    if (!forceRefresh && cached?.fresh) {
-      return this._storePrepared(cwdKey, this.prepareSkills(cached.skills, options), generation);
-    }
-
-    let refreshed;
-    try {
-      refreshed = await this._refreshRemoteSkills(cached?.skills || null);
-    } catch (error) {
-      if (cached) {
-        return this._storePrepared(cwdKey, this.prepareSkills(cached.skills, options), generation);
-      }
-      throw error;
-    }
-
-    return this._storePrepared(cwdKey, this.prepareSkills(refreshed.skills, options), generation);
-  }
 
   prepareSkills(skills = [], options = {}) {
     this.refreshOmpPaths();
@@ -547,7 +1040,7 @@ class SkillService {
     } else if (provider === 'gitlab') {
       normalized.host = normalizeRepoHost(repo.host, 'gitlab');
       normalized.projectPath = normalizeRepoPath(repo.projectPath || [repo.owner, repo.name].filter(Boolean).join('/'));
-      if (!normalized.projectPath) {
+      if (!normalized.projectPath || normalized.projectPath.split('/').some(segment => !segment || segment === '.' || segment === '..')) {
         throw new Error('Missing GitLab project path');
       }
       normalized.name = stripGitSuffix(normalized.projectPath.split('/').pop() || '');
@@ -561,7 +1054,7 @@ class SkillService {
       }
     }
 
-    normalized.repoUrl = repo.repoUrl || buildRepoUrl(normalized);
+    normalized.repoUrl = sanitizeRepoUrl(repo.repoUrl, buildRepoUrl(normalized));
     normalized.label = buildRepoLabel(normalized);
     normalized.id = buildRepoId(normalized);
 
@@ -687,16 +1180,87 @@ class SkillService {
   removeRepo(owner, name, directory = '', repoId = '') {
     const repos = this.loadRepos();
     const normalizedDirectory = normalizeRepoDirectory(directory);
-    const filtered = repos.filter(r => {
-      if (repoId) {
-        return r.id !== repoId;
+    const removedRepoIds = new Set(
+      repos
+        .filter(r => {
+          if (repoId) {
+            return r.id === repoId;
+          }
+          return (
+            (r.owner || '') === owner &&
+            (r.name || '') === name &&
+            normalizeRepoDirectory(r.directory) === normalizedDirectory
+          );
+        })
+        .map(r => r.id)
+        .filter(Boolean)
+    );
+    const filtered = repos.filter(r => !removedRepoIds.has(r.id) && !(
+      !repoId &&
+      (r.owner || '') === owner &&
+      (r.name || '') === name &&
+      normalizeRepoDirectory(r.directory) === normalizedDirectory
+    ));
+    if (this.artifactStore && removedRepoIds.size > 0) {
+      const disabledControlKeys = new Set();
+      for (const artifact of this.artifactStore.list({ platform: this.platform })) {
+        if (!removedRepoIds.has(artifact.repoId)) continue;
+        const scope = artifact.sourceScope || 'user';
+        const projectPath = scope === 'project' ? artifact.projectPath : null;
+        const controlKey = `skill:${this.platform}:${scope}:${projectPath || 'user'}:${artifact.sourceKey}`;
+        if (!disabledControlKeys.has(controlKey) && this.controlService?.getSkill && this.controlService?.setSkillEnabled) {
+          let existing = null;
+          try {
+            existing = this.controlService.getSkill(controlKey, { scope, projectPath });
+          } catch (_) {
+            // A deleted project has no readable project control manifest.
+          }
+          if (existing) {
+            try {
+              const disabled = this.controlService.setSkillEnabled({
+                platform: this.platform,
+                controlKey,
+                scope,
+                projectPath,
+                enabled: false
+              });
+              if (disabled?.enabled !== false && this.controlService.registerSkill) {
+                this.controlService.registerSkill({
+                  ...existing,
+                  enabled: false,
+                  projection: {
+                    ...(existing.projection || {}),
+                    ...(disabled?.projection || {}),
+                    state: disabled?.projection?.state || 'conflict',
+                    status: disabled?.projection?.status || 'conflict',
+                    updatedAt: Date.now()
+                  },
+                  lastError: disabled?.lastError || 'Skill projection ownership could not be verified',
+                  updatedAt: Date.now()
+                });
+              }
+            } catch (error) {
+              if (this.controlService.registerSkill) {
+                this.controlService.registerSkill({
+                  ...existing,
+                  enabled: false,
+                  projection: { ...(existing.projection || {}), state: 'error', status: 'error', updatedAt: Date.now() },
+                  lastError: error.message,
+                  updatedAt: Date.now()
+                });
+              }
+            }
+          }
+          disabledControlKeys.add(controlKey);
+        }
+        this.artifactStore.markState({
+          platform: this.platform,
+          sourceKey: artifact.sourceKey,
+          format: artifact.format,
+          state: 'orphaned'
+        });
       }
-      return !(
-        (r.owner || '') === owner &&
-        (r.name || '') === name &&
-        normalizeRepoDirectory(r.directory) === normalizedDirectory
-      );
-    });
+    }
     this.saveRepos(filtered);
     this.clearCache({ removeFile: true });
     return this.loadRepos();
@@ -768,215 +1332,22 @@ class SkillService {
   }
 
   /**
-   * 获取所有技能列表（带缓存）
+   * 获取本地 Skill 列表。网络刷新必须由显式 refresh task 触发。
+   *
+   * @deprecated 内部调用请使用 scanSkills；此方法只保留现有脚本的数组响应兼容性。
    */
-  async listSkills(forceRefresh = false, options = {}) {
-    if (this.platform === 'omp') {
-      return this.listOmpSkills(forceRefresh, options);
-    }
-
-    const cacheKey = this._skillCacheKey(options);
-    const now = Date.now();
-    const prepared = this._preparedEntry(cacheKey);
-    if (!forceRefresh && prepared && prepared.generation === this._cacheGeneration
-      && now - prepared.cachedAt < CACHE_TTL) {
-      return prepared.value.map(skill => ({ ...skill }));
-    }
-
-    const generation = this._cacheGeneration;
-    const inflightKey = `${this.platform}:${cacheKey}:${generation}`;
-    const existing = this._listSkillsInflight.get(inflightKey);
-    if (existing) return existing;
-
-    const promise = this._listSkillsUncached(forceRefresh, options, cacheKey, generation)
-      .then(skills => skills.map(skill => ({ ...skill })))
-      .finally(() => {
-        if (this._listSkillsInflight.get(inflightKey) === promise) {
-          this._listSkillsInflight.delete(inflightKey);
-        }
-      });
-    this._listSkillsInflight.set(inflightKey, promise);
-    return promise;
-  }
-
-  async listOmpSkills(forceRefresh = false, options = {}) {
-    const cwdKey = this._skillCwdKey(options);
-    const now = Date.now();
-    const cached = this._ompPreparedSkillsCache.get(cwdKey)
-      || (this.ompPreparedSkillsCacheKey === cwdKey && Array.isArray(this.ompPreparedSkillsCache)
-        ? { value: this.ompPreparedSkillsCache, cachedAt: this.cacheTime, generation: this._cacheGeneration }
-        : null);
-    if (!forceRefresh && cached && cached.generation === this._cacheGeneration
-      && now - cached.cachedAt < CACHE_TTL) {
-      return cached.value.map(skill => ({ ...skill }));
-    }
-
-    const inflightKey = `omp:${cwdKey}:${this._cacheGeneration}:${this.ompRemoteRefreshGeneration}`;
-    const existing = this._ompListInflight.get(inflightKey);
-    if (existing) return existing;
-
-    const promise = this._listOmpSkillsUncached(forceRefresh, {
-      ...options,
-      cwd: cwdKey || options.cwd,
-      force: forceRefresh
-    }, cwdKey)
-      .then(skills => skills.map(skill => ({ ...skill })))
-      .finally(() => {
-        if (this._ompListInflight.get(inflightKey) === promise) {
-          this._ompListInflight.delete(inflightKey);
-        }
-      });
-    this._ompListInflight.set(inflightKey, promise);
-    return promise;
-  }
-
-  async _listOmpSkillsUncached(forceRefresh, options, cwdKey) {
-    const requestGeneration = this.ompRemoteRefreshGeneration;
-    const envelope = this._readCacheEnvelope();
-    const cachedRemoteSkills = Array.isArray(this.ompRemoteSkillsCache)
-      ? this.ompRemoteSkillsCache
-      : envelope?.skills;
-    const fetchedAt = this._ompRemoteFetchedAt || envelope?.fetchedAt || 0;
-
-    if (!forceRefresh && Array.isArray(cachedRemoteSkills)
-      && fetchedAt > 0 && Date.now() - fetchedAt < CACHE_TTL) {
-      return this.prepareAndCacheOmpSkills(cachedRemoteSkills, options, requestGeneration, cwdKey);
-    }
-
-    const timeoutToken = Symbol('omp-refresh-timeout');
-    const refreshPromise = this.startOmpRemoteRefresh();
-    const timeoutMs = Math.max(0, Number(this.ompRemoteRefreshTimeoutMs) || OMP_REMOTE_REFRESH_TIMEOUT_MS);
-    let timeoutId;
-    const timeoutPromise = new Promise(resolve => {
-      timeoutId = setTimeout(() => resolve(timeoutToken), timeoutMs);
-    });
-
-    let remoteResult;
-    try {
-      remoteResult = await Promise.race([refreshPromise, timeoutPromise]);
-    } catch (err) {
-      console.warn('[SkillService] OMP remote refresh failed:', err.message);
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    const hasCachedRemoteSkills = Array.isArray(cachedRemoteSkills);
-    const hasRemoteResult = Boolean(remoteResult && remoteResult !== timeoutToken);
-    const refreshIsCurrent = requestGeneration === this.ompRemoteRefreshGeneration
-      && (!hasRemoteResult || remoteResult.refreshGeneration === this.ompRemoteRefreshGeneration);
-    const failureCount = remoteResult?.failureCount ?? 1;
-    let remoteSkills;
-
-    if (!refreshIsCurrent) {
-      remoteSkills = hasCachedRemoteSkills ? cachedRemoteSkills : [];
-    } else if (hasRemoteResult && failureCount === 0) {
-      remoteSkills = remoteResult.skills;
-    } else if (hasRemoteResult && remoteResult.skills.length > 0) {
-      remoteSkills = hasCachedRemoteSkills
-        ? [...remoteResult.skills, ...cachedRemoteSkills]
-        : remoteResult.skills;
-    } else {
-      remoteSkills = hasCachedRemoteSkills ? cachedRemoteSkills : [];
-    }
-
-    if (refreshIsCurrent && (!hasCachedRemoteSkills || (hasRemoteResult && remoteSkills.length > 0))) {
-      this.ompRemoteSkillsCache = remoteSkills;
-    }
-    return this.prepareAndCacheOmpSkills(remoteSkills, options, requestGeneration, cwdKey);
-  }
-
-  _storeOmpPrepared(cwdKey, prepared) {
-    const value = Array.isArray(prepared) ? prepared.map(skill => ({ ...skill })) : [];
-    const entry = { value, cachedAt: Date.now(), generation: this._cacheGeneration };
-    this._ompPreparedSkillsCache.set(cwdKey, entry);
-    this.ompPreparedSkillsCache = value;
-    this.ompPreparedSkillsCacheKey = cwdKey;
-    this.skillsCache = value;
-    this.cacheTime = entry.cachedAt;
-    return value.map(skill => ({ ...skill }));
-  }
-
-  prepareAndCacheOmpSkills(
-    remoteSkills,
-    options = {},
-    expectedGeneration = this.ompRemoteRefreshGeneration,
-    cwdKey = this._skillCwdKey(options)
-  ) {
-    if (expectedGeneration !== this.ompRemoteRefreshGeneration) {
-      return this.prepareSkills([], options);
-    }
-
-    const prepared = this.prepareSkills(remoteSkills, options);
-    if (expectedGeneration !== this.ompRemoteRefreshGeneration) {
-      return this.prepareSkills([], options);
-    }
-
-    return this._storeOmpPrepared(cwdKey, prepared);
-  }
-
-  startOmpRemoteRefresh() {
-    if (this.ompRemoteRefreshPromise) {
-      return this.ompRemoteRefreshPromise;
-    }
-
-    const refreshPromise = (async () => {
-      const skills = [];
-      const refreshGeneration = this.ompRemoteRefreshGeneration;
-
-      const repos = this.loadRepos().filter(repo => repo.enabled);
-      const results = await Promise.allSettled(repos.map(repo => this.fetchRepoSkills(repo)));
-      let failureCount = 0;
-      let remoteFailureCount = 0;
-
-      results.forEach((result, index) => {
-        const repo = repos[index];
-        if (result.status === 'fulfilled') {
-          skills.push(...result.value);
-          return;
-        }
-        failureCount++;
-        if (repo.provider !== 'local') {
-          remoteFailureCount++;
-        }
-        console.warn(
-          `[SkillService] Fetch OMP repo ${repo?.label || repo?.id || ''} failed:`,
-          result.reason?.message
-        );
-      });
-
-      if (
-        refreshGeneration === this.ompRemoteRefreshGeneration &&
-        (failureCount === 0 || skills.length > 0)
-      ) {
-        const cachedRemoteSkills = this.ompRemoteSkillsCache
-          || this.loadCacheFromFile()
-          || [];
-        const publishedSkills = failureCount === 0
-          ? skills
-          : [...skills, ...cachedRemoteSkills];
-        const publishedAt = Date.now();
-        this.ompRemoteSkillsCache = publishedSkills;
-        this._ompRemoteFetchedAt = publishedAt;
-        this._ompPreparedSkillsCache.clear();
-        this.ompPreparedSkillsCache = null;
-        this.ompPreparedSkillsCacheKey = null;
-        if (failureCount === 0) {
-          this.saveCacheToFile(skills, publishedAt);
-        }
+  async listSkills(options = {}, legacyOptions = {}) {
+    const scanOptions = typeof options === 'boolean'
+      ? {
+        ...legacyOptions,
+        ...(options ? { force: true } : {}),
+        scope: legacyOptions.scope || (legacyOptions.cwd ? 'project' : 'user')
       }
-
-      return { skills, failureCount, remoteFailureCount, refreshGeneration };
-
-    })();
-
-    const trackedPromise = refreshPromise.finally(() => {
-      if (this.ompRemoteRefreshPromise === trackedPromise) {
-        this.ompRemoteRefreshPromise = null;
-      }
-    });
-    this.ompRemoteRefreshPromise = trackedPromise;
-    return trackedPromise;
+      : options;
+    const result = await this.scanSkills(scanOptions || {});
+    return result.skills;
   }
+
 
   /**
    * 从文件加载缓存
@@ -1058,6 +1429,592 @@ class SkillService {
     }
 
     return this.fetchGitHubRepoSkills(repo);
+  }
+
+  _skillBundleSourceKey(repo, fullDirectory) {
+    return `repo:${repo.id || buildRepoId(repo)}:${normalizeRepoPath(fullDirectory)}`;
+  }
+
+  _treeSkillRoots(treeItems, repo) {
+    const baseDir = normalizeRepoDirectory(repo.directory);
+    if (baseDir) {
+      normalizeSkillRelativePath(baseDir, 'skill repository directory', { allowHiddenSegments: true });
+    }
+    const basePrefix = baseDir ? `${baseDir}/` : '';
+    return treeItems
+      .filter(item => {
+        if (!item || item.type !== 'blob' || !isRootSkillFile(item.path)) return false;
+        const normalizedPath = normalizeRepoPath(item.path);
+        try {
+          normalizeSkillRelativePath(normalizedPath, 'skill repository file path', { allowHiddenSegments: true });
+        } catch {
+          return false;
+        }
+        return !baseDir || normalizedPath === baseDir || normalizedPath.startsWith(basePrefix);
+      })
+      .map(item => ({
+        file: item,
+        fullDirectory: normalizeRepoPath(item.path).replace(/\/SKILL\.md$/i, '')
+      }))
+      .filter(item => item.fullDirectory)
+      .sort((a, b) => a.fullDirectory.length - b.fullDirectory.length);
+  }
+
+  async _fetchGitSkillBundles(repo, treeItems, revision = null) {
+    const roots = this._treeSkillRoots(treeItems, repo);
+    const rootPaths = roots.map(item => item.fullDirectory);
+    const bundles = [];
+
+    for (const root of roots) {
+      const prefix = `${root.fullDirectory}/`;
+      const nestedRoots = rootPaths.filter(candidate => (
+        candidate !== root.fullDirectory && candidate.startsWith(prefix)
+      ));
+      const files = treeItems
+        .filter(item => {
+          if (!item || item.type !== 'blob') return false;
+          const filePath = normalizeRepoPath(item.path);
+          if (filePath !== `${root.fullDirectory}/SKILL.md` && !filePath.startsWith(prefix)) return false;
+          normalizeSkillRelativePath(filePath, 'skill repository file path', { allowHiddenSegments: true });
+          if (item.mode === '120000' || item.type === 'symlink') {
+            throw new Error(`Skill repository contains symlink: ${filePath}`);
+          }
+          return !nestedRoots.some(nested => filePath === nested || filePath.startsWith(`${nested}/`));
+        })
+        .map(item => ({
+          relativePath: normalizeRepoPath(item.path).slice(prefix.length),
+          source: item
+        }));
+      const contentFiles = [];
+      for (const file of files) {
+        const content = await this.fetchSkillFileContent(repo, file.source);
+        contentFiles.push({ relativePath: file.relativePath, content });
+      }
+      const skillMd = contentFiles.find(file => file.relativePath === 'SKILL.md');
+      if (!skillMd) continue;
+      const metadata = this.parseSkillMd(String(skillMd.content));
+      const directory = this.resolveSkillDirectory(root.fullDirectory, repo.directory || '', repo);
+      bundles.push({
+        sourceKey: this._skillBundleSourceKey(repo, root.fullDirectory),
+        directory,
+        fullDirectory: root.fullDirectory,
+        files: contentFiles,
+        metadata: {
+          name: metadata.name || directory,
+          description: metadata.description || '',
+          revision: revision || repo.revision || repo.commit || null,
+          repoId: repo.id,
+          repoOwner: repo.owner || null,
+          repoName: repo.name || null,
+          repoBranch: repo.branch || null,
+          repoProvider: repo.provider,
+          repoUrl: repo.repoUrl || buildRepoUrl(repo),
+          readmeUrl: this.buildSkillReadmeUrl(repo, root.fullDirectory)
+        }
+      });
+    }
+    return bundles;
+  }
+
+  _collectLocalSkillFiles(skillDir) {
+    const files = [];
+    const visit = currentDir => {
+      let entries;
+      try {
+        if (fs.lstatSync(currentDir).isSymbolicLink()) {
+          throw new Error(`Skill repository contains symlink: ${currentDir}`);
+        }
+        entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      } catch (error) {
+        if (error.message.includes('symlink')) throw error;
+        throw new Error(`Unable to read local Skill directory: ${currentDir}`, { cause: error });
+      }
+      for (const entry of entries) {
+        const sourcePath = path.join(currentDir, entry.name);
+        if (entry.isSymbolicLink()) {
+          throw new Error(`Skill repository contains symlink: ${sourcePath}`);
+        }
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules') continue;
+          if (currentDir !== skillDir && fs.existsSync(path.join(sourcePath, 'SKILL.md'))) {
+            continue;
+          }
+          visit(sourcePath);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const relativePath = normalizeSkillRelativePath(path.relative(skillDir, sourcePath), 'skill file path', {
+          allowHiddenSegments: true
+        });
+        files.push({ relativePath, content: fs.readFileSync(sourcePath) });
+      }
+    };
+    visit(skillDir);
+    return files;
+  }
+
+  _registerCreatedSkill({ root, directory, scope = 'user', cwd = null }) {
+    const files = this._collectLocalSkillFiles(root);
+    const normalized = this.formatAdapter.normalize({
+      platform: this.platform,
+      files,
+      sourceMetadata: { name: directory }
+    });
+    const projectPath = scope === 'project' ? this._skillCwdKey({ cwd }) : null;
+    const sourceKey = projectPath
+      ? `local:${this.platform}:project:${projectPath}:${directory}`
+      : `local:${this.platform}:${directory}`;
+    const controlKey = `skill:${this.platform}:${scope}:${projectPath || 'user'}:${sourceKey}`;
+    const projectionCapability = this._skillProjectionCapability(scope);
+    const published = this.artifactStore
+      ? this.artifactStore.publishSkill({
+        platform: this.platform,
+        sourceKey,
+        format: normalized.format,
+        files: normalized.files,
+        metadata: {
+          name: directory,
+          directory,
+          sourceProvider: 'local',
+          sourceScope: scope,
+          ...(projectPath ? { projectPath } : {}),
+          revision: null
+        }
+      })
+      : {
+        root,
+        state: 'ready',
+        contentHash: null,
+        fetchedAt: Date.now()
+      };
+    const entry = {
+      kind: 'skill',
+      controlKey,
+      platform: this.platform,
+      scope,
+      projectPath,
+      sourceKey,
+      source: {
+        kind: 'local',
+        repoId: null,
+        fullDirectory: directory,
+        revision: null
+      },
+      artifact: {
+        root: published.root,
+        contentHash: published.contentHash || null,
+        state: published.state || 'ready',
+        fetchedAt: published.fetchedAt || Date.now()
+      },
+      targetDirectory: directory,
+      cached: true,
+      enabled: false,
+      trust: 'pending',
+      projection: {
+        mode: projectionCapability.mode,
+        state: projectionCapability.mode === 'native-copy' ? 'disabled' : 'unsupported',
+        path: null,
+        updatedAt: null
+      },
+      managed: true,
+      lastError: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    const registered = this.controlService?.registerSkill
+      ? this.controlService.registerSkill(entry)
+      : entry;
+    return {
+      controlKey: registered.controlKey,
+      artifact: registered.artifact,
+      cached: true,
+      enabled: false,
+      trust: 'pending',
+      managed: true,
+      warnings: normalized.warnings
+    };
+  }
+
+  registerTemplateSkill({ directory, files = null, repo = null, fullDirectory = null, scope = 'user', cwd = null } = {}) {
+    const safeDirectory = this.normalizeSkillDirectory(directory);
+    const projectPath = scope === 'project' ? this._skillCwdKey({ cwd }) : null;
+    const projectionCapability = this._skillProjectionCapability(scope);
+    if (scope === 'project' && !projectPath) {
+      throw new Error('Project template Skill requires a valid cwd');
+    }
+
+    if (repo) {
+      const normalizedRepo = this.normalizeRepoConfig(repo);
+      const sourceDirectory = fullDirectory || safeDirectory;
+      const sourceKey = this._skillBundleSourceKey(normalizedRepo, sourceDirectory);
+      const controlKey = `skill:${this.platform}:user:user:${sourceKey}`;
+      const existing = this.controlService?.getSkill?.(controlKey, { scope: 'user' }) || null;
+      const entry = existing || {
+        kind: 'skill',
+        controlKey,
+        platform: this.platform,
+        scope: 'user',
+        projectPath: null,
+        sourceKey,
+        source: {
+          kind: 'remote',
+          repoId: normalizedRepo.id,
+          fullDirectory: sourceDirectory,
+          revision: null
+        },
+        artifact: { root: null, contentHash: null, state: 'metadata_only', fetchedAt: null },
+        targetDirectory: safeDirectory,
+        cached: false,
+        enabled: false,
+        trust: 'pending',
+        projection: {
+          mode: projectionCapability.mode,
+          state: projectionCapability.mode === 'native-copy' ? 'disabled' : 'unsupported',
+          path: null,
+          updatedAt: null
+        },
+        managed: true,
+        lastError: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      };
+      const registered = existing || this.controlService?.registerSkill?.(entry) || entry;
+      return {
+        status: 'pending_refresh',
+        controlKey: registered.controlKey,
+        cached: registered.cached,
+        enabled: registered.enabled,
+        trust: registered.trust,
+        managed: true
+      };
+    }
+
+    let sourceFiles = files;
+    if (!Array.isArray(sourceFiles)) {
+      const localRoot = this.resolveStoragePath(safeDirectory).path;
+      if (!fs.existsSync(localRoot)) throw new Error(`本地模板 Skill "${safeDirectory}" 不存在`);
+      sourceFiles = this._collectLocalSkillFiles(localRoot);
+    } else {
+      sourceFiles = sourceFiles.map(file => ({
+        relativePath: file.relativePath || file.path,
+        content: file.content,
+        ...(file.encoding ? { encoding: file.encoding } : {}),
+        ...(file.mode ? { mode: file.mode } : {})
+      }));
+    }
+    const normalized = this.formatAdapter.normalize({
+      platform: this.platform,
+      files: sourceFiles,
+      sourceMetadata: { name: safeDirectory }
+    });
+    const sourceKey = projectPath
+      ? `template:${this.platform}:project:${projectPath}:${safeDirectory}`
+      : `template:${this.platform}:${safeDirectory}`;
+    const controlKey = `skill:${this.platform}:${scope}:${projectPath || 'user'}:${sourceKey}`;
+    const scopeOptions = { scope, projectPath };
+    const existing = this.controlService?.getSkill?.(controlKey, scopeOptions) || null;
+    if (existing) {
+      return {
+        status: 'pending',
+        controlKey: existing.controlKey,
+        cached: existing.cached,
+        enabled: existing.enabled,
+        trust: existing.trust,
+        managed: true
+      };
+    }
+    const published = this.artifactStore?.publishSkill?.({
+      platform: this.platform,
+      sourceKey,
+      format: normalized.format,
+      files: normalized.files,
+      metadata: {
+        name: safeDirectory,
+        directory: safeDirectory,
+        sourceProvider: 'template',
+        sourceScope: scope,
+        ...(projectPath ? { projectPath } : {}),
+        revision: null
+      }
+    }) || {
+      root: null,
+      contentHash: null,
+      state: 'ready',
+      fetchedAt: Date.now()
+    };
+    const entry = {
+      kind: 'skill',
+      controlKey,
+      platform: this.platform,
+      scope,
+      projectPath,
+      sourceKey,
+      source: { kind: 'template', repoId: null, fullDirectory: safeDirectory, revision: null },
+      artifact: {
+        root: published.root,
+        contentHash: published.contentHash,
+        state: published.state || 'ready',
+        fetchedAt: published.fetchedAt || Date.now()
+      },
+      targetDirectory: safeDirectory,
+      cached: true,
+      enabled: false,
+      trust: 'pending',
+      projection: {
+        mode: projectionCapability.mode,
+        state: projectionCapability.mode === 'native-copy' ? 'disabled' : 'unsupported',
+        path: null,
+        updatedAt: null
+      },
+      managed: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    const registered = this.controlService?.registerSkill?.(entry) || entry;
+    return {
+      status: 'pending',
+      controlKey: registered.controlKey,
+      cached: registered.cached,
+      enabled: registered.enabled,
+      trust: registered.trust,
+      managed: true,
+      warnings: normalized.warnings
+    };
+  }
+
+  _collectLocalSkillBundles(repo) {
+    const repoRoot = resolveExistingLocalRepoRoot(repo.localPath);
+    const safeDirectory = normalizeSkillRelativePath(repo.directory || '', 'skill repository directory', {
+      allowEmpty: true
+    });
+    const scanRoot = safeDirectory
+      ? resolveInsideRoot(repoRoot, safeDirectory, 'Skill repository directory', { allowHiddenSegments: true })
+      : repoRoot;
+    assertNoSymlinkComponents(repoRoot, scanRoot, fs);
+    if (!fs.existsSync(scanRoot)) throw new Error(`Local repo path not found: ${scanRoot}`);
+
+    const bundles = [];
+    const visit = currentDir => {
+      if (fs.lstatSync(currentDir).isSymbolicLink()) {
+        throw new Error(`Skill repository contains symlink: ${currentDir}`);
+      }
+      const skillMdPath = path.join(currentDir, 'SKILL.md');
+      if (fs.existsSync(skillMdPath)) {
+        if (fs.lstatSync(skillMdPath).isSymbolicLink()) {
+          throw new Error(`Skill repository contains symlink: ${skillMdPath}`);
+        }
+        const files = this._collectLocalSkillFiles(currentDir);
+        const skillMd = files.find(file => file.relativePath === 'SKILL.md');
+        const metadata = this.parseSkillMd(String(skillMd.content));
+        const fullDirectory = normalizeRepoPath(path.relative(repoRoot, currentDir));
+        const directory = this.resolveSkillDirectory(fullDirectory, repo.directory || '', repo);
+        bundles.push({
+          sourceKey: this._skillBundleSourceKey(repo, fullDirectory),
+          directory,
+          fullDirectory,
+          files,
+          metadata: {
+            name: metadata.name || directory,
+            description: metadata.description || '',
+            revision: repo.revision || null,
+            repoId: repo.id,
+            repoProvider: 'local',
+            repoLocalPath: repo.localPath,
+            readmeUrl: null
+          }
+        });
+        return;
+      }
+      for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        visit(path.join(currentDir, entry.name));
+      }
+    };
+    visit(scanRoot);
+    return bundles;
+  }
+
+  async fetchRepoSkillBundles(repo) {
+    if (repo.provider === 'local') {
+      return this._collectLocalSkillBundles(repo);
+    }
+    const tree = repo.provider === 'gitlab'
+      ? await this.fetchGitLabTree(repo)
+      : await this.fetchGitHubRepoTree(repo);
+    return this._fetchGitSkillBundles(repo, tree, tree.revision || repo.revision || repo.commit || null);
+  }
+
+  _controlEntryForBundle(bundle, repo, artifact, scope = 'user', projectPath = null) {
+    const normalizedProjectPath = scope === 'project' ? String(projectPath || '').trim() : null;
+    if (scope === 'project' && !normalizedProjectPath) {
+      throw new Error('Project Skill refresh requires a canonical projectPath');
+    }
+    const sourceKey = bundle.sourceKey;
+    const location = normalizedProjectPath || 'user';
+    const controlKey = `skill:${this.platform}:${scope}:${location}:${sourceKey}`;
+    const existing = this.controlService?.getSkill?.(controlKey, {
+      scope,
+      projectPath: normalizedProjectPath
+    }) || null;
+    const revision = bundle.metadata?.revision || null;
+    const changed = !existing
+      || existing.artifact?.contentHash !== artifact.contentHash
+      || (existing.source?.revision || null) !== revision;
+    let staleProjectionError = null;
+    if (changed && (existing?.enabled || existing?.projection?.state === 'enabled') && this.controlService?.setSkillEnabled) {
+      try {
+        const disabled = this.controlService.setSkillEnabled({
+          platform: this.platform,
+          controlKey,
+          scope,
+          projectPath: normalizedProjectPath,
+          enabled: false
+        });
+        if (disabled?.status === 'projection_failed') staleProjectionError = disabled.lastError || 'Unable to remove previous projection';
+      } catch (error) {
+        staleProjectionError = error.message;
+      }
+    }
+    const next = {
+      ...bundle.metadata,
+      kind: 'skill',
+      controlKey,
+      platform: this.platform,
+      scope,
+      projectPath: normalizedProjectPath,
+      sourceKey,
+      source: {
+        kind: repo.provider === 'local' ? 'local' : 'remote',
+        repoId: repo.id || null,
+        fullDirectory: bundle.fullDirectory,
+        revision
+      },
+      artifact: {
+        root: artifact.root,
+        contentHash: artifact.contentHash,
+        format: artifact.format || null,
+        state: artifact.state || 'ready',
+        fetchedAt: artifact.fetchedAt || Date.now()
+      },
+      targetDirectory: bundle.directory,
+      cached: true,
+      enabled: changed ? false : existing.enabled === true,
+      trust: changed ? 'needs_review' : (existing.trust || 'pending'),
+      projection: changed
+        ? { ...(existing?.projection || {}), mode: existing?.projection?.mode || 'native-copy', state: 'disabled', updatedAt: Date.now() }
+        : (existing?.projection || { mode: 'native-copy', state: 'disabled', updatedAt: Date.now() }),
+      managed: true,
+      lastError: staleProjectionError,
+      createdAt: existing?.createdAt || Date.now(),
+      updatedAt: Date.now()
+    };
+    return this.controlService?.registerSkill
+      ? this.controlService.registerSkill(next)
+      : next;
+  }
+
+  async refreshRemoteSkills({ platform = this.platform, scope = 'user', projectPath = null, reportProgress = () => {} } = {}) {
+    if (platform !== this.platform) throw new Error(`SkillService platform mismatch: ${platform}`);
+    if (!['user', 'project'].includes(scope)) throw new Error('Invalid Skill refresh scope');
+    const normalizedProjectPath = scope === 'project' ? this._skillCwdKey({ cwd: projectPath }) : null;
+    if (scope === 'project' && !normalizedProjectPath) {
+      throw new Error('Project Skill refresh requires a canonical projectPath');
+    }
+    const repos = this.loadRepos().filter(repo => repo.enabled);
+    const successfulSkills = [];
+    const failedRepos = [];
+    const updatedControlKeys = [];
+    const results = await Promise.allSettled(repos.map(async repo => {
+      const repoId = repo.id || buildRepoLabel(repo);
+      reportProgress({ [repoId]: { status: 'running' } });
+      try {
+        const bundles = await this.fetchRepoSkillBundles(repo);
+        for (const bundle of bundles) {
+          const scopedSourceKey = scope === 'project'
+            ? `${bundle.sourceKey}:project:${normalizedProjectPath}`
+            : bundle.sourceKey;
+          const scopedBundle = scopedSourceKey === bundle.sourceKey
+            ? bundle
+            : { ...bundle, sourceKey: scopedSourceKey };
+          const normalized = this.formatAdapter.normalize({
+            platform: this.platform,
+            files: scopedBundle.files,
+            sourceMetadata: scopedBundle.metadata
+          });
+          if (!this.artifactStore) throw new Error('Skill artifact store is unavailable');
+          const artifact = await this.artifactStore.publishSkill({
+            platform: this.platform,
+            sourceKey: scopedBundle.sourceKey,
+            format: normalized.format,
+            files: normalized.files,
+            metadata: {
+              ...scopedBundle.metadata,
+              directory: scopedBundle.directory,
+              fullDirectory: scopedBundle.fullDirectory,
+              sourceProvider: repo.provider === 'local' ? 'local-repo' : 'remote',
+              sourceScope: scope,
+              ...(normalizedProjectPath ? { projectPath: normalizedProjectPath } : {}),
+              revision: scopedBundle.metadata?.revision || null
+            }
+          });
+          const control = this._controlEntryForBundle(
+            scopedBundle,
+            repo,
+            artifact,
+            scope,
+            normalizedProjectPath
+          );
+          if (control?.controlKey) updatedControlKeys.push(control.controlKey);
+          successfulSkills.push({ ...scopedBundle, artifact, warnings: normalized.warnings });
+        }
+        reportProgress({ [repoId]: { status: 'succeeded', skillCount: bundles.length } });
+        return { repo, bundles };
+      } catch (error) {
+        const safeError = sanitizeRefreshError(error?.message || error);
+        failedRepos.push({ repoId, error: safeError });
+        reportProgress({ [repoId]: { status: 'failed', error: safeError } });
+        throw error;
+      }
+    }));
+
+    const fetchedRepos = results.filter(result => result.status === 'fulfilled').length;
+    const fetchedSkills = successfulSkills.length;
+    const status = failedRepos.length === 0
+      ? 'succeeded'
+      : (fetchedRepos > 0 || fetchedSkills > 0 ? 'partial' : 'failed');
+    if (fetchedSkills > 0) {
+      const fetchedAt = Date.now();
+      const summaries = successfulSkills.map(bundle => ({
+        ...this.createSkillListItem({
+          metadata: bundle.metadata,
+          repo: repos.find(repo => repo.id === bundle.metadata?.repoId) || {},
+          directory: bundle.directory,
+          fullDirectory: bundle.fullDirectory
+        }),
+        sourceKey: bundle.sourceKey,
+        sourceProvider: bundle.metadata?.repoProvider === 'local' ? 'local-repo' : 'remote',
+        sourceScope: scope,
+        projectPath: normalizedProjectPath,
+        artifactRoot: bundle.artifact.root,
+        artifactState: bundle.artifact.state || 'ready',
+        contentHash: bundle.artifact.contentHash,
+        revision: bundle.metadata?.revision || null,
+        cached: true,
+        installed: false,
+        fetchedAt
+      }));
+      this._remoteSkillsCache = summaries;
+      this._remoteSkillsFetchedAt = fetchedAt;
+      this.saveCacheToFile(summaries, fetchedAt);
+    }
+    return {
+      status,
+      fetchedRepos,
+      fetchedSkills,
+      failedRepos,
+      updatedControlKeys
+    };
   }
 
   async fetchGitHubRepoSkills(repo) {
@@ -1163,13 +2120,14 @@ class SkillService {
 
   async fetchLocalRepoSkills(repo) {
     const skills = [];
-    const repoRoot = repo.localPath;
+    const repoRoot = resolveExistingLocalRepoRoot(repo.localPath);
     const safeDirectory = normalizeSkillRelativePath(repo.directory || '', 'skill repository directory', {
       allowEmpty: true
     });
     const scanRoot = safeDirectory
       ? resolveInsideRoot(repoRoot, safeDirectory, 'Skill repository directory', { allowHiddenSegments: true })
       : repoRoot;
+    assertNoSymlinkComponents(repoRoot, scanRoot, fs);
 
     if (!fs.existsSync(scanRoot)) {
       throw new Error(`Local repo path not found: ${scanRoot}`);
@@ -1207,10 +2165,16 @@ class SkillService {
    * 递归扫描外部本地仓库目录
    */
   scanRepoLocalDir(currentDir, repoRoot, skills, repo) {
-    const skillMdPath = path.join(currentDir, 'SKILL.md');
+    try {
+      if (fs.lstatSync(currentDir).isSymbolicLink()) return;
+    } catch {
+      return;
+    }
 
+    const skillMdPath = path.join(currentDir, 'SKILL.md');
     if (fs.existsSync(skillMdPath)) {
       try {
+        if (fs.lstatSync(skillMdPath).isSymbolicLink()) return;
         const content = fs.readFileSync(skillMdPath, 'utf-8');
         const metadata = this.parseSkillMd(content);
         const fullDirectory = normalizeRepoPath(path.relative(repoRoot, currentDir));
@@ -1231,7 +2195,7 @@ class SkillService {
     try {
       const entries = fs.readdirSync(currentDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
         if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
         this.scanRepoLocalDir(path.join(currentDir, entry.name), repoRoot, skills, repo);
       }
@@ -1285,8 +2249,10 @@ class SkillService {
       return this.fetchGitLabFileContent(repo, file.path);
     }
     if (repo.provider === 'local') {
+      const repoRoot = resolveExistingLocalRepoRoot(repo.localPath);
       const safeFilePath = normalizeSkillRelativePath(file.path, 'skill repository file path');
-      const localFilePath = resolveInsideRoot(repo.localPath, safeFilePath, 'Skill repository file path', { allowHiddenSegments: true });
+      const localFilePath = resolveInsideRoot(repoRoot, safeFilePath, 'Skill repository file path', { allowHiddenSegments: true });
+      assertNoSymlinkComponents(repoRoot, localFilePath, fs);
       return fs.readFileSync(localFilePath, 'utf-8');
     }
     return this.fetchGitHubBlobContent(file.sha, repo);
@@ -1469,7 +2435,13 @@ class SkillService {
     if (tree?.truncated) {
       console.warn(`[SkillService] GitHub tree truncated for ${repo.owner}/${repo.name}`);
     }
-    return tree?.tree || [];
+    const items = Array.isArray(tree?.tree) ? tree.tree : [];
+    Object.defineProperty(items, 'revision', {
+      value: tree?.sha || repo.revision || repo.commit || null,
+      enumerable: false,
+      configurable: true
+    });
+    return items;
   }
 
   async fetchGitLabApi(url, { raw = false, repo = null } = {}) {
@@ -1537,6 +2509,11 @@ class SkillService {
       page = Number.isFinite(nextPage) && nextPage > 0 ? nextPage : 0;
     }
 
+    Object.defineProperty(tree, 'revision', {
+      value: repo.revision || repo.commit || null,
+      enumerable: false,
+      configurable: true
+    });
     return tree;
   }
 
@@ -1646,17 +2623,38 @@ class SkillService {
   /**
    * 获取文件内容
    */
-  async fetchFileContent(url) {
-    return new Promise((resolve, reject) => {
-      const protocol = url.startsWith('https') ? https : http;
+  async fetchFileContent(url, { allowedHost = null, redirects = 0 } = {}) {
+    const currentUrl = new URL(String(url));
+    if (!['http:', 'https:'].includes(currentUrl.protocol)) {
+      throw new Error('Skill file download requires HTTP(S)');
+    }
+    const host = allowedHost || currentUrl.host;
+    if (currentUrl.host !== host) {
+      throw new Error('Skill file redirect leaves the provider host');
+    }
+    if (redirects > 5) throw new Error('Skill file download redirected too many times');
+    const protocol = currentUrl.protocol === 'https:' ? https : http;
 
-      const req = protocol.get(url, {
+    return new Promise((resolve, reject) => {
+      const req = protocol.get(currentUrl, {
         headers: { 'User-Agent': 'cc-cli-skill-service' },
         timeout: 10000
       }, (res) => {
-        // 处理重定向
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          this.fetchFileContent(res.headers.location).then(resolve).catch(reject);
+          let nextUrl;
+          try {
+            nextUrl = new URL(res.headers.location, currentUrl);
+          } catch {
+            reject(new Error('Invalid Skill file redirect'));
+            return;
+          }
+          if (nextUrl.host !== host) {
+            reject(new Error('Skill file redirect leaves the provider host'));
+            return;
+          }
+          this.fetchFileContent(nextUrl.toString(), { allowedHost: host, redirects: redirects + 1 })
+            .then(resolve)
+            .catch(reject);
           return;
         }
 
@@ -1751,20 +2749,24 @@ class SkillService {
       this.refreshOmpPaths();
     }
     const safeDirectory = this.normalizeSkillDirectory(directory, label);
-    const { scope, writeRoot } = this.resolveScopeOptions(options);
+    const scopeOptions = this.resolveScopeOptions(options);
+    const target = resolveInsideRoot(scopeOptions.writeRoot, safeDirectory, label, { allowHiddenSegments: true });
+    assertNoSymlinkComponents(scopeOptions.writeRoot, target, fs);
     return {
       safeDirectory,
-      scope,
-      path: resolveInsideRoot(writeRoot, safeDirectory, label, { allowHiddenSegments: true })
+      scope: scopeOptions.scope,
+      path: target
     };
   }
 
 
   resolveStoragePath(directory, label = 'skill directory') {
     const safeDirectory = this.normalizeSkillDirectory(directory, label);
+    const target = resolveInsideRoot(this.storageDir, safeDirectory, label, { allowHiddenSegments: true });
+    assertNoSymlinkComponents(this.storageDir, target, fs);
     return {
       safeDirectory,
-      path: resolveInsideRoot(this.storageDir, safeDirectory, label, { allowHiddenSegments: true })
+      path: target
     };
   }
 
@@ -1773,6 +2775,41 @@ class SkillService {
       return this.resolveInstallPath(directory, 'skill directory', options);
     }
     return this.resolveStoragePath(directory);
+  }
+
+  _writeSkillFileAtomic(filePath, content, targetRoot = this.storageDir) {
+    const parentDir = path.dirname(filePath);
+    assertNoSymlinkComponents(targetRoot, parentDir, fs);
+    assertNoSymlinkComponents(targetRoot, filePath, fs);
+    fs.mkdirSync(parentDir, { recursive: true });
+    assertNoSymlinkComponents(targetRoot, parentDir, fs);
+    const tempPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+    let descriptor;
+    try {
+      const flags = fs.constants.O_WRONLY
+        | fs.constants.O_CREAT
+        | fs.constants.O_EXCL
+        | (fs.constants.O_NOFOLLOW || 0);
+      descriptor = fs.openSync(tempPath, flags, 0o600);
+      fs.writeFileSync(descriptor, content);
+      fs.closeSync(descriptor);
+      descriptor = undefined;
+      const tempRealPath = fs.realpathSync(tempPath);
+      const rootRealPath = fs.realpathSync(targetRoot);
+      const relative = path.relative(rootRealPath, tempRealPath);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error('Skill file escapes target root');
+      }
+      fs.renameSync(tempPath, filePath);
+    } catch (error) {
+      if (descriptor !== undefined) {
+        try { fs.closeSync(descriptor); } catch (_) {}
+      }
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch (_) {}
+      throw error;
+    }
   }
 
   isProtectedSkillDirectory(directory) {
@@ -1834,7 +2871,18 @@ class SkillService {
    * 递归扫描本地目录
    */
   scanLocalDir(currentDir, baseDir, skills, options = {}) {
+    try {
+      if (fs.lstatSync(currentDir).isSymbolicLink()) return;
+    } catch (error) {
+      if (error.code !== 'ENOENT') return;
+    }
+
     const skillMdPath = path.join(currentDir, 'SKILL.md');
+    try {
+      if (fs.existsSync(skillMdPath) && fs.lstatSync(skillMdPath).isSymbolicLink()) return;
+    } catch {
+      return;
+    }
 
     if (fs.existsSync(skillMdPath)) {
       const directory = currentDir === baseDir
@@ -1844,8 +2892,8 @@ class SkillService {
       const protectedSkill = this.isProtectedSkillDirectory(directory);
       const skillSource = protectedSkill ? 'system-installed' : (options.source || 'local');
       const sourceScope = options.sourceScope || 'user';
+      const sourceProvider = options.source === 'native-installed' ? 'native' : 'cc-tool';
 
-      // 判断是否已安装到平台目录
       let isInstalled = options.forceInstalled === true;
       if (!isInstalled) {
         try {
@@ -1861,9 +2909,15 @@ class SkillService {
       try {
         const content = fs.readFileSync(skillMdPath, 'utf-8');
         const metadata = this.parseSkillMd(content);
+        const sourceKey = protectedSkill
+          ? `system:${this.platform}:${directory}`
+          : (sourceProvider === 'native'
+            ? `native:${this.platform}:${directory}`
+            : `local:${this.platform}:${directory}`);
 
         const skill = {
           key: `local:${sourceScope}:${directory}`,
+          sourceKey,
           name: metadata.name || directory,
           description: metadata.description || '',
           directory,
@@ -1872,7 +2926,7 @@ class SkillService {
           source: skillSource,
           protected: protectedSkill,
           readonly: false,
-          sourceProvider: options.source === 'native-installed' ? 'native' : 'cc-tool',
+          sourceProvider,
           sourceScope,
           sourcePath: skillMdPath,
           shadowedSources: [],
@@ -1892,18 +2946,21 @@ class SkillService {
         console.warn(`[SkillService] Parse local skill ${directory} error:`, err.message);
       }
 
-      return; // 找到 SKILL.md 后不再递归
+      return;
     }
 
-    // 递归子目录
     try {
       const entries = fs.readdirSync(currentDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory() && (options.includeHiddenDirs || !entry.name.startsWith('.'))) {
+        if (
+          entry.isDirectory()
+          && !entry.isSymbolicLink()
+          && (options.includeHiddenDirs || !entry.name.startsWith('.'))
+        ) {
           this.scanLocalDir(path.join(currentDir, entry.name), baseDir, skills, options);
         }
       }
-    } catch (err) {
+    } catch {
       // 忽略读取错误
     }
   }
@@ -1916,243 +2973,111 @@ class SkillService {
     const identityMap = new Map();
     const realPathMap = new Map();
     const managedOverlayTargets = new Map();
+    const artifactTargets = new Map();
+    const priority = skill => {
+      const isArtifact = Boolean(skill.artifactRoot || skill.artifact?.root);
+      const sourceProvider = skill.sourceProvider || skill.source;
+      if (!isArtifact && skill.sourceScope === 'project') return 4;
+      if (!isArtifact && ['cc-tool', 'native', 'local'].includes(sourceProvider)) return 3;
+      if (skill.sourceScope === 'project' || isArtifact) return 2;
+      if (skill.sourceProvider === 'native' || skill.source === 'native-installed') return 1;
+      if (skill.installed) return 1;
+      return 0;
+    };
 
     for (const skill of skills) {
       const normalizedDirectory = normalizeRepoPath(skill.directory).toLowerCase();
       const identity = this.platform === 'omp'
-        ? `name:${String(skill.name || skill.directory).toLowerCase()}`
-        : [
+        ? (skill.sourceKey || `${skill.sourceProvider || skill.source || 'unknown'}:${String(skill.name || skill.directory).toLowerCase()}`)
+        : (skill.sourceKey || [
           normalizedDirectory,
           skill.repoId || ''
-        ].join('::');
-      const realPath = skill.realPath || (() => {
+        ].join('::'));
+      let realPath = skill.realPath || '';
+      if (!realPath && skill.sourcePath) {
         try {
-          return skill.sourcePath ? fs.realpathSync(skill.sourcePath) : '';
+          if (!fs.lstatSync(skill.sourcePath).isSymbolicLink()) {
+            realPath = fs.realpathSync(skill.sourcePath);
+          }
         } catch {
-          return skill.sourcePath || '';
+          realPath = '';
         }
-      })();
-      const isManagedOverlay = !skill.repoId && (
+      }
+      const isArtifact = Boolean(skill.artifactRoot || skill.artifact?.root);
+      const isManagedOverlay = skill.projectionOverlay || (!skill.repoId && (
         skill.sourceProvider === 'cc-tool'
         || skill.sourceProvider === 'native'
         || ['local', 'native-installed', 'system-installed'].includes(skill.source)
-      );
+      ));
       const existingIndex = identityMap.get(identity)
         ?? (realPath ? realPathMap.get(realPath) : undefined)
-        ?? (isManagedOverlay ? managedOverlayTargets.get(normalizedDirectory) : undefined);
+        ?? (isManagedOverlay ? managedOverlayTargets.get(normalizedDirectory) : undefined)
+        ?? (isManagedOverlay ? artifactTargets.get(normalizedDirectory) : undefined);
 
       if (existingIndex == null) {
         identityMap.set(identity, deduplicated.length);
         if (realPath) realPathMap.set(realPath, deduplicated.length);
-        if (skill.repoId && !managedOverlayTargets.has(normalizedDirectory)) {
+        if (isManagedOverlay && !managedOverlayTargets.has(normalizedDirectory)) {
           managedOverlayTargets.set(normalizedDirectory, deduplicated.length);
+        }
+        if (isArtifact && !artifactTargets.has(normalizedDirectory)) {
+          artifactTargets.set(normalizedDirectory, deduplicated.length);
         }
         deduplicated.push(skill);
         continue;
       }
 
       const existing = deduplicated[existingIndex];
-      const shadow = skill.sourceProvider || skill.sourcePath
+      const incomingShadow = skill.sourceProvider || skill.sourcePath
         ? {
           sourceProvider: skill.sourceProvider || skill.source || 'unknown',
           sourceScope: skill.sourceScope || 'user',
           sourcePath: skill.sourcePath || ''
         }
         : null;
-      if (shadow) {
-        existing.shadowedSources = [...(existing.shadowedSources || []), shadow];
+      const existingShadow = existing.sourceProvider || existing.sourcePath
+        ? {
+          sourceProvider: existing.sourceProvider || existing.source || 'unknown',
+          sourceScope: existing.sourceScope || 'user',
+          sourcePath: existing.sourcePath || ''
+        }
+        : null;
+      if (
+        (skill.sourceProvider === 'native' || skill.source === 'native-installed')
+        && existing.artifactRoot
+        && (existing.source === 'remote' || existing.sourceProvider === 'local-repo' || existing.repoId)
+        && existing.sourceScope === (skill.sourceScope || 'user')
+      ) {
+        existing.shadowedSources = [
+          ...(existing.shadowedSources || []),
+          ...(incomingShadow ? [incomingShadow] : [])
+        ];
+        if (skill.installed) existing.installed = true;
+        continue;
       }
 
-      const shouldPreferIncoming = Boolean(skill.installed && !existing.installed);
-      if (shouldPreferIncoming) {
+      if (priority(skill) > priority(existing)) {
         deduplicated[existingIndex] = {
-          ...existing,
           ...skill,
-          installed: true,
-          shadowedSources: existing.shadowedSources || []
+          installed: Boolean(skill.installed || existing.installed),
+          shadowedSources: [
+            ...(existing.shadowedSources || []),
+            ...(existingShadow ? [existingShadow] : [])
+          ]
         };
-      } else if (skill.installed) {
-        existing.installed = true;
+        if (isArtifact) artifactTargets.set(normalizedDirectory, existingIndex);
+      } else {
+        existing.shadowedSources = [
+          ...(existing.shadowedSources || []),
+          ...(incomingShadow ? [incomingShadow] : [])
+        ];
+        if (skill.installed) existing.installed = true;
       }
     }
 
     skills.splice(0, skills.length, ...deduplicated);
   }
 
-  /**
-   * 安装技能
-   * @param {string} directory - 本地安装目录（相对于 installDir）
-   * @param {Object} repo - 仓库配置
-   * @param {string} [fullDirectory] - 仓库中的完整路径（可选，默认与 directory 相同）
-   */
-  async installSkill(directory, repo, fullDirectory = null, options = {}) {
-    const { safeDirectory, path: dest } = this.resolveInstallPath(directory, 'skill directory', options);
-    if (this.isProtectedSkillDirectory(safeDirectory)) {
-      throw new Error('不能安装到 Codex 系统技能目录');
-    }
-    const normalizedRepo = this.normalizeRepoConfig(repo);
-
-    // 已安装则跳过
-    if (fs.existsSync(dest)) {
-      return { success: true, message: 'Already installed' };
-    }
-
-    // 使用 fullDirectory（仓库中的完整路径）或 directory（向后兼容）
-    const sourcePath = fullDirectory || safeDirectory;
-    const safeSourcePath = sourcePath
-      ? normalizeSkillRelativePath(sourcePath, 'skill source directory')
-      : '';
-
-    if (normalizedRepo.provider === 'local') {
-      const sourceDir = safeSourcePath
-        ? resolveInsideRoot(normalizedRepo.localPath, safeSourcePath, 'Skill source directory', { allowHiddenSegments: true })
-        : normalizedRepo.localPath;
-
-      if (!fs.existsSync(sourceDir)) {
-        throw new Error(`Skill directory not found: ${sourcePath || normalizedRepo.localPath}`);
-      }
-
-      fs.mkdirSync(dest, { recursive: true });
-      this.copyDirRecursive(sourceDir, dest);
-
-      this.clearCache({ removeFile: true });
-      return { success: true, message: 'Installed successfully' };
-    }
-
-    const tempDir = path.join(os.tmpdir(), `skill-${Date.now()}`);
-    const zipPath = path.join(tempDir, 'repo.zip');
-
-    try {
-      fs.mkdirSync(tempDir, { recursive: true });
-
-      let zipUrl = '';
-      let zipHeaders = {};
-
-      if (normalizedRepo.provider === 'gitlab') {
-        const projectId = encodeURIComponent(normalizedRepo.projectPath);
-        zipUrl = `${normalizedRepo.host}/api/v4/projects/${projectId}/repository/archive.zip?sha=${encodeURIComponent(normalizedRepo.branch)}`;
-        const token = this.getGitLabToken(normalizedRepo);
-        if (token) {
-          zipHeaders['PRIVATE-TOKEN'] = token;
-        }
-      } else {
-        zipUrl = `https://api.github.com/repos/${normalizedRepo.owner}/${normalizedRepo.name}/zipball/${encodeURIComponent(normalizedRepo.branch)}`;
-        const token = this.getGitHubToken(normalizedRepo);
-        zipHeaders.Accept = 'application/vnd.github+json';
-        if (token) {
-          zipHeaders.Authorization = `token ${token}`;
-        }
-      }
-
-      await this.downloadFile(zipUrl, zipPath, zipHeaders);
-
-      // 解压
-      const zip = new AdmZip(zipPath);
-      zip.extractAllTo(tempDir, true);
-
-      // 找到解压后的目录（GitHub ZIP 会有一个根目录）
-      const extractedDirs = fs.readdirSync(tempDir).filter(f =>
-        fs.statSync(path.join(tempDir, f)).isDirectory()
-      );
-
-      if (extractedDirs.length === 0) {
-        throw new Error('Empty archive');
-      }
-
-      const repoDir = path.join(tempDir, extractedDirs[0]);
-      const sourceDir = safeSourcePath
-        ? resolveInsideRoot(repoDir, safeSourcePath, 'Skill source directory', { allowHiddenSegments: true })
-        : repoDir;
-
-      if (!fs.existsSync(sourceDir)) {
-        throw new Error(`Skill directory not found: ${sourcePath}`);
-      }
-
-      // 复制到安装目录
-      fs.mkdirSync(dest, { recursive: true });
-      this.copyDirRecursive(sourceDir, dest);
-
-      this.clearCache({ removeFile: true });
-
-      return { success: true, message: 'Installed successfully' };
-    } finally {
-      // 清理临时目录
-      try {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      } catch (e) {
-        // 忽略清理错误
-      }
-    }
-  }
-
-  /**
-   * 下载文件
-   */
-  async downloadFile(url, dest, headers = {}) {
-    return new Promise((resolve, reject) => {
-      const file = createWriteStream(dest);
-      const transport = url.startsWith('http:') ? http : https;
-
-      const request = transport.get(url, {
-        headers: {
-          'User-Agent': 'cc-cli-skill-service',
-          ...headers
-        },
-        timeout: 60000
-      }, (response) => {
-        // 处理重定向
-        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          file.close();
-          this.downloadFile(response.headers.location, dest, headers).then(resolve).catch(reject);
-          return;
-        }
-
-        if (response.statusCode !== 200) {
-          file.close();
-          reject(new Error(`Download failed: HTTP ${response.statusCode}`));
-          return;
-        }
-
-        response.pipe(file);
-        file.on('finish', () => {
-          file.close();
-          resolve();
-        });
-      });
-
-      request.on('error', (err) => {
-        file.close();
-        fs.unlink(dest, () => { });
-        reject(err);
-      });
-
-      request.on('timeout', () => {
-        request.destroy();
-        file.close();
-        fs.unlink(dest, () => { });
-        reject(new Error('Download timeout'));
-      });
-    });
-  }
-
-  /**
-   * 递归复制目录
-   */
-  copyDirRecursive(src, dest) {
-    const entries = fs.readdirSync(src, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const srcPath = path.join(src, entry.name);
-      const destPath = path.join(dest, entry.name);
-
-      if (entry.isDirectory()) {
-        fs.mkdirSync(destPath, { recursive: true });
-        this.copyDirRecursive(srcPath, destPath);
-      } else {
-        fs.copyFileSync(srcPath, destPath);
-      }
-    }
-  }
 
   /**
    * 创建自定义技能
@@ -2180,12 +3105,24 @@ description: "${normalizedDescription}"
 ${content}
 `;
 
-    // 写入文件
-    fs.writeFileSync(path.join(dest, 'SKILL.md'), skillMdContent, 'utf-8');
-
+    const projectRoot = scope === 'project' ? this.resolveScopeOptions(options).cwd : null;
+    this._writeSkillFileAtomic(
+      path.join(dest, 'SKILL.md'),
+      skillMdContent,
+      projectRoot || this.storageDir
+    );
+    const control = this._registerCreatedSkill({
+      root: dest,
+      directory: safeDirectory,
+      scope,
+      cwd
+    });
+    if (scope === 'project') {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
     this.clearCache({ removeFile: true });
 
-    return { success: true, message: '技能创建成功', directory: safeDirectory };
+    return { success: true, message: '技能创建成功', directory: safeDirectory, ...control };
   }
 
   /**
@@ -2218,32 +3155,33 @@ ${content}
     // 创建目录
     fs.mkdirSync(dest, { recursive: true });
 
-    // 写入所有文件
+    const projectRoot = scope === 'project' ? this.resolveScopeOptions(options).cwd : null;
+    const targetRoot = projectRoot || this.storageDir;
     for (const file of safeFiles) {
       const filePath = resolveInsideRoot(dest, file.safePath, 'skill file path', { allowHiddenSegments: true });
-      const fileDir = path.dirname(filePath);
-
-      // 确保父目录存在
-      if (!fs.existsSync(fileDir)) {
-        fs.mkdirSync(fileDir, { recursive: true });
-      }
-
-      // 写入文件内容
-      if (file.isBase64) {
-        // 二进制文件使用 base64 编码
-        fs.writeFileSync(filePath, Buffer.from(file.content, 'base64'));
-      } else {
-        fs.writeFileSync(filePath, file.content, 'utf-8');
-      }
+      const fileContent = file.isBase64
+        ? Buffer.from(file.content, 'base64')
+        : Buffer.from(file.content, 'utf8');
+      this._writeSkillFileAtomic(filePath, fileContent, targetRoot);
     }
 
+    const control = this._registerCreatedSkill({
+      root: dest,
+      directory: safeDirectory,
+      scope,
+      cwd
+    });
+    if (scope === 'project') {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
     this.clearCache({ removeFile: true });
 
     return {
       success: true,
       message: '技能创建成功',
       directory: safeDirectory,
-      fileCount: files.length
+      fileCount: files.length,
+      ...control
     };
   }
 
@@ -2268,9 +3206,15 @@ ${content}
    * 递归扫描目录获取文件列表
    */
   _scanFilesRecursive(currentDir, baseDir, files) {
+    try {
+      if (fs.lstatSync(currentDir).isSymbolicLink()) return;
+    } catch {
+      return;
+    }
     const entries = fs.readdirSync(currentDir, { withFileTypes: true });
 
     for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
       const fullPath = path.join(currentDir, entry.name);
       const relativePath = path.relative(baseDir, fullPath);
 
@@ -2281,7 +3225,7 @@ ${content}
           isDirectory: true
         });
         this._scanFilesRecursive(fullPath, baseDir, files);
-      } else {
+      } else if (entry.isFile()) {
         const stats = fs.statSync(fullPath);
         files.push({
           path: relativePath,
@@ -2302,9 +3246,13 @@ ${content}
     const { path: skillPath } = this.resolveInstallPath(directory, 'skill directory', options);
     const safeFilePath = normalizeSkillRelativePath(filePath, 'skill file path');
     const fullPath = resolveInsideRoot(skillPath, safeFilePath, 'skill file path', { allowHiddenSegments: true });
+    assertNoSymlinkComponents(skillPath, fullPath, fs);
 
     if (!fs.existsSync(fullPath)) {
       throw new Error(`文件 "${safeFilePath}" 不存在`);
+    }
+    if (fs.lstatSync(fullPath).isSymbolicLink()) {
+      throw new Error(`skill file path contains symlink: ${safeFilePath}`);
     }
 
     const stats = fs.statSync(fullPath);
@@ -2349,23 +3297,22 @@ ${content}
       throw new Error(`技能 "${safeDirectory}" 不存在`);
     }
 
+    const projectRoot = options.scope === 'project' ? this.resolveScopeOptions(options).cwd : null;
+    const targetRoot = projectRoot || this.installDir;
+
     const added = [];
     for (const file of files) {
       const safeFilePath = normalizeSkillRelativePath(file.path, 'skill file path');
       const filePath = resolveInsideRoot(skillPath, safeFilePath, 'skill file path', { allowHiddenSegments: true });
-      const fileDir = path.dirname(filePath);
-
-      // 确保父目录存在
-      if (!fs.existsSync(fileDir)) {
-        fs.mkdirSync(fileDir, { recursive: true });
+      assertNoSymlinkComponents(targetRoot, filePath, fs);
+      if (fs.existsSync(filePath) && fs.lstatSync(filePath).isSymbolicLink()) {
+        throw new Error(`skill file path contains symlink: ${safeFilePath}`);
       }
 
-      // 写入文件
-      if (file.isBase64) {
-        fs.writeFileSync(filePath, Buffer.from(file.content, 'base64'));
-      } else {
-        fs.writeFileSync(filePath, file.content, 'utf-8');
-      }
+      const fileContent = file.isBase64
+        ? Buffer.from(file.content, 'base64')
+        : Buffer.from(file.content, 'utf8');
+      this._writeSkillFileAtomic(filePath, fileContent, targetRoot);
       added.push(safeFilePath);
     }
 
@@ -2399,11 +3346,14 @@ ${content}
       throw new Error('不能删除 SKILL.md 文件');
     }
     const fullPath = resolveInsideRoot(skillPath, safeFilePath, 'skill file path', { allowHiddenSegments: true });
+    assertNoSymlinkComponents(skillPath, fullPath, fs);
 
     if (!fs.existsSync(fullPath)) {
       throw new Error(`文件 "${safeFilePath}" 不存在`);
     }
-
+    if (fs.lstatSync(fullPath).isSymbolicLink()) {
+      throw new Error(`skill file path contains symlink: ${safeFilePath}`);
+    }
     const stats = fs.statSync(fullPath);
     if (stats.isDirectory()) {
       fs.rmSync(fullPath, { recursive: true, force: true });
@@ -2435,16 +3385,20 @@ ${content}
 
     const safeFilePath = normalizeSkillRelativePath(filePath, 'skill file path');
     const fullPath = resolveInsideRoot(skillPath, safeFilePath, 'skill file path', { allowHiddenSegments: true });
+    assertNoSymlinkComponents(skillPath, fullPath, fs);
 
     if (!fs.existsSync(fullPath)) {
       throw new Error(`文件 "${safeFilePath}" 不存在`);
     }
-
-    if (isBase64) {
-      fs.writeFileSync(fullPath, Buffer.from(content, 'base64'));
-    } else {
-      fs.writeFileSync(fullPath, content, 'utf-8');
+    if (fs.lstatSync(fullPath).isSymbolicLink()) {
+      throw new Error(`skill file path contains symlink: ${safeFilePath}`);
     }
+
+    const fileContent = isBase64
+      ? Buffer.from(content, 'base64')
+      : Buffer.from(content, 'utf8');
+    const projectRoot = options.scope === 'project' ? this.resolveScopeOptions(options).cwd : null;
+    this._writeSkillFileAtomic(fullPath, fileContent, projectRoot || this.installDir);
 
     this.clearCache({ removeFile: true });
 
@@ -2452,269 +3406,208 @@ ${content}
   }
 
 
-  /**
-   * 安装 cc-tool 本地托管的技能（从 storageDir cp 到 installDir）
-   */
-  installLocalSkill(directory, options = {}) {
-    const { safeDirectory, path: src } = this.resolveStoragePath(directory);
-    const { path: dest } = this.resolveInstallPath(safeDirectory, 'skill directory', options);
-    if (this.isProtectedSkillDirectory(safeDirectory)) {
-      throw new Error('不能安装到 Codex 系统技能目录');
-    }
-
-    if (!fs.existsSync(src)) {
-      throw new Error(`本地技能 "${safeDirectory}" 不存在`);
-    }
-
-    if (fs.existsSync(dest)) {
-      return { success: true, message: 'Already installed' };
-    }
-
-    fs.mkdirSync(dest, { recursive: true });
-    this.copyDirRecursive(src, dest);
-    this.clearCache({ removeFile: true });
-    return { success: true, message: 'Installed successfully' };
-  }
 
   /**
-   * 卸载技能
-   */
-  uninstallSkill(directory, options = {}) {
-    const safeDirectory = this.normalizeSkillDirectory(directory);
-    const dest = this.resolveInstallPath(safeDirectory, 'skill directory', options).path;
-    if (this.isProtectedSkillDirectory(safeDirectory)) {
-      throw new Error('不能卸载 Codex 系统技能');
-    }
-
-    if (fs.existsSync(dest)) {
-      fs.rmSync(dest, { recursive: true, force: true });
-      this.clearCache({ removeFile: true });
-      return { success: true, message: 'Uninstalled successfully' };
-    }
-
-    return { success: true, message: 'Not installed' };
-  }
-
-  /**
-   * 获取技能详情（完整内容）
+   * 获取本地 Skill 详情。远端内容只能来自已经发布的 artifact。
    */
   async getSkillDetail(directory, repoHint = null, fullDirectoryHint = '', options = {}) {
     const safeDirectory = this.normalizeSkillDirectory(directory);
-    // 先检查本地是否安装
+    const scope = options.scope || 'user';
+
+    const readDetail = (root, metadata = {}, controlEntry = null) => {
+      const skillPath = path.resolve(root);
+      const skillFile = path.join(skillPath, 'SKILL.md');
+      if (!fs.existsSync(skillFile) || fs.lstatSync(skillFile).isSymbolicLink()) {
+        throw new Error('Skill detail contains an unavailable or symlinked SKILL.md');
+      }
+      const content = fs.readFileSync(skillFile, 'utf8');
+      const parsed = this.parseSkillMd(content);
+      const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
+      const body = bodyMatch ? bodyMatch[1].trim() : content;
+      const enabled = controlEntry?.enabled === true || (
+        controlEntry == null && metadata.enabled === true
+      );
+      return {
+        directory: safeDirectory,
+        name: parsed.name || metadata.name || safeDirectory,
+        description: parsed.description || metadata.description || '',
+        content: body,
+        fullContent: content,
+        installed: enabled,
+        enabled,
+        cached: metadata.cached !== false,
+        trust: controlEntry?.trust || metadata.trust || (metadata.source === 'remote' ? 'pending' : 'approved'),
+        managed: true,
+        controlKey: controlEntry?.controlKey || metadata.controlKey || null,
+        scope: controlEntry?.scope || scope,
+        sourceScope: controlEntry?.scope || metadata.sourceScope || scope,
+        path: skillPath,
+        fullPath: skillFile,
+        installPath: skillPath,
+        source: metadata.source || 'local',
+        sourceProvider: metadata.sourceProvider || null,
+        sourceKey: metadata.sourceKey || null,
+        repoProvider: metadata.repoProvider || null,
+        repoOwner: metadata.repoOwner || null,
+        repoName: metadata.repoName || null,
+        repoBranch: metadata.repoBranch || null,
+        repoDirectory: metadata.repoDirectory || '',
+        repoHost: metadata.repoHost || null,
+        repoProjectPath: metadata.repoProjectPath || null,
+        repoLocalPath: metadata.repoLocalPath || null,
+        repoId: metadata.repoId || null,
+        repoUrl: metadata.repoUrl || null,
+        protected: this.isProtectedSkillDirectory(safeDirectory),
+        readonly: metadata.readonly === true
+      };
+    };
+
+    const previousSkillsCache = Array.isArray(this.skillsCache)
+      ? this.skillsCache.map(skill => ({ ...skill }))
+      : null;
+    const scanResult = await this.scanSkills({
+      ...options,
+      scope,
+      ...(scope === 'project' && options.cwd ? { cwd: options.cwd } : {})
+    });
+    const candidates = (scanResult.skills || []).filter(skill => (
+      normalizeRepoPath(skill.directory) === normalizeRepoPath(safeDirectory)
+      || (fullDirectoryHint && normalizeRepoPath(skill.fullDirectory) === normalizeRepoPath(fullDirectoryHint))
+    ));
+    const hinted = candidates.find(skill => (
+      repoHint && (
+        (repoHint.id && skill.repoId === repoHint.id)
+        || (repoHint.owner && repoHint.name && skill.repoOwner === repoHint.owner && skill.repoName === repoHint.name)
+      )
+    ));
+    const selected = hinted || candidates[0];
+    if (selected) {
+      const selectedScope = selected.scope || (selected.sourceScope === 'project' ? 'project' : 'user');
+      const selectedProjectPath = selectedScope === 'project'
+        ? (selected.projectPath || this._skillCwdKey(options))
+        : null;
+      const controlEntry = selected.controlKey
+        ? this.controlService?.getSkill?.(selected.controlKey, {
+          scope: selectedScope,
+          projectPath: selectedProjectPath
+        })
+        : null;
+      const root = selected.artifact?.root
+        || selected.artifactRoot
+        || (selected.sourcePath ? path.dirname(selected.sourcePath) : null);
+      if (root && fs.existsSync(root) && !fs.lstatSync(root).isSymbolicLink()) {
+        return readDetail(root, selected, controlEntry);
+      }
+    }
+
     const localSkillDir = this.resolveInstallPath(safeDirectory, 'skill directory', options).path;
     const localPath = path.join(localSkillDir, 'SKILL.md');
-
-    if (fs.existsSync(localPath)) {
-      const content = fs.readFileSync(localPath, 'utf-8');
-      const metadata = this.parseSkillMd(content);
-
-      // 提取正文内容（去除 frontmatter）
-      const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
-      const body = bodyMatch ? bodyMatch[1].trim() : content;
-
-      return {
-        directory: safeDirectory,
-        name: metadata.name || safeDirectory,
-        description: metadata.description || '',
-        content: body,
-        fullContent: content,
-        installed: true,
-        scope: options.scope || 'user',
-        sourceScope: options.scope || 'user',
-        path: localSkillDir,
-        fullPath: localPath,
-        installPath: localSkillDir,
-        source: this.isProtectedSkillDirectory(safeDirectory) ? 'system-installed' : 'local',
-        protected: this.isProtectedSkillDirectory(safeDirectory)
-      };
+    if (fs.existsSync(localPath) && !fs.lstatSync(localPath).isSymbolicLink()) {
+      const projectPath = scope === 'project' ? this._skillCwdKey(options) : null;
+      const sourceKey = projectPath
+        ? `native:${this.platform}:${safeDirectory}:project:${projectPath}`
+        : `native:${this.platform}:${safeDirectory}`;
+      const controlKey = `skill:${this.platform}:${scope}:${projectPath || 'user'}:${sourceKey}`;
+      const controlEntry = this.controlService?.getSkill?.(controlKey, {
+        scope,
+        projectPath
+      }) || null;
+      return readDetail(localSkillDir, {
+        source: scope === 'project' ? 'project' : 'native',
+        sourceProvider: 'native',
+        sourceScope: scope,
+        enabled: true,
+        cached: true,
+        readonly: false
+      }, controlEntry);
     }
 
-    const parseRemoteSkillContent = (content, repo, fullDirectory = '') => {
-      const metadata = this.parseSkillMd(content);
-      const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
-      const body = bodyMatch ? bodyMatch[1].trim() : content;
-
-      return {
-        directory: safeDirectory,
-        name: metadata.name || safeDirectory,
-        description: metadata.description || '',
-        content: body,
-        fullContent: content,
-        installed: false,
-        source: repo.provider === 'local' ? 'local-repo' : repo.provider,
-        fullDirectory,
-        repoProvider: repo.provider,
-        repoOwner: repo.owner || null,
-        repoName: repo.name || null,
-        repoBranch: repo.branch || 'main',
-        repoDirectory: repo.directory || '',
-        repoHost: repo.host || null,
-        repoProjectPath: repo.projectPath || null,
-        repoLocalPath: repo.localPath || null,
-        repoId: repo.id,
-        repoUrl: repo.repoUrl || buildRepoUrl(repo),
-        path: fullDirectory
-      };
-    };
-
-    let lastRemoteError = null;
-    const tryLoadRemoteDetailFromRepo = async (repo, extraCandidateDirs = []) => {
-      try {
-        if (repo.provider === 'local') {
-          const normalizedDirectory = normalizeRepoPath(safeDirectory);
-          const candidateDirs = new Set([
-            normalizedDirectory,
-            normalizeRepoPath(fullDirectoryHint || ''),
-            ...extraCandidateDirs.map(candidate => normalizeRepoPath(candidate))
-          ]);
-
-          for (const candidateDir of candidateDirs) {
-            const skillMdPath = candidateDir
-              ? path.join(repo.localPath, candidateDir, 'SKILL.md')
-              : path.join(repo.localPath, 'SKILL.md');
-            if (!fs.existsSync(skillMdPath)) continue;
-            const content = fs.readFileSync(skillMdPath, 'utf-8');
-            return {
-              ...parseRemoteSkillContent(content, repo, candidateDir),
-              path: path.dirname(skillMdPath),
-              fullPath: skillMdPath
-            };
-          }
-          return null;
-        }
-
-        const treeItems = repo.provider === 'gitlab'
-          ? await this.fetchGitLabTree(repo)
-          : await this.fetchGitHubRepoTree(repo);
-        if (!treeItems?.length) return null;
-
-          const normalizedDirectory = normalizeRepoPath(safeDirectory);
-        const candidateDirs = new Set();
-        candidateDirs.add(normalizedDirectory);
-
-        for (const candidate of extraCandidateDirs) {
-          const normalized = normalizeRepoPath(candidate);
-          if (normalized) candidateDirs.add(normalized);
-        }
-
-        if (repo.directory) {
-          candidateDirs.add(normalizeRepoPath(`${repo.directory}/${normalizedDirectory}`));
-        }
-
-        let skillFile = null;
-        for (const candidateDir of candidateDirs) {
-          skillFile = treeItems.find(item =>
-            item.type === 'blob' && (
-              candidateDir
-                ? item.path === `${candidateDir}/SKILL.md`
-                : item.path === 'SKILL.md'
-            )
-          );
-          if (skillFile) break;
-        }
-
-        if (!skillFile) return null;
-
-        const content = await this.fetchSkillFileContent(repo, skillFile);
-        const fullDirectory = normalizeRepoPath(skillFile.path.replace(/(^|\/)SKILL\.md$/, ''));
-        return parseRemoteSkillContent(content, repo, fullDirectory);
-      } catch (err) {
-        lastRemoteError = err.message;
-        console.warn('[SkillService] Fetch remote skill detail error:', err.message);
-        return null;
-      }
-    };
-
-    // OMP 平台：列表可来自多个发现源（agents/claude/codex/opencode/插件/自定义目录），
-    // 原生安装目录未命中时，从列表缓存或重新发现结果中取真实文件路径直接读取，
-    // 避免本地技能被误判为远端仓库而报「技能不存在」
-    if (this.platform === 'omp') {
-      const findLocalSkillOnDisk = (source) => (source || []).find(s =>
-        normalizeRepoPath(s.directory) === normalizeRepoPath(safeDirectory) &&
-        !(s.repoOwner || s.repoProjectPath || s.repoLocalPath) &&
-        (s.sourcePath || s.realPath)
-      );
-      const cachedLocalSkill = findLocalSkillOnDisk(this.skillsCache)
-        || findLocalSkillOnDisk(discoverOmpSkills(this, {}));
-      if (cachedLocalSkill) {
-        const skillFile = cachedLocalSkill.realPath || cachedLocalSkill.sourcePath;
-        if (skillFile && fs.existsSync(skillFile)) {
-          const content = fs.readFileSync(skillFile, 'utf-8');
-          const metadata = this.parseSkillMd(content);
-          const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
-          const body = bodyMatch ? bodyMatch[1].trim() : content;
-          return {
-            directory: safeDirectory,
-            name: metadata.name || cachedLocalSkill.name || safeDirectory,
-            description: metadata.description || '',
-            content: body,
-            fullContent: content,
-            installed: true,
-            path: path.dirname(skillFile),
-            fullPath: skillFile,
-            installPath: path.dirname(skillFile),
-            source: cachedLocalSkill.source || 'provider-installed',
-            sourceProvider: cachedLocalSkill.sourceProvider,
-            sourceScope: cachedLocalSkill.sourceScope,
-            protected: !!cachedLocalSkill.protected,
-            readonly: cachedLocalSkill.readonly !== false
-          };
-        }
-      }
+    const localStoragePath = this.resolveStoragePath(safeDirectory).path;
+    const localStorageSkillPath = path.join(localStoragePath, 'SKILL.md');
+    if (fs.existsSync(localStorageSkillPath) && !fs.lstatSync(localStorageSkillPath).isSymbolicLink()) {
+      const sourceKey = `local:${this.platform}:${safeDirectory}`;
+      const controlKey = `skill:${this.platform}:user:user:${sourceKey}`;
+      const controlEntry = this.controlService?.getSkill?.(controlKey, { scope: 'user' }) || null;
+      return readDetail(localStoragePath, {
+        source: 'local',
+        sourceProvider: 'cc-tool',
+        sourceScope: 'user',
+        sourceKey
+      }, controlEntry);
     }
 
-    if (repoHint) {
-      try {
-        const normalizedRepoHint = this.normalizeRepoConfig(repoHint);
-        const detail = await tryLoadRemoteDetailFromRepo(normalizedRepoHint, [
-          fullDirectoryHint || '',
-              repoHint.directory ? `${repoHint.directory}/${safeDirectory}` : '',
-          repoHint.fullDirectory || ''
-        ]);
-        if (detail) return detail;
-      } catch (err) {
-        console.warn('[SkillService] Invalid repo hint for detail:', err.message);
-      }
-    }
-
-    // 先尝试使用缓存中的 repo 信息（最快）
-    const cachedSkill = this.skillsCache?.find(s =>
-      normalizeRepoPath(s.directory) === normalizeRepoPath(safeDirectory)
-    );
-    if (cachedSkill && (cachedSkill.repoOwner || cachedSkill.repoProjectPath || cachedSkill.repoLocalPath)) {
-      const cachedRepo = this.normalizeRepoConfig({
-        provider: cachedSkill.repoProvider || (cachedSkill.repoLocalPath ? 'local' : (cachedSkill.repoProjectPath ? 'gitlab' : 'github')),
-        owner: cachedSkill.repoOwner,
-        name: cachedSkill.repoName,
-        branch: cachedSkill.repoBranch || 'main',
-        directory: cachedSkill.repoDirectory || '',
-        host: cachedSkill.repoHost,
-        projectPath: cachedSkill.repoProjectPath,
-        localPath: cachedSkill.repoLocalPath,
-        repoUrl: cachedSkill.repoUrl
+    const cachedSkills = previousSkillsCache || this.skillsCache;
+    const cachedLocalSkill = Array.isArray(cachedSkills)
+      ? cachedSkills.find(skill => (
+        normalizeRepoPath(skill.directory) === normalizeRepoPath(safeDirectory)
+        && (skill.sourcePath || skill.realPath)
+        && !(skill.repoOwner || skill.repoProjectPath || skill.repoLocalPath)
+      ))
+      : null;
+    const cachedSkillPath = cachedLocalSkill?.realPath || cachedLocalSkill?.sourcePath;
+    if (cachedSkillPath && fs.existsSync(cachedSkillPath) && !fs.lstatSync(cachedSkillPath).isSymbolicLink()) {
+      return readDetail(path.dirname(cachedSkillPath), {
+        ...cachedLocalSkill,
+        source: cachedLocalSkill.source || 'provider-installed',
+        enabled: cachedLocalSkill.enabled !== false && cachedLocalSkill.installed !== false,
+        cached: true,
+        readonly: cachedLocalSkill.readonly === true
       });
-      const detail = await tryLoadRemoteDetailFromRepo(cachedRepo, [
-        fullDirectoryHint || '',
-        cachedSkill.fullDirectory || '',
-        cachedSkill.repoDirectory ? `${cachedSkill.repoDirectory}/${safeDirectory}` : ''
-      ]);
-      if (detail) return detail;
     }
 
-    // 缓存缺失或过期时，回退到遍历仓库配置，避免详情页报错
-    const repos = this.loadRepos().filter(repo => repo.enabled !== false);
-    for (const repo of repos) {
-      const detail = await tryLoadRemoteDetailFromRepo(
-        repo,
-        [repo.directory ? `${repo.directory}/${safeDirectory}` : '']
-      );
-      if (detail) return detail;
+    const requestedProjectPath = scope === 'project' ? this._skillCwdKey(options) : null;
+    const artifact = this.artifactStore?.list?.({ platform: this.platform }).find(item => {
+      const artifactScope = item?.sourceScope || 'user';
+      if (artifactScope === 'project') {
+        if (scope !== 'project' || item.projectPath !== requestedProjectPath) return false;
+      } else if (item.projectPath && item.projectPath !== requestedProjectPath) {
+        return false;
+      }
+      const itemDirectory = item.targetDirectory || item.directory || item.fullDirectory || '';
+      return normalizeRepoPath(itemDirectory) === normalizeRepoPath(safeDirectory)
+        || (fullDirectoryHint && normalizeRepoPath(item.fullDirectory) === normalizeRepoPath(fullDirectoryHint));
+    });
+    if (artifact) {
+      const sourceKey = artifact.sourceKey || '';
+      const artifactScope = artifact.sourceScope || 'user';
+      const artifactProjectPath = artifactScope === 'project' ? artifact.projectPath : null;
+      const controlKey = `skill:${this.platform}:${artifactScope}:${artifactProjectPath || 'user'}:${sourceKey}`;
+      const controlEntry = this.controlService?.getSkill?.(controlKey, {
+        scope: artifactScope,
+        projectPath: artifactProjectPath
+      }) || null;
+      return readDetail(artifact.root, {
+        ...artifact,
+        source: artifact.source || 'remote',
+        sourceProvider: artifact.sourceProvider || 'remote',
+        sourceScope: artifactScope,
+        projectPath: artifactProjectPath,
+        sourceKey,
+        cached: true,
+        readonly: true
+      }, controlEntry);
     }
 
-    if (lastRemoteError) {
-      throw new Error(`技能不存在或无法获取（远端仓库获取失败: ${lastRemoteError}）`);
+    if (this.platform === 'omp') {
+      const discovered = discoverOmpSkills(this, {
+        ...options,
+        cwd: options.cwd || null,
+        force: false
+      }).find(skill => normalizeRepoPath(skill.directory) === normalizeRepoPath(safeDirectory));
+      const discoveredPath = discovered?.realPath || discovered?.sourcePath;
+      if (discoveredPath && fs.existsSync(discoveredPath) && !fs.lstatSync(discoveredPath).isSymbolicLink()) {
+        return readDetail(path.dirname(discoveredPath), {
+          ...discovered,
+          source: discovered.source || 'provider-installed',
+          sourceProvider: discovered.sourceProvider,
+          sourceScope: discovered.sourceScope,
+          enabled: true,
+          readonly: discovered.readonly !== false
+        });
+      }
     }
-    throw new Error('技能不存在或无法获取');
+
+    throw new Error('技能未缓存，请手动点击 Skill 面板的“刷新”后重试');
   }
 
   /**

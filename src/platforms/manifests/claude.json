@@ -19,6 +19,10 @@
     "agents": true,
     "plugins": true
   },
+  "skillActivation": {
+    "user": { "mode": "native-copy", "format": "claude-skill-v1" },
+    "project": { "mode": "native-copy", "format": "claude-skill-v1" }
+  },
   "projectResources": {
     "instruction": { "path": "CLAUDE.md" },
     "skills": {

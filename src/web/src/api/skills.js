@@ -8,25 +8,65 @@ import { requestKey, requestSingleflight } from './request-singleflight'
 
 function scopeParams(options = {}) {
   return {
+    ...(options.platform ? { platform: options.platform } : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.scope ? { scope: options.scope } : {})
   };
 }
 /**
- * 获取技能列表
- * @param {boolean} forceRefresh - 是否强制刷新缓存
- * @param {string} platform - 平台: claude | codex | opencode
+ * 获取本地 Skill 列表。此函数永不触发远程刷新。
  */
-export async function getSkills(forceRefresh = false, platform = 'claude', options = {}) {
-  const key = requestKey('skills', platform, options.scope || '', options.cwd || '');
+export async function getSkills(platform = 'claude', options = {}) {
+  const key = requestKey('skills', platform, options.scope || 'user', options.cwd || '');
   return requestSingleflight(key, signal => client.get('/skills', {
     params: {
-      refresh: forceRefresh ? '1' : '',
       platform,
+      scope: options.scope || 'user',
       ...scopeParams(options)
     },
     signal
   }).then(response => response.data), 'skills', `skills:${platform}`);
+}
+
+/**
+ * 手动启动 Skill 远程刷新任务。
+ */
+export async function refreshSkills(platform = 'claude', options = {}) {
+  const response = await client.post('/skills/refresh', {
+    platform,
+    scope: options.scope || 'user',
+    ...(options.cwd ? { cwd: options.cwd } : {})
+  });
+  return response.data;
+}
+
+export async function getSkillRefreshTask(taskId, options = {}) {
+  const response = await client.get(`/skills/refresh/${encodeURIComponent(taskId)}`, {
+    params: scopeParams(options)
+  });
+  return response.data;
+}
+
+export async function toggleSkill(controlKey, enabled, platform = 'claude', options = {}) {
+  const response = await client.put('/skills/toggle', {
+    controlKey,
+    enabled,
+    platform,
+    scope: options.scope || 'user',
+    ...(options.cwd ? { cwd: options.cwd } : {})
+  });
+  return response.data;
+}
+
+export async function setSkillTrust(controlKey, trust, platform = 'claude', options = {}) {
+  const response = await client.put('/skills/trust', {
+    controlKey,
+    trust,
+    platform,
+    scope: options.scope || 'user',
+    ...(options.cwd ? { cwd: options.cwd } : {})
+  });
+  return response.data;
 }
 
 /**
@@ -85,39 +125,6 @@ export async function getSkillDetail(directory, platform = 'claude', repo = null
     .then(response => response.data), 'skill-detail', `skill-detail:${platform}`)
 }
 
-/**
- * 安装技能
- * @param {string} directory - 本地安装目录
- * @param {object} repo - 仓库信息
- * @param {string} [fullDirectory] - 仓库中的完整路径（当指定了仓库子目录时使用）
- */
-export async function installSkill(directory, repo, fullDirectory = null, platform = 'claude', options = {}) {
-  const response = await client.post('/skills/install', { directory, repo, fullDirectory, platform, ...scopeParams(options) })
-  return response.data
-}
-
-/**
- * 卸载技能
- * @param {string} directory - 技能目录
- */
-export async function uninstallSkill(directory, platform = 'claude', options = {}) {
-  const response = await client.post('/skills/uninstall', {
-    directory,
-    platform,
-    ...(options.cwd ? { cwd: options.cwd } : {}),
-    ...(options.scope ? { scope: options.scope } : {})
-  })
-  return response.data
-}
-
-/**
- * 安装本地 cc-tool 托管的技能
- * @param {string} directory - 技能目录
- */
-export async function installLocalSkill(directory, platform = 'claude', options = {}) {
-  const response = await client.post('/skills/install-local', { directory, platform, ...scopeParams(options) })
-  return response.data
-}
 
 /**
  * 创建自定义技能

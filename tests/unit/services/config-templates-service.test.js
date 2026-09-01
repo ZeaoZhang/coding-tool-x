@@ -16,6 +16,7 @@ let promptPresets;
 let convertCommandToCodexMock;
 let convertCommandToGeminiMock;
 let projectConfigService;
+let templateSkillRegistrations;
 let templatesService;
 
 function writeFile(filePath, content) {
@@ -33,6 +34,7 @@ function readYaml(filePath) {
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-templates-service-'));
+  templateSkillRegistrations = [];
   configDir = path.join(testDir, '.cc-tool');
   agentList = [
     {
@@ -191,6 +193,17 @@ beforeEach(() => {
         }
         getInstalledSkills() {
           return skillsByPlatform[this.platform] || [];
+        }
+        registerTemplateSkill(input) {
+          templateSkillRegistrations.push({ platform: this.platform, input });
+          return {
+            status: input.repo ? 'pending_refresh' : 'pending',
+            controlKey: `skill:${this.platform}:project:${input.directory}`,
+            cached: !input.repo,
+            enabled: false,
+            trust: 'pending',
+            managed: true
+          };
         }
       }
     }
@@ -595,10 +608,17 @@ describe('config-templates-service apply and preview', () => {
     });
 
     expect(projectConfigService.writeInstruction).toHaveBeenCalledWith(targetDir, 'claude', '# CLAUDE');
-    expect(projectConfigService.installProjectSkill).toHaveBeenCalledWith(targetDir, 'claude', {
-      directory: 'skill-claude',
-      name: 'Skill Claude'
-    });
+    expect(templateSkillRegistrations).toEqual([
+      {
+        platform: 'claude',
+        input: expect.objectContaining({
+          directory: 'skill-claude',
+          name: 'Skill Claude',
+          scope: 'project',
+          cwd: targetDir
+        })
+      }
+    ]);
     expect(projectConfigService.upsertProjectMcp).toHaveBeenCalledWith(
       targetDir,
       'claude',
@@ -607,7 +627,38 @@ describe('config-templates-service apply and preview', () => {
     );
   });
 
+  test('registers remote template Skills as pending refresh without fetching', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Remote Skill',
+      cliType: 'claude',
+      skills: [{
+        platform: 'claude',
+        directory: 'remote-skill',
+        repo: { provider: 'github', owner: 'owner', name: 'repo', branch: 'main' }
+      }]
+    });
+    const targetDir = path.join(testDir, 'remote-template');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const result = await templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['claude']
+    });
+
+    expect(result.results.skills.pending).toBe(1);
+    expect(templateSkillRegistrations).toEqual([
+      {
+        platform: 'claude',
+        input: expect.objectContaining({
+          directory: 'remote-skill',
+          scope: 'project',
+          cwd: targetDir,
+          repo: expect.objectContaining({ owner: 'owner', name: 'repo' })
+        })
+      }
+    ]);
+  });
   test('rejects template resource paths that escape the project root', async () => {
+
     const template = templatesService.createCustomTemplate({
       name: 'Unsafe Agent Path',
       cliType: 'claude',

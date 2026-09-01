@@ -73,7 +73,7 @@ function createRemoteMutationGuard(options = {}) {
 }
 
 function isRemoteMutationAllowedByEnv(env = process.env) {
-  return String(env.CC_TOOL_ALLOW_REMOTE_WRITE || '').toLowerCase() !== 'false';
+  return String(env.CC_TOOL_ALLOW_REMOTE_WRITE || '').toLowerCase() === 'true';
 }
 
 function createRemoteRouteGuard(options = {}) {

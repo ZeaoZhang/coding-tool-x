@@ -10,8 +10,8 @@
             <div class="asset-detail-heading">
               <span class="asset-detail-name">{{ detail?.name || skill?.name || '技能详情' }}</span>
               <div class="asset-detail-meta">
-                <n-tag v-if="detail?.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
-                <n-tag v-else type="default" size="tiny" :bordered="false">未安装</n-tag>
+                <n-tag v-if="detail?.enabled" type="success" size="tiny" :bordered="false">已启用</n-tag>
+                <n-tag v-else type="default" size="tiny" :bordered="false">已关闭</n-tag>
                 <n-tag v-if="detail?.protected" type="default" size="tiny" :bordered="false">受保护</n-tag>
                 <span v-if="detail" class="asset-detail-subtle">{{ formatSkillSourceText(detail) }}</span>
               </div>
@@ -63,26 +63,32 @@
                 <h3 class="asset-detail-section-title">操作</h3>
                 <div class="asset-detail-actions">
                   <n-button
-                    v-if="!detail.installed && canInstallSkill(detail)"
+                    v-if="detail.controlKey && detail.trust === 'approved' && detail.cached && !detail.protected && detail.projection?.state !== 'unsupported' && !(scope === 'project' && detail.sourceScope !== 'project')"
                     type="primary"
                     size="small"
-                    :loading="installing"
-                    @click="handleInstall"
+                    :loading="toggling"
+                    @click="handleToggle"
                   >
-                    安装此技能
+                    {{ detail.enabled ? '关闭此技能' : '启用此技能' }}
                   </n-button>
                   <n-button
-                    v-if="detail.installed && !detail.protected && !(scope === 'project' && detail.sourceScope !== 'project')"
-                    type="error"
+                    v-else-if="detail.controlKey && ['pending', 'needs_review'].includes(detail.trust) && !(scope === 'project' && detail.sourceScope !== 'project')"
                     tertiary
+                    type="warning"
                     size="small"
-                    :loading="uninstalling"
-                    @click="handleUninstall"
+                    :loading="toggling"
+                    @click="handleApprove"
                   >
-                    卸载
+                    审批
                   </n-button>
-                  <n-button v-else-if="detail.installed && detail.protected" tertiary size="small" disabled>
+                  <n-button v-else-if="detail.protected" tertiary size="small" disabled>
                     受保护
+                  </n-button>
+                  <n-button v-else-if="detail.projection?.state === 'unsupported'" tertiary size="small" disabled>
+                    不支持投影
+                  </n-button>
+                  <n-button v-else-if="['pending', 'needs_review'].includes(detail.trust)" tertiary size="small" disabled>
+                    {{ detail.trust === 'needs_review' ? '需复审' : '待审批' }}
                   </n-button>
                   <n-button
                     text
@@ -124,13 +130,13 @@ import {
   GitBranchOutline
 } from '@vicons/ionicons5'
 import { marked } from 'marked'
-import { getSkillDetail, installSkill, uninstallSkill } from '../api/skills'
+import { getSkillDetail, toggleSkill, setSkillTrust } from '../api/skills'
+import { setProjectSkillEnabled } from '../api/project-config'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import { copyTextToClipboard } from '../utils/clipboard'
 import message from '../utils/message'
 import AssetPathField from './AssetPathField.vue'
 import {
-  canInstallSkill,
   formatSkillSourceText,
   getSkillSourceLink,
   getSkillSourceLinkLabel,
@@ -172,9 +178,8 @@ const visible = computed({
 const loading = ref(false)
 const error = ref('')
 const detail = ref(null)
-const installing = ref(false)
+const toggling = ref(false)
 const loadRequestId = ref(0)
-const uninstalling = ref(false)
 
 const bodyContentStyle = {
   height: '100%',
@@ -182,15 +187,64 @@ const bodyContentStyle = {
   overflow: 'hidden'
 }
 
+function sanitizeMarkdownHtml(html) {
+  const rawHtml = String(html)
+  if (typeof document === 'undefined') {
+    return rawHtml
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/\son[a-z]+\s*=\s*(['"])[\s\S]*?\1/gi, '')
+      .replace(/\s(?:href|src)\s*=\s*(['"])\s*(?:javascript|vbscript|data):[\s\S]*?\1/gi, '')
+  }
+
+  const allowedTags = new Set([
+    'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'del', 'div', 'em',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'input', 'li',
+    'ol', 'p', 'pre', 'span', 'strong', 'sub', 'sup', 'table', 'tbody',
+    'td', 'tfoot', 'th', 'thead', 'tr', 'ul'
+  ])
+  const allowedAttributes = new Set([
+    'alt', 'checked', 'class', 'disabled', 'href', 'id', 'rel', 'src',
+    'target', 'title', 'type'
+  ])
+  const isSafeUrl = (value, tagName) => {
+    const normalized = String(value || '').trim()
+    if (normalized.startsWith('#') || normalized.startsWith('/')) return true
+    if (tagName === 'a' && /^mailto:/i.test(normalized)) return true
+    return /^https?:\/\//i.test(normalized)
+  }
+
+  const template = document.createElement('template')
+  template.innerHTML = rawHtml
+  template.content.querySelectorAll('*').forEach(node => {
+    const tagName = node.tagName.toLowerCase()
+    if (!allowedTags.has(tagName)) {
+      node.remove()
+      return
+    }
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase()
+      if (!allowedAttributes.has(name) || /^on/i.test(name)) {
+        node.removeAttribute(attribute.name)
+        continue
+      }
+      if ((name === 'href' || name === 'src') && !isSafeUrl(attribute.value, tagName)) {
+        node.removeAttribute(attribute.name)
+      }
+    }
+  })
+  return template.innerHTML
+}
+
 const renderedContent = computed(() => {
   if (!detail.value?.content) return ''
   try {
-    return marked(detail.value.content, {
+    return sanitizeMarkdownHtml(marked(detail.value.content, {
       breaks: true,
       gfm: true
-    })
+    }))
   } catch {
-    return detail.value.content
+    return sanitizeMarkdownHtml(detail.value.content)
   }
 })
 
@@ -261,50 +315,73 @@ async function loadDetail() {
   }
 }
 
-async function handleInstall() {
-  if (!props.skill || props.skill.protected) return
-
-  installing.value = true
+async function handleToggle() {
+  if (
+    toggling.value
+    || !detail.value
+    || !detail.value.controlKey
+    || detail.value.protected
+    || detail.value.readonly
+    || detail.value.managed === false
+    || detail.value.trust !== 'approved'
+    || detail.value.projection?.state === 'unsupported'
+    || !detail.value.cached
+    || (props.scope === 'project' && detail.value.sourceScope !== 'project')
+  ) return
+  toggling.value = true
   try {
-    const result = await installSkill(
-      props.skill.directory,
-      buildSkillRepoContext(props.skill),
-      props.skill.fullDirectory || null,
+    const result = props.scope === 'project'
+      ? await setProjectSkillEnabled(props.projectPath, props.platform, detail.value.controlKey, !detail.value.enabled)
+      : await toggleSkill(
+        detail.value.controlKey,
+        !detail.value.enabled,
+        props.platform,
+        scopeOptions.value
+      )
+    if (result.status === 'needs_approval') {
+      message.warning('该技能需要先审批')
+      return
+    }
+    if (result.status === 'unsupported') {
+      message.error('当前平台不支持安全投影')
+      return
+    }
+    if (result.status === 'conflict') {
+      message.warning('目标 Skill 目录已被其他来源占用')
+      return
+    }
+    if (result.status === 'projection_failed') {
+      message.error(result.lastError || 'Skill 投影失败')
+      return
+    }
+    detail.value.enabled = result.enabled
+    detail.value.projection = result.projection || detail.value.projection
+    message.success(result.enabled ? '技能已启用' : '技能已关闭')
+    emit('updated')
+  } catch (err) {
+    message.error('切换失败: ' + (err.response?.data?.message || err.message))
+  } finally {
+    toggling.value = false
+  }
+}
+
+async function handleApprove() {
+  if (!detail.value?.controlKey || !['pending', 'needs_review'].includes(detail.value.trust)) return
+  toggling.value = true
+  try {
+    const result = await setSkillTrust(
+      detail.value.controlKey,
+      'approved',
       props.platform,
       scopeOptions.value
     )
-
-    if (result.success) {
-      message.success('安装成功')
-      if (detail.value) detail.value.installed = true
-      emit('updated')
-    }
+    detail.value.trust = result.trust
+    message.success('技能已批准，当前仍保持关闭')
+    emit('updated')
   } catch (err) {
-    message.error('安装失败: ' + (err.response?.data?.message || err.message))
+    message.error('审批失败: ' + (err.response?.data?.message || err.message))
   } finally {
-    installing.value = false
-  }
-}
-async function handleUninstall() {
-  if (
-    !detail.value
-    || detail.value.protected
-    || (props.scope === 'project' && detail.value.sourceScope !== 'project')
-  ) return
-
-  uninstalling.value = true
-  try {
-    const result = await uninstallSkill(detail.value.directory, props.platform, scopeOptions.value)
-
-    if (result.success) {
-      message.success('卸载成功')
-      if (detail.value) detail.value.installed = false
-      emit('updated')
-    }
-  } catch (err) {
-    message.error('卸载失败: ' + (err.response?.data?.message || err.message))
-  } finally {
-    uninstalling.value = false
+    toggling.value = false
   }
 }
 
