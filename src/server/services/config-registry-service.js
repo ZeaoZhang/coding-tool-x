@@ -30,14 +30,14 @@ const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
 
 function getSupportedPlatforms(registry = platformRuntime.getPlatformRegistry()) {
   if (!registry || typeof registry.list !== 'function') return [];
-  return registry.list({ enabledOnly: true })
+  return registry.list()
     .map(platform => platform && platform.key)
     .filter(Boolean);
 }
 
 function buildPlatformSupport(registry = platformRuntime.getPlatformRegistry()) {
   const support = Object.fromEntries(CONFIG_TYPES.map(type => [type, {}]));
-  for (const platform of (registry?.list?.({ enabledOnly: true }) || [])) {
+  for (const platform of (registry?.list?.() || [])) {
     const key = platform && platform.key;
     if (!key) continue;
     const resourceDriver = platform.capabilities?.resourceSync;
