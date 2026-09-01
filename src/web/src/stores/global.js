@@ -97,7 +97,10 @@ export const useGlobalStore = defineStore('global', () => {
     return isKnownPlatform(normalized)
       && catalog.value.some(platform => (
         platform.key === normalized
-        && platform.capabilities?.[capability] === true
+        && (
+          platform.capabilities?.[capability] === true
+          || platform.resourceTypes?.[capability] === true
+        )
       ))
   }
 

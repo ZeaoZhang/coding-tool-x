@@ -84,4 +84,32 @@ describe('global keyed platform requests', () => {
       '/api/platforms/no-proxy-cli/channels'
     ])
   })
+
+  it('does not request or hydrate hidden platform state', async () => {
+    enabledKeys.value = ['alpha-cli']
+    const store = useGlobalStore()
+
+    await store.initializeState()
+    await store.loadChannels()
+
+    expect(axiosGet.mock.calls.map(([url]) => url)).toEqual([
+      '/api/platforms/alpha-cli/proxy/status',
+      '/api/platforms/alpha-cli/channels'
+    ])
+
+    store.handleProxyStateUpdate({
+      type: 'proxy-state',
+      source: 'beta-cli',
+      proxy: { running: true },
+      channels: [{ id: 'hidden', name: 'Hidden' }]
+    })
+    store.handleProxyStateUpdate({
+      type: 'proxy-state',
+      source: 'missing-cli',
+      proxy: { running: true }
+    })
+
+    expect(store.getProxyState('beta-cli').value.running).toBe(false)
+    expect(store.getChannels('missing-cli')).toBeNull()
+  })
 })

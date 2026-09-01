@@ -31,9 +31,12 @@ function normalizeChannelStats(byChannel = {}) {
 }
 
 function normalizeStats(stats = {}) {
+  const tokenValue = typeof stats.tokens === 'object'
+    ? stats.tokens?.total
+    : stats.tokens
   return {
     requests: stats.requests || 0,
-    tokens: stats.tokens || 0,
+    tokens: tokenValue || 0,
     cost: stats.cost || 0,
     byModel: stats.byModel || {},
     byChannel: normalizeChannelStats(stats.byChannel)
@@ -122,7 +125,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
   function hasEnabledCapability(channelType, capability) {
     const key = hasEnabledPlatform(channelType)
-    return key && getPlatform(key)?.capabilities?.[capability] === true ? key : null
+    const platform = key ? getPlatform(key) : null
+    return key && (
+      platform?.capabilities?.[capability] === true
+      || platform?.resourceTypes?.[capability] === true
+    ) ? key : null
   }
   async function loadDashboard(force = false, options = {}) {
     const platformSignature = enabledPlatformKeys().join(',')
