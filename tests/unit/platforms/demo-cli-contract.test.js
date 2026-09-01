@@ -13,11 +13,15 @@ describe('demo-cli configuration-only contract', () => {
           key: 'demo-cli',
           label: 'Demo CLI',
           command: 'demo',
-          paths: { home: '/tmp/demo-cli' },
+          iconToken: 'terminal',
+          paths: { home: '/tmp/demo-cli', sessions: '/tmp/demo-cli/sessions', baseUrl: 'https://demo.invalid/v1' },
+          resourceMappings: { skills: '{home}/skills' },
+          sessionMapping: { sessionId: 'id', projectName: 'project', messages: 'messages' },
           capabilities: {
             sessions: 'generic-jsonl',
             resourceSync: 'generic-filesystem',
-            channels: 'generic-openai-compatible'
+            channels: 'generic-openai-compatible',
+            proxy: 'unsupported'
           }
         }]
       }
@@ -25,9 +29,9 @@ describe('demo-cli configuration-only contract', () => {
     const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
 
     expect(registry.resolve('demo-cli')).toEqual(expect.objectContaining({ key: 'demo-cli' }));
-    expect(typeof runtime.getDriver('demo-cli', 'sessions').list).toBe('function');
+    expect(typeof runtime.getDriver('demo-cli', 'sessions').inventory).toBe('function');
     expect(typeof runtime.getDriver('demo-cli', 'resourceSync').sync).toBe('function');
-    expect(typeof runtime.getDriver('demo-cli', 'channels').list).toBe('function');
+    expect(typeof runtime.getDriver('demo-cli', 'channels').request).toBe('function');
     expect(runtime.getDriver('demo-cli', 'proxy')).toEqual({
       status: 'unsupported', platform: 'demo-cli', capability: 'proxy'
     });

@@ -17,6 +17,7 @@ const CODEX_PATH    = require.resolve('../../../src/server/services/codex-channe
 const GEMINI_PATH   = require.resolve('../../../src/server/services/gemini-channels');
 const OPENCODE_PATH = require.resolve('../../../src/server/services/opencode-channels');
 const OMP_PATH      = require.resolve('../../../src/server/services/omp-channels');
+const HEALTH_PATH   = require.resolve('../../../src/server/services/channel-health');
 const RUNTIME_PATH   = require.resolve('../../../src/platforms/runtime');
 const SCHEDULER_PATH = require.resolve('../../../src/server/services/channel-scheduler');
 
@@ -46,8 +47,9 @@ function injectStubs() {
   getGeminiChannels  = vi.fn(() => ({ channels: [] }));
   getOpenCodeChannels = vi.fn(() => ({ channels: [] }));
   getOmpChannels      = vi.fn(() => ({ channels: [] }));
-  isChannelAvailable    = vi.fn(() => true);
-  setOnChannelFrozen    = vi.fn();
+  isChannelAvailable  = vi.fn(() => true);
+  getChannelHealthStatus = vi.fn(() => ({ available: true }));
+  setOnChannelFrozen = vi.fn();
   setChannelListProvider = vi.fn();
 
   const channelDrivers = {
