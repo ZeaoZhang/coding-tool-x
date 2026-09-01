@@ -58,6 +58,12 @@ vi.mock('../../api/skills', () => api)
 vi.mock('../../api/config-registry', () => ({ importFromClaude: vi.fn() }))
 const route = reactive({ meta: { channel: 'claude' }, query: {} })
 vi.mock('vue-router', () => ({ useRoute: () => route }))
+vi.mock('../../composables/useUIConfig', () => ({
+  useUIConfig: () => ({
+    uiConfig: ref({}),
+    loadUIConfig: vi.fn().mockResolvedValue({})
+  })
+}))
 vi.mock('../SkillCard.vue', () => ({ default: { name: 'SkillCard', props: ['skill'], template: '<div class="skill-card-test">{{ skill.name }}</div>' } }))
 vi.mock('../SkillRepoManager.vue', () => ({ default: { name: 'SkillRepoManager', template: '<div />' } }))
 vi.mock('../SkillCreateModal.vue', () => ({ default: { name: 'SkillCreateModal', template: '<div />' } }))
