@@ -16,7 +16,7 @@
           <div class="asset-subtitle">维护自定义代理、工具权限和平台启用状态</div>
         </div>
       </div>
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text @click="openCreateModal" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
@@ -34,7 +34,7 @@
 
     <!-- Drawer 模式下的简化头部 -->
     <div class="asset-drawer-toolbar" v-if="props.inDrawer">
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text @click="openCreateModal" class="action-btn">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
@@ -102,7 +102,7 @@
               </n-icon>
             </template>
             <template #extra>
-              <n-button size="small" @click="openCreateModal">
+              <n-button size="small" @click="openCreateModal" v-if="supportsCurrentPlatform">
                 创建第一个代理
               </n-button>
             </template>
@@ -214,6 +214,7 @@ const togglingKeys = ref({})
 let detailRequestId = 0
 const { byCapability } = useEnabledCliPlatforms()
 const managedAgentPlatforms = computed(() => byCapability('agents').map(platform => platform.key))
+const supportsCurrentPlatform = computed(() => managedAgentPlatforms.value.includes(currentPlatform.value))
 
 const currentPlatform = computed(() => {
   const requested = String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
@@ -311,10 +312,17 @@ const emptyText = computed(() => {
   if (filterScope.value === 'user') return '暂无用户级代理'
   if (filterScope.value === 'project') return '暂无项目级代理'
   if (filterScope.value === 'managed') return '暂无托管的代理'
+  if (!supportsCurrentPlatform.value) return `${currentPlatformLabel.value} 暂未提供 Agents 能力`
   return '暂无自定义代理'
 })
 
 async function loadAgents() {
+  if (!supportsCurrentPlatform.value) {
+    agents.value = []
+    registryMap.value = {}
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
     const [agentRes, registryRes] = await Promise.all([
