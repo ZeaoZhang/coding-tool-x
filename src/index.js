@@ -86,16 +86,16 @@ function showHelp() {
   console.log(chalk.yellow('[UI] UI 管理:'));
   console.log('  ctx ui                  前台启动 Web UI（仅本地访问）');
   console.log('  ctx ui --https          前台启动 Web UI（本地 HTTPS）');
-  console.log('  ctx ui --host           前台启动 Web UI（允许 LAN 访问，默认允许远程写操作）');
+  console.log('  ctx ui --host           前台启动 Web UI（允许 LAN 访问，远程写默认关闭）');
   console.log('  ctx ui --hosts          前台启动 Web UI（同 --host）');
   console.log('  ctx --hosts             前台启动 Web UI（同 ctx ui --host）');
   console.log('  ctx ui start            后台启动 Web UI');
   console.log('  ctx ui start --https    后台启动 Web UI（本地 HTTPS）');
-  console.log('  ctx ui start --host     后台启动 Web UI（允许 LAN 访问，默认允许远程写操作）');
+  console.log('  ctx ui start --host     后台启动 Web UI（允许 LAN 访问，远程写默认关闭）');
   console.log('  ctx ui start --hosts    后台启动 Web UI（同 --host）');
   console.log('  ctx ui stop             停止 Web UI');
   console.log('  ctx ui restart          重启 Web UI\n');
-  console.log(chalk.gray('  提示: 如需禁止 LAN 远程写操作，可设置 CC_TOOL_ALLOW_REMOTE_WRITE=false\n'));
+  console.log(chalk.gray('  提示: 只有显式设置 CC_TOOL_ALLOW_REMOTE_WRITE=true 才允许 LAN 远程写操作\n'));
   console.log(chalk.yellow('[PROXY] 代理管理:'));
   const platformEntries = createPlatformCommandRegistry().helpEntries();
   platformEntries.filter(entry => entry.proxy).forEach((entry) => {

@@ -472,13 +472,13 @@ function fillEditingData() {
     formData.server = { ...server.server }
     formData.server.type = serverType.value
 
-    if (server.server.env) {
+    if (server.server.env && typeof server.server.env === 'object') {
       envList.value = Object.entries(server.server.env).map(([key, value]) => ({ key, value }))
     } else {
       envList.value = []
     }
 
-    if (server.server.headers) {
+    if (server.server.headers && typeof server.server.headers === 'object') {
       headersList.value = Object.entries(server.server.headers).map(([key, value]) => ({ key, value }))
     } else {
       headersList.value = []
@@ -522,8 +522,9 @@ async function handleSave() {
     // 转换环境变量
     const env = {}
     envList.value.forEach(item => {
-      if (item.key.trim()) {
-        env[item.key.trim()] = item.value
+      const key = item.key.trim()
+      if (key && item.value !== '[REDACTED]') {
+        env[key] = item.value
       }
     })
     if (Object.keys(env).length > 0) {
@@ -534,8 +535,9 @@ async function handleSave() {
     // 转换请求头
     const headers = {}
     headersList.value.forEach(item => {
-      if (item.key.trim()) {
-        headers[item.key.trim()] = item.value
+      const key = item.key.trim()
+      if (key && item.value !== '[REDACTED]') {
+        headers[key] = item.value
       }
     })
     if (Object.keys(headers).length > 0) {

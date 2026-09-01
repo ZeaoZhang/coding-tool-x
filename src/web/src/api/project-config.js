@@ -32,6 +32,20 @@ export async function getProjectMcp(projectPath, platform) {
   return response.data.mcp || response.data
 }
 
+export async function getProjectSkills(projectPath, platform) {
+  const response = await client.get('/project-config/skills', { params: query(projectPath, platform) })
+  return response.data.skills || response.data
+}
+
+export async function setProjectSkillEnabled(projectPath, platform, controlKey, enabled) {
+  const response = await client.put('/project-config/skills/toggle', {
+    ...query(projectPath, platform),
+    controlKey,
+    enabled
+  })
+  return response.data
+}
+
 export async function saveProjectMcp(projectPath, platform, id, server) {
   const response = await client.put(`/project-config/mcp/${encodeURIComponent(id)}`, {
     ...query(projectPath, platform),

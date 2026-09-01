@@ -23,6 +23,7 @@ const tomlStringify = require('@iarna/toml').stringify;
 const { convertSkillToCodex, convertCommandToCodex, convertCommandToGemini } = require('./format-converter');
 const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../../config/paths');
 const platformRuntime = require('../../platforms/runtime');
+const { assertNoSymlinkComponents } = require('./project-config-adapters/shared');
 
 // Paths
 const HOME = HOME_DIR || os.homedir();
@@ -106,7 +107,32 @@ class ConfigSyncManager {
     this.configTypes = CONFIG_TYPES;
   }
 
-  syncToPlatform(platform, type, name) {
+  _resolveSourcePath(type, safeName, sourcePathOverride = null) {
+    const defaultPath = path.join(this.ccToolConfigs, type, safeName);
+    const sourcePath = sourcePathOverride
+      ? (() => {
+        if (typeof sourcePathOverride !== 'string' || !path.isAbsolute(sourcePathOverride)) {
+          throw new Error('Controlled source path must be an absolute path');
+        }
+        return path.resolve(sourcePathOverride);
+      })()
+      : defaultPath;
+    const allowedRoots = [
+      path.join(this.ccToolConfigs, type),
+      PATHS.skillArtifacts
+    ].filter(Boolean).map(root => path.resolve(root));
+    const allowedRoot = allowedRoots.find(root => (
+      sourcePath === root || sourcePath.startsWith(`${root}${path.sep}`)
+    ));
+    if (!allowedRoot) throw new Error('Controlled source path escapes allowed storage');
+    assertNoSymlinkComponents(allowedRoot, sourcePath, fs);
+    if (sourcePathOverride && !fs.existsSync(sourcePath)) {
+      throw new Error('Controlled source path not found');
+    }
+    return sourcePath;
+  }
+
+  syncToPlatform(platform, type, name, sourcePathOverride = null) {
     const key = String(platform || '').trim().toLowerCase();
     try {
       const driver = this.runtime?.getDriver?.(key, 'resourceSync');
@@ -120,7 +146,7 @@ class ConfigSyncManager {
       if (!safeName) {
         return { status: 'invalid', platform: key, capability: 'resourceSync', operation: 'sync', error: 'Invalid config item name' };
       }
-      const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+      const sourcePath = this._resolveSourcePath(type, safeName, sourcePathOverride);
       return driver.sync.length >= 3
         ? driver.sync(type, safeName, sourcePath)
         : driver.sync(type, safeName);
@@ -167,7 +193,7 @@ class ConfigSyncManager {
    * @param {string} name - Item name (directory name for skills, file path for others)
    * @returns {Object} Result with success status
    */
-  syncToClaude(type, name) {
+  syncToClaude(type, name, sourcePathOverride = null) {
     const config = this.configTypes[type];
     if (!config) {
       console.log(`[ConfigSyncManager] Unknown config type: ${type}`);
@@ -178,7 +204,7 @@ class ConfigSyncManager {
     if (!safeName) {
       return { success: false, error: 'Invalid config item name' };
     }
-    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    const sourcePath = this._resolveSourcePath(type, safeName, sourcePathOverride);
     const targetPath = path.join(this.claudeDir, config.claudeTarget, safeName);
 
     // Check if source exists
@@ -258,7 +284,7 @@ class ConfigSyncManager {
    * @param {string} name - Item name
    * @returns {Object} Result with success status and any warnings
    */
-  syncToCodex(type, name) {
+  syncToCodex(type, name, sourcePathOverride = null) {
     const config = this.configTypes[type];
     if (!config) {
       return { success: false, error: `Unknown config type: ${type}` };
@@ -273,7 +299,7 @@ class ConfigSyncManager {
     if (!safeName) {
       return { success: false, error: 'Invalid config item name' };
     }
-    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    const sourcePath = this._resolveSourcePath(type, safeName, sourcePathOverride);
 
     if (!fs.existsSync(sourcePath)) {
       console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
@@ -460,7 +486,7 @@ class ConfigSyncManager {
    * @param {string} name - Item name
    * @returns {Object} Result with success status
    */
-  syncToGemini(type, name) {
+  syncToGemini(type, name, sourcePathOverride = null) {
     const config = this.configTypes[type];
     if (!config) {
       return { success: false, error: `Unknown config type: ${type}` };
@@ -475,7 +501,7 @@ class ConfigSyncManager {
     if (!safeName) {
       return { success: false, error: 'Invalid config item name' };
     }
-    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    const sourcePath = this._resolveSourcePath(type, safeName, sourcePathOverride);
     if (!fs.existsSync(sourcePath)) {
       console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
       return { success: false, error: 'Source not found' };
@@ -554,7 +580,7 @@ class ConfigSyncManager {
    * @param {string} name - Item name
    * @returns {Object} Result with success status
    */
-  syncToOpenCode(type, name) {
+  syncToOpenCode(type, name, sourcePathOverride = null) {
     const config = this.configTypes[type];
     if (!config) {
       return { success: false, error: `Unknown config type: ${type}` };
@@ -569,7 +595,7 @@ class ConfigSyncManager {
     if (!safeName) {
       return { success: false, error: 'Invalid config item name' };
     }
-    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    const sourcePath = this._resolveSourcePath(type, safeName, sourcePathOverride);
     if (!fs.existsSync(sourcePath)) {
       console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
       return { success: false, error: 'Source not found' };
@@ -646,7 +672,7 @@ class ConfigSyncManager {
    * Sync a config item to OMP.
    * OMP treats commands as slash-command files and plugins as extensions/packages.
    */
-  syncToOmp(type, name) {
+  syncToOmp(type, name, sourcePathOverride = null) {
     const config = this.configTypes[type];
     if (!config) {
       return { success: false, error: `Unknown config type: ${type}` };
@@ -662,7 +688,7 @@ class ConfigSyncManager {
       return { success: false, error: 'Invalid config item name' };
     }
 
-    const sourcePath = path.join(this.ccToolConfigs, type, safeName);
+    const sourcePath = this._resolveSourcePath(type, safeName, sourcePathOverride);
     if (!fs.existsSync(sourcePath)) {
       console.log(`[ConfigSyncManager] Source not found: ${sourcePath}`);
       return { success: false, error: 'Source not found' };

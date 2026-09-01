@@ -47,6 +47,10 @@ export function getSkillSourceTag(skill = {}) {
       agents: 'Agents',
       codex: 'Codex',
       opencode: 'OpenCode',
+      github: 'GitHub',
+      gitlab: 'GitLab',
+      'local-repo': '本地仓库',
+      remote: '远端',
       custom: '自定义',
       'cc-tool': '本地技能'
     };

@@ -125,6 +125,75 @@ describe('ConfigRegistryService item persistence', () => {
   });
 });
 
+  test('migrates legacy managed Skills into the effective control manifest without deleting artifacts', () => {
+    const { ControlManifestStore } = require('../../../src/server/services/control-manifest-store');
+    const { EffectiveControlService } = require('../../../src/server/services/effective-control-service');
+    const controlService = new EffectiveControlService({
+      store: new ControlManifestStore({
+        userPath: path.join(baseDir, 'effective-control.json'),
+        projectPathResolver: ({ projectPath }) => path.join(projectPath, '.ctx-control.json'),
+        fsImpl: fs
+      })
+    });
+    const service = new ConfigRegistryService({ controlService });
+    service.setItem('skills', 'legacy-skill', {
+      enabled: false,
+      platforms: { claude: true },
+      source: 'imported'
+    });
+    writeFile(path.join(configsDir, 'skills', 'legacy-skill', 'SKILL.md'), '# legacy');
+
+    service.migrateSkillControls();
+    service.migrateSkillControls();
+
+    const entry = controlService.getSkill(
+      'skill:claude:user:user:local:claude:legacy-skill',
+      { scope: 'user' }
+    );
+    expect(fs.existsSync(path.join(configsDir, 'skills', 'legacy-skill', 'SKILL.md'))).toBe(true);
+    expect(entry).toEqual(expect.objectContaining({
+      managed: true,
+      enabled: false,
+      artifact: expect.objectContaining({ state: 'ready' })
+    }));
+  });
+
+test('migrates each legacy Skill platform flag independently', () => {
+  const { ControlManifestStore } = require('../../../src/server/services/control-manifest-store');
+  const { EffectiveControlService } = require('../../../src/server/services/effective-control-service');
+  const controlService = new EffectiveControlService({
+    store: new ControlManifestStore({
+      userPath: path.join(baseDir, 'effective-control.json'),
+      projectPathResolver: ({ projectPath }) => path.join(projectPath, '.ctx-control.json'),
+      fsImpl: fs
+    })
+  });
+  const service = new ConfigRegistryService({ controlService });
+  service.setItem('skills', 'platform-skill', {
+    enabled: true,
+    platforms: { claude: true, codex: false }
+  });
+  writeFile(path.join(configsDir, 'skills', 'platform-skill', 'SKILL.md'), '# skill');
+
+  service.migrateSkillControls();
+
+  expect(controlService.getSkill(
+    'skill:claude:user:user:local:claude:platform-skill',
+    { scope: 'user' }
+  ).enabled).toBe(true);
+  expect(controlService.getSkill(
+    'skill:codex:user:user:local:codex:platform-skill',
+    { scope: 'user' }
+  ).enabled).toBe(false);
+});
+
+test('rejects prototype keys across registry lookups and mutations', () => {
+  const service = new ConfigRegistryService();
+  expect(() => service.getItem('commands', '__proto__')).toThrow(/config name/i);
+  expect(() => service.setItem('commands', '__proto__', {})).toThrow(/config name/i);
+  expect(() => service.toggleEnabled('commands', 'constructor', true)).toThrow(/config name/i);
+  expect(() => service.togglePlatform('commands', 'prototype', 'claude', true)).toThrow(/config name/i);
+});
 describe('ConfigRegistryService import and sync', () => {
   test('imports skills and nested commands from Claude directories', () => {
     const service = new ConfigRegistryService();

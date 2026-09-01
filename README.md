@@ -45,10 +45,14 @@
 
 - 集中存储在 `~/.cc-tool`
 - 保留并同步各平台原生配置目录，而不是替代原生用法
+- Skill 仓库只保存 source reference；手动刷新时下载仓库中发现的每个 Skill 完整目录，不保存仓库归档或 tree
+- 每个 CLI 使用独立的 Skill artifact 格式和目录：`claude-skill-v1`、`codex-skill-v1`、`gemini-skill-v1`、`opencode-skill-v1`、`omp-skill-v1`
+- Skill 页面进入、浏览器刷新和页面切换只扫描本地；只有用户点击“刷新远端”才创建异步网络任务
+- Skill `enabled` 控制实际 CLI/OMP 加载；关闭只移除 native projection，不删除本地 artifact
+- 新下载 Skill 默认 `trust=needs_review`、`enabled=false`，审批前不会进入实际运行面
+- 所有扫描到的 Skill 默认登记为 `managed=true`；`managed` 不等于已启用
 - 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP 同步为原生 prompt templates
-- 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
-- OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
-- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP 写入原生 `mcp.json`
+- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；MCP/Skill activation、trust 和 secret reference 由同一有效控制面管理
 - 支持 Claude、Codex、Gemini、OpenCode 的 OAuth 凭证池管理与回写原生配置；OMP auth 通过原生配置导入导出保留
 - 支持 ZIP / JSON 配置导入导出
 
@@ -59,7 +63,7 @@
 - 支持配置模板，将提示词、技能、命令、代理、MCP、插件组合成一套模板
 - 支持 Dashboard、Analytics、日志、统计导出、环境诊断
 - 支持面板访问密码
-- LAN 模式默认允许远程写操作，可用环境变量关闭
+- LAN 模式默认禁止远程写操作；只有显式设置 `CC_TOOL_ALLOW_REMOTE_WRITE=true` 才允许
 
 ### 通知
 
@@ -155,11 +159,11 @@ ctx ui --host
 LAN 模式说明:
 
 - 服务会监听 `0.0.0.0`
-- 默认允许 LAN 远程写操作，便于从其他设备操作和修改
-- 如需禁止远程写操作，可显式设置:
+- 默认禁止 LAN 远程写操作，保护 Skill/MCP/配置控制面
+- 如需允许远程写操作，必须显式设置:
 
 ```bash
-CC_TOOL_ALLOW_REMOTE_WRITE=false ctx ui --host
+CC_TOOL_ALLOW_REMOTE_WRITE=true ctx ui --host
 ```
 
 ### 单独控制平台代理
@@ -250,8 +254,8 @@ ctx omp start
 
 #### 项目级配置
 
-在项目历史会话页点击“项目配置”，可管理当前项目的项目指令、Skills 和 MCP。
-项目配置写入 CLI 原生文件；工作区只负责项目分组和发现项目。
+在项目历史会话页点击“项目配置”，可管理当前项目的项目指令、Skill 和 MCP。
+项目级 Skill 页面只扫描本地 artifact/native roots；远端仓库不会因为打开页面、刷新浏览器或切换项目而拉取。
 
 支持的项目级原生位置：
 
@@ -263,9 +267,9 @@ ctx omp start
 | OpenCode | `.opencode/AGENTS.md`（以平台 Manifest 为准） | `.opencode/skills/` | `.opencode/opencode.json` |
 | OMP | 无单独项目指令文件 | `.omp/skills/` | `.omp/mcp.json` |
 
-这里的 `AGENTS.md` 是 Codex 的项目指令文件，不是配置管理页中的 Agents 定义。
-删除项目级配置只删除项目目录中的对应文件、Skill 或 MCP 条目，不会禁用或删除用户级配置。
-静态 MCP 环境变量、Headers 或凭据可能写入项目文件；提交项目到 Git 前请检查这些文件，避免泄露密钥。
+项目 Skill 关闭只移除该项目的 native projection，不删除 artifact；同名项目 Skill 优先于 inherited user Skill。
+平台无法安全投影的 managed project Skill 返回 `projection: unsupported`，不伪造关闭成功。
+静态 MCP 环境变量、Headers 或凭据禁止写入项目 Git；项目 MCP 只允许环境变量引用或 secret reference。
 ### 配置管理
 
 - Prompts
@@ -369,9 +373,11 @@ npm test
 
 ## 已知说明
 
-- `ctx ui --host` 开启 LAN 访问后，默认允许远程写操作；如需只读 LAN 模式，请设置 `CC_TOOL_ALLOW_REMOTE_WRITE=false`
-- OpenCode 部分能力依赖本机可访问的 OpenCode 配置目录和 `sqlite3`
-- 配置导出包可能包含 API Key、Webhook、OAuth 等敏感信息，请妥善保管
+- `ctx ui --host` 开启 LAN 访问后默认禁止远程写操作；只有显式设置 `CC_TOOL_ALLOW_REMOTE_WRITE=true` 才允许
+- Skill refresh 是异步网络任务；打开 Skill 面板、刷新浏览器和切换页面只扫描本地
+- Skill `enabled` 控制实际 CLI/OMP 加载；关闭不会删除 artifact；新远端 Skill 默认 needs_review/disabled
+- MCP/Skill 的 secret 不写入 control manifest、项目 Git、任务状态、日志或 API 响应
+- 项目 native Skill/MCP 若平台无法安全表达开关，会返回 `projection: unsupported` 或 `external`，不伪造关闭成功
 
 ## 可配置 CLI 平台
 

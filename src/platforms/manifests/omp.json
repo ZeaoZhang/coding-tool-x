@@ -39,6 +39,10 @@
     "agents": false,
     "plugins": true
   },
+  "skillActivation": {
+    "user": { "mode": "native-copy", "format": "omp-skill-v1" },
+    "project": { "mode": "native-copy", "format": "omp-skill-v1" }
+  },
   "projectResources": {
     "instruction": { "path": null },
     "skills": {

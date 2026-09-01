@@ -229,8 +229,8 @@ function createResourceSyncDriver({ platform, capability, requireImpl }) {
   return {
     platform,
     capability,
-    sync(type, name) {
-      return operations ? loadManager()[operations.sync](type, name) : unsupported(platform, capability, 'sync');
+    sync(type, name, sourcePath = null) {
+      return operations ? loadManager()[operations.sync](type, name, sourcePath) : unsupported(platform, capability, 'sync');
     },
     remove(type, name) {
       return operations ? loadManager()[operations.remove](type, name) : unsupported(platform, capability, 'remove');

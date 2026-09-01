@@ -5,7 +5,9 @@ const {
   createProjectAdapter,
   readJsonFile,
   writeJsonFileAtomic,
-  redactSecrets
+  redactSecrets,
+  validateMcpId,
+  mergeMcpPatch
 } = require('./shared');
 
 function getOpenCodeServers(projectRoot, relativePath, fsImpl) {
@@ -49,12 +51,17 @@ function createAdapter({ manifest, fsImpl } = {}) {
   }
 
   function upsertProjectMcp(projectRoot, id, spec) {
+    const normalizedId = validateMcpId(id);
     const { config, servers, nested } = getOpenCodeServers(projectRoot, relativePath, fsImpl);
-    const existing = servers[id] && typeof servers[id] === 'object' ? servers[id] : {};
-    servers[id] = {
-      ...existing,
-      ...mcpFormat.convertToOpenCodeFormat(spec)
-    };
+    const existing = servers[normalizedId] && typeof servers[normalizedId] === 'object' ? servers[normalizedId] : {};
+    const existingCanonical = mcpFormat.convertFromOpenCodeFormat(existing);
+    const mergedNative = mergeMcpPatch(
+      existingCanonical,
+      spec,
+      value => value,
+      mcpFormat.convertToOpenCodeFormat
+    );
+    servers[normalizedId] = mergedNative;
     if (nested) config.mcp.servers = servers;
     writeJsonFileAtomic(projectRoot, relativePath, config, fsImpl);
     return {
@@ -62,22 +69,23 @@ function createAdapter({ manifest, fsImpl } = {}) {
       supported: true,
       path: relativePath,
       format,
-      id,
+      id: normalizedId,
       scope: 'project',
-      server: redactSecrets(mcpFormat.convertFromOpenCodeFormat(servers[id])),
-      enabled: servers[id].enabled !== false
+      server: redactSecrets(mcpFormat.convertFromOpenCodeFormat(servers[normalizedId])),
+      enabled: servers[normalizedId].enabled !== false
     };
   }
 
   function removeProjectMcp(projectRoot, id) {
+    const normalizedId = validateMcpId(id);
     const { config, servers, nested } = getOpenCodeServers(projectRoot, relativePath, fsImpl);
-    const removed = Object.prototype.hasOwnProperty.call(servers, id);
+    const removed = Object.prototype.hasOwnProperty.call(servers, normalizedId);
     if (removed) {
-      delete servers[id];
+      delete servers[normalizedId];
       if (nested) config.mcp.servers = servers;
       writeJsonFileAtomic(projectRoot, relativePath, config, fsImpl);
     }
-    return { success: true, supported: true, path: relativePath, format, id, scope: 'project', removed };
+    return { success: true, supported: true, path: relativePath, format, id: normalizedId, scope: 'project', removed };
   }
 
   return createProjectAdapter({
