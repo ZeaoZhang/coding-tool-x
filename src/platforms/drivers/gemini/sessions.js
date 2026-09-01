@@ -7,6 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'gemini',
     capability: 'sessions',
+    preservePayloadUpdatedAt: true,
     servicePath: '../../server/services/gemini-sessions',
     localServicePath: '../../../server/services/gemini-sessions',
     adapterLocalPath: '../../../server/services/session-history-adapters/gemini',

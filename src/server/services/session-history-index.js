@@ -252,7 +252,7 @@ function _safeParseObject(value) {
 }
 
 
-function _normalizeRuntimeParseResult(result, descriptor = {}) {
+function _normalizeRuntimeParseResult(result, descriptor = {}, { preservePayloadUpdatedAt = false } = {}) {
   if (!result || typeof result !== 'object') {
     return result;
   }
@@ -272,7 +272,7 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
         projectName: result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
         projectDisplayName: result.session.projectDisplayName || result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
         projectFullPath: result.session.projectFullPath || result.session.projectPath || '',
-        updatedAt: result.session.updatedAt ?? descriptor.mtimeMs ?? null,
+        updatedAt: preservePayloadUpdatedAt ? (result.session.updatedAt ?? descriptor.mtimeMs ?? null) : descriptor.mtimeMs ?? null,
         extraJson
       }
     };
@@ -317,7 +317,11 @@ function _adaptRuntimeSessionsDriver(driver) {
   const unwrap = result => result && result.status === 'ok' ? result.data : result;
   return {
     inventory: async (...args) => unwrap(await driver.inventory(...args)),
-    parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(await unwrap(await driver.parse(descriptor, ...args)), descriptor)
+    parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(
+      await unwrap(await driver.parse(descriptor, ...args)),
+      descriptor,
+      { preservePayloadUpdatedAt: driver.preservePayloadUpdatedAt === true }
+    )
   };
 }
 
