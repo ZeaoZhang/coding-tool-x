@@ -21,6 +21,7 @@ vi.mock('../../stores/platforms', () => ({
 }))
 
 import Home from '../Home.vue'
+import HomeSource from '../Home.vue?raw'
 
 function mountHome() {
   return shallowMount(Home, {
@@ -59,5 +60,11 @@ describe('Home dynamic columns', () => {
     expect(wrapper.findAll('.channel-column-stub').map(node => node.text())).toEqual([
       'alpha-cli', 'beta-cli', 'gamma-cli', 'delta-cli', 'epsilon-cli'
     ])
+  })
+
+  it('uses auto-fit so disabled platforms cannot leave an empty grid track', () => {
+    expect(HomeSource).toMatch(
+      /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(280px,\s*1fr\)\)/
+    )
   })
 })
