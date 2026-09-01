@@ -272,7 +272,7 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
         projectName: result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
         projectDisplayName: result.session.projectDisplayName || result.session.projectName || result.session.projectHint || descriptor.projectHint || '',
         projectFullPath: result.session.projectFullPath || result.session.projectPath || '',
-        updatedAt: descriptor.mtimeMs ?? result.session.updatedAt ?? null,
+        updatedAt: result.session.updatedAt ?? descriptor.mtimeMs ?? null,
         extraJson
       }
     };
@@ -314,9 +314,10 @@ function _normalizeRuntimeParseResult(result, descriptor = {}) {
 
 function _adaptRuntimeSessionsDriver(driver) {
   if (!driver) return null;
+  const unwrap = result => result && result.status === 'ok' ? result.data : result;
   return {
-    inventory: (...args) => driver.inventory(...args),
-    parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(await driver.parse(descriptor, ...args), descriptor)
+    inventory: async (...args) => unwrap(await driver.inventory(...args)),
+    parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(await unwrap(await driver.parse(descriptor, ...args)), descriptor)
   };
 }
 
