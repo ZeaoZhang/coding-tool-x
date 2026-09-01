@@ -247,6 +247,9 @@ describe('dashboard-snapshot-worker', () => {
 
     for (const [kind, capability] of cases) {
       const resolutionError = new Error(`${capability} resolution exploded`);
+      resolutionError.retryable = false;
+      resolutionError.retryAfter = '2026-09-01T12:34:56.000Z';
+      resolutionError.code = 'E_RESOLVE';
       const runtime = {
         getDriver: vi.fn((platform, requestedCapability) => {
           expect(platform).toBe('demo-cli');
@@ -266,6 +269,9 @@ describe('dashboard-snapshot-worker', () => {
       expect(result).toMatchObject({
         status: 'failed',
         platform: 'demo-cli',
+        retryable: false,
+        retryAfter: '2026-09-01T12:34:56.000Z',
+        code: 'E_RESOLVE',
         capability,
         operation: 'resolve-driver',
         error: `${capability} resolution exploded`
@@ -708,8 +714,20 @@ describe('dashboard-snapshot-worker', () => {
       .resolves.toEqual({ status: 'unsupported', platform: 'demo-cli', capability: 'projects' });
   });
 
-  it('builds source payloads concurrently and isolates capability failures', async () => {
+  it('builds source payloads concurrently and serializes allowlisted failure metadata', async () => {
     const channelsError = new Error('channels unavailable');
+    channelsError.retryable = false;
+    channelsError.retryAfter = '2026-09-01T12:34:56.000Z';
+    channelsError.code = 'E_CHANNELS';
+    channelsError.cause = {
+      name: 'AdapterError',
+      message: 'adapter exploded',
+      code: 'E_ADAPTER',
+      retryable: true,
+      retryAfter: 1700000000000,
+      unsafe: { bigint: 1n }
+    };
+
     const getDriver = vi.fn((source, capability) => {
       expect(source).toBe('demo-cli');
       if (capability === 'channels') return { list: vi.fn(async () => { throw channelsError; }) };
@@ -717,13 +735,71 @@ describe('dashboard-snapshot-worker', () => {
       if (capability === 'counts') return { getProjectAndSessionCounts: vi.fn(async () => ({ projectCount: 2, sessionCount: 3 })) };
       throw new Error(`unexpected capability ${capability}`);
     });
+
     const payload = await worker.buildSourceDashboardPayload('demo-cli', { cwd: '/tmp/demo' }, { force: true, runtime: { getDriver } });
+    const failure = payload.__errors[0];
+
     expect(payload.channels).toEqual({ channels: [] });
-    expect(payload.__errors).toEqual(expect.arrayContaining([expect.objectContaining({ capability: 'channels', error: 'channels unavailable', retryable: true })]));
+    expect(payload.__errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: 'failed',
+        platform: 'demo-cli',
+        capability: 'channels',
+        operation: 'list',
+        error: 'channels unavailable',
+        retryable: false,
+        retryAfter: '2026-09-01T12:34:56.000Z',
+        code: 'E_CHANNELS',
+        cause: {
+          name: 'AdapterError',
+          message: 'adapter exploded',
+          retryable: true,
+          retryAfter: 1700000000000,
+          code: 'E_ADAPTER'
+        }
+      })
+    ]));
+    expect(failure).not.toHaveProperty('unsafe');
+    expect(failure.cause).not.toHaveProperty('unsafe');
+    expect(failure.cause).not.toHaveProperty('bigint');
+    expect(failure.cause.retryable).toBe(true);
+    expect(failure.cause.retryAfter).toBe(1700000000000);
+    expect(() => JSON.stringify(payload.__errors)).not.toThrow();
     expect(payload.todayStats).toEqual({ summary: { requests: 4, tokens: 8, cost: 0.2 } });
     expect(payload.counts).toEqual({ projectCount: 2, sessionCount: 3 });
     expect(getDriver).toHaveBeenCalledTimes(3);
   });
+  it('defaults unannotated source capability failures to retryable', async () => {
+    const getDriver = vi.fn((source, capability) => {
+      expect(source).toBe('demo-cli');
+      if (capability === 'channels') {
+        return { list: vi.fn(async () => { throw new Error('transient channels failure'); }) };
+      }
+      if (capability === 'statistics') {
+        return { today: vi.fn(async () => null) };
+      }
+      if (capability === 'counts') {
+        return { counts: vi.fn(async () => ({ projectCount: 1, sessionCount: 2 })) };
+      }
+      throw new Error(`unexpected capability ${capability}`);
+    });
+
+    const payload = await worker.buildSourceDashboardPayload(
+      'demo-cli',
+      {},
+      { runtime: { getDriver } }
+    );
+
+    expect(payload.__errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        capability: 'channels',
+        error: 'transient channels failure',
+        retryable: true
+      })
+    ]));
+  });
+
+
 
   it('records statistics capability failures while preserving sibling source values', async () => {
     const runtime = { getDriver: vi.fn((source, capability) => {
@@ -841,10 +917,14 @@ describe('dashboard-snapshot-worker', () => {
           platform: 'demo-cli',
           capability: 'projects',
           operation: 'list',
+          retryable: false,
+          retryAfter: '2026-09-01T12:34:56.000Z',
           code: 'E_INVENTORY',
           cause: {
             name: 'AdapterError',
             message: 'adapter exploded',
+            retryable: true,
+            retryAfter: 1700000000000,
             code: 'E_ADAPTER'
           }
         }
@@ -853,6 +933,8 @@ describe('dashboard-snapshot-worker', () => {
       expect(error).toBeInstanceOf(Error);
       expect(error.status).toBe('failed');
       expect(error.code).toBe('E_INVENTORY');
+      expect(error.retryable).toBe(false);
+      expect(error.retryAfter).toBe('2026-09-01T12:34:56.000Z');
       expect(error.message).toContain('adapter exploded');
       expect(error.platform).toBe('demo-cli');
       expect(error.capability).toBe('projects');
@@ -861,6 +943,8 @@ describe('dashboard-snapshot-worker', () => {
       expect(error.cause.name).toBe('AdapterError');
       expect(error.cause.message).toBe('adapter exploded');
       expect(error.cause.code).toBe('E_ADAPTER');
+      expect(error.cause.retryable).toBe(true);
+      expect(error.cause.retryAfter).toBe(1700000000000);
       expect(child.kill).toHaveBeenCalled();
       expect(child.removeAllListeners).toHaveBeenCalled();
     } finally {
@@ -868,31 +952,82 @@ describe('dashboard-snapshot-worker', () => {
       forkSpy.mockRestore();
     }
   });
-  it('serializes only JSON-safe error code values while preserving structured context', () => {
+  it('serializes and deserializes retry metadata using a JSON-safe allowlist', () => {
     const cause = new Error('adapter exploded');
     cause.name = 'AdapterError';
+    cause.retryable = true;
+    cause.retryAfter = 1700000000000;
     cause.code = 9001;
     const error = new Error('snapshot failed');
     error.platform = 'demo-cli';
     error.capability = 'projects';
     error.operation = 'list';
+    error.retryable = false;
+    error.retryAfter = '2026-09-01T12:34:56.000Z';
     error.code = { unsafe: true };
     error.cause = cause;
 
     const serialized = worker._test.serializeError(error);
+    const roundTrip = worker._test.deserializeError(serialized, 'fallback snapshot error');
 
     expect(serialized).toEqual({
       message: 'snapshot failed',
       platform: 'demo-cli',
       capability: 'projects',
       operation: 'list',
+      retryable: false,
+      retryAfter: '2026-09-01T12:34:56.000Z',
       cause: {
         name: 'AdapterError',
         message: 'adapter exploded',
+        retryable: true,
+        retryAfter: 1700000000000,
         code: 9001
       }
     });
-    expect(JSON.stringify(serialized)).toContain('adapter exploded');
+    expect(roundTrip.retryable).toBe(false);
+    expect(roundTrip.retryAfter).toBe('2026-09-01T12:34:56.000Z');
+    expect(roundTrip.cause.retryable).toBe(true);
+    expect(roundTrip.cause.retryAfter).toBe(1700000000000);
+    expect(roundTrip.cause.code).toBe(9001);
+    expect(() => JSON.stringify(serialized)).not.toThrow();
+  });
+
+  it('round-trips nested causes within the serialized depth bound', () => {
+    const storageError = new Error('disk full');
+    storageError.name = 'StorageError';
+    storageError.retryable = false;
+    storageError.retryAfter = 1700000000000;
+    storageError.code = 'E_STORAGE';
+    const adapterError = new Error('adapter exploded');
+    adapterError.name = 'AdapterError';
+    adapterError.retryable = true;
+    adapterError.code = 'E_ADAPTER';
+    adapterError.cause = storageError;
+    const error = new Error('snapshot failed');
+    error.cause = adapterError;
+
+    const serialized = worker._test.serializeError(error);
+    const roundTrip = worker._test.deserializeError(serialized, 'fallback snapshot error');
+
+    expect(serialized.cause.cause).toEqual({
+      name: 'StorageError',
+      message: 'disk full',
+      retryable: false,
+      retryAfter: 1700000000000,
+      code: 'E_STORAGE'
+    });
+    expect(roundTrip.cause).toBeInstanceOf(Error);
+    expect(roundTrip.cause.name).toBe('AdapterError');
+    expect(roundTrip.cause.retryable).toBe(true);
+    expect(roundTrip.cause.code).toBe('E_ADAPTER');
+    expect(roundTrip.cause.cause).toBeInstanceOf(Error);
+    expect(roundTrip.cause.cause.name).toBe('StorageError');
+    expect(roundTrip.cause.cause.message).toBe('disk full');
+    expect(roundTrip.cause.cause.retryable).toBe(false);
+    expect(roundTrip.cause.cause.retryAfter).toBe(1700000000000);
+    expect(roundTrip.cause.cause.code).toBe('E_STORAGE');
+    expect(() => JSON.stringify(serialized)).not.toThrow();
   });
 
   it('omits unsafe cause code values that would break JSON IPC serialization', () => {
@@ -919,10 +1054,14 @@ describe('dashboard-snapshot-worker', () => {
       capability: 'projects',
       operation: 'list',
       error: 'adapter exploded',
+      retryable: false,
+      retryAfter: 1700000000000,
       code: 1n,
       cause: {
         name: 'AdapterError',
         message: 'adapter exploded',
+        retryable: true,
+        retryAfter: '2026-09-01T12:34:56.000Z',
         code: { unsafe: true }
       }
     });
@@ -933,9 +1072,13 @@ describe('dashboard-snapshot-worker', () => {
       capability: 'projects',
       operation: 'list',
       error: 'adapter exploded',
+      retryable: false,
+      retryAfter: 1700000000000,
       cause: {
         name: 'AdapterError',
-        message: 'adapter exploded'
+        message: 'adapter exploded',
+        retryable: true,
+        retryAfter: '2026-09-01T12:34:56.000Z'
       }
     });
     expect(() => JSON.stringify(serialized)).not.toThrow();
