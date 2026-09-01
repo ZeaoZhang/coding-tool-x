@@ -120,6 +120,29 @@ describe('mcp-service', () => {
     try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
   });
 
+  function stubDynamicMcpRuntime(driver) {
+    const runtime = require('../../../src/platforms/runtime');
+    const definitions = [
+      { key: 'demo-cli', capabilities: { mcp: 'generic-mcp' } },
+      { key: 'prompts-only', capabilities: { prompts: 'generic-prompt' } }
+    ];
+    const byKey = new Map(definitions.map(definition => [definition.key, definition]));
+    const registry = {
+      list: () => definitions,
+      resolve: key => byKey.get(String(key).trim().toLowerCase()) || null,
+      getCapability: (key, capability) => byKey.get(String(key).trim().toLowerCase())?.capabilities?.[capability] || null
+    };
+    const platformRuntime = {
+      getDriver: vi.fn(() => driver)
+    };
+    const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+    const runtimeSpy = vi.spyOn(runtime, 'getPlatformRuntime').mockReturnValue(platformRuntime);
+    return () => {
+      registrySpy.mockRestore();
+      runtimeSpy.mockRestore();
+    };
+  }
+
   // ============================================================================
   // _test.extractMcpHint
   // ============================================================================
@@ -635,6 +658,123 @@ describe('mcp-service', () => {
         type: 'http',
         url: 'https://example.com/mcp'
       });
+    });
+  });
+
+  describe('legacy platform file adapters', () => {
+    it('round-trips native MCP config formats through fixed platform adapters', () => {
+      const configs = {
+        claude: { mcpServers: { claude: { command: 'claude-mcp' } } },
+        codex: { mcp_servers: { codex: { command: 'codex-mcp' } } },
+        gemini: { mcpServers: { gemini: { command: 'gemini-mcp' } } },
+        opencode: { mcp: { opencode: { command: 'opencode-mcp' } } },
+        omp: { mcpServers: { omp: { command: 'omp-mcp' } } }
+      };
+
+      for (const [platform, config] of Object.entries(configs)) {
+        service.writePlatformMcpConfig(platform, config);
+        expect(service.readPlatformMcpConfig(platform)).toEqual(config);
+      }
+    });
+
+    it('removes one server through the fixed native adapter', () => {
+      service.writePlatformMcpConfig('claude', {
+        mcpServers: {
+          keep: { command: 'keep' },
+          remove: { command: 'remove' }
+        }
+      });
+
+      service.removePlatformMcpServer('claude', 'remove');
+
+      expect(service.readPlatformMcpConfig('claude')).toEqual({
+        mcpServers: { keep: { command: 'keep' } }
+      });
+    });
+  });
+
+  describe('registry-driven MCP platforms', () => {
+    it('syncs and counts a generic MCP platform without a service switch', async () => {
+      let config = { mcpServers: {} };
+      const driver = {
+        read: vi.fn(async () => config),
+        write: vi.fn(async next => {
+          config = next;
+          return { status: 'ok', capability: 'mcp', operation: 'write' };
+        })
+      };
+      const restore = stubDynamicMcpRuntime(driver);
+
+      try {
+        await service.saveServer({
+          id: 'demo-server',
+          name: 'Demo server',
+          server: { type: 'stdio', command: 'demo-mcp', args: ['--stdio'] },
+          apps: { 'demo-cli': true }
+        });
+
+        expect(config.mcpServers['demo-server']).toEqual({
+          type: 'stdio',
+          command: 'demo-mcp',
+          args: ['--stdio']
+        });
+        expect(service.getStats()).toEqual({ total: 1, 'demo-cli': 1 });
+
+        await service.toggleServerApp('demo-server', 'demo-cli', false);
+        expect(config.mcpServers).toEqual({});
+      } finally {
+        restore();
+      }
+    });
+
+    it('imports a generic MCP mapping and enables only its registry platform', async () => {
+      const config = {
+        mcpServers: {
+          imported: { type: 'stdio', command: 'imported-mcp' }
+        }
+      };
+      const driver = {
+        read: vi.fn(async () => config),
+        write: vi.fn(async () => ({ status: 'ok', capability: 'mcp', operation: 'write' }))
+      };
+      const restore = stubDynamicMcpRuntime(driver);
+
+      try {
+        fs.writeFileSync(path.join(testDir, 'mcp-servers.json'), '{}', 'utf8');
+        const count = await service.importFromPlatform('demo-cli');
+        const imported = service.getServer('imported');
+
+        expect(count).toBe(1);
+        expect(imported.apps).toEqual({ 'demo-cli': true });
+        expect(imported.server).toEqual({
+          type: 'stdio',
+          command: 'imported-mcp'
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it('distinguishes unknown platforms from platforms without MCP capability', async () => {
+      const restore = stubDynamicMcpRuntime({
+        read: vi.fn(async () => ({ mcpServers: {} })),
+        write: vi.fn(async () => ({ status: 'ok', capability: 'mcp', operation: 'write' }))
+      });
+
+      try {
+        await service.saveServer({
+          id: 'capability-errors',
+          name: 'Capability errors',
+          server: { type: 'stdio', command: 'demo-mcp' }
+        }, { syncPlatforms: false });
+
+        await expect(service.toggleServerApp('capability-errors', 'missing-cli', true))
+          .rejects.toMatchObject({ status: 404, code: 'not_found', platform: 'missing-cli', capability: 'mcp' });
+        await expect(service.toggleServerApp('capability-errors', 'prompts-only', true))
+          .rejects.toMatchObject({ status: 404, code: 'unsupported', platform: 'prompts-only', capability: 'mcp' });
+      } finally {
+        restore();
+      }
     });
   });
 

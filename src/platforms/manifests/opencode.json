@@ -44,6 +44,8 @@
     "proxy": "legacy:opencode",
     "statistics": "legacy:opencode",
     "resourceSync": "legacy:opencode",
-    "nativeConfig": "legacy:opencode"
+    "nativeConfig": "legacy:opencode",
+    "mcp": "legacy:opencode",
+    "prompts": "legacy:opencode"
   }
 }

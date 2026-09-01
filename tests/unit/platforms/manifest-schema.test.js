@@ -67,6 +67,30 @@ test('rejects generic drivers assigned to incompatible capabilities', () => {
     expect(normalizeManifestError(result.errors)).toContain('only supports');
   }
 });
+test('requires fixed mappings for generic MCP and prompt drivers', () => {
+  const base = { key: 'demo-cli', label: 'Demo', command: 'demo' };
+  for (const manifest of [
+    { ...base, mcpFormat: 'json', capabilities: { mcp: 'generic-mcp' } },
+    { ...base, capabilities: { prompts: 'generic-prompt' } },
+    { ...base, promptFile: '', capabilities: { prompts: 'generic-prompt' } },
+    { ...base, resourceMappings: { prompts: '' }, capabilities: { prompts: 'generic-prompt' } },
+    { ...base, resourceMappings: { mcp: '' }, mcpFormat: 'json', capabilities: { mcp: 'generic-mcp' } }
+  ]) {
+    expect(validateManifest(manifest).valid).toBe(false);
+  }
+
+  expect(validateManifest({
+    ...base,
+    mcpFormat: 'json',
+    resourceMappings: { mcp: '{home}/mcp.json' },
+    capabilities: { mcp: 'generic-mcp' }
+  }).valid).toBe(true);
+  expect(validateManifest({
+    ...base,
+    promptFile: 'PROMPT.md',
+    capabilities: { prompts: 'generic-prompt' }
+  }).valid).toBe(true);
+});
 
 test('rejects executable module paths and unknown drivers', () => {
   const result = validateManifest({

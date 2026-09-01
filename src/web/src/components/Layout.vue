@@ -70,54 +70,16 @@
           <span class="nav-label">Home</span>
         </div>
         <div
+          v-for="platform in platformNavigation"
+          :key="platform.key"
           class="nav-tab"
-          :class="{ active: currentChannel === 'claude' }"
-          @click="router.push({ name: 'claude-projects' })"
+          :class="{ active: currentChannel === platform.key }"
+          @click="router.push({ name: 'cli-projects', params: { platform: platform.key } })"
         >
           <n-icon :size="18" class="nav-icon">
-            <ChatboxEllipsesOutline />
+            <component :is="platform.icon" />
           </n-icon>
-          <span class="nav-label">Claude</span>
-        </div>
-        <div
-          class="nav-tab"
-          :class="{ active: currentChannel === 'codex' }"
-          @click="router.push({ name: 'codex-projects' })"
-        >
-          <n-icon :size="18" class="nav-icon">
-            <CodeSlashOutline />
-          </n-icon>
-          <span class="nav-label">Codex</span>
-        </div>
-        <div
-          class="nav-tab"
-          :class="{ active: currentChannel === 'gemini' }"
-          @click="router.push({ name: 'gemini-projects' })"
-        >
-          <n-icon :size="18" class="nav-icon">
-            <SparklesOutline />
-          </n-icon>
-          <span class="nav-label">Gemini</span>
-        </div>
-        <div
-          class="nav-tab"
-          :class="{ active: currentChannel === 'opencode' }"
-          @click="router.push({ name: 'opencode-projects' })"
-        >
-          <n-icon :size="18" class="nav-icon">
-            <ExtensionPuzzleOutline />
-          </n-icon>
-          <span class="nav-label">OpenCode</span>
-        </div>
-        <div
-          class="nav-tab"
-          :class="{ active: currentChannel === 'omp' }"
-          @click="router.push({ name: 'omp-projects' })"
-        >
-          <n-icon :size="18" class="nav-icon">
-            <PlanetOutline />
-          </n-icon>
-          <span class="nav-label">OMP</span>
+          <span class="nav-label">{{ platform.label }}</span>
         </div>
         <div
           class="nav-tab"
@@ -465,7 +427,7 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon, NText, NInput, NButton, NSpace, NDropdown } from 'naive-ui'
-import { ChatbubblesOutline, ServerOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, ChatboxEllipsesOutline, CodeSlashOutline, SparklesOutline, BookmarkOutline, ChatboxOutline, WarningOutline, FolderOpenOutline, ExtensionPuzzleOutline, PlanetOutline, StatsChartOutline, EllipsisHorizontal } from '@vicons/ionicons5'
+import { ServerOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, BookmarkOutline, ChatboxOutline, WarningOutline, FolderOpenOutline, StatsChartOutline, EllipsisHorizontal } from '@vicons/ionicons5'
 import RightPanel from './RightPanel.vue'
 import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
 import FavoritesDrawer from './FavoritesDrawer.vue'
@@ -493,21 +455,19 @@ import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
 import { useFavorites } from '../composables/useFavorites'
 import { useDashboard } from '../composables/useDashboard'
+import { getRoutePlatform } from '../config/platformCatalog'
+import { buildPlatformNavigation } from '../config/platformCatalog'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 
 // 使用主题 composable
 const { isDark, toggleTheme } = useTheme()
 
 // 使用全局状态 composable
 const {
-  claudeProxy,
-  codexProxy,
-  geminiProxy,
-  opencodeProxy,
-  ompProxy,
+  getProxyState,
   startProxy,
   stopProxy
 } = useGlobalState()
-
 // 使用收藏功能
 const { totalFavorites } = useFavorites()
 
@@ -530,8 +490,12 @@ const moreMenuOptions = [
 
 // 导航状态
 const currentRoute = computed(() => route.name)
-const currentChannel = computed(() => route.meta.channel || null)
+const currentChannel = computed(() => getRoutePlatform(route) || null)
+const { enabledPlatforms } = useEnabledCliPlatforms()
+const platformNavigation = computed(() => buildPlatformNavigation(enabledPlatforms.value))
 const routeViewKey = computed(() => route.path)
+const showChannels = ref(true)
+const showLogs = ref(true)
 
 // 切换到渠道页时关闭 OAuth 凭证抽屉
 watch(currentChannel, (val) => {
@@ -567,8 +531,6 @@ const agentsDrawerPlatform = ref('')
 const showPluginsDrawer = ref(false)
 const pluginsDrawerPlatform = ref('')
 const pluginsDrawerProjectPath = ref('')
-
-// Chat history drawer state
 const showChatHistory = ref(false)
 const chatHistorySession = ref(null)
 const chatHistoryChannel = ref(null)
@@ -677,33 +639,17 @@ function handleEnvNeverRemind() {
 }
 const globalLoading = ref(false) // 全局 loading 状态
 
-// 根据当前 channel 计算有效的代理状态
-const effectiveProxyRunning = computed(() => {
-  if (currentChannel.value === 'codex') return codexProxy.value.running
-  if (currentChannel.value === 'gemini') return geminiProxy.value.running
-  if (currentChannel.value === 'opencode') return opencodeProxy.value.running
-  if (currentChannel.value === 'omp') return ompProxy.value.running
-  return claudeProxy.value.running
-})
-const effectiveProxyLoading = computed(() => {
-  if (currentChannel.value === 'codex') return codexProxy.value.loading
-  if (currentChannel.value === 'gemini') return geminiProxy.value.loading
-  if (currentChannel.value === 'opencode') return opencodeProxy.value.loading
-  if (currentChannel.value === 'omp') return ompProxy.value.loading
-  return claudeProxy.value.loading
-})
+// 根据当前平台 key 读取代理状态，不为未知 key 回退到 Claude。
+const effectiveProxyRunning = computed(() => Boolean(
+  getProxyState(currentChannel.value)?.value?.running
+))
+const effectiveProxyLoading = computed(() => Boolean(
+  getProxyState(currentChannel.value)?.value?.loading
+))
 
 function getCurrentProxyState(channelType = currentChannel.value) {
-  if (channelType === 'codex') return codexProxy
-  if (channelType === 'gemini') return geminiProxy
-  if (channelType === 'opencode') return opencodeProxy
-  if (channelType === 'omp') return ompProxy
-  return claudeProxy
+  return getProxyState(channelType)
 }
-
-// Panel visibility settings (with file persistence)
-const showChannels = ref(true)
-const showLogs = ref(true)
 
 // Load panel visibility from server using dashboard API
 async function loadPanelSettings() {
@@ -775,7 +721,8 @@ function handleMoreMenuSelect(key) {
 
 // 统一的代理切换处理器（根据当前 channel 路由到正确的代理）
 async function handleProxyToggle(newValue) {
-  const channelType = currentChannel.value || 'claude'
+  const channelType = currentChannel.value
+  if (!channelType) return
   const proxyState = getCurrentProxyState(channelType)
   proxyState.value.loading = true
 

@@ -7,6 +7,8 @@ const DRIVER_IDS = new Set([
   'generic-jsonl',
   'generic-filesystem',
   'generic-openai-compatible',
+  'generic-mcp',
+  'generic-prompt',
   'legacy:claude',
   'legacy:codex',
   'legacy:gemini',
@@ -77,6 +79,7 @@ const schema = {
     },
     promptFile: { type: ['string', 'null'] },
     promptLabel: { type: 'string', minLength: 1 },
+    mcpFormat: { enum: ['json'] },
     statisticsPath: { type: 'string', minLength: 1 },
     paths: { type: 'object', additionalProperties: { type: 'string' } },
     pathResolverId: { enum: [...PATH_RESOLVER_IDS] },
@@ -120,10 +123,7 @@ const schema = {
         }
       }
     },
-    capabilities: {
-      type: 'object',
-      additionalProperties: { enum: [...DRIVER_IDS] }
-    }
+    capabilities: { type: 'object', additionalProperties: { enum: [...DRIVER_IDS] } }
   }
 };
 
@@ -172,13 +172,37 @@ function validateManifest(manifest) {
   const allowed = {
     'generic-jsonl': new Set(['sessions']),
     'generic-filesystem': new Set(['resourceSync']),
-    'generic-openai-compatible': new Set(['channels'])
+    'generic-openai-compatible': new Set(['channels']),
+    'generic-mcp': new Set(['mcp']),
+    'generic-prompt': new Set(['prompts'])
   };
+
   for (const [capability, driver] of Object.entries(manifest && manifest.capabilities || {})) {
     if (allowed[driver] && !allowed[driver].has(capability)) {
-      errors.push({ instancePath: `/capabilities/${capability}`, message: `${driver} only supports ${[...allowed[driver]].join(', ')}` });
+      errors.push({
+        instancePath: `/capabilities/${capability}`,
+        message: `${driver} only supports ${[...allowed[driver]].join(', ')}`
+      });
+    }
+    if (driver === 'generic-mcp') {
+      if (manifest.mcpFormat !== 'json') {
+        errors.push({ instancePath: '/mcpFormat', message: 'generic-mcp requires mcpFormat json' });
+      }
+      if (typeof manifest.resourceMappings?.mcp !== 'string' || !manifest.resourceMappings.mcp.trim()) {
+        errors.push({ instancePath: '/resourceMappings/mcp', message: 'generic-mcp requires a non-empty resourceMappings.mcp' });
+      }
+    }
+    if (driver === 'generic-prompt' && !(
+      (typeof manifest.resourceMappings?.prompts === 'string' && manifest.resourceMappings.prompts.trim()) ||
+      (typeof manifest.promptFile === 'string' && manifest.promptFile.trim())
+    )) {
+      errors.push({
+        instancePath: '/resourceMappings/prompts',
+        message: 'generic-prompt requires a non-empty resourceMappings.prompts or promptFile'
+      });
     }
   }
+
   validateProjectResources(manifest, errors);
   return { valid: errors.length === 0, errors };
 }

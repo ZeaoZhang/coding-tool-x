@@ -10,7 +10,9 @@ const PUBLIC_FIELDS = Object.freeze([
   'command',
   'iconToken',
   'color',
-  'defaultVisible'
+  'defaultVisible',
+  'promptLabel',
+  'resourceTypes'
 ]);
 
 function publicCapabilities(capabilities) {
@@ -23,10 +25,30 @@ function publicCapabilities(capabilities) {
   ]));
 }
 
+function publicResourceTypes(resourceTypes) {
+  if (!resourceTypes || typeof resourceTypes !== 'object' || Array.isArray(resourceTypes)) {
+    return null;
+  }
+  return Object.fromEntries(
+    Object.entries(resourceTypes).filter(([, value]) => typeof value === 'boolean')
+  );
+}
+
 function toPublicDefinition(definition) {
   if (!definition || typeof definition !== 'object') return null;
   const result = {};
   for (const field of PUBLIC_FIELDS) {
+    if (field === 'resourceTypes') {
+      const resourceTypes = publicResourceTypes(definition.resourceTypes);
+      if (resourceTypes) result.resourceTypes = resourceTypes;
+      continue;
+    }
+    if (field === 'promptLabel') {
+      if (typeof definition.promptLabel === 'string' && definition.promptLabel.trim()) {
+        result.promptLabel = definition.promptLabel;
+      }
+      continue;
+    }
     if (definition[field] !== undefined) result[field] = definition[field];
   }
   result.capabilities = publicCapabilities(definition.capabilities);

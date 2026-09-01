@@ -99,26 +99,17 @@
               <span>启用平台</span>
             </div>
             <div class="platform-toggles">
-              <label class="platform-item">
-                <n-switch size="small" v-model:value="formData.apps.claude" />
-                <span class="platform-name">Claude</span>
+              <label
+                v-for="platform in mcpPlatforms"
+                :key="platform.key"
+                class="platform-item"
+              >
+                <n-switch size="small" v-model:value="formData.apps[platform.key]" />
+                <span class="platform-name">{{ platform.label || platform.title || platform.key }}</span>
               </label>
-              <label class="platform-item">
-                <n-switch size="small" v-model:value="formData.apps.codex" />
-                <span class="platform-name">Codex</span>
-              </label>
-              <label class="platform-item">
-                <n-switch size="small" v-model:value="formData.apps.gemini" />
-                <span class="platform-name">Gemini</span>
-              </label>
-              <label class="platform-item">
-                <n-switch size="small" v-model:value="formData.apps.opencode" />
-                <span class="platform-name">OpenCode</span>
-              </label>
-              <label class="platform-item">
-                <n-switch size="small" v-model:value="formData.apps.omp" />
-                <span class="platform-name">OMP</span>
-              </label>
+              <span v-if="mcpPlatforms.length === 0" class="platform-empty">
+                当前没有可用的 MCP 平台
+              </span>
             </div>
           </div>
 
@@ -284,6 +275,7 @@ import { getPresets, saveServer } from '../api/mcp'
 import { saveProjectMcp } from '../api/project-config'
 import message from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 
 const { drawerWidth } = useResponsiveDrawer(520)
 
@@ -297,6 +289,10 @@ const props = defineProps({
     default: null
   },
   existingIds: {
+    type: Array,
+    default: () => []
+  },
+  platforms: {
     type: Array,
     default: () => []
   },
@@ -328,6 +324,17 @@ const loadingPresets = ref(false)
 const selectedPreset = ref(-1)
 const saving = ref(false)
 
+const { byCapability } = useEnabledCliPlatforms()
+const mcpPlatforms = computed(() => (
+  props.platforms.length > 0 ? props.platforms : byCapability('mcp')
+))
+
+function buildDefaultApps() {
+  return Object.fromEntries(
+    mcpPlatforms.value.map((platform, index) => [platform.key, index === 0])
+  )
+}
+
 // 表单数据
 const formData = reactive({
   id: '',
@@ -335,13 +342,7 @@ const formData = reactive({
   description: '',
   homepage: '',
   docs: '',
-  apps: {
-    claude: true,
-    codex: false,
-    gemini: false,
-    opencode: false,
-    omp: false
-  },
+  apps: {},
   server: {
     type: 'stdio',
     command: '',
@@ -439,7 +440,7 @@ function resetForm() {
   formData.description = ''
   formData.homepage = ''
   formData.docs = ''
-  formData.apps = { claude: true, codex: false, gemini: false, opencode: false, omp: false }
+  formData.apps = buildDefaultApps()
   formData.server = {
     type: 'stdio',
     command: '',
@@ -464,7 +465,7 @@ function fillEditingData() {
   formData.description = server.description || ''
   formData.homepage = server.homepage || ''
   formData.docs = server.docs || ''
-  formData.apps = { claude: true, codex: false, gemini: false, opencode: false, omp: false, ...server.apps }
+  formData.apps = server.apps ? { ...server.apps } : buildDefaultApps()
   tagsInput.value = (server.tags || []).join(', ')
 
   if (server.server) {
@@ -550,7 +551,12 @@ async function handleSave() {
     id: formData.id.trim(),
     name: formData.name.trim() || formData.id.trim(),
     server: serverSpec,
-    apps: formData.apps
+    apps: isEditing.value
+      ? { ...formData.apps }
+      : Object.fromEntries(mcpPlatforms.value.map(platform => [
+        platform.key,
+        formData.apps[platform.key] === true
+      ]))
   }
 
   if (formData.description.trim()) {

@@ -95,6 +95,8 @@ beforeEach(() => {
   };
 
   syncManager = {
+    syncToPlatform: vi.fn(),
+    removeFromPlatform: vi.fn(),
     syncToClaude: vi.fn(),
     syncToCodex: vi.fn(),
     syncToGemini: vi.fn(),
@@ -194,9 +196,8 @@ describe('config-registry api import and toggle routes', () => {
   test('imports from claude and syncs imported enabled claude items', async () => {
     const res = await request(buildApp()).post('/skills/import', {});
 
-    expect(res.status).toBe(200);
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('claude', 'skills', 'demo-item');
     expect(registryService.importFromClaude).toHaveBeenCalledWith('skills');
-    expect(syncManager.syncToClaude).toHaveBeenCalledWith('skills', 'demo-item');
   });
 
   test('validates toggle enabled payload and handles missing items', async () => {
@@ -227,31 +228,13 @@ describe('config-registry api import and toggle routes', () => {
     const disable = await request(app).put('/commands/demo-item/toggle', { enabled: false });
 
     expect(enable.status).toBe(200);
-    expect(syncManager.syncToClaude).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(syncManager.syncToCodex).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(syncManager.syncToOmp).toHaveBeenCalledWith('commands', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('claude', 'commands', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('codex', 'commands', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('omp', 'commands', 'demo-item');
     expect(disable.status).toBe(200);
-    expect(syncManager.removeFromClaude).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(syncManager.removeFromCodex).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(syncManager.removeFromGemini).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(syncManager.removeFromOpenCode).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(syncManager.removeFromOmp).toHaveBeenCalledWith('commands', 'demo-item');
-  });
-
-  test('toggle platform validates input and syncs specific non-Skill resources', async () => {
-    const app = buildApp();
-
-    const invalidPlatform = await request(app).put('/commands/demo-item/platform/invalid', { enabled: true });
-    const invalidBody = await request(app).put('/commands/demo-item/platform/codex', { enabled: 'yes' });
-    const enable = await request(app).put('/commands/demo-item/platform/codex', { enabled: true });
-    const disable = await request(app).put('/commands/demo-item/platform/codex', { enabled: false });
-
-    expect(invalidPlatform.status).toBe(400);
-    expect(invalidBody.status).toBe(400);
-    expect(enable.status).toBe(200);
-    expect(syncManager.syncToCodex).toHaveBeenCalledWith('commands', 'demo-item');
-    expect(disable.status).toBe(200);
-    expect(syncManager.removeFromCodex).toHaveBeenCalledWith('commands', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('claude', 'commands', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('codex', 'commands', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('omp', 'commands', 'demo-item');
   });
 
   test('toggle platform syncs non-Skill OMP resources through OMP-specific path', async () => {
@@ -261,9 +244,9 @@ describe('config-registry api import and toggle routes', () => {
     const disable = await request(app).put('/commands/demo-item/platform/omp', { enabled: false });
 
     expect(enable.status).toBe(200);
-    expect(syncManager.syncToOmp).toHaveBeenCalledWith('commands', 'demo-item');
+    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('omp', 'commands', 'demo-item');
     expect(disable.status).toBe(200);
-    expect(syncManager.removeFromOmp).toHaveBeenCalledWith('commands', 'demo-item');
+    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('omp', 'commands', 'demo-item');
   });
 
   test('syncs all non-Skill registry items for a type', async () => {

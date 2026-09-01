@@ -44,6 +44,8 @@
     "proxy": "legacy:codex",
     "statistics": "legacy:codex",
     "resourceSync": "legacy:codex",
-    "nativeConfig": "legacy:codex"
+    "nativeConfig": "legacy:codex",
+    "mcp": "legacy:codex",
+    "prompts": "legacy:codex"
   }
 }

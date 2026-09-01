@@ -25,14 +25,111 @@ const OMP_PROMPTS_DIR = NATIVE_PATHS.omp?.prompts
   || path.join(NATIVE_PATHS.omp?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'prompts');
 const MANAGED_OMP_PROMPTS_DIR = path.join(OMP_PROMPTS_DIR, 'coding-tool-x');
 
-function normalizeApps(apps = {}, defaults = { claude: true, codex: true, gemini: true, opencode: false, omp: false }) {
+function normalizePlatformKey(platform) {
+  return String(platform || '').trim().toLowerCase();
+}
+
+function getPlatformServices() {
+  const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
   return {
-    claude: apps.claude !== undefined ? !!apps.claude : defaults.claude,
-    codex: apps.codex !== undefined ? !!apps.codex : defaults.codex,
-    gemini: apps.gemini !== undefined ? !!apps.gemini : defaults.gemini,
-    opencode: apps.opencode !== undefined ? !!apps.opencode : defaults.opencode,
-    omp: apps.omp !== undefined ? !!apps.omp: defaults.omp
+    registry: getPlatformRegistry(),
+    runtime: getPlatformRuntime()
   };
+}
+
+function getPromptPlatformKeys() {
+  const { registry } = getPlatformServices();
+  return registry.list({ enabledOnly: true })
+    .map(platform => normalizePlatformKey(platform.key))
+    .filter(platform => {
+      const driverId = registry.getCapability(platform, 'prompts');
+      return Boolean(driverId && driverId !== 'unsupported');
+    });
+}
+
+function createPlatformCapabilityError(platform, capability, code) {
+  const key = normalizePlatformKey(platform);
+  const error = new Error(code === 'not_found'
+    ? `无效的平台: ${key}`
+    : `平台 ${key} 未声明 ${capability} capability`);
+  error.status = 404;
+  error.code = code;
+  error.platform = key;
+  error.capability = capability;
+  return error;
+}
+
+function requirePromptCapability(platform) {
+  const key = normalizePlatformKey(platform);
+  const { registry, runtime } = getPlatformServices();
+  if (!registry.resolve(key)) {
+    throw createPlatformCapabilityError(key, 'prompts', 'not_found');
+  }
+  const driverId = registry.getCapability(key, 'prompts');
+  if (!driverId || driverId === 'unsupported') {
+    throw createPlatformCapabilityError(key, 'prompts', 'unsupported');
+  }
+  const driver = runtime.getDriver(key, 'prompts');
+  if (!driver) {
+    throw createPlatformCapabilityError(key, 'prompts', 'unsupported');
+  }
+  return { platform: key, driver, driverId };
+}
+
+function getDriverFailure(result, platform, operation) {
+  if (!result || result.status !== 'failed' || result.capability !== 'prompts') return null;
+  if (result.cause instanceof Error) return result.cause;
+  return new Error(result.error || `Prompt ${operation} failed for ${platform}`);
+}
+
+function assertPromptReadResult(result, platform) {
+  const failure = getDriverFailure(result, platform, 'read');
+  if (failure) throw failure;
+  if (typeof result !== 'string') throw new Error(`平台 ${platform} 的提示词内容无效`);
+  return result;
+}
+
+async function invokePromptRead(driver, platform) {
+  return assertPromptReadResult(await driver.read(), platform);
+}
+
+async function invokePromptWrite(driver, platform, content) {
+  const result = await driver.write(content);
+  const failure = getDriverFailure(result, platform, 'write');
+  if (failure) throw failure;
+  return content;
+}
+
+async function invokePromptRemove(driver, platform) {
+  const result = await driver.remove();
+  const failure = getDriverFailure(result, platform, 'remove');
+  if (failure) throw failure;
+  return true;
+}
+
+function normalizeApps(apps = {}, defaults = {
+  claude: true,
+  codex: true,
+  gemini: true,
+  opencode: false,
+  omp: false
+}) {
+  const source = apps && typeof apps === 'object' && !Array.isArray(apps) ? apps : {};
+  const fallback = defaults && typeof defaults === 'object' && !Array.isArray(defaults) ? defaults : {};
+  const platformKeys = new Set([...getPromptPlatformKeys(), 'omp']);
+  const normalized = {};
+
+  for (const platform of platformKeys) {
+    normalized[platform] = source[platform] !== undefined
+      ? !!source[platform]
+      : !!fallback[platform];
+  }
+
+  // Preserve historical flags for platforms absent from the current registry.
+  for (const [platform, enabled] of Object.entries(source)) {
+    if (!platformKeys.has(platform)) normalized[platform] = !!enabled;
+  }
+  return normalized;
 }
 
 // 内置模板（不是"默认"，只是可选模板）
@@ -233,14 +330,13 @@ function initPromptsData() {
   let updated = false;
   for (const preset of Object.values(data.presets || {})) {
     const normalizedApps = normalizeApps(preset.apps);
-    if (
-      !preset.apps ||
-      preset.apps.claude !== normalizedApps.claude ||
-      preset.apps.codex !== normalizedApps.codex ||
-      preset.apps.gemini !== normalizedApps.gemini ||
-      preset.apps.opencode !== normalizedApps.opencode
-      || preset.apps.omp !== normalizedApps.omp
-    ) {
+    const sourceApps = preset.apps && typeof preset.apps === 'object' && !Array.isArray(preset.apps)
+      ? preset.apps
+      : {};
+    const needsNormalization = Object.entries(normalizedApps).some(
+      ([platform, enabled]) => sourceApps[platform] !== enabled
+    );
+    if (needsNormalization) {
       preset.apps = normalizedApps;
       updated = true;
     }
@@ -336,7 +432,10 @@ function savePreset(preset) {
     if (existing && normalizeApps(existing.apps).omp && !preset.apps.omp) {
       deleteOmpPromptTemplate(existing);
     }
-    syncPresetToAllPlatforms(preset);
+    const syncResult = syncPresetToAllPlatforms(preset);
+    if (syncResult && typeof syncResult.then === 'function') {
+      return syncResult.then(() => preset);
+    }
   }
 
   return preset;
@@ -405,23 +504,40 @@ async function deactivatePrompt() {
   const data = initPromptsData();
   const activePreset = data.activePresetId ? data.presets[data.activePresetId] : null;
 
-  // 清空激活状态
+  // Clear active state.
   data.activePresetId = null;
   writeJsonFile(PROMPTS_FILE, data);
 
-  // 删除各平台的提示词文件
-  const results = {
-    claude: deleteFile(CLAUDE_PROMPT_PATH),
-    codex: deleteFile(CODEX_PROMPT_PATH),
-    gemini: deleteFile(GEMINI_PROMPT_PATH),
-    opencode: deleteFile(OPENCODE_PROMPT_PATH),
-    omp: activePreset && normalizeApps(activePreset.apps).omp
-      ? deleteOmpPromptTemplate(activePreset)
-      : false
-  };
+  const results = {};
+  const pending = [];
+  for (const platform of getPromptPlatformKeys()) {
+    const { driver } = requirePromptCapability(platform);
+    if (typeof driver.remove !== 'function') {
+      const error = createPlatformCapabilityError(platform, 'prompts', 'unsupported');
+      error.operation = 'remove';
+      throw error;
+    }
+    const result = driver.remove();
+    if (result && typeof result.then === 'function') {
+      pending.push(result.then(value => {
+        const failure = getDriverFailure(value, platform, 'remove');
+        if (failure) throw failure;
+        results[platform] = true;
+      }));
+    } else {
+      const failure = getDriverFailure(result, platform, 'remove');
+      if (failure) throw failure;
+      results[platform] = true;
+    }
+  }
 
+  // OMP templates are a legacy directory capability.
+  results.omp = activePreset && normalizeApps(activePreset.apps).omp
+    ? deleteOmpPromptTemplate(activePreset)
+    : false;
+
+  await Promise.all(pending);
   console.log('[Prompts] Deactivated and removed prompt files:', results);
-
   return results;
 }
 
@@ -432,34 +548,52 @@ async function deactivatePrompt() {
 /**
  * 同步预设到所有已启用的平台
  */
+function syncPromptToPlatform(platform, content) {
+  const { driver } = requirePromptCapability(platform);
+  if (typeof driver.write !== 'function') {
+    const error = createPlatformCapabilityError(platform, 'prompts', 'unsupported');
+    error.operation = 'write';
+    throw error;
+  }
+
+  const result = driver.write(content);
+  if (result && typeof result.then === 'function') {
+    return result.then(value => {
+      const failure = getDriverFailure(value, platform, 'write');
+      if (failure) throw failure;
+      return value;
+    });
+  }
+  return result;
+}
+
+/**
+ * 同步预设到所有已启用的平台
+ */
 function syncPresetToAllPlatforms(preset) {
   const apps = normalizeApps(preset.apps);
   const { content } = preset;
+  const pending = [];
 
-  if (apps.claude) {
-    writeTextFile(CLAUDE_PROMPT_PATH, content);
-    console.log('[Prompts] Synced to Claude:', CLAUDE_PROMPT_PATH);
+  for (const platform of getPromptPlatformKeys()) {
+    if (!apps[platform]) continue;
+    const result = syncPromptToPlatform(platform, content);
+    if (result && typeof result.then === 'function') {
+      pending.push(result.then(() => {
+        console.log(`[Prompts] Synced to ${platform}`);
+      }));
+    } else {
+      console.log(`[Prompts] Synced to ${platform}`);
+    }
   }
 
-  if (apps.codex) {
-    writeTextFile(CODEX_PROMPT_PATH, content);
-    console.log('[Prompts] Synced to Codex:', CODEX_PROMPT_PATH);
-  }
-
-  if (apps.gemini) {
-    writeTextFile(GEMINI_PROMPT_PATH, content);
-    console.log('[Prompts] Synced to Gemini:', GEMINI_PROMPT_PATH);
-  }
-
-  if (apps.opencode) {
-    writeTextFile(OPENCODE_PROMPT_PATH, content);
-    console.log('[Prompts] Synced to OpenCode:', OPENCODE_PROMPT_PATH);
-  }
-
+  // OMP templates are a legacy directory capability, not a single prompt file.
   if (apps.omp) {
     const targetPath = writeOmpPromptTemplate(preset);
     console.log('[Prompts] Synced to OMP:', targetPath);
   }
+
+  return pending.length ? Promise.all(pending) : undefined;
 }
 
 function buildOmpPromptFileName(preset) {
@@ -494,10 +628,7 @@ function deleteOmpPromptTemplate(preset) {
   return deleteFile(getOmpPromptTemplatePath(preset));
 }
 
-/**
- * 从平台读取当前提示词
- */
-function readPlatformPrompt(platform) {
+function readLegacyPlatformPrompt(platform) {
   switch (platform) {
     case 'claude':
       return readTextFile(CLAUDE_PROMPT_PATH, '');
@@ -507,11 +638,107 @@ function readPlatformPrompt(platform) {
       return readTextFile(GEMINI_PROMPT_PATH, '');
     case 'opencode':
       return readTextFile(OPENCODE_PROMPT_PATH, '');
-    case 'omp':
-      throw new Error('OMP 使用 prompts/ 目录中的模板文件，请通过平台状态查看模板列表');
     default:
       throw new Error(`无效的平台: ${platform}`);
   }
+}
+
+function writeLegacyPlatformPrompt(platform, content) {
+  if (typeof content !== 'string') {
+    throw new Error('提示词内容必须是字符串');
+  }
+
+  switch (platform) {
+    case 'claude':
+      writeTextFile(CLAUDE_PROMPT_PATH, content);
+      return content;
+    case 'codex':
+      writeTextFile(CODEX_PROMPT_PATH, content);
+      return content;
+    case 'gemini':
+      writeTextFile(GEMINI_PROMPT_PATH, content);
+      return content;
+    case 'opencode':
+      writeTextFile(OPENCODE_PROMPT_PATH, content);
+      return content;
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+function removeLegacyPlatformPrompt(platform) {
+  switch (platform) {
+    case 'claude':
+      return deleteFile(CLAUDE_PROMPT_PATH);
+    case 'codex':
+      return deleteFile(CODEX_PROMPT_PATH);
+    case 'gemini':
+      return deleteFile(GEMINI_PROMPT_PATH);
+    case 'opencode':
+      return deleteFile(OPENCODE_PROMPT_PATH);
+    default:
+      throw new Error(`无效的平台: ${platform}`);
+  }
+}
+
+/**
+ * 从平台读取当前提示词
+ */
+function readPlatformPrompt(platform) {
+  const { platform: normalizedPlatform, driver } = requirePromptCapability(platform);
+  if (typeof driver.read !== 'function') {
+    const error = createPlatformCapabilityError(normalizedPlatform, 'prompts', 'unsupported');
+    error.operation = 'read';
+    throw error;
+  }
+
+  const result = driver.read();
+  if (result && typeof result.then === 'function') {
+    return result.then(value => assertPromptReadResult(value, normalizedPlatform));
+  }
+  return assertPromptReadResult(result, normalizedPlatform);
+}
+
+function writePlatformPrompt(platform, content) {
+  if (typeof content !== 'string') {
+    throw new Error('提示词内容必须是字符串');
+  }
+
+  const { platform: normalizedPlatform, driver } = requirePromptCapability(platform);
+  if (typeof driver.write !== 'function') {
+    const error = createPlatformCapabilityError(normalizedPlatform, 'prompts', 'unsupported');
+    error.operation = 'write';
+    throw error;
+  }
+
+  const result = driver.write(content);
+  if (result && typeof result.then === 'function') {
+    return result.then(value => {
+      const failure = getDriverFailure(value, normalizedPlatform, 'write');
+      if (failure) throw failure;
+      return content;
+    });
+  }
+  return result;
+}
+
+function removePlatformPrompt(platform) {
+  const { platform: normalizedPlatform, driver } = requirePromptCapability(platform);
+  if (typeof driver.remove !== 'function') {
+    const error = createPlatformCapabilityError(normalizedPlatform, 'prompts', 'unsupported');
+    error.operation = 'remove';
+    throw error;
+  }
+
+  const result = driver.remove();
+  if (result && typeof result.then === 'function') {
+    return result.then(value => {
+      const failure = getDriverFailure(value, normalizedPlatform, 'remove');
+      if (failure) throw failure;
+      return true;
+    });
+  }
+  return result;
 }
 
 function listOmpPromptTemplates() {
@@ -551,64 +778,82 @@ function listOmpPromptTemplates() {
  * 获取各平台当前的提示词状态
  */
 function getPlatformStatus() {
-  return {
-    claude: {
-      path: CLAUDE_PROMPT_PATH,
-      exists: fs.existsSync(CLAUDE_PROMPT_PATH),
-      content: readTextFile(CLAUDE_PROMPT_PATH, '')
-    },
-    codex: {
-      path: CODEX_PROMPT_PATH,
-      exists: fs.existsSync(CODEX_PROMPT_PATH),
-      content: readTextFile(CODEX_PROMPT_PATH, '')
-    },
-    gemini: {
-      path: GEMINI_PROMPT_PATH,
-      exists: fs.existsSync(GEMINI_PROMPT_PATH),
-      content: readTextFile(GEMINI_PROMPT_PATH, '')
-    },
-    opencode: {
-      path: OPENCODE_PROMPT_PATH,
-      exists: fs.existsSync(OPENCODE_PROMPT_PATH),
-      content: readTextFile(OPENCODE_PROMPT_PATH, '')
-    },
-    omp: {
-      path: OMP_PROMPTS_DIR,
-      managedPath: MANAGED_OMP_PROMPTS_DIR,
-      exists: fs.existsSync(OMP_PROMPTS_DIR),
-      templates: listOmpPromptTemplates()
-    }
+  const statuses = {};
+  const pending = [];
+  const legacyPaths = {
+    claude: CLAUDE_PROMPT_PATH,
+    codex: CODEX_PROMPT_PATH,
+    gemini: GEMINI_PROMPT_PATH,
+    opencode: OPENCODE_PROMPT_PATH
   };
+
+  for (const platform of getPromptPlatformKeys()) {
+    const { driver } = requirePromptCapability(platform);
+    if (typeof driver.read !== 'function') {
+      const error = createPlatformCapabilityError(platform, 'prompts', 'unsupported');
+      error.operation = 'read';
+      throw error;
+    }
+    const pathValue = legacyPaths[platform] || null;
+    const result = driver.read();
+    const apply = value => {
+      const failure = getDriverFailure(value, platform, 'read');
+      if (failure && failure.code !== 'ENOENT') throw failure;
+      const content = failure ? '' : assertPromptReadResult(value, platform);
+      statuses[platform] = {
+        ...(pathValue ? { path: pathValue } : {}),
+        exists: failure ? false : Boolean(pathValue ? fs.existsSync(pathValue) : true),
+        content
+      };
+    };
+    if (result && typeof result.then === 'function') pending.push(result.then(apply));
+    else apply(result);
+  }
+
+  statuses.omp = {
+    path: OMP_PROMPTS_DIR,
+    managedPath: MANAGED_OMP_PROMPTS_DIR,
+    exists: fs.existsSync(OMP_PROMPTS_DIR),
+    templates: listOmpPromptTemplates()
+  };
+
+  return pending.length ? Promise.all(pending).then(() => statuses) : statuses;
 }
 
 /**
  * 从平台导入提示词作为新预设
  */
 function importFromPlatform(platform, presetName) {
-  const content = readPlatformPrompt(platform);
+  const normalizedPlatform = requirePromptCapability(platform).platform;
+  const contentResult = readPlatformPrompt(normalizedPlatform);
 
-  if (!content.trim()) {
-    throw new Error(`${platform} 的提示词文件为空`);
-  }
+  const createPreset = content => {
+    if (!content.trim()) {
+      throw new Error(`${normalizedPlatform} 的提示词文件为空`);
+    }
 
-  // 生成唯一 ID
-  const id = `imported-${platform}-${Date.now()}`;
+    const id = `imported-${normalizedPlatform}-${Date.now()}`;
+    const emptyApps = Object.fromEntries(
+      [...getPromptPlatformKeys(), 'omp'].map(key => [key, false])
+    );
+    const preset = {
+      id,
+      name: presetName || `从 ${normalizedPlatform} 导入`,
+      description: `从 ${normalizedPlatform} 导入的提示词`,
+      content,
+      apps: normalizeApps(emptyApps),
+      isBuiltin: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
 
-  const preset = {
-    id,
-    name: presetName || `从 ${platform} 导入`,
-    description: `从 ${platform} 导入的提示词`,
-    content,
-    apps: normalizeApps({ claude: false, codex: false, gemini: false, opencode: false, omp: false }),
-    isBuiltin: false,
-    createdAt: Date.now(),
-    updatedAt: Date.now()
+    preset.apps[normalizedPlatform] = true;
+    return savePreset(preset);
   };
 
-  // 标记来源平台
-  preset.apps[platform] = true;
-
-  return savePreset(preset);
+  return contentResult && typeof contentResult.then === 'function'
+    ? contentResult.then(createPreset)
+    : createPreset(contentResult);
 }
 
 /**
@@ -635,6 +880,11 @@ module.exports = {
   activatePreset,
   deactivatePrompt,
   readPlatformPrompt,
+  writePlatformPrompt,
+  removePlatformPrompt,
+  readLegacyPlatformPrompt,
+  writeLegacyPlatformPrompt,
+  removeLegacyPlatformPrompt,
   getPlatformStatus,
   importFromPlatform,
   getStats

@@ -23,6 +23,7 @@ beforeEach(() => {
     exportServers: vi.fn((format) => ({
       format,
       filename: `mcp.${format === 'codex' ? 'toml' : 'json'}`,
+      contentType: format === 'codex' ? 'application/toml' : 'application/json',
       content: format === 'codex' ? 'mcpServers = {}' : '{"mcpServers":{}}'
     })),
     getServerTools: vi.fn(async () => ({ status: 'online', duration: 10, tools: [{ name: 'fetch' }] })),
@@ -110,6 +111,25 @@ function call(app, method, url, body) {
       req.end();
     });
   });
+}
+
+function stubPlatformRegistry(definitions, drivers = {}) {
+  const runtime = require('../../../src/platforms/runtime');
+  const byKey = new Map(definitions.map(definition => [definition.key, definition]));
+  const registry = {
+    list: () => definitions,
+    resolve: key => byKey.get(String(key).trim().toLowerCase()) || null,
+    getCapability: (key, capability) => byKey.get(String(key).trim().toLowerCase())?.capabilities?.[capability] || null
+  };
+  const platformRuntime = {
+    getDriver: vi.fn(key => drivers[key] || {})
+  };
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+  const runtimeSpy = vi.spyOn(runtime, 'getPlatformRuntime').mockReturnValue(platformRuntime);
+  return () => {
+    registrySpy.mockRestore();
+    runtimeSpy.mockRestore();
+  };
 }
 
 describe('GET /servers', () => {
@@ -258,12 +278,12 @@ describe('GET /presets and POST /import/:platform', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.presets).toHaveLength(1);
   });
-
-  test('rejects invalid import platform', async () => {
+  test('rejects invalid import platform with typed not-found response', async () => {
     const res = await request(buildApp()).post('/import/invalid', {});
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('not_found');
   });
 
   test('imports valid platform and returns count', async () => {
@@ -272,6 +292,38 @@ describe('GET /presets and POST /import/:platform', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.imported).toBe(2);
+  });
+
+  test('imports a registered sixth platform through its MCP capability', async () => {
+    const restore = stubPlatformRegistry([
+      { key: 'demo-cli', capabilities: { mcp: 'generic-mcp' } }
+    ]);
+
+    try {
+      const res = await request(buildApp()).post('/import/demo-cli', {});
+
+      expect(res.status).toBe(200);
+      expect(res.body.imported).toBe(2);
+      expect(mockService.importFromPlatform).toHaveBeenCalledWith('demo-cli');
+    } finally {
+      restore();
+    }
+  });
+
+  test('returns typed unsupported response for a registered non-MCP platform', async () => {
+    const restore = stubPlatformRegistry([
+      { key: 'ui-only', capabilities: { prompts: 'generic-prompt' } }
+    ]);
+
+    try {
+      const res = await request(buildApp()).post('/import/ui-only', {});
+
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('unsupported');
+      expect(res.body.platform).toBe('ui-only');
+    } finally {
+      restore();
+    }
   });
 
   test('imports OMP platform configs', async () => {

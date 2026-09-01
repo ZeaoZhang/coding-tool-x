@@ -272,4 +272,18 @@ describe('ConfigRegistryService platform capability metadata', () => {
       plugins: { 'demo-cli': true, 'unsupported-cli': false }
     });
   });
+  test('uses only enabled manifest platforms for config support metadata', () => {
+    const calls = [];
+    const registry = {
+      list: (options) => {
+        calls.push(options);
+        return options?.enabledOnly
+          ? [{ key: 'enabled-cli', enabled: true }]
+          : [{ key: 'enabled-cli', enabled: true }, { key: 'disabled-cli', enabled: false }];
+      }
+    };
+
+    expect(getSupportedPlatforms(registry)).toEqual(['enabled-cli']);
+    expect(calls).toEqual([{ enabledOnly: true }]);
+  });
 });

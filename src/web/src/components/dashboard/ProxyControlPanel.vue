@@ -8,189 +8,136 @@
     </div>
 
     <div class="proxy-list">
-      <!-- Claude Proxy -->
-      <div class="proxy-item">
+      <div
+        v-for="platform in proxyPlatforms"
+        :key="platform.key"
+        class="proxy-item"
+      >
         <div class="proxy-header">
           <div class="proxy-info">
             <div class="proxy-name">
-              <div class="status-dot" :class="{ active: claudeRunning }"></div>
-              <span>Claude Proxy</span>
-              <n-tag v-if="claudeFrozenCount > 0" size="tiny" type="error" :bordered="false">
-                {{ claudeFrozenCount }} 冻结
+              <div class="status-dot" :class="{ active: isRunning(platform) }"></div>
+              <span>{{ platform.label || platform.title || platform.key }} Proxy</span>
+              <n-tag v-if="getFrozenCount(platform.key) > 0" size="tiny" type="error" :bordered="false">
+                {{ getFrozenCount(platform.key) }} 冻结
               </n-tag>
             </div>
             <div class="proxy-meta">
-              <n-text depth="3" style="font-size: 12px;">Port: {{ claudePort }}</n-text>
+              <n-text depth="3" style="font-size: 12px;">
+                Port: {{ getPort(platform.key) }}
+              </n-text>
             </div>
           </div>
           <n-switch
-            :value="claudeRunning"
-            @update:value="toggleClaudeProxy"
-            :loading="claudeLoading"
+            :value="isRunning(platform)"
+            @update:value="value => toggleProxy(platform, value)"
+            :loading="isLoading(platform.key)"
             size="small"
           />
         </div>
-        <div v-if="claudeRunning && claudeActiveChannel" class="proxy-active">
+        <div v-if="isRunning(platform) && getActiveChannel(platform.key)" class="proxy-active">
           <n-text depth="3" style="font-size: 12px;">
-            Active: {{ claudeActiveChannel }}
+            Active: {{ getActiveChannel(platform.key) }}
           </n-text>
         </div>
       </div>
-
-      <!-- Codex Proxy -->
-      <div class="proxy-item">
-        <div class="proxy-header">
-          <div class="proxy-info">
-            <div class="proxy-name">
-              <div class="status-dot" :class="{ active: codexRunning }"></div>
-              <span>Codex Proxy</span>
-              <n-tag v-if="codexFrozenCount > 0" size="tiny" type="error" :bordered="false">
-                {{ codexFrozenCount }} 冻结
-              </n-tag>
-            </div>
-            <div class="proxy-meta">
-              <n-text depth="3" style="font-size: 12px;">Port: {{ codexPort }}</n-text>
-            </div>
-          </div>
-          <n-switch
-            :value="codexRunning"
-            @update:value="toggleCodexProxy"
-            :loading="codexLoading"
-            size="small"
-          />
-        </div>
-        <div v-if="codexRunning && codexActiveChannel" class="proxy-active">
-          <n-text depth="3" style="font-size: 12px;">
-            Active: {{ codexActiveChannel }}
-          </n-text>
-        </div>
-      </div>
-
-      <!-- Gemini Proxy -->
-      <div class="proxy-item">
-        <div class="proxy-header">
-          <div class="proxy-info">
-            <div class="proxy-name">
-              <div class="status-dot" :class="{ active: geminiRunning }"></div>
-              <span>Gemini Proxy</span>
-              <n-tag v-if="geminiFrozenCount > 0" size="tiny" type="error" :bordered="false">
-                {{ geminiFrozenCount }} 冻结
-              </n-tag>
-            </div>
-            <div class="proxy-meta">
-              <n-text depth="3" style="font-size: 12px;">Port: {{ geminiPort }}</n-text>
-            </div>
-          </div>
-          <n-switch
-            :value="geminiRunning"
-            @update:value="toggleGeminiProxy"
-            :loading="geminiLoading"
-            size="small"
-          />
-        </div>
-        <div v-if="geminiRunning && geminiActiveChannel" class="proxy-active">
-          <n-text depth="3" style="font-size: 12px;">
-            Active: {{ geminiActiveChannel }}
-          </n-text>
-        </div>
-      </div>
+      <n-text v-if="proxyPlatforms.length === 0" depth="3">
+        当前没有可管理的代理
+      </n-text>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { reactive, computed, onMounted } from 'vue'
 import { NSwitch, NText, NIcon, NTag, useMessage } from 'naive-ui'
 import { PowerOutline } from '@vicons/ionicons5'
 import axios from 'axios'
 import { useGlobalState } from '../../composables/useGlobalState'
+import { useEnabledCliPlatforms } from '../../composables/useEnabledCliPlatforms'
 
 const message = useMessage()
-const { claudeProxy, codexProxy, geminiProxy, schedulerState, startProxy, stopProxy } = useGlobalState()
+const { getProxyState, getSchedulerState, startProxy, stopProxy } = useGlobalState()
+const { byCapability } = useEnabledCliPlatforms()
+const proxyPlatforms = computed(() => byCapability('proxy'))
+const loadingByPlatform = reactive({})
+const portsByPlatform = reactive({
+  claude: 20088,
+  codex: 20089,
+  gemini: 20090,
+  opencode: 20091,
+  omp: 20092
+})
 
-// 端口配置
-const claudePort = ref(20088)
-const codexPort = ref(20089)
-const geminiPort = ref(20090)
+function getProxy(platform) {
+  return getProxyState(platform)?.value || {}
+}
 
-const claudeLoading = ref(false)
-const codexLoading = ref(false)
-const geminiLoading = ref(false)
+function isRunning(platform) {
+  return getProxy(platform.key).running === true
+}
 
-function getChannelName(channel) {
+function isLoading(platform) {
+  return loadingByPlatform[platform] === true
+}
+
+function getActiveChannel(platform) {
+  const channel = getProxy(platform).activeChannel
   if (!channel) return ''
-  if (typeof channel === 'string') return channel
-  return channel.name || ''
+  return typeof channel === 'string' ? channel : channel.name || ''
 }
 
-const claudeRunning = computed(() => claudeProxy.value.running)
-const codexRunning = computed(() => codexProxy.value.running)
-const geminiRunning = computed(() => geminiProxy.value.running)
+function getPort(platform) {
+  return getProxy(platform).port || portsByPlatform[platform] || '—'
+}
 
-const claudeActiveChannel = computed(() => getChannelName(claudeProxy.value.activeChannel))
-const codexActiveChannel = computed(() => getChannelName(codexProxy.value.activeChannel))
-const geminiActiveChannel = computed(() => getChannelName(geminiProxy.value.activeChannel))
-
-// 计算各类型冻结渠道数量
-function getFrozenCount(source) {
-  const state = schedulerState[source]
+function getFrozenCount(platform) {
+  const state = getSchedulerState(platform)
   if (!state?.channels?.length) return 0
-  return state.channels.filter(ch => ch.health?.status === 'frozen').length
+  return state.channels.filter(channel => channel.health?.status === 'frozen').length
 }
 
-const claudeFrozenCount = computed(() => getFrozenCount('claude'))
-const codexFrozenCount = computed(() => getFrozenCount('codex'))
-const geminiFrozenCount = computed(() => getFrozenCount('gemini'))
-
-// 加载配置
 async function loadConfig() {
   try {
     const response = await axios.get('/api/config/advanced')
-    if (response.data.ports) {
-      claudePort.value = response.data.ports.proxy || 20088
-      codexPort.value = response.data.ports.codexProxy || 20089
-      geminiPort.value = response.data.ports.geminiProxy || 20090
+    const ports = response.data?.ports || {}
+    const legacyPorts = {
+      claude: ports.proxy,
+      codex: ports.codexProxy,
+      gemini: ports.geminiProxy,
+      opencode: ports.opencodeProxy,
+      omp: ports.ompProxy
     }
+    Object.entries(legacyPorts).forEach(([platform, port]) => {
+      if (port) portsByPlatform[platform] = port
+    })
   } catch (error) {
     console.error('Failed to load config:', error)
   }
 }
 
-async function toggleProxy(type, value, loadingRef, startMsg, stopMsg) {
-  loadingRef.value = true
+async function toggleProxy(platform, value) {
+  const key = platform.key
+  loadingByPlatform[key] = true
   try {
     if (value) {
-      const result = await startProxy(type)
-      message.success(startMsg)
-
-      // 如果有环境变量提示（Codex），显示额外的提示信息
-      if (result.envHint && type === 'codex') {
+      const result = await startProxy(key)
+      message.success(`${platform.label || key} Proxy started`)
+      if (result.envHint && key === 'codex') {
         message.warning(result.envHint.message, {
           duration: 10000,
           closable: true
         })
       }
     } else {
-      await stopProxy(type, { refreshChannelsDrawer: true })
-      message.success(stopMsg)
+      await stopProxy(key, { refreshChannelsDrawer: true })
+      message.success(`${platform.label || key} Proxy stopped`)
     }
   } catch (error) {
     message.error(error.response?.data?.error || error.message || '操作失败')
   } finally {
-    loadingRef.value = false
+    loadingByPlatform[key] = false
   }
-}
-
-function toggleClaudeProxy(value) {
-  toggleProxy('claude', value, claudeLoading, 'Claude Proxy started', 'Claude Proxy stopped')
-}
-
-function toggleCodexProxy(value) {
-  toggleProxy('codex', value, codexLoading, 'Codex Proxy started', 'Codex Proxy stopped')
-}
-
-function toggleGeminiProxy(value) {
-  toggleProxy('gemini', value, geminiLoading, 'Gemini Proxy started', 'Gemini Proxy stopped')
 }
 
 onMounted(() => {

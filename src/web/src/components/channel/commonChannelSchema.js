@@ -14,6 +14,19 @@ export const commonChannelSchema = Object.freeze({
   ])
 })
 
+function createGenericChannelForm() {
+  return {
+    name: '',
+    baseUrl: '',
+    websiteUrl: '',
+    apiKey: '',
+    authMode: 'api_key',
+    maxConcurrency: null,
+    weight: 1,
+    enabled: true
+  }
+}
+
 export function createGenericChannelPanel(manifest = {}, api = {}) {
   const key = String(manifest.key || '').trim().toLowerCase()
   const label = String(manifest.label || manifest.title || key).trim()
@@ -29,6 +42,8 @@ export function createGenericChannelPanel(manifest = {}, api = {}) {
     emptyDescription: '暂无渠道',
     showEmptyAction: true,
     emptyActionText: '添加渠道',
+    addTitle: `添加 ${label} 渠道`,
+    editTitle: `编辑 ${label} 渠道`,
     modalWidth: 520,
     formLabelWidth: 95,
     showApplyButton: false,
@@ -38,20 +53,43 @@ export function createGenericChannelPanel(manifest = {}, api = {}) {
       { title: '调度配置', fields: commonChannelSchema.schedule }
     ],
     api,
-    getInitialForm: () => ({
-      name: '',
-      baseUrl: '',
-      websiteUrl: '',
-      apiKey: '',
-      authMode: 'api_key',
-      maxConcurrency: null,
-      weight: 1,
-      enabled: true
+    getInitialForm: createGenericChannelForm,
+    mapChannelToForm: channel => ({
+      ...createGenericChannelForm(),
+      ...(channel || {})
     }),
-    validateForm: () => ({}),
     normalizeForm: form => ({ ...form }),
     getFormTitle: editing => editing ? `编辑 ${label} 渠道` : `添加 ${label} 渠道`,
     getChannelTitle: channel => channel?.name || label,
+    getHeaderTags: (channel, helpers = {}) => {
+      if (channel.health?.status === 'frozen') {
+        return [{
+          text: typeof helpers.formatFreeze === 'function'
+            ? helpers.formatFreeze(channel.health.freezeRemaining)
+            : '已冻结',
+          type: 'error'
+        }]
+      }
+      if (channel.health?.status === 'checking') {
+        return [{ text: '检测中', type: 'warning' }]
+      }
+      return []
+    },
+    buildInfoRows: (channel, helpers = {}) => ([
+      { label: 'URL', value: channel.baseUrl, mono: true },
+      {
+        label: 'Key',
+        value: channel.apiKey
+          ? (typeof helpers.maskApiKey === 'function' ? helpers.maskApiKey(channel.apiKey) : '已设置')
+          : (channel.authMode === 'none' ? '无需认证' : '未设置'),
+        mono: true,
+        action: channel.health?.status && channel.health.status !== 'healthy'
+          && typeof helpers.handleResetHealth === 'function'
+          ? () => helpers.handleResetHealth(channel)
+          : null,
+        actionLabel: '重置状态'
+      }
+    ]),
     fetch: api.fetch,
     create: api.create,
     update: api.update,
