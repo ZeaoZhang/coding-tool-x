@@ -14,8 +14,16 @@ function _safeErrorText(value, fallback = '') {
 }
 
 function _safeCode(value) {
-  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+  return typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
+    ? value
+    : undefined;
 }
+function _safeRetryAfter(value) {
+  return typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))
+    ? value
+    : undefined;
+}
+
 
 
 function sortClaudeProjects(projects, order = []) {
@@ -48,20 +56,70 @@ function _isTypedFailurePayload(value) {
     && typeof value.operation === 'string';
 }
 
-function _serializeCause(cause) {
-  if (!cause) {
+function _serializeCause(cause, depth = 0, seen = new Set()) {
+  if (!cause || depth > 3) {
     return null;
+  }
+  if ((typeof cause === 'object' || typeof cause === 'function') && seen.has(cause)) {
+    return null;
+  }
+  if (typeof cause === 'object' || typeof cause === 'function') {
+    seen.add(cause);
   }
   const serialized = {
     name: _safeErrorText(cause.name, 'Error'),
     message: _safeErrorText(cause && cause.message ? cause.message : cause, 'Error')
   };
+  if (typeof cause.retryable === 'boolean') {
+    serialized.retryable = cause.retryable;
+  }
+  const retryAfter = _safeRetryAfter(cause.retryAfter);
+  if (retryAfter !== undefined) {
+    serialized.retryAfter = retryAfter;
+  }
   const code = _safeCode(cause.code);
   if (code !== undefined) {
     serialized.code = code;
   }
+  if (cause.cause && cause.cause !== cause) {
+    const nestedCause = _serializeCause(cause.cause, depth + 1, seen);
+    if (nestedCause) {
+      serialized.cause = nestedCause;
+    }
+  }
   return serialized;
 }
+function _safeFailurePayload(value, fallback = {}) {
+  const source = value && typeof value === 'object' ? value : {};
+  const failure = {
+    status: typeof source.status === 'string' ? _safeErrorText(source.status) : _safeErrorText(fallback.status, 'failed'),
+    platform: typeof source.platform === 'string' ? _safeErrorText(source.platform) : _safeErrorText(fallback.platform),
+    capability: typeof source.capability === 'string' ? _safeErrorText(source.capability) : _safeErrorText(fallback.capability),
+    operation: typeof source.operation === 'string' ? _safeErrorText(source.operation) : _safeErrorText(fallback.operation),
+    error: source.error instanceof Error
+      ? _safeErrorText(source.error.message, 'dashboard capability failed')
+      : _safeErrorText(source.error !== undefined ? source.error : fallback.error, 'dashboard capability failed')
+  };
+  failure.retryable = failure.status === 'failed';
+  if (typeof source.retryable === 'boolean') {
+    failure.retryable = source.retryable;
+  }
+  const retryAfter = _safeRetryAfter(source.retryAfter);
+  if (retryAfter !== undefined) {
+    failure.retryAfter = retryAfter;
+  }
+  const code = _safeCode(source.code);
+  if (code !== undefined) {
+    failure.code = code;
+  }
+  const cause = source.cause || (source.error instanceof Error ? source.error : null);
+  const serializedCause = _serializeCause(cause);
+  if (serializedCause) {
+    failure.cause = serializedCause;
+  }
+  return failure;
+}
+
 
 function _serializeError(error) {
   if (!error || typeof error !== 'object') {
@@ -74,6 +132,9 @@ function _serializeError(error) {
   if (typeof error.platform === 'string') serialized.platform = _safeErrorText(error.platform);
   if (typeof error.capability === 'string') serialized.capability = _safeErrorText(error.capability);
   if (typeof error.operation === 'string') serialized.operation = _safeErrorText(error.operation);
+  if (typeof error.retryable === 'boolean') serialized.retryable = error.retryable;
+  const retryAfter = _safeRetryAfter(error.retryAfter);
+  if (retryAfter !== undefined) serialized.retryAfter = retryAfter;
   const code = _safeCode(error.code);
   if (code !== undefined) serialized.code = code;
   const cause = _serializeCause(error.cause);
@@ -83,20 +144,38 @@ function _serializeError(error) {
   return serialized;
 }
 
-function _deserializeCause(cause) {
-  if (!cause) {
+function _deserializeCause(cause, depth = 0, seen = new Set()) {
+  if (!cause || depth > 3) {
     return null;
   }
-  if (cause instanceof Error) {
-    return cause;
+  if (typeof cause === 'object' || typeof cause === 'function') {
+    if (seen.has(cause)) {
+      return null;
+    }
+    seen.add(cause);
   }
-  const error = new Error(_safeErrorText(cause.message ? cause.message : cause, 'Error'));
-  if (cause.name) {
+  const error = cause instanceof Error
+    ? cause
+    : new Error(_safeErrorText(cause.message ? cause.message : cause, 'Error'));
+  if (!(cause instanceof Error) && cause.name) {
     error.name = _safeErrorText(cause.name, 'Error');
+  }
+  if (typeof cause.retryable === 'boolean') {
+    error.retryable = cause.retryable;
+  }
+  const retryAfter = _safeRetryAfter(cause.retryAfter);
+  if (retryAfter !== undefined) {
+    error.retryAfter = retryAfter;
   }
   const code = _safeCode(cause.code);
   if (code !== undefined) {
     error.code = code;
+  }
+  if (cause.cause && cause.cause !== cause) {
+    const nestedCause = _deserializeCause(cause.cause, depth + 1, seen);
+    if (nestedCause) {
+      error.cause = nestedCause;
+    }
   }
   return error;
 }
@@ -113,6 +192,9 @@ function _deserializeError(payload, fallbackMessage) {
   if (typeof payload.platform === 'string') error.platform = _safeErrorText(payload.platform);
   if (typeof payload.capability === 'string') error.capability = _safeErrorText(payload.capability);
   if (typeof payload.operation === 'string') error.operation = _safeErrorText(payload.operation);
+  if (typeof payload.retryable === 'boolean') error.retryable = payload.retryable;
+  const retryAfter = _safeRetryAfter(payload.retryAfter);
+  if (retryAfter !== undefined) error.retryAfter = retryAfter;
   const code = _safeCode(payload.code);
   if (code !== undefined) error.code = code;
   const cause = _deserializeCause(payload.cause);
@@ -135,6 +217,11 @@ function _serializeWorkerValue(value) {
       ? _safeErrorText(value.error.message, 'dashboard snapshot failed')
       : _safeErrorText(value.error, 'dashboard snapshot failed')
   };
+  if (typeof value.retryable === 'boolean') {
+    serialized.retryable = value.retryable;
+  }
+  const retryAfter = _safeRetryAfter(value.retryAfter);
+  if (retryAfter !== undefined) serialized.retryAfter = retryAfter;
   const code = _safeCode(value.code);
   if (code !== undefined) serialized.code = code;
   const cause = value.cause || (value.error instanceof Error ? value.error : null);
@@ -162,6 +249,13 @@ function _typedFailurePayloadToError(payload) {
   error.platform = payload.platform;
   error.capability = payload.capability;
   error.operation = payload.operation;
+  if (typeof payload.retryable === 'boolean') {
+    error.retryable = payload.retryable;
+  }
+  const retryAfter = _safeRetryAfter(payload.retryAfter);
+  if (retryAfter !== undefined) {
+    error.retryAfter = retryAfter;
+  }
   const code = _safeCode(payload.code);
   if (code !== undefined) {
     error.code = code;
@@ -181,8 +275,17 @@ function _driverFailurePayload(source, capability, error) {
     platform: source,
     capability,
     operation: 'resolve-driver',
-    error: error && error.message ? error.message : String(error)
+    error: _safeErrorText(error && error.message ? error.message : error, 'dashboard snapshot failed'),
+    retryable: error?.retryable !== false
   };
+  const retryAfter = _safeRetryAfter(error?.retryAfter);
+  if (retryAfter !== undefined) {
+    result.retryAfter = retryAfter;
+  }
+  const code = _safeCode(error?.code);
+  if (code !== undefined) {
+    result.code = code;
+  }
   if (error) {
     Object.defineProperty(result, 'cause', { value: error, enumerable: false });
   }
@@ -191,15 +294,23 @@ function _driverFailurePayload(source, capability, error) {
 
 function _capabilityInvocationError(source, capability, operation, error) {
   const cause = error instanceof Error ? error : new Error(_safeErrorText(error, 'unknown error'));
+  const metadataSource = error && typeof error === 'object' ? error : cause;
   const wrapped = new Error(cause.message);
-  if (typeof cause.status === 'string') {
-    wrapped.status = _safeErrorText(cause.status);
+  if (typeof metadataSource.status === 'string') {
+    wrapped.status = _safeErrorText(metadataSource.status);
+  }
+  if (typeof metadataSource.retryable === 'boolean') {
+    wrapped.retryable = metadataSource.retryable;
+  }
+  const retryAfter = _safeRetryAfter(metadataSource.retryAfter);
+  if (retryAfter !== undefined) {
+    wrapped.retryAfter = retryAfter;
   }
   wrapped.platform = source;
   wrapped.capability = capability;
   wrapped.operation = operation;
-  wrapped.cause = cause;
-  const code = _safeCode(cause.code);
+  wrapped.cause = error && typeof error === 'object' && error.cause ? error.cause : cause;
+  const code = _safeCode(metadataSource.code);
   if (code !== undefined) {
     wrapped.code = code;
   }
@@ -334,6 +445,9 @@ function _normalizeChannelsPayload(source, value) {
     }
     return [];
   }
+  if (_isTypedPayload(value)) {
+    return value;
+  }
 
   if (Array.isArray(value)) {
     return { channels: value };
@@ -436,20 +550,16 @@ function _sourceCapabilityFallback(source, capability) {
 }
 
 function _sourceCapabilityFailure(source, capability, operation, error) {
-  const failure = {
+  const failure = _safeFailurePayload(error, {
     status: 'failed',
     platform: source,
     capability,
     operation,
-    error: error && error.message ? error.message : String(error),
-    retryable: error?.retryable !== false,
-  };
-  if (error?.retryAfter !== undefined) failure.retryAfter = error.retryAfter;
-  if (error?.code !== undefined && (typeof error.code === 'string' || typeof error.code === 'number')) {
-    failure.code = error.code;
-  }
+    error: error && error.message ? error.message : String(error)
+  });
   if (error) {
-    Object.defineProperty(failure, 'cause', { value: error, enumerable: false });
+    const cause = error.cause || error;
+    Object.defineProperty(failure, 'cause', { value: cause, enumerable: false });
   }
   return failure;
 }
@@ -459,12 +569,15 @@ function _settledCapability(result, source, capability, operation) {
     ? result.value
     : _sourceCapabilityFailure(source, capability, operation, result.reason);
   if (_isTypedPayload(value)) {
+    const failure = _safeFailurePayload(value, {
+      platform: source,
+      capability,
+      operation,
+      error: 'dashboard capability failed'
+    });
     return {
       value: _sourceCapabilityFallback(source, capability),
-      failure: {
-        ...value,
-        retryable: value.status === 'failed' ? value.retryable !== false : false
-      }
+      failure
     };
   }
   return { value, failure: null };

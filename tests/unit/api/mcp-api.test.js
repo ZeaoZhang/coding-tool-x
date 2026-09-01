@@ -434,6 +434,39 @@ describe('GET /export and /export/download', () => {
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
   });
+  test('returns typed unsupported response for a registered export platform without an export driver', async () => {
+    const restore = stubPlatformRegistry([
+      { key: 'demo-cli', capabilities: { mcp: 'generic-mcp' } }
+    ]);
+
+    try {
+      const res = await request(buildApp()).get('/export?format=demo-cli');
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('unsupported');
+      expect(res.body.platform).toBe('demo-cli');
+    } finally {
+      restore();
+    }
+  });
+  test('download returns typed unsupported response for a registered export platform without an export driver', async () => {
+    const restore = stubPlatformRegistry([
+      { key: 'demo-cli', capabilities: { mcp: 'generic-mcp' } }
+    ]);
+
+    try {
+      const res = await request(buildApp()).get('/export/download?format=demo-cli');
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('unsupported');
+      expect(res.body.platform).toBe('demo-cli');
+    } finally {
+      restore();
+    }
+  });
+
 
   test('returns export payload for valid format', async () => {
     const res = await request(buildApp()).get('/export?format=json');

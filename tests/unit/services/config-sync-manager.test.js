@@ -245,43 +245,79 @@ describe('ConfigSyncManager direct sync helpers', () => {
 });
 
 describe('ConfigSyncManager aggregation', () => {
-  test('syncAll aggregates synced, removed, warnings, and errors across platforms', () => {
+  test('syncAll aggregates synced, removed, warnings, and errors across platforms and skips unsupported registry types', () => {
+    const drivers = new Map([
+      ['claude', {
+        sync: vi.fn(() => ({ success: true })),
+        remove: vi.fn(() => ({ success: true }))
+      }],
+      ['codex', {
+        sync: vi.fn(() => ({ success: true, warnings: ['converted'] })),
+        remove: vi.fn(() => ({ success: true, skipped: true }))
+      }],
+      ['gemini', {
+        sync: vi.fn(() => ({ success: false, error: 'missing source' })),
+        remove: vi.fn(() => ({ success: true, skipped: true }))
+      }],
+      ['opencode', {
+        sync: vi.fn(() => ({ success: true })),
+        remove: vi.fn(() => ({ success: true }))
+      }],
+      ['omp', {
+        sync: vi.fn(() => ({ success: true })),
+        remove: vi.fn(() => ({ success: true, skipped: true }))
+      }],
+      ['demo-cli', {
+        sync: vi.fn(() => ({ status: 'ok', target: '/tmp/demo/skills/review' })),
+        remove: vi.fn(() => ({ success: true, skipped: true }))
+      }],
+      ['blocked-cli', {
+        sync: vi.fn(() => ({ success: true })),
+        remove: vi.fn(() => ({ success: true }))
+      }]
+    ]);
+
     const manager = new ConfigSyncManager({
       registry: {
-        list: () => [
-          { key: 'claude' },
-          { key: 'codex' },
-          { key: 'gemini' },
-          { key: 'opencode' },
-          { key: 'omp' }
-        ]
+        list: vi.fn(() => [
+          { key: 'claude', resourceTypes: { skills: true } },
+          { key: 'codex', resourceTypes: { skills: true } },
+          { key: 'gemini', resourceTypes: { skills: true } },
+          { key: 'opencode', resourceTypes: { skills: true } },
+          { key: 'omp', resourceTypes: { skills: true } },
+          { key: 'demo-cli', resourceTypes: { skills: true } },
+          { key: 'blocked-cli', resourceTypes: { skills: false } }
+        ])
+      },
+      runtime: {
+        getDriver: vi.fn(platform => drivers.get(platform))
       }
     });
-    const syncResults = {
-      claude: { success: true },
-      codex: { success: true, warnings: ['converted'] },
-      gemini: { success: false, error: 'missing source' },
-      opencode: { success: true },
-      omp: { success: true }
-    };
-    const removeResults = {
-      claude: { success: true },
-      codex: { success: true, message: 'Already removed' },
-      gemini: { success: true, skipped: true },
-      opencode: { success: true },
-      omp: { success: true, skipped: true }
-    };
-    vi.spyOn(manager, 'syncToPlatform').mockImplementation(platform => syncResults[platform]);
-    vi.spyOn(manager, 'removeFromPlatform').mockImplementation(platform => removeResults[platform]);
 
     const result = manager.syncAll('skills', {
       alpha: {
         enabled: true,
-        platforms: { claude: true, codex: true, gemini: true, opencode: true, omp: true }
+        platforms: {
+          claude: true,
+          codex: true,
+          gemini: true,
+          opencode: true,
+          omp: true,
+          'demo-cli': true,
+          'blocked-cli': true
+        }
       },
       beta: {
         enabled: false,
-        platforms: { claude: true, codex: false, gemini: false, opencode: false, omp: false }
+        platforms: {
+          claude: true,
+          codex: false,
+          gemini: false,
+          opencode: false,
+          omp: false,
+          'demo-cli': false,
+          'blocked-cli': false
+        }
       }
     });
 
@@ -289,7 +325,8 @@ describe('ConfigSyncManager aggregation', () => {
       { type: 'skills', name: 'alpha', platform: 'claude' },
       { type: 'skills', name: 'alpha', platform: 'codex' },
       { type: 'skills', name: 'alpha', platform: 'opencode' },
-      { type: 'skills', name: 'alpha', platform: 'omp' }
+      { type: 'skills', name: 'alpha', platform: 'omp' },
+      { type: 'skills', name: 'alpha', platform: 'demo-cli' }
     ]);
     expect(result.removed).toEqual([
       { type: 'skills', name: 'beta', platform: 'claude' },
@@ -301,6 +338,8 @@ describe('ConfigSyncManager aggregation', () => {
     expect(result.warnings).toEqual([
       { type: 'skills', name: 'alpha', platform: 'codex', warnings: ['converted'] }
     ]);
+    expect(drivers.get('blocked-cli').sync).not.toHaveBeenCalled();
+    expect(drivers.get('blocked-cli').remove).not.toHaveBeenCalled();
   });
 
   test('syncAll discovers and syncs a generic platform from the registry', () => {
@@ -324,5 +363,28 @@ describe('ConfigSyncManager aggregation', () => {
 
     expect(sync).toHaveBeenCalledWith('skills', 'review');
     expect(result.synced).toContainEqual({ type: 'skills', name: 'review', platform: 'demo-cli' });
+  });
+
+  test('syncAll includes a disabled sixth registry platform', () => {
+    const sync = vi.fn(() => ({ success: true }));
+    const remove = vi.fn(() => ({ success: true }));
+    const manager = new ConfigSyncManager({
+      registry: {
+        list: vi.fn((options = {}) => {
+          if (options.enabledOnly) return [];
+          return [{ key: 'demo-cli', capabilities: { resourceSync: 'generic-filesystem' } }];
+        })
+      },
+      runtime: {
+        getDriver: () => ({ sync, remove })
+      }
+    });
+
+    const result = manager.syncAll('skills', {
+      demo: { enabled: true, platforms: { 'demo-cli': true } }
+    });
+
+    expect(result.synced).toEqual([{ type: 'skills', name: 'demo', platform: 'demo-cli' }]);
+    expect(sync).toHaveBeenCalledWith('skills', 'demo');
   });
 });

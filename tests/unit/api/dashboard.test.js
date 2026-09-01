@@ -322,21 +322,69 @@ describe('GET /api/dashboard/init', () => {
     expect(counts.omp).toEqual({ projectCount: 5, sessionCount: 9 });
   });
 
-  it('proxyStatus has all five platforms', async () => {
-    getProxyStatus.mockReturnValue({ running: true, port: 8080 });
+  it('proxyStatus preserves typed failure metadata without exposing raw cause values', async () => {
+    const proxyError = new Error('proxy unavailable');
+    proxyError.status = 'failed';
+    proxyError.retryable = false;
+    proxyError.retryAfter = '2026-09-01T12:34:56.000Z';
+    proxyError.code = 'E_PROXY';
+    getProxyStatus.mockImplementation(() => { throw proxyError; });
     getCodexProxyStatus.mockReturnValue({ running: false });
     getOmpProxyStatus.mockReturnValue({ running: true, port: 20092 });
 
     const res = await callInit();
+    expect(res._status).toBe(200);
+    expect(res._body.success).toBe(true);
+    expect(res._body.data.proxyStatus.claude).toEqual({
+      status: 'failed',
+      platform: 'claude',
+      capability: 'proxy',
+      operation: 'status',
+      error: 'proxy unavailable',
+      retryable: false,
+      retryAfter: '2026-09-01T12:34:56.000Z',
+      code: 'E_PROXY'
+    });
+    expect(res._body.data.proxyStatus.claude).not.toHaveProperty('cause');
+    expect(res._body.data.proxyStatus.codex).toEqual({ running: false });
+    expect(res._body.data.proxyStatus.omp).toEqual({ running: true, port: 20092 });
+  });
+  it('proxyStatus omits non-finite retryAfter values from typed failures', async () => {
+    const proxyError = new Error('proxy unavailable');
+    proxyError.status = 'failed';
+    proxyError.retryable = true;
+    proxyError.retryAfter = Infinity;
+    getProxyStatus.mockImplementation(() => { throw proxyError; });
+
+    const res = await callInit();
+
+    expect(res._body.data.proxyStatus.claude).toEqual({
+      status: 'failed',
+      platform: 'claude',
+      capability: 'proxy',
+      operation: 'status',
+      error: 'proxy unavailable',
+      retryable: true
+    });
+    expect(res._body.data.proxyStatus.claude).not.toHaveProperty('retryAfter');
+  });
+
+  it('proxyStatus has all enabled platforms', async () => {
+    getProxyStatus.mockReturnValue({ running: true, port: 8080 });
+    getCodexProxyStatus.mockReturnValue({ running: false });
+    getGeminiProxyStatus.mockReturnValue({ running: false });
+    getOpenCodeProxyStatus.mockReturnValue({ running: false });
+    getOmpProxyStatus.mockReturnValue({ running: true, port: 20092 });
+
+    const res = await callInit();
     const { proxyStatus } = res._body.data;
-    expect(proxyStatus).toHaveProperty('claude');
-    expect(proxyStatus).toHaveProperty('codex');
-    expect(proxyStatus).toHaveProperty('gemini');
-    expect(proxyStatus).toHaveProperty('opencode');
-    expect(proxyStatus).toHaveProperty('omp');
-    expect(proxyStatus.claude).toEqual({ running: true, port: 8080 });
-    expect(proxyStatus.codex).toEqual({ running: false });
-    expect(proxyStatus.omp).toEqual({ running: true, port: 20092 });
+    expect(proxyStatus).toEqual({
+      claude: { running: true, port: 8080 },
+      codex: { running: false },
+      gemini: { running: false },
+      opencode: { running: false },
+      omp: { running: true, port: 20092 }
+    });
   });
 
   it('todayStats returns zero values when services return null', async () => {

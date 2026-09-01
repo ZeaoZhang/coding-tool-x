@@ -3,17 +3,17 @@
 const {
   DEFAULT_ENABLED_CLI_PLATFORMS,
   getPlatformDefinition,
-  normalizeCustomCliPlatform,
   normalizeEnabledCliPlatforms,
   normalizePlatformKey,
   migrateLegacyCliConfig
 } = require('../../../src/shared/platforms');
 
+const sharedPlatforms = require('../../../src/shared/platforms');
+
 describe('shared platform aliases', () => {
   test('normalizes omp to the persisted omp platform key', () => {
     expect(normalizePlatformKey('omp')).toBe('omp');
     expect(normalizePlatformKey(' OMP ')).toBe('omp');
-    expect(normalizePlatformKey('omp')).toBe('omp');
   });
 
   test('resolves platform definitions through aliases', () => {
@@ -23,28 +23,29 @@ describe('shared platform aliases', () => {
     }));
   });
 
-  test('rejects aliased built-ins as custom platform keys', () => {
-    expect(normalizeCustomCliPlatform({ key: 'omp', name: 'Custom OMP' })).toBeNull();
-  });
-});
-
-describe('legacy homepage helper compatibility', () => {
-  test('normalizes explicit built-in keys without filling obsolete defaults', () => {
-    const { normalizeHomeCliColumns } = require('../../../src/shared/platforms');
-    expect(normalizeHomeCliColumns([' OMP ', 'omp', 'unknown', 'CLAUDE'])).toEqual(['omp', 'claude']);
-    expect(normalizeHomeCliColumns([])).toEqual([]);
+  test('does not expose legacy custom or home-column helpers', () => {
+    expect(sharedPlatforms).not.toHaveProperty('DEFAULT_HOME_CLI_COLUMNS');
+    expect(sharedPlatforms).not.toHaveProperty('MAX_HOME_CLI_COLUMNS');
+    expect(sharedPlatforms).not.toHaveProperty('normalizeCustomCliPlatform');
+    expect(sharedPlatforms).not.toHaveProperty('normalizeCustomCliPlatforms');
+    expect(sharedPlatforms).not.toHaveProperty('normalizeHomeCliColumns');
   });
 });
 
 describe('enabled CLI platform helpers', () => {
-  const allowedKeys = ['claude', 'codex', 'opencode', 'omp', 'demo-cli'];
+  const allowedKeys = ['claude', 'codex', 'gemini', 'opencode', 'omp', 'demo-cli'];
+
+  test('uses the canonical default enabled order', () => {
+    expect(DEFAULT_ENABLED_CLI_PLATFORMS).toEqual(['claude', 'codex', 'opencode', 'omp']);
+    expect(normalizeEnabledCliPlatforms(undefined, allowedKeys)).toEqual(DEFAULT_ENABLED_CLI_PLATFORMS);
+  });
 
   test('normalizes keys, deduplicates in first-seen order, and keeps more than four values', () => {
     expect(normalizeEnabledCliPlatforms(
-      [' CLAUDE ', 'codex', 'claude', ' DEMO-CLI ', 'opencode', 'omp'],
+      [' CLAUDE ', 'codex', 'claude', 'gemini', ' DEMO-CLI ', 'opencode', 'omp'],
       allowedKeys,
       DEFAULT_ENABLED_CLI_PLATFORMS
-    )).toEqual(['claude', 'codex', 'demo-cli', 'opencode', 'omp']);
+    )).toEqual(['claude', 'codex', 'gemini', 'demo-cli', 'opencode', 'omp']);
   });
 
   test('preserves an explicitly empty enabled list', () => {
@@ -66,21 +67,21 @@ describe('enabled CLI platform helpers', () => {
   test('migrates the exact old default to the new default', () => {
     expect(migrateLegacyCliConfig({
       homeCliColumns: ['claude', 'codex', 'gemini', 'opencode'],
-      allowedKeys: ['claude', 'codex', 'gemini', 'opencode', 'omp']
+      allowedKeys
     })).toEqual(DEFAULT_ENABLED_CLI_PLATFORMS);
   });
 
   test('does not treat an old default with an unknown extra as the exact old default', () => {
     expect(migrateLegacyCliConfig({
       homeCliColumns: ['claude', 'codex', 'gemini', 'opencode', 'unknown'],
-      allowedKeys: ['claude', 'codex', 'gemini', 'opencode', 'omp']
+      allowedKeys
     })).toEqual(['claude', 'codex', 'gemini', 'opencode', 'omp']);
   });
 
   test('keeps valid legacy order, appends missing defaults, and discards custom metadata', () => {
     expect(migrateLegacyCliConfig({
       homeCliColumns: [' OMP ', 'custom-cli', 'CLAUDE', 'demo-cli'],
-      customCliPlatforms: [{ key: 'custom-cli', command: 'arbitrary-code' }],
+      customCliPlatforms: [{ key: 'custom-cli', command: 'arbitrary-code', icon: 'run arbitrary code' }],
       allowedKeys: ['claude', 'codex', 'opencode', 'omp']
     })).toEqual(['omp', 'claude', 'codex', 'opencode']);
   });
@@ -101,11 +102,24 @@ describe('enabled CLI platform helpers', () => {
     })).toEqual(['omp']);
   });
 
-  test('falls back when no legacy or default key is allowed', () => {
+  test('uses the new default when no legacy key is valid', () => {
     expect(migrateLegacyCliConfig({
       homeCliColumns: ['unknown'],
-      allowedKeys: ['demo-cli'],
-      fallback: ['demo-cli']
-    })).toEqual(['demo-cli']);
+      allowedKeys
+    })).toEqual(DEFAULT_ENABLED_CLI_PLATFORMS);
+  });
+
+  test('is idempotent after canonical migration', () => {
+    const migrated = migrateLegacyCliConfig({
+      dashboardChannelOrder: ['demo-cli', 'claude'],
+      allowedKeys
+    });
+
+    expect(migrateLegacyCliConfig({
+      enabledCliPlatforms: migrated,
+      homeCliColumns: ['claude', 'codex', 'gemini', 'opencode'],
+      customCliPlatforms: [{ key: 'ignored', command: 'arbitrary-code' }],
+      allowedKeys
+    })).toEqual(migrated);
   });
 });

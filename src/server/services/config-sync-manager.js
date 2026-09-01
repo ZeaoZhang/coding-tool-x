@@ -768,7 +768,7 @@ class ConfigSyncManager {
 
     let platforms = [];
     try {
-      platforms = this.registry?.list?.({ enabledOnly: true }) || [];
+      platforms = this.registry?.list?.() || [];
     } catch (error) {
       results.errors.push({ type, operation: 'list-platforms', error: error.message });
       return results;
@@ -815,6 +815,8 @@ class ConfigSyncManager {
       const active = item.enabled === true && item.platforms && typeof item.platforms === 'object';
 
       for (const platform of definitions.keys()) {
+        const definition = definitions.get(platform);
+        if (definition?.resourceTypes?.[type] === false) continue;
         const shouldSync = active && item.platforms[platform] === true;
         const operation = shouldSync ? 'sync' : 'remove';
         const result = invoke(platform, operation, name);
@@ -830,6 +832,7 @@ class ConfigSyncManager {
       console.log(`[ConfigSyncManager] syncAll(${type}): synced=${results.synced.length}, removed=${results.removed.length}, errors=${results.errors.length}`);
       return results;
     };
+
     return pending.length ? Promise.all(pending).then(finish) : finish();
   }
 

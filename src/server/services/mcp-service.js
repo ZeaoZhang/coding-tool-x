@@ -78,12 +78,19 @@ function getPlatformServices() {
 
 function getMcpPlatformKeys() {
   const { registry } = getPlatformServices();
-  return registry.list({ enabledOnly: true })
-    .map(platform => normalizePlatformKey(platform.key))
-    .filter(platform => {
-      const driverId = registry.getCapability(platform, 'mcp');
-      return Boolean(driverId && driverId !== 'unsupported');
-    });
+  const keys = [];
+  const seen = new Set();
+
+  for (const platform of registry.list()) {
+    const key = normalizePlatformKey(platform.key);
+    if (!key || seen.has(key)) continue;
+    const driverId = registry.getCapability(key, 'mcp');
+    if (!driverId || driverId === 'unsupported') continue;
+    seen.add(key);
+    keys.push(key);
+  }
+
+  return keys;
 }
 
 function createPlatformCapabilityError(platform, capability, code) {
@@ -680,11 +687,18 @@ function normalizeServerApps(apps = {}, fallbackApps = { claude: true }) {
       : !!fallback[platform];
   }
 
-  // Keep historical flags for platforms that are temporarily absent from the
+  // Preserve historical flags for platforms that are temporarily absent from the
   // current registry so disabling/re-enabling a Manifest does not erase data.
   for (const [platform, enabled] of Object.entries(source)) {
     if (!platformKeys.has(platform)) normalized[platform] = !!enabled;
   }
+
+  for (const [platform, enabled] of Object.entries(fallback)) {
+    if (!platformKeys.has(platform) && source[platform] === undefined) {
+      normalized[platform] = !!enabled;
+    }
+  }
+
   return normalized;
 }
 
@@ -861,7 +875,9 @@ function getAllServers() {
       continue;
     }
     server.id = normalizedId;
-    server.apps = normalizeServerApps(server.apps);
+    server.apps = server.apps == null
+      ? normalizeServerApps(server.apps)
+      : normalizeServerApps(server.apps, {});
     server.server = normalizeServerSpec(server.server);
     for (const platform of getControlMcpPlatformKeys()) {
       server.apps[platform] = getMcpControlEnabled(server, platform);
@@ -920,12 +936,12 @@ async function saveServer(server, options = {}) {
       ? normalizeServerApps(previousApps)
       : normalizeServerApps({ claude: true });
   } else {
-    server.apps = normalizeServerApps(server.apps, previousApps || { claude: true });
+    server.apps = normalizeServerApps(server.apps, previousApps || {});
   }
 
   if (MCP_CONTROL_SERVICE) {
     const requestedApps = normalizeServerApps(server.apps);
-    const effectiveApps = {};
+    const effectiveApps = { ...requestedApps };
     for (const platform of getControlMcpPlatformKeys()) {
       const control = promoteMcpControlEntry({ ...server, apps: requestedApps }, platform, requestedApps[platform]);
       effectiveApps[platform] = control
@@ -934,7 +950,6 @@ async function saveServer(server, options = {}) {
     }
     server.apps = effectiveApps;
   }
-
   if (syncPlatforms) {
     await syncServerToAllPlatforms(server, previousApps);
   }
@@ -1295,13 +1310,12 @@ async function removeGenericMcpServer(driver, platform, serverId) {
 async function importGenericMcpServers(driver, platform, servers) {
   const config = await readGenericMcpConfig(driver, platform, true);
   const mcpServers = getGenericMcpServerMap(config);
-  const defaultApps = normalizeServerApps({}, {});
   let count = 0;
 
   for (const [id, spec] of Object.entries(mcpServers)) {
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) continue;
     if (servers[id]) {
-      servers[id].apps = normalizeServerApps(servers[id].apps);
+      servers[id].apps = normalizeServerApps(servers[id].apps, {});
       if (!servers[id].apps[platform]) {
         servers[id].apps[platform] = true;
         count++;
@@ -1314,7 +1328,7 @@ async function importGenericMcpServers(driver, platform, servers) {
       id,
       name: id,
       server: normalizeServerSpec(spec),
-      apps: { ...defaultApps, [platform]: true },
+      apps: { [platform]: true },
       createdAt: now,
       updatedAt: now
     };

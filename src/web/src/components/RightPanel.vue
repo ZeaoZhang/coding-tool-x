@@ -204,6 +204,7 @@ const currentPanelProps = computed(() => (
 
 function supportsCapability(capability) {
   return currentPlatform.value?.capabilities?.[capability] === true
+    || currentPlatform.value?.resourceTypes?.[capability] === true
 }
 
 function supportsResource(resourceType) {

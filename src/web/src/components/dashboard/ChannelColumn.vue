@@ -4,6 +4,7 @@
     <div
       class="channel-header"
       :class="channelType"
+      :style="{ '--platform-color': accentColor }"
     >
       <!-- 拖拽手柄 -->
       <div class="drag-handle" title="拖拽排序">
@@ -1199,6 +1200,19 @@ onUnmounted(() => {
 
 .channel-header.omp::after {
   background: linear-gradient(90deg, #0f9f9a, rgba(15, 159, 154, 0.3));
+}
+
+.channel-header:not(.claude):not(.codex):not(.gemini):not(.opencode):not(.omp) {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--platform-color) 10%, transparent) 0%, var(--bg-secondary) 100%);
+}
+
+.channel-header:not(.claude):not(.codex):not(.gemini):not(.opencode):not(.omp)::after {
+  background: var(--platform-color);
+}
+
+.channel-header:not(.claude):not(.codex):not(.gemini):not(.opencode):not(.omp) .header-icon {
+  background: var(--platform-color);
+  color: white;
 }
 
 .header-icon {

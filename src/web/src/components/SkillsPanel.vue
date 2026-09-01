@@ -14,7 +14,7 @@
       <div class="asset-subtitle">缓存并控制当前平台可用的技能</div>
         </div>
       </div>
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
@@ -40,7 +40,7 @@
 
     <!-- 抽屉模式头部 -->
     <div class="asset-drawer-toolbar" v-if="inDrawer">
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
@@ -95,7 +95,7 @@
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="skills.length === 0">配置仓库源</n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="supportsCurrentPlatform && skills.length === 0">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
@@ -196,6 +196,7 @@ const loadRequestId = ref(0)
 const refreshContextEpoch = ref(0)
 const { byCapability } = useEnabledCliPlatforms()
 const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
+const supportsCurrentPlatform = computed(() => managedSkillPlatforms.value.includes(currentPlatform.value))
 
 const currentPlatform = computed(() => {
   return String(props.platform || getRoutePlatform(route) || 'claude').trim().toLowerCase()
@@ -252,12 +253,18 @@ const emptyText = computed(() => {
   if (filterStatus.value === 'enabled') return '暂无已启用的技能'
   if (filterStatus.value === 'disabled') return '暂无已关闭的技能'
   if (filterStatus.value === 'pending') return '暂无待审批的技能'
+  if (!supportsCurrentPlatform.value) return `${currentPlatformLabel.value} 暂未提供 Skills 能力`
   return '暂无可用技能，请配置仓库源'
 })
 
 async function loadData({ notifyError = true } = {}) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
+  if (!supportsCurrentPlatform.value) {
+    skills.value = []
+    loading.value = false
+    return false
+  }
   loading.value = true
   try {
     const skillsRes = await getSkills(platform, scopeOptions.value)
@@ -279,7 +286,7 @@ async function loadData({ notifyError = true } = {}) {
 }
 
 async function handleImport() {
-  if (currentPlatform.value !== 'claude') {
+  if (!supportsCurrentPlatform.value || currentPlatform.value !== 'claude') {
     return
   }
   importing.value = true
@@ -299,6 +306,7 @@ async function handleImport() {
 }
 
 async function handleToggle(skill, enabled) {
+  if (!supportsCurrentPlatform.value) return
   if (
     !skill.controlKey
     || skill.protected
@@ -360,6 +368,7 @@ async function handleToggle(skill, enabled) {
 }
 
 async function handleApprove(skill) {
+  if (!supportsCurrentPlatform.value) return
   if (!skill.controlKey || !['pending', 'needs_review'].includes(skill.trust)) return
   if (props.scope === 'project' && skill.sourceScope !== 'project') return
   const key = skill.controlKey
@@ -377,7 +386,7 @@ async function handleApprove(skill) {
 }
 
 async function handleRefresh() {
-  if (refreshing.value) return
+  if (!supportsCurrentPlatform.value || refreshing.value) return
   const epoch = refreshContextEpoch.value
   const contextKey = JSON.stringify({
     platform: currentPlatform.value,

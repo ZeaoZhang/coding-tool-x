@@ -84,6 +84,7 @@ import {
 } from '@vicons/ionicons5'
 import axios from 'axios'
 import { useGlobalState } from '../../composables/useGlobalState'
+import { useEnabledCliPlatforms } from '../../composables/useEnabledCliPlatforms'
 
 const loading = ref(false)
 const stats = ref({
@@ -100,12 +101,12 @@ let realtimeEnabled = false
 let mounted = false
 const processedLogIds = new Set()
 
-const { getLogs, statsInterval: statsIntervalSetting } = useGlobalState()
-const claudeLogs = getLogs('claude')
-const codexLogs = getLogs('codex')
-const geminiLogs = getLogs('gemini')
-const opencodeLogs = getLogs('opencode')
+const { logsBySource, statsInterval: statsIntervalSetting } = useGlobalState()
+const { enabledKeys } = useEnabledCliPlatforms()
 
+function getEnabledLogs() {
+  return enabledKeys.value.map(key => logsBySource.value[key] || [])
+}
 function formatNumber(num) {
   if (num >= 1000000) {
     return (num / 1000000).toFixed(1) + 'M'
@@ -167,7 +168,7 @@ function refresh() {
 }
 
 function markExistingLogs() {
-  ;[claudeLogs.value, codexLogs.value, geminiLogs.value, opencodeLogs.value].forEach(list => {
+  getEnabledLogs().forEach(list => {
     list.forEach(log => processedLogIds.add(log.id))
   })
 }
@@ -190,10 +191,11 @@ function processNewLogs(logList) {
   }
 }
 
-watch(claudeLogs, (list) => processNewLogs(list), { deep: true })
-watch(codexLogs, (list) => processNewLogs(list), { deep: true })
-watch(geminiLogs, (list) => processNewLogs(list), { deep: true })
-watch(opencodeLogs, (list) => processNewLogs(list), { deep: true })
+watch(
+  () => getEnabledLogs(),
+  (lists) => lists.forEach(processNewLogs),
+  { deep: true }
+)
 
 function scheduleStatsSync() {
   if (syncInterval) {

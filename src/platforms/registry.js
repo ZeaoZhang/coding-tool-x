@@ -89,7 +89,10 @@ function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platf
       });
       continue;
     }
-    if (builtInKeys.has(manifest.key)) continue;
+    if (builtInKeys.has(manifest.key)) {
+      diagnostics.push({ key: manifest.key, source: 'userFile', message: 'duplicate platform key ignored' });
+      continue;
+    }
     if (definitions.has(manifest.key)) {
       diagnostics.push({ key: manifest.key, source: 'userFile', message: 'duplicate platform key ignored' });
       continue;
@@ -142,9 +145,6 @@ function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platf
       };
       const resourceTypes = publicResourceTypes(platform.resourceTypes);
       if (resourceTypes) result.resourceTypes = resourceTypes;
-      if (platform.projectResources) {
-        result.projectResources = clone(platform.projectResources);
-      }
       if (typeof platform.promptLabel === 'string' && platform.promptLabel.trim()) {
         result.promptLabel = platform.promptLabel;
       }

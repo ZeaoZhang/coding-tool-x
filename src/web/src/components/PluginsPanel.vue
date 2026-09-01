@@ -14,7 +14,7 @@
           <div class="asset-subtitle">管理平台插件、仓库源和市场安装状态</div>
         </div>
       </div>
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="managedPluginPlatforms.includes(currentPlatform)">
         <n-button v-if="capabilities.repositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
@@ -32,7 +32,7 @@
 
     <!-- 抽屉模式头部 -->
     <div class="asset-drawer-toolbar" v-if="inDrawer">
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="managedPluginPlatforms.includes(currentPlatform)">
         <n-button v-if="capabilities.repositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
@@ -85,7 +85,7 @@
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="plugins.length === 0 && capabilities.repositories">配置仓库源</n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="managedPluginPlatforms.includes(currentPlatform) && plugins.length === 0 && capabilities.repositories">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
@@ -108,7 +108,7 @@
     </div>
 
     <!-- 底部提示 -->
-    <div v-if="capabilities.install || capabilities.uninstall" class="asset-footer">
+    <div v-if="managedPluginPlatforms.includes(currentPlatform) && (capabilities.install || capabilities.uninstall)" class="asset-footer">
       <n-icon size="14" class="asset-info-icon"><InformationCircleOutline /></n-icon>
       <span>安装/卸载后需重启 {{ currentPlatformLabel }} 生效</span>
     </div>
@@ -181,6 +181,20 @@ const capabilities = ref({
 })
 const { byCapability } = useEnabledCliPlatforms()
 const managedPluginPlatforms = computed(() => byCapability('plugins').map(platform => platform.key))
+const supportsCurrentPlatform = computed(() => managedPluginPlatforms.value.includes(currentPlatform.value))
+
+function setUnsupportedCapabilities() {
+  capabilities.value = {
+    supportsPlugins: false,
+    repositories: false,
+    market: false,
+    install: false,
+    uninstall: false,
+    import: false,
+    syncRepos: false,
+    disabledReason: `${currentPlatformLabel.value} 暂未提供插件管理能力`
+  }
+}
 
 const currentPlatform = computed(() => {
   const requested = String(
@@ -270,6 +284,12 @@ async function loadCapabilities(platform, requestId) {
 async function loadData(force = false) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
+  if (!supportsCurrentPlatform.value) {
+    plugins.value = []
+    setUnsupportedCapabilities()
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
     if (!await loadCapabilities(platform, requestId)) return
@@ -365,7 +385,7 @@ async function loadData(force = false) {
 }
 
 async function handleImport() {
-  if (currentPlatform.value !== 'claude') return
+  if (!supportsCurrentPlatform.value || currentPlatform.value !== 'claude') return
   importing.value = true
   try {
     const res = await importFromClaude('plugins')
@@ -383,7 +403,7 @@ async function handleImport() {
 }
 
 async function handleInstall(plugin) {
-  if (!capabilities.value.install || plugin.readonly) return
+  if (!supportsCurrentPlatform.value || !capabilities.value.install || plugin.readonly) return
   if (!plugin.installSource && !plugin.repoOwner && !plugin.repoProjectPath && !plugin.repoLocalPath) {
     return message.error('缺少可安装来源')
   }
@@ -433,7 +453,7 @@ async function handleInstall(plugin) {
 }
 
 async function handleUninstall(plugin) {
-  if (!capabilities.value.uninstall || plugin.readonly) return
+  if (!supportsCurrentPlatform.value || !capabilities.value.uninstall || plugin.readonly) return
   uninstallingKeys.value[plugin.key] = true
   try {
     const res = await uninstallPlugin(

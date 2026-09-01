@@ -272,18 +272,50 @@ describe('ConfigRegistryService platform capability metadata', () => {
       plugins: { 'demo-cli': true, 'unsupported-cli': false }
     });
   });
-  test('uses only enabled manifest platforms for config support metadata', () => {
-    const calls = [];
+
+  test('includes disabled registry platforms when deriving support metadata', () => {
+    const platform = {
+      key: 'demo-cli',
+      enabled: false,
+      capabilities: { resourceSync: 'generic-filesystem' },
+      resourceTypes: { skills: true, commands: false, agents: true, plugins: false }
+    };
     const registry = {
-      list: (options) => {
-        calls.push(options);
-        return options?.enabledOnly
-          ? [{ key: 'enabled-cli', enabled: true }]
-          : [{ key: 'enabled-cli', enabled: true }, { key: 'disabled-cli', enabled: false }];
-      }
+      list: vi.fn((options = {}) => (options.enabledOnly ? [] : [platform]))
     };
 
-    expect(getSupportedPlatforms(registry)).toEqual(['enabled-cli']);
-    expect(calls).toEqual([{ enabledOnly: true }]);
+    expect(getSupportedPlatforms(registry)).toEqual(['demo-cli']);
+    expect(buildPlatformSupport(registry)).toEqual({
+      skills: { 'demo-cli': true },
+      commands: { 'demo-cli': false },
+      agents: { 'demo-cli': true },
+      plugins: { 'demo-cli': false }
+    });
+  });
+  test('refreshes platform registry when normalizing new entries', () => {
+    const platformRuntime = require('../../../src/platforms/runtime');
+    let definitions = [{
+      key: 'first-cli',
+      capabilities: { resourceSync: 'generic-filesystem' },
+      resourceTypes: { skills: true }
+    }];
+    const registrySpy = vi.spyOn(platformRuntime, 'getPlatformRegistry')
+      .mockImplementation(() => ({ list: () => definitions }));
+
+    try {
+      const service = new ConfigRegistryService();
+      service.setItem('skills', 'first', { platforms: { 'first-cli': true } });
+      definitions = [{
+        key: 'second-cli',
+        capabilities: { resourceSync: 'generic-filesystem' },
+        resourceTypes: { skills: true }
+      }];
+
+      const second = service.setItem('skills', 'second', { platforms: { 'second-cli': true } });
+
+      expect(second.platforms).toEqual({ 'second-cli': true });
+    } finally {
+      registrySpy.mockRestore();
+    }
   });
 });

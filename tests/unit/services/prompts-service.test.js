@@ -44,7 +44,7 @@ function stubModules() {
 function stubDynamicPromptRuntime(driver) {
   const runtime = require('../../../src/platforms/runtime');
   const definitions = [
-    { key: 'demo-cli', capabilities: { prompts: 'generic-prompt' } },
+    { key: 'demo-cli', enabled: false, capabilities: { prompts: 'generic-prompt' } },
     { key: 'mcp-only', capabilities: { mcp: 'generic-mcp' } }
   ];
   const byKey = new Map(definitions.map(definition => [definition.key, definition]));
@@ -121,7 +121,7 @@ describe('prompts-service initialization and preset management', () => {
 });
 
 describe('prompts-service platform sync', () => {
-  test('activatePreset writes to enabled platform prompt files', async () => {
+  test('activatePreset writes registry-backed prompt files and ignores unsupported OMP app flags', async () => {
     const promptsService = require('../../../src/server/services/prompts-service');
     promptsService.savePreset({
       id: 'team-preset',
@@ -138,8 +138,7 @@ describe('prompts-service platform sync', () => {
     expect(fs.existsSync(path.join(testDir, '.codex', 'AGENTS.md'))).toBe(false);
     expect(fs.readFileSync(path.join(testDir, '.gemini', 'GEMINI.md'), 'utf8')).toBe('team instructions');
     expect(fs.readFileSync(path.join(testDir, 'opencode', 'AGENTS.md'), 'utf8')).toBe('team instructions');
-    expect(fs.readFileSync(ompTemplatePath, 'utf8')).toContain('team instructions');
-    expect(fs.readFileSync(ompTemplatePath, 'utf8')).toContain('description: "Team Preset"');
+    expect(fs.existsSync(ompTemplatePath)).toBe(false);
   });
 
   test('deactivatePrompt clears active preset and removes prompt files', async () => {
@@ -159,14 +158,14 @@ describe('prompts-service platform sync', () => {
     const active = promptsService.getActivePreset();
 
     expect(result.claude).toBe(true);
-    expect(result.omp).toBe(true);
+    expect(result.omp).toBeUndefined();
     expect(active.activePresetId).toBeNull();
     expect(fs.existsSync(path.join(globalClaudeDir, 'CLAUDE.md'))).toBe(false);
     expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'team-preset.md'))).toBe(false);
     expect(fs.existsSync(userTemplate)).toBe(true);
   });
 
-  test('activating a different OMP preset removes the previous managed template', async () => {
+  test('does not activate legacy OMP app flags without a prompt capability', async () => {
     const promptsService = require('../../../src/server/services/prompts-service');
     promptsService.savePreset({
       id: 'first',
@@ -174,18 +173,10 @@ describe('prompts-service platform sync', () => {
       content: 'first instructions',
       apps: { omp: true, claude: false, codex: false, gemini: false, opencode: false }
     });
-    promptsService.savePreset({
-      id: 'second',
-      name: 'Second',
-      content: 'second instructions',
-      apps: { omp: true, claude: false, codex: false, gemini: false, opencode: false }
-    });
 
     await promptsService.activatePreset('first');
-    await promptsService.activatePreset('second');
 
     expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'first.md'))).toBe(false);
-    expect(fs.readFileSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'second.md'), 'utf8')).toContain('second instructions');
   });
 });
 
@@ -203,8 +194,7 @@ describe('prompts-service import and stats', () => {
     expect(imported.name).toBe('Imported Codex');
     expect(imported.apps.codex).toBe(true);
     expect(platformStatus.codex.exists).toBe(true);
-    expect(platformStatus.omp.path).toBe(path.join(testDir, 'omp-agent', 'prompts'));
-    expect(Array.isArray(platformStatus.omp.templates)).toBe(true);
+    expect(platformStatus.omp).toBeUndefined();
     expect(stats.total).toBeGreaterThanOrEqual(4);
   });
 
@@ -270,6 +260,26 @@ describe('registry-driven prompt platforms', () => {
       expect(await promptsService.removePlatformPrompt('demo-cli')).toBe(true);
       expect(driver.write).toHaveBeenCalled();
       expect(driver.remove).toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+  it('lists prompt-capable registry platforms regardless of manifest enabled state', async () => {
+    const driver = {
+      read: vi.fn(async () => 'generic prompt'),
+      write: vi.fn(async () => ({ status: 'ok', capability: 'prompts', operation: 'write' })),
+      remove: vi.fn(async () => ({ status: 'ok', capability: 'prompts', operation: 'remove' }))
+    };
+    const restore = stubDynamicPromptRuntime(driver);
+    const promptsService = require('../../../src/server/services/prompts-service');
+
+    try {
+      const status = await promptsService.getPlatformStatus();
+
+      expect(status['demo-cli'].content).toBe('generic prompt');
+      expect(status['demo-cli'].path).toBeUndefined();
+      expect(status.omp).toBeUndefined();
+      expect(driver.read).toHaveBeenCalledTimes(1);
     } finally {
       restore();
     }

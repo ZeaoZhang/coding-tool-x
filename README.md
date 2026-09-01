@@ -45,14 +45,17 @@
 
 - 集中存储在 `~/.cc-tool`
 - 保留并同步各平台原生配置目录，而不是替代原生用法
+- 支持 Prompts 预设管理，并同步到声明 `prompts` capability 的平台提示文件；具体平台能力以 Manifest 为准
+- 支持 Skills、Agents、Commands、Plugins 的中心托管与按支持的平台启停
+- OMP Commands 按 OMP 原生语义管理为 slash commands，OMP Plugins 按 packages / extensions 管理
+- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；OMP 写入原生 `mcp.json`
 - Skill 仓库只保存 source reference；手动刷新时下载仓库中发现的每个 Skill 完整目录，不保存仓库归档或 tree
 - 每个 CLI 使用独立的 Skill artifact 格式和目录：`claude-skill-v1`、`codex-skill-v1`、`gemini-skill-v1`、`opencode-skill-v1`、`omp-skill-v1`
 - Skill 页面进入、浏览器刷新和页面切换只扫描本地；只有用户点击“刷新远端”才创建异步网络任务
 - Skill `enabled` 控制实际 CLI/OMP 加载；关闭只移除 native projection，不删除本地 artifact
 - 新下载 Skill 默认 `trust=needs_review`、`enabled=false`，审批前不会进入实际运行面
 - 所有扫描到的 Skill 默认登记为 `managed=true`；`managed` 不等于已启用
-- 支持 Prompts 预设管理，并同步到 Claude、Codex、Gemini、OpenCode 对应提示文件；OMP 同步为原生 prompt templates
-- 支持 MCP 服务器配置、预设、连通性测试和多平台写入；MCP/Skill activation、trust 和 secret reference 由同一有效控制面管理
+- OMP 可将提示词同步为原生 prompt templates；MCP/Skill activation、trust 和 secret reference 由同一有效控制面管理
 - 支持 Claude、Codex、Gemini、OpenCode 的 OAuth 凭证池管理与回写原生配置；OMP auth 通过原生配置导入导出保留
 - 支持 ZIP / JSON 配置导入导出
 
@@ -77,7 +80,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
 | 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持，含余额显示与批量测速 |
-| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 写入 OMP prompt templates |
+| Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 不提供集中式提示文件同步 |
 | Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
 | Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
 | Agents 管理 | 支持 | 用户级 | 支持 | 支持 | 不提供直接原生管理 |
@@ -91,7 +94,7 @@
 
 - Codex Agents 目前仅支持用户级代理
 - OpenCode 会话读取使用内置 `node:sqlite`，不再依赖本机 sqlite3 可执行文件
-- OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；Agents 暂不作为独立可写配置文件管理
+- OMP 的原生资源轴包含 skills、commands、prompt templates、packages / extensions 和 MCP `mcp.json`；集中式 Prompts 预设不向 OMP 同步，Agents 暂不作为独立可写配置文件管理
 - OMP 平台键统一为 `omp`，不再保留 `omp` 平台键兼容
 - OMP OAuth 不在 OAuth Credentials 抽屉中直接增删改；`auth.json` 仍随 Config Export / Import 的 native config 快照迁移
 
