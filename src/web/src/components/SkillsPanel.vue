@@ -14,7 +14,7 @@
           <div class="asset-subtitle">安装、创建和同步当前平台可用的技能</div>
         </div>
       </div>
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
@@ -40,7 +40,7 @@
 
     <!-- 抽屉模式头部 -->
     <div class="asset-drawer-toolbar" v-if="inDrawer">
-      <div class="asset-action-row">
+      <div class="asset-action-row" v-if="supportsCurrentPlatform">
         <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
@@ -95,7 +95,7 @@
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="skills.length === 0">配置仓库源</n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="supportsCurrentPlatform && skills.length === 0">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
@@ -189,6 +189,7 @@ const importing = ref(false)
 const loadRequestId = ref(0)
 const { byCapability } = useEnabledCliPlatforms()
 const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
+const supportsCurrentPlatform = computed(() => managedSkillPlatforms.value.includes(currentPlatform.value))
 
 const currentPlatform = computed(() => {
   return String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
@@ -228,12 +229,17 @@ const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的技能'
   if (filterStatus.value === 'installed') return '暂无已安装的技能'
   if (filterStatus.value === 'uninstalled') return '所有技能都已安装'
+  if (!supportsCurrentPlatform.value) return `${currentPlatformLabel.value} 暂未提供 Skills 能力`
   return '暂无可用技能，请配置仓库源'
 })
-
 async function loadData(force = false, { notifyError = true } = {}) {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
+  if (!supportsCurrentPlatform.value) {
+    skills.value = []
+    loading.value = false
+    return false
+  }
   loading.value = true
   try {
     const skillsRes = await getSkills(force, platform, scopeOptions.value)
@@ -254,7 +260,7 @@ async function loadData(force = false, { notifyError = true } = {}) {
 }
 
 async function handleImport() {
-  if (currentPlatform.value !== 'claude') {
+  if (!supportsCurrentPlatform.value || currentPlatform.value !== 'claude') {
     return
   }
   importing.value = true
@@ -274,7 +280,7 @@ async function handleImport() {
 }
 
 async function handleInstall(skill) {
-  if (skill.protected) return
+  if (!supportsCurrentPlatform.value) return
   installingKeys.value[skill.key] = true
   try {
     let res
@@ -318,7 +324,8 @@ async function handleInstall(skill) {
 
 async function handleUninstall(skill) {
   if (
-    skill.protected
+    !supportsCurrentPlatform.value
+    || skill.protected
     || skill.readonly
     || (props.scope === 'project' && skill.sourceScope !== 'project')
   ) return
