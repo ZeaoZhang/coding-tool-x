@@ -9,8 +9,6 @@ const MODULE_PATHS = Object.freeze({
     nativeConfig: './claude/native-config-implementation',
     api: './claude/api',
     projectConfig: './claude/project-config',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
   }),
   codex: Object.freeze({
     projects: './codex/sessions-implementation',
@@ -20,8 +18,6 @@ const MODULE_PATHS = Object.freeze({
     nativeConfig: './codex/native-config-implementation',
     api: './codex/api',
     projectConfig: './codex/project-config',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
   }),
   gemini: Object.freeze({
     projects: './gemini/sessions-implementation',
@@ -31,8 +27,6 @@ const MODULE_PATHS = Object.freeze({
     nativeConfig: './gemini/native-config-implementation',
     api: './gemini/api',
     projectConfig: './gemini/project-config',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
   }),
   opencode: Object.freeze({
     projects: './opencode/sessions-implementation',
@@ -42,8 +36,6 @@ const MODULE_PATHS = Object.freeze({
     nativeConfig: './opencode/native-config-implementation',
     api: './opencode/api',
     projectConfig: './opencode/project-config',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
   }),
   omp: Object.freeze({
     projects: './omp/sessions-implementation',
@@ -53,7 +45,6 @@ const MODULE_PATHS = Object.freeze({
     nativeConfig: './omp/native-config-implementation',
     api: './omp/api',
     projectConfig: './omp/project-config',
-    mcp: '../../server/services/mcp-service'
   })
 });
 
@@ -231,22 +222,6 @@ const NATIVE_CONFIG_EXPORTS = Object.freeze({
 function unsupported(platform, capability, operation) {
   return { status: 'unsupported', platform, capability, operation };
 }
-const LEGACY_FILE_EXPORTS = Object.freeze({
-  mcp: Object.freeze({
-    read: 'readPlatformMcpConfig',
-    write: 'writePlatformMcpConfig',
-    remove: 'removePlatformMcpServer',
-    sync: 'syncPlatformMcpServer',
-    import: 'importPlatformMcpServers',
-    export: 'exportPlatformMcpServers'
-  }),
-  prompts: Object.freeze({
-    read: 'readLegacyPlatformPrompt',
-    write: 'writeLegacyPlatformPrompt',
-    remove: 'removeLegacyPlatformPrompt'
-  })
-});
-
 function createModuleLoader({ platform, capability, requireImpl }) {
   const modulePath = MODULE_PATHS[platform] && MODULE_PATHS[platform][capability];
   let loaded = false;
@@ -462,22 +437,6 @@ function createMappedDriver({ platform, capability, requireImpl, operations }) {
   return driver;
 }
 
-function createLegacyFileDriver({ platform, capability, requireImpl }) {
-  const loadModule = createModuleLoader({ platform, capability, requireImpl });
-  const operations = LEGACY_FILE_EXPORTS[capability];
-  const driver = { platform, capability };
-
-  for (const [operation, exportName] of Object.entries(operations || {})) {
-    driver[operation] = (...args) => invokeExport(
-      loadModule,
-      exportName,
-      [platform, ...args],
-      () => unsupported(platform, capability, operation)
-    );
-  }
-
-  return driver;
-}
 
 function createClaudeSessionDriver({ platform, capability, requireImpl }) {
   const loadModule = createModuleLoader({ platform, capability, requireImpl });
@@ -609,9 +568,6 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
         return moduleExports.createAdapter(options);
       }
     };
-  }
-  if ((capability === 'mcp' || capability === 'prompts') && MODULE_PATHS[platform]?.[capability]) {
-    return createLegacyFileDriver({ platform, capability, requireImpl });
   }
   if (capability === 'channels') {
     return createChannelsDriver({ ...context, platform, capability, requireImpl, manifest, useBuiltInDrivers });
