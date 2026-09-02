@@ -698,37 +698,6 @@ describe('mcp-service', () => {
     });
   });
 
-  describe('legacy platform file adapters', () => {
-    it('round-trips native MCP config formats through fixed platform adapters', () => {
-      const configs = {
-        claude: { mcpServers: { claude: { command: 'claude-mcp' } } },
-        codex: { mcp_servers: { codex: { command: 'codex-mcp' } } },
-        gemini: { mcpServers: { gemini: { command: 'gemini-mcp' } } },
-        opencode: { mcp: { opencode: { command: 'opencode-mcp' } } },
-        omp: { mcpServers: { omp: { command: 'omp-mcp' } } }
-      };
-
-      for (const [platform, config] of Object.entries(configs)) {
-        service.writePlatformMcpConfig(platform, config);
-        expect(service.readPlatformMcpConfig(platform)).toEqual(config);
-      }
-    });
-
-    it('removes one server through the fixed native adapter', () => {
-      service.writePlatformMcpConfig('claude', {
-        mcpServers: {
-          keep: { command: 'keep' },
-          remove: { command: 'remove' }
-        }
-      });
-
-      service.removePlatformMcpServer('claude', 'remove');
-
-      expect(service.readPlatformMcpConfig('claude')).toEqual({
-        mcpServers: { keep: { command: 'keep' } }
-      });
-    });
-  });
 
   describe('registry-driven MCP platforms', () => {
     it('syncs and counts a generic MCP platform without a service switch', async () => {

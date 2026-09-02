@@ -6,21 +6,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
-const { NATIVE_PATHS, PATHS } = require('../../config/paths');
-const { resolvePreferredHomeDir } = require('../../utils/home-dir');
-
-const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+const { PATHS } = require('../../config/paths');
 
 // Prompts 配置文件路径
 const PROMPTS_FILE = PATHS.prompts;
 
-// 各平台提示词文件路径
-const CLAUDE_CONFIG_DIR = NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings);
-const CLAUDE_PROMPT_PATH = NATIVE_PATHS.claude.prompt || path.join(CLAUDE_CONFIG_DIR, 'CLAUDE.md');
-const CODEX_PROMPT_PATH = path.join(HOME_DIR, '.codex', 'AGENTS.md');
-const GEMINI_PROMPT_PATH = path.join(HOME_DIR, '.gemini', 'GEMINI.md');
-const OPENCODE_PROMPT_PATH = path.join(NATIVE_PATHS.opencode.config, 'AGENTS.md');
 
 function normalizePlatformKey(platform) {
   return String(platform || '').trim().toLowerCase();
@@ -227,44 +217,6 @@ function writeJsonFile(filePath, data) {
   fs.renameSync(tempPath, filePath);
 }
 
-/**
- * 安全读取文本文件
- */
-function readTextFile(filePath, defaultValue = '') {
-  try {
-    if (fs.existsSync(filePath)) {
-      return fs.readFileSync(filePath, 'utf-8');
-    }
-  } catch (err) {
-    console.error(`[Prompts] Failed to read ${filePath}:`, err.message);
-  }
-  return defaultValue;
-}
-
-/**
- * 安全写入文本文件（原子写入）
- */
-function writeTextFile(filePath, content) {
-  ensureDir(path.dirname(filePath));
-  const tempPath = filePath + '.tmp';
-  fs.writeFileSync(tempPath, content, 'utf-8');
-  fs.renameSync(tempPath, filePath);
-}
-
-/**
- * 删除文件（如果存在）
- */
-function deleteFile(filePath) {
-  try {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      return true;
-    }
-  } catch (err) {
-    console.error(`[Prompts] Failed to delete ${filePath}:`, err.message);
-  }
-  return false;
-}
 
 // ============================================================================
 // Prompts 数据管理
@@ -563,59 +515,6 @@ function syncPresetToAllPlatforms(preset) {
 }
 
 
-function readLegacyPlatformPrompt(platform) {
-  switch (platform) {
-    case 'claude':
-      return readTextFile(CLAUDE_PROMPT_PATH, '');
-    case 'codex':
-      return readTextFile(CODEX_PROMPT_PATH, '');
-    case 'gemini':
-      return readTextFile(GEMINI_PROMPT_PATH, '');
-    case 'opencode':
-      return readTextFile(OPENCODE_PROMPT_PATH, '');
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
-function writeLegacyPlatformPrompt(platform, content) {
-  if (typeof content !== 'string') {
-    throw new Error('提示词内容必须是字符串');
-  }
-
-  switch (platform) {
-    case 'claude':
-      writeTextFile(CLAUDE_PROMPT_PATH, content);
-      return content;
-    case 'codex':
-      writeTextFile(CODEX_PROMPT_PATH, content);
-      return content;
-    case 'gemini':
-      writeTextFile(GEMINI_PROMPT_PATH, content);
-      return content;
-    case 'opencode':
-      writeTextFile(OPENCODE_PROMPT_PATH, content);
-      return content;
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
-function removeLegacyPlatformPrompt(platform) {
-  switch (platform) {
-    case 'claude':
-      return deleteFile(CLAUDE_PROMPT_PATH);
-    case 'codex':
-      return deleteFile(CODEX_PROMPT_PATH);
-    case 'gemini':
-      return deleteFile(GEMINI_PROMPT_PATH);
-    case 'opencode':
-      return deleteFile(OPENCODE_PROMPT_PATH);
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
 /**
  * 从平台读取当前提示词
  */
@@ -770,9 +669,6 @@ module.exports = {
   readPlatformPrompt,
   writePlatformPrompt,
   removePlatformPrompt,
-  readLegacyPlatformPrompt,
-  writeLegacyPlatformPrompt,
-  removeLegacyPlatformPrompt,
   getPlatformStatus,
   importFromPlatform,
   getStats
