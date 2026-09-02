@@ -10,7 +10,10 @@ function createDriver(context = {}) {
     localServicePath: '../platforms/drivers/codex/channels-implementation',
     syncMethod: 'syncCurrentCodexChannel',
     createArgs: (input, rest) => typeof input === 'object'
-      ? [input.name, input.providerKey, input.baseUrl, input.apiKey, input.wireApi, input.extra || {}]
+      ? (() => {
+        const { name, providerKey, baseUrl, apiKey, wireApi, extra, ...channelExtra } = input;
+        return [name, providerKey, baseUrl, apiKey, wireApi, { ...channelExtra, ...extra }];
+      })()
       : [input, ...rest],
     cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20089, createDefaults: { wireApi: 'responses' } },
     modelListType: 'openai_compatible',
@@ -18,6 +21,7 @@ function createDriver(context = {}) {
       ? [`provider ${channel.providerKey}`]
       : []
   });
+  const callLegacy = (name, args) => driver._service()[name](...args);
   for (const name of [
     'getChannels', 'getEnabledChannels', 'createChannel', 'updateChannel',
     'markChannelAsRecentlyUsed', 'deleteChannel', 'saveChannelOrder',
@@ -26,6 +30,10 @@ function createDriver(context = {}) {
   ]) {
     driver[name] = (...args) => callLegacy(name, args);
   }
+  driver.writeMultiChannelConfig = channels => {
+    const service = driver._service();
+    return service.writeCodexConfigForMultiChannel(channels);
+  };
   return driver;
 }
 

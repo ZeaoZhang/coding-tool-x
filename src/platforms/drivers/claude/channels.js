@@ -11,7 +11,10 @@ function createDriver(context = {}) {
     listMethod: 'getAllChannels',
     syncMethod: 'syncCurrentClaudeChannel',
     createArgs: (input, rest) => typeof input === 'object'
-      ? [input.name, input.baseUrl, input.apiKey, input.websiteUrl, input.extra || {}]
+      ? (() => {
+        const { name, baseUrl, apiKey, websiteUrl, extra, ...channelExtra } = input;
+        return [name, baseUrl, apiKey, websiteUrl, { ...channelExtra, ...extra }];
+      })()
       : [input, ...rest],
     cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20088 },
     dashboardChannelShape: 'array'
