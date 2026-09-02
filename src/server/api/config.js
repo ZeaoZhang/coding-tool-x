@@ -2,9 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
-const { getAllChannels } = require('../../platforms/drivers/claude/channels-implementation');
-const { getChannels: getCodexChannels } = require('../../platforms/drivers/codex/channels-implementation');
-const { getChannels: getGeminiChannels } = require('../../platforms/drivers/gemini/channels-implementation');
+const { getPlatformRuntime } = require('../../platforms/runtime');
 const {
   probeModelAvailability,
   fetchModelsFromProvider
@@ -107,6 +105,18 @@ function parseBooleanQuery(value, defaultValue = false) {
   if (value === undefined || value === null || value === '') return defaultValue;
   const normalized = String(value).trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(normalized);
+}
+function readChannelList(platform) {
+  const driver = getPlatformRuntime().getDriver(platform, 'channels');
+  const result = typeof driver?.list === 'function' ? driver.list() : null;
+  if (result && typeof result.then === 'function') {
+    return result.then(value => {
+      const data = value?.status === 'ok' ? value.data : value;
+      return Array.isArray(data) ? data : data?.channels || [];
+    });
+  }
+  const data = result?.status === 'ok' ? result.data : result;
+  return Array.isArray(data) ? data : data?.channels || [];
 }
 
 async function probeModelsForSingleChannel(channel, channelType, options = {}) {
@@ -235,33 +245,21 @@ router.get('/default-models', async (req, res) => {
       });
     }
 
-    const forceRefresh = parseBooleanQuery(req.query.forceRefresh, true);
-    const claudeChannels = getAllChannels();
-    const codexData = getCodexChannels();
-    const geminiData = getGeminiChannels();
-
-    // 各工具类型也按串行探测，进一步降低并发压力
-    const claudeProbed = await probeModelsForChannels(claudeChannels || [], 'claude', { forceRefresh });
-    const codexProbed = await probeModelsForChannels(codexData?.channels || [], 'codex', { forceRefresh });
-    const geminiProbed = await probeModelsForChannels(geminiData?.channels || [], 'gemini', { forceRefresh });
-
-    const defaultModels = {
-      claude: mergeProbedAndConfiguredModels(
-        claudeProbed,
-        configuredDefaultModels.claude,
-        'claude'
-      ),
-      codex: mergeProbedAndConfiguredModels(
-        codexProbed,
-        configuredDefaultModels.codex,
-        'codex'
-      ),
-      gemini: mergeProbedAndConfiguredModels(
-        geminiProbed,
-        configuredDefaultModels.gemini,
-        'gemini'
+    const runtime = getPlatformRuntime();
+    const platforms = Object.keys(configuredDefaultModels || {})
+      .filter(platform => runtime.getDriver(platform, 'channels'));
+    const channelLists = await Promise.all(platforms.map(platform => readChannelList(platform)));
+    const probedModels = await Promise.all(platforms.map((platform, index) => (
+      probeModelsForChannels(channelLists[index], platform, { forceRefresh })
+    )));
+    const defaultModels = Object.fromEntries(platforms.map((platform, index) => [
+      platform,
+      mergeProbedAndConfiguredModels(
+        probedModels[index],
+        configuredDefaultModels[platform],
+        platform
       )
-    };
+    ]));
 
     res.json({
       defaultModels,
