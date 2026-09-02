@@ -1,18 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getStatistics,
-  getDailyStatistics,
-  getTodayStatistics
-} = require('./statistics-implementation');
+const { invokeCapabilityDriver } = require('../../../server/api/capability-driver');
 
 /**
  * 获取 Claude Code 总体统计数据
  * GET /api/claude/statistics/summary
  */
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   try {
-    const stats = getStatistics();
+    const stats = await invokeCapabilityDriver('claude', 'statistics', 'getStatistics');
     res.json(stats);
   } catch (error) {
     console.error('[Claude] Failed to get statistics:', error);
@@ -24,9 +20,9 @@ router.get('/summary', (req, res) => {
  * 获取 Claude Code 今日统计数据
  * GET /api/claude/statistics/today
  */
-router.get('/today', (req, res) => {
+router.get('/today', async (req, res) => {
   try {
-    const stats = getTodayStatistics();
+    const stats = await invokeCapabilityDriver('claude', 'statistics', 'getTodayStatistics');
     res.json(stats);
   } catch (error) {
     console.error('[Claude] Failed to get today statistics:', error);
@@ -38,15 +34,14 @@ router.get('/today', (req, res) => {
  * 获取 Claude Code 指定日期的统计数据
  * GET /api/claude/statistics/daily/:date
  */
-router.get('/daily/:date', (req, res) => {
+router.get('/daily/:date', async (req, res) => {
   try {
     const { date } = req.params;
-
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
     }
 
-    const stats = getDailyStatistics(date);
+    const stats = await invokeCapabilityDriver('claude', 'statistics', 'getDailyStatistics', [date]);
     res.json(stats);
   } catch (error) {
     console.error('[Claude] Failed to get daily statistics:', error);

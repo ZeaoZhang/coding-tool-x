@@ -1,13 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, HOME_DIR } = require('../../../config/paths');
-const {
-  listProjects: idxListProjects,
-  listSessions: idxListSessions,
-  getRecentSessions: idxGetRecent,
-  searchSessions: idxSearch,
-  getSessionStatus: idxGetSessionStatus,
-} = require('../../../server/services/session-history-index');
+let sessionHistoryIndex = null;
+
+function configure({ sessionHistoryIndex: index } = {}) {
+  sessionHistoryIndex = index || null;
+}
+
+function getSessionHistoryIndex() {
+  if (!sessionHistoryIndex) {
+    const { getDefaultDependencies } = require('../../../platforms/runtime');
+    sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+  }
+  return sessionHistoryIndex;
+}
 const { getOmpCommand, getOmpPaths, resolveOmpRuntime } = require('./config');
 
 const PROJECT_ORDER_FILE = PATHS.ompProjectOrder;
@@ -294,8 +300,8 @@ function scanSessionFiles(rootDir = getOmpSessionPaths().sessions) {
 }
 
 async function getAllSessions(options = {}) {
-  const projects = await idxListProjects('omp', options);
-  const groups = await Promise.all(projects.map(project => idxListSessions('omp', project.name, options)));
+  const projects = await getSessionHistoryIndex().listProjects('omp', options);
+  const groups = await Promise.all(projects.map(project => getSessionHistoryIndex().listSessions('omp', project.name, options)));
   return groups.flat().map(session => normalizeSession({
     ...session,
     mtime: new Date(session.mtime).toISOString(),
@@ -356,7 +362,7 @@ function loadSessionOrder() {
 }
 
 async function getProjects(_options = {}) {
-  const idxProjects = await idxListProjects('omp');
+  const idxProjects = await getSessionHistoryIndex().listProjects('omp');
   const projects = idxProjects.map(p => ({
     name: p.name,
     path: p.fullPath || p.path || '',
@@ -384,7 +390,7 @@ async function getProjects(_options = {}) {
 }
 
 async function getSessionsByProject(projectName, _options = {}) {
-  const idxSessions = await idxListSessions('omp', projectName);
+  const idxSessions = await getSessionHistoryIndex().listSessions('omp', projectName);
   const sessions = idxSessions.map(s => ({
     sessionId: s.sessionId,
     filePath: s.filePath,
@@ -437,7 +443,7 @@ function normalizeSession(session) {
 }
 
 async function getSessionById(sessionId) {
-  const status = await idxGetSessionStatus('omp', sessionId);
+  const status = await getSessionHistoryIndex().getSessionStatus('omp', sessionId);
   if (!status) return null;
   return {
     sessionId: status.sessionId,
@@ -465,7 +471,7 @@ async function getSessionMessages(sessionId) {
 }
 
 async function getRecentSessions(limit = 5) {
-  const indexed = await idxGetRecent('omp', limit);
+  const indexed = await getSessionHistoryIndex().getRecentSessions('omp', limit);
   return indexed.map(session => normalizeSession({
     ...session,
     mtime: new Date(session.mtime).toISOString(),
@@ -476,7 +482,7 @@ async function getRecentSessions(limit = 5) {
 }
 
 async function searchSessions(keyword, contextLength = 35, projectName = null) {
-  return idxSearch('omp', keyword, { contextLength, projectName });
+  return getSessionHistoryIndex().searchSessions('omp', keyword, { contextLength, projectName });
 }
 
 async function deleteSession(sessionId) {
@@ -514,7 +520,7 @@ function saveSessionOrder(projectName, order) {
 }
 
 async function getProjectAndSessionCounts(options = {}) {
-  const projects = await idxListProjects('omp', options);
+  const projects = await getSessionHistoryIndex().listProjects('omp', options);
   return {
     projectCount: projects.length,
     sessionCount: projects.reduce((sum, project) => sum + (project.sessionCount || 0), 0)
@@ -564,6 +570,7 @@ function isOmpCliInstalled() {
 }
 
 module.exports = {
+  configure,
   buildLaunchCommand,
   createOmpUsageEventCursor,
   decodeProjectName,

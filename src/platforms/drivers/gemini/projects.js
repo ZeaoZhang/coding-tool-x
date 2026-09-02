@@ -7,7 +7,13 @@ function createDriver(context = {}) {
     ...context,
     platform: 'gemini',
     servicePath: './gemini/sessions-implementation',
-    localServicePath: '../gemini/sessions-implementation'
+    localServicePath: '../gemini/sessions-implementation',
+    availabilityCheck: () => {
+      const config = context.requireImpl
+        ? context.requireImpl('./gemini/config')
+        : require('./config');
+      return config.isGeminiInstalled();
+    }
   });
 }
 

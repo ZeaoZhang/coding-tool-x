@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { isOpenCodeInstalled } = require('./sessions-implementation');
 const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const {
   emptyProjectList,
@@ -21,7 +20,7 @@ module.exports = (config) => {
    */
   router.get('/', async (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!invokeProjectDriver('opencode', 'isAvailable')) {
         return res.json({
           projects: [],
           currentProject: null,
@@ -60,7 +59,7 @@ module.exports = (config) => {
    */
   router.post('/order', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!invokeProjectDriver('opencode', 'isAvailable')) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
@@ -84,7 +83,7 @@ module.exports = (config) => {
    */
   router.delete('/:projectName', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!invokeProjectDriver('opencode', 'isAvailable')) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 

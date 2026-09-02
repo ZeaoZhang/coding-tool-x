@@ -1,16 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getProjectSessions,
-  getSessionById,
-  searchSessions,
-  forkSession,
-  deleteSession,
-  getRecentSessions,
-  saveSessionOrder,
-  getProjectPath,
-  getAllSessions
-} = require('./sessions-implementation');
+const { invokeCapabilityDriver } = require('../../../server/api/capability-driver');
 const { getSessionStatus, getSessionOutline, getMessagePage } = require('../../../server/services/session-history-index');
 const { isGeminiInstalled } = require('./config');
 const { loadAliases } = require('../../../server/services/alias');
@@ -42,6 +32,9 @@ function normalizeForkOptions(body = {}) {
 }
 
 module.exports = (config) => {
+  const invokeSession = (operation, args = []) => (
+    invokeCapabilityDriver('gemini', 'sessions', operation, args)
+  );
   /**
    * GET /api/gemini/sessions/search/global?keyword=xxx
    * 全局搜索
@@ -58,7 +51,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = await searchSessions(keyword);
+      const results = await invokeSession('search', [keyword]);
 
       res.json({
         keyword,
@@ -83,7 +76,7 @@ module.exports = (config) => {
       }
 
       const limit = parseInt(req.query.limit) || 5;
-      const sessions = await getRecentSessions(limit);
+      const sessions = await invokeSession('recent', [limit]);
 
       res.json({
         sessions,
@@ -142,7 +135,7 @@ module.exports = (config) => {
       const contextLength = context ? parseInt(context) : 35;
 
       // 搜索所有会话，然后过滤该项目的会话
-      const allResults = await searchSessions(keyword, contextLength);
+      const allResults = await invokeSession('search', [keyword, contextLength]);
       const results = allResults.filter(r => r.projectHash === projectHash);
 
       res.json({
@@ -175,7 +168,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -209,7 +202,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -265,7 +258,7 @@ module.exports = (config) => {
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
@@ -357,7 +350,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const result = deleteSession(sessionId);
+      const result = invokeSession('delete', [sessionId]);
       invalidateSessionSnapshots('gemini', req.params.projectHash);
       invalidateProjectSnapshots('gemini');
 
@@ -399,7 +392,7 @@ module.exports = (config) => {
 
       uniqueSessionIds.forEach((sessionId) => {
         try {
-          deleteSession(sessionId);
+          invokeSession('delete', [sessionId]);
           deletedSessionIds.push(sessionId);
         } catch (err) {
           failed.push({
@@ -438,7 +431,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const result = forkSession(sessionId, normalizeForkOptions(req.body));
+      const result = invokeSession('fork', [sessionId, normalizeForkOptions(req.body)]);
       invalidateSessionSnapshots('gemini', req.params.projectHash);
       invalidateProjectSnapshots('gemini');
 
@@ -466,7 +459,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
 
-      saveSessionOrder(projectHash, order);
+      invokeSession('saveSessionOrder', [projectHash, order]);
       invalidateSessionSnapshots('gemini', projectHash);
 
       res.json({ success: true });
@@ -489,14 +482,14 @@ module.exports = (config) => {
       const { projectHash, sessionId } = req.params;
 
       // 获取会话详情
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
 
       // 使用彩虹表方法获取项目路径
-      const projectPath = getProjectPath(projectHash);
+      const projectPath = invokeSession('getProjectPath', [projectHash]);
 
       if (!projectPath) {
         return res.status(400).json({
@@ -505,7 +498,7 @@ module.exports = (config) => {
       }
 
       // 获取该项目的所有会话文件，按 startTime 升序排列（与 gemini --list-sessions 一致）
-      const allSessions = getAllSessions()
+      const allSessions = await invokeSession('getAllSessions')
         .filter(s => s.projectHash === projectHash)
         .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 

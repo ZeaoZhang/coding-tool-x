@@ -98,7 +98,28 @@ function isLegacyDriverId(driverId) {
   return typeof driverId === 'string' && driverId.startsWith('legacy:');
 }
 
+function getDefaultDependencies() {
+  const sessionHistoryIndex = {};
+  for (const method of [
+    'ensureSourceIndexed',
+    'listProjects',
+    'listSessions',
+    'getSessionStatus',
+    'getSessionOutline',
+    'getMessagePage',
+    'getRecentSessions',
+    'searchSessions',
+    'invalidateSource'
+  ]) {
+    sessionHistoryIndex[method] = (...args) => (
+      require('../server/services/session-history-index')[method](...args)
+    );
+  }
+  return { sessionHistoryIndex };
+}
+
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
+  const resolvedDependencies = { ...dependencies };
   const resolvedRegistry = registry || createPlatformRegistry();
   return {
     getDriver(platform, capability, context = {}) {
@@ -106,7 +127,7 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       if (!driverId) return null;
       if (!driverRegistry || typeof driverRegistry.create !== 'function') return null;
       const rawManifest = typeof resolvedRegistry.resolve === 'function' ? resolvedRegistry.resolve(platform) : null;
-      const pathOptions = context.pathResolver || context.pathResolverOptions || dependencies.pathResolver || dependencies.pathResolverOptions || {};
+      const pathOptions = context.pathResolver || context.pathResolverOptions || resolvedDependencies.pathResolver || resolvedDependencies.pathResolverOptions || {};
       const resolvedPaths = rawManifest && !isLegacyDriverId(driverId) && typeof resolvedRegistry.resolvePaths === 'function'
         ? resolvedRegistry.resolvePaths(platform, pathOptions)
         : null;
@@ -114,12 +135,12 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
         ? rawManifest
         : buildResolvedManifest(rawManifest, resolvedPaths, pathOptions, driverId);
       return driverRegistry.create(driverId, {
-        ...dependencies,
+        ...resolvedDependencies,
         platform,
         capability,
         manifest,
         context,
-        dependencies
+        dependencies: resolvedDependencies
       });
     },
     invoke(platform, capability, operation, args = []) {
@@ -144,4 +165,4 @@ function getPlatformRuntime() {
   return platformRuntime;
 }
 
-module.exports = { createPlatformRuntime, getPlatformRegistry, getPlatformRuntime };
+module.exports = { createPlatformRuntime, getPlatformRegistry, getPlatformRuntime, getDefaultDependencies };

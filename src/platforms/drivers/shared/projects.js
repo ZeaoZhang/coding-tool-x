@@ -2,7 +2,16 @@
 
 const { ok, unsupported, failed } = require('../../../shared/driver-result');
 
-function createProjectsDriver({ platform, servicePath, localServicePath, requireImpl, ...context } = {}) {
+function createProjectsDriver({
+  platform,
+  servicePath,
+  localServicePath,
+  requireImpl,
+  availabilityMethod = null,
+  availabilityCheck = null,
+  createProject = null,
+  ...context
+} = {}) {
   let service;
 
   const loadService = () => {
@@ -30,6 +39,19 @@ function createProjectsDriver({ platform, servicePath, localServicePath, require
       return failed(platform, 'projects', operation, error);
     }
   };
+
+  const invokeCustom = (operation, callback, args) => {
+    try {
+      const value = callback(...args);
+      const wrap = result => ok(platform, 'projects', operation, result);
+      return value && typeof value.then === 'function'
+        ? value.then(wrap).catch(error => failed(platform, 'projects', operation, error))
+        : wrap(value);
+    } catch (error) {
+      return failed(platform, 'projects', operation, error);
+    }
+  };
+
 
   const driver = {
     platform,
@@ -65,6 +87,28 @@ function createProjectsDriver({ platform, servicePath, localServicePath, require
       return invoke('deleteProject', 'deleteProject', args);
     }
   };
+  if (availabilityMethod) {
+    driver.isAvailable = (options = {}) => invoke(
+      'isAvailable',
+      availabilityMethod,
+      platform === 'claude' ? [configFor(options)] : [options]
+    );
+  } else if (typeof availabilityCheck === 'function') {
+    driver.isAvailable = (options = {}) => invokeCustom(
+      'isAvailable',
+      availabilityCheck,
+      [options]
+    );
+  }
+
+  if (typeof createProject === 'function') {
+    driver.createProject = (input = {}, options = {}) => invokeCustom(
+      'createProject',
+      createProject,
+      [input, options]
+    );
+  }
+
 
   return driver;
 }

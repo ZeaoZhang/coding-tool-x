@@ -4,7 +4,19 @@ const crypto = require('crypto');
 const { HOME_DIR } = require('../../../config/paths');
 const { getGeminiDir } = require('./config');
 const { resolveModelPricing } = require('../../../server/utils/pricing');
-const { listProjects: idxListProjects, listSessions: idxListSessions, getSessionStatus: idxGetSessionStatus, getRecentSessions: idxGetRecent, searchSessions: idxSearch } = require('../../../server/services/session-history-index');
+let sessionHistoryIndex = null;
+
+function configure({ sessionHistoryIndex: index } = {}) {
+  sessionHistoryIndex = index || null;
+}
+
+function getSessionHistoryIndex() {
+  if (!sessionHistoryIndex) {
+    const { getDefaultDependencies } = require('../../../platforms/runtime');
+    sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+  }
+  return sessionHistoryIndex;
+}
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 const SESSION_FILE_RE = /^session-(.*)-([a-f0-9]+)\.(json|jsonl)$/;
@@ -630,7 +642,7 @@ function getProjectPath(projectHash, options = {}) {
  * @returns {Array} 项目对象数组
  */
 async function getProjects(options = {}) {
-  const projects = await idxListProjects('gemini', options);
+  const projects = await getSessionHistoryIndex().listProjects('gemini', options);
   const paths = buildPathMapping();
   return projects.map(project => {
     const fullPath = project.fullPath || paths.get(project.name) || null;
@@ -651,7 +663,7 @@ async function getProjects(options = {}) {
  * @returns {Array} 会话对象数组
  */
 async function getProjectSessions(projectHash, options = {}) {
-  const indexed = await idxListSessions('gemini', projectHash, options);
+  const indexed = await getSessionHistoryIndex().listSessions('gemini', projectHash, options);
   return indexed.map(session => ({
     sessionId: session.sessionId,
     mtime: new Date(session.mtime).toISOString(),
@@ -677,7 +689,7 @@ async function getProjectSessions(projectHash, options = {}) {
  * @returns {Object|null} 完整会话数据
  */
 async function getSession(sessionId) {
-  const status = await idxGetSessionStatus('gemini', sessionId);
+  const status = await getSessionHistoryIndex().getSessionStatus('gemini', sessionId);
   return status ? readSessionFull(status.filePath) : null;
 }
 
@@ -740,7 +752,7 @@ function saveProjectOrder(order) {
  * @returns {Array} 会话对象数组
  */
 async function getRecentSessions(limit = 5) {
-  const sessions = await idxGetRecent('gemini', limit);
+  const sessions = await getSessionHistoryIndex().getRecentSessions('gemini', limit);
   return sessions.map(session => ({
     ...session,
     mtime: new Date(session.mtime).toISOString(),
@@ -754,7 +766,7 @@ async function getRecentSessions(limit = 5) {
  * @returns {Object|null} 完整会话数据
  */
 async function getSessionById(sessionId) {
-  const status = await idxGetSessionStatus('gemini', sessionId);
+  const status = await getSessionHistoryIndex().getSessionStatus('gemini', sessionId);
   if (!status) return null;
   const fullSession = readSessionFull(status.filePath);
   if (!fullSession) return null;
@@ -774,7 +786,7 @@ async function getSessionById(sessionId) {
  * @returns {Array} 搜索结果数组
  */
 async function searchSessions(keyword, contextLength = 35) {
-  const results = await idxSearch('gemini', keyword, { contextLength });
+  const results = await getSessionHistoryIndex().searchSessions('gemini', keyword, { contextLength });
   return results.map(result => ({
     sessionId: result.sessionId,
     projectHash: result.projectName,
@@ -918,6 +930,7 @@ function getProjectAndSessionCounts() {
 }
 
 module.exports = {
+  configure,
   getAllSessions,
   getProjects,
   getProjectSessions,

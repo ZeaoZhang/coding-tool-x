@@ -1,17 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getProjects,
-  getSessionsByProject,
-  getSessionById,
-  getSessionMessages,
-  getRecentSessions,
-  searchSessions,
-  deleteSession,
-  forkSession,
-  saveSessionOrder,
-  isOpenCodeInstalled
-} = require('./sessions-implementation');
+const { invokeCapabilityDriver } = require('../../../server/api/capability-driver');
 const { loadAliases } = require('../../../server/services/alias');
 const { broadcastLog } = require('../../../server/websocket-server');
 const { HOME_DIR } = require('../../../config/paths');
@@ -32,13 +21,17 @@ function isNotFoundError(error) {
 }
 
 module.exports = (config) => {
+  const invokeSession = (operation, args = []) => (
+    invokeCapabilityDriver('opencode', 'sessions', operation, args)
+  );
+  const isInstalled = () => invokeSession('isAvailable');
   /**
    * GET /api/opencode/sessions/search/global?keyword=xxx
    * 全局搜索
    */
   router.get('/search/global', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
@@ -50,7 +43,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = searchSessions(keyword, contextLength);
+      const results = invokeSession('search', [keyword, contextLength]);
       const totalMatches = results.reduce((sum, session) => sum + (session.matchCount || 0), 0);
 
       res.json({
@@ -71,12 +64,12 @@ module.exports = (config) => {
    */
   router.get('/recent/list', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const limit = parseInt(req.query.limit, 10) || 5;
-      const sessions = getRecentSessions(limit);
+      const sessions = invokeSession('recent', [limit]);
 
       res.json({
         sessions,
@@ -94,7 +87,7 @@ module.exports = (config) => {
    */
   router.get('/:projectName/search', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
@@ -107,7 +100,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = searchSessions(keyword, contextLength, projectName);
+      const results = invokeSession('search', [keyword, contextLength, projectName]);
       const totalMatches = results.reduce((sum, session) => sum + (session.matchCount || 0), 0);
 
       res.json({
@@ -127,7 +120,7 @@ module.exports = (config) => {
    */
   router.get('/:projectName', async (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
@@ -154,12 +147,12 @@ module.exports = (config) => {
    */
   router.get('/:projectName/:sessionId/status', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -181,20 +174,20 @@ module.exports = (config) => {
    */
   router.get('/:projectName/:sessionId/outline', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const session = getSessionById(sessionId);
+      const session = invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
+      const messages = invokeSession('messages', [sessionId]);
 
       let userMessageNumber = 0;
       const items = [];
-      for (const msg of getSessionMessages(sessionId)) {
-        if (msg.type !== 'user') continue;
+      for (const msg of messages || []) {
         const preview = typeof msg.content === 'string' ? msg.content.trim() : '';
         if (!preview) continue;
         userMessageNumber += 1;
@@ -221,17 +214,17 @@ module.exports = (config) => {
    */
   router.get('/:projectName/:sessionId/messages', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
-      const session = getSessionById(sessionId);
+      const session = invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
-      const baseMessages = getSessionMessages(sessionId);
+      const baseMessages = invokeSession('messages', [sessionId]) || session.messages || [];
       let userMessageNumber = 0;
       const convertedMessages = baseMessages.map((message) => {
         if (message.type !== 'user') {
@@ -285,12 +278,12 @@ module.exports = (config) => {
    */
   router.delete('/:projectName/:sessionId', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const result = deleteSession(sessionId);
+      const result = invokeSession('delete', [sessionId]);
       invalidateSessionSnapshots('opencode', req.params.projectName);
       invalidateProjectSnapshots('opencode');
 
@@ -311,7 +304,7 @@ module.exports = (config) => {
    */
   router.post('/:projectName/batch-delete', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
@@ -336,7 +329,7 @@ module.exports = (config) => {
 
       uniqueSessionIds.forEach((sessionId) => {
         try {
-          deleteSession(sessionId);
+          invokeSession('delete', [sessionId]);
           deletedSessionIds.push(sessionId);
         } catch (err) {
           failed.push({
@@ -370,12 +363,12 @@ module.exports = (config) => {
    */
   router.post('/:projectName/:sessionId/fork', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { sessionId } = req.params;
-      const result = forkSession(sessionId);
+      const result = invokeSession('fork', [sessionId]);
       invalidateSessionSnapshots('opencode', req.params.projectName);
       invalidateProjectSnapshots('opencode');
       res.json(result);
@@ -395,7 +388,7 @@ module.exports = (config) => {
    */
   router.post('/:projectName/order', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
@@ -406,7 +399,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
 
-      saveSessionOrder(projectName, order);
+      invokeSession('saveSessionOrder', [projectName, order]);
       invalidateSessionSnapshots('opencode', projectName);
       res.json({ success: true });
     } catch (err) {
@@ -421,18 +414,18 @@ module.exports = (config) => {
    */
   router.post('/:projectName/:sessionId/launch', (req, res) => {
     try {
-      if (!isOpenCodeInstalled()) {
+      if (!isInstalled()) {
         return res.status(404).json({ error: 'OpenCode CLI not installed' });
       }
 
       const { projectName, sessionId } = req.params;
 
-      const session = getSessionById(sessionId);
+      const session = invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
 
-      const projects = getProjects();
+      const projects = invokeSession('getProjects');
       const project = projects.find(p => p.name === projectName);
       const cwd = session.directory || project?.fullPath || HOME_DIR;
       const command = `opencode -r ${sessionId}`;

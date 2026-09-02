@@ -7,7 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'opencode',
     servicePath: './opencode/sessions-implementation',
-    localServicePath: '../opencode/sessions-implementation'
+    localServicePath: '../opencode/sessions-implementation',
+    availabilityMethod: 'isOpenCodeInstalled'
   });
 }
 

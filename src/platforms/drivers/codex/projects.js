@@ -7,7 +7,13 @@ function createDriver(context = {}) {
     ...context,
     platform: 'codex',
     servicePath: './codex/sessions-implementation',
-    localServicePath: '../codex/sessions-implementation'
+    localServicePath: '../codex/sessions-implementation',
+    availabilityCheck: () => {
+      const config = context.requireImpl
+        ? context.requireImpl('./codex/config')
+        : require('./config');
+      return config.isCodexInstalled();
+    }
   });
 }
 
