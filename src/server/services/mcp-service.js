@@ -1038,29 +1038,6 @@ function invokeMcpDriver(platform, operation, args = []) {
   return result && typeof result.then === 'function' ? result.then(normalize) : normalize(result);
 }
 
-function readPlatformMcpConfig(platform) {
-  return invokeMcpDriver(platform, 'read');
-}
-
-function writePlatformMcpConfig(platform, config) {
-  return invokeMcpDriver(platform, 'write', [config]);
-}
-
-function removePlatformMcpServer(platform, serverId) {
-  return invokeMcpDriver(platform, 'remove', [serverId]);
-}
-
-function syncPlatformMcpServer(platform, server) {
-  return invokeMcpDriver(platform, 'sync', [server]);
-}
-
-function importPlatformMcpServers(platform, servers) {
-  return invokeMcpDriver(platform, 'import', [servers]);
-}
-
-function exportPlatformMcpServers(platform, servers) {
-  return invokeMcpDriver(platform, 'export', [servers]);
-}
 
 function getGenericMcpServerMap(config) {
   for (const key of ['mcpServers', 'mcp_servers', 'mcp']) {
@@ -1720,12 +1697,6 @@ module.exports = {
   importFromPlatform,
   getStats,
   validateServerSpec,
-  readPlatformMcpConfig,
-  writePlatformMcpConfig,
-  removePlatformMcpServer,
-  syncPlatformMcpServer,
-  importPlatformMcpServers,
-  exportPlatformMcpServers,
   getMcpPlatformKeys,
   // 新增功能
   testServer,
