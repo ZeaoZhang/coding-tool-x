@@ -762,14 +762,14 @@ function removeProjectFromWorkspace(workspaceId, projectName) {
  */
 async function getAllAvailableProjects() {
   const { loadConfig } = require('../../config/loader');
-  const sessionsService = require('./sessions');
-  const codexSessionsService = require('./codex-sessions');
-  const geminiSessionsService = require('./gemini-sessions');
-  const opencodeSessionsService = require('./opencode-sessions');
-  const ompSessionsService = require('./omp-sessions');
-  const { isCodexInstalled } = require('./codex-config');
-  const { isGeminiInstalled } = require('./gemini-config');
-  const { isOpenCodeInstalled } = require('./opencode-sessions');
+  const sessionsService = require('../../platforms/drivers/claude/sessions-implementation');
+  const codexSessionsService = require('../../platforms/drivers/codex/sessions-implementation');
+  const geminiSessionsService = require('../../platforms/drivers/gemini/sessions-implementation');
+  const opencodeSessionsService = require('../../platforms/drivers/opencode/sessions-implementation');
+  const ompSessionsService = require('../../platforms/drivers/omp/sessions-implementation');
+  const { isCodexInstalled } = require('../../platforms/drivers/codex/config');
+  const { isGeminiInstalled } = require('../../platforms/drivers/gemini/config');
+  const { isOpenCodeInstalled } = require('../../platforms/drivers/opencode/sessions-implementation');
 
   const allProjects = [];
   const seenKeys = new Set();

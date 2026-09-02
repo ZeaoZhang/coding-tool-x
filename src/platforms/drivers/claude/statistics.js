@@ -7,8 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'claude',
     capability: 'statistics',
-    servicePath: '../../server/services/claude-statistics-service',
-    localServicePath: '../../../server/services/claude-statistics-service',
+    servicePath: './claude/statistics-implementation',
+    localServicePath: '../claude/statistics-implementation',
     methods: {"getStatistics":"getStatistics","getDailyStatistics":"getDailyStatistics","getTodayStatistics":"getTodayStatistics","recordRequest":"recordRequest","resetStatistics":"resetStatistics"}
   });
 }

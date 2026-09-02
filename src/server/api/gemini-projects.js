@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { saveProjectOrder, deleteProject } = require('../services/gemini-sessions');
-const { isGeminiInstalled } = require('../services/gemini-config');
+const { saveProjectOrder, deleteProject } = require('../../platforms/drivers/gemini/sessions-implementation');
+const { isGeminiInstalled } = require('../../platforms/drivers/gemini/config');
 const {
   emptyProjectList,
   getProjectListSnapshot,

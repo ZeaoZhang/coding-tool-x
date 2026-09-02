@@ -1,15 +1,17 @@
 'use strict';
 
+const implementation = require('./native-config-implementation');
+
 function createDriver({ requireImpl, ...context } = {}) {
-  const settings = requireImpl ? requireImpl('../../server/services/gemini-settings-manager') : require('../../../server/services/gemini-settings-manager');
+  const settings = requireImpl
+    ? requireImpl('./gemini/native-config-implementation')
+    : implementation;
   return {
-    platform: 'gemini', capability: 'nativeConfig', ...context,
-    setProxyConfig: (...args) => settings.setProxyConfig(...args),
-    restoreSettings: (...args) => settings.restoreSettings(...args),
-    isProxyConfig: (...args) => settings.isProxyConfig(...args),
-    settingsExists: (...args) => settings.settingsExists(...args),
-    hasBackup: (...args) => settings.hasBackup(...args),
-    deleteBackup: (...args) => settings.deleteBackup(...args)
+    platform: 'gemini',
+    capability: 'nativeConfig',
+    ...context,
+    ...settings,
+    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('gemini')
   };
 }
 

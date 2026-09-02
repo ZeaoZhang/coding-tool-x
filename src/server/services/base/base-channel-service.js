@@ -1,8 +1,7 @@
 /**
  * BaseChannelService - 四平台渠道管理的公共基类
  *
- * 提取 channels.js / codex-channels.js / gemini-channels.js / opencode-channels.js
- * 中的共享 CRUD、启用/禁用、单渠道强制等逻辑。
+ * 为各平台 Driver 实现提供共享 CRUD、启用/禁用、单渠道强制等基础能力。
  *
  * 子类通过覆写钩子方法实现平台差异化行为。
  */

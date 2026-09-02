@@ -60,7 +60,7 @@ require.cache[pathsModulePath] = {
     ensureStorageDirMigrated: () => {}
   }
 };
-const ompConfigPath = require.resolve('../../src/server/services/omp-config');
+const ompConfigPath = require.resolve('../../src/platforms/drivers/omp/config');
 require.cache[ompConfigPath] = {
   id: ompConfigPath,
   filename: ompConfigPath,

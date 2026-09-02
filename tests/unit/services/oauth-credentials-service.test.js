@@ -59,7 +59,7 @@ function stubModules() {
   clearNativeOAuthMock = vi.fn();
   disableNativeOAuthCredentialMock = vi.fn();
   applyOAuthCredentialMock = vi.fn();
-  const nativeAdapterPath = require.resolve('../../../src/server/services/native-oauth-adapters');
+  const nativeAdapterPath = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
   require.cache[nativeAdapterPath] = {
     id: nativeAdapterPath,
     filename: nativeAdapterPath,
@@ -103,27 +103,27 @@ function stubModules() {
   deleteCodexBackupMock = vi.fn();
   deleteGeminiBackupMock = vi.fn();
   deleteOpenCodeBackupMock = vi.fn();
-  require.cache[require.resolve('../../../src/server/services/settings-manager')] = {
-    id: require.resolve('../../../src/server/services/settings-manager'),
-    filename: require.resolve('../../../src/server/services/settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
     loaded: true,
     exports: { deleteBackup: deleteClaudeBackupMock }
   };
-  require.cache[require.resolve('../../../src/server/services/codex-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/codex-settings-manager'),
-    filename: require.resolve('../../../src/server/services/codex-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/native-config-implementation'),
     loaded: true,
     exports: { deleteBackup: deleteCodexBackupMock }
   };
-  require.cache[require.resolve('../../../src/server/services/gemini-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/gemini-settings-manager'),
-    filename: require.resolve('../../../src/server/services/gemini-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation'),
     loaded: true,
     exports: { deleteBackup: deleteGeminiBackupMock }
   };
-  require.cache[require.resolve('../../../src/server/services/opencode-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/opencode-settings-manager'),
-    filename: require.resolve('../../../src/server/services/opencode-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
     loaded: true,
     exports: { deleteBackup: deleteOpenCodeBackupMock }
   };
@@ -133,42 +133,42 @@ function stubModules() {
   disableGeminiChannelsMock = vi.fn();
   disableOpenCodeChannelsMock = vi.fn();
   disableOmpChannelsMock = vi.fn();
-  require.cache[require.resolve('../../../src/server/services/channels')] = {
-    id: require.resolve('../../../src/server/services/channels'),
-    filename: require.resolve('../../../src/server/services/channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/channels-implementation'),
     loaded: true,
     exports: { disableAllChannels: disableClaudeChannelsMock }
   };
-  require.cache[require.resolve('../../../src/server/services/codex-channels')] = {
-    id: require.resolve('../../../src/server/services/codex-channels'),
-    filename: require.resolve('../../../src/server/services/codex-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/channels-implementation'),
     loaded: true,
     exports: { disableAllChannels: disableCodexChannelsMock }
   };
-  require.cache[require.resolve('../../../src/server/services/gemini-channels')] = {
-    id: require.resolve('../../../src/server/services/gemini-channels'),
-    filename: require.resolve('../../../src/server/services/gemini-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
     loaded: true,
     exports: { disableAllChannels: disableGeminiChannelsMock }
   };
-  require.cache[require.resolve('../../../src/server/services/opencode-channels')] = {
-    id: require.resolve('../../../src/server/services/opencode-channels'),
-    filename: require.resolve('../../../src/server/services/opencode-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
     loaded: true,
     exports: { disableAllChannels: disableOpenCodeChannelsMock }
   };
-  require.cache[require.resolve('../../../src/server/services/omp-channels')] = {
-    id: require.resolve('../../../src/server/services/omp-channels'),
-    filename: require.resolve('../../../src/server/services/omp-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
     loaded: true,
     exports: { disableAllChannels: disableOmpChannelsMock }
   };
 
   getProxyStatusMock = vi.fn(() => ({ running: false }));
   stopProxyServerMock = vi.fn(async () => {});
-  require.cache[require.resolve('../../../src/server/proxy-server')] = {
-    id: require.resolve('../../../src/server/proxy-server'),
-    filename: require.resolve('../../../src/server/proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/proxy-implementation'),
     loaded: true,
     exports: {
       getProxyStatus: getProxyStatusMock,
@@ -178,9 +178,9 @@ function stubModules() {
 
   getCodexProxyStatusMock = vi.fn(() => ({ running: false }));
   stopCodexProxyServerMock = vi.fn(async () => {});
-  require.cache[require.resolve('../../../src/server/codex-proxy-server')] = {
-    id: require.resolve('../../../src/server/codex-proxy-server'),
-    filename: require.resolve('../../../src/server/codex-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/proxy-implementation'),
     loaded: true,
     exports: {
       getCodexProxyStatus: getCodexProxyStatusMock,
@@ -190,9 +190,9 @@ function stubModules() {
 
   getGeminiProxyStatusMock = vi.fn(() => ({ running: false }));
   stopGeminiProxyServerMock = vi.fn(async () => {});
-  require.cache[require.resolve('../../../src/server/gemini-proxy-server')] = {
-    id: require.resolve('../../../src/server/gemini-proxy-server'),
-    filename: require.resolve('../../../src/server/gemini-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
     loaded: true,
     exports: {
       getGeminiProxyStatus: getGeminiProxyStatusMock,
@@ -202,9 +202,9 @@ function stubModules() {
 
   getOpenCodeProxyStatusMock = vi.fn(() => ({ running: false }));
   stopOpenCodeProxyServerMock = vi.fn(async () => {});
-  require.cache[require.resolve('../../../src/server/opencode-proxy-server')] = {
-    id: require.resolve('../../../src/server/opencode-proxy-server'),
-    filename: require.resolve('../../../src/server/opencode-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
     loaded: true,
     exports: {
       getOpenCodeProxyStatus: getOpenCodeProxyStatusMock,
@@ -214,9 +214,9 @@ function stubModules() {
 
   getOmpProxyStatusMock = vi.fn(() => ({ running: false }));
   stopOmpProxyServerMock = vi.fn(async () => {});
-  require.cache[require.resolve('../../../src/server/omp-proxy-server')] = {
-    id: require.resolve('../../../src/server/omp-proxy-server'),
-    filename: require.resolve('../../../src/server/omp-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/proxy-implementation'),
     loaded: true,
     exports: {
       getOmpProxyStatus: getOmpProxyStatusMock,
@@ -237,22 +237,22 @@ afterEach(() => {
   [
     '../../../src/server/services/oauth-credentials-service',
     '../../../src/config/paths',
-    '../../../src/server/services/native-oauth-adapters',
+    '../../../src/platforms/drivers/shared/native-oauth-adapters',
     '../../../src/server/services/oauth-utils',
-    '../../../src/server/services/settings-manager',
-    '../../../src/server/services/codex-settings-manager',
-    '../../../src/server/services/gemini-settings-manager',
-    '../../../src/server/services/opencode-settings-manager',
-    '../../../src/server/services/channels',
-    '../../../src/server/services/codex-channels',
-    '../../../src/server/services/gemini-channels',
-    '../../../src/server/services/opencode-channels',
-    '../../../src/server/services/omp-channels',
-    '../../../src/server/proxy-server',
-    '../../../src/server/codex-proxy-server',
-    '../../../src/server/gemini-proxy-server',
-    '../../../src/server/opencode-proxy-server',
-    '../../../src/server/omp-proxy-server'
+    '../../../src/platforms/drivers/claude/native-config-implementation',
+    '../../../src/platforms/drivers/codex/native-config-implementation',
+    '../../../src/platforms/drivers/gemini/native-config-implementation',
+    '../../../src/platforms/drivers/opencode/native-config-implementation',
+    '../../../src/platforms/drivers/claude/channels-implementation',
+    '../../../src/platforms/drivers/codex/channels-implementation',
+    '../../../src/platforms/drivers/gemini/channels-implementation',
+    '../../../src/platforms/drivers/opencode/channels-implementation',
+    '../../../src/platforms/drivers/omp/channels-implementation',
+    '../../../src/platforms/drivers/claude/proxy-implementation',
+    '../../../src/platforms/drivers/codex/proxy-implementation',
+    '../../../src/platforms/drivers/gemini/proxy-implementation',
+    '../../../src/platforms/drivers/opencode/proxy-implementation',
+    '../../../src/platforms/drivers/omp/proxy-implementation'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

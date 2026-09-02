@@ -7,8 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'omp',
     capability: 'statistics',
-    servicePath: '../../server/services/omp-statistics-service',
-    localServicePath: '../../../server/services/omp-statistics-service',
+    servicePath: './omp/statistics-implementation',
+    localServicePath: '../omp/statistics-implementation',
     methods: {"getStatistics":"getStatistics","getDailyStatistics":"getDailyStatistics","getTodayStatistics":"getTodayStatistics","recordRequest":"recordRequest","resetStatistics":"resetStatistics"}
   });
 }

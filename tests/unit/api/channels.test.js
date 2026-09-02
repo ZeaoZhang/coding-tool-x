@@ -5,17 +5,17 @@
  * under test. Mirrors the channel-scheduler.test.js pattern used in this project.
  */
 
-const CHANNELS_SVC_PATH   = require.resolve('../../../src/server/services/channels');
+const CHANNELS_SVC_PATH   = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
 const SCHEDULER_PATH      = require.resolve('../../../src/server/services/channel-scheduler');
 const CHANNEL_HEALTH_PATH = require.resolve('../../../src/server/services/channel-health');
 const SPEED_TEST_PATH     = require.resolve('../../../src/server/services/speed-test');
 const PATHS_PATH          = require.resolve('../../../src/config/paths');
-const SETTINGS_MGR_PATH   = require.resolve('../../../src/server/services/settings-manager');
+const SETTINGS_MGR_PATH   = require.resolve('../../../src/platforms/drivers/claude/native-config-implementation');
 const MODEL_META_PATH     = require.resolve('../../../src/config/model-metadata');
 const MODEL_DETECTOR_PATH = require.resolve('../../../src/server/services/model-detector');
 const WS_SERVER_PATH      = require.resolve('../../../src/server/websocket-server');
-const PROXY_SERVER_PATH   = require.resolve('../../../src/server/proxy-server');
-const NATIVE_OAUTH_PATH   = require.resolve('../../../src/server/services/native-oauth-adapters');
+const PROXY_SERVER_PATH   = require.resolve('../../../src/platforms/drivers/claude/proxy-implementation');
+const NATIVE_OAUTH_PATH   = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
 const RUNTIME_PATH        = require.resolve('../../../src/platforms/runtime');
 const API_PATH            = require.resolve('../../../src/server/api/channels');
 

@@ -5,7 +5,7 @@ const os   = require('os');
 const path = require('path');
 const { isWindowsLikePlatform } = require('../../../src/utils/home-dir');
 
-const SETTINGS_MGR_PATH = require.resolve('../../../src/server/services/settings-manager');
+const SETTINGS_MGR_PATH = require.resolve('../../../src/platforms/drivers/claude/native-config-implementation');
 const PATHS_PATH        = require.resolve('../../../src/config/paths');
 
 let testDir;
@@ -29,7 +29,7 @@ beforeEach(() => {
     }
   };
 
-  const mod        = require('../../../src/server/services/settings-manager');
+  const mod        = require('../../../src/platforms/drivers/claude/native-config-implementation');
   getSettingsPath  = mod.getSettingsPath;
   getBackupPath    = mod.getBackupPath;
   settingsExists   = mod.settingsExists;

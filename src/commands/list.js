@@ -7,7 +7,7 @@ const { formatTime, formatSize, truncate } = require('../utils/format');
 const { promptSelectSession, promptForkConfirm } = require('../ui/prompts');
 const { resumeSession } = require('./resume');
 const { loadAliases } = require('../server/services/alias');
-const { getRecentSessions } = require('../server/services/sessions');
+const { getRecentSessions } = require('../platforms/drivers/claude/sessions-implementation');
 
 /**
  * 列出会话

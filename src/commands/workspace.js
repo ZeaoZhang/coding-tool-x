@@ -4,7 +4,7 @@ const inquirer = require('inquirer');
 const fs = require('fs');
 const path = require('path');
 const workspaceService = require('../server/services/workspace-service');
-const { getProjectsWithStats } = require('../server/services/sessions');
+const { getProjectsWithStats } = require('../platforms/drivers/claude/sessions-implementation');
 const { loadConfig } = require('../config/loader');
 
 /**

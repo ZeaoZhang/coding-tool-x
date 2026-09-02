@@ -6,12 +6,19 @@ function createDriver(context = {}) {
   return createChannelDriver({
     ...context,
     platform: 'omp',
-    servicePath: '../../server/services/omp-channels',
-    localServicePath: '../../../server/services/omp-channels',
+    servicePath: './omp/channels-implementation',
+    localServicePath: '../omp/channels-implementation',
     syncMethod: 'syncCurrentOmpChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.extra || {}]
-      : [input, ...rest]
+      : [input, ...rest],
+    cliMetadata: {
+      supportsCliCreate: false,
+      supportsCliToggle: true,
+      managedProviderConfig: true,
+      defaultPort: 20092,
+      createUnavailableMessage: '提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。'
+    }
   });
 }
 

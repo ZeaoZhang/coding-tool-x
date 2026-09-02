@@ -4,7 +4,7 @@ const ora = require('ora');
 const inquirer = require('inquirer');
 const { promptSelectSession, promptSearchKeyword, promptForkConfirm } = require('../ui/prompts');
 const { resumeSession } = require('./resume');
-const { getProjects, searchSessions: searchSessionsInProject, parseRealProjectPath } = require('../server/services/sessions');
+const { getProjects, searchSessions: searchSessionsInProject, parseRealProjectPath } = require('../platforms/drivers/claude/sessions-implementation');
 const { loadAliases } = require('../server/services/alias');
 
 /**

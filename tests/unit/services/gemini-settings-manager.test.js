@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
-const MODULE_PATH = require.resolve('../../../src/server/services/gemini-settings-manager');
+const MODULE_PATH = require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation');
 
 let testDir;
 let envPath;
@@ -47,7 +47,7 @@ beforeEach(() => {
     }
   };
 
-  manager = require('../../../src/server/services/gemini-settings-manager');
+  manager = require('../../../src/platforms/drivers/gemini/native-config-implementation');
 });
 
 afterEach(() => {

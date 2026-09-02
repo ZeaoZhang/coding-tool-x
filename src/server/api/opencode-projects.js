@@ -4,7 +4,7 @@ const {
   saveProjectOrder,
   deleteProject,
   isOpenCodeInstalled
-} = require('../services/opencode-sessions');
+} = require('../../platforms/drivers/opencode/sessions-implementation');
 const {
   emptyProjectList,
   getProjectListSnapshot,

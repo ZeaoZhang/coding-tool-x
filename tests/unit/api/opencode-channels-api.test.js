@@ -76,9 +76,9 @@ beforeEach(() => {
   }));
   isOpenCodeInstalled = vi.fn(() => true);
 
-  require.cache[require.resolve('../../../src/server/services/opencode-channels')] = {
-    id: require.resolve('../../../src/server/services/opencode-channels'),
-    filename: require.resolve('../../../src/server/services/opencode-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
     loaded: true,
     exports: {
       getChannels,
@@ -88,9 +88,9 @@ beforeEach(() => {
       saveChannelOrder
     }
   };
-  require.cache[require.resolve('../../../src/server/services/opencode-sessions')] = {
-    id: require.resolve('../../../src/server/services/opencode-sessions'),
-    filename: require.resolve('../../../src/server/services/opencode-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation'),
     loaded: true,
     exports: { isOpenCodeInstalled }
   };
@@ -118,9 +118,9 @@ beforeEach(() => {
     loaded: true,
     exports: { testChannelSpeed, sanitizeBatchConcurrency, runWithConcurrencyLimit }
   };
-  require.cache[require.resolve('../../../src/server/opencode-proxy-server')] = {
-    id: require.resolve('../../../src/server/opencode-proxy-server'),
-    filename: require.resolve('../../../src/server/opencode-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
     loaded: true,
     exports: { clearOpenCodeRedirectCache }
   };
@@ -138,13 +138,13 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/opencode-channels',
-    '../../../src/server/services/opencode-channels',
-    '../../../src/server/services/opencode-sessions',
+    '../../../src/platforms/drivers/opencode/channels-implementation',
+    '../../../src/platforms/drivers/opencode/sessions-implementation',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
     '../../../src/server/websocket-server',
     '../../../src/server/services/speed-test',
-    '../../../src/server/opencode-proxy-server',
+    '../../../src/platforms/drivers/opencode/proxy-implementation',
     '../../../src/server/services/model-detector'
   ].forEach((mod) => {
     try {

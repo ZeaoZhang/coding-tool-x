@@ -6,8 +6,8 @@ const path = require('path');
 const toml = require('toml');
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
-const ENV_MANAGER_PATH = require.resolve('../../../src/server/services/codex-env-manager');
-const MODULE_PATH = require.resolve('../../../src/server/services/codex-settings-manager');
+const ENV_MANAGER_PATH = require.resolve('../../../src/platforms/drivers/codex/env-manager');
+const MODULE_PATH = require.resolve('../../../src/platforms/drivers/codex/native-config-implementation');
 
 let testDir;
 let configPath;
@@ -58,7 +58,7 @@ beforeEach(() => {
     exports: { syncCodexUserEnvironment }
   };
 
-  manager = require('../../../src/server/services/codex-settings-manager');
+  manager = require('../../../src/platforms/drivers/codex/native-config-implementation');
 });
 
 afterEach(() => {

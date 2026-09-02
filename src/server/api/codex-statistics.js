@@ -4,7 +4,7 @@ const {
   getStatistics,
   getDailyStatistics,
   getTodayStatistics
-} = require('../services/codex-statistics-service');
+} = require('../../platforms/drivers/codex/statistics-implementation');
 
 /**
  * 获取 Codex 总体统计数据

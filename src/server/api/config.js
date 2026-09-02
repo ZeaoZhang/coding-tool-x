@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
-const { getAllChannels } = require('../services/channels');
-const { getChannels: getCodexChannels } = require('../services/codex-channels');
-const { getChannels: getGeminiChannels } = require('../services/gemini-channels');
+const { getAllChannels } = require('../../platforms/drivers/claude/channels-implementation');
+const { getChannels: getCodexChannels } = require('../../platforms/drivers/codex/channels-implementation');
+const { getChannels: getGeminiChannels } = require('../../platforms/drivers/gemini/channels-implementation');
 const {
   probeModelAvailability,
   fetchModelsFromProvider

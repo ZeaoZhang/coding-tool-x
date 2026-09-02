@@ -8,8 +8,8 @@ const {
   deleteSession,
   getRecentSessions,
   saveSessionOrder
-} = require('../services/codex-sessions');
-const { isCodexInstalled } = require('../services/codex-config');
+} = require('../../platforms/drivers/codex/sessions-implementation');
+const { isCodexInstalled } = require('../../platforms/drivers/codex/config');
 const { loadAliases } = require('../services/alias');
 const {
   defaultProjectInfo,

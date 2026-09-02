@@ -5,10 +5,10 @@ const path = require('path');
 // ---------------------------------------------------------------------------
 // Resolve dependency paths before requiring the module under test
 // ---------------------------------------------------------------------------
-const CODEX_CONFIG_PATH   = require.resolve('../../../src/server/services/codex-config');
-const CODEX_PARSER_PATH   = require.resolve('../../../src/server/services/codex-parser');
+const CODEX_CONFIG_PATH   = require.resolve('../../../src/platforms/drivers/codex/config');
+const CODEX_PARSER_PATH   = require.resolve('../../../src/platforms/drivers/codex/parser');
 const ENHANCED_CACHE_PATH = require.resolve('../../../src/server/services/enhanced-cache');
-const MODULE_PATH         = require.resolve('../../../src/server/services/codex-sessions');
+const MODULE_PATH         = require.resolve('../../../src/platforms/drivers/codex/sessions-implementation');
 
 let testDir;
 
@@ -48,7 +48,7 @@ function cleanStubs() {
   delete require.cache[MODULE_PATH];
   // Also clean up sessions dependency pulled in by getSessionsByProject
   try {
-    const sessionsPath = require.resolve('../../../src/server/services/sessions');
+    const sessionsPath = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
     delete require.cache[sessionsPath];
   } catch (_) { /* not loaded, ignore */ }
 }

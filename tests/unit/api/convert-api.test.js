@@ -87,9 +87,9 @@ beforeEach(() => {
     loaded: true,
     exports: sessionConverter
   };
-  require.cache[require.resolve('../../../src/server/services/opencode-gateway-converter')] = {
-    id: require.resolve('../../../src/server/services/opencode-gateway-converter'),
-    filename: require.resolve('../../../src/server/services/opencode-gateway-converter'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/gateway-converter')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/gateway-converter'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/gateway-converter'),
     loaded: true,
     exports: gatewayConverter
   };
@@ -99,7 +99,7 @@ afterEach(() => {
   [
     '../../../src/server/api/convert',
     '../../../src/server/services/session-converter',
-    '../../../src/server/services/opencode-gateway-converter'
+    '../../../src/platforms/drivers/opencode/gateway-converter'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

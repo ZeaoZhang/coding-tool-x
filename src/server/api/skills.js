@@ -16,7 +16,7 @@ const { validateKnownProjectCwd } = require('../services/project-path-validation
 const {
   readOmpSkillSettings,
   updateOmpSkillSettings
-} = require('../services/omp-skill-settings-service');
+} = require('../../platforms/drivers/omp/skill-settings');
 
 const router = express.Router();
 const skillServices = new Map();

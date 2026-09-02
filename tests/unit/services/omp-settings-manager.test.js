@@ -3,8 +3,8 @@ const os = require('os');
 const path = require('path');
 const yaml = require('js-yaml');
 
-const MANAGER_PATH = require.resolve('../../../src/server/services/omp-settings-manager');
-const OMP_CONFIG_PATH = require.resolve('../../../src/server/services/omp-config');
+const MANAGER_PATH = require.resolve('../../../src/platforms/drivers/omp/native-config-implementation');
+const OMP_CONFIG_PATH = require.resolve('../../../src/platforms/drivers/omp/config');
 
 let testDir;
 let paths;
@@ -60,7 +60,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }
     }), 'utf8');
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([{
       id: 'channel-1',
       name: 'Demo Provider',
@@ -88,7 +88,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     expect(settings.enabledModels).toEqual(['ctx-demo/gpt-demo', 'ctx-demo/gpt-demo-mini']);
   });
   test('writes Codex-source providers with the Codex Responses API while preserving generic Responses', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([
       {
         id: 'edge-codex',
@@ -135,7 +135,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('writes Claude-source providers with anthropic-messages and Gemini-source with google-generative-ai', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([
       {
         id: 'claude-official',
@@ -203,7 +203,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     }), { mode: 0o600 });
     fs.chmodSync(paths.modelsYml, 0o600);
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'openai',
@@ -223,7 +223,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('writes gateway-local providers without exposing upstream credentials', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       name: 'Demo Provider',
@@ -295,7 +295,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     };
     fs.writeFileSync(paths.modelsYml, yaml.dump(originalConfig), 'utf8');
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'demo',
@@ -328,7 +328,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       stderr: 'stderr warning\n'
     }));
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'demo',
@@ -390,7 +390,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       stderr: ''
     }));
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'deepseek',
@@ -420,7 +420,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       stdout: JSON.stringify({ models: [{ id: 'cached-model' }] }),
       stderr: ''
     }));
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 
     expect(manager.getOmpCatalogModels('demo', { catalogRunner })).toEqual([{ id: 'cached-model' }]);
     expect(manager.getOmpCatalogModels('demo', { catalogRunner })).toEqual([{ id: 'cached-model' }]);
@@ -444,7 +444,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }),
       stderr: ''
     }));
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 
     expect(manager.getOmpCatalogModels('unregistered-provider', {
       requestedModelIds: ['gpt-5.6-sol'],
@@ -472,7 +472,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }),
       stderr: ''
     }));
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 
     expect(manager.getOmpCatalogModels('openai_shuai', {
       requestedModelIds: ['gpt-5.6-terra:high'],
@@ -521,7 +521,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
         stderr: ''
       });
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([
       {
         id: 'channel-1',
@@ -603,7 +603,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }
     };
     fs.writeFileSync(paths.settings, yaml.dump(originalSettings), 'utf8');
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 
     manager.writeManagedOmpProviders([
       {
@@ -656,7 +656,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }
     }), 'utf8');
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'deepseek',
@@ -683,7 +683,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       modelRoles: { default: 'openai/gpt-5' }
     }), 'utf8');
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'deepseek',
@@ -710,7 +710,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('does not expose provider catalog when an enabled channel has no configured models', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'deepseek',
@@ -750,7 +750,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       stderr: 'schema failed'
     }));
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 
     expect(() => manager.writeManagedOmpProviders([{
       id: 'channel-1',
@@ -770,7 +770,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     require.cache[OMP_CONFIG_PATH].exports.resolveOmpRuntime = resolveOmpRuntime;
     const modelsRunner = vi.fn();
     const catalogRunner = vi.fn();
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
@@ -791,7 +791,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('does not invent metadata for an unknown user-added model', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([{
       id: 'channel-future',
       providerKey: 'future-provider',
@@ -811,7 +811,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('writes the base model once and keeps thinking effort in the default selector', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([{
       id: 'channel-gpt',
       providerKey: 'openai-official',
@@ -843,7 +843,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('round-trips complete model and provider-level OMP parameters', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([{
       id: 'channel-custom',
       providerKey: 'custom',
@@ -900,7 +900,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }
     }), 'utf8');
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     expect(manager.isManagedOmpProvidersActive()).toBe(true);
     manager.removeManagedOmpProviders();
 
@@ -935,7 +935,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
       }
     }), 'utf8');
 
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.removeManagedOmpProviders();
 
     expect(yaml.load(fs.readFileSync(paths.settings, 'utf8'))).toEqual({
@@ -958,7 +958,7 @@ describe('omp-settings-manager OMP models.yml sync', () => {
   });
 
   test('rolls back models, settings and visibility state when cleanup validation fails', () => {
-    const manager = require('../../../src/server/services/omp-settings-manager');
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     manager.writeManagedOmpProviders([{
       id: 'channel-1',
       providerKey: 'demo',

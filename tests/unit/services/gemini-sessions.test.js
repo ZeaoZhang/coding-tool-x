@@ -61,9 +61,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/gemini-config')] = {
-    id: require.resolve('../../../src/server/services/gemini-config'),
-    filename: require.resolve('../../../src/server/services/gemini-config'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/config')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/config'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/config'),
     loaded: true,
     exports: {
       getGeminiDir: vi.fn(() => geminiDir)
@@ -72,9 +72,9 @@ beforeEach(() => {
 
   delete require.cache[require.resolve('../../../src/server/services/session-history-index')];
   delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/gemini')];
-  delete require.cache[require.resolve('../../../src/server/services/gemini-sessions')];
-  geminiSessions = require('../../../src/server/services/gemini-sessions');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/session-history-adapter')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation')];
+  geminiSessions = require('../../../src/platforms/drivers/gemini/sessions-implementation');
 });
 
 afterEach(() => {
@@ -83,12 +83,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/services/gemini-sessions',
+    '../../../src/platforms/drivers/gemini/sessions-implementation',
     '../../../src/server/services/session-history-index',
     '../../../src/server/services/session-history-adapters',
-    '../../../src/server/services/session-history-adapters/gemini',
+    '../../../src/platforms/drivers/gemini/session-history-adapter',
     '../../../src/config/paths',
-    '../../../src/server/services/gemini-config'
+    '../../../src/platforms/drivers/gemini/config'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

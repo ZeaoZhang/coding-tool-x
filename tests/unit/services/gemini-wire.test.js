@@ -13,7 +13,7 @@ let geminiWire;
 
 beforeEach(() => {
   vi.resetModules();
-  geminiWire = require('../../../src/server/services/gemini-wire');
+  geminiWire = require('../../../src/platforms/drivers/gemini/wire');
 });
 
 describe('gemini-wire module exports', () => {

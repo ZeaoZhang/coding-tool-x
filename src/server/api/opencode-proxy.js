@@ -5,7 +5,7 @@ const {
   stopOpenCodeProxyServer,
   getOpenCodeProxyStatus,
   collectProxyModelList
-} = require('../opencode-proxy-server');
+} = require('../../platforms/drivers/opencode/proxy-implementation');
 const {
   configExists,
   hasBackup,
@@ -16,14 +16,14 @@ const {
   getCurrentProxyPort,
   readConfig,
   selectConfigPath
-} = require('../services/opencode-settings-manager');
+} = require('../../platforms/drivers/opencode/native-config-implementation');
 const {
   getChannels,
   getEnabledChannels,
   applyChannelToSettings,
   markChannelAsRecentlyUsed,
   getEffectiveApiKeyCandidates
-} = require('../services/opencode-channels');
+} = require('../../platforms/drivers/opencode/channels-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');

@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
-const { getOmpPaths } = require('./omp-config');
+const { getOmpPaths } = require('../../platforms/drivers/omp/config');
 const { normalizeSafeRelativePath, resolveInsideRoot } = require('./config-artifact-paths');
 const { assertNoSymlinkComponents } = require('./project-config-adapters/shared');
 

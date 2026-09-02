@@ -122,9 +122,9 @@ beforeEach(() => {
     exports: pathsStub
   };
 
-  require.cache[require.resolve('../../../src/server/services/settings-manager')] = {
-    id: require.resolve('../../../src/server/services/settings-manager'),
-    filename: require.resolve('../../../src/server/services/settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
     loaded: true,
     exports: {
       settingsExists: vi.fn(() => true),
@@ -133,9 +133,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/codex-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/codex-settings-manager'),
-    filename: require.resolve('../../../src/server/services/codex-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/native-config-implementation'),
     loaded: true,
     exports: {
       readAuth: vi.fn(() => (fs.existsSync(pathsStub.NATIVE_PATHS.codex.auth) ? readJson(pathsStub.NATIVE_PATHS.codex.auth) : {})),
@@ -144,9 +144,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/gemini-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/gemini-settings-manager'),
-    filename: require.resolve('../../../src/server/services/gemini-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation'),
     loaded: true,
     exports: {
       configExists: vi.fn(() => true),
@@ -158,9 +158,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/opencode-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/opencode-settings-manager'),
-    filename: require.resolve('../../../src/server/services/opencode-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
     loaded: true,
     exports: {
       clearManagedChannelConfig: clearManagedChannelConfigMock,
@@ -173,9 +173,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/codex-env-manager')] = {
-    id: require.resolve('../../../src/server/services/codex-env-manager'),
-    filename: require.resolve('../../../src/server/services/codex-env-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/env-manager')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/env-manager'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/env-manager'),
     loaded: true,
     exports: {
       syncCodexUserEnvironment: syncCodexUserEnvironmentMock
@@ -216,45 +216,45 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/proxy-server')] = {
-    id: require.resolve('../../../src/server/proxy-server'),
-    filename: require.resolve('../../../src/server/proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/proxy-implementation'),
     loaded: true,
     exports: { getProxyStatus: getProxyStatusMock }
   };
-  require.cache[require.resolve('../../../src/server/codex-proxy-server')] = {
-    id: require.resolve('../../../src/server/codex-proxy-server'),
-    filename: require.resolve('../../../src/server/codex-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/proxy-implementation'),
     loaded: true,
     exports: { getCodexProxyStatus: getCodexProxyStatusMock }
   };
-  require.cache[require.resolve('../../../src/server/gemini-proxy-server')] = {
-    id: require.resolve('../../../src/server/gemini-proxy-server'),
-    filename: require.resolve('../../../src/server/gemini-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
     loaded: true,
     exports: { getGeminiProxyStatus: getGeminiProxyStatusMock }
   };
-  require.cache[require.resolve('../../../src/server/opencode-proxy-server')] = {
-    id: require.resolve('../../../src/server/opencode-proxy-server'),
-    filename: require.resolve('../../../src/server/opencode-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
     loaded: true,
     exports: { getOpenCodeProxyStatus: getOpenCodeProxyStatusMock }
   };
-  require.cache[require.resolve('../../../src/server/omp-proxy-server')] = {
-    id: require.resolve('../../../src/server/omp-proxy-server'),
-    filename: require.resolve('../../../src/server/omp-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/proxy-implementation'),
     loaded: true,
     exports: { getOmpProxyStatus: getOmpProxyStatusMock }
   };
-  require.cache[require.resolve('../../../src/server/services/omp-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/omp-settings-manager'),
-    filename: require.resolve('../../../src/server/services/omp-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/native-config-implementation'),
     loaded: true,
     exports: { isManagedOmpProvidersActive: vi.fn(() => false) }
   };
-  require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
-    id: require.resolve('../../../src/server/services/omp-auth-providers'),
-    filename: require.resolve('../../../src/server/services/omp-auth-providers'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/auth-providers')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/auth-providers'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/auth-providers'),
     loaded: true,
     exports: {
       getOmpAuthProviderSnapshot: getOmpAuthProviderSnapshotMock,
@@ -262,29 +262,29 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/server/services/native-oauth-adapters')];
-  nativeAdapters = require('../../../src/server/services/native-oauth-adapters');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')];
+  nativeAdapters = require('../../../src/platforms/drivers/shared/native-oauth-adapters');
 });
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/services/native-oauth-adapters',
+    '../../../src/platforms/drivers/shared/native-oauth-adapters',
     '../../../src/config/paths',
-    '../../../src/server/services/settings-manager',
-    '../../../src/server/services/codex-settings-manager',
-    '../../../src/server/services/gemini-settings-manager',
-    '../../../src/server/services/opencode-settings-manager',
-    '../../../src/server/services/codex-env-manager',
+    '../../../src/platforms/drivers/claude/native-config-implementation',
+    '../../../src/platforms/drivers/codex/native-config-implementation',
+    '../../../src/platforms/drivers/gemini/native-config-implementation',
+    '../../../src/platforms/drivers/opencode/native-config-implementation',
+    '../../../src/platforms/drivers/codex/env-manager',
     '../../../src/server/services/native-keychain',
     '../../../src/server/services/oauth-utils',
-    '../../../src/server/proxy-server',
-    '../../../src/server/codex-proxy-server',
-    '../../../src/server/gemini-proxy-server',
-    '../../../src/server/opencode-proxy-server',
-    '../../../src/server/omp-proxy-server',
-    '../../../src/server/services/omp-settings-manager',
-    '../../../src/server/services/omp-auth-providers'
+    '../../../src/platforms/drivers/claude/proxy-implementation',
+    '../../../src/platforms/drivers/codex/proxy-implementation',
+    '../../../src/platforms/drivers/gemini/proxy-implementation',
+    '../../../src/platforms/drivers/opencode/proxy-implementation',
+    '../../../src/platforms/drivers/omp/proxy-implementation',
+    '../../../src/platforms/drivers/omp/native-config-implementation',
+    '../../../src/platforms/drivers/omp/auth-providers'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

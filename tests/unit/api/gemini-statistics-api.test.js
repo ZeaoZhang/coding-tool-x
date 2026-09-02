@@ -52,9 +52,9 @@ beforeEach(() => {
     getTodayStatistics: vi.fn(() => ({ total: 4 }))
   };
 
-  require.cache[require.resolve('../../../src/server/services/gemini-statistics-service')] = {
-    id: require.resolve('../../../src/server/services/gemini-statistics-service'),
-    filename: require.resolve('../../../src/server/services/gemini-statistics-service'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/statistics-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/statistics-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/statistics-implementation'),
     loaded: true,
     exports: geminiStatsService
   };
@@ -63,7 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/gemini-statistics',
-    '../../../src/server/services/gemini-statistics-service'
+    '../../../src/platforms/drivers/gemini/statistics-implementation'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

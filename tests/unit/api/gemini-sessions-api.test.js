@@ -84,15 +84,15 @@ beforeEach(() => {
   isGeminiInstalledMock = vi.fn(() => true);
   loadAliasesMock = vi.fn(() => ({ 'gem-1': 'alias-gem' }));
 
-  require.cache[require.resolve('../../../src/server/services/gemini-sessions')] = {
-    id: require.resolve('../../../src/server/services/gemini-sessions'),
-    filename: require.resolve('../../../src/server/services/gemini-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation'),
     loaded: true,
     exports: geminiSessionsService
   };
-  require.cache[require.resolve('../../../src/server/services/gemini-config')] = {
-    id: require.resolve('../../../src/server/services/gemini-config'),
-    filename: require.resolve('../../../src/server/services/gemini-config'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/config')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/config'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/config'),
     loaded: true,
     exports: { isGeminiInstalled: isGeminiInstalledMock }
   };
@@ -134,9 +134,9 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/gemini-sessions',
-    '../../../src/server/services/gemini-sessions',
+    '../../../src/platforms/drivers/gemini/sessions-implementation',
     '../../../src/server/services/session-history-index',
-    '../../../src/server/services/gemini-config',
+    '../../../src/platforms/drivers/gemini/config',
     '../../../src/server/services/alias'
   ].forEach((mod) => {
     try {

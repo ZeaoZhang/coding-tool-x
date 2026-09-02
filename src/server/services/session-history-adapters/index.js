@@ -1,8 +1,15 @@
 'use strict';
 
+const ADAPTER_PATHS = Object.freeze({
+  claude: '../../../platforms/drivers/claude/session-history-adapter',
+  codex: '../../../platforms/drivers/codex/session-history-adapter',
+  gemini: '../../../platforms/drivers/gemini/session-history-adapter',
+  omp: '../../../platforms/drivers/omp/session-history-adapter'
+});
+
 function optionalAdapter(name) {
   try {
-    return require(`./${name}`);
+    return require(ADAPTER_PATHS[name]);
   } catch (_) {
     return {
       inventory: async () => [],

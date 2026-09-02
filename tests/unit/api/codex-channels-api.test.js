@@ -89,9 +89,9 @@ beforeEach(() => {
   };
   getDefaultSpeedTestModelByToolType = vi.fn(() => 'gpt-5-codex');
 
-  require.cache[require.resolve('../../../src/server/services/codex-channels')] = {
-    id: require.resolve('../../../src/server/services/codex-channels'),
-    filename: require.resolve('../../../src/server/services/codex-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/channels-implementation'),
     loaded: true,
     exports: {
       getChannels,
@@ -124,9 +124,9 @@ beforeEach(() => {
     loaded: true,
     exports: { broadcastSchedulerState, broadcastLog }
   };
-  require.cache[require.resolve('../../../src/server/services/codex-config')] = {
-    id: require.resolve('../../../src/server/services/codex-config'),
-    filename: require.resolve('../../../src/server/services/codex-config'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/config')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/config'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/config'),
     loaded: true,
     exports: { isCodexInstalled }
   };
@@ -141,9 +141,9 @@ beforeEach(() => {
       runWithConcurrencyLimit
     }
   };
-  require.cache[require.resolve('../../../src/server/codex-proxy-server')] = {
-    id: require.resolve('../../../src/server/codex-proxy-server'),
-    filename: require.resolve('../../../src/server/codex-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/proxy-implementation'),
     loaded: true,
     exports: {
       clearCodexRedirectCache,
@@ -151,9 +151,9 @@ beforeEach(() => {
       stopCodexProxyServer
     }
   };
-  require.cache[require.resolve('../../../src/server/services/codex-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/codex-settings-manager'),
-    filename: require.resolve('../../../src/server/services/codex-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/native-config-implementation'),
     loaded: true,
     exports: { deleteBackup }
   };
@@ -190,14 +190,14 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/codex-channels',
-    '../../../src/server/services/codex-channels',
+    '../../../src/platforms/drivers/codex/channels-implementation',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
     '../../../src/server/websocket-server',
-    '../../../src/server/services/codex-config',
+    '../../../src/platforms/drivers/codex/config',
     '../../../src/server/services/speed-test',
-    '../../../src/server/codex-proxy-server',
-    '../../../src/server/services/codex-settings-manager',
+    '../../../src/platforms/drivers/codex/proxy-implementation',
+    '../../../src/platforms/drivers/codex/native-config-implementation',
     '../../../src/config/paths',
     '../../../src/config/model-metadata',
     '../../../src/platforms/runtime'

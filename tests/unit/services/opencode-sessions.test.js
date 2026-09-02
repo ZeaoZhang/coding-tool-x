@@ -7,8 +7,8 @@ const { DatabaseSync } = require('node:sqlite');
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const ALIAS_PATH = require.resolve('../../../src/server/services/alias');
-const SESSIONS_PATH = require.resolve('../../../src/server/services/sessions');
-const MODULE_PATH = require.resolve('../../../src/server/services/opencode-sessions');
+const SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
+const MODULE_PATH = require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation');
 
 let testDir;
 let dataDir;
@@ -160,7 +160,7 @@ beforeEach(() => {
   };
 
   delete require.cache[MODULE_PATH];
-  opencodeSessions = require('../../../src/server/services/opencode-sessions');
+  opencodeSessions = require('../../../src/platforms/drivers/opencode/sessions-implementation');
 });
 
 afterEach(() => {
@@ -187,7 +187,7 @@ describe('opencode-sessions', () => {
       fs.rmSync(dataDir, { recursive: true, force: true });
       // Need fresh require since paths mock still points to same dataDir
       delete require.cache[MODULE_PATH];
-      const fresh = require('../../../src/server/services/opencode-sessions');
+      const fresh = require('../../../src/platforms/drivers/opencode/sessions-implementation');
       expect(fresh.isOpenCodeInstalled()).toBe(false);
     });
   });
