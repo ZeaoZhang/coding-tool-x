@@ -4,13 +4,13 @@ const {
   startOmpProxyServer,
   stopOmpProxyServer,
   getOmpProxyStatus
-} = require('../omp-proxy-server');
+} = require('../../platforms/drivers/omp/proxy-implementation');
 const {
   getChannels,
   getEnabledChannels,
   markChannelAsRecentlyUsed,
   loadManagedOmpActiveChannelId
-} = require('../services/omp-channels');
+} = require('../../platforms/drivers/omp/channels-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 
 function sanitizeChannel(channel) {

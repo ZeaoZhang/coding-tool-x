@@ -129,9 +129,9 @@ beforeEach(() => {
   clearNativeOAuthMock = vi.fn();
   broadcastProxyStateMock = vi.fn();
 
-  require.cache[require.resolve('../../../src/server/gemini-proxy-server')] = {
-    id: require.resolve('../../../src/server/gemini-proxy-server'),
-    filename: require.resolve('../../../src/server/gemini-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
     loaded: true,
     exports: {
       startGeminiProxyServer: startGeminiProxyServerMock,
@@ -140,9 +140,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/gemini-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/gemini-settings-manager'),
-    filename: require.resolve('../../../src/server/services/gemini-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/native-config-implementation'),
     loaded: true,
     exports: {
       setProxyConfig: setProxyConfigMock,
@@ -156,9 +156,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/gemini-channels')] = {
-    id: require.resolve('../../../src/server/services/gemini-channels'),
-    filename: require.resolve('../../../src/server/services/gemini-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
     loaded: true,
     exports: {
       getChannels: getChannelsMock,
@@ -168,9 +168,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/native-oauth-adapters')] = {
-    id: require.resolve('../../../src/server/services/native-oauth-adapters'),
-    filename: require.resolve('../../../src/server/services/native-oauth-adapters'),
+  require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')] = {
+    id: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
+    filename: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
     loaded: true,
     exports: {
       clearNativeOAuth: clearNativeOAuthMock
@@ -205,10 +205,10 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/api/gemini-proxy',
-    '../../../src/server/gemini-proxy-server',
-    '../../../src/server/services/gemini-settings-manager',
-    '../../../src/server/services/gemini-channels',
-    '../../../src/server/services/native-oauth-adapters',
+    '../../../src/platforms/drivers/gemini/proxy-implementation',
+    '../../../src/platforms/drivers/gemini/native-config-implementation',
+    '../../../src/platforms/drivers/gemini/channels-implementation',
+    '../../../src/platforms/drivers/shared/native-oauth-adapters',
     '../../../src/server/websocket-server',
     '../../../src/config/paths'
   ].forEach((mod) => {

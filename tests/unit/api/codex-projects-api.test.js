@@ -74,15 +74,15 @@ beforeEach(() => {
   };
   isCodexInstalledMock = vi.fn(() => true);
 
-  require.cache[require.resolve('../../../src/server/services/codex-sessions')] = {
-    id: require.resolve('../../../src/server/services/codex-sessions'),
-    filename: require.resolve('../../../src/server/services/codex-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/sessions-implementation'),
     loaded: true,
     exports: codexSessionsService
   };
-  require.cache[require.resolve('../../../src/server/services/codex-config')] = {
-    id: require.resolve('../../../src/server/services/codex-config'),
-    filename: require.resolve('../../../src/server/services/codex-config'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/config')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/config'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/config'),
     loaded: true,
     exports: {
       isCodexInstalled: isCodexInstalledMock
@@ -105,8 +105,8 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/codex-projects',
-    '../../../src/server/services/codex-sessions',
-    '../../../src/server/services/codex-config',
+    '../../../src/platforms/drivers/codex/sessions-implementation',
+    '../../../src/platforms/drivers/codex/config',
     '../../../src/config/paths',
     '../../../src/server/services/snapshot-cache',
     '../../../src/server/services/project-snapshots'

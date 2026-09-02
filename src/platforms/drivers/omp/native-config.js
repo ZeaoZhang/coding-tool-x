@@ -1,12 +1,19 @@
 'use strict';
 
+const implementation = require('./channels-implementation');
+
 function createDriver({ requireImpl, ...context } = {}) {
-  const service = requireImpl ? requireImpl('../../server/services/omp-channels') : require('../../../server/services/omp-channels');
+  const managed = requireImpl
+    ? requireImpl('./omp/channels-implementation')
+    : implementation;
   return {
-    platform: 'omp', capability: 'nativeConfig', ...context,
-    syncManagedProviders: (...args) => service.syncManagedOmpProviders(...args),
-    disableManagedProviders: (...args) => service.disableManagedOmpProviders(...args),
-    isManagedModeEnabled: (...args) => service.isManagedOmpModeEnabled(...args)
+    platform: 'omp',
+    capability: 'nativeConfig',
+    ...context,
+    syncManagedProviders: (...args) => managed.syncManagedOmpProviders(...args),
+    disableManagedProviders: (...args) => managed.disableManagedOmpProviders(...args),
+    isManagedModeEnabled: (...args) => managed.isManagedOmpModeEnabled(...args),
+    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('omp')
   };
 }
 

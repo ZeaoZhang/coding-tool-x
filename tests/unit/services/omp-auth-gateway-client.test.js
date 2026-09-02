@@ -1,7 +1,7 @@
 const http = require('http');
 const {
   probeOmpAuthGateways
-} = require('../../../src/server/services/omp-auth-gateway-client');
+} = require('../../../src/platforms/drivers/omp/auth-gateway-client');
 
 function listen(server) {
   return new Promise((resolve, reject) => {

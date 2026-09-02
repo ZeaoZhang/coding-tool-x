@@ -1,7 +1,7 @@
 const http = require('http');
 const { WebSocket, WebSocketServer } = require('ws');
-const { createOmpGateway } = require('../../../src/server/services/omp-gateway');
-const { prepareManagedOmpChannels } = require('../../../src/server/services/omp-gateway-routing');
+const { createOmpGateway } = require('../../../src/platforms/drivers/omp/gateway');
+const { prepareManagedOmpChannels } = require('../../../src/platforms/drivers/omp/gateway-routing');
 
 function listen(server) {
   return new Promise((resolve, reject) => {

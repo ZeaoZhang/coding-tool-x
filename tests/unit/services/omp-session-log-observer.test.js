@@ -1,7 +1,7 @@
-const OMP_OBSERVER_MODULE = require.resolve('../../../src/server/services/omp-session-log-observer');
-const OMP_SESSIONS_MODULE = require.resolve('../../../src/server/services/omp-sessions');
-const OMP_CHANNELS_MODULE = require.resolve('../../../src/server/services/omp-channels');
-const OMP_SETTINGS_MODULE = require.resolve('../../../src/server/services/omp-settings-manager');
+const OMP_OBSERVER_MODULE = require.resolve('../../../src/platforms/drivers/omp/session-log-observer');
+const OMP_SESSIONS_MODULE = require.resolve('../../../src/platforms/drivers/omp/sessions-implementation');
+const OMP_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
+const OMP_SETTINGS_MODULE = require.resolve('../../../src/platforms/drivers/omp/native-config-implementation');
 const PROXY_LOG_HELPER_MODULE = require.resolve('../../../src/server/services/proxy-log-helper');
 const WEBSOCKET_MODULE = require.resolve('../../../src/server/websocket-server');
 
@@ -20,7 +20,7 @@ function injectStub(modulePath, exports) {
 }
 
 function loadObserver() {
-  return require('../../../src/server/services/omp-session-log-observer');
+  return require('../../../src/platforms/drivers/omp/session-log-observer');
 }
 
 beforeEach(() => {

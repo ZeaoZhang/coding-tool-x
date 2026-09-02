@@ -8,18 +8,18 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { probeModelAvailability } = require('./model-detector');
-const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('./channels');
-const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('./codex-channels');
-const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('./gemini-channels');
-const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('./opencode-channels');
-const { getEffectiveApiKey: getOmpEffectiveApiKey } = require('./omp-channels');
-const { createCodexRequest } = require('./codex-wire');
-const { createClaudeRequest, buildClaudeTargetUrl } = require('./claude-wire');
+const { getEffectiveApiKey: getClaudeEffectiveApiKey } = require('../../platforms/drivers/claude/channels-implementation');
+const { getEffectiveApiKey: getCodexEffectiveApiKey } = require('../../platforms/drivers/codex/channels-implementation');
+const { getEffectiveApiKey: getGeminiEffectiveApiKey } = require('../../platforms/drivers/gemini/channels-implementation');
+const { getEffectiveApiKey: getOpenCodeEffectiveApiKey } = require('../../platforms/drivers/opencode/channels-implementation');
+const { getEffectiveApiKey: getOmpEffectiveApiKey } = require('../../platforms/drivers/omp/channels-implementation');
+const { createCodexRequest } = require('../../platforms/drivers/codex/wire');
+const { createClaudeRequest, buildClaudeTargetUrl } = require('../../platforms/drivers/claude/wire');
 const {
   createGeminiRequest,
   buildGeminiTargetUrl,
   shouldUseGeminiCliFormat
-} = require('./gemini-wire');
+} = require('../../platforms/drivers/gemini/wire');
 
 // 测试结果缓存
 const testResultsCache = new Map();

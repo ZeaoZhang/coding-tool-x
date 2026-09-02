@@ -6,7 +6,7 @@ const path = require('path');
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const MODEL_META_PATH = require.resolve('../../../src/config/model-metadata');
-const MODULE_PATH = require.resolve('../../../src/server/services/opencode-settings-manager');
+const MODULE_PATH = require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation');
 
 let testDir;
 let configDir;
@@ -63,7 +63,7 @@ beforeEach(() => {
     }
   };
 
-  manager = require('../../../src/server/services/opencode-settings-manager');
+  manager = require('../../../src/platforms/drivers/opencode/native-config-implementation');
 });
 
 afterEach(() => {

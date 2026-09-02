@@ -301,33 +301,33 @@ function stubModules() {
     loaded: true,
     exports: configTemplatesService
   };
-  require.cache[require.resolve('../../../src/server/services/channels')] = {
-    id: require.resolve('../../../src/server/services/channels'),
-    filename: require.resolve('../../../src/server/services/channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/channels-implementation'),
     loaded: true,
     exports: channelsService
   };
-  require.cache[require.resolve('../../../src/server/services/codex-channels')] = {
-    id: require.resolve('../../../src/server/services/codex-channels'),
-    filename: require.resolve('../../../src/server/services/codex-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/channels-implementation'),
     loaded: true,
     exports: codexChannelsService
   };
-  require.cache[require.resolve('../../../src/server/services/gemini-channels')] = {
-    id: require.resolve('../../../src/server/services/gemini-channels'),
-    filename: require.resolve('../../../src/server/services/gemini-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
     loaded: true,
     exports: geminiChannelsService
   };
-  require.cache[require.resolve('../../../src/server/services/opencode-channels')] = {
-    id: require.resolve('../../../src/server/services/opencode-channels'),
-    filename: require.resolve('../../../src/server/services/opencode-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
     loaded: true,
     exports: opencodeChannelsService
   };
-  require.cache[require.resolve('../../../src/server/services/omp-channels')] = {
-    id: require.resolve('../../../src/server/services/omp-channels'),
-    filename: require.resolve('../../../src/server/services/omp-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
     loaded: true,
     exports: ompChannelsService
   };
@@ -406,9 +406,9 @@ function stubModules() {
       getOpenCodeManagedPluginPath: () => ''
     }
   };
-  require.cache[require.resolve('../../../src/server/services/opencode-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/opencode-settings-manager'),
-    filename: require.resolve('../../../src/server/services/opencode-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
     loaded: true,
     exports: {
       CONFIG_PATHS: {
@@ -523,11 +523,11 @@ afterEach(() => {
   [
     '../../../src/server/services/config-export-service',
     '../../../src/server/services/config-templates-service',
-    '../../../src/server/services/channels',
-    '../../../src/server/services/codex-channels',
-    '../../../src/server/services/gemini-channels',
-    '../../../src/server/services/opencode-channels',
-    '../../../src/server/services/omp-channels',
+    '../../../src/platforms/drivers/claude/channels-implementation',
+    '../../../src/platforms/drivers/codex/channels-implementation',
+    '../../../src/platforms/drivers/gemini/channels-implementation',
+    '../../../src/platforms/drivers/opencode/channels-implementation',
+    '../../../src/platforms/drivers/omp/channels-implementation',
     '../../../src/server/services/agents-service',
     '../../../src/server/services/commands-service',
     '../../../src/server/services/skill-service',
@@ -540,7 +540,7 @@ afterEach(() => {
     '../../../src/config/loader',
     '../../../src/config/paths',
     '../../../src/server/services/notification-hooks',
-    '../../../src/server/services/opencode-settings-manager',
+    '../../../src/platforms/drivers/opencode/native-config-implementation',
     'adm-zip'
   ].forEach((mod) => {
     try {

@@ -6,7 +6,7 @@
  */
 
 const HC_PATH      = require.resolve('../../../src/server/services/health-check');
-const SESSIONS_PATH = require.resolve('../../../src/server/services/sessions');
+const SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
 const API_PATH     = require.resolve('../../../src/server/api/health-check');
 
 let healthCheckAllProjects;

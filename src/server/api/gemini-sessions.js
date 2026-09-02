@@ -10,9 +10,9 @@ const {
   saveSessionOrder,
   getProjectPath,
   getAllSessions
-} = require('../services/gemini-sessions');
+} = require('../../platforms/drivers/gemini/sessions-implementation');
 const { getSessionStatus, getSessionOutline, getMessagePage } = require('../services/session-history-index');
-const { isGeminiInstalled } = require('../services/gemini-config');
+const { isGeminiInstalled } = require('../../platforms/drivers/gemini/config');
 const { loadAliases } = require('../services/alias');
 const {
   defaultProjectInfo,

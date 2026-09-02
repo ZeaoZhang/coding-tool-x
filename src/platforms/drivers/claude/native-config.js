@@ -1,20 +1,19 @@
 'use strict';
 
 const fs = require('fs');
+const implementation = require('./native-config-implementation');
 const { PATHS } = require('../../../config/paths');
 
 function createDriver({ requireImpl, ...context } = {}) {
-  const settings = requireImpl ? requireImpl('../../server/services/settings-manager') : require('../../../server/services/settings-manager');
+  const settings = requireImpl
+    ? requireImpl('./claude/native-config-implementation')
+    : implementation;
   return {
     platform: 'claude',
     capability: 'nativeConfig',
     ...context,
-    setProxyConfig: (...args) => settings.setProxyConfig(...args),
-    restoreSettings: (...args) => settings.restoreSettings(...args),
-    isProxyConfig: (...args) => settings.isProxyConfig(...args),
-    settingsExists: (...args) => settings.settingsExists(...args),
-    hasBackup: (...args) => settings.hasBackup(...args),
-    deleteBackup: (...args) => settings.deleteBackup(...args),
+    ...settings,
+    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('claude'),
     clearActiveChannelMarker() {
       try {
         fs.unlinkSync(PATHS.activeChannel.claude);

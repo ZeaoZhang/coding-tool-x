@@ -9,7 +9,7 @@ const {
   getCurrentSettings,
   getBestChannelForRestore,
   syncCurrentClaudeChannel
-} = require('../services/channels');
+} = require('../../platforms/drivers/claude/channels-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, getAllChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { fetchModelsFromProvider } = require('../services/model-detector');
@@ -22,7 +22,7 @@ const {
 const { normalizeGatewaySourceType } = require('../services/base/proxy-utils');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
-const { clearRedirectCache } = require('../proxy-server');
+const { clearRedirectCache } = require('../../platforms/drivers/claude/proxy-implementation');
 const CLAUDE_GATEWAY_SOURCE_TYPE = 'claude';
 
 function getDefaultClaudeModel() {

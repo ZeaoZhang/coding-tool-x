@@ -7,14 +7,14 @@ function createDriver(context = {}) {
     ...context,
     platform: 'claude',
     servicePath: './claude/channels-implementation',
-    localServicePath: './channels-implementation',
+    localServicePath: '../claude/channels-implementation',
     listMethod: 'getAllChannels',
     syncMethod: 'syncCurrentClaudeChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.websiteUrl, input.extra || {}]
-      : [input, ...rest]
+      : [input, ...rest],
+    cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20088 }
   });
-  const callLegacy = (name, args) => driver._service()[name](...args);
   for (const name of [
     'getAllChannels', 'getCurrentChannel', 'getCurrentSettings', 'createChannel',
     'updateChannel', 'markChannelAsRecentlyUsed', 'deleteChannel',

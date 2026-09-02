@@ -11,13 +11,13 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const { loadConfig } = require('../../config/loader');
-const { createCodexRequest, buildCodexTargetUrl } = require('./codex-wire');
-const { createClaudeRequest, buildClaudeTargetUrl } = require('./claude-wire');
+const { createCodexRequest, buildCodexTargetUrl } = require('../../platforms/drivers/codex/wire');
+const { createClaudeRequest, buildClaudeTargetUrl } = require('../../platforms/drivers/claude/wire');
 const {
   createGeminiRequest,
   buildGeminiTargetUrl,
   shouldUseGeminiCliFormat
-} = require('./gemini-wire');
+} = require('../../platforms/drivers/gemini/wire');
 const { PATHS } = require('../../config/paths');
 
 // 内置模型优先级（当配置缺失时兜底）

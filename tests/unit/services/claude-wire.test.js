@@ -13,7 +13,7 @@ let claudeWire;
 
 beforeEach(() => {
   vi.resetModules();
-  claudeWire = require('../../../src/server/services/claude-wire');
+  claudeWire = require('../../../src/platforms/drivers/claude/wire');
 });
 
 describe('claude-wire module exports', () => {

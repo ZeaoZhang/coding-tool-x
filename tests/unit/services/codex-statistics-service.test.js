@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const TOOL_TYPE = 'codex';
-const MODULE_PATH = '../../../src/server/services/codex-statistics-service';
+const MODULE_PATH = '../../../src/platforms/drivers/codex/statistics-implementation';
 
 const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();

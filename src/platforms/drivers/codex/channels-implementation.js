@@ -4,9 +4,9 @@ const crypto = require('crypto');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { PATHS } = require('../../../config/paths');
-const { getCodexDir } = require('../../../server/services/codex-config');
-const { isProxyConfig, readConfig } = require('../../../server/services/codex-settings-manager');
-const { syncCodexUserEnvironment } = require('../../../server/services/codex-env-manager');
+const { getCodexDir } = require('./config');
+const { isProxyConfig, readConfig } = require('./native-config-implementation');
+const { syncCodexUserEnvironment } = require('./env-manager');
 const BaseChannelService = require('../../../server/services/base/base-channel-service');
 const {
   createSkippedResult,

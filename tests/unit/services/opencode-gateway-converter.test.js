@@ -3,7 +3,7 @@ const {
   convertToOpenCodePayload,
   convertClaudeToOpenCodePayload,
   convertGeminiToOpenCodePayload
-} = require('../../../src/server/services/opencode-gateway-converter');
+} = require('../../../src/platforms/drivers/opencode/gateway-converter');
 
 describe('opencode-gateway-converter', () => {
   test('normalizes source aliases and rejects unsupported sources or target APIs', () => {

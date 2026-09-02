@@ -52,7 +52,7 @@ beforeEach(() => {
     getTodayStatistics: vi.fn(() => ({ total: 1 }))
   };
 
-  const servicePath = require.resolve('../../../src/server/services/claude-statistics-service');
+  const servicePath = require.resolve('../../../src/platforms/drivers/claude/statistics-implementation');
   require.cache[servicePath] = {
     id: servicePath,
     filename: servicePath,
@@ -64,7 +64,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/claude-statistics',
-    '../../../src/server/services/claude-statistics-service'
+    '../../../src/platforms/drivers/claude/statistics-implementation'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

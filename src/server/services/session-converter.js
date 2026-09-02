@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { getSessionById: getClaudeSessionById } = require('./sessions');
-const { getSessionById: getCodexSessionById } = require('./codex-sessions');
-const { getSessionById: getGeminiSessionById, getProjectPath } = require('./gemini-sessions');
-const { readJSONL, parseSession: parseCodexFull } = require('./codex-parser');
+const { getSessionById: getClaudeSessionById } = require('../../platforms/drivers/claude/sessions-implementation');
+const { getSessionById: getCodexSessionById } = require('../../platforms/drivers/codex/sessions-implementation');
+const { getSessionById: getGeminiSessionById, getProjectPath } = require('../../platforms/drivers/gemini/sessions-implementation');
+const { readJSONL, parseSession: parseCodexFull } = require('../../platforms/drivers/codex/parser');
 const { NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
 
 const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
@@ -462,7 +462,7 @@ async function convertSession(sourceType, targetType, sessionId, options = {}) {
   if (sourceType === 'claude') {
     const { getConfig } = require('../config/default');
     const config = getConfig();
-    const sessions = require('./sessions');
+    const sessions = require('../../platforms/drivers/claude/sessions-implementation');
     const allSessions = require('../../utils/session').getAllSessions(config);
     sourceSession = allSessions.find(s => s.sessionId === sessionId);
     if (!sourceSession) {

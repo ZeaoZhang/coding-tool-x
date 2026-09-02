@@ -8,9 +8,9 @@ function createDriver(context = {}) {
     platform: 'gemini',
     capability: 'sessions',
     preservePayloadUpdatedAt: true,
-    servicePath: '../../server/services/gemini-sessions',
-    localServicePath: '../../../server/services/gemini-sessions',
-    adapterLocalPath: '../../../server/services/session-history-adapters/gemini',
+    servicePath: './gemini/sessions-implementation',
+    localServicePath: '../gemini/sessions-implementation',
+    adapterLocalPath: '../gemini/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
     methods: {"listSessions":"getProjectSessions","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
   });

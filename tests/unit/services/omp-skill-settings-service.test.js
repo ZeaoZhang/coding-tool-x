@@ -3,8 +3,8 @@ const os = require('os');
 const path = require('path');
 const yaml = require('js-yaml');
 
-const CONFIG_MODULE = require.resolve('../../../src/server/services/omp-config');
-const SERVICE_MODULE = require.resolve('../../../src/server/services/omp-skill-settings-service');
+const CONFIG_MODULE = require.resolve('../../../src/platforms/drivers/omp/config');
+const SERVICE_MODULE = require.resolve('../../../src/platforms/drivers/omp/skill-settings');
 
 const DEFAULT_SETTINGS = Object.freeze({
   enableCodexUser: true,

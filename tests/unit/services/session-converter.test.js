@@ -44,27 +44,27 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/sessions')] = {
-    id: require.resolve('../../../src/server/services/sessions'),
-    filename: require.resolve('../../../src/server/services/sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/sessions-implementation'),
     loaded: true,
     exports: {
       getSessionById: vi.fn((sessionId) => claudeSessions.find((item) => item.sessionId === sessionId) || null)
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/codex-sessions')] = {
-    id: require.resolve('../../../src/server/services/codex-sessions'),
-    filename: require.resolve('../../../src/server/services/codex-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/sessions-implementation'),
     loaded: true,
     exports: {
       getSessionById: vi.fn((sessionId) => codexSessionsById.get(sessionId) || null)
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/gemini-sessions')] = {
-    id: require.resolve('../../../src/server/services/gemini-sessions'),
-    filename: require.resolve('../../../src/server/services/gemini-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation'),
     loaded: true,
     exports: {
       getSessionById: vi.fn((sessionId) => geminiSessionsById.get(sessionId) || null),
@@ -72,9 +72,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/codex-parser')] = {
-    id: require.resolve('../../../src/server/services/codex-parser'),
-    filename: require.resolve('../../../src/server/services/codex-parser'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/parser')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/parser'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/parser'),
     loaded: true,
     exports: {
       readJSONL: vi.fn(),
@@ -90,10 +90,10 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/services/session-converter',
-    '../../../src/server/services/sessions',
-    '../../../src/server/services/codex-sessions',
-    '../../../src/server/services/gemini-sessions',
-    '../../../src/server/services/codex-parser',
+    '../../../src/platforms/drivers/claude/sessions-implementation',
+    '../../../src/platforms/drivers/codex/sessions-implementation',
+    '../../../src/platforms/drivers/gemini/sessions-implementation',
+    '../../../src/platforms/drivers/codex/parser',
     '../../../src/config/paths'
   ].forEach((mod) => {
     try {

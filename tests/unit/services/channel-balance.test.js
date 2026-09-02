@@ -7,11 +7,11 @@ const path = require('path');
 
 const SERVICE_PATH = require.resolve('../../../src/server/services/channel-balance');
 const UI_CONFIG_PATH = require.resolve('../../../src/server/services/ui-config');
-const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
-const CODEX_CHANNELS_PATH = require.resolve('../../../src/server/services/codex-channels');
-const GEMINI_CHANNELS_PATH = require.resolve('../../../src/server/services/gemini-channels');
-const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
-const OMP_CHANNELS_PATH = require.resolve('../../../src/server/services/omp-channels');
+const CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
+const CODEX_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/codex/channels-implementation');
+const GEMINI_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
+const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/opencode/channels-implementation');
+const OMP_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
 const PLATFORM_RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');

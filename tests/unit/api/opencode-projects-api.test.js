@@ -68,9 +68,9 @@ beforeEach(() => {
     isOpenCodeInstalled: vi.fn(() => true)
   };
 
-  require.cache[require.resolve('../../../src/server/services/opencode-sessions')] = {
-    id: require.resolve('../../../src/server/services/opencode-sessions'),
-    filename: require.resolve('../../../src/server/services/opencode-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation'),
     loaded: true,
     exports: opencodeSessionsService
   };
@@ -91,7 +91,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/opencode-projects',
-    '../../../src/server/services/opencode-sessions',
+    '../../../src/platforms/drivers/opencode/sessions-implementation',
     '../../../src/config/paths',
     '../../../src/server/services/snapshot-cache',
     '../../../src/server/services/project-snapshots'

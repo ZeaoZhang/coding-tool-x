@@ -3,16 +3,16 @@
 const http = require('http');
 const path = require('path');
 
-const PROXY_PATH = require.resolve('../../../src/server/opencode-proxy-server');
+const PROXY_PATH = require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const CONFIG_LOADER_PATH = require.resolve('../../../src/config/loader');
-const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/opencode-channels');
+const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/opencode/channels-implementation');
 const CHANNEL_SCHEDULER_PATH = require.resolve('../../../src/server/services/channel-scheduler');
 const CHANNEL_HEALTH_PATH = require.resolve('../../../src/server/services/channel-health');
 const PROXY_RUNTIME_PATH = require.resolve('../../../src/server/services/proxy-runtime');
 const WEBSOCKET_PATH = require.resolve('../../../src/server/websocket-server');
 const PROXY_LOG_HELPER_PATH = require.resolve('../../../src/server/services/proxy-log-helper');
-const OPENCODE_STATS_PATH = require.resolve('../../../src/server/services/opencode-statistics-service');
+const OPENCODE_STATS_PATH = require.resolve('../../../src/platforms/drivers/opencode/statistics-implementation');
 const REQUEST_LOGGER_PATH = require.resolve('../../../src/server/services/request-logger');
 const MODEL_DETECTOR_PATH = require.resolve('../../../src/server/services/model-detector');
 const PRICING_PATH = require.resolve('../../../src/server/utils/pricing');
@@ -116,7 +116,7 @@ beforeEach(async () => {
   stub(PRICING_PATH, { resolveModelPricing: () => ({}), calculateTokenCost: () => 0 });
 
   delete require.cache[PROXY_PATH];
-  proxy = require('../../../src/server/opencode-proxy-server');
+  proxy = require('../../../src/platforms/drivers/opencode/proxy-implementation');
 });
 
 afterEach(async () => {

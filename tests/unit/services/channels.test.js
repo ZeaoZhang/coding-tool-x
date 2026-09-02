@@ -39,18 +39,18 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/settings-manager')] = {
-    id: require.resolve('../../../src/server/services/settings-manager'),
-    filename: require.resolve('../../../src/server/services/settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/claude/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
     loaded: true,
     exports: {
       isProxyConfig: vi.fn(() => false)
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/native-oauth-adapters')] = {
-    id: require.resolve('../../../src/server/services/native-oauth-adapters'),
-    filename: require.resolve('../../../src/server/services/native-oauth-adapters'),
+  require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')] = {
+    id: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
+    filename: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
     loaded: true,
     exports: {
       clearNativeOAuth: clearNativeOAuthMock,
@@ -67,18 +67,18 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/server/services/channels')];
-  channelsService = require('../../../src/server/services/channels');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/channels-implementation')];
+  channelsService = require('../../../src/platforms/drivers/claude/channels-implementation');
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/services/channels',
+    '../../../src/platforms/drivers/claude/channels-implementation',
     '../../../src/config/paths',
-    '../../../src/server/services/settings-manager',
-    '../../../src/server/services/native-oauth-adapters',
+    '../../../src/platforms/drivers/claude/native-config-implementation',
+    '../../../src/platforms/drivers/shared/native-oauth-adapters',
     '../../../src/utils/home-dir'
   ].forEach((mod) => {
     try {

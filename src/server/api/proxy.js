@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { startProxyServer, stopProxyServer, getProxyStatus } = require('../proxy-server');
+const { startProxyServer, stopProxyServer, getProxyStatus } = require('../../platforms/drivers/claude/proxy-implementation');
 const {
   setProxyConfig,
   restoreSettings,
@@ -10,9 +10,9 @@ const {
   settingsExists,
   hasBackup,
   readSettings
-} = require('../services/settings-manager');
-const { getAllChannels, markChannelAsRecentlyUsed, extractApiKeyFromHelper } = require('../services/channels');
-const { clearNativeOAuth } = require('../services/native-oauth-adapters');
+} = require('../../platforms/drivers/claude/native-config-implementation');
+const { getAllChannels, markChannelAsRecentlyUsed, extractApiKeyFromHelper } = require('../../platforms/drivers/claude/channels-implementation');
+const { clearNativeOAuth } = require('../../platforms/drivers/shared/native-oauth-adapters');
 const { clearAllLogs } = require('../websocket-server');
 const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
@@ -90,7 +90,7 @@ function findActiveChannelFromSettings() {
   try {
     const settings = readSettings();
     const baseUrl = settings?.env?.ANTHROPIC_BASE_URL || '';
-    const { readNativeOAuth } = require('../services/native-oauth-adapters');
+    const { readNativeOAuth } = require('../../platforms/drivers/shared/native-oauth-adapters');
     const nativeOAuth = readNativeOAuth('claude');
 
     // 兼容多种 API Key 格式（与 channels.js 保持一致）
@@ -259,7 +259,7 @@ router.post('/stop', async (req, res) => {
       restoreSettings();
       console.log('[OK] Restored settings from backup');
       const channels = getAllChannels();
-      const currentSettings = require('../services/channels').getCurrentSettings();
+      const currentSettings = require('../../platforms/drivers/claude/channels-implementation').getCurrentSettings();
       if (currentSettings) {
         restoredChannel = channels.find(ch =>
           ch.baseUrl === currentSettings.baseUrl && ch.apiKey === currentSettings.apiKey
@@ -269,7 +269,7 @@ router.post('/stop', async (req, res) => {
 
     // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
     if (restoredChannel) {
-      const { applyChannelToSettings } = require('../services/channels');
+      const { applyChannelToSettings } = require('../../platforms/drivers/claude/channels-implementation');
       applyChannelToSettings(restoredChannel.id);
       console.log(`[OK] Single-channel mode restored: ${restoredChannel.name}`);
     }

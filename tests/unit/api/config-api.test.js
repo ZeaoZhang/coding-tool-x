@@ -9,9 +9,9 @@
 
 const LOADER_PATH         = require.resolve('../../../src/config/loader');
 const DEFAULT_PATH        = require.resolve('../../../src/config/default');
-const CHANNELS_PATH       = require.resolve('../../../src/server/services/channels');
-const CODEX_CH_PATH       = require.resolve('../../../src/server/services/codex-channels');
-const GEMINI_CH_PATH      = require.resolve('../../../src/server/services/gemini-channels');
+const CHANNELS_PATH       = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
+const CODEX_CH_PATH       = require.resolve('../../../src/platforms/drivers/codex/channels-implementation');
+const GEMINI_CH_PATH      = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
 const MODEL_DET_PATH      = require.resolve('../../../src/server/services/model-detector');
 const API_PATH            = require.resolve('../../../src/server/api/config');
 

@@ -6,7 +6,7 @@ const {
   buildAssistantMessageFromStreamState,
   buildClaudeCountTokensPayload,
   recoverClaudeUsageViaCountTokens
-} = require('../../../src/server/services/claude-token-recovery');
+} = require('../../../src/platforms/drivers/claude/token-recovery');
 
 describe('claude-token-recovery', () => {
   test('rebuilds assistant text and tool_use blocks from Claude SSE events', () => {

@@ -9,7 +9,7 @@ const {
   convertCodexToOpenCodePayload,
   convertGeminiToOpenCodePayload,
   normalizeSourceType
-} = require('../services/opencode-gateway-converter');
+} = require('../../platforms/drivers/opencode/gateway-converter');
 
 /**
  * 获取支持的格式列表

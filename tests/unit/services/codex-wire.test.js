@@ -1,6 +1,6 @@
 'use strict';
 
-const { createCodexRequest, normalizeCodexResponsesInput, buildCodexTargetUrl } = require('../../../src/server/services/codex-wire');
+const { createCodexRequest, normalizeCodexResponsesInput, buildCodexTargetUrl } = require('../../../src/platforms/drivers/codex/wire');
 
 describe('Codex wire compatibility', () => {
   it('builds the current official-client request identity and Codex-safe body', () => {

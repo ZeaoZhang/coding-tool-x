@@ -1,11 +1,11 @@
-const { startProxyServer, stopProxyServer, getProxyStatus } = require('../server/proxy-server');
+const { startProxyServer, stopProxyServer, getProxyStatus } = require('../platforms/drivers/claude/proxy-implementation');
 const {
   setProxyConfig,
   restoreSettings,
   isProxyConfig,
   settingsExists,
   hasBackup
-} = require('../server/services/settings-manager');
+} = require('../platforms/drivers/claude/native-config-implementation');
 
 /**
  * 启动代理

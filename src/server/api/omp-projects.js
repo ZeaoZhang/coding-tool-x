@@ -4,7 +4,7 @@ const {
   saveProjectOrder,
   deleteProject,
   isOmpInstalled
-} = require('../services/omp-sessions');
+} = require('../../platforms/drivers/omp/sessions-implementation');
 const {
   emptyProjectList,
   getProjectListSnapshot,

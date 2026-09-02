@@ -396,7 +396,7 @@ function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') 
 // 启动时执行健康检查
 async function performStartupHealthCheck() {
   const { healthCheckAllProjects } = require('./services/health-check');
-  const { getProjects } = require('./services/sessions');
+  const { getProjects } = require('./platforms/drivers/claude/sessions-implementation');
 
   try {
     console.log(chalk.cyan('\n[SEARCH] 正在进行启动健康检查...'));

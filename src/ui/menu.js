@@ -21,27 +21,27 @@ function getChannelAndProxyStatus(cliType) {
   const currentType = normalizeCliType(cliType);
 
   if (currentType === 'claude') {
-    const { getCurrentChannel } = require('../server/services/channels');
-    const { getProxyStatus } = require('../server/proxy-server');
+    const { getCurrentChannel } = require('../platforms/drivers/claude/channels-implementation');
+    const { getProxyStatus } = require('../platforms/drivers/claude/proxy-implementation');
     return { channel: getCurrentChannel(), proxyStatus: getProxyStatus() };
   }
 
   if (currentType === 'codex') {
-    const { getChannels } = require('../server/services/codex-channels');
-    const { getCodexProxyStatus } = require('../server/codex-proxy-server');
+    const { getChannels } = require('../platforms/drivers/codex/channels-implementation');
+    const { getCodexProxyStatus } = require('../platforms/drivers/codex/proxy-implementation');
     const data = getChannels();
     return { channel: pickActiveChannel(data?.channels), proxyStatus: getCodexProxyStatus() };
   }
 
   if (currentType === 'gemini') {
-    const { getChannels } = require('../server/services/gemini-channels');
-    const { getGeminiProxyStatus } = require('../server/gemini-proxy-server');
+    const { getChannels } = require('../platforms/drivers/gemini/channels-implementation');
+    const { getGeminiProxyStatus } = require('../platforms/drivers/gemini/proxy-implementation');
     const data = getChannels();
     return { channel: pickActiveChannel(data?.channels), proxyStatus: getGeminiProxyStatus() };
   }
 
-  const { getChannels } = require('../server/services/opencode-channels');
-  const { getOpenCodeProxyStatus } = require('../server/opencode-proxy-server');
+  const { getChannels } = require('../platforms/drivers/opencode/channels-implementation');
+  const { getOpenCodeProxyStatus } = require('../platforms/drivers/opencode/proxy-implementation');
   const data = getChannels();
   return { channel: pickActiveChannel(data?.channels), proxyStatus: getOpenCodeProxyStatus() };
 }

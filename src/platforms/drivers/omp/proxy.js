@@ -6,9 +6,10 @@ function createDriver(context = {}) {
   return createProxyDriver({
     ...context,
     platform: 'omp',
-    servicePath: '../../server/omp-proxy-server',
-    localServicePath: '../../../server/omp-proxy-server',
-    exports: { status: 'getOmpProxyStatus', start: 'startOmpProxyServer', stop: 'stopOmpProxyServer' }
+    servicePath: './omp/proxy-implementation',
+    localServicePath: '../omp/proxy-implementation',
+    exports: { status: 'getOmpProxyStatus', start: 'startOmpProxyServer', stop: 'stopOmpProxyServer' },
+    cliMetadata: { managedProviderConfig: true, defaultPort: 20092 }
   });
 }
 
