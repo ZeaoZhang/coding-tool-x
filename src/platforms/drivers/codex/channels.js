@@ -1,13 +1,13 @@
 'use strict';
 
-const { createChannelDriver } = require('../shared/channel-driver');
+const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
   const driver = createChannelDriver({
     ...context,
     platform: 'codex',
     servicePath: './codex/channels-implementation',
-    localServicePath: '../codex/channels-implementation',
+    localServicePath: '../platforms/drivers/codex/channels-implementation',
     syncMethod: 'syncCurrentCodexChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.providerKey, input.baseUrl, input.apiKey, input.wireApi, input.extra || {}]

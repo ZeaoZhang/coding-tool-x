@@ -1,6 +1,6 @@
 'use strict';
 
-const { createChannelDriver } = require('../shared/channel-driver');
+const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
   return createChannelDriver({

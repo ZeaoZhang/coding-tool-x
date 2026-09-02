@@ -37,6 +37,7 @@
   "statisticsPath": "/api/gemini/statistics",
   "promptFile": "GEMINI.md",
   "promptLabel": "Gemini",
+  "api": { "prefix": "gemini" },
   "capabilities": {
     "projects": "legacy:gemini",
     "sessions": "legacy:gemini",
@@ -45,6 +46,8 @@
     "statistics": "legacy:gemini",
     "resourceSync": "legacy:gemini",
     "nativeConfig": "legacy:gemini",
+    "projectConfig": "legacy:gemini",
+    "api": "legacy:gemini",
     "mcp": "legacy:gemini",
     "prompts": "legacy:gemini"
   }

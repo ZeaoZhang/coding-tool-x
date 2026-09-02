@@ -10,8 +10,8 @@ const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapsh
 const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/opencode-projects')];
-  const createRouter = require('../../../src/server/api/opencode-projects');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/opencode/api-projects')];
+  const createRouter = require('../../../src/platforms/drivers/opencode/api-projects');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -90,7 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/opencode-projects',
+    '../../../src/platforms/drivers/opencode/api-projects',
     '../../../src/platforms/drivers/opencode/sessions-implementation',
     '../../../src/config/paths',
     '../../../src/server/services/snapshot-cache',

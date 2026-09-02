@@ -2,7 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const BaseChannelService = require('../../../src/server/services/base/base-channel-service');
+const BaseChannelService = require('../../../src/shared/base-channel-service');
 
 let tempDir;
 let channelsFile;

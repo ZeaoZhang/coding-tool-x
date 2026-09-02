@@ -44,9 +44,9 @@ async function run() {
 
     // Require after HOME is replaced to isolate from real ~/.codex state.
     const { AgentsService } = require('../src/server/services/agents-service');
-    const codexEnvManager = require('../src/server/services/codex-env-manager');
-    const codexSettingsManager = require('../src/server/services/codex-settings-manager');
-    const codexChannels = require('../src/server/services/codex-channels');
+    const codexEnvManager = require('../src/platforms/drivers/codex/env-manager');
+    const codexSettingsManager = require('../src/platforms/drivers/codex/native-config-implementation');
+    const codexChannels = require('../src/platforms/drivers/codex/channels-implementation');
     const service = new AgentsService('codex');
     const envTest = codexEnvManager._test || {};
 

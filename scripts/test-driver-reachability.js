@@ -7,13 +7,32 @@ const { getPlatformRegistry, getPlatformRuntime } = require('../src/platforms/ru
 const ROOT = path.join(__dirname, '..');
 const DRIVER_ROOT = path.join(ROOT, 'src/platforms/drivers');
 const DYNAMIC_ENTRIES = new Set([
-  'src/server/services/session-history-adapters/index.js',
   'src/server/services/dashboard-snapshot-worker.js',
-  'src/server/services/omp-auth-provider-worker.js'
+  'src/platforms/drivers/omp/auth-provider-worker.js'
 ]);
 const COMPANION_FILES = new Set(['channels-implementation.js', 'native-config.js']);
 const DRIVER_FILES = new Set(['channels.js', 'proxy.js', 'sessions.js', 'statistics.js', 'resource-sync.js', 'prompts.js', 'mcp.js']);
-
+const PLATFORM_BUSINESS_FILES = new Set([
+  'api.js',
+  'project-config.js',
+  'config.js',
+  'env-manager.js',
+  'parser.js',
+  'wire.js',
+  'normalization.js',
+  'gateway.js',
+  'gateway-converter.js',
+  'gateway-routing.js',
+  'auth-gateway-client.js',
+  'auth-provider-worker.js',
+  'auth-providers.js',
+  'native-plugin-adapter.js',
+  'session-log-observer.js',
+  'skill-discovery.js',
+  'skill-settings.js',
+  'openai-gateway.js',
+  'token-recovery.js'
+]);
 function walk(directory) {
   const files = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -44,9 +63,16 @@ function main() {
     const parent = path.basename(path.dirname(file));
     const base = path.basename(file);
     if (parent === 'shared' || base === 'legacy.js' || base === 'unsupported.js' || base === 'secure-file-driver.js' || base.startsWith('generic-')) continue;
-    if (!DRIVER_FILES.has(base) && !COMPANION_FILES.has(base)) orphan.push(relative);
-  }
+    if (
+      !DRIVER_FILES.has(base)
+      && !COMPANION_FILES.has(base)
+      && !PLATFORM_BUSINESS_FILES.has(base)
+      && !base.startsWith('api-')
+      && !base.endsWith('-implementation.js')
+      && !base.endsWith('-adapter.js')
+    ) orphan.push(relative);
 
+  }
   const result = {
     reachable,
     serverFacades: {

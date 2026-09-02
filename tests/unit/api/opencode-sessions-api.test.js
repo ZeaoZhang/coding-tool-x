@@ -6,8 +6,8 @@ let loadAliasesMock;
 let broadcastLogMock;
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/opencode-sessions')];
-  const createRouter = require('../../../src/server/api/opencode-sessions');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/opencode/api-sessions')];
+  const createRouter = require('../../../src/platforms/drivers/opencode/api-sessions');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -102,7 +102,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/opencode-sessions',
+    '../../../src/platforms/drivers/opencode/api-sessions',
     '../../../src/platforms/drivers/opencode/sessions-implementation',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server',

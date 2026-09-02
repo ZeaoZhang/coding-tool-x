@@ -24,14 +24,14 @@ const {
   normalizeSafeRelativePath,
   pathHasProtectedSegment,
   resolveInsideRoot
-} = require('./config-artifact-paths');
+} = require('../../shared/config-artifact-paths');
 const remoteCredentialCache = require('./remote-credential-cache');
 const platformRuntime = require('../../platforms/runtime');
 const {
   assertExistingProjectRoot,
   assertNoSymlinkComponents,
   resolveProjectTarget
-} = require('./project-config-adapters/shared');
+} = require('../../shared/project-config');
 const { ControlManifestStore } = require('./control-manifest-store');
 const { EffectiveControlService } = require('./effective-control-service');
 const { SkillArtifactStore } = require('./skill-artifact-store');

@@ -14,8 +14,8 @@ const path = require('path');
 // ─── Absolute paths for deps that need to be stubbed ─────────────────────────
 
 const PATHS_MODULE          = require.resolve('../../../src/config/paths');
-const NATIVE_OAUTH_MODULE   = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
-const PROXY_UTILS_MODULE    = require.resolve('../../../src/server/services/base/proxy-utils');
+const NATIVE_OAUTH_MODULE   = require.resolve('../../../src/platforms/native-oauth-adapters');
+const PROXY_UTILS_MODULE    = require.resolve('../../../src/shared/proxy-utils');
 const OPENCODE_SM_MODULE    = require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation');
 const OPENCODE_PROXY_MODULE = require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation');
 const OPENCODE_CH_MODULE    = require.resolve('../../../src/platforms/drivers/opencode/channels-implementation');

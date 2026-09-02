@@ -4,8 +4,8 @@ const http = require('http');
 let codexStatsService;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/codex-statistics')];
-  const router = require('../../../src/server/api/codex-statistics');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/codex/api-statistics')];
+  const router = require('../../../src/platforms/drivers/codex/api-statistics');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -62,7 +62,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/codex-statistics',
+    '../../../src/platforms/drivers/codex/api-statistics',
     '../../../src/platforms/drivers/codex/statistics-implementation'
   ].forEach((mod) => {
     try {

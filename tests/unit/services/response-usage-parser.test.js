@@ -5,7 +5,7 @@ const {
   parseSSEEventText,
   mergeUsageIntoTokenData,
   createTokenData
-} = require('../../../src/server/services/base/response-usage-parser');
+} = require('../../../src/shared/response-usage-parser');
 
 describe('response-usage-parser', () => {
   test('parses camelCase response.completed usage objects from compatible providers', () => {

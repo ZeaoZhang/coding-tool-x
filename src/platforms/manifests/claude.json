@@ -37,6 +37,11 @@
   "promptFile": "CLAUDE.md",
   "promptLabel": "Claude",
   "pathResolverId": "claude",
+  "api": {
+    "prefix": "claude",
+    "rootAlias": true,
+    "rootAliasPaths": ["projects", "sessions", "channels", "proxy"]
+  },
   "capabilities": {
     "projects": "legacy:claude",
     "sessions": "legacy:claude",
@@ -45,6 +50,8 @@
     "statistics": "legacy:claude",
     "resourceSync": "legacy:claude",
     "nativeConfig": "legacy:claude",
+    "projectConfig": "legacy:claude",
+    "api": "legacy:claude",
     "mcp": "legacy:claude",
     "prompts": "legacy:claude"
   }

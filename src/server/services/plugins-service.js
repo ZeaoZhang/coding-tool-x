@@ -30,7 +30,7 @@ const {
   normalizeSafeFileStem,
   normalizeSafeRelativePath,
   resolveInsideRoot
-} = require('./config-artifact-paths');
+} = require('../../shared/config-artifact-paths');
 
 const CLAUDE_PLUGINS_DIR = NATIVE_PATHS.claude.plugins
   || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'plugins');

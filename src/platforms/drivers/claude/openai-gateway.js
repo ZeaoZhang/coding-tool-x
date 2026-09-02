@@ -7,7 +7,7 @@ const { recordRequest } = require('../../../server/services/statistics-service')
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
 const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const { createDecodedStream } = require('../../../server/services/response-decoder');
-const { parseNonStreamingUsage } = require('../../../server/services/base/response-usage-parser');
+const { parseNonStreamingUsage } = require('../../../shared/response-usage-parser');
 const { convertClaudeToOpenCodePayload } = require('../opencode/gateway-converter');
 
 const REQUEST_TIMEOUT_MS = 120000;

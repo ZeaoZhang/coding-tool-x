@@ -11,7 +11,7 @@ function createDriver({ requireImpl, ...context } = {}) {
     capability: 'nativeConfig',
     ...context,
     ...settings,
-    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('opencode')
+    clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('opencode')
   };
 }
 

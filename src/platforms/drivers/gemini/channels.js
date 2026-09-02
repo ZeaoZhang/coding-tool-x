@@ -1,13 +1,13 @@
 'use strict';
 
-const { createChannelDriver } = require('../shared/channel-driver');
+const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
   return createChannelDriver({
     ...context,
     platform: 'gemini',
     servicePath: './gemini/channels-implementation',
-    localServicePath: '../gemini/channels-implementation',
+    localServicePath: '../platforms/drivers/gemini/channels-implementation',
     syncMethod: 'syncCurrentGeminiChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.model, input.extra || {}]
