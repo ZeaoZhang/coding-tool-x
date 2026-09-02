@@ -3,14 +3,17 @@
 const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
-  return createChannelDriver({
+  const driver = createChannelDriver({
     ...context,
     platform: 'omp',
     servicePath: './omp/channels-implementation',
     localServicePath: '../platforms/drivers/omp/channels-implementation',
     syncMethod: 'syncCurrentOmpChannel',
     createArgs: (input, rest) => typeof input === 'object'
-      ? [input.name, input.baseUrl, input.apiKey, input.extra || {}]
+      ? (() => {
+        const { name, baseUrl, apiKey, extra, ...channelExtra } = input;
+        return [name, baseUrl, apiKey, { ...channelExtra, ...extra }];
+      })()
       : [input, ...rest],
     cliMetadata: {
       supportsCliCreate: false,
@@ -21,6 +24,10 @@ function createDriver(context = {}) {
     },
     dashboardChannelShape: 'array'
   });
+  driver.syncManagedProviderExtension = (...args) => (
+    driver._service().syncManagedProviderExtension(...args)
+  );
+  return driver;
 }
 
 module.exports = { createDriver };

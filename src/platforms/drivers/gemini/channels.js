@@ -10,7 +10,10 @@ function createDriver(context = {}) {
     localServicePath: '../platforms/drivers/gemini/channels-implementation',
     syncMethod: 'syncCurrentGeminiChannel',
     createArgs: (input, rest) => typeof input === 'object'
-      ? [input.name, input.baseUrl, input.apiKey, input.model, input.extra || {}]
+      ? (() => {
+        const { name, baseUrl, apiKey, model, extra, ...channelExtra } = input;
+        return [name, baseUrl, apiKey, model, { ...channelExtra, ...extra }];
+      })()
       : [input, ...rest],
     cliMetadata: {
       supportsCliCreate: true,
