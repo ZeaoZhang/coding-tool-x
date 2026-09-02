@@ -3,89 +3,61 @@ const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
 const { normalizePlatformKey } = require('../shared/platforms');
+const { getPlatformRegistry } = require('../platforms/runtime');
 
-/**
- * 获取当前类型的渠道服务
- */
-function getChannelServices(cliType) {
-  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  if (normalizedCliType === 'claude') {
-    const {
-      getAllChannels,
-      createChannel,
-      updateChannel
-    } = require('../server/services/channels');
-    const { getProxyStatus } = require('../server/proxy-server');
-    return { getAllChannels, createChannel, updateChannel, getProxyStatus };
-  } else if (normalizedCliType === 'codex') {
-    const {
-      getChannels,
-      createChannel,
-      updateChannel
-    } = require('../server/services/codex-channels');
-    const { getCodexProxyStatus } = require('../server/codex-proxy-server');
-    return {
-      getAllChannels: () => {
-        const result = getChannels();
-        return Array.isArray(result?.channels) ? result.channels : [];
-      },
-      createChannel,
-      updateChannel,
-      getProxyStatus: getCodexProxyStatus
-    };
-  } else if (normalizedCliType === 'gemini') {
-    const {
-      getChannels,
-      createChannel,
-      updateChannel
-    } = require('../server/services/gemini-channels');
-    const { getGeminiProxyStatus } = require('../server/gemini-proxy-server');
-    return {
-      getAllChannels: () => {
-        const result = getChannels();
-        return Array.isArray(result?.channels) ? result.channels : [];
-      },
-      createChannel,
-      updateChannel,
-      getProxyStatus: getGeminiProxyStatus
-    };
-  } else if (normalizedCliType === 'opencode') {
-    const {
-      getChannels,
-      createChannel,
-      updateChannel
-    } = require('../server/services/opencode-channels');
-    const { getOpenCodeProxyStatus } = require('../server/opencode-proxy-server');
-    return {
-      getAllChannels: () => {
-        const result = getChannels();
-        return Array.isArray(result?.channels) ? result.channels : [];
-      },
-      createChannel,
-      updateChannel,
-      getProxyStatus: getOpenCodeProxyStatus
-    };
-  } else if (normalizedCliType === 'omp') {
-    const {
-      getChannels,
-      createChannel,
-      updateChannel
-    } = require('../server/services/omp-channels');
-    const { getOmpProxyStatus } = require('../server/omp-proxy-server');
-    return {
-      getAllChannels: () => {
-        const result = getChannels();
-        return Array.isArray(result?.channels) ? result.channels : [];
-      },
-      createChannel,
-      updateChannel,
-      getProxyStatus: getOmpProxyStatus,
-      supportsCliCreate: false,
-      managedProviderConfig: true
-    };
+function getPlatformRuntime() {
+  return require('../platforms/runtime').getPlatformRuntime();
+}
+
+function unwrapDriverResult(result) {
+  if (!result || typeof result !== 'object' || !result.status) {
+    return result;
+  }
+  if (result.status === 'ok') {
+    return result.data;
+  }
+  throw result.cause instanceof Error
+    ? result.cause
+    : new Error(result.error || `Driver operation ${result.operation || 'unknown'} failed`);
+}
+
+function getChannelServices(cliType, runtime = getPlatformRuntime()) {
+  const platform = normalizePlatformKey(cliType || 'claude');
+  const channelsDriver = runtime?.getDriver?.(platform, 'channels');
+  const proxyDriver = runtime?.getDriver?.(platform, 'proxy');
+  if (!channelsDriver && !proxyDriver) {
+    return null;
   }
 
-  return null;
+  const channelMetadata = channelsDriver?.getCliMetadata?.() || {};
+  const proxyMetadata = proxyDriver?.getCliMetadata?.() || {};
+  const metadata = { ...channelMetadata, ...proxyMetadata };
+  const unwrapChannels = (operation, ...args) => {
+    if (typeof channelsDriver?.[operation] !== 'function') return null;
+    return unwrapDriverResult(channelsDriver[operation](...args));
+  };
+
+  return {
+    ...metadata,
+    getAllChannels: () => {
+      const value = unwrapChannels('list');
+      return Array.isArray(value) ? value : (value?.channels || []);
+    },
+    createChannel: input => unwrapChannels('create', input),
+    updateChannel: (id, patch) => unwrapChannels('update', id, patch),
+    activateChannel: id => unwrapChannels('applyNativeConfig', id),
+    getBestChannelForRestore: () => unwrapChannels('getBestChannelForRestore'),
+    formatChannelDetails: channel => channelsDriver?.formatCliChannelDetails?.(channel) || [],
+    getProxyStatus: () => proxyDriver ? unwrapDriverResult(proxyDriver.status()) : null,
+    startProxyServer: options => proxyDriver
+      ? unwrapDriverResult(proxyDriver.start(options))
+      : null,
+    stopProxyServer: options => proxyDriver
+      ? unwrapDriverResult(proxyDriver.stop(options))
+      : null,
+    channelsDriver,
+    proxyDriver
+  };
 }
 
 /**
@@ -106,19 +78,17 @@ async function handleChannelManagement() {
     return;
   }
 
-  const channels = services.getAllChannels();
-
   if (channels.length === 0) {
     console.log(chalk.yellow('还没有添加任何渠道'));
-    if (cliType === 'omp') {
-      console.log(chalk.gray('提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。\n'));
+    if (services.createUnavailableMessage) {
+      console.log(chalk.gray(`${services.createUnavailableMessage}\n`));
     } else if (services.supportsCliCreate === false || typeof services.createChannel !== 'function') {
       console.log(chalk.gray('提示: 当前平台不支持在 CLI 中添加渠道，请通过 Web UI 添加。\n'));
     } else {
       console.log(chalk.gray('提示: 使用主菜单的"添加渠道"功能来添加新渠道\n'));
     }
 
-    const { action } = await inquirer.prompt([
+    await inquirer.prompt([
       {
         type: 'list',
         name: 'action',
@@ -156,11 +126,9 @@ async function handleAddChannel() {
   const services = getChannelServices(cliType);
 
   if (!services || services.supportsCliCreate === false || typeof services.createChannel !== 'function') {
-    if (cliType === 'omp') {
-      console.log(chalk.yellow('OMP 渠道创建/编辑需要使用 Web UI 或 API，以便配置 providerKey、providerApi、模型白名单等 OMP 字段。\n'));
-    } else {
-      console.log(chalk.red(`当前 CLI 类型 (${cliType}) 暂不支持添加渠道\n`));
-    }
+    console.log(chalk.red(
+      `${services?.createUnavailableMessage || `当前 CLI 类型 (${cliType}) 暂不支持添加渠道`}\n`
+    ));
     await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
     return;
   }
@@ -210,76 +178,30 @@ async function handleAddChannel() {
     },
   ]);
 
+  const extraQuestions = services.createQuestions || [];
+  const extraAnswers = extraQuestions.length > 0
+    ? await inquirer.prompt(extraQuestions)
+    : {};
+
+  const websiteUrl = answers.websiteUrl.trim() || undefined;
+  const createInput = {
+    ...services.createDefaults,
+    ...answers,
+    ...extraAnswers,
+    name: answers.name.trim(),
+    baseUrl: answers.baseUrl.trim(),
+    apiKey: answers.apiKey.trim(),
+    websiteUrl,
+    providerKey: answers.name.trim().toLowerCase().replace(/\s+/g, '-'),
+    extra: {
+      ...services.createDefaults,
+      ...extraAnswers,
+      websiteUrl
+    }
+  };
+
   try {
-    let channel;
-
-    // Claude 类型的参数: (name, baseUrl, apiKey, websiteUrl, extraConfig)
-    if (cliType === 'claude') {
-      channel = services.createChannel(
-        answers.name.trim(),
-        answers.baseUrl.trim(),
-        answers.apiKey.trim(),
-        answers.websiteUrl.trim() || undefined
-      );
-    }
-    // Codex 类型的参数: (name, providerKey, baseUrl, apiKey, wireApi, extraConfig)
-    else if (cliType === 'codex') {
-      // Codex 需要额外的 providerKey 和 wireApi 参数
-      // 在这里简化为使用 name 作为 providerKey，wireApi 固定为 'responses'
-      channel = services.createChannel(
-        answers.name.trim(),
-        answers.name.trim().toLowerCase().replace(/\s+/g, '-'), // 生成 providerKey
-        answers.baseUrl.trim(),
-        answers.apiKey.trim(),
-        'responses', // wireApi 固定值
-        { websiteUrl: answers.websiteUrl.trim() || undefined }
-      );
-    }
-    // Gemini 类型的参数: (name, baseUrl, apiKey, model, extraConfig)
-    else if (cliType === 'gemini') {
-      // Gemini 需要 model 参数
-      const modelAnswer = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'model',
-          message: '模型名称 (默认: gemini-2.5-pro):',
-          default: 'gemini-2.5-pro'
-        }
-      ]);
-
-      channel = services.createChannel(
-        answers.name.trim(),
-        answers.baseUrl.trim(),
-        answers.apiKey.trim(),
-        modelAnswer.model.trim(),
-        { websiteUrl: answers.websiteUrl.trim() || undefined }
-      );
-    } else if (cliType === 'opencode') {
-      const extraAnswers = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'wireApi',
-          message: 'Wire API (默认: openai):',
-          default: 'openai'
-        },
-        {
-          type: 'input',
-          name: 'model',
-          message: '默认模型（可选，直接回车跳过）:'
-        }
-      ]);
-
-      channel = services.createChannel(
-        answers.name.trim(),
-        answers.baseUrl.trim(),
-        answers.apiKey.trim(),
-        {
-          wireApi: extraAnswers.wireApi.trim() || 'openai',
-          model: extraAnswers.model.trim() || null,
-          websiteUrl: answers.websiteUrl.trim() || undefined
-        }
-      );
-    }
+    const channel = services.createChannel(createInput);
 
     console.log(chalk.green(`\n[OK] 渠道添加成功: ${channel.name}\n`));
     console.log(chalk.gray('提示: 使用"渠道管理"功能来启用此渠道\n'));
@@ -356,7 +278,6 @@ module.exports = {
  * 统一的多渠道选择处理
  */
 async function handleChannelToggle(channels, services, cliType) {
-  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
   const choices = channels.map(channel => {
     const enabled = channel.enabled !== false;
     const detailParts = [];
@@ -366,30 +287,7 @@ async function handleChannelToggle(channels, services, cliType) {
       detailParts.push(cleaned);
     }
 
-    if (normalizedCliType === 'codex' && channel.providerKey) {
-      detailParts.push(`provider ${channel.providerKey}`);
-    }
-
-    if (normalizedCliType === 'gemini' && channel.model) {
-      detailParts.push(`model ${channel.model}`);
-    }
-
-    if (normalizedCliType === 'omp') {
-      if (channel.providerKey) {
-        detailParts.push(`provider ${channel.providerKey}`);
-      }
-      if (channel.model) {
-        detailParts.push(`model ${channel.model}`);
-      }
-      const allowedModels = Array.isArray(channel.allowedModels) && channel.allowedModels.length > 0
-        ? channel.allowedModels
-        : channel.models;
-      if (Array.isArray(allowedModels) && allowedModels.length > 0) {
-        const preview = allowedModels.slice(0, 3).join(', ');
-        const suffix = allowedModels.length > 3 ? ` +${allowedModels.length - 3}` : '';
-        detailParts.push(`models ${preview}${suffix}`);
-      }
-    }
+    detailParts.push(...services.formatChannelDetails(channel));
 
     if (channel.maxConcurrency) {
       detailParts.push(`并发 ${channel.maxConcurrency}`);
@@ -564,13 +462,12 @@ function broadcastSchedulerSnapshot(source = 'claude') {
 }
 
 function buildSchedulerSources() {
-  return [
-    { key: 'claude', label: 'Claude (Claude Code)' },
-    { key: 'codex', label: 'Codex (OpenAI)' },
-    { key: 'gemini', label: 'Gemini' },
-    { key: 'opencode', label: 'OpenCode' },
-    { key: 'omp', label: 'OMP' }
-  ];
+  return getPlatformRegistry()
+    .list({ enabledOnly: true })
+    .map(platform => ({
+      key: platform.key,
+      label: platform.label || platform.key
+    }));
 }
 
 async function handleLegacySwitch(channels, services) {

@@ -9,7 +9,8 @@ function createProxyDriver({
   exports: names,
   requireImpl,
   capability = 'proxy',
-  manifest = {}
+  manifest = {},
+  cliMetadata = {}
 } = {}) {
   let service;
   const loadService = () => {
@@ -29,6 +30,7 @@ function createProxyDriver({
     }
   };
   const driver = { platform, capability, manifest };
+  driver.getCliMetadata = () => ({ ...cliMetadata });
   for (const operation of ['status', 'start', 'stop']) {
     driver[operation] = (...args) => call(operation, args);
   }

@@ -8,7 +8,8 @@ function createDriver(context = {}) {
     platform: 'opencode',
     servicePath: '../../server/opencode-proxy-server',
     localServicePath: '../../../server/opencode-proxy-server',
-    exports: { status: 'getOpenCodeProxyStatus', start: 'startOpenCodeProxyServer', stop: 'stopOpenCodeProxyServer' }
+    exports: { status: 'getOpenCodeProxyStatus', start: 'startOpenCodeProxyServer', stop: 'stopOpenCodeProxyServer' },
+    cliMetadata: { defaultPort: 20091 }
   });
 }
 
