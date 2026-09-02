@@ -1,36 +1,32 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getStatistics,
-  getDailyStatistics,
-  getTodayStatistics
-} = require('./statistics-implementation');
+const { invokeCapabilityDriver } = require('../../../server/api/capability-driver');
 
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   try {
-    res.json(getStatistics());
+    res.json(await invokeCapabilityDriver('omp', 'statistics', 'getStatistics'));
   } catch (error) {
     console.error('[OMP] Failed to get statistics:', error);
     res.status(500).json({ error: 'Failed to get statistics' });
   }
 });
 
-router.get('/today', (req, res) => {
+router.get('/today', async (req, res) => {
   try {
-    res.json(getTodayStatistics());
+    res.json(await invokeCapabilityDriver('omp', 'statistics', 'getTodayStatistics'));
   } catch (error) {
     console.error('[OMP] Failed to get today statistics:', error);
     res.status(500).json({ error: 'Failed to get today statistics' });
   }
 });
 
-router.get('/daily/:date', (req, res) => {
+router.get('/daily/:date', async (req, res) => {
   try {
     const { date } = req.params;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return res.status(400).json({ error: 'Invalid date format. Expected YYYY-MM-DD' });
     }
-    res.json(getDailyStatistics(date));
+    res.json(await invokeCapabilityDriver('omp', 'statistics', 'getDailyStatistics', [date]));
   } catch (error) {
     console.error('[OMP] Failed to get daily statistics:', error);
     res.status(500).json({ error: 'Failed to get daily statistics' });

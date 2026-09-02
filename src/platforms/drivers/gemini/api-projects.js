@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { invokeProjectDriver } = require('../../../server/api/project-driver');
-const { isGeminiInstalled } = require('./config');
 const {
   emptyProjectList,
   getProjectListSnapshot,
@@ -17,8 +16,7 @@ module.exports = (config) => {
    */
   router.get('/', async (req, res) => {
     try {
-      // 检查 Gemini 是否安装
-      if (!isGeminiInstalled()) {
+      if (!invokeProjectDriver('gemini', 'isAvailable')) {
         return res.json({
           projects: [],
           currentProject: null,
@@ -57,7 +55,7 @@ module.exports = (config) => {
    */
   router.post('/order', (req, res) => {
     try {
-      if (!isGeminiInstalled()) {
+      if (!invokeProjectDriver('gemini', 'isAvailable')) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 
@@ -83,7 +81,7 @@ module.exports = (config) => {
    */
   router.delete('/:projectHash', (req, res) => {
     try {
-      if (!isGeminiInstalled()) {
+      if (!invokeProjectDriver('gemini', 'isAvailable')) {
         return res.status(404).json({ error: 'Gemini CLI not installed' });
       }
 

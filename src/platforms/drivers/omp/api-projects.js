@@ -1,6 +1,5 @@
 const express = require('express');
 const router = express.Router();
-const { isOmpInstalled } = require('./sessions-implementation');
 const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const {
   emptyProjectList,
@@ -17,7 +16,7 @@ function isNotFoundError(error) {
 module.exports = () => {
   router.get('/', async (req, res) => {
     try {
-      if (!isOmpInstalled()) {
+      if (!invokeProjectDriver('omp', 'isAvailable')) {
         return res.json({
           projects: [],
           currentProject: null,
@@ -47,7 +46,7 @@ module.exports = () => {
 
   router.post('/order', (req, res) => {
     try {
-      if (!isOmpInstalled()) {
+      if (!invokeProjectDriver('omp', 'isAvailable')) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const { order } = req.body || {};
@@ -65,7 +64,7 @@ module.exports = () => {
 
   router.delete('/:projectName', async (req, res) => {
     try {
-      if (!isOmpInstalled()) {
+      if (!invokeProjectDriver('omp', 'isAvailable')) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
       const result = await invokeProjectDriver('omp', 'deleteProject', [req.params.projectName]);

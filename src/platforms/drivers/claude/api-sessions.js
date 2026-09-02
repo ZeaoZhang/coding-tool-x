@@ -3,7 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const { deleteSession, forkSession, saveSessionOrder, parseRealProjectPath, searchSessions, getRecentSessions, searchSessionsAcrossProjects, hasActualMessages } = require('./sessions-implementation');
+const { invokeCapabilityDriver } = require('../../../server/api/capability-driver');
 const { getSessionStatus, getSessionOutline, getMessagePage } = require('../../../server/services/session-history-index');
 const { loadAliases } = require('../../../server/services/alias');
 const { broadcastLog } = require('../../../server/websocket-server');
@@ -128,6 +128,9 @@ function normalizeForkOptions(body = {}) {
 }
 
 module.exports = (config) => {
+  const invokeSession = (operation, args = []) => (
+    invokeCapabilityDriver('claude', 'sessions', operation, args)
+  );
   // GET /api/sessions/search/global - Search sessions across all projects
   router.get('/search/global', async (req, res) => {
     try {
@@ -138,7 +141,7 @@ module.exports = (config) => {
       }
 
       const contextLength = context ? parseInt(context) : 35;
-      const results = await searchSessionsAcrossProjects(config, keyword, contextLength);
+      const results = await invokeSession('searchAcrossProjects', [config, keyword, contextLength]);
 
       res.json({
         keyword,
@@ -155,7 +158,7 @@ module.exports = (config) => {
   router.get('/recent/list', async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 5;
-      const sessions = await getRecentSessions(config, limit);
+      const sessions = await invokeSession('recent', [config, limit]);
       res.json({ sessions });
     } catch (error) {
       console.error('Error fetching recent sessions:', error);
@@ -187,7 +190,7 @@ module.exports = (config) => {
   router.delete('/:projectName/:sessionId', (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
-      const result = deleteSession(config, projectName, sessionId);
+      const result = invokeSession('delete', [config, projectName, sessionId]);
       invalidateSessionSnapshots('claude', projectName);
       invalidateProjectSnapshots('claude');
       res.json(result);
@@ -223,7 +226,7 @@ module.exports = (config) => {
 
       uniqueSessionIds.forEach((sessionId) => {
         try {
-          deleteSession(config, projectName, sessionId);
+          invokeSession('delete', [config, projectName, sessionId]);
           deletedSessionIds.push(sessionId);
         } catch (error) {
           failed.push({
@@ -255,7 +258,7 @@ module.exports = (config) => {
   router.post('/:projectName/:sessionId/fork', (req, res) => {
     try {
       const { projectName, sessionId } = req.params;
-      const result = forkSession(config, projectName, sessionId, normalizeForkOptions(req.body));
+      const result = invokeSession('fork', [config, projectName, sessionId, normalizeForkOptions(req.body)]);
       invalidateSessionSnapshots('claude', projectName);
       invalidateProjectSnapshots('claude');
       res.json(result);
@@ -273,7 +276,7 @@ module.exports = (config) => {
       const crypto = require('crypto');
 
       // 解析项目路径
-      const { fullPath } = parseRealProjectPath(projectName);
+      const { fullPath } = invokeSession('parseRealProjectPath', [projectName]);
 
       // 生成新的 session ID
       const newSessionId = crypto.randomUUID();
@@ -367,7 +370,7 @@ module.exports = (config) => {
       if (!Array.isArray(order)) {
         return res.status(400).json({ error: 'order must be an array' });
       }
-      saveSessionOrder(projectName, order);
+      invokeSession('saveSessionOrder', [projectName, order]);
       invalidateSessionSnapshots('claude', projectName);
       res.json({ success: true });
     } catch (error) {
@@ -387,7 +390,7 @@ module.exports = (config) => {
       }
 
       const contextLength = context ? parseInt(context) : 15;
-      const results = await searchSessions(config, projectName, keyword, contextLength);
+      const results = await invokeSession('search', [config, projectName, keyword, contextLength]);
 
       res.json({
         keyword,
@@ -417,7 +420,7 @@ module.exports = (config) => {
       } catch (_) { /* fall through to direct stat */ }
 
       const { projectName, sessionId } = req.params;
-      const { fullPath } = parseRealProjectPath(projectName);
+      const { fullPath } = invokeSession('parseRealProjectPath', [projectName]);
       const { sessionFile, triedPaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
 
       if (!sessionFile) {
@@ -455,7 +458,7 @@ module.exports = (config) => {
       } catch (_) { /* fall through to direct read */ }
 
       const { projectName, sessionId } = req.params;
-      const { fullPath } = parseRealProjectPath(projectName);
+      const { fullPath } = invokeSession('parseRealProjectPath', [projectName]);
       const { sessionFile, triedPaths } = resolveClaudeSessionFile(projectName, sessionId, fullPath);
 
       if (!sessionFile) {
@@ -504,7 +507,7 @@ module.exports = (config) => {
       const limitNum = parseInt(limit);
 
       // Parse real project path
-      const { fullPath } = parseRealProjectPath(projectName);
+      const { fullPath } = invokeSession('parseRealProjectPath', [projectName]);
       console.log(`[Messages API] Parsed project path: ${fullPath}`);
 
       // Try to find session file
@@ -525,7 +528,7 @@ module.exports = (config) => {
       }
 
       // Check if session has actual messages (not just file-history-snapshots)
-      if (!hasActualMessages(sessionFile)) {
+      if (!invokeSession('hasActualMessages', [sessionFile])) {
         console.warn(`[Messages API] Session ${sessionId} has no actual messages (only file-history-snapshots)`);
         return res.status(404).json({
           error: `Session has no conversation messages: ${sessionId}`,
@@ -692,7 +695,7 @@ module.exports = (config) => {
       const fs = require('fs');
 
       // Parse real project path (important for cross-project sessions)
-      const { fullPath } = parseRealProjectPath(projectName);
+      const { fullPath } = invokeSession('parseRealProjectPath', [projectName]);
 
       const projectSessionsDir = path.join(fullPath, '.claude', 'sessions');
       const projectSessionFile = path.join(projectSessionsDir, sessionId + '.jsonl');

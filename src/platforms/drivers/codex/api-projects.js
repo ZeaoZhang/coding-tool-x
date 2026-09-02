@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { invokeProjectDriver } = require('../../../server/api/project-driver');
-const { isCodexInstalled } = require('./config');
 const {
   emptyProjectList,
   getProjectListSnapshot,
@@ -27,8 +26,7 @@ module.exports = (config) => {
   router.get('/', async (req, res) => {
     const startMs = Date.now();
     try {
-      // 检查 Codex 是否安装
-      if (!isCodexInstalled()) {
+      if (!invokeProjectDriver('codex', 'isAvailable')) {
         logPerf('GET /api/codex/projects', startMs, 'codex not installed');
         return res.json({
           projects: [],
@@ -71,7 +69,7 @@ module.exports = (config) => {
    */
   router.post('/order', (req, res) => {
     try {
-      if (!isCodexInstalled()) {
+      if (!invokeProjectDriver('codex', 'isAvailable')) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 
@@ -97,7 +95,7 @@ module.exports = (config) => {
    */
   router.delete('/:projectName', (req, res) => {
     try {
-      if (!isCodexInstalled()) {
+      if (!invokeProjectDriver('codex', 'isAvailable')) {
         return res.status(404).json({ error: 'Codex CLI not installed' });
       }
 

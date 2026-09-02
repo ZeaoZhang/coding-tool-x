@@ -1,14 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const {
-  getSessionsByProject,
-  getSessionById,
-  searchSessions,
-  forkSession,
-  deleteSession,
-  getRecentSessions,
-  saveSessionOrder
-} = require('./sessions-implementation');
+const { invokeCapabilityDriver } = require('../../../server/api/capability-driver');
 const { isCodexInstalled } = require('./config');
 const { loadAliases } = require('../../../server/services/alias');
 const {
@@ -79,6 +71,9 @@ module.exports = (config) => {
    * GET /api/codex/sessions/search/global?keyword=xxx
    * 全局搜索
    */
+  const invokeSession = (operation, args = []) => (
+    invokeCapabilityDriver('codex', 'sessions', operation, args)
+  );
   router.get('/search/global', async (req, res) => {
     try {
       if (!isCodexInstalled()) {
@@ -91,7 +86,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'Keyword is required' });
       }
 
-      const results = await searchSessions(keyword);
+      const results = await invokeSession('search', [keyword]);
 
       // 按会话分组，统计每个会话的匹配数
       const sessionMap = new Map();
@@ -139,7 +134,7 @@ module.exports = (config) => {
       }
 
       const limit = parseInt(req.query.limit) || 5;
-      const sessions = await getRecentSessions(limit);
+      const sessions = await invokeSession('recent', [limit]);
 
       res.json({
         sessions,
@@ -205,7 +200,7 @@ module.exports = (config) => {
       }
 
       // 使用全局搜索，然后过滤项目
-      const allResults = await searchSessions(keyword);
+      const allResults = await invokeSession('search', [keyword]);
       const filteredResults = allResults.filter(r => r.projectName === projectName);
 
       // 按会话分组
@@ -249,7 +244,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
       if (!session || !session.filePath) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -274,7 +269,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -318,7 +313,7 @@ module.exports = (config) => {
       const { sessionId } = req.params;
       const { page = 1, limit = 20, order = 'desc' } = req.query;
 
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
 
       if (!session) {
         logPerf('GET /api/codex/sessions/:projectName/:sessionId/messages', startMs, `session=${sessionId}, not found`);
@@ -451,7 +446,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const result = deleteSession(sessionId);
+      const result = invokeSession('delete', [sessionId]);
       invalidateSessionSnapshots('codex', req.params.projectName);
       invalidateProjectSnapshots('codex');
 
@@ -493,7 +488,7 @@ module.exports = (config) => {
 
       uniqueSessionIds.forEach((sessionId) => {
         try {
-          deleteSession(sessionId);
+          invokeSession('delete', [sessionId]);
           deletedSessionIds.push(sessionId);
         } catch (err) {
           failed.push({
@@ -532,7 +527,7 @@ module.exports = (config) => {
       }
 
       const { sessionId } = req.params;
-      const result = forkSession(sessionId, normalizeForkOptions(req.body));
+      const result = invokeSession('fork', [sessionId, normalizeForkOptions(req.body)]);
       invalidateSessionSnapshots('codex', req.params.projectName);
       invalidateProjectSnapshots('codex');
 
@@ -560,7 +555,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
 
-      saveSessionOrder(projectName, order);
+      invokeSession('saveSessionOrder', [projectName, order]);
       invalidateSessionSnapshots('codex', projectName);
 
       res.json({ success: true });
@@ -584,7 +579,7 @@ module.exports = (config) => {
       const fs = require('fs');
 
       // 获取会话详情
-      const session = await getSessionById(sessionId);
+      const session = await invokeSession('getSessionById', [sessionId]);
 
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });

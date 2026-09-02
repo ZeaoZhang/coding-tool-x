@@ -153,3 +153,37 @@ describe('built-in project Driver contract', () => {
     );
   });
 });
+
+describe('built-in session and statistics Driver contracts', () => {
+  test.each(platforms)('%s exposes session operations through its Driver', platform => {
+    const service = new Proxy({}, {
+      get: () => vi.fn(() => [])
+    });
+    const driver = require(`../../../src/platforms/drivers/${platform}/sessions`).createDriver({
+      requireImpl: () => service
+    });
+
+    for (const operation of ['listSessions', 'recent', 'search', 'delete', 'fork']) {
+      expect(typeof driver[operation]).toBe('function');
+    }
+  });
+
+  test.each(platforms)('%s exposes statistics operations through its Driver', platform => {
+    const service = new Proxy({}, {
+      get: () => vi.fn(() => ({}))
+    });
+    const driver = require(`../../../src/platforms/drivers/${platform}/statistics`).createDriver({
+      requireImpl: () => service
+    });
+
+    for (const operation of ['getStatistics', 'getDailyStatistics', 'getTodayStatistics', 'recordRequest', 'resetStatistics']) {
+      expect(typeof driver[operation]).toBe('function');
+    }
+    expect(driver.getStatistics()).toMatchObject({
+      status: 'ok',
+      platform,
+      capability: 'statistics',
+      operation: 'getStatistics'
+    });
+  });
+});

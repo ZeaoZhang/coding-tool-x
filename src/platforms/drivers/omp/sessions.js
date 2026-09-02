@@ -12,7 +12,19 @@ function createDriver(context = {}) {
     localServicePath: '../platforms/drivers/omp/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/omp/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
-    methods: {"listSessions":"getSessionsByProject","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
+    methods: {
+      getProjects: 'getProjects',
+      listSessions: 'getSessionsByProject',
+      recent: 'getRecentSessions',
+      search: 'searchSessions',
+      getSessionById: 'getSessionById',
+      messages: 'getSessionMessages',
+      delete: 'deleteSession',
+      fork: 'forkSession',
+      saveSessionOrder: 'saveSessionOrder',
+      buildLaunchCommand: 'buildLaunchCommand',
+      status: 'getSessionStatus'
+    }
   });
 }
 

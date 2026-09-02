@@ -7,7 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'omp',
     servicePath: './omp/sessions-implementation',
-    localServicePath: '../omp/sessions-implementation'
+    localServicePath: '../omp/sessions-implementation',
+    availabilityMethod: 'isOmpInstalled'
   });
 }
 
