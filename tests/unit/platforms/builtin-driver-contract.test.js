@@ -76,6 +76,19 @@ describe('built-in channel Driver contract', () => {
     expect(Object.keys(result)).not.toContain('cause');
   });
 
+  test('resolves migrated resource capabilities through built-in Drivers', () => {
+    const { getPlatformRuntime } = require('../../../src/platforms/runtime');
+    const runtime = getPlatformRuntime();
+    for (const platform of platforms) {
+      for (const capability of ['resourceSync', 'mcp']) {
+        expect(runtime.getDriver(platform, capability)).toBeTruthy();
+      }
+      if (platform !== 'omp') {
+        expect(runtime.getDriver(platform, 'prompts')).toBeTruthy();
+      }
+    }
+  });
+
   test('resolves every built-in manifest capability through Runtime', () => {
     const { getPlatformRuntime } = require('../../../src/platforms/runtime');
     const runtime = getPlatformRuntime();

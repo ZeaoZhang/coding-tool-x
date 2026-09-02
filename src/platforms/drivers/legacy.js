@@ -600,7 +600,8 @@ function createBuiltInCompatibilityDriver(capabilityModule, { platform, capabili
 
 function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = false, ...context } = {}) {
   if (useBuiltInDrivers && ['resourceSync', 'mcp', 'prompts'].includes(capability)) {
-    const capabilityModule = requireImpl(`./${platform}/${capability}`);
+    const moduleName = capability === 'resourceSync' ? 'resource-sync' : capability;
+    const capabilityModule = requireImpl(`./${platform}/${moduleName}`);
     if (typeof capabilityModule?.createDriver === 'function') {
       if (capability === 'resourceSync') {
         return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
