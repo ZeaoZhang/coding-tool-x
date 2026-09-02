@@ -2,46 +2,47 @@
 
 const MODULE_PATHS = Object.freeze({
   claude: Object.freeze({
-    projects: '../../server/services/sessions',
-    sessions: '../../server/services/sessions',
-    proxy: '../../server/proxy-server',
-    statistics: '../../server/services/claude-statistics-service',
-    nativeConfig: '../../server/services/settings-manager',
+    projects: './claude/sessions-implementation',
+    sessions: './claude/sessions-implementation',
+    proxy: './claude/proxy-implementation',
+    statistics: './claude/statistics-implementation',
+    nativeConfig: './claude/native-config-implementation',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
   codex: Object.freeze({
-    projects: '../../server/services/codex-sessions',
-    sessions: '../../server/services/codex-sessions',
-    proxy: '../../server/codex-proxy-server',
-    statistics: '../../server/services/codex-statistics-service',
-    nativeConfig: '../../server/services/codex-settings-manager',
+    projects: './codex/sessions-implementation',
+    sessions: './codex/sessions-implementation',
+    proxy: './codex/proxy-implementation',
+    statistics: './codex/statistics-implementation',
+    nativeConfig: './codex/native-config-implementation',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
   gemini: Object.freeze({
-    projects: '../../server/services/gemini-sessions',
-    sessions: '../../server/services/gemini-sessions',
-    proxy: '../../server/gemini-proxy-server',
-    statistics: '../../server/services/gemini-statistics-service',
-    nativeConfig: '../../server/services/gemini-settings-manager',
+    projects: './gemini/sessions-implementation',
+    sessions: './gemini/sessions-implementation',
+    proxy: './gemini/proxy-implementation',
+    statistics: './gemini/statistics-implementation',
+    nativeConfig: './gemini/native-config-implementation',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
   opencode: Object.freeze({
-    projects: '../../server/services/opencode-sessions',
-    sessions: '../../server/services/opencode-sessions',
-    proxy: '../../server/opencode-proxy-server',
-    statistics: '../../server/services/opencode-statistics-service',
-    nativeConfig: '../../server/services/opencode-settings-manager',
+    projects: './opencode/sessions-implementation',
+    sessions: './opencode/sessions-implementation',
+    proxy: './opencode/proxy-implementation',
+    statistics: './opencode/statistics-implementation',
+    nativeConfig: './opencode/native-config-implementation',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
   omp: Object.freeze({
-    projects: '../../server/services/omp-sessions',
-    sessions: '../../server/services/omp-sessions',
-    proxy: '../../server/omp-proxy-server',
-    statistics: '../../server/services/omp-statistics-service',
+    projects: './omp/sessions-implementation',
+    sessions: './omp/sessions-implementation',
+    proxy: './omp/proxy-implementation',
+    statistics: './omp/statistics-implementation',
+    nativeConfig: './omp/native-config-implementation',
     mcp: '../../server/services/mcp-service'
   })
 });
@@ -208,6 +209,11 @@ const NATIVE_CONFIG_EXPORTS = Object.freeze({
     settingsExists: 'settingsExists',
     hasBackup: 'hasBackup',
     deleteBackup: 'deleteBackup'
+  }),
+  omp: Object.freeze({
+    syncManagedProviders: 'syncManagedOmpProviders',
+    disableManagedProviders: 'disableManagedOmpProviders',
+    isManagedModeEnabled: 'isManagedOmpModeEnabled'
   })
 });
 
@@ -288,11 +294,11 @@ function invokeExport(loadModule, exportName, args, fallback) {
 
 function createChannelsDriver({ platform, capability, requireImpl, useBuiltInDrivers = requireImpl === require, ...context }) {
   const legacyPaths = {
-    claude: '../../server/services/channels',
-    codex: '../../server/services/codex-channels',
-    gemini: '../../server/services/gemini-channels',
-    opencode: '../../server/services/opencode-channels',
-    omp: '../../server/services/omp-channels'
+    claude: './claude/channels-implementation',
+    codex: './codex/channels-implementation',
+    gemini: './gemini/channels-implementation',
+    opencode: './opencode/channels-implementation',
+    omp: './omp/channels-implementation'
   };
   const modulePath = useBuiltInDrivers
     ? `./${platform}/channels`
@@ -406,7 +412,7 @@ function createProxyDriver({ platform, capability, requireImpl, manifest = {} })
     }
 
     if (platform === 'opencode') {
-      const channelsModule = requireImpl('../../server/services/opencode-channels');
+      const channelsModule = requireImpl('./opencode/channels-implementation');
       const proxyModule = loadModule();
       const enabledChannels = typeof channelsModule.getEnabledChannels === 'function'
         ? channelsModule.getEnabledChannels()
@@ -573,7 +579,7 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
     return createChannelsDriver({ ...context, platform, capability, requireImpl, manifest, useBuiltInDrivers });
   }
 
-  if (capability === 'nativeConfig' && useBuiltInDrivers && (platform === 'claude' || platform === 'codex')) {
+  if (capability === 'nativeConfig' && useBuiltInDrivers) {
     const nativeModule = requireImpl(`./${platform}/native-config`);
     if (typeof nativeModule?.createDriver === 'function') {
       return nativeModule.createDriver({ ...context, platform, capability, requireImpl });

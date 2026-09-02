@@ -7,8 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'opencode',
     capability: 'sessions',
-    servicePath: '../../server/services/opencode-sessions',
-    localServicePath: '../../../server/services/opencode-sessions',
+    servicePath: './opencode/sessions-implementation',
+    localServicePath: '../opencode/sessions-implementation',
     methods: {"listSessions":"getSessionsByProjectId","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
   });
 }

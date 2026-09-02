@@ -4,7 +4,7 @@ const {
   getStatistics,
   getDailyStatistics,
   getTodayStatistics
-} = require('../services/claude-statistics-service');
+} = require('../../platforms/drivers/claude/statistics-implementation');
 
 /**
  * 获取 Claude Code 总体统计数据

@@ -1,7 +1,7 @@
 const path = require('path');
 
-const adapterModule = '../../../src/server/services/omp-native-plugin-adapter';
-const configModule = '../../../src/server/services/omp-config';
+const adapterModule = '../../../src/platforms/drivers/omp/native-plugin-adapter';
+const configModule = '../../../src/platforms/drivers/omp/config';
 
 describe('OmpNativePluginAdapter operation cache', () => {
   let commandRunner;

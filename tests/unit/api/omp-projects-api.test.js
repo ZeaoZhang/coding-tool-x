@@ -73,9 +73,9 @@ beforeEach(() => {
     isOmpInstalled: vi.fn(() => true)
   };
 
-  require.cache[require.resolve('../../../src/server/services/omp-sessions')] = {
-    id: require.resolve('../../../src/server/services/omp-sessions'),
-    filename: require.resolve('../../../src/server/services/omp-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/sessions-implementation'),
     loaded: true,
     exports: ompSessionsService
   };
@@ -96,7 +96,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/omp-projects',
-    '../../../src/server/services/omp-sessions',
+    '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/config/paths',
     '../../../src/server/services/snapshot-cache',
     '../../../src/server/services/project-snapshots'

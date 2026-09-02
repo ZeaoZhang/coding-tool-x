@@ -1,6 +1,6 @@
 'use strict';
 
-const OMP_PROXY_SERVER_MODULE = require.resolve('../../src/server/omp-proxy-server');
+const OMP_PROXY_SERVER_MODULE = require.resolve('../../src/platforms/drivers/omp/proxy-implementation');
 const INDEX_MODULE = require.resolve('../../src/index');
 
 

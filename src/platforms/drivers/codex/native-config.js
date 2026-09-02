@@ -1,20 +1,19 @@
 'use strict';
 
 const fs = require('fs');
+const implementation = require('./native-config-implementation');
 const { PATHS } = require('../../../config/paths');
 
 function createDriver({ requireImpl, ...context } = {}) {
-  const settings = requireImpl ? requireImpl('../../server/services/codex-settings-manager') : require('../../../server/services/codex-settings-manager');
+  const settings = requireImpl
+    ? requireImpl('./codex/native-config-implementation')
+    : implementation;
   return {
     platform: 'codex',
     capability: 'nativeConfig',
     ...context,
-    setProxyConfig: (...args) => settings.setProxyConfig(...args),
-    restoreSettings: (...args) => settings.restoreSettings(...args),
-    isProxyConfig: (...args) => settings.isProxyConfig(...args),
-    settingsExists: (...args) => settings.settingsExists(...args),
-    hasBackup: (...args) => settings.hasBackup(...args),
-    deleteBackup: (...args) => settings.deleteBackup(...args),
+    ...settings,
+    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('codex'),
     clearActiveChannelMarker() {
       try {
         fs.unlinkSync(PATHS.activeChannel.codex);

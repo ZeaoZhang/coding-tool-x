@@ -15,7 +15,7 @@ async function buildClaudePayload(projectName, config, options = {}) {
   const {
     getSessionsForProject,
     parseRealProjectPath
-  } = require('./sessions');
+  } = require('../../platforms/drivers/claude/sessions-implementation');
 
   const result = await getSessionsForProject(config, projectName, { force: options.force === true });
   const { fullPath, projectName: displayName } = parseRealProjectPath(projectName);
@@ -33,7 +33,7 @@ async function buildClaudePayload(projectName, config, options = {}) {
 }
 
 async function buildCodexPayload(projectName, options = {}) {
-  const { getSessionsByProject } = require('./codex-sessions');
+  const { getSessionsByProject } = require('../../platforms/drivers/codex/sessions-implementation');
   const sessions = await getSessionsByProject(projectName, { force: options.force === true });
 
   return {
@@ -50,7 +50,7 @@ async function buildCodexPayload(projectName, options = {}) {
 }
 
 async function buildGeminiPayload(projectHash, options = {}) {
-  const { getProjectSessions, getProjectPath } = require('./gemini-sessions');
+  const { getProjectSessions, getProjectPath } = require('../../platforms/drivers/gemini/sessions-implementation');
   const sessions = await getProjectSessions(projectHash, { force: options.force === true });
   const realPath = getProjectPath(projectHash, { force: options.force === true });
   const displayName = realPath ? path.basename(realPath) : `Project ${projectHash.substring(0, 8)}`;
@@ -69,7 +69,7 @@ async function buildGeminiPayload(projectHash, options = {}) {
 }
 
 function buildOpenCodePayload(projectName, options = {}) {
-  const { getSessionsByProject, getProjects } = require('./opencode-sessions');
+  const { getSessionsByProject, getProjects } = require('../../platforms/drivers/opencode/sessions-implementation');
   const sessions = getSessionsByProject(projectName, { force: options.force === true });
   const firstDirectory = sessions.find(session => session.directory)?.directory;
   const project = firstDirectory ? null : getProjects({ force: options.force === true }).find(p => p.name === projectName);
@@ -89,7 +89,7 @@ function buildOpenCodePayload(projectName, options = {}) {
 }
 
 async function buildOmpPayload(projectName, options = {}) {
-  const { getProjects, getSessionsByProject } = require('./omp-sessions');
+  const { getProjects, getSessionsByProject } = require('../../platforms/drivers/omp/sessions-implementation');
   const sessions = await getSessionsByProject(projectName, { force: options.force === true });
   const firstDirectory = sessions.find(session => session.directory)?.directory;
   let project = null;

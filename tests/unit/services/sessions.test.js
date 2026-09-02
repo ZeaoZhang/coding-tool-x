@@ -16,7 +16,7 @@ const PATHS_PATH         = require.resolve('../../../src/config/paths');
 const SESSION_UTIL_PATH  = require.resolve('../../../src/utils/session');
 const ALIAS_PATH         = require.resolve('../../../src/server/services/alias');
 const ENHANCED_CACHE_PATH = require.resolve('../../../src/server/services/enhanced-cache');
-const SESSIONS_PATH      = require.resolve('../../../src/server/services/sessions');
+const SESSIONS_PATH      = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
 const SESSION_INDEX_PATH = require.resolve('../../../src/server/services/session-history-index');
 const GLOBAL_CACHE_DELETE = vi.fn();
 const SET_ALIAS_MOCK = vi.fn();
@@ -83,7 +83,7 @@ beforeEach(() => {
   SET_ALIAS_MOCK.mockReset();
   delete require.cache[SESSION_INDEX_PATH];
   delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/claude')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/session-history-adapter')];
   delete require.cache[SESSIONS_PATH];
 });
 
@@ -92,7 +92,7 @@ afterEach(() => {
   delete require.cache[SESSIONS_PATH];
   delete require.cache[SESSION_INDEX_PATH];
   delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/claude')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/session-history-adapter')];
   try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
 });
 
@@ -100,19 +100,19 @@ afterEach(() => {
 
 describe('getProjectOrder', () => {
   test('returns [] when order file does not exist', () => {
-    const { getProjectOrder } = require('../../../src/server/services/sessions');
+    const { getProjectOrder } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(getProjectOrder({})).toEqual([]);
   });
 
   test('returns parsed array from valid order file', () => {
     fs.writeFileSync(orderFile, JSON.stringify(['proj-a', 'proj-b']), 'utf8');
-    const { getProjectOrder } = require('../../../src/server/services/sessions');
+    const { getProjectOrder } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(getProjectOrder({})).toEqual(['proj-a', 'proj-b']);
   });
 
   test('returns [] when order file contains invalid JSON', () => {
     fs.writeFileSync(orderFile, '<<<not json>>>', 'utf8');
-    const { getProjectOrder } = require('../../../src/server/services/sessions');
+    const { getProjectOrder } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(getProjectOrder({})).toEqual([]);
   });
 });
@@ -126,7 +126,7 @@ describe('saveProjectOrder', () => {
     require.cache[PATHS_PATH].exports.PATHS.projectOrder = nestedOrder;
     delete require.cache[SESSIONS_PATH];
 
-    const { saveProjectOrder, getProjectOrder } = require('../../../src/server/services/sessions');
+    const { saveProjectOrder, getProjectOrder } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     saveProjectOrder({}, ['x', 'y', 'z']);
 
     expect(fs.existsSync(nestedOrder)).toBe(true);
@@ -135,7 +135,7 @@ describe('saveProjectOrder', () => {
   });
 
   test('round-trips through getProjectOrder', () => {
-    const { saveProjectOrder, getProjectOrder } = require('../../../src/server/services/sessions');
+    const { saveProjectOrder, getProjectOrder } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     saveProjectOrder({}, ['alpha', 'beta']);
     expect(getProjectOrder({})).toEqual(['alpha', 'beta']);
   });
@@ -145,20 +145,20 @@ describe('saveProjectOrder', () => {
 
 describe('getForkRelations', () => {
   test('returns {} when fork file does not exist', () => {
-    const { getForkRelations } = require('../../../src/server/services/sessions');
+    const { getForkRelations } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(getForkRelations()).toEqual({});
   });
 
   test('returns parsed object from valid fork file', () => {
     const relations = { 'new-id': 'old-id' };
     fs.writeFileSync(forkFile, JSON.stringify(relations), 'utf8');
-    const { getForkRelations } = require('../../../src/server/services/sessions');
+    const { getForkRelations } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(getForkRelations()).toEqual(relations);
   });
 
   test('returns {} when fork file contains invalid JSON', () => {
     fs.writeFileSync(forkFile, 'bad json', 'utf8');
-    const { getForkRelations } = require('../../../src/server/services/sessions');
+    const { getForkRelations } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(getForkRelations()).toEqual({});
   });
 });
@@ -167,7 +167,7 @@ describe('getForkRelations', () => {
 
 describe('saveForkRelations', () => {
   test('writes relations JSON to fork file', () => {
-    const { saveForkRelations } = require('../../../src/server/services/sessions');
+    const { saveForkRelations } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     saveForkRelations({ 'sid-new': 'sid-old' });
 
     const written = JSON.parse(fs.readFileSync(forkFile, 'utf8'));
@@ -175,7 +175,7 @@ describe('saveForkRelations', () => {
   });
 
   test('round-trips through getForkRelations', () => {
-    const { saveForkRelations, getForkRelations } = require('../../../src/server/services/sessions');
+    const { saveForkRelations, getForkRelations } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     saveForkRelations({ a: 'b', c: 'd' });
     expect(getForkRelations()).toEqual({ a: 'b', c: 'd' });
   });
@@ -185,7 +185,7 @@ describe('saveForkRelations', () => {
 
 describe('getProjects', () => {
   test('returns [] when projects directory is empty', async () => {
-    const { getProjects } = require('../../../src/server/services/sessions');
+    const { getProjects } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = await getProjects({ projectsDir });
     expect(result).toEqual([]);
   });
@@ -198,7 +198,7 @@ describe('getProjects', () => {
     // A file should not be included
     fs.writeFileSync(path.join(projectsDir, 'not-a-dir.txt'), '', 'utf8');
 
-    const { getProjects } = require('../../../src/server/services/sessions');
+    const { getProjects } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = await getProjects({ projectsDir });
     expect(result.sort()).toEqual(['proj-one', 'proj-two']);
   });
@@ -207,13 +207,13 @@ describe('getProjects', () => {
     fs.mkdirSync(path.join(projectsDir, 'native-proj'));
     fs.writeFileSync(path.join(projectsDir, 'native-proj', 'native.jsonl'), JSON.stringify({ type: 'user', sessionId: 'native', message: { content: 'native' } }) + '\n');
 
-    const { getProjects } = require('../../../src/server/services/sessions');
+    const { getProjects } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = await getProjects({});
     expect(result).toEqual(['native-proj']);
   });
 
   test('returns [] when projects directory does not exist', async () => {
-    const { getProjects } = require('../../../src/server/services/sessions');
+    const { getProjects } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = await getProjects({ projectsDir: path.join(testDir, 'nonexistent') });
     expect(result).toEqual([]);
   });
@@ -227,7 +227,7 @@ describe('deleteProject', () => {
     fs.mkdirSync(projDir);
     fs.writeFileSync(path.join(projDir, 'session.jsonl'), '', 'utf8');
 
-    const { deleteProject } = require('../../../src/server/services/sessions');
+    const { deleteProject } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = deleteProject({ projectsDir }, 'to-delete');
 
     expect(result.success).toBe(true);
@@ -238,7 +238,7 @@ describe('deleteProject', () => {
     const projDir = path.join(projectsDir, 'native-delete');
     fs.mkdirSync(projDir);
 
-    const { deleteProject } = require('../../../src/server/services/sessions');
+    const { deleteProject } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = deleteProject({}, 'native-delete');
 
     expect(result.success).toBe(true);
@@ -246,7 +246,7 @@ describe('deleteProject', () => {
   });
 
   test('throws when project does not exist', () => {
-    const { deleteProject } = require('../../../src/server/services/sessions');
+    const { deleteProject } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     expect(() => deleteProject({ projectsDir }, 'ghost-project')).toThrow('Project not found');
   });
 
@@ -256,7 +256,7 @@ describe('deleteProject', () => {
     fs.mkdirSync(projDir);
     fs.writeFileSync(orderFile, JSON.stringify(['ordered-proj', 'other-proj']), 'utf8');
 
-    const { deleteProject, getProjectOrder } = require('../../../src/server/services/sessions');
+    const { deleteProject, getProjectOrder } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     deleteProject({ projectsDir }, 'ordered-proj');
 
     const remaining = getProjectOrder({});
@@ -283,7 +283,7 @@ describe('forkSession', () => {
 
     const randomUuidSpy = vi.spyOn(require('crypto'), 'randomUUID').mockReturnValue('forked-session-id');
 
-    const { forkSession, getForkRelations } = require('../../../src/server/services/sessions');
+    const { forkSession, getForkRelations } = require('../../../src/platforms/drivers/claude/sessions-implementation');
     const result = forkSession(
       { projectsDir },
       projectName,
@@ -332,7 +332,7 @@ describe('forkSession', () => {
       'utf8'
     );
 
-    const { forkSession } = require('../../../src/server/services/sessions');
+    const { forkSession } = require('../../../src/platforms/drivers/claude/sessions-implementation');
 
     expect(() => forkSession(
       { projectsDir },
@@ -357,7 +357,7 @@ describe('forkSession', () => {
     );
 
     const randomUuidSpy = vi.spyOn(require('crypto'), 'randomUUID').mockReturnValue('windows-fork-id');
-    const { forkSession } = require('../../../src/server/services/sessions');
+    const { forkSession } = require('../../../src/platforms/drivers/claude/sessions-implementation');
 
     forkSession(
       { projectsDir },

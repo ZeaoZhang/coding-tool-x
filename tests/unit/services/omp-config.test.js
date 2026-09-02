@@ -3,7 +3,7 @@ const os = require('os');
 const fs = require('fs');
 const yaml = require('js-yaml');
 
-const OMP_CONFIG_PATH = require.resolve('../../../src/server/services/omp-config');
+const OMP_CONFIG_PATH = require.resolve('../../../src/platforms/drivers/omp/config');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 
 describe('omp-config path resolution', () => {
@@ -30,7 +30,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('uses OMP_CODING_AGENT_DIR when provided', () => {
-    const { getOmpAgentDir, getOmpPaths } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir, getOmpPaths } = require('../../../src/platforms/drivers/omp/config');
     const env = { OMP_CODING_AGENT_DIR: path.join(path.sep, 'custom', 'omp-agent') };
     const options = { commandRunner: commandNotFound };
 
@@ -48,7 +48,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('prefers PI_CODING_AGENT_DIR over the legacy OMP_CODING_AGENT_DIR fallback', () => {
-    const { getOmpAgentDir, getOmpPaths } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir, getOmpPaths } = require('../../../src/platforms/drivers/omp/config');
     const env = {
       PI_CODING_AGENT_DIR: path.join(path.sep, 'canonical', 'omp-agent'),
       OMP_CODING_AGENT_DIR: path.join(path.sep, 'legacy', 'omp-agent')
@@ -61,13 +61,13 @@ describe('omp-config path resolution', () => {
   });
 
   test('defaults to HOME_DIR/.omp/agent', () => {
-    const { getOmpAgentDir } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir } = require('../../../src/platforms/drivers/omp/config');
 
     expect(getOmpAgentDir({}, { commandRunner: commandNotFound })).toBe(path.resolve(homeDir, '.omp', 'agent'));
   });
 
   test('uses OMP_PROFILE for profile agent directories', () => {
-    const { getOmpAgentDir } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir } = require('../../../src/platforms/drivers/omp/config');
     const options = { commandRunner: commandNotFound };
 
     expect(getOmpAgentDir({ OMP_PROFILE: 'work' }, options))
@@ -75,14 +75,14 @@ describe('omp-config path resolution', () => {
   });
 
   test('expands tilde paths against configured HOME_DIR', () => {
-    const { getOmpAgentDir } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir } = require('../../../src/platforms/drivers/omp/config');
 
     expect(getOmpAgentDir({ OMP_CODING_AGENT_DIR: '~/custom-omp' }, { commandRunner: commandNotFound }))
       .toBe(path.resolve(homeDir, 'custom-omp'));
   });
 
   test('preserves Windows-style env paths without forcing Unix home expansion', () => {
-    const { getOmpAgentDir } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir } = require('../../../src/platforms/drivers/omp/config');
     const windowsPath = 'C:\\Users\\demo\\.omp\\agent';
 
     expect(getOmpAgentDir({ OMP_CODING_AGENT_DIR: windowsPath }, { commandRunner: commandNotFound }))
@@ -90,7 +90,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('prefers omp config path over derived environment paths when OMP is available', () => {
-    const { getOmpAgentDir, getOmpStatus } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir, getOmpStatus } = require('../../../src/platforms/drivers/omp/config');
     const resolvedAgentDir = path.join(path.sep, 'real', 'omp', 'agent');
     const calls = [];
     const commandRunner = (command, args) => {
@@ -119,7 +119,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('hides Windows command windows while probing the OMP runtime', () => {
-    const { resolveOmpRuntime } = require('../../../src/server/services/omp-config');
+    const { resolveOmpRuntime } = require('../../../src/platforms/drivers/omp/config');
     const commandRunner = vi.fn(() => 'omp 1.0.0\n');
 
     resolveOmpRuntime({}, { commandRunner });
@@ -132,7 +132,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('can resolve OMP native paths without starting the CLI', () => {
-    const { getOmpPaths } = require('../../../src/server/services/omp-config');
+    const { getOmpPaths } = require('../../../src/platforms/drivers/omp/config');
     const commandRunner = vi.fn(() => {
       throw new Error('OMP CLI must not be started for native path lookup');
     });
@@ -144,7 +144,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('can report native OMP status without starting the CLI', () => {
-    const { getOmpStatus } = require('../../../src/server/services/omp-config');
+    const { getOmpStatus } = require('../../../src/platforms/drivers/omp/config');
     const commandRunner = vi.fn(() => {
       throw new Error('OMP CLI must not be started for native status');
     });
@@ -159,7 +159,7 @@ describe('omp-config path resolution', () => {
   });
 
   test('falls back to ~/.omp/agent when OMP command is unavailable', () => {
-    const { getOmpAgentDir, resolveOmpRuntime } = require('../../../src/server/services/omp-config');
+    const { getOmpAgentDir, resolveOmpRuntime } = require('../../../src/platforms/drivers/omp/config');
     const commandRunner = (command, args) => {
       if (command === 'omp' && args[0] === '--version') throw new Error('missing omp');
       throw new Error('unexpected command');
@@ -273,7 +273,7 @@ describe('strict OMP settings persistence', () => {
   test('returns an empty object when config.yml is absent without reading legacy settings', () => {
     fs.mkdirSync(agentDir, { recursive: true });
     fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ legacy: true }));
-    const { readOmpSettings, readOmpSettingsStrict } = require('../../../src/server/services/omp-config');
+    const { readOmpSettings, readOmpSettingsStrict } = require('../../../src/platforms/drivers/omp/config');
 
     expect(readOmpSettingsStrict()).toEqual({});
     expect(readOmpSettings()).toEqual({ legacy: true });
@@ -289,7 +289,7 @@ describe('strict OMP settings persistence', () => {
     fs.mkdirSync(agentDir, { recursive: true });
     fs.writeFileSync(configPath, source, 'utf8');
     fs.writeFileSync(path.join(agentDir, 'settings.json'), JSON.stringify({ legacy: true }));
-    const { readOmpSettings, readOmpSettingsStrict } = require('../../../src/server/services/omp-config');
+    const { readOmpSettings, readOmpSettingsStrict } = require('../../../src/platforms/drivers/omp/config');
 
     expect(() => readOmpSettingsStrict()).toThrow();
     expect(readOmpSettings()).toEqual({ legacy: true });
@@ -304,7 +304,7 @@ describe('strict OMP settings persistence', () => {
       if (path.resolve(filePath) === path.resolve(configPath)) throw readError;
       return originalReadFileSync(filePath, ...args);
     });
-    const { readOmpSettingsStrict } = require('../../../src/server/services/omp-config');
+    const { readOmpSettingsStrict } = require('../../../src/platforms/drivers/omp/config');
 
     expect(() => readOmpSettingsStrict()).toThrow(readError);
   });
@@ -315,7 +315,7 @@ describe('strict OMP settings persistence', () => {
     const writeSpy = vi.spyOn(fs, 'writeFileSync');
     const chmodSpy = vi.spyOn(fs, 'chmodSync');
     const renameSpy = vi.spyOn(fs, 'renameSync');
-    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+    const { writeOmpSettingsAtomic } = require('../../../src/platforms/drivers/omp/config');
 
     writeOmpSettingsAtomic({ skills: { enablePiUser: false } });
 
@@ -331,7 +331,7 @@ describe('strict OMP settings persistence', () => {
   });
 
   test('creates config.yml with mode 0600', () => {
-    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+    const { writeOmpSettingsAtomic } = require('../../../src/platforms/drivers/omp/config');
 
     writeOmpSettingsAtomic({ skills: { enablePiUser: false } });
 
@@ -349,7 +349,7 @@ describe('strict OMP settings persistence', () => {
     vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
       throw renameError;
     });
-    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+    const { writeOmpSettingsAtomic } = require('../../../src/platforms/drivers/omp/config');
 
     expect(() => writeOmpSettingsAtomic({ skills: { enablePiUser: false } })).toThrow(renameError);
     expect(fs.readFileSync(configPath)).toEqual(original);
@@ -367,7 +367,7 @@ describe('strict OMP settings persistence', () => {
     const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
       throw new Error('cleanup failed');
     });
-    const { writeOmpSettingsAtomic } = require('../../../src/server/services/omp-config');
+    const { writeOmpSettingsAtomic } = require('../../../src/platforms/drivers/omp/config');
 
     try {
       expect(() => writeOmpSettingsAtomic({ skills: { enablePiUser: false } })).toThrow(renameError);
@@ -382,7 +382,7 @@ describe('strict OMP settings persistence', () => {
   });
 
   test('keeps legacy readOmpSettings and writeOmpSettings behavior', () => {
-    const { readOmpSettings, writeOmpSettings } = require('../../../src/server/services/omp-config');
+    const { readOmpSettings, writeOmpSettings } = require('../../../src/platforms/drivers/omp/config');
 
     writeOmpSettings({ skills: { enabled: true } });
 

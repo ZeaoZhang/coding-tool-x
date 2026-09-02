@@ -1,8 +1,8 @@
 const CONFIG_LOADER_MODULE = require.resolve('../../../src/config/loader');
 const PROXY_RUNTIME_MODULE = require.resolve('../../../src/server/services/proxy-runtime');
-const OMP_CHANNELS_MODULE = require.resolve('../../../src/server/services/omp-channels');
-const OMP_LOG_OBSERVER_MODULE = require.resolve('../../../src/server/services/omp-session-log-observer');
-const OMP_PROXY_SERVER_MODULE = require.resolve('../../../src/server/omp-proxy-server');
+const OMP_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
+const OMP_LOG_OBSERVER_MODULE = require.resolve('../../../src/platforms/drivers/omp/session-log-observer');
+const OMP_PROXY_SERVER_MODULE = require.resolve('../../../src/platforms/drivers/omp/proxy-implementation');
 const http = require('http');
 
 let syncManagedOmpProviders;
@@ -124,7 +124,7 @@ afterEach(async () => {
 });
 
 it('enables persistent managed mode before synchronizing providers', async () => {
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
 
   const result = await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
 
@@ -154,7 +154,7 @@ it('enables persistent managed mode before synchronizing providers', async () =>
   });
 });
 it('reuses the persisted gateway secret when managed mode restarts', async () => {
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
 
   const first = await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
   await proxy.stopOmpProxyServer();
@@ -177,7 +177,7 @@ it('hands off to one direct current provider before stopping the gateway', async
       secret: 'gateway-secret'
     }
   });
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
   await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
 
   const result = await proxy.stopOmpProxyServer();
@@ -208,7 +208,7 @@ it('preserves managed mode when the owning service process shuts down', async ()
       secret: 'gateway-secret'
     }
   });
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
   await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
   activateStaticOmpChannel.mockClear();
   disableManagedOmpProviders.mockClear();
@@ -227,7 +227,7 @@ it('rolls back newly enabled managed mode when provider synchronization fails', 
   syncManagedOmpProviders.mockImplementation(() => {
     throw new Error('sync failed');
   });
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
 
   await expect(proxy.startOmpProxyServer({ activeChannelId: 'channel-a' }))
     .rejects.toThrow('sync failed');
@@ -253,7 +253,7 @@ it('restores the previous active channel when resynchronization fails', async ()
   syncManagedOmpProviders.mockImplementation(() => {
     throw new Error('sync failed');
   });
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
 
   await expect(proxy.startOmpProxyServer({ activeChannelId: 'channel-new' }))
     .rejects.toThrow('sync failed');
@@ -283,7 +283,7 @@ it('keeps managed mode active and resumes log observation when static handoff fa
   activateStaticOmpChannel.mockImplementation(() => {
     throw new Error('handoff failed');
   });
-  const proxy = require('../../../src/server/omp-proxy-server');
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
   await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
   startOmpSessionLogObserver.mockClear();
 

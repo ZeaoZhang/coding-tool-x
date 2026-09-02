@@ -74,9 +74,9 @@ beforeEach(() => {
   loadAliasesMock = vi.fn(() => ({ 'open-1': 'open-alias' }));
   broadcastLogMock = vi.fn();
 
-  require.cache[require.resolve('../../../src/server/services/opencode-sessions')] = {
-    id: require.resolve('../../../src/server/services/opencode-sessions'),
-    filename: require.resolve('../../../src/server/services/opencode-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation'),
     loaded: true,
     exports: opencodeSessionsService
   };
@@ -103,7 +103,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/opencode-sessions',
-    '../../../src/server/services/opencode-sessions',
+    '../../../src/platforms/drivers/opencode/sessions-implementation',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server',
     '../../../src/config/paths'

@@ -7,8 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'gemini',
     capability: 'statistics',
-    servicePath: '../../server/services/gemini-statistics-service',
-    localServicePath: '../../../server/services/gemini-statistics-service',
+    servicePath: './gemini/statistics-implementation',
+    localServicePath: '../gemini/statistics-implementation',
     methods: {"getStatistics":"getStatistics","getDailyStatistics":"getDailyStatistics","getTodayStatistics":"getTodayStatistics","recordRequest":"recordRequest","resetStatistics":"resetStatistics"}
   });
 }

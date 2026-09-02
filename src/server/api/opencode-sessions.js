@@ -11,7 +11,7 @@ const {
   forkSession,
   saveSessionOrder,
   isOpenCodeInstalled
-} = require('../services/opencode-sessions');
+} = require('../../platforms/drivers/opencode/sessions-implementation');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');
 const { HOME_DIR } = require('../../config/paths');

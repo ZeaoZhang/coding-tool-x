@@ -7,8 +7,8 @@ const {
   deleteChannel,
   saveChannelOrder,
   syncCurrentOmpChannel
-} = require('../services/omp-channels');
-const { isOmpInstalled } = require('../services/omp-sessions');
+} = require('../../platforms/drivers/omp/channels-implementation');
+const { isOmpInstalled } = require('../../platforms/drivers/omp/sessions-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
@@ -25,7 +25,7 @@ const {
   findAuthProviderForKey,
   getCachedOmpAuthProviderSnapshot,
   getOmpAuthProviderCacheMeta
-} = require('../services/omp-auth-providers');
+} = require('../../platforms/drivers/omp/auth-providers');
 const {
   MODEL_SCHEMA_VERSION,
   MODEL_METADATA_MODES,
@@ -35,7 +35,7 @@ const {
   validateModelDefinitions,
   validateProviderConfig
 } = require('../services/model-definition-schema');
-const { getOmpCatalogModels } = require('../services/omp-settings-manager');
+const { getOmpCatalogModels } = require('../../platforms/drivers/omp/native-config-implementation');
 
 const CHANNEL_LIST_AUTH_OPTIONS = { accountCheck: false, includeStatus: false };
 

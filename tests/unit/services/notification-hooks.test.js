@@ -6,13 +6,13 @@ vi.mock('../../../src/server/services/ui-config', () => ({
   saveUIConfig: vi.fn()
 }));
 
-vi.mock('../../../src/server/services/codex-settings-manager', () => ({
+vi.mock('../../../src/platforms/drivers/codex/native-config-implementation', () => ({
   readConfig: vi.fn(() => ({})),
   configExists: vi.fn(() => false),
   writeConfig: vi.fn()
 }));
 
-vi.mock('../../../src/server/services/gemini-settings-manager', () => ({
+vi.mock('../../../src/platforms/drivers/gemini/native-config-implementation', () => ({
   readSettings: vi.fn(() => ({})),
   settingsExists: vi.fn(() => false),
   writeSettings: vi.fn(),

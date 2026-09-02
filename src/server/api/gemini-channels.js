@@ -8,18 +8,18 @@ const {
   getEnabledChannels,
   saveChannelOrder,
   syncCurrentGeminiChannel
-} = require('../services/gemini-channels');
+} = require('../../platforms/drivers/gemini/channels-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
-const { isGeminiInstalled } = require('../services/gemini-config');
+const { isGeminiInstalled } = require('../../platforms/drivers/gemini/config');
 const {
   testChannelSpeed,
   getLatencyLevel,
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
-const { clearGeminiRedirectCache } = require('../gemini-proxy-server');
+const { clearGeminiRedirectCache } = require('../../platforms/drivers/gemini/proxy-implementation');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const GEMINI_GATEWAY_SOURCE_TYPE = 'gemini';
 

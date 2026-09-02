@@ -6,8 +6,8 @@ function createDriver(context = {}) {
   return createChannelDriver({
     ...context,
     platform: 'opencode',
-    servicePath: '../../server/services/opencode-channels',
-    localServicePath: '../../../server/services/opencode-channels',
+    servicePath: './opencode/channels-implementation',
+    localServicePath: '../opencode/channels-implementation',
     syncMethod: 'syncCurrentOpenCodeChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.extra || {}]

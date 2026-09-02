@@ -102,13 +102,13 @@ afterEach(() => {
   [
     '../../../src/server/services/workspace-service',
     '../../../src/server/services/config-templates-service',
-    '../../../src/server/services/sessions',
-    '../../../src/server/services/codex-sessions',
-    '../../../src/server/services/gemini-sessions',
-    '../../../src/server/services/opencode-sessions',
-    '../../../src/server/services/omp-sessions',
-    '../../../src/server/services/codex-config',
-    '../../../src/server/services/gemini-config',
+    '../../../src/platforms/drivers/claude/sessions-implementation',
+    '../../../src/platforms/drivers/codex/sessions-implementation',
+    '../../../src/platforms/drivers/gemini/sessions-implementation',
+    '../../../src/platforms/drivers/opencode/sessions-implementation',
+    '../../../src/platforms/drivers/omp/sessions-implementation',
+    '../../../src/platforms/drivers/codex/config',
+    '../../../src/platforms/drivers/gemini/config',
     '../../../src/config/loader',
     '../../../src/config/paths'
   ].forEach((mod) => {
@@ -422,7 +422,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const sessionsPath = require.resolve('../../../src/server/services/sessions');
+    const sessionsPath = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
     require.cache[sessionsPath] = {
       id: sessionsPath,
       filename: sessionsPath,
@@ -434,7 +434,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const codexSessionsPath = require.resolve('../../../src/server/services/codex-sessions');
+    const codexSessionsPath = require.resolve('../../../src/platforms/drivers/codex/sessions-implementation');
     require.cache[codexSessionsPath] = {
       id: codexSessionsPath,
       filename: codexSessionsPath,
@@ -446,7 +446,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const geminiSessionsPath = require.resolve('../../../src/server/services/gemini-sessions');
+    const geminiSessionsPath = require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation');
     require.cache[geminiSessionsPath] = {
       id: geminiSessionsPath,
       filename: geminiSessionsPath,
@@ -456,7 +456,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const opencodeSessionsPath = require.resolve('../../../src/server/services/opencode-sessions');
+    const opencodeSessionsPath = require.resolve('../../../src/platforms/drivers/opencode/sessions-implementation');
     require.cache[opencodeSessionsPath] = {
       id: opencodeSessionsPath,
       filename: opencodeSessionsPath,
@@ -469,7 +469,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const ompSessionsPath = require.resolve('../../../src/server/services/omp-sessions');
+    const ompSessionsPath = require.resolve('../../../src/platforms/drivers/omp/sessions-implementation');
     require.cache[ompSessionsPath] = {
       id: ompSessionsPath,
       filename: ompSessionsPath,
@@ -482,7 +482,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const codexConfigPath = require.resolve('../../../src/server/services/codex-config');
+    const codexConfigPath = require.resolve('../../../src/platforms/drivers/codex/config');
     require.cache[codexConfigPath] = {
       id: codexConfigPath,
       filename: codexConfigPath,
@@ -492,7 +492,7 @@ describe('workspace-service project management', () => {
       }
     };
 
-    const geminiConfigPath = require.resolve('../../../src/server/services/gemini-config');
+    const geminiConfigPath = require.resolve('../../../src/platforms/drivers/gemini/config');
     require.cache[geminiConfigPath] = {
       id: geminiConfigPath,
       filename: geminiConfigPath,

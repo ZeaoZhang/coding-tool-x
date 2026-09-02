@@ -8,7 +8,7 @@ vi.mock('../../../src/config/paths', () => ({
   HOME_DIR: '/tmp/test-home'
 }));
 
-const { _test } = require('../../../src/server/services/codex-env-manager');
+const { _test } = require('../../../src/platforms/drivers/codex/env-manager');
 const {
   buildWindowsEnvBatchScript,
   shellQuote,

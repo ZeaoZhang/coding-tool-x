@@ -8,9 +8,9 @@ function createDriver(context = {}) {
     platform: 'claude',
     capability: 'sessions',
     preservePayloadUpdatedAt: true,
-    servicePath: '../../server/services/sessions',
-    localServicePath: '../../../server/services/sessions',
-    adapterLocalPath: '../../../server/services/session-history-adapters/claude',
+    servicePath: './claude/sessions-implementation',
+    localServicePath: '../claude/sessions-implementation',
+    adapterLocalPath: '../claude/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
     methods: {"listSessions":"getSessionsForProject","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
   });

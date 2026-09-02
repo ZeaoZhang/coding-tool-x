@@ -5,7 +5,7 @@ import path from 'path';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-const { parse } = require('../../../../src/server/services/session-history-adapters/claude');
+const { parse } = require('../../../../src/platforms/drivers/claude/session-history-adapter');
 
 describe('Claude session history adapter', () => {
   let rootDir;

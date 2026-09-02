@@ -9,7 +9,7 @@ const {
   extractTokenUsage,
   parseSession,
   parseSessionMeta
-} = require('../../../src/server/services/codex-parser');
+} = require('../../../src/platforms/drivers/codex/parser');
 
 // ---------------------------------------------------------------------------
 // Helpers

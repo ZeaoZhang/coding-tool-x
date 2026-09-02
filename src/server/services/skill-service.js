@@ -16,8 +16,8 @@ const {
 } = require('./format-converter');
 const { maskToken } = require('./oauth-utils');
 const { NATIVE_PATHS, HOME_DIR, PATHS } = require('../../config/paths');
-const { getOmpPaths } = require('./omp-config');
-const { discoverOmpSkills } = require('./omp-skill-discovery');
+const { getOmpPaths } = require('../../platforms/drivers/omp/config');
+const { discoverOmpSkills } = require('../../platforms/drivers/omp/skill-discovery');
 const { migratePiStorage } = require('./pi-omp-migration');
 const { resolveManagedPlatform } = require('./platform-resolution');
 const {

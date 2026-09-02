@@ -10,11 +10,11 @@ const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const yaml = require('js-yaml');
 const configTemplatesService = require('./config-templates-service');
-const channelsService = require('./channels');
-const codexChannelsService = require('./codex-channels');
-const geminiChannelsService = require('./gemini-channels');
-const opencodeChannelsService = require('./opencode-channels');
-const ompChannelsService = require('./omp-channels');
+const channelsService = require('../../platforms/drivers/claude/channels-implementation');
+const codexChannelsService = require('../../platforms/drivers/codex/channels-implementation');
+const geminiChannelsService = require('../../platforms/drivers/gemini/channels-implementation');
+const opencodeChannelsService = require('../../platforms/drivers/opencode/channels-implementation');
+const ompChannelsService = require('../../platforms/drivers/omp/channels-implementation');
 const { AgentsService } = require('./agents-service');
 const { CommandsService } = require('./commands-service');
 const { SkillService } = require('./skill-service');
@@ -137,7 +137,7 @@ function normalizeOmpResourceTypes(input = []) {
 
 function getOpenCodeConfigPaths() {
   try {
-    const { CONFIG_PATHS } = require('./opencode-settings-manager');
+    const { CONFIG_PATHS } = require('../../platforms/drivers/opencode/native-config-implementation');
     return CONFIG_PATHS || {};
   } catch (err) {
     return {};
