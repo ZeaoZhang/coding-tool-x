@@ -14,7 +14,8 @@ function readChannels(source = 'claude') {
         : null;
     if (!list) return [];
     const result = list();
-    return Array.isArray(result) ? result : (Array.isArray(result?.channels) ? result.channels : []);
+    const payload = result?.status === 'ok' ? result.data : result;
+    return Array.isArray(payload) ? payload : (Array.isArray(payload?.channels) ? payload.channels : []);
   } catch (_) {
     return [];
   }
@@ -28,14 +29,7 @@ function createState() {
     queue: []
   };
 }
-
-const schedulerStates = {
-  claude: createState(),
-  codex: createState(),
-  gemini: createState(),
-  opencode: createState(),
-  omp: createState()
-};
+const schedulerStates = Object.create(null);
 
 function getState(source = 'claude') {
   if (!schedulerStates[source]) {

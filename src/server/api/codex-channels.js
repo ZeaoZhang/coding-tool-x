@@ -1,6 +1,6 @@
 const express = require('express');
+const { getPlatformRuntime } = require('../../platforms/runtime');
 const router = express.Router();
-const fs = require('fs');
 const {
   getChannels,
   createChannel,
@@ -8,7 +8,6 @@ const {
   deleteChannel,
   getEnabledChannels,
   saveChannelOrder,
-  applyChannelToSettings,
   syncCurrentCodexChannel
 } = require('../services/codex-channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
@@ -22,8 +21,6 @@ const {
   runWithConcurrencyLimit
 } = require('../services/speed-test');
 const { clearCodexRedirectCache } = require('../codex-proxy-server');
-const { deleteBackup } = require('../services/codex-settings-manager');
-const { PATHS } = require('../../config/paths');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const CODEX_GATEWAY_SOURCE_TYPE = 'codex';
 const CODEX_PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i;
@@ -408,21 +405,20 @@ module.exports = (config) => {
       }
 
       const { channelId } = req.params;
-      const channel = applyChannelToSettings(channelId);
-
-      // 如果代理正在运行，停止它
-      const { getCodexProxyStatus, stopCodexProxyServer } = require('../codex-proxy-server');
-      const proxyStatus = getCodexProxyStatus();
+      const runtime = getPlatformRuntime();
+      const channelsDriver = runtime.getDriver('codex', 'channels');
+      const channel = channelsDriver.applyChannelToSettings(channelId);
+      const proxyDriver = runtime.getDriver('codex', 'proxy');
+      const proxyStatus = proxyDriver && typeof proxyDriver.status === 'function'
+        ? await proxyDriver.status()
+        : null;
 
       if (proxyStatus && proxyStatus.running) {
         console.log(`Codex proxy is running, stopping to apply channel settings: ${channel.name}`);
-        await stopCodexProxyServer({ clearStartTime: false });
-        deleteBackup();
-        try {
-          fs.unlinkSync(PATHS.activeChannel.codex);
-        } catch {
-          // ignore missing active channel marker
-        }
+        await proxyDriver.stop({ clearStartTime: false });
+        const nativeDriver = runtime.getDriver('codex', 'nativeConfig');
+        nativeDriver.deleteBackup();
+        nativeDriver.clearActiveChannelMarker();
 
         broadcastLog({
           type: 'action',

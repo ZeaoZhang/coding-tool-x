@@ -14,6 +14,8 @@ const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/server/services/ope
 const OMP_CHANNELS_PATH = require.resolve('../../../src/server/services/omp-channels');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
+const PLATFORM_RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');
+const platformRuntimeModule = require('../../../src/platforms/runtime');
 
 function loadServiceWithStubs({
   uiConfig = { channelBalance: { showRemaining: true } },
@@ -100,6 +102,23 @@ function loadServiceWithStubs({
       exports: ompChannelsStub
     };
   }
+  const channelStubs = { claude: channelsStub, codex: codexChannelsStub, gemini: geminiChannelsStub, opencode: opencodeChannelsStub, omp: ompChannelsStub };
+  require.cache[PLATFORM_RUNTIME_PATH] = {
+    id: PLATFORM_RUNTIME_PATH,
+    filename: PLATFORM_RUNTIME_PATH,
+    loaded: true,
+    exports: {
+      getPlatformRegistry: platformRuntimeModule.getPlatformRegistry,
+      getPlatformRuntime: () => ({
+        getDriver: source => {
+          const stub = channelStubs[source];
+          if (!stub) return null;
+          const method = stub.getAllChannels || stub.getChannels;
+          return { list: () => ({ status: 'ok', data: method() }) };
+        }
+      })
+    }
+  };
 
   return require(SERVICE_PATH);
 }
@@ -134,7 +153,7 @@ describe('channel-balance service', () => {
     delete require.cache[GEMINI_CHANNELS_PATH];
     delete require.cache[OPENCODE_CHANNELS_PATH];
     delete require.cache[OMP_CHANNELS_PATH];
-    delete require.cache[PATHS_PATH];
+    delete require.cache[PLATFORM_RUNTIME_PATH];
     delete require.cache[SNAPSHOT_CACHE_PATH];
   });
 
