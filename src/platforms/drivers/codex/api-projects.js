@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { saveProjectOrder, deleteProject } = require('./sessions-implementation');
+const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const { isCodexInstalled } = require('./config');
 const {
   emptyProjectList,
@@ -81,7 +81,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
 
-      saveProjectOrder(order);
+      invokeProjectDriver('codex', 'saveProjectOrder', [order]);
       invalidateProjectSnapshots('codex');
 
       res.json({ success: true });
@@ -102,7 +102,7 @@ module.exports = (config) => {
       }
 
       const { projectName } = req.params;
-      const result = deleteProject(projectName);
+      const result = invokeProjectDriver('codex', 'deleteProject', [projectName]);
       invalidateProjectSnapshots('codex');
       invalidateSessionSnapshots('codex', projectName);
 

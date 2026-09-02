@@ -1,10 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const {
-  saveProjectOrder,
-  deleteProject,
-  isOmpInstalled
-} = require('./sessions-implementation');
+const { isOmpInstalled } = require('./sessions-implementation');
+const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const {
   emptyProjectList,
   getProjectListSnapshot,
@@ -57,7 +54,7 @@ module.exports = () => {
       if (!Array.isArray(order)) {
         return res.status(400).json({ error: 'order must be an array' });
       }
-      saveProjectOrder(order);
+      invokeProjectDriver('omp', 'saveProjectOrder', [order]);
       invalidateProjectSnapshots('omp');
       res.json({ success: true });
     } catch (err) {
@@ -71,7 +68,7 @@ module.exports = () => {
       if (!isOmpInstalled()) {
         return res.status(404).json({ error: 'OMP CLI not installed' });
       }
-      const result = await deleteProject(req.params.projectName);
+      const result = await invokeProjectDriver('omp', 'deleteProject', [req.params.projectName]);
       invalidateProjectSnapshots('omp');
       invalidateSessionSnapshots('omp', req.params.projectName);
       res.json(result);

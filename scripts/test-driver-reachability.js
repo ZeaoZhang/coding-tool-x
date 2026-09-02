@@ -11,7 +11,7 @@ const DYNAMIC_ENTRIES = new Set([
   'src/platforms/drivers/omp/auth-provider-worker.js'
 ]);
 const COMPANION_FILES = new Set(['channels-implementation.js', 'native-config.js']);
-const DRIVER_FILES = new Set(['channels.js', 'proxy.js', 'sessions.js', 'statistics.js', 'resource-sync.js', 'prompts.js', 'mcp.js']);
+const DRIVER_FILES = new Set(['channels.js', 'proxy.js', 'projects.js', 'sessions.js', 'statistics.js', 'resource-sync.js', 'prompts.js', 'mcp.js']);
 const PLATFORM_BUSINESS_FILES = new Set([
   'api.js',
   'project-config.js',

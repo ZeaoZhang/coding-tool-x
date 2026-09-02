@@ -1,10 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const {
-  saveProjectOrder,
-  deleteProject,
-  isOpenCodeInstalled
-} = require('./sessions-implementation');
+const { isOpenCodeInstalled } = require('./sessions-implementation');
+const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const {
   emptyProjectList,
   getProjectListSnapshot,
@@ -72,7 +69,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
 
-      saveProjectOrder(order);
+      invokeProjectDriver('opencode', 'saveProjectOrder', [order]);
       invalidateProjectSnapshots('opencode');
       res.json({ success: true });
     } catch (err) {
@@ -92,7 +89,7 @@ module.exports = (config) => {
       }
 
       const { projectName } = req.params;
-      const result = deleteProject(projectName);
+      const result = invokeProjectDriver('opencode', 'deleteProject', [projectName]);
       invalidateProjectSnapshots('opencode');
       invalidateSessionSnapshots('opencode', projectName);
       res.json(result);
