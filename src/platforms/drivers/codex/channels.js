@@ -13,6 +13,7 @@ function createDriver(context = {}) {
       ? [input.name, input.providerKey, input.baseUrl, input.apiKey, input.wireApi, input.extra || {}]
       : [input, ...rest],
     cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20089, createDefaults: { wireApi: 'responses' } },
+    modelListType: 'openai_compatible',
     formatCliChannelDetails: channel => channel.providerKey
       ? [`provider ${channel.providerKey}`]
       : []

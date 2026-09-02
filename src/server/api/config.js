@@ -3,10 +3,7 @@ const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
 const { getPlatformRuntime } = require('../../platforms/runtime');
-const {
-  probeModelAvailability,
-  fetchModelsFromProvider
-} = require('../services/model-detector');
+const { probeModelAvailability } = require('../services/model-detector');
 
 function clampNumber(value, fallback) {
   const num = typeof value === 'number' ? value : parseFloat(value);
@@ -119,6 +116,14 @@ function readChannelList(platform) {
   return Array.isArray(data) ? data : data?.channels || [];
 }
 
+async function listModelsForChannel(channel, platform, options = {}) {
+  const driver = getPlatformRuntime().getDriver(platform, 'channels');
+  if (typeof driver?.listModels !== 'function') return [];
+  const result = await driver.listModels(channel, options);
+  if (result?.status !== 'ok') return [];
+  return Array.isArray(result.data?.models) ? result.data.models : [];
+}
+
 async function probeModelsForSingleChannel(channel, channelType, options = {}) {
   const builtInPreferred = Array.isArray(DEFAULT_CONFIG.defaultModels?.[channelType])
     ? DEFAULT_CONFIG.defaultModels[channelType]
@@ -129,12 +134,11 @@ async function probeModelsForSingleChannel(channel, channelType, options = {}) {
   ]);
 
   try {
-    if (channelType === 'codex') {
-      const listResult = await fetchModelsFromProvider(channel, 'openai_compatible');
-      const listedModels = Array.isArray(listResult?.models) ? listResult.models : [];
-      if (listedModels.length > 0) {
-        return uniqueModels(listedModels);
-      }
+    const listedModels = await listModelsForChannel(channel, channelType, {
+      forceRefresh: !!options.forceRefresh
+    });
+    if (listedModels.length > 0) {
+      return uniqueModels(listedModels);
     }
 
     const probe = await probeModelAvailability(channel, channelType, {

@@ -40,7 +40,8 @@ function createChannelDriver({
   capability = 'channels',
   cliMetadata = {},
   formatCliChannelDetails,
-  dashboardChannelShape = 'object'
+  dashboardChannelShape = 'object',
+  modelListType
 } = {}) {
   let service;
   const loadService = () => {
@@ -89,6 +90,18 @@ function createChannelDriver({
     return value == null ? { channels: [] } : value;
   };
   Object.defineProperty(driver, '_service', { value: loadService, enumerable: false });
+  driver.listModels = async (channel, options = {}) => {
+    if (!modelListType) {
+      return unsupported(platform, capability, 'listModels');
+    }
+    try {
+      const { fetchModelsFromProvider } = require('../server/services/model-detector');
+      const data = await fetchModelsFromProvider(channel, modelListType, options);
+      return ok(platform, capability, 'listModels', data);
+    } catch (error) {
+      return failed(platform, capability, 'listModels', error);
+    }
+  };
   driver.list = (...args) => call('list', listMethod, args, sanitizeChannels);
   driver.getEnabled = (...args) => call('getEnabled', 'getEnabledChannels', args, channels => sanitizeChannels(channels).channels);
   driver.create = (input, ...rest) => {

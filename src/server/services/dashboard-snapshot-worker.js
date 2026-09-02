@@ -432,23 +432,13 @@ function _normalizeProjectPayload(source, projects, config = {}) {
   return projects;
 }
 
-function _normalizeChannelsPayload(source, value) {
-  if (source === 'claude') {
-    if (_isTypedPayload(value)) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return value;
-    }
-    if (value && Array.isArray(value.channels)) {
-      return value.channels;
-    }
-    return [];
-  }
+function _normalizeChannelsPayload(driver, value) {
   if (_isTypedPayload(value)) {
     return value;
   }
-
+  if (typeof driver?.normalizeDashboardChannels === 'function') {
+    return driver.normalizeDashboardChannels(value);
+  }
   if (Array.isArray(value)) {
     return { channels: value };
   }
@@ -529,7 +519,7 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   const getter = _getChannelsGetter(driver);
   if (getter) {
     const value = await _invokeCapabilityGetter(source, 'channels', 'list', getter, { force: options.force === true, config });
-    return _normalizeChannelsPayload(source, value);
+    return _normalizeChannelsPayload(driver, value);
   }
 
   if (_isTypedPayload(driver)) {
