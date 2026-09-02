@@ -126,13 +126,13 @@ function stubModules() {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commands-service-'));
   stubModules();
-  delete require.cache[require.resolve('../../../src/server/services/commands-service')];
+  delete require.cache[require.resolve('../../../src/platforms/commands-service')];
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   [
-    '../../../src/server/services/commands-service',
+    '../../../src/platforms/commands-service',
     '../../../src/config/paths',
     '../../../src/server/services/format-converter',
     '../../../src/server/services/repo-scanner-base'
@@ -145,7 +145,7 @@ afterEach(() => {
 
 describe('CommandsService local command management', () => {
   test('creates, lists, updates and deletes a Claude command with namespace', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
     const projectPath = path.join(testDir, 'project');
     const created = service.createCommand({
@@ -184,7 +184,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('rejects invalid command names and existing commands', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
 
     expect(() => service.createCommand({ name: 'bad name', scope: 'user' })).toThrow(/命令名/);
@@ -194,7 +194,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('rejects unsafe namespaces in service-level file operations', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
 
     expect(() => service.createCommand({
@@ -212,7 +212,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('supports nested command namespaces', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
 
     const created = service.createCommand({
@@ -230,7 +230,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('OpenCode commands omit Claude-specific frontmatter fields', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('opencode');
     const command = service.createCommand({
       name: 'format',
@@ -246,7 +246,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('Codex commands use markdown files in the native user directory', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('codex');
     const command = service.createCommand({
       name: 'review',
@@ -264,7 +264,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('Gemini commands use TOML files in user and project scopes', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('gemini');
     const projectPath = path.join(testDir, 'project-gemini');
 
@@ -303,7 +303,7 @@ describe('CommandsService local command management', () => {
   });
 
   test('OMP commands use OMP markdown commands without Claude metadata', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('omp');
     const projectPath = path.join(testDir, 'project-omp');
 
@@ -340,7 +340,7 @@ describe('CommandsService local command management', () => {
 });
 
 test('listCommands reads metadata without full command body', () => {
-  const { CommandsService } = require('../../../src/server/services/commands-service');
+  const { CommandsService } = require('../../../src/platforms/commands-service');
   const service = new CommandsService('claude');
   service.createCommand({ name: 'summary', scope: 'user', description: 'Summary', body: 'private body' });
   const readSpy = vi.spyOn(fs, 'readFileSync');
@@ -354,7 +354,7 @@ test('listCommands reads metadata without full command body', () => {
 
 describe('CommandsService remote merge and stats', () => {
   test('listAllCommands merges remote commands without duplicating local ones', async () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
 
     service.createCommand({ name: 'review', scope: 'user', body: 'local' });
@@ -371,7 +371,7 @@ describe('CommandsService remote merge and stats', () => {
   });
 
   test('getStats groups commands by namespace', () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
     service.createCommand({ name: 'review', scope: 'user', namespace: 'team' });
     service.createCommand({ name: 'build', scope: 'user' });
@@ -384,7 +384,7 @@ describe('CommandsService remote merge and stats', () => {
   });
 
   test('Gemini remote command parser reads TOML metadata and body', async () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('gemini');
     const repo = { owner: 'google-gemini', name: 'gemini-cli', branch: 'main' };
     const file = { path: '.gemini/commands/team/review.toml' };
@@ -405,7 +405,7 @@ describe('CommandsService remote merge and stats', () => {
   });
 
   test('repo management delegates to scanner', async () => {
-    const { CommandsService } = require('../../../src/server/services/commands-service');
+    const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');
 
     service.addRepo({ owner: 'demo', name: 'repo', directory: 'commands' });

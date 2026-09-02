@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const notificationHooks = require('../services/notification-hooks');
-const { createSameOriginGuard } = require('../services/network-access');
-const { resolvePreferredHomeDir, normalizeWindowsHomePath } = require('../../utils/home-dir');
+const notificationHooks = require('../../notification-hooks');
+const { createSameOriginGuard } = require('../../../server/services/network-access');
+const { resolvePreferredHomeDir, normalizeWindowsHomePath } = require('../../../utils/home-dir');
 
 router.use(createSameOriginGuard({
   message: '禁止跨站访问 Claude Hooks 配置接口'

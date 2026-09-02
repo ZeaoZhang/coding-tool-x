@@ -27,7 +27,7 @@ require.cache[networkModPath] = {
   }
 };
 
-const hooksModPath = require.resolve('../../../src/server/services/notification-hooks');
+const hooksModPath = require.resolve('../../../src/platforms/notification-hooks');
 const mockGetLegacyClaudeHookSettings = vi.fn();
 const mockSaveLegacyClaudeHookSettings = vi.fn();
 const mockTestNotification = vi.fn();
@@ -70,7 +70,7 @@ require.cache[homeDirModPath] = {
   }
 };
 
-const router = require('../../../src/server/api/claude-hooks');
+const router = require('../../../src/platforms/drivers/claude/api-hooks');
 
 describe('claude-hooks api', () => {
   beforeEach(() => {

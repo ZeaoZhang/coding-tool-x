@@ -1,11 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { PATHS } = require('../../config/paths');
-const claudeSettingsManager = require('../../platforms/drivers/claude/native-config-implementation');
-const codexSettingsManager = require('../../platforms/drivers/codex/native-config-implementation');
-const geminiSettingsManager = require('../../platforms/drivers/gemini/native-config-implementation');
-const opencodeSettingsManager = require('../../platforms/drivers/opencode/native-config-implementation');
+const { PATHS } = require('../config/paths');
+const claudeSettingsManager = require('./drivers/claude/native-config-implementation');
+const codexSettingsManager = require('./drivers/codex/native-config-implementation');
+const geminiSettingsManager = require('./drivers/gemini/native-config-implementation');
+const opencodeSettingsManager = require('./drivers/opencode/native-config-implementation');
 const {
   SUPPORTED_TOOLS,
   fingerprintFor,
@@ -14,8 +14,8 @@ const {
   clearNativeOAuth,
   disableNativeOAuthCredential,
   applyOAuthCredential
-} = require('../../platforms/native-oauth-adapters');
-const { maskToken, decodeJwtPayload, removeFileIfExists } = require('./oauth-utils');
+} = require('./native-oauth-adapters');
+const { maskToken, decodeJwtPayload, removeFileIfExists } = require('../server/services/oauth-utils');
 
 function createEmptyStore() {
   return {
@@ -649,8 +649,8 @@ function cleanupManagedArtifacts(tool) {
 async function stopProxyIfRunning(tool) {
   switch (tool) {
     case 'claude': {
-      const { stopProxyServer } = require('../../platforms/drivers/claude/proxy-implementation');
-      const { getProxyStatus } = require('../../platforms/drivers/claude/proxy-implementation');
+      const { stopProxyServer } = require('./drivers/claude/proxy-implementation');
+      const { getProxyStatus } = require('./drivers/claude/proxy-implementation');
       if (getProxyStatus().running) {
         await stopProxyServer();
         return true;
@@ -658,7 +658,7 @@ async function stopProxyIfRunning(tool) {
       return false;
     }
     case 'codex': {
-      const { stopCodexProxyServer, getCodexProxyStatus } = require('../../platforms/drivers/codex/proxy-implementation');
+      const { stopCodexProxyServer, getCodexProxyStatus } = require('./drivers/codex/proxy-implementation');
       if (getCodexProxyStatus().running) {
         await stopCodexProxyServer();
         return true;
@@ -666,7 +666,7 @@ async function stopProxyIfRunning(tool) {
       return false;
     }
     case 'gemini': {
-      const { stopGeminiProxyServer, getGeminiProxyStatus } = require('../../platforms/drivers/gemini/proxy-implementation');
+      const { stopGeminiProxyServer, getGeminiProxyStatus } = require('./drivers/gemini/proxy-implementation');
       if (getGeminiProxyStatus().running) {
         await stopGeminiProxyServer();
         return true;
@@ -674,7 +674,7 @@ async function stopProxyIfRunning(tool) {
       return false;
     }
     case 'opencode': {
-      const { stopOpenCodeProxyServer, getOpenCodeProxyStatus } = require('../../platforms/drivers/opencode/proxy-implementation');
+      const { stopOpenCodeProxyServer, getOpenCodeProxyStatus } = require('./drivers/opencode/proxy-implementation');
       if (getOpenCodeProxyStatus().running) {
         await stopOpenCodeProxyServer();
         return true;
@@ -682,7 +682,7 @@ async function stopProxyIfRunning(tool) {
       return false;
     }
     case 'omp': {
-      const { stopOmpProxyServer, getOmpProxyStatus } = require('../../platforms/drivers/omp/proxy-implementation');
+      const { stopOmpProxyServer, getOmpProxyStatus } = require('./drivers/omp/proxy-implementation');
       if (getOmpProxyStatus().running) {
         await stopOmpProxyServer();
         return true;
@@ -698,27 +698,27 @@ function disableAllChannelsForTool(tool) {
   try {
     switch (tool) {
       case 'claude': {
-        const { disableAllChannels } = require('../../platforms/drivers/claude/channels-implementation');
+        const { disableAllChannels } = require('./drivers/claude/channels-implementation');
         disableAllChannels();
         break;
       }
       case 'codex': {
-        const { disableAllChannels } = require('../../platforms/drivers/codex/channels-implementation');
+        const { disableAllChannels } = require('./drivers/codex/channels-implementation');
         disableAllChannels();
         break;
       }
       case 'gemini': {
-        const { disableAllChannels } = require('../../platforms/drivers/gemini/channels-implementation');
+        const { disableAllChannels } = require('./drivers/gemini/channels-implementation');
         disableAllChannels();
         break;
       }
       case 'opencode': {
-        const { disableAllChannels } = require('../../platforms/drivers/opencode/channels-implementation');
+        const { disableAllChannels } = require('./drivers/opencode/channels-implementation');
         disableAllChannels();
         break;
       }
       case 'omp': {
-        const { disableAllChannels } = require('../../platforms/drivers/omp/channels-implementation');
+        const { disableAllChannels } = require('./drivers/omp/channels-implementation');
         disableAllChannels();
         break;
       }
@@ -838,7 +838,7 @@ async function fetchClaudeUsage(accessToken) {
 async function fetchCodexUsage(accessToken) {
   // Codex uses JWT id_token; decode it to extract user info directly
   try {
-    const { decodeJwtPayload } = require('./oauth-utils');
+    const { decodeJwtPayload } = require('../server/services/oauth-utils');
     const payload = decodeJwtPayload(accessToken);
     if (payload && (payload.email || payload.sub)) {
       return {

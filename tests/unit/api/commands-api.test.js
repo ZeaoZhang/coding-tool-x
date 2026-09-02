@@ -16,7 +16,7 @@ beforeEach(() => {
     return services[platform] || services.claude;
   };
 
-  const servicePath = require.resolve('../../../src/server/services/commands-service');
+  const servicePath = require.resolve('../../../src/platforms/commands-service');
   require.cache[servicePath] = {
     id: servicePath,
     filename: servicePath,
@@ -31,7 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/api/commands')];
-  delete require.cache[require.resolve('../../../src/server/services/commands-service')];
+  delete require.cache[require.resolve('../../../src/platforms/commands-service')];
 });
 
 function createMockService() {

@@ -15,8 +15,8 @@ const codexChannelsService = require('../../platforms/drivers/codex/channels-imp
 const geminiChannelsService = require('../../platforms/drivers/gemini/channels-implementation');
 const opencodeChannelsService = require('../../platforms/drivers/opencode/channels-implementation');
 const ompChannelsService = require('../../platforms/drivers/omp/channels-implementation');
-const { AgentsService } = require('./agents-service');
-const { CommandsService } = require('./commands-service');
+const { AgentsService } = require('../../platforms/agents-service');
+const { CommandsService } = require('../../platforms/commands-service');
 const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
@@ -146,7 +146,7 @@ function getOpenCodeConfigPaths() {
 
 function getOpenCodeNotificationPluginPath() {
   try {
-    const { getOpenCodeManagedPluginPath } = require('./notification-hooks');
+    const { getOpenCodeManagedPluginPath } = require('../../platforms/notification-hooks');
     return typeof getOpenCodeManagedPluginPath === 'function' ? getOpenCodeManagedPluginPath() : '';
   } catch (err) {
     return '';

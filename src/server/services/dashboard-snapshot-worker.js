@@ -539,9 +539,9 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   return _unsupportedPayload(source, 'channels');
 }
 
-function _sourceCapabilityFallback(source, capability) {
+function _sourceCapabilityFallback(capability) {
   if (capability === 'channels') {
-    return source === 'claude' ? [] : { channels: [] };
+    return { channels: [] };
   }
   if (capability === 'counts') {
     return { projectCount: 0, sessionCount: 0 };
@@ -564,7 +564,7 @@ function _sourceCapabilityFailure(source, capability, operation, error) {
   return failure;
 }
 
-function _settledCapability(result, source, capability, operation) {
+function _settledCapability(result, source, capability, operation, fallbackValue) {
   const value = result.status === 'fulfilled'
     ? result.value
     : _sourceCapabilityFailure(source, capability, operation, result.reason);
@@ -576,7 +576,7 @@ function _settledCapability(result, source, capability, operation) {
       error: 'dashboard capability failed'
     });
     return {
-      value: _sourceCapabilityFallback(source, capability),
+      value: fallbackValue === undefined ? _sourceCapabilityFallback(capability) : fallbackValue,
       failure
     };
   }

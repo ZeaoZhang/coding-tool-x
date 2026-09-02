@@ -13,7 +13,8 @@ function createDriver(context = {}) {
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.websiteUrl, input.extra || {}]
       : [input, ...rest],
-    cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20088 }
+    cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20088 },
+    dashboardChannelShape: 'array'
   });
   for (const name of [
     'getAllChannels', 'getCurrentChannel', 'getCurrentSettings', 'createChannel',

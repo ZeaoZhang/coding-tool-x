@@ -6,10 +6,10 @@ const https = require('https');
 const crypto = require('crypto');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { execSync, execFileSync } = require('child_process');
-const { PATHS, NATIVE_PATHS } = require('../../config/paths');
-const { loadUIConfig, saveUIConfig } = require('./ui-config');
-const codexSettingsManager = require('../../platforms/drivers/codex/native-config-implementation');
-const geminiSettingsManager = require('../../platforms/drivers/gemini/native-config-implementation');
+const { PATHS, NATIVE_PATHS } = require('../config/paths');
+const { loadUIConfig, saveUIConfig } = require('../server/services/ui-config');
+const codexSettingsManager = require('./drivers/codex/native-config-implementation');
+const geminiSettingsManager = require('./drivers/gemini/native-config-implementation');
 
 const MANAGED_HOOK_NAME = 'coding-tool-notify';
 const MANAGED_OPENCODE_PLUGIN_FILE = 'coding-tool-notify.js';
@@ -1658,7 +1658,7 @@ function getOmpHookStatus() {
 
 function saveOpenCodeHook(enabled, type) {
   const pluginPath = getOpenCodeManagedPluginPath();
-  const opencodeSettingsManager = require('../../platforms/drivers/opencode/native-config-implementation');
+  const opencodeSettingsManager = require('./drivers/opencode/native-config-implementation');
   const configPath = opencodeSettingsManager.selectConfigPath();
 
   if (!enabled) {
@@ -1800,7 +1800,7 @@ function emitBrowserNotification(input = {}) {
     timestamp: Date.now()
   };
 
-  const { broadcastBrowserNotification } = require('../websocket-server');
+  const { broadcastBrowserNotification } = require('../server/websocket-server');
   broadcastBrowserNotification(payload);
   return payload;
 }

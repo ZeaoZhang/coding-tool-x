@@ -39,7 +39,8 @@ function createChannelDriver({
   requireImpl,
   capability = 'channels',
   cliMetadata = {},
-  formatCliChannelDetails
+  formatCliChannelDetails,
+  dashboardChannelShape = 'object'
 } = {}) {
   let service;
   const loadService = () => {
@@ -78,6 +79,15 @@ function createChannelDriver({
   driver.formatCliChannelDetails = typeof formatCliChannelDetails === 'function'
     ? channel => formatCliChannelDetails(channel)
     : () => [];
+  driver.normalizeDashboardChannels = value => {
+    if (value && typeof value === 'object' && typeof value.status === 'string') return value;
+    const channels = Array.isArray(value) ? value : value?.channels;
+    if (dashboardChannelShape === 'array') {
+      return Array.isArray(channels) ? channels : [];
+    }
+    if (Array.isArray(channels)) return { channels };
+    return value == null ? { channels: [] } : value;
+  };
   Object.defineProperty(driver, '_service', { value: loadService, enumerable: false });
   driver.list = (...args) => call('list', listMethod, args, sanitizeChannels);
   driver.getEnabled = (...args) => call('getEnabled', 'getEnabledChannels', args, channels => sanitizeChannels(channels).channels);

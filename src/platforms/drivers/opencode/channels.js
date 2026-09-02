@@ -30,6 +30,7 @@ function createDriver(context = {}) {
         }
       ]
     },
+    dashboardChannelShape: 'array'
   });
 }
 

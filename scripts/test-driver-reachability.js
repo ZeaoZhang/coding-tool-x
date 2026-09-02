@@ -31,7 +31,9 @@ const PLATFORM_BUSINESS_FILES = new Set([
   'skill-discovery.js',
   'skill-settings.js',
   'openai-gateway.js',
-  'token-recovery.js'
+  'token-recovery.js',
+  'config-sync.js',
+  'health-check.js'
 ]);
 function walk(directory) {
   const files = [];

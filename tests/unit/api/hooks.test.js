@@ -36,7 +36,7 @@ require.cache[networkModPath] = {
 };
 
 // Stub notification-hooks before loading the router
-const hooksModPath = require.resolve('../../../src/server/services/notification-hooks');
+const hooksModPath = require.resolve('../../../src/platforms/notification-hooks');
 const mockGetNotificationSettings = vi.fn();
 const mockSaveNotificationSettings = vi.fn();
 const mockTestNotification = vi.fn();

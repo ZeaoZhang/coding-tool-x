@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { HOME_DIR, NATIVE_PATHS } = require('../../config/paths');
+const { HOME_DIR, NATIVE_PATHS } = require('../../../config/paths');
 
 // 全局配置目录
 const GLOBAL_CONFIG_DIR = NATIVE_PATHS.claude.dir
