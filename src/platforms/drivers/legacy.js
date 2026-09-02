@@ -578,7 +578,41 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
+function createBuiltInCompatibilityDriver(capabilityModule, { platform, capability, requireImpl, ...context }) {
+  const builtIn = capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+  const unwrap = value => {
+    if (!value || typeof value !== 'object' || typeof value.status !== 'string') return value;
+    return value.status === 'ok' ? value.data : value;
+  };
+  const driver = { platform, capability };
+  for (const name of Object.keys(builtIn)) {
+    if (typeof builtIn[name] !== 'function') {
+      driver[name] = builtIn[name];
+      continue;
+    }
+    driver[name] = (...args) => {
+      const value = builtIn[name](...args);
+      return value && typeof value.then === 'function' ? value.then(unwrap) : unwrap(value);
+    };
+  }
+  return driver;
+}
+
 function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = false, ...context } = {}) {
+  if (useBuiltInDrivers && ['resourceSync', 'mcp', 'prompts'].includes(capability)) {
+    const capabilityModule = requireImpl(`./${platform}/${capability}`);
+    if (typeof capabilityModule?.createDriver === 'function') {
+      if (capability === 'resourceSync') {
+        return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+      }
+      return createBuiltInCompatibilityDriver(capabilityModule, {
+        ...context,
+        platform,
+        capability,
+        requireImpl
+      });
+    }
+  }
   if (capability === 'resourceSync') {
     return createResourceSyncDriver({ platform, capability, requireImpl });
   }
