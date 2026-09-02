@@ -89,9 +89,9 @@ beforeEach(() => {
   loadAliasesMock = vi.fn(() => ({ 'omp-1': 'omp-alias' }));
   broadcastLogMock = vi.fn();
 
-  require.cache[require.resolve('../../../src/server/services/omp-sessions')] = {
-    id: require.resolve('../../../src/server/services/omp-sessions'),
-    filename: require.resolve('../../../src/server/services/omp-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/sessions-implementation'),
     loaded: true,
     exports: ompSessionsService
   };
@@ -144,7 +144,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/omp-sessions',
-    '../../../src/server/services/omp-sessions',
+    '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/server/services/session-history-index',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server'

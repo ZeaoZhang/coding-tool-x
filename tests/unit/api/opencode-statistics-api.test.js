@@ -52,9 +52,9 @@ beforeEach(() => {
     getTodayStatistics: vi.fn(() => ({ total: 6 }))
   };
 
-  require.cache[require.resolve('../../../src/server/services/opencode-statistics-service')] = {
-    id: require.resolve('../../../src/server/services/opencode-statistics-service'),
-    filename: require.resolve('../../../src/server/services/opencode-statistics-service'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/statistics-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/statistics-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/statistics-implementation'),
     loaded: true,
     exports: opencodeStatsService
   };
@@ -63,7 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/opencode-statistics',
-    '../../../src/server/services/opencode-statistics-service'
+    '../../../src/platforms/drivers/opencode/statistics-implementation'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

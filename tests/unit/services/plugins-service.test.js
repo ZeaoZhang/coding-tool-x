@@ -102,7 +102,7 @@ beforeEach(() => {
     }
   };
 
-  const ompConfigPath = require.resolve('../../../src/server/services/omp-config');
+  const ompConfigPath = require.resolve('../../../src/platforms/drivers/omp/config');
   require.cache[ompConfigPath] = {
     id: ompConfigPath,
     filename: ompConfigPath,
@@ -164,15 +164,15 @@ beforeEach(() => {
   };
 
   delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
-  delete require.cache[require.resolve('../../../src/server/services/omp-native-plugin-adapter')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/native-plugin-adapter')];
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
   delete require.cache[require.resolve('../../../src/server/services/plugins-service')];
-  delete require.cache[require.resolve('../../../src/server/services/omp-native-plugin-adapter')];
-  delete require.cache[require.resolve('../../../src/server/services/omp-config')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/native-plugin-adapter')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/config')];
   delete require.cache[require.resolve('../../../src/config/paths')];
   delete require.cache[require.resolve('../../../src/plugins/registry')];
   delete require.cache[require.resolve('../../../src/plugins/plugin-installer')];

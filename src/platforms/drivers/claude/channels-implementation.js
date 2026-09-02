@@ -1,9 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const BaseChannelService = require('../../../server/services/base/base-channel-service');
-const { isProxyConfig } = require('../../../server/services/settings-manager');
+const { isProxyConfig } = require('./native-config-implementation');
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
-const { clearNativeOAuth } = require('../../../server/services/native-oauth-adapters');
+const { clearNativeOAuth } = require('../shared/native-oauth-adapters');
 const { isWindowsLikePlatform } = require('../../../utils/home-dir');
 const { normalizeGatewaySourceType } = require('../../../server/services/base/proxy-utils');
 const {
@@ -354,7 +354,7 @@ function readClaudeNativeSettings() {
 
 function readClaudeNativeOAuth() {
   try {
-    const adapters = require('../../../server/services/native-oauth-adapters');
+    const adapters = require('../shared/native-oauth-adapters');
     return typeof adapters.readNativeOAuth === 'function'
       ? adapters.readNativeOAuth('claude')
       : null;

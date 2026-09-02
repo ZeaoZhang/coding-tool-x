@@ -7,7 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'claude',
     servicePath: './claude/channels-implementation',
-    localServicePath: './channels-implementation',
+    localServicePath: '../claude/channels-implementation',
     listMethod: 'getAllChannels',
     syncMethod: 'syncCurrentClaudeChannel',
     createArgs: (input, rest) => typeof input === 'object'

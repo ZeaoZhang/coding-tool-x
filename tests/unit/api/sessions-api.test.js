@@ -108,7 +108,7 @@ beforeEach(() => {
 
   broadcastLogMock = vi.fn();
 
-  const sessionsPath = require.resolve('../../../src/server/services/sessions');
+  const sessionsPath = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
   require.cache[sessionsPath] = {
     id: sessionsPath,
     filename: sessionsPath,
@@ -152,7 +152,7 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/api/sessions',
-    '../../../src/server/services/sessions',
+    '../../../src/platforms/drivers/claude/sessions-implementation',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server',
     '../../../src/config/paths'

@@ -83,7 +83,7 @@ function stubFormatConverter() {
 
 function stubOmpConfig() {
   ompRuntimeDir = path.join(testDir, 'runtime-omp');
-  const modulePath = require.resolve('../../../src/server/services/omp-config');
+  const modulePath = require.resolve('../../../src/platforms/drivers/omp/config');
   require.cache[modulePath] = {
     id: modulePath,
     filename: modulePath,
@@ -106,7 +106,7 @@ beforeEach(() => {
   stubPaths();
   stubFormatConverter();
   stubOmpConfig();
-  delete require.cache[require.resolve('../../../src/server/services/omp-skill-discovery')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/skill-discovery')];
   delete require.cache[require.resolve('../../../src/server/services/skill-projection-service')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
 });
@@ -115,8 +115,8 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
   delete require.cache[require.resolve('../../../src/config/paths')];
-  delete require.cache[require.resolve('../../../src/server/services/omp-config')];
-  delete require.cache[require.resolve('../../../src/server/services/omp-skill-discovery')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/config')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/skill-discovery')];
   delete require.cache[require.resolve('../../../src/server/services/skill-projection-service')];
   try {
     delete require.cache[require.resolve('../../../src/server/services/format-converter')];
@@ -398,7 +398,7 @@ describe('SkillService repo auth', () => {
 
 describe('SkillService.getInstalledSkills', () => {
   it('OMP discovery deduplicates different names that resolve to the same SKILL.md realpath', () => {
-    const { deduplicateDiscoveredSkills } = require('../../../src/server/services/omp-skill-discovery');
+    const { deduplicateDiscoveredSkills } = require('../../../src/platforms/drivers/omp/skill-discovery');
     const skills = deduplicateDiscoveredSkills([
       {
         name: 'primary-name',
@@ -536,7 +536,7 @@ describe('SkillService.getInstalledSkills', () => {
   });
 
   it('OMP provider settings affect discovery while cached artifacts remain local', async () => {
-    const ompConfig = require('../../../src/server/services/omp-config');
+    const ompConfig = require('../../../src/platforms/drivers/omp/config');
     const claudeRoot = path.join(testDir, 'claude-skills');
     for (const name of ['included', 'ignored', 'not-included']) {
       const skillDir = path.join(claudeRoot, name);
@@ -690,7 +690,7 @@ describe('SkillService.getInstalledSkills', () => {
     const skillRoot = path.join(projectRoot, 'child');
     fs.mkdirSync(skillRoot, { recursive: true });
     fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '---\nname: custom-child\ndescription: custom\n---\nBody');
-    const ompConfig = require('../../../src/server/services/omp-config');
+    const ompConfig = require('../../../src/platforms/drivers/omp/config');
     ompConfig.readOmpSettings.mockReturnValue({
       skills: {
         enabled: true,
@@ -1022,9 +1022,9 @@ describe('SkillService cache scheduling', () => {
 describe('OMP discovery cache', () => {
   it('reuses settings and plugin path CLI results for the same scope and cwd', () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
-    const { discoverOmpSkills } = require('../../../src/server/services/omp-skill-discovery');
+    const { discoverOmpSkills } = require('../../../src/platforms/drivers/omp/skill-discovery');
     const svc = new SkillService('omp');
-    const ompConfig = require('../../../src/server/services/omp-config');
+    const ompConfig = require('../../../src/platforms/drivers/omp/config');
     const cwd = path.join(testDir, 'project');
     fs.mkdirSync(cwd, { recursive: true });
 

@@ -1,5 +1,5 @@
 const TOOL_TYPE = 'omp';
-const MODULE_PATH = '../../../src/server/services/omp-statistics-service';
+const MODULE_PATH = '../../../src/platforms/drivers/omp/statistics-implementation';
 
 const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();
@@ -36,7 +36,7 @@ beforeEach(() => {
     }
   };
 
-  const sessionsPath = require.resolve('../../../src/server/services/omp-sessions');
+  const sessionsPath = require.resolve('../../../src/platforms/drivers/omp/sessions-implementation');
   require.cache[sessionsPath] = {
     id: sessionsPath,
     filename: sessionsPath,
@@ -78,7 +78,7 @@ afterEach(() => {
   [
     MODULE_PATH,
     '../../../src/server/services/statistics-service',
-    '../../../src/server/services/omp-sessions',
+    '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/server/services/proxy-log-helper'
   ].forEach((mod) => {
     try {

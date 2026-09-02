@@ -6,8 +6,8 @@ function createDriver(context = {}) {
   return createProxyDriver({
     ...context,
     platform: 'claude',
-    servicePath: '../../server/proxy-server',
-    localServicePath: '../../../server/proxy-server',
+    servicePath: './claude/proxy-implementation',
+    localServicePath: '../claude/proxy-implementation',
     exports: { status: 'getProxyStatus', start: 'startProxyServer', stop: 'stopProxyServer' },
     cliMetadata: { defaultPort: 20088 }
   });

@@ -26,23 +26,23 @@ stubModule(
   { probeModelAvailability: () => Promise.resolve(null) }
 );
 stubModule(
-  path.join(PROJECT_ROOT, 'src/server/services/channels.js'),
+  path.join(PROJECT_ROOT, 'src/platforms/drivers/claude/channels-implementation.js'),
   { getEffectiveApiKey: () => null }
 );
 stubModule(
-  path.join(PROJECT_ROOT, 'src/server/services/codex-channels.js'),
+  path.join(PROJECT_ROOT, 'src/platforms/drivers/codex/channels-implementation.js'),
   { getEffectiveApiKey: () => null }
 );
 stubModule(
-  path.join(PROJECT_ROOT, 'src/server/services/gemini-channels.js'),
+  path.join(PROJECT_ROOT, 'src/platforms/drivers/gemini/channels-implementation.js'),
   { getEffectiveApiKey: () => null }
 );
 stubModule(
-  path.join(PROJECT_ROOT, 'src/server/services/opencode-channels.js'),
+  path.join(PROJECT_ROOT, 'src/platforms/drivers/opencode/channels-implementation.js'),
   { getEffectiveApiKey: () => null }
 );
 stubModule(
-  path.join(PROJECT_ROOT, 'src/server/services/omp-channels.js'),
+  path.join(PROJECT_ROOT, 'src/platforms/drivers/omp/channels-implementation.js'),
   { getEffectiveApiKey: (channel) => channel?.apiKey || null }
 );
 stubModule(

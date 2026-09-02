@@ -151,9 +151,9 @@ beforeEach(() => {
   broadcastProxyStateMock = vi.fn();
   broadcastSchedulerStateMock = vi.fn();
 
-  require.cache[require.resolve('../../../src/server/opencode-proxy-server')] = {
-    id: require.resolve('../../../src/server/opencode-proxy-server'),
-    filename: require.resolve('../../../src/server/opencode-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
     loaded: true,
     exports: {
       startOpenCodeProxyServer: startOpenCodeProxyServerMock,
@@ -163,9 +163,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/opencode-settings-manager')] = {
-    id: require.resolve('../../../src/server/services/opencode-settings-manager'),
-    filename: require.resolve('../../../src/server/services/opencode-settings-manager'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
     loaded: true,
     exports: {
       configExists: configExistsMock,
@@ -180,9 +180,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/opencode-channels')] = {
-    id: require.resolve('../../../src/server/services/opencode-channels'),
-    filename: require.resolve('../../../src/server/services/opencode-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/opencode/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
     loaded: true,
     exports: {
       getChannels: getChannelsMock,
@@ -196,9 +196,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/native-oauth-adapters')] = {
-    id: require.resolve('../../../src/server/services/native-oauth-adapters'),
-    filename: require.resolve('../../../src/server/services/native-oauth-adapters'),
+  require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')] = {
+    id: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
+    filename: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
     loaded: true,
     exports: {
       clearNativeOAuth: clearNativeOAuthMock
@@ -243,10 +243,10 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/api/opencode-proxy',
-    '../../../src/server/opencode-proxy-server',
-    '../../../src/server/services/opencode-settings-manager',
-    '../../../src/server/services/opencode-channels',
-    '../../../src/server/services/native-oauth-adapters',
+    '../../../src/platforms/drivers/opencode/proxy-implementation',
+    '../../../src/platforms/drivers/opencode/native-config-implementation',
+    '../../../src/platforms/drivers/opencode/channels-implementation',
+    '../../../src/platforms/drivers/shared/native-oauth-adapters',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/websocket-server',
     '../../../src/config/paths'

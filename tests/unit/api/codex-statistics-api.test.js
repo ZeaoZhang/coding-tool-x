@@ -52,9 +52,9 @@ beforeEach(() => {
     getTodayStatistics: vi.fn(() => ({ total: 1 }))
   };
 
-  require.cache[require.resolve('../../../src/server/services/codex-statistics-service')] = {
-    id: require.resolve('../../../src/server/services/codex-statistics-service'),
-    filename: require.resolve('../../../src/server/services/codex-statistics-service'),
+  require.cache[require.resolve('../../../src/platforms/drivers/codex/statistics-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/codex/statistics-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/codex/statistics-implementation'),
     loaded: true,
     exports: codexStatsService
   };
@@ -63,7 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/codex-statistics',
-    '../../../src/server/services/codex-statistics-service'
+    '../../../src/platforms/drivers/codex/statistics-implementation'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

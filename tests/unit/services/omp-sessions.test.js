@@ -2,8 +2,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const OMP_SESSIONS_PATH = require.resolve('../../../src/server/services/omp-sessions');
-const OMP_CONFIG_PATH = require.resolve('../../../src/server/services/omp-config');
+const OMP_SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/omp/sessions-implementation');
+const OMP_CONFIG_PATH = require.resolve('../../../src/platforms/drivers/omp/config');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const SESSION_INDEX_PATH = require.resolve('../../../src/server/services/session-history-index');
 
@@ -23,7 +23,7 @@ function writeJsonl(filePath, entries) {
 }
 
 function loadModule() {
-  return require('../../../src/server/services/omp-sessions');
+  return require('../../../src/platforms/drivers/omp/sessions-implementation');
 }
 
 beforeEach(() => {
@@ -80,7 +80,7 @@ afterEach(() => {
   delete require.cache[OMP_CONFIG_PATH];
   delete require.cache[SESSION_INDEX_PATH];
   delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters/omp')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/session-history-adapter')];
   delete require.cache[PATHS_PATH];
   fs.rmSync(testDir, { recursive: true, force: true });
 });

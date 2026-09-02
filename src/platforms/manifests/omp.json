@@ -59,6 +59,7 @@
     "channels": "legacy:omp",
     "proxy": "legacy:omp",
     "statistics": "legacy:omp",
+    "nativeConfig": "legacy:omp",
     "resourceSync": "legacy:omp",
     "mcp": "legacy:omp"
   }

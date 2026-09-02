@@ -4,7 +4,7 @@ const {
   getStatistics,
   getDailyStatistics,
   getTodayStatistics
-} = require('../services/opencode-statistics-service');
+} = require('../../platforms/drivers/opencode/statistics-implementation');
 
 /**
  * 获取 OpenCode 总体统计数据

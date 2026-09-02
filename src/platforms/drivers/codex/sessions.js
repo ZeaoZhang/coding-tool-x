@@ -8,9 +8,9 @@ function createDriver(context = {}) {
     platform: 'codex',
     capability: 'sessions',
     preservePayloadUpdatedAt: true,
-    servicePath: '../../server/services/codex-sessions',
-    localServicePath: '../../../server/services/codex-sessions',
-    adapterLocalPath: '../../../server/services/session-history-adapters/codex',
+    servicePath: './codex/sessions-implementation',
+    localServicePath: '../codex/sessions-implementation',
+    adapterLocalPath: '../codex/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
     methods: {"listSessions":"getSessionsByProject","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
   });

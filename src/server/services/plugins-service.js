@@ -18,7 +18,7 @@ const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore }
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
-const { OmpNativePluginAdapter } = require('./omp-native-plugin-adapter');
+const { OmpNativePluginAdapter } = require('../../platforms/drivers/omp/native-plugin-adapter');
 const {
   importLegacyPluginRepos,
   migratePiStorage

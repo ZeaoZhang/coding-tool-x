@@ -1,7 +1,7 @@
 const chalk = require('chalk');
 const { startServer } = require('../server');
 const open = require('open');
-const { getProxyStatus } = require('../server/proxy-server');
+const { getProxyStatus } = require('../platforms/drivers/claude/proxy-implementation');
 const { loadConfig } = require('../config/loader');
 const { hasHostFlag } = require('../utils/cli-flags');
 
@@ -75,7 +75,7 @@ async function handleUI() {
           process.off('SIGINT', secondSigint);
 
           if (stopProxy) {
-            const { stopProxyServer } = require('../server/proxy-server');
+            const { stopProxyServer } = require('../platforms/drivers/claude/proxy-implementation');
             await stopProxyServer();
             console.log(chalk.green('[OK] 代理服务已停止\n'));
           } else {
@@ -89,7 +89,7 @@ async function handleUI() {
 
       // OMP 动态网关持有 models.yml 事务，退出前必须先恢复原生配置。
       try {
-        const { getOmpProxyStatus, stopOmpProxyServer } = require('../server/omp-proxy-server');
+        const { getOmpProxyStatus, stopOmpProxyServer } = require('../platforms/drivers/omp/proxy-implementation');
         if (getOmpProxyStatus().running) {
           await stopOmpProxyServer({ forceAfterMs: 1500 });
         }

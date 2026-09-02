@@ -124,9 +124,9 @@ beforeEach(() => {
   });
   isOmpInstalled = vi.fn(() => true);
 
-  require.cache[require.resolve('../../../src/server/services/omp-channels')] = {
-    id: require.resolve('../../../src/server/services/omp-channels'),
-    filename: require.resolve('../../../src/server/services/omp-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
     loaded: true,
     exports: {
       getChannels,
@@ -136,9 +136,9 @@ beforeEach(() => {
       saveChannelOrder
     }
   };
-  require.cache[require.resolve('../../../src/server/services/omp-sessions')] = {
-    id: require.resolve('../../../src/server/services/omp-sessions'),
-    filename: require.resolve('../../../src/server/services/omp-sessions'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/sessions-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/sessions-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/sessions-implementation'),
     loaded: true,
     exports: { isOmpInstalled }
   };
@@ -172,9 +172,9 @@ beforeEach(() => {
     loaded: true,
     exports: { fetchModelsFromProvider, probeModelAvailability }
   };
-  require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
-    id: require.resolve('../../../src/server/services/omp-auth-providers'),
-    filename: require.resolve('../../../src/server/services/omp-auth-providers'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/auth-providers')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/auth-providers'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/auth-providers'),
     loaded: true,
     exports: {
       getCachedOmpAuthProviderSnapshot,
@@ -190,14 +190,14 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/omp-channels',
-    '../../../src/server/services/omp-channels',
-    '../../../src/server/services/omp-sessions',
+    '../../../src/platforms/drivers/omp/channels-implementation',
+    '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
     '../../../src/server/websocket-server',
     '../../../src/server/services/speed-test',
     '../../../src/server/services/model-detector',
-    '../../../src/server/services/omp-auth-providers'
+    '../../../src/platforms/drivers/omp/auth-providers'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];
@@ -470,7 +470,7 @@ describe('omp-channels api', () => {
 
   test('uses form model ids when OMP has not registered the provider yet', () => {
     const getOmpCatalogModels = vi.fn(() => [{ id: 'gpt-5.6-sol', contextWindow: 1050000 }]);
-    const settingsManagerPath = require.resolve('../../../src/server/services/omp-settings-manager');
+    const settingsManagerPath = require.resolve('../../../src/platforms/drivers/omp/native-config-implementation');
     require.cache[settingsManagerPath].exports.getOmpCatalogModels = getOmpCatalogModels;
     delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
     const router = require('../../../src/server/api/omp-channels')({});

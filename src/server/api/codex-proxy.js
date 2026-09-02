@@ -4,7 +4,7 @@ const {
   startCodexProxyServer,
   stopCodexProxyServer,
   getCodexProxyStatus
-} = require('../codex-proxy-server');
+} = require('../../platforms/drivers/codex/proxy-implementation');
 const {
   setProxyConfig,
   restoreSettings,
@@ -13,9 +13,9 @@ const {
   configExists,
   hasBackup,
   readConfig
-} = require('../services/codex-settings-manager');
-const { getChannels, getEnabledChannels, markChannelAsRecentlyUsed } = require('../services/codex-channels');
-const { clearNativeOAuth } = require('../services/native-oauth-adapters');
+} = require('../../platforms/drivers/codex/native-config-implementation');
+const { getChannels, getEnabledChannels, markChannelAsRecentlyUsed } = require('../../platforms/drivers/codex/channels-implementation');
+const { clearNativeOAuth } = require('../../platforms/drivers/shared/native-oauth-adapters');
 const { clearAllLogs } = require('../websocket-server');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
@@ -256,7 +256,7 @@ router.post('/stop', async (req, res) => {
     // - 备份中的 mcp_servers 是旧状态，会覆盖用户在动态切换期间对 MCP 的修改
     // 直接丢弃备份，由 applyChannelToSettings 从当前 config.toml 写入正确渠道配置
     if (hadBackup) {
-      const { deleteBackup } = require('../services/codex-settings-manager');
+      const { deleteBackup } = require('../../platforms/drivers/codex/native-config-implementation');
       deleteBackup();
       console.log('[Codex Proxy] Discarded backup (MCP changes preserved)');
     }
@@ -265,7 +265,7 @@ router.post('/stop', async (req, res) => {
 
     // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
     if (activeChannel) {
-      const { applyChannelToSettings } = require('../services/codex-channels');
+      const { applyChannelToSettings } = require('../../platforms/drivers/codex/channels-implementation');
       applyChannelToSettings(activeChannel.id);
       console.log(`[Codex Proxy] Single-channel mode restored: ${activeChannel.name}`);
     }

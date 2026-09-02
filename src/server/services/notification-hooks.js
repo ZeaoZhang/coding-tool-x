@@ -8,8 +8,8 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const { execSync, execFileSync } = require('child_process');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { loadUIConfig, saveUIConfig } = require('./ui-config');
-const codexSettingsManager = require('./codex-settings-manager');
-const geminiSettingsManager = require('./gemini-settings-manager');
+const codexSettingsManager = require('../../platforms/drivers/codex/native-config-implementation');
+const geminiSettingsManager = require('../../platforms/drivers/gemini/native-config-implementation');
 
 const MANAGED_HOOK_NAME = 'coding-tool-notify';
 const MANAGED_OPENCODE_PLUGIN_FILE = 'coding-tool-notify.js';
@@ -1658,7 +1658,7 @@ function getOmpHookStatus() {
 
 function saveOpenCodeHook(enabled, type) {
   const pluginPath = getOpenCodeManagedPluginPath();
-  const opencodeSettingsManager = require('./opencode-settings-manager');
+  const opencodeSettingsManager = require('../../platforms/drivers/opencode/native-config-implementation');
   const configPath = opencodeSettingsManager.selectConfigPath();
 
   if (!enabled) {

@@ -6,8 +6,8 @@ function createDriver(context = {}) {
   return createChannelDriver({
     ...context,
     platform: 'gemini',
-    servicePath: '../../server/services/gemini-channels',
-    localServicePath: '../../../server/services/gemini-channels',
+    servicePath: './gemini/channels-implementation',
+    localServicePath: '../gemini/channels-implementation',
     syncMethod: 'syncCurrentGeminiChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.model, input.extra || {}]

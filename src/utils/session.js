@@ -208,7 +208,7 @@ async function getAvailableProjects(config) {
   }
 
   // 获取项目列表和统计信息（包含解析后的名称）
-  const { getProjectsWithStats, getProjectOrder } = require('../server/services/sessions');
+  const { getProjectsWithStats, getProjectOrder } = require('../platforms/drivers/claude/sessions-implementation');
   const resolvedConfig = { ...config, projectsDir };
   const projects = await getProjectsWithStats(resolvedConfig);
   const savedOrder = getProjectOrder(resolvedConfig);

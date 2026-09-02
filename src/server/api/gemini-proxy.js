@@ -4,7 +4,7 @@ const {
   startGeminiProxyServer,
   stopGeminiProxyServer,
   getGeminiProxyStatus
-} = require('../gemini-proxy-server');
+} = require('../../platforms/drivers/gemini/proxy-implementation');
 const {
   setProxyConfig,
   restoreSettings,
@@ -14,9 +14,9 @@ const {
   configExists,
   hasBackup,
   readEnv
-} = require('../services/gemini-settings-manager');
-const { getChannels, getEnabledChannels, markChannelAsRecentlyUsed } = require('../services/gemini-channels');
-const { clearNativeOAuth } = require('../services/native-oauth-adapters');
+} = require('../../platforms/drivers/gemini/native-config-implementation');
+const { getChannels, getEnabledChannels, markChannelAsRecentlyUsed } = require('../../platforms/drivers/gemini/channels-implementation');
+const { clearNativeOAuth } = require('../../platforms/drivers/shared/native-oauth-adapters');
 const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
 const fs = require('fs');
 const path = require('path');
@@ -202,7 +202,7 @@ router.post('/stop', async (req, res) => {
 
     // 停止动态切换后回到单渠道模式：保留激活渠道，禁用其他渠道
     if (activeChannel) {
-      const { applyChannelToSettings } = require('../services/gemini-channels');
+      const { applyChannelToSettings } = require('../../platforms/drivers/gemini/channels-implementation');
       applyChannelToSettings(activeChannel.id);
       console.log(`[Gemini Proxy] Single-channel mode restored: ${activeChannel.name}`);
     }

@@ -6,8 +6,8 @@ function createDriver(context = {}) {
   return createProxyDriver({
     ...context,
     platform: 'codex',
-    servicePath: '../../server/codex-proxy-server',
-    localServicePath: '../../../server/codex-proxy-server',
+    servicePath: './codex/proxy-implementation',
+    localServicePath: '../codex/proxy-implementation',
     exports: { status: 'getCodexProxyStatus', start: 'startCodexProxyServer', stop: 'stopCodexProxyServer' },
     cliMetadata: { defaultPort: 20089 }
   });

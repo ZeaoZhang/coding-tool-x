@@ -13,7 +13,7 @@ const {
   saveSessionOrder,
   isOmpInstalled,
   HOME_DIR
-} = require('../services/omp-sessions');
+} = require('../../platforms/drivers/omp/sessions-implementation');
 const { getSessionStatus, getSessionOutline, getMessagePage } = require('../services/session-history-index');
 const { loadAliases } = require('../services/alias');
 const { broadcastLog } = require('../websocket-server');

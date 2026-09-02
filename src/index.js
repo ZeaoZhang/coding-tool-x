@@ -190,7 +190,7 @@ async function stopOwnedOmpGatewayBeforeExit() {
     const {
       getOmpProxyStatus,
       stopOmpProxyServer
-    } = require('./server/omp-proxy-server');
+    } = require('./platforms/drivers/omp/proxy-implementation');
     if (getOmpProxyStatus().running) {
       const preserveManagedMode = process.argv.includes('--daemon');
       await stopOmpProxyServer({ forceAfterMs: 1500, preserveManagedMode });

@@ -21,17 +21,17 @@ beforeEach(() => {
     exports: { NATIVE_PATHS: { gemini: { env: envPath } }, PATHS: {} }
   };
 
-  delete require.cache[require.resolve('../../../src/server/services/gemini-config')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/config')];
 });
 
 afterEach(() => {
   delete require.cache[pathsModPath];
-  delete require.cache[require.resolve('../../../src/server/services/gemini-config')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/config')];
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
 function getModule() {
-  return require('../../../src/server/services/gemini-config');
+  return require('../../../src/platforms/drivers/gemini/config');
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ describe('isGeminiInstalled', () => {
       id: pathsModPath, filename: pathsModPath, loaded: true,
       exports: { NATIVE_PATHS: { gemini: { env: nonExistentEnv } }, PATHS: {} }
     };
-    delete require.cache[require.resolve('../../../src/server/services/gemini-config')];
+    delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/config')];
     expect(getModule().isGeminiInstalled()).toBe(false);
   });
 });

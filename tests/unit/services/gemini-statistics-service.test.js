@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const TOOL_TYPE = 'gemini';
-const MODULE_PATH = '../../../src/server/services/gemini-statistics-service';
+const MODULE_PATH = '../../../src/platforms/drivers/gemini/statistics-implementation';
 
 const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();

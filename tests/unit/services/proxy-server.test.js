@@ -3,8 +3,8 @@
 const http = require('http');
 const path = require('path');
 
-const PROXY_SERVER_PATH = '../../../src/server/proxy-server';
-const CLAUDE_OPENAI_GATEWAY_PATH = '../../../src/server/services/claude-openai-gateway';
+const PROXY_SERVER_PATH = '../../../src/platforms/drivers/claude/proxy-implementation';
+const CLAUDE_OPENAI_GATEWAY_PATH = '../../../src/platforms/drivers/claude/openai-gateway';
 
 let proxyPort = 9960;
 let proxyModule = null;
@@ -114,7 +114,7 @@ function createStubs() {
       createDecodedStream
     }],
     ['../../../src/plugins/event-bus', eventBus],
-    ['../../../src/server/services/channels', {
+    ['../../../src/platforms/drivers/claude/channels-implementation', {
       getEffectiveApiKey,
       getAllChannels: vi.fn(() => [])
     }],

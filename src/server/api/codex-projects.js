@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { saveProjectOrder, deleteProject } = require('../services/codex-sessions');
-const { isCodexInstalled } = require('../services/codex-config');
+const { saveProjectOrder, deleteProject } = require('../../platforms/drivers/codex/sessions-implementation');
+const { isCodexInstalled } = require('../../platforms/drivers/codex/config');
 const {
   emptyProjectList,
   getProjectListSnapshot,

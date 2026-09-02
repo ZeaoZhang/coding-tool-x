@@ -59,9 +59,9 @@ beforeEach(() => {
   isGeminiInstalled = vi.fn(() => true);
   getDefaultSpeedTestModelByToolType = vi.fn(() => 'gemini-2.0-flash');
 
-  require.cache[require.resolve('../../../src/server/services/gemini-channels')] = {
-    id: require.resolve('../../../src/server/services/gemini-channels'),
-    filename: require.resolve('../../../src/server/services/gemini-channels'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/channels-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
     loaded: true,
     exports: {
       getChannels,
@@ -90,9 +90,9 @@ beforeEach(() => {
     loaded: true,
     exports: { broadcastSchedulerState }
   };
-  require.cache[require.resolve('../../../src/server/services/gemini-config')] = {
-    id: require.resolve('../../../src/server/services/gemini-config'),
-    filename: require.resolve('../../../src/server/services/gemini-config'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/config')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/config'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/config'),
     loaded: true,
     exports: { isGeminiInstalled }
   };
@@ -107,9 +107,9 @@ beforeEach(() => {
       runWithConcurrencyLimit
     }
   };
-  require.cache[require.resolve('../../../src/server/gemini-proxy-server')] = {
-    id: require.resolve('../../../src/server/gemini-proxy-server'),
-    filename: require.resolve('../../../src/server/gemini-proxy-server'),
+  require.cache[require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation')] = {
+    id: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
+    filename: require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation'),
     loaded: true,
     exports: { clearGeminiRedirectCache }
   };
@@ -127,13 +127,13 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/gemini-channels',
-    '../../../src/server/services/gemini-channels',
+    '../../../src/platforms/drivers/gemini/channels-implementation',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
     '../../../src/server/websocket-server',
-    '../../../src/server/services/gemini-config',
+    '../../../src/platforms/drivers/gemini/config',
     '../../../src/server/services/speed-test',
-    '../../../src/server/gemini-proxy-server',
+    '../../../src/platforms/drivers/gemini/proxy-implementation',
     '../../../src/config/model-metadata'
   ].forEach((mod) => {
     try {

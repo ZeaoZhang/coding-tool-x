@@ -8,9 +8,9 @@ function createDriver(context = {}) {
     platform: 'omp',
     capability: 'sessions',
     preservePayloadUpdatedAt: true,
-    servicePath: '../../server/services/omp-sessions',
-    localServicePath: '../../../server/services/omp-sessions',
-    adapterLocalPath: '../../../server/services/session-history-adapters/omp',
+    servicePath: './omp/sessions-implementation',
+    localServicePath: '../omp/sessions-implementation',
+    adapterLocalPath: '../omp/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
     methods: {"listSessions":"getSessionsByProject","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
   });

@@ -7,8 +7,8 @@ function createDriver(context = {}) {
     ...context,
     platform: 'opencode',
     capability: 'statistics',
-    servicePath: '../../server/services/opencode-statistics-service',
-    localServicePath: '../../../server/services/opencode-statistics-service',
+    servicePath: './opencode/statistics-implementation',
+    localServicePath: '../opencode/statistics-implementation',
     methods: {"getStatistics":"getStatistics","getDailyStatistics":"getDailyStatistics","getTodayStatistics":"getTodayStatistics","recordRequest":"recordRequest","resetStatistics":"resetStatistics"}
   });
 }

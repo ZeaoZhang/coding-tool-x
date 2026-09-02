@@ -7,10 +7,10 @@ const {
   getOmpStatus,
   readJsonFile,
   readYamlFile
-} = require('../services/omp-config');
+} = require('../../platforms/drivers/omp/config');
 const {
   getOmpAuthProviderSnapshot
-} = require('../services/omp-auth-providers');
+} = require('../../platforms/drivers/omp/auth-providers');
 
 function listDirEntries(dirPath, options = {}) {
   const { extensions = null, includeDirectories = true } = options;

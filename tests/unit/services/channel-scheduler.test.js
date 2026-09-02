@@ -12,11 +12,11 @@
 const path = require('path');
 
 // Absolute paths for the deps we need to stub
-const CHANNELS_PATH = require.resolve('../../../src/server/services/channels');
-const CODEX_PATH    = require.resolve('../../../src/server/services/codex-channels');
-const GEMINI_PATH   = require.resolve('../../../src/server/services/gemini-channels');
-const OPENCODE_PATH = require.resolve('../../../src/server/services/opencode-channels');
-const OMP_PATH      = require.resolve('../../../src/server/services/omp-channels');
+const CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
+const CODEX_PATH    = require.resolve('../../../src/platforms/drivers/codex/channels-implementation');
+const GEMINI_PATH   = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
+const OPENCODE_PATH = require.resolve('../../../src/platforms/drivers/opencode/channels-implementation');
+const OMP_PATH      = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
 const HEALTH_PATH   = require.resolve('../../../src/server/services/channel-health');
 const RUNTIME_PATH   = require.resolve('../../../src/platforms/runtime');
 const SCHEDULER_PATH = require.resolve('../../../src/server/services/channel-scheduler');

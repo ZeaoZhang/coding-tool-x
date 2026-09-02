@@ -17,7 +17,7 @@ async function resetConfig() {
   try {
     // 1. 尝试停止代理服务器（如果正在运行）
     try {
-      const { stopProxyServer, getProxyStatus } = require('./server/proxy-server');
+      const { stopProxyServer, getProxyStatus } = require('./platforms/drivers/claude/proxy-implementation');
       const status = getProxyStatus();
 
       if (status.running) {

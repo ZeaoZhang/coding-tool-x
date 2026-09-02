@@ -1,5 +1,5 @@
 /**
- * Tests for src/server/services/gemini-channels.js
+ * Tests for src/platforms/drivers/gemini/channels-implementation.js
  *
  * Strategy: inject stubs into require.cache before requiring the module.
  * File I/O is redirected to a tmpdir created fresh in beforeEach.
@@ -12,10 +12,10 @@ const path = require('path');
 // ─── Absolute paths for deps that need to be stubbed ─────────────────────────
 
 const PATHS_MODULE        = require.resolve('../../../src/config/paths');
-const NATIVE_OAUTH_MODULE = require.resolve('../../../src/server/services/native-oauth-adapters');
+const NATIVE_OAUTH_MODULE = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
 const PROXY_UTILS_MODULE  = require.resolve('../../../src/server/services/base/proxy-utils');
-const GEMINI_PROXY_MODULE = require.resolve('../../../src/server/gemini-proxy-server');
-const GEMINI_CH_MODULE    = require.resolve('../../../src/server/services/gemini-channels');
+const GEMINI_PROXY_MODULE = require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation');
+const GEMINI_CH_MODULE    = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
 const CHANNEL_BALANCE_MODULE = require.resolve('../../../src/server/services/channel-balance');
 
 // ─── Per-test state ───────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ beforeEach(() => {
 
   delete require.cache[GEMINI_CH_MODULE];
   injectStubs();
-  service = require('../../../src/server/services/gemini-channels');
+  service = require('../../../src/platforms/drivers/gemini/channels-implementation');
 });
 
 afterEach(() => {

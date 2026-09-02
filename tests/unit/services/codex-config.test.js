@@ -20,20 +20,20 @@ beforeEach(() => {
   };
 
   // Force re-require of codex-config to pick up new stub
-  delete require.cache[require.resolve('../../../src/server/services/codex-config')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/codex/config')];
 });
 
 afterEach(() => {
   // Restore the real paths module
   delete require.cache[pathsModPath];
-  delete require.cache[require.resolve('../../../src/server/services/codex-config')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/codex/config')];
 
   // Clean up temp dir
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
 function getModule() {
-  return require('../../../src/server/services/codex-config');
+  return require('../../../src/platforms/drivers/codex/config');
 }
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ describe('isCodexInstalled', () => {
       id: pathsModPath, filename: pathsModPath, loaded: true,
       exports: { NATIVE_PATHS: { codex: { dir: nonExistent } }, PATHS: {} }
     };
-    delete require.cache[require.resolve('../../../src/server/services/codex-config')];
+    delete require.cache[require.resolve('../../../src/platforms/drivers/codex/config')];
     expect(getModule().isCodexInstalled()).toBe(false);
   });
 });

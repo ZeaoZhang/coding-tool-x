@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const TOOL_TYPE = 'opencode';
-const MODULE_PATH = '../../../src/server/services/opencode-statistics-service';
+const MODULE_PATH = '../../../src/platforms/drivers/opencode/statistics-implementation';
 
 const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();

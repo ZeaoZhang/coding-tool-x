@@ -119,9 +119,9 @@ beforeEach(() => {
     checkedAt: '2026-07-08T00:00:00.000Z'
   }));
 
-  require.cache[require.resolve('../../../src/server/services/omp-config')] = {
-    id: require.resolve('../../../src/server/services/omp-config'),
-    filename: require.resolve('../../../src/server/services/omp-config'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/config')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/config'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/config'),
     loaded: true,
     exports: {
       getOmpPaths: vi.fn(() => paths),
@@ -130,9 +130,9 @@ beforeEach(() => {
       readYamlFile: readYamlFileMock
     }
   };
-  require.cache[require.resolve('../../../src/server/services/omp-auth-providers')] = {
-    id: require.resolve('../../../src/server/services/omp-auth-providers'),
-    filename: require.resolve('../../../src/server/services/omp-auth-providers'),
+  require.cache[require.resolve('../../../src/platforms/drivers/omp/auth-providers')] = {
+    id: require.resolve('../../../src/platforms/drivers/omp/auth-providers'),
+    filename: require.resolve('../../../src/platforms/drivers/omp/auth-providers'),
     loaded: true,
     exports: {
       getOmpAuthProviderSnapshot: getOmpAuthProviderSnapshotMock
@@ -144,8 +144,8 @@ afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/api/omp-config',
-    '../../../src/server/services/omp-config',
-    '../../../src/server/services/omp-auth-providers'
+    '../../../src/platforms/drivers/omp/config',
+    '../../../src/platforms/drivers/omp/auth-providers'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

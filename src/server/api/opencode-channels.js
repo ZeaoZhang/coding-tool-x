@@ -7,8 +7,8 @@ const {
   deleteChannel,
   saveChannelOrder,
   syncCurrentOpenCodeChannel
-} = require('../services/opencode-channels');
-const { isOpenCodeInstalled } = require('../services/opencode-sessions');
+} = require('../../platforms/drivers/opencode/channels-implementation');
+const { isOpenCodeInstalled } = require('../../platforms/drivers/opencode/sessions-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState } = require('../websocket-server');
@@ -17,7 +17,7 @@ const {
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
-const { clearOpenCodeRedirectCache } = require('../opencode-proxy-server');
+const { clearOpenCodeRedirectCache } = require('../../platforms/drivers/opencode/proxy-implementation');
 const {
   fetchModelsFromProvider,
   probeModelAvailability

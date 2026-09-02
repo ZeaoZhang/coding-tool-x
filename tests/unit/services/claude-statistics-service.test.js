@@ -1,5 +1,5 @@
 const TOOL_TYPE = 'claude-code';
-const MODULE_PATH = '../../../src/server/services/claude-statistics-service';
+const MODULE_PATH = '../../../src/platforms/drivers/claude/statistics-implementation';
 
 const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();

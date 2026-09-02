@@ -4,7 +4,7 @@ const {
   getStatistics,
   getDailyStatistics,
   getTodayStatistics
-} = require('../services/gemini-statistics-service');
+} = require('../../platforms/drivers/gemini/statistics-implementation');
 
 /**
  * 获取 Gemini 总体统计数据

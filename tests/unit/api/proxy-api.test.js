@@ -90,7 +90,7 @@ beforeEach(() => {
   clearAllLogsMock = vi.fn();
   broadcastProxyStateMock = vi.fn();
 
-  const proxyServerPath = require.resolve('../../../src/server/proxy-server');
+  const proxyServerPath = require.resolve('../../../src/platforms/drivers/claude/proxy-implementation');
   require.cache[proxyServerPath] = {
     id: proxyServerPath,
     filename: proxyServerPath,
@@ -102,7 +102,7 @@ beforeEach(() => {
     }
   };
 
-  const settingsManagerPath = require.resolve('../../../src/server/services/settings-manager');
+  const settingsManagerPath = require.resolve('../../../src/platforms/drivers/claude/native-config-implementation');
   require.cache[settingsManagerPath] = {
     id: settingsManagerPath,
     filename: settingsManagerPath,
@@ -119,7 +119,7 @@ beforeEach(() => {
     }
   };
 
-  const channelsPath = require.resolve('../../../src/server/services/channels');
+  const channelsPath = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
   require.cache[channelsPath] = {
     id: channelsPath,
     filename: channelsPath,
@@ -133,7 +133,7 @@ beforeEach(() => {
     }
   };
 
-  const nativeOauthPath = require.resolve('../../../src/server/services/native-oauth-adapters');
+  const nativeOauthPath = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
   require.cache[nativeOauthPath] = {
     id: nativeOauthPath,
     filename: nativeOauthPath,
@@ -181,10 +181,10 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   delete require.cache[require.resolve('../../../src/server/api/proxy')];
-  delete require.cache[require.resolve('../../../src/server/proxy-server')];
-  delete require.cache[require.resolve('../../../src/server/services/settings-manager')];
-  delete require.cache[require.resolve('../../../src/server/services/channels')];
-  delete require.cache[require.resolve('../../../src/server/services/native-oauth-adapters')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/proxy-implementation')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/native-config-implementation')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/channels-implementation')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')];
   delete require.cache[require.resolve('../../../src/server/websocket-server')];
   delete require.cache[require.resolve('../../../src/config/paths')];
 });

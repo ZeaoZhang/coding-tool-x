@@ -20,7 +20,7 @@ function makeRequire(stubs) {
 describe('legacy drivers', () => {
   test('lazily loads codex channels and exposes the normalized list operation', () => {
     const requireImpl = makeRequire({
-      '../../server/services/codex-channels': {
+      './codex/channels-implementation': {
         getChannels: vi.fn(() => ({ channels: [{ id: 'codex-channel' }] })),
         createChannel: vi.fn((...args) => ({ op: 'create', args })),
         updateChannel: vi.fn((...args) => ({ op: 'update', args })),
@@ -33,7 +33,7 @@ describe('legacy drivers', () => {
 
     expect(requireImpl.calls).toEqual([]);
     expect(driver.list()).toEqual([{ id: 'codex-channel' }]);
-    expect(requireImpl.calls).toEqual(['../../server/services/codex-channels']);
+    expect(requireImpl.calls).toEqual(['./codex/channels-implementation']);
     expect(driver.create('name', 'provider', 'url', 'key')).toEqual({ op: 'create', args: ['name', 'provider', 'url', 'key'] });
     expect(driver.update('id', { enabled: false })).toEqual({ op: 'update', args: ['id', { enabled: false }] });
     expect(driver.remove('id')).toEqual({ op: 'delete', args: ['id'] });
@@ -43,7 +43,7 @@ describe('legacy drivers', () => {
   test('normalizes Claude getAllChannels into list', () => {
     const getAllChannels = vi.fn(() => [{ id: 'claude-channel' }]);
     const requireImpl = makeRequire({
-      '../../server/services/channels': { getAllChannels }
+      './claude/channels-implementation': { getAllChannels }
     });
     const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
     const driver = createLegacyDriver({ platform: 'claude', capability: 'channels', requireImpl });
@@ -60,7 +60,7 @@ describe('legacy drivers', () => {
       operation: 'list'
     };
     const requireImpl = makeRequire({
-      '../../server/services/codex-channels': {
+      './codex/channels-implementation': {
         getChannels: vi.fn(() => unsupportedResult)
       }
     });
@@ -80,7 +80,7 @@ describe('legacy drivers', () => {
     const claudeDelete = vi.fn((...args) => ({ op: 'delete', args }));
     const claudeFork = vi.fn((...args) => ({ op: 'fork', args }));
     const claudeRequireImpl = makeRequire({
-      '../../server/services/sessions': {
+      './claude/sessions-implementation': {
         getSessionsForProject: claudeGetSessions,
         getRecentSessions: claudeRecent,
         searchSessions: claudeSearch,
@@ -121,10 +121,10 @@ describe('legacy drivers', () => {
     expect(claudeDelete).toHaveBeenCalledWith(config, 'project', 'session-id');
     expect(claudeFork).toHaveBeenCalledWith(config, 'project', 'session-id', options);
     const cases = [
-      ['codex', '../../server/services/codex-sessions', 'getSessionsByProject'],
-      ['gemini', '../../server/services/gemini-sessions', 'getProjectSessions'],
-      ['opencode', '../../server/services/opencode-sessions', 'getSessionsByProjectId'],
-      ['omp', '../../server/services/omp-sessions', 'getSessionsByProject']
+      ['codex', './codex/sessions-implementation', 'getSessionsByProject'],
+      ['gemini', './gemini/sessions-implementation', 'getProjectSessions'],
+      ['opencode', './opencode/sessions-implementation', 'getSessionsByProjectId'],
+      ['omp', './omp/sessions-implementation', 'getSessionsByProject']
     ];
     for (const [platform, modulePath, listSessionsExport] of cases) {
       const exports = {
@@ -152,11 +152,11 @@ describe('legacy drivers', () => {
 
   test('creates project drivers for every legacy platform and maps deletion', () => {
     const cases = [
-      ['claude', '../../server/services/sessions'],
-      ['codex', '../../server/services/codex-sessions'],
-      ['gemini', '../../server/services/gemini-sessions'],
-      ['opencode', '../../server/services/opencode-sessions'],
-      ['omp', '../../server/services/omp-sessions']
+      ['claude', './claude/sessions-implementation'],
+      ['codex', './codex/sessions-implementation'],
+      ['gemini', './gemini/sessions-implementation'],
+      ['opencode', './opencode/sessions-implementation'],
+      ['omp', './omp/sessions-implementation']
     ];
     const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
 
@@ -184,7 +184,7 @@ describe('legacy drivers', () => {
     const richDriver = createLegacyDriver({
       platform: 'claude',
       capability: 'projects',
-      requireImpl: makeRequire({ '../../server/services/sessions': { getProjectsWithStats, getProjects } })
+      requireImpl: makeRequire({ './claude/sessions-implementation': { getProjectsWithStats, getProjects } })
     });
 
     expect(richDriver.listProjects(options)).toEqual({ op: 'rich-projects', args: [options.config, options] });
@@ -195,7 +195,7 @@ describe('legacy drivers', () => {
     const fallbackDriver = createLegacyDriver({
       platform: 'claude',
       capability: 'projects',
-      requireImpl: makeRequire({ '../../server/services/sessions': { getProjects: fallbackGetProjects } })
+      requireImpl: makeRequire({ './claude/sessions-implementation': { getProjects: fallbackGetProjects } })
     });
     expect(fallbackDriver.listProjects(options)).toEqual({ op: 'projects', args: [options.config] });
     expect(fallbackGetProjects).toHaveBeenCalledWith(options.config);
@@ -208,7 +208,7 @@ describe('legacy drivers', () => {
     const driver = createLegacyDriver({
       platform: 'claude',
       capability: 'projects',
-      requireImpl: makeRequire({ '../../server/services/sessions': { getProjectOrder } })
+      requireImpl: makeRequire({ './claude/sessions-implementation': { getProjectOrder } })
     });
 
     expect(driver.getProjectOrder(options)).toEqual({ op: 'order', args: [options.config] });
@@ -221,7 +221,7 @@ describe('legacy drivers', () => {
     const getTodayStatistics = vi.fn(() => ({ today: true }));
     const recordRequest = vi.fn(request => ({ recorded: request.id }));
     const requireImpl = makeRequire({
-      '../../server/services/codex-statistics-service': {
+      './codex/statistics-implementation': {
         getStatistics,
         getDailyStatistics,
         getTodayStatistics,
@@ -247,7 +247,7 @@ describe('legacy drivers', () => {
     const hasBackup = vi.fn(() => true);
     const deleteBackup = vi.fn(() => ({ success: true }));
     const requireImpl = makeRequire({
-      '../../server/services/codex-settings-manager': {
+      './codex/native-config-implementation': {
         setProxyConfig,
         restoreSettings,
         isProxyConfig: vi.fn(() => true),
@@ -263,13 +263,13 @@ describe('legacy drivers', () => {
     expect(driver.restoreSettings()).toEqual({ success: true });
     expect(driver.hasBackup()).toBe(true);
     expect(driver.deleteBackup()).toEqual({ success: true });
-    expect(requireImpl.calls).toEqual(['../../server/services/codex-settings-manager']);
+    expect(requireImpl.calls).toEqual(['./codex/native-config-implementation']);
   });
 
   test('falls back statistics daily and today operations to getTodayStatistics when needed', () => {
     const getTodayStatistics = vi.fn(() => ({ today: true }));
     const requireImpl = makeRequire({
-      '../../server/services/gemini-statistics-service': { getTodayStatistics }
+      './gemini/statistics-implementation': { getTodayStatistics }
     });
     const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
     const driver = createLegacyDriver({ platform: 'gemini', capability: 'statistics', requireImpl });
@@ -283,10 +283,10 @@ describe('legacy drivers', () => {
     const script = `
       const assert = require('assert');
       const pathsPath = require.resolve('./src/config/paths');
-      const codexChannelsPath = require.resolve('./src/server/services/codex-channels');
-      const ompChannelsPath = require.resolve('./src/server/services/omp-channels');
-      const ompProxyPath = require.resolve('./src/server/omp-proxy-server');
-      const codexProxyPath = require.resolve('./src/server/codex-proxy-server');
+      const codexChannelsPath = require.resolve('./src/platforms/drivers/codex/channels-implementation');
+      const ompChannelsPath = require.resolve('./src/platforms/drivers/omp/channels-implementation');
+      const ompProxyPath = require.resolve('./src/platforms/drivers/omp/proxy-implementation');
+      const codexProxyPath = require.resolve('./src/platforms/drivers/codex/proxy-implementation');
       const originals = new Map();
       const unsupportedResult = { status: 'unsupported', platform: 'codex', capability: 'channels', operation: 'list' };
       const ompChannelsResult = { channels: [{ id: 'omp-channel' }] };
@@ -351,7 +351,7 @@ describe('legacy drivers', () => {
     const stopOmpProxyServer = vi.fn(options => ({ op: 'stop', options }));
     const getOmpProxyStatus = vi.fn(() => ({ running: true, port: 20092 }));
     const requireImpl = makeRequire({
-      '../../server/omp-proxy-server': {
+      './omp/proxy-implementation': {
         startOmpProxyServer,
         stopOmpProxyServer,
         getOmpProxyStatus
@@ -374,7 +374,7 @@ describe('legacy drivers', () => {
     const stopCodexProxyServer = vi.fn(options => ({ op: 'stop', options }));
     const getCodexProxyStatus = vi.fn(() => ({ running: false, port: null }));
     const requireImpl = makeRequire({
-      '../../server/codex-proxy-server': {
+      './codex/proxy-implementation': {
         startCodexProxyServer,
         stopCodexProxyServer,
         getCodexProxyStatus
@@ -392,8 +392,8 @@ describe('legacy drivers', () => {
     const startCodexProxyServer = vi.fn(async options => ({ success: true, port: 21111, options }));
     const setProxyConfig = vi.fn(() => ({ success: true }));
     const requireImpl = makeRequire({
-      '../../server/codex-proxy-server': { startCodexProxyServer },
-      '../../server/services/codex-settings-manager': { setProxyConfig }
+      './codex/proxy-implementation': { startCodexProxyServer },
+      './codex/native-config-implementation': { setProxyConfig }
     });
     const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
     const driver = createLegacyDriver({
@@ -411,7 +411,7 @@ describe('legacy drivers', () => {
 
   test('returns an explicit unsupported result for missing legacy operations', () => {
     const requireImpl = makeRequire({
-      '../../server/services/omp-channels': {
+      './omp/channels-implementation': {
         getChannels: vi.fn(() => ({ channels: [] }))
       }
     });
@@ -505,7 +505,7 @@ describe('legacy drivers', () => {
 
   test('runtime caches stubs for registry-backed legacy drivers', () => {
     const requireImpl = makeRequire({
-      '../../server/services/codex-channels': {
+      './codex/channels-implementation': {
         getChannels: vi.fn(() => ({ channels: [{ id: 'codex-channel' }] }))
       }
     });
@@ -521,6 +521,6 @@ describe('legacy drivers', () => {
 
     expect(runtime.invoke('codex', 'channels', 'list')).toEqual([{ id: 'codex-channel' }]);
     expect(platformRegistry.resolvePaths).not.toHaveBeenCalled();
-    expect(requireImpl.calls).toEqual(['../../server/services/codex-channels']);
+    expect(requireImpl.calls).toEqual(['./codex/channels-implementation']);
   });
 });

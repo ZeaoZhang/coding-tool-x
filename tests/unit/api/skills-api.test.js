@@ -52,7 +52,7 @@ beforeEach(() => {
     enablePiProject: true,
     ...patch
   }));
-  const ompSkillSettingsServicePath = require.resolve('../../../src/server/services/omp-skill-settings-service');
+  const ompSkillSettingsServicePath = require.resolve('../../../src/platforms/drivers/omp/skill-settings');
   require.cache[ompSkillSettingsServicePath] = {
     id: ompSkillSettingsServicePath,
     filename: ompSkillSettingsServicePath,
@@ -115,7 +115,7 @@ function createMockService() {
 afterEach(() => {
   delete require.cache[require.resolve('../../../src/server/api/skills')];
   delete require.cache[require.resolve('../../../src/server/services/skill-service')];
-  delete require.cache[require.resolve('../../../src/server/services/omp-skill-settings-service')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/skill-settings')];
   delete require.cache[require.resolve('../../../src/server/services/project-path-validation')];
 });
 

@@ -1,6 +1,6 @@
 const {
   prepareManagedOmpChannels
-} = require('../../../src/server/services/omp-gateway-routing');
+} = require('../../../src/platforms/drivers/omp/gateway-routing');
 
 const PROVIDER_APIS = [
   'openai-completions',

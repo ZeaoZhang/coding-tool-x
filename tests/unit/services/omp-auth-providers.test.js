@@ -2,8 +2,8 @@ describe('omp-auth-providers', () => {
   let service;
 
   beforeEach(() => {
-    delete require.cache[require.resolve('../../../src/server/services/omp-auth-providers')];
-    service = require('../../../src/server/services/omp-auth-providers');
+    delete require.cache[require.resolve('../../../src/platforms/drivers/omp/auth-providers')];
+    service = require('../../../src/platforms/drivers/omp/auth-providers');
     service.clearOmpAuthProviderCache();
   });
 

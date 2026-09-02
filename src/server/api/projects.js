@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { saveProjectOrder, deleteProject } = require('../services/sessions');
+const { saveProjectOrder, deleteProject } = require('../../platforms/drivers/claude/sessions-implementation');
 const {
   emptyProjectList,
   getProjectListSnapshot,

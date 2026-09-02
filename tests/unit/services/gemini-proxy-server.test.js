@@ -2,12 +2,12 @@ describe('gemini-proxy-server compatibility helpers', () => {
   let proxyServer;
 
   beforeEach(() => {
-    delete require.cache[require.resolve('../../../src/server/gemini-proxy-server')];
-    proxyServer = require('../../../src/server/gemini-proxy-server');
+    delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation')];
+    proxyServer = require('../../../src/platforms/drivers/gemini/proxy-implementation');
   });
 
   afterEach(() => {
-    delete require.cache[require.resolve('../../../src/server/gemini-proxy-server')];
+    delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/proxy-implementation')];
   });
 
   test('strips function response ids for Vertex AI v1 payloads', () => {

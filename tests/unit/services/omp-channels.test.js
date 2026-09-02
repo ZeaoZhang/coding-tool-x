@@ -3,9 +3,9 @@ const os = require('os');
 const path = require('path');
 
 const PATHS_MODULE = require.resolve('../../../src/config/paths');
-const OMP_CONFIG_MODULE = require.resolve('../../../src/server/services/omp-config');
-const OMP_SETTINGS_MODULE = require.resolve('../../../src/server/services/omp-settings-manager');
-const OMP_CHANNELS_MODULE = require.resolve('../../../src/server/services/omp-channels');
+const OMP_CONFIG_MODULE = require.resolve('../../../src/platforms/drivers/omp/config');
+const OMP_SETTINGS_MODULE = require.resolve('../../../src/platforms/drivers/omp/native-config-implementation');
+const OMP_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
 const CHANNEL_SYNC_MODULE = require.resolve('../../../src/server/services/channel-sync-utils');
 const GENERATED_ROUTE = 'http://127.0.0.1:20092/omp/aaaaaaaaaaaaaaaaaaaaaaaa';
 const GENERATED_KEY = `ctx_${'b'.repeat(40)}`;
@@ -130,7 +130,7 @@ beforeEach(() => {
   delete require.cache[CHANNEL_SYNC_MODULE];
   delete require.cache[OMP_CONFIG_MODULE];
   injectStubs();
-  service = require('../../../src/server/services/omp-channels');
+  service = require('../../../src/platforms/drivers/omp/channels-implementation');
 });
 
 afterEach(() => {
@@ -311,7 +311,7 @@ describe('managed provider activation lifecycle', () => {
 
     delete require.cache[OMP_CHANNELS_MODULE];
     injectStubs();
-    const reloadedService = require('../../../src/server/services/omp-channels');
+    const reloadedService = require('../../../src/platforms/drivers/omp/channels-implementation');
     expect(reloadedService.getOrCreateOmpGatewaySecret()).toBe(first);
   });
 

@@ -6,8 +6,8 @@ function createDriver(context = {}) {
   return createChannelDriver({
     ...context,
     platform: 'omp',
-    servicePath: '../../server/services/omp-channels',
-    localServicePath: '../../../server/services/omp-channels',
+    servicePath: './omp/channels-implementation',
+    localServicePath: '../omp/channels-implementation',
     syncMethod: 'syncCurrentOmpChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.baseUrl, input.apiKey, input.extra || {}]

@@ -31,7 +31,7 @@ async function switchProject(config) {
   saveConfig({ ...config });
 
   // 使用解析后的名称显示
-  const { parseRealProjectPath } = require('../server/services/sessions');
+  const { parseRealProjectPath } = require('../platforms/drivers/claude/sessions-implementation');
   const { displayName, fullPath } = parseRealProjectPath(selectedProject);
 
   console.log(chalk.green(`\n[OK] 已切换到: ${displayName}\n`));

@@ -9,18 +9,18 @@ const {
   getEnabledChannels,
   saveChannelOrder,
   syncCurrentCodexChannel
-} = require('../services/codex-channels');
+} = require('../../platforms/drivers/codex/channels-implementation');
 const { getSchedulerState } = require('../services/channel-scheduler');
 const { getChannelHealthStatus, resetChannelHealth } = require('../services/channel-health');
 const { broadcastSchedulerState, broadcastLog } = require('../websocket-server');
-const { isCodexInstalled } = require('../services/codex-config');
+const { isCodexInstalled } = require('../../platforms/drivers/codex/config');
 const {
   testChannelSpeed,
   getLatencyLevel,
   sanitizeBatchConcurrency,
   runWithConcurrencyLimit
 } = require('../services/speed-test');
-const { clearCodexRedirectCache } = require('../codex-proxy-server');
+const { clearCodexRedirectCache } = require('../../platforms/drivers/codex/proxy-implementation');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const CODEX_GATEWAY_SOURCE_TYPE = 'codex';
 const CODEX_PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i;

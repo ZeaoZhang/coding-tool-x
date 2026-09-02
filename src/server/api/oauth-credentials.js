@@ -26,8 +26,8 @@ function broadcastToolProxyState(tool) {
   const { broadcastProxyState } = require('../websocket-server');
 
   if (tool === 'claude') {
-    const { getProxyStatus } = require('../proxy-server');
-    const { getAllChannels } = require('../services/channels');
+    const { getProxyStatus } = require('../../platforms/drivers/claude/proxy-implementation');
+    const { getAllChannels } = require('../../platforms/drivers/claude/channels-implementation');
     const channels = getAllChannels();
     const activeChannel = channels.find(ch => ch.enabled !== false) || null;
     broadcastProxyState('claude', getProxyStatus(), activeChannel, channels);
@@ -35,8 +35,8 @@ function broadcastToolProxyState(tool) {
   }
 
   if (tool === 'codex') {
-    const { getCodexProxyStatus } = require('../codex-proxy-server');
-    const { getChannels } = require('../services/codex-channels');
+    const { getCodexProxyStatus } = require('../../platforms/drivers/codex/proxy-implementation');
+    const { getChannels } = require('../../platforms/drivers/codex/channels-implementation');
     const channels = getChannels().channels || [];
     const activeChannel = channels.find(ch => ch.enabled !== false) || null;
     broadcastProxyState('codex', getCodexProxyStatus(), activeChannel, channels);
@@ -44,8 +44,8 @@ function broadcastToolProxyState(tool) {
   }
 
   if (tool === 'gemini') {
-    const { getGeminiProxyStatus } = require('../gemini-proxy-server');
-    const { getChannels } = require('../services/gemini-channels');
+    const { getGeminiProxyStatus } = require('../../platforms/drivers/gemini/proxy-implementation');
+    const { getChannels } = require('../../platforms/drivers/gemini/channels-implementation');
     const channels = getChannels().channels || [];
     const activeChannel = channels.find(ch => ch.enabled !== false) || null;
     broadcastProxyState('gemini', getGeminiProxyStatus(), activeChannel, channels);
@@ -53,8 +53,8 @@ function broadcastToolProxyState(tool) {
   }
 
   if (tool === 'opencode') {
-    const { getOpenCodeProxyStatus } = require('../opencode-proxy-server');
-    const { getChannels } = require('../services/opencode-channels');
+    const { getOpenCodeProxyStatus } = require('../../platforms/drivers/opencode/proxy-implementation');
+    const { getChannels } = require('../../platforms/drivers/opencode/channels-implementation');
     const channels = getChannels().channels || [];
     const activeChannel = channels.find(ch => ch.enabled !== false) || null;
     broadcastProxyState('opencode', getOpenCodeProxyStatus(), activeChannel, channels);
@@ -62,8 +62,8 @@ function broadcastToolProxyState(tool) {
   }
 
   if (tool === 'omp') {
-    const { getOmpProxyStatus } = require('../omp-proxy-server');
-    const { getChannels } = require('../services/omp-channels');
+    const { getOmpProxyStatus } = require('../../platforms/drivers/omp/proxy-implementation');
+    const { getChannels } = require('../../platforms/drivers/omp/channels-implementation');
     const channels = getChannels().channels || [];
     const activeChannel = channels.find(ch => ch.enabled !== false) || null;
     broadcastProxyState('omp', getOmpProxyStatus(), activeChannel, channels);
