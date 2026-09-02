@@ -1,15 +1,13 @@
 const express = require('express');
+const { getPlatformRuntime } = require('../../platforms/runtime');
 const router = express.Router();
-const fs = require('fs');
 const {
   getAllChannels,
-  applyChannelToSettings,
   createChannel,
   updateChannel,
   deleteChannel,
   getCurrentSettings,
   getBestChannelForRestore,
-  updateClaudeSettingsWithModelConfig,
   syncCurrentClaudeChannel
 } = require('../services/channels');
 const { getSchedulerState } = require('../services/channel-scheduler');
@@ -22,8 +20,6 @@ const {
   runWithConcurrencyLimit
 } = require('../services/speed-test');
 const { normalizeGatewaySourceType } = require('../services/base/proxy-utils');
-const { PATHS } = require('../../config/paths');
-const { deleteBackup } = require('../services/settings-manager');
 const { getDefaultSpeedTestModelByToolType } = require('../../config/model-metadata');
 const { broadcastLog, broadcastProxyState, broadcastSchedulerState } = require('../websocket-server');
 const { clearRedirectCache } = require('../proxy-server');
@@ -200,11 +196,13 @@ router.delete('/:id', async (req, res) => {
 router.post('/:id/apply-to-settings', async (req, res) => {
   try {
     const { id } = req.params;
-    const channel = applyChannelToSettings(id);
-
-    // Check if proxy is running
-    const { getProxyStatus } = require('../proxy-server');
-    const proxyStatus = getProxyStatus();
+    const runtime = getPlatformRuntime();
+    const channelsDriver = runtime.getDriver('claude', 'channels');
+    const channel = channelsDriver.applyChannelToSettings(id);
+    const proxyDriver = runtime.getDriver('claude', 'proxy');
+    const proxyStatus = proxyDriver && typeof proxyDriver.status === 'function'
+      ? await proxyDriver.status()
+      : null;
 
     broadcastLog({
       type: 'action',
@@ -215,25 +213,15 @@ router.post('/:id/apply-to-settings', async (req, res) => {
       source: 'claude'
     });
 
-    // Stop proxy if running
     if (proxyStatus && proxyStatus.running) {
       console.log(`Proxy is running, stopping to apply channel settings: ${channel.name}`);
+      await proxyDriver.stop({ clearStartTime: false });
+      const nativeDriver = runtime.getDriver('claude', 'nativeConfig');
+      nativeDriver.deleteBackup();
+      nativeDriver.clearActiveChannelMarker();
+      channelsDriver.updateClaudeSettingsWithModelConfig(channel);
 
-      // Stop proxy and restore backup
-      const { stopProxyServer } = require('../proxy-server');
-      await stopProxyServer({ clearStartTime: false });
-      deleteBackup();
-      try {
-        fs.unlinkSync(PATHS.activeChannel.claude);
-      } catch {
-        // ignore missing active channel marker
-      }
-
-      // Re-apply channel settings after proxy stop to prevent race condition
-      // (stopProxyServer restores backup, then we overwrite it with current channel)
-      updateClaudeSettingsWithModelConfig(channel);
-
-      console.log(`[OK] 已停���动态切换，默认使用当前渠道`);
+      console.log(`[OK] 已停止动态切换，默认使用当前渠道`);
       broadcastLog({
         type: 'action',
         action: 'stop_proxy',
@@ -242,14 +230,12 @@ router.post('/:id/apply-to-settings', async (req, res) => {
         source: 'claude'
       });
 
-      // 广播代理状态更新，通知前端代理已停止
-      const { broadcastProxyState } = require('../websocket-server');
       broadcastProxyState('claude', {
         running: false,
         port: null,
         runtime: null,
         startTime: null
-      }, null, getAllChannels());
+      }, null, channelsDriver.getAllChannels());
     }
 
     res.json({

@@ -48,8 +48,7 @@ const requestMetadata = new Map();
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
 const printedRedirectCache = new Map();
 
-// OpenAI 模型定价（每百万 tokens 的价格，单位：美元）
-// Claude 模型使用 config/model-pricing.js 中的集中定价
+// OpenAI/Claude pricing is sourced from config/model-metadata.js
 const PRICING = {
   'gpt-4o': { input: 2.5, output: 10 },
   'gpt-4o-2024-11-20': { input: 2.5, output: 10 },

@@ -296,9 +296,6 @@ class OmpChannelService extends BaseChannelService {
     return this.syncOmpProvidersForCurrentMode(channels);
   }
 
-  disableManagedProviderExtension() {
-    this.disableManagedOmpProviders();
-  }
 }
 
 const service = new OmpChannelService();
@@ -696,7 +693,6 @@ module.exports = {
   syncManagedOmpProviders: (channels, options) => service.syncManagedOmpProviders(channels, options),
   disableManagedOmpProviders: () => service.disableManagedOmpProviders(),
   syncManagedProviderExtension: (channels) => service.syncManagedProviderExtension(channels),
-  disableManagedProviderExtension: () => service.disableManagedProviderExtension(),
   isManagedOmpModeEnabled,
   getOrCreateOmpGatewaySecret,
   enableManagedOmpMode,
