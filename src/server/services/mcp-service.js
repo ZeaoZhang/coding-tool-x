@@ -6,34 +6,17 @@
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
-const toml = require('@iarna/toml');
 const { spawn } = require('child_process');
 const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
 const mcpFormat = require('../../shared/mcp-format');
-const { NATIVE_PATHS, PATHS } = require('../../config/paths');
-const { resolvePreferredHomeDir } = require('../../utils/home-dir');
+const { convertToOmpMcpFormat, convertFromOmpMcpFormat } = mcpFormat;
+const { PATHS } = require('../../config/paths');
 const { ControlManifestStore } = require('./control-manifest-store');
 const { EffectiveControlService, deriveMcpPolicy } = require('./effective-control-service');
 const { validateMcpId, mergeMcpPatch, redactSecrets } = require('../../shared/project-config');
 
-const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
-
-// MCP 配置文件路径
+// MCP central storage path. Native paths and serialization belong to Drivers.
 const MCP_SERVERS_FILE = PATHS.mcpServers;
-
-// 各平台配置文件路径
-const CLAUDE_CONFIG_PATH = NATIVE_PATHS.claude.mcp || path.join(HOME_DIR, '.claude.json');
-const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
-const GEMINI_CONFIG_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
-const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
-const OPENCODE_CONFIG_PATHS = {
-  jsonc: path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc'),
-  json: path.join(OPENCODE_CONFIG_DIR, 'opencode.json'),
-  legacy: path.join(OPENCODE_CONFIG_DIR, 'config.json')
-};
-const OMP_MCP_CONFIG_PATH = NATIVE_PATHS.omp?.mcp
-  || path.join(NATIVE_PATHS.omp?.dir || path.join(HOME_DIR, '.omp', 'agent'), 'mcp.json');
 
 // MCP 客户端连接池
 // serverId -> { client, timestamp }
@@ -360,10 +343,6 @@ function readJsonFile(filePath, defaultValue = {}) {
   }
   return defaultValue;
 }
-
-/**
- * 安全写入 JSON 文件（原子写入）
- */
 function writeJsonFile(filePath, data) {
   ensureDir(path.dirname(filePath));
   const tempPath = filePath + '.tmp';
@@ -371,138 +350,6 @@ function writeJsonFile(filePath, data) {
   fs.renameSync(tempPath, filePath);
 }
 
-/**
- * 安全读取 TOML 文件
- */
-function readTomlFile(filePath, defaultValue = {}) {
-  if (!fs.existsSync(filePath)) {
-    return defaultValue;
-  }
-
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    return toml.parse(content);
-  } catch (err) {
-    throw new Error(`Failed to parse ${filePath}: ${err.message}`);
-  }
-}
-
-/**
- * 安全写入 TOML 文件（原子写入）
- */
-function writeTomlFile(filePath, data) {
-  ensureDir(path.dirname(filePath));
-  const tempPath = filePath + '.tmp';
-  fs.writeFileSync(tempPath, toml.stringify(data), 'utf-8');
-  fs.renameSync(tempPath, filePath);
-}
-
-/**
- * 去除 JSONC 注释
- */
-function stripJsonComments(input) {
-  let result = '';
-  let inString = false;
-  let quote = '';
-  let index = 0;
-
-  while (index < input.length) {
-    const ch = input[index];
-    const next = input[index + 1];
-
-    if (inString) {
-      result += ch;
-      if (ch === '\\') {
-        if (next) {
-          result += next;
-          index += 2;
-          continue;
-        }
-      } else if (ch === quote) {
-        inString = false;
-      }
-      index += 1;
-      continue;
-    }
-
-    if (ch === '"' || ch === '\'') {
-      inString = true;
-      quote = ch;
-      result += ch;
-      index += 1;
-      continue;
-    }
-
-    if (ch === '/' && next === '/') {
-      index += 2;
-      while (index < input.length && input[index] !== '\n') {
-        index += 1;
-      }
-      continue;
-    }
-
-    if (ch === '/' && next === '*') {
-      index += 2;
-      while (index < input.length - 1 && !(input[index] === '*' && input[index + 1] === '/')) {
-        index += 1;
-      }
-      index += 2;
-      continue;
-    }
-
-    result += ch;
-    index += 1;
-  }
-
-  return result;
-}
-
-/**
- * 选择 OpenCode 配置文件路径
- */
-function selectOpenCodeConfigPath() {
-  if (fs.existsSync(OPENCODE_CONFIG_PATHS.jsonc)) return OPENCODE_CONFIG_PATHS.jsonc;
-  if (fs.existsSync(OPENCODE_CONFIG_PATHS.json)) return OPENCODE_CONFIG_PATHS.json;
-  if (fs.existsSync(OPENCODE_CONFIG_PATHS.legacy)) return OPENCODE_CONFIG_PATHS.legacy;
-  return OPENCODE_CONFIG_PATHS.json;
-}
-
-/**
- * 读取 OpenCode 配置
- */
-function readOpenCodeConfig() {
-  const filePath = selectOpenCodeConfigPath();
-
-  if (!fs.existsSync(filePath)) {
-    return { path: filePath, config: {} };
-  }
-
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    if (!raw.trim()) {
-      return { path: filePath, config: {} };
-    }
-
-    const content = filePath.endsWith('.jsonc') ? stripJsonComments(raw) : raw;
-    return {
-      path: filePath,
-      config: JSON.parse(content)
-    };
-  } catch (err) {
-    console.error(`[MCP] Failed to read OpenCode config:`, sanitizeMcpErrorText(err.message || err));
-    return { path: filePath, config: {} };
-  }
-}
-
-/**
- * 写入 OpenCode 配置（保持 JSON 格式）
- */
-function writeOpenCodeConfig(filePath, data) {
-  ensureDir(path.dirname(filePath));
-  const tempPath = filePath + '.tmp';
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tempPath, filePath);
-}
 
 function getPathEnvKey(envObj = {}) {
   return Object.keys(envObj).find(key => key.toLowerCase() === 'path') || 'PATH';
@@ -813,30 +660,30 @@ function applyMcpControlApps(server) {
 }
 
 function readNativeMcpEntries() {
-  const sources = [
-    ['claude', () => readJsonFile(CLAUDE_CONFIG_PATH, {}).mcpServers || {}, spec => normalizeServerSpec(spec)],
-    ['codex', () => readTomlFile(CODEX_CONFIG_PATH, {}).mcp_servers || {}, spec => convertFromCodexFormat(spec)],
-    ['gemini', () => readJsonFile(GEMINI_CONFIG_PATH, {}).mcpServers || {}, spec => normalizeServerSpec(spec)],
-    ['opencode', () => readOpenCodeConfig().config?.mcp || {}, spec => convertFromOpenCodeFormat(spec || {})],
-    ['omp', () => readOmpMcpConfig().mcpServers || {}, spec => convertFromOmpMcpFormat(spec || {})]
-  ];
   const entries = [];
-  for (const [platform, readServers, convert] of sources) {
-    let servers;
+  for (const platform of getMcpPlatformKeys()) {
     try {
-      servers = readServers();
-    } catch {
-      continue;
-    }
-    for (const [rawId, spec] of Object.entries(servers || {})) {
-      let id;
-      try {
-        id = validateMcpId(rawId);
-      } catch {
-        console.warn(`[MCP] Ignoring invalid native server id for ${platform}`);
-        continue;
+      const { driver } = requireMcpCapability(platform);
+      const result = driver.entries ? driver.entries() : driver.read?.();
+      if (result && typeof result.then === 'function') continue;
+      const config = result?.status === 'ok' ? result.data : result;
+      const nativeEntries = driver.entries
+        ? config
+        : getGenericMcpServerMap(config || {});
+      for (const [rawId, spec] of Object.entries(nativeEntries || {})) {
+        let id;
+        try {
+          id = validateMcpId(rawId);
+        } catch {
+          console.warn(`[MCP] Ignoring invalid native server id for ${platform}`);
+          continue;
+        }
+        const normalized = driver.normalize ? driver.normalize(spec) : normalizeServerSpec(spec);
+        const internalSpec = normalized?.status === 'ok' ? normalized.data : normalized;
+        entries.push({ platform, id, spec: internalSpec });
       }
-      entries.push({ platform, id, spec: convert(spec) });
+    } catch {
+      // A missing or malformed native config must not block central inventory.
     }
   }
   return entries;
@@ -1113,12 +960,16 @@ async function removeServerFromAllPlatforms(serverId) {
 async function syncServerToPlatform(server, platform) {
   try {
     const { platform: normalizedPlatform, driver } = requireMcpCapability(platform);
+    let result;
     if (typeof driver.sync === 'function') {
-      await driver.sync(server);
+      result = await driver.sync(server);
     } else {
-      await syncGenericMcpServer(driver, normalizedPlatform, server);
+      result = await syncGenericMcpServer(driver, normalizedPlatform, server);
     }
+    const failure = getDriverFailure(result, normalizedPlatform, 'sync');
+    if (failure) throw failure;
     console.log(`[MCP] Synced "${server.id}" to ${normalizedPlatform}`);
+    return result;
   } catch (err) {
     console.error(`[MCP] Failed to sync "${server.id}" to ${platform}:`, sanitizeMcpErrorText(err.message || err));
     throw err;
@@ -1128,113 +979,19 @@ async function syncServerToPlatform(server, platform) {
 async function removeServerFromPlatform(serverId, platform) {
   try {
     const { platform: normalizedPlatform, driver } = requireMcpCapability(platform);
-    if (typeof driver.sync === 'function') {
-      await driver.remove(serverId);
+    let result;
+    if (typeof driver.remove === 'function') {
+      result = await driver.remove(serverId);
     } else {
-      await removeGenericMcpServer(driver, normalizedPlatform, serverId);
+      result = await removeGenericMcpServer(driver, normalizedPlatform, serverId);
     }
+    const failure = getDriverFailure(result, normalizedPlatform, 'remove');
+    if (failure) throw failure;
     console.log(`[MCP] Removed "${serverId}" from ${normalizedPlatform}`);
+    return result;
   } catch (err) {
     console.error(`[MCP] Failed to remove "${serverId}" from ${platform}:`, sanitizeMcpErrorText(err.message || err));
     throw err;
-  }
-}
-
-function readPlatformMcpConfig(platform) {
-  switch (platform) {
-    case 'claude':
-      return readJsonFile(CLAUDE_CONFIG_PATH, {});
-    case 'codex':
-      return readTomlFile(CODEX_CONFIG_PATH, {});
-    case 'gemini':
-      return readJsonFile(GEMINI_CONFIG_PATH, {});
-    case 'opencode':
-      return readOpenCodeConfig().config;
-    case 'omp':
-      return readOmpMcpConfig();
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
-function writePlatformMcpConfig(platform, config) {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) {
-    throw new Error('MCP 平台配置必须是对象');
-  }
-
-  switch (platform) {
-    case 'claude':
-      writeJsonFile(CLAUDE_CONFIG_PATH, config);
-      return config;
-    case 'codex':
-      writeTomlFile(CODEX_CONFIG_PATH, config);
-      return config;
-    case 'gemini':
-      writeJsonFile(GEMINI_CONFIG_PATH, config);
-      return config;
-    case 'opencode':
-      writeOpenCodeConfig(selectOpenCodeConfigPath(), config);
-      return config;
-    case 'omp':
-      writeJsonFile(OMP_MCP_CONFIG_PATH, config);
-      return config;
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
-function removePlatformMcpServer(platform, serverId) {
-  if (!serverId || !String(serverId).trim()) {
-    throw new Error('MCP 服务器 ID 不能为空');
-  }
-
-  switch (platform) {
-    case 'claude':
-      return removeFromClaudeConfig(serverId);
-    case 'codex':
-      return removeFromCodexConfig(serverId);
-    case 'gemini':
-      return removeFromGeminiConfig(serverId);
-    case 'opencode':
-      return removeFromOpenCodeConfig(serverId);
-    case 'omp':
-      return removeFromOmpMcpConfig(serverId);
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
-function syncPlatformMcpServer(platform, server) {
-  switch (platform) {
-    case 'claude':
-      return syncToClaudeConfig(server);
-    case 'codex':
-      return syncToCodexConfig(server);
-    case 'gemini':
-      return syncToGeminiConfig(server);
-    case 'opencode':
-      return syncToOpenCodeConfig(server);
-    case 'omp':
-      return syncToOmpMcpConfig(server);
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
-}
-
-function importPlatformMcpServers(platform, servers) {
-  switch (platform) {
-    case 'claude':
-      return importFromClaude(servers);
-    case 'codex':
-      return importFromCodex(servers);
-    case 'gemini':
-      return importFromGemini(servers);
-    case 'opencode':
-      return importFromOpenCode(servers);
-    case 'omp':
-      return importFromOmp(servers);
-    default:
-      throw new Error(`无效的平台: ${platform}`);
   }
 }
 
@@ -1251,34 +1008,58 @@ async function readGenericMcpConfig(driver, platform, allowMissing = false) {
     if (allowMissing && failure.code === 'ENOENT') return {};
     throw failure;
   }
-  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+  const config = result?.status === 'ok' ? result.data : result;
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error(`MCP 配置必须是 JSON 对象: ${platform}`);
   }
-  return result;
+  return config;
 }
 
 async function writeGenericMcpConfig(driver, platform, config) {
   const result = await driver.write(config);
   const failure = getDriverFailure(result, platform, 'write');
   if (failure) throw failure;
-  return result;
+  return result?.status === 'ok' ? result.data : result;
+}
+
+function invokeMcpDriver(platform, operation, args = []) {
+  const { driver } = requireMcpCapability(platform);
+  if (typeof driver[operation] !== 'function') {
+    const error = createPlatformCapabilityError(platform, 'mcp', 'unsupported');
+    error.operation = operation;
+    throw error;
+  }
+  const normalize = result => {
+    const failure = getDriverFailure(result, platform, operation);
+    if (failure) throw failure;
+    return result?.status === 'ok' ? result.data : result;
+  };
+  const result = driver[operation](...args);
+  return result && typeof result.then === 'function' ? result.then(normalize) : normalize(result);
+}
+
+function readPlatformMcpConfig(platform) {
+  return invokeMcpDriver(platform, 'read');
+}
+
+function writePlatformMcpConfig(platform, config) {
+  return invokeMcpDriver(platform, 'write', [config]);
+}
+
+function removePlatformMcpServer(platform, serverId) {
+  return invokeMcpDriver(platform, 'remove', [serverId]);
+}
+
+function syncPlatformMcpServer(platform, server) {
+  return invokeMcpDriver(platform, 'sync', [server]);
+}
+
+function importPlatformMcpServers(platform, servers) {
+  return invokeMcpDriver(platform, 'import', [servers]);
 }
 
 function exportPlatformMcpServers(platform, servers) {
-  switch (platform) {
-    case 'claude':
-      return exportForClaude(servers);
-    case 'codex':
-      return exportForCodex(servers);
-    case 'gemini':
-      return exportForGemini(servers);
-    case 'opencode':
-      return exportForOpenCode(servers);
-    case 'omp':
-      return exportForOmp(servers);
-    default:
-      throw new Error(`无效的平台: ${platform}`);
-  }
+  return invokeMcpDriver(platform, 'export', [servers]);
 }
 
 function getGenericMcpServerMap(config) {
@@ -1338,216 +1119,6 @@ async function importGenericMcpServers(driver, platform, servers) {
   return count;
 }
 
-// ============================================================================
-// Claude 配置同步
-// ============================================================================
-
-/**
- * 同步到 Claude 配置
- */
-function syncToClaudeConfig(server) {
-  const config = readJsonFile(CLAUDE_CONFIG_PATH, {});
-
-  if (!config.mcpServers) {
-    config.mcpServers = {};
-  }
-
-  // 只写入 server spec，不写入元数据
-  config.mcpServers[server.id] = extractServerSpec(server.server);
-
-  writeJsonFile(CLAUDE_CONFIG_PATH, config);
-}
-
-/**
- * 从 Claude 配置移除
- */
-function removeFromClaudeConfig(serverId) {
-  const config = readJsonFile(CLAUDE_CONFIG_PATH, {});
-
-  if (config.mcpServers && config.mcpServers[serverId]) {
-    delete config.mcpServers[serverId];
-    writeJsonFile(CLAUDE_CONFIG_PATH, config);
-  }
-}
-
-// ============================================================================
-// Codex 配置同步 (TOML 格式)
-// ============================================================================
-
-/**
- * 同步到 Codex 配置
- */
-function syncToCodexConfig(server) {
-  if (!fs.existsSync(CODEX_CONFIG_PATH)) {
-    throw new Error('Codex config.toml not found. Please run Codex CLI at least once before syncing MCP servers.');
-  }
-
-  const config = readTomlFile(CODEX_CONFIG_PATH, {});
-  const nextSpec = convertToCodexFormat(server.server);
-
-  if (!config.mcp_servers) {
-    config.mcp_servers = {};
-  }
-
-  if (JSON.stringify(config.mcp_servers[server.id] || null) === JSON.stringify(nextSpec)) {
-    return;
-  }
-
-  config.mcp_servers[server.id] = nextSpec;
-
-  writeTomlFile(CODEX_CONFIG_PATH, config);
-}
-
-/**
- * 从 Codex 配置移除
- */
-function removeFromCodexConfig(serverId) {
-  if (!fs.existsSync(CODEX_CONFIG_PATH)) {
-    return;
-  }
-
-  const config = readTomlFile(CODEX_CONFIG_PATH, {});
-
-  if (config.mcp_servers && config.mcp_servers[serverId]) {
-    delete config.mcp_servers[serverId];
-    if (Object.keys(config.mcp_servers).length === 0) {
-      delete config.mcp_servers;
-    }
-    writeTomlFile(CODEX_CONFIG_PATH, config);
-  }
-}
-
-/**
- * 转换为 Codex TOML 格式
- */
-function convertToCodexFormat(spec) {
-  return mcpFormat.convertToCodexFormat(spec);
-}
-
-// ============================================================================
-// Gemini 配置同步
-// ============================================================================
-
-/**
- * 同步到 Gemini 配置
- */
-function syncToGeminiConfig(server) {
-  const config = readJsonFile(GEMINI_CONFIG_PATH, {});
-
-  if (!config.mcpServers) {
-    config.mcpServers = {};
-  }
-
-  // 只写入 server spec，不写入元数据
-  config.mcpServers[server.id] = extractServerSpec(server.server);
-
-  writeJsonFile(GEMINI_CONFIG_PATH, config);
-}
-
-/**
- * 从 Gemini 配置移除
- */
-function removeFromGeminiConfig(serverId) {
-  const config = readJsonFile(GEMINI_CONFIG_PATH, {});
-
-  if (config.mcpServers && config.mcpServers[serverId]) {
-    delete config.mcpServers[serverId];
-    writeJsonFile(GEMINI_CONFIG_PATH, config);
-  }
-}
-
-// ============================================================================
-// OMP 配置同步
-// ============================================================================
-
-function validateOmpServerName(serverId) {
-  try {
-    return validateMcpId(serverId);
-  } catch {
-    throw new Error(`OMP MCP 服务器 ID "${serverId}" 无效。OMP 仅支持 1-100 个字母、数字、下划线、点或连字符。`);
-  }
-}
-
-function readOmpMcpConfig() {
-  const config = readJsonFile(OMP_MCP_CONFIG_PATH, { mcpServers: {} });
-  if (!config || typeof config !== 'object' || Array.isArray(config)) {
-    return { mcpServers: {} };
-  }
-  if (!config.mcpServers || typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers)) {
-    config.mcpServers = {};
-  }
-  return config;
-}
-
-
-function convertToOmpMcpFormat(spec = {}) {
-  return mcpFormat.convertToOmpMcpFormat(spec);
-}
-
-function convertFromOmpMcpFormat(spec = {}) {
-  return mcpFormat.convertFromOmpMcpFormat(spec);
-}
-
-function syncToOmpMcpConfig(server) {
-  validateOmpServerName(server.id);
-  const config = readOmpMcpConfig();
-  config.mcpServers[server.id] = convertToOmpMcpFormat(server.server);
-  writeJsonFile(OMP_MCP_CONFIG_PATH, config);
-}
-
-function removeFromOmpMcpConfig(serverId) {
-  const config = readOmpMcpConfig();
-  if (config.mcpServers && config.mcpServers[serverId]) {
-    delete config.mcpServers[serverId];
-    writeJsonFile(OMP_MCP_CONFIG_PATH, config);
-  }
-}
-
-// ============================================================================
-// OpenCode 配置同步
-// ============================================================================
-
-/**
- * 转换为 OpenCode 配置格式
- */
-function convertToOpenCodeFormat(spec) {
-  return mcpFormat.convertToOpenCodeFormat(spec);
-}
-
-/**
- * 从 OpenCode 格式转换到通用格式
- */
-function convertFromOpenCodeFormat(spec) {
-  return mcpFormat.convertFromOpenCodeFormat(spec);
-}
-
-/**
- * 同步到 OpenCode 配置
- */
-function syncToOpenCodeConfig(server) {
-  const { path: configPath, config } = readOpenCodeConfig();
-  const nextConfig = config && typeof config === 'object' ? config : {};
-
-  if (!nextConfig.mcp || typeof nextConfig.mcp !== 'object') {
-    nextConfig.mcp = {};
-  }
-
-  nextConfig.mcp[server.id] = convertToOpenCodeFormat(server.server);
-  writeOpenCodeConfig(configPath, nextConfig);
-}
-
-/**
- * 从 OpenCode 配置移除
- */
-function removeFromOpenCodeConfig(serverId) {
-  const { path: configPath, config } = readOpenCodeConfig();
-  const nextConfig = config && typeof config === 'object' ? config : {};
-
-  if (nextConfig.mcp && nextConfig.mcp[serverId]) {
-    delete nextConfig.mcp[serverId];
-    writeOpenCodeConfig(configPath, nextConfig);
-  }
-}
 
 // ============================================================================
 // 导入功能
@@ -1559,9 +1130,12 @@ function removeFromOpenCodeConfig(serverId) {
 async function importFromPlatform(platform) {
   const { platform: normalizedPlatform, driver } = requireMcpCapability(platform);
   const servers = getAllServers();
-  const importedCount = typeof driver.import === 'function'
+  const result = typeof driver.import === 'function'
     ? await driver.import(servers)
     : await importGenericMcpServers(driver, normalizedPlatform, servers);
+  const failure = getDriverFailure(result, normalizedPlatform, 'import');
+  if (failure) throw failure;
+  const importedCount = result?.status === 'ok' ? result.data : result;
 
   if (importedCount > 0) {
     writeJsonFile(MCP_SERVERS_FILE, servers);
@@ -1572,174 +1146,7 @@ async function importFromPlatform(platform) {
   return importedCount;
 }
 
-/**
- * 从 Claude 导入
- */
-function importFromClaude(servers) {
-  const config = readJsonFile(CLAUDE_CONFIG_PATH, {});
-  const mcpServers = config.mcpServers || {};
-  let count = 0;
 
-  for (const [id, spec] of Object.entries(mcpServers)) {
-    const normalizedId = validateMcpId(id);
-    if (servers[normalizedId]) {
-      if (!servers[normalizedId].apps.claude) {
-        servers[normalizedId].apps.claude = true;
-        count++;
-      }
-    } else {
-      servers[normalizedId] = {
-        id: normalizedId,
-        name: normalizedId,
-        server: spec,
-        apps: { claude: true, codex: false, gemini: false, opencode: false },
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      count++;
-    }
-  }
-
-  return count;
-}
-
-/**
- * 从 Codex 导入
- */
-function importFromCodex(servers) {
-  const config = readTomlFile(CODEX_CONFIG_PATH, {});
-  const mcpServers = config.mcp_servers || {};
-  let count = 0;
-
-  for (const [id, spec] of Object.entries(mcpServers)) {
-    const normalizedId = validateMcpId(id);
-    const convertedSpec = convertFromCodexFormat(spec);
-
-    if (servers[normalizedId]) {
-      if (!servers[normalizedId].apps.codex) {
-        servers[normalizedId].apps.codex = true;
-        count++;
-      }
-    } else {
-      servers[normalizedId] = {
-        id: normalizedId,
-        name: normalizedId,
-        server: convertedSpec,
-        apps: { claude: false, codex: true, gemini: false, opencode: false },
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      count++;
-    }
-  }
-
-  return count;
-}
-
-/**
- * 从 Gemini 导入
- */
-function importFromGemini(servers) {
-  const config = readJsonFile(GEMINI_CONFIG_PATH, {});
-  const mcpServers = config.mcpServers || {};
-  let count = 0;
-
-  for (const [id, spec] of Object.entries(mcpServers)) {
-    const normalizedId = validateMcpId(id);
-    if (servers[normalizedId]) {
-      if (!servers[normalizedId].apps.gemini) {
-        servers[normalizedId].apps.gemini = true;
-        count++;
-      }
-    } else {
-      servers[normalizedId] = {
-        id: normalizedId,
-        name: normalizedId,
-        server: spec,
-        apps: { claude: false, codex: false, gemini: true, opencode: false },
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      count++;
-    }
-  }
-
-  return count;
-}
-
-/**
- * 从 OpenCode 导入
- */
-function importFromOpenCode(servers) {
-  const { config } = readOpenCodeConfig();
-  const mcpServers = config.mcp || {};
-  let count = 0;
-
-  for (const [id, spec] of Object.entries(mcpServers)) {
-    const normalizedId = validateMcpId(id);
-    const convertedSpec = convertFromOpenCodeFormat(spec || {});
-
-    if (servers[normalizedId]) {
-      if (!servers[normalizedId].apps.opencode) {
-        servers[normalizedId].apps.opencode = true;
-        count++;
-      }
-    } else {
-      servers[normalizedId] = {
-        id: normalizedId,
-        name: normalizedId,
-        server: convertedSpec,
-        apps: { claude: false, codex: false, gemini: false, opencode: true },
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      count++;
-    }
-  }
-
-  return count;
-}
-
-/**
- * 从 OMP 导入
- */
-function importFromOmp(servers) {
-  const config = readOmpMcpConfig();
-  const mcpServers = config.mcpServers || {};
-  let count = 0;
-
-  for (const [id, spec] of Object.entries(mcpServers)) {
-    const normalizedId = validateMcpId(id);
-    const convertedSpec = convertFromOmpMcpFormat(spec || {});
-
-    if (servers[normalizedId]) {
-      servers[normalizedId].apps = normalizeServerApps(servers[normalizedId].apps);
-      if (!servers[normalizedId].apps.omp) {
-        servers[normalizedId].apps.omp = true;
-        count++;
-      }
-    } else {
-      servers[normalizedId] = {
-        id: normalizedId,
-        name: normalizedId,
-        server: convertedSpec,
-        apps: { claude: false, codex: false, gemini: false, opencode: false, omp: true },
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      };
-      count++;
-    }
-  }
-
-  return count;
-}
-
-/**
- * 从 Codex 格式转换
- */
-function convertFromCodexFormat(spec) {
-  return mcpFormat.convertFromCodexFormat(spec);
-}
 
 /**
  * 提取纯净的服务器规范（移除元数据）
@@ -2302,106 +1709,6 @@ function exportAsJson(servers) {
   };
 }
 
-/**
- * 导出为 Claude 格式
- */
-function exportForClaude(servers) {
-  const mcpServers = {};
-
-  for (const [id, server] of Object.entries(servers)) {
-    if (server.apps?.claude) {
-      mcpServers[id] = sanitizeExportSpec(server.server);
-    }
-  }
-
-  return {
-    format: 'claude',
-    content: JSON.stringify({ mcpServers }, null, 2),
-    filename: 'claude-mcp-config.json',
-    contentType: 'application/json'
-  };
-}
-
-/**
- * 导出为 Codex 格式
- */
-function exportForCodex(servers) {
-  const mcp_servers = {};
-
-  for (const [id, server] of Object.entries(servers)) {
-    if (server.apps?.codex) {
-      mcp_servers[id] = convertToCodexFormat(sanitizeExportSpec(server.server));
-    }
-  }
-
-  return {
-    format: 'codex',
-    content: toml.stringify({ mcp_servers }),
-    filename: 'codex-mcp-config.toml',
-    contentType: 'application/toml'
-  };
-}
-
-/**
- * 导出为 OpenCode 格式
- */
-function exportForOpenCode(servers) {
-  const mcp = {};
-
-  for (const [id, server] of Object.entries(servers)) {
-    if (server.apps?.opencode) {
-      mcp[id] = convertToOpenCodeFormat(sanitizeExportSpec(server.server));
-    }
-  }
-
-  return {
-    format: 'opencode',
-    content: JSON.stringify({ mcp }, null, 2),
-    filename: 'opencode-mcp-config.json',
-    contentType: 'application/json'
-  };
-}
-
-/**
- * 导出为 Gemini 格式
- */
-function exportForGemini(servers) {
-  const mcpServers = {};
-
-  for (const [id, server] of Object.entries(servers)) {
-    if (server.apps?.gemini) {
-      mcpServers[id] = sanitizeExportSpec(server.server);
-    }
-  }
-
-  return {
-    format: 'gemini',
-    content: JSON.stringify({ mcpServers }, null, 2),
-    filename: 'gemini-mcp-config.json',
-    contentType: 'application/json'
-  };
-}
-
-/**
- * 导出为 OMP 格式
- */
-function exportForOmp(servers) {
-  const mcpServers = {};
-
-  for (const [id, server] of Object.entries(servers)) {
-    if (server.apps?.omp) {
-      validateOmpServerName(id);
-      mcpServers[id] = convertToOmpMcpFormat(sanitizeExportSpec(server.server));
-    }
-  }
-
-  return {
-    format: 'omp',
-    content: JSON.stringify({ $schema: OMP_MCP_SCHEMA_URL, mcpServers }, null, 2),
-    contentType: 'application/json',
-    filename: 'omp-mcp-config.json'
-  };
-}
 
 module.exports = {
   getAllServers,

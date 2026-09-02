@@ -227,14 +227,10 @@ const NATIVE_CONFIG_EXPORTS = Object.freeze({
   })
 });
 
-const RESOURCE_SYNC_METHODS = Object.freeze({
-  claude: Object.freeze({ sync: 'syncToClaude', remove: 'removeFromClaude' }),
-  codex: Object.freeze({ sync: 'syncToCodex', remove: 'removeFromCodex' }),
-  gemini: Object.freeze({ sync: 'syncToGemini', remove: 'removeFromGemini' }),
-  opencode: Object.freeze({ sync: 'syncToOpenCode', remove: 'removeFromOpenCode' }),
-  omp: Object.freeze({ sync: 'syncToOmp', remove: 'removeFromOmp' })
-});
 
+function unsupported(platform, capability, operation) {
+  return { status: 'unsupported', platform, capability, operation };
+}
 const LEGACY_FILE_EXPORTS = Object.freeze({
   mcp: Object.freeze({
     read: 'readPlatformMcpConfig',
@@ -250,33 +246,6 @@ const LEGACY_FILE_EXPORTS = Object.freeze({
     remove: 'removeLegacyPlatformPrompt'
   })
 });
-
-function createResourceSyncDriver({ platform, capability, requireImpl }) {
-  let manager;
-  const operations = RESOURCE_SYNC_METHODS[platform];
-  const loadManager = () => {
-    if (!manager) {
-      const service = requireImpl('../../server/services/config-sync-manager');
-      manager = new service.ConfigSyncManager();
-    }
-    return manager;
-  };
-
-  return {
-    platform,
-    capability,
-    sync(type, name, sourcePath = null) {
-      return operations ? loadManager()[operations.sync](type, name, sourcePath) : unsupported(platform, capability, 'sync');
-    },
-    remove(type, name) {
-      return operations ? loadManager()[operations.remove](type, name) : unsupported(platform, capability, 'remove');
-    }
-  };
-}
-
-function unsupported(platform, capability, operation) {
-  return { status: 'unsupported', platform, capability, operation };
-}
 
 function createModuleLoader({ platform, capability, requireImpl }) {
   const modulePath = MODULE_PATHS[platform] && MODULE_PATHS[platform][capability];
@@ -566,7 +535,8 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
     const normalizedOptions = options || {};
     return invokeProjectOperation(
       'getProjectAndSessionCounts',
-      platform === 'claude' ? [getClaudeConfig(normalizedOptions)] : [normalizedOptions]
+      platform === 'claude' ? [getClaudeConfig(normalizedOptions)] : [normalizedOptions],
+      'getProjectAndSessionCounts'
     );
   };
   driver.counts = driver.getProjectAndSessionCounts;
@@ -613,9 +583,6 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
         requireImpl
       });
     }
-  }
-  if (capability === 'resourceSync') {
-    return createResourceSyncDriver({ platform, capability, requireImpl });
   }
   if (capability === 'api' && MODULE_PATHS[platform]?.api) {
     const loadModule = createModuleLoader({ platform, capability, requireImpl });

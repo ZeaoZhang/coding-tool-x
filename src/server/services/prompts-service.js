@@ -89,8 +89,9 @@ function getDriverFailure(result, platform, operation) {
 function assertPromptReadResult(result, platform) {
   const failure = getDriverFailure(result, platform, 'read');
   if (failure) throw failure;
-  if (typeof result !== 'string') throw new Error(`平台 ${platform} 的提示词内容无效`);
-  return result;
+  const content = result?.status === 'ok' ? result.data : result;
+  if (typeof content !== 'string') throw new Error(`平台 ${platform} 的提示词内容无效`);
+  return content;
 }
 
 
@@ -292,8 +293,9 @@ function initPromptsData() {
       };
     });
 
-    // 检查用户是否已有提示词文件，如果有则导入为"当前使用"
-    const existingContent = readTextFile(CLAUDE_PROMPT_PATH, '');
+    const existingContent = getPromptPlatformKeys().includes('claude')
+      ? readPlatformPrompt('claude')
+      : '';
     if (existingContent.trim()) {
       const currentPreset = {
         id: 'current',
@@ -681,12 +683,6 @@ function removePlatformPrompt(platform) {
 function getPlatformStatus() {
   const statuses = {};
   const pending = [];
-  const legacyPaths = {
-    claude: CLAUDE_PROMPT_PATH,
-    codex: CODEX_PROMPT_PATH,
-    gemini: GEMINI_PROMPT_PATH,
-    opencode: OPENCODE_PROMPT_PATH
-  };
 
   for (const platform of getPromptPlatformKeys()) {
     const { driver } = requirePromptCapability(platform);
@@ -695,22 +691,21 @@ function getPlatformStatus() {
       error.operation = 'read';
       throw error;
     }
-    const pathValue = legacyPaths[platform] || null;
+    const pathValue = typeof driver.path === 'string' ? driver.path : null;
     const result = driver.read();
     const apply = value => {
       const failure = getDriverFailure(value, platform, 'read');
-      if (failure && failure.code !== 'ENOENT') throw failure;
-      const content = failure ? '' : assertPromptReadResult(value, platform);
+      if (failure) throw failure;
+      const content = assertPromptReadResult(value, platform);
       statuses[platform] = {
         ...(pathValue ? { path: pathValue } : {}),
-        exists: failure ? false : Boolean(pathValue ? fs.existsSync(pathValue) : true),
+        exists: pathValue ? fs.existsSync(pathValue) : Boolean(content),
         content
       };
     };
     if (result && typeof result.then === 'function') pending.push(result.then(apply));
     else apply(result);
   }
-
 
   return pending.length ? Promise.all(pending).then(() => statuses) : statuses;
 }
