@@ -543,6 +543,12 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
       });
     }
   }
+  if (useBuiltInDrivers && capability === 'projects') {
+    const capabilityModule = requireImpl(`./${platform}/projects`);
+    if (typeof capabilityModule?.createDriver === 'function') {
+      return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+    }
+  }
   if (capability === 'api' && MODULE_PATHS[platform]?.api) {
     const loadModule = createModuleLoader({ platform, capability, requireImpl });
     return {

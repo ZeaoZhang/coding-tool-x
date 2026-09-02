@@ -319,7 +319,8 @@ function _capabilityInvocationError(source, capability, operation, error) {
 
 async function _invokeCapabilityGetter(source, capability, operation, getter, options) {
   try {
-    return await getter(options);
+    const value = await getter(options);
+    return value && value.status === 'ok' ? value.data : value;
   } catch (error) {
     throw _capabilityInvocationError(source, capability, operation, error);
   }
@@ -459,6 +460,9 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     const driverOptions = { force: options.force === true, config };
     const projects = await _invokeCapabilityGetter(source, 'projects', 'list', getter, driverOptions);
     if (_isTypedPayload(projects)) {
+      if (projects.status === 'failed' && projects.cause instanceof Error) {
+        throw projects.cause;
+      }
       return projects;
     }
     if (source === 'claude') {

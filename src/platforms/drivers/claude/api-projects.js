@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { saveProjectOrder, deleteProject } = require('./sessions-implementation');
+const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const {
   emptyProjectList,
   getProjectListSnapshot,
@@ -33,7 +33,7 @@ module.exports = (config) => {
       if (!Array.isArray(order)) {
         return res.status(400).json({ error: 'Order must be an array' });
       }
-      saveProjectOrder(config, order);
+      invokeProjectDriver('claude', 'saveProjectOrder', [order, { config }]);
       invalidateProjectSnapshots('claude');
       res.json({ success: true });
     } catch (error) {
@@ -106,7 +106,7 @@ module.exports = (config) => {
   router.delete('/:projectName', (req, res) => {
     try {
       const { projectName } = req.params;
-      deleteProject(config, projectName);
+      invokeProjectDriver('claude', 'deleteProject', [projectName, { config }]);
       invalidateProjectSnapshots('claude');
       invalidateSessionSnapshots('claude', projectName);
       res.json({ success: true });

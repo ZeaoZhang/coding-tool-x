@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { saveProjectOrder, deleteProject } = require('./sessions-implementation');
+const { invokeProjectDriver } = require('../../../server/api/project-driver');
 const { isGeminiInstalled } = require('./config');
 const {
   emptyProjectList,
@@ -67,7 +67,7 @@ module.exports = (config) => {
         return res.status(400).json({ error: 'order must be an array' });
       }
 
-      saveProjectOrder(order);
+      invokeProjectDriver('gemini', 'saveProjectOrder', [order]);
       invalidateProjectSnapshots('gemini');
 
       res.json({ success: true });
@@ -88,7 +88,7 @@ module.exports = (config) => {
       }
 
       const { projectHash } = req.params;
-      const result = deleteProject(projectHash);
+      const result = invokeProjectDriver('gemini', 'deleteProject', [projectHash]);
       invalidateProjectSnapshots('gemini');
       invalidateSessionSnapshots('gemini', projectHash);
 
