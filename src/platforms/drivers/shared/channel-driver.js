@@ -37,7 +37,9 @@ function createChannelDriver({
   listMethod = 'getChannels',
   syncMethod,
   requireImpl,
-  capability = 'channels'
+  capability = 'channels',
+  cliMetadata = {},
+  formatCliChannelDetails
 } = {}) {
   let service;
   const loadService = () => {
@@ -71,8 +73,11 @@ function createChannelDriver({
         : failed(platform, capability, operation, error);
     }
   };
-
   const driver = { platform, capability };
+  driver.getCliMetadata = () => ({ ...cliMetadata });
+  driver.formatCliChannelDetails = typeof formatCliChannelDetails === 'function'
+    ? channel => formatCliChannelDetails(channel)
+    : () => [];
   Object.defineProperty(driver, '_service', { value: loadService, enumerable: false });
   driver.list = (...args) => call('list', listMethod, args, sanitizeChannels);
   driver.getEnabled = (...args) => call('getEnabled', 'getEnabledChannels', args, channels => sanitizeChannels(channels).channels);

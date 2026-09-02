@@ -1,62 +1,66 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const MODULE_PATH = require.resolve('../../../src/commands/channels');
-const OMP_CHANNELS_PATH = require.resolve('../../../src/server/services/omp-channels');
-const OMP_PROXY_PATH = require.resolve('../../../src/server/omp-proxy-server');
+const RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');
 
-let originalOmpChannelsCache;
-let originalOmpProxyCache;
+let originalRuntimeCache;
 
 beforeEach(() => {
-  originalOmpChannelsCache = require.cache[OMP_CHANNELS_PATH];
-  originalOmpProxyCache = require.cache[OMP_PROXY_PATH];
-
-  require.cache[OMP_CHANNELS_PATH] = {
-    id: OMP_CHANNELS_PATH,
-    filename: OMP_CHANNELS_PATH,
+  originalRuntimeCache = require.cache[RUNTIME_PATH];
+  require.cache[RUNTIME_PATH] = {
+    id: RUNTIME_PATH,
+    filename: RUNTIME_PATH,
     loaded: true,
     exports: {
-      getChannels: vi.fn(() => ({ channels: [{ id: 'omp-1', name: 'OMP One' }] })),
-      createChannel: vi.fn(),
-      updateChannel: vi.fn()
+      getPlatformRuntime: vi.fn(() => ({
+        getDriver: vi.fn((platform, capability) => {
+          if (capability === 'channels' && platform === 'omp') {
+            return {
+              getCliMetadata: () => ({
+                supportsCliCreate: false,
+                managedProviderConfig: true
+              }),
+              list: () => ({ status: 'ok', data: { channels: [{ id: 'omp-1', name: 'OMP One' }] } })
+            };
+          }
+          if (capability === 'proxy' && platform === 'omp') {
+            return {
+              getCliMetadata: () => ({ defaultPort: 20092, managedProviderConfig: true }),
+              status: () => ({ running: true })
+            };
+          }
+          return null;
+        })
+      })),
+      getPlatformRegistry: () => ({
+        list: () => [{ key: 'omp', label: 'OMP' }]
+      })
     }
   };
-  require.cache[OMP_PROXY_PATH] = {
-    id: OMP_PROXY_PATH,
-    filename: OMP_PROXY_PATH,
-    loaded: true,
-    exports: {
-      getOmpProxyStatus: vi.fn(() => ({ running: true }))
-    }
-  };
-
   delete require.cache[MODULE_PATH];
 });
 
 afterEach(() => {
   delete require.cache[MODULE_PATH];
-  if (originalOmpChannelsCache) {
-    require.cache[OMP_CHANNELS_PATH] = originalOmpChannelsCache;
+  if (originalRuntimeCache) {
+    require.cache[RUNTIME_PATH] = originalRuntimeCache;
   } else {
-    delete require.cache[OMP_CHANNELS_PATH];
-  }
-  if (originalOmpProxyCache) {
-    require.cache[OMP_PROXY_PATH] = originalOmpProxyCache;
-  } else {
-    delete require.cache[OMP_PROXY_PATH];
+    delete require.cache[RUNTIME_PATH];
   }
 });
 
 describe('channels command helpers', () => {
-  test('includes OMP in scheduler status sources', () => {
+  test('includes configured platforms in scheduler status sources', () => {
     const { _test } = require('../../../src/commands/channels');
 
-    expect(_test.buildSchedulerSources()).toEqual(expect.arrayContaining([
+    expect(_test.buildSchedulerSources()).toEqual([
       { key: 'omp', label: 'OMP' }
-    ]));
+    ]);
   });
 
-  test('routes omp channel services through omp channels', () => {
+  test('routes omp channel services through Runtime Drivers', () => {
     const { _test } = require('../../../src/commands/channels');
     const services = _test.getChannelServices('omp');
 
@@ -64,5 +68,16 @@ describe('channels command helpers', () => {
     expect(services.managedProviderConfig).toBe(true);
     expect(services.getAllChannels()).toEqual([{ id: 'omp-1', name: 'OMP One' }]);
     expect(services.getProxyStatus()).toEqual({ running: true });
+  });
+
+  test('keeps platform implementation out of the channel command', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, '../../../src/commands/channels.js'),
+      'utf8'
+    );
+
+    expect(source).not.toMatch(/server\/services\/(?:channels|codex-channels|gemini-channels|opencode-channels|omp-channels)/);
+    expect(source).not.toMatch(/server\/(?:codex|gemini|opencode|omp-)?proxy-server/);
+    expect(source).not.toMatch(/(?:cliType|normalizedCliType)\s*===\s*['"](?:claude|codex|gemini|opencode|omp)['"]/);
   });
 });

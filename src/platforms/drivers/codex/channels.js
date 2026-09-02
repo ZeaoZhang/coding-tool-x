@@ -11,9 +11,12 @@ function createDriver(context = {}) {
     syncMethod: 'syncCurrentCodexChannel',
     createArgs: (input, rest) => typeof input === 'object'
       ? [input.name, input.providerKey, input.baseUrl, input.apiKey, input.wireApi, input.extra || {}]
-      : [input, ...rest]
+      : [input, ...rest],
+    cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20089, createDefaults: { wireApi: 'responses' } },
+    formatCliChannelDetails: channel => channel.providerKey
+      ? [`provider ${channel.providerKey}`]
+      : []
   });
-  const callLegacy = (name, args) => driver._service()[name](...args);
   for (const name of [
     'getChannels', 'getEnabledChannels', 'createChannel', 'updateChannel',
     'markChannelAsRecentlyUsed', 'deleteChannel', 'saveChannelOrder',

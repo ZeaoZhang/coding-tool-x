@@ -4,88 +4,77 @@ const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
 const { PATHS } = require('../config/paths');
-const { clearNativeOAuth } = require('../server/services/native-oauth-adapters');
 const { normalizePlatformKey } = require('../shared/platforms');
+const { getPlatformRuntime, getPlatformRegistry } = require('../platforms/runtime');
 
 /**
  * 获取当前类型的代理服务
  */
-function getProxyServices(cliType) {
-  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  if (normalizedCliType === 'claude') {
-    const { getProxyStatus, startProxyServer, stopProxyServer } = require('../server/proxy-server');
-    return { getProxyStatus, startProxyServer, stopProxyServer, defaultPort: 20088 };
-  } else if (normalizedCliType === 'codex') {
-    const { getCodexProxyStatus, startCodexProxyServer, stopCodexProxyServer } = require('../server/codex-proxy-server');
-    return {
-      getProxyStatus: getCodexProxyStatus,
-      startProxyServer: startCodexProxyServer,
-      stopProxyServer: stopCodexProxyServer,
-      defaultPort: 20089
-    };
-  } else if (normalizedCliType === 'gemini') {
-    const { getGeminiProxyStatus, startGeminiProxyServer, stopGeminiProxyServer } = require('../server/gemini-proxy-server');
-    return {
-      getProxyStatus: getGeminiProxyStatus,
-      startProxyServer: startGeminiProxyServer,
-      stopProxyServer: stopGeminiProxyServer,
-      defaultPort: 20090
-    };
-  } else if (normalizedCliType === 'opencode') {
-    const { getOpenCodeProxyStatus, startOpenCodeProxyServer, stopOpenCodeProxyServer } = require('../server/opencode-proxy-server');
-    return {
-      getProxyStatus: getOpenCodeProxyStatus,
-      startProxyServer: startOpenCodeProxyServer,
-      stopProxyServer: stopOpenCodeProxyServer,
-      defaultPort: 20091
-    };
-  } else if (normalizedCliType === 'omp') {
-    const { getOmpProxyStatus, startOmpProxyServer, stopOmpProxyServer } = require('../server/omp-proxy-server');
-    const config = loadConfig();
-    return {
-      getProxyStatus: getOmpProxyStatus,
-      startProxyServer: startOmpProxyServer,
-      stopProxyServer: stopOmpProxyServer,
-      defaultPort: config.ports?.ompProxy || 20092,
-      managedProviderConfig: true
-    };
-  }
-
-  return null;
+function unwrapDriverResult(result) {
+  if (!result || typeof result !== 'object' || !result.status) return result;
+  if (result.status === 'ok') return result.data;
+  throw result.cause instanceof Error
+    ? result.cause
+    : new Error(result.error || `Driver operation ${result.operation || 'unknown'} failed`);
 }
 
-function getPlatformRuntime() {
-  return require('../platforms/runtime').getPlatformRuntime();
+function getProxyServices(cliType, runtime = getPlatformRuntime()) {
+  const platform = normalizePlatformKey(cliType || 'claude');
+  const proxyDriver = runtime?.getDriver?.(platform, 'proxy');
+  const channelsDriver = runtime?.getDriver?.(platform, 'channels');
+  if (!proxyDriver) return null;
+
+  const metadata = {
+    ...(channelsDriver?.getCliMetadata?.() || {}),
+    ...(proxyDriver.getCliMetadata?.() || {})
+  };
+  return {
+    ...metadata,
+    getProxyStatus: () => unwrapDriverResult(proxyDriver.status()),
+    startProxyServer: options => unwrapDriverResult(proxyDriver.start(options)),
+    stopProxyServer: options => unwrapDriverResult(proxyDriver.stop(options)),
+    getAllChannels: () => {
+      if (typeof channelsDriver?.list !== 'function') return [];
+      const result = unwrapDriverResult(channelsDriver.list());
+      return Array.isArray(result) ? result : (result?.channels || []);
+    },
+    applyChannelToSettings: id => channelsDriver?.applyNativeConfig
+      ? unwrapDriverResult(channelsDriver.applyNativeConfig(id))
+      : null,
+    channelsDriver,
+    proxyDriver
+  };
 }
+function getPlatformLabel(platform) {
+  return getPlatformRegistry().resolve(platform)?.label || platform;
+}
+
 
 function getSettingsManager(cliType, runtime = getPlatformRuntime()) {
-  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  const candidates = ['nativeConfig', 'proxy'];
-
-  for (const capability of candidates) {
-    let driver;
-    try {
-      driver = runtime && typeof runtime.getDriver === 'function'
-        ? runtime.getDriver(normalizedCliType, capability)
-        : null;
-    } catch (_) {
-      continue;
-    }
-    if (!driver || typeof driver !== 'object' || driver.status === 'unsupported') {
-      continue;
-    }
-    if (typeof driver.setProxyConfig !== 'function') {
-      continue;
-    }
-    return {
-      setProxyConfig: driver.setProxyConfig.bind(driver),
-      restoreSettings: typeof driver.restoreSettings === 'function' ? driver.restoreSettings.bind(driver) : undefined,
-      hasBackup: typeof driver.hasBackup === 'function' ? driver.hasBackup.bind(driver) : () => false,
-      deleteBackup: typeof driver.deleteBackup === 'function' ? driver.deleteBackup.bind(driver) : undefined
-    };
+  const platform = normalizePlatformKey(cliType || 'claude');
+  const driver = runtime?.getDriver?.(platform, 'nativeConfig');
+  if (!driver || typeof driver.setProxyConfig !== 'function') {
+    return null;
   }
 
-  return null;
+  return {
+    setProxyConfig: (...args) => unwrapDriverResult(driver.setProxyConfig(...args)),
+    restoreSettings: typeof driver.restoreSettings === 'function'
+      ? (...args) => unwrapDriverResult(driver.restoreSettings(...args))
+      : undefined,
+    isProxyConfig: typeof driver.isProxyConfig === 'function'
+      ? (...args) => unwrapDriverResult(driver.isProxyConfig(...args))
+      : undefined,
+    hasBackup: typeof driver.hasBackup === 'function'
+      ? (...args) => unwrapDriverResult(driver.hasBackup(...args))
+      : () => false,
+    deleteBackup: typeof driver.deleteBackup === 'function'
+      ? (...args) => unwrapDriverResult(driver.deleteBackup(...args))
+      : undefined,
+    clearNativeOAuth: typeof driver.clearNativeOAuth === 'function'
+      ? (...args) => unwrapDriverResult(driver.clearNativeOAuth(...args))
+      : undefined
+  };
 }
 
 function removeActiveChannelMarker(cliType) {
@@ -148,33 +137,22 @@ function pickRestoredChannel(cliType, channels = []) {
   return pickLatestEnabledChannel(channels);
 }
 
-function restoreSingleChannelMode(cliType) {
-  const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  if (normalizedCliType === 'claude') {
-    const { getAllChannels, applyChannelToSettings } = require('../server/services/channels');
-    const target = pickRestoredChannel(normalizedCliType, getAllChannels());
-    return target ? applyChannelToSettings(target.id) : null;
+function restoreSingleChannelMode(cliType, runtime = getPlatformRuntime()) {
+  const platform = normalizePlatformKey(cliType || 'claude');
+  const channelsDriver = runtime?.getDriver?.(platform, 'channels');
+  if (!channelsDriver || typeof channelsDriver.list !== 'function') {
+    return null;
   }
 
-  if (normalizedCliType === 'codex') {
-    const { getChannels, applyChannelToSettings } = require('../server/services/codex-channels');
-    const target = pickRestoredChannel(normalizedCliType, getChannels().channels || []);
-    return target ? applyChannelToSettings(target.id) : null;
-  }
+  const listed = unwrapDriverResult(channelsDriver.list());
+  const channels = Array.isArray(listed) ? listed : (listed?.channels || []);
+  const target = pickRestoredChannel(platform, channels);
+  if (!target) return null;
 
-  if (normalizedCliType === 'gemini') {
-    const { getChannels, applyChannelToSettings } = require('../server/services/gemini-channels');
-    const target = pickRestoredChannel(normalizedCliType, getChannels().channels || []);
-    return target ? applyChannelToSettings(target.id) : null;
-  }
-
-  if (normalizedCliType === 'opencode') {
-    const { getChannels, applyChannelToSettings } = require('../server/services/opencode-channels');
-    const target = pickRestoredChannel(normalizedCliType, getChannels().channels || []);
-    return target ? applyChannelToSettings(target.id) : null;
-  }
-
-  return null;
+  const result = typeof channelsDriver.applyNativeConfig === 'function'
+    ? channelsDriver.applyNativeConfig(target.id)
+    : channelsDriver.applyChannelToSettings?.(target.id);
+  return unwrapDriverResult(result);
 }
 
 /**
@@ -206,17 +184,7 @@ async function handleToggleProxy() {
 async function handleStartProxy(cliType, services) {
   console.clear();
   console.log(chalk.bold.cyan('\n╔=======================================╗'));
-  console.log(chalk.bold.cyan('║        开启动态切换        ║'));
-  console.log(chalk.bold.cyan('╚=======================================╝\n'));
-
-  const toolNameMap = {
-    claude: 'Claude Code',
-    codex: 'Codex',
-    gemini: 'Gemini',
-    opencode: 'OpenCode',
-    omp: 'OMP'
-  };
-  const toolName = toolNameMap[cliType] || 'Claude Code';
+  const toolName = getPlatformLabel(cliType);
   const defaultPort = services.defaultPort;
 
   console.log(chalk.cyan('动态切换功能说明:'));
@@ -284,7 +252,7 @@ async function handleStartProxy(cliType, services) {
       if (!settingsManager) {
         throw new Error(`平台 ${cliType} 未提供 nativeConfig 能力`);
       }
-      clearNativeOAuth(cliType);
+      settingsManager.clearNativeOAuth?.(cliType);
       settingsManager.setProxyConfig(proxyResult.port);
       console.log(chalk.green('[OK] 配置文件已更新'));
 
@@ -329,14 +297,7 @@ async function handleStopProxy(cliType, services) {
   console.log(chalk.bold.cyan('║        关闭动态切换        ║'));
   console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
-  const toolNameMap = {
-    claude: 'Claude Code',
-    codex: 'Codex',
-    gemini: 'Gemini',
-    opencode: 'OpenCode',
-    omp: 'OMP'
-  };
-  const toolName = toolNameMap[cliType] || 'Claude Code';
+  const toolName = getPlatformLabel(cliType);
   const proxyStatus = services.getProxyStatus();
 
   console.log(chalk.cyan('当前状态:'));
