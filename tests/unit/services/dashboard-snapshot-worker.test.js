@@ -537,10 +537,16 @@ describe('dashboard-snapshot-worker', () => {
           throw new Error(`unexpected capability ${capability}`);
         }
         if (platform === 'claude') {
-          return { list: vi.fn(() => [{ id: 'claude-channel' }]) };
+          return {
+            list: vi.fn(() => [{ id: 'claude-channel' }]),
+            normalizeDashboardChannels: value => Array.isArray(value) ? value : value?.channels || []
+          };
         }
         if (platform === 'opencode') {
-          return { list: vi.fn(() => [{ id: 'opencode-channel' }]) };
+          return {
+            list: vi.fn(() => [{ id: 'opencode-channel' }]),
+            normalizeDashboardChannels: value => Array.isArray(value) ? { channels: value } : value || { channels: [] }
+          };
         }
         throw new Error(`unexpected platform ${platform}`);
       })

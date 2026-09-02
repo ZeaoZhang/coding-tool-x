@@ -39,7 +39,7 @@ beforeEach(() => {
     return services[platform] || services.claude;
   };
 
-  const servicePath = require.resolve('../../../src/server/services/agents-service');
+  const servicePath = require.resolve('../../../src/platforms/agents-service');
   require.cache[servicePath] = {
     id: servicePath,
     filename: servicePath,
@@ -55,7 +55,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   delete require.cache[require.resolve('../../../src/server/api/agents')];
-  delete require.cache[require.resolve('../../../src/server/services/agents-service')];
+  delete require.cache[require.resolve('../../../src/platforms/agents-service')];
   delete require.cache[require.resolve('../../../src/config/paths')];
 });
 

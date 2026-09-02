@@ -228,14 +228,14 @@ function stubModules() {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth-creds-'));
   stubModules();
-  delete require.cache[require.resolve('../../../src/server/services/oauth-credentials-service')];
-  service = require('../../../src/server/services/oauth-credentials-service');
+  delete require.cache[require.resolve('../../../src/platforms/oauth-credentials-service')];
+  service = require('../../../src/platforms/oauth-credentials-service');
 });
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/services/oauth-credentials-service',
+    '../../../src/platforms/oauth-credentials-service',
     '../../../src/config/paths',
     '../../../src/platforms/native-oauth-adapters',
     '../../../src/server/services/oauth-utils',

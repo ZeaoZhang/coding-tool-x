@@ -123,14 +123,14 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/server/services/agents-service')];
-  ({ AgentsService } = require('../../../src/server/services/agents-service'));
+  delete require.cache[require.resolve('../../../src/platforms/agents-service')];
+  ({ AgentsService } = require('../../../src/platforms/agents-service'));
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   [
-    '../../../src/server/services/agents-service',
+    '../../../src/platforms/agents-service',
     '../../../src/config/paths',
     '../../../src/utils/home-dir',
     '../../../src/server/services/repo-scanner-base'

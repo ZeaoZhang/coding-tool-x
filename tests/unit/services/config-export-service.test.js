@@ -331,15 +331,15 @@ function stubModules() {
     loaded: true,
     exports: ompChannelsService
   };
-  require.cache[require.resolve('../../../src/server/services/agents-service')] = {
-    id: require.resolve('../../../src/server/services/agents-service'),
-    filename: require.resolve('../../../src/server/services/agents-service'),
+  require.cache[require.resolve('../../../src/platforms/agents-service')] = {
+    id: require.resolve('../../../src/platforms/agents-service'),
+    filename: require.resolve('../../../src/platforms/agents-service'),
     loaded: true,
     exports: { AgentsService: AgentsServiceStub }
   };
-  require.cache[require.resolve('../../../src/server/services/commands-service')] = {
-    id: require.resolve('../../../src/server/services/commands-service'),
-    filename: require.resolve('../../../src/server/services/commands-service'),
+  require.cache[require.resolve('../../../src/platforms/commands-service')] = {
+    id: require.resolve('../../../src/platforms/commands-service'),
+    filename: require.resolve('../../../src/platforms/commands-service'),
     loaded: true,
     exports: { CommandsService: CommandsServiceStub }
   };
@@ -398,9 +398,9 @@ function stubModules() {
       getConfigFilePath: () => path.join(testDir, 'config.json')
     }
   };
-  require.cache[require.resolve('../../../src/server/services/notification-hooks')] = {
-    id: require.resolve('../../../src/server/services/notification-hooks'),
-    filename: require.resolve('../../../src/server/services/notification-hooks'),
+  require.cache[require.resolve('../../../src/platforms/notification-hooks')] = {
+    id: require.resolve('../../../src/platforms/notification-hooks'),
+    filename: require.resolve('../../../src/platforms/notification-hooks'),
     loaded: true,
     exports: {
       getOpenCodeManagedPluginPath: () => ''
@@ -528,8 +528,8 @@ afterEach(() => {
     '../../../src/platforms/drivers/gemini/channels-implementation',
     '../../../src/platforms/drivers/opencode/channels-implementation',
     '../../../src/platforms/drivers/omp/channels-implementation',
-    '../../../src/server/services/agents-service',
-    '../../../src/server/services/commands-service',
+    '../../../src/platforms/agents-service',
+    '../../../src/platforms/commands-service',
     '../../../src/server/services/skill-service',
     '../../../src/server/services/plugins-service',
     '../../../src/server/services/workspace-service',
@@ -539,7 +539,7 @@ afterEach(() => {
     '../../../src/server/services/ui-config',
     '../../../src/config/loader',
     '../../../src/config/paths',
-    '../../../src/server/services/notification-hooks',
+    '../../../src/platforms/notification-hooks',
     '../../../src/platforms/drivers/opencode/native-config-implementation',
     'adm-zip'
   ].forEach((mod) => {

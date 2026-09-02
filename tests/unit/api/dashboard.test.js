@@ -114,7 +114,10 @@ function injectStubs() {
   platformDrivers = {
     claude: {
       proxy: { status: getProxyStatus },
-      channels: { list: getAllChannels },
+      channels: {
+        list: getAllChannels,
+        normalizeDashboardChannels: value => Array.isArray(value) ? value : value?.channels || []
+      },
       counts: { count: getClaudeCounts },
       statistics: { get: getTodayStatistics }
     },
@@ -132,13 +135,19 @@ function injectStubs() {
     },
     opencode: {
       proxy: { status: getOpenCodeProxyStatus },
-      channels: { list: getOpenCodeChannels },
+      channels: {
+        list: getOpenCodeChannels,
+        normalizeDashboardChannels: value => Array.isArray(value) ? value : value?.channels || []
+      },
       counts: { count: getOpenCodeCounts },
       statistics: { get: getOpenCodeTodayStatistics }
     },
     omp: {
       proxy: { status: getOmpProxyStatus },
-      channels: { list: getOmpChannels },
+      channels: {
+        list: getOmpChannels,
+        normalizeDashboardChannels: value => Array.isArray(value) ? value : value?.channels || []
+      },
       counts: { count: getOmpCounts },
       statistics: { get: getOmpTodayStatistics }
     }

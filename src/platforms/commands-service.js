@@ -9,17 +9,17 @@ const fs = require('fs');
 const path = require('path');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const { RepoScannerBase } = require('./repo-scanner-base');
-const { LocalResourceIndex } = require('./local-resource-index');
-const { NATIVE_PATHS } = require('../../config/paths');
+const { RepoScannerBase } = require('../server/services/repo-scanner-base');
+const { LocalResourceIndex } = require('../server/services/local-resource-index');
+const { NATIVE_PATHS } = require('../config/paths');
 const {
   parseFrontmatter
-} = require('./format-converter');
+} = require('../server/services/format-converter');
 const {
   normalizeSafeFileStem,
   normalizeSafeRelativePath,
   resolveInsideRoot
-} = require('../../shared/config-artifact-paths');
+} = require('../shared/config-artifact-paths');
 
 function readMetadataPrefix(filePath, platform) {
   const fd = fs.openSync(filePath, 'r');

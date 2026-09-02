@@ -12,7 +12,8 @@ const {
   disableStoredCredential,
   clearNativeOAuthState,
   fetchCredentialUsage
-} = require('../services/oauth-credentials-service');
+} = require('../../platforms/oauth-credentials-service');
+const { getPlatformRuntime } = require('../../platforms/runtime');
 
 function assertTool(tool) {
   if (!SUPPORTED_TOOLS.includes(tool)) {
@@ -22,52 +23,21 @@ function assertTool(tool) {
   }
 }
 
+function unwrapDriverData(result, fallback) {
+  if (!result || result.status === 'unsupported' || result.status === 'failed') return fallback;
+  return result.status === 'ok' ? result.data : result;
+}
+
 function broadcastToolProxyState(tool) {
   const { broadcastProxyState } = require('../websocket-server');
-
-  if (tool === 'claude') {
-    const { getProxyStatus } = require('../../platforms/drivers/claude/proxy-implementation');
-    const { getAllChannels } = require('../../platforms/drivers/claude/channels-implementation');
-    const channels = getAllChannels();
-    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
-    broadcastProxyState('claude', getProxyStatus(), activeChannel, channels);
-    return;
-  }
-
-  if (tool === 'codex') {
-    const { getCodexProxyStatus } = require('../../platforms/drivers/codex/proxy-implementation');
-    const { getChannels } = require('../../platforms/drivers/codex/channels-implementation');
-    const channels = getChannels().channels || [];
-    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
-    broadcastProxyState('codex', getCodexProxyStatus(), activeChannel, channels);
-    return;
-  }
-
-  if (tool === 'gemini') {
-    const { getGeminiProxyStatus } = require('../../platforms/drivers/gemini/proxy-implementation');
-    const { getChannels } = require('../../platforms/drivers/gemini/channels-implementation');
-    const channels = getChannels().channels || [];
-    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
-    broadcastProxyState('gemini', getGeminiProxyStatus(), activeChannel, channels);
-    return;
-  }
-
-  if (tool === 'opencode') {
-    const { getOpenCodeProxyStatus } = require('../../platforms/drivers/opencode/proxy-implementation');
-    const { getChannels } = require('../../platforms/drivers/opencode/channels-implementation');
-    const channels = getChannels().channels || [];
-    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
-    broadcastProxyState('opencode', getOpenCodeProxyStatus(), activeChannel, channels);
-    return;
-  }
-
-  if (tool === 'omp') {
-    const { getOmpProxyStatus } = require('../../platforms/drivers/omp/proxy-implementation');
-    const { getChannels } = require('../../platforms/drivers/omp/channels-implementation');
-    const channels = getChannels().channels || [];
-    const activeChannel = channels.find(ch => ch.enabled !== false) || null;
-    broadcastProxyState('omp', getOmpProxyStatus(), activeChannel, channels);
-  }
+  const runtime = getPlatformRuntime();
+  const proxyDriver = runtime.getDriver(tool, 'proxy');
+  const channelsDriver = runtime.getDriver(tool, 'channels');
+  const proxyStatus = unwrapDriverData(proxyDriver?.status?.(), {});
+  const channelData = unwrapDriverData(channelsDriver?.list?.(), { channels: [] });
+  const channels = Array.isArray(channelData) ? channelData : channelData?.channels || [];
+  const activeChannel = channels.find((channel) => channel && channel.enabled !== false) || null;
+  broadcastProxyState(tool, proxyStatus, activeChannel, channels);
 }
 
 router.get('/', (req, res) => {

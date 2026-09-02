@@ -18,7 +18,8 @@ function createDriver(context = {}) {
       managedProviderConfig: true,
       defaultPort: 20092,
       createUnavailableMessage: '提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。'
-    }
+    },
+    dashboardChannelShape: 'array'
   });
 }
 

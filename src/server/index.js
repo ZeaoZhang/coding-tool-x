@@ -207,8 +207,8 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/env', require('./api/env'));
   app.use('/api/skills', require('./api/skills'));
   app.use('/api/project-config', require('./api/project-config'));
-  const claudeHooks = require('./api/claude-hooks');
-  const notificationHooks = require('./services/notification-hooks');
+  const claudeHooks = require('../platforms/drivers/claude/api-hooks');
+  const notificationHooks = require('../platforms/notification-hooks');
   app.use('/api/claude/hooks', claudeHooks);
   app.use('/api/hooks', require('./api/hooks'));
 
@@ -238,7 +238,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/config-registry', require('./api/config-registry'));
 
   // 健康检查 API
-  app.use('/api/health-check', require('./api/health-check')(config));
+  app.use('/api/health-check', require('../platforms/drivers/claude/api-health-check')(config));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');
@@ -366,8 +366,8 @@ function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') 
 
 // 启动时执行健康检查
 async function performStartupHealthCheck() {
-  const { healthCheckAllProjects } = require('./services/health-check');
-  const { getProjects } = require('./platforms/drivers/claude/sessions-implementation');
+  const { healthCheckAllProjects } = require('../platforms/drivers/claude/health-check');
+  const { getProjects } = require('../platforms/drivers/claude/sessions-implementation');
 
   try {
     console.log(chalk.cyan('\n[SEARCH] 正在进行启动健康检查...'));

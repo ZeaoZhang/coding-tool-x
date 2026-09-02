@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { healthCheckAllProjects } = require('../services/health-check');
-const { getProjects } = require('../../platforms/drivers/claude/sessions-implementation');
+const { healthCheckAllProjects } = require('./health-check');
+const { getProjects } = require('./sessions-implementation');
 
 module.exports = (config) => {
   /**

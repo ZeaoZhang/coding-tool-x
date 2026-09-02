@@ -8,8 +8,8 @@ const { resolvePreferredHomeDir, normalizeWindowsHomePath, isWindowsLikePlatform
 const mcpClient = require('../src/server/services/mcp-client');
 const portHelper = require('../src/utils/port-helper');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
-const claudeHooks = require('../src/server/api/claude-hooks');
-const notificationHooks = require('../src/server/services/notification-hooks');
+const claudeHooks = require('../src/platforms/drivers/claude/api-hooks');
+const notificationHooks = require('../src/platforms/notification-hooks');
 const logsCommand = require('../src/commands/logs');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
 const daemonCommand = require('../src/commands/daemon');

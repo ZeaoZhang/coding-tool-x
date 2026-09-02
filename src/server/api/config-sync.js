@@ -3,7 +3,7 @@
  */
 
 const express = require('express');
-const { ConfigSyncService } = require('../services/config-sync-service');
+const { ConfigSyncService } = require('../../platforms/drivers/claude/config-sync');
 
 const router = express.Router();
 const configSyncService = new ConfigSyncService();

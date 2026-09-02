@@ -160,9 +160,13 @@ async function readDashboardSnapshot(source, fallbackValue, config = {}, options
   return snapshot;
 }
 
-function sourceFallback(source) {
+function sourceFallback(source, runtime) {
+  const channelsDriver = runtime?.getDriver?.(source, 'channels');
+  const channels = typeof channelsDriver?.normalizeDashboardChannels === 'function'
+    ? channelsDriver.normalizeDashboardChannels(null)
+    : { channels: [] };
   return {
-    channels: source === 'claude' ? [] : { channels: [] },
+    channels,
     todayStats: null,
     counts: EMPTY_COUNTS
   };
@@ -216,7 +220,7 @@ router.get('/init', async (req, res) => {
     const registry = getPlatformRegistry();
     const runtime = getPlatformRuntime();
     const sources = resolveEnabledSources(uiConfig, registry);
-    const sourceFallbackPayload = sourceFallback;
+    const sourceFallbackPayload = source => sourceFallback(source, runtime);
     const proxyStatusEntries = await Promise.all(sources.map(async source => [
       source,
       await readProxyStatus(source, runtime)
@@ -258,16 +262,13 @@ router.get('/init', async (req, res) => {
     const capabilityValueFor = (source, capability) => capabilitySnapshot(source, capability).value;
     const channels = Object.fromEntries(sources.map(source => {
       const value = capabilityValueFor(source, 'channels');
-      if (source === 'opencode' || source === 'omp') {
-        return [source, value?.channels || []];
-      }
-      if (source === 'claude') {
-        return [source, value || []];
-      }
-      if (Array.isArray(value)) {
-        return [source, value];
-      }
-      return [source, value || { channels: [] }];
+      const driver = runtime?.getDriver?.(source, 'channels');
+      return [
+        source,
+        typeof driver?.normalizeDashboardChannels === 'function'
+          ? driver.normalizeDashboardChannels(value)
+          : value
+      ];
     }));
     const counts = Object.fromEntries(sources.map(source => [
       source,

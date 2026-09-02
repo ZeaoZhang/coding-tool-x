@@ -2,7 +2,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
-const { ensureProjectClaudeDir, healthCheckAllProjects } = require('../../../src/server/services/health-check');
+const { ensureProjectClaudeDir, healthCheckAllProjects } = require('../../../src/platforms/drivers/claude/health-check');
 
 let testDir;
 
