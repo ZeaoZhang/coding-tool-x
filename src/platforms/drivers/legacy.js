@@ -7,6 +7,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './claude/proxy-implementation',
     statistics: './claude/statistics-implementation',
     nativeConfig: './claude/native-config-implementation',
+    api: './claude/api',
+    projectConfig: './claude/project-config',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
@@ -16,6 +18,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './codex/proxy-implementation',
     statistics: './codex/statistics-implementation',
     nativeConfig: './codex/native-config-implementation',
+    api: './codex/api',
+    projectConfig: './codex/project-config',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
@@ -25,6 +29,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './gemini/proxy-implementation',
     statistics: './gemini/statistics-implementation',
     nativeConfig: './gemini/native-config-implementation',
+    api: './gemini/api',
+    projectConfig: './gemini/project-config',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
@@ -34,6 +40,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './opencode/proxy-implementation',
     statistics: './opencode/statistics-implementation',
     nativeConfig: './opencode/native-config-implementation',
+    api: './opencode/api',
+    projectConfig: './opencode/project-config',
     mcp: '../../server/services/mcp-service',
     prompts: '../../server/services/prompts-service'
   }),
@@ -43,6 +51,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './omp/proxy-implementation',
     statistics: './omp/statistics-implementation',
     nativeConfig: './omp/native-config-implementation',
+    api: './omp/api',
+    projectConfig: './omp/project-config',
     mcp: '../../server/services/mcp-service'
   })
 });
@@ -571,6 +581,32 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
 function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = false, ...context } = {}) {
   if (capability === 'resourceSync') {
     return createResourceSyncDriver({ platform, capability, requireImpl });
+  }
+  if (capability === 'api' && MODULE_PATHS[platform]?.api) {
+    const loadModule = createModuleLoader({ platform, capability, requireImpl });
+    return {
+      platform,
+      capability,
+      createRouter: ({ config, routes } = {}) => {
+        const moduleExports = loadModule();
+        if (typeof moduleExports?.createRouter !== 'function') return null;
+        return moduleExports.createRouter(config, { routes });
+      }
+    };
+  }
+  if (capability === 'projectConfig' && MODULE_PATHS[platform]?.projectConfig) {
+    const loadModule = createModuleLoader({ platform, capability, requireImpl });
+    return {
+      platform,
+      capability,
+      createAdapter: options => {
+        const moduleExports = loadModule();
+        if (typeof moduleExports?.createAdapter !== 'function') {
+          return null;
+        }
+        return moduleExports.createAdapter(options);
+      }
+    };
   }
   if ((capability === 'mcp' || capability === 'prompts') && MODULE_PATHS[platform]?.[capability]) {
     return createLegacyFileDriver({ platform, capability, requireImpl });

@@ -11,8 +11,8 @@ const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapsh
 const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/gemini-projects')];
-  const createRouter = require('../../../src/server/api/gemini-projects');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/api-projects')];
+  const createRouter = require('../../../src/platforms/drivers/gemini/api-projects');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -97,7 +97,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/gemini-projects',
+    '../../../src/platforms/drivers/gemini/api-projects',
     '../../../src/platforms/drivers/gemini/sessions-implementation',
     '../../../src/platforms/drivers/gemini/config',
     '../../../src/config/paths',

@@ -10,8 +10,8 @@ const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapsh
 const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/omp-projects')];
-  const createRouter = require('../../../src/server/api/omp-projects');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/api-projects')];
+  const createRouter = require('../../../src/platforms/drivers/omp/api-projects');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -95,7 +95,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/omp-projects',
+    '../../../src/platforms/drivers/omp/api-projects',
     '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/config/paths',
     '../../../src/server/services/snapshot-cache',

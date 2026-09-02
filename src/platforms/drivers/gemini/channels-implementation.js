@@ -3,8 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
 const { resolveChannelWebsiteUrl } = require('../../../config/channel-preset-websites');
-const { clearNativeOAuth } = require('../shared/native-oauth-adapters');
-const { normalizeGatewaySourceType } = require('../../../server/services/base/proxy-utils');
+const { clearNativeOAuth } = require('../../native-oauth-adapters');
+const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const {
   createSkippedResult,
   isLocalProxyBaseUrl,

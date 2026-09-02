@@ -177,58 +177,29 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     message: 'Skill/MCP/project configuration requires same-origin access.'
   }));
 
-  // Registry-backed platform catalog and generic read routes
+  // Registry-backed platform catalog and config-driven platform API routes
   const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
+  const platformRegistry = getPlatformRegistry();
+  const platformRuntime = getPlatformRuntime();
   app.use('/api/platforms', require('./api/platforms')({
-    registry: getPlatformRegistry(),
-    runtime: getPlatformRuntime()
+    registry: platformRegistry,
+    runtime: platformRuntime
   }));
-
-  // API Routes
-  app.use('/api/projects', require('./api/projects')(config));
-  app.use('/api/sessions', require('./api/sessions')(config));
-
-  // Codex API Routes
-  app.use('/api/codex/projects', require('./api/codex-projects')(config));
-  app.use('/api/codex/sessions', require('./api/codex-sessions')(config));
-  app.use('/api/codex/channels', require('./api/codex-channels')(config));
-
-  // Gemini API Routes
-  app.use('/api/gemini/projects', require('./api/gemini-projects')(config));
-  app.use('/api/gemini/sessions', require('./api/gemini-sessions')(config));
-  app.use('/api/gemini/channels', require('./api/gemini-channels')(config));
-  app.use('/api/gemini/proxy', require('./api/gemini-proxy'));
-
-  // OpenCode API Routes
-  app.use('/api/opencode/projects', require('./api/opencode-projects')(config));
-  app.use('/api/opencode/sessions', require('./api/opencode-sessions')(config));
-  app.use('/api/opencode/channels', require('./api/opencode-channels')(config));
-  app.use('/api/opencode/proxy', require('./api/opencode-proxy'));
-  app.use('/api/opencode/statistics', require('./api/opencode-statistics'));
-
-  // OMP API Routes
-  app.use('/api/omp/projects', require('./api/omp-projects')(config));
-  app.use('/api/omp/sessions', require('./api/omp-sessions')(config));
-  app.use('/api/omp/channels', require('./api/omp-channels')(config));
-  app.use('/api/omp/proxy', require('./api/omp-proxy'));
-  app.use('/api/omp/statistics', require('./api/omp-statistics'));
-  app.use('/api/omp/config', require('./api/omp-config'));
+  app.use('/api', require('./api/platform-routes')({
+    registry: platformRegistry,
+    runtime: platformRuntime,
+    config
+  }));
 
   app.use('/api/aliases', require('./api/aliases')());
   app.use('/api/favorites', require('./api/favorites'));
   app.use('/api/ui-config', require('./api/ui-config'));
   app.use('/api/channel-balances', require('./api/channel-balances'));
   app.use('/api/security', require('./api/security'));
-  app.use('/api/channels', require('./api/channels'));
-  app.use('/api/proxy', require('./api/proxy'));
-  app.use('/api/codex/proxy', require('./api/codex-proxy'));
   app.use('/api/settings', require('./api/settings'));
   app.use('/api/config', require('./api/config'));
   app.use('/api/convert', require('./api/convert'));
   app.use('/api/statistics', require('./api/statistics'));
-  app.use('/api/claude/statistics', require('./api/claude-statistics'));
-  app.use('/api/codex/statistics', require('./api/codex-statistics'));
-  app.use('/api/gemini/statistics', require('./api/gemini-statistics'));
   app.use('/api/pm2-autostart', require('./api/pm2-autostart')());
   app.use('/api/dashboard', require('./api/dashboard'));
   app.use('/api/mcp', require('./api/mcp'));

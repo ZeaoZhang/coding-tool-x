@@ -1,5 +1,5 @@
 /**
- * Tests for src/server/api/channels.js
+ * Tests for src/platforms/drivers/claude/api-channels.js
  *
  * Pattern: inject vi.fn() stubs into require.cache before requiring the module
  * under test. Mirrors the channel-scheduler.test.js pattern used in this project.
@@ -15,9 +15,9 @@ const MODEL_META_PATH     = require.resolve('../../../src/config/model-metadata'
 const MODEL_DETECTOR_PATH = require.resolve('../../../src/server/services/model-detector');
 const WS_SERVER_PATH      = require.resolve('../../../src/server/websocket-server');
 const PROXY_SERVER_PATH   = require.resolve('../../../src/platforms/drivers/claude/proxy-implementation');
-const NATIVE_OAUTH_PATH   = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
+const NATIVE_OAUTH_PATH   = require.resolve('../../../src/platforms/native-oauth-adapters');
 const RUNTIME_PATH        = require.resolve('../../../src/platforms/runtime');
-const API_PATH            = require.resolve('../../../src/server/api/channels');
+const API_PATH            = require.resolve('../../../src/platforms/drivers/claude/api-channels');
 
 // Stable stub references – recreated in beforeEach
 let getAllChannels;
@@ -185,7 +185,7 @@ function makeRes() {
 beforeEach(() => {
   delete require.cache[API_PATH];
   injectStubs();
-  router = require('../../../src/server/api/channels');
+  router = require('../../../src/platforms/drivers/claude/api-channels');
 });
 
 afterEach(() => {

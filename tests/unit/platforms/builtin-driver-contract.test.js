@@ -29,11 +29,11 @@ describe('built-in channel Driver contract', () => {
   test.each(platforms)('%s exposes the stable channel operations', platform => {
     const driverModule = require(`../../../src/platforms/drivers/${platform}/channels`);
     const servicePath = {
-      claude: '../../server/services/channels',
-      codex: '../../server/services/codex-channels',
-      gemini: '../../server/services/gemini-channels',
-      opencode: '../../server/services/opencode-channels',
-      omp: '../../server/services/omp-channels'
+      claude: './claude/channels-implementation',
+      codex: './codex/channels-implementation',
+      gemini: './gemini/channels-implementation',
+      opencode: './opencode/channels-implementation',
+      omp: './omp/channels-implementation'
     }[platform];
     const driver = driverModule.createDriver({
       requireImpl: requested => requested === servicePath ? serviceFor(platform) : null

@@ -19,7 +19,7 @@ const {
   normalizeSafeFileStem,
   normalizeSafeRelativePath,
   resolveInsideRoot
-} = require('./config-artifact-paths');
+} = require('../../shared/config-artifact-paths');
 
 function readMetadataPrefix(filePath, platform) {
   const fd = fs.openSync(filePath, 'r');

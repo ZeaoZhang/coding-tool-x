@@ -1,13 +1,13 @@
 'use strict';
 
-const { createChannelDriver } = require('../shared/channel-driver');
+const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
   const driver = createChannelDriver({
     ...context,
     platform: 'claude',
     servicePath: './claude/channels-implementation',
-    localServicePath: '../claude/channels-implementation',
+    localServicePath: '../platforms/drivers/claude/channels-implementation',
     listMethod: 'getAllChannels',
     syncMethod: 'syncCurrentClaudeChannel',
     createArgs: (input, rest) => typeof input === 'object'

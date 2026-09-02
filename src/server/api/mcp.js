@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const mcpService = require('../services/mcp-service');
-const { redactSecrets } = require('../services/project-config-adapters/shared');
+const { redactSecrets } = require('../../shared/project-config');
 
 const SENSITIVE_URL_KEY = /^(?:token|secret|password|api[-_]?key|access[_-]?token|authorization|key)$/i;
 

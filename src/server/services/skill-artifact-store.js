@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const {
   normalizeSafeRelativePath,
   resolveInsideRoot
-} = require('./config-artifact-paths');
+} = require('../../shared/config-artifact-paths');
 
 const FORBIDDEN_METADATA_KEYS = new Set([
   'env',

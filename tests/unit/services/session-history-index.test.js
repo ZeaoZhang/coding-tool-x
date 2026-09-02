@@ -1509,7 +1509,7 @@ describe('session-history-index runtime selection', () => {
   it('treats typed unsupported runtime sessions results without an operation as explicit unsupported errors', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-runtime-unsupported-typed-'));
     const dbPath = path.join(rootDir, 'history.sqlite');
-    const sessionAdaptersPath = require.resolve('../../../src/server/services/session-history-adapters');
+    const sessionAdaptersPath = require.resolve('../../../src/platforms/session-history-adapters');
     const originalAdaptersCacheEntry = require.cache[sessionAdaptersPath];
     const legacyInventory = vi.fn(async () => {
       throw new Error('legacy adapter should not be used');

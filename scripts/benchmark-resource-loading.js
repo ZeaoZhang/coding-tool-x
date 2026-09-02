@@ -18,13 +18,13 @@ function installStubs(root) {
     codex: { dir: dirs.codex, config: path.join(dirs.codex, 'config.toml') }, gemini: { dir: dirs.gemini, env: path.join(dirs.gemini, '.env') }, opencode: { dir: dirs.opencode, config: dirs.opencode }, omp: { dir: dirs.omp, skills: path.join(dirs.omp, 'skills') }
   }, PATHS: { base: root, config: path.join(root, 'config'), localSkills: Object.fromEntries(PLATFORMS.map(p => [p, path.join(root, 'local-skills', p)])), skillRepos: files('repos'), skillCaches: files('cache'), pluginRepos: files('plugin-repos'), pluginMarketCache: files('plugin-cache'), plugins: { registry: path.join(root, 'plugins', 'registry.json') } }, getRepoScannerReposPath: t => path.join(root, 'repos', `${t}.json`), getRepoScannerCachePath: t => path.join(root, 'cache', `${t}-cache.json`) });
   stub(require.resolve('../src/utils/home-dir'), { resolvePreferredHomeDir: () => root });
-  stub(require.resolve('../src/server/services/omp-config'), { getOmpCommand: () => 'omp', getOmpPaths: () => ({ agentDir: dirs.omp, settings: path.join(dirs.omp, 'config.yml'), skills: path.join(dirs.omp, 'skills') }) });
+  stub(require.resolve('../src/platforms/drivers/omp/config'), { getOmpCommand: () => 'omp', getOmpPaths: () => ({ agentDir: dirs.omp, settings: path.join(dirs.omp, 'config.yml'), skills: path.join(dirs.omp, 'skills') }) });
   stub(require.resolve('../src/plugins/registry'), { listPlugins: () => [...registry.values()], getPlugin: n => registry.get(n) || null, updatePlugin: () => null });
   stub(require.resolve('../src/plugins/plugin-installer'), { installPlugin: () => null, uninstallPlugin: () => null });
   stub(require.resolve('../src/plugins/plugin-manager'), { initializePlugins: async () => {}, shutdownPlugins: async () => {} });
   stub(require.resolve('../src/plugins/constants'), { INSTALLED_DIR: installedDir, CONFIG_DIR: path.join(root, 'plugins', 'config') });
 }
-function clearModules() { for (const m of ['../src/server/services/commands-service', '../src/server/services/agents-service', '../src/server/services/skill-service', '../src/server/services/plugins-service', '../src/server/services/omp-native-plugin-adapter']) delete require.cache[require.resolve(m)]; }
+function clearModules() { for (const m of ['../src/server/services/commands-service', '../src/server/services/agents-service', '../src/server/services/skill-service', '../src/server/services/plugins-service', '../src/platforms/drivers/omp/native-plugin-adapter']) delete require.cache[require.resolve(m)]; }
 function fixture(root) {
   const d = { commands: path.join(root, 'claude', 'commands'), agents: path.join(root, 'claude', 'agents'), skills: path.join(root, 'local-skills', 'claude'), nativeSkills: path.join(root, 'claude', 'skills') };
   for (const x of Object.values(d)) fs.mkdirSync(x, { recursive: true }); fs.mkdirSync(installedDir, { recursive: true });

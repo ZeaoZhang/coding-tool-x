@@ -1,6 +1,6 @@
 'use strict';
 
-const { createProxyDriver } = require('../shared/proxy-driver');
+const { createProxyDriver } = require('../../../shared/proxy-driver');
 
 function createDriver(context = {}) {
   return createProxyDriver({

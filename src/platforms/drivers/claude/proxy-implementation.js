@@ -19,8 +19,8 @@ const eventBus = require('../../../plugins/event-bus');
 const { getEffectiveApiKey } = require('./channels-implementation');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
-const { redirectModel, normalizeGatewaySourceType } = require('../../../server/services/base/proxy-utils');
-const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('../../../server/services/base/response-usage-parser');
+const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
+const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('../../../shared/response-usage-parser');
 const {
   createClaudeStreamRecoveryState,
   mergeClaudeStreamEvent,
@@ -44,7 +44,7 @@ const printedRedirectCache = new Map();
 const CLAUDE_BASE_PRICING = DEFAULT_CONFIG.pricing.claude;
 const ONE_MILLION = 1000000;
 
-// detectModelTier and redirectModel imported from services/base/proxy-utils
+// detectModelTier and redirectModel imported from shared/proxy-utils
 
 /**
  * 计算请求成本

@@ -10,12 +10,12 @@ const os = require('os');
 const toml = require('@iarna/toml');
 const { spawn } = require('child_process');
 const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
-const mcpFormat = require('./mcp-format');
+const mcpFormat = require('../../shared/mcp-format');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { resolvePreferredHomeDir } = require('../../utils/home-dir');
 const { ControlManifestStore } = require('./control-manifest-store');
 const { EffectiveControlService, deriveMcpPolicy } = require('./effective-control-service');
-const { validateMcpId, mergeMcpPatch, redactSecrets } = require('./project-config-adapters/shared');
+const { validateMcpId, mergeMcpPatch, redactSecrets } = require('../../shared/project-config');
 
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
 

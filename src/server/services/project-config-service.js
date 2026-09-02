@@ -13,14 +13,26 @@ const {
   redactSecrets,
   validateMcpId,
   mergeMcpPatch
-} = require('./project-config-adapters/shared');
-const { createProjectConfigAdapters } = require('./project-config-adapters');
+} = require('../../shared/project-config');
 const PROJECT_SCOPES = new Set(['user', 'project']);
 
 function normalizePlatform(platform) {
   const normalized = String(platform || '').trim().toLowerCase();
   if (!normalized) throw new Error('Platform is required');
   return normalized;
+}
+function createProjectConfigAdapters({ registry, runtime, fsImpl }) {
+  const adapters = new Map();
+  const manifests = registry?.list?.({ enabledOnly: true }) || [];
+
+  for (const manifest of manifests) {
+    const driver = runtime?.getDriver?.(manifest.key, 'projectConfig');
+    if (!driver || typeof driver.createAdapter !== 'function') continue;
+    const adapter = driver.createAdapter({ manifest, fsImpl, registry });
+    if (adapter) adapters.set(manifest.key, adapter);
+  }
+
+  return adapters;
 }
 
 function secretRefsForMcpSpec(spec = {}) {
@@ -188,6 +200,7 @@ function unsupportedResource(pathname = null) {
 class ProjectConfigService {
   constructor({
     registry = platformRuntime.getPlatformRegistry(),
+    runtime = platformRuntime.getPlatformRuntime(),
     adapters = null,
     validateProjectPath = validateKnownProjectCwd,
     skillServiceFactory = null,
@@ -196,9 +209,10 @@ class ProjectConfigService {
     fsImpl = fs
   } = {}) {
     this.registry = registry;
+    this.runtime = runtime;
     this.fs = fsImpl;
     this.validateProjectPath = validateProjectPath;
-    this.adapters = adapters || createProjectConfigAdapters({ registry, fsImpl });
+    this.adapters = adapters || createProjectConfigAdapters({ registry, runtime, fsImpl });
     this.skillServiceFactory = skillServiceFactory;
     this.controlService = controlService || (
       PATHS.effectiveControlManifest

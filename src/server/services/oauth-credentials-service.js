@@ -14,7 +14,7 @@ const {
   clearNativeOAuth,
   disableNativeOAuthCredential,
   applyOAuthCredential
-} = require('../../platforms/drivers/shared/native-oauth-adapters');
+} = require('../../platforms/native-oauth-adapters');
 const { maskToken, decodeJwtPayload, removeFileIfExists } = require('./oauth-utils');
 
 function createEmptyStore() {

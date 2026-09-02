@@ -18,7 +18,7 @@ const {
   normalizeSafeFileStem,
   normalizeSafeRelativePath,
   resolveInsideRoot
-} = require('./config-artifact-paths');
+} = require('../../shared/config-artifact-paths');
 
 function readAgentMetadata(filePath) {
   const fd = fs.openSync(filePath, 'r');

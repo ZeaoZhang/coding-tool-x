@@ -13,8 +13,8 @@ let broadcastLogMock;
 let randomUuidSpy;
 
 function buildApp(config = { feature: 'test' }) {
-  delete require.cache[require.resolve('../../../src/server/api/sessions')];
-  const createRouter = require('../../../src/server/api/sessions');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/api-sessions')];
+  const createRouter = require('../../../src/platforms/drivers/claude/api-sessions');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -151,7 +151,7 @@ afterEach(() => {
   randomUuidSpy.mockRestore();
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/api/sessions',
+    '../../../src/platforms/drivers/claude/api-sessions',
     '../../../src/platforms/drivers/claude/sessions-implementation',
     '../../../src/server/services/alias',
     '../../../src/server/websocket-server',

@@ -4,8 +4,8 @@ const http = require('http');
 let claudeStatsService;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/claude-statistics')];
-  const router = require('../../../src/server/api/claude-statistics');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/api-statistics')];
+  const router = require('../../../src/platforms/drivers/claude/api-statistics');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -63,7 +63,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/claude-statistics',
+    '../../../src/platforms/drivers/claude/api-statistics',
     '../../../src/platforms/drivers/claude/statistics-implementation'
   ].forEach((mod) => {
     try {

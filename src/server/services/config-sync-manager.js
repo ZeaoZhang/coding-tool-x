@@ -23,7 +23,7 @@ const tomlStringify = require('@iarna/toml').stringify;
 const { convertSkillToCodex, convertCommandToCodex, convertCommandToGemini } = require('./format-converter');
 const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../../config/paths');
 const platformRuntime = require('../../platforms/runtime');
-const { assertNoSymlinkComponents } = require('./project-config-adapters/shared');
+const { assertNoSymlinkComponents } = require('../../shared/project-config');
 
 // Paths
 const HOME = HOME_DIR || os.homedir();

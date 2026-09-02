@@ -71,7 +71,7 @@ beforeEach(() => {
   };
 
   delete require.cache[require.resolve('../../../src/server/services/session-history-index')];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/platforms/session-history-adapters')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/session-history-adapter')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/sessions-implementation')];
   geminiSessions = require('../../../src/platforms/drivers/gemini/sessions-implementation');
@@ -85,7 +85,7 @@ afterEach(() => {
   [
     '../../../src/platforms/drivers/gemini/sessions-implementation',
     '../../../src/server/services/session-history-index',
-    '../../../src/server/services/session-history-adapters',
+    '../../../src/platforms/session-history-adapters',
     '../../../src/platforms/drivers/gemini/session-history-adapter',
     '../../../src/config/paths',
     '../../../src/platforms/drivers/gemini/config'

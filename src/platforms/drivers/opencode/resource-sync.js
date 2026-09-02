@@ -1,6 +1,6 @@
 'use strict';
 
-const { ok, failed } = require('../shared/driver-result');
+const { ok, failed } = require('../../../shared/driver-result');
 
 function createDriver({ requireImpl, ...context } = {}) {
   const moduleExports = requireImpl ? requireImpl('../../server/services/config-sync-manager') : require('../../../server/services/config-sync-manager');

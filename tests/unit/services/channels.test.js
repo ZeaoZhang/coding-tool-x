@@ -48,9 +48,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')] = {
-    id: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
-    filename: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
+  require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')] = {
+    id: require.resolve('../../../src/platforms/native-oauth-adapters'),
+    filename: require.resolve('../../../src/platforms/native-oauth-adapters'),
     loaded: true,
     exports: {
       clearNativeOAuth: clearNativeOAuthMock,
@@ -78,7 +78,7 @@ afterEach(() => {
     '../../../src/platforms/drivers/claude/channels-implementation',
     '../../../src/config/paths',
     '../../../src/platforms/drivers/claude/native-config-implementation',
-    '../../../src/platforms/drivers/shared/native-oauth-adapters',
+    '../../../src/platforms/native-oauth-adapters',
     '../../../src/utils/home-dir'
   ].forEach((mod) => {
     try {
