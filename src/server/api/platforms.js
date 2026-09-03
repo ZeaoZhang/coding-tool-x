@@ -56,11 +56,7 @@ function toPublicDefinition(definition) {
 }
 
 function defaultDependencies() {
-  const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
-  return {
-    registry: getPlatformRegistry(),
-    runtime: getPlatformRuntime()
-  };
+  return require('../platform-context').getPlatformContext();
 }
 
 function createPlatformRouter(options = {}) {

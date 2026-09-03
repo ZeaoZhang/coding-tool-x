@@ -28,6 +28,15 @@
 
       <!-- Scrollable Content -->
       <div class="content" ref="contentEl">
+
+        <n-alert
+          v-if="store.projects.length > 0 && store.projectsUsingFallback"
+          type="warning"
+          :title="store.projectsMeta?.error ? '项目列表刷新失败' : '项目列表可能不是最新'"
+          style="margin-bottom: 16px;"
+        >
+          {{ store.projectsMeta?.error || '当前显示的是上一次可用结果，后台正在尝试刷新。' }}
+        </n-alert>
         <!-- Loading -->
         <div v-if="store.loading && store.projects.length === 0 && !store.projectsPending" class="loading-container">
         <n-spin size="large">

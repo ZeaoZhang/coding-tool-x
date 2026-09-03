@@ -26,7 +26,7 @@ const {
   resolveInsideRoot
 } = require('../../shared/config-artifact-paths');
 const remoteCredentialCache = require('./remote-credential-cache');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const {
   assertExistingProjectRoot,
   assertNoSymlinkComponents,
@@ -270,7 +270,7 @@ class SkillService {
   constructor(
     platform = 'claude',
     {
-      registry = platformRuntime.getPlatformRegistry(),
+      registry = getPlatformContext().registry,
       controlService = null,
       artifactStore = null,
       formatAdapter = null

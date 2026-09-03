@@ -67,6 +67,28 @@ describe('sessions store background refresh', () => {
     expect(mocks.getSessions).toHaveBeenCalledWith('project-a', 'claude', { fresh: true });
   });
 
+  test('always refreshes projects instead of serving a client-side project cache', async () => {
+    mocks.getProjects
+      .mockResolvedValueOnce({
+        projects: [{ name: 'project-a' }],
+        currentProject: 'project-a',
+        meta: { refreshing: false, fallback: false, stale: false, error: null }
+      })
+      .mockResolvedValueOnce({
+        projects: [{ name: 'project-b' }],
+        currentProject: 'project-b',
+        meta: { refreshing: false, fallback: false, stale: false, error: null }
+      });
+    const store = useSessionsStore();
+
+    await store.fetchProjects();
+    await store.fetchProjects();
+
+    expect(mocks.getProjects).toHaveBeenNthCalledWith(1, 'claude', { fresh: false });
+    expect(mocks.getProjects).toHaveBeenNthCalledWith(2, 'claude', { fresh: false });
+    expect(store.projects).toEqual([{ name: 'project-b' }]);
+  });
+
   test('keeps polling a pending project snapshot until the long-task deadline', async () => {
     mocks.getProjects.mockResolvedValue({
       projects: [],

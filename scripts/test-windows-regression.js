@@ -8,7 +8,6 @@ const { resolvePreferredHomeDir, normalizeWindowsHomePath, isWindowsLikePlatform
 const mcpClient = require('../src/server/services/mcp-client');
 const portHelper = require('../src/utils/port-helper');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
-const claudeHooks = require('../src/platforms/drivers/claude/api-hooks');
 const notificationHooks = require('../src/platforms/notification-hooks');
 const logsCommand = require('../src/commands/logs');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
@@ -17,7 +16,7 @@ const codexSettingsManager = require('../src/platforms/drivers/codex/native-conf
 const ompConfig = require('../src/platforms/drivers/omp/config');
 
 function run() {
-  const hookTest = claudeHooks._test || {};
+  const hookTest = notificationHooks._test || {};
   const notificationHookTest = notificationHooks._test || {};
   const logsTest = logsCommand._test || {};
   const pm2Test = pm2Autostart._test || {};
@@ -27,7 +26,7 @@ function run() {
   const codexSettingsTest = codexSettingsManager._test || {};
 
   assert.strictEqual(typeof hookTest.shouldRepairStopHook, 'function', '缺少 shouldRepairStopHook 测试导出');
-  assert.strictEqual(typeof hookTest.resolvePreferredHomeDir, 'function', '缺少 resolvePreferredHomeDir 测试导出');
+  assert.strictEqual(typeof resolvePreferredHomeDir, 'function', '缺少 resolvePreferredHomeDir 导出');
   assert.strictEqual(typeof notificationHookTest.getManagedCommandType, 'function', '缺少 getManagedCommandType 测试导出');
   assert.strictEqual(typeof notificationHookTest.parseCodexNotificationStatus, 'function', '缺少 parseCodexNotificationStatus 测试导出');
   assert.strictEqual(typeof notificationHookTest.generateSystemNotificationCommand, 'function', '缺少 generateSystemNotificationCommand 测试导出');

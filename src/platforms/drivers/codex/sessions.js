@@ -24,6 +24,11 @@ function createDriver(context = {}) {
       getProjectOrder: 'getProjectOrder',
       status: 'getSessionStatus',
       messages: 'getSessionMessages'
+    },
+    onSuccess: operation => {
+      if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {
+        context.sessionHistoryIndex?.invalidateSource('codex');
+      }
     }
   });
 }

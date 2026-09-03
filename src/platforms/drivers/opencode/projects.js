@@ -1,14 +1,19 @@
 'use strict';
 
-const { createProjectsDriver } = require('../shared/projects');
+const { createProjectsDriver } = require('../../../shared/driver-factories/projects');
 
 function createDriver(context = {}) {
   return createProjectsDriver({
     ...context,
     platform: 'opencode',
     servicePath: './opencode/sessions-implementation',
-    localServicePath: '../opencode/sessions-implementation',
-    availabilityMethod: 'isOpenCodeInstalled'
+    localServicePath: '../../platforms/drivers/opencode/sessions-implementation',
+    availabilityMethod: 'isOpenCodeInstalled',
+    onSuccess: operation => {
+      if (['saveProjectOrder', 'createProject', 'deleteProject'].includes(operation)) {
+        context.sessionHistoryIndex?.invalidateSource('opencode');
+      }
+    }
   });
 }
 

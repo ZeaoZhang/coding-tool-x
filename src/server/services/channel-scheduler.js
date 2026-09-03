@@ -1,9 +1,9 @@
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } = require('./channel-health');
 
 function readChannels(source = 'claude') {
   try {
-    const driver = platformRuntime.getPlatformRuntime().getDriver(source, 'channels');
+    const driver = getPlatformContext().runtime.getDriver(source, 'channels');
     if (!driver || (typeof driver.status === 'string' && driver.status !== 'ok')) {
       return [];
     }

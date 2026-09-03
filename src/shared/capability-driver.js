@@ -12,6 +12,7 @@ function createCapabilityDriver({
   adapterPath,
   adapterLocalPath,
   adapterMethods = {},
+  onSuccess,
   preservePayloadUpdatedAt = false,
   requireImpl,
   prependPlatform = false,
@@ -47,8 +48,11 @@ function createCapabilityDriver({
       try {
         const target = load();
         if (typeof target?.[methodName] !== 'function') return unsupported(platform, capability, operation);
-        const value = target[methodName](...(prependPlatform ? [platform, ...args] : args));
-        const wrap = result => ok(platform, capability, operation, result);
+        const value = target[methodName](...args);
+        const wrap = result => {
+          if (typeof onSuccess === 'function') onSuccess(operation, result);
+          return ok(platform, capability, operation, result);
+        };
         return value && typeof value.then === 'function'
           ? value.then(wrap).catch(error => failed(platform, capability, operation, error))
           : wrap(value);

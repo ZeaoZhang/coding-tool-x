@@ -10,10 +10,16 @@ function configure({ sessionHistoryIndex: index } = {}) {
   sessionHistoryIndex = index || null;
 }
 
-function getSessionHistoryIndex() {
+function getSessionHistoryIndex(config = {}) {
   if (!sessionHistoryIndex) {
     const { getDefaultDependencies } = require('../../../platforms/runtime');
     sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+    if (!sessionHistoryIndex) {
+      const indexModule = require('../../../server/services/session-history-index');
+      sessionHistoryIndex = Object.keys(config).length > 0
+        ? indexModule.createSessionHistoryIndex({ config })
+        : indexModule;
+    }
   }
   return sessionHistoryIndex;
 }
@@ -113,20 +119,20 @@ function sliceClaudeSessionContentByUserMessage(content, afterUserMessageNumber)
 
 // ===== Read-side: all project/list/session/recent/search delegate to session-history-index =====
 
-async function getProjects(config) {
-  const indexed = await getSessionHistoryIndex().listProjects('claude');
+async function getProjects(config = {}, options = {}) {
+  const indexed = await getSessionHistoryIndex(config).listProjects('claude', { ...options, config });
   return indexed.map(p => p.name);
 }
 
-async function getProjectsWithStats(config, options = {}) {
-  return getSessionHistoryIndex().listProjects('claude');
+async function getProjectsWithStats(config = {}, options = {}) {
+  return getSessionHistoryIndex(config).listProjects('claude', { ...options, config });
 }
 
 // ===== Path resolution helpers (kept for mutation/conversion paths) =====
 
-function parseRealProjectPath(encodedName) {
+function parseRealProjectPath(encodedName, config = {}) {
   const isWindows = process.platform === 'win32';
-  const fallbackFromSessions = tryResolvePathFromSessions(encodedName);
+  const fallbackFromSessions = tryResolvePathFromSessions(encodedName, config);
   const windowsDriveMatch = encodedName.match(/^([A-Z])--(.+)$/);
 
   if (isWindows && windowsDriveMatch) {
@@ -209,9 +215,9 @@ function validateProjectPath(candidatePath) {
   return (candidatePath && fs.existsSync(candidatePath)) ? candidatePath : null;
 }
 
-function tryResolvePathFromSessions(encodedName) {
+function tryResolvePathFromSessions(encodedName, config = {}) {
   try {
-    const projectDir = path.join(CLAUDE_PROJECTS_DIR, encodedName);
+    const projectDir = path.join(resolveProjectsDir(config), encodedName);
     if (!fs.existsSync(projectDir)) return null;
     const files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
     for (const file of files) {
@@ -240,24 +246,19 @@ function extractCwdFromSessionHeader(sessionFile) {
 
 // ===== Counts: delegates to index =====
 
-async function getProjectAndSessionCounts(config) {
-  try {
-    const projects = await getSessionHistoryIndex().listProjects('claude');
-    let sessionCount = 0;
-    for (const p of projects) sessionCount += p.sessionCount || 0;
-    return { projectCount: projects.length, sessionCount };
-  } catch (_) {
-    return { projectCount: 0, sessionCount: 0 };
-  }
+async function getProjectAndSessionCounts(config = {}, options = {}) {
+  const projects = await getSessionHistoryIndex().listProjects('claude', { ...options, config });
+  let sessionCount = 0;
+  for (const project of projects) sessionCount += project.sessionCount || 0;
+  return { projectCount: projects.length, sessionCount };
 }
 
 // ===== Sessions for project: index + saved order + fork relations =====
 
 async function getSessionsForProject(config, projectName, options = {}) {
-  const indexed = await getSessionHistoryIndex().listSessions('claude', projectName);
+  const indexed = await getSessionHistoryIndex().listSessions('claude', projectName, { ...options, config });
   const forkRelations = getForkRelations();
   const savedOrder = getSessionOrder(projectName);
-
   let sessions = indexed.map(s => ({
     sessionId: s.sessionId,
     mtime: s.mtime,
@@ -281,7 +282,6 @@ async function getSessionsForProject(config, projectName, options = {}) {
   const totalSize = sessions.reduce((sum, s) => sum + (s.size || 0), 0);
   return { sessions, totalSize };
 }
-
 // ===== Mutations (sync) =====
 
 function deleteSession(config, projectName, sessionId) {
@@ -355,8 +355,8 @@ function deleteProject(config, projectName) {
 
 // ===== Search: delegates to index =====
 
-async function searchSessions(config, projectName, keyword, contextLength = 15) {
-  const results = await getSessionHistoryIndex().searchSessions('claude', keyword, { projectName, contextLength });
+async function searchSessions(config, projectName, keyword, contextLength = 15, options = {}) {
+  const results = await getSessionHistoryIndex().searchSessions('claude', keyword, { projectName, contextLength, ...options, config });
   const aliases = loadAliases();
   return results.map(r => ({
     sessionId: r.sessionId,
@@ -366,9 +366,8 @@ async function searchSessions(config, projectName, keyword, contextLength = 15) 
   }));
 }
 
-async function getRecentSessions(config, limit = 5) {
-  const indexed = await getSessionHistoryIndex().getRecentSessions('claude', limit);
-  const aliases = loadAliases();
+async function getRecentSessions(config, limit = 5, options = {}) {
+  const indexed = await getSessionHistoryIndex().getRecentSessions('claude', limit, { ...options, config });
   const forkRelations = getForkRelations();
   return indexed.map(s => ({
     sessionId: s.sessionId,

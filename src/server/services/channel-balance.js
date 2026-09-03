@@ -6,7 +6,7 @@ const path = require('path');
 const { URL } = require('url');
 const { PATHS } = require('../../config/paths');
 const { loadUIConfig } = require('./ui-config');
-const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const {
   getSnapshot,
   refreshSnapshot,
@@ -1624,7 +1624,7 @@ function clearChannelBalanceCache(source, channel) {
 }
 function getChannelsForSource(source) {
   try {
-    const driver = getPlatformRuntime().getDriver(source, 'channels');
+    const driver = getPlatformContext().runtime.getDriver(source, 'channels');
     if (!driver) return [];
     const value = typeof driver.list === 'function' ? driver.list() : driver.getChannels?.();
     if (value?.status === 'ok') return value.data?.channels || value.data || [];
@@ -1648,7 +1648,7 @@ function isBalanceDisplayEnabled() {
 
 function validateSource(source) {
   const normalized = String(source || '').trim().toLowerCase();
-  if (!getPlatformRegistry().resolve(normalized)) {
+  if (!getPlatformContext().registry.resolve(normalized)) {
     throw new Error('Invalid channel balance source');
   }
   return normalized;

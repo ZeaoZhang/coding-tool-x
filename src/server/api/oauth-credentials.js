@@ -13,7 +13,7 @@ const {
   clearNativeOAuthState,
   fetchCredentialUsage
 } = require('../../platforms/oauth-credentials-service');
-const { getPlatformRuntime } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 function assertTool(tool) {
   if (!SUPPORTED_TOOLS.includes(tool)) {
@@ -30,7 +30,7 @@ function unwrapDriverData(result, fallback) {
 
 function broadcastToolProxyState(tool) {
   const { broadcastProxyState } = require('../websocket-server');
-  const runtime = getPlatformRuntime();
+  const runtime = getPlatformContext().runtime;
   const proxyDriver = runtime.getDriver(tool, 'proxy');
   const channelsDriver = runtime.getDriver(tool, 'channels');
   const proxyStatus = unwrapDriverData(proxyDriver?.status?.(), {});

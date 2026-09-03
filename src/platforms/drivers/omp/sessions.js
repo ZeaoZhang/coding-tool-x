@@ -24,6 +24,11 @@ function createDriver(context = {}) {
       saveSessionOrder: 'saveSessionOrder',
       buildLaunchCommand: 'buildLaunchCommand',
       status: 'getSessionStatus'
+    },
+    onSuccess: operation => {
+      if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {
+        context.sessionHistoryIndex?.invalidateSource('omp');
+      }
     }
   });
 }

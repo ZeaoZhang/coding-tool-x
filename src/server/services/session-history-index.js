@@ -15,9 +15,8 @@ const path = require('path');
 const INDEX_INVENTORY_TTL_MS = 30000;
 
 
-/** @type {number} Hard timeout for worker processes */
-const WORKER_TIMEOUT_MS = 180000;
-
+/** @type {number} Maximum time a cold stale-ok read waits for inventory */
+const INDEX_COLD_WAIT_MS = 1500;
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
 const SESSION_PARSER_VERSIONS = Object.freeze({
   claude: 2,
@@ -211,13 +210,13 @@ function _typedSessionsUnsupported(source, error, operation = 'resolve-driver') 
   return result;
 }
 
-function _getRuntimeSessionsDriver(runtime, source) {
+function _getRuntimeSessionsDriver(runtime, source, config = {}) {
   if (!runtime || typeof runtime.getDriver !== 'function') {
     return null;
   }
 
   try {
-    const driver = runtime.getDriver(source, 'sessions');
+    const driver = runtime.getDriver(source, 'sessions', { config });
     const typedResult = _normalizeTypedSessionsResult(driver);
     if (typedResult) {
       return typedResult;
@@ -340,6 +339,7 @@ function _adaptRuntimeSessionsDriver(driver) {
  */
 function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
+  const indexConfig = opts.config || (opts.projectsDir ? { projectsDir: opts.projectsDir } : {});
   const explicitAdapters = opts.adapterRegistry || null;
   const adapters = explicitAdapters || {};
   const runtimeProvided = !explicitAdapters && process.env.NODE_ENV === 'test' && _isUsableRuntime(opts.runtime);
@@ -450,9 +450,11 @@ function createSessionHistoryIndex(opts = {}) {
     }
 
     const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
+    const workerOptions = { force };
+    if (options.config?.projectsDir) workerOptions.projectsDir = options.config.projectsDir;
     const promise = useWorker
-      ? workerRunner(source, dbPath, { force })
-      : _runInventory(source, { force });
+      ? workerRunner(source, dbPath, workerOptions)
+      : _runInventory(source, { force, config: options.config || indexConfig });
     _inflight.set(key, promise);
     promise.finally(() => {
       if (_inflight.get(key) === promise) {
@@ -461,6 +463,14 @@ function createSessionHistoryIndex(opts = {}) {
     }).catch(() => {});
 
     if (consistency === 'stale-ok' && _hasUsableIndexedData(source)) {
+      return;
+    }
+
+    if (consistency === 'stale-ok') {
+      await Promise.race([
+        promise,
+        new Promise(resolve => setTimeout(resolve, INDEX_COLD_WAIT_MS))
+      ]);
       return;
     }
 
@@ -491,7 +501,7 @@ function createSessionHistoryIndex(opts = {}) {
     ).run(source, lastInventoryMs, lastError);
   }
 
-  async function _runInventory(source, { force = false } = {}) {
+  async function _runInventory(source, { force = false, config = indexConfig } = {}) {
     const db = _getDb();
     let errorMsg = null;
     let stateToRecord = null;
@@ -506,7 +516,7 @@ function createSessionHistoryIndex(opts = {}) {
       if (explicitAdapters) {
         adapter = adapters[source];
       } else {
-        const runtimeDriver = _getRuntimeSessionsDriver(runtime, source);
+        const runtimeDriver = _getRuntimeSessionsDriver(runtime, source, config);
         if (_isTypedFailureResult(runtimeDriver)) {
           throw _typedFailureToError(runtimeDriver);
         }
@@ -519,7 +529,6 @@ function createSessionHistoryIndex(opts = {}) {
           throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
         }
       }
-
       if (!adapter || typeof adapter.inventory !== 'function' || typeof adapter.parse !== 'function') {
         if (explicitAdapters) {
           return;
@@ -527,7 +536,7 @@ function createSessionHistoryIndex(opts = {}) {
         throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
       }
 
-      const inventoryResult = await adapter.inventory();
+      const inventoryResult = await adapter.inventory({ projectsDir: config.projectsDir });
       if (_isTypedFailureResult(inventoryResult)) {
         throw _typedFailureToError(inventoryResult);
       }
@@ -569,7 +578,7 @@ function createSessionHistoryIndex(opts = {}) {
       // are recorded below and do not cancel sibling parses.
       const parseDescriptor = async (d) => {
         const preFingerprint = { size: d.size, mtimeMs: d.mtimeMs };
-        const parseResult = await adapter.parse(d);
+        const parseResult = await adapter.parse({ ...d, projectsDir: config.projectsDir });
         if (_isTypedFailureResult(parseResult)) throw _typedFailureToError(parseResult);
         if (!parseResult || typeof parseResult !== 'object' || !parseResult.session || typeof parseResult.session !== 'object' || typeof parseResult.session.sessionId !== 'string' || !parseResult.session.sessionId.trim() || !Array.isArray(parseResult.messages)) {
           throw new Error('invalid parsed session result');
@@ -742,7 +751,11 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<Array<{name, displayName, fullPath, path, sessionCount, lastUsed, latestSession, source}>>}
    */
   async function listProjects(source, options = {}) {
-    await ensureSourceIndexed(source, { consistency: options.consistency || 'stale-ok' });
+    await ensureSourceIndexed(source, {
+      force: options.force === true,
+      consistency: options.consistency || 'stale-ok',
+      config: options.config
+    });
     const db = _getDb();
 
     const rows = db.prepare(`
@@ -777,7 +790,11 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<Array>}
    */
   async function listSessions(source, projectName, options = {}) {
-    await ensureSourceIndexed(source, { consistency: 'stale-ok' });
+    await ensureSourceIndexed(source, {
+      force: options.force === true,
+      consistency: options.consistency || 'stale-ok',
+      config: options.config
+    });
 
     const db = _getDb();
     const rows = db.prepare(`
@@ -930,7 +947,11 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<Array>}
    */
   async function getRecentSessions(source, limit = 5, options = {}) {
-    await ensureSourceIndexed(source, { consistency: 'stale-ok' });
+    await ensureSourceIndexed(source, {
+      force: options.force === true,
+      consistency: options.consistency || 'stale-ok',
+      config: options.config
+    });
     const db = _getDb();
 
     const rows = db.prepare(`
@@ -966,7 +987,11 @@ function createSessionHistoryIndex(opts = {}) {
    */
   async function searchSessions(source, keyword, options = {}) {
     if (!String(keyword || '').trim()) return [];
-    await ensureSourceIndexed(source, { consistency: options.consistency || 'complete' });
+    await ensureSourceIndexed(source, {
+      force: options.force === true,
+      consistency: options.consistency || 'complete',
+      config: options.config
+    });
     const db = _getDb();
     const contextLength = options.contextLength || 35;
     const projectName = options.projectName || null;
@@ -1219,6 +1244,9 @@ function createSessionHistoryIndex(opts = {}) {
     if (options.deleted && options.sessionId) {
       db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?').run(source, options.sessionId);
     }
+    if (options.projectName) {
+      db.prepare('DELETE FROM session_file WHERE source = ? AND project_name = ?').run(source, options.projectName);
+    }
 
     // Mark state as stale
     db.prepare(
@@ -1227,6 +1255,21 @@ function createSessionHistoryIndex(opts = {}) {
     for (const key of fileVersions.keys()) {
       if (key.startsWith(`${source}:`)) fileVersions.delete(key);
     }
+  }
+  function getSourceIndexMeta(source) {
+    const row = _getDb().prepare(
+      'SELECT last_inventory_ms, last_error FROM source_state WHERE source = ?'
+    ).get(source);
+    const generatedAt = row?.last_inventory_ms ? Number(row.last_inventory_ms) : null;
+    const stale = !generatedAt || Date.now() - generatedAt >= INDEX_INVENTORY_TTL_MS;
+    const refreshing = _inflight.has(`ensure:${source}`);
+    return {
+      generatedAt,
+      stale,
+      refreshing,
+      fallback: Boolean(row?.last_error && !_hasUsableIndexedData(source)),
+      error: row?.last_error || null
+    };
   }
   function closeSessionHistoryIndex() {
     closeDatabase(dbPath);
@@ -1246,6 +1289,7 @@ function createSessionHistoryIndex(opts = {}) {
     getRecentSessions,
     searchSessions,
     invalidateSource,
+    getSourceIndexMeta,
     closeSessionHistoryIndex,
   };
 
@@ -1262,9 +1306,11 @@ function createSessionHistoryIndex(opts = {}) {
 
 let _defaultIndex = null;
 
-function _getDefaultIndex() {
+function _getDefaultIndex(options = {}) {
   if (!_defaultIndex) {
-    _defaultIndex = createSessionHistoryIndex();
+    _defaultIndex = Object.keys(options).length > 0
+      ? createSessionHistoryIndex({ config: options })
+      : createSessionHistoryIndex();
   }
   return _defaultIndex;
 }
@@ -1274,7 +1320,7 @@ async function ensureSourceIndexed(source, options) {
 }
 
 async function listProjects(source, options) {
-  return _getDefaultIndex().listProjects(source, options);
+  return _getDefaultIndex(options).listProjects(source, options);
 }
 
 async function listSessions(source, projectName, options) {
@@ -1299,6 +1345,10 @@ async function getRecentSessions(source, limit, options) {
 
 async function searchSessions(source, keyword, options) {
   return _getDefaultIndex().searchSessions(source, keyword, options);
+}
+
+function getSourceIndexMeta(source) {
+  return _getDefaultIndex().getSourceIndexMeta(source);
 }
 
 function invalidateSource(source, options) {
@@ -1330,5 +1380,6 @@ module.exports = {
   getRecentSessions,
   searchSessions,
   invalidateSource,
-  closeSessionHistoryIndex
+  getSourceIndexMeta,
+  closeSessionHistoryIndex,
 };

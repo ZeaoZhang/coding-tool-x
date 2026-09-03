@@ -1,7 +1,7 @@
 'use strict';
 
 const childProcess = require('child_process');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 const DASHBOARD_SNAPSHOT_WORKER_TIMEOUT_MS = 180 * 1000;
 const MAX_SERIALIZED_ERROR_TEXT_LENGTH = 4096;
@@ -452,8 +452,8 @@ function _normalizeChannelsPayload(driver, value) {
   return value;
 }
 
-async function buildProjectsPayload(source, config = {}, options = {}) {
-  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+async function readProjectsPayload(source, config = {}, options = {}) {
+  const runtime = options.runtime || getPlatformContext().runtime;
   const driver = _getRuntimeDriver(runtime, source, 'projects');
   const getter = _getProjectsGetter(driver);
   if (getter) {
@@ -480,7 +480,7 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
 }
 
 async function buildCountsPayload(source, config = {}, options = {}) {
-  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const runtime = options.runtime || getPlatformContext().runtime;
   const countsDriver = _getRuntimeDriver(runtime, source, 'counts');
   const countsGetter = _getCountsGetter(countsDriver);
   if (countsGetter) {
@@ -503,7 +503,7 @@ async function buildCountsPayload(source, config = {}, options = {}) {
 }
 
 async function buildTodayStatsPayload(source, config = {}, options = {}) {
-  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const runtime = options.runtime || getPlatformContext().runtime;
   const driver = _getRuntimeDriver(runtime, source, 'statistics');
   const getter = _getTodayStatsGetter(driver);
   if (getter) {
@@ -518,7 +518,7 @@ async function buildTodayStatsPayload(source, config = {}, options = {}) {
 }
 
 async function buildChannelsPayload(source, config = {}, options = {}) {
-  const runtime = options.runtime || platformRuntime.getPlatformRuntime();
+  const runtime = options.runtime || getPlatformContext().runtime;
   const driver = _getRuntimeDriver(runtime, source, 'channels');
   const getter = _getChannelsGetter(driver);
   if (getter) {
@@ -610,7 +610,7 @@ async function buildPayload({ kind, source, config, options, runtime } = {}) {
   const effectiveOptions = effectiveRuntime ? { ...snapshotOptions, runtime: effectiveRuntime } : snapshotOptions;
   switch (kind) {
     case 'projects':
-      return buildProjectsPayload(source, config || {}, effectiveOptions);
+      return readProjectsPayload(source, config || {}, effectiveOptions);
     case 'counts':
       return buildCountsPayload(source, config || {}, effectiveOptions);
     case 'todayStats':

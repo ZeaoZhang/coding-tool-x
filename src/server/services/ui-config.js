@@ -60,8 +60,7 @@ function ensureConfigDir() {
 function getAllowedPlatformKeys() {
   // Keep this require lazy: runtime's registry construction reads configuration.
   try {
-    const { getPlatformRegistry } = require('../../platforms/runtime');
-    const registry = getPlatformRegistry();
+    const { registry } = require('../platform-context').getPlatformContext();
     const platforms = registry && typeof registry.list === 'function' ? registry.list() : [];
     const keys = platforms
       .map(platform => String(platform && platform.key || '').trim().toLowerCase())

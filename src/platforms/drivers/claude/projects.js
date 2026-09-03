@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { createProjectsDriver } = require('../shared/projects');
+const { createProjectsDriver } = require('../../../shared/driver-factories/projects');
 
 function createProject({ projectName, projectPath } = {}) {
   if (!projectName || !projectPath) {
@@ -49,8 +49,13 @@ function createDriver(context = {}) {
     ...context,
     platform: 'claude',
     servicePath: './claude/sessions-implementation',
-    localServicePath: '../claude/sessions-implementation',
-    createProject
+    localServicePath: '../../platforms/drivers/claude/sessions-implementation',
+    createProject,
+    onSuccess: operation => {
+      if (['saveProjectOrder', 'createProject', 'deleteProject'].includes(operation)) {
+        context.sessionHistoryIndex?.invalidateSource('claude');
+      }
+    }
   });
 }
 

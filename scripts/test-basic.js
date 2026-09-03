@@ -8,7 +8,6 @@ const { expandHome, getConfigFilePath } = require('../src/config/loader');
 const { PATHS } = require('../src/config/paths');
 const DEFAULT_CONFIG = require('../src/config/default');
 const { isLoopbackRequest, isSameOriginRequest } = require('../src/server/services/network-access');
-const claudeHooks = require('../src/platforms/drivers/claude/api-hooks');
 const notificationHooks = require('../src/platforms/notification-hooks');
 const portHelper = require('../src/utils/port-helper');
 const mcpClient = require('../src/server/services/mcp-client');
@@ -116,7 +115,7 @@ function assertCliEntryCanRunWithoutInteractiveDeps(args, stubModulePath, stubEx
 }
 
 function run() {
-  const hookTest = claudeHooks._test || {};
+  const hookTest = notificationHooks._test || {};
   const notificationHookTest = notificationHooks._test || {};
   const mcpClientTest = mcpClient._test || {};
   const mcpServiceTest = mcpService._test || {};
@@ -125,8 +124,8 @@ function run() {
   const portHelperTest = portHelper._test || {};
   assert(typeof hookTest.parseStopHookStatus === 'function', '缺少 parseStopHookStatus 测试导出');
   assert(typeof hookTest.buildStopHookCommand === 'function', '缺少 buildStopHookCommand 测试导出');
-  assert(typeof hookTest.resolvePreferredHomeDir === 'function', '缺少 resolvePreferredHomeDir 测试导出');
-  assert(typeof hookTest.normalizeWindowsHomePath === 'function', '缺少 normalizeWindowsHomePath 测试导出');
+  assert(typeof resolvePreferredHomeDir === 'function', '缺少 resolvePreferredHomeDir 导出');
+  assert(typeof normalizeWindowsHomePath === 'function', '缺少 normalizeWindowsHomePath 导出');
   assert(typeof hookTest.shouldRepairStopHook === 'function', '缺少 shouldRepairStopHook 测试导出');
   assert(typeof notificationHookTest.getManagedCommandType === 'function', '缺少 getManagedCommandType 测试导出');
   assert(typeof notificationHookTest.applyClaudeDisablePreference === 'function', '缺少 applyClaudeDisablePreference 测试导出');
@@ -448,10 +447,10 @@ function run() {
     '非飞书或非 HTTPS 的 Webhook 应被拒绝'
   );
 
-  const normalizedMsysHome = hookTest.normalizeWindowsHomePath('/c/Users/wjx', { SYSTEMDRIVE: 'C:' });
+  const normalizedMsysHome = normalizeWindowsHomePath('/c/Users/wjx', { SYSTEMDRIVE: 'C:' });
   assert.strictEqual(normalizedMsysHome, path.win32.normalize('C:\\Users\\wjx'), 'MSYS home 路径转换失败');
 
-  const preferredWindowsHome = hookTest.resolvePreferredHomeDir(
+  const preferredWindowsHome = resolvePreferredHomeDir(
     'win32',
     {
       USERPROFILE: 'C:\\Users\\wjx',

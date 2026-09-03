@@ -37,7 +37,6 @@ const OMP_STATS_PATH               = require.resolve('../../../src/platforms/dri
 const PATHS_PATH                   = require.resolve('../../../src/config/paths');
 const PLATFORM_RUNTIME_PATH        = require.resolve('../../../src/platforms/runtime');
 const SNAPSHOT_CACHE_PATH          = require.resolve('../../../src/server/services/snapshot-cache');
-const PROJECT_SNAPSHOTS_PATH       = require.resolve('../../../src/server/services/project-snapshots');
 const DASHBOARD_WORKER_PATH        = require.resolve('../../../src/server/services/dashboard-snapshot-worker');
 const DASHBOARD_PATH               = require.resolve('../../../src/server/api/dashboard');
 
@@ -75,7 +74,6 @@ let runDashboardSourceWorker;
 
 function injectStubs() {
   delete require.cache[SNAPSHOT_CACHE_PATH];
-  delete require.cache[PROJECT_SNAPSHOTS_PATH];
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-test-'));
   loadConfig               = vi.fn(() => ({ currentProject: 'test-project' }));
@@ -218,7 +216,7 @@ function cleanStubs() {
     SESSIONS_PATH, CODEX_SESSIONS_PATH, GEMINI_SESSIONS_PATH, OPENCODE_SESSIONS_PATH, OMP_SESSIONS_PATH,
     CODEX_CHANNELS_PATH, GEMINI_CHANNELS_PATH, OPENCODE_CHANNELS_PATH, OMP_CHANNELS_PATH,
     CLAUDE_STATS_PATH, CODEX_STATS_PATH, GEMINI_STATS_PATH, OPENCODE_STATS_PATH, OMP_STATS_PATH,
-    PATHS_PATH, PLATFORM_RUNTIME_PATH, SNAPSHOT_CACHE_PATH, PROJECT_SNAPSHOTS_PATH, DASHBOARD_WORKER_PATH,
+    PATHS_PATH, PLATFORM_RUNTIME_PATH, SNAPSHOT_CACHE_PATH, DASHBOARD_WORKER_PATH,
     DASHBOARD_PATH
   ];
   paths.forEach(p => delete require.cache[p]);
